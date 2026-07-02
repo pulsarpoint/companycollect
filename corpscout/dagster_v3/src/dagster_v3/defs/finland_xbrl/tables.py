@@ -4,27 +4,6 @@ import polars as pl
 
 STATEMENT_DOCUMENTS_TABLE = "fi_prh_xbrl_statement_documents"
 FACTS_TABLE = "fi_prh_xbrl_facts_raw"
-XML_DOCUMENTS_TABLE = "fi_prh_xbrl_xml_documents"
-FINANCIAL_METRICS_TABLE = "fi_prh_xbrl_financial_metrics"
-FINANCIAL_METRICS_USD_TABLE = "fi_prh_xbrl_financial_metrics_usd"
-
-XML_DOCUMENTS_POLARS_SCHEMA = {
-    "business_id": pl.Utf8,
-    "financial_date": pl.Utf8,
-    "registration_date": pl.Utf8,
-    "source_url": pl.Utf8,
-    "xml_object_key": pl.Utf8,
-    "xml_sha256": pl.Utf8,
-    "xml_size_bytes": pl.Int64,
-    "downloaded": pl.Boolean,
-    "reused": pl.Boolean,
-    "discovery_registered_date_start": pl.Utf8,
-    "discovery_registered_date_end": pl.Utf8,
-    "financial_start_date": pl.Utf8,
-    "max_reports": pl.Utf8,
-    "selected_at": pl.Utf8,
-}
-XML_DOCUMENTS_COLUMNS = list(XML_DOCUMENTS_POLARS_SCHEMA)
 
 STATEMENT_DOCUMENTS_POLARS_SCHEMA = {
     "statement_key": pl.Utf8,

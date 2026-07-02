@@ -1,47 +1,54 @@
 # Sweden — license & terms notes
 
-## Big picture
+## Current practical position
 
-Sweden's company data became free under the **EU Open Data Directive (2019/1024)** and its
-**high-value-datasets** implementing regulation (EU 2023/138), category *"Companies and company
-ownership"*. Sweden implemented this so that **Bolagsverket** and **SCB** must provide the core company
-datasets **free of charge, via API and bulk**. Launch: **26 June 2025** ("Värdefulla datamängder").
+Bolagsverket publishes company/register bulk files and annual-report archives as public high-value
+datasets under:
 
-## SCB — Företagsregistret / FDB free API
+```text
+https://vardefulla-datamangder.bolagsverket.se/
+```
 
-- **License: CC0 1.0** (public-domain dedication). SCB states data may be used, distributed and made
-  available **without any requirement to cite the source**. (Attribution still courteous.)
-- Fee removal followed a **government decision amending the relevant ordinance**, effective
-  **26 June 2025**.
-- Operational terms: you must **accept the API terms of use** and obtain a **certificate + password**
-  (today) — migrating to an **API-key model in September 2026**. Limits: 2,000 rows/request, 10 req/10 s.
-- **Status: clear and permissive.** Safe for ingestion and redistribution.
+The user confirmed that these bulk files are free to download and may be downloaded on a **7-day**
+cadence. The first Sweden ingestion should therefore use the public bulk files directly.
 
-## Bolagsverket — Värdefulla datamängder API
+## Public bulk files
 
-- **Free of charge, no contract.** Provided under the EU high-value-datasets obligation
-  ("it should be free for everyone to use" per the EU Commission directive, as stated by Bolagsverket).
-- Access is **OAuth2-gated** (free `client_id`/`client_secret` via self-service Kundanmälan) — the
-  authentication is for **rate-management/identification**, not payment.
-- **Reuse terms: confirm per dataset.** The directive mandates open reuse, and the national catalog
-  (dataportal.se) carries the formal license string. Treat as **open/free-reuse**, but before
-  large-scale **redistribution** of the raw payloads (esp. annual-report documents), record the exact
-  license shown on `dataportal.se/datasets/612_5428` and the API terms page.
-- Annual reports (iXBRL) are **public filings**; their data is reusable, but the **document files**
-  may carry specific reuse wording — verify.
+Recommended source URLs:
 
-## Paid / restricted (NOT for open ingestion)
+```text
+https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip
+https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip
+https://vardefulla-datamangder.bolagsverket.se/arsredovisningar/
+```
 
-- **Bolagsverket XML bulk packet & legacy paid API** — commercial agreement + fee (~SEK 6,250
-  onboarding + usage). Superseded for open use by the free VDM API. Do not use unless a paid contract
-  is explicitly authorised.
-- **Verklig huvudman (UBO) register** — not part of the free open-API set; restricted. Out of scope.
-- **Commercial aggregators** (allabolag, bolagsapi.se, apiverket.se, foretagsapi.se, OpenCorporates,
-  Apify) — governed by **each vendor's terms**; many repackage the same official data. Use the official
-  free APIs instead for primary ingestion.
+Access characteristics:
+
+- No API token required for the direct ZIP downloads.
+- No payment required.
+- Files are public high-value datasets.
+- Exact formal license/reuse text should still be saved from the Bolagsverket/dataportal metadata before
+  redistribution of raw data.
+
+## Annual reports
+
+The annual-report archives contain public filings in XHTML/iXBRL form. Treat the structured facts as
+open company filing data, but verify and record any specific wording that applies to redistribution of
+the raw annual-report document files.
+
+## Authenticated API
+
+The Bolagsverket API exists, but it is not the preferred ingestion path now:
+
+- requires authentication/registration,
+- appears to require EU identity documentation/eID,
+- adds operational complexity that the public bulk files avoid.
+
+Use the API only for future targeted enrichment if credentials are available.
 
 ## Uncertainty / to confirm
 
-- [ ] Exact formal license string for the Bolagsverket VDM datasets on dataportal.se (CC0 vs custom open).
-- [ ] Any attribution/redistribution clause on the **annual-report document** payloads specifically.
-- [ ] SCB API-key terms once the Sept 2026 model is published (expected same CC0 data license).
+- [ ] Exact formal license string for each direct bulk dataset.
+- [ ] Exact reuse wording for annual-report raw XHTML/iXBRL documents.
+- [ ] Whether annual-report archive names and directory partitioning are stable enough to use as raw
+      object keys directly.

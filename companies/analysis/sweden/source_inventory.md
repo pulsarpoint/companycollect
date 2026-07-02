@@ -1,27 +1,40 @@
-# Sweden — source inventory (summary)
+# Sweden — source inventory
 
-| # | Source | Type | Access | Formats | License | Financials | Status |
-|---|--------|------|--------|---------|---------|-----------|--------|
-| 1 | **Bolagsverket — Värdefulla datamängder API v1** | Official registry API | OAuth2 client_credentials (free creds via Kundanmälan) | JSON, iXBRL, ZIP | Free / EU high-value datasets | **Yes — annual reports (iXBRL)** | **recommended (primary)** |
-| 2 | **SCB — Företagsregistret / FDB free API** | Statistical business register API | Client cert (→ API key Sept 2026), free | JSON, XML | **CC0** | No | **recommended (secondary/seed)** |
-| 3 | dataportal.se | National DCAT catalog | Open | DCAT, JSON | metadata | — | useful_secondary_source |
-| 4 | Bolagsverket paid XML packet / legacy API | Official registry (paid) | Agreement + fee | XML, CSV | commercial | partial | blocked_by_payment |
-| 5 | Verklig huvudman (UBO) | Official registry | Controlled | — | restricted | No | blocked_by_license_uncertainty |
-| 6 | Aggregators (allabolag, bolagsapi.se, apiverket.se, foretagsapi.se, OpenCorporates, Apify) | Third-party | Paid/keyed | JSON, PDF, iXBRL | vendor | resold | useful_secondary_source |
+| # | Source | Type | Access | Formats | Financials | Status |
+|---|---|---|---|---|---|---|
+| 1 | **Bolagsverket legal-register bulk file** | Official registry bulk | Public direct ZIP, refreshed about every 7 days | ZIP, CSV-like text | No | **recommended primary company source** |
+| 2 | **SCB/FDB bulk file via Bolagsverket high-value datasets** | Statistical business register bulk | Public direct ZIP, refreshed about every 7 days | ZIP, tab-separated text | No | **recommended secondary/company universe source** |
+| 3 | **Bolagsverket annual-report archives** | Official filings bulk | Public directory of ZIP archives | ZIP, nested ZIP, XHTML/iXBRL | **Yes** | **recommended primary financial source** |
+| 4 | Bolagsverket Värdefulla datamängder API | Official API | Authenticated; requires registration/EU identity documents/eID | JSON, ZIP, iXBRL | Yes | fallback/enrichment only |
+| 5 | dataportal.se / Bolagsverket source pages | Catalog/documentation | Public browser pages | HTML/DCAT metadata | No | useful_secondary_source |
+| 6 | Verklig huvudman (UBO) | Official registry | Restricted | unknown | No | out of scope |
+| 7 | Commercial aggregators | Third-party | Paid/keyed | JSON/PDF/iXBRL | sometimes | fallback/comparison only |
 
-## Key endpoints (primary source)
+## Recommended direct URLs
 
-```
-Base:  https://gw.api.bolagsverket.se/vardefulla-datamangder/v1
-Auth:  OAuth2 client_credentials, scope vardefulla-datamangder:read  (WSO2 gateway)
-GET  /isalive
-POST /organisationer        -> company base data by organisationsnummer (JSON)
-POST /dokumentlista         -> list annual-report documents for an org
-GET  /dokument/{id}         -> ZIP containing iXBRL annual report (financial data)
+```text
+https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip
+https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip
+https://vardefulla-datamangder.bolagsverket.se/arsredovisningar/
 ```
 
-## One-line recommendation
+## Local observed files
 
-Use **Bolagsverket Värdefulla datamängder** as the primary company + **financial** source (free OAuth2,
-iXBRL annual reports), and **SCB FDB free API** (CC0) to seed/complete the company + workplace universe.
-Both became free on **26 June 2025** under the EU Open Data Directive high-value-datasets rule.
+```text
+data_model/bolagsverket_bulkfil.txt
+data_model/scb_bulkfil_JE_20260629T055245_80.txt
+data_model/01_1.zip
+data_model/annual_reports_01_1/
+```
+
+## Recommendation
+
+Build the Sweden ingestion from public bulk files:
+
+```text
+company bulk ZIPs + annual-report ZIPs -> raw object storage -> parser -> normalized tables -> ClickHouse
+```
+
+Do not build the first version around the authenticated API. The API is useful later for targeted
+refresh/enrichment if credentials are available, but the public bulk files are simpler, cheaper, and
+better aligned with batch ingestion.

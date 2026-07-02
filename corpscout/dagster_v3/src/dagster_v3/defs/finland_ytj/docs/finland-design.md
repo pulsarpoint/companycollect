@@ -101,7 +101,8 @@ period end and is used only as metadata and as the XML endpoint parameter.
 Historical partitions:
 
 ```text
-Monthly: 2025-06-01 through 2026-05-01
+Metadata snapshot: 2023-07-01 through 2026-06-01
+XML snapshot monthly: 2023-07-01 through 2026-05-01
 ```
 
 Daily partitions:
@@ -113,50 +114,58 @@ Daily: 2026-06-01 onward
 Historical chain:
 
 ```text
-finland_xbrl_financial_reports_backfill
--> finland_xbrl_raw_xml_documents_backfill
--> finland_xbrl_parse_backfill
+data_snapshot
+-> data_snapshot_duckdb
+-> data_snapshot_duckdb_ch
+-> data_snapshot_xml
+-> data_snapshot_xml_duckdb
 ```
 
 Daily chain:
 
 ```text
-finland_xbrl_financial_reports_incremental
--> finland_xbrl_raw_xml_documents_incremental
--> finland_xbrl_parse_incremental
+data_daily
+-> data_daily_duckdb
+-> data_daily_duckdb_ch
+-> data_daily_xml
+-> data_daily_xml_duckdb
 ```
 
 Publish chain:
 
 ```text
-fi_prh_xbrl_financial_metrics
--> fi_prh_xbrl_financial_metrics_usd
--> finland_xbrl_financial_metrics_clickhouse
+fi_financial_statements_ch
+-> fi_financial_metrics_parquet
+-> fi_financial_metrics_usd_parquet
+-> fi_financial_metrics_ch
 ```
 
 Raw XML storage:
 
 ```text
 bucket: source-finland-prh-xbrl
-key:    companies/<business_id>/<financial_date>.xml
+key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/companies/<business_id>/<financial_date>.xml
+key:    financial_data/xml_daily/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/companies/<business_id>/<financial_date>.xml
 ```
 
-Local parquet storage:
+Local DuckDB/parquet storage:
 
 ```text
-data/finland_xbrl/parquet/
+data/finland_xbrl/
 ```
 
 ClickHouse target:
 
 ```text
+corpscout.fi_xbrl_financial_statement_listings
+corpscout.fi_financial_statements
 corpscout.fi_financial_metrics
 ```
 
 The XBRL pipeline does not use YTJ eligibility, website filters, active-company
 filters, or company seed tables. It downloads every statement listed by PRH for
 the partition registration window and reuses existing XML objects unless the raw
-XML asset is configured with `refresh_existing=true`.
+XML partition is incomplete. Completed XML partitions are marked by `_SUCCESS.json`.
 
 ## Operational Separation
 
@@ -165,7 +174,7 @@ YTJ and XBRL are intentionally independent:
 - YTJ refreshes the company register and resolved company profile tables.
 - XBRL refreshes financial statement data and final financial metrics.
 - Running the YTJ resolved job does not download XBRL XML.
-- Running the XBRL historical or incremental jobs does not refresh YTJ.
+- Running the XBRL snapshot, incremental, or publish jobs does not refresh YTJ.
 
 See also:
 

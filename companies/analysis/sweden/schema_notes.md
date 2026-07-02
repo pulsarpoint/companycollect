@@ -1,115 +1,134 @@
 # Sweden — schema notes & mapping to internal company model
 
-## Identifiers
+## Identifier model
 
-- **organisationsnummer** — 10-digit Swedish org number (often written `NNNNNN-NNNN`). Primary key for
-  companies/legal entities. For sole traders this is the **personnummer**.
-- **CFAR-nummer** (SCB) — 8-digit **workplace / local-unit (arbetsställe)** identifier. One company can
-  have many CFAR workplaces. Use for site/establishment-level coverage.
-- **momsregistreringsnummer / VAT** — `SE` + 12 digits (orgnr + `01`), where applicable.
+- `organisationsnummer` / `PeOrgNr` is the primary company identifier.
+- Store a normalized digits-only value and keep the raw source value.
+- Bolagsverket raw values can include embedded suffixes, for example:
 
-## Source 1 — Bolagsverket Värdefulla datamängder (base data + financials)
-
-`POST /organisationer` (by organisationsnummer) → JSON. Observed/expected fields:
-
-```
-organisationsnummer
-organisationsnamn            (legal name)
-juridisk_form / organisationsform   (Aktiebolag (AB), Handelsbolag (HB), Kommanditbolag (KB),
-                                     Enskild firma, Ekonomisk förening, ...)
-status                       (registered / deregistered / bankruptcy / liquidation ...)
-postadress_organisation      (postal address: street, postnr, postort)
-naringsgrenskod / SNI        (industry code, SNI 2025)
-registrering / avregistrering datum
+```text
+8888006577$ORGNR-IDORG
+Stiftelsen ...$FORETAGSNAMN-ORGNAM$1993-03-15
 ```
 
-`POST /dokumentlista` (by org) → list of available **annual-report documents** (document ids + metadata
-such as filing year, type). `GET /dokument/{id}` → **ZIP** containing the report in **iXBRL**.
+Split these into normalized value, source code/type, and any embedded date where relevant.
 
-### Financial data (iXBRL annual report)
+## Bolagsverket bulk file
 
-iXBRL = inline XBRL; tags map to the official **Swedish K2/K3 taxonomies** at `taxonomier.se`.
-Parse to obtain at least:
+File:
 
-```
-# Income statement (resultaträkning)
-Nettoomsättning                 (net revenue)
-Rörelseresultat                 (operating profit/EBIT)
-Resultat efter finansiella poster
-Årets resultat                  (net profit for the year)
-
-# Balance sheet (balansräkning)
-Summa tillgångar                (total assets)
-Summa eget kapital              (total equity)
-Summa skulder                   (total liabilities)
-Omsättningstillgångar / Anläggningstillgångar
-Kortfristiga / Långfristiga skulder
-
-# Meta
-Räkenskapsår (financial year), valuta (currency, usually SEK), revisor/audit, K2-vs-K3 regelverk
+```text
+data_model/bolagsverket_bulkfil.txt
 ```
 
-Notes: free coverage = companies that filed **digitally**; quantify historical gaps. No pre-computed
-ratios — derive (e.g. soliditet = equity/assets) downstream.
+Format:
 
-## Source 2 — SCB Företagsdatabasen (FDB) free API (register + workplaces)
+- UTF-8.
+- Semicolon CSV.
+- 11 columns.
 
-REST JSON/XML. Field docs: `postbeskrivning-foretag.pdf`, `postbeskrivning-arbetsstalle.pdf`,
-`variabelbeskrivning-api-sni-2025.pdf`. Observed/expected fields:
+Observed columns and likely mapping:
 
+| Source column | Meaning / mapping |
+|---|---|
+| `organisationsidentitet` | company id / registration number, with raw suffix |
+| `namnskyddslopnummer` | name-protection sequence number |
+| `registreringsland` | registration country |
+| `organisationsnamn` | legal/company name, with raw suffix metadata |
+| `organisationsform` | legal form code |
+| `avregistreringsdatum` | deregistration/dissolution date |
+| `avregistreringsorsak` | deregistration reason |
+| `pagandeAvvecklingsEllerOmstruktureringsforfarande` | ongoing liquidation/restructuring indicator |
+| `registreringsdatum` | incorporation/registration date |
+| `verksamhetsbeskrivning` | business/activity description |
+| `postadress` | postal address packed as delimited text |
+
+## SCB bulk file
+
+File:
+
+```text
+data_model/scb_bulkfil_JE_20260629T055245_80.txt
 ```
-# Company (företag)
-organisationsnummer / personnummer
-företagsnamn
-juridisk form
-adress (postal/visit), postnr, postort, kommun, län
-SNI-kod (industry)
-register flags: moms (VAT), arbetsgivare (employer), F-skatt
-storleksklass anställda (employee size-class)
 
-# Workplace (arbetsställe / local unit)
-CFAR-nummer
-arbetsställets namn + adress, kommun, län
-SNI-kod (workplace level)
-storleksklass anställda
-huvud-/del-arbetsställe (main vs subsidiary)
-koppling till organisationsnummer (parent company)
+Format:
+
+- Latin-1 / ISO-8859.
+- Tab-separated.
+- 35 columns, including a trailing empty header in the local sample.
+
+Observed columns and likely mapping:
+
+| Source column | Meaning / mapping |
+|---|---|
+| `PeOrgNr` | company/person organization identifier |
+| `Namn` / `Foretagsnamn` | company/name fields |
+| `JurForm` | legal form code |
+| `FtgStat` / `JEStat` | status flags |
+| `COAdress`, `Gatuadress`, `PostNr`, `PostOrt` | address fields |
+| `Ng1`..`Ng5` | SNI/activity codes |
+| `RegDatKtid` | registration date, observed as `YYYYMMDD` |
+| `Reklamsparrtyp` | advertising/direct-marketing block type |
+| `m*` columns | marker/change/metadata flags for corresponding fields |
+
+## Annual-report archives
+
+Files:
+
+```text
+data_model/01_1.zip
+data_model/annual_reports_01_1/*.zip
 ```
 
-No financial statements in SCB.
+Observed structure:
+
+```text
+01_1.zip
+  5560187493_2025-06-30.zip
+    <uuid>.xhtml
+    <uuid>.xhtml
+```
+
+Nested ZIP filename gives:
+
+```text
+org_number = 5560187493
+financial_period_end = 2025-06-30
+```
+
+XHTML files include inline XBRL concepts. Observed examples:
+
+```text
+se-cd-base:RakenskapsarForstaDag
+se-cd-base:RakenskapsarSistaDag
+se-cd-base:Organisationsnummer
+se-cd-base:ForetagetsNamn
+se-gen-base:Nettoomsattning
+```
 
 ## Mapping to internal company model
 
-```
-company_id           <- organisationsnummer (Bolagsverket/SCB)
-registration_number  <- organisationsnummer
-tax_id / vat_id      <- VAT (SE + orgnr + 01) where present
-legal_name           <- organisationsnamn / företagsnamn
-normalized_name      <- normalized(legal_name)
-company_type         <- juridisk_form / organisationsform (AB, HB, KB, EF, Enskild firma, ...)
-status               <- status (registered/deregistered/bankruptcy/liquidation)
-incorporation_date   <- registreringsdatum
-dissolution_date     <- avregistreringsdatum
-registered_address   <- postadress (street, postnr, postort)
-municipality         <- kommun
-region               <- län
-country              <- "Sweden"
-industry_code        <- SNI (company; + workplace-level from SCB)
-employees            <- storleksklass anställda (SCB; size-class, not exact)
-local_units[]        <- CFAR workplaces (SCB): {cfar, name, address, kommun, sni, size_class}
-financials[]         <- per fiscal year from iXBRL annual report (Bolagsverket):
-                        {year, currency, net_revenue, ebit, profit_after_fin, net_profit,
-                         total_assets, total_equity, total_liabilities, audited, regelverk}
-source_name          <- "Bolagsverket Värdefulla datamängder" / "SCB Företagsregistret"
-source_url           <- gw.api.bolagsverket.se/... / SCB web service
-source_retrieved_at  <- ISO-8601 UTC
-raw_record           <- original JSON / parsed-iXBRL JSON
+```text
+company_id              <- normalized organisationsnummer / PeOrgNr
+registration_number     <- same as company_id
+legal_name              <- Bolagsverket organisationsnamn, SCB fallback
+company_type            <- Bolagsverket organisationsform, SCB JurForm fallback
+status                  <- derived from avregistreringsdatum, avregistreringsorsak, FtgStat, JEStat
+incorporation_date      <- Bolagsverket registreringsdatum, SCB RegDatKtid fallback
+dissolution_date        <- Bolagsverket avregistreringsdatum
+registered_address      <- Bolagsverket postadress, SCB address fallback
+activity_description    <- Bolagsverket verksamhetsbeskrivning
+industry_codes          <- SCB Ng1..Ng5
+financials[]            <- parsed annual-report iXBRL facts
+source_retrieved_at     <- raw ZIP retrieval time
+raw_record              <- full raw row / raw iXBRL fact metadata
 ```
 
-## Encoding / format notes
+## Parser requirements
 
-- Encoding: UTF-8; Swedish characters å/ä/ö.
-- Dates: ISO `YYYY-MM-DD`.
-- Currency: financials usually **SEK** (check `valuta` tag; some report in EUR/USD).
-- orgnr canonical form: store digits-only (10) plus a display form `NNNNNN-NNNN`.
-- iXBRL: parse with an XBRL/iXBRL parser keyed to the K2/K3 taxonomy concept names; keep raw + mapped.
+- Preserve raw rows.
+- Normalize org numbers consistently.
+- Decode SCB as Latin-1.
+- Parse Bolagsverket packed fields without losing raw suffix metadata.
+- Store raw annual-report archive path, nested ZIP path, XHTML filename, and concept QName for every
+  financial fact.

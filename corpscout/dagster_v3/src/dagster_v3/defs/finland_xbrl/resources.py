@@ -17,32 +17,6 @@ from pydantic import PrivateAttr
 from dagster_v3.defs.finland_xbrl import tables
 
 PRH_XBRL_REGISTRATION_SEARCH_START = "2023-07-01"
-FINANCIAL_REPORT_COLUMNS = (
-    "business_id",
-    "financial_date",
-    "registration_date",
-    "discovery_registered_date_start",
-    "discovery_registered_date_end",
-    "source_run_id",
-    "source_page_number",
-    "source_page_record_number",
-    "source_record_number",
-    "source_payload_hash",
-    "raw_financial",
-)
-FINANCIAL_REPORT_POLARS_SCHEMA = {
-    "business_id": pl.Utf8,
-    "financial_date": pl.Utf8,
-    "registration_date": pl.Utf8,
-    "discovery_registered_date_start": pl.Utf8,
-    "discovery_registered_date_end": pl.Utf8,
-    "source_run_id": pl.Utf8,
-    "source_page_number": pl.Int64,
-    "source_page_record_number": pl.Int64,
-    "source_record_number": pl.Int64,
-    "source_payload_hash": pl.Utf8,
-    "raw_financial": pl.Utf8,
-}
 
 
 class HttpSession(Protocol):
@@ -63,171 +37,11 @@ class XbrlFinancialReportListing:
 class XbrlParquetStorageResource(dg.ConfigurableResource):
     base_path: str = "data/finland_xbrl/parquet"
 
-    def financial_reports_backfill_path(self, partition_key: str) -> Path:
-        return self._partition_path("financial_reports_backfill", partition_key)
-
-    def financial_reports_incremental_path(self, partition_key: str) -> Path:
-        return self._partition_path("financial_reports_incremental", partition_key)
-
-    def raw_xml_documents_backfill_path(self, partition_key: str) -> Path:
-        return self._partition_path("raw_xml_documents_backfill", partition_key)
-
-    def raw_xml_documents_incremental_path(self, partition_key: str) -> Path:
-        return self._partition_path("raw_xml_documents_incremental", partition_key)
-
-    def statement_documents_backfill_path(self, partition_key: str) -> Path:
-        return self._partition_path("statement_documents_backfill", partition_key)
-
-    def statement_documents_incremental_path(self, partition_key: str) -> Path:
-        return self._partition_path("statement_documents_incremental", partition_key)
-
-    def facts_backfill_path(self, partition_key: str) -> Path:
-        return self._partition_path("facts_backfill", partition_key)
-
-    def facts_incremental_path(self, partition_key: str) -> Path:
-        return self._partition_path("facts_incremental", partition_key)
-
     def financial_metrics_path(self) -> Path:
         return Path(self.base_path) / "financial_metrics" / "data.parquet"
 
     def financial_metrics_usd_path(self) -> Path:
         return Path(self.base_path) / "financial_metrics_usd" / "data.parquet"
-
-    def write_financial_reports_backfill(
-        self,
-        partition_key: str,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_financial_reports(
-            self.financial_reports_backfill_path(partition_key),
-            rows,
-        )
-
-    def write_financial_reports_incremental(
-        self,
-        partition_key: str,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_financial_reports(
-            self.financial_reports_incremental_path(partition_key),
-            rows,
-        )
-
-    def read_financial_reports_backfill(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_required_financial_reports(
-            self.financial_reports_backfill_path(partition_key)
-        )
-
-    def read_financial_reports_incremental(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_required_financial_reports(
-            self.financial_reports_incremental_path(partition_key)
-        )
-
-    def write_raw_xml_documents_backfill(
-        self,
-        partition_key: str,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_rows(
-            self.raw_xml_documents_backfill_path(partition_key),
-            rows,
-            columns=tables.XML_DOCUMENTS_COLUMNS,
-            schema=tables.XML_DOCUMENTS_POLARS_SCHEMA,
-        )
-
-    def write_raw_xml_documents_incremental(
-        self,
-        partition_key: str,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_rows(
-            self.raw_xml_documents_incremental_path(partition_key),
-            rows,
-            columns=tables.XML_DOCUMENTS_COLUMNS,
-            schema=tables.XML_DOCUMENTS_POLARS_SCHEMA,
-        )
-
-    def read_raw_xml_documents_backfill(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_required_rows(
-            self.raw_xml_documents_backfill_path(partition_key)
-        )
-
-    def read_raw_xml_documents_incremental(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_required_rows(
-            self.raw_xml_documents_incremental_path(partition_key)
-        )
-
-    def write_statement_documents_backfill(
-        self,
-        partition_key: str,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_rows(
-            self.statement_documents_backfill_path(partition_key),
-            rows,
-            columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
-            schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
-        )
-
-    def write_statement_documents_incremental(
-        self,
-        partition_key: str,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_rows(
-            self.statement_documents_incremental_path(partition_key),
-            rows,
-            columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
-            schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
-        )
-
-    def write_facts_backfill(
-        self,
-        partition_key: str,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_rows(
-            self.facts_backfill_path(partition_key),
-            rows,
-            columns=tables.FACTS_COLUMNS,
-            schema=tables.FACTS_POLARS_SCHEMA,
-        )
-
-    def write_facts_incremental(
-        self,
-        partition_key: str,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_rows(
-            self.facts_incremental_path(partition_key),
-            rows,
-            columns=tables.FACTS_COLUMNS,
-            schema=tables.FACTS_POLARS_SCHEMA,
-        )
-
-    def read_statement_documents_backfill(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_rows(self.statement_documents_backfill_path(partition_key))
-
-    def read_statement_documents_incremental(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_rows(self.statement_documents_incremental_path(partition_key))
-
-    def read_facts_backfill(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_rows(self.facts_backfill_path(partition_key))
-
-    def read_facts_incremental(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_rows(self.facts_incremental_path(partition_key))
-
-    def read_statement_documents(self) -> list[dict[str, Any]]:
-        return [
-            *self._read_asset_rows("statement_documents_backfill"),
-            *self._read_asset_rows("statement_documents_incremental"),
-        ]
-
-    def read_facts(self) -> list[dict[str, Any]]:
-        return [
-            *self._read_asset_rows("facts_backfill"),
-            *self._read_asset_rows("facts_incremental"),
-        ]
 
     def write_financial_metrics(self, rows: list[dict[str, Any]]) -> Path:
         return self._write_rows(
@@ -251,53 +65,11 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
     def read_financial_metrics_usd(self) -> list[dict[str, Any]]:
         return self._read_rows(self.financial_metrics_usd_path())
 
-    def financial_reports_backfill_row_count(self) -> int:
-        return self._row_count("financial_reports_backfill")
-
-    def financial_reports_incremental_row_count(self) -> int:
-        return self._row_count("financial_reports_incremental")
-
-    def raw_xml_documents_backfill_row_count(self) -> int:
-        return self._row_count("raw_xml_documents_backfill")
-
-    def raw_xml_documents_incremental_row_count(self) -> int:
-        return self._row_count("raw_xml_documents_incremental")
-
-    def statement_documents_row_count(self) -> int:
-        return self._row_count("statement_documents_backfill") + self._row_count(
-            "statement_documents_incremental"
-        )
-
-    def facts_row_count(self) -> int:
-        return self._row_count("facts_backfill") + self._row_count(
-            "facts_incremental"
-        )
-
     def financial_metrics_row_count(self) -> int:
         return len(self.read_financial_metrics())
 
     def financial_metrics_usd_row_count(self) -> int:
         return len(self.read_financial_metrics_usd())
-
-    def _partition_path(self, asset_name: str, partition_key: str) -> Path:
-        return (
-            Path(self.base_path)
-            / asset_name
-            / f"partition_key={partition_key}"
-            / "data.parquet"
-        )
-
-    def _write_financial_reports(
-        self,
-        path: Path,
-        rows: list[dict[str, Any]],
-    ) -> Path:
-        return self._write_rows(
-            path,
-            rows,
-            columns=FINANCIAL_REPORT_COLUMNS,
-            schema=FINANCIAL_REPORT_POLARS_SCHEMA,
-        )
 
     def _write_rows(
         self,
@@ -312,35 +84,10 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
         frame.write_parquet(path)
         return path
 
-    def _read_required_financial_reports(self, path: Path) -> list[dict[str, Any]]:
-        return self._read_required_rows(path)
-
-    def _read_required_rows(self, path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Required Finland XBRL parquet file is missing: {path}"
-            )
-        return pl.read_parquet(path).to_dicts()
-
     def _read_rows(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():
             return []
         return pl.read_parquet(path).to_dicts()
-
-    def _read_asset_rows(self, asset_name: str) -> list[dict[str, Any]]:
-        root = Path(self.base_path) / asset_name
-        if not root.exists():
-            return []
-        rows: list[dict[str, Any]] = []
-        for path in sorted(root.glob("*/data.parquet")):
-            rows.extend(pl.read_parquet(path).to_dicts())
-        return rows
-
-    def _row_count(self, asset_name: str) -> int:
-        root = Path(self.base_path) / asset_name
-        if not root.exists():
-            return 0
-        return sum(pl.read_parquet(path).height for path in root.glob("*/data.parquet"))
 
 
 class XbrlApiResource(dg.ConfigurableResource):

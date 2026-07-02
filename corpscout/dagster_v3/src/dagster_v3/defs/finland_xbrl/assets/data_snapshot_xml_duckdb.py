@@ -20,8 +20,9 @@ from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml import (
     xml_snapshot_partition_prefix,
     xml_snapshot_success_key,
 )
-from dagster_v3.defs.finland_xbrl.assets.parse import StatementParser
-from dagster_v3.defs.finland_xbrl.parser import parse_statement_xml
+from dagster_v3.defs.finland_xbrl.parser import ParsedStatement, parse_statement_xml
+
+StatementParser = Callable[..., ParsedStatement]
 
 FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH = Path(
     "data/finland_xbrl/duckdb/xml_snapshot_parse"

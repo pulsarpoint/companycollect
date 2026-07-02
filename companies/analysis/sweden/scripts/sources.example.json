@@ -1,54 +1,40 @@
 [
   {
-    "name": "Bolagsverket Värdefulla datamängder - health check",
-    "slug": "bolagsverket_vdm_isalive",
-    "type": "api_page",
-    "url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1/isalive",
+    "name": "Sweden SCB/FDB bulk file",
+    "slug": "sweden_scb_bulkfil",
+    "type": "bulk",
+    "url": "https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip",
+    "method": "GET",
+    "headers": {},
+    "_note": "Public direct ZIP. Download no more often than the allowed 7-day cadence."
+  },
+  {
+    "name": "Sweden Bolagsverket legal-register bulk file",
+    "slug": "sweden_bolagsverket_bulkfil",
+    "type": "bulk",
+    "url": "https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip",
+    "method": "GET",
+    "headers": {},
+    "_note": "Public direct ZIP. Download no more often than the allowed 7-day cadence."
+  },
+  {
+    "name": "Sweden Bolagsverket annual reports directory",
+    "slug": "sweden_bolagsverket_annual_reports",
+    "type": "bulk_directory",
+    "url": "https://vardefulla-datamangder.bolagsverket.se/arsredovisningar/",
+    "method": "GET",
+    "headers": {},
+    "_note": "Public directory of annual-report ZIP archives. Directory listing and archive naming should be parsed by a source-specific downloader."
+  },
+  {
+    "name": "Bolagsverket Värdefulla datamängder API",
+    "slug": "bolagsverket_vdm_api_fallback",
+    "type": "authenticated_api_fallback",
+    "url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1",
     "method": "GET",
     "headers": {
-      "Accept": "application/json",
       "Authorization": "Bearer ${BV_ACCESS_TOKEN}"
     },
-    "page_param": "page",
-    "page_start": 1,
-    "max_pages": 1,
-    "_note": "Requires OAuth2 client_credentials token (scope vardefulla-datamangder:read). Get free client_id/client_secret via the Kundanmälan registration. Without a token the gateway returns HTTP 401 'Missing Credentials'."
-  },
-  {
-    "name": "Bolagsverket Värdefulla datamängder - organisation lookup (base data)",
-    "slug": "bolagsverket_vdm_organisationer",
-    "type": "manual_post",
-    "url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1/organisationer",
-    "method": "POST",
-    "headers": {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "Authorization": "Bearer ${BV_ACCESS_TOKEN}"
-    },
-    "body_example": { "identitetsbeteckning": "5560125790" },
-    "_note": "POST body schema confirmed at registration. Returns JSON company base data."
-  },
-  {
-    "name": "Bolagsverket Värdefulla datamängder - document list (annual reports)",
-    "slug": "bolagsverket_vdm_dokumentlista",
-    "type": "manual_post",
-    "url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1/dokumentlista",
-    "method": "POST",
-    "headers": {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "Authorization": "Bearer ${BV_ACCESS_TOKEN}"
-    },
-    "body_example": { "identitetsbeteckning": "5560125790" },
-    "_note": "Lists annual-report document ids for the org; then GET /dokument/{id} returns a ZIP with the iXBRL report."
-  },
-  {
-    "name": "SCB Företagsregistret free API (CC0) - business register",
-    "slug": "scb_fdb",
-    "type": "manual_cert",
-    "url": "https://www.scb.se/vara-tjanster/bestall-data-och-statistik/foretagsregistret/foretagsregistrets-tjanster/foretagsregistrets-webbtjanster/",
-    "method": "POST",
-    "headers": { "Content-Type": "application/json", "Accept": "application/json" },
-    "_note": "Certificate-based today (request via scbforetag@scb.se). Max 2,000 rows/request, 10 req/10s. JSON or XML. API-key model from Sept 2026. License CC0."
+    "_note": "Fallback only. API requires authentication/registration with EU identity documentation/eID; do not use for the first bulk ingestion path."
   }
 ]

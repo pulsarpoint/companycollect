@@ -2,123 +2,251 @@
 
 ## Goal
 
-Find official/reliable public sources for **Swedish company data**, and specifically for
-**financial data** (annual accounts), with reproducible access notes and recommended ingestion path.
+Document the practical open-data path for Swedish company data and annual-report financial data.
 
 ## Headline conclusion
 
-Sweden moved from a **paid-data** regime to a **free** one on **26 June 2025**, when **Bolagsverket**
-(Swedish Companies Registration Office) and **SCB** (Statistics Sweden) launched the
-**Värdefulla datamängder** ("valuable datasets") programme to comply with the **EU Open Data Directive
-(2019/1024) high-value-datasets** implementing regulation. Company base data **and digitally submitted
-annual reports** are now available free via API.
+Use **public downloadable bulk files**, not the authenticated API, as the primary ingestion source.
 
-There are **two official, free sources**, and they overlap by design (the Bolagsverket gateway also
-serves SCB-sourced fields):
+Bolagsverket publishes high-value company datasets directly as ZIP files:
 
-1. **Bolagsverket — Värdefulla datamängder API v1** → company base data + **annual reports (iXBRL)**.
-   This is the **primary** source and the one that satisfies the financial-data requirement.
-2. **SCB — Företagsregistret / Företagsdatabasen (FDB) free API** (**CC0**) → full company + **workplace
-   (arbetsställe)** universe with **CFAR** IDs, **SNI** codes, **employee size-classes**.
+```text
+https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip
+https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip
+```
 
-No free single-file full dump exists; full coverage is obtained by **paged API pulls**. Bolagsverket's
-historical one-shot **XML bulk packet remains a paid product** (~SEK 6,250 onboarding + usage).
+Annual reports are also published as downloadable archives under:
 
-## 1. Bolagsverket — Värdefulla datamängder API v1 (PRIMARY, free)
+```text
+https://vardefulla-datamangder.bolagsverket.se/arsredovisningar/
+```
 
-- Landing / docs: `https://bolagsverket.se/apierochoppnadata/hamtaforetagsinformation/vardefulladatamangder.5294.html`
-- API page: `…/vardefulladatamangder/apiforvardefulladatamangder.5513.html`
-- Registration (free, self-service): *Kundanmälan till API för värdefulla datamängder*
-  `https://bolagsverket.se/apierochoppnadata/vardefulladatamangder/kundanmalantillapiforvardefulladatamangder.5528.html`
-  → provide email + phone, receive `client_id`/`client_secret` for **test** and **production** by email/SMS.
-- Catalog entry (national portal): `https://www.dataportal.se/datasets/612_5428`
+The bulk files are free and the user confirmed Bolagsverket allows downloading the free bulk files every
+**7 days**. The authenticated API exists, but it requires authentication/registration using EU identity
+documentation/eID, so it should not be the default implementation path.
 
-### Access (verified live against the gateway)
+## Source 1 — Bolagsverket legal-register bulk file
 
-- Base URL: `https://gw.api.bolagsverket.se/vardefulla-datamangder/v1`
-- Auth: **OAuth2 client_credentials**, scope `vardefulla-datamangder:read` (ping scope
-  `vardefulla-datamangder:ping`). Gateway is **WSO2 API Manager**.
-- Live probes (no credentials — to confirm endpoints exist; see `data/sweden/raw/api/_PROBE_NOTES.md`):
-  - `GET /isalive` → **HTTP 401** `{"code":"900902","message":"Missing Credentials"}` (exists, OAuth-gated)
-  - `POST /organisationer` → **HTTP 401** same (exists, OAuth-gated)
-  - `POST /oauth2/token` (no creds) → HTTP 404 — exact token path is provided at registration; do not
-    assume this literal path. The community client lib references `https://gw.api.bolagsverket.se/oauth2/token`.
+Direct URL:
 
-### Endpoints (from official Elixir client `bolagsverket_ex` docs)
+```text
+https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip
+```
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET  | `/isalive` | health check |
-| POST | `/organisationer` | company base data by organisationsnummer → JSON |
-| POST | `/dokumentlista` | list available documents (annual reports) for an org |
-| GET  | `/dokument/{id}` | download document → **ZIP** containing **iXBRL** annual report |
+Local extracted sample:
 
-### Financial data
+```text
+data_model/bolagsverket_bulkfil.txt
+```
 
-The **annual report (årsredovisning)** documents are the financial source. They are **iXBRL**
-(inline XBRL) tagged against the official Swedish taxonomies (K2/K3) published at `taxonomier.se`.
-That gives a structured income statement + balance sheet you can parse programmatically. This is the
-free replacement for what used to be paid PDF/financial products.
+Observed properties:
 
-## 2. SCB — Företagsregistret / FDB free API (SECONDARY, CC0)
+- UTF-8 text.
+- Semicolon-separated CSV.
+- Header + ~2,963,424 data lines in the local sample.
+- Large file: extracted sample is roughly 944 MB.
+- Direct URL returned HTTP 200 during verification on 2026-07-02.
+- Response headers showed `content-type: application/zip`, `content-length: 248608278`, and
+  `last-modified: Mon, 29 Jun 2026 01:27:14 GMT`.
 
-- Service page: `https://www.scb.se/vara-tjanster/bestall-data-och-statistik/foretagsregistret/`
-- Free-data page: `…/foretagsregistret/avgiftsfria-uppgifter-i-foretagsregistret/`
-- Web services / API: `…/foretagsregistret/foretagsregistrets-tjanster/foretagsregistrets-webbtjanster/`
+Observed columns:
 
-### Access
+```text
+organisationsidentitet
+namnskyddslopnummer
+registreringsland
+organisationsnamn
+organisationsform
+avregistreringsdatum
+avregistreringsorsak
+pagandeAvvecklingsEllerOmstruktureringsforfarande
+registreringsdatum
+verksamhetsbeskrivning
+postadress
+```
 
-- REST, **JSON or XML over HTTPS**. **Certificate-based** auth today (request + accept terms via
-  `scbforetag@scb.se`); **API-key model announced for September 2026** (with pagination + larger pages).
-- Limits: **2,000 rows per request**, **10 requests / 10 seconds**. License **CC0**.
-- Update cadence: nightly (Mon–Fri); most variables weekly, some annual. Sourced mainly from the
-  Swedish Tax Agency (Skatteverket).
+This is the best source for legal-register facts: company identity, name, legal form, registration
+country, registration/deregistration dates, deregistration reason, business description, and postal
+address.
 
-### Coverage / fields
+## Source 2 — SCB/FDB bulk file
 
-- Companies (~1,804,297) and **local units / workplaces (~1,436,285)** with **CFAR** 8-digit workplace IDs.
-- Fields: organisationsnummer/personnummer, company & workplace **addresses**, **SNI** industry codes,
-  **employee size-class**, main-vs-subsidiary workplace structure, VAT/employer/F-tax register flags.
-- Field docs (PDF "postbeskrivning"): `postbeskrivning-foretag.pdf`, `postbeskrivning-arbetsstalle.pdf`,
-  `variabelbeskrivning-api-sni-2025.pdf` (under scb.se/contentassets/…).
+Direct URL:
 
-SCB does **not** provide financial statements — use Bolagsverket for that.
+```text
+https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip
+```
 
-## 3. Open data portal
+Local extracted sample:
 
-- `https://www.dataportal.se` — national DCAT catalog (operated by DIGG). Lists the Värdefulla
-  datamängder API and SCB datasets. Confirms publishers and free status. Actual data served from
-  `gw.api.bolagsverket.se` and SCB web services. (Catalog page is a JS SPA; metadata also reachable
-  via the dataportal admin/store API with a `type` parameter.)
+```text
+data_model/scb_bulkfil_JE_20260629T055245_80.txt
+```
 
-## 4. What was NOT found / excluded
+Observed properties:
 
-- **No free, single-file, whole-register bulk download.** Bulk = paged API. Bolagsverket XML packet = paid.
-- **Beneficial ownership** (*verklig huvudman*) — register exists at Bolagsverket but is **not** in the
-  free open-API set. Out of scope for open ingestion.
-- **Pre-computed financial ratios / multi-year history** — not in the free APIs; derive from iXBRL.
-- **Commercial aggregators** (allabolag.se, bolagsapi.se, apiverket.se, foretagsapi.se, OpenCorporates,
-  Apify Nordic Company Registry) — useful as fallback/comparison but **not** primary official sources;
-  several repackage exactly the Bolagsverket/SCB data behind their own keys.
+- Latin-1 / ISO-8859 text.
+- Tab-separated file.
+- Header + ~1,816,509 data lines in the local sample.
+- Extracted sample is roughly 256 MB.
+- Direct URL returned HTTP 200 during verification on 2026-07-02.
+- Response headers showed `content-type: application/zip`, `content-length: 70747583`, and
+  `last-modified: Mon, 29 Jun 2026 13:04:12 GMT`.
 
-## Recommended ingestion approach
+Observed columns:
 
-**Hybrid, Bolagsverket-primary:**
+```text
+ForAndrTyp
+COAdress
+Foretagsnamn
+FtgStat
+Gatuadress
+JEStat
+JurForm
+Namn
+Ng1
+Ng2
+Ng3
+Ng4
+Ng5
+PeOrgNr
+PostNr
+PostOrt
+RegDatKtid
+Reklamsparrtyp
+mCOAdress
+mForetagsnamn
+mFtgStat
+mGatuadress
+mJEStat
+mJurForm
+mNamn
+mNg1
+mNg2
+mNg3
+mNg4
+mNg5
+mPostNr
+mPostOrt
+mRegDatKtid
+mReklamsparrtyp
+```
 
-1. Register (free) for Bolagsverket VDM credentials; get OAuth token via client_credentials.
-2. Seed the org universe from the **SCB free API** (page the whole register, 2,000 rows/call) — gives
-   the full orgnr list + workplaces + employee size + SNI.
-3. For each orgnr, `POST /organisationer` (Bolagsverket) for authoritative base data, then
-   `POST /dokumentlista` → `GET /dokument/{id}` to pull the latest **iXBRL annual report**; parse it
-   for income-statement + balance-sheet figures.
-4. Cache by orgnr + latest filing year; respect rate limits; re-poll on update cadence.
+This is the best source for SCB/statistical business-register fields such as company names, addresses,
+legal form code, status flags, organization/person number (`PeOrgNr`), registration date (`RegDatKtid`),
+and SNI/activity codes (`Ng1`..`Ng5`).
+
+## Source 3 — Annual-report bulk archives
+
+Directory:
+
+```text
+https://vardefulla-datamangder.bolagsverket.se/arsredovisningar/
+```
+
+Local sample archive:
+
+```text
+data_model/01_1.zip
+```
+
+Extracted local sample:
+
+```text
+data_model/annual_reports_01_1/
+```
+
+Observed properties:
+
+- `01_1.zip` contains 1,512 nested per-company ZIP files in the local sample.
+- Nested ZIP names follow this pattern:
+
+```text
+<org_number>_<financial_period_end>.zip
+```
+
+Example:
+
+```text
+5560187493_2025-06-30.zip
+```
+
+- Each inspected nested ZIP contains one or more `.xhtml` files.
+- The XHTML files contain inline XBRL namespaces and concepts.
+- Example observed concepts:
+
+```text
+se-cd-base:RakenskapsarForstaDag
+se-cd-base:RakenskapsarSistaDag
+se-cd-base:Organisationsnummer
+se-cd-base:ForetagetsNamn
+se-gen-base:Nettoomsattning
+```
+
+This is the source for Swedish financial metrics. The parser should work from raw ZIPs and preserve:
+
+- outer archive key/name,
+- nested company ZIP name,
+- organization number,
+- financial period end,
+- XHTML file name,
+- raw concept QName,
+- context/unit/decimals,
+- raw value and parsed numeric/text/date value.
+
+## Authenticated API status
+
+The API should be documented as a fallback, not the initial ingestion path.
+
+Known API surface:
+
+```text
+https://gw.api.bolagsverket.se/vardefulla-datamangder/v1
+```
+
+Known endpoints from previous investigation:
+
+```text
+GET  /isalive
+POST /organisationer
+POST /dokumentlista
+GET  /dokument/{id}
+```
+
+However, using the API requires registration/authentication. The current strategy is to avoid this
+dependency because the same key data is available as public bulk files.
+
+## Recommended ingestion architecture
+
+Company data:
+
+```text
+download raw ZIPs every 7 days
+-> store raw ZIPs in S3/object storage with checksum and retrieved_at
+-> extract/parse text files
+-> normalize to Swedish company/register tables
+-> load ClickHouse
+```
+
+Annual reports:
+
+```text
+download annual-report ZIP batches
+-> store raw ZIPs in S3/object storage
+-> enumerate nested company ZIPs
+-> parse XHTML/iXBRL documents
+-> map concepts to financial metrics
+-> load ClickHouse
+```
 
 ## Open questions / risks
 
-- Exact OAuth **token URL** and the precise request schema for `/organisationer` / `/dokumentlista`
-  (body field names, paging) are confirmed only after registration — verify against the official
-  developer docs once credentialed.
-- **Digital annual-report coverage** is high and growing but not 100% historically; quantify gaps.
-- SCB auth migrates from **certificate → API key in Sept 2026**; build the client to swap auth modes.
-- Confirm the precise **reuse/attribution** terms on the Bolagsverket high-value datasets (CC0 is
-  explicit for SCB; Bolagsverket is "free, no contract" under the directive — record per `license_notes.md`).
+- The annual-report directory listing format should be scripted and verified; direct `HEAD` to
+  `arsredovisningar/01_1.zip` returned HTTP 500 during one check, while the local sample exists and
+  the directory is public.
+- Exact license/reuse wording for annual-report documents should be captured from Bolagsverket's
+  dataset terms before redistribution of raw documents.
+- The SCB file is Latin-1; parser must explicitly decode it.
+- Bolagsverket fields include encoded suffixes inside values, for example
+  `8888006577$ORGNR-IDORG`; parser must split and preserve both raw and normalized values.
+- Annual-report concept mapping needs a Sweden taxonomy mapping layer, not just generic XHTML parsing.

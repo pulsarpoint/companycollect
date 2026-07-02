@@ -7,11 +7,11 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.finland_xbrl.assets.common import DAILY_PARTITIONS
 from dagster_v3.defs.finland_xbrl.assets.data_daily_xml import data_daily_xml
 from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml_duckdb import (
+    StatementParser,
     materialize_data_snapshot_xml_duckdb,
     xml_daily_parse_duckdb_path,
     xml_daily_parse_temp_dir,
 )
-from dagster_v3.defs.finland_xbrl.assets.parse import StatementParser
 from dagster_v3.defs.finland_xbrl.parser import parse_statement_xml
 
 

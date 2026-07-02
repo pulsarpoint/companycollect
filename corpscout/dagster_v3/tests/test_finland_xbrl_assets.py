@@ -11,12 +11,10 @@ from dagster import AssetKey
 import duckdb
 import polars as pl
 import pytest
-from pydantic import ValidationError
 
 import dagster_v3.defs.finland_xbrl.assets as xbrl_assets
 from dagster_v3.defs.finland_xbrl import metric_mapping
 from dagster_v3.defs.finland_xbrl.assets import financial_metrics
-from dagster_v3.defs.finland_xbrl.assets import parse as parse_assets
 from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.finland_xbrl.assets import (
     FINANCIAL_DATA_DAILY_KEY_PREFIX,
@@ -30,12 +28,9 @@ from dagster_v3.defs.finland_xbrl.assets import (
     FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE,
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE,
-    XbrlParsedConfig,
-    XbrlRawConfig,
     XML_SNAPSHOT_PARTITIONS,
     build_financial_data_snapshot_csv,
     download_finland_xbrl_snapshot_xml_partition,
-    download_finland_xbrl_raw_xml_documents,
     export_data_daily_duckdb_to_clickhouse,
     export_data_snapshot_duckdb_to_clickhouse,
     fetch_xml_snapshot_report_rows,
@@ -69,14 +64,11 @@ from dagster_v3.defs.finland_xbrl.tables import (
     FACTS_POLARS_SCHEMA,
     STATEMENT_DOCUMENTS_TABLE,
     STATEMENT_DOCUMENTS_POLARS_SCHEMA,
-    XML_DOCUMENTS_TABLE,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.finland_xbrl.clickhouse import (
     export_finland_xbrl_financial_statements_clickhouse,
 )
-
-FINANCIAL_METRICS_USD_TABLE = "fi_prh_xbrl_financial_metrics_usd"
 
 
 class FakeResponse:
@@ -276,73 +268,11 @@ def _object_store() -> tuple[ObjectStoreResource, FakeS3Client]:
     return ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3_client), s3_client
 
 
-def test_xbrl_financial_reports_config_has_launchpad_defaults() -> None:
-    config = xbrl_assets.XbrlFinancialReportsConfig()
-
-    assert config.request_delay_seconds == 1.0
-
-
 def test_xbrl_parquet_storage_resource_maps_partition_paths(
     tmp_path: Path,
 ) -> None:
     storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
 
-    assert storage.financial_reports_backfill_path("2026-05-01") == (
-        tmp_path
-        / "parquet"
-        / "financial_reports_backfill"
-        / "partition_key=2026-05-01"
-        / "data.parquet"
-    )
-    assert storage.financial_reports_incremental_path("2026-06-28") == (
-        tmp_path
-        / "parquet"
-        / "financial_reports_incremental"
-        / "partition_key=2026-06-28"
-        / "data.parquet"
-    )
-    assert storage.raw_xml_documents_backfill_path("2026-05-01") == (
-        tmp_path
-        / "parquet"
-        / "raw_xml_documents_backfill"
-        / "partition_key=2026-05-01"
-        / "data.parquet"
-    )
-    assert storage.raw_xml_documents_incremental_path("2026-06-28") == (
-        tmp_path
-        / "parquet"
-        / "raw_xml_documents_incremental"
-        / "partition_key=2026-06-28"
-        / "data.parquet"
-    )
-    assert storage.statement_documents_backfill_path("2026-05-01") == (
-        tmp_path
-        / "parquet"
-        / "statement_documents_backfill"
-        / "partition_key=2026-05-01"
-        / "data.parquet"
-    )
-    assert storage.statement_documents_incremental_path("2026-06-28") == (
-        tmp_path
-        / "parquet"
-        / "statement_documents_incremental"
-        / "partition_key=2026-06-28"
-        / "data.parquet"
-    )
-    assert storage.facts_backfill_path("2026-05-01") == (
-        tmp_path
-        / "parquet"
-        / "facts_backfill"
-        / "partition_key=2026-05-01"
-        / "data.parquet"
-    )
-    assert storage.facts_incremental_path("2026-06-28") == (
-        tmp_path
-        / "parquet"
-        / "facts_incremental"
-        / "partition_key=2026-06-28"
-        / "data.parquet"
-    )
     assert storage.financial_metrics_path() == (
         tmp_path
         / "parquet"
@@ -360,24 +290,22 @@ def test_xbrl_parquet_storage_resource_maps_partition_paths(
 def test_finland_xbrl_backfill_and_incremental_partitions() -> None:
     graph = load_project_defs().get_repository_def().asset_graph
 
-    for key in (
-        "finland_xbrl_financial_reports_backfill",
-        "finland_xbrl_raw_xml_documents_backfill",
-        "finland_xbrl_parse_backfill",
-    ):
+    for key in ("data_snapshot_xml", "data_snapshot_xml_duckdb"):
         node = graph.get(AssetKey(key))
         assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
         partition_keys = node.partitions_def.get_partition_keys(
             current_time=datetime(2026, 6, 22)
         )
-        assert partition_keys[0] == "2025-06-01"
+        assert partition_keys[0] == "2023-07-01"
         assert "2026-05-01" in partition_keys
         assert "2026-06-01" not in partition_keys
 
     for key in (
-        "finland_xbrl_financial_reports_incremental",
-        "finland_xbrl_raw_xml_documents_incremental",
-        "finland_xbrl_parse_incremental",
+        "data_daily",
+        "data_daily_duckdb",
+        "data_daily_duckdb_ch",
+        "data_daily_xml",
+        "data_daily_xml_duckdb",
     ):
         node = graph.get(AssetKey(key))
         assert type(node.partitions_def).__name__ == "DailyPartitionsDefinition"
@@ -392,21 +320,8 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
 
     with pytest.raises(Exception):
         repo.get_job("finland_xbrl_reference_refresh_job")
-
-    historical_backfill = {
-        key.path[-1]
-        for key in repo.get_job(
-            "finland_xbrl_historical_backfill_job"
-        ).asset_layer.executable_asset_keys
-    }
-    assert historical_backfill == {
-        "finland_xbrl_financial_reports_backfill",
-        "finland_xbrl_raw_xml_documents_backfill",
-        "finland_xbrl_parse_backfill",
-    }
-    assert type(
-        repo.get_job("finland_xbrl_historical_backfill_job").partitions_def
-    ).__name__ == "MonthlyPartitionsDefinition"
+    with pytest.raises(Exception):
+        repo.get_job("finland_xbrl_historical_backfill_job")
     with pytest.raises(Exception):
         repo.get_job("finland_xbrl_backfill_job")
 
@@ -420,9 +335,6 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         "data_daily_duckdb_ch",
         "data_daily_xml",
         "data_daily_xml_duckdb",
-        "finland_xbrl_financial_reports_incremental",
-        "finland_xbrl_raw_xml_documents_incremental",
-        "finland_xbrl_parse_incremental",
     }
     assert type(repo.get_job("finland_xbrl_incremental_job").partitions_def).__name__ == (
         "DailyPartitionsDefinition"
@@ -464,102 +376,21 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
     assert repo.get_job("finland_xbrl_publish_job").partitions_def is None
 
 
-def test_financial_reports_write_separate_partition_parquet_files(tmp_path: Path) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    window_one_session = FakePagedFinancialReportsSession(
-        {
-            1: [
-                {
-                    "businessId": "a",
-                    "financialDate": "2024-02-29",
-                    "registrationDate": "2024-03-15",
-                }
-            ],
-            2: [],
-        }
-    )
-    window_two_session = FakePagedFinancialReportsSession(
-        {
-            1: [
-                {
-                    "businessId": "b",
-                    "financialDate": "2024-03-31",
-                    "registrationDate": "2024-04-15",
-                }
-            ],
-            2: [],
-        }
-    )
-
-    storage.write_financial_reports_backfill(
-        "2024-03-01",
-        list(
-            XbrlApiResource(session=window_one_session).iter_financial_report_rows(
-                registered_date_start="2024-03-01",
-                registered_date_end="2024-03-31",
-                request_delay_seconds=0,
-                run_id="r1",
-                sleep=lambda _: None,
-            )
-        ),
-    )
-    storage.write_financial_reports_backfill(
-        "2024-04-01",
-        list(
-            XbrlApiResource(session=window_two_session).iter_financial_report_rows(
-                registered_date_start="2024-04-01",
-                registered_date_end="2024-04-30",
-                request_delay_seconds=0,
-                run_id="r2",
-                sleep=lambda _: None,
-            )
-        ),
-    )
-
-    assert storage.read_financial_reports_backfill("2024-03-01")[0]["business_id"] == "a"
-    assert storage.read_financial_reports_backfill("2024-04-01")[0]["business_id"] == "b"
-    assert storage.financial_reports_backfill_path("2024-03-01").exists()
-    assert storage.financial_reports_backfill_path("2024-04-01").exists()
-
-
-def test_xbrl_raw_config_defaults() -> None:
-    config = XbrlRawConfig()
-
-    assert config.refresh_existing is False
-    assert config.download_delay_seconds == 1.0
-
-
 def test_xbrl_transforms_are_python_assets():
     graph = load_project_defs().get_repository_def().asset_graph
     keys = {k.path[-1] for k in graph.get_all_asset_keys()}
-    assert "fi_prh_xbrl_financial_metrics" in keys
-    assert "fi_prh_xbrl_financial_metrics_usd" in keys
+    assert "fi_prh_xbrl_financial_metrics" not in keys
+    assert "fi_prh_xbrl_financial_metrics_usd" not in keys
+    assert "finland_xbrl_financial_metrics_clickhouse" not in keys
     assert "finland_xbrl_eligible_companies" not in keys
     assert "finland_xbrl_eligible_financial_reports" not in keys
     assert "xbrl_metric_map" not in keys
     assert "finland_xbrl_dbt_assets" not in xbrl_assets.__dict__
-    deps = graph.get(AssetKey(["finland_xbrl_raw_xml_documents"])).parent_keys
-    assert AssetKey(["finland_xbrl_raw_xml_documents_backfill"]) in deps
-    assert AssetKey(["finland_xbrl_raw_xml_documents_incremental"]) in deps
-
-
-def test_xbrl_parsed_config_has_no_manifest_override() -> None:
-    assert XbrlParsedConfig()
-
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"documents_key": 1},
-        {"documents_key": "raw/fi_prh_xbrl_xml_documents.parquet"},
-        {"listing_key": "windows/start=2026-01-01/end=2026-01-31/listing.json"},
-        {"registered_date_start": "2026-01-01"},
-        {"registered_date_end": "2026-01-31"},
-    ],
-)
-def test_xbrl_parsed_config_rejects_non_manifest_config(kwargs: dict) -> None:
-    with pytest.raises(ValidationError):
-        XbrlParsedConfig(**kwargs)
+    assert "finland_xbrl_raw_xml_documents" not in keys
+    assert "finland_xbrl_raw_xml_documents_backfill" not in keys
+    assert "finland_xbrl_raw_xml_documents_incremental" not in keys
+    assert "finland_xbrl_parse_backfill" not in keys
+    assert "finland_xbrl_parse_incremental" not in keys
 
 
 def test_xbrl_asset_graph_does_not_model_ytj_eligibility() -> None:
@@ -573,7 +404,7 @@ def test_xbrl_asset_graph_does_not_model_ytj_eligibility() -> None:
     assert dg.AssetKey("finland_xbrl_company_seed_duckdb") not in asset_graph.get_all_asset_keys()
 
 
-def test_xbrl_financial_reports_are_modeled_as_partitioned_writer_assets() -> None:
+def test_xbrl_financial_reports_legacy_assets_are_removed() -> None:
     assert "finland_xbrl_financial_reports_source" not in xbrl_assets.__dict__
     assert "_financial_reports_resource" not in xbrl_assets.__dict__
     assert "finland_xbrl_financial_reports_pipeline" not in xbrl_assets.__dict__
@@ -582,9 +413,11 @@ def test_xbrl_financial_reports_are_modeled_as_partitioned_writer_assets() -> No
     assert "finland_xbrl_financial_reports_incremental_duckdb" not in xbrl_assets.__dict__
     assert "finland_xbrl_financial_reports_duckdb" not in xbrl_assets.__dict__
     assert "finland_xbrl_financial_reports" not in xbrl_assets.__dict__
+    assert "finland_xbrl_financial_reports_backfill" not in xbrl_assets.__dict__
+    assert "finland_xbrl_financial_reports_incremental" not in xbrl_assets.__dict__
     graph = load_project_defs().get_repository_def().asset_graph
-    assert AssetKey("finland_xbrl_financial_reports_backfill") in graph.get_all_asset_keys()
-    assert AssetKey("finland_xbrl_financial_reports_incremental") in graph.get_all_asset_keys()
+    assert AssetKey("finland_xbrl_financial_reports_backfill") not in graph.get_all_asset_keys()
+    assert AssetKey("finland_xbrl_financial_reports_incremental") not in graph.get_all_asset_keys()
     assert AssetKey("finland_xbrl_financial_reports") not in graph.get_all_asset_keys()
 
 
@@ -1757,103 +1590,6 @@ def test_xbrl_api_resource_rejects_registration_start_before_prh_floor() -> None
     assert session.calls == []
 
 
-def test_xbrl_parquet_storage_overwrites_financial_report_partition(tmp_path: Path) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    rows = list(
-        XbrlApiResource(session=FakePagedFinancialReportsSession()).iter_financial_report_rows(
-            registered_date_start="2026-06-01",
-            registered_date_end="2026-06-30",
-            request_delay_seconds=0,
-            run_id="first-run",
-            sleep=lambda _: None,
-        )
-    )
-
-    storage.write_financial_reports_incremental("2026-06-01", rows)
-    storage.write_financial_reports_incremental(
-        "2026-06-01",
-        [
-            {
-                **rows[0],
-                "source_run_id": "second-run",
-                "source_page_number": 9,
-            }
-        ],
-    )
-
-    stored = storage.read_financial_reports_incremental("2026-06-01")
-
-    assert stored == [
-        {
-            **rows[0],
-            "source_run_id": "second-run",
-            "source_page_number": 9,
-        }
-    ]
-
-
-def test_xbrl_parquet_storage_writes_empty_financial_report_partition(
-    tmp_path: Path,
-) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-
-    storage.write_financial_reports_incremental("2026-06-28", [])
-
-    assert storage.read_financial_reports_incremental("2026-06-28") == []
-
-
-def test_xbrl_parquet_storage_writes_raw_xml_document_partitions(
-    tmp_path: Path,
-) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    rows = [
-        {
-            "business_id": "active-web",
-            "financial_date": "2026-05-31",
-            "registration_date": "2026-06-01",
-            "source_url": "https://example.test/financial",
-            "xml_object_key": "companies/active-web/2026-05-31.xml",
-            "xml_sha256": "hash",
-            "xml_size_bytes": 34,
-            "downloaded": True,
-            "reused": False,
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-            "financial_start_date": "",
-            "max_reports": "",
-            "selected_at": "2026-06-01T00:00:00+00:00",
-        }
-    ]
-
-    storage.write_raw_xml_documents_incremental("2026-06-01", rows)
-    storage.write_raw_xml_documents_backfill("2026-05-01", [])
-
-    assert storage.read_raw_xml_documents_incremental("2026-06-01") == rows
-    assert storage.read_raw_xml_documents_backfill("2026-05-01") == []
-    assert storage.raw_xml_documents_incremental_row_count() == 1
-    assert storage.raw_xml_documents_backfill_row_count() == 0
-
-
-def test_xbrl_parquet_storage_writes_parsed_output_partitions(
-    tmp_path: Path,
-) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    statement = _statement_document_row("statement-1")
-    fact = _fact_row("statement-1", fact_ordinal=1)
-
-    storage.write_statement_documents_incremental("2026-06-01", [statement])
-    storage.write_facts_incremental("2026-06-01", [fact])
-    storage.write_statement_documents_backfill("2026-05-01", [])
-    storage.write_facts_backfill("2026-05-01", [])
-
-    assert storage.read_statement_documents_incremental("2026-06-01") == [statement]
-    assert storage.read_facts_incremental("2026-06-01") == [fact]
-    assert storage.read_statement_documents_backfill("2026-05-01") == []
-    assert storage.read_facts_backfill("2026-05-01") == []
-    assert storage.statement_documents_row_count() == 1
-    assert storage.facts_row_count() == 1
-
-
 def test_xbrl_parquet_storage_writes_financial_metrics(tmp_path: Path) -> None:
     storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
     rows = [_financial_metric_row("statement-1")]
@@ -1862,30 +1598,6 @@ def test_xbrl_parquet_storage_writes_financial_metrics(tmp_path: Path) -> None:
 
     assert storage.read_financial_metrics() == rows
     assert storage.financial_metrics_row_count() == 1
-
-
-def test_xbrl_parquet_storage_fails_when_required_financial_report_partition_is_missing(
-    tmp_path: Path,
-) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-
-    with pytest.raises(
-        FileNotFoundError,
-        match="financial_reports_incremental/partition_key=2026-06-01/data.parquet",
-    ):
-        storage.read_financial_reports_incremental("2026-06-01")
-
-
-def test_xbrl_parquet_storage_fails_when_required_raw_xml_partition_is_missing(
-    tmp_path: Path,
-) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-
-    with pytest.raises(
-        FileNotFoundError,
-        match="raw_xml_documents_incremental/partition_key=2026-06-01/data.parquet",
-    ):
-        storage.read_raw_xml_documents_incremental("2026-06-01")
 
 
 def test_xbrl_metric_mapping_is_code_backed() -> None:
@@ -2053,56 +1765,13 @@ def test_xbrl_parquet_storage_writes_financial_metrics_usd(tmp_path: Path) -> No
     assert storage.financial_metrics_usd_row_count() == 1
 
 
-def test_financial_report_materialization_loads_api_rows(tmp_path: Path) -> None:
-    session = FakePagedFinancialReportsSession()
-    api = XbrlApiResource(session=session)
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    context = dg.build_asset_context(
-        partition_key="2026-06-01",
-    )
-
-    result = xbrl_assets.materialize_financial_reports_window(
-        context,
-        xbrl_assets.XbrlFinancialReportsConfig(request_delay_seconds=0),
-        api,
-        registered_date_start="2026-06-01",
-        registered_date_end="2026-06-30",
-        run_id="test-run",
-        write_financial_reports=storage.write_financial_reports_incremental,
-    )
-
-    assert result.metadata["row_count"] == 2
-    assert result.metadata["parquet_path"] == str(
-        storage.financial_reports_incremental_path("2026-06-01")
-    )
-    assert [
-        (row["business_id"], row["financial_date"], row["registration_date"], row["source_page_number"])
-        for row in storage.read_financial_reports_incremental("2026-06-01")
-    ] == [
-        ("active-web", "2026-05-31", "2026-06-01", 1),
-        ("second-active-web", "2026-04-30", "2026-06-02", 2),
-    ]
-
-
-def test_xbrl_asset_graph_models_xml_documents_catalog_as_bridge() -> None:
+def test_xbrl_asset_graph_removes_legacy_xml_document_catalog_bridge() -> None:
     asset_graph = load_project_defs().resolve_asset_graph()
 
-    assert dg.AssetKey(XML_DOCUMENTS_TABLE) in asset_graph.get_all_asset_keys()
-    assert asset_graph.get(dg.AssetKey("finland_xbrl_raw_xml_documents")).parent_keys == {
-        dg.AssetKey("finland_xbrl_raw_xml_documents_backfill"),
-        dg.AssetKey("finland_xbrl_raw_xml_documents_incremental"),
-    }
-    assert asset_graph.get(dg.AssetKey("finland_xbrl_raw_xml_documents_backfill")).parent_keys == {
-        dg.AssetKey("finland_xbrl_financial_reports_backfill"),
-    }
-    assert asset_graph.get(
-        dg.AssetKey("finland_xbrl_raw_xml_documents_incremental")
-    ).parent_keys == {
-        dg.AssetKey("finland_xbrl_financial_reports_incremental"),
-    }
-    assert asset_graph.get(dg.AssetKey(XML_DOCUMENTS_TABLE)).parent_keys == {
-        dg.AssetKey("finland_xbrl_raw_xml_documents")
-    }
+    assert dg.AssetKey("fi_prh_xbrl_xml_documents") not in asset_graph.get_all_asset_keys()
+    assert dg.AssetKey("finland_xbrl_raw_xml_documents") not in asset_graph.get_all_asset_keys()
+    assert dg.AssetKey("finland_xbrl_raw_xml_documents_backfill") not in asset_graph.get_all_asset_keys()
+    assert dg.AssetKey("finland_xbrl_raw_xml_documents_incremental") not in asset_graph.get_all_asset_keys()
 
 
 def test_xbrl_asset_graph_keeps_quality_and_concept_profile_as_metadata_not_assets() -> None:
@@ -2251,171 +1920,6 @@ def test_xbrl_api_resource_uses_dlt_retry_client_for_xml_downloads() -> None:
     assert client._retry_kwargs["max_delay"] == 480.0
 
 
-def test_xbrl_raw_download_uses_eligible_financial_report_rows() -> None:
-    session = FakeHttpSession()
-    api = XbrlApiResource(session=session)
-    object_store, s3_client = _object_store()
-    sleeps: list[float] = []
-    log_messages: list[str] = []
-
-    result = download_finland_xbrl_raw_xml_documents(
-        xbrl_api=api,
-        object_store=object_store,
-        financial_reports=_financial_reports(),
-        refresh_existing=False,
-        download_delay_seconds=0.5,
-        sleep=sleeps.append,
-        log_info=log_messages.append,
-        progress_interval=1,
-    )
-
-    assert result.metadata["downloaded_count"] == 2
-    assert result.metadata["selected_reports_count"] == 2
-    assert ("source-finland-prh-xbrl", "companies/active-web/2026-05-31.xml") in s3_client.objects
-    assert ("source-finland-prh-xbrl", "companies/second-active-web/2026-04-30.xml") in s3_client.objects
-    assert [call[0] for call in session.calls] == [
-        "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial",
-        "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial",
-    ]
-    assert sleeps == [0.5]
-
-    assert result.rows
-    assert list(result.rows[0]) == [
-        "business_id",
-        "financial_date",
-        "registration_date",
-        "source_url",
-        "xml_object_key",
-        "xml_sha256",
-        "xml_size_bytes",
-        "downloaded",
-        "reused",
-        "discovery_registered_date_start",
-        "discovery_registered_date_end",
-        "financial_start_date",
-        "max_reports",
-        "selected_at",
-    ]
-    assert [row["business_id"] for row in result.rows] == ["active-web", "second-active-web"]
-    assert [row["xml_object_key"] for row in result.rows] == [
-        "companies/active-web/2026-05-31.xml",
-        "companies/second-active-web/2026-04-30.xml",
-    ]
-    assert [row["downloaded"] for row in result.rows] == [True, True]
-    assert [row["reused"] for row in result.rows] == [False, False]
-    assert [row["discovery_registered_date_start"] for row in result.rows] == [
-        "2026-06-01",
-        "2026-06-01",
-    ]
-    assert [row["financial_start_date"] for row in result.rows] == ["", ""]
-    assert [row["max_reports"] for row in result.rows] == ["", ""]
-    assert ("source-finland-prh-xbrl", "raw/fi_prh_xbrl_xml_documents.parquet") not in (
-        s3_client.objects
-    )
-    assert log_messages == [
-        "XBRL raw XML download started: reports=2 refresh_existing=False",
-        "XBRL raw XML document 1/2: business_id=active-web financial_date=2026-05-31 action=downloaded downloaded=1 reused=0 bytes_downloaded=34",
-        "XBRL raw XML document 2/2: business_id=second-active-web financial_date=2026-04-30 action=downloaded downloaded=2 reused=0 bytes_downloaded=75",
-        "XBRL raw XML download completed: selected_reports=2 documents=2 downloaded=2 reused=0 bytes_downloaded=75",
-    ]
-
-
-def test_xbrl_raw_download_returns_empty_manifest_when_selection_is_empty() -> None:
-    session = FakeHttpSession()
-    api = XbrlApiResource(session=session)
-    object_store, s3_client = _object_store()
-
-    result = download_finland_xbrl_raw_xml_documents(
-        xbrl_api=api,
-        object_store=object_store,
-        financial_reports=[],
-        refresh_existing=False,
-        download_delay_seconds=0.0,
-    )
-
-    assert result.metadata["documents_count"] == 0
-    assert result.rows == []
-    assert s3_client.objects == {}
-
-
-def test_xbrl_parse_window_uses_partition_manifest_without_global_catalog(
-    tmp_path: Path,
-) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    storage.write_raw_xml_documents_incremental("2026-06-01", [])
-    object_store, _s3_client = _object_store()
-    context = dg.build_asset_context(partition_key="2026-06-01")
-
-    result = parse_assets._materialize_parse_window(
-        context,
-        object_store,
-        window_start=date(2026, 6, 1),
-        window_end=date(2026, 6, 2),
-        documents=storage.read_raw_xml_documents_incremental("2026-06-01"),
-        documents_manifest_path=storage.raw_xml_documents_incremental_path(
-            "2026-06-01"
-        ),
-        run_id="test-run",
-        write_statement_documents=storage.write_statement_documents_incremental,
-        write_facts=storage.write_facts_incremental,
-    )
-
-    assert result.metadata["documents_in_window"] == 0
-    assert result.metadata["xml_documents_manifest_path"] == str(
-        storage.raw_xml_documents_incremental_path("2026-06-01")
-    )
-    assert result.metadata["statement_documents_parquet_path"] == str(
-        storage.statement_documents_incremental_path("2026-06-01")
-    )
-    assert result.metadata["facts_parquet_path"] == str(
-        storage.facts_incremental_path("2026-06-01")
-    )
-    assert storage.read_statement_documents_incremental("2026-06-01") == []
-    assert storage.read_facts_incremental("2026-06-01") == []
-
-
-def test_xbrl_parse_window_writes_parsed_partition_parquet(
-    tmp_path: Path,
-) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    object_store, _s3_client = _object_store()
-    object_store.write_bytes(
-        "companies/active-web/2026-05-31.xml",
-        b"<xbrl />",
-        bucket="source-finland-prh-xbrl",
-    )
-    document = {
-        "business_id": "active-web",
-        "financial_date": "2026-05-31",
-        "registration_date": "2026-06-01",
-        "source_url": "https://example.test/financial",
-        "xml_object_key": "companies/active-web/2026-05-31.xml",
-    }
-
-    result = parse_assets._materialize_parse_window(
-        dg.build_asset_context(partition_key="2026-06-01"),
-        object_store,
-        window_start=date(2026, 6, 1),
-        window_end=date(2026, 6, 2),
-        documents=[document],
-        documents_manifest_path=storage.raw_xml_documents_incremental_path(
-            "2026-06-01"
-        ),
-        run_id="test-run",
-        write_statement_documents=storage.write_statement_documents_incremental,
-        write_facts=storage.write_facts_incremental,
-        parser=_fake_statement_parser,
-    )
-
-    assert result.metadata["documents_parsed_this_run"] == 1
-    assert storage.read_statement_documents_incremental("2026-06-01") == [
-        _statement_document_row("statement-active-web")
-    ]
-    assert storage.read_facts_incremental("2026-06-01") == [
-        _fact_row("statement-active-web", fact_ordinal=1)
-    ]
-
-
 def test_xbrl_parse_outputs_are_parquet_without_duckdb_bridge() -> None:
     assert "finland_xbrl_parsed_tables" not in xbrl_assets.__dict__
     assert "rebuild_parsed_duckdb_tables" not in xbrl_assets.__dict__
@@ -2424,125 +1928,11 @@ def test_xbrl_parse_outputs_are_parquet_without_duckdb_bridge() -> None:
     assert "parsed_duckdb_observability_metadata" not in xbrl_assets.__dict__
 
 
-def test_finland_xbrl_parse_assets_use_lxml_parser() -> None:
-    assert "run_finland_xbrl_parse" in xbrl_assets.__dict__
-
+def test_finland_xbrl_legacy_parse_assets_are_removed() -> None:
     graph = load_project_defs().get_repository_def().asset_graph
     for key in ("finland_xbrl_parse_backfill", "finland_xbrl_parse_incremental"):
-        node = graph.get(AssetKey([key]))
-        assert node.kinds == {"lxml", "parquet", "python"}
-
-
-
-def test_financial_report_rows_in_registration_window_keeps_all_companies() -> None:
-    financial_reports = [
-        {
-            "business_id": "old-financial-date",
-            "financial_date": "2023-12-31",
-            "registration_date": "2026-06-01",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "outside-window",
-            "financial_date": "2026-05-31",
-            "registration_date": "2026-05-31",
-            "discovery_registered_date_start": "2026-05-01",
-            "discovery_registered_date_end": "2026-05-31",
-        },
-        {
-            "business_id": "inactive-company",
-            "financial_date": "2026-04-30",
-            "registration_date": "2026-06-02",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "missing-website",
-            "financial_date": "2026-04-30",
-            "registration_date": "2026-06-02",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "active-web",
-            "financial_date": "2026-05-31",
-            "registration_date": "2026-06-01",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "second-active-web",
-            "financial_date": "2026-04-30",
-            "registration_date": "2026-06-02",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-    ]
-
-    rows = xbrl_assets.financial_report_rows_in_registration_window(
-        financial_reports=financial_reports,
-        registered_date_start="2026-06-01",
-        registered_date_end="2026-06-30",
-    )
-
-    assert rows == [
-        {
-            "business_id": "old-financial-date",
-            "financial_date": "2023-12-31",
-            "registration_date": "2026-06-01",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "active-web",
-            "financial_date": "2026-05-31",
-            "registration_date": "2026-06-01",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "inactive-company",
-            "financial_date": "2026-04-30",
-            "registration_date": "2026-06-02",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "missing-website",
-            "financial_date": "2026-04-30",
-            "registration_date": "2026-06-02",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "second-active-web",
-            "financial_date": "2026-04-30",
-            "registration_date": "2026-06-02",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-    ]
-
-
-def _financial_reports() -> list[dict]:
-    return [
-        {
-            "business_id": "active-web",
-            "financial_date": "2026-05-31",
-            "registration_date": "2026-06-01",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-        {
-            "business_id": "second-active-web",
-            "financial_date": "2026-04-30",
-            "registration_date": "2026-06-02",
-            "discovery_registered_date_start": "2026-06-01",
-            "discovery_registered_date_end": "2026-06-30",
-        },
-    ]
-
+        assert AssetKey([key]) not in graph.get_all_asset_keys()
+        assert key not in xbrl_assets.__dict__
 
 def _write_xml_snapshot_manifest_fixture(
     s3_client: FakeS3Client,
@@ -2682,21 +2072,9 @@ def _fact_row(statement_key: str, fact_ordinal: int) -> dict:
     }
 
 
-def _fake_statement_parser(**kwargs) -> ParsedStatement:
-    del kwargs
-    return ParsedStatement(
-        statement_key="statement-active-web",
-        rows_by_table={
-            STATEMENT_DOCUMENTS_TABLE: [_statement_document_row("statement-active-web")],
-            FACTS_TABLE: [_fact_row("statement-active-web", fact_ordinal=1)],
-        },
-        warnings=[],
-    )
-
-
 def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
     graph = load_project_defs().get_repository_def().asset_graph
-    for key in (
+    legacy_keys = {
         "finland_xbrl_financial_reports_backfill",
         "finland_xbrl_financial_reports_incremental",
         "finland_xbrl_raw_xml_documents_backfill",
@@ -2705,6 +2083,19 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
         "finland_xbrl_parse_incremental",
         "fi_prh_xbrl_financial_metrics",
         "fi_prh_xbrl_financial_metrics_usd",
+    }
+    all_keys = graph.get_all_asset_keys()
+    assert all(AssetKey([key]) not in all_keys for key in legacy_keys)
+
+    for key in (
+        "data_snapshot_duckdb",
+        "data_snapshot_duckdb_ch",
+        "data_daily_duckdb",
+        "data_daily_duckdb_ch",
+        "data_snapshot_xml_duckdb",
+        "data_daily_xml_duckdb",
+        "fi_financial_metrics_parquet",
+        "fi_financial_metrics_usd_parquet",
     ):
         node = graph.get(AssetKey([key]))
         assert "finland_ytj_duckdb" not in node.pools, f"{key} should not use YTJ pool"

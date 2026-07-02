@@ -171,47 +171,33 @@ facts
 Both tables use the parser contracts from `tables.py`. Temporary parquet files
 are written while parsing and removed after the DuckDB tables are created.
 
-Existing partitioned flow:
+Current partitioned flow:
 
-1. `finland_xbrl_financial_reports_backfill` and
-   `finland_xbrl_financial_reports_incremental` call
-   `XbrlApiResource.iter_financial_report_rows`.
-2. `XbrlApiResource` pages `/all_financial_statements` until PRH returns an empty
-   `financials` list.
-3. Each listing row is written to local parquet under
-   `data/finland_xbrl/parquet/financial_reports_<mode>/partition_key=<key>/data.parquet`.
-4. `finland_xbrl_raw_xml_documents_backfill` and
-   `finland_xbrl_raw_xml_documents_incremental` read the listing parquet for the
-   same partition and filter rows to that partition's registration window.
-5. For each selected row, the asset builds the deterministic S3 key:
-
-```text
-companies/<business_id>/<financial_date>.xml
-```
-
-6. If the object already exists and `refresh_existing=false`, the asset reuses it
-   and writes a manifest row with `downloaded=false`.
-7. Otherwise it calls `/financial?businessId=...&financialDate=...`, stores the XML
-   bytes in bucket `source-finland-prh-xbrl`, and writes a manifest row with
-   `downloaded=true`, `xml_sha256`, and `xml_size_bytes`.
-8. The raw XML manifest is written to local parquet under
-   `data/finland_xbrl/parquet/raw_xml_documents_<mode>/partition_key=<key>/data.parquet`.
+1. `data_snapshot` downloads a fixed historical statement-listing CSV to S3.
+2. `data_snapshot_duckdb` parses that CSV into DuckDB.
+3. `data_snapshot_duckdb_ch` loads the historical listing rows into
+   `corpscout.fi_xbrl_financial_statement_listings`.
+4. `data_snapshot_xml` uses that ClickHouse listing table to download historical
+   XML files into monthly S3 folders with `manifest.jsonl` and `_SUCCESS.json`.
+5. `data_snapshot_xml_duckdb` parses those monthly XML folders into local DuckDB
+   files with `statement_documents` and `facts` tables.
+6. `data_daily` through `data_daily_xml_duckdb` runs the same flow for daily
+   statement-registration partitions starting at `2026-06-01`.
 
 The PRH HTTP client is a `DltRequestsClient` configured for 6 total attempts,
 initial retry delay 30 seconds, max retry delay 480 seconds, and
-`Retry-After` support. Listing and XML download assets also have a configurable
-1 second delay between PRH requests.
+`Retry-After` support.
 
 ## Partitions
 
-Historical backfill partitions:
+Historical XML snapshot partitions:
 
 ```text
-MonthlyPartitionsDefinition(start_date="2025-06-01", end_date="2026-06-01")
+MonthlyPartitionsDefinition(start_date="2023-07-01", end_date="2026-06-01")
 ```
 
-That produces monthly partitions from `2025-06-01` through `2026-05-01`.
-`2026-06-01` is excluded from historical backfill.
+That produces monthly XML partitions from `2023-07-01` through `2026-05-01`.
+`2026-06-01` is excluded from historical XML snapshot processing.
 
 Incremental partitions:
 
@@ -228,50 +214,59 @@ Daily partitions start at `2026-06-01`.
 
 ## Assets
 
-Historical partition chain:
+Fixed historical listing chain:
 
 ```text
-finland_xbrl_financial_reports_backfill
--> finland_xbrl_raw_xml_documents_backfill
--> finland_xbrl_parse_backfill
+data_snapshot
+-> data_snapshot_duckdb
+-> data_snapshot_duckdb_ch
+```
+
+Historical XML partition chain:
+
+```text
+data_snapshot_xml
+-> data_snapshot_xml_duckdb
 ```
 
 Daily partition chain:
 
 ```text
-finland_xbrl_financial_reports_incremental
--> finland_xbrl_raw_xml_documents_incremental
--> finland_xbrl_parse_incremental
+data_daily
+-> data_daily_duckdb
+-> data_daily_duckdb_ch
+-> data_daily_xml
+-> data_daily_xml_duckdb
 ```
 
 Unpartitioned publish chain:
 
 ```text
-fi_prh_xbrl_financial_metrics
--> fi_prh_xbrl_financial_metrics_usd
--> finland_xbrl_financial_metrics_clickhouse
+fi_financial_statements_ch
+fi_financial_metrics_parquet
+-> fi_financial_metrics_usd_parquet
+-> fi_financial_metrics_ch
 ```
-
-Marker/catalog assets:
-
-```text
-finland_xbrl_raw_xml_documents
-fi_prh_xbrl_xml_documents
-```
-
-These marker assets only summarize partition manifests. They do not download or
-parse XML.
 
 ## Jobs And Schedule
 
-Historical backfill job:
+Historical listing snapshot job:
 
 ```text
-finland_xbrl_historical_backfill_job
+finland_xbrl_data_snapshot_job
 ```
 
-Runs only the monthly historical partition chain. It is intended for the fixed
-historical range and should not be used as the daily refresh path.
+Runs the fixed historical statement-listing CSV, DuckDB parse, and ClickHouse
+load.
+
+Historical XML snapshot job:
+
+```text
+finland_xbrl_xml_snapshot_job
+```
+
+Runs monthly historical XML download and parse partitions. It is intended for the
+fixed historical range and should not be used as the daily refresh path.
 
 Daily incremental job:
 
@@ -279,7 +274,8 @@ Daily incremental job:
 finland_xbrl_incremental_job
 ```
 
-Runs the daily listing, raw XML, and parse assets.
+Runs the daily listing, DuckDB, ClickHouse listing, XML download, and XML parse
+assets.
 
 Publish job:
 
@@ -315,25 +311,25 @@ Runs the daily incremental job at 06:00 according to the partition definition.
 
 ## Storage
 
-Raw XML object store:
+Statement listing and XML object store:
 
 ```text
 bucket: source-finland-prh-xbrl
-key:    companies/<business_id>/<financial_date>.xml
+key:    financial_data/snapshot/registeredDateStart=2023-07-01/registeredDateEnd=2026-06-01/financial_statements.csv
+key:    financial_data/daily/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/financial_statements.csv
+key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/companies/<business_id>/<financial_date>.xml
+key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/manifest.jsonl
+key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/_SUCCESS.json
 ```
 
-Local parquet resource:
+Local DuckDB and parquet outputs:
 
 ```text
+data/finland_xbrl/financial_data_snapshot.duckdb
+data/finland_xbrl/financial_data_daily.duckdb
+data/finland_xbrl/duckdb/xml_snapshot_parse/partition_key=<month>/data.duckdb
+data/finland_xbrl/duckdb/xml_daily_parse/partition_key=<day>/data.duckdb
 data/finland_xbrl/parquet/
-  financial_reports_backfill/partition_key=<month>/data.parquet
-  financial_reports_incremental/partition_key=<day>/data.parquet
-  raw_xml_documents_backfill/partition_key=<month>/data.parquet
-  raw_xml_documents_incremental/partition_key=<day>/data.parquet
-  statement_documents_backfill/partition_key=<month>/data.parquet
-  statement_documents_incremental/partition_key=<day>/data.parquet
-  facts_backfill/partition_key=<month>/data.parquet
-  facts_incremental/partition_key=<day>/data.parquet
   financial_metrics/data.parquet
   financial_metrics_usd/data.parquet
 ```

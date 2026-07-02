@@ -1,25 +1,14 @@
-from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-import dagster as dg
-from dagster_clickhouse import ClickhouseResource
 import polars as pl
 
 from dagster_v3.defs.finland_xbrl import metric_mapping, tables
 from dagster_v3.defs.finland_xbrl.clickhouse import (
-    CLICKHOUSE_DATABASE,
     EUR_CURRENCY,
-    FINANCIAL_METRICS_CLICKHOUSE_TABLE,
     MONEY_METRIC_TO_CLICKHOUSE_COLUMN,
     SOURCE_SYSTEM,
-    export_finland_xbrl_financial_metrics_clickhouse,
 )
-from dagster_v3.defs.finland_xbrl.assets.parse import (
-    finland_xbrl_parse_backfill,
-    finland_xbrl_parse_incremental,
-)
-from dagster_v3.defs.finland_xbrl.resources import XbrlParquetStorageResource
 
 DECIMAL_SCALE = Decimal("0.000001")
 
@@ -159,107 +148,6 @@ def build_financial_metric_usd_rows(
             }
         )
     return rows
-
-
-@dg.asset(
-    name=tables.FINANCIAL_METRICS_TABLE,
-    group_name="finland_xbrl",
-    deps=[
-        finland_xbrl_parse_backfill,
-        finland_xbrl_parse_incremental,
-    ],
-    kinds={"python", "polars", "parquet"},
-)
-def finland_xbrl_financial_metrics(
-    context: dg.AssetExecutionContext,
-    xbrl_parquet_storage: XbrlParquetStorageResource,
-) -> dg.MaterializeResult:
-    context.log.info("Building Finland XBRL financial metrics parquet from parsed rows")
-    rows = build_financial_metric_rows(
-        statement_documents=xbrl_parquet_storage.read_statement_documents(),
-        facts=xbrl_parquet_storage.read_facts(),
-        built_at=datetime.now(UTC).isoformat(),
-    )
-    parquet_path = xbrl_parquet_storage.write_financial_metrics(rows)
-    context.log.info(
-        "Finland XBRL financial metrics complete: row_count=%d parquet_path=%s",
-        len(rows),
-        parquet_path,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            "row_count": len(rows),
-            "parquet_path": str(parquet_path),
-            "mapping_version": metric_mapping.MAPPING_VERSION,
-        }
-    )
-
-
-@dg.asset(
-    name=tables.FINANCIAL_METRICS_USD_TABLE,
-    group_name="finland_xbrl",
-    deps=[dg.AssetKey(tables.FINANCIAL_METRICS_TABLE)],
-    kinds={"python", "fx", "parquet"},
-)
-def finland_xbrl_financial_metrics_usd(
-    context: dg.AssetExecutionContext,
-    xbrl_parquet_storage: XbrlParquetStorageResource,
-) -> dg.MaterializeResult:
-    from exchange_rates import ExchangeRateClient
-
-    financial_metric_rows = xbrl_parquet_storage.read_financial_metrics()
-    context.log.info(
-        "Building Finland XBRL USD financial metrics parquet: source_rows=%d",
-        len(financial_metric_rows),
-    )
-    rows = []
-    if financial_metric_rows:
-        rows = build_financial_metric_usd_rows(
-            financial_metrics=financial_metric_rows,
-            exchange_rates=ExchangeRateClient.from_env(),
-            converted_at=datetime.now(UTC).isoformat(),
-        )
-    parquet_path = xbrl_parquet_storage.write_financial_metrics_usd(rows)
-    rate_dates = sorted({row["fx_rate_date"] for row in rows if row.get("fx_rate_date")})
-    context.log.info(
-        "Finland XBRL USD financial metrics complete: row_count=%d rate_dates=%d parquet_path=%s",
-        len(rows),
-        len(rate_dates),
-        parquet_path,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            "row_count": len(rows),
-            "rate_date_count": len(rate_dates),
-            "currency_original": EUR_CURRENCY,
-            "parquet_path": str(parquet_path),
-        }
-    )
-
-
-@dg.asset(
-    name="finland_xbrl_financial_metrics_clickhouse",
-    group_name="finland_xbrl",
-    deps=[dg.AssetKey(tables.FINANCIAL_METRICS_USD_TABLE)],
-    kinds={"python", "parquet", "clickhouse"},
-)
-def finland_xbrl_financial_metrics_clickhouse(
-    context: dg.AssetExecutionContext,
-    xbrl_parquet_storage: XbrlParquetStorageResource,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    row_count = export_finland_xbrl_financial_metrics_clickhouse(
-        xbrl_parquet_storage=xbrl_parquet_storage,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            "row_count": row_count,
-            "clickhouse_database": CLICKHOUSE_DATABASE,
-            "clickhouse_table": FINANCIAL_METRICS_CLICKHOUSE_TABLE,
-        }
-    )
 
 
 def _metric_pivot(current_numeric_facts: pl.DataFrame) -> pl.DataFrame:
