@@ -65,3 +65,25 @@ cc-enrich-worker/
 ├── bin/            # build output (gitignored)
 ├── Makefile  ·  Dockerfile  ·  go.mod
 ```
+
+## Subcommands
+
+`cc-enrich-worker <command> [flags]`. The command is the workflow; mode-specific flags appear only under
+their command.
+
+| Command | Fetches | Embeds? | Classifies NACE? | Needs | Writes | Bottleneck |
+|---|---|---|---|---|---|---|
+| **`industry`** | 1 primary page/domain | yes (instructed) | yes | embed endpoint + ClickHouse reference + S3 | `domains`, `industries`, `page_signals` + `embeddings.parquet` | GPU |
+| **`embed`** | 1 primary page/domain | yes (vector only) | no | embed endpoint + S3 | **only** `embeddings.parquet` — no ClickHouse, no load | GPU |
+| **`tech`** | many pages/domain | no | no | S3 only | `domains`, `technologies`, `identifiers`, `metadata`, `contacts` | CPU |
+| **`both`** | many pages/domain | yes | yes | everything industry+tech need | all of the above | GPU (discouraged) |
+| **`load`** | — (reads Parquet) | — | — | ClickHouse | `INSERT`s into `commoncrawl_*` | — |
+
+- **`both` is discouraged** — co-locating the CPU tech pass with the GPU industry pass throttles the GPU;
+  prefer two separate processes.
+- **`embed` is `industry` minus the classify + ClickHouse** — its whole job is to persist the raw page
+  vector for parts that were processed before vectors were stored (backfill) or that industry hasn't
+  reached. It is **idempotent**: it skips a shard whose output dir already holds a complete
+  `embeddings.parquet` **or** `embeddings_fp16.parquet` (§Limits).
+- **`load` is decoupled** from produce so you can inspect Parquet before inserting and re-load without
+  re-fetching (§Processing).
