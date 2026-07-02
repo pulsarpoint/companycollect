@@ -225,3 +225,54 @@ ClickHouse (too large, incompressible). `EmbeddingRow` carries the WARC re-fetch
 (`warc_filename`, `warc_offset`, `warc_length`) so the exact archived page can be re-fetched without
 re-resolving the index. The write is **atomic** (one `WriteFile` at the very end). Rationale + downstream
 use (re-classification, vector search): [`../docs/embeddings-design.md`](../docs/embeddings-design.md).
+
+## Limits, gotchas & invariants
+
+**Concurrency & batching**
+- Fetch/parse: `--concurrency` (default 32) goroutines, bounded by a semaphore.
+- Embed: `--embed-concurrency` (default 96) requests in flight; `--embed-batch` (default 16) texts/request
+  — keep the batch small, big batches overflow the engine's token budget.
+- Classify (tech/both `Finalize`): `runtime.NumCPU()` workers over non-overlapping index ranges.
+
+**Timeouts & retries**
+- Fetch: **30 s per WARC record** (a slow/bad page is skipped; the domain still emits if its primary
+  survived; the first error is sampled into the log).
+- Embed HTTP client: **120 s**, up to **4 retries** with backoff on transient (EOF/5xx) errors; fetch has
+  the same backoff on transient/connection errors.
+
+**Caps**
+- Embed text: `COMMONCRAWL_EMBED_MAX_CHARS`, default **2000** chars/text.
+- Tech body: `--tech-max-bytes`, default **131072** (`0` = full body ≈ 1.2 s/page).
+
+**Output-dir rules**
+- Non-embed modes **refuse a non-empty `--out`** (fatal) — point it at a fresh dir.
+- `embed` **reuses** the dir on purpose (that's how verify-and-skip works).
+- Embeddings land in the sibling `../data/embedding/<stem>/`, not the crawl dir.
+
+**Refuse-to-replace / safety**
+- `load --dir` with **no** matching Parquet files errors rather than doing nothing.
+- Produce writes Parquet atomically (embeddings especially); a killed produce leaves no partial vector file
+  the skip would mistake for complete.
+
+**Model-match invariant (industry/both)**
+- The NACE reference (`nace_category_embeddings`) MUST be built with the **same model + dim** as the embed
+  endpoint. Startup probes the endpoint and **fails fast** on a model-name or dim mismatch. Change the
+  served model ⇒ rebuild the reference (`reference-builder`) **and** re-run industry.
+
+**S3 fetch**
+- **Signed S3** (default) is the only reliable bulk source and validates credentials upfront (5 s). Reads
+  are free (CommonCrawl is Open Data).
+- **`--s3-anonymous`** uses the public CDN (`data.commoncrawl.org`) — latency-bound, **rate-limited**, and
+  **cannot upload** (`--s3-bucket` needs signed S3).
+
+**Primary-page selection**
+- The worklist is shallowest-first; the first row per `root_domain` is `Primary`. industry/embed embed
+  **only** the primary page; tech aggregates all pages but emits one primary URL/domain.
+
+**Not configurable (hardcoded)** — flagged so you don't look for a knob that isn't there:
+- Page-type decision threshold `0.55` and confidence temperature `1.0` (`classify.go`) are constants.
+- The 30 s fetch timeout and 120 s embed timeout are constants.
+
+**Legacy fat-domains** — `load` detects a pre-split `domains.parquet` (by a `nace_top3_codes` column) and
+fans it into `domains` + `industries` + `page_signals` + `contacts`, skipping the normal split loads for
+those kinds. Modern output never takes this path.
