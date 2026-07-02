@@ -20,8 +20,11 @@ type fpat struct {
 // FastMatcher reimplements wappalyzergo's detection orchestration (headers → cookies →
 // html/script/meta body) but gates the expensive HTML-body patterns with Aho-Corasick:
 // only patterns whose required literal is present in the body get their regex evaluated.
-// It reuses wappalyzergo's ParsePattern/Evaluate (exact matching + version extraction)
-// and category mapping, so non-HTML parts are identical to upstream.
+// It reuses wappalyzergo's ParsePattern/Evaluate (exact matching + version extraction) and
+// category mapping; headers/cookies/meta evaluate the same patterns against the same inputs
+// as upstream (cookies: pattern vs the cookie VALUE, see normalizeCookies). Detections are a
+// SUPERSET of upstream's: implies are applied transitively (upstream is single-level) and
+// confidence-0 accumulation is not replicated.
 type FastMatcher struct {
 	ac         ahocorasick.AhoCorasick
 	litToPats  [][]fpat // index-aligned with the AC dictionary (HTML body)
@@ -185,6 +188,41 @@ func NewFastMatcher() (*FastMatcher, error) {
 	return m, nil
 }
 
+// normalizeCookies mirrors upstream wappalyzergo (findSetCookie + normalizeCookies): lowercase each
+// Set-Cookie header, split on spaces, split each piece on commas (or else semicolons), and keep
+// name=value pairs. Crude — a value containing spaces/commas fragments — but upstream parity IS the
+// contract here: the fingerprint patterns are then evaluated against the cookie value only.
+func normalizeCookies(setCookies []string) map[string]string {
+	if len(setCookies) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for _, sc := range setCookies {
+		for _, v := range strings.Split(strings.ToLower(sc), " ") {
+			if v == "" {
+				continue
+			}
+			var frags []string
+			switch {
+			case strings.Contains(v, ","):
+				frags = strings.Split(v, ",")
+			case strings.Contains(v, ";"):
+				frags = strings.Split(v, ";")
+			default:
+				frags = []string{v}
+			}
+			for _, f := range frags {
+				parts := strings.SplitN(strings.Trim(f, " "), "=", 2)
+				if len(parts) < 2 {
+					continue
+				}
+				out[parts[0]] = parts[1]
+			}
+		}
+	}
+	return out
+}
+
 // Detect mirrors wappalyzer.Fingerprint: lowercase, then headers + cookies + body.
 func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.Technology {
 	normBody := bytes.ToLower(body)
@@ -219,10 +257,12 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.T
 			}
 		}
 	}
-	for _, c := range headers["Set-Cookie"] {
-		name := strings.ToLower(strings.TrimSpace(strings.SplitN(c, "=", 2)[0]))
+	// Cookies: mirror upstream exactly (fingerprint_cookies.go) — normalize Set-Cookie into
+	// name->value and evaluate each pattern against the VALUE only. Evaluating against the whole
+	// "name=value; attrs" string dead-ends every anchored value pattern (^\d+$, ^\w+$, …).
+	for name, value := range normalizeCookies(headers["Set-Cookie"]) {
 		for _, fp := range m.cookiePats[name] {
-			eval(fp, strings.ToLower(c))
+			eval(fp, value)
 		}
 	}
 

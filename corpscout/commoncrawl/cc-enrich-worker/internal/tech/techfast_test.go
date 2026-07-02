@@ -109,3 +109,37 @@ func TestFastMatcherParity(t *testing.T) {
 		}
 	}
 }
+
+// Set-Cookie parity: upstream evaluates cookie patterns against the cookie VALUE only
+// (wappalyzergo fingerprint_cookies.go normalizeCookies) — never against the whole
+// "name=value; attrs" string, where every anchored value pattern (^\d+$, ^\w+$, …) is dead on
+// arrival. Also covers the empty-pattern "cookie exists" fingerprints (430 of 468 in the JSON).
+func TestFastMatcherCookieParity(t *testing.T) {
+	fast, err := NewFastMatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := []struct {
+		name    string
+		headers map[string][]string
+	}{
+		// empty pattern -> existence check (PHP via PHPSESSID)
+		{"existence-phpsessid", map[string][]string{"Set-Cookie": {"PHPSESSID=abc123; path=/"}}},
+		// anchored ^\w+$ against the value (SoteShop -> implies PHP)
+		{"anchored-word-soteshop", map[string][]string{"Set-Cookie": {"soteshop=abc123; path=/; HttpOnly"}}},
+		// anchored ^\d+$ against the value (DigitalRiver)
+		{"anchored-digits-x-dr-theme", map[string][]string{"Set-Cookie": {"x-dr-theme=42; path=/; HttpOnly"}}},
+		// anchored ^\d+$ must NOT match a non-digit value (no Retail Rocket)
+		{"anchored-digits-value-mismatch", map[string][]string{"Set-Cookie": {"rrpvid=notdigits; max-age=3600"}}},
+		// two Set-Cookie headers in one response
+		{"two-cookies", map[string][]string{"Set-Cookie": {"laravel_session=xyz; path=/", "x-dr-theme=7"}}},
+	}
+	body := []byte(`<html><body>plain</body></html>`)
+	for _, s := range samples {
+		want := techNameSet(DetectTech(s.headers, body))
+		got := techNameSet(fast.Detect(s.headers, body))
+		if !eqStrings(want, got) {
+			t.Errorf("%s:\n  fast = %v\n  want = %v", s.name, got, want)
+		}
+	}
+}
