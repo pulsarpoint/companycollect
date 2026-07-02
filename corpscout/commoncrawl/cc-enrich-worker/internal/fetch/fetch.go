@@ -73,7 +73,14 @@ func NewS3Getter(ctx context.Context, region string, concurrency int) (RangeGett
 		MaxConnsPerHost:     concurrency,
 	}}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region),
-		awsconfig.WithHTTPClient(httpClient))
+		awsconfig.WithHTTPClient(httpClient),
+		// CommonCrawl's bucket returns 503 SlowDown under our fetch concurrency (tech = conc×8 in flight).
+		// Adaptive mode adds a client-side token-bucket rate limiter that backs off automatically on
+		// throttling responses and ramps back up — so the client self-tunes to the bucket's ceiling
+		// instead of hammering it. More attempts absorb a transient 503 rather than dropping the page
+		// (a dropped page counts toward the C1 error-rate trip).
+		awsconfig.WithRetryMode(aws.RetryModeAdaptive),
+		awsconfig.WithRetryMaxAttempts(10))
 	if err != nil {
 		return &S3Getter{}, err
 	}
