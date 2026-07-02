@@ -423,28 +423,38 @@ func run(mode string, o opts) {
 	} else {
 		// Pipeline fetch and finalize: while chunk N embeds on the GPU (Finalize), chunk N+1 downloads
 		// on the network (FetchChunk) — so the GPU isn't idle during the fetch phase.
+		// Domain-aligned chunks: each snapped to a domain boundary so a domain's pages never split across a
+		// chunk (the worklist is ORDER BY root_domain, rn) — otherwise a straddling domain aggregates twice
+		// into two DomainRows with conflicting primary URLs (review C3). The loop advances by the ACTUAL
+		// snapped boundary, prefetching the next chunk over the network while the current one finalizes.
 		chunkEnd := func(i int) int {
-			if e := i + o.chunk; e < len(items) {
-				return e
+			e := i + o.chunk
+			if e >= len(items) {
+				return len(items)
 			}
-			return len(items)
+			for e < len(items) && items[e].RootDomain == items[e-1].RootDomain {
+				e++ // extend to the next domain change
+			}
+			return e
 		}
 		var fetched worker.FetchedChunk
+		curLo, curHi := 0, 0
 		if len(items) > 0 {
-			fetched = worker.FetchChunk(ctx, items[0:chunkEnd(0)], getter, cfg)
+			curHi = chunkEnd(0)
+			fetched = worker.FetchChunk(ctx, items[0:curHi], getter, cfg)
 		}
-		for i := 0; i < len(items); i += o.chunk {
-			end := chunkEnd(i)
+		for curLo < curHi {
 			cur := fetched
+			nextLo, nextHi := curHi, 0
 			var nextCh chan worker.FetchedChunk
-			if end < len(items) { // prefetch the next chunk while this one finalizes
+			if nextLo < len(items) { // prefetch the next chunk while this one finalizes
+				nextHi = chunkEnd(nextLo)
 				nextCh = make(chan worker.FetchedChunk, 1)
-				nlo, nhi := end, chunkEnd(end)
-				go func() { nextCh <- worker.FetchChunk(ctx, items[nlo:nhi], getter, cfg) }()
+				go func() { nextCh <- worker.FetchChunk(ctx, items[nextLo:nextHi], getter, cfg) }()
 			}
 			res, err := worker.Finalize(ctx, cur, emb, ref, protos, cfg)
 			if err != nil {
-				log.Fatalf("process chunk at %d: %v", i, err)
+				log.Fatalf("process chunk [%d:%d]: %v", curLo, curHi, err)
 			}
 			domains = append(domains, res.Domains...)
 			industries = append(industries, res.Industries...)
@@ -458,10 +468,11 @@ func run(mode string, o opts) {
 			embeddings = append(embeddings, res.Embeddings...)
 			el := time.Since(start).Seconds()
 			log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d contacts (%.1f pages/s)",
-				end, len(items), len(domains), len(techRows), len(idents), len(contacts), float64(end)/el)
+				curHi, len(items), len(domains), len(techRows), len(idents), len(contacts), float64(curHi)/el)
 			if nextCh != nil {
 				fetched = <-nextCh
 			}
+			curLo, curHi = nextLo, nextHi
 		}
 	}
 
