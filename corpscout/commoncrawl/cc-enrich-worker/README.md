@@ -129,3 +129,26 @@ Parsed per-subcommand via `flag.NewFlagSet(..., flag.ExitOnError)` in `parse()` 
 | `--kind` | string | (inferred) | override the kind for `--file`: `domains\|industries\|page_signals\|metadata\|contacts\|tech\|identifiers` |
 
 Pass **exactly one** of `--dir` / `--file`.
+
+## Environment variables
+
+Read via `envOr()` / `envInt()` in `main.go`, plus the fetch/embed clients. Load them with
+`set -a; source ../.env; set +a` (see [`../README.md`](../README.md) §2).
+
+| Var | Default | Controls |
+|---|---|---|
+| `COMMONCRAWL_EMBED_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible embedding endpoint |
+| `COMMONCRAWL_EMBED_MODEL` | (empty → auto-detect) | model name; empty ⇒ probe `/v1/models` for the served model |
+| `COMMONCRAWL_EMBED_MAX_CHARS` | `0` → **2000** | chars per text before embedding (`0` means use the built-in cap 2000) |
+| `CLICKHOUSE_HOST` | `localhost` | ClickHouse host |
+| `CLICKHOUSE_NATIVE_PORT` | `9000` | ClickHouse native protocol port |
+| `CLICKHOUSE_DATABASE` | `corpscout` | database |
+| `CLICKHOUSE_USER` | `default` | user |
+| `CLICKHOUSE_PASSWORD` | (empty) | password |
+| `AWS_REGION` | `us-east-1` | S3 region (the CommonCrawl bucket is permanently `us-east-1`) |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | (none) | signed-S3 credentials; validated upfront (5 s) in `NewS3Getter`. Off-AWS you must export these |
+| `CC_BASE_URL` | (empty → `data.commoncrawl.org/`) | anonymous CDN base for `--s3-anonymous` |
+
+**Connection gating:** `embed` uses **no** ClickHouse (logs `embed-only mode: no NACE reference, no
+ClickHouse, no load`). `industry`/`both` connect to **read** the reference + run the startup model-match
+check. `load` always connects.
