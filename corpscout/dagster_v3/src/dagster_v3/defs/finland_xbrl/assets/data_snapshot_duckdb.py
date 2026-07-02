@@ -27,7 +27,7 @@ def materialize_data_snapshot_duckdb(
         FINANCIAL_DATA_S3_SNAPSHOT_KEY,
         bucket=XBRL_BUCKET,
     ).decode("utf-8")
-    rows = _snapshot_csv_rows(csv_body)
+    rows = financial_data_csv_rows(csv_body)
     with snapshot_duckdb.get_connection() as connection:
         connection.execute(
             f"create schema if not exists {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}"
@@ -104,7 +104,7 @@ def data_snapshot_duckdb(
     return result
 
 
-def _snapshot_csv_rows(csv_body: str) -> list[dict[str, str]]:
+def financial_data_csv_rows(csv_body: str) -> list[dict[str, str]]:
     reader = csv.DictReader(StringIO(csv_body))
     if reader.fieldnames != list(FINANCIAL_DATA_S3_SNAPSHOT_COLUMNS):
         raise ValueError(

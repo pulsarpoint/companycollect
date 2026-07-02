@@ -66,6 +66,42 @@ bucket: source-finland-prh-xbrl
 key:    financial_data/snapshot/registeredDateStart=2023-07-01/registeredDateEnd=2026-06-01/financial_statements.csv
 ```
 
+Daily listing asset:
+
+```text
+data_daily
+```
+
+This asset uses daily partitions starting at `2026-06-01`. Each partition calls
+`/all_financial_statements` with `registeredDateStart` and `registeredDateEnd`
+both set to the partition date and writes the same three-column CSV shape as the
+fixed snapshot.
+
+Daily S3 object:
+
+```text
+bucket: source-finland-prh-xbrl
+key:    financial_data/daily/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/financial_statements.csv
+```
+
+Daily metadata publish chain:
+
+```text
+data_daily
+-> data_daily_duckdb
+-> data_daily_duckdb_ch
+```
+
+`data_daily_duckdb` stores each daily CSV partition in
+`data/finland_xbrl/financial_data_daily.duckdb` table
+`finland_prh_xbrl.financial_data_daily`. The table includes `partition_key` plus
+the same three PRH source columns. Re-materializing a partition deletes and
+rewrites only that partition in DuckDB.
+
+`data_daily_duckdb_ch` inserts the selected daily DuckDB partition into
+`corpscout.fi_xbrl_financial_statement_listings`. It appends into the shared
+metadata table rather than replacing the fixed snapshot load.
+
 Existing partitioned flow:
 
 1. `finland_xbrl_financial_reports_backfill` and

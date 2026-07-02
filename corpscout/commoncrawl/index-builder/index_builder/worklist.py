@@ -83,6 +83,7 @@ def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25) 
           WHERE fetch_status = 200
             AND content_mime_detected IN ({mime})
         ) WHERE {rn}
+        ORDER BY root_domain, rn
     """
 
 

@@ -30,6 +30,22 @@ from dagster_v3.defs.finland_xbrl.assets.data_snapshot import (
     data_snapshot,
     write_financial_data_snapshot_csv,
 )
+from dagster_v3.defs.finland_xbrl.assets.data_daily import (
+    FINANCIAL_DATA_DAILY_KEY_PREFIX,
+    data_daily,
+    financial_data_daily_key,
+    write_financial_data_daily_csv,
+)
+from dagster_v3.defs.finland_xbrl.assets.data_daily_duckdb import (
+    FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE,
+    FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH,
+    data_daily_duckdb,
+    materialize_data_daily_duckdb,
+)
+from dagster_v3.defs.finland_xbrl.assets.data_daily_duckdb_ch import (
+    data_daily_duckdb_ch,
+    export_data_daily_duckdb_to_clickhouse,
+)
 from dagster_v3.defs.finland_xbrl.assets.data_snapshot_duckdb_ch import (
     DATA_SNAPSHOT_CLICKHOUSE_TABLE,
     data_snapshot_duckdb_ch,
@@ -104,8 +120,11 @@ __all__ = [
     "XbrlParseRunResult",
     "XbrlRawConfig",
     "FINANCIAL_DATA_S3_SNAPSHOT_KEY",
+    "FINANCIAL_DATA_DAILY_KEY_PREFIX",
     "FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_END",
     "FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START",
+    "FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE",
+    "FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH",
     "FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH",
     "FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA",
     "FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE",
@@ -115,6 +134,9 @@ __all__ = [
     "build_financial_metric_usd_rows",
     "build_parse_quality_row",
     "data_snapshot",
+    "data_daily",
+    "data_daily_duckdb",
+    "data_daily_duckdb_ch",
     "data_snapshot_duckdb",
     "data_snapshot_duckdb_ch",
     "defs",
@@ -122,6 +144,7 @@ __all__ = [
     "documents_in_registration_window",
     "documents_missing_registration_date",
     "download_finland_xbrl_raw_xml_documents",
+    "export_data_daily_duckdb_to_clickhouse",
     "export_data_snapshot_duckdb_to_clickhouse",
     "finland_xbrl_historical_backfill_job",
     "finland_xbrl_financial_metrics",
@@ -140,17 +163,23 @@ __all__ = [
     "finland_xbrl_raw_xml_documents_incremental",
     "finland_xbrl_xml_documents",
     "financial_report_rows_in_registration_window",
+    "financial_data_daily_key",
     "materialize_financial_reports_window",
+    "materialize_data_daily_duckdb",
     "materialize_data_snapshot_duckdb",
     "parse_xbrl_documents",
     "run_finland_xbrl_parse",
     "tables",
     "write_financial_data_snapshot_csv",
+    "write_financial_data_daily_csv",
 ]
 
 defs = dg.Definitions(
     assets=[
         data_snapshot,
+        data_daily,
+        data_daily_duckdb,
+        data_daily_duckdb_ch,
         data_snapshot_duckdb,
         data_snapshot_duckdb_ch,
         finland_xbrl_financial_reports_backfill,
@@ -178,6 +207,9 @@ defs = dg.Definitions(
         "object_store": ObjectStoreResource(),
         "xbrl_financial_data_snapshot_duckdb": duckdb_resource(
             FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH
+        ),
+        "xbrl_financial_data_daily_duckdb": duckdb_resource(
+            FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH
         ),
     },
 )

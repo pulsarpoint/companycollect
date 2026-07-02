@@ -17,18 +17,25 @@ from dagster_v3.defs.finland_xbrl.assets import financial_metrics
 from dagster_v3.defs.finland_xbrl.assets import parse as parse_assets
 from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.finland_xbrl.assets import (
+    FINANCIAL_DATA_DAILY_KEY_PREFIX,
     FINANCIAL_DATA_S3_SNAPSHOT_KEY,
     FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_END,
     FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START,
+    FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH,
     FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH,
+    FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE,
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE,
     XbrlParsedConfig,
     XbrlRawConfig,
     build_financial_data_snapshot_csv,
     download_finland_xbrl_raw_xml_documents,
+    export_data_daily_duckdb_to_clickhouse,
     export_data_snapshot_duckdb_to_clickhouse,
+    financial_data_daily_key,
+    materialize_data_daily_duckdb,
     materialize_data_snapshot_duckdb,
+    write_financial_data_daily_csv,
     write_financial_data_snapshot_csv,
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
@@ -329,6 +336,9 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_incremental_job").asset_layer.executable_asset_keys
     }
     assert incremental == {
+        "data_daily",
+        "data_daily_duckdb",
+        "data_daily_duckdb_ch",
         "finland_xbrl_financial_reports_incremental",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
@@ -626,6 +636,76 @@ def test_financial_data_snapshot_reuses_existing_s3_csv_without_api_calls() -> N
     assert session.calls == []
 
 
+def test_financial_data_daily_key_uses_one_day_registration_window() -> None:
+    assert FINANCIAL_DATA_DAILY_KEY_PREFIX == "financial_data/daily"
+    assert financial_data_daily_key("2026-06-01") == (
+        "financial_data/daily/"
+        "registeredDateStart=2026-06-01/"
+        "registeredDateEnd=2026-06-01/"
+        "financial_statements.csv"
+    )
+
+
+def test_financial_data_daily_writes_partition_listing_to_s3() -> None:
+    session = FakePagedFinancialReportsSession()
+    api = XbrlApiResource(session=session)
+    object_store, s3_client = _object_store()
+
+    result = write_financial_data_daily_csv(
+        partition_key="2026-06-01",
+        xbrl_api=api,
+        object_store=object_store,
+        request_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    s3_key = financial_data_daily_key("2026-06-01")
+    assert result.metadata["downloaded"] is True
+    assert result.metadata["row_count"] == 2
+    assert result.metadata["registered_date_start"] == "2026-06-01"
+    assert result.metadata["registered_date_end"] == "2026-06-01"
+    assert result.metadata["s3_key"] == s3_key
+    assert [call[1]["registeredDateStart"] for call in session.calls] == [
+        "2026-06-01",
+        "2026-06-01",
+        "2026-06-01",
+    ]
+    assert [call[1]["registeredDateEnd"] for call in session.calls] == [
+        "2026-06-01",
+        "2026-06-01",
+        "2026-06-01",
+    ]
+    assert s3_client.objects[("source-finland-prh-xbrl", s3_key)].decode("utf-8") == (
+        "businessId,financialDate,registrationDate\r\n"
+        "active-web,2026-05-31,2026-06-01\r\n"
+        "second-active-web,2026-04-30,2026-06-02\r\n"
+    )
+
+
+def test_financial_data_daily_reuses_existing_s3_csv_without_api_calls() -> None:
+    session = FakePagedFinancialReportsSession()
+    api = XbrlApiResource(session=session)
+    object_store, s3_client = _object_store()
+    s3_key = financial_data_daily_key("2026-06-01")
+    s3_client.objects[
+        ("source-finland-prh-xbrl", s3_key)
+    ] = b"businessId,financialDate,registrationDate\r\n"
+
+    result = write_financial_data_daily_csv(
+        partition_key="2026-06-01",
+        xbrl_api=api,
+        object_store=object_store,
+        request_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    assert result.metadata["downloaded"] is False
+    assert result.metadata["reused_existing_snapshot"] is True
+    assert result.metadata["registered_date_start"] == "2026-06-01"
+    assert result.metadata["registered_date_end"] == "2026-06-01"
+    assert session.calls == []
+
+
 def test_data_snapshot_asset_is_registered() -> None:
     graph = load_project_defs().get_repository_def().asset_graph
     node = graph.get(AssetKey("data_snapshot"))
@@ -633,6 +713,196 @@ def test_data_snapshot_asset_is_registered() -> None:
     assert node.group_name == "finland_xbrl"
     assert node.description
     assert "fixed initial PRH XBRL financial statement listing" in node.description
+
+
+def test_data_daily_asset_is_daily_partitioned_from_june_2026() -> None:
+    graph = load_project_defs().get_repository_def().asset_graph
+    node = graph.get(AssetKey("data_daily"))
+
+    assert node.group_name == "finland_xbrl"
+    assert type(node.partitions_def).__name__ == "DailyPartitionsDefinition"
+    assert node.partitions_def.get_partition_keys(current_time=datetime(2026, 6, 22))[0] == (
+        "2026-06-01"
+    )
+    assert node.description
+    assert "daily PRH XBRL financial statement listing" in node.description
+
+
+def test_data_daily_duckdb_writes_s3_partition_csv_to_duckdb(tmp_path: Path) -> None:
+    object_store, s3_client = _object_store()
+    s3_client.objects[
+        ("source-finland-prh-xbrl", financial_data_daily_key("2026-06-01"))
+    ] = (
+        "businessId,financialDate,registrationDate\r\n"
+        "0100123-2,2024-05-31,2024-08-17\r\n"
+        "0202020-2,2025-12-31,2026-02-01\r\n"
+    ).encode("utf-8")
+    duckdb_path = tmp_path / "daily.duckdb"
+
+    result = materialize_data_daily_duckdb(
+        partition_key="2026-06-01",
+        object_store=object_store,
+        daily_duckdb=duckdb_resource(duckdb_path),
+    )
+
+    assert result.metadata["row_count"] == 2
+    assert result.metadata["partition"] == "2026-06-01"
+    assert result.metadata["duckdb_schema"] == FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA
+    assert result.metadata["duckdb_table"] == FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        columns = connection.execute(
+            """
+            select column_name, data_type
+            from information_schema.columns
+            where table_schema = ?
+              and table_name = ?
+            order by ordinal_position
+            """,
+            [
+                FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
+                FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE,
+            ],
+        ).fetchall()
+        rows = connection.execute(
+            f"""
+            select partition_key, "businessId", "financialDate", "registrationDate"
+            from {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE}
+            order by "businessId"
+            """
+        ).fetchall()
+
+    assert columns == [
+        ("partition_key", "VARCHAR"),
+        ("businessId", "VARCHAR"),
+        ("financialDate", "VARCHAR"),
+        ("registrationDate", "VARCHAR"),
+    ]
+    assert rows == [
+        ("2026-06-01", "0100123-2", "2024-05-31", "2024-08-17"),
+        ("2026-06-01", "0202020-2", "2025-12-31", "2026-02-01"),
+    ]
+
+
+def test_data_daily_duckdb_replaces_only_current_partition(tmp_path: Path) -> None:
+    object_store, s3_client = _object_store()
+    duckdb_path = tmp_path / "daily.duckdb"
+    s3_client.objects[
+        ("source-finland-prh-xbrl", financial_data_daily_key("2026-06-01"))
+    ] = (
+        "businessId,financialDate,registrationDate\r\n"
+        "old-row,2024-05-31,2024-08-17\r\n"
+    ).encode("utf-8")
+    s3_client.objects[
+        ("source-finland-prh-xbrl", financial_data_daily_key("2026-06-02"))
+    ] = (
+        "businessId,financialDate,registrationDate\r\n"
+        "other-partition,2025-12-31,2026-02-01\r\n"
+    ).encode("utf-8")
+
+    materialize_data_daily_duckdb(
+        partition_key="2026-06-01",
+        object_store=object_store,
+        daily_duckdb=duckdb_resource(duckdb_path),
+    )
+    materialize_data_daily_duckdb(
+        partition_key="2026-06-02",
+        object_store=object_store,
+        daily_duckdb=duckdb_resource(duckdb_path),
+    )
+    s3_client.objects[
+        ("source-finland-prh-xbrl", financial_data_daily_key("2026-06-01"))
+    ] = (
+        "businessId,financialDate,registrationDate\r\n"
+        "new-row,2024-05-31,2024-08-18\r\n"
+    ).encode("utf-8")
+
+    materialize_data_daily_duckdb(
+        partition_key="2026-06-01",
+        object_store=object_store,
+        daily_duckdb=duckdb_resource(duckdb_path),
+    )
+
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        rows = connection.execute(
+            f"""
+            select partition_key, "businessId", "registrationDate"
+            from {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE}
+            order by partition_key, "businessId"
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("2026-06-01", "new-row", "2024-08-18"),
+        ("2026-06-02", "other-partition", "2026-02-01"),
+    ]
+
+
+def test_data_daily_duckdb_ch_inserts_current_partition_into_clickhouse(
+    tmp_path: Path,
+) -> None:
+    duckdb_path = tmp_path / "daily.duckdb"
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute(f"create schema {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}")
+        connection.execute(
+            f"""
+            create table
+              {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE} (
+                partition_key varchar,
+                "businessId" varchar,
+                "financialDate" varchar,
+                "registrationDate" varchar
+              )
+            """
+        )
+        connection.executemany(
+            f"""
+            insert into {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE}
+              (partition_key, "businessId", "financialDate", "registrationDate")
+            values (?, ?, ?, ?)
+            """,
+            [
+                ("2026-06-01", "0100123-2", "2024-05-31", "2024-08-17"),
+                ("2026-06-02", "not-exported", "2025-12-31", "2026-02-01"),
+            ],
+        )
+    client = FakeClickHouseClient(tables={"fi_xbrl_financial_statement_listings"})
+
+    row_count = export_data_daily_duckdb_to_clickhouse(
+        partition_key="2026-06-01",
+        daily_duckdb=duckdb_resource(duckdb_path),
+        clickhouse=FakeClickHouseResource(client),
+    )
+
+    assert row_count == 1
+    assert not any("EXCHANGE TABLES" in statement for statement in client.statements)
+    insert_calls = [
+        (sql, params)
+        for sql, params in client.execute_calls
+        if sql.strip().startswith("INSERT INTO")
+    ]
+    assert len(insert_calls) == 1
+    insert_sql, insert_rows = insert_calls[0]
+    assert "fi_xbrl_financial_statement_listings" in insert_sql
+    assert isinstance(insert_rows, list)
+    assert insert_rows == [
+        ("0100123-2", date(2024, 5, 31), date(2024, 8, 17)),
+    ]
+
+
+def test_data_daily_duckdb_assets_are_partitioned_and_chained() -> None:
+    graph = load_project_defs().get_repository_def().asset_graph
+    duckdb_node = graph.get(AssetKey("data_daily_duckdb"))
+    clickhouse_node = graph.get(AssetKey("data_daily_duckdb_ch"))
+
+    assert duckdb_node.group_name == "finland_xbrl"
+    assert clickhouse_node.group_name == "finland_xbrl"
+    assert type(duckdb_node.partitions_def).__name__ == "DailyPartitionsDefinition"
+    assert type(clickhouse_node.partitions_def).__name__ == "DailyPartitionsDefinition"
+    assert duckdb_node.parent_keys == {AssetKey("data_daily")}
+    assert clickhouse_node.parent_keys == {AssetKey("data_daily_duckdb")}
+    assert FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH == (
+        "data/finland_xbrl/financial_data_daily.duckdb"
+    )
 
 
 def test_data_snapshot_duckdb_writes_s3_csv_to_duckdb(tmp_path: Path) -> None:

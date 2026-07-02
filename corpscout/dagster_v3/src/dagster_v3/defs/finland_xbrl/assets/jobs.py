@@ -22,6 +22,9 @@ finland_xbrl_historical_backfill_job = dg.define_asset_job(
 finland_xbrl_incremental_job = dg.define_asset_job(
     "finland_xbrl_incremental_job",
     selection=dg.AssetSelection.assets(
+        "data_daily",
+        "data_daily_duckdb",
+        "data_daily_duckdb_ch",
         "finland_xbrl_financial_reports_incremental",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
