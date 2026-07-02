@@ -201,3 +201,27 @@ table may carry extra defaulted columns the worker doesn't write. All target tab
 **ReplacingMergeTree**, so re-loading is safe (dedupe on the sort key, newest `resolved_at` wins) — **read
 with `FINAL`**. An **old fat `domains.parquet`** (pre-split, detected by a `nace_top3_codes` column) is
 fanned into the split tables automatically.
+
+## Output files
+
+Each produce mode writes fixed-name Parquet into `--out`. Every `*Row` struct carries dual tags —
+`parquet` (write) and `ch` (the `load` INSERT column). Full per-column schema:
+[`../docs/schema.md`](../docs/schema.md).
+
+| File | Struct | Modes | ClickHouse table | Grain |
+|---|---|---|---|---|
+| `domains.parquet` | `DomainRow` | every non-embed | `commoncrawl_domains` | 1 / domain (identity master) |
+| `industries.parquet` | `IndustryRow` | industry, both | `commoncrawl_industries` | **many** / domain (top-3 NACE, `rank`/`is_primary`/`score`) |
+| `page_signals.parquet` | `PageSignalRow` | industry, both | `commoncrawl_page_signals` | 1 / domain (`page_type`, `nace_confident`, `nace_margin`) |
+| `technologies.parquet` (`tech.parquet`) | `TechRow` | tech, both | `commoncrawl_technologies` | many / (domain, tech) |
+| `identifiers.parquet` | `IdentifierRow` | tech, both | `commoncrawl_domain_identifiers` | many / (domain, id) — LEI/VAT/… |
+| `metadata.parquet` | `MetadataRow` | tech, both | `commoncrawl_domain_metadata` | 1 / domain (schema.org JSON-LD) |
+| `contacts.parquet` | `ContactRow` | tech, both | `commoncrawl_domain_contact_info` | many / domain (email/phone/social) |
+| `embeddings.parquet` | `EmbeddingRow` | industry, both, embed | **Parquet only — never ClickHouse** | 1 / domain (fp32 4096-dim vector) |
+
+**Embeddings are special.** They go to a **separate sibling tree** `../data/embedding/<stem>/` for
+industry/both (for `embed`, `--out` *is* that dir), not `../data/crawl/`, and are **never** loaded into
+ClickHouse (too large, incompressible). `EmbeddingRow` carries the WARC re-fetch coords
+(`warc_filename`, `warc_offset`, `warc_length`) so the exact archived page can be re-fetched without
+re-resolving the index. The write is **atomic** (one `WriteFile` at the very end). Rationale + downstream
+use (re-classification, vector search): [`../docs/embeddings-design.md`](../docs/embeddings-design.md).
