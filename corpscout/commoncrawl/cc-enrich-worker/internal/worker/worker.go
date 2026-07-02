@@ -140,8 +140,13 @@ type domainAgg struct {
 }
 
 // FetchedChunk holds the per-domain aggregates produced by FetchChunk, ready for Finalize.
-// (domainAgg is unexported, so callers pass this opaque value between the two phases.)
-type FetchedChunk struct{ aggs []*domainAgg }
+// (domainAgg is unexported, so callers pass this opaque value between the two phases.) Pages/Errs carry
+// the chunk's fetch counts so the caller can enforce a per-shard failure contract (a systemically-failed
+// fetch must not write a near-empty part that then gets loaded + marked done).
+type FetchedChunk struct {
+	aggs        []*domainAgg
+	Pages, Errs int64
+}
 
 // subdomainOf returns the label(s) before the registered root, or "" for apex/www.
 func subdomainOf(rawURL, root string) string {
@@ -368,7 +373,7 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 			log.Printf("  first fetch error: %s", stats.errSample)
 		}
 	}
-	return FetchedChunk{aggs: aggs}
+	return FetchedChunk{aggs: aggs, Pages: atomic.LoadInt64(&stats.pages), Errs: atomic.LoadInt64(&stats.errs)}
 }
 
 // Finalize embeds + classifies (industry) and builds the output rows from a fetched chunk. For the

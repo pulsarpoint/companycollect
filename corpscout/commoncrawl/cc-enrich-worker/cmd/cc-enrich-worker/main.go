@@ -438,6 +438,7 @@ func run(mode string, o opts) {
 			return e
 		}
 		var fetched worker.FetchedChunk
+		var totalPages, totalErrs int64
 		curLo, curHi := 0, 0
 		if len(items) > 0 {
 			curHi = chunkEnd(0)
@@ -445,6 +446,8 @@ func run(mode string, o opts) {
 		}
 		for curLo < curHi {
 			cur := fetched
+			totalPages += cur.Pages
+			totalErrs += cur.Errs
 			nextLo, nextHi := curHi, 0
 			var nextCh chan worker.FetchedChunk
 			if nextLo < len(items) { // prefetch the next chunk while this one finalizes
@@ -474,6 +477,22 @@ func run(mode string, o opts) {
 			}
 			curLo, curHi = nextLo, nextHi
 		}
+		// Failure contract (chunked path): a systemically-failed fetch (auth/throttle) must not silently
+		// write a near-empty part. cc-crawl gates on exit code, so a Fatalf here retries the part next run.
+		const maxFetchErrorRate = 0.5 // >50% errors = systemic; normal WARC decay is a few %
+		if totalPages > 0 && float64(totalErrs)/float64(totalPages) > maxFetchErrorRate {
+			log.Fatalf("refusing to write: fetch error rate %.0f%% (%d/%d pages) exceeds %.0f%% — part will be retried",
+				100*float64(totalErrs)/float64(totalPages), totalErrs, totalPages, 100*maxFetchErrorRate)
+		}
+	}
+
+	// Failure contract (all modes): refuse to write when a non-empty worklist produced nothing.
+	produced := len(domains)
+	if mode == "embed" {
+		produced = len(embeddings)
+	}
+	if len(items) > 0 && produced == 0 {
+		log.Fatalf("refusing to write: 0 outputs from %d worklist pages (systemic fetch failure?) — part will be retried", len(items))
 	}
 
 	var written []string
