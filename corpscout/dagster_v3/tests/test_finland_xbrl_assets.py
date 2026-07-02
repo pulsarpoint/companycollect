@@ -24,6 +24,7 @@ from dagster_v3.defs.finland_xbrl.assets import (
     FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START,
     FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH,
     FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH,
+    FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH,
     FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE,
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE,
@@ -37,12 +38,18 @@ from dagster_v3.defs.finland_xbrl.assets import (
     export_data_snapshot_duckdb_to_clickhouse,
     fetch_xml_snapshot_report_rows,
     financial_data_daily_key,
+    materialize_data_daily_xml,
+    materialize_data_daily_xml_duckdb,
+    materialize_data_snapshot_xml_duckdb,
     materialize_data_daily_duckdb,
     materialize_data_snapshot_duckdb,
+    read_xml_snapshot_manifest_rows,
     write_financial_data_daily_csv,
     write_financial_data_snapshot_csv,
     xml_snapshot_document_key,
     xml_snapshot_manifest_key,
+    xml_snapshot_parse_duckdb_path,
+    xml_snapshot_parse_temp_dir,
     xml_snapshot_partition_prefix,
     xml_snapshot_success_key,
 )
@@ -219,6 +226,42 @@ class FakeExchangeRatesWithMissing:
         raise LookupError("No USD exchange rate for EUR on, before, or after 2026-05-31")
 
 
+class RecordingStatementParser:
+    def __init__(self, *, fail_business_id: str | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.fail_business_id = fail_business_id
+
+    def __call__(self, **kwargs) -> ParsedStatement:
+        self.calls.append(kwargs)
+        if kwargs["business_id"] == self.fail_business_id:
+            raise ValueError("bad xml")
+        statement_key = f"statement-{kwargs['business_id']}"
+        return ParsedStatement(
+            statement_key=statement_key,
+            rows_by_table={
+                STATEMENT_DOCUMENTS_TABLE: [
+                    {
+                        **_statement_document_row(statement_key),
+                        "business_id": kwargs["business_id"],
+                        "financial_date": kwargs["financial_date"],
+                        "registration_date": kwargs["registration_date"],
+                        "source_url": kwargs["source_url"],
+                        "xml_object_key": kwargs["xml_object_key"],
+                        "source_run_id": kwargs["source_run_id"],
+                    }
+                ],
+                FACTS_TABLE: [
+                    {
+                        **_fact_row(statement_key, fact_ordinal=1),
+                        "business_id": kwargs["business_id"],
+                        "financial_date": kwargs["financial_date"],
+                    }
+                ],
+            },
+            warnings=[],
+        )
+
+
 def _object_store() -> tuple[ObjectStoreResource, FakeS3Client]:
     s3_client = FakeS3Client()
     return ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3_client), s3_client
@@ -366,6 +409,8 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         "data_daily",
         "data_daily_duckdb",
         "data_daily_duckdb_ch",
+        "data_daily_xml",
+        "data_daily_xml_duckdb",
         "finland_xbrl_financial_reports_incremental",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
@@ -392,7 +437,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         key.path[-1]
         for key in repo.get_job("finland_xbrl_xml_snapshot_job").asset_layer.executable_asset_keys
     }
-    assert xml_snapshot == {"data_snapshot_xml"}
+    assert xml_snapshot == {"data_snapshot_xml", "data_snapshot_xml_duckdb"}
     assert type(repo.get_job("finland_xbrl_xml_snapshot_job").partitions_def).__name__ == (
         "MonthlyPartitionsDefinition"
     )
@@ -929,13 +974,21 @@ def test_data_daily_duckdb_assets_are_partitioned_and_chained() -> None:
     graph = load_project_defs().get_repository_def().asset_graph
     duckdb_node = graph.get(AssetKey("data_daily_duckdb"))
     clickhouse_node = graph.get(AssetKey("data_daily_duckdb_ch"))
+    xml_node = graph.get(AssetKey("data_daily_xml"))
+    xml_duckdb_node = graph.get(AssetKey("data_daily_xml_duckdb"))
 
     assert duckdb_node.group_name == "finland_xbrl"
     assert clickhouse_node.group_name == "finland_xbrl"
+    assert xml_node.group_name == "finland_xbrl"
+    assert xml_duckdb_node.group_name == "finland_xbrl"
     assert type(duckdb_node.partitions_def).__name__ == "DailyPartitionsDefinition"
     assert type(clickhouse_node.partitions_def).__name__ == "DailyPartitionsDefinition"
+    assert type(xml_node.partitions_def).__name__ == "DailyPartitionsDefinition"
+    assert type(xml_duckdb_node.partitions_def).__name__ == "DailyPartitionsDefinition"
     assert duckdb_node.parent_keys == {AssetKey("data_daily")}
     assert clickhouse_node.parent_keys == {AssetKey("data_daily_duckdb")}
+    assert xml_node.parent_keys == {AssetKey("data_daily_duckdb_ch")}
+    assert xml_duckdb_node.parent_keys == {AssetKey("data_daily_xml")}
     assert FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH == (
         "data/finland_xbrl/financial_data_daily.duckdb"
     )
@@ -949,6 +1002,13 @@ def test_xml_snapshot_monthly_partitions_cover_prh_start_until_june_2026() -> No
     assert partition_keys[0] == "2023-07-01"
     assert "2026-05-01" in partition_keys
     assert "2026-06-01" not in partition_keys
+
+
+def test_data_snapshot_xml_duckdb_uses_xml_snapshot_partitions() -> None:
+    graph = load_project_defs().get_repository_def().asset_graph
+    node = graph.get(AssetKey("data_snapshot_xml_duckdb"))
+
+    assert node.partitions_def is XML_SNAPSHOT_PARTITIONS
 
 
 def test_xml_snapshot_s3_keys_are_scoped_by_registration_window() -> None:
@@ -979,6 +1039,21 @@ def test_xml_snapshot_s3_keys_are_scoped_by_registration_window() -> None:
         "registeredDateStart=2023-07-01/"
         "registeredDateEnd=2023-07-31/"
         "_SUCCESS.json"
+    )
+
+
+def test_xml_snapshot_parse_duckdb_path_helpers() -> None:
+    assert str(FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH) == (
+        "data/finland_xbrl/duckdb/xml_snapshot_parse"
+    )
+    assert xml_snapshot_parse_duckdb_path("2023-07-01") == (
+        FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH
+        / "partition_key=2023-07-01"
+        / "data.duckdb"
+    )
+    assert xml_snapshot_parse_temp_dir("2023-07-01") == (
+        Path("data/finland_xbrl/tmp/xml_snapshot_parse")
+        / "partition_key=2023-07-01"
     )
 
 
@@ -1018,6 +1093,237 @@ def test_fetch_xml_snapshot_report_rows_reads_clickhouse_listing_table() -> None
         "start": "2023-07-01",
         "end": "2023-07-31",
     }
+
+
+def test_xml_snapshot_parse_requires_success_marker(tmp_path: Path) -> None:
+    object_store, _s3_client = _object_store()
+
+    with pytest.raises(FileNotFoundError, match="_SUCCESS.json"):
+        materialize_data_snapshot_xml_duckdb(
+            partition_key="2023-07-01",
+            registered_date_start="2023-07-01",
+            registered_date_end="2023-07-31",
+            object_store=object_store,
+            duckdb_path=tmp_path / "data.duckdb",
+            temp_dir=tmp_path / "tmp",
+            run_id="run-1",
+        )
+
+    assert not (tmp_path / "data.duckdb").exists()
+
+
+def test_xml_snapshot_parse_requires_manifest(tmp_path: Path) -> None:
+    object_store, s3_client = _object_store()
+    s3_client.objects[
+        ("source-finland-prh-xbrl", xml_snapshot_success_key("2023-07-01", "2023-07-31"))
+    ] = b"{}"
+
+    with pytest.raises(FileNotFoundError, match="manifest.jsonl"):
+        materialize_data_snapshot_xml_duckdb(
+            partition_key="2023-07-01",
+            registered_date_start="2023-07-01",
+            registered_date_end="2023-07-31",
+            object_store=object_store,
+            duckdb_path=tmp_path / "data.duckdb",
+            temp_dir=tmp_path / "tmp",
+            run_id="run-1",
+        )
+
+    assert not (tmp_path / "data.duckdb").exists()
+
+
+def test_read_xml_snapshot_manifest_rows_validates_required_fields() -> None:
+    object_store, s3_client = _object_store()
+    manifest_key = xml_snapshot_manifest_key("2023-07-01", "2023-07-31")
+    s3_client.objects[
+        ("source-finland-prh-xbrl", manifest_key)
+    ] = b'{"business_id":"0100123-2"}\n'
+
+    with pytest.raises(ValueError, match="financial_date"):
+        read_xml_snapshot_manifest_rows(
+            object_store=object_store,
+            manifest_key=manifest_key,
+        )
+
+
+def test_xml_snapshot_parse_empty_manifest_creates_empty_duckdb(tmp_path: Path) -> None:
+    object_store, s3_client = _object_store()
+    _write_xml_snapshot_manifest_fixture(
+        s3_client,
+        start="2023-07-01",
+        end="2023-07-31",
+        rows=[],
+    )
+
+    result = materialize_data_snapshot_xml_duckdb(
+        partition_key="2023-07-01",
+        registered_date_start="2023-07-01",
+        registered_date_end="2023-07-31",
+        object_store=object_store,
+        duckdb_path=tmp_path / "data.duckdb",
+        temp_dir=tmp_path / "tmp",
+        run_id="run-1",
+    )
+
+    with duckdb.connect(str(tmp_path / "data.duckdb"), read_only=True) as connection:
+        assert connection.execute("select count(*) from statement_documents").fetchone()[0] == 0
+        assert connection.execute("select count(*) from facts").fetchone()[0] == 0
+    assert result.metadata["documents_in_manifest"] == 0
+    assert result.metadata["statement_documents_row_count"] == 0
+    assert result.metadata["facts_row_count"] == 0
+
+
+def test_xml_snapshot_parse_writes_partition_duckdb_and_removes_temp_parquet(
+    tmp_path: Path,
+) -> None:
+    object_store, s3_client = _object_store()
+    xml_key = xml_snapshot_document_key(
+        "2023-07-01",
+        "2023-07-31",
+        "0100123-2",
+        "2022-12-31",
+    )
+    s3_client.objects[("source-finland-prh-xbrl", xml_key)] = b"<xbrl />"
+    _write_xml_snapshot_manifest_fixture(
+        s3_client,
+        start="2023-07-01",
+        end="2023-07-31",
+        rows=[
+            {
+                "business_id": "0100123-2",
+                "financial_date": "2022-12-31",
+                "registration_date": "2023-07-02",
+                "source_url": "https://example.test/financial",
+                "xml_object_key": xml_key,
+            }
+        ],
+    )
+    parser = RecordingStatementParser()
+    temp_dir = tmp_path / "tmp"
+
+    result = materialize_data_snapshot_xml_duckdb(
+        partition_key="2023-07-01",
+        registered_date_start="2023-07-01",
+        registered_date_end="2023-07-31",
+        object_store=object_store,
+        duckdb_path=tmp_path / "data.duckdb",
+        temp_dir=temp_dir,
+        run_id="run-1",
+        parser=parser,
+    )
+
+    assert len(parser.calls) == 1
+    assert parser.calls[0]["business_id"] == "0100123-2"
+    assert parser.calls[0]["body"] == b"<xbrl />"
+    with duckdb.connect(str(tmp_path / "data.duckdb"), read_only=True) as connection:
+        assert connection.execute("select business_id from statement_documents").fetchall() == [
+            ("0100123-2",)
+        ]
+        assert connection.execute("select business_id from facts").fetchall() == [
+            ("0100123-2",)
+        ]
+    assert result.metadata["documents_parsed_this_run"] == 1
+    assert result.metadata["documents_failed_this_run"] == 0
+    assert result.metadata["statement_documents_row_count"] == 1
+    assert result.metadata["facts_row_count"] == 1
+    assert result.metadata["temporary_directory_removed"] is True
+    assert not temp_dir.exists()
+
+
+def test_xml_snapshot_parse_missing_xml_object_fails_partition(tmp_path: Path) -> None:
+    object_store, s3_client = _object_store()
+    xml_key = xml_snapshot_document_key(
+        "2023-07-01",
+        "2023-07-31",
+        "0100123-2",
+        "2022-12-31",
+    )
+    _write_xml_snapshot_manifest_fixture(
+        s3_client,
+        start="2023-07-01",
+        end="2023-07-31",
+        rows=[
+            {
+                "business_id": "0100123-2",
+                "financial_date": "2022-12-31",
+                "registration_date": "2023-07-02",
+                "source_url": "https://example.test/financial",
+                "xml_object_key": xml_key,
+            }
+        ],
+    )
+
+    with pytest.raises(KeyError):
+        materialize_data_snapshot_xml_duckdb(
+            partition_key="2023-07-01",
+            registered_date_start="2023-07-01",
+            registered_date_end="2023-07-31",
+            object_store=object_store,
+            duckdb_path=tmp_path / "data.duckdb",
+            temp_dir=tmp_path / "tmp",
+            run_id="run-1",
+            parser=RecordingStatementParser(),
+        )
+
+    assert not (tmp_path / "data.duckdb").exists()
+
+
+def test_xml_snapshot_parse_records_parser_failures_and_continues(tmp_path: Path) -> None:
+    object_store, s3_client = _object_store()
+    good_key = xml_snapshot_document_key(
+        "2023-07-01",
+        "2023-07-31",
+        "0100123-2",
+        "2022-12-31",
+    )
+    bad_key = xml_snapshot_document_key(
+        "2023-07-01",
+        "2023-07-31",
+        "0202020-2",
+        "2022-12-31",
+    )
+    s3_client.objects[("source-finland-prh-xbrl", good_key)] = b"<xbrl />"
+    s3_client.objects[("source-finland-prh-xbrl", bad_key)] = b"<xbrl />"
+    _write_xml_snapshot_manifest_fixture(
+        s3_client,
+        start="2023-07-01",
+        end="2023-07-31",
+        rows=[
+            {
+                "business_id": "0202020-2",
+                "financial_date": "2022-12-31",
+                "registration_date": "2023-07-02",
+                "source_url": "https://example.test/bad",
+                "xml_object_key": bad_key,
+            },
+            {
+                "business_id": "0100123-2",
+                "financial_date": "2022-12-31",
+                "registration_date": "2023-07-02",
+                "source_url": "https://example.test/good",
+                "xml_object_key": good_key,
+            },
+        ],
+    )
+
+    result = materialize_data_snapshot_xml_duckdb(
+        partition_key="2023-07-01",
+        registered_date_start="2023-07-01",
+        registered_date_end="2023-07-31",
+        object_store=object_store,
+        duckdb_path=tmp_path / "data.duckdb",
+        temp_dir=tmp_path / "tmp",
+        run_id="run-1",
+        parser=RecordingStatementParser(fail_business_id="0202020-2"),
+    )
+
+    with duckdb.connect(str(tmp_path / "data.duckdb"), read_only=True) as connection:
+        assert connection.execute("select business_id from statement_documents").fetchall() == [
+            ("0100123-2",)
+        ]
+    assert result.metadata["documents_in_manifest"] == 2
+    assert result.metadata["documents_parsed_this_run"] == 1
+    assert result.metadata["documents_failed_this_run"] == 1
 
 
 def test_xml_snapshot_existing_success_marker_skips_clickhouse_and_prh() -> None:
@@ -1099,6 +1405,83 @@ def test_xml_snapshot_downloads_missing_xml_and_writes_manifest_and_success() ->
     )
     assert success["selected_reports_count"] == 2
     assert success["downloaded_count"] == 2
+
+
+def test_data_daily_xml_downloads_daily_listing_window() -> None:
+    object_store, s3_client = _object_store()
+    session = FakeHttpSession()
+    client = FakeClickHouseClient(
+        tables={"fi_xbrl_financial_statement_listings"},
+        financial_statement_listing_rows=[
+            ("0100123-2", "2022-12-31", "2026-06-01"),
+        ],
+    )
+
+    result = materialize_data_daily_xml(
+        partition_key="2026-06-01",
+        xbrl_api=XbrlApiResource(session=session),
+        clickhouse=FakeClickHouseResource(client),
+        object_store=object_store,
+        download_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    xml_key = xml_snapshot_document_key(
+        "2026-06-01",
+        "2026-06-01",
+        "0100123-2",
+        "2022-12-31",
+    )
+    assert ("source-finland-prh-xbrl", xml_key) in s3_client.objects
+    assert result.metadata["partition"] == "2026-06-01"
+    assert result.metadata["registered_date_start"] == "2026-06-01"
+    assert result.metadata["registered_date_end"] == "2026-06-01"
+    assert result.metadata["selected_reports_count"] == 1
+    assert result.metadata["manifest_key"] == xml_snapshot_manifest_key(
+        "2026-06-01", "2026-06-01"
+    )
+
+
+def test_data_daily_xml_duckdb_parses_daily_xml_partition(tmp_path: Path) -> None:
+    object_store, s3_client = _object_store()
+    xml_key = xml_snapshot_document_key(
+        "2026-06-01",
+        "2026-06-01",
+        "0100123-2",
+        "2022-12-31",
+    )
+    s3_client.objects[("source-finland-prh-xbrl", xml_key)] = b"<xbrl />"
+    _write_xml_snapshot_manifest_fixture(
+        s3_client,
+        start="2026-06-01",
+        end="2026-06-01",
+        rows=[
+            {
+                "business_id": "0100123-2",
+                "financial_date": "2022-12-31",
+                "registration_date": "2026-06-01",
+                "source_url": "https://example.test/financial",
+                "xml_object_key": xml_key,
+            }
+        ],
+    )
+
+    result = materialize_data_daily_xml_duckdb(
+        partition_key="2026-06-01",
+        object_store=object_store,
+        duckdb_path=tmp_path / "daily.duckdb",
+        temp_dir=tmp_path / "tmp",
+        run_id="run-1",
+        parser=RecordingStatementParser(),
+    )
+
+    with duckdb.connect(str(tmp_path / "daily.duckdb"), read_only=True) as connection:
+        assert connection.execute("select business_id from statement_documents").fetchall() == [
+            ("0100123-2",)
+        ]
+    assert result.metadata["registered_date_start"] == "2026-06-01"
+    assert result.metadata["registered_date_end"] == "2026-06-01"
+    assert result.metadata["documents_parsed_this_run"] == 1
 
 
 def test_xml_snapshot_reuses_existing_xml_without_success_marker() -> None:
@@ -2046,6 +2429,19 @@ def _financial_reports() -> list[dict]:
             "discovery_registered_date_end": "2026-06-30",
         },
     ]
+
+
+def _write_xml_snapshot_manifest_fixture(
+    s3_client: FakeS3Client,
+    *,
+    start: str,
+    end: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    s3_client.objects[("source-finland-prh-xbrl", xml_snapshot_success_key(start, end))] = b"{}"
+    s3_client.objects[("source-finland-prh-xbrl", xml_snapshot_manifest_key(start, end))] = (
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows).encode("utf-8")
+    )
 
 
 def _statement_document_row(statement_key: str) -> dict:

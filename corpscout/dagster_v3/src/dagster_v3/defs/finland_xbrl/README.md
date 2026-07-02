@@ -90,6 +90,8 @@ Daily metadata publish chain:
 data_daily
 -> data_daily_duckdb
 -> data_daily_duckdb_ch
+-> data_daily_xml
+-> data_daily_xml_duckdb
 ```
 
 `data_daily_duckdb` stores each daily CSV partition in
@@ -101,6 +103,13 @@ rewrites only that partition in DuckDB.
 `data_daily_duckdb_ch` inserts the selected daily DuckDB partition into
 `corpscout.fi_xbrl_financial_statement_listings`. It appends into the shared
 metadata table rather than replacing the fixed snapshot load.
+
+`data_daily_xml` reads the same shared ClickHouse listing table for the daily
+registration-date partition, downloads or reuses the corresponding XML files, and
+writes the same `financial_data/xml_snapshot/registeredDateStart=<date>/registeredDateEnd=<date>/`
+S3 layout as historical XML partitions. `data_daily_xml_duckdb` then parses that
+daily XML folder into a partition DuckDB using the same parser and table
+contracts as `data_snapshot_xml_duckdb`.
 
 Historical XML snapshot asset:
 
@@ -128,6 +137,33 @@ partition is skipped without querying ClickHouse or PRH. If the marker is missin
 but some XML files already exist, those XML files are reused and only missing
 documents are downloaded. The marker is written only after the partition finishes
 successfully.
+
+Historical XML snapshot parse asset:
+
+```text
+data_snapshot_xml_duckdb
+```
+
+This asset runs on the same monthly partitions as `data_snapshot_xml`. It requires
+the XML snapshot `_SUCCESS.json` marker, reads the partition `manifest.jsonl`,
+parses each listed XML object with the shared lxml parser, and writes a local
+partition DuckDB:
+
+```text
+data/finland_xbrl/duckdb/xml_snapshot_parse/
+  partition_key=<YYYY-MM-01>/
+    data.duckdb
+```
+
+The DuckDB contains:
+
+```text
+statement_documents
+facts
+```
+
+Temporary parquet files are written while parsing and removed after the DuckDB
+tables are created.
 
 Existing partitioned flow:
 
