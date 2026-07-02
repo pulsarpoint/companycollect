@@ -18,6 +18,7 @@ import (
 	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/parse"
+	"cc-enrich-worker/internal/security"
 	"cc-enrich-worker/internal/tech"
 )
 
@@ -39,6 +40,8 @@ type ShardResult struct {
 	Identifiers []output.IdentifierRow
 	Metadata    []output.MetadataRow  // self-reported "about", from the tech pass
 	Contacts    []output.ContactRow   // emails/phones/social, from the tech pass
+	Security    []output.SecurityRow  // full response-header map, from the tech pass
+	PageMeta    []output.PageMetaRow  // head content signals (title/meta/hreflang/jsonld @types), tech pass
 	Embeddings  []output.EmbeddingRow // raw page vectors, from the industry pass (saved separately)
 }
 
@@ -130,6 +133,9 @@ type domainAgg struct {
 	tech                                            []model.Technology
 	identifiers                                     []model.Identifier
 	profile                                         model.CompanyProfile
+	security                                        map[string]string // primary page's response headers
+	meta                                            parse.HeadMeta    // primary page's head signals
+	jsonldTypes                                     []string          // primary page's JSON-LD @types
 	hasPrimary                                      bool
 }
 
@@ -184,13 +190,16 @@ func (s *chunkStats) recordErr(err error) {
 // merged deterministically by mergePageResults. primary marks the result carrying the embed text
 // (the worklist's Primary page, embed/both modes only).
 type pageResult struct {
-	url, sub string
-	primary  bool
-	text     string // parsed visible text (embed/both, Primary page only)
-	tech     []model.Technology
-	emails   []string
-	ids      []model.Identifier
-	profile  model.CompanyProfile
+	url, sub    string
+	primary     bool
+	text        string // parsed visible text (embed/both, Primary page only)
+	tech        []model.Technology
+	emails      []string
+	ids         []model.Identifier
+	profile     model.CompanyProfile
+	security    map[string]string // response headers, Primary page only
+	meta        parse.HeadMeta    // head signals, Primary page only
+	jsonldTypes []string          // JSON-LD @types, Primary page only
 }
 
 // processPage fetches ONE page and runs the per-page extraction for the configured mode:
@@ -213,19 +222,27 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 
 	r := pageResult{url: it.URL, sub: subdomainOf(it.URL, it.RootDomain)}
 	if runTech {
-		t2 := time.Now()
+		// Cap the body ONLY for the expensive Wappalyzer regex scan (~1.2s/page uncapped). The cheap
+		// linear extractors run on the FULL body — LEI/VAT/JSON-LD live in page footers, past the cap.
 		techBody := body
 		if limit := cfg.TechMaxBytes; limit > 0 && len(techBody) > limit {
-			techBody = techBody[:limit] // cap regex input; tech signals live in headers + early body
+			techBody = techBody[:limit]
 		}
+		t2 := time.Now()
 		r.tech = tech.DetectTech(headers, techBody)
 		atomic.AddInt64(&stats.techNs, time.Since(t2).Nanoseconds())
-		r.emails = parse.Emails(string(body)) // regex emails over the full page
-		prof, structIDs := extract.ExtractProfile(techBody)
-		r.profile = prof                                        // schema.org Organization JSON-LD
-		r.ids = append(r.ids, structIDs...)                     // ids declared in that JSON-LD
-		r.ids = append(r.ids, extract.ExtractLEIs(techBody)...) // jsonld-regex + text LEIs
-		r.ids = append(r.ids, extract.ExtractVATs(techBody)...) // EU VAT ids (format + checksum)
+		r.emails = parse.Emails(string(body))
+		prof, structIDs := extract.ExtractProfile(body)
+		r.profile = prof                                     // schema.org Organization JSON-LD
+		r.ids = append(r.ids, structIDs...)                  // ids declared in that JSON-LD
+		r.ids = append(r.ids, extract.ExtractLEIs(body)...)  // jsonld-regex + text LEIs
+		r.ids = append(r.ids, extract.ExtractVATs(body)...)  // EU VAT ids (format + checksum)
+		r.ids = append(r.ids, extract.Trackers(body)...)     // analytics/ad/tag account ids (ownership signal)
+		if it.Primary {                                      // per-domain head signals: the representative page
+			r.security = security.HeaderMap(headers)
+			r.meta = parse.ParseHeadMeta(string(body))
+			r.jsonldTypes = extract.JSONLDTypes(body)
+		}
 	}
 	if runEmbed && it.Primary {
 		t1 := time.Now()
@@ -279,6 +296,9 @@ func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
 		if r.primary && !agg.hasPrimary {
 			agg.hasPrimary = true
 			agg.primaryText = r.text
+			agg.security = r.security
+			agg.meta = r.meta
+			agg.jsonldTypes = r.jsonldTypes
 		}
 	}
 	return agg
@@ -372,6 +392,8 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 	var identRows []output.IdentifierRow
 	var metaRows []output.MetadataRow
 	var contacts []output.ContactRow
+	var securityRows []output.SecurityRow
+	var pageMetaRows []output.PageMetaRow
 
 	if runEmbed {
 		var idx []int
@@ -475,9 +497,27 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 			for _, s := range a.profile.SameAs {
 				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "social", s, "jsonld"))
 			}
+			// security posture + head signals: the primary page's captured headers/meta (empty if the
+			// homepage itself failed to fetch — then this domain has no security/meta row).
+			if len(a.security) > 0 {
+				securityRows = append(securityRows, output.SecurityRow{
+					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, SourceURL: a.primaryURL,
+					Headers: a.security, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+				})
+			}
+			if a.meta.Title != "" || len(a.meta.Meta) > 0 || a.meta.Canonical != "" || len(a.meta.Hreflang) > 0 || len(a.jsonldTypes) > 0 {
+				pageMetaRows = append(pageMetaRows, output.PageMetaRow{
+					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, SourceURL: a.primaryURL,
+					Title: a.meta.Title, Meta: a.meta.Meta, Canonical: a.meta.Canonical,
+					Hreflang: a.meta.Hreflang, JSONLDTypes: a.jsonldTypes, Charset: a.meta.Charset,
+					SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+				})
+			}
 		}
 	}
-	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals, Tech: techRows, Identifiers: identRows, Metadata: metaRows, Contacts: contacts}, nil
+	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals, Tech: techRows,
+		Identifiers: identRows, Metadata: metaRows, Contacts: contacts,
+		Security: securityRows, PageMeta: pageMetaRows}, nil
 }
 
 // streamItem is one fetched primary page handed from the fetch stage to an embed worker.

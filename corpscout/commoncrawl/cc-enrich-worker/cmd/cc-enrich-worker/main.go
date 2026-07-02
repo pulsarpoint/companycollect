@@ -399,6 +399,8 @@ func run(mode string, o opts) {
 	var idents []output.IdentifierRow
 	var metadata []output.MetadataRow
 	var contacts []output.ContactRow
+	var securityRows []output.SecurityRow
+	var pageMetaRows []output.PageMetaRow
 	var embeddings []output.EmbeddingRow
 
 	// Industry: one continuous fetch→embed stream over the whole shard, so the GPU is fed
@@ -451,6 +453,8 @@ func run(mode string, o opts) {
 			idents = append(idents, res.Identifiers...)
 			metadata = append(metadata, res.Metadata...)
 			contacts = append(contacts, res.Contacts...)
+			securityRows = append(securityRows, res.Security...)
+			pageMetaRows = append(pageMetaRows, res.PageMeta...)
 			embeddings = append(embeddings, res.Embeddings...)
 			el := time.Since(start).Seconds()
 			log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d contacts (%.1f pages/s)",
@@ -480,6 +484,8 @@ func run(mode string, o opts) {
 			write("contacts.parquet", func(p string) error { return output.WriteContacts(p, contacts) })
 			write("tech.parquet", func(p string) error { return output.WriteTech(p, techRows) })
 			write("identifiers.parquet", func(p string) error { return output.WriteIdentifiers(p, idents) })
+			write("security.parquet", func(p string) error { return output.WriteSecurity(p, securityRows) })
+			write("page_meta.parquet", func(p string) error { return output.WritePageMeta(p, pageMetaRows) })
 		}
 	}
 	// Embeddings are the expensive GPU artifact — kept large, never loaded into ClickHouse. For embed

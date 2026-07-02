@@ -143,6 +143,33 @@ type EmbeddingRow struct {
 	ResolvedAt   time.Time `parquet:"resolved_at,timestamp"`
 }
 
+// SecurityRow mirrors corpscout.commoncrawl_domain_security (migration 078): the full response-header
+// map of a domain's primary page, captured verbatim. One row / domain (tech pass).
+type SecurityRow struct {
+	CrawlID     string            `parquet:"crawl_id" ch:"crawl_id"`
+	RootDomain  string            `parquet:"root_domain" ch:"root_domain"`
+	SourceURL   string            `parquet:"source_url" ch:"source_url"`
+	Headers     map[string]string `parquet:"headers" ch:"headers"`
+	SourceRunID string            `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt  time.Time         `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+}
+
+// PageMetaRow mirrors corpscout.commoncrawl_domain_page_meta (migration 079): head-level content signals
+// of a domain's primary page. One row / domain (tech pass).
+type PageMetaRow struct {
+	CrawlID     string            `parquet:"crawl_id" ch:"crawl_id"`
+	RootDomain  string            `parquet:"root_domain" ch:"root_domain"`
+	SourceURL   string            `parquet:"source_url" ch:"source_url"`
+	Title       string            `parquet:"title" ch:"title"`
+	Meta        map[string]string `parquet:"meta" ch:"meta"`
+	Canonical   string            `parquet:"canonical" ch:"canonical"`
+	Hreflang    []string          `parquet:"hreflang" ch:"hreflang"`
+	JSONLDTypes []string          `parquet:"jsonld_types" ch:"jsonld_types"`
+	Charset     string            `parquet:"charset" ch:"charset"`
+	SourceRunID string            `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt  time.Time         `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+}
+
 func WriteDomains(path string, rows []DomainRow) error         { return parquet.WriteFile(path, rows) }
 func WriteIndustries(path string, rows []IndustryRow) error    { return parquet.WriteFile(path, rows) }
 func WritePageSignals(path string, rows []PageSignalRow) error { return parquet.WriteFile(path, rows) }
@@ -151,6 +178,8 @@ func WriteMetadata(path string, rows []MetadataRow) error      { return parquet.
 func WriteTech(path string, rows []TechRow) error              { return parquet.WriteFile(path, rows) }
 func WriteIdentifiers(path string, rows []IdentifierRow) error { return parquet.WriteFile(path, rows) }
 func WriteEmbeddings(path string, rows []EmbeddingRow) error   { return parquet.WriteFile(path, rows) }
+func WriteSecurity(path string, rows []SecurityRow) error      { return parquet.WriteFile(path, rows) }
+func WritePageMeta(path string, rows []PageMetaRow) error      { return parquet.WriteFile(path, rows) }
 
 // UploadToS3 puts a local file at the given bucket/key.
 func UploadToS3(ctx context.Context, client *s3.Client, bucket, key, path string) error {

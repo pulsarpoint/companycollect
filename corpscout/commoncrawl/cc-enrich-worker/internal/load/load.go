@@ -26,10 +26,12 @@ var Tables = map[string]string{
 	"contacts":     "commoncrawl_domain_contact_info",
 	"tech":         "commoncrawl_technologies",
 	"identifiers":  "commoncrawl_domain_identifiers",
+	"security":     "commoncrawl_domain_security",
+	"page_meta":    "commoncrawl_domain_page_meta",
 }
 
 // Kinds is the load order (domains is the parent master, written by every pass).
-var Kinds = []string{"domains", "industries", "page_signals", "metadata", "contacts", "tech", "identifiers"}
+var Kinds = []string{"domains", "industries", "page_signals", "metadata", "contacts", "tech", "identifiers", "security", "page_meta"}
 
 // Result is one loaded file.
 type Result struct {
@@ -126,6 +128,20 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 		return table, n, err
 	case "identifiers":
 		rows, err := parquet.ReadFile[output.IdentifierRow](path)
+		if err != nil {
+			return table, 0, err
+		}
+		n, err := Insert(ctx, conn, table, rows)
+		return table, n, err
+	case "security":
+		rows, err := parquet.ReadFile[output.SecurityRow](path)
+		if err != nil {
+			return table, 0, err
+		}
+		n, err := Insert(ctx, conn, table, rows)
+		return table, n, err
+	case "page_meta":
+		rows, err := parquet.ReadFile[output.PageMetaRow](path)
 		if err != nil {
 			return table, 0, err
 		}
