@@ -87,3 +87,45 @@ their command.
   `embeddings.parquet` **or** `embeddings_fp16.parquet` (§Limits).
 - **`load` is decoupled** from produce so you can inspect Parquet before inserting and re-load without
   re-fetching (§Processing).
+
+## Flags
+
+Parsed per-subcommand via `flag.NewFlagSet(..., flag.ExitOnError)` in `parse()` / `runLoad()`
+(`cmd/cc-enrich-worker/main.go`). `-h` under any command prints its own set.
+
+### Common to `industry`, `embed`, `tech`, `both`
+
+| Flag | Type | Default | Meaning |
+|---|---|---|---|
+| `--worklist` | string | **required** | worklist Parquet shard (one row per page to fetch) |
+| `--crawl-id` | string | **required** | e.g. `CC-MAIN-2026-25`; stamped on every output row |
+| `--out` | string | `../data/crawl/<worklist-stem>/` | output **directory** (fixed per-mode filenames); an explicit dir must be **empty** (except `embed`, which reuses it) |
+| `--concurrency` | int | `32` | fetch/parse goroutines; push toward ~128 to hide off-AWS fetch RTT |
+| `--chunk` | int | `1024` | domains per fetch+process chunk (lower = earlier GPU traffic) |
+| `--s3-anonymous` | bool | `false` | fetch via the anonymous HTTPS CDN instead of signed S3 — **rate-limited**, no upload |
+| `--s3-bucket` | string | (unset) | if set, upload outputs to this bucket (in-AWS path; signed S3 only) |
+| `--s3-prefix` | string | (unset) | key prefix for uploaded outputs |
+
+### `industry`, `embed`, `both` only
+
+| Flag | Type | Default | Meaning |
+|---|---|---|---|
+| `--embed-batch` | int | `16` | texts per embed request — keep small; big batches overflow the engine's token budget |
+| `--embed-concurrency` | int | `96` | embed requests in flight (saturate the GPU) |
+
+### `tech`, `both` only
+
+| Flag | Type | Default | Meaning |
+|---|---|---|---|
+| `--tech-engine` | string | `fast` | `fast` = Aho-Corasick-gated Wappalyzer (a strict superset of the library's output, ~4.6× faster) \| `wappalyzer` = unmodified `wappalyzergo` (every fingerprint; parity baseline, slower) |
+| `--tech-max-bytes` | int | `131072` | cap body bytes fed to the tech matcher (`0` = full body; full-body regex ≈ 1.2 s/page) |
+
+### `load` only
+
+| Flag | Type | Default | Meaning |
+|---|---|---|---|
+| `--dir` | string | — | a shard output directory; loads every `{domains,industries,page_signals,metadata,contacts,tech,identifiers}.parquet` present |
+| `--file` | string | — | a single Parquet file to load |
+| `--kind` | string | (inferred) | override the kind for `--file`: `domains\|industries\|page_signals\|metadata\|contacts\|tech\|identifiers` |
+
+Pass **exactly one** of `--dir` / `--file`.
