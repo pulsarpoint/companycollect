@@ -147,7 +147,7 @@ Read via `envOr()` / `envInt()` in `main.go`, plus the fetch/embed clients. Load
 | `CLICKHOUSE_PASSWORD` | (empty) | password |
 | `AWS_REGION` | `us-east-1` | S3 region (the CommonCrawl bucket is permanently `us-east-1`) |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | (none) | signed-S3 credentials; validated upfront (5 s) in `NewS3Getter`. Off-AWS you must export these |
-| `CC_BASE_URL` | (empty → `data.commoncrawl.org/`) | anonymous CDN base for `--s3-anonymous` |
+| `CC_BASE_URL` | (empty → `https://data.commoncrawl.org/`) | anonymous CDN base for `--s3-anonymous` |
 
 **Connection gating:** `embed` uses **no** ClickHouse (logs `embed-only mode: no NACE reference, no
 ClickHouse, no load`). `industry`/`both` connect to **read** the reference + run the startup model-match
