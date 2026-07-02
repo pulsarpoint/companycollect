@@ -87,6 +87,9 @@ EXPECTED_MIGRATIONS = (
     "000073_corpscout_commoncrawl_domain_graph_signals",
     "000074_corpscout_no_companies_date32",
     "000075_corpscout_no_companies_last_accounts_year",
+    "000078_corpscout_commoncrawl_domain_security",
+    "000079_corpscout_commoncrawl_domain_page_meta",
+    "000080_corpscout_commoncrawl_tracker_owners",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
