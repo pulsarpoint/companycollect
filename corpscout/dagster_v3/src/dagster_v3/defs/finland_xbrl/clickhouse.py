@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
+import json
 from typing import Any
 import uuid
 
@@ -10,12 +11,42 @@ from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.finland_xbrl.resources import XbrlParquetStorageResource
 
 CLICKHOUSE_DATABASE = "corpscout"
+FINANCIAL_STATEMENTS_CLICKHOUSE_TABLE = "fi_financial_statements"
 FINANCIAL_METRICS_CLICKHOUSE_TABLE = "fi_financial_metrics"
 SOURCE_SYSTEM = "finland_prh_xbrl"
 EUR_CURRENCY = "EUR"
 DECIMAL_SCALE = Decimal("0.000001")
 RATE_DECIMAL_SCALE = Decimal("0.000000000001")
 EMPTY_SHA256 = "0" * 64
+
+FINANCIAL_STATEMENTS_CLICKHOUSE_COLUMNS = (
+    "statement_key",
+    "business_id",
+    "financial_date",
+    "registration_date",
+    "source_url",
+    "xml_object_key",
+    "xml_sha256",
+    "xml_size_bytes",
+    "root_name",
+    "schema_refs",
+    "taxonomy_entrypoint",
+    "reported_business_id",
+    "reported_company_name",
+    "period_start",
+    "period_end",
+    "contexts_count",
+    "units_count",
+    "facts_count",
+    "validation_warnings",
+    "parser_version",
+    "parsed_at",
+    "source_system",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "resolved_at",
+)
 
 FINANCIAL_METRICS_CLICKHOUSE_COLUMNS = (
     "statement_key",
@@ -139,6 +170,122 @@ MONEY_METRIC_TO_CLICKHOUSE_COLUMN = {
     "personnel_expenses": "personnel_expenses_amount_original",
     "wages_and_salaries": "wages_and_salaries_amount_original",
 }
+
+
+def export_finland_xbrl_financial_statements_clickhouse(
+    *,
+    statement_documents: list[dict[str, Any]],
+    clickhouse: Any,
+    log: Callable[..., object] | None = None,
+) -> int:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=CLICKHOUSE_DATABASE,
+        tables=(FINANCIAL_STATEMENTS_CLICKHOUSE_TABLE,),
+    )
+    rows = [_clickhouse_financial_statement_row(row) for row in statement_documents]
+
+    if log is not None:
+        log(
+            "Exporting Finland XBRL financial statements to ClickHouse: table=%s.%s rows=%d",
+            CLICKHOUSE_DATABASE,
+            FINANCIAL_STATEMENTS_CLICKHOUSE_TABLE,
+            len(rows),
+        )
+
+    with clickhouse.get_connection() as client:
+        _replace_clickhouse_table_with_rows(
+            clickhouse_client=client,
+            rows=rows,
+            database=CLICKHOUSE_DATABASE,
+            table=FINANCIAL_STATEMENTS_CLICKHOUSE_TABLE,
+            columns=FINANCIAL_STATEMENTS_CLICKHOUSE_COLUMNS,
+        )
+
+    if log is not None:
+        log(
+            "Finished Finland XBRL financial statements ClickHouse export: rows=%d",
+            len(rows),
+        )
+    return len(rows)
+
+
+def _clickhouse_financial_statement_row(row: dict[str, Any]) -> dict[str, Any]:
+    parsed_at = _datetime_value(row.get("parsed_at")) or datetime.now(UTC)
+    xml_sha256 = _sha256_value(row.get("xml_sha256"))
+    statement_key = str(row.get("statement_key") or "")
+    return {
+        "statement_key": statement_key,
+        "business_id": str(row.get("business_id") or ""),
+        "financial_date": _date_value(row.get("financial_date")),
+        "registration_date": _date_value(row.get("registration_date")),
+        "source_url": str(row.get("source_url") or ""),
+        "xml_object_key": str(row.get("xml_object_key") or ""),
+        "xml_sha256": xml_sha256,
+        "xml_size_bytes": _uint_value(row.get("xml_size_bytes")) or 0,
+        "root_name": str(row.get("root_name") or ""),
+        "schema_refs": _json_string_list(row.get("schema_refs")),
+        "taxonomy_entrypoint": str(row.get("taxonomy_entrypoint") or ""),
+        "reported_business_id": _optional_string(row.get("reported_business_id")),
+        "reported_company_name": _optional_string(row.get("reported_company_name")),
+        "period_start": _date_value(row.get("reported_period_start")),
+        "period_end": _date_value(row.get("reported_period_end")),
+        "contexts_count": _uint_value(row.get("contexts_count")) or 0,
+        "units_count": _uint_value(row.get("units_count")) or 0,
+        "facts_count": _uint_value(row.get("facts_count")) or 0,
+        "validation_warnings": str(row.get("validation_warnings") or "[]"),
+        "parser_version": str(row.get("parser_version") or ""),
+        "parsed_at": parsed_at,
+        "source_system": SOURCE_SYSTEM,
+        "source_run_id": str(row.get("source_run_id") or ""),
+        "source_record_id": statement_key,
+        "source_payload_hash": xml_sha256,
+        "resolved_at": parsed_at,
+    }
+
+
+def _replace_clickhouse_table_with_rows(
+    *,
+    clickhouse_client: Any,
+    rows: list[dict[str, Any]],
+    database: str,
+    table: str,
+    columns: tuple[str, ...],
+) -> None:
+    stage_table = f"{table}__stage_{uuid.uuid4().hex}"
+    qualified_table = f"{database}.{table}"
+    qualified_stage_table = f"{database}.{stage_table}"
+    primary_error: Exception | None = None
+    try:
+        clickhouse_client.execute(
+            f"CREATE TABLE {qualified_stage_table} AS {qualified_table}"
+        )
+        if rows:
+            clickhouse_client.execute(
+                _insert_sql(qualified_stage_table, columns),
+                [tuple(row[column] for column in columns) for row in rows],
+            )
+        clickhouse_client.execute(
+            f"EXCHANGE TABLES {qualified_stage_table} AND {qualified_table}"
+        )
+    except Exception as exc:
+        primary_error = exc
+        raise
+    finally:
+        try:
+            clickhouse_client.execute(f"DROP TABLE IF EXISTS {qualified_stage_table}")
+        except Exception:
+            if primary_error is None:
+                raise
+
+
+def _insert_sql(qualified_table: str, columns: tuple[str, ...]) -> str:
+    column_lines = "\n".join(f"            {column}," for column in columns).rstrip(",")
+    return f"""
+        INSERT INTO {qualified_table} (
+{column_lines}
+        ) VALUES
+    """
 
 
 def export_finland_xbrl_financial_metrics_clickhouse(
@@ -428,3 +575,20 @@ def _sha256_value(value: object) -> str:
     if len(text) == 64:
         return text
     return EMPTY_SHA256
+
+
+def _optional_string(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _json_string_list(value: object) -> list[str]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    parsed = json.loads(str(value))
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed]

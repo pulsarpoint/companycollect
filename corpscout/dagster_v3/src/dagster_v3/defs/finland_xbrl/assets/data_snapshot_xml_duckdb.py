@@ -1,6 +1,7 @@
 import json
 import shutil
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,10 @@ FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH = Path(
 FINLAND_XBRL_XML_SNAPSHOT_PARSE_TEMP_PATH = Path(
     "data/finland_xbrl/tmp/xml_snapshot_parse"
 )
+FINLAND_XBRL_XML_DAILY_PARSE_DUCKDB_PATH = Path(
+    "data/finland_xbrl/duckdb/xml_daily_parse"
+)
+FINLAND_XBRL_XML_DAILY_PARSE_TEMP_PATH = Path("data/finland_xbrl/tmp/xml_daily_parse")
 REQUIRED_XML_SNAPSHOT_MANIFEST_FIELDS = (
     "business_id",
     "financial_date",
@@ -35,6 +40,21 @@ REQUIRED_XML_SNAPSHOT_MANIFEST_FIELDS = (
     "source_url",
     "xml_object_key",
 )
+
+
+@dataclass(frozen=True)
+class ParsedXmlDuckdbRows:
+    statement_documents: list[dict[str, Any]]
+    facts: list[dict[str, Any]]
+    duckdb_path_count: int
+
+    @property
+    def statement_documents_count(self) -> int:
+        return len(self.statement_documents)
+
+    @property
+    def facts_count(self) -> int:
+        return len(self.facts)
 
 
 def xml_snapshot_parse_duckdb_path(partition_key: str) -> Path:
@@ -47,6 +67,71 @@ def xml_snapshot_parse_duckdb_path(partition_key: str) -> Path:
 
 def xml_snapshot_parse_temp_dir(partition_key: str) -> Path:
     return FINLAND_XBRL_XML_SNAPSHOT_PARSE_TEMP_PATH / f"partition_key={partition_key}"
+
+
+def xml_daily_parse_duckdb_path(partition_key: str) -> Path:
+    return (
+        FINLAND_XBRL_XML_DAILY_PARSE_DUCKDB_PATH
+        / f"partition_key={partition_key}"
+        / "data.duckdb"
+    )
+
+
+def xml_daily_parse_temp_dir(partition_key: str) -> Path:
+    return FINLAND_XBRL_XML_DAILY_PARSE_TEMP_PATH / f"partition_key={partition_key}"
+
+
+def list_xml_parse_duckdb_paths(
+    *,
+    snapshot_base_path: Path = FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH,
+    daily_base_path: Path = FINLAND_XBRL_XML_DAILY_PARSE_DUCKDB_PATH,
+) -> list[Path]:
+    return [
+        *sorted(snapshot_base_path.glob("partition_key=*/data.duckdb")),
+        *sorted(daily_base_path.glob("partition_key=*/data.duckdb")),
+    ]
+
+
+def read_xml_parse_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRows:
+    statement_documents: list[dict[str, Any]] = []
+    facts: list[dict[str, Any]] = []
+    for path in duckdb_paths:
+        if not path.exists():
+            raise FileNotFoundError(f"Finland XBRL parsed DuckDB is missing: {path}")
+        statement_documents.extend(
+            _read_duckdb_table_rows(
+                path=path,
+                table_name="statement_documents",
+                columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
+            )
+        )
+        facts.extend(
+            _read_duckdb_table_rows(
+                path=path,
+                table_name="facts",
+                columns=tables.FACTS_COLUMNS,
+            )
+        )
+    return ParsedXmlDuckdbRows(
+        statement_documents=statement_documents,
+        facts=facts,
+        duckdb_path_count=len(duckdb_paths),
+    )
+
+
+def _read_duckdb_table_rows(
+    *,
+    path: Path,
+    table_name: str,
+    columns: list[str],
+) -> list[dict[str, Any]]:
+    column_sql = ", ".join(f'"{column}"' for column in columns)
+    with duckdb.connect(str(path), read_only=True) as connection:
+        rows = connection.execute(f"select {column_sql} from {table_name}").fetchall()
+    return [
+        {column: value for column, value in zip(columns, row, strict=True)}
+        for row in rows
+    ]
 
 
 def read_xml_snapshot_manifest_rows(

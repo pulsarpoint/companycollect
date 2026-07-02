@@ -42,9 +42,10 @@ finland_xbrl_incremental_job = dg.define_asset_job(
 finland_xbrl_publish_job = dg.define_asset_job(
     "finland_xbrl_publish_job",
     selection=dg.AssetSelection.assets(
-        "fi_prh_xbrl_financial_metrics",
-        "fi_prh_xbrl_financial_metrics_usd",
-        "finland_xbrl_financial_metrics_clickhouse",
+        "fi_financial_statements_ch",
+        "fi_financial_metrics_parquet",
+        "fi_financial_metrics_usd_parquet",
+        "fi_financial_metrics_ch",
     ),
 )
 finland_xbrl_incremental_schedule = dg.build_schedule_from_partitioned_job(

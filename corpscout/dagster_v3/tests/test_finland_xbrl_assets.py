@@ -9,6 +9,7 @@ from typing import Any
 import dagster as dg
 from dagster import AssetKey
 import duckdb
+import polars as pl
 import pytest
 from pydantic import ValidationError
 
@@ -24,6 +25,7 @@ from dagster_v3.defs.finland_xbrl.assets import (
     FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START,
     FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH,
     FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH,
+    FINLAND_XBRL_XML_DAILY_PARSE_DUCKDB_PATH,
     FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH,
     FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE,
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
@@ -44,8 +46,11 @@ from dagster_v3.defs.finland_xbrl.assets import (
     materialize_data_daily_duckdb,
     materialize_data_snapshot_duckdb,
     read_xml_snapshot_manifest_rows,
+    read_xml_parse_duckdb_rows,
     write_financial_data_daily_csv,
     write_financial_data_snapshot_csv,
+    xml_daily_parse_duckdb_path,
+    xml_daily_parse_temp_dir,
     xml_snapshot_document_key,
     xml_snapshot_manifest_key,
     xml_snapshot_parse_duckdb_path,
@@ -61,11 +66,15 @@ from dagster_v3.defs.finland_xbrl.resources import (
 from dagster_v3.defs.finland_xbrl.parser import ParsedStatement
 from dagster_v3.defs.finland_xbrl.tables import (
     FACTS_TABLE,
-    FINANCIAL_METRICS_TABLE,
+    FACTS_POLARS_SCHEMA,
     STATEMENT_DOCUMENTS_TABLE,
+    STATEMENT_DOCUMENTS_POLARS_SCHEMA,
     XML_DOCUMENTS_TABLE,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.finland_xbrl.clickhouse import (
+    export_finland_xbrl_financial_statements_clickhouse,
+)
 
 FINANCIAL_METRICS_USD_TABLE = "fi_prh_xbrl_financial_metrics_usd"
 
@@ -447,9 +456,10 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_publish_job").asset_layer.executable_asset_keys
     }
     assert publish == {
-        "fi_prh_xbrl_financial_metrics",
-        "fi_prh_xbrl_financial_metrics_usd",
-        "finland_xbrl_financial_metrics_clickhouse",
+        "fi_financial_statements_ch",
+        "fi_financial_metrics_parquet",
+        "fi_financial_metrics_usd_parquet",
+        "fi_financial_metrics_ch",
     }
     assert repo.get_job("finland_xbrl_publish_job").partitions_def is None
 
@@ -1046,6 +1056,9 @@ def test_xml_snapshot_parse_duckdb_path_helpers() -> None:
     assert str(FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH) == (
         "data/finland_xbrl/duckdb/xml_snapshot_parse"
     )
+    assert str(FINLAND_XBRL_XML_DAILY_PARSE_DUCKDB_PATH) == (
+        "data/finland_xbrl/duckdb/xml_daily_parse"
+    )
     assert xml_snapshot_parse_duckdb_path("2023-07-01") == (
         FINLAND_XBRL_XML_SNAPSHOT_PARSE_DUCKDB_PATH
         / "partition_key=2023-07-01"
@@ -1054,6 +1067,15 @@ def test_xml_snapshot_parse_duckdb_path_helpers() -> None:
     assert xml_snapshot_parse_temp_dir("2023-07-01") == (
         Path("data/finland_xbrl/tmp/xml_snapshot_parse")
         / "partition_key=2023-07-01"
+    )
+    assert xml_daily_parse_duckdb_path("2026-06-01") == (
+        FINLAND_XBRL_XML_DAILY_PARSE_DUCKDB_PATH
+        / "partition_key=2026-06-01"
+        / "data.duckdb"
+    )
+    assert xml_daily_parse_temp_dir("2026-06-01") == (
+        Path("data/finland_xbrl/tmp/xml_daily_parse")
+        / "partition_key=2026-06-01"
     )
 
 
@@ -1482,6 +1504,51 @@ def test_data_daily_xml_duckdb_parses_daily_xml_partition(tmp_path: Path) -> Non
     assert result.metadata["registered_date_start"] == "2026-06-01"
     assert result.metadata["registered_date_end"] == "2026-06-01"
     assert result.metadata["documents_parsed_this_run"] == 1
+
+
+def test_read_xml_parse_duckdb_rows_reads_snapshot_and_daily_outputs(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = (
+        tmp_path
+        / "xml_snapshot_parse"
+        / "partition_key=2026-05-01"
+        / "data.duckdb"
+    )
+    daily_path = (
+        tmp_path
+        / "xml_daily_parse"
+        / "partition_key=2026-06-01"
+        / "data.duckdb"
+    )
+    _write_parsed_xml_duckdb_fixture(
+        snapshot_path,
+        statement_key="snapshot-statement",
+        business_id="snapshot-business",
+        financial_date="2025-12-31",
+    )
+    _write_parsed_xml_duckdb_fixture(
+        daily_path,
+        statement_key="daily-statement",
+        business_id="daily-business",
+        financial_date="2026-03-31",
+    )
+
+    rows = read_xml_parse_duckdb_rows(
+        duckdb_paths=[snapshot_path, daily_path],
+    )
+
+    assert [row["statement_key"] for row in rows.statement_documents] == [
+        "snapshot-statement",
+        "daily-statement",
+    ]
+    assert [row["business_id"] for row in rows.facts] == [
+        "snapshot-business",
+        "daily-business",
+    ]
+    assert rows.duckdb_path_count == 2
+    assert rows.statement_documents_count == 2
+    assert rows.facts_count == 2
 
 
 def test_xml_snapshot_reuses_existing_xml_without_success_marker() -> None:
@@ -2048,18 +2115,21 @@ def test_xbrl_asset_graph_keeps_quality_and_concept_profile_as_metadata_not_asse
 def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parse_parquet_assets() -> None:
     asset_graph = load_project_defs().resolve_asset_graph()
 
-    parent_keys = asset_graph.get(dg.AssetKey(FINANCIAL_METRICS_TABLE)).parent_keys
-    assert parent_keys == {
-        dg.AssetKey("finland_xbrl_parse_backfill"),
-        dg.AssetKey("finland_xbrl_parse_incremental"),
+    parsed_duckdb_assets = {
+        dg.AssetKey("data_snapshot_xml_duckdb"),
+        dg.AssetKey("data_daily_xml_duckdb"),
     }
-    assert asset_graph.get(dg.AssetKey(FINANCIAL_METRICS_USD_TABLE)).parent_keys == {
-        dg.AssetKey(FINANCIAL_METRICS_TABLE),
+    assert asset_graph.get(dg.AssetKey("fi_financial_statements_ch")).parent_keys == {
+        *parsed_duckdb_assets,
     }
-    assert asset_graph.get(
-        dg.AssetKey("finland_xbrl_financial_metrics_clickhouse")
-    ).parent_keys == {
-        dg.AssetKey(FINANCIAL_METRICS_USD_TABLE),
+    assert asset_graph.get(dg.AssetKey("fi_financial_metrics_parquet")).parent_keys == {
+        *parsed_duckdb_assets,
+    }
+    assert asset_graph.get(dg.AssetKey("fi_financial_metrics_usd_parquet")).parent_keys == {
+        dg.AssetKey("fi_financial_metrics_parquet"),
+    }
+    assert asset_graph.get(dg.AssetKey("fi_financial_metrics_ch")).parent_keys == {
+        dg.AssetKey("fi_financial_metrics_usd_parquet"),
     }
 
 
@@ -2116,6 +2186,49 @@ def test_finland_xbrl_clickhouse_export_casts_employees_to_nullable_uint(
     assert second_row["employees"] is None
     assert first_row["revenue_amount_usd"] == Decimal("110.000000")
     assert first_row["fx_rate_to_usd"] == Decimal("1.100000000000")
+    assert any(statement.startswith("EXCHANGE TABLES") for statement in client.statements)
+
+
+def test_export_finland_xbrl_financial_statements_clickhouse_replaces_table() -> None:
+    client = FakeClickHouseClient(tables={"fi_financial_statements"})
+
+    row_count = export_finland_xbrl_financial_statements_clickhouse(
+        statement_documents=[
+            {
+                **_statement_document_row("statement-1"),
+                "xml_sha256": "a" * 64,
+                "source_run_id": "run-1",
+            }
+        ],
+        clickhouse=FakeClickHouseResource(client),
+    )
+
+    assert row_count == 1
+    insert_calls = [
+        (sql, params)
+        for sql, params in client.execute_calls
+        if sql.strip().startswith("INSERT INTO corpscout.fi_financial_statements__stage_")
+    ]
+    assert len(insert_calls) == 1
+    insert_sql, insert_rows = insert_calls[0]
+    assert isinstance(insert_rows, list)
+    assert len(insert_rows) == 1
+    column_block = insert_sql.split("(", 1)[1].rsplit(")", 1)[0]
+    insert_columns = [
+        line.strip().rstrip(",")
+        for line in column_block.splitlines()
+        if line.strip()
+    ]
+    row = dict(zip(insert_columns, insert_rows[0], strict=True))
+    assert row["statement_key"] == "statement-1"
+    assert row["business_id"] == "active-web"
+    assert row["financial_date"] == date(2026, 5, 31)
+    assert row["registration_date"] == date(2026, 6, 1)
+    assert row["schema_refs"] == []
+    assert row["xml_sha256"] == "a" * 64
+    assert row["source_system"] == "finland_prh_xbrl"
+    assert row["source_record_id"] == "statement-1"
+    assert row["source_payload_hash"] == "a" * 64
     assert any(statement.startswith("EXCHANGE TABLES") for statement in client.statements)
 
 
@@ -2442,6 +2555,39 @@ def _write_xml_snapshot_manifest_fixture(
     s3_client.objects[("source-finland-prh-xbrl", xml_snapshot_manifest_key(start, end))] = (
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows).encode("utf-8")
     )
+
+
+def _write_parsed_xml_duckdb_fixture(
+    path: Path,
+    *,
+    statement_key: str,
+    business_id: str,
+    financial_date: str,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    statement = {
+        **_statement_document_row(statement_key),
+        "business_id": business_id,
+        "financial_date": financial_date,
+    }
+    fact = {
+        **_fact_row(statement_key, fact_ordinal=1),
+        "business_id": business_id,
+        "financial_date": financial_date,
+    }
+    with duckdb.connect(str(path)) as connection:
+        connection.register(
+            "statement_rows",
+            pl.DataFrame([statement], schema=STATEMENT_DOCUMENTS_POLARS_SCHEMA),
+        )
+        connection.register(
+            "fact_rows",
+            pl.DataFrame([fact], schema=FACTS_POLARS_SCHEMA),
+        )
+        connection.execute(
+            "create or replace table statement_documents as select * from statement_rows"
+        )
+        connection.execute("create or replace table facts as select * from fact_rows")
 
 
 def _statement_document_row(statement_key: str) -> dict:

@@ -109,7 +109,13 @@ registration-date partition, downloads or reuses the corresponding XML files, an
 writes the same `financial_data/xml_snapshot/registeredDateStart=<date>/registeredDateEnd=<date>/`
 S3 layout as historical XML partitions. `data_daily_xml_duckdb` then parses that
 daily XML folder into a partition DuckDB using the same parser and table
-contracts as `data_snapshot_xml_duckdb`.
+contracts as `data_snapshot_xml_duckdb`, under its own daily parse path:
+
+```text
+data/finland_xbrl/duckdb/xml_daily_parse/
+  partition_key=<YYYY-MM-DD>/
+    data.duckdb
+```
 
 Historical XML snapshot asset:
 
@@ -162,8 +168,8 @@ statement_documents
 facts
 ```
 
-Temporary parquet files are written while parsing and removed after the DuckDB
-tables are created.
+Both tables use the parser contracts from `tables.py`. Temporary parquet files
+are written while parsing and removed after the DuckDB tables are created.
 
 Existing partitioned flow:
 
@@ -281,9 +287,23 @@ Publish job:
 finland_xbrl_publish_job
 ```
 
-Builds metrics from all parsed backfill + incremental parquet files, performs EUR
-to USD conversion through the shared exchange-rate client, and replaces
-`corpscout.fi_financial_metrics` in ClickHouse.
+Publishes from all parsed historical and daily XML DuckDB partitions:
+
+```text
+data_snapshot_xml_duckdb
+data_daily_xml_duckdb
+-> fi_financial_statements_ch
+-> fi_financial_metrics_parquet
+-> fi_financial_metrics_usd_parquet
+-> fi_financial_metrics_ch
+```
+
+`fi_financial_statements_ch` replaces `corpscout.fi_financial_statements` from
+the parsed `statement_documents` tables. `fi_financial_metrics_parquet` joins
+parsed statements to parsed facts and writes original-currency metrics parquet.
+`fi_financial_metrics_usd_parquet` performs EUR to USD conversion through the
+shared exchange-rate client. `fi_financial_metrics_ch` replaces
+`corpscout.fi_financial_metrics` from that USD parquet.
 
 Schedule:
 
@@ -320,25 +340,25 @@ data/finland_xbrl/parquet/
 
 ## Parser And Metrics
 
-`finland_xbrl_parse_*` reads XML bytes from S3 and parses them with
-`parse_statement_xml` in `parser.py`. The parser emits:
+`data_snapshot_xml_duckdb` and `data_daily_xml_duckdb` read XML bytes from S3 and
+parse them with `parse_statement_xml` in `parser.py`. The parser emits:
 
 ```text
-fi_prh_xbrl_statement_documents
-fi_prh_xbrl_facts
+statement_documents
+facts
 ```
 
-`fi_prh_xbrl_financial_metrics` joins parsed statement rows to numeric,
+`fi_financial_metrics_parquet` joins parsed statement rows to numeric,
 non-comparative facts and maps XBRL concepts through
 `metric_mapping.xbrl_metric_mapping_rows()`. The mapping lives in Python code, not
 in a CSV file.
 
-`fi_prh_xbrl_financial_metrics_usd` uses EUR as the original currency and converts
+`fi_financial_metrics_usd_parquet` uses EUR as the original currency and converts
 money columns to USD using the shared `exchange_rates` client. Missing rates raise
 and fail the asset.
 
-`finland_xbrl_financial_metrics_clickhouse` replaces
-`corpscout.fi_financial_metrics` from the USD parquet.
+`fi_financial_metrics_ch` replaces `corpscout.fi_financial_metrics` from the USD
+parquet.
 
 ## Operational Notes
 
