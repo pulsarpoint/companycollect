@@ -11,6 +11,7 @@ require (
 	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745
 	github.com/projectdiscovery/wappalyzergo v0.2.86
 	golang.org/x/net v0.56.0
+	golang.org/x/sync v0.21.0
 )
 
 require (

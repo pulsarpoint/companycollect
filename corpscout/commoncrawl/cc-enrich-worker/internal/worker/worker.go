@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/extract"
 	"cc-enrich-worker/internal/fetch"
@@ -159,13 +161,158 @@ func modeFlags(cfg ShardConfig) (mode string, runEmbed, runTech bool) {
 	return mode, mode != "tech", mode != "industry"
 }
 
-// FetchChunk downloads + parses every page of the chunk into per-domain aggregates; tech detection
-// and identifier/profile extraction run inline here. It does NOT embed/classify — call Finalize for
-// that. Splitting the two phases lets the driver overlap one chunk's embed (GPU) with the next
-// chunk's fetch (network), so the GPU isn't idle while pages download.
-func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter, cfg ShardConfig) FetchedChunk {
+// PageConcurrency is the per-domain page pool: how many of ONE domain's pages fetch in parallel
+// inside processDomain. Total in-flight fetches for a tech/both chunk are therefore capped at
+// Concurrency × PageConcurrency (Concurrency = the DOMAIN pool) — size the S3 transport to that
+// product. All fetches hit the single CommonCrawl S3 endpoint (never the companies' own sites),
+// so there is no per-domain politeness concern.
+const PageConcurrency = 8
+
+// chunkStats accumulates per-chunk fetch diagnostics across all domain/page goroutines.
+type chunkStats struct {
+	fetchNs, parseNs, techNs, pages, errs int64 // updated atomically
+	errOnce                               sync.Once
+	errSample                             string
+}
+
+func (s *chunkStats) recordErr(err error) {
+	atomic.AddInt64(&s.errs, 1)
+	s.errOnce.Do(func() { s.errSample = err.Error() })
+}
+
+// pageResult is everything ONE page contributed — produced by processPage with no shared state,
+// merged deterministically by mergePageResults. primary marks the result carrying the embed text
+// (the worklist's Primary page, embed/both modes only).
+type pageResult struct {
+	url, sub string
+	primary  bool
+	text     string // parsed visible text (embed/both, Primary page only)
+	tech     []model.Technology
+	emails   []string
+	ids      []model.Identifier
+	profile  model.CompanyProfile
+}
+
+// processPage fetches ONE page and runs the per-page extraction for the configured mode:
+// tech detection (body capped at TechMaxBytes) + emails + JSON-LD profile + LEI/VAT (tech/both),
+// and the visible-text parse of the Primary page (embed/both). Pure with respect to the chunk —
+// it returns a pageResult and touches no aggregate.
+func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig, it model.WorklistItem, stats *chunkStats) (pageResult, error) {
 	_, runEmbed, runTech := modeFlags(cfg)
 
+	t0 := time.Now()
+	fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	headers, body, err := fetch.FetchRecord(fctx, getter, ccBucket, it.WarcFilename, it.Offset, it.Length)
+	cancel()
+	atomic.AddInt64(&stats.fetchNs, time.Since(t0).Nanoseconds())
+	atomic.AddInt64(&stats.pages, 1)
+	if err != nil {
+		stats.recordErr(err)
+		return pageResult{}, err // a bad/slow page is skipped; the domain still emits if any page survived
+	}
+
+	r := pageResult{url: it.URL, sub: subdomainOf(it.URL, it.RootDomain)}
+	if runTech {
+		t2 := time.Now()
+		techBody := body
+		if limit := cfg.TechMaxBytes; limit > 0 && len(techBody) > limit {
+			techBody = techBody[:limit] // cap regex input; tech signals live in headers + early body
+		}
+		r.tech = tech.DetectTech(headers, techBody)
+		atomic.AddInt64(&stats.techNs, time.Since(t2).Nanoseconds())
+		r.emails = parse.Emails(string(body)) // regex emails over the full page
+		prof, structIDs := extract.ExtractProfile(techBody)
+		r.profile = prof                                        // schema.org Organization JSON-LD
+		r.ids = append(r.ids, structIDs...)                     // ids declared in that JSON-LD
+		r.ids = append(r.ids, extract.ExtractLEIs(techBody)...) // jsonld-regex + text LEIs
+		r.ids = append(r.ids, extract.ExtractVATs(techBody)...) // EU VAT ids (format + checksum)
+	}
+	if runEmbed && it.Primary {
+		t1 := time.Now()
+		text, _, _ := parse.ParseHTML(string(body))
+		atomic.AddInt64(&stats.parseNs, time.Since(t1).Nanoseconds())
+		r.primary = true
+		r.text = text
+	}
+	return r, nil
+}
+
+// mergePageResults folds one domain's per-page results into its aggregate, in WORKLIST order
+// (slice index = the page's rank) — deterministic regardless of the parallel completion order:
+// the primary row = the lowest-rank SURVIVOR, dedup is first-rank-wins, profile = first non-empty.
+// ok[i] marks pages that fetched successfully; a domain with no survivor yields an empty agg
+// (no primaryURL), which Finalize drops.
+func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
+	agg := &domainAgg{rootDomain: dom}
+	techSeen := map[string]bool{}
+	idSeen := map[string]bool{}
+	emailSeen := map[string]bool{}
+	for i, r := range results {
+		if !ok[i] {
+			continue
+		}
+		if agg.primaryURL == "" { // lowest-rank surviving page keys this domain's rows
+			agg.primaryURL = r.url
+			agg.primarySub = r.sub
+		}
+		for _, t := range r.tech {
+			if !techSeen[t.Name] {
+				techSeen[t.Name] = true
+				agg.tech = append(agg.tech, t)
+			}
+		}
+		for _, e := range r.emails {
+			if !emailSeen[e] {
+				emailSeen[e] = true
+				agg.emails = append(agg.emails, e)
+			}
+		}
+		for _, id := range r.ids {
+			if !idSeen[id.Value] {
+				idSeen[id.Value] = true
+				agg.identifiers = append(agg.identifiers, id)
+			}
+		}
+		if agg.profile.Empty() && !r.profile.Empty() {
+			agg.profile = r.profile
+		}
+		if r.primary && !agg.hasPrimary {
+			agg.hasPrimary = true
+			agg.primaryText = r.text
+		}
+	}
+	return agg
+}
+
+// processDomain is ONE unit of work: fetch a domain's pages through the domain's own bounded page
+// pool (PageConcurrency) and merge them into the domain aggregate. A failed page is recorded in
+// stats and skipped — it never fails the domain.
+func processDomain(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig, dom string, pages []model.WorklistItem, stats *chunkStats) *domainAgg {
+	results := make([]pageResult, len(pages))
+	ok := make([]bool, len(pages))
+	var g errgroup.Group
+	g.SetLimit(PageConcurrency)
+	for i, it := range pages {
+		g.Go(func() error {
+			if r, err := processPage(ctx, getter, cfg, it, stats); err == nil {
+				results[i], ok[i] = r, true
+			}
+			return nil // page errors are recorded in stats, never propagated
+		})
+	}
+	_ = g.Wait()
+	return mergePageResults(dom, results, ok)
+}
+
+// FetchChunk downloads + parses every page of the chunk into per-domain aggregates; tech detection
+// and identifier/profile extraction run per page (processPage). It does NOT embed/classify — call
+// Finalize for that. Splitting the two phases lets the driver overlap one chunk's embed (GPU) with
+// the next chunk's fetch (network), so the GPU isn't idle while pages download.
+//
+// Concurrency model: a DOMAIN pool of cfg.Concurrency processDomain units, each fanning its pages
+// into its own PageConcurrency page pool — "parallel domains" is the speed dial, and in-flight
+// fetches are capped at Concurrency × PageConcurrency.
+func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter, cfg ShardConfig) FetchedChunk {
 	byDomain := map[string][]model.WorklistItem{}
 	var order []string
 	for _, it := range items {
@@ -180,100 +327,25 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 	if conc <= 0 {
 		conc = 8
 	}
-	var fetchNs, parseNs, techNs, pageCount, errCount int64 // per-stage timing (diagnostics)
-	var errSample string
-	var errOnce sync.Once
-	sem := make(chan struct{}, conc)
-	var wg sync.WaitGroup
+	stats := &chunkStats{}
+	var g errgroup.Group
+	g.SetLimit(conc)
 	for di, dom := range order {
-		wg.Add(1)
-		go func(di int, dom string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			agg := &domainAgg{rootDomain: dom}
-			techSeen := map[string]bool{}
-			idSeen := map[string]bool{}
-			emailSeen := map[string]bool{}
-			for _, it := range byDomain[dom] {
-				t0 := time.Now()
-				fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				headers, body, err := fetch.FetchRecord(fctx, getter, ccBucket, it.WarcFilename, it.Offset, it.Length)
-				cancel()
-				atomic.AddInt64(&fetchNs, time.Since(t0).Nanoseconds())
-				atomic.AddInt64(&pageCount, 1)
-				if err != nil {
-					atomic.AddInt64(&errCount, 1)
-					errOnce.Do(func() { errSample = err.Error() })
-					continue // skip a bad/slow page; the domain still emits if its primary survived
-				}
-				if agg.primaryURL == "" { // first surviving page keys this domain's rows
-					agg.primaryURL = it.URL
-					agg.primarySub = subdomainOf(it.URL, dom)
-				}
-				if runTech {
-					t2 := time.Now()
-					techBody := body
-					if limit := cfg.TechMaxBytes; limit > 0 && len(techBody) > limit {
-						techBody = techBody[:limit] // cap regex input; tech signals live in headers + early body
-					}
-					detected := tech.DetectTech(headers, techBody)
-					atomic.AddInt64(&techNs, time.Since(t2).Nanoseconds())
-					for _, t := range detected {
-						if !techSeen[t.Name] {
-							techSeen[t.Name] = true
-							agg.tech = append(agg.tech, t)
-						}
-					}
-					for _, e := range parse.Emails(string(body)) { // regex emails over the full page
-						if !emailSeen[e] {
-							emailSeen[e] = true
-							agg.emails = append(agg.emails, e)
-						}
-					}
-					prof, structIDs := extract.ExtractProfile(techBody) // schema.org Organization JSON-LD
-					for _, id := range structIDs {
-						if !idSeen[id.Value] {
-							idSeen[id.Value] = true
-							agg.identifiers = append(agg.identifiers, id)
-						}
-					}
-					for _, id := range extract.ExtractLEIs(techBody) { // jsonld-regex + text LEIs
-						if !idSeen[id.Value] {
-							idSeen[id.Value] = true
-							agg.identifiers = append(agg.identifiers, id)
-						}
-					}
-					for _, id := range extract.ExtractVATs(techBody) { // EU VAT ids (format + checksum)
-						if !idSeen[id.Value] {
-							idSeen[id.Value] = true
-							agg.identifiers = append(agg.identifiers, id)
-						}
-					}
-					if agg.profile.Empty() && !prof.Empty() {
-						agg.profile = prof
-					}
-				}
-				if runEmbed && it.Primary && !agg.hasPrimary {
-					t1 := time.Now()
-					text, _, _ := parse.ParseHTML(string(body))
-					atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
-					agg.hasPrimary = true
-					agg.primaryText = text
-				}
-			}
-			aggs[di] = agg
-		}(di, dom)
+		g.Go(func() error {
+			aggs[di] = processDomain(ctx, getter, cfg, dom, byDomain[dom], stats)
+			return nil
+		})
 	}
-	wg.Wait()
-	if n := atomic.LoadInt64(&pageCount); n > 0 {
-		errs := atomic.LoadInt64(&errCount)
+	_ = g.Wait()
+
+	if n := atomic.LoadInt64(&stats.pages); n > 0 {
+		errs := atomic.LoadInt64(&stats.errs)
 		mode, _, _ := modeFlags(cfg)
-		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  errs=%d/%d  conc=%d mode=%s",
-			float64(fetchNs)/float64(n)/1e6, float64(parseNs)/float64(n)/1e6,
-			float64(techNs)/float64(n)/1e6, errs, n, conc, mode)
+		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  errs=%d/%d  conc=%dx%d mode=%s",
+			float64(stats.fetchNs)/float64(n)/1e6, float64(stats.parseNs)/float64(n)/1e6,
+			float64(stats.techNs)/float64(n)/1e6, errs, n, conc, PageConcurrency, mode)
 		if errs > 0 {
-			log.Printf("  first fetch error: %s", errSample)
+			log.Printf("  first fetch error: %s", stats.errSample)
 		}
 	}
 	return FetchedChunk{aggs: aggs}

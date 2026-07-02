@@ -93,8 +93,8 @@ func parse(mode string, args []string) opts {
 	fs.StringVar(&o.worklist, "worklist", "", "worklist parquet shard (required)")
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
 	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default ../data/crawl/<worklist-name>/, unique per shard; an explicit dir must be empty)")
-	fs.IntVar(&o.concurrency, "concurrency", 32, "fetch/parse concurrency (push to ~128 to hide off-AWS fetch RTT)")
-	fs.IntVar(&o.chunk, "chunk", 1024, "domains per fetch+process chunk")
+	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
+	fs.IntVar(&o.chunk, "chunk", 1024, "worklist rows (pages) per fetch+process chunk (tech/both)")
 	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch via the HTTPS CDN data.commoncrawl.org (off-AWS; rate-limited — signed S3 preferred)")
 	fs.StringVar(&o.s3Bucket, "s3-bucket", "", "if set, upload outputs to this bucket (in-AWS path)")
 	fs.StringVar(&o.s3Prefix, "s3-prefix", "", "key prefix for uploaded outputs")
@@ -361,12 +361,18 @@ func run(mode string, o opts) {
 		}
 	}
 
+	// Transport sizing = true in-flight fetches: industry/embed run one page per concurrency slot;
+	// tech/both fan each domain slot into worker.PageConcurrency parallel page fetches.
+	fetchConc := o.concurrency
+	if mode == "tech" || mode == "both" {
+		fetchConc *= worker.PageConcurrency
+	}
 	var getter fetch.RangeGetter
 	if o.anonymous {
-		getter = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), o.concurrency)
+		getter = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), fetchConc)
 		log.Printf("fetch: anonymous HTTPS CDN (data.commoncrawl.org)")
 	} else {
-		g, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"), o.concurrency)
+		g, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"), fetchConc)
 		if err != nil {
 			log.Fatalf("s3 init: %v", err)
 		}

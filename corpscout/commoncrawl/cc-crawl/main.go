@@ -89,10 +89,11 @@ func main() {
 	maxPagesF := fs.String("max-pages", env("MAX_PAGES", "25"), "tech: max pages per domain (0 = all)")
 	indConcF := fs.String("ind-conc", env("IND_CONC", "64"), "industry: fetch concurrency")
 	embedConcF := fs.String("embed-conc", env("EMBED_CONC", "128"), "industry: embed concurrency")
-	techConcF := fs.String("tech-conc", env("TECH_CONC", "128"), "tech: concurrency")
-	// Worker chunks are PAGES (~13.1 pages/domain -> chunk/13 domains in flight, which caps effective
-	// fetch concurrency). The worker's own default (1024 ~= 78 domains) starves a 128+ semaphore; size
-	// this >= ~25x tech-conc so the semaphore stays full. 16384 ~= 1250 domains.
+	// tech-conc counts DOMAINS in flight; the worker fetches each domain's pages through its own
+	// 8-wide page pool, so total in-flight fetches = tech-conc x 8 (32 -> 256 sockets).
+	techConcF := fs.String("tech-conc", env("TECH_CONC", "32"), "tech: domains in flight (x8 parallel pages each)")
+	// Worker chunks are PAGES (~13.1 pages/domain). Keep chunk >> tech-conc x 13 so the domain pool
+	// stays full; 16384 ~= 1250 domains.
 	techChunkF := fs.String("tech-chunk", env("TECH_CHUNK", "16384"), "tech: pages per fetch+process chunk")
 	_ = fs.Parse(os.Args[1:])
 

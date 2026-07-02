@@ -100,7 +100,7 @@ Parsed per-subcommand via `flag.NewFlagSet(..., flag.ExitOnError)` in `parse()` 
 | `--worklist` | string | **required** | worklist Parquet shard (one row per page to fetch) |
 | `--crawl-id` | string | **required** | e.g. `CC-MAIN-2026-25`; stamped on every output row |
 | `--out` | string | `../data/crawl/<worklist-stem>/` | output **directory** (fixed per-mode filenames); an explicit dir must be **empty** (except `embed`, which reuses it) |
-| `--concurrency` | int | `32` | fetch/parse goroutines; push toward ~128 to hide off-AWS fetch RTT |
+| `--concurrency` | int | `32` | industry/embed: pages in flight. tech/both: **domains** in flight — each domain fetches up to **8 pages in parallel** (`worker.PageConcurrency`), so total fetches = concurrency × 8 |
 | `--chunk` | int | `1024` | domains per fetch+process chunk (lower = earlier GPU traffic) |
 | `--s3-anonymous` | bool | `false` | fetch via the anonymous HTTPS CDN instead of signed S3 — **rate-limited**, no upload |
 | `--s3-bucket` | string | (unset) | if set, upload outputs to this bucket (in-AWS path; signed S3 only) |
@@ -174,11 +174,15 @@ Per-domain result slices are indexed by domain order (no shared writes).
 
 ### tech / both — `FetchChunk` + `Finalize` (chunked pipeline)
 
-Tech wants **coverage**, so it fetches *all* of a domain's pages and aggregates:
-- **FetchChunk** (semaphore = `--concurrency`): per page — detect tech (body capped at `--tech-max-bytes`,
-  deduped by tech name per domain), email regex, schema.org JSON-LD profile, LEI (text+jsonld), VAT
-  (format+checksum). First surviving page becomes the domain's `primaryURL`; the `Primary` page's text is
-  kept for embedding (`both`).
+Tech wants **coverage**, so it fetches *all* of a domain's pages and aggregates. Two-level pools:
+- **FetchChunk** (orchestrator) runs a **domain pool** of `--concurrency` `processDomain` units; each
+  unit fans its pages into its **own 8-wide page pool** (`worker.PageConcurrency`) — so in-flight
+  fetches = `concurrency × 8` and one slow domain no longer serializes 25 RTTs.
+- **processPage** (pure, per page): detect tech (body capped at `--tech-max-bytes`), email regex,
+  schema.org JSON-LD profile, LEI (text+jsonld), VAT (format+checksum) → a `pageResult`.
+- **mergePageResults** (deterministic, worklist order): dedup tech/ids/emails first-rank-wins; the
+  **lowest-rank surviving** page becomes the domain's `primaryURL`; the `Primary` page's text is kept
+  for embedding (`both`).
 - **Finalize** (`runtime.NumCPU()` classify workers, non-overlapping index ranges): for `both`, embed +
   classify the primary texts; fan each domain into tech / identifier / metadata / contact rows.
 - **Chunking** (`--chunk`, default 1024): the next chunk is **prefetched over the network while the

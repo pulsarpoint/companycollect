@@ -97,13 +97,16 @@ fixing *before* burning 300 parts of compute.
   so version-bearing patterns lose to earlier versionless ones and implies-recorded apps never get a
   version; per-domain dedup by name collapses differing versions across pages; `Confidence: 100` hardcoded
   (`worker.go:369`) — the column is meaningless.
-- **I7 — Effective fetch concurrency ≈ `chunk/25`, far below `--concurrency`. ✅ MITIGATED (Level 1).**
-  Parallelism is per-domain, pages sequential; chunk 1024 items ≈ 78 domains → the 256 semaphore never
-  filled (confirmed live: 42% CPU / 58% idle). **Fixed at the flag level**: cc-crawl now passes `--chunk`
-  (`-tech-chunk`, default 16384 ≈ 1250 domains/chunk) so the semaphore saturates. Pages within a domain
-  remain sequential ("Level 2" — an industry-style fetch→process pipeline — only if Level 1 leaves the CPU
-  idle; note primary-page selection is rank-order-dependent, so parallel pages must pick the lowest-rank
-  survivor).
+- **I7 — Effective fetch concurrency ≈ `chunk/25`, far below `--concurrency`. ✅ FIXED (Level 1 + 2).**
+  Level 1: cc-crawl passes `--chunk` (`-tech-chunk`, default 16384). Level 2 (refactor): `FetchChunk` is
+  now a two-level pool — a domain pool (`--concurrency` = DOMAINS in flight) of `processDomain` units,
+  each fanning its pages into its own 8-wide page pool (`worker.PageConcurrency`), built on
+  `errgroup.SetLimit`. `processPage` is pure (one page → `pageResult`), `mergePageResults` folds results
+  deterministically in worklist order (primary = **lowest-rank survivor** — preserves the old sequential
+  semantics under parallel completion). Total fetches = `concurrency × 8`; the S3/CDN transport is sized to
+  that product; `-tech-conc` default lowered to 32 (= 256 sockets). Unit-tested (merge semantics,
+  all-failed domain, parallel-page determinism ×20). This also fixed the ~70-line five-job closure the
+  code-quality section flagged.
 - **I8 — S3 client: default 10 idle conns/host under 128-way concurrency → TLS churn. ✅ FIXED** —
   `NewS3Getter` now takes `concurrency` and sizes the transport like `NewHTTPGetter`
   (`MaxIdleConnsPerHost = 2×conc`, `MaxConnsPerHost = conc`). Still open from I8: no app-level

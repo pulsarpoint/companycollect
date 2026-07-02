@@ -212,9 +212,10 @@ cc-crawl/bin/cc-crawl -mode embed    -parts 0-70  -crawl CC-MAIN-2026-25   # emb
 ```
 Flags (`flag` package; each defaults from the same-named env var). **Required:** `-mode`
 (`industry|tech|embed`), `-parts` (`lo-hi` or a single `N`), `-crawl` (no default). Optional: `-data`,
-`-builder-dir`, `-worker`, `-max-pages`, `-ind-conc`, `-embed-conc`, `-tech-conc`, `-tech-chunk`
-(pages per worker chunk, default 16384 — chunks count *pages*, ~13/domain, and the worker runs one
-goroutine per *domain* within a chunk, so keep it ≫ `-tech-conc` or the fetch semaphore starves).
+`-builder-dir`, `-worker`, `-max-pages`, `-ind-conc`, `-embed-conc`, `-tech-conc` (**domains** in
+flight, default 32 — each domain fetches up to 8 pages in parallel, so total fetches = tech-conc × 8),
+`-tech-chunk` (pages per worker chunk, default 16384 — chunks count *pages*, ~13/domain; keep it ≫
+`tech-conc × 13` so the domain pool stays full).
 
 For each part it: builds the **per-mode** worklist on demand (`shard_<mode>_<part>.parquet`, cached),
 then runs **two separate worker executions** — (1) the **pass** that produces `out_<mode>_<part>/`,
