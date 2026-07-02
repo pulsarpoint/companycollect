@@ -152,3 +152,52 @@ Read via `envOr()` / `envInt()` in `main.go`, plus the fetch/embed clients. Load
 **Connection gating:** `embed` uses **no** ClickHouse (logs `embed-only mode: no NACE reference, no
 ClickHouse, no load`). `industry`/`both` connect to **read** the reference + run the startup model-match
 check. `load` always connects.
+
+## Processing logic
+
+### industry / embed — `ProcessIndustryStream` (continuous fetch→embed)
+
+One primary page per domain, streamed so the GPU is fed non-stop (no per-chunk "embed all then wait"
+barrier):
+1. **Fetch workers** (semaphore = `--concurrency`, default 32) each fetch the domain's `Primary` page
+   (the worklist is ordered shallowest-first, so the first row per `root_domain` is the homepage),
+   30 s timeout/record, parse HTML → visible text, and stream a `streamItem` (domain index, text, WARC
+   coords) onto a channel.
+2. **Embed workers** (pool = `--embed-concurrency`, default 96) batch texts into `--embed-batch`
+   (default 16) and POST to the endpoint.
+   - **embed mode:** store the raw vector only — skip classify and the domain/industry/signal rows.
+   - **industry/both:** page-type **signal matching** runs first (keyword regexes; a matched
+     junk/parked type wins and skips NACE), else `classify.Classify` does cosine over the NACE matrix and
+     the row is fanned into `domains` + `industries` (top-3) + `page_signals`.
+
+Per-domain result slices are indexed by domain order (no shared writes).
+
+### tech / both — `FetchChunk` + `Finalize` (chunked pipeline)
+
+Tech wants **coverage**, so it fetches *all* of a domain's pages and aggregates:
+- **FetchChunk** (semaphore = `--concurrency`): per page — detect tech (body capped at `--tech-max-bytes`,
+  deduped by tech name per domain), email regex, schema.org JSON-LD profile, LEI (text+jsonld), VAT
+  (format+checksum). First surviving page becomes the domain's `primaryURL`; the `Primary` page's text is
+  kept for embedding (`both`).
+- **Finalize** (`runtime.NumCPU()` classify workers, non-overlapping index ranges): for `both`, embed +
+  classify the primary texts; fan each domain into tech / identifier / metadata / contact rows.
+- **Chunking** (`--chunk`, default 1024): the next chunk is **prefetched over the network while the
+  current chunk embeds on the GPU**, so the GPU isn't idle during fetch.
+
+### embed verify-and-skip (idempotency)
+
+Before doing any work, `embed` checks the output dir for a complete vector file under **either** name —
+`embeddings.parquet` (fp32) **or** `embeddings_fp16.parquet` (converted offline). It reads only the
+Parquet **footer row count**; `> 0` ⇒ the shard is done and is skipped (logs `skip: embeddings already
+present …`). If the footer can't be read (fp16) but the file is non-empty, it's accepted as done. There is
+**no `.loaded` marker** for embed — the vector file *is* the marker. Non-embed modes instead require
+`--out` to be **empty**.
+
+### load — Parquet → ClickHouse
+
+`load --dir` reads each fixed-name Parquet and `INSERT`s it into its table over the native protocol
+(§Output). `load --file [--kind]` loads one. The column list is derived from each struct's `ch` tags, so a
+table may carry extra defaulted columns the worker doesn't write. All target tables are
+**ReplacingMergeTree**, so re-loading is safe (dedupe on the sort key, newest `resolved_at` wins) — **read
+with `FINAL`**. An **old fat `domains.parquet`** (pre-split, detected by a `nace_top3_codes` column) is
+fanned into the split tables automatically.
