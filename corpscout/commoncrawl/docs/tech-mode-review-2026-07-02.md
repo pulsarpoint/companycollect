@@ -50,7 +50,9 @@ fixing *before* burning 300 parts of compute.
 
 ### Critical
 
-- **C1 — A part where every fetch fails still "succeeds", is loaded, and is permanently marked `.loaded`.**
+- **C1 — A part where every fetch fails still "succeeds"… ✅ FIXED.** The worker now refuses to write
+  (Fatalf → non-zero exit → cc-crawl fails the part, no marker, retries) when fetch error-rate > 50% or a
+  non-empty worklist yields zero outputs. Original:
   `FetchChunk` drops failed pages with `continue` (`worker.go:205-212`); no error propagates. If S3 auth
   expires or throttling spikes mid-run, every page errors → `Finalize` emits 0 rows → worker logs
   `done: 0 domains` and **exits 0**, writing valid empty parquets. cc-crawl's gate (exit 0 +
@@ -62,7 +64,9 @@ fixing *before* burning 300 parts of compute.
   retina image and every jsdelivr/unpkg script tag becomes an "email" contact row. At millions of domains ×
   25 pages this will likely be the dominant content of `commoncrawl_domain_contact_info`. No TLD sanity
   check; trailing dots allowed; no case normalization (M10).
-- **C3 — `--chunk` slices pages, not domains → duplicate rows with conflicting provenance.** Documented as
+- **C3 — `--chunk` slices pages, not domains → duplicate rows. ✅ FIXED** — chunk ends now snap to a domain
+  boundary (worklist ORDER BY root_domain, rn) and the loop advances by the actual boundary, so a domain
+  never splits. Original:
   "domains per chunk" (`main.go:97`) but the loop slices worklist *items* (`main.go:418-435`). A domain
   straddling a boundary aggregates twice (~2.5% of domains at chunk 1024 / 25 pages): two `DomainRow`s,
   duplicated tech/contact/metadata rows, second half keyed to a different "primary" URL. The missing
@@ -70,7 +74,9 @@ fixing *before* burning 300 parts of compute.
 
 ### Important
 
-- **I1 — Identifiers/JSON-LD extracted from the CAPPED body; emails from the full body — exactly inverted.**
+- **I1 — Identifiers/JSON-LD from the CAPPED body — exactly inverted. ✅ FIXED** — `ExtractProfile`/`LEIs`/
+  `VATs` (and the new Trackers/JSONLDTypes) now run on the FULL body; only the expensive Wappalyzer regex
+  keeps the `--tech-max-bytes` cap. Footer LEI/VAT/JSON-LD no longer skipped. Original:
   The 128 KiB cap is justified for Wappalyzer regexes (~1.2 s/page uncapped) but `ExtractProfile`/
   `ExtractLEIs`/`ExtractVATs` also get the capped body (`worker.go:234-252`) while the cheap email regex
   gets the full body (`worker.go:228`). LEI/VAT/imprint data lives in page **footers** — the bytes the cap
