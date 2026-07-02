@@ -22,3 +22,46 @@ and a crashed produce never half-writes ClickHouse. Both stages use the native C
 > Full pipeline context (cc-crawl driver, workflows A/B, per-part loop, the ClickHouse schema):
 > [`../README.md`](../README.md) and [`../docs/schema.md`](../docs/schema.md). This doc is the worker's
 > CLI + internals reference.
+
+## Build & run
+
+Go **1.26+**, no cgo. From `commoncrawl/`:
+
+```bash
+make -C cc-enrich-worker            # -> cc-enrich-worker/bin/cc-enrich-worker  (static, CGO_ENABLED=0)
+# or, at commoncrawl/:  make worker
+make -C cc-enrich-worker arm        # cross-compile linux/arm64 (Graviton)
+make -C cc-enrich-worker test       # go test ./...
+make -C cc-enrich-worker vet        # go vet ./...
+make -C cc-enrich-worker clean      # rm -rf bin
+# amd64 cross-compile (no target):  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/cc-enrich-worker ./cmd/cc-enrich-worker
+```
+
+A minimal run (produce, then load) — see §Flags for every option:
+```bash
+set -a; source ../.env; set +a
+./bin/cc-enrich-worker tech --worklist ../data/index/CC-MAIN-2026-25/shard_tech_0.parquet \
+                            --crawl-id CC-MAIN-2026-25 --out ../data/crawl/run0
+./bin/cc-enrich-worker load --dir ../data/crawl/run0
+```
+
+## Module layout
+
+```
+cc-enrich-worker/
+├── cmd/cc-enrich-worker/main.go   # subcommand dispatch, flag parsing, run() + runLoad()
+├── internal/
+│   ├── classify/   # NACE cosine classify + page-type signals + startup model-match check
+│   ├── embed/      # OpenAI-compatible embedding client (batching, concurrency, retry, L2-normalize)
+│   ├── extract/    # schema.org JSON-LD profile, LEI, VAT (checksum-validated)
+│   ├── fetch/      # RangeGetter: signed S3 + anonymous CDN; FetchRecord unpacks a WARC record
+│   ├── load/       # Parquet -> ClickHouse (native protocol); legacy fat-domains fan-out
+│   ├── model/      # shared types (Reference, Prototypes, WorklistItem, Technology, Identifier, …)
+│   ├── output/     # *Row structs (parquet+ch tags), Write* funcs, S3 upload
+│   ├── parse/      # HTML -> visible text, emails, social links
+│   ├── tech/       # DetectTech: fast Aho-Corasick gating | upstream wappalyzergo
+│   ├── vec/        # Dot, L2-normalize
+│   └── worker/     # ShardConfig, ProcessIndustryStream, FetchChunk + Finalize
+├── bin/            # build output (gitignored)
+├── Makefile  ·  Dockerfile  ·  go.mod
+```
