@@ -81,12 +81,13 @@ fixing *before* burning 300 parts of compute.
   become confident `Valid=1` LEIs attributed to the wrong domains — poison for registry linking.
 - **I3 — VAT format-only countries validate junk** (`vat.go:64-70`: only DE/IT have checksums). `RO12`,
   `RO2024`, `FI12345678` all emit `Valid: 1`, indistinguishable from checksummed hits.
-- **I4 — Fast-matcher cookie channel diverges from upstream.** Upstream matches the pattern against the
-  cookie **value** (`wappalyzergo fingerprint_cookies.go:21-31`); fast matches against the whole
-  `name=value; path=/…` string (`techfast.go:222-227`). 13 anchored cookie fingerprints (Bynder,
-  DigitalRiver, CodeIgniter…) can **never** match in fast mode; unanchored ones can false-match on
-  attributes. Small blast radius but breaks the parity claim (`techfast.go:24` overclaims); no Set-Cookie
-  parity test exists.
+- **I4 — Fast-matcher cookie channel diverges from upstream. ✅ FIXED (same day).** Upstream matches the
+  pattern against the cookie **value** (`wappalyzergo fingerprint_cookies.go:21-31`); fast matched against
+  the whole `name=value; path=/…` string, so 13 anchored cookie fingerprints (Bynder, DigitalRiver,
+  CodeIgniter…) could never match, and unanchored ones could false-match on attributes. **Fixed**: fast now
+  normalizes Set-Cookie exactly like upstream and evaluates against the value only; `TestFastMatcherCookieParity`
+  (existence + anchored + mismatch + multi-cookie) locks it in. The 430 empty-pattern existence cookies were
+  verified fine all along. Doc comment corrected.
 - **I5 — Otherwise the AC-gate soundness claim HOLDS (verified against upstream):** literal extraction is
   conservative (`+`→`{1,250}` rewrites can't remove requirements; `OpStar/OpQuest/OpAlternate/OpRepeat`
   treated as non-required), casefolding matches, unparseable patterns fall to always-evaluate, <4-rune
