@@ -102,6 +102,33 @@ rewrites only that partition in DuckDB.
 `corpscout.fi_xbrl_financial_statement_listings`. It appends into the shared
 metadata table rather than replacing the fixed snapshot load.
 
+Historical XML snapshot asset:
+
+```text
+data_snapshot_xml
+```
+
+This asset is monthly partitioned from `2023-07-01` through `2026-05-31`. Each
+partition reads report metadata from
+`corpscout.fi_xbrl_financial_statement_listings` for that registration-date
+window, downloads XML with `/financial?businessId=...&financialDate=...`, and
+stores XML files in a partition-scoped S3 folder.
+
+XML snapshot S3 layout:
+
+```text
+bucket: source-finland-prh-xbrl
+key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/companies/<business_id>/<financial_date>.xml
+key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/manifest.jsonl
+key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/_SUCCESS.json
+```
+
+`_SUCCESS.json` is the only partition-complete marker. If it exists, the whole
+partition is skipped without querying ClickHouse or PRH. If the marker is missing
+but some XML files already exist, those XML files are reused and only missing
+documents are downloaded. The marker is written only after the partition finishes
+successfully.
+
 Existing partitioned flow:
 
 1. `finland_xbrl_financial_reports_backfill` and

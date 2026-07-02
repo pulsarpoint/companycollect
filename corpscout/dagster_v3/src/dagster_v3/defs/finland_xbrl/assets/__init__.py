@@ -51,6 +51,16 @@ from dagster_v3.defs.finland_xbrl.assets.data_snapshot_duckdb_ch import (
     data_snapshot_duckdb_ch,
     export_data_snapshot_duckdb_to_clickhouse,
 )
+from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml import (
+    XML_SNAPSHOT_PARTITIONS,
+    data_snapshot_xml,
+    download_finland_xbrl_snapshot_xml_partition,
+    fetch_xml_snapshot_report_rows,
+    xml_snapshot_document_key,
+    xml_snapshot_manifest_key,
+    xml_snapshot_partition_prefix,
+    xml_snapshot_success_key,
+)
 from dagster_v3.defs.finland_xbrl.assets.financial_metrics import (
     build_financial_metric_rows,
     build_financial_metric_usd_rows,
@@ -64,6 +74,7 @@ from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_incremental_job,
     finland_xbrl_incremental_schedule,
     finland_xbrl_publish_job,
+    finland_xbrl_xml_snapshot_job,
 )
 from dagster_v3.defs.finland_xbrl.assets.parse import (
     XbrlParsedConfig,
@@ -119,6 +130,7 @@ __all__ = [
     "XbrlParsedConfig",
     "XbrlParseRunResult",
     "XbrlRawConfig",
+    "XML_SNAPSHOT_PARTITIONS",
     "FINANCIAL_DATA_S3_SNAPSHOT_KEY",
     "FINANCIAL_DATA_DAILY_KEY_PREFIX",
     "FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_END",
@@ -139,13 +151,16 @@ __all__ = [
     "data_daily_duckdb_ch",
     "data_snapshot_duckdb",
     "data_snapshot_duckdb_ch",
+    "data_snapshot_xml",
     "defs",
     "document_object_key",
     "documents_in_registration_window",
     "documents_missing_registration_date",
     "download_finland_xbrl_raw_xml_documents",
+    "download_finland_xbrl_snapshot_xml_partition",
     "export_data_daily_duckdb_to_clickhouse",
     "export_data_snapshot_duckdb_to_clickhouse",
+    "fetch_xml_snapshot_report_rows",
     "finland_xbrl_historical_backfill_job",
     "finland_xbrl_financial_metrics",
     "finland_xbrl_financial_metrics_clickhouse",
@@ -158,6 +173,7 @@ __all__ = [
     "finland_xbrl_parse_backfill",
     "finland_xbrl_parse_incremental",
     "finland_xbrl_publish_job",
+    "finland_xbrl_xml_snapshot_job",
     "finland_xbrl_raw_xml_documents",
     "finland_xbrl_raw_xml_documents_backfill",
     "finland_xbrl_raw_xml_documents_incremental",
@@ -172,6 +188,10 @@ __all__ = [
     "tables",
     "write_financial_data_snapshot_csv",
     "write_financial_data_daily_csv",
+    "xml_snapshot_document_key",
+    "xml_snapshot_manifest_key",
+    "xml_snapshot_partition_prefix",
+    "xml_snapshot_success_key",
 ]
 
 defs = dg.Definitions(
@@ -182,6 +202,7 @@ defs = dg.Definitions(
         data_daily_duckdb_ch,
         data_snapshot_duckdb,
         data_snapshot_duckdb_ch,
+        data_snapshot_xml,
         finland_xbrl_financial_reports_backfill,
         finland_xbrl_financial_reports_incremental,
         finland_xbrl_raw_xml_documents_backfill,
@@ -199,6 +220,7 @@ defs = dg.Definitions(
         finland_xbrl_historical_backfill_job,
         finland_xbrl_incremental_job,
         finland_xbrl_publish_job,
+        finland_xbrl_xml_snapshot_job,
     ],
     schedules=[finland_xbrl_incremental_schedule],
     resources={

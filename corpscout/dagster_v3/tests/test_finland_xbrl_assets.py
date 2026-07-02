@@ -1,7 +1,8 @@
-from datetime import date, datetime
 from contextlib import contextmanager
+from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
+import json
 from pathlib import Path
 from typing import Any
 
@@ -28,15 +29,22 @@ from dagster_v3.defs.finland_xbrl.assets import (
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE,
     XbrlParsedConfig,
     XbrlRawConfig,
+    XML_SNAPSHOT_PARTITIONS,
     build_financial_data_snapshot_csv,
+    download_finland_xbrl_snapshot_xml_partition,
     download_finland_xbrl_raw_xml_documents,
     export_data_daily_duckdb_to_clickhouse,
     export_data_snapshot_duckdb_to_clickhouse,
+    fetch_xml_snapshot_report_rows,
     financial_data_daily_key,
     materialize_data_daily_duckdb,
     materialize_data_snapshot_duckdb,
     write_financial_data_daily_csv,
     write_financial_data_snapshot_csv,
+    xml_snapshot_document_key,
+    xml_snapshot_manifest_key,
+    xml_snapshot_partition_prefix,
+    xml_snapshot_success_key,
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.finland_xbrl.resources import (
@@ -81,6 +89,18 @@ class FakeHttpSession:
             business_id = params["businessId"]
             financial_date = params["financialDate"]
             return FakeResponse(content=f"<xbrl>{business_id}:{financial_date}</xbrl>".encode())
+        raise AssertionError(f"unexpected URL {url}")
+
+
+class FailingFinancialXmlSession(FakeHttpSession):
+    def __init__(self, status_code: int) -> None:
+        super().__init__()
+        self.status_code = status_code
+
+    def get(self, url: str, params: dict | None = None, timeout: int = 120) -> FakeResponse:
+        self.calls.append((url, params, timeout))
+        if url.endswith("/financial"):
+            return FakeResponse(status_code=self.status_code)
         raise AssertionError(f"unexpected URL {url}")
 
 
@@ -144,10 +164,15 @@ class FakeS3Error(Exception):
 
 
 class FakeClickHouseClient:
-    def __init__(self, tables: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        tables: set[str] | None = None,
+        financial_statement_listing_rows: list[tuple[str, str, str]] | None = None,
+    ) -> None:
         self.statements: list[str] = []
         self.execute_calls: list[tuple[str, object | None]] = []
         self.tables = tables or {"fi_financial_metrics"}
+        self.financial_statement_listing_rows = financial_statement_listing_rows or []
 
     def execute(self, sql: str, params: object | None = None) -> list[tuple[str, ...]]:
         self.execute_calls.append((sql, params))
@@ -155,6 +180,8 @@ class FakeClickHouseClient:
         if "system.tables" in sql:
             requested = set(params.get("tables", ())) if isinstance(params, dict) else set()
             return [(table,) for table in sorted(self.tables & requested)]
+        if "fi_xbrl_financial_statement_listings" in sql:
+            return self.financial_statement_listing_rows
         return []
 
 
@@ -360,6 +387,15 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         "data_snapshot_duckdb_ch",
     }
     assert repo.get_job("finland_xbrl_data_snapshot_job").partitions_def is None
+
+    xml_snapshot = {
+        key.path[-1]
+        for key in repo.get_job("finland_xbrl_xml_snapshot_job").asset_layer.executable_asset_keys
+    }
+    assert xml_snapshot == {"data_snapshot_xml"}
+    assert type(repo.get_job("finland_xbrl_xml_snapshot_job").partitions_def).__name__ == (
+        "MonthlyPartitionsDefinition"
+    )
 
     publish = {
         key.path[-1]
@@ -903,6 +939,230 @@ def test_data_daily_duckdb_assets_are_partitioned_and_chained() -> None:
     assert FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH == (
         "data/finland_xbrl/financial_data_daily.duckdb"
     )
+
+
+def test_xml_snapshot_monthly_partitions_cover_prh_start_until_june_2026() -> None:
+    partition_keys = XML_SNAPSHOT_PARTITIONS.get_partition_keys(
+        current_time=datetime(2026, 7, 1)
+    )
+
+    assert partition_keys[0] == "2023-07-01"
+    assert "2026-05-01" in partition_keys
+    assert "2026-06-01" not in partition_keys
+
+
+def test_xml_snapshot_s3_keys_are_scoped_by_registration_window() -> None:
+    assert xml_snapshot_partition_prefix("2023-07-01", "2023-07-31") == (
+        "financial_data/xml_snapshot/"
+        "registeredDateStart=2023-07-01/"
+        "registeredDateEnd=2023-07-31"
+    )
+    assert xml_snapshot_document_key(
+        "2023-07-01",
+        "2023-07-31",
+        "0100123-2",
+        "2022-12-31",
+    ) == (
+        "financial_data/xml_snapshot/"
+        "registeredDateStart=2023-07-01/"
+        "registeredDateEnd=2023-07-31/"
+        "companies/0100123-2/2022-12-31.xml"
+    )
+    assert xml_snapshot_manifest_key("2023-07-01", "2023-07-31") == (
+        "financial_data/xml_snapshot/"
+        "registeredDateStart=2023-07-01/"
+        "registeredDateEnd=2023-07-31/"
+        "manifest.jsonl"
+    )
+    assert xml_snapshot_success_key("2023-07-01", "2023-07-31") == (
+        "financial_data/xml_snapshot/"
+        "registeredDateStart=2023-07-01/"
+        "registeredDateEnd=2023-07-31/"
+        "_SUCCESS.json"
+    )
+
+
+def test_fetch_xml_snapshot_report_rows_reads_clickhouse_listing_table() -> None:
+    client = FakeClickHouseClient(
+        tables={"fi_xbrl_financial_statement_listings"},
+        financial_statement_listing_rows=[
+            ("0100123-2", "2022-12-31", "2023-07-02"),
+            ("0202020-2", "2023-03-31", "2023-07-03"),
+        ],
+    )
+
+    rows = fetch_xml_snapshot_report_rows(
+        clickhouse=FakeClickHouseResource(client),
+        registered_date_start="2023-07-01",
+        registered_date_end="2023-07-31",
+    )
+
+    assert rows == [
+        {
+            "business_id": "0100123-2",
+            "financial_date": "2022-12-31",
+            "registration_date": "2023-07-02",
+        },
+        {
+            "business_id": "0202020-2",
+            "financial_date": "2023-03-31",
+            "registration_date": "2023-07-03",
+        },
+    ]
+    query_sql, query_params = client.execute_calls[-1]
+    assert "fi_xbrl_financial_statement_listings" in query_sql
+    assert query_params == {
+        "start": "2023-07-01",
+        "end": "2023-07-31",
+    }
+
+
+def test_xml_snapshot_existing_success_marker_skips_clickhouse_and_prh() -> None:
+    object_store, s3_client = _object_store()
+    success_key = xml_snapshot_success_key("2023-07-01", "2023-07-31")
+    s3_client.objects[("source-finland-prh-xbrl", success_key)] = b"{}"
+    session = FakeHttpSession()
+    client = FakeClickHouseClient(tables={"fi_xbrl_financial_statement_listings"})
+
+    result = download_finland_xbrl_snapshot_xml_partition(
+        partition_key="2023-07-01",
+        registered_date_start="2023-07-01",
+        registered_date_end="2023-07-31",
+        xbrl_api=XbrlApiResource(session=session),
+        clickhouse=FakeClickHouseResource(client),
+        object_store=object_store,
+        download_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    assert result.metadata["skipped_existing_partition"] is True
+    assert result.metadata["selected_reports_count"] == 0
+    assert session.calls == []
+    assert client.execute_calls == []
+
+
+def test_xml_snapshot_downloads_missing_xml_and_writes_manifest_and_success() -> None:
+    object_store, s3_client = _object_store()
+    session = FakeHttpSession()
+    client = FakeClickHouseClient(
+        tables={"fi_xbrl_financial_statement_listings"},
+        financial_statement_listing_rows=[
+            ("0100123-2", "2022-12-31", "2023-07-02"),
+            ("0202020-2", "2023-03-31", "2023-07-03"),
+        ],
+    )
+
+    result = download_finland_xbrl_snapshot_xml_partition(
+        partition_key="2023-07-01",
+        registered_date_start="2023-07-01",
+        registered_date_end="2023-07-31",
+        xbrl_api=XbrlApiResource(session=session),
+        clickhouse=FakeClickHouseResource(client),
+        object_store=object_store,
+        download_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    first_xml_key = xml_snapshot_document_key(
+        "2023-07-01", "2023-07-31", "0100123-2", "2022-12-31"
+    )
+    second_xml_key = xml_snapshot_document_key(
+        "2023-07-01", "2023-07-31", "0202020-2", "2023-03-31"
+    )
+    manifest_key = xml_snapshot_manifest_key("2023-07-01", "2023-07-31")
+    success_key = xml_snapshot_success_key("2023-07-01", "2023-07-31")
+
+    assert result.metadata["skipped_existing_partition"] is False
+    assert result.metadata["selected_reports_count"] == 2
+    assert result.metadata["downloaded_count"] == 2
+    assert result.metadata["reused_count"] == 0
+    assert s3_client.objects[("source-finland-prh-xbrl", first_xml_key)] == (
+        b"<xbrl>0100123-2:2022-12-31</xbrl>"
+    )
+    assert s3_client.objects[("source-finland-prh-xbrl", second_xml_key)] == (
+        b"<xbrl>0202020-2:2023-03-31</xbrl>"
+    )
+    manifest_rows = [
+        json.loads(line)
+        for line in s3_client.objects[
+            ("source-finland-prh-xbrl", manifest_key)
+        ].decode("utf-8").splitlines()
+    ]
+    assert [row["xml_object_key"] for row in manifest_rows] == [first_xml_key, second_xml_key]
+    assert [row["downloaded"] for row in manifest_rows] == [True, True]
+    assert [row["reused"] for row in manifest_rows] == [False, False]
+    success = json.loads(
+        s3_client.objects[("source-finland-prh-xbrl", success_key)].decode("utf-8")
+    )
+    assert success["selected_reports_count"] == 2
+    assert success["downloaded_count"] == 2
+
+
+def test_xml_snapshot_reuses_existing_xml_without_success_marker() -> None:
+    object_store, s3_client = _object_store()
+    existing_xml_key = xml_snapshot_document_key(
+        "2023-07-01", "2023-07-31", "0100123-2", "2022-12-31"
+    )
+    s3_client.objects[("source-finland-prh-xbrl", existing_xml_key)] = b"<xbrl>cached</xbrl>"
+    session = FakeHttpSession()
+    client = FakeClickHouseClient(
+        tables={"fi_xbrl_financial_statement_listings"},
+        financial_statement_listing_rows=[
+            ("0100123-2", "2022-12-31", "2023-07-02"),
+        ],
+    )
+
+    result = download_finland_xbrl_snapshot_xml_partition(
+        partition_key="2023-07-01",
+        registered_date_start="2023-07-01",
+        registered_date_end="2023-07-31",
+        xbrl_api=XbrlApiResource(session=session),
+        clickhouse=FakeClickHouseResource(client),
+        object_store=object_store,
+        download_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    assert result.metadata["downloaded_count"] == 0
+    assert result.metadata["reused_count"] == 1
+    assert session.calls == []
+    manifest_key = xml_snapshot_manifest_key("2023-07-01", "2023-07-31")
+    manifest_row = json.loads(
+        s3_client.objects[("source-finland-prh-xbrl", manifest_key)].decode("utf-8").strip()
+    )
+    assert manifest_row["downloaded"] is False
+    assert manifest_row["reused"] is True
+    assert manifest_row["xml_sha256"]
+    assert manifest_row["xml_size_bytes"] == len(b"<xbrl>cached</xbrl>")
+
+
+def test_xml_snapshot_failure_does_not_write_success_marker() -> None:
+    object_store, s3_client = _object_store()
+    client = FakeClickHouseClient(
+        tables={"fi_xbrl_financial_statement_listings"},
+        financial_statement_listing_rows=[
+            ("fail-business", "2022-12-31", "2023-07-02"),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        download_finland_xbrl_snapshot_xml_partition(
+            partition_key="2023-07-01",
+            registered_date_start="2023-07-01",
+            registered_date_end="2023-07-31",
+            xbrl_api=XbrlApiResource(
+                session=FailingFinancialXmlSession(status_code=500)
+            ),
+            clickhouse=FakeClickHouseResource(client),
+            object_store=object_store,
+            download_delay_seconds=0,
+            sleep=lambda _: None,
+        )
+
+    assert (
+        "source-finland-prh-xbrl",
+        xml_snapshot_success_key("2023-07-01", "2023-07-31"),
+    ) not in s3_client.objects
 
 
 def test_data_snapshot_duckdb_writes_s3_csv_to_duckdb(tmp_path: Path) -> None:
