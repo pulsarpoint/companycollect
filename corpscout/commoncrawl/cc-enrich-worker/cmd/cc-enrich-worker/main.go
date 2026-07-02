@@ -366,7 +366,7 @@ func run(mode string, o opts) {
 		getter = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), o.concurrency)
 		log.Printf("fetch: anonymous HTTPS CDN (data.commoncrawl.org)")
 	} else {
-		g, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"))
+		g, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"), o.concurrency)
 		if err != nil {
 			log.Fatalf("s3 init: %v", err)
 		}

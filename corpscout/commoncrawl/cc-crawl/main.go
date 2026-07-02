@@ -90,6 +90,10 @@ func main() {
 	indConcF := fs.String("ind-conc", env("IND_CONC", "64"), "industry: fetch concurrency")
 	embedConcF := fs.String("embed-conc", env("EMBED_CONC", "128"), "industry: embed concurrency")
 	techConcF := fs.String("tech-conc", env("TECH_CONC", "128"), "tech: concurrency")
+	// Worker chunks are PAGES (~13.1 pages/domain -> chunk/13 domains in flight, which caps effective
+	// fetch concurrency). The worker's own default (1024 ~= 78 domains) starves a 128+ semaphore; size
+	// this >= ~25x tech-conc so the semaphore stays full. 16384 ~= 1250 domains.
+	techChunkF := fs.String("tech-chunk", env("TECH_CHUNK", "16384"), "tech: pages per fetch+process chunk")
 	_ = fs.Parse(os.Args[1:])
 
 	fail := func(format string, a ...any) {
@@ -137,7 +141,7 @@ func main() {
 
 	pc := partCtx{
 		lg: lg, data: data, builder: builder, worker: worker, crawl: crawl, maxPages: maxPages,
-		indConc: *indConcF, embedConc: *embedConcF, techConc: *techConcF,
+		indConc: *indConcF, embedConc: *embedConcF, techConc: *techConcF, techChunk: *techChunkF,
 	}
 	var done, skipped, failed int
 	for p := lo; p <= hi; p++ {
@@ -176,6 +180,7 @@ type partCtx struct {
 	lg                                     *slog.Logger
 	data, builder, worker, crawl, maxPages string
 	indConc, embedConc, techConc           string
+	techChunk                              string
 }
 
 // ensureWorklist returns the path to shard_<wlMode>_<p>.parquet, building it via index_builder if absent
@@ -222,7 +227,7 @@ func runProduceLoad(pc partCtx, mode string, p int) outcome {
 	// Clear any stale/partial output (the worker requires an empty --out); safe — a done part already
 	// returned above on its marker.
 	os.RemoveAll(outDir)
-	pArgs := append(append([]string{mode}, passArgs(mode, pc.indConc, pc.embedConc, pc.techConc)...),
+	pArgs := append(append([]string{mode}, passArgs(pc, mode)...),
 		"--worklist", shard, "--crawl-id", pc.crawl, "--out", outDir)
 	plg.Info("produce.run", "cmd", pc.worker+" "+strings.Join(pArgs, " "))
 	code, pout, pel := runStep(pc.worker, pArgs, "")
@@ -265,7 +270,7 @@ func runEmbedPart(pc partCtx, p int) outcome {
 		return ocFailed
 	}
 	outDir := filepath.Join(filepath.Dir(pc.data), "embedding", fmt.Sprintf("out_industry_%d", p))
-	pArgs := append(append([]string{"embed"}, passArgs("embed", pc.indConc, pc.embedConc, pc.techConc)...),
+	pArgs := append(append([]string{"embed"}, passArgs(pc, "embed")...),
 		"--worklist", shard, "--crawl-id", pc.crawl, "--out", outDir)
 	plg.Info("embed.run", "cmd", pc.worker+" "+strings.Join(pArgs, " "))
 	code, pout, pel := runStep(pc.worker, pArgs, "")
@@ -286,12 +291,14 @@ func runEmbedPart(pc partCtx, p int) outcome {
 }
 
 // passArgs builds the per-mode cc-enrich-worker pass flags.
-func passArgs(mode, indConc, embedConc, techConc string) []string {
+func passArgs(pc partCtx, mode string) []string {
 	switch mode {
 	case "industry", "embed": // embed runs the same fetch→embed stream, just without classify
-		return []string{"--concurrency", indConc, "--embed-concurrency", embedConc}
+		return []string{"--concurrency", pc.indConc, "--embed-concurrency", pc.embedConc}
 	case "tech":
-		return []string{"--tech-engine", "fast", "--concurrency", techConc}
+		// --chunk counts PAGES; the worker runs one goroutine per DOMAIN within a chunk, so
+		// chunk/(pages per domain) caps in-flight fetches — keep it >> tech-conc (see -tech-chunk).
+		return []string{"--tech-engine", "fast", "--concurrency", pc.techConc, "--chunk", pc.techChunk}
 	}
 	return nil
 }

@@ -97,12 +97,17 @@ fixing *before* burning 300 parts of compute.
   so version-bearing patterns lose to earlier versionless ones and implies-recorded apps never get a
   version; per-domain dedup by name collapses differing versions across pages; `Confidence: 100` hardcoded
   (`worker.go:369`) — the column is meaningless.
-- **I7 — Effective fetch concurrency ≈ `chunk/25`, far below `--concurrency`.** Parallelism is per-domain,
-  pages sequential; chunk 1024 items ≈ 41 domains → ≤ ~41 fetches in flight even at `--concurrency 128`,
-  and each chunk tail is one domain's 25 sequential RTTs. Fix: `--chunk ≥ 25 × concurrency` (≥ 3200), or
-  parallelize pages within a domain.
-- **I8 — S3 client: default 10 idle conns/host under 128-way concurrency → TLS churn; no app-level
-  whole-request retry (unlike the CDN path's 4-attempt loop); a mid-`ReadAll` stream error drops the page.**
+- **I7 — Effective fetch concurrency ≈ `chunk/25`, far below `--concurrency`. ✅ MITIGATED (Level 1).**
+  Parallelism is per-domain, pages sequential; chunk 1024 items ≈ 78 domains → the 256 semaphore never
+  filled (confirmed live: 42% CPU / 58% idle). **Fixed at the flag level**: cc-crawl now passes `--chunk`
+  (`-tech-chunk`, default 16384 ≈ 1250 domains/chunk) so the semaphore saturates. Pages within a domain
+  remain sequential ("Level 2" — an industry-style fetch→process pipeline — only if Level 1 leaves the CPU
+  idle; note primary-page selection is rank-order-dependent, so parallel pages must pick the lowest-rank
+  survivor).
+- **I8 — S3 client: default 10 idle conns/host under 128-way concurrency → TLS churn. ✅ FIXED** —
+  `NewS3Getter` now takes `concurrency` and sizes the transport like `NewHTTPGetter`
+  (`MaxIdleConnsPerHost = 2×conc`, `MaxConnsPerHost = conc`). Still open from I8: no app-level
+  whole-request retry (SDK request retry only); a mid-`ReadAll` stream error drops the page.
 - **I9 — `load --dir` silently loads partial dirs** (missing kinds skipped, `load.go:177-180`): a crash
   between the five sequential writes → part loads domains-only and is marked done forever.
 

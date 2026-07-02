@@ -59,8 +59,21 @@ type S3Getter struct{ Client *s3.Client }
 
 // NewS3Getter signs requests (in-AWS instance role / configured creds). CommonCrawl's
 // S3 API denies anonymous access — off-AWS use httpRangeGetter instead.
-func NewS3Getter(ctx context.Context, region string) (RangeGetter, error) {
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+// concurrency sizes the HTTP transport: every request hits the single CommonCrawl S3 endpoint,
+// and the SDK's default transport keeps only 10 idle conns per host — at high --concurrency that
+// means a fresh TLS handshake for most requests instead of connection reuse (same sizing as
+// NewHTTPGetter).
+func NewS3Getter(ctx context.Context, region string, concurrency int) (RangeGetter, error) {
+	if concurrency <= 0 {
+		concurrency = 16
+	}
+	httpClient := &http.Client{Transport: &http.Transport{
+		MaxIdleConns:        concurrency * 2,
+		MaxIdleConnsPerHost: concurrency * 2,
+		MaxConnsPerHost:     concurrency,
+	}}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region),
+		awsconfig.WithHTTPClient(httpClient))
 	if err != nil {
 		return &S3Getter{}, err
 	}
