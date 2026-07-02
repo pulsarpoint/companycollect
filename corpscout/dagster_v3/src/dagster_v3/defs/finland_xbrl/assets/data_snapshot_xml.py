@@ -79,10 +79,18 @@ def fetch_xml_snapshot_report_rows(
                 business_id,
                 toString(financial_date) AS financial_date,
                 toString(registration_date) AS registration_date
-            FROM {CLICKHOUSE_DATABASE}.{DATA_SNAPSHOT_CLICKHOUSE_TABLE}
-            WHERE registration_date >= toDate(%(start)s)
-              AND registration_date <= toDate(%(end)s)
-            ORDER BY registration_date, business_id, financial_date
+            FROM
+            (
+                SELECT
+                    business_id,
+                    financial_date,
+                    registration_date,
+                    toDateOrNull(toString(registration_date)) AS registered_on
+                FROM {CLICKHOUSE_DATABASE}.{DATA_SNAPSHOT_CLICKHOUSE_TABLE}
+            )
+            WHERE registered_on >= toDate(%(start)s)
+              AND registered_on <= toDate(%(end)s)
+            ORDER BY registered_on, business_id, financial_date
             """,
             {
                 "start": registered_date_start,

@@ -1011,6 +1011,9 @@ def test_fetch_xml_snapshot_report_rows_reads_clickhouse_listing_table() -> None
     ]
     query_sql, query_params = client.execute_calls[-1]
     assert "fi_xbrl_financial_statement_listings" in query_sql
+    assert "toDateOrNull(toString(registration_date)) AS registered_on" in query_sql
+    assert "WHERE registered_on >= toDate(%(start)s)" in query_sql
+    assert "registration_date >= toDate(%(start)s)" not in query_sql
     assert query_params == {
         "start": "2023-07-01",
         "end": "2023-07-31",
