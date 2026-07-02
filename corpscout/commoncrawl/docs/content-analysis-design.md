@@ -1,126 +1,196 @@
-# Content analysis — security signals + tracker IDs (design)
+# Content analysis — capture per-page signals (design)
 
-Two cheap, high-fit additions to the **tech pass**, harvested from bytes it *already* fetches and parses
-(`processPage` has `http.Header` + body in hand and discards most of it). Marginal cost ≈ one header scan
-and a few regexes per page. Companion to [`tech-mode-review-2026-07-02.md`](tech-mode-review-2026-07-02.md);
-schema conventions per [`schema.md`](schema.md).
+Harvest the cheap-to-extract signals from bytes the **tech pass already fetches** (`processPage` has
+`http.Header` + body in hand and discards most of it). Companion to
+[`tech-mode-review-2026-07-02.md`](tech-mode-review-2026-07-02.md); schema conventions per
+[`schema.md`](schema.md).
 
-**Scope line (important):** extract **observable facts from the static crawl snapshot** (header
-present/absent, disclosed version string, tracker id). **No active probing** — that's
-`pulsarprotectrunner2`'s job and needs a live target; CommonCrawl is a historical snapshot. Everything here
-is *as-of-crawl* — good for coverage/trend analytics, not real-time posture.
+## Principle: collection-first, capture everything cheap, analyze later
+
+The S3 fetch + gzip + HTML parse is the **one-time expensive cost**, paid once per page. Extracting one more
+thing from bytes already in memory is ≈ free. The asymmetry is brutal: a signal you **skip** now is one you
+must **re-crawl** for later. So:
+
+- **Capture completely now, defer all analysis.** Store the raw structured signal (full header map, all meta,
+  all IDs); scoring, the `PP_WEBAPP_*` issue mapping, and CVE/EOL joins are **downstream CPU passes over the
+  stored data** (like re-classification runs over stored embeddings without re-embedding). Not in scope here.
+- **Don't re-derive what CommonCrawl already publishes.** CC ships the **URL index** (→ worklists) and the
+  **webgraph** (domain↔domain links + ranks). The graph is CC's job and is built from the *whole* crawl —
+  extracting links from our ~25 fetched pages/domain would be a worse, redundant subset. So this pass
+  captures **only per-page content signals CC does *not* publish** (§ below); the graph is a **separate
+  direct ingest** (§4).
+- **The one storage line:** cheap *structured* signals (headers, meta, ids) → store fully; they're tiny and
+  compress hard. The big blobs — full page HTML / visible text — **are not stored**; they're re-fetchable
+  exactly anytime via the WARC coords we already keep (`warc_filename/offset/length`). Nothing is skipped —
+  it's either captured cheaply or reconstructable.
+
+**Scope line:** observable facts from the **static snapshot** only. **No active probing** — that's
+`pulsarprotectrunner2`'s job (needs a live target). Everything is *as-of-crawl*.
+
+## What to capture (per-page content CC does not publish)
+
+| Layer | Capture | Status |
+|---|---|---|
+| HTTP | **all response headers** (map), all Set-Cookie flags | new |
+| HTML head | title, **all `<meta>`** (description/keywords/generator/robots/viewport/og:*/twitter:*), canonical, **all hreflang**, charset, favicon | new |
+| Structured data | **all JSON-LD `@type`s** + Organization firmographics | partly have (Organization only) |
+| Identifiers | **all analytics/ad/tag IDs** (GA/UA/GTM/AdSense/FB/Hotjar/Segment/Matomo/Mixpanel/Yandex/TikTok) + LEI/VAT | LEI/VAT have |
+| Tech / contacts | Wappalyzer, emails/phones/social | have |
+| ~~Outbound links~~ | ~~linked domains~~ — **CC webgraph, pulled directly (§4), not parsed here** | — |
 
 ---
 
-## Addition 1 — security signals → `commoncrawl_domain_security` (migration 078)
+## 1. Security signals → `commoncrawl_domain_security` (migration 078)
 
-**What:** per-domain HTTP security-header hygiene + software-version disclosure, read from the response
-headers we already parse. This is the security product's home turf — a posture dataset for tens of millions
-of domains the active scanner can't produce cheaply, and it maps straight onto the existing issue-template
-model (`PP_WEBAPP_CSP_MISSING`, `PP_WEBAPP_HSTS_MISSING`, …).
-
-**Grain:** **1 row / domain**, taken from the **primary (representative) page's** response headers — the same
-lowest-rank-survivor page that sets `primaryURL`. (Headers can vary by path; the homepage is the honest
-domain-level representative. Per-page header capture is a possible v2, not v1.)
-
-**Table** (`ReplacingMergeTree`, read with `FINAL`):
+**Capture the full response-header map**, not a hand-picked set of flags — if next month we care about a
+header we didn't flag, it's already there, no re-crawl. **1 row / domain**, from the primary
+(lowest-rank-survivor) page's headers.
 
 ```sql
 CREATE TABLE corpscout.commoncrawl_domain_security (
     crawl_id LowCardinality(String),
     root_domain String,
-    source_url String,                       -- the page these headers came from (the primary)
-    -- header presence (the hygiene score is sum of these)
-    has_hsts UInt8,                          -- Strict-Transport-Security
-    has_csp UInt8,                           -- Content-Security-Policy
-    has_x_frame_options UInt8,
-    has_x_content_type_options UInt8,
-    has_referrer_policy UInt8,
-    has_permissions_policy UInt8,
-    -- version / fingerprint disclosure (verbatim, '' if header absent -> never NULL, see CLAUDE.md)
-    server String,                           -- Server: Apache/2.4.29
-    x_powered_by String,                     -- X-Powered-By: PHP/5.6
+    source_url String,                                  -- the page these headers came from (the primary)
+    headers Map(LowCardinality(String), String),        -- ALL response headers, lowercased names
     source_run_id String,
     resolved_at DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(resolved_at)
 ORDER BY (root_domain, crawl_id);
 ```
 
-**Extraction** — a pure `security.FromHeaders(http.Header) SecurityInfo` (new `internal/security` or a
-function in `internal/extract`): six `h.Get(name) != ""` presence checks + the two verbatim version strings.
-Trivial, no body scan.
+Everything derives from `headers` later (all in ClickHouse SQL, no re-crawl): hygiene score
+(`arrayExists`/`mapContains` over `content-security-policy`, `strict-transport-security`,
+`x-frame-options`, …), version disclosure (`headers['server']`, `headers['x-powered-by']`), cookie flags
+(parse `headers['set-cookie']`). Header maps are small and highly compressible — storing all of them costs
+almost nothing and skips nothing.
 
-**Analytics it unlocks** (and why it fits): `sum(has_*)` = a header-hygiene score; `server`/`x_powered_by`
-join to a known-EOL/CVE list → **vuln-surface analytics for free** (we already extract `(tech, version)` via
-Wappalyzer, so this extends the same idea to the server layer); coverage queries like "% of DE ecommerce
-domains missing HSTS." Each `has_*=0` is a candidate row for the existing issue templates.
+**Extraction:** `security.HeaderMap(http.Header) map[string]string` — lowercase each name, join multi-values
+with `, ` (join Set-Cookie with `\n`). Pure, no body scan.
 
----
+## 2. HTML-head signals → `commoncrawl_domain_page_meta` (migration 079)
 
-## Addition 2 — tracker / analytics IDs → `commoncrawl_domain_identifiers` (no schema change)
+**Capture all `<meta>` + head links**, not a fixed subset. **1 row / domain** (primary page).
 
-**What:** the marketing/analytics IDs embedded in page HTML — Google Analytics (`G-…`, legacy `UA-…`),
-GTM container (`GTM-…`), AdSense publisher (`ca-pub-…` / `pub-…`), Facebook Pixel (numeric `fbq('init', …)`).
+```sql
+CREATE TABLE corpscout.commoncrawl_domain_page_meta (
+    crawl_id LowCardinality(String),
+    root_domain String,
+    source_url String,
+    title String,
+    meta Map(LowCardinality(String), String),   -- name/property -> content (description, og:*, twitter:*, generator, robots, viewport, …)
+    canonical String,
+    hreflang Array(LowCardinality(String)),      -- declared language/region alternates
+    jsonld_types Array(LowCardinality(String)),  -- every @type seen (Organization, Product, JobPosting, …)
+    charset LowCardinality(String),
+    source_run_id String,
+    resolved_at DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (root_domain, crawl_id);
+```
 
-**Why this one matters most:** a **shared tracker id across two domains is a far stronger "same operator"
-signal than a hyperlink** — it's the missing strong edge for the sibling/ownership graph
-([graph discussion → `commoncrawl_domain_graph_signals` / `commoncrawl_domain_related`]). It turns
-entity-resolution from "argued by links" into "proven by a shared account."
+`jsonld_types` is the cheap win over today's Organization-only extraction (a `JobPosting` present = hiring
+signal; `Product` = ecommerce) without storing the raw JSON-LD blocks. **Extraction:** `parse.HeadMeta(body)
+→ HeadMeta{title, meta, canonical, hreflang, charset}` (one `x/net/html` head walk) + collect `@type`s while
+`extract.ExtractProfile` already walks the JSON-LD blocks.
 
-**Storage: reuse `commoncrawl_domain_identifiers` — zero migration.** The table already has
+## 3. Tracker / analytics IDs → `commoncrawl_domain_identifiers` (no migration)
+
+Don't hand-maintain a tracker list — two maintained sources cover the two halves:
+
+**Half A — which trackers exist (presence): Wappalyzer, already vendored.** `fingerprints_data.json`
+(7,540 apps) has the maintained categories that *are* the tracker list: **Analytics (426), Advertising
+(224), Marketing automation (544)**. Presence comes free from the tech detection already running — refreshed
+by bumping `wappalyzergo`, zero maintenance.
+
+**Half B — the account ID value (the ownership signal): Wappalyzer version-capture + a small curated
+fallback.** Some Wappalyzer fingerprints capture the id via a version group (verified: Google Analytics ✅,
+Facebook Pixel ✅), many don't (GTM ❌, Hotjar ❌). So: **reuse Wappalyzer's captured `version` as the id
+where present**, and add a **~15-provider curated regex fallback** only for the ones it misses. These id
+shapes are fixed and stable, so a short hardcoded table is more precise than a generic feed:
+
+| id_type | value shape | source |
+|---|---|---|
+| `ga` | `G-XXXXXXX` / `ua` `UA-NNNNN-N` | Wappalyzer version-capture |
+| `fb_pixel` | numeric | Wappalyzer version-capture |
+| `gtm` | `GTM-XXXXX` | curated regex |
+| `adsense` | `ca-pub-NNNN…` | curated regex |
+| `hotjar` / `segment` / `matomo` / `mixpanel` / `yandex` / `tiktok_pixel` / `clarity` / `linkedin_insight` / `pinterest_tag` / `snap_pixel` | provider id | curated regex |
+
+Storage: **existing `commoncrawl_domain_identifiers`** — the table already carries
 `id_type / id_value / valid / source / url / subdomain`, `ORDER BY (root_domain, id_type, id_value, url,
-crawl_id)`, so it holds many per domain with per-page provenance. Just emit new `id_type` values:
+crawl_id)`, so ids ride the current fan-out. **Extraction:** the tech pass already returns Wappalyzer
+`Technology{Name, Version}`; map the id-bearing ones to `Identifier{Type, Value: Version, Source:
+"wappalyzer"}`, plus `extract.Trackers(body) []model.Identifier` for the curated fallback
+(`Source: "html"`). Appended to `pageResult.ids` — **no new code path**.
 
-| id_type | value | valid | source |
-|---|---|---|---|
-| `ga` | `G-XXXXXXX` | 1 (format) | `html` |
-| `ua` | `UA-NNNNN-N` | 1 | `html` |
-| `gtm` | `GTM-XXXXX` | 1 | `html` |
-| `adsense` | `ca-pub-NNNNNNNN` | 1 | `html` |
-| `fb_pixel` | `NNNNNNNNNN` | 1 | `html` |
+**Ownership tie-in (derived, later): DDG Tracker Radar for owner mapping.** Raw "shared id" is refined two
+ways: (a) rarity — `GROUP BY id_type, id_value HAVING count(distinct root_domain) BETWEEN 2 AND ~20` (a
+larger cluster is an agency / shared GTM container, not ownership); (b) join tracker *domains* against a
+`commoncrawl_tracker_owners` reference table (§3a) to lift "same id" → "same **owner entity**" and to
+**exclude** known third-party trackers/CDNs/consent-managers that would otherwise fabricate sibling edges.
 
-**Extraction** — `extract.Trackers(body []byte) []model.Identifier` (one anchored regex per provider over the
-full body; these ids have fixed, low-false-positive shapes). Appended to `pageResult.ids`, so they flow
-through the existing id dedup + `IdentifierRow` write + load with **no new code path**.
+### 3a. `commoncrawl_tracker_owners` — reference, from DDG Tracker Radar (migration 080)
 
-**The ownership-graph tie-in (derived, later):** a query/materialized table pairing domains that share a
-tracker id →candidate same-operator edges into `commoncrawl_domain_related`. **Caveat — weight by rarity:**
-an id on 2 domains is a strong owner signal; an id on 500 is a marketing agency / shared GTM container →
-noise. So: `GROUP BY id_type, id_value HAVING count(distinct root_domain) BETWEEN 2 AND ~20`, and treat
-larger clusters as agency/network, not ownership.
+A small reference table (tens of thousands of rows), loaded from **[DuckDuckGo Tracker
+Radar](https://github.com/duckduckgo/tracker-radar)** (permissive license, updated regularly) — the
+best-maintained tracker-domain → owning-company map (also powers DDG's blocker).
+
+```sql
+CREATE TABLE corpscout.commoncrawl_tracker_owners (
+    tracker_domain String,                 -- e.g. google-analytics.com
+    owner_name String,                      -- owning company
+    owner_display String,
+    categories Array(LowCardinality(String)),
+    prevalence Float32,                     -- how common (used to gate 3rd-party exclusion)
+    resolved_at DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (tracker_domain);
+```
+
+Loaded by a small script (like `load-domain-ranks.sh`) that walks the Tracker Radar `domains/*.json`. Not
+part of the tech pass — a reference dataset refreshed on its own cadence.
 
 ---
 
-## Integration (the `processPage`/`mergePageResults` refactor makes this clean)
+## 4. Graph edges — CommonCrawl webgraph, pulled directly (NOT this pass)
 
-The two-level FetchChunk split we just landed is exactly what makes this a small change:
+The domain↔domain edge graph is **CC's**, from the same webgraph release as the `*-domain-ranks` you already
+load. Pull the companion **edges** file the same way as
+[`load-domain-ranks.sh`](../load-domain-ranks.sh) (clickhouse-local, un-reverse hosts), **filtered to your
+domains + 1 hop** (the full edge list is billions of rows), into a `commoncrawl_domain_links` edge table.
+This is a separate ingest — decoupled from the tech pass — and together with the tracker-ID edges (§3) is the
+ownership/sibling-discovery substrate. Design: the graph section of `embeddings-design.md` / the earlier
+graph discussion. **Do not parse links from pages** — it would be a redundant, ~25-page subset of this.
 
-- **`pageResult`** gains a `security SecurityInfo` field (populated only for the primary page) and its `ids`
-  already accept the tracker `Identifier`s.
-- **`processPage`** (tech/both): call `extract.Trackers(body)` → append to `r.ids`; if `it.Primary`, set
-  `r.security = security.FromHeaders(headers)`.
-- **`mergePageResults`**: capture `security` from the same lowest-rank-survivor page that sets `primaryURL`
-  (trackers already merge via the existing id dedup).
-- **`Finalize`**: fan one `SecurityRow` per domain (from `agg.security`); tracker ids ride the existing
+---
+
+## Integration (fits the `processPage`/`mergePageResults` seams)
+
+- **`pageResult`** gains `security map[string]string`, `meta HeadMeta` (populated only on the primary page);
+  its `ids` already accept the tracker `Identifier`s.
+- **`processPage`** (tech/both): `extract.Trackers(body)` → append to `r.ids`; if `it.Primary`:
+  `r.security = security.HeaderMap(headers)`, `r.meta = parse.HeadMeta(body)`.
+- **`mergePageResults`**: capture `security`/`meta` from the same lowest-rank-survivor page that sets
+  `primaryURL` (trackers already merge via the id dedup).
+- **`Finalize`**: fan one `SecurityRow` + one `PageMetaRow` per domain; tracker ids ride the existing
   `IdentifierRow` fan-out.
-- **`output`**: add `SecurityRow` + `WriteSecurity`; **`load`**: add `Tables["security"] =
-  "commoncrawl_domain_security"` + to `Kinds`. Trackers need nothing (identifiers path unchanged).
+- **`output`**: add `SecurityRow`/`PageMetaRow` + `WriteSecurity`/`WritePageMeta`. **`load`**: add
+  `Tables["security"]`/`Tables["page_meta"]` + to `Kinds`. Trackers: nothing.
 
 ## Migrations & tests
 
-- **078** `commoncrawl_domain_security` (`.up`/`.down`); register in `EXPECTED_MIGRATIONS`; column-order
-  contract test greps the migration (mirrors the other export-column tests).
-- Trackers: **no migration** (new `id_type` values only).
-- Unit tests: `FromHeaders` (present/absent matrix), `Trackers` (each provider + a negative), and a
-  `mergePageResults` case asserting security comes from the primary-survivor page.
+- **078** `commoncrawl_domain_security`, **079** `commoncrawl_domain_page_meta`, **080**
+  `commoncrawl_tracker_owners` (`.up`/`.down`); register all in `EXPECTED_MIGRATIONS`; column-order contract
+  tests grep each migration (mirror the other export tests). ClickHouse `Map`/`Array` columns are fine
+  (native driver `AppendStruct` handles `map[string]string` / `[]string`).
+- Trackers into `commoncrawl_domain_identifiers`: **no migration** (new `id_type` values only).
+- Unit tests: `HeaderMap` (multi-value join, Set-Cookie), `HeadMeta` (title/meta/canonical/hreflang/charset +
+  a malformed-HTML case), `Trackers` (each provider + a negative), and a `mergePageResults` case asserting
+  security/meta come from the primary-survivor page.
 
-## Open decisions
+## Deferred (explicitly out of scope — later CPU passes over stored data)
 
-1. **Security grain** — 1/domain from the primary page (recommended, v1) vs per-page (captures path-specific
-   CSP; more rows). Start domain-level.
-2. **Cookie security flags** (`Secure`/`HttpOnly`/`SameSite`) — cheap now that we parse cookies, but per-page
-   × per-cookie; defer to v2 unless wanted in the first table.
-3. **Tracker → graph** materialization — a `cc-crawl` step vs a standalone query, and the rarity threshold.
-   Lean standalone + `2..20` distinct domains, tunable.
-4. **Version→CVE join** — out of scope here (just store `server`/`x_powered_by`); the EOL/CVE mapping is a
-   separate analytical layer.
+- Hygiene **scoring** + `PP_WEBAPP_*` issue-template mapping (there is far more to systematize here; do it
+  once collection is complete, not inline).
+- Server/tech **version → EOL/CVE** join.
+- Cookie-flag breakout, full JSON-LD block storage, per-page (vs per-domain) capture.
