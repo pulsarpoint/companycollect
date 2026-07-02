@@ -109,7 +109,7 @@ def write_financial_data_snapshot_csv(
 
 
 @dg.asset(
-    name="finacial_data_s3_snapshot",
+    name="data_snapshot",
     group_name="finland_xbrl",
     kinds={"python", "s3", "csv", "prh"},
     description=(
@@ -121,7 +121,7 @@ def write_financial_data_snapshot_csv(
         "the download when the fixed S3 object already exists."
     ),
 )
-def finacial_data_s3_snapshot(
+def data_snapshot(
     context: dg.AssetExecutionContext,
     xbrl_api: XbrlApiResource,
     object_store: ObjectStoreResource,

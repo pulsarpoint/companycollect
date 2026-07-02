@@ -7,6 +7,7 @@ from typing import Any
 
 import dagster as dg
 from dagster import AssetKey
+import duckdb
 import pytest
 from pydantic import ValidationError
 
@@ -19,12 +20,18 @@ from dagster_v3.defs.finland_xbrl.assets import (
     FINANCIAL_DATA_S3_SNAPSHOT_KEY,
     FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_END,
     FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START,
+    FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH,
+    FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
+    FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE,
     XbrlParsedConfig,
     XbrlRawConfig,
     build_financial_data_snapshot_csv,
     download_finland_xbrl_raw_xml_documents,
+    export_data_snapshot_duckdb_to_clickhouse,
+    materialize_data_snapshot_duckdb,
     write_financial_data_snapshot_csv,
 )
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.finland_xbrl.resources import (
     XbrlApiResource,
     XbrlParquetStorageResource,
@@ -130,15 +137,17 @@ class FakeS3Error(Exception):
 
 
 class FakeClickHouseClient:
-    def __init__(self) -> None:
+    def __init__(self, tables: set[str] | None = None) -> None:
         self.statements: list[str] = []
         self.execute_calls: list[tuple[str, object | None]] = []
+        self.tables = tables or {"fi_financial_metrics"}
 
     def execute(self, sql: str, params: object | None = None) -> list[tuple[str, ...]]:
         self.execute_calls.append((sql, params))
         self.statements.append(sql)
         if "system.tables" in sql:
-            return [("fi_financial_metrics",)]
+            requested = set(params.get("tables", ())) if isinstance(params, dict) else set()
+            return [(table,) for table in sorted(self.tables & requested)]
         return []
 
 
@@ -330,6 +339,17 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
 
     schedule = repo.get_schedule_def("finland_xbrl_incremental_schedule")
     assert schedule.cron_schedule == "0 6 * * *"
+
+    data_snapshot = {
+        key.path[-1]
+        for key in repo.get_job("finland_xbrl_data_snapshot_job").asset_layer.executable_asset_keys
+    }
+    assert data_snapshot == {
+        "data_snapshot",
+        "data_snapshot_duckdb",
+        "data_snapshot_duckdb_ch",
+    }
+    assert repo.get_job("finland_xbrl_data_snapshot_job").partitions_def is None
 
     publish = {
         key.path[-1]
@@ -606,13 +626,134 @@ def test_financial_data_snapshot_reuses_existing_s3_csv_without_api_calls() -> N
     assert session.calls == []
 
 
-def test_finacial_data_s3_snapshot_asset_is_registered() -> None:
+def test_data_snapshot_asset_is_registered() -> None:
     graph = load_project_defs().get_repository_def().asset_graph
-    node = graph.get(AssetKey("finacial_data_s3_snapshot"))
+    node = graph.get(AssetKey("data_snapshot"))
 
     assert node.group_name == "finland_xbrl"
     assert node.description
     assert "fixed initial PRH XBRL financial statement listing" in node.description
+
+
+def test_data_snapshot_duckdb_writes_s3_csv_to_duckdb(tmp_path: Path) -> None:
+    object_store, s3_client = _object_store()
+    s3_client.objects[
+        ("source-finland-prh-xbrl", FINANCIAL_DATA_S3_SNAPSHOT_KEY)
+    ] = (
+        "businessId,financialDate,registrationDate\r\n"
+        "0100123-2,2024-05-31,2024-08-17\r\n"
+        "0202020-2,2025-12-31,2026-02-01\r\n"
+    ).encode("utf-8")
+    duckdb_path = tmp_path / "snapshot.duckdb"
+
+    result = materialize_data_snapshot_duckdb(
+        object_store=object_store,
+        snapshot_duckdb=duckdb_resource(duckdb_path),
+    )
+
+    assert result.metadata["row_count"] == 2
+    assert result.metadata["duckdb_schema"] == FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA
+    assert result.metadata["duckdb_table"] == FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        columns = connection.execute(
+            """
+            select column_name, data_type
+            from information_schema.columns
+            where table_schema = ?
+              and table_name = ?
+            order by ordinal_position
+            """,
+            [
+                FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
+                FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE,
+            ],
+        ).fetchall()
+        rows = connection.execute(
+            f"""
+            select "businessId", "financialDate", "registrationDate"
+            from {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE}
+            order by "businessId"
+            """
+        ).fetchall()
+
+    assert columns == [
+        ("businessId", "VARCHAR"),
+        ("financialDate", "VARCHAR"),
+        ("registrationDate", "VARCHAR"),
+    ]
+    assert rows == [
+        ("0100123-2", "2024-05-31", "2024-08-17"),
+        ("0202020-2", "2025-12-31", "2026-02-01"),
+    ]
+
+
+def test_data_snapshot_duckdb_asset_is_registered_after_s3_snapshot() -> None:
+    graph = load_project_defs().get_repository_def().asset_graph
+    node = graph.get(AssetKey("data_snapshot_duckdb"))
+
+    assert node.group_name == "finland_xbrl"
+    assert node.parent_keys == {AssetKey("data_snapshot")}
+    assert FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH == (
+        "data/finland_xbrl/financial_data_snapshot.duckdb"
+    )
+
+
+def test_data_snapshot_duckdb_ch_replaces_clickhouse_listing_table(tmp_path: Path) -> None:
+    duckdb_path = tmp_path / "snapshot.duckdb"
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute(f"create schema {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}")
+        connection.execute(
+            f"""
+            create table
+              {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE} (
+                "businessId" varchar,
+                "financialDate" varchar,
+                "registrationDate" varchar
+              )
+            """
+        )
+        connection.executemany(
+            f"""
+            insert into {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE}
+              ("businessId", "financialDate", "registrationDate")
+            values (?, ?, ?)
+            """,
+            [
+                ("0100123-2", "2024-05-31", "2024-08-17"),
+                ("0202020-2", "2025-12-31", "2026-02-01"),
+            ],
+        )
+    client = FakeClickHouseClient(tables={"fi_xbrl_financial_statement_listings"})
+
+    row_count = export_data_snapshot_duckdb_to_clickhouse(
+        snapshot_duckdb=duckdb_resource(duckdb_path),
+        clickhouse=FakeClickHouseResource(client),
+    )
+
+    assert row_count == 2
+    assert any("CREATE TABLE" in statement for statement in client.statements)
+    assert any("EXCHANGE TABLES" in statement for statement in client.statements)
+    insert_calls = [
+        (sql, params)
+        for sql, params in client.execute_calls
+        if sql.strip().startswith("INSERT INTO")
+    ]
+    assert len(insert_calls) == 1
+    insert_sql, insert_rows = insert_calls[0]
+    assert "_tmp_fi_xbrl_financial_statement_listings_" in insert_sql
+    assert isinstance(insert_rows, list)
+    assert insert_rows == [
+        ("0100123-2", date(2024, 5, 31), date(2024, 8, 17)),
+        ("0202020-2", date(2025, 12, 31), date(2026, 2, 1)),
+    ]
+
+
+def test_data_snapshot_duckdb_ch_asset_is_registered_after_duckdb_snapshot() -> None:
+    graph = load_project_defs().get_repository_def().asset_graph
+    node = graph.get(AssetKey("data_snapshot_duckdb_ch"))
+
+    assert node.group_name == "finland_xbrl"
+    assert node.parent_keys == {AssetKey("data_snapshot_duckdb")}
 
 
 def test_xbrl_api_resource_rejects_registration_start_before_prh_floor() -> None:

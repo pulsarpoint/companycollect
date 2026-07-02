@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS corpscout.fi_xbrl_financial_statement_listings;

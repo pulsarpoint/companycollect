@@ -47,7 +47,7 @@ PRH only supports registration-date listing searches starting on or after
 New fixed listing snapshot asset:
 
 ```text
-finacial_data_s3_snapshot
+data_snapshot
 ```
 
 This asset is the first step in the replacement financial reporting design. It

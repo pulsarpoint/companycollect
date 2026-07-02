@@ -2,6 +2,14 @@ import dagster as dg
 
 from dagster_v3.defs.finland_xbrl.assets.common import BACKFILL_PARTITIONS, DAILY_PARTITIONS
 
+finland_xbrl_data_snapshot_job = dg.define_asset_job(
+    "finland_xbrl_data_snapshot_job",
+    selection=dg.AssetSelection.assets(
+        "data_snapshot",
+        "data_snapshot_duckdb",
+        "data_snapshot_duckdb_ch",
+    ),
+)
 finland_xbrl_historical_backfill_job = dg.define_asset_job(
     "finland_xbrl_historical_backfill_job",
     selection=dg.AssetSelection.assets(
