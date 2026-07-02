@@ -276,3 +276,24 @@ use (re-classification, vector search): [`../docs/embeddings-design.md`](../docs
 **Legacy fat-domains** — `load` detects a pre-split `domains.parquet` (by a `nace_top3_codes` column) and
 fans it into `domains` + `industries` + `page_signals` + `contacts`, skipping the normal split loads for
 those kinds. Modern output never takes this path.
+
+## Internal packages
+
+| Package | Role |
+|---|---|
+| `fetch` | `RangeGetter` (signed `S3Getter` + anonymous CDN getter); `FetchRecord` byte-range-reads a WARC record and unpacks gzip → HTTP headers+body. 30 s/record, backoff on transient errors. |
+| `embed` | `EmbedClient`: POSTs to the OpenAI-compatible `/embeddings` endpoint with batching + a concurrency pool; caps text length; retries transient failures; L2-normalizes the output. |
+| `parse` | `ParseHTML` → visible text; email regex (deduped); social-platform link extraction. |
+| `tech` | `DetectTech`: dispatches to the fast Aho-Corasick-gated matcher (`--tech-engine=fast`) or upstream `wappalyzergo`; returns `[]Technology{Name,Category,Version}`. |
+| `extract` | `ExtractProfile` (schema.org Organization JSON-LD), `ExtractLEIs`, `ExtractVATs` (checksum-validated). |
+| `classify` | `LoadReference` (NACE matrix + page-type prototypes from ClickHouse), `Classify` (cosine + page-type signals), `VerifyReference` (startup model/dim match). |
+| `output` | `*Row` structs (parquet+ch tags), `Write*` funcs, S3 upload. |
+| `load` | `FromFile`/`FromDir`, the generic `Insert[T]`, the filename→table map, legacy fan-out. |
+| `worker` | `ShardConfig`, `ProcessIndustryStream`, `FetchChunk`+`Finalize`, per-domain aggregation. |
+| `vec` | `Dot`, `Norm` (L2). |
+| `model` | shared types: `Reference`, `Prototypes`, `WorklistItem`, `Technology`, `Identifier`, `CompanyProfile`, `DomainResult`. |
+
+---
+
+*Worker CLI + internals reference. Pipeline/driver: [`../README.md`](../README.md) · ClickHouse columns:
+[`../docs/schema.md`](../docs/schema.md) · embeddings: [`../docs/embeddings-design.md`](../docs/embeddings-design.md).*
