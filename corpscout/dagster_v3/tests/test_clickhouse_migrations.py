@@ -87,8 +87,6 @@ EXPECTED_MIGRATIONS = (
     "000073_corpscout_commoncrawl_domain_graph_signals",
     "000074_corpscout_no_companies_date32",
     "000075_corpscout_no_companies_last_accounts_year",
-    "000076_corpscout_drop_unused_finland_xbrl_raw_tables",
-    "000077_corpscout_fi_xbrl_financial_statement_listings",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
