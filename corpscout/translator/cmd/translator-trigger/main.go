@@ -10,8 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
+	"github.com/pulsarpoint/corpscout/translator/internal/engine"
 	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 	"go.temporal.io/sdk/client"
 )
@@ -37,8 +37,8 @@ func run(ctx context.Context, args []string, stdout io.Writer, newStarter starte
 	fs.SetOutput(stdout)
 
 	configPath := fs.String("config", defaultConfigPath(), "path to translator config file")
-	source := fs.String("source", brreg.SourceName, "translation source")
-	action := fs.String("action", brreg.ActionLoadAndRun, "source action: load-and-run, run, or load-queue")
+	source := fs.String("source", "norway_brreg", "translation source")
+	action := fs.String("action", engine.ActionLoadAndRun, "source action: load-and-run, run, or load-queue")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -48,7 +48,7 @@ func run(ctx context.Context, args []string, stdout io.Writer, newStarter starte
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments: %v", fs.Args())
 	}
-	if err := validateSourceAction(*source, *action); err != nil {
+	if err := validateAction(*action); err != nil {
 		return err
 	}
 
@@ -88,9 +88,14 @@ func newTemporalStarter(_ context.Context, cfg config.Config) (sourceActionStart
 		return nil, nil, fmt.Errorf("connect temporal: %w", err)
 	}
 
+	sources := make([]string, 0, len(cfg.Sources))
+	for name := range cfg.Sources {
+		sources = append(sources, name)
+	}
+
 	return orchestration.NewTemporalWorkflowStarter(
 			temporalClient,
-			brreg.TaskQueue,
+			sources,
 			cfg.Temporal.BatchSize,
 			cfg.Temporal.TimeoutSeconds,
 			cfg.Temporal.BatchesPerRun,
@@ -99,13 +104,9 @@ func newTemporalStarter(_ context.Context, cfg config.Config) (sourceActionStart
 		nil
 }
 
-func validateSourceAction(source string, action string) error {
-	if source != brreg.SourceName {
-		return fmt.Errorf("unsupported source: %s", source)
-	}
-
+func validateAction(action string) error {
 	switch action {
-	case brreg.ActionLoadAndRun, brreg.ActionLoadQueue, brreg.ActionRun:
+	case engine.ActionLoadAndRun, engine.ActionLoadQueue, engine.ActionRun:
 		return nil
 	default:
 		return fmt.Errorf("unsupported action: %s", action)
