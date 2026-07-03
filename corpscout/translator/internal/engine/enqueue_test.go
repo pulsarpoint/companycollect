@@ -8,15 +8,14 @@ import (
 )
 
 // newEnqueueTestRuntime builds a Runtime against a temp queue file, mirroring
-// runtime_test.go's construction (including Definition, since RuntimeConfig
-// still requires one) with the same fixture ClickHouse source and translator.
+// runtime_test.go's construction with the same fixture ClickHouse source and
+// translator.
 func newEnqueueTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	ctx := context.Background()
 	rt, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "enqueue.duckdb"),
-		Definition:   norwayDefinition(),
-		Source:       newFixtureSource(0),
+		Source:       newFixtureSource(),
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
 		Model:        "qwen3:6b",

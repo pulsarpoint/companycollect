@@ -7,18 +7,46 @@ import (
 	"log/slog"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pulsarpoint/corpscout/translator/internal/translation"
 )
 
+// enqueueFixtureItems enqueues n synthetic items with distinct dedup keys
+// through Runtime.Enqueue, standing in for what an external loader pushes
+// into the queue now that the engine has no scan/load path of its own.
+func enqueueFixtureItems(t *testing.T, rt *Runtime, n int) EnqueueResult {
+	t.Helper()
+
+	items := make([]EnqueueItem, 0, n)
+	for i := 0; i < n; i++ {
+		items = append(items, EnqueueItem{
+			SourceTable:    testSourceTable,
+			SourceColumn:   testActivityColumn,
+			SourceText:     fmt.Sprintf("Norwegian text %03d", i),
+			SourceTextHash: strconv.FormatUint(uint64(10_000+i), 10),
+		})
+	}
+	result, err := rt.Enqueue(context.Background(), EnqueueRequest{
+		SourceLang:         testSourceLang,
+		TargetLang:         testTargetLang,
+		SourceLanguageName: testSourceLangName,
+		TargetLanguageName: testTargetLangName,
+		Items:              items,
+	})
+	if err != nil {
+		t.Fatalf("enqueue fixture items: %v", err)
+	}
+	return result
+}
+
 func TestRuntimeLoadsProcessesAndUploadsBRREGQueue(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(10)
+	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
-		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -29,12 +57,9 @@ func TestRuntimeLoadsProcessesAndUploadsBRREGQueue(t *testing.T) {
 	}
 	defer runtime.Close()
 
-	loadResult, err := runtime.LoadNewInput(ctx)
-	if err != nil {
-		t.Fatalf("load new input: %v", err)
-	}
-	if loadResult.RowsInserted != 10 {
-		t.Fatalf("expected 10 inserted input rows, got %d", loadResult.RowsInserted)
+	enqueueResult := enqueueFixtureItems(t, runtime, 10)
+	if enqueueResult.Inserted != 10 {
+		t.Fatalf("expected 10 inserted input rows, got %d", enqueueResult.Inserted)
 	}
 
 	totalTranslated := 0
@@ -87,10 +112,9 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 	ctx := context.Background()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	source := newFixtureSource(2)
+	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
-		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -102,9 +126,7 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 	}
 	defer runtime.Close()
 
-	if _, err := runtime.LoadNewInput(ctx); err != nil {
-		t.Fatalf("load new input: %v", err)
-	}
+	enqueueFixtureItems(t, runtime, 2)
 	processResult, err := runtime.ProcessOneBatch(ctx, ProcessInput{BatchSize: 1, TimeoutSeconds: 30})
 	if err != nil {
 		t.Fatalf("process one batch: %v", err)
@@ -119,8 +141,6 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 	logText := logs.String()
 	required := []string{
 		`"msg":"runtime initialized"`,
-		`"msg":"load input completed"`,
-		`"rows_inserted":2`,
 		`"msg":"process batch completed"`,
 		`"translated_count":1`,
 		`"msg":"flush output completed"`,
@@ -137,10 +157,9 @@ func TestRuntimeLogsQueueCountsWhenBatchIsEmpty(t *testing.T) {
 	ctx := context.Background()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	source := newFixtureSource(0)
+	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
-		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -177,10 +196,9 @@ func TestRuntimeLogsQueueCountsWhenBatchIsEmpty(t *testing.T) {
 
 func TestRuntimeMarksSingleUnexpectedTranslationResultFailed(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(1)
+	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
-		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   unexpectedRuntimeTranslator{},
 		ProviderName: "local",
@@ -191,9 +209,7 @@ func TestRuntimeMarksSingleUnexpectedTranslationResultFailed(t *testing.T) {
 	}
 	defer runtime.Close()
 
-	if _, err := runtime.LoadNewInput(ctx); err != nil {
-		t.Fatalf("load new input: %v", err)
-	}
+	enqueueFixtureItems(t, runtime, 1)
 
 	result, err := runtime.ProcessOneBatch(ctx, ProcessInput{
 		BatchSize:      10,
@@ -224,11 +240,10 @@ func TestRuntimeMarksSingleUnexpectedTranslationResultFailed(t *testing.T) {
 
 func TestRuntimeRetriesModelOutputFailureWithShuffledItems(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(4)
+	source := newFixtureSource()
 	translator := &modelOutputThenSuccessTranslator{failuresBeforeSuccess: 1}
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
-		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   translator,
 		ProviderName: "local",
@@ -239,9 +254,7 @@ func TestRuntimeRetriesModelOutputFailureWithShuffledItems(t *testing.T) {
 	}
 	defer runtime.Close()
 
-	if _, err := runtime.LoadNewInput(ctx); err != nil {
-		t.Fatalf("load new input: %v", err)
-	}
+	enqueueFixtureItems(t, runtime, 4)
 
 	result, err := runtime.ProcessOneBatch(ctx, ProcessInput{BatchSize: 4, TimeoutSeconds: 30})
 	if err != nil {
@@ -260,11 +273,10 @@ func TestRuntimeRetriesModelOutputFailureWithShuffledItems(t *testing.T) {
 
 func TestRuntimeSplitsBatchAfterRepeatedModelOutputFailures(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(4)
+	source := newFixtureSource()
 	translator := &failLargeBatchTranslator{maxSuccessfulBatchSize: 2}
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
-		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   translator,
 		ProviderName: "local",
@@ -275,9 +287,7 @@ func TestRuntimeSplitsBatchAfterRepeatedModelOutputFailures(t *testing.T) {
 	}
 	defer runtime.Close()
 
-	if _, err := runtime.LoadNewInput(ctx); err != nil {
-		t.Fatalf("load new input: %v", err)
-	}
+	enqueueFixtureItems(t, runtime, 4)
 
 	result, err := runtime.ProcessOneBatch(ctx, ProcessInput{BatchSize: 4, TimeoutSeconds: 30})
 	if err != nil {
@@ -295,10 +305,9 @@ func TestRuntimeSplitsBatchAfterRepeatedModelOutputFailures(t *testing.T) {
 
 func TestRuntimeMarksSingleItemFailedAfterRepeatedModelOutputFailures(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(1)
+	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
-		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   alwaysModelOutputFailureTranslator{},
 		ProviderName: "local",
@@ -309,9 +318,7 @@ func TestRuntimeMarksSingleItemFailedAfterRepeatedModelOutputFailures(t *testing
 	}
 	defer runtime.Close()
 
-	if _, err := runtime.LoadNewInput(ctx); err != nil {
-		t.Fatalf("load new input: %v", err)
-	}
+	enqueueFixtureItems(t, runtime, 1)
 
 	result, err := runtime.ProcessOneBatch(ctx, ProcessInput{BatchSize: 1, TimeoutSeconds: 30})
 	if err != nil {
@@ -332,10 +339,9 @@ func TestRuntimeMarksSingleItemFailedAfterRepeatedModelOutputFailures(t *testing
 
 func TestFlushOutputInsertsAndDeletesFlushedRows(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(0)
+	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "flush.duckdb"),
-		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",

@@ -20,11 +20,9 @@ import (
 
 type Runtime struct {
 	queuePath    string
-	queueCreated bool
 	db           *sql.DB
 	queue        *queue.Queue
 	source       ClickHouseSource
-	definition   Definition
 	translator   translation.Translator
 	providerName string
 	model        string
@@ -34,7 +32,6 @@ type Runtime struct {
 
 type RuntimeConfig struct {
 	QueuePath    string
-	Definition   Definition
 	Source       ClickHouseSource
 	Translator   translation.Translator
 	ProviderName string
@@ -62,9 +59,6 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	if config.QueuePath == "" {
 		return nil, errors.New("queue path is required")
 	}
-	if err := config.Definition.Validate(); err != nil {
-		return nil, fmt.Errorf("source definition: %w", err)
-	}
 	if config.Source == nil {
 		return nil, errors.New("clickhouse source is required")
 	}
@@ -83,7 +77,6 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	}
 	logger = logger.With(
 		"component", "translator_runtime",
-		"source", config.Definition.Source,
 		"queue_path", config.QueuePath,
 	)
 
@@ -115,11 +108,9 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 
 	runtime := &Runtime{
 		queuePath:    config.QueuePath,
-		queueCreated: created,
 		db:           db,
 		queue:        q,
 		source:       config.Source,
-		definition:   config.Definition,
 		translator:   config.Translator,
 		providerName: config.ProviderName,
 		model:        config.Model,
@@ -133,31 +124,6 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	)
 
 	return runtime, nil
-}
-
-func (r *Runtime) LoadNewInput(ctx context.Context) (LoadResult, error) {
-	if r.closed {
-		return LoadResult{}, errors.New("translator runtime is closed")
-	}
-
-	start := time.Now()
-	r.logger.Info("load input started")
-	result, err := loadInputWithDB(ctx, r.source, r.definition, r.db, r.queuePath, r.queueCreated)
-	r.queueCreated = false
-	if err != nil {
-		r.logger.Error("load input failed", "err", err, "duration_ms", elapsedMillis(start))
-		return result, err
-	}
-	r.logger.Info(
-		"load input completed",
-		"rows_seen", result.RowsSeen,
-		"rows_inserted", result.RowsInserted,
-		"static_rows_seen", result.StaticRowsSeen,
-		"static_flushed", result.StaticFlushed,
-		"created", result.Created,
-		"duration_ms", elapsedMillis(start),
-	)
-	return result, err
 }
 
 func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (ProcessResult, error) {

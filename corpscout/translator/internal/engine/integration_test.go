@@ -5,13 +5,40 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
+	"github.com/pulsarpoint/corpscout/translator/internal/translation"
 )
 
-func TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries(t *testing.T) {
+// uppercaseEchoTranslator is a fake Translator that returns the source text
+// upper-cased, standing in for a real LLM/provider call in the integration
+// test below.
+type uppercaseEchoTranslator struct{}
+
+func (uppercaseEchoTranslator) Translate(
+	ctx context.Context,
+	items []translation.TranslationInput,
+	timeoutSeconds int,
+	promptData translation.PromptData,
+) ([]translation.TranslationResult, error) {
+	results := make([]translation.TranslationResult, 0, len(items))
+	for _, item := range items {
+		results = append(results, translation.TranslationResult{
+			ItemID:         item.ItemID,
+			TranslatedText: strings.ToUpper(item.SourceText),
+		})
+	}
+	return results, nil
+}
+
+// TestEnqueueProcessFlushWithExistingClickHouse exercises the whole engine
+// loop end to end against a real ClickHouse: enqueue two synthetic items,
+// process them with a fake translator, flush the output, and confirm the
+// rows land in corpscout.text_translations while the DuckDB queue empties.
+func TestEnqueueProcessFlushWithExistingClickHouse(t *testing.T) {
 	if os.Getenv("TRANSLATOR_INTEGRATION_TESTS") != "true" {
 		t.Skip("set TRANSLATOR_INTEGRATION_TESTS=true and CLICKHOUSE_* environment variables to run")
 	}
@@ -32,117 +59,117 @@ func TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries(
 		t.Fatalf("open clickhouse: %v", err)
 	}
 	defer db.Close()
-	if err := db.PingContext(ctx); err != nil {
-		t.Fatalf("ping clickhouse: %v", err)
-	}
 
-	if sourceRows := clickHouseTableCount(t, ctx, db, "corpscout.no_companies"); sourceRows == 0 {
-		t.Fatal("corpscout.no_companies is empty")
-	}
+	const (
+		integrationTable  = "corpscout.integration_test"
+		integrationColumn = "enqueue_process_flush_test"
+	)
 
-	def := norwayDefinition()
-	articlesSQL, err := ScanSQL(def, def.Columns[0])
-	if err != nil {
-		t.Fatalf("render articles scan sql: %v", err)
+	deleteIntegrationRows := func() {
+		_, _ = db.ExecContext(context.Background(), `
+			ALTER TABLE corpscout.text_translations
+			DELETE WHERE source_table = '`+integrationTable+`'
+			  AND source_column = '`+integrationColumn+`'
+		`)
 	}
-	activitySQL, err := ScanSQL(def, def.Columns[1])
-	if err != nil {
-		t.Fatalf("render activity scan sql: %v", err)
-	}
-	expectedArticlesPurposeRows := clickHouseScanCount(t, ctx, db, articlesSQL)
-	expectedActivityTextRows := clickHouseScanCount(t, ctx, db, activitySQL)
-	expectedDynamicRows := expectedArticlesPurposeRows + expectedActivityTextRows
-	beforeStaticRows := clickHouseStaticTranslationCount(t, ctx, db)
+	deleteIntegrationRows()
+	t.Cleanup(deleteIntegrationRows)
 
 	source, err := OpenClickHouse(ctx, cfg.ClickHouse.NativeURL)
 	if err != nil {
-		t.Fatalf("open brreg clickhouse source: %v", err)
+		t.Fatalf("open clickhouse source: %v", err)
 	}
 	defer source.Close()
 
-	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
-	result, err := LoadInput(ctx, source, def, Options{QueuePath: queuePath})
+	queuePath := filepath.Join(t.TempDir(), "enqueue_process_flush.duckdb")
+	runtime, err := NewRuntime(ctx, RuntimeConfig{
+		QueuePath:    queuePath,
+		Source:       source,
+		Translator:   uppercaseEchoTranslator{},
+		ProviderName: "integration-test",
+		Model:        "uppercase-echo",
+	})
 	if err != nil {
-		t.Fatalf("initialize translation: %v", err)
+		t.Fatalf("new runtime: %v", err)
 	}
+	defer runtime.Close()
 
-	if result.RowsSeen != expectedDynamicRows {
-		t.Fatalf("expected %d dynamic rows, got %d", expectedDynamicRows, result.RowsSeen)
-	}
-	if result.RowsInserted != expectedDynamicRows {
-		t.Fatalf("expected %d inserted dynamic rows, got %d", expectedDynamicRows, result.RowsInserted)
-	}
-	queueDB, err := sql.Open("duckdb", queuePath)
+	enqueueResult, err := runtime.Enqueue(ctx, EnqueueRequest{
+		SourceLang:         "no",
+		TargetLang:         "en",
+		SourceLanguageName: "Norwegian",
+		TargetLanguageName: "English",
+		Items: []EnqueueItem{
+			{
+				SourceTable:    integrationTable,
+				SourceColumn:   integrationColumn,
+				SourceText:     "første tekst",
+				SourceTextHash: "1001",
+			},
+			{
+				SourceTable:    integrationTable,
+				SourceColumn:   integrationColumn,
+				SourceText:     "andre tekst",
+				SourceTextHash: "1002",
+			},
+		},
+	})
 	if err != nil {
-		t.Fatalf("open queue duckdb: %v", err)
+		t.Fatalf("enqueue: %v", err)
 	}
-	defer queueDB.Close()
+	if enqueueResult.Received != 2 || enqueueResult.Inserted != 2 {
+		t.Fatalf("expected 2/2 enqueued, got %+v", enqueueResult)
+	}
 
-	if got := duckDBCount(t, queueDB, "select count(*) from input_items"); got != expectedDynamicRows {
-		t.Fatalf("expected %d queue input rows, got %d", expectedDynamicRows, got)
+	processResult, err := runtime.ProcessOneBatch(ctx, ProcessInput{BatchSize: 10, TimeoutSeconds: 30})
+	if err != nil {
+		t.Fatalf("process one batch: %v", err)
 	}
-	if got := duckDBCount(t, queueDB, "select count(*) from output_items"); got != 0 {
-		t.Fatalf("expected empty output queue, got %d rows", got)
+	if processResult.TranslatedCount != 2 || processResult.PendingCount != 0 || processResult.OutputCount != 2 {
+		t.Fatalf("unexpected process result: %+v", processResult)
 	}
-	if got := duckDBCount(t, queueDB, "select count(*) from input_items where source_column = 'articles_purpose_original'"); got != expectedArticlesPurposeRows {
-		t.Fatalf("expected %d articles_purpose_original rows, got %d", expectedArticlesPurposeRows, got)
-	}
-	if got := duckDBCount(t, queueDB, "select count(*) from input_items where source_column = 'activity_text_original'"); got != expectedActivityTextRows {
-		t.Fatalf("expected %d activity_text_original rows, got %d", expectedActivityTextRows, got)
-	}
-	if got := duckDBCount(t, queueDB, "select count(*) from input_items where source_column = 'legal_form_description_original'"); got != 0 {
-		t.Fatalf("static legal-form rows must not enter input queue, got %d rows", got)
-	}
-	if got := duckDBCount(t, queueDB, `
-		select count(*)
-		from input_items
-		where source_table <> 'corpscout.no_companies'
-		   or source_lang <> 'no'
-		   or target_lang <> 'en'
-		   or source_text = ''
-	`); got != 0 {
-		t.Fatalf("queue has %d malformed rows", got)
-	}
-	if got := duckDBCount(t, queueDB, `
-		select count(*)
-		from input_items
-		where source_column not in ('articles_purpose_original', 'activity_text_original')
-	`); got != 0 {
-		t.Fatalf("queue has %d rows for unexpected columns", got)
-	}
-	if got := duckDBCount(t, queueDB, `
-		select count(*)
-		from (
-			select source_table, source_column, source_text_hash, source_lang, target_lang
-			from input_items
-			group by source_table, source_column, source_text_hash, source_lang, target_lang
-			having count(*) > 1
-		)
-	`); got != 0 {
-		t.Fatalf("queue has %d duplicate queue keys", got)
-	}
-	if afterStaticRows := clickHouseStaticTranslationCount(t, ctx, db); afterStaticRows < beforeStaticRows {
-		t.Fatalf("static translation rows decreased from %d to %d", beforeStaticRows, afterStaticRows)
-	}
-	t.Logf(
-		"queue_path=%s dynamic_rows=%d static_rows_seen=%d static_flushed=%d",
-		queuePath,
-		result.RowsInserted,
-		result.StaticRowsSeen,
-		result.StaticFlushed,
-	)
-}
 
-func duckDBCount(t *testing.T, db *sql.DB, query string) int {
-	t.Helper()
+	flushResult, err := runtime.FlushOutput(ctx)
+	if err != nil {
+		t.Fatalf("flush output: %v", err)
+	}
+	if flushResult.RowsSeen != 2 || flushResult.RowsInserted != 2 {
+		t.Fatalf("unexpected flush result: %+v", flushResult)
+	}
 
 	var count int
-	if err := db.QueryRow(query).Scan(&count); err != nil {
-		t.Fatalf("query duckdb count: %v\nSQL:\n%s", err, query)
+	if err := db.QueryRowContext(ctx, `
+		SELECT count()
+		FROM corpscout.text_translations
+		WHERE source_table = '`+integrationTable+`'
+		  AND source_column = '`+integrationColumn+`'
+		  AND translated_text IN ('FØRSTE TEKST', 'ANDRE TEKST')
+	`).Scan(&count); err != nil {
+		t.Fatalf("count inserted rows: %v", err)
 	}
-	return count
+	if count != 2 {
+		t.Fatalf("expected 2 uppercased rows in corpscout.text_translations, got %d", count)
+	}
+
+	outputCount, err := countRows(ctx, runtime.db, "output_items")
+	if err != nil {
+		t.Fatalf("count output_items: %v", err)
+	}
+	if outputCount != 0 {
+		t.Fatalf("output_items count = %d, want 0", outputCount)
+	}
+
+	inputCount, err := countRows(ctx, runtime.db, "input_items")
+	if err != nil {
+		t.Fatalf("count input_items: %v", err)
+	}
+	if inputCount != 0 {
+		t.Fatalf("input_items count = %d, want 0 (matched inputs deleted by flush)", inputCount)
+	}
 }
 
+// TestInsertTextTranslationsWithExistingClickHouse exercises
+// ClickHouse.InsertTextTranslations directly against a real ClickHouse.
 func TestInsertTextTranslationsWithExistingClickHouse(t *testing.T) {
 	if os.Getenv("TRANSLATOR_INTEGRATION_TESTS") != "true" {
 		t.Skip("set TRANSLATOR_INTEGRATION_TESTS=true and CLICKHOUSE_* environment variables to run")
@@ -215,39 +242,4 @@ func TestInsertTextTranslationsWithExistingClickHouse(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected 1 inserted integration row, got %d", count)
 	}
-}
-
-func clickHouseTableCount(t *testing.T, ctx context.Context, db *sql.DB, table string) int {
-	t.Helper()
-
-	var count int
-	if err := db.QueryRowContext(ctx, "SELECT count() FROM "+table).Scan(&count); err != nil {
-		t.Fatalf("count table %s: %v", table, err)
-	}
-	return count
-}
-
-func clickHouseScanCount(t *testing.T, ctx context.Context, db *sql.DB, query string) int {
-	t.Helper()
-
-	var count int
-	if err := db.QueryRowContext(ctx, "SELECT count() FROM ("+query+")").Scan(&count); err != nil {
-		t.Fatalf("count scan rows: %v", err)
-	}
-	return count
-}
-
-func clickHouseStaticTranslationCount(t *testing.T, ctx context.Context, db *sql.DB) int {
-	t.Helper()
-
-	var count int
-	if err := db.QueryRowContext(ctx, `
-		SELECT count()
-		FROM corpscout.text_translations
-		WHERE source_table = 'corpscout.no_companies'
-		  AND source_column = 'legal_form_description_original'
-	`).Scan(&count); err != nil {
-		t.Fatalf("count static translation rows: %v", err)
-	}
-	return count
 }
