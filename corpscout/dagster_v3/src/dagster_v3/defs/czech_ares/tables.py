@@ -1,8 +1,3 @@
-DUCKDB_SCHEMA = "czech_ares"
-RES_RAW_TABLE = "res_raw"  # DuckDB staging (all_varchar read_csv)
-COMPANIES_TABLE = "companies"  # DuckDB normalized
-INDUSTRIES_RAW_TABLE = "industries"  # DuckDB normalized
-
 CZECH_DATABASE = "corpscout"
 
 # CSU RES open data — stable URL, refreshed twice monthly. Free, no credentials.

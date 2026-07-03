@@ -2,11 +2,6 @@ from collections.abc import Callable
 
 import duckdb
 
-from dagster_v3.defs.czech_ares import tables
-
-DUCKDB_SCHEMA = tables.DUCKDB_SCHEMA
-RES_RAW_TABLE = tables.RES_RAW_TABLE
-INDUSTRIES_TABLE = tables.INDUSTRIES_RAW_TABLE
 INDUSTRIES_SOURCE_SLUG = "czech_ares"
 
 
@@ -26,8 +21,8 @@ def build_czech_ares_industries(
     Prefer NACE2025; the first 4 digits form the NACE code (national codes are
     digits only). One main activity per company, is_primary=1.
     """
-    raw = f"{DUCKDB_SCHEMA}.{RES_RAW_TABLE}"
-    qualified = f"{DUCKDB_SCHEMA}.{INDUSTRIES_TABLE}"
+    raw = "czech_ares.res_raw"
+    qualified = "czech_ares.industries"
     sql = f"""
         create or replace table {qualified} as
         with chosen as (

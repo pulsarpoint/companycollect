@@ -10,8 +10,6 @@ from dagster_v3.defs.clickhouse.resolved import (
 from dagster_v3.defs.czech_ares import contacts
 from dagster_v3.defs.czech_ares import tables
 
-DUCKDB_SCHEMA = tables.DUCKDB_SCHEMA
-
 
 def export_czech_ares_clickhouse_companies(
     *,
@@ -29,8 +27,8 @@ def export_czech_ares_clickhouse_companies(
         rows = export_duckdb_connection_table_to_clickhouse(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
-            duckdb_schema=DUCKDB_SCHEMA,
-            duckdb_table=tables.COMPANIES_TABLE,
+            duckdb_schema="czech_ares",
+            duckdb_table="companies",
             clickhouse_database=tables.CZECH_DATABASE,
             clickhouse_table=tables.COMPANIES_TABLE_CH,
             columns=tables.CZ_COMPANIES_EXPORT_COLUMNS,
@@ -57,8 +55,8 @@ def export_czech_ares_clickhouse_industries(
         rows = export_duckdb_connection_table_to_clickhouse(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
-            duckdb_schema=DUCKDB_SCHEMA,
-            duckdb_table=tables.INDUSTRIES_RAW_TABLE,
+            duckdb_schema="czech_ares",
+            duckdb_table="industries",
             clickhouse_database=tables.CZECH_DATABASE,
             clickhouse_table=tables.INDUSTRIES_TABLE_CH,
             columns=tables.CZ_INDUSTRIES_EXPORT_COLUMNS,

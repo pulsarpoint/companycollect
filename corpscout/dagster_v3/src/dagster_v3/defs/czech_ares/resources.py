@@ -3,19 +3,14 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol
 
 import duckdb
 import requests
-from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.czech_ares import tables
 
 LOGGER = logging.getLogger(__name__)
 
-DUCKDB_SCHEMA = tables.DUCKDB_SCHEMA
-RES_RAW_TABLE = tables.RES_RAW_TABLE
-COMPANIES_TABLE = tables.COMPANIES_TABLE
 REGISTER_SOURCE_SLUG = "czech_ares_register"
 
 DEFAULT_TIMEOUT_SECONDS = 600
@@ -29,12 +24,6 @@ _DOWNLOAD_RETRYABLE_ERRORS = (
     requests.exceptions.ConnectionError,
     requests.exceptions.Timeout,
 )
-
-
-class HttpSession(Protocol):
-    def get(self, url: str, *, timeout: int, stream: bool = False) -> Any: ...
-
-
 # CZ legal-form code (FORMA) -> English. Common codes; unknown -> "" (extensible).
 CZ_LEGAL_FORM_EN_BY_CODE = {
     "101": "Sole trader (trade licence)",
@@ -80,9 +69,11 @@ CZ_LEGAL_FORM_EN_BY_CODE = {
 
 
 def _stream_download(
-    *, url: str, dest: Path, timeout_seconds: int, session: HttpSession | None
+    *, url: str, dest: Path, timeout_seconds: int, session: requests.Session | None
 ) -> None:
-    http_session = session or dlt_requests.Session()
+    http_session = session or requests.Session()
+    if session is None:
+        http_session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
     response = http_session.get(url, timeout=timeout_seconds, stream=True)
     response.raise_for_status()
     iter_content = getattr(response, "iter_content", None)
@@ -110,7 +101,7 @@ def _download_to_path(
     url: str,
     dest: Path,
     timeout_seconds: int,
-    session: HttpSession | None,
+    session: requests.Session | None,
     log: Callable[..., None] | None = None,
     max_attempts: int = DOWNLOAD_MAX_ATTEMPTS,
     retry_base_seconds: float = DOWNLOAD_RETRY_BASE_SECONDS,
@@ -141,7 +132,7 @@ def load_czech_ares_res(
     *,
     connection: duckdb.DuckDBPyConnection,
     download_url: str = tables.RES_DATA_URL,
-    session: HttpSession | None = None,
+    session: requests.Session | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -152,17 +143,15 @@ def load_czech_ares_res(
             url=download_url, dest=csv_path, timeout_seconds=timeout_seconds,
             session=session, log=log if callable(log) else None,
         )
-        connection.execute(f"create schema if not exists {DUCKDB_SCHEMA}")
+        connection.execute("create schema if not exists czech_ares")
         connection.execute(
-            f"create or replace table {DUCKDB_SCHEMA}.{RES_RAW_TABLE} as "
+            "create or replace table czech_ares.res_raw as "
             "select * from read_csv(?, header=true, all_varchar=true, "
             "quote='\"', escape='\"')",
             [str(csv_path)],
         )
         count = int(
-            connection.execute(
-                f"select count(*) from {DUCKDB_SCHEMA}.{RES_RAW_TABLE}"
-            ).fetchone()[0]
+            connection.execute("select count(*) from czech_ares.res_raw").fetchone()[0]
         )
     if count == 0:
         raise ValueError("Czech RES produced no rows; refusing to replace the table")
@@ -183,8 +172,8 @@ def build_czech_ares_companies(
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Normalize the raw RES table into czech_ares.companies (with address)."""
-    raw = f"{DUCKDB_SCHEMA}.{RES_RAW_TABLE}"
-    qualified = f"{DUCKDB_SCHEMA}.{COMPANIES_TABLE}"
+    raw = "czech_ares.res_raw"
+    qualified = "czech_ares.companies"
     legal_form_en = "case FORMA " + " ".join(
         f"when {_sql_literal(code)} then {_sql_literal(en)}"
         for code, en in CZ_LEGAL_FORM_EN_BY_CODE.items()

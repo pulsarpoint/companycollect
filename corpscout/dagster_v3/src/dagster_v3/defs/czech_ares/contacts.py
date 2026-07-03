@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 import uuid
 from collections.abc import Callable, Iterable, Sequence
@@ -112,46 +110,40 @@ def extract_contact_candidates_by_domain(
     return candidates_by_domain
 
 
-def build_contact_rows_from_domain_candidates(
+def iter_valid_contact_rows_from_domain_candidates(
     candidates_by_domain: dict[str, list[ContactCandidate]],
     *,
     commoncrawl_domains: set[str],
-    resolve_nameservers: Callable[[str], Sequence[str]],
+    nameservers_by_domain: dict[str, tuple[str, ...]],
     source_run_id: str,
     resolved_at: datetime,
     source_url: str = tables.RES_DATA_URL,
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-
+) -> Iterable[dict[str, object]]:
     for domain in sorted(candidates_by_domain):
         validation = _validated_domain(
             domain,
             commoncrawl_domains=commoncrawl_domains,
-            resolve_nameservers=resolve_nameservers,
+            nameservers_by_domain=nameservers_by_domain,
         )
         if validation is None:
             continue
         domain_source, confidence = validation
         for candidate in candidates_by_domain[domain]:
-            rows.append(
-                {
-                    "country_iso2": "CZ",
-                    "source_slug": CONTACTS_SOURCE_SLUG,
-                    "source_run_id": source_run_id,
-                    "source_record_id": candidate.ico,
-                    "ico": candidate.ico,
-                    "company_name": candidate.company_name,
-                    "contact_type": candidate.contact_type,
-                    "contact_value": candidate.contact_value,
-                    "domain": domain,
-                    "domain_source": domain_source,
-                    "confidence": confidence,
-                    "source_url": source_url,
-                    "resolved_at": resolved_at,
-                }
-            )
-
-    return rows
+            yield {
+                "country_iso2": "CZ",
+                "source_slug": CONTACTS_SOURCE_SLUG,
+                "source_run_id": source_run_id,
+                "source_record_id": candidate.ico,
+                "ico": candidate.ico,
+                "company_name": candidate.company_name,
+                "contact_type": candidate.contact_type,
+                "contact_value": candidate.contact_value,
+                "domain": domain,
+                "domain_source": domain_source,
+                "confidence": confidence,
+                "source_url": source_url,
+                "resolved_at": resolved_at,
+            }
 
 
 def replace_czech_company_contacts_clickhouse(
@@ -163,12 +155,12 @@ def replace_czech_company_contacts_clickhouse(
 ) -> dict[str, int]:
     resolved_timestamp = resolved_at or datetime.now(UTC)
     candidates_by_domain: dict[str, list[ContactCandidate]] = {}
-    offset = 0
+    last_ico = ""
     while True:
         company_rows = load_company_contact_candidate_batch(
             clickhouse_client,
             batch_size=CLICKHOUSE_COMPANY_BATCH_SIZE,
-            offset=offset,
+            after_ico=last_ico,
         )
         if not company_rows:
             break
@@ -176,7 +168,7 @@ def replace_czech_company_contacts_clickhouse(
             candidates_by_domain,
             extract_contact_candidates_by_domain(company_rows),
         )
-        offset += CLICKHOUSE_COMPANY_BATCH_SIZE
+        last_ico = company_rows[-1][0]
 
     candidate_domains = tuple(sorted(candidates_by_domain))
     commoncrawl_domains = _commoncrawl_domains(clickhouse_client, candidate_domains)
@@ -188,22 +180,19 @@ def replace_czech_company_contacts_clickhouse(
         ]
     )
 
-    def resolve_nameservers(domain: str) -> Sequence[str]:
-        return nameservers_by_domain.get(domain, ())
-
-    contact_rows = build_contact_rows_from_domain_candidates(
+    contact_rows = iter_valid_contact_rows_from_domain_candidates(
         candidates_by_domain,
         commoncrawl_domains=commoncrawl_domains,
-        resolve_nameservers=resolve_nameservers,
+        nameservers_by_domain=nameservers_by_domain,
         source_run_id=source_run_id,
         resolved_at=resolved_timestamp,
     )
     if log is not None:
         log(
-            "Built Czech company contact rows: candidates=%s valid_rows=%s commoncrawl_domains=%s",
+            "Built Czech company contact candidates: domains=%s commoncrawl_domains=%s dns_domains=%s",
             len(candidate_domains),
-            len(contact_rows),
             len(commoncrawl_domains),
+            sum(1 for nameservers in nameservers_by_domain.values() if nameservers),
         )
     return _replace_contact_table(clickhouse_client, contact_rows)
 
@@ -212,8 +201,7 @@ def nameservers_for_domain(domain: str) -> tuple[str, ...]:
     parent_zone = _parent_zone_for_domain(domain)
     if parent_zone == "":
         return ()
-    parent_nameserver_hosts = _recursive_nameservers(parent_zone)
-    parent_nameserver_addresses = _nameserver_addresses(parent_nameserver_hosts)
+    parent_nameserver_addresses = _parent_nameserver_addresses(parent_zone)
     if not parent_nameserver_addresses:
         return ()
     return _resolve_domain_nameservers_from_parent(
@@ -225,6 +213,10 @@ def nameservers_for_domain(domain: str) -> tuple[str, ...]:
 def _parent_zone_for_domain(domain: str) -> str:
     extracted = _TLD_EXTRACT(domain)
     return extracted.suffix.lower()
+
+
+def _parent_nameserver_addresses(parent_zone: str) -> tuple[str, ...]:
+    return _nameserver_addresses(_recursive_nameservers(parent_zone))
 
 
 def _recursive_nameservers(domain: str) -> tuple[str, ...]:
@@ -309,12 +301,36 @@ def _resolve_nameservers_concurrently(domains: Sequence[str]) -> dict[str, tuple
     unique_domains = tuple(dict.fromkeys(domains))
     if not unique_domains:
         return {}
+
+    domains_by_parent_zone: dict[str, list[str]] = {}
     results: dict[str, tuple[str, ...]] = {}
+    for domain in unique_domains:
+        parent_zone = _parent_zone_for_domain(domain)
+        if parent_zone == "":
+            results[domain] = ()
+            continue
+        domains_by_parent_zone.setdefault(parent_zone, []).append(domain)
+
+    parent_addresses_by_zone = {
+        parent_zone: _parent_nameserver_addresses(parent_zone)
+        for parent_zone in sorted(domains_by_parent_zone)
+    }
+
     with ThreadPoolExecutor(max_workers=DNS_RESOLVE_WORKERS) as executor:
-        future_by_domain = {
-            executor.submit(nameservers_for_domain, domain): domain
-            for domain in unique_domains
-        }
+        future_by_domain = {}
+        for parent_zone, zone_domains in domains_by_parent_zone.items():
+            parent_addresses = parent_addresses_by_zone[parent_zone]
+            if not parent_addresses:
+                results.update({domain: () for domain in zone_domains})
+                continue
+            for domain in zone_domains:
+                future_by_domain[
+                    executor.submit(
+                        _resolve_domain_nameservers_from_parent,
+                        domain,
+                        parent_addresses,
+                    )
+                ] = domain
         for future in as_completed(future_by_domain):
             domain = future_by_domain[future]
             try:
@@ -359,11 +375,11 @@ def _validated_domain(
     domain: str,
     *,
     commoncrawl_domains: set[str],
-    resolve_nameservers: Callable[[str], Sequence[str]],
+    nameservers_by_domain: dict[str, tuple[str, ...]],
 ) -> tuple[str, float] | None:
     if domain in commoncrawl_domains:
         return "commoncrawl", COMMONCRAWL_CONFIDENCE
-    if resolve_nameservers(domain):
+    if nameservers_by_domain.get(domain):
         return "dns", DNS_CONFIDENCE
     return None
 
@@ -372,20 +388,21 @@ def load_company_contact_candidate_batch(
     clickhouse_client: Any,
     *,
     batch_size: int = CLICKHOUSE_COMPANY_BATCH_SIZE,
-    offset: int = 0,
+    after_ico: str = "",
 ) -> list[tuple[str, str]]:
     rows = clickhouse_client.execute(
         f"""
         SELECT ico, name
         FROM {tables.QUALIFIED_COMPANIES_TABLE} FINAL
         WHERE match(name, %(candidate_filter)s)
+          AND (%(after_ico)s = '' OR ico > %(after_ico)s)
         ORDER BY ico
-        LIMIT %(batch_size)s OFFSET %(offset)s
+        LIMIT %(batch_size)s
         """,
         {
             "candidate_filter": _CANDIDATE_NAME_FILTER,
             "batch_size": batch_size,
-            "offset": offset,
+            "after_ico": after_ico,
         },
     )
     return [(str(row[0]), str(row[1])) for row in rows]
@@ -430,14 +447,14 @@ def _commoncrawl_domains(
 
 def _replace_contact_table(
     clickhouse_client: Any,
-    rows: Sequence[dict[str, object]],
+    rows: Iterable[dict[str, object]],
 ) -> dict[str, int]:
     target = tables.QUALIFIED_COMPANY_CONTACTS_TABLE
     stage = f"corpscout._tmp_{tables.COMPANY_CONTACTS_TABLE_CH}_{uuid.uuid4().hex}"
     primary_error: Exception | None = None
     try:
         clickhouse_client.execute(f"CREATE TABLE {stage} AS {target}")
-        _insert_contact_rows(clickhouse_client, stage, rows)
+        counts = _insert_contact_rows(clickhouse_client, stage, rows)
         clickhouse_client.execute(f"EXCHANGE TABLES {stage} AND {target}")
     except Exception as exc:
         primary_error = exc
@@ -448,25 +465,27 @@ def _replace_contact_table(
         except Exception:
             if primary_error is None:
                 raise
-    return {
-        "contacts": len(rows),
-        "domains": len({str(row["domain"]) for row in rows}),
-        "commoncrawl_validated": sum(
-            1 for row in rows if row["domain_source"] == "commoncrawl"
-        ),
-        "dns_validated": sum(1 for row in rows if row["domain_source"] == "dns"),
-    }
+    return counts
 
 
 def _insert_contact_rows(
     clickhouse_client: Any,
     qualified_table: str,
-    rows: Sequence[dict[str, object]],
-) -> None:
-    if not rows:
-        return
+    rows: Iterable[dict[str, object]],
+) -> dict[str, int]:
     columns = tables.CZ_COMPANY_CONTACTS_EXPORT_COLUMNS
-    for batch in _batches(tuple(rows), CLICKHOUSE_INSERT_BATCH_SIZE):
+    counts = {
+        "contacts": 0,
+        "domains": 0,
+        "commoncrawl_validated": 0,
+        "dns_validated": 0,
+    }
+    seen_domains: set[str] = set()
+    batch: list[dict[str, object]] = []
+
+    def flush() -> None:
+        if not batch:
+            return
         value_rows = [tuple(row[column] for column in columns) for row in batch]
         insert_rows = getattr(clickhouse_client, "insert_rows", None)
         if callable(insert_rows):
@@ -476,11 +495,28 @@ def _insert_contact_rows(
                 columns=columns,
                 database=qualified_table.split(".", maxsplit=1)[0],
             )
-            continue
-        clickhouse_client.execute(
-            f"INSERT INTO {qualified_table} ({_column_list(columns)}) VALUES",
-            value_rows,
-        )
+        else:
+            clickhouse_client.execute(
+                f"INSERT INTO {qualified_table} ({_column_list(columns)}) VALUES",
+                value_rows,
+            )
+        batch.clear()
+
+    for row in rows:
+        counts["contacts"] += 1
+        domain = str(row["domain"])
+        if domain not in seen_domains:
+            seen_domains.add(domain)
+            counts["domains"] += 1
+        if row["domain_source"] == "commoncrawl":
+            counts["commoncrawl_validated"] += 1
+        elif row["domain_source"] == "dns":
+            counts["dns_validated"] += 1
+        batch.append(row)
+        if len(batch) >= CLICKHOUSE_INSERT_BATCH_SIZE:
+            flush()
+    flush()
+    return counts
 
 
 def _column_list(columns: Sequence[str]) -> str:
