@@ -8,6 +8,7 @@ from dagster_duckdb import DuckDBResource
 from dagster_v3.defs.czech_ares import resources, tables
 from dagster_v3.defs.czech_ares.clickhouse import (
     export_czech_ares_clickhouse_companies,
+    export_czech_ares_clickhouse_company_contacts,
     export_czech_ares_clickhouse_industries,
 )
 from dagster_v3.defs.czech_ares.industries import build_czech_ares_industries
@@ -82,6 +83,30 @@ def czech_ares_clickhouse_companies(
 
 
 @dg.asset(
+    deps=[dg.AssetKey("czech_ares_clickhouse_companies")],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse"},
+    metadata={"table": tables.QUALIFIED_COMPANY_CONTACTS_TABLE},
+    description=(
+        "Czech ARES company contacts extracted from corpscout.cz_companies.name, "
+        "validated against commoncrawl_domains or DNS."
+    ),
+)
+def czech_ares_clickhouse_company_contacts(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    counts = export_czech_ares_clickhouse_company_contacts(
+        clickhouse=clickhouse,
+        source_run_id=context.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={**counts, "table": tables.QUALIFIED_COMPANY_CONTACTS_TABLE}
+    )
+
+
+@dg.asset(
     name="czech_ares_industries_duckdb",
     deps=[dg.AssetKey(RAW_ASSET_KEY)],
     group_name=GROUP_NAME,
@@ -130,7 +155,9 @@ def czech_ares_clickhouse_industries(
 czech_ares_register_job = dg.define_asset_job(
     "czech_ares_register_job",
     selection=dg.AssetSelection.assets(
-        "czech_ares_clickhouse_companies", "czech_ares_clickhouse_industries"
+        "czech_ares_clickhouse_companies",
+        "czech_ares_clickhouse_company_contacts",
+        "czech_ares_clickhouse_industries",
     ).upstream(),
 )
 czech_ares_register_schedule = dg.ScheduleDefinition(
@@ -145,6 +172,7 @@ defs = dg.Definitions(
         czech_ares_res_raw_duckdb,
         czech_ares_companies_duckdb,
         czech_ares_clickhouse_companies,
+        czech_ares_clickhouse_company_contacts,
         czech_ares_industries_duckdb,
         czech_ares_clickhouse_industries,
     ],

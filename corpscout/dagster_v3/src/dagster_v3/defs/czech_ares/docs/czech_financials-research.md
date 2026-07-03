@@ -1,8 +1,9 @@
 # Czech companies — financials & domain-matching research (starting point)
 
-Status: **research only, not built.** Czech register/industry/address is live
-(`czech_ares`, 3.51M companies). Financials are deferred in favour of a
-**domain-first** approach (below). This file is the starting point.
+Status: Czech register/industry/address is live (`czech_ares`, 3.51M companies).
+`cz_company_contacts` now captures domain/email candidates embedded in company
+names and validates domains against Common Crawl or DNS. Financials are still
+deferred in favour of a broader **domain-first** approach (below).
 
 ---
 
@@ -20,12 +21,15 @@ So the next real task is the **domain ↔ company match**, then financials on th
 matched subset.
 
 ### Matching `.cz` domains to companies — the key question
-`cz_companies` has **no website/contact field** (ARES/RES expose none — confirmed,
-§2). So we need an external join key between a `.cz` domain and a company:
+`cz_companies` has **no structured website/contact field** (ARES/RES expose none —
+confirmed, §2). `cz_company_contacts` extracts the subset of domains/emails that
+are embedded directly in company names, but broader coverage still needs an
+external join key between a `.cz` domain and a company:
 
 - **Best candidate — the CZ.NIC registry holder IČO.** `.cz` domains are managed by
   CZ.NIC; a domain held by a company has a **holder** with an **IČO** (the same
-  8-digit company id that is the key of `cz_companies`). If we can get
+  8-digit Czech company/economic-subject identifier that is stored as `ico` and is
+  the key of `cz_companies`). If we can get
   `domain → holder IČO`, the join is exact (`IČO`). **TO VERIFY:** does CZ.NIC
   whois / registry data still expose the holder IČO post-GDPR (org holders may
   still show it; natural-person holders are redacted)? Check the CZ.NIC whois
@@ -51,16 +55,25 @@ matched subset.
 - **Bulk** source: ČSÚ RES open data `res_data.csv`
   (`https://opendata.csu.gov.cz/soubory/od/od_org03/res_data.csv`, ~540 MB,
   stable URL, twice-monthly, no key).
-- Landed: **`cz_companies`** (3,512,259; 2,927,411 active; name, legal form,
+- Landed: **`cz_companies`** (3,512,259; 2,927,411 active; `ico` = Czech IČO
+  8-digit company/economic-subject identifier; name, legal form,
   status, established/terminated dates, **address**, size category, sector) and
   **`cz_industries`** (CZ-NACE + NACE2025 → unified NACE, 2.83M mapped → 100% join
   `nace_categories`). Migrations 000038/000039.
+- Landed: **`cz_company_contacts`** from company-name text only. It extracts
+  embedded domains and email addresses, links rows to `cz_companies.ico`, stores
+  `contact_type`, `contact_value`, normalized root `domain`, `domain_source`, and
+  `confidence`. `domain_source='commoncrawl'` means the domain exists in
+  `commoncrawl_domains` and receives higher confidence; `domain_source='dns'`
+  means the domain was absent from Common Crawl but resolved successfully.
 
-## 2. Contacts — ABSENT (confirmed)
+## 2. Structured contacts — ABSENT (confirmed)
 - Neither the **ARES API** (full record scanned — zero contact keys, no `@`/`http`/
   `www`) nor the **RES bulk CSV** expose email/phone/website. Only the **registered
   address** (already in `cz_companies`) and `dic` (DIČ tax id). Czech company
-  websites/emails exist only in commercial sources (Merk, Bisnode/D&B — paid).
+  websites/emails exist only in commercial sources (Merk, Bisnode/D&B — paid), or
+  as unstructured text occasionally embedded in the company name and captured by
+  `cz_company_contacts`.
 
 ## 3. Financials — PDF-only, per-company (deferred)
 - **No structured/XBRL financials, no API.** Statements (*účetní závěrka*) are filed

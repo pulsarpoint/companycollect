@@ -89,11 +89,12 @@ def test_schedules_registered_and_jobs_cover_full_chains():
 
     repo = load_defs().get_repository_def()
     reg = repo.get_schedule_def("estonia_ar_register_schedule")
-    fin = repo.get_schedule_def("estonia_ar_financials_schedule")
+    fin = repo.get_schedule_def("estonia_financials_schedule")
+    assert not repo.has_schedule_def("estonia_ar_financials_schedule")
     assert reg.cron_schedule == "0 4 * * *"  # register: daily
     assert reg.job.name == "estonia_ar_register_job"
     assert fin.cron_schedule == "0 5 5 * *"  # financials: 5th of month
-    assert fin.job.name == "estonia_ar_financials_job"
+    assert fin.job.name == "estonia_financials_job"
     gen = repo.get_schedule_def("estonia_ar_general_data_schedule")
     assert gen.cron_schedule == "0 6 8 * *"  # general data: monthly (single 4.5 GB download)
     assert gen.job.name == "estonia_ar_general_data_job"
@@ -108,7 +109,7 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     # usd + 2 exports = 13), unlike the `dg launch +leaf` 1-hop CLI behavior.
     financials_keys = {
         k.path[-1]
-        for k in repo.get_job("estonia_ar_financials_job").asset_layer.executable_asset_keys
+        for k in repo.get_job("estonia_financials_job").asset_layer.executable_asset_keys
     }
     assert len(financials_keys) == 13
     assert "estonia_ar_report_general_raw_duckdb" in financials_keys
@@ -129,13 +130,30 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         "estonia_ar_clickhouse_industries",
     }
 
-    # end-to-end trigger: every estonia_ar asset (register ∪ financials ∪ general = 20).
+    # General full refresh excludes financial assets; financials have their own package/job.
     full_keys = {
         k.path[-1]
         for k in repo.get_job("estonia_ar_full_refresh_job").asset_layer.executable_asset_keys
     }
-    assert full_keys == register_keys | financials_keys | general_keys
-    assert len(full_keys) == 20
+    assert full_keys == register_keys | general_keys
+    assert not (full_keys & financials_keys)
+    assert len(full_keys) == 7
+
+    asset_graph = repo.asset_graph
+    assert asset_graph.get(
+        next(
+            key
+            for key in asset_graph.get_all_asset_keys()
+            if key.path[-1] == "estonia_ar_clickhouse_companies"
+        )
+    ).group_name == "estonia_ar"
+    assert asset_graph.get(
+        next(
+            key
+            for key in asset_graph.get_all_asset_keys()
+            if key.path[-1] == "estonia_ar_financial_metrics_usd_duckdb"
+        )
+    ).group_name == "estonia_financial"
 
 
 def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch):

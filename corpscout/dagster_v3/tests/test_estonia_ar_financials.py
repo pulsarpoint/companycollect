@@ -7,7 +7,9 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from dagster_v3.defs.estonia_ar import financials, tables
+from dagster_v3.defs.estonia_ar import tables
+from dagster_v3.defs.estonia_financial import financials
+from dagster_v3.defs.estonia_financial import resources as financial_resources
 
 
 def _zip_session(csv_text: str):
@@ -164,13 +166,12 @@ _INDEX_HTML = (
 
 
 def test_resolve_financial_url_reads_current_datestamp_from_index():
-    url = financials.resolve_financial_url(
-        tables.REPORT_GENERAL_RAW_TABLE, session=_IndexSession(text=_INDEX_HTML)
+    source = financial_resources.EstoniaFinancialResource(
+        session=_IndexSession(text=_INDEX_HTML)
     )
+    url = source.resolve_financial_url(tables.REPORT_GENERAL_RAW_TABLE)
     assert url.endswith("/1.aruannete_yldandmed_kuni_30062026_1.zip")
-    ki = financials.resolve_financial_url(
-        tables.key_indicators_raw_table(2024), session=_IndexSession(text=_INDEX_HTML)
-    )
+    ki = source.resolve_financial_url(tables.key_indicators_raw_table(2024))
     assert ki.endswith("/4.2024_aruannete_elemendid_kuni_30062026_1.zip")
 
 
@@ -178,19 +179,29 @@ def test_resolve_financial_url_falls_back_to_pinned_on_failure():
     pinned = tables.EE_FINANCIAL_RAW_SOURCES[tables.REPORT_GENERAL_RAW_TABLE]
     # index fetch raises
     assert (
-        financials.resolve_financial_url(
-            tables.REPORT_GENERAL_RAW_TABLE,
+        financial_resources.EstoniaFinancialResource(
             session=_IndexSession(raise_exc=RuntimeError("down")),
+        ).resolve_financial_url(
+            tables.REPORT_GENERAL_RAW_TABLE,
         )
         == pinned
     )
     # index reachable but missing the file -> pinned
     assert (
-        financials.resolve_financial_url(
-            tables.REPORT_GENERAL_RAW_TABLE, session=_IndexSession(text="<html></html>")
-        )
+        financial_resources.EstoniaFinancialResource(
+            session=_IndexSession(text="<html></html>")
+        ).resolve_financial_url(tables.REPORT_GENERAL_RAW_TABLE)
         == pinned
     )
+
+
+def test_financial_resource_downloads_zip(tmp_path: Path):
+    zip_path = tmp_path / "financial.zip"
+    source = financial_resources.EstoniaFinancialResource(session=_zip_session(RG_CSV))
+
+    source.download_financial_zip(download_url="https://example/financial.zip", dest=zip_path)
+
+    assert zip_path.read_bytes().startswith(b"PK")
 
 
 def test_build_refuses_empty_report_general(tmp_path: Path):

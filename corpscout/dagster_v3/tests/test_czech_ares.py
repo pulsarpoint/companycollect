@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import datetime as dt
+
 import duckdb
 
 from dagster_v3.defs.czech_ares import industries, resources, tables
@@ -7,6 +9,7 @@ from dagster_v3.defs.czech_ares import industries, resources, tables
 MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
 COMPANIES_MIGRATION = (MIG_DIR / "000038_corpscout_cz_companies.up.sql").read_text()
 INDUSTRIES_MIGRATION = (MIG_DIR / "000039_corpscout_cz_industries.up.sql").read_text()
+CONTACTS_MIGRATION = (MIG_DIR / "000083_corpscout_cz_company_contacts.up.sql").read_text()
 
 HEADER = (
     "ICO,OKRESLAU,DDATVZN,DDATZAN,ZPZAN,DDATPAKT,FORMA,ROSFORMA,KATPO,NACE,NACE2025,"
@@ -34,8 +37,6 @@ def _load_raw(tmp_path) -> Path:
 
 
 def test_companies_build(tmp_path):
-    import datetime as dt
-
     db = _load_raw(tmp_path)
     with duckdb.connect(str(db)) as con:
         counts = resources.build_czech_ares_companies(connection=con, source_run_id="r1")
@@ -93,6 +94,69 @@ def test_industries_export_columns_match_migration():
     assert tables.CZ_INDUSTRIES_EXPORT_COLUMNS == tables.CZ_INDUSTRIES_COLUMNS
 
 
+def test_contact_candidates_extract_domains_and_emails_from_company_name():
+    from dagster_v3.defs.czech_ares import contacts
+
+    candidates = contacts.extract_contact_candidates(
+        ico="27074358",
+        company_name="Asseco a.s. - www.asseco.cz, info@asseco.cz, https://portal.asseco.cz/path",
+    )
+
+    assert [candidate.contact_type for candidate in candidates] == [
+        "domain",
+        "email",
+        "domain",
+    ]
+    assert [candidate.contact_value for candidate in candidates] == [
+        "www.asseco.cz",
+        "info@asseco.cz",
+        "portal.asseco.cz",
+    ]
+    assert [candidate.domain for candidate in candidates] == [
+        "asseco.cz",
+        "asseco.cz",
+        "asseco.cz",
+    ]
+    assert all(candidate.ico == "27074358" for candidate in candidates)
+
+
+def test_contact_rows_keep_commoncrawl_and_dns_validated_domains_only():
+    from dagster_v3.defs.czech_ares import contacts
+
+    rows = contacts.build_contact_rows_from_company_rows(
+        [
+            ("27074358", "Asseco a.s.", "www.asseco.cz info@asseco.cz"),
+            ("12345678", "DNS only s.r.o.", "dns-only.cz"),
+            ("87654321", "Invalid s.r.o.", "missing.example"),
+        ],
+        commoncrawl_domains={"asseco.cz"},
+        resolve_domain=lambda domain: domain == "dns-only.cz",
+        source_run_id="run-1",
+        resolved_at=dt.datetime(2026, 7, 3, 12, 0, tzinfo=dt.UTC),
+    )
+
+    assert [row["contact_value"] for row in rows] == [
+        "www.asseco.cz",
+        "info@asseco.cz",
+        "dns-only.cz",
+    ]
+    assert [row["domain_source"] for row in rows] == [
+        "commoncrawl",
+        "commoncrawl",
+        "dns",
+    ]
+    assert [row["confidence"] for row in rows] == [0.95, 0.95, 0.7]
+    assert all(row["domain"] in {"asseco.cz", "dns-only.cz"} for row in rows)
+
+
+def test_contacts_export_columns_match_migration():
+    assert f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_COMPANY_CONTACTS_TABLE}" in CONTACTS_MIGRATION
+    for column in tables.CZ_COMPANY_CONTACTS_EXPORT_COLUMNS:
+        assert f"    {column} " in CONTACTS_MIGRATION, f"missing {column} in 000083"
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in CONTACTS_MIGRATION
+    assert "ORDER BY (ico, contact_type, contact_value)" in CONTACTS_MIGRATION
+
+
 def test_legal_form_map():
     assert resources.CZ_LEGAL_FORM_EN_BY_CODE["112"] == "Limited liability company (s.r.o.)"
     assert resources.CZ_LEGAL_FORM_EN_BY_CODE["121"] == "Joint-stock company (a.s.)"
@@ -113,6 +177,7 @@ def test_register_job_and_schedule():
         "czech_ares_res_raw_duckdb",
         "czech_ares_companies_duckdb",
         "czech_ares_clickhouse_companies",
+        "czech_ares_clickhouse_company_contacts",
         "czech_ares_industries_duckdb",
         "czech_ares_clickhouse_industries",
     }

@@ -4,7 +4,9 @@
 
 ## 1. Source overview
 - **Country / registry**: Estonia — e-Business Register (Äriregister), publisher RIK.
-- **Module**: `defs/estonia_ar/` · DuckDB `data/estonia_ar_source.duckdb` · pool `estonia_ar_duckdb`
+- **Modules**: `defs/estonia_ar/` for register/general data and `defs/estonia_financial/`
+  for annual financial statements/metrics · DuckDB `data/estonia_ar_source.duckdb` · pool
+  `estonia_ar_duckdb`
 - **ClickHouse tables**: `corpscout.ee_companies` (000024), `ee_financial_statements` (000025),
   `ee_financial_metrics` (000026)
 - **Datasets** (all free bulk open data, **no credentials** — only the live API needs an agreement):
@@ -120,11 +122,12 @@
 
 ## 8. Scheduling
 - `estonia_ar_register_job` (entities + companies) — **daily 04:00**.
-- `estonia_ar_financials_job` (full 13-asset chain via `.upstream()`) — **monthly, 5th 05:00**
+- `estonia_financials_job` (full 13-asset chain via `.upstream()`) — **monthly, 5th 05:00**
   (after the new snapshot datestamp publishes). Crons staggered vs other sources; **default STOPPED**.
 - `estonia_ar_general_data_job` (contacts + domains + industries from **one** yldandmed download) —
   **monthly, 8th 06:00**; the ~4.5 GB JSON is too heavy for daily, staggered after the financials run.
-- `estonia_ar_full_refresh_job` (all 20 assets via group selection) — unscheduled, manual full run.
+- `estonia_ar_full_refresh_job` (register/general assets via group selection) — unscheduled,
+  manual general-data full run. Financial assets live under `estonia_financials_job`.
 
 ## 9. Issues found during processing
 - **Literal `?` in report-general column names** (`"kas konsolideeritud?"`) collided with DuckDB's

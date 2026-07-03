@@ -1,75 +1,23 @@
 from __future__ import annotations
 
 import logging
-import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from dlt.sources.helpers import requests as dlt_requests
 from duckdb import DuckDBPyConnection
 
-from dagster_v3.defs.estonia_ar import resources, tables
+from dagster_v3.defs.estonia_ar import resources as ar_resources
+from dagster_v3.defs.estonia_ar import tables
+from dagster_v3.defs.estonia_financial.resources import EstoniaFinancialResource
 
 LOGGER = logging.getLogger(__name__)
-
-# The financial snapshot filenames carry a monthly cumulative datestamp (and a
-# Drupal _N suffix) that rotates. Resolve the *current* filenames from the
-# server-rendered dataset index each run; fall back to the pinned constants if
-# the index can't be fetched/parsed.
-EE_FINANCIAL_INDEX_URL = (
-    "https://avaandmed.ariregister.rik.ee/en/downloading-open-data"
-)
-_FINANCIAL_FILE_PATTERNS: dict[str, str] = {
-    tables.REPORT_GENERAL_RAW_TABLE: r"1\.aruannete_yldandmed_kuni_\d+(?:_\d+)?\.zip",
-    **{
-        tables.key_indicators_raw_table(year): (
-            rf"4\.{year}_aruannete_elemendid_kuni_\d+(?:_\d+)?\.zip"
-        )
-        for year in tables.EE_FINANCIAL_YEARS
-    },
-}
-
-
-def resolve_financial_url(
-    raw_table: str,
-    *,
-    session: resources.HttpSession | None = None,
-    index_url: str = EE_FINANCIAL_INDEX_URL,
-    log: Callable[..., object] | None = None,
-) -> str:
-    """Resolve the current download URL for a financial raw table from the index.
-
-    Robust to the monthly datestamp / _N suffix rotation. Falls back to the
-    pinned `tables.EE_FINANCIAL_RAW_SOURCES` URL on any failure.
-    """
-    pinned = tables.EE_FINANCIAL_RAW_SOURCES[raw_table]
-    warn = log or LOGGER.warning
-    pattern = _FINANCIAL_FILE_PATTERNS.get(raw_table)
-    if pattern is None:
-        return pinned
-    try:
-        http = session or dlt_requests.Session()
-        response = http.get(index_url, timeout=DEFAULT_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        html = getattr(response, "text", None) or response.content.decode(
-            "utf-8", "replace"
-        )
-    except Exception as exc:  # noqa: BLE001 - degrade to pinned URL, never block
-        warn("Estonia AR index fetch failed (%s); using pinned URL for %s", exc, raw_table)
-        return pinned
-    match = re.search(pattern, html)
-    if match is None:
-        warn("Estonia AR index missing %s; using pinned URL", raw_table)
-        return pinned
-    return f"{tables.EE_FINANCIAL_BASE_URL}/{match.group(0)}"
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 WIDE_TABLE = tables.FINANCIAL_STATEMENTS_WIDE_TABLE
 REPORT_GENERAL_RAW_TABLE = tables.REPORT_GENERAL_RAW_TABLE
 FINANCIALS_SOURCE_SLUG = "estonia_ar_financials"
-DEFAULT_TIMEOUT_SECONDS = resources.DEFAULT_TIMEOUT_SECONDS
-DEFAULT_USER_AGENT = resources.DEFAULT_USER_AGENT
+DEFAULT_TIMEOUT_SECONDS = ar_resources.DEFAULT_TIMEOUT_SECONDS
 
 # Report-general columns captured into raw_financial_record (DuckDB-staging-only).
 # Spaced/`?` names are double-quoted for the SQL reference.
@@ -100,7 +48,8 @@ def load_estonia_ar_financial_csv(
     duckdb_connection: DuckDBPyConnection,
     download_url: str,
     raw_table: str,
-    session: resources.HttpSession | None = None,
+    financial_resource: EstoniaFinancialResource | None = None,
+    session: ar_resources.HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> int:
     """Download one zipped financial CSV, unzip, and (re)load it raw into DuckDB.
@@ -110,14 +59,15 @@ def load_estonia_ar_financial_csv(
     with tempfile.TemporaryDirectory(prefix="estonia_ar_fin_") as tmpdir:
         tmp = Path(tmpdir)
         zip_path = tmp / "data.zip"
-        resources._download_to_path(
-            url=download_url,
-            dest=zip_path,
-            timeout_seconds=timeout_seconds,
-            user_agent=DEFAULT_USER_AGENT,
+        source = financial_resource or EstoniaFinancialResource(
             session=session,
+            timeout_seconds=timeout_seconds,
         )
-        csv_path = resources._extract_single_csv(zip_path, tmp)
+        source.download_financial_zip(
+            download_url=download_url,
+            dest=zip_path,
+        )
+        csv_path = ar_resources._extract_single_csv(zip_path, tmp)
         duckdb_connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
         duckdb_connection.execute(
             f"create or replace table {DLT_DATASET_NAME}.{raw_table} as "
@@ -164,7 +114,7 @@ def build_estonia_ar_financial_statements(
     )
     report_category_en = "\n            ".join(
         f"when '{name}' then '{en}'"
-        for name, en in resources.EE_REPORT_CATEGORY_EN_BY_NAME.items()
+        for name, en in ar_resources.EE_REPORT_CATEGORY_EN_BY_NAME.items()
     )
 
     sql = f"""

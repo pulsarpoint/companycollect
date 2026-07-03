@@ -7,6 +7,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
 )
+from dagster_v3.defs.czech_ares import contacts
 from dagster_v3.defs.czech_ares import tables
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
@@ -66,3 +67,35 @@ def export_czech_ares_clickhouse_industries(
     if log is not None:
         log("Finished Czech ARES industries ClickHouse export: rows=%s", rows)
     return rows
+
+
+def export_czech_ares_clickhouse_company_contacts(
+    *,
+    clickhouse: ClickhouseResource,
+    source_run_id: str,
+    log: Callable[..., object] | None = None,
+) -> dict[str, int]:
+    """Replace corpscout.cz_company_contacts from contacts embedded in cz_companies.name."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.CZECH_DATABASE,
+        tables=(
+            tables.COMPANIES_TABLE_CH,
+            "commoncrawl_domains",
+            tables.COMPANY_CONTACTS_TABLE_CH,
+        ),
+    )
+    if log is not None:
+        log(
+            "Exporting Czech ARES company contacts: table=%s",
+            tables.QUALIFIED_COMPANY_CONTACTS_TABLE,
+        )
+    with clickhouse.get_connection() as client:
+        counts = contacts.replace_czech_company_contacts_clickhouse(
+            clickhouse_client=client,
+            source_run_id=source_run_id,
+            log=log,
+        )
+    if log is not None:
+        log("Finished Czech ARES company contacts ClickHouse export: counts=%s", counts)
+    return counts

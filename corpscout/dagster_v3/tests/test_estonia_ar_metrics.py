@@ -5,8 +5,9 @@ from pathlib import Path
 import duckdb
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.estonia_ar import clickhouse as ee_clickhouse
-from dagster_v3.defs.estonia_ar import financials, metrics, tables
+from dagster_v3.defs.estonia_ar import tables
+from dagster_v3.defs.estonia_financial import clickhouse as ee_clickhouse
+from dagster_v3.defs.estonia_financial import financials, metrics
 from tests.test_estonia_ar_financials import _seed_raw
 
 
@@ -129,7 +130,7 @@ def test_export_metrics_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
     with duckdb.connect(str(db_path), read_only=True) as conn:
-        rows = ee_clickhouse.export_estonia_ar_clickhouse_financial_metrics(
+        rows = ee_clickhouse.export_estonia_financial_metrics_clickhouse(
             duckdb_connection=conn,
             clickhouse=ClickhouseResource(host="localhost"),
         )
