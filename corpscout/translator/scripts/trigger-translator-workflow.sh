@@ -4,7 +4,9 @@ set -euo pipefail
 usage() {
 	cat <<'EOF'
 Usage:
-  scripts/trigger-translator-workflow.sh [load-and-run|run|load-queue]
+  scripts/trigger-translator-workflow.sh
+
+Signals (or starts) the single shared translation queue workflow.
 
 Environment overrides:
   TEMPORAL_ADDRESS                 default: localhost:7233
@@ -13,7 +15,7 @@ Environment overrides:
   TRANSLATOR_BATCH_SIZE            default: 50
   TRANSLATOR_TIMEOUT_SECONDS       default: 120
   TRANSLATOR_BATCHES_PER_RUN       default: 500
-  SOURCE                           default: norway_brreg
+  TRANSLATOR_FLUSH_EVERY_BATCHES   default: 10
   TRANSLATOR_WORKFLOW_TYPE         default: TranslationWorkflow
 EOF
 }
@@ -23,16 +25,11 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 	exit 0
 fi
 
-action="${1:-load-and-run}"
-case "$action" in
-load-and-run | run | load-queue)
-	;;
-*)
-	echo "unsupported action: $action" >&2
+if [[ $# -gt 0 ]]; then
+	echo "unexpected arguments: $*" >&2
 	usage >&2
 	exit 2
-	;;
-esac
+fi
 
 temporal_cli="${TEMPORAL_CLI:-temporal}"
 if ! command -v "$temporal_cli" >/dev/null 2>&1; then
@@ -43,14 +40,14 @@ fi
 
 temporal_address="${TEMPORAL_ADDRESS:-localhost:7233}"
 temporal_namespace="${TEMPORAL_NAMESPACE:-default}"
-source="${SOURCE:-norway_brreg}"
-workflow_id="translator/$source"
-task_queue="translator-${source//_/-}"
+workflow_id="translator/process"
+task_queue="translator-process"
 workflow_type="${TRANSLATOR_WORKFLOW_TYPE:-TranslationWorkflow}"
 batch_size="${TRANSLATOR_BATCH_SIZE:-50}"
 timeout_seconds="${TRANSLATOR_TIMEOUT_SECONDS:-120}"
 batches_per_run="${TRANSLATOR_BATCHES_PER_RUN:-500}"
-signal_name="source-action"
+flush_every_batches="${TRANSLATOR_FLUSH_EVERY_BATCHES:-10}"
+signal_name="new-items"
 
 if [[ ! "$batch_size" =~ ^[1-9][0-9]*$ ]]; then
 	echo "TRANSLATOR_BATCH_SIZE must be a positive integer, got: $batch_size" >&2
@@ -67,8 +64,12 @@ if [[ ! "$batches_per_run" =~ ^[1-9][0-9]*$ ]]; then
 	exit 2
 fi
 
-workflow_input="{\"Source\":\"$source\",\"BatchSize\":$batch_size,\"TimeoutSeconds\":$timeout_seconds,\"BatchesPerRun\":$batches_per_run}"
-signal_input="{\"Action\":\"$action\"}"
+if [[ ! "$flush_every_batches" =~ ^[1-9][0-9]*$ ]]; then
+	echo "TRANSLATOR_FLUSH_EVERY_BATCHES must be a positive integer, got: $flush_every_batches" >&2
+	exit 2
+fi
+
+workflow_input="{\"BatchSize\":$batch_size,\"TimeoutSeconds\":$timeout_seconds,\"BatchesPerRun\":$batches_per_run,\"FlushEveryBatches\":$flush_every_batches}"
 
 exec "$temporal_cli" workflow signal-with-start \
 	--address "$temporal_address" \
@@ -78,4 +79,4 @@ exec "$temporal_cli" workflow signal-with-start \
 	--task-queue "$task_queue" \
 	--input "$workflow_input" \
 	--signal-name "$signal_name" \
-	--signal-input "$signal_input"
+	--signal-input 'null'
