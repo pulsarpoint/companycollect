@@ -90,8 +90,42 @@ AND NOT EXISTS (
 ```
 
 `createQueueTables` executes the embedded file (idempotent: everything is
-`IF NOT EXISTS`). The pair-pick query, batch query, and pending count all
-become `SELECT ... FROM pending_items`, deleting the triplicated predicate.
+`IF NOT EXISTS`). The pair-pick and batch queries become
+`SELECT ... FROM pending_items`, deleting the triplicated predicate; the
+pending COUNT does not use the view (see Performance at scale).
+
+## Performance at scale (millions of pending rows)
+
+The `NOT EXISTS` probes are always cheap (`output_items` ≤
+flush_every_batches × batch_size ≈ 500 rows by construction; `failed_items`
+tiny). The risk is unindexed scans over `input_items`, which run per batch.
+Three measures keep per-batch queue cost flat regardless of backlog size:
+
+1. **Batch-query index:** `CREATE INDEX IF NOT EXISTS
+   idx_input_pair_created ON input_items (source_lang, target_lang,
+   created_at);` and the batch query orders by `created_at` (with the
+   primary-key columns as tiebreak) instead of the 5-column key. SQLite
+   seeks to the language pair, walks oldest-first, probes each row, and
+   stops at the LIMIT; skipped rows are only translated-but-unflushed ones
+   (≤ ~500). Deterministic ordering is preserved — determinism, not any
+   specific order, is the requirement.
+2. **Pair-pick index:** `CREATE INDEX IF NOT EXISTS idx_input_created ON
+   input_items (created_at);` `ORDER BY created_at LIMIT 1` over the view
+   walks the index and stops at the first pending row — near-instant, since
+   the oldest rows are almost always pending (flushed rows are deleted).
+3. **Pending count by arithmetic identity**, not a view scan:
+   `pending = count(input_items) − count(output_items) − count(failed_items)`.
+   This is exact under the structural invariant that every output/failed row
+   has a matching input row (outputs/faileds are only written for items
+   pulled from input; flush deletes inputs and outputs together; failed
+   inputs are never deleted). It stays correct even if an operator clears
+   `failed_items` (those inputs genuinely become pending again, and the
+   arithmetic agrees). Used by both `queueCounts` (per batch) and `Stats`.
+
+Without these, a 3M-row backlog would cost ~3 full scans (~2–10s each) per
+~45s batch; with them, per-batch queue overhead is sub-second at any
+realistic backlog. A test pins the arithmetic-count identity against the
+view definition (both computed on a seeded queue, must agree).
 
 ## Query dialect changes
 
