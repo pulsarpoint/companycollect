@@ -189,6 +189,13 @@ To make a source's fields translatable:
    failure can never block ingestion.
 - The design doc lists every translated field and its mechanism (LLM vs static dict).
 
+Sources **without official industry codes** (see §8c) classify their free-text activity
+description directly: add a `defs/<source>/classification.py` mirroring
+`defs/latvia_ur/classification.py`, calling the shared embed-retrieve-adjudicate machinery in
+`defs/classifier/lib.py`. Same anti-join/cache shape as translation — results are cached per
+distinct text in `corpscout.text_classifications`, and a per-source view (mirror
+`lv_companies_nace`) exposes the joined NACE code.
+
 ## 8b. Cross-cutting standard C — contact information (ALWAYS pull it)
 **Connecting a company to its internet/contact presence is core to corpscout — capturing *any*
 contact information is mandatory, not optional.** When you analyse a new source, the data inventory

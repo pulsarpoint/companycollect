@@ -124,6 +124,9 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         # The translation loader runs at the end of every register refresh so
         # newly landed texts are enqueued to the translator service.
         "latvia_ur_translation_load",
+        # The NACE classifier runs at the end of every register refresh so
+        # newly landed activity texts are classified.
+        "latvia_ur_nace_classification",
     }
 
     # full transitive chain: 4 raw multi-asset outputs + pivot + metrics + usd + 2 exports = 9
@@ -151,6 +154,18 @@ def test_schedules_registered_and_jobs_cover_full_chains():
             if k.path[-1] == "latvia_financial_statements_raw_duckdb"
         )
     ).group_name == "latvia_financial"
+
+
+def test_nace_classification_asset_deps_and_group():
+    from dagster_v3.defs.latvia_ur import classification as latvia_classification
+
+    import dagster as dg
+
+    asset = latvia_classification.latvia_ur_nace_classification
+    assert dg.AssetKey("latvia_ur_clickhouse_companies") in {
+        dep.asset_key for dep in asset.specs_by_key[asset.key].deps
+    }
+    assert asset.specs_by_key[asset.key].group_name == "latvia_ur"
 
 
 def test_pipeline_loads_register_rows_into_duckdb(tmp_path: Path):
