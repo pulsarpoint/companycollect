@@ -48,27 +48,22 @@ type TemporalConfig struct {
 }
 
 type EndpointConfig struct {
-	Model         string           `json:"model"`
-	ModelEnv      string           `json:"model_env"`
-	BaseURL       string           `json:"base_url"`
-	BaseURLEnv    string           `json:"base_url_env"`
-	APIKeyEnv     string           `json:"api_key_env"`
-	APIKeyDefault string           `json:"api_key_default"`
-	MaxTokens     int              `json:"max_tokens"`
-	ExtraBody     map[string]any   `json:"extra_body"`
-	PromptData    PromptDataConfig `json:"prompt_data"`
+	Model         string         `json:"model"`
+	ModelEnv      string         `json:"model_env"`
+	BaseURL       string         `json:"base_url"`
+	BaseURLEnv    string         `json:"base_url_env"`
+	APIKeyEnv     string         `json:"api_key_env"`
+	APIKeyDefault string         `json:"api_key_default"`
+	MaxTokens     int            `json:"max_tokens"`
+	ExtraBody     map[string]any `json:"extra_body"`
 
 	APIKey string `json:"-"`
 }
 
-type PromptDataConfig struct {
-	SourceLanguage string `json:"source_language"`
-	TargetLanguage string `json:"target_language"`
-}
-
 type SourceConfig struct {
-	QueuePath  string `json:"queue_path"`
-	EndpointID string `json:"endpoint_id"`
+	QueuePath      string `json:"queue_path"`
+	EndpointID     string `json:"endpoint_id"`
+	DefinitionPath string `json:"definition_path"`
 }
 
 func LoadFromEnvironment() (Config, string, error) {
