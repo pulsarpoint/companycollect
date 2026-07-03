@@ -13,208 +13,139 @@ import (
 )
 
 const (
-	testSourceTable     = "corpscout.no_companies"
-	testArticlesColumn  = "articles_purpose_original"
-	testActivityColumn  = "activity_text_original"
-	testLegalFormColumn = "legal_form_description_original"
-	testSourceLang      = "no"
-	testTargetLang      = "en"
+	testSourceTable    = "corpscout.no_companies"
+	testActivityColumn = "activity_text_original"
+	testSourceLang     = "no"
+	testTargetLang     = "en"
+	testSourceLangName = "Norwegian"
+	testTargetLangName = "English"
 )
 
-func TestLoadInputCreatesQueueDuckDBWithOneHundredRows(t *testing.T) {
-	ctx := context.Background()
-	source := newFixtureSource(100)
-	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
+// openTestQueueDB opens a fresh temp DuckDB file with the queue tables
+// already created, mirroring what NewRuntime does on startup.
+func openTestQueueDB(t *testing.T) *sql.DB {
+	t.Helper()
 
-	result, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath})
-	if err != nil {
-		t.Fatalf("load input: %v", err)
-	}
-
-	if !result.Created {
-		t.Fatal("expected new queue file to be created")
-	}
-	if result.RowsSeen != 100 {
-		t.Fatalf("expected 100 source rows, got %d", result.RowsSeen)
-	}
-	if result.RowsInserted != 100 {
-		t.Fatalf("expected 100 inserted rows, got %d", result.RowsInserted)
-	}
-	if len(source.queries) != 2 {
-		t.Fatalf("expected 2 ClickHouse scan queries, got %d", len(source.queries))
-	}
-
-	if got := tableCount(t, queuePath, "input_items"); got != 100 {
-		t.Fatalf("expected 100 input rows, got %d", got)
-	}
-	if got := tableCount(t, queuePath, "output_items"); got != 0 {
-		t.Fatalf("expected empty output queue, got %d rows", got)
-	}
-
-	assertColumnCount(t, queuePath, testArticlesColumn, 50)
-	assertColumnCount(t, queuePath, testActivityColumn, 50)
-}
-
-func TestLoadInputWithDBUsesCallerOwnedConnection(t *testing.T) {
-	ctx := context.Background()
-	source := newFixtureSource(10)
-	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
-
-	db, err := sql.Open("duckdb", queuePath)
+	path := filepath.Join(t.TempDir(), "queue.duckdb")
+	db, err := sql.Open("duckdb", path)
 	if err != nil {
 		t.Fatalf("open duckdb: %v", err)
 	}
-	defer db.Close()
+	t.Cleanup(func() { _ = db.Close() })
 
-	result, err := loadInputWithDB(ctx, source, norwayDefinition(), db, queuePath, true)
-	if err != nil {
-		t.Fatalf("load input with db: %v", err)
+	if err := createQueueTables(context.Background(), db); err != nil {
+		t.Fatalf("create queue tables: %v", err)
 	}
-	if !result.Created {
-		t.Fatal("expected created flag to be preserved")
-	}
-	if result.RowsInserted != 10 {
-		t.Fatalf("expected 10 inserted rows, got %d", result.RowsInserted)
-	}
+	return db
+}
 
-	var count int
-	if err := db.QueryRow("select count(*) from input_items").Scan(&count); err != nil {
-		t.Fatalf("caller-owned db should remain usable: %v", err)
-	}
-	if count != 10 {
-		t.Fatalf("expected 10 input rows, got %d", count)
+func TestCreateQueueTablesCreatesEmptyInputOutputFailedTables(t *testing.T) {
+	ctx := context.Background()
+	db := openTestQueueDB(t)
+
+	for _, table := range []string{"input_items", "output_items", "failed_items"} {
+		count, err := countRows(ctx, db, table)
+		if err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("expected empty %s, got %d rows", table, count)
+		}
 	}
 }
 
-func TestLoadInputUpsertsExistingQueueFile(t *testing.T) {
+func TestCreateQueueTablesIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(100)
-	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
+	db := openTestQueueDB(t)
 
-	if _, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath}); err != nil {
-		t.Fatalf("first load input: %v", err)
-	}
-
-	source.rowsByColumn[testArticlesColumn] = append(
-		source.rowsByColumn[testArticlesColumn],
-		fixtureInputItem(testArticlesColumn, 100),
-	)
-
-	result, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath})
-	if err != nil {
-		t.Fatalf("second load input: %v", err)
-	}
-	if result.Created {
-		t.Fatal("expected existing queue file to be reused")
-	}
-	if result.RowsSeen != 101 {
-		t.Fatalf("expected 101 source rows on second load, got %d", result.RowsSeen)
-	}
-	if result.RowsInserted != 1 {
-		t.Fatalf("expected 1 new inserted row, got %d", result.RowsInserted)
-	}
-	if got := tableCount(t, queuePath, "input_items"); got != 101 {
-		t.Fatalf("expected 101 input rows after upsert, got %d", got)
+	if err := createQueueTables(ctx, db); err != nil {
+		t.Fatalf("create queue tables again: %v", err)
 	}
 }
 
-func TestLoadInputFlushesStaticColumnsDirectlyToClickHouse(t *testing.T) {
+func TestUpsertInputItemsInsertsAndDedupsByQueueKey(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(100)
-	source.staticRows = []StaticInput{
-		{
-			SourceText:     "Aksjeselskap",
-			SourceTextHash: 9001,
-			Key:            "AS",
-		},
-		{
-			SourceText:     "Ukjent form",
-			SourceTextHash: 9002,
-			Key:            "UNKNOWN",
-		},
-	}
-	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
+	db := openTestQueueDB(t)
 
-	result, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath})
-	if err != nil {
-		t.Fatalf("load input: %v", err)
+	row := fixtureInputItem(testActivityColumn, 1)
+	if err := upsertInputItems(ctx, db, []InputItem{row}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if got := tableCount(t, db, "input_items"); got != 1 {
+		t.Fatalf("expected 1 row, got %d", got)
 	}
 
-	if result.StaticRowsSeen != 2 {
-		t.Fatalf("expected 2 static source rows, got %d", result.StaticRowsSeen)
+	// Re-upsert with the same dedup key (table, column, hash, source_lang,
+	// target_lang) but different text: on-conflict-do-nothing must leave the
+	// row count unchanged.
+	dup := row
+	dup.SourceText = "different text, same key"
+	if err := upsertInputItems(ctx, db, []InputItem{dup}); err != nil {
+		t.Fatalf("upsert duplicate: %v", err)
 	}
-	if result.StaticFlushed != 1 {
-		t.Fatalf("expected 1 static row flushed, got %d", result.StaticFlushed)
-	}
-	if len(source.staticQueries) != 1 {
-		t.Fatalf("expected 1 static ClickHouse scan query, got %d", len(source.staticQueries))
-	}
-	if !strings.Contains(source.staticQueries[0], "c.legal_form_code AS legal_form_code") {
-		t.Fatalf("expected static scan to select legal_form_code:\n%s", source.staticQueries[0])
-	}
-	if got := inputCountByColumn(t, queuePath, testLegalFormColumn); got != 0 {
-		t.Fatalf("static legal-form rows must not enter input queue, got %d rows", got)
+	if got := tableCount(t, db, "input_items"); got != 1 {
+		t.Fatalf("expected dedup to keep 1 row, got %d", got)
 	}
 
-	if len(source.insertedTranslations) != 1 {
-		t.Fatalf("expected 1 inserted static translation, got %d", len(source.insertedTranslations))
+	// A distinct hash inserts a new row.
+	distinct := fixtureInputItem(testActivityColumn, 2)
+	if err := upsertInputItems(ctx, db, []InputItem{distinct}); err != nil {
+		t.Fatalf("upsert distinct: %v", err)
 	}
-	inserted := source.insertedTranslations[0]
-	if inserted.SourceTable != testSourceTable {
-		t.Fatalf("expected source table %q, got %q", testSourceTable, inserted.SourceTable)
-	}
-	if inserted.SourceColumn != testLegalFormColumn {
-		t.Fatalf("expected source column %q, got %q", testLegalFormColumn, inserted.SourceColumn)
-	}
-	if inserted.SourceText != "Aksjeselskap" {
-		t.Fatalf("expected source text Aksjeselskap, got %q", inserted.SourceText)
-	}
-	if inserted.SourceTextHash != 9001 {
-		t.Fatalf("expected source hash 9001, got %d", inserted.SourceTextHash)
-	}
-	if inserted.TranslatedText != "Private limited company" {
-		t.Fatalf("expected static translation, got %q", inserted.TranslatedText)
-	}
-	if inserted.Provider != "static" || inserted.Model != "static" {
-		t.Fatalf("expected static provider/model, got provider=%q model=%q", inserted.Provider, inserted.Model)
-	}
-	if inserted.SourceLang != testSourceLang || inserted.TargetLang != testTargetLang {
-		t.Fatalf("expected %s->%s, got %s->%s", testSourceLang, testTargetLang, inserted.SourceLang, inserted.TargetLang)
-	}
-	if inserted.Version == 0 {
-		t.Fatal("expected non-zero static translation version")
+	if got := tableCount(t, db, "input_items"); got != 2 {
+		t.Fatalf("expected 2 rows after distinct insert, got %d", got)
 	}
 }
 
-func TestLoadInputStoresUnsignedCityHashValues(t *testing.T) {
+func TestUpsertInputItemsRejectsIncompleteRows(t *testing.T) {
 	ctx := context.Background()
-	source := newFixtureSource(0)
-	source.rowsByColumn[testArticlesColumn] = []InputItem{
-		{
-			SourceTable:    testSourceTable,
-			SourceColumn:   testArticlesColumn,
-			SourceText:     "high unsigned hash",
-			SourceTextHash: math.MaxUint64,
-			SourceLang:     testSourceLang,
-			TargetLang:     testTargetLang,
-		},
-	}
-	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
+	db := openTestQueueDB(t)
 
-	result, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath})
-	if err != nil {
-		t.Fatalf("load input: %v", err)
+	tests := []struct {
+		name    string
+		mutate  func(*InputItem)
+		wantErr string
+	}{
+		{"missing source_table", func(r *InputItem) { r.SourceTable = "" }, "source_table is required"},
+		{"missing source_column", func(r *InputItem) { r.SourceColumn = "" }, "source_column is required"},
+		{"missing source_text", func(r *InputItem) { r.SourceText = "" }, "source_text is required"},
+		{"missing source_lang", func(r *InputItem) { r.SourceLang = "" }, "source_lang is required"},
+		{"missing target_lang", func(r *InputItem) { r.TargetLang = "" }, "target_lang is required"},
+		{"missing source_language_name", func(r *InputItem) { r.SourceLanguageName = "" }, "source_language_name is required"},
+		{"missing target_language_name", func(r *InputItem) { r.TargetLanguageName = "" }, "target_language_name is required"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := fixtureInputItem(testActivityColumn, 1)
+			tt.mutate(&row)
+			err := upsertInputItems(ctx, db, []InputItem{row})
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
 
-	if result.RowsInserted != 1 {
-		t.Fatalf("expected 1 inserted row, got %d", result.RowsInserted)
-	}
+// TestUpsertInputItemsStoresUnsignedMaxUint64Hash pins that cityHash64
+// values above math.MaxInt64 (which don't fit a signed 64-bit column)
+// round-trip correctly through DuckDB's ubigint column.
+func TestUpsertInputItemsStoresUnsignedMaxUint64Hash(t *testing.T) {
+	ctx := context.Background()
+	db := openTestQueueDB(t)
 
-	db, err := sql.Open("duckdb", queuePath)
-	if err != nil {
-		t.Fatalf("open duckdb: %v", err)
+	row := InputItem{
+		SourceTable:        testSourceTable,
+		SourceColumn:       testActivityColumn,
+		SourceText:         "high unsigned hash",
+		SourceTextHash:     math.MaxUint64,
+		SourceLang:         testSourceLang,
+		TargetLang:         testTargetLang,
+		SourceLanguageName: testSourceLangName,
+		TargetLanguageName: testTargetLangName,
 	}
-	defer db.Close()
+	if err := upsertInputItems(ctx, db, []InputItem{row}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
 
 	var stored string
 	if err := db.QueryRow("select source_text_hash::varchar from input_items").Scan(&stored); err != nil {
@@ -225,45 +156,15 @@ func TestLoadInputStoresUnsignedCityHashValues(t *testing.T) {
 	}
 }
 
+// fixtureSource is an InsertTextTranslations recorder used by flush tests
+// (runtime_test.go); it satisfies ClickHouseSource without talking to a real
+// ClickHouse.
 type fixtureSource struct {
-	rowsByColumn         map[string][]InputItem
-	staticRows           []StaticInput
-	queries              []string
-	staticQueries        []string
 	insertedTranslations []TextTranslation
 }
 
-func newFixtureSource(count int) *fixtureSource {
-	rowsByColumn := map[string][]InputItem{
-		testArticlesColumn: make([]InputItem, 0, count/2),
-		testActivityColumn: make([]InputItem, 0, count/2),
-	}
-	for index := 0; index < count; index++ {
-		column := testArticlesColumn
-		if index >= count/2 {
-			column = testActivityColumn
-		}
-		rowsByColumn[column] = append(rowsByColumn[column], fixtureInputItem(column, index))
-	}
-	return &fixtureSource{rowsByColumn: rowsByColumn}
-}
-
-func (s *fixtureSource) QueryTranslationInput(ctx context.Context, query string) ([]InputItem, error) {
-	s.queries = append(s.queries, query)
-
-	switch {
-	case strings.Contains(query, testArticlesColumn):
-		return append([]InputItem(nil), s.rowsByColumn[testArticlesColumn]...), nil
-	case strings.Contains(query, testActivityColumn):
-		return append([]InputItem(nil), s.rowsByColumn[testActivityColumn]...), nil
-	default:
-		return nil, fmt.Errorf("unexpected query: %s", query)
-	}
-}
-
-func (s *fixtureSource) QueryStaticInput(ctx context.Context, query string) ([]StaticInput, error) {
-	s.staticQueries = append(s.staticQueries, query)
-	return append([]StaticInput(nil), s.staticRows...), nil
+func newFixtureSource() *fixtureSource {
+	return &fixtureSource{}
 }
 
 func (s *fixtureSource) InsertTextTranslations(ctx context.Context, rows []TextTranslation) (int, error) {
@@ -273,67 +174,23 @@ func (s *fixtureSource) InsertTextTranslations(ctx context.Context, rows []TextT
 
 func fixtureInputItem(column string, index int) InputItem {
 	return InputItem{
-		SourceTable:    testSourceTable,
-		SourceColumn:   column,
-		SourceText:     fmt.Sprintf("Norwegian text %03d", index),
-		SourceTextHash: uint64(10_000 + index),
-		SourceLang:     testSourceLang,
-		TargetLang:     testTargetLang,
+		SourceTable:        testSourceTable,
+		SourceColumn:       column,
+		SourceText:         fmt.Sprintf("Norwegian text %03d", index),
+		SourceTextHash:     uint64(10_000 + index),
+		SourceLang:         testSourceLang,
+		TargetLang:         testTargetLang,
+		SourceLanguageName: testSourceLangName,
+		TargetLanguageName: testTargetLangName,
 	}
 }
 
-func tableCount(t *testing.T, path string, table string) int {
+func tableCount(t *testing.T, db *sql.DB, table string) int {
 	t.Helper()
 
-	db, err := sql.Open("duckdb", path)
+	count, err := countRows(context.Background(), db, table)
 	if err != nil {
-		t.Fatalf("open duckdb: %v", err)
-	}
-	defer db.Close()
-
-	var count int
-	if err := db.QueryRow("select count(*) from " + table).Scan(&count); err != nil {
 		t.Fatalf("count %s: %v", table, err)
-	}
-	return count
-}
-
-func assertColumnCount(t *testing.T, path string, column string, want int) {
-	t.Helper()
-
-	db, err := sql.Open("duckdb", path)
-	if err != nil {
-		t.Fatalf("open duckdb: %v", err)
-	}
-	defer db.Close()
-
-	var count int
-	if err := db.QueryRow(
-		"select count(*) from input_items where source_column = ?",
-		column,
-	).Scan(&count); err != nil {
-		t.Fatalf("count column %s: %v", column, err)
-	}
-	if count != want {
-		t.Fatalf("expected %d rows for %s, got %d", want, column, count)
-	}
-}
-
-func inputCountByColumn(t *testing.T, path string, column string) int {
-	t.Helper()
-
-	db, err := sql.Open("duckdb", path)
-	if err != nil {
-		t.Fatalf("open duckdb: %v", err)
-	}
-	defer db.Close()
-
-	var count int
-	if err := db.QueryRow(
-		"select count(*) from input_items where source_column = ?",
-		column,
-	).Scan(&count); err != nil {
-		t.Fatalf("count column %s: %v", column, err)
 	}
 	return count
 }

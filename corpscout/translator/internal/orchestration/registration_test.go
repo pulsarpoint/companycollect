@@ -12,11 +12,11 @@ import (
 	"go.temporal.io/sdk/activity"
 )
 
-func TestRegisterSourceRegistersWorkflowAndPerSourceActivities(t *testing.T) {
-	registry := &fakeSourceRegistry{}
+func TestRegisterProcessRegistersWorkflowAndActivities(t *testing.T) {
+	registry := &fakeProcessRegistry{}
 
-	if err := RegisterSource(registry, "norway_brreg", &fakeSourceRuntime{}); err != nil {
-		t.Fatalf("register source: %v", err)
+	if err := RegisterProcess(registry, &fakeProcessRuntime{}); err != nil {
+		t.Fatalf("register process: %v", err)
 	}
 
 	if len(registry.workflows) != 1 {
@@ -32,28 +32,21 @@ func TestRegisterSourceRegistersWorkflowAndPerSourceActivities(t *testing.T) {
 	}
 
 	expected := []string{
-		"norway_brreg.LoadNewInput",
-		"norway_brreg.ProcessOneBatch",
-		"norway_brreg.UploadOutput",
+		"translator.ProcessOneBatch",
+		"translator.FlushOutput",
 	}
 	if !reflect.DeepEqual(activityNames, expected) {
 		t.Fatalf("unexpected activity registrations: got %#v want %#v", activityNames, expected)
 	}
 }
 
-func TestRegisterSourceRequiresRuntime(t *testing.T) {
-	if err := RegisterSource(&fakeSourceRegistry{}, "norway_brreg", nil); !errors.Is(err, ErrSourceRuntimeRequired) {
+func TestRegisterProcessRequiresRuntime(t *testing.T) {
+	if err := RegisterProcess(&fakeProcessRegistry{}, nil); !errors.Is(err, ErrProcessRuntimeRequired) {
 		t.Fatalf("expected missing runtime error, got %v", err)
 	}
 }
 
-func TestRegisterSourceRequiresSourceName(t *testing.T) {
-	if err := RegisterSource(&fakeSourceRegistry{}, "", &fakeSourceRuntime{}); !errors.Is(err, ErrSourceNameRequired) {
-		t.Fatalf("expected missing source name error, got %v", err)
-	}
-}
-
-type fakeSourceRegistry struct {
+type fakeProcessRegistry struct {
 	workflows  []interface{}
 	activities []registeredActivity
 }
@@ -63,11 +56,11 @@ type registeredActivity struct {
 	options  activity.RegisterOptions
 }
 
-func (f *fakeSourceRegistry) RegisterWorkflow(workflow interface{}) {
+func (f *fakeProcessRegistry) RegisterWorkflow(workflow interface{}) {
 	f.workflows = append(f.workflows, workflow)
 }
 
-func (f *fakeSourceRegistry) RegisterActivityWithOptions(
+func (f *fakeProcessRegistry) RegisterActivityWithOptions(
 	activityFunc interface{},
 	options activity.RegisterOptions,
 ) {
@@ -81,16 +74,12 @@ func functionName(value interface{}) string {
 	return runtime.FuncForPC(reflect.ValueOf(value).Pointer()).Name()
 }
 
-type fakeSourceRuntime struct{}
+type fakeProcessRuntime struct{}
 
-func (f *fakeSourceRuntime) LoadNewInput(ctx context.Context) (engine.LoadResult, error) {
-	return engine.LoadResult{}, nil
-}
-
-func (f *fakeSourceRuntime) ProcessOneBatch(ctx context.Context, input engine.ProcessInput) (engine.ProcessResult, error) {
+func (f *fakeProcessRuntime) ProcessOneBatch(ctx context.Context, input engine.ProcessInput) (engine.ProcessResult, error) {
 	return engine.ProcessResult{}, nil
 }
 
-func (f *fakeSourceRuntime) UploadOutput(ctx context.Context) (engine.UploadResult, error) {
+func (f *fakeProcessRuntime) FlushOutput(ctx context.Context) (engine.UploadResult, error) {
 	return engine.UploadResult{}, nil
 }

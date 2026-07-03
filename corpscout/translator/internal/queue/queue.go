@@ -17,13 +17,15 @@ type Queue struct {
 }
 
 type Item struct {
-	ItemID         string
-	SourceTable    string
-	SourceColumn   string
-	SourceText     string
-	SourceTextHash uint64
-	SourceLang     string
-	TargetLang     string
+	ItemID             string
+	SourceTable        string
+	SourceColumn       string
+	SourceText         string
+	SourceTextHash     uint64
+	SourceLang         string
+	TargetLang         string
+	SourceLanguageName string
+	TargetLanguageName string
 }
 
 type TranslatedItem struct {
@@ -86,9 +88,38 @@ func (q *Queue) Close() error {
 	return q.db.Close()
 }
 
+// GetBatch returns up to limit pending items from exactly one language pair:
+// the pair holding the oldest pending input_items row. Callers depend on
+// batches being homogeneous, since a translation request carries a single
+// source/target language pair for prompt framing.
 func (q *Queue) GetBatch(ctx context.Context, limit int) ([]Item, error) {
 	if limit <= 0 {
 		return nil, errors.New("batch size must be positive")
+	}
+
+	var srcLang, dstLang string
+	err := q.db.QueryRowContext(ctx, `
+		select i.source_lang, i.target_lang
+		from input_items as i
+		where not exists (
+			select 1 from output_items as o
+			where o.source_table = i.source_table and o.source_column = i.source_column
+				and o.source_text_hash = i.source_text_hash
+				and o.source_lang = i.source_lang and o.target_lang = i.target_lang
+		) and not exists (
+			select 1 from failed_items as f
+			where f.source_table = i.source_table and f.source_column = i.source_column
+				and f.source_text_hash = i.source_text_hash
+				and f.source_lang = i.source_lang and f.target_lang = i.target_lang
+		)
+		order by i.created_at, i.source_lang, i.target_lang
+		limit 1
+	`).Scan(&srcLang, &dstLang)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []Item{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("pick queue language pair: %w", err)
 	}
 
 	rows, err := q.db.QueryContext(ctx, `
@@ -98,7 +129,9 @@ func (q *Queue) GetBatch(ctx context.Context, limit int) ([]Item, error) {
 			i.source_text,
 			i.source_text_hash::varchar,
 			i.source_lang,
-			i.target_lang
+			i.target_lang,
+			i.source_language_name,
+			i.target_language_name
 		from input_items as i
 		where not exists (
 			select 1
@@ -118,6 +151,8 @@ func (q *Queue) GetBatch(ctx context.Context, limit int) ([]Item, error) {
 				and f.source_lang = i.source_lang
 				and f.target_lang = i.target_lang
 		)
+			and i.source_lang = ?
+			and i.target_lang = ?
 		order by
 			i.source_table,
 			i.source_column,
@@ -125,7 +160,7 @@ func (q *Queue) GetBatch(ctx context.Context, limit int) ([]Item, error) {
 			i.source_lang,
 			i.target_lang
 		limit ?
-	`, limit)
+	`, srcLang, dstLang, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query queue batch: %w", err)
 	}
@@ -142,6 +177,8 @@ func (q *Queue) GetBatch(ctx context.Context, limit int) ([]Item, error) {
 			&hashText,
 			&item.SourceLang,
 			&item.TargetLang,
+			&item.SourceLanguageName,
+			&item.TargetLanguageName,
 		); err != nil {
 			return nil, fmt.Errorf("scan queue item: %w", err)
 		}
@@ -306,6 +343,8 @@ func (q *Queue) validateSchema(ctx context.Context) error {
 				"source_text_hash",
 				"source_lang",
 				"target_lang",
+				"source_language_name",
+				"target_language_name",
 				"created_at",
 			},
 		},

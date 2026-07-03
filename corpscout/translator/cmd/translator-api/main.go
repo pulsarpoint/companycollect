@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -30,12 +29,29 @@ func main() {
 		logger.Error("failed to load translator config", "err", err)
 		os.Exit(1)
 	}
-	if len(cfg.Sources) == 0 {
-		logger.Error("no translation sources configured")
-		os.Exit(1)
-	}
 	if cfg.ClickHouse.NativeURL == "" {
 		logger.Error("clickhouse native_url is required")
+		os.Exit(1)
+	}
+	if cfg.EndpointID == "" {
+		logger.Error("endpoint_id is required")
+		os.Exit(1)
+	}
+	endpointConfig, ok := cfg.Endpoints[cfg.EndpointID]
+	if !ok {
+		logger.Error("endpoint not found", "endpoint_id", cfg.EndpointID)
+		os.Exit(1)
+	}
+	if endpointConfig.BaseURL == "" {
+		logger.Error("endpoint base_url is required", "endpoint_id", cfg.EndpointID)
+		os.Exit(1)
+	}
+	if endpointConfig.Model == "" {
+		logger.Error("endpoint model is required", "endpoint_id", cfg.EndpointID)
+		os.Exit(1)
+	}
+	if endpointConfig.APIKey == "" {
+		logger.Error("endpoint api_key is required", "endpoint_id", cfg.EndpointID)
 		os.Exit(1)
 	}
 
@@ -45,6 +61,37 @@ func main() {
 		os.Exit(1)
 	}
 	defer clickHouse.Close()
+
+	provider, err := translation.Init(translation.Config{
+		BaseURL:   endpointConfig.BaseURL,
+		Model:     endpointConfig.Model,
+		APIKey:    endpointConfig.APIKey,
+		MaxTokens: endpointConfig.MaxTokens,
+		ExtraBody: endpointConfig.ExtraBody,
+		Logger:    logger,
+	})
+	if err != nil {
+		logger.Error("failed to initialize translation provider", "err", err)
+		os.Exit(1)
+	}
+
+	runtime, err := engine.NewRuntime(ctx, engine.RuntimeConfig{
+		QueuePath:    cfg.Queue.Path,
+		Source:       clickHouse,
+		Translator:   provider,
+		ProviderName: cfg.EndpointID,
+		Model:        endpointConfig.Model,
+		Logger:       logger,
+	})
+	if err != nil {
+		logger.Error("failed to initialize translator runtime", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := runtime.Close(); err != nil {
+			logger.Error("failed to close translator runtime", "err", err)
+		}
+	}()
 
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.Address,
@@ -56,83 +103,45 @@ func main() {
 	}
 	defer temporalClient.Close()
 
-	sourceNames := make([]string, 0, len(cfg.Sources))
-	for name, sourceConfig := range cfg.Sources {
-		endpointConfig, def, err := sourceSetup(cfg, name, sourceConfig)
-		if err != nil {
-			logger.Error("invalid translator source config", "source", name, "err", err)
-			os.Exit(1)
-		}
-
-		provider, err := translation.Init(translation.Config{
-			BaseURL:   endpointConfig.BaseURL,
-			Model:     endpointConfig.Model,
-			APIKey:    endpointConfig.APIKey,
-			MaxTokens: endpointConfig.MaxTokens,
-			ExtraBody: endpointConfig.ExtraBody,
-			Logger:    logger,
-			PromptData: translation.PromptData{
-				SourceLanguage: def.SourceLanguageName,
-				TargetLanguage: def.TargetLanguageName,
-			},
-		})
-		if err != nil {
-			logger.Error("failed to initialize translation provider", "source", name, "err", err)
-			os.Exit(1)
-		}
-
-		sourceRuntime, err := engine.NewRuntime(ctx, engine.RuntimeConfig{
-			QueuePath:    sourceConfig.QueuePath,
-			Definition:   def,
-			Source:       clickHouse,
-			Translator:   provider,
-			ProviderName: sourceConfig.EndpointID,
-			Model:        endpointConfig.Model,
-			Logger:       logger,
-		})
-		if err != nil {
-			logger.Error("failed to initialize source runtime", "source", name, "err", err)
-			os.Exit(1)
-		}
-		defer func(name string, r *engine.Runtime) {
-			if err := r.Close(); err != nil {
-				logger.Error("failed to close source runtime", "source", name, "err", err)
-			}
-		}(name, sourceRuntime)
-
-		temporalWorker := worker.New(temporalClient, engine.TaskQueue(name), worker.Options{})
-		if err := orchestration.RegisterSource(temporalWorker, name, sourceRuntime); err != nil {
-			logger.Error("failed to register source workflow", "source", name, "err", err)
-			os.Exit(1)
-		}
-		if err := temporalWorker.Start(); err != nil {
-			logger.Error("failed to start temporal worker", "source", name, "err", err)
-			os.Exit(1)
-		}
-		defer temporalWorker.Stop()
-
-		logger.Info(
-			"translator source registered",
-			"source", name,
-			"task_queue", engine.TaskQueue(name),
-			"queue_path", sourceConfig.QueuePath,
-			"definition_path", sourceConfig.DefinitionPath,
-			"endpoint", sourceConfig.EndpointID,
-		)
-		sourceNames = append(sourceNames, name)
+	temporalWorker := worker.New(temporalClient, engine.ProcessTaskQueue, worker.Options{})
+	if err := orchestration.RegisterProcess(temporalWorker, runtime); err != nil {
+		logger.Error("failed to register translation workflow", "err", err)
+		os.Exit(1)
 	}
+	if err := temporalWorker.Start(); err != nil {
+		logger.Error("failed to start temporal worker", "err", err)
+		os.Exit(1)
+	}
+	defer temporalWorker.Stop()
 
-	workflowStarter := orchestration.NewTemporalWorkflowStarter(
+	starter := orchestration.NewTemporalWorkflowStarter(
 		temporalClient,
-		sourceNames,
 		cfg.Temporal.BatchSize,
 		cfg.Temporal.TimeoutSeconds,
 		cfg.Temporal.BatchesPerRun,
+		cfg.Queue.FlushEveryBatches,
 	)
+
+	// Boot resume: never strand a half-full queue if the process crashed or
+	// was redeployed while items were pending.
+	if stats, err := runtime.Stats(ctx); err != nil {
+		logger.Error("boot queue stats failed", "err", err)
+	} else if stats.Pending > 0 {
+		if result, err := starter.StartProcess(ctx); err != nil {
+			logger.Error("boot resume failed", "err", err, "pending", stats.Pending)
+		} else {
+			logger.Info(
+				"boot resume started workflow",
+				"pending", stats.Pending,
+				"workflow_id", result.WorkflowID,
+				"run_id", result.RunID,
+			)
+		}
+	}
 
 	server := &http.Server{
 		Addr:              cfg.Server.ListenAddress,
-		Handler:           api.NewRouterWithLogger(workflowStarter, sourceNames, logger),
+		Handler:           api.NewRouterWithLogger(runtime, starter, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -148,8 +157,8 @@ func main() {
 		"temporal_address", cfg.Temporal.Address,
 		"temporal_namespace", cfg.Temporal.Namespace,
 		"batches_per_run", cfg.Temporal.BatchesPerRun,
-		"sources", len(sourceNames),
-		"endpoints", len(cfg.Endpoints),
+		"endpoint_id", cfg.EndpointID,
+		"queue_path", cfg.Queue.Path,
 	)
 
 	select {
@@ -166,42 +175,4 @@ func main() {
 			os.Exit(1)
 		}
 	}
-}
-
-// sourceSetup validates one source's config, loads its definition, and checks
-// the definition names the same source as the config key.
-func sourceSetup(cfg config.Config, name string, sourceConfig config.SourceConfig) (config.EndpointConfig, engine.Definition, error) {
-	if sourceConfig.QueuePath == "" {
-		return config.EndpointConfig{}, engine.Definition{}, fmt.Errorf("source %s queue_path is required", name)
-	}
-	if sourceConfig.EndpointID == "" {
-		return config.EndpointConfig{}, engine.Definition{}, fmt.Errorf("source %s endpoint_id is required", name)
-	}
-	if sourceConfig.DefinitionPath == "" {
-		return config.EndpointConfig{}, engine.Definition{}, fmt.Errorf("source %s definition_path is required", name)
-	}
-
-	endpointConfig, ok := cfg.Endpoints[sourceConfig.EndpointID]
-	if !ok {
-		return config.EndpointConfig{}, engine.Definition{}, fmt.Errorf("endpoint %q is required", sourceConfig.EndpointID)
-	}
-	if endpointConfig.BaseURL == "" {
-		return config.EndpointConfig{}, engine.Definition{}, fmt.Errorf("endpoint %q base_url is required", sourceConfig.EndpointID)
-	}
-	if endpointConfig.Model == "" {
-		return config.EndpointConfig{}, engine.Definition{}, fmt.Errorf("endpoint %q model is required", sourceConfig.EndpointID)
-	}
-	if endpointConfig.APIKey == "" {
-		return config.EndpointConfig{}, engine.Definition{}, fmt.Errorf("endpoint %q api_key is required", sourceConfig.EndpointID)
-	}
-
-	def, err := engine.LoadDefinition(sourceConfig.DefinitionPath)
-	if err != nil {
-		return config.EndpointConfig{}, engine.Definition{}, err
-	}
-	if def.Source != name {
-		return config.EndpointConfig{}, engine.Definition{}, fmt.Errorf(
-			"definition source %q does not match config source %q", def.Source, name)
-	}
-	return endpointConfig, def, nil
 }

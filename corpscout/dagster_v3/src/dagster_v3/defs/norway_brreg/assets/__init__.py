@@ -20,23 +20,16 @@ from dagster_v3.defs.norway_brreg.assets.entity_clickhouse import (
     norway_brreg_entities_snapshot_clickhouse,
     norway_brreg_entity_updates_clickhouse,
 )
-from dagster_v3.defs.norway_brreg.assets.translation import (
-    NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
-    NorwayBrregTranslationConfig,
-    build_norway_brreg_build_queue_input,
+from dagster_v3.defs.norway_brreg.assets.jobs import (
     norway_brreg_entities_full_snapshot_job,
     norway_brreg_entity_updates_job,
     norway_brreg_entity_updates_schedule,
-    norway_brreg_translation_trigger,
 )
 
 __all__ = [
     "GROUP_NAME",
-    "NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID",
     "NORWAY_BRREG_ENTITY_BUCKET",
     "NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS",
-    "NorwayBrregTranslationConfig",
-    "build_norway_brreg_build_queue_input",
     "entries_snapshot_raw_object_key",
     "entity_snapshot_object_key",
     "entity_update_window",
@@ -51,5 +44,4 @@ __all__ = [
     "norway_brreg_entity_updates_normalized_parquets",
     "norway_brreg_entity_updates_s3",
     "norway_brreg_entity_updates_schedule",
-    "norway_brreg_translation_trigger",
 ]

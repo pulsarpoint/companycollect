@@ -30,16 +30,11 @@ func TestLoadBuildsClickHouseNativeURLFromDagsterEnv(t *testing.T) {
 	}
 }
 
-func TestLoadParsesSourceDefinitionPath(t *testing.T) {
+func TestLoadParsesQueueConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "translator.json")
 	content := `{
-  "sources": {
-    "norway_brreg": {
-      "queue_path": "data/translator/norway_brreg.duckdb",
-      "endpoint_id": "local_llm",
-      "definition_path": "config/sources/norway_brreg.json"
-    }
-  }
+  "queue": {"path": "data/translator/custom.duckdb", "flush_every_batches": 5},
+  "endpoint_id": "local_llm"
 }`
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -49,10 +44,38 @@ func TestLoadParsesSourceDefinitionPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	if cfg.Queue.Path != "data/translator/custom.duckdb" {
+		t.Fatalf("expected queue path, got %q", cfg.Queue.Path)
+	}
+	if cfg.Queue.FlushEveryBatches != 5 {
+		t.Fatalf("expected flush_every_batches 5, got %d", cfg.Queue.FlushEveryBatches)
+	}
+	if cfg.EndpointID != "local_llm" {
+		t.Fatalf("expected endpoint_id local_llm, got %q", cfg.EndpointID)
+	}
+}
 
-	source := cfg.Sources["norway_brreg"]
-	if source.DefinitionPath != "config/sources/norway_brreg.json" {
-		t.Fatalf("expected definition path, got %q", source.DefinitionPath)
+func TestLoadAppliesQueueDefaultsAndSoleEndpointFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "translator.json")
+	content := `{
+  "endpoints": {"local_llm": {"model": "qwen3:6b", "base_url": "http://x/v1"}}
+}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Queue.Path != "data/translator/queue.duckdb" {
+		t.Fatalf("expected default queue path, got %q", cfg.Queue.Path)
+	}
+	if cfg.Queue.FlushEveryBatches != 10 {
+		t.Fatalf("expected default flush_every_batches 10, got %d", cfg.Queue.FlushEveryBatches)
+	}
+	if cfg.EndpointID != "local_llm" {
+		t.Fatalf("expected sole-endpoint fallback, got %q", cfg.EndpointID)
 	}
 }
 

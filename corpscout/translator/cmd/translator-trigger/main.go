@@ -11,16 +11,17 @@ import (
 	"syscall"
 
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
-	"github.com/pulsarpoint/corpscout/translator/internal/engine"
 	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 	"go.temporal.io/sdk/client"
 )
 
-type sourceActionStarter interface {
-	StartSourceAction(ctx context.Context, source string, action string) (orchestration.WorkflowActionResult, error)
+// processStarter signals (or starts) the single shared-queue translation
+// workflow. *orchestration.TemporalWorkflowStarter satisfies it.
+type processStarter interface {
+	StartProcess(ctx context.Context) (orchestration.WorkflowActionResult, error)
 }
 
-type starterFactory func(ctx context.Context, cfg config.Config) (sourceActionStarter, func(), error)
+type starterFactory func(ctx context.Context, cfg config.Config) (processStarter, func(), error)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -32,13 +33,13 @@ func main() {
 	}
 }
 
+// run loads config, signals (or starts) the single shared-queue translation
+// workflow, and prints the resulting workflow/run IDs.
 func run(ctx context.Context, args []string, stdout io.Writer, newStarter starterFactory) error {
 	fs := flag.NewFlagSet("translator-trigger", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 
 	configPath := fs.String("config", defaultConfigPath(), "path to translator config file")
-	source := fs.String("source", "norway_brreg", "translation source")
-	action := fs.String("action", engine.ActionLoadAndRun, "source action: load-and-run, run, or load-queue")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -47,9 +48,6 @@ func run(ctx context.Context, args []string, stdout io.Writer, newStarter starte
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments: %v", fs.Args())
-	}
-	if err := validateAction(*action); err != nil {
-		return err
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -63,23 +61,16 @@ func run(ctx context.Context, args []string, stdout io.Writer, newStarter starte
 	}
 	defer closeStarter()
 
-	result, err := starter.StartSourceAction(ctx, *source, *action)
+	result, err := starter.StartProcess(ctx)
 	if err != nil {
-		return fmt.Errorf("start %s action: %w", *action, err)
+		return fmt.Errorf("start process workflow: %w", err)
 	}
 
-	fmt.Fprintf(
-		stdout,
-		"workflow_id=%s run_id=%s source=%s action=%s\n",
-		result.WorkflowID,
-		result.RunID,
-		*source,
-		*action,
-	)
+	fmt.Fprintf(stdout, "workflow_id=%s run_id=%s\n", result.WorkflowID, result.RunID)
 	return nil
 }
 
-func newTemporalStarter(_ context.Context, cfg config.Config) (sourceActionStarter, func(), error) {
+func newTemporalStarter(_ context.Context, cfg config.Config) (processStarter, func(), error) {
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.Address,
 		Namespace: cfg.Temporal.Namespace,
@@ -88,29 +79,15 @@ func newTemporalStarter(_ context.Context, cfg config.Config) (sourceActionStart
 		return nil, nil, fmt.Errorf("connect temporal: %w", err)
 	}
 
-	sources := make([]string, 0, len(cfg.Sources))
-	for name := range cfg.Sources {
-		sources = append(sources, name)
-	}
-
 	return orchestration.NewTemporalWorkflowStarter(
 			temporalClient,
-			sources,
 			cfg.Temporal.BatchSize,
 			cfg.Temporal.TimeoutSeconds,
 			cfg.Temporal.BatchesPerRun,
+			cfg.Queue.FlushEveryBatches,
 		),
 		temporalClient.Close,
 		nil
-}
-
-func validateAction(action string) error {
-	switch action {
-	case engine.ActionLoadAndRun, engine.ActionLoadQueue, engine.ActionRun:
-		return nil
-	default:
-		return fmt.Errorf("unsupported action: %s", action)
-	}
 }
 
 func defaultConfigPath() string {

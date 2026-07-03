@@ -9,11 +9,10 @@ import (
 	"testing"
 
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
-	"github.com/pulsarpoint/corpscout/translator/internal/engine"
 	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 )
 
-func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
+func TestRunStartsProcessWorkflowWithConfigDefaults(t *testing.T) {
 	t.Setenv("TEMPORAL_ADDRESS", "")
 
 	configPath := writeConfig(t, `{
@@ -28,7 +27,7 @@ func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
 	factory := &fakeStarterFactory{
 		starter: &fakeStarter{
 			result: orchestration.WorkflowActionResult{
-				WorkflowID: engine.WorkflowID("norway_brreg"),
+				WorkflowID: "translator/process",
 				RunID:      "run-123",
 			},
 		},
@@ -37,7 +36,7 @@ func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
 	var stdout bytes.Buffer
 	err := run(
 		context.Background(),
-		[]string{"-config", configPath, "-action", "run"},
+		[]string{"-config", configPath},
 		&stdout,
 		factory.newStarter,
 	)
@@ -45,6 +44,9 @@ func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
 		t.Fatalf("run() error = %v, want nil", err)
 	}
 
+	if !factory.called {
+		t.Fatal("run() did not create a workflow starter")
+	}
 	if factory.cfg.Temporal.Address != "temporal.test:7233" {
 		t.Fatalf("run() Temporal address = %q, want %q", factory.cfg.Temporal.Address, "temporal.test:7233")
 	}
@@ -58,58 +60,14 @@ func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
 		t.Fatalf("run() Temporal timeout seconds = %d, want %d", factory.cfg.Temporal.TimeoutSeconds, 90)
 	}
 
-	if factory.starter.source != "norway_brreg" {
-		t.Fatalf("run() source = %q, want %q", factory.starter.source, "norway_brreg")
+	if !factory.starter.called {
+		t.Fatal("run() did not call StartProcess on the starter")
 	}
-	if factory.starter.action != engine.ActionRun {
-		t.Fatalf("run() action = %q, want %q", factory.starter.action, engine.ActionRun)
-	}
-	if !strings.Contains(stdout.String(), "workflow_id="+engine.WorkflowID("norway_brreg")) {
+	if !strings.Contains(stdout.String(), "workflow_id=translator/process") {
 		t.Fatalf("run() stdout = %q, want workflow id", stdout.String())
 	}
-}
-
-func TestRunLoadAndRunStartsSingleLoadAndRunAction(t *testing.T) {
-	configPath := writeConfig(t, `{}`)
-	starter := &fakeStarter{
-		result: orchestration.WorkflowActionResult{
-			WorkflowID: engine.WorkflowID("norway_brreg"),
-			RunID:      "run-123",
-		},
-	}
-
-	err := run(
-		context.Background(),
-		[]string{"-config", configPath, "-action", "load-and-run"},
-		&bytes.Buffer{},
-		func(_ context.Context, _ config.Config) (sourceActionStarter, func(), error) {
-			return starter, func() {}, nil
-		},
-	)
-	if err != nil {
-		t.Fatalf("run(load-and-run) error = %v, want nil", err)
-	}
-
-	if starter.action != engine.ActionLoadAndRun {
-		t.Fatalf("run(load-and-run) action = %q, want %q", starter.action, engine.ActionLoadAndRun)
-	}
-}
-
-func TestRunRejectsUnsupportedActionBeforeCreatingStarter(t *testing.T) {
-	configPath := writeConfig(t, `{}`)
-	factory := &fakeStarterFactory{}
-
-	err := run(
-		context.Background(),
-		[]string{"-config", configPath, "-action", "bad-action"},
-		&bytes.Buffer{},
-		factory.newStarter,
-	)
-	if err == nil {
-		t.Fatal("run() error = nil, want unsupported action error")
-	}
-	if factory.called {
-		t.Fatal("run() created Temporal starter for unsupported action, want no starter")
+	if !strings.Contains(stdout.String(), "run_id=run-123") {
+		t.Fatalf("run() stdout = %q, want run id", stdout.String())
 	}
 }
 
@@ -122,6 +80,27 @@ func TestRunPrintsUsageForHelp(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Usage of translator-trigger") {
 		t.Fatalf("run(-h) stdout = %q, want usage text", stdout.String())
+	}
+}
+
+func TestRunRejectsUnexpectedPositionalArguments(t *testing.T) {
+	configPath := writeConfig(t, `{}`)
+	factory := &fakeStarterFactory{}
+
+	err := run(
+		context.Background(),
+		[]string{"-config", configPath, "unexpected"},
+		&bytes.Buffer{},
+		factory.newStarter,
+	)
+	if err == nil {
+		t.Fatal("run() error = nil, want unexpected positional arguments error")
+	}
+	if !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("run() error = %v, want unexpected positional arguments error", err)
+	}
+	if factory.called {
+		t.Fatal("run() created Temporal starter before validating arguments, want no starter")
 	}
 }
 
@@ -141,7 +120,7 @@ type fakeStarterFactory struct {
 	starter *fakeStarter
 }
 
-func (f *fakeStarterFactory) newStarter(_ context.Context, cfg config.Config) (sourceActionStarter, func(), error) {
+func (f *fakeStarterFactory) newStarter(_ context.Context, cfg config.Config) (processStarter, func(), error) {
 	f.called = true
 	f.cfg = cfg
 	if f.starter == nil {
@@ -151,17 +130,11 @@ func (f *fakeStarterFactory) newStarter(_ context.Context, cfg config.Config) (s
 }
 
 type fakeStarter struct {
-	source string
-	action string
+	called bool
 	result orchestration.WorkflowActionResult
 }
 
-func (f *fakeStarter) StartSourceAction(
-	_ context.Context,
-	source string,
-	action string,
-) (orchestration.WorkflowActionResult, error) {
-	f.source = source
-	f.action = action
+func (f *fakeStarter) StartProcess(_ context.Context) (orchestration.WorkflowActionResult, error) {
+	f.called = true
 	return f.result, nil
 }

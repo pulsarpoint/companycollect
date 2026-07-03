@@ -35,6 +35,7 @@ func TranslateItems(
 	timeoutSeconds int,
 	provider string,
 	model string,
+	promptData PromptData,
 ) ([]queue.TranslatedItem, []queue.FailedItem, error) {
 	if translator == nil {
 		return nil, nil, errors.New("translator is required")
@@ -43,7 +44,7 @@ func TranslateItems(
 		return nil, nil, nil
 	}
 
-	output, err := translateItemsOnce(ctx, translator, items, timeoutSeconds, provider, model)
+	output, err := translateItemsOnce(ctx, translator, items, timeoutSeconds, provider, model, promptData)
 	if err == nil {
 		return output, nil, nil
 	}
@@ -52,7 +53,7 @@ func TranslateItems(
 	}
 
 	shuffled := shuffledItems(items)
-	output, shuffledErr := translateItemsOnce(ctx, translator, shuffled, timeoutSeconds, provider, model)
+	output, shuffledErr := translateItemsOnce(ctx, translator, shuffled, timeoutSeconds, provider, model, promptData)
 	if shuffledErr == nil {
 		return output, nil, nil
 	}
@@ -68,11 +69,11 @@ func TranslateItems(
 	}
 
 	midpoint := len(items) / 2
-	leftOutput, leftFailed, err := TranslateItems(ctx, translator, items[:midpoint], timeoutSeconds, provider, model)
+	leftOutput, leftFailed, err := TranslateItems(ctx, translator, items[:midpoint], timeoutSeconds, provider, model, promptData)
 	if err != nil {
 		return nil, nil, err
 	}
-	rightOutput, rightFailed, err := TranslateItems(ctx, translator, items[midpoint:], timeoutSeconds, provider, model)
+	rightOutput, rightFailed, err := TranslateItems(ctx, translator, items[midpoint:], timeoutSeconds, provider, model, promptData)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -99,6 +100,7 @@ func translateItemsOnce(
 	timeoutSeconds int,
 	provider string,
 	model string,
+	promptData PromptData,
 ) ([]queue.TranslatedItem, error) {
 	inputs := make([]TranslationInput, 0, len(items))
 	expectedItemIDs := make(map[string]bool, len(items))
@@ -112,7 +114,7 @@ func translateItemsOnce(
 		expectedItemIDs[item.ItemID] = true
 	}
 
-	results, err := translator.Translate(ctx, inputs, timeoutSeconds)
+	results, err := translator.Translate(ctx, inputs, timeoutSeconds, promptData)
 	if err != nil {
 		return nil, fmt.Errorf("translate queue batch: %w", err)
 	}

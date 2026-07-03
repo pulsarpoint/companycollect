@@ -42,10 +42,6 @@ func TestLocalLLMTranslatesNorwegianBatchToEnglish(t *testing.T) {
 		APIKey:    endpoint.APIKey,
 		MaxTokens: endpoint.MaxTokens,
 		ExtraBody: endpoint.ExtraBody,
-		PromptData: translation.PromptData{
-			SourceLanguage: "Norwegian",
-			TargetLanguage: "English",
-		},
 	})
 	if err != nil {
 		t.Fatalf("init translation provider: %v", err)
@@ -67,7 +63,10 @@ func TestLocalLLMTranslatesNorwegianBatchToEnglish(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	results, err := provider.Translate(ctx, items, 180)
+	results, err := provider.Translate(ctx, items, 180, translation.PromptData{
+		SourceLanguage: "Norwegian",
+		TargetLanguage: "English",
+	})
 	if err != nil {
 		t.Fatalf(
 			"translate Norwegian batch using endpoint=%s model=%s: %v",

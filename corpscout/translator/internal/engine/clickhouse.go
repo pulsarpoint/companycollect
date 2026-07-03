@@ -52,59 +52,6 @@ func (c *ClickHouse) Close() error {
 	return c.conn.Close()
 }
 
-func (c *ClickHouse) QueryTranslationInput(ctx context.Context, query string) ([]InputItem, error) {
-	rows, err := c.conn.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("query translation input: %w", err)
-	}
-	defer rows.Close()
-
-	var items []InputItem
-	for rows.Next() {
-		var item InputItem
-		if err := rows.Scan(
-			&item.SourceTable,
-			&item.SourceColumn,
-			&item.SourceText,
-			&item.SourceTextHash,
-			&item.SourceLang,
-			&item.TargetLang,
-		); err != nil {
-			return nil, fmt.Errorf("scan translation input: %w", err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read translation input: %w", err)
-	}
-	return items, nil
-}
-
-func (c *ClickHouse) QueryStaticInput(ctx context.Context, query string) ([]StaticInput, error) {
-	rows, err := c.conn.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("query static input: %w", err)
-	}
-	defer rows.Close()
-
-	var items []StaticInput
-	for rows.Next() {
-		var item StaticInput
-		if err := rows.Scan(
-			&item.SourceText,
-			&item.SourceTextHash,
-			&item.Key,
-		); err != nil {
-			return nil, fmt.Errorf("scan static input: %w", err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read static input: %w", err)
-	}
-	return items, nil
-}
-
 func (c *ClickHouse) InsertTextTranslations(ctx context.Context, rows []TextTranslation) (int, error) {
 	return insertTextTranslationsBatched(ctx, rows, textTranslationInsertBatchRows, c.prepareTextTranslationBatch)
 }
@@ -174,23 +121,16 @@ func insertTextTranslationsBatched(
 	return inserted, nil
 }
 
-// InputItem is one distinct untranslated text produced by an LLM-column scan
-// query and queued for translation.
+// InputItem is one distinct untranslated text queued for translation.
 type InputItem struct {
-	SourceTable    string
-	SourceColumn   string
-	SourceText     string
-	SourceTextHash uint64
-	SourceLang     string
-	TargetLang     string
-}
-
-// StaticInput is one distinct untranslated text produced by a static-column
-// scan query; Key indexes the column's StaticSpec.Values map.
-type StaticInput struct {
-	SourceText     string
-	SourceTextHash uint64
-	Key            string
+	SourceTable        string
+	SourceColumn       string
+	SourceText         string
+	SourceTextHash     uint64
+	SourceLang         string
+	TargetLang         string
+	SourceLanguageName string
+	TargetLanguageName string
 }
 
 // TextTranslation is one row of corpscout.text_translations.

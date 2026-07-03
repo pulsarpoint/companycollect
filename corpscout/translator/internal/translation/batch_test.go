@@ -23,6 +23,7 @@ func TestTranslateItemsRetriesModelOutputFailureWithShuffledItems(t *testing.T) 
 		30,
 		"local",
 		"qwen3:6b",
+		testPromptData(),
 	)
 	if err != nil {
 		t.Fatalf("TranslateItems() error = %v, want nil", err)
@@ -53,6 +54,7 @@ func TestTranslateItemsSplitsBatchAfterRepeatedModelOutputFailures(t *testing.T)
 		30,
 		"local",
 		"qwen3:6b",
+		testPromptData(),
 	)
 	if err != nil {
 		t.Fatalf("TranslateItems() error = %v, want nil", err)
@@ -78,6 +80,7 @@ func TestTranslateItemsMarksSingleItemFailedAfterRepeatedModelOutputFailures(t *
 		30,
 		"local",
 		"qwen3:6b",
+		testPromptData(),
 	)
 	if err != nil {
 		t.Fatalf("TranslateItems() error = %v, want nil", err)
@@ -104,12 +107,20 @@ func TestTranslateItemsReturnsTransientProviderError(t *testing.T) {
 		30,
 		"local",
 		"qwen3:6b",
+		testPromptData(),
 	)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("TranslateItems() error = %v, want %v", err, wantErr)
 	}
 	if len(output) != 0 || len(failed) != 0 {
 		t.Fatalf("TranslateItems() returned %d output and %d failed rows, want none on transient error", len(output), len(failed))
+	}
+}
+
+func testPromptData() translation.PromptData {
+	return translation.PromptData{
+		SourceLanguage: "Norwegian",
+		TargetLanguage: "English",
 	}
 }
 
@@ -139,6 +150,7 @@ func (t *modelOutputThenSuccessTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	t.calls = append(t.calls, translationItemIDs(items))
 	if len(t.calls) <= t.failuresBeforeSuccess {
@@ -156,6 +168,7 @@ func (t *failLargeBatchTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	t.callSizes = append(t.callSizes, len(items))
 	if len(items) > t.maxSuccessfulBatchSize {
@@ -170,6 +183,7 @@ func (alwaysModelOutputFailureTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	return nil, fmt.Errorf("fake model output: %w", translation.ErrModelOutput)
 }
@@ -182,6 +196,7 @@ func (t transientFailureTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	return nil, t.err
 }

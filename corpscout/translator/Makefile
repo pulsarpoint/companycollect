@@ -5,9 +5,8 @@ API_BINARY ?= $(BINARY_DIR)/translator-api
 TRIGGER_BINARY ?= $(BINARY_DIR)/translator-trigger
 API_CMD ?= ./cmd/translator-api
 TRIGGER_CMD ?= ./cmd/translator-trigger
-SOURCE ?= norway_brreg
 
-.PHONY: build build-api build-trigger test run trigger-load-and-run trigger-run trigger-load-queue clean
+.PHONY: build build-api build-trigger test run trigger clean
 
 build: build-api build-trigger
 
@@ -25,14 +24,8 @@ test:
 run:
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(API_CMD)
 
-trigger-load-and-run:
-	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(TRIGGER_CMD) -source $(SOURCE) -action load-and-run
-
-trigger-run:
-	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(TRIGGER_CMD) -source $(SOURCE) -action run
-
-trigger-load-queue:
-	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(TRIGGER_CMD) -source $(SOURCE) -action load-queue
+trigger:
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(TRIGGER_CMD)
 
 clean:
 	rm -rf $(BINARY_DIR)

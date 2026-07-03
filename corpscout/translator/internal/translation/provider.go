@@ -22,13 +22,12 @@ const promptTemplateSource = `/no_think
 Translate each {{.SourceLanguage}} text fragment to {{.TargetLanguage}}. Preserve legal and business meaning. Do not add explanations. Do not produce reasoning, chain-of-thought, thinking tags, or Markdown. Return only valid JSON with shape {"translations":[{"item_id":"...","translated_text":"..."}]}. Every item_id in the response must match an input item_id. Input JSON: {{.ItemsJSON}}`
 
 type Config struct {
-	BaseURL    string
-	Model      string
-	APIKey     string
-	MaxTokens  int
-	ExtraBody  map[string]any
-	PromptData PromptData
-	Logger     *slog.Logger
+	BaseURL   string
+	Model     string
+	APIKey    string
+	MaxTokens int
+	ExtraBody map[string]any
+	Logger    *slog.Logger
 }
 
 type PromptData struct {
@@ -49,7 +48,6 @@ type LocalOpenAICompatibleProvider struct {
 	maxTokens      int
 	extraBody      map[string]any
 	promptTemplate *template.Template
-	promptData     PromptData
 	client         *http.Client
 	logger         *slog.Logger
 }
@@ -74,12 +72,6 @@ func Init(config Config) (*LocalOpenAICompatibleProvider, error) {
 	if config.ExtraBody == nil {
 		config.ExtraBody = defaultExtraBody()
 	}
-	if strings.TrimSpace(config.PromptData.SourceLanguage) == "" {
-		return nil, errors.New("translation prompt source_language is required")
-	}
-	if strings.TrimSpace(config.PromptData.TargetLanguage) == "" {
-		return nil, errors.New("translation prompt target_language is required")
-	}
 	logger := config.Logger
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -87,8 +79,6 @@ func Init(config Config) (*LocalOpenAICompatibleProvider, error) {
 	logger = logger.With(
 		"component", "translation_provider",
 		"model", model,
-		"source_language", config.PromptData.SourceLanguage,
-		"target_language", config.PromptData.TargetLanguage,
 	)
 
 	promptTemplate, err := template.New("translation-prompt").Parse(promptTemplateSource)
@@ -103,13 +93,12 @@ func Init(config Config) (*LocalOpenAICompatibleProvider, error) {
 		maxTokens:      config.MaxTokens,
 		extraBody:      cloneMap(config.ExtraBody),
 		promptTemplate: promptTemplate,
-		promptData:     config.PromptData,
 		client:         http.DefaultClient,
 		logger:         logger,
 	}, nil
 }
 
-func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput) (string, map[string]string, error) {
+func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput, promptData PromptData) (string, map[string]string, error) {
 	payload := struct {
 		Items []struct {
 			ItemID     string `json:"item_id"`
@@ -148,14 +137,14 @@ func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput) (
 		return "", nil, fmt.Errorf("marshal translation prompt payload: %w", err)
 	}
 
-	promptData := promptRenderData{
-		SourceLanguage: p.promptData.SourceLanguage,
-		TargetLanguage: p.promptData.TargetLanguage,
+	renderData := promptRenderData{
+		SourceLanguage: promptData.SourceLanguage,
+		TargetLanguage: promptData.TargetLanguage,
 		ItemsJSON:      string(data),
 	}
 
 	var prompt bytes.Buffer
-	if err := p.promptTemplate.Execute(&prompt, promptData); err != nil {
+	if err := p.promptTemplate.Execute(&prompt, renderData); err != nil {
 		return "", nil, fmt.Errorf("execute prompt template: %w", err)
 	}
 	return prompt.String(), promptIDToItemID, nil
@@ -219,7 +208,11 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 	ctx context.Context,
 	items []TranslationInput,
 	timeoutSeconds int,
+	promptData PromptData,
 ) ([]TranslationResult, error) {
+	if strings.TrimSpace(promptData.SourceLanguage) == "" || strings.TrimSpace(promptData.TargetLanguage) == "" {
+		return nil, errors.New("prompt source and target languages are required")
+	}
 	if len(items) == 0 {
 		return []TranslationResult{}, nil
 	}
@@ -229,9 +222,11 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 		"item_count", len(items),
 		"timeout_seconds", timeoutSeconds,
 		"max_tokens", p.maxTokens,
+		"source_language", promptData.SourceLanguage,
+		"target_language", promptData.TargetLanguage,
 	)
 
-	prompt, promptIDToItemID, err := p.renderPrompt(items)
+	prompt, promptIDToItemID, err := p.renderPrompt(items, promptData)
 	if err != nil {
 		p.logger.Error(
 			"translation provider request failed",

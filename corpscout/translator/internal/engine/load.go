@@ -5,179 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
-	"time"
-
-	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 // ClickHouseSource is the ClickHouse surface the engine needs; *ClickHouse
 // satisfies it, tests use fakes.
 type ClickHouseSource interface {
-	QueryTranslationInput(ctx context.Context, query string) ([]InputItem, error)
-	QueryStaticInput(ctx context.Context, query string) ([]StaticInput, error)
 	InsertTextTranslations(ctx context.Context, rows []TextTranslation) (int, error)
-}
-
-type Options struct {
-	QueuePath string
-}
-
-type LoadResult struct {
-	QueuePath      string
-	Created        bool
-	RowsSeen       int
-	RowsInserted   int
-	StaticRowsSeen int
-	StaticFlushed  int
-}
-
-// LoadInput scans ClickHouse for untranslated texts declared by the
-// definition, queues LLM-column rows into the DuckDB queue, and flushes
-// static-column translations directly to ClickHouse.
-func LoadInput(ctx context.Context, source ClickHouseSource, def Definition, options Options) (LoadResult, error) {
-	if source == nil {
-		return LoadResult{}, errors.New("clickhouse source is required")
-	}
-	if err := def.Validate(); err != nil {
-		return LoadResult{}, err
-	}
-	if options.QueuePath == "" {
-		return LoadResult{}, errors.New("queue path is required")
-	}
-
-	created := false
-	if _, err := os.Stat(options.QueuePath); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return LoadResult{}, fmt.Errorf("stat queue %q: %w", options.QueuePath, err)
-		}
-		created = true
-	}
-
-	if err := os.MkdirAll(filepath.Dir(options.QueuePath), 0o755); err != nil {
-		return LoadResult{}, fmt.Errorf("create queue directory: %w", err)
-	}
-
-	db, err := sql.Open("duckdb", options.QueuePath)
-	if err != nil {
-		return LoadResult{}, fmt.Errorf("open queue duckdb: %w", err)
-	}
-	defer db.Close()
-
-	return loadInputWithDB(ctx, source, def, db, options.QueuePath, created)
-}
-
-func loadInputWithDB(
-	ctx context.Context,
-	source ClickHouseSource,
-	def Definition,
-	db *sql.DB,
-	queuePath string,
-	created bool,
-) (LoadResult, error) {
-	if err := createQueueTables(ctx, db); err != nil {
-		return LoadResult{}, err
-	}
-
-	before, err := countRows(ctx, db, "input_items")
-	if err != nil {
-		return LoadResult{}, err
-	}
-
-	rowsSeen := 0
-	staticRowsSeen := 0
-	staticFlushed := 0
-	version := time.Now().Unix()
-
-	for _, col := range def.Columns {
-		query, err := ScanSQL(def, col)
-		if err != nil {
-			return LoadResult{}, err
-		}
-
-		if col.Static != nil {
-			seen, flushed, err := flushStaticColumn(ctx, source, def, col, query, version)
-			if err != nil {
-				return LoadResult{}, err
-			}
-			staticRowsSeen += seen
-			staticFlushed += flushed
-			continue
-		}
-
-		rows, err := source.QueryTranslationInput(ctx, query)
-		if err != nil {
-			return LoadResult{}, fmt.Errorf("query translation input for %s.%s: %w", col.Table, col.Column, err)
-		}
-		rowsSeen += len(rows)
-		if err := upsertInputItems(ctx, db, rows); err != nil {
-			return LoadResult{}, err
-		}
-	}
-
-	after, err := countRows(ctx, db, "input_items")
-	if err != nil {
-		return LoadResult{}, err
-	}
-
-	return LoadResult{
-		QueuePath:      queuePath,
-		Created:        created,
-		RowsSeen:       rowsSeen,
-		RowsInserted:   after - before,
-		StaticRowsSeen: staticRowsSeen,
-		StaticFlushed:  staticFlushed,
-	}, nil
-}
-
-// flushStaticColumn translates one static column from its definition map and
-// writes the results straight to ClickHouse; keys missing from the map are
-// skipped, matching the previous legal-form behavior.
-func flushStaticColumn(
-	ctx context.Context,
-	source ClickHouseSource,
-	def Definition,
-	col ColumnSpec,
-	query string,
-	version int64,
-) (int, int, error) {
-	rows, err := source.QueryStaticInput(ctx, query)
-	if err != nil {
-		return 0, 0, fmt.Errorf("query static translations for %s.%s: %w", col.Table, col.Column, err)
-	}
-
-	translations := make([]TextTranslation, 0, len(rows))
-	for _, row := range rows {
-		translatedText := col.Static.Values[row.Key]
-		if row.SourceText == "" || translatedText == "" {
-			continue
-		}
-
-		translations = append(translations, TextTranslation{
-			SourceTable:    col.Table,
-			SourceColumn:   col.Column,
-			SourceText:     row.SourceText,
-			SourceTextHash: row.SourceTextHash,
-			SourceLang:     def.SourceLang,
-			TargetLang:     def.TargetLang,
-			TranslatedText: translatedText,
-			Provider:       "static",
-			Model:          "static",
-			Version:        version,
-		})
-	}
-
-	if len(translations) == 0 {
-		return len(rows), 0, nil
-	}
-
-	flushed, err := source.InsertTextTranslations(ctx, translations)
-	if err != nil {
-		return len(rows), 0, fmt.Errorf("insert static translations for %s.%s: %w", col.Table, col.Column, err)
-	}
-	return len(rows), flushed, nil
 }
 
 func createQueueTables(ctx context.Context, db *sql.DB) error {
@@ -189,6 +23,8 @@ func createQueueTables(ctx context.Context, db *sql.DB) error {
 			source_text_hash ubigint not null,
 			source_lang text not null,
 			target_lang text not null,
+			source_language_name text not null,
+			target_language_name text not null,
 			created_at timestamp not null,
 			primary key (
 				source_table,
@@ -270,9 +106,11 @@ func upsertInputItems(ctx context.Context, db *sql.DB, rows []InputItem) error {
 			source_text_hash,
 			source_lang,
 			target_lang,
+			source_language_name,
+			target_language_name,
 			created_at
 		)
-		values (?, ?, ?, cast(? as ubigint), ?, ?, current_timestamp)
+		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, current_timestamp)
 		on conflict (
 			source_table,
 			source_column,
@@ -298,6 +136,8 @@ func upsertInputItems(ctx context.Context, db *sql.DB, rows []InputItem) error {
 			strconv.FormatUint(row.SourceTextHash, 10),
 			row.SourceLang,
 			row.TargetLang,
+			row.SourceLanguageName,
+			row.TargetLanguageName,
 		); err != nil {
 			return fmt.Errorf("upsert input item: %w", err)
 		}
@@ -321,6 +161,10 @@ func validateInput(row InputItem) error {
 		return errors.New("source_lang is required")
 	case row.TargetLang == "":
 		return errors.New("target_lang is required")
+	case row.SourceLanguageName == "":
+		return errors.New("source_language_name is required")
+	case row.TargetLanguageName == "":
+		return errors.New("target_language_name is required")
 	default:
 		return nil
 	}

@@ -26,84 +26,54 @@ type WorkflowActionResult struct {
 }
 
 type TemporalWorkflowStarter struct {
-	client         temporalSignalStarter
-	sources        map[string]bool
-	batchSize      int
-	timeoutSeconds int
-	batchesPerRun  int
+	client            temporalSignalStarter
+	batchSize         int
+	timeoutSeconds    int
+	batchesPerRun     int
+	flushEveryBatches int
 }
 
 // NewTemporalWorkflowStarter builds a starter that can signal-with-start the
-// translation workflow for any of the configured sources.
+// single translation workflow.
 func NewTemporalWorkflowStarter(
 	temporalClient temporalSignalStarter,
-	sources []string,
 	batchSize int,
 	timeoutSeconds int,
 	batchesPerRun int,
+	flushEveryBatches int,
 ) *TemporalWorkflowStarter {
-	known := make(map[string]bool, len(sources))
-	for _, source := range sources {
-		known[source] = true
-	}
 	return &TemporalWorkflowStarter{
-		client:         temporalClient,
-		sources:        known,
-		batchSize:      batchSize,
-		timeoutSeconds: timeoutSeconds,
-		batchesPerRun:  batchesPerRun,
+		client:            temporalClient,
+		batchSize:         batchSize,
+		timeoutSeconds:    timeoutSeconds,
+		batchesPerRun:     batchesPerRun,
+		flushEveryBatches: flushEveryBatches,
 	}
 }
 
-func (s *TemporalWorkflowStarter) StartSourceAction(
-	ctx context.Context,
-	source string,
-	action string,
-) (WorkflowActionResult, error) {
+func (s *TemporalWorkflowStarter) StartProcess(ctx context.Context) (WorkflowActionResult, error) {
 	if s.client == nil {
 		return WorkflowActionResult{}, fmt.Errorf("temporal client is required")
 	}
-	if !s.sources[source] {
-		return WorkflowActionResult{}, fmt.Errorf("unsupported source: %s", source)
-	}
-
-	workflowAction, err := normalizeWorkflowAction(action)
-	if err != nil {
-		return WorkflowActionResult{}, err
-	}
-
 	run, err := s.client.SignalWithStartWorkflow(
 		ctx,
-		engine.WorkflowID(source),
-		engine.SignalSourceAction,
-		engine.SourceActionSignal{Action: workflowAction},
+		engine.ProcessWorkflowID,
+		engine.SignalNewItems,
+		nil,
 		client.StartWorkflowOptions{
-			ID:        engine.WorkflowID(source),
-			TaskQueue: engine.TaskQueue(source),
+			ID:        engine.ProcessWorkflowID,
+			TaskQueue: engine.ProcessTaskQueue,
 		},
 		engine.TranslationWorkflow,
 		engine.WorkflowInput{
-			Source:         source,
-			BatchSize:      s.batchSize,
-			TimeoutSeconds: s.timeoutSeconds,
-			BatchesPerRun:  s.batchesPerRun,
+			BatchSize:         s.batchSize,
+			TimeoutSeconds:    s.timeoutSeconds,
+			BatchesPerRun:     s.batchesPerRun,
+			FlushEveryBatches: s.flushEveryBatches,
 		},
 	)
 	if err != nil {
 		return WorkflowActionResult{}, fmt.Errorf("signal/start workflow: %w", err)
 	}
-
-	return WorkflowActionResult{
-		WorkflowID: run.GetID(),
-		RunID:      run.GetRunID(),
-	}, nil
-}
-
-func normalizeWorkflowAction(action string) (string, error) {
-	switch action {
-	case engine.ActionLoadAndRun, engine.ActionLoadQueue, engine.ActionRun:
-		return action, nil
-	default:
-		return "", fmt.Errorf("unsupported action: %s", action)
-	}
+	return WorkflowActionResult{WorkflowID: run.GetID(), RunID: run.GetRunID()}, nil
 }
