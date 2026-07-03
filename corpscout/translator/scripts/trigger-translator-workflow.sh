@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
 	cat <<'EOF'
 Usage:
-  scripts/trigger-brreg-workflow.sh [load-and-run|run|load-queue]
+  scripts/trigger-translator-workflow.sh [load-and-run|run|load-queue]
 
 Environment overrides:
   TEMPORAL_ADDRESS                 default: localhost:7233
@@ -13,9 +13,8 @@ Environment overrides:
   TRANSLATOR_BATCH_SIZE            default: 50
   TRANSLATOR_TIMEOUT_SECONDS       default: 120
   TRANSLATOR_BATCHES_PER_RUN       default: 500
-  BRREG_TRANSLATOR_WORKFLOW_ID     default: translator/norway_brreg
-  BRREG_TRANSLATOR_TASK_QUEUE      default: translator-norway-brreg
-  BRREG_TRANSLATOR_WORKFLOW_TYPE   default: NorwayBRREGWorkflow
+  SOURCE                           default: norway_brreg
+  TRANSLATOR_WORKFLOW_TYPE         default: TranslationWorkflow
 EOF
 }
 
@@ -44,9 +43,10 @@ fi
 
 temporal_address="${TEMPORAL_ADDRESS:-localhost:7233}"
 temporal_namespace="${TEMPORAL_NAMESPACE:-default}"
-workflow_id="${BRREG_TRANSLATOR_WORKFLOW_ID:-translator/norway_brreg}"
-task_queue="${BRREG_TRANSLATOR_TASK_QUEUE:-translator-norway-brreg}"
-workflow_type="${BRREG_TRANSLATOR_WORKFLOW_TYPE:-NorwayBRREGWorkflow}"
+source="${SOURCE:-norway_brreg}"
+workflow_id="translator/$source"
+task_queue="translator-${source//_/-}"
+workflow_type="${TRANSLATOR_WORKFLOW_TYPE:-TranslationWorkflow}"
 batch_size="${TRANSLATOR_BATCH_SIZE:-50}"
 timeout_seconds="${TRANSLATOR_TIMEOUT_SECONDS:-120}"
 batches_per_run="${TRANSLATOR_BATCHES_PER_RUN:-500}"
@@ -67,7 +67,7 @@ if [[ ! "$batches_per_run" =~ ^[1-9][0-9]*$ ]]; then
 	exit 2
 fi
 
-workflow_input="{\"BatchSize\":$batch_size,\"TimeoutSeconds\":$timeout_seconds,\"BatchesPerRun\":$batches_per_run}"
+workflow_input="{\"Source\":\"$source\",\"BatchSize\":$batch_size,\"TimeoutSeconds\":$timeout_seconds,\"BatchesPerRun\":$batches_per_run}"
 signal_input="{\"Action\":\"$action\"}"
 
 exec "$temporal_cli" workflow signal-with-start \

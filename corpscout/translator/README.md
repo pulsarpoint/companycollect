@@ -1,29 +1,36 @@
 # Corpscout Translator Service
 
-Standalone Go service for BRREG translation queue loading and translation runs.
+Standalone Go service for config-driven translation queue loading and
+translation runs.
 
-The service owns the Norway BRREG DuckDB queue, registers the BRREG Temporal
-workflow and activities, exposes HTTP triggers, and uses the configured local
-LLM endpoint for dynamic translations.
+The service is a generic translation engine: each source is declared by a
+`config/sources/<name>.json` definition plus an entry in
+`config/translator.json`. The engine owns that source's DuckDB queue,
+registers its Temporal workflow and activities, exposes HTTP triggers, and
+uses the configured endpoint (e.g. a local LLM) for dynamic translations, with
+static key-to-text maps available for columns like legal-form codes that don't
+need an LLM.
 
 ## Packages
 
 ```text
 cmd/translator-api        HTTP server entrypoint
-cmd/translator-trigger    CLI trigger for the BRREG Temporal workflow
+cmd/translator-trigger    CLI trigger for a source's Temporal workflow
 internal/api              Minimal router and health endpoint
 internal/config           JSON + environment config loading
-internal/brreg            Norway BRREG workflow, queue loading, and translations
+internal/engine           Generic translation engine: definitions, scanning,
+                           queue load, ClickHouse I/O, workflow/activities
 internal/orchestration    Central Temporal registration and workflow starts
 internal/queue            DuckDB queue runtime for existing source queue files
 internal/translation      Translator provider and shared batch translation logic
 ```
 
 `internal/queue` opens one existing DuckDB queue file per source. It does not
-create the file or schema. Source packages such as `internal/brreg` own queue
-file creation because they know the ClickHouse table, source columns, static
-translation rules, and language pair. Queue startup fails if the file is missing
-or does not contain the expected `input_items`, `output_items`, and
+create the file or schema. `internal/engine` owns queue file creation for
+every configured source because it reads each source's `Definition` (table,
+columns, static translation rules, and language pair) from
+`config/sources/<name>.json`. Queue startup fails if the file is missing or
+does not contain the expected `input_items`, `output_items`, and
 `failed_items` tables.
 
 `GetBatch` reads pending rows by subtracting `output_items` and `failed_items`
@@ -33,19 +40,20 @@ rows to `output_items`; `SaveFailed` writes irreducible failed rows to
 storage-only: it does not call the translator, know provider/model metadata, or
 own batch processing policy.
 
-Source runtimes such as BRREG are responsible for getting a batch from the
+The engine's per-source `Runtime` is responsible for getting a batch from the
 queue and saving successful or failed results back to the queue. The
 source-independent translation policy lives in `internal/translation`
-`TranslateItems`, so new source packages do not need to duplicate the same LLM
-recovery behavior.
+`TranslateItems`, so adding a new source (a new definition file) does not
+require duplicating the same LLM recovery behavior.
 
-The BRREG runtime is owned by the BRREG Temporal worker/workflow path. Queue
-access is serialized by that workflow: it loads input, processes one batch
-activity at a time, continues as new when needed, and uploads output only after
-the queue is empty. The runtime itself intentionally has no actor loop, request
-channel, mutex, lease system, or second serialization layer. If this service is
-changed to run multiple workers for the same source queue, that ownership model
-must be changed explicitly instead of hidden inside `Runtime`.
+Each source's `Runtime` is owned by that source's Temporal worker/workflow
+path. Queue access is serialized by that workflow: it loads input, processes
+one batch activity at a time, continues as new when needed, and uploads output
+only after the queue is empty. The runtime itself intentionally has no actor
+loop, request channel, mutex, lease system, or second serialization layer. If
+this service is changed to run multiple workers for the same source queue,
+that ownership model must be changed explicitly instead of hidden inside
+`Runtime`.
 
 `internal/translation.TranslateItems` handles deterministic LLM output failures
 inside the activity. A normal provider/network error returns to Temporal and is
@@ -121,10 +129,13 @@ TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888/v1
 TRANSLATION_PROVIDER_LOCAL_MODEL=qwen3:6b
 TRANSLATION_PROVIDER_LOCAL_API_KEY=not-needed
 max_tokens=32768
-prompt_data.source_language=Norwegian
-prompt_data.target_language=English
 extra_body={"chat_template_kwargs":{"enable_thinking":false}}
 ```
+
+The source and target language names used in the translation prompt come from
+each source's definition file (`source_language_name` / `target_language_name`
+in `config/sources/<name>.json`), not from the endpoint config, so the same
+endpoint can serve multiple sources with different language pairs.
 
 The ClickHouse connection is resolved from the same `CLICKHOUSE_*` environment
 variables used by `dagster_v3`. The Go service uses `CLICKHOUSE_NATIVE_PORT`
@@ -160,8 +171,9 @@ curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/run
 
 ## Direct Temporal Trigger
 
-Use the Go trigger command when you want to start the BRREG workflow directly
-through Temporal instead of the HTTP API:
+Use the Go trigger command when you want to start a source's translation
+workflow directly through Temporal instead of the HTTP API. It defaults to the
+`norway_brreg` source; pass `-source <name>` for any other configured source:
 
 ```bash
 make trigger-brreg-load-and-run
@@ -173,33 +185,37 @@ Or run it directly:
 
 ```bash
 go run ./cmd/translator-trigger -action load-and-run
-go run ./cmd/translator-trigger -action load-queue
-go run ./cmd/translator-trigger -action run
+go run ./cmd/translator-trigger -source norway_brreg -action load-queue
+go run ./cmd/translator-trigger -source norway_brreg -action run
 ```
 
 The command uses Temporal `SignalWithStartWorkflow` with:
 
 ```text
-workflow_id=translator/norway_brreg
-workflow_type=NorwayBRREGWorkflow
-task_queue=translator-norway-brreg
+workflow_id=translator/<source>
+workflow_type=TranslationWorkflow
+task_queue=translator-<source-with-hyphens>
 signal_name=source-action
 ```
 
-The `load-and-run` action first reloads new BRREG input from ClickHouse into the
-DuckDB queue, then processes batches until the queue is empty and uploads the
-output queue to ClickHouse. The `run` action only processes the existing DuckDB
-queue; it does not query ClickHouse. The `load-queue` action only reloads the
-input queue.
+For `norway_brreg` that is `workflow_id=translator/norway_brreg` and
+`task_queue=translator-norway-brreg`.
+
+The `load-and-run` action first reloads new source input from ClickHouse into
+the DuckDB queue, then processes batches until the queue is empty and uploads
+the output queue to ClickHouse. The `run` action only processes the existing
+DuckDB queue; it does not query ClickHouse. The `load-queue` action only
+reloads the input queue.
 
 Queue runs use Temporal Continue-As-New after
 `batches_per_run` / `TRANSLATOR_BATCHES_PER_RUN` processed batches. The next run
 resumes with `run` against the same DuckDB queue, so progress is kept in
 `output_items` and workflow history stays bounded.
 
-If the Temporal CLI is installed, `scripts/trigger-brreg-workflow.sh` can also
-send the same `source-action` signal through `temporal workflow
-signal-with-start`.
+If the Temporal CLI is installed, `scripts/trigger-translator-workflow.sh` can
+also send the same `source-action` signal through `temporal workflow
+signal-with-start`; set `SOURCE=<name>` to target a source other than the
+`norway_brreg` default.
 
 ## Build
 
@@ -233,7 +249,8 @@ Run the compiled binary from the `translator` directory:
 ./bin/translator-api
 ```
 
-Trigger BRREG through the compiled CLI:
+Trigger a source through the compiled CLI (defaults to `norway_brreg`, or pass
+`-source <name>`):
 
 ```bash
 ./bin/translator-trigger -action load-and-run
@@ -255,13 +272,28 @@ make test
 
 ## Integration Test
 
-The BRREG integration test hits the existing ClickHouse database, builds a real
-temporary DuckDB queue, and may insert missing static legal-form translations
-into `corpscout.text_translations`.
+The engine's Norway BRREG integration test hits the existing ClickHouse
+database, builds a real temporary DuckDB queue, and may insert missing static
+legal-form translations into `corpscout.text_translations`.
 
 ```bash
 set -a
 . ./.env
 set +a
-TRANSLATOR_INTEGRATION_TESTS=true go test ./internal/brreg -run TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries -v
+TRANSLATOR_INTEGRATION_TESTS=true go test ./internal/engine -run TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries -v
 ```
+
+## Adding a translation source
+
+1. Create `config/sources/<name>.json` declaring `source`, `source_lang`,
+   `target_lang`, `source_language_name`, `target_language_name`, and the
+   `columns` to translate. A column is LLM-translated by default; add
+   `"static": {"key_column": ..., "values": {...}}` for map-based translation,
+   or `"custom_sql_file": "<name>/<file>.sql"` (path relative to the
+   definition file) to override the generated scan query.
+2. Add the source to `config/translator.json` under `sources` with
+   `queue_path`, `endpoint_id`, and `definition_path`.
+3. Restart the worker. The source gets workflow ID `translator/<name>` and
+   task queue `translator-<name-with-hyphens>`; trigger it via
+   `POST /v1/sources/<name>/{load-and-run|run|load-queue}` or
+   `SOURCE=<name> scripts/trigger-translator-workflow.sh <action>`.
