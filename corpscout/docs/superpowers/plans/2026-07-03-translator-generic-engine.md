@@ -17,7 +17,7 @@
 - Generated scan SQL must be byte-for-byte identical to the old brreg constants (golden tests pin this).
 - DuckDB queue schema and ClickHouse `text_translations` insert are unchanged.
 - Conventional Commits; run `go fmt ./... && go vet ./...` before every commit; use `rg` not `grep`.
-- `internal/brreg` keeps compiling until Task 11 deletes it; every task leaves `go test ./...` green.
+- `internal/brreg` keeps compiling until Task 11 deletes it; every task leaves the build and tests green, with one documented exception: Task 7 removes `EndpointConfig.PromptData`, which breaks `cmd/translator-api` compilation until Task 10 rewires it. During Tasks 7–9 verify with the per-task package commands given in each task (`go build ./internal/... && go test ./internal/...`), not `go test ./...`.
 - Test conventions: standard library testing with `t.Fatalf` (match existing files); testify only in Temporal workflow tests (matches existing `workflow_test.go`).
 
 ---
@@ -1113,15 +1113,10 @@ Create `internal/engine/workflow_test.go` starting with the new identity tests (
 package engine
 
 import (
-	"context"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
-	"go.temporal.io/sdk/workflow"
 )
 
 const workflowTestSource = "norway_brreg"
@@ -1355,6 +1350,7 @@ func TranslationWorkflow(ctx workflow.Context, input WorkflowInput) error {
 
 Then port the five workflow tests from `internal/brreg/workflow_test.go` into `internal/engine/workflow_test.go` (append after the Step 1 tests), with these exact changes:
 
+- Extend the test file's imports for the ported tests: add `"context"`, `"time"`, `"github.com/stretchr/testify/mock"`, `"go.temporal.io/sdk/activity"`, `"go.temporal.io/sdk/workflow"`.
 - `NorwayBRREGWorkflow` → `TranslationWorkflow` everywhere (registration, `ExecuteWorkflow`).
 - Test names `TestNorwayBRREGWorkflow*` → `TestTranslationWorkflow*`.
 - Activity name constants become helper calls with the test source: `ActivityLoadNewInput` → `ActivityLoadNewInput(workflowTestSource)`, `ActivityProcessOneBatch` → `ActivityProcessOneBatch(workflowTestSource)`, `ActivityUploadOutput` → `ActivityUploadOutput(workflowTestSource)` (both in `env.OnActivity(...)` and in `registerTestActivities`).
