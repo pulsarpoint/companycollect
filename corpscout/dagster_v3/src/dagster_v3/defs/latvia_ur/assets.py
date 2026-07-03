@@ -436,9 +436,13 @@ def _duckdb_table_count(*, duckdb_connection: Any, table_name: str) -> int:
 
 # --- Jobs & schedules (mirrors estonia_ar; see dagster_v3/CLAUDE.md "Scheduling") -------
 # Register-only full-refresh chain. Latvia financial assets live in defs/latvia_financial.
+# Selecting from the translation loader (defined in defs/translator_load,
+# downstream of latvia_ur_clickhouse_companies) pulls the whole register
+# chain via upstream() AND runs the loader after ClickHouse lands, so newly
+# ingested texts are enqueued to the translator service every refresh.
 latvia_ur_register_job = dg.define_asset_job(
     "latvia_ur_register_job",
-    selection=dg.AssetSelection.assets("latvia_ur_clickhouse_companies").upstream(),
+    selection=dg.AssetSelection.assets("latvia_ur_translation_load").upstream(),
 )
 latvia_ur_register_schedule = dg.ScheduleDefinition(
     name="latvia_ur_register_schedule",

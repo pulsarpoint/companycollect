@@ -5,6 +5,7 @@ import duckdb
 import pytest
 
 from dagster_v3.defs.sweden_company import tables
+from dagster_v3.defs.sweden_company import normalized_duckdb
 from dagster_v3.defs.sweden_company.normalized_duckdb import (
     replace_sweden_company_normalized_tables,
 )
@@ -72,6 +73,33 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             order by company_id, sequence
             """
         ).fetchall()
+        company_provenance = connection.execute(
+            f"""
+            select
+                source_run_id,
+                bolagsverket_source_record_id,
+                scb_source_record_id,
+                bolagsverket_source_payload_hash,
+                scb_source_payload_hash,
+                updated_from_raw_at
+            from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            where company_id = '5560000000'
+            """
+        ).fetchone()
+        address_provenance = connection.execute(
+            f"""
+            select source_run_id, source_record_id, source_payload_hash
+            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_ADDRESSES_TABLE}
+            where company_id = '5560000000' and source = 'bolagsverket'
+            """
+        ).fetchone()
+        industry_provenance = connection.execute(
+            f"""
+            select source_run_id, source_record_id, source_payload_hash
+            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_INDUSTRY_CODES_TABLE}
+            where company_id = '5560000000' and source_field = 'Ng1'
+            """
+        ).fetchone()
 
     assert counts == {
         tables.COMPANIES_TABLE: 3,
@@ -80,7 +108,7 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
         "bolagsverket_company_count": 2,
         "scb_company_count": 2,
         "companies_with_sni_count": 2,
-        "unknown_sni_count": 1,
+        "unknown_sni_count": 2,
     }
     assert companies == [
         (
@@ -178,6 +206,86 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
         ("9999999999", 1, True, "01110", "0111", "Ng1"),
         ("9999999999", 3, False, "55202", "5520", "Ng3"),
     ]
+    assert company_provenance == (
+        "run-1",
+        "5560000000$ORGNR-IDORG",
+        "5560000000",
+        "bolag-hash-1",
+        "scb-hash-1",
+        loaded_at,
+    )
+    assert address_provenance == (
+        "run-1",
+        "5560000000$ORGNR-IDORG",
+        "bolag-hash-1",
+    )
+    assert industry_provenance == ("run-1", "5560000000", "scb-hash-1")
+
+
+def test_replace_sweden_company_normalized_tables_rolls_back_partial_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "sweden_company_source.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE} (
+                company_id varchar
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            insert into {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            values ('preexisting')
+            """
+        )
+
+        def fail_after_companies_table(
+            *,
+            connection: object,
+            loaded_at: datetime,
+        ) -> None:
+            raise RuntimeError("forced address rebuild failure")
+
+        monkeypatch.setattr(
+            normalized_duckdb,
+            "_replace_company_addresses_table",
+            fail_after_companies_table,
+        )
+
+        with pytest.raises(RuntimeError, match="forced address rebuild failure"):
+            replace_sweden_company_normalized_tables(
+                connection=connection,
+                loaded_at=datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
+            )
+
+        companies = connection.execute(
+            f"select company_id from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
+        ).fetchall()
+
+    assert companies == [("preexisting",)]
+
+
+def test_replace_sweden_company_normalized_tables_fails_when_raw_table_is_missing(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "sweden_company_source.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+
+        with pytest.raises(
+            ValueError,
+            match=rf"missing required raw tables.*{tables.BOLAGSVERKET_RAW_TABLE}",
+        ):
+            replace_sweden_company_normalized_tables(
+                connection=connection,
+                loaded_at=datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
+            )
 
 
 def test_replace_sweden_company_normalized_tables_fails_when_required_raw_column_is_missing(
@@ -207,7 +315,10 @@ def test_replace_sweden_company_normalized_tables_fails_when_required_raw_column
             """
         )
 
-        with pytest.raises(ValueError, match="missing required columns"):
+        with pytest.raises(
+            ValueError,
+            match=rf"missing required columns.*{tables.BOLAGSVERKET_RAW_TABLE}\.organisationsidentitet",
+        ):
             replace_sweden_company_normalized_tables(
                 connection=connection,
                 loaded_at=datetime(2026, 7, 3, 12, 0, tzinfo=UTC),

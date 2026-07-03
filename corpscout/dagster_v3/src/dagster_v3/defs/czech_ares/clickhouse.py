@@ -70,7 +70,6 @@ def export_czech_ares_clickhouse_industries(
 def export_czech_ares_clickhouse_company_contacts(
     *,
     clickhouse: ClickhouseResource,
-    source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Replace corpscout.cz_company_contacts from contacts embedded in cz_companies.name."""
@@ -91,7 +90,6 @@ def export_czech_ares_clickhouse_company_contacts(
     with clickhouse.get_connection() as client:
         counts = contacts.replace_czech_company_contacts_clickhouse(
             clickhouse_client=client,
-            source_run_id=source_run_id,
             log=log,
         )
     if log is not None:

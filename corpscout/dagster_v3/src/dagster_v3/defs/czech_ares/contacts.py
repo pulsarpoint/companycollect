@@ -43,7 +43,6 @@ _TLD_EXTRACT = tldextract.TLDExtract(
 @dataclass(frozen=True)
 class ContactCandidate:
     ico: str
-    company_name: str
     contact_type: str
     contact_value: str
     domain: str
@@ -75,7 +74,6 @@ def extract_contact_candidates(*, ico: str, company_name: str) -> list[ContactCa
             candidates,
             seen,
             ico=ico,
-            company_name=company_name,
             contact_type=contact_type,
             contact_value=contact_value,
             domain=domain,
@@ -97,7 +95,6 @@ def extract_contact_candidates_by_domain(
         ):
             candidate = ContactCandidate(
                 ico=parsed_candidate.ico,
-                company_name=company_name,
                 contact_type=parsed_candidate.contact_type,
                 contact_value=parsed_candidate.contact_value,
                 domain=parsed_candidate.domain,
@@ -115,9 +112,7 @@ def iter_valid_contact_rows_from_domain_candidates(
     *,
     commoncrawl_domains: set[str],
     nameservers_by_domain: dict[str, tuple[str, ...]],
-    source_run_id: str,
     resolved_at: datetime,
-    source_url: str = tables.RES_DATA_URL,
 ) -> Iterable[dict[str, object]]:
     for domain in sorted(candidates_by_domain):
         validation = _validated_domain(
@@ -130,18 +125,14 @@ def iter_valid_contact_rows_from_domain_candidates(
         domain_source, confidence = validation
         for candidate in candidates_by_domain[domain]:
             yield {
-                "country_iso2": "CZ",
                 "source_slug": CONTACTS_SOURCE_SLUG,
-                "source_run_id": source_run_id,
                 "source_record_id": candidate.ico,
                 "ico": candidate.ico,
-                "company_name": candidate.company_name,
                 "contact_type": candidate.contact_type,
                 "contact_value": candidate.contact_value,
                 "domain": domain,
                 "domain_source": domain_source,
                 "confidence": confidence,
-                "source_url": source_url,
                 "resolved_at": resolved_at,
             }
 
@@ -149,7 +140,6 @@ def iter_valid_contact_rows_from_domain_candidates(
 def replace_czech_company_contacts_clickhouse(
     *,
     clickhouse_client: Any,
-    source_run_id: str,
     resolved_at: datetime | None = None,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
@@ -184,7 +174,6 @@ def replace_czech_company_contacts_clickhouse(
         candidates_by_domain,
         commoncrawl_domains=commoncrawl_domains,
         nameservers_by_domain=nameservers_by_domain,
-        source_run_id=source_run_id,
         resolved_at=resolved_timestamp,
     )
     if log is not None:
@@ -345,7 +334,6 @@ def _append_candidate(
     seen: set[tuple[str, str]],
     *,
     ico: str,
-    company_name: str,
     contact_type: str,
     contact_value: str,
     domain: str,
@@ -357,7 +345,6 @@ def _append_candidate(
     candidates.append(
         ContactCandidate(
             ico=ico,
-            company_name=company_name,
             contact_type=contact_type,
             contact_value=contact_value,
             domain=domain,

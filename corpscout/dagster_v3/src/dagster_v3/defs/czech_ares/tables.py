@@ -69,18 +69,14 @@ CZ_INDUSTRIES_EXPORT_COLUMNS = _export_columns(CZ_INDUSTRIES_COLUMNS)
 COMPANY_CONTACTS_TABLE_CH = "cz_company_contacts"
 QUALIFIED_COMPANY_CONTACTS_TABLE = f"{CZECH_DATABASE}.{COMPANY_CONTACTS_TABLE_CH}"
 CZ_COMPANY_CONTACTS_COLUMNS = (
-    "country_iso2",
     "source_slug",
-    "source_run_id",
     "source_record_id",
     "ico",
-    "company_name",
     "contact_type",
     "contact_value",
     "domain",
     "domain_source",
     "confidence",
-    "source_url",
     "resolved_at",
 )
 CZ_COMPANY_CONTACTS_EXPORT_COLUMNS = _export_columns(CZ_COMPANY_CONTACTS_COLUMNS)

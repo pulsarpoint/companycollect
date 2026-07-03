@@ -100,7 +100,12 @@ def _load_source(context: AssetExecutionContext, clickhouse: ClickhouseResource,
 
 
 @dg.asset(
-    deps=[dg.AssetKey("norway_brreg_entities_snapshot_clickhouse")],
+    # Both ClickHouse landing paths (manual full snapshot and daily updates)
+    # produce untranslated rows, so both are upstream of the loader.
+    deps=[
+        dg.AssetKey("norway_brreg_entities_snapshot_clickhouse"),
+        dg.AssetKey("norway_brreg_entity_updates_clickhouse"),
+    ],
     group_name="norway_brreg",
     kinds={"python", "clickhouse"},
     description=(

@@ -121,6 +121,9 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         "latvia_address_cities_duckdb",
         "latvia_address_municipalities_duckdb",
         "latvia_ur_clickhouse_companies",
+        # The translation loader runs at the end of every register refresh so
+        # newly landed texts are enqueued to the translator service.
+        "latvia_ur_translation_load",
     }
 
     # full transitive chain: 4 raw multi-asset outputs + pivot + metrics + usd + 2 exports = 9

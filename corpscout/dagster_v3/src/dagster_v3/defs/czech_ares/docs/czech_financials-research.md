@@ -93,16 +93,59 @@ external join key between a `.cz` domain and a company:
      `href="/ias/content/download?id=<hash>"`.
   4. `https://or.justice.cz/ias/content/download?id=<hash>` → the PDF
      (`application/pdf`; Asseco's 2024 závěrka = **17.5 MB, 63 pages**).
-- **The PDFs are scanned images** — `pdftotext` got 63 chars from 63 pages. So:
-  **`pdftoppm` → `tesseract` OCR → LLM** (reuse `uk_companies_house/pdf_extract.py`).
+- **The PDFs are scanned images** — `pdftotext` got 63 chars from 63 pages. OCR is
+  mandatory before any metric extraction.
+  - The current OCR benchmark package is
+    `corpscout/czech_ocr_benchmark`; it is intentionally separate from Dagster.
+    Test document: Asseco 2024 PDF (`IČO 27074358`, document `85645222`,
+    **17.5 MB, 63 pages**).
+  - **GLM-OCR deployment tested on `gx10`** (`graovic@100.77.62.33`) using Docker
+    vLLM:
+    - image: `vllm/vllm-openai:cu130-nightly`
+    - model: `zai-org/GLM-OCR`
+    - served model name: `glm-ocr`
+    - endpoint: `http://localhost:8000/v1/chat/completions`
+    - context: `--max-model-len 32768`
+    - GPU: NVIDIA GB10; vLLM reported ~102.94 GiB available KV cache and accepted
+      `max_model_len=32768`.
+  - **Input format for GLM-OCR:** we do **not** send the PDF directly. The benchmark
+    renders selected PDF pages to PNG with `pypdfium2` (`page.render(scale=2)`),
+    base64-encodes each PNG, then sends one page per OpenAI-compatible vLLM request
+    as `image_url: data:image/png;base64,...`. This keeps page selection, retries,
+    and per-page output deterministic.
+  - **Measured GLM-OCR speed on `gx10`:**
+    - first 32k request after restarting vLLM: **57.4s/page**
+    - warmed 32k request: **35.4s/page**
+    - page 29 output completed naturally with `finish_reason=stop`,
+      `prompt_tokens=2592`, `completion_tokens=4313`, `total_tokens=6905`
+    - sequential full-PDF estimate for the 63-page Asseco file:
+      **~37 minutes/PDF** if every page is processed; **~3 minutes/PDF** for five
+      selected financial-table pages.
+  - **OCRmyPDF/Tesseract comparison:**
+    - OCRmyPDF processed the full 63-page Asseco PDF in **138.8s** (~2.2s/page).
+    - On financial table page 29, OCRmyPDF produced usable plain text, but table
+      structure was flattened. Example shape:
+      `AKTIVA CELKEM 874.682 405.049 469.533 479.484`.
+    - GLM-OCR produced structured HTML table output for the same page. Example
+      shape:
+      `<td>AKTIVA CELKEM</td><td>874.582</td><td>-405.049</td><td>489.533</td><td>479.484</td>`.
+    - OCRmyPDF is much faster and useful for full-text search/page discovery.
+      GLM-OCR is slower but better for reliable financial-table extraction because
+      rows and columns are preserved.
+  - **Recommended extraction strategy:** hybrid, not GLM on every page.
+    1. Run OCRmyPDF/Tesseract over the whole PDF to produce searchable text.
+    2. Use text/keywords to identify candidate financial statement pages.
+    3. For simple line-based pages, send OCRmyPDF text to a smaller LLM to map values
+       into the target JSON schema.
+    4. For dense financial tables, run GLM-OCR only on selected rendered PNG pages.
+    5. Validate extracted values deterministically: unit scale, year columns, signs,
+       totals, balance-sheet equality, and metric confidence.
   - Czech labels for the metric prompt: `tržby`/`výnosy`=revenue, `náklady`=costs,
     `provozní výsledek hospodaření`=operating result, `výsledek hospodaření`=net
     result, `aktiva celkem`=total assets, `vlastní kapitál`=equity, `cizí
     zdroje`/`závazky`=liabilities, `oběžná aktiva`=current assets, `stálá aktiva`=
     fixed assets, `peněžní prostředky`=cash. Currency **CZK**; statements often in
     **thousands** ("údaje v tis. Kč") → capture unit scale.
-  - OCR note: this host's `tesseract` has **`eng` only** (no `ces`); install the
-    `ces` language pack for cleaner Czech-label OCR (numbers are language-agnostic).
 - **Scope:** targeted/on-demand for a provided list of IČOs (→ the domain-matched
   subset from §0). Module `czech_financials` is scaffolded (this doc only); the
   fetch+OCR+LLM build was paused per the domain-first decision.

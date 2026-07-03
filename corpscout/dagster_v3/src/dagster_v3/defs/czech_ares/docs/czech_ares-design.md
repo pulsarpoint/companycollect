@@ -48,10 +48,10 @@ Ingest the Czech business register — companies + NACE industry + registered ad
   `source_url`. No `raw_*`/hash in DDL; non-null Strings coalesced to `''`.
 - **`cz_industries`** mirrors `fr_industries`/`gb_industries`.
 - **`cz_company_contacts`** `ORDER BY (ico, contact_type, contact_value)` — one row
-  per extracted valid contact candidate. Columns include `ico`, `company_name`,
-  `contact_type` (`domain` or `email`), `contact_value`, normalized root `domain`,
-  `domain_source` (`commoncrawl` or `dns`), `confidence`, `source_run_id`,
-  `source_record_id`, `source_url`, and `resolved_at`.
+  per extracted valid contact candidate. Columns include `source_slug`,
+  `source_record_id`, `ico`, `contact_type` (`domain` or `email`),
+  `contact_value`, normalized root `domain`, `domain_source` (`commoncrawl` or
+  `dns`), `confidence`, and `resolved_at`.
 
 ## 6. Translation
 - **No LLM** — legal form via static EN map; NACE descriptions from `nace_categories`.

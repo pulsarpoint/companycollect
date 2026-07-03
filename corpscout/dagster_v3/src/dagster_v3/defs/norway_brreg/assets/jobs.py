@@ -10,18 +10,27 @@ import dagster as dg
 
 # Manual full entity snapshot. The translation loader runs after the
 # parquet-backed snapshot publish lands corpscout.no_companies in ClickHouse.
+# The selection is an explicit union (snapshot chain + loader) rather than
+# loader.upstream(): the loader is also downstream of the daily updates
+# asset, and upstream() from it would drag the partitioned updates chain
+# into this manual job.
 norway_brreg_entities_full_snapshot_job = dg.define_asset_job(
     "norway_brreg_entities_full_snapshot_job",
-    selection=dg.AssetSelection.assets(
-        "norway_brreg_translation_load"
-    ).upstream().required_multi_asset_neighbors(),
+    selection=(
+        dg.AssetSelection.assets("norway_brreg_entities_snapshot_clickhouse").upstream()
+        | dg.AssetSelection.assets("norway_brreg_translation_load")
+    ).required_multi_asset_neighbors(),
 )
 
+# Daily updates land rows in ClickHouse too, so the translation loader runs
+# at the end of this job as well (unpartitioned asset appended to the
+# partitioned chain).
 norway_brreg_entity_updates_job = dg.define_asset_job(
     "norway_brreg_entity_updates_job",
-    selection=dg.AssetSelection.assets(
-        "norway_brreg_entity_updates_clickhouse"
-    ).upstream().required_multi_asset_neighbors(),
+    selection=(
+        dg.AssetSelection.assets("norway_brreg_entity_updates_clickhouse").upstream()
+        | dg.AssetSelection.assets("norway_brreg_translation_load")
+    ).required_multi_asset_neighbors(),
 )
 norway_brreg_entity_updates_schedule = dg.build_schedule_from_partitioned_job(
     norway_brreg_entity_updates_job,

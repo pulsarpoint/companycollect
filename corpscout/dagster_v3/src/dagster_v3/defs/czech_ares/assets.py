@@ -97,7 +97,6 @@ def czech_ares_clickhouse_company_contacts(
 ) -> dg.MaterializeResult:
     counts = export_czech_ares_clickhouse_company_contacts(
         clickhouse=clickhouse,
-        source_run_id=context.run_id,
         log=context.log.info,
     )
     return dg.MaterializeResult(

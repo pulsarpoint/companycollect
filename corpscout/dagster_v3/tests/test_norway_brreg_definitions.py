@@ -120,9 +120,12 @@ def test_norway_brreg_asset_dependency_edges() -> None:
         "norway_brreg_entity_updates_affected_orgs_parquet",
         "norway_brreg_entity_updates_removed_orgs_parquet",
     }
-    # Snapshot parquet ClickHouse publish → translation loader.
+    # Both ClickHouse landing paths (snapshot publish AND daily updates) feed
+    # the translation loader, so newly ingested texts are enqueued whichever
+    # path landed them.
     assert {k.path[-1] for k in loader_node.parent_keys} == {
-        "norway_brreg_entities_snapshot_clickhouse"
+        "norway_brreg_entities_snapshot_clickhouse",
+        "norway_brreg_entity_updates_clickhouse",
     }
     assert {k.path[-1] for k in snapshot_raw_node.parent_keys} == set()
     assert {k.path[-1] for k in snapshot_s3_node.parent_keys} == {
@@ -208,6 +211,9 @@ def test_norway_brreg_entity_updates_job_membership() -> None:
         "norway_brreg_entity_updates_affected_orgs_parquet",
         "norway_brreg_entity_updates_removed_orgs_parquet",
         "norway_brreg_entity_updates_clickhouse",
+        # The translation loader runs at the end of every daily update run so
+        # newly landed texts are enqueued to the translator service.
+        "norway_brreg_translation_load",
     }
 
 

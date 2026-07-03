@@ -171,7 +171,6 @@ def test_contact_rows_keep_commoncrawl_and_dns_validated_domains_only():
             candidates_by_domain,
             commoncrawl_domains={"asseco.cz"},
             nameservers_by_domain={"dns-only.cz": ("ns1.dns-only.cz",)},
-            source_run_id="run-1",
             resolved_at=dt.datetime(2026, 7, 3, 12, 0, tzinfo=dt.UTC),
         )
     )
@@ -188,6 +187,12 @@ def test_contact_rows_keep_commoncrawl_and_dns_validated_domains_only():
     ]
     assert [row["confidence"] for row in rows] == [0.95, 0.95, 0.7]
     assert all(row["domain"] in {"asseco.cz", "dns-only.cz"} for row in rows)
+    assert not {
+        "country_iso2",
+        "source_run_id",
+        "company_name",
+        "source_url",
+    }.intersection(rows[0])
 
 
 def test_contact_extraction_returns_domain_dictionary_before_validation():
@@ -227,18 +232,14 @@ def test_replace_contact_table_inserts_contact_rows_in_batches(monkeypatch):
 
     rows = (
         {
-            "country_iso2": "CZ",
             "source_slug": contacts.CONTACTS_SOURCE_SLUG,
-            "source_run_id": "run-1",
             "source_record_id": str(index),
             "ico": str(index),
-            "company_name": f"Company {index}",
             "contact_type": "domain",
             "contact_value": f"example{index}.cz",
             "domain": f"example{index}.cz",
             "domain_source": "dns",
             "confidence": contacts.DNS_CONFIDENCE,
-            "source_url": tables.RES_DATA_URL,
             "resolved_at": dt.datetime(2026, 7, 3, 12, 0, tzinfo=dt.UTC),
         }
         for index in range(3)
@@ -391,6 +392,9 @@ def test_contacts_export_columns_match_migration():
     assert f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_COMPANY_CONTACTS_TABLE}" in CONTACTS_MIGRATION
     for column in tables.CZ_COMPANY_CONTACTS_EXPORT_COLUMNS:
         assert f"    {column} " in CONTACTS_MIGRATION, f"missing {column} in 000083"
+    for column in ("country_iso2", "source_run_id", "company_name", "source_url"):
+        assert f"    {column} " not in CONTACTS_MIGRATION
+        assert column not in tables.CZ_COMPANY_CONTACTS_EXPORT_COLUMNS
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in CONTACTS_MIGRATION
     assert "ORDER BY (ico, contact_type, contact_value)" in CONTACTS_MIGRATION
 
