@@ -43,8 +43,8 @@ func TestLocalLLMTranslatesNorwegianBatchToEnglish(t *testing.T) {
 		MaxTokens: endpoint.MaxTokens,
 		ExtraBody: endpoint.ExtraBody,
 		PromptData: translation.PromptData{
-			SourceLanguage: endpoint.PromptData.SourceLanguage,
-			TargetLanguage: endpoint.PromptData.TargetLanguage,
+			SourceLanguage: "Norwegian",
+			TargetLanguage: "English",
 		},
 	})
 	if err != nil {
