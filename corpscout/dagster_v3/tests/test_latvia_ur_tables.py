@@ -6,6 +6,12 @@ def test_entities_columns_has_regcode_primary_key():
     assert columns["regcode"] == {"data_type": "text", "nullable": False}
 
 
+def test_latvia_address_table_names_are_defined():
+    assert tables.ADDRESS_BUILDINGS_TABLE == "address_buildings"
+    assert tables.ADDRESS_CITIES_TABLE == "address_cities"
+    assert tables.ADDRESS_MUNICIPALITIES_TABLE == "address_municipalities"
+
+
 def test_entities_columns_cover_expected_fields():
     expected = {
         "country_iso2",

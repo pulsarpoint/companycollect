@@ -59,7 +59,14 @@ def _create_lv_companies_export_view(duckdb_connection: Any) -> None:
         create or replace view {DLT_DATASET_NAME}.{LV_COMPANIES_EXPORT_VIEW} as
         select
             {entity_columns},
-            a.activity_text_original
+            a.activity_text_original,
+            b.full_address as vzd_address_text,
+            b.postal_code as vzd_address_postal_code,
+            b.status as vzd_address_status,
+            c.name as address_city_name,
+            coalesce(m_atvk.name, m_parent.name) as address_municipality_name,
+            b.latitude as address_latitude,
+            b.longitude as address_longitude
         from {DLT_DATASET_NAME}.{ENTITIES_TABLE} e
         left join (
             select
@@ -68,5 +75,25 @@ def _create_lv_companies_export_view(duckdb_connection: Any) -> None:
             from {DLT_DATASET_NAME}.{tables.COMPANY_ACTIVITY_TABLE}
             group by regcode
         ) a on a.regcode = e.regcode
+        left join (
+            select *
+            from {DLT_DATASET_NAME}.{tables.ADDRESS_BUILDINGS_TABLE}
+            where status = 'EKS'
+        ) b on b.address_code = e.address_id
+        left join (
+            select *
+            from {DLT_DATASET_NAME}.{tables.ADDRESS_CITIES_TABLE}
+            where status = 'EKS'
+        ) c on c.address_code = coalesce(nullif(e.city_code, '0'), nullif(e.region_code, '0'))
+        left join (
+            select *
+            from {DLT_DATASET_NAME}.{tables.ADDRESS_MUNICIPALITIES_TABLE}
+            where status = 'EKS'
+        ) m_atvk on m_atvk.atvk_code = e.atvk_code
+        left join (
+            select *
+            from {DLT_DATASET_NAME}.{tables.ADDRESS_MUNICIPALITIES_TABLE}
+            where status = 'EKS'
+        ) m_parent on m_parent.address_code = c.parent_address_code
         """
     )

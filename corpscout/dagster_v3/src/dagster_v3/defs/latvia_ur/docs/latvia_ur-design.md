@@ -20,6 +20,11 @@
 ## 3. Loading
 - Register: narrow **dlt row-resource** (`iter_latvia_ur_entity_rows`) — applies the static legal-form
   translation + status derivation per row, over 485 k rows.
+- Address enrichment: three VZD State Address Register CSVs are loaded as reference tables in the
+  same DuckDB database:
+  `AW_EKA.CSV` -> `latvia_address_buildings_duckdb`,
+  `AW_PILSETA.CSV` -> `latvia_address_cities_duckdb`,
+  `AW_NOVADS.CSV` -> `latvia_address_municipalities_duckdb`.
 - Financials: one Dagster **multi-asset** downloads the four full CSV files and writes four DuckDB
   raw staging tables with `read_csv(all_varchar=true)`. Each output is visible as its own raw asset:
   `latvia_financial_statements_raw_duckdb`, `latvia_balance_sheets_raw_duckdb`,
@@ -27,7 +32,11 @@
 - `raw_entity`/`raw_financial_record` + `source_payload_hash` kept in DuckDB only.
 
 ## 4. Transform
-- **Register → tier 1 (direct copy)**: `entities` → `lv_companies`.
+- **Register → tier 1 (enriched copy)**: `entities` + company activity + VZD address reference
+  tables → `lv_companies`.
+  The ClickHouse export joins UR `address_id`, `city_code`/`region_code`, and `atvk_code` against
+  VZD address objects to populate `vzd_address_text`, `vzd_address_postal_code`,
+  `address_city_name`, `address_municipality_name`, `address_latitude`, and `address_longitude`.
 - **Financials → tier 2 (set-based SQL)**: pivot the 4 raw tables on `statement_id` into the wide
   `financial_statements` (16 balance + 26 income + 35 cashflow numeric columns); native metrics
   build (scaled by `rounded_to_nearest`); separate USD step.

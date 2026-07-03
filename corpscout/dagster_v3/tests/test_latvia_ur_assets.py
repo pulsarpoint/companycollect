@@ -24,6 +24,23 @@ ACTIVITY_CSV = (
     '"40103550818";"SIA ""Psihologs""";"LIMITED_LIABILITY_COMPANY_SIA";'
     '"Sabiedrība ar ierobežotu atbildību";"psiholoģiskie pakalpojumi"\n'
 )
+VZD_BUILDINGS_CSV = (
+    "KODS,TIPS_CD,STATUSS,APSTIPR,APST_PAK,VKUR_CD,VKUR_TIPS,NOSAUKUMS,SORT_NOS,"
+    "ATRIB,PNOD_CD,DAT_SAK,DAT_MOD,DAT_BEIG,FOR_BUILD,PLAN_ADR,STD,KOORD_X,KOORD_Y,DD_N,DD_E\n"
+    "103045133,108,EKS,Y,101,0885162,113,Building 1,Building 1,LV-4201,,2020.01.01,"
+    "2026.01.01,,N,N,\"Valmiera, Building 1\",1,2,57.5380,25.4260\n"
+)
+VZD_CITIES_CSV = (
+    "KODS,TIPS_CD,NOSAUKUMS,VKUR_CD,VKUR_TIPS,APSTIPR,APST_PAK,STATUSS,SORT_NOS,"
+    "DAT_SAK,DAT_MOD,DAT_BEIG,ATRIB,STD\n"
+    "100015821,104,Valmiera,0885162,113,Y,101,EKS,Valmiera,2020.01.01,2026.01.01,,0885162,Valmiera\n"
+)
+VZD_MUNICIPALITIES_CSV = (
+    "KODS,TIPS_CD,NOSAUKUMS,VKUR_CD,VKUR_TIPS,APSTIPR,APST_PAK,STATUSS,SORT_NOS,"
+    "DAT_SAK,DAT_MOD,DAT_BEIG,ATRIB,STD\n"
+    "0885162,113,Valmieras novads,100000000,100,Y,101,EKS,Valmieras novads,"
+    "2020.01.01,2026.01.01,,0885162,Valmieras novads\n"
+)
 
 
 class _FakeResponse:
@@ -61,6 +78,27 @@ class _FakeClickHouse:
         return None
 
 
+def _load_latvia_address_fixtures(conn) -> None:
+    assets.load_latvia_address_csv(
+        duckdb_connection=conn,
+        table_name=tables.ADDRESS_BUILDINGS_TABLE,
+        download_url="https://example.test/aw_eka.csv",
+        session=_FakeSession(VZD_BUILDINGS_CSV.encode("utf-8")),
+    )
+    assets.load_latvia_address_csv(
+        duckdb_connection=conn,
+        table_name=tables.ADDRESS_CITIES_TABLE,
+        download_url="https://example.test/aw_pilseta.csv",
+        session=_FakeSession(VZD_CITIES_CSV.encode("utf-8")),
+    )
+    assets.load_latvia_address_csv(
+        duckdb_connection=conn,
+        table_name=tables.ADDRESS_MUNICIPALITIES_TABLE,
+        download_url="https://example.test/aw_novads.csv",
+        session=_FakeSession(VZD_MUNICIPALITIES_CSV.encode("utf-8")),
+    )
+
+
 def test_schedules_registered_and_jobs_cover_full_chains():
     from dagster_v3.definitions import defs as load_defs
 
@@ -79,6 +117,9 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     assert register_keys == {
         "latvia_ur_entities_duckdb",
         "latvia_company_activity_duckdb",
+        "latvia_address_buildings_duckdb",
+        "latvia_address_cities_duckdb",
+        "latvia_address_municipalities_duckdb",
         "latvia_ur_clickhouse_companies",
     }
 
@@ -166,11 +207,66 @@ def test_load_company_activity_rows_into_duckdb(tmp_path: Path):
     assert row == ("40103550818", "psiholoģiskie pakalpojumi")
 
 
+def test_load_latvia_address_reference_rows_into_duckdb(tmp_path: Path):
+    db_path = tmp_path / "latvia_ur_source.duckdb"
+    with duckdb.connect(str(db_path)) as conn:
+        building_rows = assets.load_latvia_address_csv(
+            duckdb_connection=conn,
+            table_name=tables.ADDRESS_BUILDINGS_TABLE,
+            download_url="https://example.test/aw_eka.csv",
+            session=_FakeSession(VZD_BUILDINGS_CSV.encode("utf-8")),
+        )
+        city_rows = assets.load_latvia_address_csv(
+            duckdb_connection=conn,
+            table_name=tables.ADDRESS_CITIES_TABLE,
+            download_url="https://example.test/aw_pilseta.csv",
+            session=_FakeSession(VZD_CITIES_CSV.encode("utf-8")),
+        )
+        municipality_rows = assets.load_latvia_address_csv(
+            duckdb_connection=conn,
+            table_name=tables.ADDRESS_MUNICIPALITIES_TABLE,
+            download_url="https://example.test/aw_novads.csv",
+            session=_FakeSession(VZD_MUNICIPALITIES_CSV.encode("utf-8")),
+        )
+
+    assert (building_rows, city_rows, municipality_rows) == (1, 1, 1)
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        building = conn.execute(
+            f"select address_code, full_address, latitude, longitude "
+            f"from {tables.DLT_DATASET_NAME}.{tables.ADDRESS_BUILDINGS_TABLE}"
+        ).fetchone()
+        city = conn.execute(
+            f"select address_code, name, parent_address_code "
+            f"from {tables.DLT_DATASET_NAME}.{tables.ADDRESS_CITIES_TABLE}"
+        ).fetchone()
+        municipality = conn.execute(
+            f"select address_code, name, atvk_code "
+            f"from {tables.DLT_DATASET_NAME}.{tables.ADDRESS_MUNICIPALITIES_TABLE}"
+        ).fetchone()
+    assert building == ("103045133", "Valmiera, Building 1", 57.5380, 25.4260)
+    assert city == ("100015821", "Valmiera", "0885162")
+    assert municipality == ("0885162", "Valmieras novads", "0885162")
+
+
+def test_lv_companies_export_columns_include_vzd_address_fields():
+    for column in (
+        "vzd_address_text",
+        "vzd_address_postal_code",
+        "vzd_address_status",
+        "address_city_name",
+        "address_municipality_name",
+        "address_latitude",
+        "address_longitude",
+    ):
+        assert column in tables.LV_COMPANIES_EXPORT_COLUMNS
+
+
 def test_lv_companies_columns_match_entities_schema_and_migration():
     # Published companies are register entities plus enriched activity text.
     assert tables.LV_COMPANIES_COLUMNS == (
         *tuple(tables.LATVIA_UR_ENTITIES_COLUMNS),
         "activity_text_original",
+        *tables.LATVIA_VZD_ADDRESS_COLUMNS,
     )
     # ...and register columns must exist in the 000015 migration that owns the base schema.
     migration = (
@@ -191,6 +287,25 @@ def test_lv_companies_columns_match_entities_schema_and_migration():
     ).read_text()
     assert "ADD COLUMN IF NOT EXISTS activity_text_original Nullable(String)" in activity_migration
     assert "CREATE OR REPLACE VIEW corpscout.lv_companies_translated" in activity_migration
+
+
+def test_lv_companies_vzd_address_migration_adds_columns():
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "clickhouse"
+        / "migrations"
+        / "000082_corpscout_lv_companies_vzd_address.up.sql"
+    ).read_text()
+    for ddl in (
+        "ADD COLUMN IF NOT EXISTS vzd_address_text Nullable(String)",
+        "ADD COLUMN IF NOT EXISTS vzd_address_postal_code Nullable(String)",
+        "ADD COLUMN IF NOT EXISTS vzd_address_status LowCardinality(Nullable(String))",
+        "ADD COLUMN IF NOT EXISTS address_city_name Nullable(String)",
+        "ADD COLUMN IF NOT EXISTS address_municipality_name Nullable(String)",
+        "ADD COLUMN IF NOT EXISTS address_latitude Nullable(Float64)",
+        "ADD COLUMN IF NOT EXISTS address_longitude Nullable(Float64)",
+    ):
+        assert ddl in migration
 
 
 def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
@@ -215,6 +330,7 @@ def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch)
             duckdb_connection=conn,
             session=_FakeSession(ACTIVITY_CSV.encode("utf-8")),
         )
+        _load_latvia_address_fixtures(conn)
         rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_companies(
             duckdb_connection=conn,
             clickhouse=ClickhouseResource(host="localhost"),
@@ -242,6 +358,7 @@ def test_export_companies_includes_activity_text(tmp_path: Path, monkeypatch):
             duckdb_connection=conn,
             session=_FakeSession(ACTIVITY_CSV.encode("utf-8")),
         )
+        _load_latvia_address_fixtures(conn)
 
     fake = _FakeClickHouse()
 
@@ -260,3 +377,43 @@ def test_export_companies_includes_activity_text(tmp_path: Path, monkeypatch):
     _, inserted_rows = fake.inserts[0]
     activity_index = tables.LV_COMPANIES_EXPORT_COLUMNS.index("activity_text_original")
     assert inserted_rows[0][activity_index] == "psiholoģiskie pakalpojumi"
+
+
+def test_export_companies_includes_vzd_address_enrichment(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "latvia_ur_source.duckdb"
+    assets.run_latvia_ur_dlt_pipeline(
+        database_path=db_path,
+        run_id="run-1",
+        session=_FakeSession(SAMPLE_CSV.encode("utf-8")),
+        pipelines_dir=tmp_path / "dlt",
+    )
+    with duckdb.connect(str(db_path)) as conn:
+        assets.load_latvia_company_activity_csv(
+            duckdb_connection=conn,
+            session=_FakeSession(ACTIVITY_CSV.encode("utf-8")),
+        )
+        _load_latvia_address_fixtures(conn)
+
+    fake = _FakeClickHouse()
+
+    @contextmanager
+    def fake_get_connection(self):
+        yield fake
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    with duckdb.connect(str(db_path)) as conn:
+        latvia_ur_clickhouse.export_latvia_ur_clickhouse_companies(
+            duckdb_connection=conn,
+            clickhouse=ClickhouseResource(host="localhost"),
+        )
+
+    _, inserted_rows = fake.inserts[0]
+    row = inserted_rows[0]
+    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("vzd_address_text")] == "Valmiera, Building 1"
+    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("vzd_address_postal_code")] == "LV-4201"
+    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("vzd_address_status")] == "EKS"
+    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("address_city_name")] == "Valmiera"
+    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("address_municipality_name")] == "Valmieras novads"
+    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("address_latitude")] == 57.5380
+    assert row[tables.LV_COMPANIES_EXPORT_COLUMNS.index("address_longitude")] == 25.4260

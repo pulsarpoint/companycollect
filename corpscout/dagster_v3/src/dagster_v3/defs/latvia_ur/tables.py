@@ -3,6 +3,9 @@ from typing import Any
 DLT_DATASET_NAME = "latvia_ur"
 ENTITIES_TABLE = "entities"
 COMPANY_ACTIVITY_TABLE = "company_activity"
+ADDRESS_BUILDINGS_TABLE = "address_buildings"
+ADDRESS_CITIES_TABLE = "address_cities"
+ADDRESS_MUNICIPALITIES_TABLE = "address_municipalities"
 
 LATVIA_UR_ENTITIES_COLUMNS: dict[str, dict[str, Any]] = {
     "country_iso2": {"data_type": "text"},
@@ -47,8 +50,22 @@ LATVIA_UR_DATABASE = "corpscout"
 LV_COMPANIES_TABLE = "lv_companies"
 QUALIFIED_LV_COMPANIES_TABLE = f"{LATVIA_UR_DATABASE}.{LV_COMPANIES_TABLE}"
 
-# Column order must match the DuckDB entities table and the 000015 migration.
-LV_COMPANIES_COLUMNS = tuple(LATVIA_UR_ENTITIES_COLUMNS) + ("activity_text_original",)
+LATVIA_VZD_ADDRESS_COLUMNS = (
+    "vzd_address_text",
+    "vzd_address_postal_code",
+    "vzd_address_status",
+    "address_city_name",
+    "address_municipality_name",
+    "address_latitude",
+    "address_longitude",
+)
+
+# Column order must match the DuckDB export view and ClickHouse migrations.
+LV_COMPANIES_COLUMNS = (
+    tuple(LATVIA_UR_ENTITIES_COLUMNS)
+    + ("activity_text_original",)
+    + LATVIA_VZD_ADDRESS_COLUMNS
+)
 
 
 # --- Financials (Module 2) ---------------------------------------------------
