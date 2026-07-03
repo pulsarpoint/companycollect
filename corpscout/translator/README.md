@@ -46,6 +46,30 @@ translation prompt requires a homogeneous batch. `SaveBatch` writes
 translated rows to `output_items`; `SaveFailed` writes irreducible failed
 rows to `failed_items`.
 
+### Queue performance at scale
+
+The schema (embedded in `internal/queuedb/schema.sql`) is designed so that
+per-batch queue cost stays flat even with millions of pending rows:
+
+- **`pending_items` view** — the single definition of "pending" (in
+  `input_items`, no matching `output_items` or `failed_items` row). Both
+  `GetBatch` queries read this view; the predicate exists in exactly one
+  place.
+- **Index-backed early termination** — `idx_input_created (created_at,
+  source_lang, target_lang)` lets the pair-pick query walk oldest-first and
+  stop at the first pending row; `idx_input_pair_created (source_lang,
+  target_lang, created_at)` lets the batch query seek to the language pair
+  and stop at its LIMIT. Without them, every batch would full-scan and sort
+  the queue (~seconds at a few million rows). `TestGetBatchQueriesUseIndexes`
+  pins both query plans via `EXPLAIN QUERY PLAN`, so a schema or query change
+  that silently regresses to a table scan fails CI.
+- **Arithmetic pending count** — the per-batch pending count is
+  `count(input) − count(output) − count(failed)`, not a scan of the view.
+  This is exact under a structural invariant (every output/failed row has a
+  matching input row; flush deletes inputs and outputs together; failed
+  inputs are never auto-deleted), and
+  `TestPendingCountMatchesViewDefinition` pins the identity against the view.
+
 `internal/translation.TranslateItems` handles deterministic LLM output
 failures inside the activity. A normal provider/network error returns to
 Temporal and is retried by the activity retry policy. A model-output error
@@ -290,6 +314,15 @@ Behavior:
 5. Once `BatchesPerRun` is exhausted, the workflow continues-as-new with the
    same input, keeping workflow history bounded across a queue that never
    fully empties.
+
+**Retry policy:** activities retry transient failures (network, provider
+outage, ClickHouse hiccups) **without an attempt cap** — 1s initial interval,
+2× backoff, capped at 5 minutes between attempts — so an LLM endpoint that is
+down for an hour stalls the queue instead of failing the workflow. This is
+deliberate: the only failures that should ever stop retrying are
+deterministic bad model outputs, and those never surface as activity errors —
+the recovery ladder inside `TranslateItems` quarantines them into
+`failed_items` and the batch continues.
 
 **Crash-window duplicate note:** a crash between the ClickHouse insert and
 the SQLite delete re-flushes the same rows on resume, producing duplicate
@@ -542,6 +575,35 @@ Run the package test suite:
 ```bash
 make test
 ```
+
+## Design History
+
+The service reached its current shape through three architecture changes on
+2026-07-03, each with a full design spec and implementation plan under
+`corpscout/docs/superpowers/`:
+
+1. **Config-driven generic engine**
+   (`specs/2026-07-03-translator-generic-engine-design.md`) — generalized the
+   original Norway-only `internal/brreg` package into a definition-driven
+   engine: per-source JSON definitions, templated anti-join scan SQL, static
+   translation maps. Superseded the same day by the loader/service split;
+   kept in history because its golden SQL tests pinned the canonical scan
+   shape that loaders now use.
+2. **Loader/service split**
+   (`specs/2026-07-03-translator-loader-service-split-design.md`) — moved
+   extraction out of the translator entirely. Per-source dagster loader
+   assets (in `corpscout/dagster_v3`) scan ClickHouse and POST to the bulk
+   enqueue API; the translator became the source-agnostic shared-queue
+   service documented in this README (one workflow, single-language-pair
+   batches, flush-with-delete, boot-resume). Also retired the legacy Python
+   translator package that predated the decision to rewrite the service in
+   Go.
+3. **SQLite queue**
+   (`specs/2026-07-03-translator-sqlite-queue-design.md`) — replaced the
+   DuckDB queue with pure-Go SQLite (`modernc.org/sqlite`): embedded schema
+   with the `pending_items` view and early-termination indexes, arithmetic
+   pending count, and a fully CGO-free build. No data migration — the queue
+   is transient by design.
 
 ## Integration Test
 
