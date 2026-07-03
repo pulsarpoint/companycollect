@@ -111,6 +111,12 @@ func loadInputWithDB(
 		if err != nil {
 			return LoadResult{}, fmt.Errorf("query translation input for %s.%s: %w", col.Table, col.Column, err)
 		}
+		// The ClickHouse scan itself doesn't produce language names; stamp
+		// them from the definition so upsertInputItems' validation passes.
+		for i := range rows {
+			rows[i].SourceLanguageName = def.SourceLanguageName
+			rows[i].TargetLanguageName = def.TargetLanguageName
+		}
 		rowsSeen += len(rows)
 		if err := upsertInputItems(ctx, db, rows); err != nil {
 			return LoadResult{}, err
@@ -189,6 +195,8 @@ func createQueueTables(ctx context.Context, db *sql.DB) error {
 			source_text_hash ubigint not null,
 			source_lang text not null,
 			target_lang text not null,
+			source_language_name text not null,
+			target_language_name text not null,
 			created_at timestamp not null,
 			primary key (
 				source_table,
@@ -270,9 +278,11 @@ func upsertInputItems(ctx context.Context, db *sql.DB, rows []InputItem) error {
 			source_text_hash,
 			source_lang,
 			target_lang,
+			source_language_name,
+			target_language_name,
 			created_at
 		)
-		values (?, ?, ?, cast(? as ubigint), ?, ?, current_timestamp)
+		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, current_timestamp)
 		on conflict (
 			source_table,
 			source_column,
@@ -298,6 +308,8 @@ func upsertInputItems(ctx context.Context, db *sql.DB, rows []InputItem) error {
 			strconv.FormatUint(row.SourceTextHash, 10),
 			row.SourceLang,
 			row.TargetLang,
+			row.SourceLanguageName,
+			row.TargetLanguageName,
 		); err != nil {
 			return fmt.Errorf("upsert input item: %w", err)
 		}
@@ -321,6 +333,10 @@ func validateInput(row InputItem) error {
 		return errors.New("source_lang is required")
 	case row.TargetLang == "":
 		return errors.New("target_lang is required")
+	case row.SourceLanguageName == "":
+		return errors.New("source_language_name is required")
+	case row.TargetLanguageName == "":
+		return errors.New("target_language_name is required")
 	default:
 		return nil
 	}

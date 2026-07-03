@@ -273,12 +273,14 @@ func (s *fixtureSource) InsertTextTranslations(ctx context.Context, rows []TextT
 
 func fixtureInputItem(column string, index int) InputItem {
 	return InputItem{
-		SourceTable:    testSourceTable,
-		SourceColumn:   column,
-		SourceText:     fmt.Sprintf("Norwegian text %03d", index),
-		SourceTextHash: uint64(10_000 + index),
-		SourceLang:     testSourceLang,
-		TargetLang:     testTargetLang,
+		SourceTable:        testSourceTable,
+		SourceColumn:       column,
+		SourceText:         fmt.Sprintf("Norwegian text %03d", index),
+		SourceTextHash:     uint64(10_000 + index),
+		SourceLang:         testSourceLang,
+		TargetLang:         testTargetLang,
+		SourceLanguageName: "Norwegian",
+		TargetLanguageName: "English",
 	}
 }
 

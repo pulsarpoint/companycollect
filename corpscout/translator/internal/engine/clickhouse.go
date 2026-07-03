@@ -177,12 +177,14 @@ func insertTextTranslationsBatched(
 // InputItem is one distinct untranslated text produced by an LLM-column scan
 // query and queued for translation.
 type InputItem struct {
-	SourceTable    string
-	SourceColumn   string
-	SourceText     string
-	SourceTextHash uint64
-	SourceLang     string
-	TargetLang     string
+	SourceTable        string
+	SourceColumn       string
+	SourceText         string
+	SourceTextHash     uint64
+	SourceLang         string
+	TargetLang         string
+	SourceLanguageName string
+	TargetLanguageName string
 }
 
 // StaticInput is one distinct untranslated text produced by a static-column

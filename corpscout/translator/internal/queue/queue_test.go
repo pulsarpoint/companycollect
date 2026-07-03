@@ -129,16 +129,43 @@ func TestQueueGetsAndSavesOnlyUntranslatedRows(t *testing.T) {
 	assertOutputRow(t, path, firstBatch[0], "translated "+firstBatch[0].SourceText, "local", "qwen3:6b")
 }
 
+func TestGetBatchReturnsSingleLanguagePairOldestFirst(t *testing.T) {
+	ctx := context.Background()
+	db := openTestQueue(t) // existing helper; update its input_items DDL with the two name columns
+	q, err := queue.New(db)
+	if err != nil {
+		t.Fatalf("new queue: %v", err)
+	}
+
+	// Latvian item inserted FIRST (oldest created_at), then Norwegian items.
+	insertTestInput(t, db, "corpscout.lv_companies", "activity_text_original", "Latviešu teksts", 1, "lv", "en", "Latvian", "English")
+	insertTestInput(t, db, "corpscout.no_companies", "activity_text_original", "Norsk tekst A", 2, "no", "en", "Norwegian", "English")
+	insertTestInput(t, db, "corpscout.no_companies", "activity_text_original", "Norsk tekst B", 3, "no", "en", "Norwegian", "English")
+
+	batch, err := q.GetBatch(ctx, 10)
+	if err != nil {
+		t.Fatalf("get batch: %v", err)
+	}
+	if len(batch) != 1 {
+		t.Fatalf("expected only the oldest pair's items (1 Latvian), got %d items", len(batch))
+	}
+	if batch[0].SourceLang != "lv" || batch[0].SourceLanguageName != "Latvian" || batch[0].TargetLanguageName != "English" {
+		t.Fatalf("expected Latvian item with names, got %+v", batch[0])
+	}
+}
+
 func TestQueueHandlesUnsignedCityHashValues(t *testing.T) {
 	ctx := context.Background()
 	path := createEmptyQueueFixture(t)
 	row := queue.Item{
-		SourceTable:    "corpscout.no_companies",
-		SourceColumn:   "activity_text_original",
-		SourceText:     "high hash",
-		SourceTextHash: math.MaxUint64,
-		SourceLang:     "no",
-		TargetLang:     "en",
+		SourceTable:        "corpscout.no_companies",
+		SourceColumn:       "activity_text_original",
+		SourceText:         "high hash",
+		SourceTextHash:     math.MaxUint64,
+		SourceLang:         "no",
+		TargetLang:         "en",
+		SourceLanguageName: "Norwegian",
+		TargetLanguageName: "English",
 	}
 	insertInput(t, path, row)
 
@@ -198,6 +225,8 @@ func createEmptyQueueFixture(t *testing.T) string {
 			source_text_hash ubigint not null,
 			source_lang text not null,
 			target_lang text not null,
+			source_language_name text not null,
+			target_language_name text not null,
 			created_at timestamp not null,
 			primary key (
 				source_table,
@@ -260,18 +289,49 @@ func createEmptyQueueFixture(t *testing.T) string {
 	return path
 }
 
+// openTestQueue opens a fresh DuckDB connection over an empty queue schema
+// (via createEmptyQueueFixture) and closes it automatically at test cleanup.
+func openTestQueue(t *testing.T) *sql.DB {
+	t.Helper()
+
+	path := createEmptyQueueFixture(t)
+	db, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatalf("open queue duckdb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+var testInputSeq int
+
+func insertTestInput(t *testing.T, db *sql.DB, table, column, text string, hash uint64, srcLang, dstLang, srcName, dstName string) {
+	t.Helper()
+	testInputSeq++
+	if _, err := db.Exec(`
+		insert into input_items (
+			source_table, source_column, source_text, source_text_hash,
+			source_lang, target_lang, source_language_name, target_language_name, created_at
+		) values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, timestamp '2026-01-01 00:00:00' + to_seconds(?))
+	`, table, column, text, strconv.FormatUint(hash, 10), srcLang, dstLang, srcName, dstName, testInputSeq); err != nil {
+		t.Fatalf("insert test input: %v", err)
+	}
+}
+
 func inputFixtureRow(index int) queue.Item {
 	column := "articles_purpose_original"
 	if index >= 50 {
 		column = "activity_text_original"
 	}
 	return queue.Item{
-		SourceTable:    "corpscout.no_companies",
-		SourceColumn:   column,
-		SourceText:     fmt.Sprintf("Norwegian text %03d", index),
-		SourceTextHash: uint64(1000 + index),
-		SourceLang:     "no",
-		TargetLang:     "en",
+		SourceTable:        "corpscout.no_companies",
+		SourceColumn:       column,
+		SourceText:         fmt.Sprintf("Norwegian text %03d", index),
+		SourceTextHash:     uint64(1000 + index),
+		SourceLang:         "no",
+		TargetLang:         "en",
+		SourceLanguageName: "Norwegian",
+		TargetLanguageName: "English",
 	}
 }
 
@@ -292,10 +352,12 @@ func insertInput(t *testing.T, path string, row queue.Item) {
 			source_text_hash,
 			source_lang,
 			target_lang,
+			source_language_name,
+			target_language_name,
 			created_at
 		)
-		values (?, ?, ?, cast(? as ubigint), ?, ?, current_timestamp)
-	`, row.SourceTable, row.SourceColumn, row.SourceText, strconv.FormatUint(row.SourceTextHash, 10), row.SourceLang, row.TargetLang); err != nil {
+		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, current_timestamp)
+	`, row.SourceTable, row.SourceColumn, row.SourceText, strconv.FormatUint(row.SourceTextHash, 10), row.SourceLang, row.TargetLang, row.SourceLanguageName, row.TargetLanguageName); err != nil {
 		t.Fatalf("insert input fixture row: %v", err)
 	}
 }
