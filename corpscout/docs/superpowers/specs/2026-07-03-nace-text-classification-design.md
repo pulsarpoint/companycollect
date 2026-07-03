@@ -171,6 +171,45 @@ owns everything generic.
 - `dg check defs` + job-membership test updates (register job gains the
   classification asset).
 
+## Addendum: reuse the existing NACE embedding corpus (discovered at planning)
+
+Planning exploration found `corpscout.nace_category_embeddings` (migration
+000044, maintained by the commoncrawl reference-builder): 1,025 NACE entries
+across division/group/class levels with hierarchical label paths
+("A AGRICULTURE… > 01.1 Growing of non-perennial crops > 01.11 Growing of
+cereals…"), already embedded with the production `qwen3-embedding-8b`
+(4096-dim, variant `hier`), classification_version **`NACE_REV_2_1`**. This
+supersedes three v1 decisions above:
+
+1. **No `nace2_classifier` ingestion** — the corpus is read from
+   `nace_category_embeddings` (filtered by embedding_model +
+   classification_version), and the view takes NACE labels from the same
+   table. The `nace_2.csv` ingestion asset is dropped. Coupling note: the
+   table is a shared corpscout artifact versioned by
+   `classification_version`; the classifier pins the version it reads.
+2. **NACE Rev 2.1, not Rev 2** — commoncrawl's domain classification
+   already emits Rev 2.1 org-wide, Latvian companies re-declared under 2.1,
+   and the maintained corpus is 2.1. Org-internal consistency beats
+   Norway's Rev-2-based SN2007 alignment; Eurostat publishes a 2↔2.1
+   correspondence if cross-country joins need it later.
+   `classifier_version` records `NACE_REV_2_1`.
+3. **Classification input prefers the English translation** — the corpus
+   embedding text is English, so same-language retrieval beats
+   cross-lingual: the scan selects
+   `coalesce(English translation from text_translations, Latvian
+   original)` per distinct text (one argMax join, same shape as the
+   `_translated` views). Untranslated texts still classify via the
+   multilingual embedder using the Latvian original. The adjudication
+   prompt shows both original and translation when available.
+4. **Retrieval spans all corpus levels** (divisions, groups, classes), and
+   the stored `nace_code` may be 2-, 3-, or 4-digit — vague texts like
+   "tirdzniecība" (trade) honestly classify at division level rather than
+   being forced into a wrong 4-digit class.
+5. **Query embeddings must use the same instruction convention** the
+   commoncrawl pipeline uses for queries against this corpus (mirrored
+   from `cc-enrich-worker`'s embed client at plan time), since Qwen3
+   embeddings are instruction-conditioned.
+
 ## Out of scope (v1)
 
 - Any source other than Latvia (Norway/Estonia/Czech have official codes).
