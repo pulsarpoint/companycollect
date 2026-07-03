@@ -173,12 +173,13 @@ curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/run
 
 Use the Go trigger command when you want to start a source's translation
 workflow directly through Temporal instead of the HTTP API. It defaults to the
-`norway_brreg` source; pass `-source <name>` for any other configured source:
+`norway_brreg` source; pass `-source <name>` (or `SOURCE=<name>` with make) for
+any other configured source:
 
 ```bash
-make trigger-brreg-load-and-run
-make trigger-brreg-load-queue
-make trigger-brreg-run
+make trigger-load-and-run
+make trigger-load-queue
+make trigger-run
 ```
 
 Or run it directly:
