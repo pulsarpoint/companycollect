@@ -97,6 +97,7 @@ EXPECTED_MIGRATIONS = (
     "000082_corpscout_lv_companies_vzd_address",
     "000083_corpscout_cz_company_contacts",
     "000084_corpscout_se_company_registry",
+    "000085_corpscout_text_classifications",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
