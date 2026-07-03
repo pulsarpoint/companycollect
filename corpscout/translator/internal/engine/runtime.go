@@ -254,35 +254,69 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 	}, nil
 }
 
-func (r *Runtime) UploadOutput(ctx context.Context) (UploadResult, error) {
+// FlushOutput inserts all queued output rows into ClickHouse and then, only
+// after a successful insert, deletes the flushed rows from the DuckDB queue.
+// Matched input_items are deleted first (while output_items still exists to
+// join against), then all of output_items; failed_items is never touched.
+func (r *Runtime) FlushOutput(ctx context.Context) (UploadResult, error) {
 	if r.closed {
 		return UploadResult{}, errors.New("translator runtime is closed")
 	}
 
 	start := time.Now()
-	r.logger.Info("upload output started")
+	r.logger.Info("flush output started")
 	translations, err := r.outputTranslations(ctx)
 	if err != nil {
-		r.logger.Error("upload output failed", "err", err, "duration_ms", elapsedMillis(start))
+		r.logger.Error("flush output failed", "err", err, "duration_ms", elapsedMillis(start))
 		return UploadResult{}, err
 	}
 	if len(translations) == 0 {
-		r.logger.Info("upload output completed", "rows_seen", 0, "rows_inserted", 0, "duration_ms", elapsedMillis(start))
+		r.logger.Info("flush output completed", "rows_seen", 0, "rows_inserted", 0, "duration_ms", elapsedMillis(start))
 		return UploadResult{}, nil
 	}
 
 	inserted, err := r.source.InsertTextTranslations(ctx, translations)
 	if err != nil {
 		r.logger.Error(
-			"upload output failed",
+			"flush output failed",
 			"err", err,
 			"rows_seen", len(translations),
 			"duration_ms", elapsedMillis(start),
 		)
 		return UploadResult{RowsSeen: len(translations)}, err
 	}
+
+	if _, err := r.db.ExecContext(ctx, `
+		delete from input_items
+		where (source_table, source_column, source_text_hash, source_lang, target_lang) in (
+			select source_table, source_column, source_text_hash, source_lang, target_lang
+			from output_items
+		)
+	`); err != nil {
+		r.logger.Error(
+			"flush output failed",
+			"err", err,
+			"rows_seen", len(translations),
+			"rows_inserted", inserted,
+			"duration_ms", elapsedMillis(start),
+		)
+		return UploadResult{RowsSeen: len(translations), RowsInserted: inserted},
+			fmt.Errorf("delete flushed input rows: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `delete from output_items`); err != nil {
+		r.logger.Error(
+			"flush output failed",
+			"err", err,
+			"rows_seen", len(translations),
+			"rows_inserted", inserted,
+			"duration_ms", elapsedMillis(start),
+		)
+		return UploadResult{RowsSeen: len(translations), RowsInserted: inserted},
+			fmt.Errorf("delete flushed output rows: %w", err)
+	}
+
 	r.logger.Info(
-		"upload output completed",
+		"flush output completed",
 		"rows_seen", len(translations),
 		"rows_inserted", inserted,
 		"duration_ms", elapsedMillis(start),

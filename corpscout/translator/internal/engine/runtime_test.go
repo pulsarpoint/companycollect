@@ -60,9 +60,9 @@ func TestRuntimeLoadsProcessesAndUploadsBRREGQueue(t *testing.T) {
 		t.Fatalf("expected 10 translated rows, got %d", totalTranslated)
 	}
 
-	uploadResult, err := runtime.UploadOutput(ctx)
+	uploadResult, err := runtime.FlushOutput(ctx)
 	if err != nil {
-		t.Fatalf("upload output: %v", err)
+		t.Fatalf("flush output: %v", err)
 	}
 	if uploadResult.RowsSeen != 10 {
 		t.Fatalf("expected 10 output rows seen, got %d", uploadResult.RowsSeen)
@@ -112,8 +112,8 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 	if processResult.PendingCount != 1 || processResult.OutputCount != 1 {
 		t.Fatalf("ProcessOneBatch() result = %#v, want one pending and one output row", processResult)
 	}
-	if _, err := runtime.UploadOutput(ctx); err != nil {
-		t.Fatalf("upload output: %v", err)
+	if _, err := runtime.FlushOutput(ctx); err != nil {
+		t.Fatalf("flush output: %v", err)
 	}
 
 	logText := logs.String()
@@ -123,7 +123,7 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 		`"rows_inserted":2`,
 		`"msg":"process batch completed"`,
 		`"translated_count":1`,
-		`"msg":"upload output completed"`,
+		`"msg":"flush output completed"`,
 		`"rows_seen":1`,
 	}
 	for _, fragment := range required {
@@ -327,6 +327,104 @@ func TestRuntimeMarksSingleItemFailedAfterRepeatedModelOutputFailures(t *testing
 	}
 	if failedCount != 1 {
 		t.Fatalf("failed_items count = %d, want 1", failedCount)
+	}
+}
+
+func TestFlushOutputInsertsAndDeletesFlushedRows(t *testing.T) {
+	ctx := context.Background()
+	source := newFixtureSource(0)
+	runtime, err := NewRuntime(ctx, RuntimeConfig{
+		QueuePath:    filepath.Join(t.TempDir(), "flush.duckdb"),
+		Definition:   norwayDefinition(),
+		Source:       source,
+		Translator:   runtimeTranslator{},
+		ProviderName: "local",
+		Model:        "qwen3:6b",
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	defer runtime.Close()
+
+	// Two distinct items so both actually enqueue as separate rows.
+	req := validEnqueueRequest(1)
+	req.Items = append(req.Items, EnqueueItem{
+		SourceTable:    "corpscout.no_companies",
+		SourceColumn:   "activity_text_original",
+		SourceText:     "annen tekst",
+		SourceTextHash: "42",
+	})
+	enqueueResult, err := runtime.Enqueue(ctx, req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if enqueueResult.Received != 2 || enqueueResult.Inserted != 2 {
+		t.Fatalf("expected 2/2 enqueued, got %+v", enqueueResult)
+	}
+
+	processResult, err := runtime.ProcessOneBatch(ctx, ProcessInput{BatchSize: 10, TimeoutSeconds: 30})
+	if err != nil {
+		t.Fatalf("process one batch: %v", err)
+	}
+	if processResult.TranslatedCount != 2 || processResult.OutputCount != 2 || processResult.PendingCount != 0 {
+		t.Fatalf("unexpected process result: %+v", processResult)
+	}
+
+	// Seed an unrelated failed item directly; flush must never delete
+	// failed_items rows.
+	if _, err := runtime.db.ExecContext(ctx, `
+		insert into failed_items (
+			source_table, source_column, source_text, source_text_hash,
+			source_lang, target_lang, error_message, failed_at
+		) values (?, ?, ?, cast(? as ubigint), ?, ?, ?, current_timestamp)
+	`, "corpscout.no_companies", "activity_text_original", "failed tekst", "999", "no", "en", "boom"); err != nil {
+		t.Fatalf("seed failed item: %v", err)
+	}
+
+	flushResult, err := runtime.FlushOutput(ctx)
+	if err != nil {
+		t.Fatalf("flush output: %v", err)
+	}
+	if flushResult.RowsSeen != 2 || flushResult.RowsInserted != 2 {
+		t.Fatalf("unexpected flush result: %+v", flushResult)
+	}
+	if len(source.insertedTranslations) != 2 {
+		t.Fatalf("expected 2 ClickHouse insert rows, got %d", len(source.insertedTranslations))
+	}
+
+	outputCount, err := countRows(ctx, runtime.db, "output_items")
+	if err != nil {
+		t.Fatalf("count output_items: %v", err)
+	}
+	if outputCount != 0 {
+		t.Fatalf("output_items count = %d, want 0", outputCount)
+	}
+
+	inputCount, err := countRows(ctx, runtime.db, "input_items")
+	if err != nil {
+		t.Fatalf("count input_items: %v", err)
+	}
+	if inputCount != 0 {
+		t.Fatalf("input_items count = %d, want 0 (matched inputs deleted)", inputCount)
+	}
+
+	failedCount, err := countRows(ctx, runtime.db, "failed_items")
+	if err != nil {
+		t.Fatalf("count failed_items: %v", err)
+	}
+	if failedCount != 1 {
+		t.Fatalf("failed_items count = %d, want 1 (untouched by flush)", failedCount)
+	}
+
+	secondFlush, err := runtime.FlushOutput(ctx)
+	if err != nil {
+		t.Fatalf("second flush output: %v", err)
+	}
+	if secondFlush.RowsSeen != 0 || secondFlush.RowsInserted != 0 {
+		t.Fatalf("expected no-op second flush, got %+v", secondFlush)
+	}
+	if len(source.insertedTranslations) != 2 {
+		t.Fatalf("second flush must not insert more rows, got %d", len(source.insertedTranslations))
 	}
 }
 
