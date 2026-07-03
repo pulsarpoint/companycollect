@@ -17,7 +17,6 @@ from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 GROUP_NAME = "czech_ares"
 CZECH_ARES_DUCKDB_POOL = "czech_ares_duckdb"
 CZECH_ARES_DUCKDB_PATH = Path("data/czech_ares_source.duckdb")
-DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 RAW_ASSET_KEY = "czech_ares_res_raw_duckdb"
 
 

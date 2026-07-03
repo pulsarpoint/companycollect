@@ -27,9 +27,9 @@ def _load_raw(tmp_path) -> Path:
     csv.write_text("\n".join([HEADER, *ROWS]) + "\n")
     db = tmp_path / "cz.duckdb"
     con = duckdb.connect(str(db))
-    con.execute(f"create schema {tables.DLT_DATASET_NAME}")
+    con.execute(f"create schema {tables.DUCKDB_SCHEMA}")
     con.execute(
-        f"create table {tables.DLT_DATASET_NAME}.{tables.RES_RAW_TABLE} as "
+        f"create table {tables.DUCKDB_SCHEMA}.{tables.RES_RAW_TABLE} as "
         f"select * from read_csv('{csv}', header=true, all_varchar=true)"
     )
     con.close()
@@ -43,12 +43,12 @@ def test_companies_build(tmp_path):
     assert counts == {"companies": 3, "active": 2}
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
-            f"describe {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
+            f"describe {tables.DUCKDB_SCHEMA}.{tables.COMPANIES_TABLE}"
         ).fetchall()]
         assert cols == list(tables.CZ_COMPANIES_COLUMNS)
         rows = {r[0]: r for r in con.execute(
             f"select ico, name, legal_form_en, is_active, established_date, terminated_date, "
-            f"address, postal_code, city from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
+            f"address, postal_code, city from {tables.DUCKDB_SCHEMA}.{tables.COMPANIES_TABLE}"
         ).fetchall()}
     assert rows["27074358"][1:] == (
         "Asseco a.s.", "Joint-stock company (a.s.)", True, dt.date(2003, 8, 6), None,
@@ -67,13 +67,13 @@ def test_industries_build_cznace_to_nace(tmp_path):
     assert counts == {"industries": 3, "nace_mapped": 3}
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
-            f"describe {tables.DLT_DATASET_NAME}.{tables.INDUSTRIES_RAW_TABLE}"
+            f"describe {tables.DUCKDB_SCHEMA}.{tables.INDUSTRIES_RAW_TABLE}"
         ).fetchall()]
         assert cols == list(tables.CZ_INDUSTRIES_COLUMNS)
         rows = {r[0]: r for r in con.execute(
             f"select ico, source_industry_code, source_industry_code_set, nace_revision, "
             f"nace_code, nace_normalized_code, nace_mapping_status, is_primary "
-            f"from {tables.DLT_DATASET_NAME}.{tables.INDUSTRIES_RAW_TABLE}"
+            f"from {tables.DUCKDB_SCHEMA}.{tables.INDUSTRIES_RAW_TABLE}"
         ).fetchall()}
     # NACE2025 preferred -> NACE Rev 2.1, first 4 digits.
     assert rows["27074358"][1:] == ("62010", "CZ_NACE_2025", "NACE_REV_2_1", "62.01", "6201", "mapped", 1)
@@ -123,14 +123,17 @@ def test_contact_candidates_extract_domains_and_emails_from_company_name():
 def test_contact_rows_keep_commoncrawl_and_dns_validated_domains_only():
     from dagster_v3.defs.czech_ares import contacts
 
-    rows = contacts.build_contact_rows_from_company_rows(
+    candidates_by_domain = contacts.extract_contact_candidates_by_domain(
         [
-            ("27074358", "Asseco a.s.", "www.asseco.cz info@asseco.cz"),
-            ("12345678", "DNS only s.r.o.", "dns-only.cz"),
-            ("87654321", "Invalid s.r.o.", "missing.example"),
-        ],
+            ("27074358", "Asseco a.s. www.asseco.cz info@asseco.cz"),
+            ("12345678", "DNS only dns-only.cz"),
+            ("87654321", "Invalid missing.example"),
+        ]
+    )
+    rows = contacts.build_contact_rows_from_domain_candidates(
+        candidates_by_domain,
         commoncrawl_domains={"asseco.cz"},
-        resolve_domain=lambda domain: domain == "dns-only.cz",
+        resolve_nameservers=lambda domain: ("ns1.dns-only.cz",) if domain == "dns-only.cz" else (),
         source_run_id="run-1",
         resolved_at=dt.datetime(2026, 7, 3, 12, 0, tzinfo=dt.UTC),
     )
@@ -147,6 +150,114 @@ def test_contact_rows_keep_commoncrawl_and_dns_validated_domains_only():
     ]
     assert [row["confidence"] for row in rows] == [0.95, 0.95, 0.7]
     assert all(row["domain"] in {"asseco.cz", "dns-only.cz"} for row in rows)
+
+
+def test_contact_extraction_returns_domain_dictionary_before_validation():
+    from dagster_v3.defs.czech_ares import contacts
+
+    candidates_by_domain = contacts.extract_contact_candidates_by_domain(
+        [
+            ("27074358", "Asseco a.s. www.asseco.cz info@asseco.cz"),
+            ("12345678", "Portal https://portal.example.cz/path"),
+        ]
+    )
+
+    assert sorted(candidates_by_domain) == ["asseco.cz", "example.cz"]
+    assert [candidate.contact_value for candidate in candidates_by_domain["asseco.cz"]] == [
+        "www.asseco.cz",
+        "info@asseco.cz",
+    ]
+    assert candidates_by_domain["example.cz"][0].contact_value == "portal.example.cz"
+
+
+def test_clickhouse_candidate_batches_load_100k_company_names():
+    from dagster_v3.defs.czech_ares import contacts
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params):
+            self.calls.append((sql, params))
+            return [("27074358", "Asseco a.s. www.asseco.cz")]
+
+    fake = FakeClient()
+
+    rows = contacts.load_company_contact_candidate_batch(fake)
+
+    assert rows == [("27074358", "Asseco a.s. www.asseco.cz")]
+    assert fake.calls[0][1]["batch_size"] == 100_000
+    assert fake.calls[0][1]["offset"] == 0
+
+
+def test_nameservers_for_domain_uses_parent_zone_authority(monkeypatch):
+    from dagster_v3.defs.czech_ares import contacts
+
+    class FakeNsAnswer:
+        target = "A.NS.NIC.CZ."
+
+    calls = []
+
+    def fake_resolve(domain, record_type, *, lifetime):
+        calls.append((domain, record_type, lifetime))
+        if (domain, record_type) == ("cz", "NS"):
+            return [FakeNsAnswer()]
+        if (domain, record_type) == ("a.ns.nic.cz", "A"):
+            return ["192.0.2.53"]
+        return []
+
+    def fake_authoritative_lookup(domain, parent_nameserver_addresses):
+        assert domain == "example.cz"
+        assert parent_nameserver_addresses == ("192.0.2.53",)
+        return ("ns1.example.cz",)
+
+    monkeypatch.setattr(contacts.dns.resolver, "resolve", fake_resolve)
+    monkeypatch.setattr(
+        contacts,
+        "_resolve_domain_nameservers_from_parent",
+        fake_authoritative_lookup,
+    )
+
+    assert contacts.nameservers_for_domain("example.cz") == ("ns1.example.cz",)
+    assert calls == [
+        ("cz", "NS", contacts.DNS_QUERY_TIMEOUT_SECONDS),
+        ("a.ns.nic.cz", "A", contacts.DNS_QUERY_TIMEOUT_SECONDS),
+        ("a.ns.nic.cz", "AAAA", contacts.DNS_QUERY_TIMEOUT_SECONDS),
+    ]
+
+
+def test_authoritative_nameserver_lookup_uses_dns_resolver(monkeypatch):
+    from dagster_v3.defs.czech_ares import contacts
+
+    class FakeAnswer:
+        target = "NS1.Example.CZ."
+
+    class FakeResolver:
+        instances = []
+
+        def __init__(self, *, configure):
+            assert configure is False
+            self.nameservers = []
+            self.timeout = None
+            self.lifetime = None
+            self.calls = []
+            self.instances.append(self)
+
+        def resolve(self, domain, record_type, *, lifetime):
+            self.calls.append((domain, record_type, lifetime))
+            return [FakeAnswer()]
+
+    monkeypatch.setattr(contacts.dns.resolver, "Resolver", FakeResolver)
+
+    nameservers = contacts._resolve_domain_nameservers_from_parent(
+        "example.cz",
+        ("192.0.2.53",),
+    )
+
+    assert nameservers == ("ns1.example.cz",)
+    resolver = FakeResolver.instances[0]
+    assert resolver.nameservers == ["192.0.2.53"]
+    assert resolver.calls == [("example.cz", "NS", contacts.DNS_QUERY_TIMEOUT_SECONDS)]
 
 
 def test_contacts_export_columns_match_migration():

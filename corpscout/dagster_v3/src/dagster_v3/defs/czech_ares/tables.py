@@ -1,4 +1,4 @@
-DLT_DATASET_NAME = "czech_ares"
+DUCKDB_SCHEMA = "czech_ares"
 RES_RAW_TABLE = "res_raw"  # DuckDB staging (all_varchar read_csv)
 COMPANIES_TABLE = "companies"  # DuckDB normalized
 INDUSTRIES_RAW_TABLE = "industries"  # DuckDB normalized

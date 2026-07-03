@@ -36,10 +36,10 @@ Ingest the Czech business register — companies + NACE industry + registered ad
   contacts, but many `cz_companies.name` values contain embedded domains or email
   addresses. The contact asset scans company names for email/domain candidates,
   normalizes each to a root domain, validates the domain against
-  `corpscout.commoncrawl_domains`, and falls back to DNS resolution when the domain
-  is absent from Common Crawl. Common Crawl validation gets higher confidence
-  (`0.95`) than DNS-only validation (`0.70`). Invalid/unresolvable candidates are
-  dropped.
+  `corpscout.commoncrawl_domains`, and falls back to DNS NS-record resolution when
+  the domain is absent from Common Crawl. Common Crawl validation gets higher
+  confidence (`0.95`) than DNS-only NS validation (`0.70`). Invalid/unresolvable
+  candidates are dropped.
 
 ## 5. ClickHouse schema (migration-owned, ReplacingMergeTree)
 - **`cz_companies`** `ORDER BY (ico)` — provenance + `ico`, `name`, `legal_form_code`,
@@ -63,7 +63,7 @@ Ingest the Czech business register — companies + NACE industry + registered ad
   stored in `cz_company_contacts` and linked to `cz_companies` by `ico` (IČO).
 - `domain_source='commoncrawl'` means the normalized domain exists in
   `commoncrawl_domains` and is treated as the stronger signal. `domain_source='dns'`
-  means the domain was not in Common Crawl but resolved successfully via DNS.
+  means the domain was not in Common Crawl but returned DNS NS records.
 - Phone numbers are still absent; this asset only extracts domains and emails from
   names.
 
@@ -90,5 +90,5 @@ Ingest the Czech business register — companies + NACE industry + registered ad
 - `uv run pytest tests/test_czech_ares.py tests/test_clickhouse_migrations.py -q` +
   `uv run dg check defs`. Migrations apply. Materialize live; `cz_companies` count +
   legal_form_en/address; `cz_company_contacts` contains only Common Crawl or
-  DNS-validated candidates; `cz_industries` join `nace_categories`. TDD; commit by
-  path.
+  DNS-NS-validated candidates; `cz_industries` join `nace_categories`. TDD; commit
+  by path.

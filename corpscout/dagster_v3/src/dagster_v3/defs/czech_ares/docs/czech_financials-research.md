@@ -2,7 +2,7 @@
 
 Status: Czech register/industry/address is live (`czech_ares`, 3.51M companies).
 `cz_company_contacts` now captures domain/email candidates embedded in company
-names and validates domains against Common Crawl or DNS. Financials are still
+names and validates domains against Common Crawl or DNS NS records. Financials are still
 deferred in favour of a broader **domain-first** approach (below).
 
 ---
@@ -65,7 +65,7 @@ external join key between a `.cz` domain and a company:
   `contact_type`, `contact_value`, normalized root `domain`, `domain_source`, and
   `confidence`. `domain_source='commoncrawl'` means the domain exists in
   `commoncrawl_domains` and receives higher confidence; `domain_source='dns'`
-  means the domain was absent from Common Crawl but resolved successfully.
+  means the domain was absent from Common Crawl but returned DNS NS records.
 
 ## 2. Structured contacts — ABSENT (confirmed)
 - Neither the **ARES API** (full record scanned — zero contact keys, no `@`/`http`/

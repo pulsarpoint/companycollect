@@ -13,7 +13,7 @@ from dagster_v3.defs.czech_ares import tables
 
 LOGGER = logging.getLogger(__name__)
 
-DLT_DATASET_NAME = tables.DLT_DATASET_NAME
+DUCKDB_SCHEMA = tables.DUCKDB_SCHEMA
 RES_RAW_TABLE = tables.RES_RAW_TABLE
 COMPANIES_TABLE = tables.COMPANIES_TABLE
 REGISTER_SOURCE_SLUG = "czech_ares_register"
@@ -152,16 +152,16 @@ def load_czech_ares_res(
             url=download_url, dest=csv_path, timeout_seconds=timeout_seconds,
             session=session, log=log if callable(log) else None,
         )
-        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        connection.execute(f"create schema if not exists {DUCKDB_SCHEMA}")
         connection.execute(
-            f"create or replace table {DLT_DATASET_NAME}.{RES_RAW_TABLE} as "
+            f"create or replace table {DUCKDB_SCHEMA}.{RES_RAW_TABLE} as "
             "select * from read_csv(?, header=true, all_varchar=true, "
             "quote='\"', escape='\"')",
             [str(csv_path)],
         )
         count = int(
             connection.execute(
-                f"select count(*) from {DLT_DATASET_NAME}.{RES_RAW_TABLE}"
+                f"select count(*) from {DUCKDB_SCHEMA}.{RES_RAW_TABLE}"
             ).fetchone()[0]
         )
     if count == 0:
@@ -183,8 +183,8 @@ def build_czech_ares_companies(
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Normalize the raw RES table into czech_ares.companies (with address)."""
-    raw = f"{DLT_DATASET_NAME}.{RES_RAW_TABLE}"
-    qualified = f"{DLT_DATASET_NAME}.{COMPANIES_TABLE}"
+    raw = f"{DUCKDB_SCHEMA}.{RES_RAW_TABLE}"
+    qualified = f"{DUCKDB_SCHEMA}.{COMPANIES_TABLE}"
     legal_form_en = "case FORMA " + " ".join(
         f"when {_sql_literal(code)} then {_sql_literal(en)}"
         for code, en in CZ_LEGAL_FORM_EN_BY_CODE.items()

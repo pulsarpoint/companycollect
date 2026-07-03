@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import re
-import socket
 import uuid
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+import dns.exception
+import dns.rdatatype
+import dns.resolver
+import tldextract
 
 from dagster_v3.defs.czech_ares import tables
 from dagster_v3.domains import root_domain, website_host
@@ -16,19 +20,25 @@ CONTACTS_SOURCE_SLUG = "czech_ares_contact_extraction"
 COMMONCRAWL_CONFIDENCE = 0.95
 DNS_CONFIDENCE = 0.70
 DNS_RESOLVE_WORKERS = 32
+CLICKHOUSE_COMPANY_BATCH_SIZE = 100_000
 CLICKHOUSE_QUERY_BATCH_SIZE = 10_000
 CLICKHOUSE_INSERT_BATCH_SIZE = 50_000
+DNS_QUERY_TIMEOUT_SECONDS = 2.0
 
 _EMAIL_RE = re.compile(
-    r"\b[A-Z0-9._%+\-]+@(?:[A-Z0-9](?:[A-Z0-9\-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,63}\b",
+    r"\b[A-Z0-9._%+\-]+@(?:[A-Z0-9](?:[A-Z0-9\-]{0,61}[A-Z0-9])?\.)+[A-Z0-9](?:[A-Z0-9\-]{0,61}[A-Z0-9])?\b",
     re.IGNORECASE,
 )
 _DOMAIN_RE = re.compile(
-    r"(?<!@)\b(?:https?://)?(?:[A-Z0-9](?:[A-Z0-9\-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,63}(?:/[^\s,;)]*)?",
+    r"(?<!@)\b(?:https?://)?(?:[A-Z0-9](?:[A-Z0-9\-]{0,61}[A-Z0-9])?\.)+[A-Z0-9](?:[A-Z0-9\-]{0,61}[A-Z0-9])?(?:/[^\s,;)]*)?",
     re.IGNORECASE,
 )
 _CANDIDATE_NAME_FILTER = (
     "(?i)(@|https?://|www\\.|[A-Za-z0-9][A-Za-z0-9-]*\\.[A-Za-z]{2,})"
+)
+_TLD_EXTRACT = tldextract.TLDExtract(
+    suffix_list_urls=(),
+    cache_dir=None,
 )
 
 
@@ -39,6 +49,9 @@ class ContactCandidate:
     contact_type: str
     contact_value: str
     domain: str
+
+
+CompanyContactRow = tuple[str, str]
 
 
 def extract_contact_candidates(*, ico: str, company_name: str) -> list[ContactCandidate]:
@@ -73,42 +86,64 @@ def extract_contact_candidates(*, ico: str, company_name: str) -> list[ContactCa
     return candidates
 
 
-def build_contact_rows_from_company_rows(
-    company_rows: Iterable[tuple[str, str, str]],
+def extract_contact_candidates_by_domain(
+    company_rows: Iterable[CompanyContactRow],
+) -> dict[str, list[ContactCandidate]]:
+    candidates_by_domain: dict[str, list[ContactCandidate]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for ico_raw, company_name_raw in company_rows:
+        ico = str(ico_raw)
+        company_name = str(company_name_raw)
+        for parsed_candidate in extract_contact_candidates(
+            ico=ico, company_name=company_name
+        ):
+            candidate = ContactCandidate(
+                ico=parsed_candidate.ico,
+                company_name=company_name,
+                contact_type=parsed_candidate.contact_type,
+                contact_value=parsed_candidate.contact_value,
+                domain=parsed_candidate.domain,
+            )
+            key = (candidate.ico, candidate.contact_type, candidate.contact_value)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates_by_domain.setdefault(candidate.domain, []).append(candidate)
+    return candidates_by_domain
+
+
+def build_contact_rows_from_domain_candidates(
+    candidates_by_domain: dict[str, list[ContactCandidate]],
     *,
     commoncrawl_domains: set[str],
-    resolve_domain: Callable[[str], bool],
+    resolve_nameservers: Callable[[str], Sequence[str]],
     source_run_id: str,
     resolved_at: datetime,
     source_url: str = tables.RES_DATA_URL,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    validation_cache: dict[str, tuple[str, float] | None] = {}
 
-    for ico, company_name, candidate_text in company_rows:
-        for candidate in extract_contact_candidates(
-            ico=str(ico), company_name=str(candidate_text)
-        ):
-            validation = _validated_domain(
-                candidate.domain,
-                commoncrawl_domains=commoncrawl_domains,
-                resolve_domain=resolve_domain,
-                validation_cache=validation_cache,
-            )
-            if validation is None:
-                continue
-            domain_source, confidence = validation
+    for domain in sorted(candidates_by_domain):
+        validation = _validated_domain(
+            domain,
+            commoncrawl_domains=commoncrawl_domains,
+            resolve_nameservers=resolve_nameservers,
+        )
+        if validation is None:
+            continue
+        domain_source, confidence = validation
+        for candidate in candidates_by_domain[domain]:
             rows.append(
                 {
                     "country_iso2": "CZ",
                     "source_slug": CONTACTS_SOURCE_SLUG,
                     "source_run_id": source_run_id,
-                    "source_record_id": str(ico),
-                    "ico": str(ico),
-                    "company_name": str(company_name),
+                    "source_record_id": candidate.ico,
+                    "ico": candidate.ico,
+                    "company_name": candidate.company_name,
                     "contact_type": candidate.contact_type,
                     "contact_value": candidate.contact_value,
-                    "domain": candidate.domain,
+                    "domain": domain,
                     "domain_source": domain_source,
                     "confidence": confidence,
                     "source_url": source_url,
@@ -125,29 +160,41 @@ def replace_czech_company_contacts_clickhouse(
     source_run_id: str,
     resolved_at: datetime | None = None,
     log: Callable[..., object] | None = None,
-    resolve_domain: Callable[[str], bool] | None = None,
 ) -> dict[str, int]:
     resolved_timestamp = resolved_at or datetime.now(UTC)
-    company_rows = _candidate_company_rows(clickhouse_client)
-    candidate_domains = _candidate_domains(company_rows)
-    commoncrawl_domains = _commoncrawl_domains(clickhouse_client, candidate_domains)
-    if resolve_domain is None:
-        dns_results = _resolve_domains_concurrently(
-            [
-                domain
-                for domain in candidate_domains
-                if domain not in commoncrawl_domains
-            ]
+    candidates_by_domain: dict[str, list[ContactCandidate]] = {}
+    offset = 0
+    while True:
+        company_rows = load_company_contact_candidate_batch(
+            clickhouse_client,
+            batch_size=CLICKHOUSE_COMPANY_BATCH_SIZE,
+            offset=offset,
         )
+        if not company_rows:
+            break
+        _merge_domain_candidates(
+            candidates_by_domain,
+            extract_contact_candidates_by_domain(company_rows),
+        )
+        offset += CLICKHOUSE_COMPANY_BATCH_SIZE
 
-        def resolver(domain: str) -> bool:
-            return dns_results.get(domain, False)
-    else:
-        resolver = resolve_domain
-    contact_rows = build_contact_rows_from_company_rows(
-        company_rows,
+    candidate_domains = tuple(sorted(candidates_by_domain))
+    commoncrawl_domains = _commoncrawl_domains(clickhouse_client, candidate_domains)
+    nameservers_by_domain = _resolve_nameservers_concurrently(
+        [
+            domain
+            for domain in candidate_domains
+            if domain not in commoncrawl_domains
+        ]
+    )
+
+    def resolve_nameservers(domain: str) -> Sequence[str]:
+        return nameservers_by_domain.get(domain, ())
+
+    contact_rows = build_contact_rows_from_domain_candidates(
+        candidates_by_domain,
         commoncrawl_domains=commoncrawl_domains,
-        resolve_domain=resolver,
+        resolve_nameservers=resolve_nameservers,
         source_run_id=source_run_id,
         resolved_at=resolved_timestamp,
     )
@@ -161,34 +208,119 @@ def replace_czech_company_contacts_clickhouse(
     return _replace_contact_table(clickhouse_client, contact_rows)
 
 
-def domain_resolves(domain: str) -> bool:
+def nameservers_for_domain(domain: str) -> tuple[str, ...]:
+    parent_zone = _parent_zone_for_domain(domain)
+    if parent_zone == "":
+        return ()
+    parent_nameserver_hosts = _recursive_nameservers(parent_zone)
+    parent_nameserver_addresses = _nameserver_addresses(parent_nameserver_hosts)
+    if not parent_nameserver_addresses:
+        return ()
+    return _resolve_domain_nameservers_from_parent(
+        domain,
+        parent_nameserver_addresses,
+    )
+
+
+def _parent_zone_for_domain(domain: str) -> str:
+    extracted = _TLD_EXTRACT(domain)
+    return extracted.suffix.lower()
+
+
+def _recursive_nameservers(domain: str) -> tuple[str, ...]:
     try:
-        socket.getaddrinfo(domain, None)
-    except OSError:
-        return False
-    return True
+        answers = dns.resolver.resolve(
+            domain,
+            "NS",
+            lifetime=DNS_QUERY_TIMEOUT_SECONDS,
+        )
+    except dns.exception.DNSException:
+        return ()
+    return _answer_nameservers(answers)
 
 
-def resolve_domains_concurrently(domain: str) -> bool:
-    return _resolve_domains_concurrently((domain,)).get(domain, False)
+def _nameserver_addresses(nameservers: Sequence[str]) -> tuple[str, ...]:
+    addresses: set[str] = set()
+    for nameserver in nameservers:
+        for record_type in ("A", "AAAA"):
+            try:
+                answers = dns.resolver.resolve(
+                    nameserver,
+                    record_type,
+                    lifetime=DNS_QUERY_TIMEOUT_SECONDS,
+                )
+            except dns.exception.DNSException:
+                continue
+            addresses.update(str(answer).rstrip(".") for answer in answers)
+    return tuple(sorted(addresses))
 
 
-def _resolve_domains_concurrently(domains: Sequence[str]) -> dict[str, bool]:
+def _resolve_domain_nameservers_from_parent(
+    domain: str,
+    parent_nameserver_addresses: Sequence[str],
+) -> tuple[str, ...]:
+    for address in parent_nameserver_addresses:
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.nameservers = [address]
+        resolver.timeout = DNS_QUERY_TIMEOUT_SECONDS
+        resolver.lifetime = DNS_QUERY_TIMEOUT_SECONDS
+        try:
+            answers = resolver.resolve(
+                domain,
+                "NS",
+                lifetime=DNS_QUERY_TIMEOUT_SECONDS,
+            )
+        except dns.resolver.NoAnswer as exc:
+            nameservers = _authority_nameservers(exc.response())
+            if nameservers:
+                return nameservers
+            continue
+        except dns.exception.DNSException:
+            continue
+        nameservers = _answer_nameservers(answers)
+        if nameservers:
+            return nameservers
+    return ()
+
+
+def _answer_nameservers(answers: Any) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(getattr(answer, "target", answer)).rstrip(".").lower()
+                for answer in answers
+            }
+        )
+    )
+
+
+def _authority_nameservers(response: Any | None) -> tuple[str, ...]:
+    if response is None:
+        return ()
+    nameservers: set[str] = set()
+    for rrset in response.authority:
+        if rrset.rdtype != dns.rdatatype.NS:
+            continue
+        nameservers.update(str(record.target).rstrip(".").lower() for record in rrset)
+    return tuple(sorted(nameservers))
+
+
+def _resolve_nameservers_concurrently(domains: Sequence[str]) -> dict[str, tuple[str, ...]]:
     unique_domains = tuple(dict.fromkeys(domains))
     if not unique_domains:
         return {}
-    results: dict[str, bool] = {}
+    results: dict[str, tuple[str, ...]] = {}
     with ThreadPoolExecutor(max_workers=DNS_RESOLVE_WORKERS) as executor:
         future_by_domain = {
-            executor.submit(domain_resolves, domain): domain
+            executor.submit(nameservers_for_domain, domain): domain
             for domain in unique_domains
         }
         for future in as_completed(future_by_domain):
             domain = future_by_domain[future]
             try:
-                results[domain] = bool(future.result())
+                results[domain] = tuple(future.result())
             except OSError:
-                results[domain] = False
+                results[domain] = ()
     return results
 
 
@@ -227,40 +359,55 @@ def _validated_domain(
     domain: str,
     *,
     commoncrawl_domains: set[str],
-    resolve_domain: Callable[[str], bool],
-    validation_cache: dict[str, tuple[str, float] | None],
+    resolve_nameservers: Callable[[str], Sequence[str]],
 ) -> tuple[str, float] | None:
-    if domain in validation_cache:
-        return validation_cache[domain]
     if domain in commoncrawl_domains:
-        validation_cache[domain] = ("commoncrawl", COMMONCRAWL_CONFIDENCE)
-        return validation_cache[domain]
-    if resolve_domain(domain):
-        validation_cache[domain] = ("dns", DNS_CONFIDENCE)
-        return validation_cache[domain]
-    validation_cache[domain] = None
+        return "commoncrawl", COMMONCRAWL_CONFIDENCE
+    if resolve_nameservers(domain):
+        return "dns", DNS_CONFIDENCE
     return None
 
 
-def _candidate_company_rows(clickhouse_client: Any) -> list[tuple[str, str, str]]:
+def load_company_contact_candidate_batch(
+    clickhouse_client: Any,
+    *,
+    batch_size: int = CLICKHOUSE_COMPANY_BATCH_SIZE,
+    offset: int = 0,
+) -> list[tuple[str, str]]:
     rows = clickhouse_client.execute(
         f"""
-        SELECT ico, name, name
+        SELECT ico, name
         FROM {tables.QUALIFIED_COMPANIES_TABLE} FINAL
         WHERE match(name, %(candidate_filter)s)
+        ORDER BY ico
+        LIMIT %(batch_size)s OFFSET %(offset)s
         """,
-        {"candidate_filter": _CANDIDATE_NAME_FILTER},
+        {
+            "candidate_filter": _CANDIDATE_NAME_FILTER,
+            "batch_size": batch_size,
+            "offset": offset,
+        },
     )
-    return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
+    return [(str(row[0]), str(row[1])) for row in rows]
 
 
-def _candidate_domains(company_rows: Sequence[tuple[str, str, str]]) -> tuple[str, ...]:
-    domains = {
-        candidate.domain
-        for ico, _company_name, candidate_text in company_rows
-        for candidate in extract_contact_candidates(ico=ico, company_name=candidate_text)
+def _merge_domain_candidates(
+    target: dict[str, list[ContactCandidate]],
+    source: dict[str, list[ContactCandidate]],
+) -> None:
+    seen = {
+        (domain, candidate.ico, candidate.contact_type, candidate.contact_value)
+        for domain, candidates in target.items()
+        for candidate in candidates
     }
-    return tuple(sorted(domains))
+    for domain, candidates in source.items():
+        target_candidates = target.setdefault(domain, [])
+        for candidate in candidates:
+            key = (domain, candidate.ico, candidate.contact_type, candidate.contact_value)
+            if key in seen:
+                continue
+            seen.add(key)
+            target_candidates.append(candidate)
 
 
 def _commoncrawl_domains(
