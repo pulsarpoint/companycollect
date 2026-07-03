@@ -270,6 +270,62 @@ def test_replace_sweden_company_normalized_tables_rolls_back_partial_rebuild(
     assert companies == [("preexisting",)]
 
 
+def test_replace_sweden_company_normalized_tables_uses_source_line_number_for_duplicate_scb_ids(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "sweden_company_source.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        _create_raw_tables(connection)
+        connection.execute(
+            f"""
+            insert into {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+            values
+            (
+                'run-1',
+                1,
+                '9999999999',
+                'scb-hash-lower-line',
+                'scb-key',
+                '{{}}',
+                '1',
+                '',
+                '',
+                '0',
+                'Lower Line Road 1',
+                '1',
+                '49',
+                'SCB LOWER LINE',
+                '62010',
+                '',
+                '',
+                '',
+                '',
+                '9999999999',
+                '33333',
+                'UPPSALA',
+                '20240102',
+                '1'
+            )
+            """
+        )
+
+        replace_sweden_company_normalized_tables(
+            connection=connection,
+            loaded_at=datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
+        )
+
+        company = connection.execute(
+            f"""
+            select legal_name, scb_source_record_id, scb_source_payload_hash
+            from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            where company_id = '9999999999'
+            """
+        ).fetchone()
+
+    assert company == ("SCB LOWER LINE", "9999999999", "scb-hash-lower-line")
+
+
 def test_replace_sweden_company_normalized_tables_fails_when_raw_table_is_missing(
     tmp_path: Path,
 ) -> None:

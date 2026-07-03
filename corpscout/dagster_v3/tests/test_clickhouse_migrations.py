@@ -8,6 +8,7 @@ from dagster_v3.defs.finland_ytj import resolved_tables as finland_resolved_tabl
 from dagster_v3.defs.nace import tables as nace_tables
 from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
 from dagster_v3.defs.norway_brreg import resolved_tables as norway_resolved_tables
+from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
@@ -95,6 +96,7 @@ EXPECTED_MIGRATIONS = (
     "000081_corpscout_lv_companies_activity_translation",
     "000082_corpscout_lv_companies_vzd_address",
     "000083_corpscout_cz_company_contacts",
+    "000084_corpscout_se_company_registry",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -450,6 +452,27 @@ def test_clickhouse_migrations_have_down_files() -> None:
             or "CREATE OR REPLACE VIEW" in sql
             or "TRUNCATE TABLE IF EXISTS" in sql  # undo a data backfill
         )
+
+
+def test_sweden_company_registry_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000084_corpscout_se_company_registry.up.sql")
+    down_sql = _migration_sql("000084_corpscout_se_company_registry.down.sql")
+
+    expected_columns_by_table = {
+        sweden_company_tables.COMPANIES_TABLE_CH: sweden_company_tables.SE_COMPANIES_EXPORT_COLUMNS,
+        sweden_company_tables.COMPANY_ADDRESSES_TABLE_CH: (
+            sweden_company_tables.SE_COMPANY_ADDRESSES_EXPORT_COLUMNS
+        ),
+        sweden_company_tables.INDUSTRIES_TABLE_CH: (
+            sweden_company_tables.SE_INDUSTRIES_EXPORT_COLUMNS
+        ),
+    }
+
+    for table_name, column_names in expected_columns_by_table.items():
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        assert f"DROP TABLE IF EXISTS corpscout.{table_name}" in down_sql
+        for column_name in column_names:
+            assert f"    {column_name} " in sql
 
 
 def test_finland_resolved_migrations_use_corpscout_database() -> None:

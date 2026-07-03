@@ -1,4 +1,4 @@
-# Sweden Company Raw Snapshot And DuckDB Design
+# Sweden Company Registry Pipeline Design
 
 ## Source Overview
 
@@ -9,7 +9,7 @@ Sweden company data is available from Bolagsverket's public high-value-dataset h
 | SCB/FDB company bulk file | `https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip` | ZIP containing tab-separated text | about every 7 days | no |
 | Bolagsverket legal-register bulk file | `https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip` | ZIP containing semicolon-separated text | about every 7 days | no |
 
-The first implementation captures each raw ZIP company file and rebuilds a raw DuckDB database from those ZIPs. No parsing into a normalized company model, source-field normalization, ClickHouse export, contact extraction, or financial annual-report processing is part of this slice.
+The implementation captures each raw ZIP company file, rebuilds a raw DuckDB database from those ZIPs, materializes deterministic normalized DuckDB tables from the raw staging tables, and publishes those tables to migrated ClickHouse tables. Contact/domain candidates and financial annual-report processing are separate later slices.
 
 ## Resource
 
@@ -36,7 +36,7 @@ On each materialization it:
 4. Checks whether the source-last-modified/source object key already exists.
 5. Skips downloading files that already exist.
 6. Downloads missing files and uploads them to S3/RustFS.
-7. Writes a date-level manifest.
+7. Writes a run-scoped manifest and updates a date-level latest-manifest pointer.
 8. Emits materialization metadata with bucket, manifest key, file keys, downloaded count, reused count, and downloaded bytes.
 
 Object keys are date-based:
@@ -44,10 +44,13 @@ Object keys are date-based:
 ```text
 sweden_company/raw/source_last_modified=YYYY-MM-DDTHH-MM-SSZ/source=scb_bulkfil/source.zip
 sweden_company/raw/source_last_modified=YYYY-MM-DDTHH-MM-SSZ/source=bolagsverket_bulkfil/source.zip
+sweden_company/raw/retrieved_date=YYYY-MM-DD/run_id=<dagster-run-id>/manifest.json
 sweden_company/raw/retrieved_date=YYYY-MM-DD/manifest.json
 ```
 
 If the same upstream `Last-Modified` timestamp already exists, the asset reuses that raw ZIP and does not issue an HTTP GET download for that file. A rerun still issues lightweight HEAD requests to resolve the current source timestamp.
+
+The run-scoped manifest is the canonical manifest for downstream assets in the same Dagster run. The date-level manifest is only a latest pointer for manual downstream-only materializations and does not replace earlier run-scoped manifests.
 
 `sweden_company_raw_duckdb` materializes the raw DuckDB staging database.
 
@@ -84,12 +87,38 @@ Each source table is a full replacement table. The source columns are loaded as 
 | `source_s3_key` | object-store key of the ZIP loaded into the table |
 | `raw_record` | JSON representation of the source columns for audit/debug use |
 
+`sweden_company_normalized_duckdb` materializes deterministic normalized tables from the raw DuckDB tables.
+
+It creates:
+
+| table | purpose |
+|---|---|
+| `companies` | one row per normalized organization identifier, with Bolagsverket preferred over SCB for legal identity |
+| `company_addresses` | parsed Bolagsverket postal addresses and SCB fallback/enrichment addresses |
+| `company_industry_codes` | one row per valid non-empty SCB `Ng1`..`Ng5` SNI code |
+
+The industry-code table stores the raw 5-digit SNI code and derives `nace_rev2_class_code` from the first four digits. It does not label the 5-digit SNI value as NACE because the fifth digit is Sweden-specific detail.
+
+Contact extraction is intentionally separate. Domains, emails, and phone numbers in these sources are unstructured text candidates, not canonical registry fields, and should be handled later by `sweden_company_contact_candidates_duckdb`.
+
+`sweden_company_clickhouse` publishes the normalized DuckDB tables to ClickHouse.
+
+It asserts that migrations have already created the target tables and then full-replaces each table through a staging-table swap:
+
+| DuckDB table | ClickHouse table | purpose |
+|---|---|---|
+| `sweden_company.companies` | `corpscout.se_companies` | one row per normalized organization identifier |
+| `sweden_company.company_addresses` | `corpscout.se_company_addresses` | source-specific postal/visiting address observations |
+| `sweden_company.company_industry_codes` | `corpscout.se_industries` | SCB SNI activity codes with derived 4-digit NACE Rev. 2 class code |
+
+The ClickHouse tables are created only by migrations. Dagster does not run DDL beyond temporary stage-table creation during export.
+
 ## Job And Schedule
 
-`sweden_company_raw_snapshot_job` selects `sweden_company_raw_duckdb` with its upstream dependency, so the job runs both `sweden_company_raw_snapshot_s3` and `sweden_company_raw_duckdb`.
+`sweden_company_refresh_job` selects `sweden_company_clickhouse` with its upstream dependencies, so the job runs raw S3 download/reuse, raw DuckDB rebuild, normalized DuckDB rebuild, and ClickHouse publish.
 
-`sweden_company_raw_snapshot_weekly` runs at `15 6 * * 1` in `Europe/Belgrade`, matching the observed roughly weekly source refresh and staggering it from other country jobs. The schedule is `STOPPED` by default until the first live materialization is validated.
+`sweden_company_refresh_weekly` runs at `15 6 * * 1` in `Europe/Belgrade`, matching the observed roughly weekly source refresh and staggering it from other country jobs. The schedule is `STOPPED` by default until the first live materialization is validated.
 
 ## Out Of Scope
 
-No normalized company model, ClickHouse export, translation, NACE mapping, contacts, domain extraction, or financial annual-report processing is included here. Those belong in later Sweden company and Sweden financial slices after the raw object-storage and raw DuckDB boundaries are validated.
+No contact/domain extraction, financial annual-report processing, translation, or external NACE label enrichment is included here. Those belong in later Sweden company and Sweden financial slices after the registry pipeline is validated.

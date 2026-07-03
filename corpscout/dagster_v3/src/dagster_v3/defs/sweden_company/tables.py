@@ -1,12 +1,16 @@
 from pathlib import Path
 
 DLT_DATASET_NAME = "sweden_company"
-RAW_FILES_TABLE = "raw_files"
-BOLAGSVERKET_RAW_TABLE = "bolagsverket_raw"
-SCB_RAW_TABLE = "scb_raw"
-COMPANIES_TABLE = "companies"
-COMPANY_ADDRESSES_TABLE = "company_addresses"
-COMPANY_INDUSTRY_CODES_TABLE = "company_industry_codes"
+
+SWEDEN_DATABASE = "corpscout"
+COMPANIES_TABLE_CH = "se_companies"
+COMPANY_ADDRESSES_TABLE_CH = "se_company_addresses"
+INDUSTRIES_TABLE_CH = "se_industries"
+QUALIFIED_COMPANIES_TABLE = f"{SWEDEN_DATABASE}.{COMPANIES_TABLE_CH}"
+QUALIFIED_COMPANY_ADDRESSES_TABLE = (
+    f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_TABLE_CH}"
+)
+QUALIFIED_INDUSTRIES_TABLE = f"{SWEDEN_DATABASE}.{INDUSTRIES_TABLE_CH}"
 
 SWEDEN_COMPANY_DUCKDB_PATH = Path("data/sweden_company_source.duckdb")
 
@@ -68,4 +72,54 @@ RAW_PROVENANCE_COLUMNS = (
     "source_payload_hash",
     "source_s3_key",
     "raw_record",
+)
+
+SE_COMPANIES_EXPORT_COLUMNS = (
+    "company_id",
+    "registration_number",
+    "bolagsverket_company_id_raw",
+    "scb_company_id_raw",
+    "legal_name",
+    "legal_name_raw",
+    "legal_form_code",
+    "status",
+    "status_reason",
+    "incorporation_date",
+    "dissolution_date",
+    "activity_description",
+    "source_run_id",
+    "bolagsverket_source_record_id",
+    "scb_source_record_id",
+    "bolagsverket_source_payload_hash",
+    "scb_source_payload_hash",
+    "updated_from_raw_at",
+)
+
+SE_COMPANY_ADDRESSES_EXPORT_COLUMNS = (
+    "company_id",
+    "address_type",
+    "source",
+    "raw_address",
+    "street_address",
+    "care_of",
+    "postal_code",
+    "post_town",
+    "country_code",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "updated_from_raw_at",
+)
+
+SE_INDUSTRIES_EXPORT_COLUMNS = (
+    "company_id",
+    "sequence",
+    "is_primary",
+    "sni_code",
+    "nace_rev2_class_code",
+    "source_field",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "updated_from_raw_at",
 )

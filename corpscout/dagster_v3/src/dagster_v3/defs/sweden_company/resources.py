@@ -72,7 +72,14 @@ def raw_file_object_key(*, source_slug: str, source_last_modified: str) -> str:
     )
 
 
-def manifest_object_key(*, retrieved_date: str) -> str:
+def manifest_object_key(*, retrieved_date: str, run_id: str) -> str:
+    return (
+        f"sweden_company/raw/retrieved_date={retrieved_date}/"
+        f"run_id={run_id}/manifest.json"
+    )
+
+
+def latest_manifest_object_key(*, retrieved_date: str) -> str:
     return f"sweden_company/raw/retrieved_date={retrieved_date}/manifest.json"
 
 
@@ -88,6 +95,16 @@ def manifest_for_run(object_store: ObjectStoreResource, run_id: str) -> dict[str
     if not manifest_keys:
         raise ValueError("No Sweden company raw manifest found in object storage")
 
+    exact_run_keys = [
+        key for key in manifest_keys if key.endswith(f"/run_id={run_id}/manifest.json")
+    ]
+    if exact_run_keys:
+        manifests = [
+            json.loads(object_store.read_bytes(key, bucket=SWEDEN_COMPANY_RAW_BUCKET))
+            for key in exact_run_keys
+        ]
+        return max(manifests, key=_manifest_retrieved_at)
+
     manifests = [
         json.loads(object_store.read_bytes(key, bucket=SWEDEN_COMPANY_RAW_BUCKET))
         for key in manifest_keys
@@ -95,7 +112,11 @@ def manifest_for_run(object_store: ObjectStoreResource, run_id: str) -> dict[str
     run_manifests = [
         manifest for manifest in manifests if str(manifest.get("run_id")) == run_id
     ]
-    return max(run_manifests or manifests, key=lambda item: str(item["retrieved_at"]))
+    return max(run_manifests or manifests, key=_manifest_retrieved_at)
+
+
+def _manifest_retrieved_at(manifest: dict[str, Any]) -> str:
+    return str(manifest["retrieved_at"])
 
 
 def build_manifest(
@@ -161,13 +182,19 @@ class SwedenCompanyBulkResource(dg.ConfigurableResource):
             )
             for source_file in self._source_files()
         ]
-        manifest_key = manifest_object_key(retrieved_date=retrieved_date)
+        manifest_key = manifest_object_key(retrieved_date=retrieved_date, run_id=run_id)
+        manifest_body = json.dumps(
+            build_manifest(run_id=run_id, retrieved_at=retrieved_at, files=files),
+            sort_keys=True,
+        )
         object_store.write_json(
             manifest_key,
-            json.dumps(
-                build_manifest(run_id=run_id, retrieved_at=retrieved_at, files=files),
-                sort_keys=True,
-            ),
+            manifest_body,
+            bucket=SWEDEN_COMPANY_RAW_BUCKET,
+        )
+        object_store.write_json(
+            latest_manifest_object_key(retrieved_date=retrieved_date),
+            manifest_body,
             bucket=SWEDEN_COMPANY_RAW_BUCKET,
         )
 

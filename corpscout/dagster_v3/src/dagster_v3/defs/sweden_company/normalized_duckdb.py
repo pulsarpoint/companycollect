@@ -6,6 +6,7 @@ from dagster_v3.defs.sweden_company import tables
 BOLAGSVERKET_REQUIRED_COLUMNS = (
     "source_run_id",
     "source_record_id",
+    "source_line_number",
     "source_payload_hash",
     "organisationsidentitet",
     "organisationsnamn",
@@ -20,6 +21,7 @@ BOLAGSVERKET_REQUIRED_COLUMNS = (
 SCB_REQUIRED_COLUMNS = (
     "source_run_id",
     "source_record_id",
+    "source_line_number",
     "source_payload_hash",
     "PeOrgNr",
     "Namn",
@@ -51,12 +53,10 @@ def replace_sweden_company_normalized_tables(
         _replace_company_industry_codes_table(connection=connection, loaded_at=loaded_at)
 
         counts = {
-            tables.COMPANIES_TABLE: _table_count(connection, tables.COMPANIES_TABLE),
-            tables.COMPANY_ADDRESSES_TABLE: _table_count(
-                connection, tables.COMPANY_ADDRESSES_TABLE
-            ),
-            tables.COMPANY_INDUSTRY_CODES_TABLE: _table_count(
-                connection, tables.COMPANY_INDUSTRY_CODES_TABLE
+            "companies": _table_count(connection, "companies"),
+            "company_addresses": _table_count(connection, "company_addresses"),
+            "company_industry_codes": _table_count(
+                connection, "company_industry_codes"
             ),
             "bolagsverket_company_count": _bolagsverket_company_count(connection),
             "scb_company_count": _scb_company_count(connection),
@@ -71,10 +71,9 @@ def replace_sweden_company_normalized_tables(
 
 
 def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
-    dataset = tables.DLT_DATASET_NAME
     connection.execute(
-        f"""
-        create or replace table {dataset}.{tables.COMPANIES_TABLE} as
+        """
+        create or replace table sweden_company.companies as
         with bolagsverket_source as (
             select
                 *,
@@ -91,9 +90,12 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
                         '',
                         'g'
                     )
-                    order by source_record_id
+                    order by
+                        source_record_id,
+                        source_line_number,
+                        source_payload_hash
                 ) as company_rank
-            from {dataset}.{tables.BOLAGSVERKET_RAW_TABLE}
+            from sweden_company.bolagsverket_raw
             where regexp_replace(
                 coalesce(organisationsidentitet, ''),
                 '[^0-9]',
@@ -112,9 +114,12 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
                 regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
                 row_number() over (
                     partition by regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g')
-                    order by source_record_id
+                    order by
+                        source_record_id,
+                        source_line_number,
+                        source_payload_hash
                 ) as company_rank
-            from {dataset}.{tables.SCB_RAW_TABLE}
+            from sweden_company.scb_raw
             where regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') != ''
         ),
         scb as (
@@ -176,10 +181,9 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
 
 
 def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) -> None:
-    dataset = tables.DLT_DATASET_NAME
     connection.execute(
-        f"""
-        create or replace table {dataset}.{tables.COMPANY_ADDRESSES_TABLE} as
+        """
+        create or replace table sweden_company.company_addresses as
         with bolagsverket_addresses as (
             select
                 regexp_replace(
@@ -203,7 +207,7 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
                 source_record_id,
                 source_payload_hash,
                 ? as updated_from_raw_at
-            from {dataset}.{tables.BOLAGSVERKET_RAW_TABLE}
+            from sweden_company.bolagsverket_raw
             where nullif(trim(postadress), '') is not null
                 and regexp_replace(
                     coalesce(organisationsidentitet, ''),
@@ -244,7 +248,7 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
                 source_record_id,
                 source_payload_hash,
                 ? as updated_from_raw_at
-            from {dataset}.{tables.SCB_RAW_TABLE}
+            from sweden_company.scb_raw
             where regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') != ''
                 and (
                     nullif(trim(COAdress), '') is not null
@@ -266,10 +270,9 @@ def _replace_company_industry_codes_table(
     connection: Any,
     loaded_at: datetime,
 ) -> None:
-    dataset = tables.DLT_DATASET_NAME
     connection.execute(
-        f"""
-        create or replace table {dataset}.{tables.COMPANY_INDUSTRY_CODES_TABLE} as
+        """
+        create or replace table sweden_company.company_industry_codes as
         with candidates as (
             select
                 regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
@@ -280,7 +283,7 @@ def _replace_company_industry_codes_table(
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from {dataset}.{tables.SCB_RAW_TABLE}
+            from sweden_company.scb_raw
             union all
             select
                 regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
@@ -291,7 +294,7 @@ def _replace_company_industry_codes_table(
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from {dataset}.{tables.SCB_RAW_TABLE}
+            from sweden_company.scb_raw
             union all
             select
                 regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
@@ -302,7 +305,7 @@ def _replace_company_industry_codes_table(
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from {dataset}.{tables.SCB_RAW_TABLE}
+            from sweden_company.scb_raw
             union all
             select
                 regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
@@ -313,7 +316,7 @@ def _replace_company_industry_codes_table(
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from {dataset}.{tables.SCB_RAW_TABLE}
+            from sweden_company.scb_raw
             union all
             select
                 regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
@@ -324,7 +327,7 @@ def _replace_company_industry_codes_table(
                 source_run_id,
                 source_record_id,
                 source_payload_hash
-            from {dataset}.{tables.SCB_RAW_TABLE}
+            from sweden_company.scb_raw
         )
         select
             company_id,
@@ -339,7 +342,7 @@ def _replace_company_industry_codes_table(
             ? as updated_from_raw_at
         from candidates
         where company_id != ''
-            and sni_code ~ '^[0-9]{{5}}$'
+            and sni_code ~ '^[0-9]{5}$'
             and sni_code != '00000'
         """,
         [loaded_at],
@@ -348,8 +351,8 @@ def _replace_company_industry_codes_table(
 
 def _validate_required_columns(connection: Any) -> None:
     required_tables = (
-        tables.BOLAGSVERKET_RAW_TABLE,
-        tables.SCB_RAW_TABLE,
+        "bolagsverket_raw",
+        "scb_raw",
     )
     missing_tables = [
         table_name
@@ -364,8 +367,8 @@ def _validate_required_columns(connection: Any) -> None:
 
     missing_columns: list[str] = []
     for table_name, required_columns in (
-        (tables.BOLAGSVERKET_RAW_TABLE, BOLAGSVERKET_REQUIRED_COLUMNS),
-        (tables.SCB_RAW_TABLE, SCB_REQUIRED_COLUMNS),
+        ("bolagsverket_raw", BOLAGSVERKET_REQUIRED_COLUMNS),
+        ("scb_raw", SCB_REQUIRED_COLUMNS),
     ):
         existing_columns = _table_columns(connection, table_name)
         missing_columns.extend(
@@ -414,14 +417,14 @@ def _table_count(connection: Any, table_name: str) -> int:
 def _bolagsverket_company_count(connection: Any) -> int:
     return _scalar_count(
         connection,
-        f"""
+        """
         select count(distinct regexp_replace(
             coalesce(organisationsidentitet, ''),
             '[^0-9]',
             '',
             'g'
         ))
-        from {tables.DLT_DATASET_NAME}.{tables.BOLAGSVERKET_RAW_TABLE}
+        from sweden_company.bolagsverket_raw
         where regexp_replace(coalesce(organisationsidentitet, ''), '[^0-9]', '', 'g') != ''
         """,
     )
@@ -430,9 +433,9 @@ def _bolagsverket_company_count(connection: Any) -> int:
 def _scb_company_count(connection: Any) -> int:
     return _scalar_count(
         connection,
-        f"""
+        """
         select count(distinct regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g'))
-        from {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+        from sweden_company.scb_raw
         where regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') != ''
         """,
     )
@@ -441,9 +444,9 @@ def _scb_company_count(connection: Any) -> int:
 def _companies_with_sni_count(connection: Any) -> int:
     return _scalar_count(
         connection,
-        f"""
+        """
         select count(distinct company_id)
-        from {tables.DLT_DATASET_NAME}.{tables.COMPANY_INDUSTRY_CODES_TABLE}
+        from sweden_company.company_industry_codes
         """,
     )
 
@@ -451,24 +454,24 @@ def _companies_with_sni_count(connection: Any) -> int:
 def _unknown_sni_count(connection: Any) -> int:
     return _scalar_count(
         connection,
-        f"""
+        """
         with candidates as (
-            select nullif(trim(Ng1), '') as sni_code from {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+            select nullif(trim(Ng1), '') as sni_code from sweden_company.scb_raw
             union all
-            select nullif(trim(Ng2), '') as sni_code from {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+            select nullif(trim(Ng2), '') as sni_code from sweden_company.scb_raw
             union all
-            select nullif(trim(Ng3), '') as sni_code from {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+            select nullif(trim(Ng3), '') as sni_code from sweden_company.scb_raw
             union all
-            select nullif(trim(Ng4), '') as sni_code from {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+            select nullif(trim(Ng4), '') as sni_code from sweden_company.scb_raw
             union all
-            select nullif(trim(Ng5), '') as sni_code from {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+            select nullif(trim(Ng5), '') as sni_code from sweden_company.scb_raw
         )
         select count(*)
         from candidates
         where sni_code is not null
             and (
                 sni_code = '00000'
-                or sni_code !~ '^[0-9]{{5}}$'
+                or sni_code !~ '^[0-9]{5}$'
             )
         """,
     )

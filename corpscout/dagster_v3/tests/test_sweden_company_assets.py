@@ -3,7 +3,7 @@ from pathlib import Path
 from dagster_v3.defs.sweden_company import assets
 
 
-def test_sweden_company_raw_asset_job_and_schedule_registered() -> None:
+def test_sweden_company_refresh_job_and_schedule_registered() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
@@ -21,6 +21,7 @@ def test_sweden_company_raw_asset_job_and_schedule_registered() -> None:
         "sweden_company_raw_snapshot_s3",
         "sweden_company_raw_duckdb",
         "sweden_company_normalized_duckdb",
+        "sweden_company_clickhouse",
     }
 
     asset_graph = repo.asset_graph
@@ -32,9 +33,11 @@ def test_sweden_company_raw_asset_job_and_schedule_registered() -> None:
         assets.SWEDEN_COMPANY_NORMALIZED_DUCKDB_ASSET_KEY
     )
     assert normalized_node.group_name == "sweden_company"
+    clickhouse_node = asset_graph.get(assets.SWEDEN_COMPANY_CLICKHOUSE_ASSET_KEY)
+    assert clickhouse_node.group_name == "sweden_company"
 
 
-def test_sweden_company_docs_describe_raw_download_only_scope() -> None:
+def test_sweden_company_docs_describe_registry_pipeline_scope() -> None:
     doc_path = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -47,5 +50,5 @@ def test_sweden_company_docs_describe_raw_download_only_scope() -> None:
 
     text = doc_path.read_text(encoding="utf-8")
     assert "raw ZIP" in text
-    assert "No parsing" in text
+    assert "ClickHouse" in text
     assert "weekly" in text

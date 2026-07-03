@@ -1,11 +1,13 @@
 from datetime import UTC, datetime
 
 import dagster as dg
+from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_company import tables
+from dagster_v3.defs.sweden_company.clickhouse import export_sweden_company_clickhouse
 from dagster_v3.defs.sweden_company.normalized_duckdb import (
     replace_sweden_company_normalized_tables,
 )
@@ -16,16 +18,10 @@ from dagster_v3.defs.sweden_company.resources import (
 )
 
 GROUP_NAME = "sweden_company"
-SWEDEN_COMPANY_RAW_ASSET_KEY = dg.AssetKey("sweden_company_raw_snapshot_s3")
-SWEDEN_COMPANY_RAW_DUCKDB_ASSET_KEY = dg.AssetKey("sweden_company_raw_duckdb")
-SWEDEN_COMPANY_NORMALIZED_DUCKDB_ASSET_KEY = dg.AssetKey(
-    "sweden_company_normalized_duckdb"
-)
 SWEDEN_COMPANY_DUCKDB_POOL = "sweden_company_duckdb"
 
 
 @dg.asset(
-    name=SWEDEN_COMPANY_RAW_ASSET_KEY.path[-1],
     group_name=GROUP_NAME,
     kinds={"python", "s3", "zip", "bolagsverket"},
     description=(
@@ -47,8 +43,7 @@ def sweden_company_raw_snapshot_s3(
 
 
 @dg.asset(
-    name=SWEDEN_COMPANY_RAW_DUCKDB_ASSET_KEY.path[-1],
-    deps=[SWEDEN_COMPANY_RAW_ASSET_KEY],
+    deps=["sweden_company_raw_snapshot_s3"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "zip", "bolagsverket"},
     pool=SWEDEN_COMPANY_DUCKDB_POOL,
@@ -76,16 +71,15 @@ def sweden_company_raw_duckdb(
             "duckdb_path": str(tables.SWEDEN_COMPANY_DUCKDB_PATH),
             "source_run_id": source_run_id,
             "retrieved_date": str(manifest["retrieved_date"]),
-            "raw_file_count": counts[tables.RAW_FILES_TABLE],
-            "bolagsverket_row_count": counts.get(tables.BOLAGSVERKET_RAW_TABLE, 0),
-            "scb_row_count": counts.get(tables.SCB_RAW_TABLE, 0),
+            "raw_file_count": counts["raw_files"],
+            "bolagsverket_row_count": counts.get("bolagsverket_raw", 0),
+            "scb_row_count": counts.get("scb_raw", 0),
         }
     )
 
 
 @dg.asset(
-    name=SWEDEN_COMPANY_NORMALIZED_DUCKDB_ASSET_KEY.path[-1],
-    deps=[SWEDEN_COMPANY_RAW_DUCKDB_ASSET_KEY],
+    deps=["sweden_company_raw_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "bolagsverket", "scb"},
     pool=SWEDEN_COMPANY_DUCKDB_POOL,
@@ -106,9 +100,9 @@ def sweden_company_normalized_duckdb(
     return dg.MaterializeResult(
         metadata={
             "duckdb_path": str(tables.SWEDEN_COMPANY_DUCKDB_PATH),
-            "company_count": counts[tables.COMPANIES_TABLE],
-            "address_count": counts[tables.COMPANY_ADDRESSES_TABLE],
-            "industry_code_count": counts[tables.COMPANY_INDUSTRY_CODES_TABLE],
+            "company_count": counts["companies"],
+            "address_count": counts["company_addresses"],
+            "industry_code_count": counts["company_industry_codes"],
             "bolagsverket_company_count": counts["bolagsverket_company_count"],
             "scb_company_count": counts["scb_company_count"],
             "companies_with_sni_count": counts["companies_with_sni_count"],
@@ -118,11 +112,49 @@ def sweden_company_normalized_duckdb(
     )
 
 
+@dg.asset(
+    deps=["sweden_company_normalized_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
+    pool=SWEDEN_COMPANY_DUCKDB_POOL,
+    metadata={
+        "tables": [
+            tables.QUALIFIED_COMPANIES_TABLE,
+            tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
+            tables.QUALIFIED_INDUSTRIES_TABLE,
+        ]
+    },
+    description=(
+        "Exports normalized Sweden company DuckDB tables to migrated ClickHouse "
+        "tables in corpscout."
+    ),
+)
+def sweden_company_clickhouse(
+    context: dg.AssetExecutionContext,
+    sweden_company_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with sweden_company_duckdb.get_connection() as connection:
+        counts = export_sweden_company_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "company_rows": counts[tables.COMPANIES_TABLE_CH],
+            "address_rows": counts[tables.COMPANY_ADDRESSES_TABLE_CH],
+            "industry_rows": counts[tables.INDUSTRIES_TABLE_CH],
+            "company_table": tables.QUALIFIED_COMPANIES_TABLE,
+            "address_table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
+            "industry_table": tables.QUALIFIED_INDUSTRIES_TABLE,
+        }
+    )
+
+
 sweden_company_refresh_job = dg.define_asset_job(
     "sweden_company_refresh_job",
-    selection=dg.AssetSelection.assets(
-        SWEDEN_COMPANY_NORMALIZED_DUCKDB_ASSET_KEY
-    ).upstream(),
+    selection=dg.AssetSelection.assets("sweden_company_clickhouse").upstream(),
 )
 
 sweden_company_refresh_weekly = dg.ScheduleDefinition(
@@ -139,6 +171,7 @@ defs = dg.Definitions(
         sweden_company_raw_snapshot_s3,
         sweden_company_raw_duckdb,
         sweden_company_normalized_duckdb,
+        sweden_company_clickhouse,
     ],
     jobs=[sweden_company_refresh_job],
     schedules=[sweden_company_refresh_weekly],
