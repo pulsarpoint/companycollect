@@ -150,10 +150,11 @@ configure it + supply a mapping table, rather than re-implementing a parser.
   legacy LVL) keep native-only (`_usd` NULL) — document it. Mirror `latvia_ur`/`estonia_ar` metrics.
 
 ## 8. Cross-cutting standard B — translation (always, for non-English free text)
-Non-English text/enum fields are translated to English by the **standalone translator service**
-(`translator/` — a Temporal worker decoupled from the Dagster graph; full detail in
-`dagster_v3/README.md` "# Translation"). Translation is **not** done in dbt/SQL and is **not** an asset
-in the graph.
+Non-English text/enum fields are translated to English by the **standalone Go translator service**
+(`corpscout/translator` — see its README for the API contract). The flow is: **loader asset (this
+repo) → Go translator service → `corpscout.text_translations`**. Translation is **not** done in
+dbt/SQL; only the thin loader asset lives in the graph (full detail in `dagster_v3/README.md`
+"# Translation").
 
 The base ClickHouse table carries only `<field>_original` — **do not add `<field>_en` (or
 `_translated_at`/`_provider`/`_model`) columns to it.** English values live in the shared
@@ -161,18 +162,28 @@ The base ClickHouse table carries only `<field>_original` — **do not add `<fie
 cache row names its exact table and column. Results are exposed by a per-source `<source>_translated` join
 view. The cache survives the wipe-and-replace export, so a refresh only translates genuinely new/changed text.
 
+The loader pattern contract (`src/dagster_v3/defs/translator_load/`):
+- **Anti-join scan**: `SELECT DISTINCT` untranslated texts per `(table, column)` by LEFT ANTI JOIN
+  against `text_translations` — **loaders own dedup**, the service does not.
+- **Hash in SQL**: `cityHash64(col)` computed in ClickHouse, never in Python, so hashes always
+  agree with past runs and the join view.
+- **Chunked POST**: at most 10k items per request to the service's `POST /v1/queue/items`, hashes
+  as decimal strings; the first successful enqueue starts the service's Temporal workflow.
+- **Static maps direct-insert**: closed enumerations skip the queue — the loader resolves them from
+  an in-loader code→EN dict and inserts rows with `provider='static'`.
+
 To make a source's fields translatable:
-1. **Register** the columns in `translator/registry.py` — one `FieldConfig(original_col=…)` per
-   field on the `SourceConfig`. Pick the mechanism by field kind:
-   - **Free text** (company description, activity text) → LLM (leave `static_map` unset).
-   - **Finite enumeration** (legal form, status, size category) → set `static_map` (an authoritative
-     code/value→EN dict in `translator/static_maps.py`) + `static_key_col`. Resolved from the dict, no
-     LLM — deterministic and free. *Prefer this for closed sets.*
+1. **Loader**: add a `LoaderSource` and loader asset in
+   `src/dagster_v3/defs/translator_load/assets.py`, downstream of the source's ClickHouse export.
+   Pick the mechanism by field kind:
+   - **Free text** (company description, activity text) → LLM (enqueue to the service).
+   - **Finite enumeration** (legal form, status, size category) → static map + key column,
+     direct-inserted. Deterministic and free. *Prefer this for closed sets.*
    - **Proper nouns** (company name, address) → not translated.
 2. **View**: add a `<source>_translated` join view (mirror `corpscout.no_companies_translated`).
-3. **Trigger**: add a fire-and-forget Dagster asset downstream of the source's ClickHouse export (mirror
-   `norway_brreg_translation_trigger`) — it starts the Temporal workflow and returns immediately. No
-   completion sensor, no gating; a translation failure can never block ingestion.
+3. **Job wiring**: include the loader asset in the source's refresh job selection (mirror
+   `norway_brreg_entities_full_snapshot_job`). No completion sensor, no gating; a translation
+   failure can never block ingestion.
 - The design doc lists every translated field and its mechanism (LLM vs static dict).
 
 ## 8b. Cross-cutting standard C — contact information (ALWAYS pull it)
@@ -232,9 +243,10 @@ the general-data/financials datasets before concluding it's unavailable.
 - Select job assets with **`AssetSelection.assets(...).upstream()`** (full transitive chain — the
   `dg launch +leaf` CLI only resolves one hop). **Stagger** cron minutes across sources; leave
   schedules **default-STOPPED** until validated.
-- Translation is **out of the asset graph**: the refresh job lands the source's tables in ClickHouse,
-  then a **fire-and-forget trigger asset** starts the standalone translator workflow and returns
-  immediately (no completion sensor, no gating). Mirror `norway_brreg_translation_trigger`.
+- Translation is **decoupled from ingestion**: the refresh job lands the source's tables in
+  ClickHouse, then a **loader asset** scans for untranslated text and enqueues it to the Go
+  translator service, returning immediately (no completion sensor, no gating). Mirror
+  `norway_brreg_translation_load`.
 
 ## 10. Required: a per-source design doc
 **Every source must ship `defs/<source>/docs/<source>-design.md`** using

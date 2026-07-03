@@ -37,7 +37,7 @@
   DD.MM.YYYY; element X has no native field → column stays NULL; …>
 - Export subset: `<TABLE>_EXPORT_COLUMNS` drops `raw_*`/`source_payload_hash`.
 
-## 6. Translation (§8) — registered in `translator/registry.py`
+## 6. Translation (§8) — loader in `src/dagster_v3/defs/translator_load/assets.py`
 | label | source_column (= original_col) | mechanism | static_map / notes |
 |---|---|---|---|
 | legal form | `legal_form_original` | static dict | `<CC>_LEGAL_FORM_EN_BY_CODE`, `static_key_col=legal_form_code` |
@@ -46,7 +46,8 @@
 - `_en` is served by the `<source>_translated` join view from the `text_translations` cache — **not**
   base-table columns (the base table carries only `<field>_original`). The cache key is
   `(source_table, source_column, source_text_hash)` where `source_column` = the `original_col` value above.
-- A fire-and-forget trigger asset starts the standalone translator after the ClickHouse export (no sensor).
+- A loader asset scans for untranslated text after the ClickHouse export and enqueues it to the
+  standalone Go translator service (`corpscout/translator`); static-map fields are direct-inserted (no sensor).
 - Fields deliberately **not** translated (proper nouns): <name, address>.
 
 ## 6b. Contacts (§8b) — MANDATORY to assess
@@ -61,7 +62,7 @@
 
 ## 8. Scheduling (§9)
 - Jobs + cadence: <register daily HH:MM; financials monthly Nth>; cron stagger vs other sources: <…>
-- Special orchestration: <fire-and-forget translation trigger downstream of the ClickHouse export>
+- Special orchestration: <translation loader asset downstream of the ClickHouse export>
 
 ## 9. Issues found during processing
 > The most valuable section — what bit us, the symptom, and the fix, so the next source avoids it.

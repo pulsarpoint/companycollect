@@ -210,7 +210,9 @@ norway_brreg_entities_full_snapshot_job
 ```
 
 This job pulls/reuses the full company snapshot, normalizes it, publishes the
-company tables to ClickHouse, and starts the translation trigger.
+company tables to ClickHouse, and runs the translation loader
+(`norway_brreg_translation_load`), which enqueues untranslated text to the Go
+translator service.
 
 Daily update job:
 

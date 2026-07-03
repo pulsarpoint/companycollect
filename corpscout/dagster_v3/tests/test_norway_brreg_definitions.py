@@ -1,7 +1,7 @@
 """Graph-contract tests for the Norway Brreg definitions.
 
 Coverage:
-1. All surviving assets are registered, including norway_brreg_translation_trigger.
+1. All surviving assets are registered, including norway_brreg_translation_load.
 2. Dependency edges: parquet entity assets feed parquet-backed ClickHouse publish assets.
 3. norway_brreg_entities_full_snapshot_job uses the full snapshot parquet-to-ClickHouse path.
 4. norway_brreg_entity_updates_job uses the daily update parquet-to-ClickHouse path.
@@ -60,7 +60,8 @@ def test_norway_brreg_all_assets_registered() -> None:
     assert "norway_brreg_financial_statements_updates_usd_parquet" in asset_names
     assert "norway_brreg_financial_statements_snapshot_clickhouse" in asset_names
     assert "norway_brreg_financial_statements_updates_clickhouse" in asset_names
-    assert "norway_brreg_translation_trigger" in asset_names
+    assert "norway_brreg_translation_load" in asset_names
+    assert "norway_brreg_translation_trigger" not in asset_names
 
     # Raw Brreg ClickHouse exports and old translation-in-graph assets are gone.
     assert "norway_brreg_clickhouse_companies" not in asset_names
@@ -79,7 +80,7 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     update_clickhouse_node = asset_graph.get(
         dg.AssetKey("norway_brreg_entity_updates_clickhouse")
     )
-    trigger_node = asset_graph.get(dg.AssetKey("norway_brreg_translation_trigger"))
+    loader_node = asset_graph.get(dg.AssetKey("norway_brreg_translation_load"))
     snapshot_raw_node = asset_graph.get(dg.AssetKey("norway_brreg_entries_snapshot_raw_s3"))
     snapshot_s3_node = asset_graph.get(dg.AssetKey("norway_brreg_entities_snapshot_s3"))
     snapshot_fetches_node = asset_graph.get(
@@ -119,8 +120,8 @@ def test_norway_brreg_asset_dependency_edges() -> None:
         "norway_brreg_entity_updates_affected_orgs_parquet",
         "norway_brreg_entity_updates_removed_orgs_parquet",
     }
-    # Snapshot parquet ClickHouse publish → translation_trigger.
-    assert {k.path[-1] for k in trigger_node.parent_keys} == {
+    # Snapshot parquet ClickHouse publish → translation loader.
+    assert {k.path[-1] for k in loader_node.parent_keys} == {
         "norway_brreg_entities_snapshot_clickhouse"
     }
     assert {k.path[-1] for k in snapshot_raw_node.parent_keys} == set()
@@ -168,7 +169,7 @@ def test_norway_brreg_entities_full_snapshot_job_membership() -> None:
             "norway_brreg_entities_full_snapshot_job"
         ).asset_layer.executable_asset_keys
     }
-    # Trigger fires after the parquet-backed full snapshot publish.
+    # The translation loader runs after the parquet-backed full snapshot publish.
     assert refresh == {
         "norway_brreg_entries_snapshot_raw_s3",
         "norway_brreg_entities_snapshot_s3",
@@ -178,7 +179,7 @@ def test_norway_brreg_entities_full_snapshot_job_membership() -> None:
         "norway_brreg_entities_snapshot_affected_orgs_parquet",
         "norway_brreg_entities_snapshot_removed_orgs_parquet",
         "norway_brreg_entities_snapshot_clickhouse",
-        "norway_brreg_translation_trigger",
+        "norway_brreg_translation_load",
     }
     assert "norway_resolved_clickhouse" not in refresh
     assert "norway_resolved_no_companies" not in refresh
