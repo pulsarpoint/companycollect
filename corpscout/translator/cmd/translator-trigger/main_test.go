@@ -3,120 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/pulsarpoint/corpscout/translator/internal/config"
-	"github.com/pulsarpoint/corpscout/translator/internal/engine"
-	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 )
-
-func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
-	t.Setenv("TEMPORAL_ADDRESS", "")
-
-	configPath := writeConfig(t, `{
-  "temporal": {
-    "address": "temporal.test:7233",
-    "namespace": "default",
-    "batch_size": 25,
-    "timeout_seconds": 90
-  }
-}`)
-
-	factory := &fakeStarterFactory{
-		starter: &fakeStarter{
-			result: orchestration.WorkflowActionResult{
-				WorkflowID: engine.WorkflowID("norway_brreg"),
-				RunID:      "run-123",
-			},
-		},
-	}
-
-	var stdout bytes.Buffer
-	err := run(
-		context.Background(),
-		[]string{"-config", configPath, "-action", "run"},
-		&stdout,
-		factory.newStarter,
-	)
-	if err != nil {
-		t.Fatalf("run() error = %v, want nil", err)
-	}
-
-	if factory.cfg.Temporal.Address != "temporal.test:7233" {
-		t.Fatalf("run() Temporal address = %q, want %q", factory.cfg.Temporal.Address, "temporal.test:7233")
-	}
-	if factory.cfg.Temporal.Namespace != "default" {
-		t.Fatalf("run() Temporal namespace = %q, want %q", factory.cfg.Temporal.Namespace, "default")
-	}
-	if factory.cfg.Temporal.BatchSize != 25 {
-		t.Fatalf("run() Temporal batch size = %d, want %d", factory.cfg.Temporal.BatchSize, 25)
-	}
-	if factory.cfg.Temporal.TimeoutSeconds != 90 {
-		t.Fatalf("run() Temporal timeout seconds = %d, want %d", factory.cfg.Temporal.TimeoutSeconds, 90)
-	}
-
-	if factory.starter.source != "norway_brreg" {
-		t.Fatalf("run() source = %q, want %q", factory.starter.source, "norway_brreg")
-	}
-	if factory.starter.action != engine.ActionRun {
-		t.Fatalf("run() action = %q, want %q", factory.starter.action, engine.ActionRun)
-	}
-	if !strings.Contains(stdout.String(), "workflow_id="+engine.WorkflowID("norway_brreg")) {
-		t.Fatalf("run() stdout = %q, want workflow id", stdout.String())
-	}
-}
-
-func TestRunLoadAndRunStartsSingleLoadAndRunAction(t *testing.T) {
-	configPath := writeConfig(t, `{}`)
-	starter := &fakeStarter{
-		result: orchestration.WorkflowActionResult{
-			WorkflowID: engine.WorkflowID("norway_brreg"),
-			RunID:      "run-123",
-		},
-	}
-
-	err := run(
-		context.Background(),
-		[]string{"-config", configPath, "-action", "load-and-run"},
-		&bytes.Buffer{},
-		func(_ context.Context, _ config.Config) (sourceActionStarter, func(), error) {
-			return starter, func() {}, nil
-		},
-	)
-	if err != nil {
-		t.Fatalf("run(load-and-run) error = %v, want nil", err)
-	}
-
-	if starter.action != engine.ActionLoadAndRun {
-		t.Fatalf("run(load-and-run) action = %q, want %q", starter.action, engine.ActionLoadAndRun)
-	}
-}
-
-func TestRunRejectsUnsupportedActionBeforeCreatingStarter(t *testing.T) {
-	configPath := writeConfig(t, `{}`)
-	factory := &fakeStarterFactory{}
-
-	err := run(
-		context.Background(),
-		[]string{"-config", configPath, "-action", "bad-action"},
-		&bytes.Buffer{},
-		factory.newStarter,
-	)
-	if err == nil {
-		t.Fatal("run() error = nil, want unsupported action error")
-	}
-	if factory.called {
-		t.Fatal("run() created Temporal starter for unsupported action, want no starter")
-	}
-}
 
 func TestRunPrintsUsageForHelp(t *testing.T) {
 	var stdout bytes.Buffer
 
-	err := run(context.Background(), []string{"-h"}, &stdout, nil)
+	err := run(context.Background(), []string{"-h"}, &stdout)
 	if err != nil {
 		t.Fatalf("run(-h) error = %v, want nil", err)
 	}
@@ -125,43 +19,26 @@ func TestRunPrintsUsageForHelp(t *testing.T) {
 	}
 }
 
-func writeConfig(t *testing.T, content string) string {
-	t.Helper()
+func TestRunRefusesToStart(t *testing.T) {
+	var stdout bytes.Buffer
 
-	path := filepath.Join(t.TempDir(), "translator.json")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("writeConfig(%q) error = %v, want nil", path, err)
+	err := run(context.Background(), nil, &stdout)
+	if err == nil {
+		t.Fatal("run() error = nil, want mid-migration refusal error")
 	}
-	return path
-}
-
-type fakeStarterFactory struct {
-	called  bool
-	cfg     config.Config
-	starter *fakeStarter
-}
-
-func (f *fakeStarterFactory) newStarter(_ context.Context, cfg config.Config) (sourceActionStarter, func(), error) {
-	f.called = true
-	f.cfg = cfg
-	if f.starter == nil {
-		f.starter = &fakeStarter{}
+	if !strings.Contains(err.Error(), "mid-migration") {
+		t.Fatalf("run() error = %v, want mid-migration refusal error", err)
 	}
-	return f.starter, func() {}, nil
 }
 
-type fakeStarter struct {
-	source string
-	action string
-	result orchestration.WorkflowActionResult
-}
+func TestRunRejectsUnexpectedPositionalArguments(t *testing.T) {
+	var stdout bytes.Buffer
 
-func (f *fakeStarter) StartSourceAction(
-	_ context.Context,
-	source string,
-	action string,
-) (orchestration.WorkflowActionResult, error) {
-	f.source = source
-	f.action = action
-	return f.result, nil
+	err := run(context.Background(), []string{"unexpected"}, &stdout)
+	if err == nil {
+		t.Fatal("run() error = nil, want unexpected positional arguments error")
+	}
+	if !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("run() error = %v, want unexpected positional arguments error", err)
+	}
 }

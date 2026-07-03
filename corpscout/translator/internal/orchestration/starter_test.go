@@ -8,75 +8,52 @@ import (
 	"go.temporal.io/sdk/client"
 )
 
-func TestTemporalWorkflowStarterSignalsSourceWorkflow(t *testing.T) {
+func TestTemporalWorkflowStarterSignalsProcessWorkflow(t *testing.T) {
 	temporalClient := &fakeTemporalClient{
 		run: fakeWorkflowRun{
-			id:    "translator/norway_brreg",
+			id:    "translator/process",
 			runID: "run-123",
 		},
 	}
-	starter := NewTemporalWorkflowStarter(temporalClient, []string{"norway_brreg"}, 25, 90, 400)
+	starter := NewTemporalWorkflowStarter(temporalClient, 25, 90, 400, 7)
 
-	result, err := starter.StartSourceAction(context.Background(), "norway_brreg", engine.ActionRun)
+	result, err := starter.StartProcess(context.Background())
 	if err != nil {
-		t.Fatalf("StartSourceAction() error = %v, want nil", err)
+		t.Fatalf("StartProcess() error = %v, want nil", err)
 	}
 
-	if result.WorkflowID != "translator/norway_brreg" || result.RunID != "run-123" {
-		t.Fatalf("StartSourceAction() result = %#v, want workflow/run ids", result)
+	if result.WorkflowID != "translator/process" || result.RunID != "run-123" {
+		t.Fatalf("StartProcess() result = %#v, want workflow/run ids", result)
 	}
-	if temporalClient.workflowID != "translator/norway_brreg" {
-		t.Fatalf("SignalWithStartWorkflow() workflow id = %q, want translator/norway_brreg", temporalClient.workflowID)
+	if temporalClient.workflowID != engine.ProcessWorkflowID {
+		t.Fatalf("SignalWithStartWorkflow() workflow id = %q, want %q", temporalClient.workflowID, engine.ProcessWorkflowID)
 	}
-	if temporalClient.signalName != engine.SignalSourceAction {
-		t.Fatalf("SignalWithStartWorkflow() signal name = %q, want %q", temporalClient.signalName, engine.SignalSourceAction)
+	if temporalClient.signalName != engine.SignalNewItems {
+		t.Fatalf("SignalWithStartWorkflow() signal name = %q, want %q", temporalClient.signalName, engine.SignalNewItems)
 	}
-	if temporalClient.signalArg != (engine.SourceActionSignal{Action: engine.ActionRun}) {
-		t.Fatalf("SignalWithStartWorkflow() signal arg = %#v, want run action", temporalClient.signalArg)
+	if temporalClient.signalArg != nil {
+		t.Fatalf("SignalWithStartWorkflow() signal arg = %#v, want nil", temporalClient.signalArg)
 	}
-	if temporalClient.options.TaskQueue != "translator-norway-brreg" {
-		t.Fatalf("SignalWithStartWorkflow() task queue = %q, want translator-norway-brreg", temporalClient.options.TaskQueue)
+	if temporalClient.options.ID != engine.ProcessWorkflowID {
+		t.Fatalf("SignalWithStartWorkflow() options.ID = %q, want %q", temporalClient.options.ID, engine.ProcessWorkflowID)
+	}
+	if temporalClient.options.TaskQueue != engine.ProcessTaskQueue {
+		t.Fatalf("SignalWithStartWorkflow() task queue = %q, want %q", temporalClient.options.TaskQueue, engine.ProcessTaskQueue)
 	}
 	if len(temporalClient.workflowArgs) != 1 {
 		t.Fatalf("SignalWithStartWorkflow() workflow arg count = %d, want 1", len(temporalClient.workflowArgs))
 	}
-	want := engine.WorkflowInput{Source: "norway_brreg", BatchSize: 25, TimeoutSeconds: 90, BatchesPerRun: 400}
+	want := engine.WorkflowInput{BatchSize: 25, TimeoutSeconds: 90, BatchesPerRun: 400, FlushEveryBatches: 7}
 	if temporalClient.workflowArgs[0] != want {
 		t.Fatalf("SignalWithStartWorkflow() workflow input = %#v, want %#v", temporalClient.workflowArgs[0], want)
 	}
 }
 
-func TestTemporalWorkflowStarterSupportsLoadAndRunAction(t *testing.T) {
-	temporalClient := &fakeTemporalClient{
-		run: fakeWorkflowRun{
-			id:    "translator/norway_brreg",
-			runID: "run-123",
-		},
-	}
-	starter := NewTemporalWorkflowStarter(temporalClient, []string{"norway_brreg"}, 25, 90, 400)
+func TestTemporalWorkflowStarterRequiresClient(t *testing.T) {
+	starter := NewTemporalWorkflowStarter(nil, 25, 90, 400, 7)
 
-	if _, err := starter.StartSourceAction(context.Background(), "norway_brreg", engine.ActionLoadAndRun); err != nil {
-		t.Fatalf("StartSourceAction(load-and-run) error = %v, want nil", err)
-	}
-
-	if temporalClient.signalArg != (engine.SourceActionSignal{Action: engine.ActionLoadAndRun}) {
-		t.Fatalf("SignalWithStartWorkflow() signal arg = %#v, want load-and-run action", temporalClient.signalArg)
-	}
-}
-
-func TestTemporalWorkflowStarterRejectsUnsupportedAction(t *testing.T) {
-	starter := NewTemporalWorkflowStarter(&fakeTemporalClient{}, []string{"norway_brreg"}, 25, 90, 400)
-
-	if _, err := starter.StartSourceAction(context.Background(), "norway_brreg", "unknown"); err == nil {
-		t.Fatal("StartSourceAction(unknown) error = nil, want unsupported action error")
-	}
-}
-
-func TestTemporalWorkflowStarterRejectsUnknownSource(t *testing.T) {
-	starter := NewTemporalWorkflowStarter(&fakeTemporalClient{}, []string{"norway_brreg"}, 25, 90, 400)
-
-	if _, err := starter.StartSourceAction(context.Background(), "sweden_scb", engine.ActionRun); err == nil {
-		t.Fatal("StartSourceAction(unknown source) error = nil, want unsupported source error")
+	if _, err := starter.StartProcess(context.Background()); err == nil {
+		t.Fatal("StartProcess() error = nil, want temporal client required error")
 	}
 }
 

@@ -8,48 +8,33 @@ import (
 	"go.temporal.io/sdk/activity"
 )
 
-var (
-	ErrSourceRuntimeRequired = errors.New("source runtime is required")
-	ErrSourceNameRequired    = errors.New("source name is required")
-)
+var ErrProcessRuntimeRequired = errors.New("process runtime is required")
 
-// SourceRuntime is the per-source activity implementation; *engine.Runtime
-// satisfies it.
-type SourceRuntime interface {
-	LoadNewInput(ctx context.Context) (engine.LoadResult, error)
+// ProcessRuntime is the activity implementation; *engine.Runtime satisfies it.
+type ProcessRuntime interface {
 	ProcessOneBatch(ctx context.Context, input engine.ProcessInput) (engine.ProcessResult, error)
-	UploadOutput(ctx context.Context) (engine.UploadResult, error)
+	FlushOutput(ctx context.Context) (engine.UploadResult, error)
 }
 
-type sourceRegistry interface {
+type processRegistry interface {
 	RegisterWorkflow(workflow interface{})
 	RegisterActivityWithOptions(activity interface{}, options activity.RegisterOptions)
 }
 
-// RegisterSource registers the shared translation workflow and one source's
-// activities. Each source runs on its own task queue with its own worker, so
-// every source's worker registers both the workflow and its activities.
-func RegisterSource(registry sourceRegistry, source string, runtime SourceRuntime) error {
-	if source == "" {
-		return ErrSourceNameRequired
-	}
+// RegisterProcess registers the translation workflow and its activities on
+// the translator's single Temporal worker.
+func RegisterProcess(registry processRegistry, runtime ProcessRuntime) error {
 	if runtime == nil {
-		return ErrSourceRuntimeRequired
+		return ErrProcessRuntimeRequired
 	}
-
 	registry.RegisterWorkflow(engine.TranslationWorkflow)
-
-	registry.RegisterActivityWithOptions(
-		runtime.LoadNewInput,
-		activity.RegisterOptions{Name: engine.ActivityLoadNewInput(source)},
-	)
 	registry.RegisterActivityWithOptions(
 		runtime.ProcessOneBatch,
-		activity.RegisterOptions{Name: engine.ActivityProcessOneBatch(source)},
+		activity.RegisterOptions{Name: engine.ActivityProcessOneBatch},
 	)
 	registry.RegisterActivityWithOptions(
-		runtime.UploadOutput,
-		activity.RegisterOptions{Name: engine.ActivityUploadOutput(source)},
+		runtime.FlushOutput,
+		activity.RegisterOptions{Name: engine.ActivityFlushOutput},
 	)
 	return nil
 }

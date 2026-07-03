@@ -1,9 +1,6 @@
 package engine
 
 import (
-	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -11,61 +8,33 @@ import (
 )
 
 const (
-	SignalSourceAction = "source-action"
+	// ProcessWorkflowID is the fixed ID of the single translation workflow.
+	ProcessWorkflowID = "translator/process"
+	// ProcessTaskQueue is the fixed Temporal task queue for the translator.
+	ProcessTaskQueue = "translator-process"
+	// SignalNewItems wakes (or signal-with-starts) the workflow after an enqueue.
+	SignalNewItems = "new-items"
 
-	ActionLoadAndRun = "load-and-run"
-	ActionLoadQueue  = "load-queue"
-	ActionRun        = "run"
+	ActivityProcessOneBatch = "translator.ProcessOneBatch"
+	ActivityFlushOutput     = "translator.FlushOutput"
 )
 
 const DefaultBatchesPerRun = 500
 
-// WorkflowID returns the per-source workflow ID, e.g. translator/norway_brreg.
-func WorkflowID(source string) string {
-	return "translator/" + source
-}
-
-// TaskQueue returns the per-source task queue. Underscores become hyphens so
-// norway_brreg keeps its historical queue name translator-norway-brreg.
-func TaskQueue(source string) string {
-	return "translator-" + strings.ReplaceAll(source, "_", "-")
-}
-
-// ActivityLoadNewInput returns the per-source LoadNewInput activity name.
-func ActivityLoadNewInput(source string) string {
-	return source + ".LoadNewInput"
-}
-
-// ActivityProcessOneBatch returns the per-source ProcessOneBatch activity name.
-func ActivityProcessOneBatch(source string) string {
-	return source + ".ProcessOneBatch"
-}
-
-// ActivityUploadOutput returns the per-source UploadOutput activity name.
-func ActivityUploadOutput(source string) string {
-	return source + ".UploadOutput"
-}
-
 type WorkflowInput struct {
-	Source         string
-	BatchSize      int
-	TimeoutSeconds int
-	BatchesPerRun  int
-	ResumeAction   string
+	BatchSize         int
+	TimeoutSeconds    int
+	BatchesPerRun     int
+	FlushEveryBatches int
 }
 
-type SourceActionSignal struct {
-	Action string
-}
-
-// TranslationWorkflow drives one source's translation loop: it waits for a
-// source-action signal (or a ResumeAction carried across continue-as-new),
-// loads new input, and processes queue batches until empty, then uploads the
-// output to ClickHouse.
+// TranslationWorkflow drains the shared queue: translate batches (each batch
+// is a single language pair), flush translated output to ClickHouse every
+// FlushEveryBatches batches and at queue-empty, and continue-as-new after
+// BatchesPerRun batches. Transient activity failures retry without an
+// attempt cap (deterministic bad model output never fails the activity — it
+// lands in failed_items inside ProcessOneBatch).
 func TranslationWorkflow(ctx workflow.Context, input WorkflowInput) error {
-	if input.Source == "" {
-		return errors.New("workflow input source is required")
-	}
 	if input.BatchSize <= 0 {
 		input.BatchSize = 50
 	}
@@ -75,108 +44,95 @@ func TranslationWorkflow(ctx workflow.Context, input WorkflowInput) error {
 	if input.BatchesPerRun <= 0 {
 		input.BatchesPerRun = DefaultBatchesPerRun
 	}
+	if input.FlushEveryBatches <= 0 {
+		input.FlushEveryBatches = 10
+	}
 	logger := workflow.GetLogger(ctx)
 	logger.Info(
 		"translator workflow started",
-		"source", input.Source,
 		"batch_size", input.BatchSize,
 		"timeout_seconds", input.TimeoutSeconds,
 		"batches_per_run", input.BatchesPerRun,
-		"resume_action", input.ResumeAction,
+		"flush_every_batches", input.FlushEveryBatches,
 	)
 
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: time.Second,
-			MaximumAttempts: 10,
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2,
+			MaximumInterval:    5 * time.Minute,
 		},
 	})
 
-	processUntilEmpty := func() error {
-		processInput := ProcessInput{
-			BatchSize:      input.BatchSize,
-			TimeoutSeconds: input.TimeoutSeconds,
-		}
+	signalChannel := workflow.GetSignalChannel(ctx, SignalNewItems)
 
-		for batch := 0; batch < input.BatchesPerRun; batch++ {
-			logger.Info(
-				"translator workflow processing batch",
-				"source", input.Source,
-				"batch_index", batch+1,
-				"batches_per_run", input.BatchesPerRun,
-				"batch_size", input.BatchSize,
-			)
-			var processResult ProcessResult
-			if err := workflow.ExecuteActivity(ctx, ActivityProcessOneBatch(input.Source), processInput).Get(ctx, &processResult); err != nil {
-				return err
-			}
-			logger.Info(
-				"translator workflow batch processed",
-				"source", input.Source,
-				"batch_index", batch+1,
-				"translated_count", processResult.TranslatedCount,
-				"pending_count", processResult.PendingCount,
-				"output_count", processResult.OutputCount,
-			)
-			if processResult.PendingCount == 0 {
-				if processResult.OutputCount == 0 {
-					logger.Info("translator workflow queue is empty", "source", input.Source)
-					return nil
-				}
-				var uploadResult UploadResult
-				logger.Info("translator workflow uploading output", "source", input.Source, "output_count", processResult.OutputCount)
-				return workflow.ExecuteActivity(ctx, ActivityUploadOutput(input.Source)).Get(ctx, &uploadResult)
-			}
+	flush := func() error {
+		var flushResult UploadResult
+		logger.Info("translator workflow flushing output")
+		if err := workflow.ExecuteActivity(ctx, ActivityFlushOutput).Get(ctx, &flushResult); err != nil {
+			return err
 		}
-
-		nextInput := input
-		nextInput.ResumeAction = ActionRun
 		logger.Info(
-			"translator workflow continuing as new",
-			"source", input.Source,
-			"batches_per_run", input.BatchesPerRun,
-			"next_resume_action", nextInput.ResumeAction,
+			"translator workflow flushed output",
+			"rows_seen", flushResult.RowsSeen,
+			"rows_inserted", flushResult.RowsInserted,
 		)
-		return workflow.NewContinueAsNewError(ctx, TranslationWorkflow, nextInput)
+		return nil
 	}
 
-	signalChannel := workflow.GetSignalChannel(ctx, SignalSourceAction)
-	signal := SourceActionSignal{Action: input.ResumeAction}
-	if signal.Action == "" {
-		logger.Info("translator workflow waiting for source action signal", "source", input.Source, "signal_name", SignalSourceAction)
-		signalChannel.Receive(ctx, &signal)
+	processInput := ProcessInput{
+		BatchSize:      input.BatchSize,
+		TimeoutSeconds: input.TimeoutSeconds,
 	}
-	logger.Info("translator workflow source action received", "source", input.Source, "action", signal.Action)
+	batchesSinceFlush := 0
 
-	for {
-		logger.Info("translator workflow action started", "source", input.Source, "action", signal.Action)
-		switch signal.Action {
-		case ActionLoadAndRun:
-			var result LoadResult
-			if err := workflow.ExecuteActivity(ctx, ActivityLoadNewInput(input.Source)).Get(ctx, &result); err != nil {
-				return err
+	for batch := 0; batch < input.BatchesPerRun; batch++ {
+		var processResult ProcessResult
+		if err := workflow.ExecuteActivity(ctx, ActivityProcessOneBatch, processInput).Get(ctx, &processResult); err != nil {
+			return err
+		}
+		if processResult.TranslatedCount > 0 {
+			batchesSinceFlush++
+		}
+		logger.Info(
+			"translator workflow batch processed",
+			"batch_index", batch+1,
+			"translated_count", processResult.TranslatedCount,
+			"pending_count", processResult.PendingCount,
+			"output_count", processResult.OutputCount,
+		)
+
+		if processResult.PendingCount == 0 {
+			if processResult.OutputCount > 0 {
+				if err := flush(); err != nil {
+					return err
+				}
 			}
-			if err := processUntilEmpty(); err != nil {
-				return err
+			// The queue is drained and flushed. Any signal received since the
+			// last check means an enqueue may have added items after our
+			// batch — loop again to re-derive pending from the queue;
+			// otherwise complete. Drain extra buffered signals so one more
+			// round covers any number of racing enqueues (pending is
+			// re-derived from the DB, signals are only wakeups).
+			if !signalChannel.ReceiveAsync(nil) {
+				logger.Info("translator workflow queue is empty")
+				return nil
 			}
-		case ActionLoadQueue:
-			var result LoadResult
-			if err := workflow.ExecuteActivity(ctx, ActivityLoadNewInput(input.Source)).Get(ctx, &result); err != nil {
-				return err
+			for signalChannel.ReceiveAsync(nil) {
 			}
-		case ActionRun:
-			if err := processUntilEmpty(); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unsupported source action: %s", signal.Action)
+			batchesSinceFlush = 0
+			continue
 		}
 
-		if !signalChannel.ReceiveAsync(&signal) {
-			logger.Info("translator workflow completed action", "source", input.Source, "action", signal.Action)
-			return nil
+		if batchesSinceFlush >= input.FlushEveryBatches {
+			if err := flush(); err != nil {
+				return err
+			}
+			batchesSinceFlush = 0
 		}
-		logger.Info("translator workflow source action received", "source", input.Source, "action", signal.Action)
 	}
+
+	logger.Info("translator workflow continuing as new", "batches_per_run", input.BatchesPerRun)
+	return workflow.NewContinueAsNewError(ctx, TranslationWorkflow, input)
 }
