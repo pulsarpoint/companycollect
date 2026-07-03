@@ -1,3 +1,8 @@
+// Package engine implements the shared translation queue: loaders enqueue
+// batches of untranslated text over HTTP, the Temporal workflow processes
+// pending batches through a translation provider, and periodic flushes write
+// finished translations into ClickHouse before deleting the matching rows
+// from the local DuckDB queue.
 package engine
 
 import (
