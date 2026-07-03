@@ -40,7 +40,11 @@ func Open(path string) (*sql.DB, error) {
 	// latent bug if a path ever contains a literal "%" (which an
 	// escape-then-decode round trip could misinterpret). Only the query
 	// string (the _pragma params) needs escaping, and those contain no
-	// reserved characters.
+	// reserved characters. Caveat: because the raw path is concatenated
+	// directly ahead of the "?", a literal "?" or "#" in path would be
+	// parsed as the start of the DSN's query string or fragment and
+	// truncate the actual file path there. This is acceptable because the
+	// queue path is operator-controlled config, not user input.
 	dsn := "file:" + path +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=busy_timeout(5000)" +
@@ -74,7 +78,9 @@ func CreateTables(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// SchemaSQL returns the embedded schema text.
+// SchemaSQL returns the embedded schema text. Currently unused by any
+// caller in this module; kept as the hook for future sqlc adoption, which
+// would read exactly this schema to generate typed query code.
 func SchemaSQL() string {
 	return schemaSQL
 }

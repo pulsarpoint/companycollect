@@ -39,6 +39,14 @@ func TestOpenAppliesPragmas(t *testing.T) {
 	if busyTimeout != 5000 {
 		t.Fatalf("expected busy_timeout 5000, got %d", busyTimeout)
 	}
+
+	var synchronous int
+	if err := db.QueryRow("PRAGMA synchronous").Scan(&synchronous); err != nil {
+		t.Fatalf("read synchronous: %v", err)
+	}
+	if synchronous != 1 { // 1 = NORMAL
+		t.Fatalf("expected synchronous NORMAL (1), got %d", synchronous)
+	}
 }
 
 func TestCreateTablesIsIdempotentAndCreatesAllObjects(t *testing.T) {

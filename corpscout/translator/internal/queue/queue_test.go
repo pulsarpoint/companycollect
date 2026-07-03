@@ -170,6 +170,76 @@ func TestGetBatchReturnsEmptySliceOnEmptyQueue(t *testing.T) {
 	}
 }
 
+// TestGetBatchQueriesUseIndexes pins the query plans of GetBatch's two hot
+// queries: at millions of pending rows a silent regression to a full-table
+// scan + sort costs seconds per batch (the whole point of the created_at
+// indexes). Plan text is driver/SQLite-version dependent; the assertions
+// target the stable parts: the named index appears, and the pair-pick's
+// ORDER BY needs no full temp B-tree sort.
+func TestGetBatchQueriesUseIndexes(t *testing.T) {
+	db := openTestQueue(t)
+	insertTestInput(t, db, "corpscout.no_companies", "activity_text_original", "tekst", 1, "no", "en", "Norwegian", "English")
+
+	planFor := func(query string, args ...any) string {
+		t.Helper()
+		rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+		if err != nil {
+			t.Fatalf("explain: %v", err)
+		}
+		defer rows.Close()
+
+		columns, err := rows.Columns()
+		if err != nil {
+			t.Fatalf("plan columns: %v", err)
+		}
+
+		var plan strings.Builder
+		for rows.Next() {
+			raw := make([]any, len(columns))
+			ptrs := make([]any, len(columns))
+			for i := range raw {
+				ptrs[i] = &raw[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				t.Fatalf("scan plan row: %v", err)
+			}
+			// The "detail" column (query plan text) is always the last
+			// column regardless of whether the driver returns 3 or 4
+			// columns (id, parent, notused, detail).
+			detail := fmt.Sprintf("%v", raw[len(raw)-1])
+			plan.WriteString(detail)
+			plan.WriteString("\n")
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("iterate plan rows: %v", err)
+		}
+		return plan.String()
+	}
+
+	pairPickPlan := planFor(`
+		select source_lang, target_lang
+		from pending_items
+		order by created_at, source_lang, target_lang
+		limit 1`)
+	t.Logf("pair-pick plan:\n%s", pairPickPlan)
+	if !strings.Contains(pairPickPlan, "idx_input_created") {
+		t.Fatalf("pair-pick must walk idx_input_created:\n%s", pairPickPlan)
+	}
+	if strings.Contains(pairPickPlan, "TEMP B-TREE FOR ORDER BY") {
+		t.Fatalf("pair-pick must not sort the whole table:\n%s", pairPickPlan)
+	}
+
+	batchPlan := planFor(`
+		select source_table from pending_items
+		where source_lang = ? and target_lang = ?
+		order by created_at, source_table, source_column, source_text_hash
+		limit ?`, "no", "en", 10)
+	t.Logf("batch plan:\n%s", batchPlan)
+	if !strings.Contains(batchPlan, "idx_input_pair_created") {
+		t.Fatalf("batch query must use idx_input_pair_created:\n%s", batchPlan)
+	}
+}
+
 func TestQueueHandlesUnsignedCityHashValues(t *testing.T) {
 	ctx := context.Background()
 	path := createEmptyQueueFixture(t)

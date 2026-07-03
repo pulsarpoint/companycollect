@@ -44,7 +44,12 @@ CREATE TABLE IF NOT EXISTS failed_items (
 
 -- Early-termination indexes: batch queries walk created_at order and stop at
 -- their LIMIT; without these, every batch pays a full scan of input_items.
-CREATE INDEX IF NOT EXISTS idx_input_created ON input_items (created_at);
+-- idx_input_created is widened to (created_at, source_lang, target_lang)
+-- because the pair-pick query orders by all three columns: a single-column
+-- index on created_at alone cannot satisfy that ORDER BY, so SQLite would
+-- full-scan and temp-B-tree-sort the whole table per batch; the extra
+-- columns let SQLite walk the index directly and stop at LIMIT 1.
+CREATE INDEX IF NOT EXISTS idx_input_created ON input_items (created_at, source_lang, target_lang);
 CREATE INDEX IF NOT EXISTS idx_input_pair_created ON input_items (source_lang, target_lang, created_at);
 
 -- The single definition of "pending": in input, not yet translated, not failed.
