@@ -157,4 +157,37 @@ def latvia_ur_translation_load(
     )
 
 
-defs = dg.Definitions(assets=[norway_brreg_translation_load, latvia_ur_translation_load])
+def _stats_check(session=None) -> dg.AssetCheckResult:
+    """Assert /v1/queue/stats is reachable and reports queue counts."""
+    session = session or dlt_requests.Session()
+    try:
+        response = session.get(f"{_api_url()}/v1/queue/stats", timeout=10)
+        response.raise_for_status()
+        stats = response.json()
+    except Exception as error:  # noqa: BLE001 - reachability check reports any failure
+        return dg.AssetCheckResult(passed=False, metadata={"error": str(error)})
+    return dg.AssetCheckResult(
+        passed=True,
+        metadata={
+            "input": stats.get("input", 0),
+            "pending": stats.get("pending", 0),
+            "output": stats.get("output", 0),
+            "failed": stats.get("failed", 0),
+        },
+    )
+
+
+@dg.asset_check(asset=norway_brreg_translation_load, name="translator_stats_reachable")
+def norway_brreg_translator_stats_check() -> dg.AssetCheckResult:
+    return _stats_check()
+
+
+@dg.asset_check(asset=latvia_ur_translation_load, name="translator_stats_reachable")
+def latvia_ur_translator_stats_check() -> dg.AssetCheckResult:
+    return _stats_check()
+
+
+defs = dg.Definitions(
+    assets=[norway_brreg_translation_load, latvia_ur_translation_load],
+    asset_checks=[norway_brreg_translator_stats_check, latvia_ur_translator_stats_check],
+)

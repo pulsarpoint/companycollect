@@ -84,6 +84,8 @@ func TestEnqueueUpsertsAndCountsInserted(t *testing.T) {
 	rt := newEnqueueTestRuntime(t)
 
 	req := validEnqueueRequest(1)
+	req.SourceLang = " no"
+	req.TargetLang = "en "
 	req.Items = append(req.Items, EnqueueItem{
 		SourceTable: "corpscout.no_companies", SourceColumn: "activity_text_original",
 		SourceText: "annen tekst", SourceTextHash: "42",
@@ -95,6 +97,14 @@ func TestEnqueueUpsertsAndCountsInserted(t *testing.T) {
 	}
 	if first.Received != 2 || first.Inserted != 2 {
 		t.Fatalf("expected 2/2, got %+v", first)
+	}
+
+	var storedSourceLang, storedTargetLang string
+	if err := rt.db.QueryRowContext(ctx, "select source_lang, target_lang from input_items limit 1").Scan(&storedSourceLang, &storedTargetLang); err != nil {
+		t.Fatalf("query input_items: %v", err)
+	}
+	if storedSourceLang != "no" || storedTargetLang != "en" {
+		t.Fatalf("expected trimmed source_lang=%q target_lang=%q, got %q/%q", "no", "en", storedSourceLang, storedTargetLang)
 	}
 
 	second, err := rt.Enqueue(ctx, req)

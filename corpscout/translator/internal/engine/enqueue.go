@@ -88,8 +88,17 @@ func (r *Runtime) Enqueue(ctx context.Context, req EnqueueRequest) (EnqueueResul
 		return EnqueueResult{}, err
 	}
 
+	// Trim once for the whole request — these four fields are request-level,
+	// not per-item, so there is no need to re-trim inside the loop below.
+	sourceLang := strings.TrimSpace(req.SourceLang)
+	targetLang := strings.TrimSpace(req.TargetLang)
+	sourceLanguageName := strings.TrimSpace(req.SourceLanguageName)
+	targetLanguageName := strings.TrimSpace(req.TargetLanguageName)
+
 	rows := make([]InputItem, 0, len(req.Items))
 	for _, item := range req.Items {
+		// Validate already confirmed this parses; this call cannot fail in
+		// practice, but the error is still handled defensively.
 		hash, err := strconv.ParseUint(item.SourceTextHash, 10, 64)
 		if err != nil {
 			return EnqueueResult{}, fmt.Errorf("parse source_text_hash %q: %w", item.SourceTextHash, err)
@@ -99,10 +108,10 @@ func (r *Runtime) Enqueue(ctx context.Context, req EnqueueRequest) (EnqueueResul
 			SourceColumn:       item.SourceColumn,
 			SourceText:         item.SourceText,
 			SourceTextHash:     hash,
-			SourceLang:         req.SourceLang,
-			TargetLang:         req.TargetLang,
-			SourceLanguageName: req.SourceLanguageName,
-			TargetLanguageName: req.TargetLanguageName,
+			SourceLang:         sourceLang,
+			TargetLang:         targetLang,
+			SourceLanguageName: sourceLanguageName,
+			TargetLanguageName: targetLanguageName,
 		})
 	}
 

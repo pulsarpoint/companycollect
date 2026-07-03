@@ -273,7 +273,11 @@ Behavior:
    `output_items` into `corpscout.text_translations`, and — only after that
    insert succeeds — deletes the matching `input_items` rows and all of
    `output_items` from the DuckDB queue. `failed_items` is never
-   auto-deleted; an operator inspects and clears it.
+   auto-deleted; an operator inspects and clears it. The `FlushEveryBatches`
+   counter only counts batches that actually translated at least one item —
+   a batch that finds nothing pending means the queue is already empty,
+   which flushes immediately under the "pending count reaches zero" rule
+   above, so it never needs to also advance the every-N counter.
 4. When the queue drains and there is nothing left to flush, the workflow
    checks for a buffered enqueue signal (an enqueue that raced the drain) and
    loops once more if one arrived; otherwise it completes.
@@ -301,8 +305,8 @@ service, so nothing signals a stale run that the new worker cannot process:
 - `translator/norway_brreg` — the old per-source Go workflow (predates this
   split; task queue `translator-norway-brreg`).
 - `build-queue-norway_brreg` — legacy Python loader workflow. That Python
-  package (`corpscout/dagster_v3/translator/`) is retired by a later task;
-  its Temporal workflows still need cleaning up at deploy.
+  package (`corpscout/dagster_v3/translator/`) has been removed in this
+  branch; its Temporal workflows still need cleaning up at deploy.
 - `translate-norway_brreg` — legacy Python translation workflow.
 
 ```bash
@@ -316,6 +320,21 @@ identities, and the new `translator/process` workflow does not need to be
 started manually: the first successful loader enqueue signal-with-starts it,
 and boot-resume covers the case where the queue was already non-empty at
 restart.
+
+**Stop the legacy Python worker too.** Any already-deployed instance of the
+old `uv run translator-worker` process (task queues `translation-build` /
+`translation-llm`) must be stopped and removed as part of this migration —
+its Dockerfile and package (`corpscout/dagster_v3/translator/`) were deleted
+in this branch, so it can no longer be rebuilt, and a still-running old
+container/process will otherwise keep polling those task queues forever with
+no work arriving.
+
+**The old per-source queue file is abandoned.** `data/translator/norway_brreg.duckdb`
+(the pre-split, per-source queue used by the legacy Go and Python workflows)
+is no longer read by anything and can be deleted. Any text it still held
+that was never translated is not lost: the loaders' anti-join against
+`corpscout.text_translations` re-discovers untranslated text on the next
+scan and re-enqueues it into the new shared `data/translator/queue.duckdb`.
 
 ## Configuration
 

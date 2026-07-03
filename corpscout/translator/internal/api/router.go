@@ -107,7 +107,7 @@ func (r *Router) enqueue(w http.ResponseWriter, req *http.Request) {
 		"received": result.Received,
 		"inserted": result.Inserted,
 	}
-	if result.Inserted > 0 && r.starter != nil {
+	if r.starter != nil {
 		workflowResult, err := r.starter.StartProcess(req.Context())
 		if err != nil {
 			r.logger.Error("enqueue accepted but workflow start failed", "err", err)

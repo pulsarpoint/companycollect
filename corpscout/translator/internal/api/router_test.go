@@ -59,7 +59,7 @@ func TestEnqueueAcceptsValidRequestAndStartsWorkflow(t *testing.T) {
 	}
 }
 
-func TestEnqueueSkipsWorkflowStartWhenNothingInserted(t *testing.T) {
+func TestEnqueueStartsWorkflowEvenWhenNothingInserted(t *testing.T) {
 	queue := &fakeQueueAPI{enqueueResult: engine.EnqueueResult{Received: 2, Inserted: 0}}
 	starter := &fakeProcessStarter{result: orchestration.WorkflowActionResult{WorkflowID: "translator/process", RunID: "run-1"}}
 	router := NewRouter(queue, starter)
@@ -77,11 +77,11 @@ func TestEnqueueSkipsWorkflowStartWhenNothingInserted(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if _, ok := body["workflow_id"]; ok {
-		t.Fatalf("expected no workflow_id key, got %#v", body)
+	if _, ok := body["workflow_id"]; !ok {
+		t.Fatalf("expected workflow_id key even when nothing inserted, got %#v", body)
 	}
-	if starter.calls != 0 {
-		t.Fatalf("expected starter not called, got %d calls", starter.calls)
+	if starter.calls != 1 {
+		t.Fatalf("expected starter called once even when nothing inserted, got %d calls", starter.calls)
 	}
 }
 

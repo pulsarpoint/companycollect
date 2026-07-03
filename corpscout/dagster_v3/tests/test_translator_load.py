@@ -124,6 +124,49 @@ def test_insert_static_translations_maps_and_skips_unknown_keys():
     assert "text_translations" in sql
     (row,) = params
     assert row[:3] == ("corpscout.no_companies", "legal_form_description_original", 9001)
+    assert row[6:8] == ("static", "static")
+
+
+class _FakeStatsSession:
+    def __init__(self, payload: dict | None = None, error: Exception | None = None) -> None:
+        self._payload = payload
+        self._error = error
+
+    def get(self, url: str, timeout: int = 10):
+        if self._error is not None:
+            raise self._error
+
+        class _Resp:
+            def raise_for_status(self_inner):
+                return None
+
+            def json(self_inner):
+                return self._payload
+
+        return _Resp()
+
+
+def test_stats_check_passes_and_reports_counts():
+    from dagster_v3.defs.translator_load.assets import _stats_check
+
+    session = _FakeStatsSession(payload={"input": 1, "pending": 2, "output": 3, "failed": 4})
+    result = _stats_check(session=session)
+
+    assert result.passed is True
+    assert result.metadata["input"].value == 1
+    assert result.metadata["pending"].value == 2
+    assert result.metadata["output"].value == 3
+    assert result.metadata["failed"].value == 4
+
+
+def test_stats_check_fails_when_unreachable():
+    from dagster_v3.defs.translator_load.assets import _stats_check
+
+    session = _FakeStatsSession(error=RuntimeError("connection refused"))
+    result = _stats_check(session=session)
+
+    assert result.passed is False
+    assert "connection refused" in result.metadata["error"].value
 
 
 def test_assets_are_defined_with_expected_deps():
