@@ -1,5 +1,5 @@
 GO ?= go
-CGO_ENABLED := 1
+CGO_ENABLED := 0
 BINARY_DIR ?= bin
 API_BINARY ?= $(BINARY_DIR)/translator-api
 TRIGGER_BINARY ?= $(BINARY_DIR)/translator-trigger

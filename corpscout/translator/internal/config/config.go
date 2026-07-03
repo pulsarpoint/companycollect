@@ -132,7 +132,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Endpoints = make(map[string]EndpointConfig)
 	}
 	if cfg.Queue.Path == "" {
-		cfg.Queue.Path = "data/translator/queue.duckdb"
+		cfg.Queue.Path = "data/translator/queue.sqlite"
 	}
 	if cfg.Queue.FlushEveryBatches <= 0 {
 		cfg.Queue.FlushEveryBatches = 10

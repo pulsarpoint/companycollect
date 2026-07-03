@@ -33,7 +33,7 @@
     }
   },
   "queue": {
-    "path": "data/translator/queue.duckdb",
+    "path": "data/translator/queue.sqlite",
     "flush_every_batches": 10
   },
   "endpoint_id": "local_llm"

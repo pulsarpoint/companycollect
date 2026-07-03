@@ -19,7 +19,7 @@ func TestInitFailsWhenQueueFileIsMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing queue file to fail")
 	}
-	if !strings.Contains(err.Error(), "queue duckdb file does not exist") {
+	if !strings.Contains(err.Error(), "queue database file does not exist") {
 		t.Fatalf("expected missing-file error, got %v", err)
 	}
 }
@@ -46,7 +46,7 @@ func TestInitFailsWhenQueueFileDoesNotHaveQueueTables(t *testing.T) {
 	}
 }
 
-func TestNewUsesExistingDuckDBConnectionWithoutClosingIt(t *testing.T) {
+func TestNewUsesExistingConnectionWithoutClosingIt(t *testing.T) {
 	path := createQueueFixture(t, 1)
 	db, err := queuedb.Open(path)
 	if err != nil {

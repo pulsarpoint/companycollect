@@ -4,7 +4,7 @@ Standalone Go service that owns one shared translation queue and one
 Temporal workflow. It has zero per-source configuration: sources exist only
 as loader scripts (dagster assets in `corpscout/dagster_v3`) that POST batches
 of untranslated text to this service's HTTP API. The service upserts the
-batch into a DuckDB queue, drives translation through a configured LLM
+batch into a SQLite queue, drives translation through a configured LLM
 endpoint (or accepts static-map translations written directly by loaders),
 and periodically flushes finished rows into ClickHouse
 `corpscout.text_translations`.
@@ -28,17 +28,23 @@ internal/engine           Shared-queue engine: enqueue/stats, ClickHouse I/O,
                            workflow/activities
 internal/orchestration    Temporal registration and workflow starter
                            (signal-with-start)
-internal/queue            DuckDB queue runtime: GetBatch, SaveBatch, SaveFailed
+internal/queue            SQLite queue runtime: GetBatch, SaveBatch, SaveFailed
+internal/queuedb          Embedded SQLite schema (tables, pending_items view,
+                           indexes) and configured connection (WAL, busy
+                           timeout, single pooled connection)
 internal/translation      Translator provider and shared batch translation logic
 ```
 
-`internal/engine` owns one DuckDB queue file (`input_items`, `output_items`,
+`internal/engine` owns one SQLite queue file (`input_items`, `output_items`,
 `failed_items`) shared by every source. It creates the file and schema on
-first run; there is no per-source file and no source registry. `GetBatch`
-selects up to `BatchSize` pending rows from a single language pair — the pair
-holding the oldest pending item — because a translation prompt requires a
-homogeneous batch. `SaveBatch` writes translated rows to `output_items`;
-`SaveFailed` writes irreducible failed rows to `failed_items`.
+first run; there is no per-source file and no source registry. The queue
+connection runs in WAL journaling mode, so the queue file is accompanied by
+`-wal` and `-shm` sidecar files alongside `queue.sqlite` while the process is
+running. `GetBatch` selects up to `BatchSize` pending rows from a single
+language pair — the pair holding the oldest pending item — because a
+translation prompt requires a homogeneous batch. `SaveBatch` writes
+translated rows to `output_items`; `SaveFailed` writes irreducible failed
+rows to `failed_items`.
 
 `internal/translation.TranslateItems` handles deterministic LLM output
 failures inside the activity. A normal provider/network error returns to
@@ -272,7 +278,7 @@ Behavior:
    pending count reaches zero, the `FlushOutput` activity inserts
    `output_items` into `corpscout.text_translations`, and — only after that
    insert succeeds — deletes the matching `input_items` rows and all of
-   `output_items` from the DuckDB queue. `failed_items` is never
+   `output_items` from the SQLite queue. `failed_items` is never
    auto-deleted; an operator inspects and clears it. The `FlushEveryBatches`
    counter only counts batches that actually translated at least one item —
    a batch that finds nothing pending means the queue is already empty,
@@ -286,7 +292,7 @@ Behavior:
    fully empties.
 
 **Crash-window duplicate note:** a crash between the ClickHouse insert and
-the DuckDB delete re-flushes the same rows on resume, producing duplicate
+the SQLite delete re-flushes the same rows on resume, producing duplicate
 `text_translations` rows with identical content. Readers already pick the
 latest version per key, so this is the same idempotent-read property the
 rest of the pipeline relies on — documented, accepted, not treated as a bug.
@@ -329,12 +335,20 @@ in this branch, so it can no longer be rebuilt, and a still-running old
 container/process will otherwise keep polling those task queues forever with
 no work arriving.
 
-**The old per-source queue file is abandoned.** `data/translator/norway_brreg.duckdb`
-(the pre-split, per-source queue used by the legacy Go and Python workflows)
-is no longer read by anything and can be deleted. Any text it still held
-that was never translated is not lost: the loaders' anti-join against
-`corpscout.text_translations` re-discovers untranslated text on the next
-scan and re-enqueues it into the new shared `data/translator/queue.duckdb`.
+**Old queue files are abandoned.** `data/translator/norway_brreg.duckdb` (the
+pre-split, per-source queue used by the legacy Go and Python workflows) and
+`data/translator/queue.duckdb` (the pre-cutover shared queue, before the
+engine moved to SQLite) are both no longer read by anything and can be
+deleted. The queue is transient working state, not a system of record: any
+text either file still held that was never translated is not lost — the
+loaders' anti-join against `corpscout.text_translations` re-discovers
+untranslated text on the next scan and re-enqueues it into the current
+shared `data/translator/queue.sqlite`. Restarting `translator-api` creates
+`queue.sqlite` (plus its `-wal`/`-shm` sidecar files) on boot; no manual
+migration step is required beyond re-running the affected loaders once to
+re-seed the new queue (Latvia had roughly 46k pending items from the E2E
+before this cutover — run `latvia_ur_translation_load` once after deploy to
+re-seed and let the workflow drain it).
 
 ## Configuration
 
@@ -350,13 +364,13 @@ config/translator.json
   "clickhouse": {"host": "...", "native_port": 9002, "user": "default", "database": "corpscout", "secure": false},
   "temporal": {"address": "localhost:7233", "namespace": "default", "batch_size": 50, "timeout_seconds": 120, "batches_per_run": 500},
   "endpoints": {"local_llm": {"model": "...", "model_env": "...", "base_url": "...", "base_url_env": "...", "api_key_env": "...", "max_tokens": 32768, "extra_body": {}}},
-  "queue": {"path": "data/translator/queue.duckdb", "flush_every_batches": 10},
+  "queue": {"path": "data/translator/queue.sqlite", "flush_every_batches": 10},
   "endpoint_id": "local_llm"
 }
 ```
 
 The `queue` block is the entire source configuration surface: a path to the
-single shared DuckDB file and the flush cadence. There is no `sources` map
+single shared SQLite file and the flush cadence. There is no `sources` map
 and no `definition_path` any more.
 
 Local environment variables can be started from:
@@ -429,7 +443,7 @@ make run
 
 The service expects ClickHouse and Temporal to be reachable at startup. It
 reads configuration from `config/translator.json` plus the environment
-variables listed above, opens (or creates) the shared DuckDB queue, starts
+variables listed above, opens (or creates) the shared SQLite queue, starts
 the Temporal worker, and performs boot-resume before serving HTTP.
 
 ## Direct Temporal Trigger
@@ -485,19 +499,17 @@ covers restarts with a non-empty queue. These exist for a manual nudge.
 
 ## Build
 
-DuckDB is linked through `github.com/marcboeker/go-duckdb`, which requires
-cgo. The Makefile sets `CGO_ENABLED=1` for `build`, `test`, `run`, and
-`trigger`.
+The queue runs on `modernc.org/sqlite`, a pure-Go SQLite driver — no cgo, no
+C toolchain, and no platform-specific bindings to vendor. The Makefile sets
+`CGO_ENABLED=0` for `build`, `test`, `run`, and `trigger`, so the service
+cross-compiles cleanly from any host and needs no build-essential-style
+toolchain step on Linux.
 
-On Debian/Ubuntu Linux, install a C/C++ toolchain before building:
-
-```bash
-apt-get update
-apt-get install -y build-essential
-```
-
-If cgo is disabled, Go will fail inside `go-duckdb` with errors such as
-`undefined: bindings.Type` or `undefined: bindings.State`.
+The race detector (`go test -race`) still works under `CGO_ENABLED=0` on
+this platform: Go has supported a cgo-free race detector on darwin/arm64 and
+linux/amd64 since Go 1.20, and the module's tests (including
+`internal/engine`'s concurrent test) pass cleanly under `-race` with cgo
+disabled.
 
 ```bash
 make build
@@ -534,7 +546,7 @@ make test
 `internal/engine/integration_test.go` exercises the whole engine loop
 against a real ClickHouse: enqueue two synthetic items, process them with a
 fake translator, flush the output, and confirm the rows land in
-`corpscout.text_translations` while the DuckDB queue empties (plus a second
+`corpscout.text_translations` while the SQLite queue empties (plus a second
 test that exercises `InsertTextTranslations` directly). Both tests are
 skipped unless `TRANSLATOR_INTEGRATION_TESTS=true`.
 

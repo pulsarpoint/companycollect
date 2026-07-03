@@ -33,7 +33,7 @@ func TestLoadBuildsClickHouseNativeURLFromDagsterEnv(t *testing.T) {
 func TestLoadParsesQueueConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "translator.json")
 	content := `{
-  "queue": {"path": "data/translator/custom.duckdb", "flush_every_batches": 5},
+  "queue": {"path": "data/translator/custom.sqlite", "flush_every_batches": 5},
   "endpoint_id": "local_llm"
 }`
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -44,7 +44,7 @@ func TestLoadParsesQueueConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.Queue.Path != "data/translator/custom.duckdb" {
+	if cfg.Queue.Path != "data/translator/custom.sqlite" {
 		t.Fatalf("expected queue path, got %q", cfg.Queue.Path)
 	}
 	if cfg.Queue.FlushEveryBatches != 5 {
@@ -68,7 +68,7 @@ func TestLoadAppliesQueueDefaultsAndSoleEndpointFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.Queue.Path != "data/translator/queue.duckdb" {
+	if cfg.Queue.Path != "data/translator/queue.sqlite" {
 		t.Fatalf("expected default queue path, got %q", cfg.Queue.Path)
 	}
 	if cfg.Queue.FlushEveryBatches != 10 {

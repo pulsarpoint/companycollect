@@ -42,23 +42,23 @@ type FailedItem struct {
 
 func Init(path string) (*Queue, error) {
 	if path == "" {
-		return nil, errors.New("queue duckdb path is required")
+		return nil, errors.New("queue database path is required")
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("queue duckdb file does not exist: %s", path)
+			return nil, fmt.Errorf("queue database file does not exist: %s", path)
 		}
-		return nil, fmt.Errorf("stat queue duckdb file: %w", err)
+		return nil, fmt.Errorf("stat queue database file: %w", err)
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("queue duckdb path is a directory: %s", path)
+		return nil, fmt.Errorf("queue database path is a directory: %s", path)
 	}
 
 	db, err := queuedb.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open queue duckdb: %w", err)
+		return nil, fmt.Errorf("open queue database: %w", err)
 	}
 	q, err := New(db)
 	if err != nil {
@@ -71,7 +71,7 @@ func Init(path string) (*Queue, error) {
 
 func New(db *sql.DB) (*Queue, error) {
 	if db == nil {
-		return nil, errors.New("queue duckdb connection is required")
+		return nil, errors.New("queue database connection is required")
 	}
 
 	q := &Queue{db: db}
@@ -377,12 +377,12 @@ func validateTable(ctx context.Context, db *sql.DB, table string, requiredColumn
 		return fmt.Errorf("iterate %s schema: %w", table, err)
 	}
 	if len(columns) == 0 {
-		return fmt.Errorf("%s table is required in queue duckdb", table)
+		return fmt.Errorf("%s table is required in queue database", table)
 	}
 
 	for _, column := range requiredColumns {
 		if !columns[column] {
-			return fmt.Errorf("%s.%s column is required in queue duckdb", table, column)
+			return fmt.Errorf("%s.%s column is required in queue database", table, column)
 		}
 	}
 	return nil
