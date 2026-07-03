@@ -505,11 +505,13 @@ C toolchain, and no platform-specific bindings to vendor. The Makefile sets
 cross-compiles cleanly from any host and needs no build-essential-style
 toolchain step on Linux.
 
-The race detector (`go test -race`) still works under `CGO_ENABLED=0` on
-this platform: Go has supported a cgo-free race detector on darwin/arm64 and
-linux/amd64 since Go 1.20, and the module's tests (including
-`internal/engine`'s concurrent test) pass cleanly under `-race` with cgo
-disabled.
+The module builds with `CGO_ENABLED=0` everywhere. The race detector
+(`go test -race`) has been verified to work cgo-free on darwin/arm64 (the
+development machine): the full test suite, including `internal/engine`'s
+concurrent test, passes under `-race` with cgo disabled there. On
+linux/amd64 the race detector still requires a host C toolchain — run race
+tests on Linux with `CGO_ENABLED=1 go test -race ./...`; the production
+build itself stays CGO-free.
 
 ```bash
 make build
