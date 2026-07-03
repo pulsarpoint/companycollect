@@ -270,6 +270,42 @@ skeleton, trigger CLI (reduced), Temporal worker wiring.
 - **End-to-end smoke** on the lab stack: dagster asset run → API →
   workflow → translated rows in ClickHouse.
 
+## Addendum: retirement of the legacy Python translator (user decision 2026-07-03)
+
+During planning, a second, older translator implementation was found at
+`corpscout/dagster_v3/translator/` (Python: per-source configs for
+`norway_brreg` and `latvia_ur`, DuckDB queue, LLM provider, flush, Temporal
+`BuildQueueWorkflow`/`TranslateWorkflow`, dagster trigger asset). The user
+confirmed: **the Go service is the system of record; the Python package
+predates the decision to rewrite the translator in Go and is retired by this
+project.** Consequences, in scope:
+
+1. **Latvia joins the loader lineup.** The Python package's `latvia_ur`
+   source (source_lang `lv`, `corpscout.lv_companies`, single column
+   `activity_text_original`, no static map) becomes a second dagster loader
+   asset (downstream of `latvia_ur_clickhouse_companies`), so no capability
+   is lost when the package is deleted.
+2. **Python package deletion**: `corpscout/dagster_v3/translator/` (whole
+   package incl. Dockerfile and design.md), the old trigger asset
+   `src/dagster_v3/defs/norway_brreg/assets/translation.py` (its
+   `norway_brreg_entities_full_snapshot_job` moves and re-targets the new
+   loader asset), all `tests/test_translator_*.py` plus other tests importing
+   `translator`, the `"translator"` entry in `pyproject.toml` wheel packages,
+   and the README / `docs/data-source-guidelines.md` §8 sections describing
+   the Python architecture (rewritten to describe the Go service + loader
+   pattern).
+3. **Ordering safety**: deletion happens only after the new Go path passes an
+   end-to-end smoke (loader → API → workflow → `text_translations`).
+4. **Operational lesson ported**: the Python package's hard-won retry policy
+   (transient LLM failures retry indefinitely with backoff; only
+   deterministic bad output is terminal) is adopted in the Go workflow's
+   activity retry policy (no max attempts, capped backoff interval);
+   deterministic bad output already terminates into `failed_items` via the
+   recovery ladder.
+5. **Temporal cleanup at deploy**: terminate the legacy Python workflows
+   (`build-queue-norway_brreg`, `translate-norway_brreg`) along with the old
+   Go `translator/norway_brreg` workflow.
+
 ## Out of scope
 
 - Multiple LLM endpoints / per-language-pair endpoint routing (one endpoint
