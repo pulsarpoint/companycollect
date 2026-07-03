@@ -7,6 +7,7 @@ require (
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/stretchr/testify v1.11.1
 	go.temporal.io/sdk v1.45.0
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -21,6 +22,7 @@ require (
 	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.21 // indirect
+	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
@@ -36,10 +38,13 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/marcboeker/go-duckdb/arrowmapping v0.0.21 // indirect
 	github.com/marcboeker/go-duckdb/mapping v0.0.21 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/nexus-rpc/sdk-go v0.6.0 // indirect
 	github.com/paulmach/orb v0.13.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
@@ -65,4 +70,7 @@ require (
 	google.golang.org/grpc v1.79.3 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	modernc.org/libc v1.73.4 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.11.0 // indirect
 )
