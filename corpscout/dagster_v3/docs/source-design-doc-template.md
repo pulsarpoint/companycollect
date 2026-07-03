@@ -37,7 +37,7 @@
   DD.MM.YYYY; element X has no native field → column stays NULL; …>
 - Export subset: `<TABLE>_EXPORT_COLUMNS` drops `raw_*`/`source_payload_hash`.
 
-## 6. Translation (§8) — loader in `src/dagster_v3/defs/translator_load/assets.py`
+## 6. Translation (§8) — loader in `defs/<source>/translation.py`
 | label | source_column (= original_col) | mechanism | static_map / notes |
 |---|---|---|---|
 | legal form | `legal_form_original` | static dict | `<CC>_LEGAL_FORM_EN_BY_CODE`, `static_key_col=legal_form_code` |

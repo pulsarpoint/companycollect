@@ -12,8 +12,14 @@ Table/column values are interpolated into SQL — loader configs are trusted,
 developer-authored code.
 """
 
+import os
 import time
 from dataclasses import dataclass
+
+import dagster as dg
+from dagster import AssetExecutionContext
+from dagster_clickhouse import ClickhouseResource
+from dlt.sources.helpers import requests as dlt_requests
 
 MAX_ITEMS_PER_REQUEST = 10_000
 
@@ -115,3 +121,53 @@ def insert_static_translations(client, table, column, source_lang, target_lang, 
         values,
     )
     return len(values)
+
+
+def api_url() -> str:
+    """Translator service base URL from TRANSLATOR_API_URL (default localhost)."""
+    return os.environ.get("TRANSLATOR_API_URL", "http://localhost:8080").rstrip("/")
+
+
+def load_source(
+    context: AssetExecutionContext, clickhouse: ClickhouseResource, source: LoaderSource
+) -> dict:
+    """Scan every LLM field of a source and enqueue untranslated texts.
+
+    The shared body of every per-source translation asset: anti-join scan per
+    field, chunked POST to the translator, summed {'received','inserted'}.
+    """
+    session = dlt_requests.Session()
+    totals = {"received": 0, "inserted": 0}
+    with clickhouse.get_connection() as client:
+        for field in source.fields:
+            rows = client.execute(build_scan_sql(field.table, field.column))
+            context.log.info(
+                "scanned %d untranslated texts for %s.%s", len(rows), field.table, field.column
+            )
+            field_totals = enqueue_items(session, api_url(), source, field, rows)
+            totals["received"] += field_totals["received"]
+            totals["inserted"] += field_totals["inserted"]
+    return totals
+
+
+def stats_check(session=None) -> dg.AssetCheckResult:
+    """Assert /v1/queue/stats is reachable and report queue counts.
+
+    Shared body of every per-source ``translator_stats_reachable`` asset check.
+    """
+    session = session or dlt_requests.Session()
+    try:
+        response = session.get(f"{api_url()}/v1/queue/stats", timeout=10)
+        response.raise_for_status()
+        stats = response.json()
+    except Exception as error:  # noqa: BLE001 - reachability check reports any failure
+        return dg.AssetCheckResult(passed=False, metadata={"error": str(error)})
+    return dg.AssetCheckResult(
+        passed=True,
+        metadata={
+            "input": stats.get("input", 0),
+            "pending": stats.get("pending", 0),
+            "output": stats.get("output", 0),
+            "failed": stats.get("failed", 0),
+        },
+    )

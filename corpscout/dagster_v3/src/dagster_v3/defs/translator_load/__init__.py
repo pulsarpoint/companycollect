@@ -1,5 +1,10 @@
-"""Translator loader assets: anti-join ClickHouse scans that enqueue untranslated
-free-text to the Go translator service's bulk endpoint (and insert static-map
-columns directly), one asset per source (Norway, Latvia). See ``loader.py``'s
-module docstring for the shared scan/enqueue/static-insert contract.
+"""Shared translation-loader library (no assets of its own).
+
+``loader.py`` holds the source-agnostic machinery: anti-join scan SQL
+builders, chunked bulk enqueue to the Go translator service, static-map
+direct insert, and the stats reachability check. Each source defines its own
+translation asset next to its ingest assets (``defs/<source>/translation.py``
+or ``defs/<source>/assets/translation.py``), importing these helpers — see
+``defs/norway_brreg/assets/translation.py`` (LLM columns + static map) and
+``defs/latvia_ur/translation.py`` (LLM column only) as the templates.
 """

@@ -16,6 +16,10 @@ from dagster_v3.defs.common.duckdb_resources import (
 )
 from dagster_v3.defs.latvia_ur import resources, tables
 from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_companies
+from dagster_v3.defs.latvia_ur.translation import (
+    latvia_ur_translation_load,
+    latvia_ur_translator_stats_check,
+)
 
 GROUP_NAME = "latvia"
 LATVIA_UR_DUCKDB_POOL = "latvia_ur_duckdb"
@@ -460,6 +464,10 @@ defs = dg.Definitions(
         latvia_address_cities_duckdb,
         latvia_address_municipalities_duckdb,
         latvia_ur_clickhouse_companies,
+        latvia_ur_translation_load,
+    ],
+    asset_checks=[
+        latvia_ur_translator_stats_check,
     ],
     jobs=[
         latvia_ur_register_job,

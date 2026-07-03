@@ -32,7 +32,8 @@ every ClickHouse export does — a re-export only creates work for genuinely new
 
 ## The loader pattern
 
-Loaders live in `src/dagster_v3/defs/translator_load/` — one asset per source
+Shared loader helpers live in `src/dagster_v3/defs/translator_load/loader.py`;
+each source defines its own translation asset in `defs/<source>/translation.py`
 (`norway_brreg_translation_load`, `latvia_ur_translation_load`), each downstream of that source's
 ClickHouse publish asset. The shared contract (`loader.py`):
 
@@ -58,7 +59,7 @@ trusted, developer-authored code and must never be built from untrusted input.
 1. Ensure the base table carries `<field>_original` columns and a `<source>_translated` join view
    exists (mirror `corpscout.no_companies_translated`; migrations own the schema).
 2. Add a `LoaderSource` (and any static map) to
-   `src/dagster_v3/defs/translator_load/assets.py`, plus a loader asset downstream of the source's
+   `defs/<source>/translation.py`, plus a loader asset downstream of the source's
    ClickHouse publish asset.
 3. Wire the loader into the source's full-refresh job selection if it should run per refresh
    (see `norway_brreg_entities_full_snapshot_job`).

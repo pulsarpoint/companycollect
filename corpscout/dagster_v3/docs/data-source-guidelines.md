@@ -162,7 +162,8 @@ The base ClickHouse table carries only `<field>_original` — **do not add `<fie
 cache row names its exact table and column. Results are exposed by a per-source `<source>_translated` join
 view. The cache survives the wipe-and-replace export, so a refresh only translates genuinely new/changed text.
 
-The loader pattern contract (`src/dagster_v3/defs/translator_load/`):
+The loader pattern contract (shared helpers in `src/dagster_v3/defs/translator_load/loader.py`;
+per-source assets in `defs/<source>/translation.py`):
 - **Anti-join scan**: `SELECT DISTINCT` untranslated texts per `(table, column)` by LEFT ANTI JOIN
   against `text_translations` — **loaders own dedup**, the service does not.
 - **Hash in SQL**: `cityHash64(col)` computed in ClickHouse, never in Python, so hashes always
@@ -174,7 +175,9 @@ The loader pattern contract (`src/dagster_v3/defs/translator_load/`):
 
 To make a source's fields translatable:
 1. **Loader**: add a `LoaderSource` and loader asset in
-   `src/dagster_v3/defs/translator_load/assets.py`, downstream of the source's ClickHouse export.
+   `defs/<source>/translation.py` (mirror `defs/latvia_ur/translation.py`, or
+   `defs/norway_brreg/assets/translation.py` for a source with static maps),
+   downstream of the source's ClickHouse export.
    Pick the mechanism by field kind:
    - **Free text** (company description, activity text) → LLM (enqueue to the service).
    - **Finite enumeration** (legal form, status, size category) → static map + key column,

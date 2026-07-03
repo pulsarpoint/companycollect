@@ -147,7 +147,7 @@ class _FakeStatsSession:
 
 
 def test_stats_check_passes_and_reports_counts():
-    from dagster_v3.defs.translator_load.assets import _stats_check
+    from dagster_v3.defs.translator_load.loader import stats_check as _stats_check
 
     session = _FakeStatsSession(payload={"input": 1, "pending": 2, "output": 3, "failed": 4})
     result = _stats_check(session=session)
@@ -160,7 +160,7 @@ def test_stats_check_passes_and_reports_counts():
 
 
 def test_stats_check_fails_when_unreachable():
-    from dagster_v3.defs.translator_load.assets import _stats_check
+    from dagster_v3.defs.translator_load.loader import stats_check as _stats_check
 
     session = _FakeStatsSession(error=RuntimeError("connection refused"))
     result = _stats_check(session=session)
@@ -170,16 +170,17 @@ def test_stats_check_fails_when_unreachable():
 
 
 def test_assets_are_defined_with_expected_deps():
-    from dagster_v3.defs.translator_load import assets as translator_assets
+    from dagster_v3.defs.latvia_ur import translation as latvia_translation
+    from dagster_v3.defs.norway_brreg.assets import translation as norway_translation
 
     import dagster as dg
 
-    norway = translator_assets.norway_brreg_translation_load
+    norway = norway_translation.norway_brreg_translation_load
     assert dg.AssetKey("norway_brreg_entities_snapshot_clickhouse") in {
         dep.asset_key for dep in norway.specs_by_key[norway.key].deps
     }
 
-    latvia = translator_assets.latvia_ur_translation_load
+    latvia = latvia_translation.latvia_ur_translation_load
     assert dg.AssetKey("latvia_ur_clickhouse_companies") in {
         dep.asset_key for dep in latvia.specs_by_key[latvia.key].deps
     }
