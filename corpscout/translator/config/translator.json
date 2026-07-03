@@ -32,11 +32,9 @@
       }
     }
   },
-  "sources": {
-    "norway_brreg": {
-      "queue_path": "data/translator/norway_brreg.duckdb",
-      "endpoint_id": "local_llm",
-      "definition_path": "config/sources/norway_brreg.json"
-    }
-  }
+  "queue": {
+    "path": "data/translator/queue.duckdb",
+    "flush_every_batches": 10
+  },
+  "endpoint_id": "local_llm"
 }

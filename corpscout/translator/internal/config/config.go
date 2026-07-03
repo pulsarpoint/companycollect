@@ -21,7 +21,8 @@ type Config struct {
 	ClickHouse ClickHouseConfig          `json:"clickhouse"`
 	Temporal   TemporalConfig            `json:"temporal"`
 	Endpoints  map[string]EndpointConfig `json:"endpoints"`
-	Sources    map[string]SourceConfig   `json:"sources"`
+	Queue      QueueConfig               `json:"queue"`
+	EndpointID string                    `json:"endpoint_id"`
 }
 
 type ServerConfig struct {
@@ -60,10 +61,10 @@ type EndpointConfig struct {
 	APIKey string `json:"-"`
 }
 
-type SourceConfig struct {
-	QueuePath      string `json:"queue_path"`
-	EndpointID     string `json:"endpoint_id"`
-	DefinitionPath string `json:"definition_path"`
+// QueueConfig locates the shared translation queue and sets the flush cadence.
+type QueueConfig struct {
+	Path              string `json:"path"`
+	FlushEveryBatches int    `json:"flush_every_batches"`
 }
 
 func LoadFromEnvironment() (Config, string, error) {
@@ -130,8 +131,16 @@ func applyDefaults(cfg *Config) {
 	if cfg.Endpoints == nil {
 		cfg.Endpoints = make(map[string]EndpointConfig)
 	}
-	if cfg.Sources == nil {
-		cfg.Sources = make(map[string]SourceConfig)
+	if cfg.Queue.Path == "" {
+		cfg.Queue.Path = "data/translator/queue.duckdb"
+	}
+	if cfg.Queue.FlushEveryBatches <= 0 {
+		cfg.Queue.FlushEveryBatches = 10
+	}
+	if cfg.EndpointID == "" && len(cfg.Endpoints) == 1 {
+		for name := range cfg.Endpoints {
+			cfg.EndpointID = name
+		}
 	}
 }
 

@@ -88,14 +88,11 @@ func newTemporalStarter(_ context.Context, cfg config.Config) (sourceActionStart
 		return nil, nil, fmt.Errorf("connect temporal: %w", err)
 	}
 
-	sources := make([]string, 0, len(cfg.Sources))
-	for name := range cfg.Sources {
-		sources = append(sources, name)
-	}
-
+	// TODO(task 8): bridge only — the shared queue no longer has per-source
+	// names, so this starter is temporarily unable to start real workflows.
 	return orchestration.NewTemporalWorkflowStarter(
 			temporalClient,
-			sources,
+			nil,
 			cfg.Temporal.BatchSize,
 			cfg.Temporal.TimeoutSeconds,
 			cfg.Temporal.BatchesPerRun,
