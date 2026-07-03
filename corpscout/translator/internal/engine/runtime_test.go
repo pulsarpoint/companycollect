@@ -336,6 +336,7 @@ func (runtimeTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	results := make([]translation.TranslationResult, 0, len(items))
 	for _, item := range items {
@@ -353,6 +354,7 @@ func (unexpectedRuntimeTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	return []translation.TranslationResult{
 		{ItemID: items[0].ItemID, TranslatedText: "translated expected"},
@@ -369,6 +371,7 @@ func (t *modelOutputThenSuccessTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	t.calls = append(t.calls, itemIDs(items))
 	if len(t.calls) <= t.failuresBeforeSuccess {
@@ -386,6 +389,7 @@ func (t *failLargeBatchTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	t.callSizes = append(t.callSizes, len(items))
 	if len(items) > t.maxSuccessfulBatchSize {
@@ -400,6 +404,7 @@ func (alwaysModelOutputFailureTranslator) Translate(
 	ctx context.Context,
 	items []translation.TranslationInput,
 	timeoutSeconds int,
+	promptData translation.PromptData,
 ) ([]translation.TranslationResult, error) {
 	return nil, fmt.Errorf("fake model output: %w", translation.ErrModelOutput)
 }

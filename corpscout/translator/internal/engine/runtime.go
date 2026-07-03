@@ -187,6 +187,10 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 
 	translatedCount := 0
 	if len(items) > 0 {
+		promptData := translation.PromptData{
+			SourceLanguage: items[0].SourceLanguageName,
+			TargetLanguage: items[0].TargetLanguageName,
+		}
 		output, failed, err := translation.TranslateItems(
 			ctx,
 			r.translator,
@@ -194,6 +198,7 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 			input.TimeoutSeconds,
 			r.providerName,
 			r.model,
+			promptData,
 		)
 		if err != nil {
 			r.logger.Error(

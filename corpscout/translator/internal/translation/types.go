@@ -25,5 +25,5 @@ type TranslationResult struct {
 }
 
 type Translator interface {
-	Translate(ctx context.Context, items []TranslationInput, timeoutSeconds int) ([]TranslationResult, error)
+	Translate(ctx context.Context, items []TranslationInput, timeoutSeconds int, promptData PromptData) ([]TranslationResult, error)
 }

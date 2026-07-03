@@ -38,10 +38,6 @@ func TestInitRendersPackagePromptTemplateWithConfiguredLanguages(t *testing.T) {
 		APIKey:    "test-key",
 		MaxTokens: 123,
 		ExtraBody: map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
-		PromptData: translation.PromptData{
-			SourceLanguage: "Danish",
-			TargetLanguage: "English",
-		},
 	})
 	if err != nil {
 		t.Fatalf("init provider: %v", err)
@@ -54,7 +50,10 @@ func TestInitRendersPackagePromptTemplateWithConfiguredLanguages(t *testing.T) {
 			SourceLang: "da",
 			TargetLang: "en",
 		},
-	}, 30)
+	}, 30, translation.PromptData{
+		SourceLanguage: "Danish",
+		TargetLanguage: "English",
+	})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -92,20 +91,14 @@ func TestInitRendersPackagePromptTemplateWithConfiguredLanguages(t *testing.T) {
 	}
 }
 
-func TestInitRequiresPromptLanguages(t *testing.T) {
-	_, err := translation.Init(translation.Config{
-		BaseURL: "http://127.0.0.1:8888/v1",
-		Model:   "qwen3:6b",
-		APIKey:  "test-key",
-		PromptData: translation.PromptData{
-			TargetLanguage: "English",
-		},
-	})
-	if err == nil {
-		t.Fatal("expected missing source language to fail")
+func TestTranslateRequiresPromptLanguages(t *testing.T) {
+	provider, err := translation.Init(translation.Config{BaseURL: "http://localhost:1", Model: "m", APIKey: "k"})
+	if err != nil {
+		t.Fatalf("init provider: %v", err)
 	}
-	if !strings.Contains(err.Error(), "source_language") {
-		t.Fatalf("expected source language error, got %v", err)
+	_, err = provider.Translate(context.Background(), []translation.TranslationInput{{ItemID: "1", SourceText: "x", SourceLang: "no", TargetLang: "en"}}, 1, translation.PromptData{})
+	if err == nil {
+		t.Fatal("expected error for empty prompt languages")
 	}
 }
 
@@ -135,10 +128,6 @@ func TestLocalOpenAICompatibleProviderMapsRequestLocalItemIDsToCanonicalItemIDs(
 		BaseURL: server.URL + "/v1",
 		Model:   "qwen3:6b",
 		APIKey:  "test-key",
-		PromptData: translation.PromptData{
-			SourceLanguage: "Norwegian",
-			TargetLanguage: "English",
-		},
 	})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -151,7 +140,10 @@ func TestLocalOpenAICompatibleProviderMapsRequestLocalItemIDsToCanonicalItemIDs(
 			SourceLang: "no",
 			TargetLang: "en",
 		},
-	}, 30)
+	}, 30, translation.PromptData{
+		SourceLanguage: "Norwegian",
+		TargetLanguage: "English",
+	})
 	if err != nil {
 		t.Fatalf("Translate(canonical item id) error = %v, want nil", err)
 	}
@@ -230,10 +222,6 @@ func TestLocalOpenAICompatibleProviderSendsRequestAndParsesResponse(t *testing.T
 		APIKey:    "test-key",
 		MaxTokens: 123,
 		ExtraBody: map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
-		PromptData: translation.PromptData{
-			SourceLanguage: "Norwegian",
-			TargetLanguage: "English",
-		},
 	})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -241,7 +229,10 @@ func TestLocalOpenAICompatibleProviderSendsRequestAndParsesResponse(t *testing.T
 
 	results, err := provider.Translate(context.Background(), []translation.TranslationInput{
 		{ItemID: "item-1", SourceText: "Holdingselskap", SourceLang: "no", TargetLang: "en"},
-	}, 30)
+	}, 30, translation.PromptData{
+		SourceLanguage: "Norwegian",
+		TargetLanguage: "English",
+	})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -297,10 +288,6 @@ func TestLocalOpenAICompatibleProviderLogsRequestMetadataWithoutSecretsOrSourceT
 		APIKey:    "secret-api-key",
 		MaxTokens: 123,
 		Logger:    logger,
-		PromptData: translation.PromptData{
-			SourceLanguage: "Norwegian",
-			TargetLanguage: "English",
-		},
 	})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -308,7 +295,10 @@ func TestLocalOpenAICompatibleProviderLogsRequestMetadataWithoutSecretsOrSourceT
 
 	_, err = provider.Translate(context.Background(), []translation.TranslationInput{
 		{ItemID: "item-1", SourceText: "Holdingselskap", SourceLang: "no", TargetLang: "en"},
-	}, 30)
+	}, 30, translation.PromptData{
+		SourceLanguage: "Norwegian",
+		TargetLanguage: "English",
+	})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
