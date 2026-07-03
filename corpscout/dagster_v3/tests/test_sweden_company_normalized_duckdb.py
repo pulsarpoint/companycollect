@@ -40,7 +40,7 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
                 incorporation_date::varchar,
                 dissolution_date::varchar,
                 activity_description
-            from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            from {tables.DLT_DATASET_NAME}.companies
             order by company_id
             """
         ).fetchall()
@@ -56,7 +56,7 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
                 postal_code,
                 post_town,
                 country_code
-            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_ADDRESSES_TABLE}
+            from {tables.DLT_DATASET_NAME}.company_addresses
             order by company_id, source
             """
         ).fetchall()
@@ -69,7 +69,7 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
                 sni_code,
                 nace_rev2_class_code,
                 source_field
-            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_INDUSTRY_CODES_TABLE}
+            from {tables.DLT_DATASET_NAME}.company_industry_codes
             order by company_id, sequence
             """
         ).fetchall()
@@ -82,29 +82,29 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
                 bolagsverket_source_payload_hash,
                 scb_source_payload_hash,
                 updated_from_raw_at
-            from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            from {tables.DLT_DATASET_NAME}.companies
             where company_id = '5560000000'
             """
         ).fetchone()
         address_provenance = connection.execute(
             f"""
             select source_run_id, source_record_id, source_payload_hash
-            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_ADDRESSES_TABLE}
+            from {tables.DLT_DATASET_NAME}.company_addresses
             where company_id = '5560000000' and source = 'bolagsverket'
             """
         ).fetchone()
         industry_provenance = connection.execute(
             f"""
             select source_run_id, source_record_id, source_payload_hash
-            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_INDUSTRY_CODES_TABLE}
+            from {tables.DLT_DATASET_NAME}.company_industry_codes
             where company_id = '5560000000' and source_field = 'Ng1'
             """
         ).fetchone()
 
     assert counts == {
-        tables.COMPANIES_TABLE: 3,
-        tables.COMPANY_ADDRESSES_TABLE: 4,
-        tables.COMPANY_INDUSTRY_CODES_TABLE: 4,
+        "companies": 3,
+        "company_addresses": 4,
+        "company_industry_codes": 4,
         "bolagsverket_company_count": 2,
         "scb_company_count": 2,
         "companies_with_sni_count": 2,
@@ -232,14 +232,14 @@ def test_replace_sweden_company_normalized_tables_rolls_back_partial_rebuild(
         _create_raw_tables(connection)
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.companies (
                 company_id varchar
             )
             """
         )
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.companies
             values ('preexisting')
             """
         )
@@ -264,7 +264,7 @@ def test_replace_sweden_company_normalized_tables_rolls_back_partial_rebuild(
             )
 
         companies = connection.execute(
-            f"select company_id from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
+            f"select company_id from {tables.DLT_DATASET_NAME}.companies"
         ).fetchall()
 
     assert companies == [("preexisting",)]
@@ -279,7 +279,7 @@ def test_replace_sweden_company_normalized_tables_uses_source_line_number_for_du
         _create_raw_tables(connection)
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.scb_raw
             values
             (
                 'run-1',
@@ -318,7 +318,7 @@ def test_replace_sweden_company_normalized_tables_uses_source_line_number_for_du
         company = connection.execute(
             f"""
             select legal_name, scb_source_record_id, scb_source_payload_hash
-            from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            from {tables.DLT_DATASET_NAME}.companies
             where company_id = '9999999999'
             """
         ).fetchone()
@@ -336,7 +336,7 @@ def test_replace_sweden_company_normalized_tables_fails_when_raw_table_is_missin
 
         with pytest.raises(
             ValueError,
-            match=rf"missing required raw tables.*{tables.BOLAGSVERKET_RAW_TABLE}",
+            match=r"missing required raw tables.*bolagsverket_raw",
         ):
             replace_sweden_company_normalized_tables(
                 connection=connection,
@@ -353,7 +353,7 @@ def test_replace_sweden_company_normalized_tables_fails_when_required_raw_column
         connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.BOLAGSVERKET_RAW_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.bolagsverket_raw (
                 source_run_id varchar,
                 source_record_id varchar,
                 source_payload_hash varchar
@@ -362,7 +362,7 @@ def test_replace_sweden_company_normalized_tables_fails_when_required_raw_column
         )
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.scb_raw (
                 source_run_id varchar,
                 source_record_id varchar,
                 source_payload_hash varchar,
@@ -373,7 +373,7 @@ def test_replace_sweden_company_normalized_tables_fails_when_required_raw_column
 
         with pytest.raises(
             ValueError,
-            match=rf"missing required columns.*{tables.BOLAGSVERKET_RAW_TABLE}\.organisationsidentitet",
+            match=r"missing required columns.*bolagsverket_raw\.organisationsidentitet",
         ):
             replace_sweden_company_normalized_tables(
                 connection=connection,
@@ -385,7 +385,7 @@ def _create_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
     connection.execute(
         f"""
-        create table {tables.DLT_DATASET_NAME}.{tables.BOLAGSVERKET_RAW_TABLE} (
+        create table {tables.DLT_DATASET_NAME}.bolagsverket_raw (
             source_run_id varchar,
             source_line_number bigint,
             source_record_id varchar,
@@ -408,7 +408,7 @@ def _create_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:
     )
     connection.execute(
         f"""
-        insert into {tables.DLT_DATASET_NAME}.{tables.BOLAGSVERKET_RAW_TABLE}
+        insert into {tables.DLT_DATASET_NAME}.bolagsverket_raw
         values
         (
             'run-1',
@@ -452,7 +452,7 @@ def _create_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:
     )
     connection.execute(
         f"""
-        create table {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE} (
+        create table {tables.DLT_DATASET_NAME}.scb_raw (
             source_run_id varchar,
             source_line_number bigint,
             source_record_id varchar,
@@ -482,7 +482,7 @@ def _create_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:
     )
     connection.execute(
         f"""
-        insert into {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}
+        insert into {tables.DLT_DATASET_NAME}.scb_raw
         values
         (
             'run-1',

@@ -209,7 +209,8 @@ def _replace_scb_raw_table(
                 quote='"',
                 escape='"',
                 null_padding=true,
-                strict_mode=false
+                strict_mode=false,
+                parallel=false
             )
         ),
         with_raw_record as (

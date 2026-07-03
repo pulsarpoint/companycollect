@@ -95,28 +95,28 @@ def test_load_sweden_company_raw_manifest_creates_raw_duckdb_tables(tmp_path: Pa
             source_run_id="run-1",
         )
         raw_files = connection.execute(
-            f"select source_slug, s3_key, sha256 from {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE} "
+            f"select source_slug, s3_key, sha256 from {tables.DLT_DATASET_NAME}.raw_files "
             "order by source_slug"
         ).fetchall()
         bolag = connection.execute(
             f"select source_run_id, source_line_number, source_record_id, organisationsnamn, raw_record "
-            f"from {tables.DLT_DATASET_NAME}.{tables.BOLAGSVERKET_RAW_TABLE}"
+            f"from {tables.DLT_DATASET_NAME}.bolagsverket_raw"
         ).fetchone()
         scb = connection.execute(
             f"select source_run_id, source_line_number, source_record_id, Namn, Ng1 "
-            f"from {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}"
+            f"from {tables.DLT_DATASET_NAME}.scb_raw"
         ).fetchone()
         scb_columns = [
             row[1]
             for row in connection.execute(
-                f"pragma table_info('{tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}')"
+                f"pragma table_info('{tables.DLT_DATASET_NAME}.scb_raw')"
             ).fetchall()
         ]
 
     assert counts == {
-        tables.RAW_FILES_TABLE: 2,
-        tables.BOLAGSVERKET_RAW_TABLE: 1,
-        tables.SCB_RAW_TABLE: 1,
+        "raw_files": 2,
+        "bolagsverket_raw": 1,
+        "scb_raw": 1,
     }
     assert raw_files == [
         ("bolagsverket_bulkfil", bolagsverket_key, "bolag-sha"),
@@ -212,15 +212,37 @@ def test_load_sweden_company_raw_manifest_streams_scb_latin1_transcode(
         )
         scb = connection.execute(
             f"select source_record_id, Namn "
-            f"from {tables.DLT_DATASET_NAME}.{tables.SCB_RAW_TABLE}"
+            f"from {tables.DLT_DATASET_NAME}.scb_raw"
         ).fetchone()
 
     assert counts == {
-        tables.RAW_FILES_TABLE: 2,
-        tables.BOLAGSVERKET_RAW_TABLE: 1,
-        tables.SCB_RAW_TABLE: 1,
+        "raw_files": 2,
+        "bolagsverket_raw": 1,
+        "scb_raw": 1,
     }
     assert scb == ("5560000000", "ÅÄÖ SCB")
+
+
+def test_scb_raw_loader_disables_parallel_csv_scan_with_null_padding(
+    tmp_path: Path,
+) -> None:
+    scb_path = tmp_path / "scb_bulkfil.txt"
+    scb_path.write_text("PeOrgNr\tNamn\r\n5560000000\tACME\r\n", encoding="latin-1")
+    executed_sql: list[str] = []
+
+    class CapturingConnection:
+        def execute(self, sql: str, params: list[str]) -> None:
+            executed_sql.append(sql)
+
+    raw_duckdb._replace_scb_raw_table(
+        connection=CapturingConnection(),
+        csv_path=scb_path,
+        source_run_id="run-1",
+        source_s3_key="raw/scb.zip",
+    )
+
+    assert "null_padding=true" in executed_sql[0]
+    assert "parallel=false" in executed_sql[0]
 
 
 def test_load_sweden_company_raw_manifest_rejects_partial_manifest_before_replacing_raw_files(
@@ -251,7 +273,7 @@ def test_load_sweden_company_raw_manifest_rejects_partial_manifest_before_replac
         connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.raw_files (
                 source_slug varchar,
                 s3_key varchar
             )
@@ -259,7 +281,7 @@ def test_load_sweden_company_raw_manifest_rejects_partial_manifest_before_replac
         )
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.raw_files
             values ('preexisting', 'old-key')
             """
         )
@@ -278,7 +300,7 @@ def test_load_sweden_company_raw_manifest_rejects_partial_manifest_before_replac
         raw_files = connection.execute(
             f"""
             select source_slug, s3_key
-            from {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE}
+            from {tables.DLT_DATASET_NAME}.raw_files
             """
         ).fetchall()
 
@@ -333,7 +355,7 @@ def test_load_sweden_company_raw_manifest_rejects_duplicate_manifest_source_slug
         connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.raw_files (
                 source_slug varchar,
                 s3_key varchar
             )
@@ -341,7 +363,7 @@ def test_load_sweden_company_raw_manifest_rejects_duplicate_manifest_source_slug
         )
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.raw_files
             values ('preexisting', 'old-key')
             """
         )
@@ -360,7 +382,7 @@ def test_load_sweden_company_raw_manifest_rejects_duplicate_manifest_source_slug
         raw_files = connection.execute(
             f"""
             select source_slug, s3_key
-            from {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE}
+            from {tables.DLT_DATASET_NAME}.raw_files
             """
         ).fetchall()
 
@@ -428,7 +450,7 @@ def test_load_sweden_company_raw_manifest_rolls_back_partial_rebuild(
         connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.raw_files (
                 source_slug varchar,
                 s3_key varchar
             )
@@ -436,13 +458,13 @@ def test_load_sweden_company_raw_manifest_rolls_back_partial_rebuild(
         )
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.raw_files
             values ('preexisting', 'old-key')
             """
         )
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.BOLAGSVERKET_RAW_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.bolagsverket_raw (
                 source_record_id varchar,
                 organisationsnamn varchar
             )
@@ -450,7 +472,7 @@ def test_load_sweden_company_raw_manifest_rolls_back_partial_rebuild(
         )
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.BOLAGSVERKET_RAW_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.bolagsverket_raw
             values ('old-id', 'Old Company')
             """
         )
@@ -469,13 +491,13 @@ def test_load_sweden_company_raw_manifest_rolls_back_partial_rebuild(
         raw_files = connection.execute(
             f"""
             select source_slug, s3_key
-            from {tables.DLT_DATASET_NAME}.{tables.RAW_FILES_TABLE}
+            from {tables.DLT_DATASET_NAME}.raw_files
             """
         ).fetchall()
         bolagsverket = connection.execute(
             f"""
             select source_record_id, organisationsnamn
-            from {tables.DLT_DATASET_NAME}.{tables.BOLAGSVERKET_RAW_TABLE}
+            from {tables.DLT_DATASET_NAME}.bolagsverket_raw
             """
         ).fetchall()
 

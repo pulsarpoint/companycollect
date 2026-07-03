@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dagster_v3.defs.sweden_company import assets
+import dagster as dg
 
 
 def test_sweden_company_refresh_job_and_schedule_registered() -> None:
@@ -25,15 +25,13 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
     }
 
     asset_graph = repo.asset_graph
-    asset_node = asset_graph.get(assets.SWEDEN_COMPANY_RAW_ASSET_KEY)
+    asset_node = asset_graph.get(dg.AssetKey("sweden_company_raw_snapshot_s3"))
     assert asset_node.group_name == "sweden_company"
-    duckdb_node = asset_graph.get(assets.SWEDEN_COMPANY_RAW_DUCKDB_ASSET_KEY)
+    duckdb_node = asset_graph.get(dg.AssetKey("sweden_company_raw_duckdb"))
     assert duckdb_node.group_name == "sweden_company"
-    normalized_node = asset_graph.get(
-        assets.SWEDEN_COMPANY_NORMALIZED_DUCKDB_ASSET_KEY
-    )
+    normalized_node = asset_graph.get(dg.AssetKey("sweden_company_normalized_duckdb"))
     assert normalized_node.group_name == "sweden_company"
-    clickhouse_node = asset_graph.get(assets.SWEDEN_COMPANY_CLICKHOUSE_ASSET_KEY)
+    clickhouse_node = asset_graph.get(dg.AssetKey("sweden_company_clickhouse"))
     assert clickhouse_node.group_name == "sweden_company"
 
 

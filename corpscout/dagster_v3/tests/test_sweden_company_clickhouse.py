@@ -61,7 +61,7 @@ def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_indus
         connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.companies (
                 company_id varchar,
                 registration_number varchar,
                 bolagsverket_company_id_raw varchar,
@@ -85,7 +85,7 @@ def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_indus
         )
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.COMPANY_ADDRESSES_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.company_addresses (
                 company_id varchar,
                 address_type varchar,
                 source varchar,
@@ -104,7 +104,7 @@ def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_indus
         )
         connection.execute(
             f"""
-            create table {tables.DLT_DATASET_NAME}.{tables.COMPANY_INDUSTRY_CODES_TABLE} (
+            create table {tables.DLT_DATASET_NAME}.company_industry_codes (
                 company_id varchar,
                 sequence integer,
                 is_primary boolean,
@@ -120,7 +120,7 @@ def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_indus
         )
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.companies
             values (
                 '5560000000',
                 '5560000000',
@@ -145,7 +145,7 @@ def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_indus
         )
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.COMPANY_ADDRESSES_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.company_addresses
             values (
                 '5560000000',
                 'postal',
@@ -165,7 +165,7 @@ def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_indus
         )
         connection.execute(
             f"""
-            insert into {tables.DLT_DATASET_NAME}.{tables.COMPANY_INDUSTRY_CODES_TABLE}
+            insert into {tables.DLT_DATASET_NAME}.company_industry_codes
             values (
                 '5560000000',
                 1,
