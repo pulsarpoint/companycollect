@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/marcboeker/go-duckdb/v2"
 	"github.com/pulsarpoint/corpscout/translator/internal/queue"
+	"github.com/pulsarpoint/corpscout/translator/internal/queuedb"
 )
 
 func TestInitFailsWhenQueueFileIsMissing(t *testing.T) {
-	_, err := queue.Init(filepath.Join(t.TempDir(), "missing.duckdb"))
+	_, err := queue.Init(filepath.Join(t.TempDir(), "missing.sqlite"))
 	if err == nil {
 		t.Fatal("expected missing queue file to fail")
 	}
@@ -25,16 +25,16 @@ func TestInitFailsWhenQueueFileIsMissing(t *testing.T) {
 }
 
 func TestInitFailsWhenQueueFileDoesNotHaveQueueTables(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "invalid.duckdb")
-	db, err := sql.Open("duckdb", path)
+	path := filepath.Join(t.TempDir(), "invalid.sqlite")
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open fixture duckdb: %v", err)
+		t.Fatalf("open fixture sqlite: %v", err)
 	}
 	if _, err := db.Exec("create table something_else (id integer)"); err != nil {
 		t.Fatalf("create invalid fixture table: %v", err)
 	}
 	if err := db.Close(); err != nil {
-		t.Fatalf("close fixture duckdb: %v", err)
+		t.Fatalf("close fixture sqlite: %v", err)
 	}
 
 	_, err = queue.Init(path)
@@ -48,9 +48,9 @@ func TestInitFailsWhenQueueFileDoesNotHaveQueueTables(t *testing.T) {
 
 func TestNewUsesExistingDuckDBConnectionWithoutClosingIt(t *testing.T) {
 	path := createQueueFixture(t, 1)
-	db, err := sql.Open("duckdb", path)
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open fixture duckdb: %v", err)
+		t.Fatalf("open fixture sqlite: %v", err)
 	}
 	defer db.Close()
 
@@ -154,6 +154,22 @@ func TestGetBatchReturnsSingleLanguagePairOldestFirst(t *testing.T) {
 	}
 }
 
+func TestGetBatchReturnsEmptySliceOnEmptyQueue(t *testing.T) {
+	db := openTestQueue(t)
+	q, err := queue.New(db)
+	if err != nil {
+		t.Fatalf("new queue: %v", err)
+	}
+
+	batch, err := q.GetBatch(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("get batch on empty queue: %v", err)
+	}
+	if len(batch) != 0 {
+		t.Fatalf("expected empty batch, got %d items", len(batch))
+	}
+}
+
 func TestQueueHandlesUnsignedCityHashValues(t *testing.T) {
 	ctx := context.Background()
 	path := createEmptyQueueFixture(t)
@@ -207,97 +223,34 @@ func createQueueFixture(t *testing.T, count int) string {
 	return path
 }
 
+// createEmptyQueueFixture creates a fresh queue database at a temp path via
+// queuedb.Open/CreateTables (the schema of record) and returns the path.
 func createEmptyQueueFixture(t *testing.T) string {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "queue.duckdb")
-	db, err := sql.Open("duckdb", path)
+	path := filepath.Join(t.TempDir(), "queue.sqlite")
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open fixture duckdb: %v", err)
+		t.Fatalf("open fixture sqlite: %v", err)
 	}
 	defer db.Close()
 
-	if _, err := db.Exec(`
-		create table input_items (
-			source_table text not null,
-			source_column text not null,
-			source_text text not null,
-			source_text_hash ubigint not null,
-			source_lang text not null,
-			target_lang text not null,
-			source_language_name text not null,
-			target_language_name text not null,
-			created_at timestamp not null,
-			primary key (
-				source_table,
-				source_column,
-				source_text_hash,
-				source_lang,
-				target_lang
-			)
-		)
-	`); err != nil {
-		t.Fatalf("create input_items: %v", err)
-	}
-
-	if _, err := db.Exec(`
-		create table output_items (
-			source_table text not null,
-			source_column text not null,
-			source_text text not null,
-			source_text_hash ubigint not null,
-			source_lang text not null,
-			target_lang text not null,
-			translated_text text not null,
-			provider text not null,
-			model text not null,
-			completed_at timestamp not null,
-			primary key (
-				source_table,
-				source_column,
-				source_text_hash,
-				source_lang,
-				target_lang
-			)
-		)
-	`); err != nil {
-		t.Fatalf("create output_items: %v", err)
-	}
-
-	if _, err := db.Exec(`
-		create table failed_items (
-			source_table text not null,
-			source_column text not null,
-			source_text text not null,
-			source_text_hash ubigint not null,
-			source_lang text not null,
-			target_lang text not null,
-			error_message text not null,
-			failed_at timestamp not null,
-			primary key (
-				source_table,
-				source_column,
-				source_text_hash,
-				source_lang,
-				target_lang
-			)
-		)
-	`); err != nil {
-		t.Fatalf("create failed_items: %v", err)
+	if err := queuedb.CreateTables(context.Background(), db); err != nil {
+		t.Fatalf("create fixture tables: %v", err)
 	}
 
 	return path
 }
 
-// openTestQueue opens a fresh DuckDB connection over an empty queue schema
+// openTestQueue opens a fresh SQLite connection over an empty queue schema
 // (via createEmptyQueueFixture) and closes it automatically at test cleanup.
 func openTestQueue(t *testing.T) *sql.DB {
 	t.Helper()
 
 	path := createEmptyQueueFixture(t)
-	db, err := sql.Open("duckdb", path)
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open queue duckdb: %v", err)
+		t.Fatalf("open queue sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
@@ -312,7 +265,7 @@ func insertTestInput(t *testing.T, db *sql.DB, table, column, text string, hash 
 		insert into input_items (
 			source_table, source_column, source_text, source_text_hash,
 			source_lang, target_lang, source_language_name, target_language_name, created_at
-		) values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, timestamp '2026-01-01 00:00:00' + to_seconds(?))
+		) values (?, ?, ?, ?, ?, ?, ?, ?, datetime('2026-01-01 00:00:00', '+' || ? || ' seconds'))
 	`, table, column, text, strconv.FormatUint(hash, 10), srcLang, dstLang, srcName, dstName, testInputSeq); err != nil {
 		t.Fatalf("insert test input: %v", err)
 	}
@@ -338,9 +291,9 @@ func inputFixtureRow(index int) queue.Item {
 func insertInput(t *testing.T, path string, row queue.Item) {
 	t.Helper()
 
-	db, err := sql.Open("duckdb", path)
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open fixture duckdb: %v", err)
+		t.Fatalf("open fixture sqlite: %v", err)
 	}
 	defer db.Close()
 
@@ -356,7 +309,7 @@ func insertInput(t *testing.T, path string, row queue.Item) {
 			target_language_name,
 			created_at
 		)
-		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, current_timestamp)
+		values (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
 	`, row.SourceTable, row.SourceColumn, row.SourceText, strconv.FormatUint(row.SourceTextHash, 10), row.SourceLang, row.TargetLang, row.SourceLanguageName, row.TargetLanguageName); err != nil {
 		t.Fatalf("insert input fixture row: %v", err)
 	}
@@ -365,9 +318,9 @@ func insertInput(t *testing.T, path string, row queue.Item) {
 func insertOutput(t *testing.T, path string, row queue.Item, translatedText string, provider string, model string) {
 	t.Helper()
 
-	db, err := sql.Open("duckdb", path)
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open fixture duckdb: %v", err)
+		t.Fatalf("open fixture sqlite: %v", err)
 	}
 	defer db.Close()
 
@@ -384,7 +337,7 @@ func insertOutput(t *testing.T, path string, row queue.Item, translatedText stri
 			model,
 			completed_at
 		)
-		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, ?, current_timestamp)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
 	`, row.SourceTable, row.SourceColumn, row.SourceText, strconv.FormatUint(row.SourceTextHash, 10), row.SourceLang, row.TargetLang, translatedText, provider, model); err != nil {
 		t.Fatalf("insert output fixture row: %v", err)
 	}
@@ -393,9 +346,9 @@ func insertOutput(t *testing.T, path string, row queue.Item, translatedText stri
 func outputCount(t *testing.T, path string) int {
 	t.Helper()
 
-	db, err := sql.Open("duckdb", path)
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open fixture duckdb: %v", err)
+		t.Fatalf("open fixture sqlite: %v", err)
 	}
 	defer db.Close()
 
@@ -409,9 +362,9 @@ func outputCount(t *testing.T, path string) int {
 func assertOutputRow(t *testing.T, path string, row queue.Item, translatedText string, provider string, model string) {
 	t.Helper()
 
-	db, err := sql.Open("duckdb", path)
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open fixture duckdb: %v", err)
+		t.Fatalf("open fixture sqlite: %v", err)
 	}
 	defer db.Close()
 
@@ -423,7 +376,7 @@ func assertOutputRow(t *testing.T, path string, row queue.Item, translatedText s
 		from output_items
 		where source_table = ?
 			and source_column = ?
-			and source_text_hash = cast(? as ubigint)
+			and source_text_hash = ?
 			and source_lang = ?
 			and target_lang = ?
 	`, row.SourceTable, row.SourceColumn, strconv.FormatUint(row.SourceTextHash, 10), row.SourceLang, row.TargetLang).Scan(&gotText, &gotProvider, &gotModel); err != nil {

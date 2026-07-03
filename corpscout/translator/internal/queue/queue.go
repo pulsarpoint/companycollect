@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	_ "github.com/marcboeker/go-duckdb/v2"
+	"github.com/pulsarpoint/corpscout/translator/internal/queuedb"
 )
 
 type Queue struct {
@@ -56,7 +56,7 @@ func Init(path string) (*Queue, error) {
 		return nil, fmt.Errorf("queue duckdb path is a directory: %s", path)
 	}
 
-	db, err := sql.Open("duckdb", path)
+	db, err := queuedb.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open queue duckdb: %w", err)
 	}
@@ -99,20 +99,9 @@ func (q *Queue) GetBatch(ctx context.Context, limit int) ([]Item, error) {
 
 	var srcLang, dstLang string
 	err := q.db.QueryRowContext(ctx, `
-		select i.source_lang, i.target_lang
-		from input_items as i
-		where not exists (
-			select 1 from output_items as o
-			where o.source_table = i.source_table and o.source_column = i.source_column
-				and o.source_text_hash = i.source_text_hash
-				and o.source_lang = i.source_lang and o.target_lang = i.target_lang
-		) and not exists (
-			select 1 from failed_items as f
-			where f.source_table = i.source_table and f.source_column = i.source_column
-				and f.source_text_hash = i.source_text_hash
-				and f.source_lang = i.source_lang and f.target_lang = i.target_lang
-		)
-		order by i.created_at, i.source_lang, i.target_lang
+		select source_lang, target_lang
+		from pending_items
+		order by created_at, source_lang, target_lang
 		limit 1
 	`).Scan(&srcLang, &dstLang)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -124,41 +113,17 @@ func (q *Queue) GetBatch(ctx context.Context, limit int) ([]Item, error) {
 
 	rows, err := q.db.QueryContext(ctx, `
 		select
-			i.source_table,
-			i.source_column,
-			i.source_text,
-			i.source_text_hash::varchar,
-			i.source_lang,
-			i.target_lang,
-			i.source_language_name,
-			i.target_language_name
-		from input_items as i
-		where not exists (
-			select 1
-			from output_items as o
-			where o.source_table = i.source_table
-				and o.source_column = i.source_column
-				and o.source_text_hash = i.source_text_hash
-				and o.source_lang = i.source_lang
-				and o.target_lang = i.target_lang
-		)
-			and not exists (
-			select 1
-			from failed_items as f
-			where f.source_table = i.source_table
-				and f.source_column = i.source_column
-				and f.source_text_hash = i.source_text_hash
-				and f.source_lang = i.source_lang
-				and f.target_lang = i.target_lang
-		)
-			and i.source_lang = ?
-			and i.target_lang = ?
-		order by
-			i.source_table,
-			i.source_column,
-			i.source_text_hash,
-			i.source_lang,
-			i.target_lang
+			source_table,
+			source_column,
+			source_text,
+			source_text_hash,
+			source_lang,
+			target_lang,
+			source_language_name,
+			target_language_name
+		from pending_items
+		where source_lang = ? and target_lang = ?
+		order by created_at, source_table, source_column, source_text_hash
 		limit ?
 	`, srcLang, dstLang, limit)
 	if err != nil {
@@ -221,7 +186,7 @@ func (q *Queue) SaveBatch(ctx context.Context, rows []TranslatedItem) error {
 			model,
 			completed_at
 		)
-		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, ?, current_timestamp)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
 		on conflict (
 			source_table,
 			source_column,
@@ -288,7 +253,7 @@ func (q *Queue) SaveFailed(ctx context.Context, rows []FailedItem) error {
 			error_message,
 			failed_at
 		)
-		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, current_timestamp)
+		values (?, ?, ?, ?, ?, ?, ?, current_timestamp)
 		on conflict (
 			source_table,
 			source_column,
@@ -387,11 +352,14 @@ func (q *Queue) validateSchema(ctx context.Context) error {
 }
 
 func validateTable(ctx context.Context, db *sql.DB, table string, requiredColumns []string) error {
-	rows, err := db.QueryContext(ctx, `
-		select column_name
-		from information_schema.columns
-		where table_name = ?
-	`, table)
+	rows, err := db.QueryContext(ctx, "select name from pragma_table_info(?)", table)
+	if err != nil {
+		// Fallback: some driver/version combinations reject binding a
+		// parameter into a table-valued function argument. table is always
+		// one of this package's own constant table names (never user
+		// input), so interpolating it directly here is safe.
+		rows, err = db.QueryContext(ctx, fmt.Sprintf("select name from pragma_table_info(%q)", table))
+	}
 	if err != nil {
 		return fmt.Errorf("read %s schema: %w", table, err)
 	}
