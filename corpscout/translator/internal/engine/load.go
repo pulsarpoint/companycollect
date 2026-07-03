@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+
+	"github.com/pulsarpoint/corpscout/translator/internal/queuedb"
 )
 
 // ClickHouseSource is the ClickHouse surface the engine needs; *ClickHouse
@@ -15,76 +17,7 @@ type ClickHouseSource interface {
 }
 
 func createQueueTables(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `
-		create table if not exists input_items (
-			source_table text not null,
-			source_column text not null,
-			source_text text not null,
-			source_text_hash ubigint not null,
-			source_lang text not null,
-			target_lang text not null,
-			source_language_name text not null,
-			target_language_name text not null,
-			created_at timestamp not null,
-			primary key (
-				source_table,
-				source_column,
-				source_text_hash,
-				source_lang,
-				target_lang
-			)
-		)
-	`); err != nil {
-		return fmt.Errorf("create input_items: %w", err)
-	}
-
-	if _, err := db.ExecContext(ctx, `
-		create table if not exists output_items (
-			source_table text not null,
-			source_column text not null,
-			source_text text not null,
-			source_text_hash ubigint not null,
-			source_lang text not null,
-			target_lang text not null,
-			translated_text text not null,
-			provider text not null,
-			model text not null,
-			completed_at timestamp not null,
-			primary key (
-				source_table,
-				source_column,
-				source_text_hash,
-				source_lang,
-				target_lang
-			)
-		)
-	`); err != nil {
-		return fmt.Errorf("create output_items: %w", err)
-	}
-
-	if _, err := db.ExecContext(ctx, `
-		create table if not exists failed_items (
-			source_table text not null,
-			source_column text not null,
-			source_text text not null,
-			source_text_hash ubigint not null,
-			source_lang text not null,
-			target_lang text not null,
-			error_message text not null,
-			failed_at timestamp not null,
-			primary key (
-				source_table,
-				source_column,
-				source_text_hash,
-				source_lang,
-				target_lang
-			)
-		)
-	`); err != nil {
-		return fmt.Errorf("create failed_items: %w", err)
-	}
-
-	return nil
+	return queuedb.CreateTables(ctx, db)
 }
 
 func upsertInputItems(ctx context.Context, db *sql.DB, rows []InputItem) error {
@@ -110,7 +43,7 @@ func upsertInputItems(ctx context.Context, db *sql.DB, rows []InputItem) error {
 			target_language_name,
 			created_at
 		)
-		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, ?, current_timestamp)
+		values (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
 		on conflict (
 			source_table,
 			source_column,

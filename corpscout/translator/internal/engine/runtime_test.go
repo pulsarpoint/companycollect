@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pulsarpoint/corpscout/translator/internal/translation"
@@ -42,11 +43,11 @@ func enqueueFixtureItems(t *testing.T, rt *Runtime, n int) EnqueueResult {
 	return result
 }
 
-func TestRuntimeLoadsProcessesAndUploadsBRREGQueue(t *testing.T) {
+func TestRuntimeProcessesAndFlushesQueue(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.sqlite"),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -114,7 +115,7 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.sqlite"),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -159,7 +160,7 @@ func TestRuntimeLogsQueueCountsWhenBatchIsEmpty(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.sqlite"),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -198,7 +199,7 @@ func TestRuntimeMarksSingleUnexpectedTranslationResultFailed(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.sqlite"),
 		Source:       source,
 		Translator:   unexpectedRuntimeTranslator{},
 		ProviderName: "local",
@@ -243,7 +244,7 @@ func TestRuntimeRetriesModelOutputFailureWithShuffledItems(t *testing.T) {
 	source := newFixtureSource()
 	translator := &modelOutputThenSuccessTranslator{failuresBeforeSuccess: 1}
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.sqlite"),
 		Source:       source,
 		Translator:   translator,
 		ProviderName: "local",
@@ -276,7 +277,7 @@ func TestRuntimeSplitsBatchAfterRepeatedModelOutputFailures(t *testing.T) {
 	source := newFixtureSource()
 	translator := &failLargeBatchTranslator{maxSuccessfulBatchSize: 2}
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.sqlite"),
 		Source:       source,
 		Translator:   translator,
 		ProviderName: "local",
@@ -307,7 +308,7 @@ func TestRuntimeMarksSingleItemFailedAfterRepeatedModelOutputFailures(t *testing
 	ctx := context.Background()
 	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.sqlite"),
 		Source:       source,
 		Translator:   alwaysModelOutputFailureTranslator{},
 		ProviderName: "local",
@@ -341,7 +342,7 @@ func TestFlushOutputInsertsAndDeletesFlushedRows(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "flush.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "flush.sqlite"),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -382,7 +383,7 @@ func TestFlushOutputInsertsAndDeletesFlushedRows(t *testing.T) {
 		insert into failed_items (
 			source_table, source_column, source_text, source_text_hash,
 			source_lang, target_lang, error_message, failed_at
-		) values (?, ?, ?, cast(? as ubigint), ?, ?, ?, current_timestamp)
+		) values (?, ?, ?, ?, ?, ?, ?, current_timestamp)
 	`, "corpscout.no_companies", "activity_text_original", "failed tekst", "999", "no", "en", "boom"); err != nil {
 		t.Fatalf("seed failed item: %v", err)
 	}
@@ -431,6 +432,61 @@ func TestFlushOutputInsertsAndDeletesFlushedRows(t *testing.T) {
 	}
 	if len(source.insertedTranslations) != 2 {
 		t.Fatalf("second flush must not insert more rows, got %d", len(source.insertedTranslations))
+	}
+}
+
+// TestConcurrentEnqueueAndProcess is the MaxOpenConns(1)/busy_timeout smoke:
+// parallel enqueues racing the batch loop must produce no SQLITE_BUSY errors
+// and a consistent final state. Run under -race in CI.
+func TestConcurrentEnqueueAndProcess(t *testing.T) {
+	ctx := context.Background()
+	rt := newEnqueueTestRuntime(t) // translator fake must succeed
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for worker := 0; worker < 4; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			req := validEnqueueRequest(1)
+			req.Items = nil
+			for i := 0; i < 25; i++ {
+				req.Items = append(req.Items, EnqueueItem{
+					SourceTable:    "corpscout.no_companies",
+					SourceColumn:   "activity_text_original",
+					SourceText:     fmt.Sprintf("tekst %d-%d", worker, i),
+					SourceTextHash: fmt.Sprintf("%d", worker*1000+i+1),
+				})
+			}
+			if _, err := rt.Enqueue(ctx, req); err != nil {
+				errs <- err
+			}
+		}(worker)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 5; i++ {
+			if _, err := rt.ProcessOneBatch(ctx, ProcessInput{BatchSize: 10, TimeoutSeconds: 5}); err != nil {
+				errs <- err
+			}
+		}
+	}()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent operation failed: %v", err)
+	}
+
+	stats, err := rt.Stats(ctx)
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if stats.Input != 100 {
+		t.Fatalf("expected 100 input rows, got %d", stats.Input)
+	}
+	if stats.Pending+stats.Output != 100 || stats.Failed != 0 {
+		t.Fatalf("inconsistent final state: %+v", stats)
 	}
 }
 

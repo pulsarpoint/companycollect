@@ -37,7 +37,7 @@ func (uppercaseEchoTranslator) Translate(
 // TestEnqueueProcessFlushWithExistingClickHouse exercises the whole engine
 // loop end to end against a real ClickHouse: enqueue two synthetic items,
 // process them with a fake translator, flush the output, and confirm the
-// rows land in corpscout.text_translations while the DuckDB queue empties.
+// rows land in corpscout.text_translations while the SQLite queue empties.
 func TestEnqueueProcessFlushWithExistingClickHouse(t *testing.T) {
 	if os.Getenv("TRANSLATOR_INTEGRATION_TESTS") != "true" {
 		t.Skip("set TRANSLATOR_INTEGRATION_TESTS=true and CLICKHOUSE_* environment variables to run")
@@ -81,7 +81,7 @@ func TestEnqueueProcessFlushWithExistingClickHouse(t *testing.T) {
 	}
 	defer source.Close()
 
-	queuePath := filepath.Join(t.TempDir(), "enqueue_process_flush.duckdb")
+	queuePath := filepath.Join(t.TempDir(), "enqueue_process_flush.sqlite")
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    queuePath,
 		Source:       source,

@@ -2,7 +2,7 @@
 // batches of untranslated text over HTTP, the Temporal workflow processes
 // pending batches through a translation provider, and periodic flushes write
 // finished translations into ClickHouse before deleting the matching rows
-// from the local DuckDB queue.
+// from the local SQLite queue.
 package engine
 
 import (
@@ -139,9 +139,5 @@ func (r *Runtime) Stats(ctx context.Context) (QueueStats, error) {
 	if err != nil {
 		return QueueStats{}, err
 	}
-	failed, err := countRows(ctx, r.db, "failed_items")
-	if err != nil {
-		return QueueStats{}, err
-	}
-	return QueueStats{Input: counts.input, Pending: counts.pending, Output: counts.output, Failed: failed}, nil
+	return QueueStats{Input: counts.input, Pending: counts.pending, Output: counts.output, Failed: counts.failed}, nil
 }

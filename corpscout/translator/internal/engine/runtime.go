@@ -13,9 +13,8 @@ import (
 	"time"
 
 	"github.com/pulsarpoint/corpscout/translator/internal/queue"
+	"github.com/pulsarpoint/corpscout/translator/internal/queuedb"
 	"github.com/pulsarpoint/corpscout/translator/internal/translation"
-
-	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 type Runtime struct {
@@ -91,9 +90,9 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		return nil, fmt.Errorf("create queue directory: %w", err)
 	}
 
-	db, err := sql.Open("duckdb", config.QueuePath)
+	db, err := queuedb.Open(config.QueuePath)
 	if err != nil {
-		return nil, fmt.Errorf("open queue duckdb: %w", err)
+		return nil, fmt.Errorf("open queue database: %w", err)
 	}
 	if err := createQueueTables(ctx, db); err != nil {
 		_ = db.Close()
@@ -221,7 +220,7 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 }
 
 // FlushOutput inserts all queued output rows into ClickHouse and then, only
-// after a successful insert, deletes the flushed rows from the DuckDB queue.
+// after a successful insert, deletes the flushed rows from the SQLite queue.
 // Matched input_items are deleted first (while output_items still exists to
 // join against), then all of output_items; failed_items is never touched.
 func (r *Runtime) FlushOutput(ctx context.Context) (UploadResult, error) {
@@ -254,9 +253,13 @@ func (r *Runtime) FlushOutput(ctx context.Context) (UploadResult, error) {
 
 	if _, err := r.db.ExecContext(ctx, `
 		delete from input_items
-		where (source_table, source_column, source_text_hash, source_lang, target_lang) in (
-			select source_table, source_column, source_text_hash, source_lang, target_lang
-			from output_items
+		where exists (
+			select 1 from output_items as o
+			where o.source_table = input_items.source_table
+				and o.source_column = input_items.source_column
+				and o.source_text_hash = input_items.source_text_hash
+				and o.source_lang = input_items.source_lang
+				and o.target_lang = input_items.target_lang
 		)
 	`); err != nil {
 		r.logger.Error(
@@ -304,7 +307,7 @@ func (r *Runtime) outputTranslations(ctx context.Context) ([]TextTranslation, er
 			source_table,
 			source_column,
 			source_text,
-			source_text_hash::varchar,
+			source_text_hash,
 			source_lang,
 			target_lang,
 			translated_text,
@@ -353,40 +356,31 @@ func (r *Runtime) outputTranslations(ctx context.Context) ([]TextTranslation, er
 type queueCounts struct {
 	input   int
 	output  int
+	failed  int
 	pending int
 }
 
 func (r *Runtime) queueCounts(ctx context.Context) (queueCounts, error) {
 	var counts queueCounts
-	if err := r.db.QueryRowContext(ctx, "select count(*) from input_items").Scan(&counts.input); err != nil {
-		return queueCounts{}, fmt.Errorf("count input_items: %w", err)
+	var err error
+	if counts.input, err = countRows(ctx, r.db, "input_items"); err != nil {
+		return queueCounts{}, err
 	}
-	if err := r.db.QueryRowContext(ctx, "select count(*) from output_items").Scan(&counts.output); err != nil {
-		return queueCounts{}, fmt.Errorf("count output_items: %w", err)
+	if counts.output, err = countRows(ctx, r.db, "output_items"); err != nil {
+		return queueCounts{}, err
 	}
-	if err := r.db.QueryRowContext(ctx, `
-		select count(*)
-		from input_items as i
-		where not exists (
-			select 1
-			from output_items as o
-			where o.source_table = i.source_table
-				and o.source_column = i.source_column
-				and o.source_text_hash = i.source_text_hash
-				and o.source_lang = i.source_lang
-				and o.target_lang = i.target_lang
-		)
-			and not exists (
-			select 1
-			from failed_items as f
-			where f.source_table = i.source_table
-				and f.source_column = i.source_column
-				and f.source_text_hash = i.source_text_hash
-				and f.source_lang = i.source_lang
-				and f.target_lang = i.target_lang
-		)
-	`).Scan(&counts.pending); err != nil {
-		return queueCounts{}, fmt.Errorf("count pending queue items: %w", err)
+	if counts.failed, err = countRows(ctx, r.db, "failed_items"); err != nil {
+		return queueCounts{}, err
+	}
+	// Exact under the structural invariant: every output/failed row has a
+	// matching input row (outputs/faileds are only written for items pulled
+	// from input; flush deletes inputs and outputs together; failed inputs
+	// are never auto-deleted). Clamped defensively — going negative would
+	// mean the invariant broke, and a stuck-negative pending must not wedge
+	// the workflow's queue-empty detection.
+	counts.pending = counts.input - counts.output - counts.failed
+	if counts.pending < 0 {
+		counts.pending = 0
 	}
 	return counts, nil
 }

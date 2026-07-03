@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/marcboeker/go-duckdb/v2"
+	"github.com/pulsarpoint/corpscout/translator/internal/queuedb"
 )
 
 const (
@@ -21,15 +21,15 @@ const (
 	testTargetLangName = "English"
 )
 
-// openTestQueueDB opens a fresh temp DuckDB file with the queue tables
+// openTestQueueDB opens a fresh temp SQLite file with the queue tables
 // already created, mirroring what NewRuntime does on startup.
 func openTestQueueDB(t *testing.T) *sql.DB {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "queue.duckdb")
-	db, err := sql.Open("duckdb", path)
+	path := filepath.Join(t.TempDir(), "queue.sqlite")
+	db, err := queuedb.Open(path)
 	if err != nil {
-		t.Fatalf("open duckdb: %v", err)
+		t.Fatalf("open queue db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -127,8 +127,8 @@ func TestUpsertInputItemsRejectsIncompleteRows(t *testing.T) {
 }
 
 // TestUpsertInputItemsStoresUnsignedMaxUint64Hash pins that cityHash64
-// values above math.MaxInt64 (which don't fit a signed 64-bit column)
-// round-trip correctly through DuckDB's ubigint column.
+// values above math.MaxInt64 (which don't fit a signed 64-bit SQLite
+// integer) round-trip correctly through the source_text_hash text column.
 func TestUpsertInputItemsStoresUnsignedMaxUint64Hash(t *testing.T) {
 	ctx := context.Background()
 	db := openTestQueueDB(t)
@@ -148,7 +148,7 @@ func TestUpsertInputItemsStoresUnsignedMaxUint64Hash(t *testing.T) {
 	}
 
 	var stored string
-	if err := db.QueryRow("select source_text_hash::varchar from input_items").Scan(&stored); err != nil {
+	if err := db.QueryRow("select source_text_hash from input_items").Scan(&stored); err != nil {
 		t.Fatalf("read source_text_hash: %v", err)
 	}
 	if stored != "18446744073709551615" {

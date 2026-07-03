@@ -14,7 +14,7 @@ func newEnqueueTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	ctx := context.Background()
 	rt, err := NewRuntime(ctx, RuntimeConfig{
-		QueuePath:    filepath.Join(t.TempDir(), "enqueue.duckdb"),
+		QueuePath:    filepath.Join(t.TempDir(), "enqueue.sqlite"),
 		Source:       newFixtureSource(),
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -121,5 +121,52 @@ func TestEnqueueUpsertsAndCountsInserted(t *testing.T) {
 	}
 	if stats.Input != 2 || stats.Pending != 2 || stats.Output != 0 || stats.Failed != 0 {
 		t.Fatalf("unexpected stats %+v", stats)
+	}
+}
+
+// TestPendingCountMatchesViewDefinition pins the arithmetic identity
+// (pending = input − output − failed) against the pending_items view: both
+// must agree on a queue seeded with pending, translated, and failed rows.
+func TestPendingCountMatchesViewDefinition(t *testing.T) {
+	ctx := context.Background()
+	rt := newEnqueueTestRuntime(t) // existing helper; translator fake must succeed
+
+	req := validEnqueueRequest(1)
+	req.Items = []EnqueueItem{
+		{SourceTable: "corpscout.no_companies", SourceColumn: "activity_text_original", SourceText: "en", SourceTextHash: "1"},
+		{SourceTable: "corpscout.no_companies", SourceColumn: "activity_text_original", SourceText: "to", SourceTextHash: "2"},
+		{SourceTable: "corpscout.no_companies", SourceColumn: "activity_text_original", SourceText: "tre", SourceTextHash: "3"},
+	}
+	if _, err := rt.Enqueue(ctx, req); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	// Translate one item (batch size 1) → 1 output row; fail one directly.
+	if _, err := rt.ProcessOneBatch(ctx, ProcessInput{BatchSize: 1, TimeoutSeconds: 5}); err != nil {
+		t.Fatalf("process one batch: %v", err)
+	}
+	if _, err := rt.db.ExecContext(ctx, `
+		insert into failed_items (source_table, source_column, source_text, source_text_hash,
+			source_lang, target_lang, error_message)
+		select source_table, source_column, source_text, source_text_hash,
+			source_lang, target_lang, 'seeded failure'
+		from pending_items limit 1
+	`); err != nil {
+		t.Fatalf("seed failed item: %v", err)
+	}
+
+	counts, err := rt.queueCounts(ctx)
+	if err != nil {
+		t.Fatalf("queue counts: %v", err)
+	}
+	var viewPending int
+	if err := rt.db.QueryRowContext(ctx, "select count(*) from pending_items").Scan(&viewPending); err != nil {
+		t.Fatalf("count view: %v", err)
+	}
+	if counts.pending != viewPending {
+		t.Fatalf("arithmetic pending %d != view pending %d", counts.pending, viewPending)
+	}
+	if counts.pending != 1 {
+		t.Fatalf("expected exactly 1 pending (3 − 1 translated − 1 failed), got %d", counts.pending)
 	}
 }
