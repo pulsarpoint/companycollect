@@ -8,21 +8,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
+	"github.com/pulsarpoint/corpscout/translator/internal/engine"
 	"go.temporal.io/sdk/activity"
 )
 
-func TestRegisterNorwayBRREGRegistersWorkflowAndActivities(t *testing.T) {
-	registry := &fakeBRREGRegistry{}
+func TestRegisterSourceRegistersWorkflowAndPerSourceActivities(t *testing.T) {
+	registry := &fakeSourceRegistry{}
 
-	if err := RegisterNorwayBRREG(registry, &fakeBRREGRuntime{}); err != nil {
-		t.Fatalf("register norway brreg: %v", err)
+	if err := RegisterSource(registry, "norway_brreg", &fakeSourceRuntime{}); err != nil {
+		t.Fatalf("register source: %v", err)
 	}
 
 	if len(registry.workflows) != 1 {
 		t.Fatalf("expected one workflow registration, got %d", len(registry.workflows))
 	}
-	if !strings.HasSuffix(functionName(registry.workflows[0]), ".NorwayBRREGWorkflow") {
+	if !strings.HasSuffix(functionName(registry.workflows[0]), ".TranslationWorkflow") {
 		t.Fatalf("unexpected workflow registration: %s", functionName(registry.workflows[0]))
 	}
 
@@ -32,22 +32,28 @@ func TestRegisterNorwayBRREGRegistersWorkflowAndActivities(t *testing.T) {
 	}
 
 	expected := []string{
-		brreg.ActivityLoadNewInput,
-		brreg.ActivityProcessOneBatch,
-		brreg.ActivityUploadOutput,
+		"norway_brreg.LoadNewInput",
+		"norway_brreg.ProcessOneBatch",
+		"norway_brreg.UploadOutput",
 	}
 	if !reflect.DeepEqual(activityNames, expected) {
 		t.Fatalf("unexpected activity registrations: got %#v want %#v", activityNames, expected)
 	}
 }
 
-func TestRegisterNorwayBRREGRequiresRuntime(t *testing.T) {
-	if err := RegisterNorwayBRREG(&fakeBRREGRegistry{}, nil); !errors.Is(err, ErrBRREGRuntimeRequired) {
+func TestRegisterSourceRequiresRuntime(t *testing.T) {
+	if err := RegisterSource(&fakeSourceRegistry{}, "norway_brreg", nil); !errors.Is(err, ErrSourceRuntimeRequired) {
 		t.Fatalf("expected missing runtime error, got %v", err)
 	}
 }
 
-type fakeBRREGRegistry struct {
+func TestRegisterSourceRequiresSourceName(t *testing.T) {
+	if err := RegisterSource(&fakeSourceRegistry{}, "", &fakeSourceRuntime{}); !errors.Is(err, ErrSourceNameRequired) {
+		t.Fatalf("expected missing source name error, got %v", err)
+	}
+}
+
+type fakeSourceRegistry struct {
 	workflows  []interface{}
 	activities []registeredActivity
 }
@@ -57,11 +63,11 @@ type registeredActivity struct {
 	options  activity.RegisterOptions
 }
 
-func (f *fakeBRREGRegistry) RegisterWorkflow(workflow interface{}) {
+func (f *fakeSourceRegistry) RegisterWorkflow(workflow interface{}) {
 	f.workflows = append(f.workflows, workflow)
 }
 
-func (f *fakeBRREGRegistry) RegisterActivityWithOptions(
+func (f *fakeSourceRegistry) RegisterActivityWithOptions(
 	activityFunc interface{},
 	options activity.RegisterOptions,
 ) {
@@ -75,16 +81,16 @@ func functionName(value interface{}) string {
 	return runtime.FuncForPC(reflect.ValueOf(value).Pointer()).Name()
 }
 
-type fakeBRREGRuntime struct{}
+type fakeSourceRuntime struct{}
 
-func (f *fakeBRREGRuntime) LoadNewInput(ctx context.Context) (brreg.InitResult, error) {
-	return brreg.InitResult{}, nil
+func (f *fakeSourceRuntime) LoadNewInput(ctx context.Context) (engine.LoadResult, error) {
+	return engine.LoadResult{}, nil
 }
 
-func (f *fakeBRREGRuntime) ProcessOneBatch(ctx context.Context, input brreg.ProcessInput) (brreg.ProcessResult, error) {
-	return brreg.ProcessResult{}, nil
+func (f *fakeSourceRuntime) ProcessOneBatch(ctx context.Context, input engine.ProcessInput) (engine.ProcessResult, error) {
+	return engine.ProcessResult{}, nil
 }
 
-func (f *fakeBRREGRuntime) UploadOutput(ctx context.Context) (brreg.UploadResult, error) {
-	return brreg.UploadResult{}, nil
+func (f *fakeSourceRuntime) UploadOutput(ctx context.Context) (engine.UploadResult, error) {
+	return engine.UploadResult{}, nil
 }

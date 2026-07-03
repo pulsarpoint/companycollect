@@ -1,4 +1,4 @@
-package brreg
+package engine
 
 import (
 	"context"
@@ -40,8 +40,17 @@ func TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries(
 		t.Fatal("corpscout.no_companies is empty")
 	}
 
-	expectedArticlesPurposeRows := clickHouseScanCount(t, ctx, db, articlesPurposeScanSQL)
-	expectedActivityTextRows := clickHouseScanCount(t, ctx, db, activityTextScanSQL)
+	def := norwayDefinition()
+	articlesSQL, err := ScanSQL(def, def.Columns[0])
+	if err != nil {
+		t.Fatalf("render articles scan sql: %v", err)
+	}
+	activitySQL, err := ScanSQL(def, def.Columns[1])
+	if err != nil {
+		t.Fatalf("render activity scan sql: %v", err)
+	}
+	expectedArticlesPurposeRows := clickHouseScanCount(t, ctx, db, articlesSQL)
+	expectedActivityTextRows := clickHouseScanCount(t, ctx, db, activitySQL)
 	expectedDynamicRows := expectedArticlesPurposeRows + expectedActivityTextRows
 	beforeStaticRows := clickHouseStaticTranslationCount(t, ctx, db)
 
@@ -52,7 +61,7 @@ func TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries(
 	defer source.Close()
 
 	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
-	result, err := InitializeTranslation(ctx, source, Options{QueuePath: queuePath})
+	result, err := LoadInput(ctx, source, def, Options{QueuePath: queuePath})
 	if err != nil {
 		t.Fatalf("initialize translation: %v", err)
 	}
@@ -177,8 +186,8 @@ func TestInsertTextTranslationsWithExistingClickHouse(t *testing.T) {
 			SourceTable:    "corpscout.integration_test",
 			SourceColumn:   "translation_batch_test",
 			SourceTextHash: 18_446_744_073_709_551_615,
-			SourceLang:     SourceLang,
-			TargetLang:     TargetLang,
+			SourceLang:     "no",
+			TargetLang:     "en",
 			TranslatedText: "integration translation",
 			Provider:       "integration-test",
 			Model:          "integration-test",

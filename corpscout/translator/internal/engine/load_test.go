@@ -1,4 +1,4 @@
-package brreg
+package engine
 
 import (
 	"context"
@@ -12,14 +12,23 @@ import (
 	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
-func TestInitializeTranslationCreatesQueueDuckDBWithOneHundredRows(t *testing.T) {
+const (
+	testSourceTable     = "corpscout.no_companies"
+	testArticlesColumn  = "articles_purpose_original"
+	testActivityColumn  = "activity_text_original"
+	testLegalFormColumn = "legal_form_description_original"
+	testSourceLang      = "no"
+	testTargetLang      = "en"
+)
+
+func TestLoadInputCreatesQueueDuckDBWithOneHundredRows(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource(100)
 	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
 
-	result, err := InitializeTranslation(ctx, source, Options{QueuePath: queuePath})
+	result, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath})
 	if err != nil {
-		t.Fatalf("initialize translation: %v", err)
+		t.Fatalf("load input: %v", err)
 	}
 
 	if !result.Created {
@@ -42,11 +51,11 @@ func TestInitializeTranslationCreatesQueueDuckDBWithOneHundredRows(t *testing.T)
 		t.Fatalf("expected empty output queue, got %d rows", got)
 	}
 
-	assertColumnCount(t, queuePath, ArticlesPurposeColumn, 50)
-	assertColumnCount(t, queuePath, ActivityTextColumn, 50)
+	assertColumnCount(t, queuePath, testArticlesColumn, 50)
+	assertColumnCount(t, queuePath, testActivityColumn, 50)
 }
 
-func TestInitializeTranslationWithDBUsesCallerOwnedConnection(t *testing.T) {
+func TestLoadInputWithDBUsesCallerOwnedConnection(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource(10)
 	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
@@ -57,9 +66,9 @@ func TestInitializeTranslationWithDBUsesCallerOwnedConnection(t *testing.T) {
 	}
 	defer db.Close()
 
-	result, err := initializeTranslationWithDB(ctx, source, db, queuePath, true)
+	result, err := loadInputWithDB(ctx, source, norwayDefinition(), db, queuePath, true)
 	if err != nil {
-		t.Fatalf("initialize translation with db: %v", err)
+		t.Fatalf("load input with db: %v", err)
 	}
 	if !result.Created {
 		t.Fatal("expected created flag to be preserved")
@@ -77,29 +86,29 @@ func TestInitializeTranslationWithDBUsesCallerOwnedConnection(t *testing.T) {
 	}
 }
 
-func TestInitializeTranslationUpsertsExistingQueueFile(t *testing.T) {
+func TestLoadInputUpsertsExistingQueueFile(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource(100)
 	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
 
-	if _, err := InitializeTranslation(ctx, source, Options{QueuePath: queuePath}); err != nil {
-		t.Fatalf("first initialize translation: %v", err)
+	if _, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath}); err != nil {
+		t.Fatalf("first load input: %v", err)
 	}
 
-	source.rowsByColumn[ArticlesPurposeColumn] = append(
-		source.rowsByColumn[ArticlesPurposeColumn],
-		fixtureInputItem(ArticlesPurposeColumn, 100),
+	source.rowsByColumn[testArticlesColumn] = append(
+		source.rowsByColumn[testArticlesColumn],
+		fixtureInputItem(testArticlesColumn, 100),
 	)
 
-	result, err := InitializeTranslation(ctx, source, Options{QueuePath: queuePath})
+	result, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath})
 	if err != nil {
-		t.Fatalf("second initialize translation: %v", err)
+		t.Fatalf("second load input: %v", err)
 	}
 	if result.Created {
 		t.Fatal("expected existing queue file to be reused")
 	}
 	if result.RowsSeen != 101 {
-		t.Fatalf("expected 101 source rows on second init, got %d", result.RowsSeen)
+		t.Fatalf("expected 101 source rows on second load, got %d", result.RowsSeen)
 	}
 	if result.RowsInserted != 1 {
 		t.Fatalf("expected 1 new inserted row, got %d", result.RowsInserted)
@@ -109,26 +118,26 @@ func TestInitializeTranslationUpsertsExistingQueueFile(t *testing.T) {
 	}
 }
 
-func TestInitializeTranslationFlushesStaticLegalFormsDirectlyToClickHouse(t *testing.T) {
+func TestLoadInputFlushesStaticColumnsDirectlyToClickHouse(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource(100)
-	source.staticLegalFormRows = []StaticLegalFormInput{
+	source.staticRows = []StaticInput{
 		{
 			SourceText:     "Aksjeselskap",
 			SourceTextHash: 9001,
-			LegalFormCode:  "AS",
+			Key:            "AS",
 		},
 		{
 			SourceText:     "Ukjent form",
 			SourceTextHash: 9002,
-			LegalFormCode:  "UNKNOWN",
+			Key:            "UNKNOWN",
 		},
 	}
 	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
 
-	result, err := InitializeTranslation(ctx, source, Options{QueuePath: queuePath})
+	result, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath})
 	if err != nil {
-		t.Fatalf("initialize translation: %v", err)
+		t.Fatalf("load input: %v", err)
 	}
 
 	if result.StaticRowsSeen != 2 {
@@ -143,7 +152,7 @@ func TestInitializeTranslationFlushesStaticLegalFormsDirectlyToClickHouse(t *tes
 	if !strings.Contains(source.staticQueries[0], "c.legal_form_code AS legal_form_code") {
 		t.Fatalf("expected static scan to select legal_form_code:\n%s", source.staticQueries[0])
 	}
-	if got := inputCountByColumn(t, queuePath, LegalFormDescriptionColumn); got != 0 {
+	if got := inputCountByColumn(t, queuePath, testLegalFormColumn); got != 0 {
 		t.Fatalf("static legal-form rows must not enter input queue, got %d rows", got)
 	}
 
@@ -151,11 +160,11 @@ func TestInitializeTranslationFlushesStaticLegalFormsDirectlyToClickHouse(t *tes
 		t.Fatalf("expected 1 inserted static translation, got %d", len(source.insertedTranslations))
 	}
 	inserted := source.insertedTranslations[0]
-	if inserted.SourceTable != SourceTable {
-		t.Fatalf("expected source table %q, got %q", SourceTable, inserted.SourceTable)
+	if inserted.SourceTable != testSourceTable {
+		t.Fatalf("expected source table %q, got %q", testSourceTable, inserted.SourceTable)
 	}
-	if inserted.SourceColumn != LegalFormDescriptionColumn {
-		t.Fatalf("expected source column %q, got %q", LegalFormDescriptionColumn, inserted.SourceColumn)
+	if inserted.SourceColumn != testLegalFormColumn {
+		t.Fatalf("expected source column %q, got %q", testLegalFormColumn, inserted.SourceColumn)
 	}
 	if inserted.SourceText != "Aksjeselskap" {
 		t.Fatalf("expected source text Aksjeselskap, got %q", inserted.SourceText)
@@ -169,32 +178,32 @@ func TestInitializeTranslationFlushesStaticLegalFormsDirectlyToClickHouse(t *tes
 	if inserted.Provider != "static" || inserted.Model != "static" {
 		t.Fatalf("expected static provider/model, got provider=%q model=%q", inserted.Provider, inserted.Model)
 	}
-	if inserted.SourceLang != SourceLang || inserted.TargetLang != TargetLang {
-		t.Fatalf("expected %s->%s, got %s->%s", SourceLang, TargetLang, inserted.SourceLang, inserted.TargetLang)
+	if inserted.SourceLang != testSourceLang || inserted.TargetLang != testTargetLang {
+		t.Fatalf("expected %s->%s, got %s->%s", testSourceLang, testTargetLang, inserted.SourceLang, inserted.TargetLang)
 	}
 	if inserted.Version == 0 {
 		t.Fatal("expected non-zero static translation version")
 	}
 }
 
-func TestInitializeTranslationStoresUnsignedCityHashValues(t *testing.T) {
+func TestLoadInputStoresUnsignedCityHashValues(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource(0)
-	source.rowsByColumn[ArticlesPurposeColumn] = []InputItem{
+	source.rowsByColumn[testArticlesColumn] = []InputItem{
 		{
-			SourceTable:    SourceTable,
-			SourceColumn:   ArticlesPurposeColumn,
+			SourceTable:    testSourceTable,
+			SourceColumn:   testArticlesColumn,
 			SourceText:     "high unsigned hash",
 			SourceTextHash: math.MaxUint64,
-			SourceLang:     SourceLang,
-			TargetLang:     TargetLang,
+			SourceLang:     testSourceLang,
+			TargetLang:     testTargetLang,
 		},
 	}
 	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
 
-	result, err := InitializeTranslation(ctx, source, Options{QueuePath: queuePath})
+	result, err := LoadInput(ctx, source, norwayDefinition(), Options{QueuePath: queuePath})
 	if err != nil {
-		t.Fatalf("initialize translation: %v", err)
+		t.Fatalf("load input: %v", err)
 	}
 
 	if result.RowsInserted != 1 {
@@ -216,51 +225,9 @@ func TestInitializeTranslationStoresUnsignedCityHashValues(t *testing.T) {
 	}
 }
 
-func TestScanSQLUsesConcreteClickHouseAntiJoinShape(t *testing.T) {
-	assertScanSQL(t, articlesPurposeScanSQL, []string{
-		"SELECT DISTINCT",
-		"'corpscout.no_companies' AS source_table",
-		"'articles_purpose_original' AS source_column",
-		"c.articles_purpose_original AS source_text",
-		"cityHash64(c.articles_purpose_original) AS source_text_hash",
-		"FROM corpscout.no_companies AS c",
-		"LEFT ANTI JOIN",
-		"FROM corpscout.text_translations",
-		"WHERE source_table = 'corpscout.no_companies' AND source_column = 'articles_purpose_original'",
-		"ON t.source_text_hash = cityHash64(c.articles_purpose_original)",
-		"WHERE c.articles_purpose_original <> ''",
-	})
-	assertScanSQL(t, activityTextScanSQL, []string{
-		"SELECT DISTINCT",
-		"'corpscout.no_companies' AS source_table",
-		"'activity_text_original' AS source_column",
-		"c.activity_text_original AS source_text",
-		"cityHash64(c.activity_text_original) AS source_text_hash",
-		"FROM corpscout.no_companies AS c",
-		"LEFT ANTI JOIN",
-		"FROM corpscout.text_translations",
-		"WHERE source_table = 'corpscout.no_companies' AND source_column = 'activity_text_original'",
-		"ON t.source_text_hash = cityHash64(c.activity_text_original)",
-		"WHERE c.activity_text_original <> ''",
-	})
-}
-
-func assertScanSQL(t *testing.T, sql string, required []string) {
-	t.Helper()
-
-	for _, fragment := range required {
-		if !strings.Contains(sql, fragment) {
-			t.Fatalf("expected SQL to contain %q\nSQL:\n%s", fragment, sql)
-		}
-	}
-	if strings.Contains(sql, "{table:String}") || strings.Contains(sql, "{column:String}") {
-		t.Fatalf("BRREG scan SQL must not use generic table/column parameters:\n%s", sql)
-	}
-}
-
 type fixtureSource struct {
 	rowsByColumn         map[string][]InputItem
-	staticLegalFormRows  []StaticLegalFormInput
+	staticRows           []StaticInput
 	queries              []string
 	staticQueries        []string
 	insertedTranslations []TextTranslation
@@ -268,13 +235,13 @@ type fixtureSource struct {
 
 func newFixtureSource(count int) *fixtureSource {
 	rowsByColumn := map[string][]InputItem{
-		ArticlesPurposeColumn: make([]InputItem, 0, count/2),
-		ActivityTextColumn:    make([]InputItem, 0, count/2),
+		testArticlesColumn: make([]InputItem, 0, count/2),
+		testActivityColumn: make([]InputItem, 0, count/2),
 	}
 	for index := 0; index < count; index++ {
-		column := ArticlesPurposeColumn
+		column := testArticlesColumn
 		if index >= count/2 {
-			column = ActivityTextColumn
+			column = testActivityColumn
 		}
 		rowsByColumn[column] = append(rowsByColumn[column], fixtureInputItem(column, index))
 	}
@@ -285,18 +252,18 @@ func (s *fixtureSource) QueryTranslationInput(ctx context.Context, query string)
 	s.queries = append(s.queries, query)
 
 	switch {
-	case strings.Contains(query, ArticlesPurposeColumn):
-		return append([]InputItem(nil), s.rowsByColumn[ArticlesPurposeColumn]...), nil
-	case strings.Contains(query, ActivityTextColumn):
-		return append([]InputItem(nil), s.rowsByColumn[ActivityTextColumn]...), nil
+	case strings.Contains(query, testArticlesColumn):
+		return append([]InputItem(nil), s.rowsByColumn[testArticlesColumn]...), nil
+	case strings.Contains(query, testActivityColumn):
+		return append([]InputItem(nil), s.rowsByColumn[testActivityColumn]...), nil
 	default:
 		return nil, fmt.Errorf("unexpected query: %s", query)
 	}
 }
 
-func (s *fixtureSource) QueryStaticLegalForms(ctx context.Context, query string) ([]StaticLegalFormInput, error) {
+func (s *fixtureSource) QueryStaticInput(ctx context.Context, query string) ([]StaticInput, error) {
 	s.staticQueries = append(s.staticQueries, query)
-	return append([]StaticLegalFormInput(nil), s.staticLegalFormRows...), nil
+	return append([]StaticInput(nil), s.staticRows...), nil
 }
 
 func (s *fixtureSource) InsertTextTranslations(ctx context.Context, rows []TextTranslation) (int, error) {
@@ -306,12 +273,12 @@ func (s *fixtureSource) InsertTextTranslations(ctx context.Context, rows []TextT
 
 func fixtureInputItem(column string, index int) InputItem {
 	return InputItem{
-		SourceTable:    SourceTable,
+		SourceTable:    testSourceTable,
 		SourceColumn:   column,
 		SourceText:     fmt.Sprintf("Norwegian text %03d", index),
 		SourceTextHash: uint64(10_000 + index),
-		SourceLang:     SourceLang,
-		TargetLang:     TargetLang,
+		SourceLang:     testSourceLang,
+		TargetLang:     testTargetLang,
 	}
 }
 

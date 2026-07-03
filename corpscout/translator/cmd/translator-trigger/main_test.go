@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
+	"github.com/pulsarpoint/corpscout/translator/internal/engine"
 	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 )
 
@@ -28,7 +28,7 @@ func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
 	factory := &fakeStarterFactory{
 		starter: &fakeStarter{
 			result: orchestration.WorkflowActionResult{
-				WorkflowID: brreg.WorkflowID,
+				WorkflowID: engine.WorkflowID("norway_brreg"),
 				RunID:      "run-123",
 			},
 		},
@@ -58,13 +58,13 @@ func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
 		t.Fatalf("run() Temporal timeout seconds = %d, want %d", factory.cfg.Temporal.TimeoutSeconds, 90)
 	}
 
-	if factory.starter.source != brreg.SourceName {
-		t.Fatalf("run() source = %q, want %q", factory.starter.source, brreg.SourceName)
+	if factory.starter.source != "norway_brreg" {
+		t.Fatalf("run() source = %q, want %q", factory.starter.source, "norway_brreg")
 	}
-	if factory.starter.action != brreg.ActionRun {
-		t.Fatalf("run() action = %q, want %q", factory.starter.action, brreg.ActionRun)
+	if factory.starter.action != engine.ActionRun {
+		t.Fatalf("run() action = %q, want %q", factory.starter.action, engine.ActionRun)
 	}
-	if !strings.Contains(stdout.String(), "workflow_id="+brreg.WorkflowID) {
+	if !strings.Contains(stdout.String(), "workflow_id="+engine.WorkflowID("norway_brreg")) {
 		t.Fatalf("run() stdout = %q, want workflow id", stdout.String())
 	}
 }
@@ -73,7 +73,7 @@ func TestRunLoadAndRunStartsSingleLoadAndRunAction(t *testing.T) {
 	configPath := writeConfig(t, `{}`)
 	starter := &fakeStarter{
 		result: orchestration.WorkflowActionResult{
-			WorkflowID: brreg.WorkflowID,
+			WorkflowID: engine.WorkflowID("norway_brreg"),
 			RunID:      "run-123",
 		},
 	}
@@ -90,8 +90,8 @@ func TestRunLoadAndRunStartsSingleLoadAndRunAction(t *testing.T) {
 		t.Fatalf("run(load-and-run) error = %v, want nil", err)
 	}
 
-	if starter.action != brreg.ActionLoadAndRun {
-		t.Fatalf("run(load-and-run) action = %q, want %q", starter.action, brreg.ActionLoadAndRun)
+	if starter.action != engine.ActionLoadAndRun {
+		t.Fatalf("run(load-and-run) action = %q, want %q", starter.action, engine.ActionLoadAndRun)
 	}
 }
 

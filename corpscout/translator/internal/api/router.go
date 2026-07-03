@@ -9,13 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
+	"github.com/pulsarpoint/corpscout/translator/internal/engine"
 	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 )
 
 type Router struct {
 	startedAt       time.Time
 	workflowStarter WorkflowStarter
+	sources         map[string]bool
 	logger          *slog.Logger
 }
 
@@ -23,17 +24,22 @@ type WorkflowStarter interface {
 	StartSourceAction(ctx context.Context, source string, action string) (orchestration.WorkflowActionResult, error)
 }
 
-func NewRouter(workflowStarter WorkflowStarter) *Router {
-	return NewRouterWithLogger(workflowStarter, nil)
+func NewRouter(workflowStarter WorkflowStarter, sources []string) *Router {
+	return NewRouterWithLogger(workflowStarter, sources, nil)
 }
 
-func NewRouterWithLogger(workflowStarter WorkflowStarter, logger *slog.Logger) *Router {
+func NewRouterWithLogger(workflowStarter WorkflowStarter, sources []string, logger *slog.Logger) *Router {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	known := make(map[string]bool, len(sources))
+	for _, source := range sources {
+		known[source] = true
 	}
 	return &Router{
 		startedAt:       time.Now().UTC(),
 		workflowStarter: workflowStarter,
+		sources:         known,
 		logger:          logger.With("component", "api"),
 	}
 }
@@ -75,11 +81,11 @@ func (r *Router) sourceAction(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if source != brreg.SourceName {
+	if !r.sources[source] {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !isBRREGAction(action) {
+	if !isSourceAction(action) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -133,9 +139,9 @@ func parseSourceAction(path string) (string, string, bool) {
 	return parts[2], parts[3], true
 }
 
-func isBRREGAction(action string) bool {
+func isSourceAction(action string) bool {
 	switch action {
-	case brreg.ActionLoadAndRun, brreg.ActionLoadQueue, brreg.ActionRun:
+	case engine.ActionLoadAndRun, engine.ActionLoadQueue, engine.ActionRun:
 		return true
 	default:
 		return false

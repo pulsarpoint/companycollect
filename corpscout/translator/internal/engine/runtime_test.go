@@ -1,4 +1,4 @@
-package brreg
+package engine
 
 import (
 	"bytes"
@@ -18,6 +18,7 @@ func TestRuntimeLoadsProcessesAndUploadsBRREGQueue(t *testing.T) {
 	source := newFixtureSource(10)
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -89,6 +90,7 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 	source := newFixtureSource(2)
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -116,12 +118,12 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 
 	logText := logs.String()
 	required := []string{
-		`"msg":"brreg runtime initialized"`,
-		`"msg":"brreg load input completed"`,
+		`"msg":"runtime initialized"`,
+		`"msg":"load input completed"`,
 		`"rows_inserted":2`,
-		`"msg":"brreg process batch completed"`,
+		`"msg":"process batch completed"`,
 		`"translated_count":1`,
-		`"msg":"brreg upload output completed"`,
+		`"msg":"upload output completed"`,
 		`"rows_seen":1`,
 	}
 	for _, fragment := range required {
@@ -138,6 +140,7 @@ func TestRuntimeLogsQueueCountsWhenBatchIsEmpty(t *testing.T) {
 	source := newFixtureSource(0)
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   runtimeTranslator{},
 		ProviderName: "local",
@@ -159,7 +162,7 @@ func TestRuntimeLogsQueueCountsWhenBatchIsEmpty(t *testing.T) {
 
 	logText := logs.String()
 	required := []string{
-		`"msg":"brreg process batch completed"`,
+		`"msg":"process batch completed"`,
 		`"translated_count":0`,
 		`"input_count":0`,
 		`"output_count":0`,
@@ -177,6 +180,7 @@ func TestRuntimeMarksSingleUnexpectedTranslationResultFailed(t *testing.T) {
 	source := newFixtureSource(1)
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   unexpectedRuntimeTranslator{},
 		ProviderName: "local",
@@ -224,6 +228,7 @@ func TestRuntimeRetriesModelOutputFailureWithShuffledItems(t *testing.T) {
 	translator := &modelOutputThenSuccessTranslator{failuresBeforeSuccess: 1}
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   translator,
 		ProviderName: "local",
@@ -259,6 +264,7 @@ func TestRuntimeSplitsBatchAfterRepeatedModelOutputFailures(t *testing.T) {
 	translator := &failLargeBatchTranslator{maxSuccessfulBatchSize: 2}
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   translator,
 		ProviderName: "local",
@@ -292,6 +298,7 @@ func TestRuntimeMarksSingleItemFailedAfterRepeatedModelOutputFailures(t *testing
 	source := newFixtureSource(1)
 	runtime, err := NewRuntime(ctx, RuntimeConfig{
 		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Definition:   norwayDefinition(),
 		Source:       source,
 		Translator:   alwaysModelOutputFailureTranslator{},
 		ProviderName: "local",

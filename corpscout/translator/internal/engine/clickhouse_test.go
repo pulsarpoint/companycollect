@@ -1,4 +1,4 @@
-package brreg
+package engine
 
 import (
 	"context"
@@ -59,12 +59,12 @@ func TestInsertTextTranslationsAbortsCurrentBatchOnAppendError(t *testing.T) {
 
 func fixtureTextTranslation(hash uint64) TextTranslation {
 	return TextTranslation{
-		SourceTable:    SourceTable,
-		SourceColumn:   ActivityTextColumn,
+		SourceTable:    "corpscout.no_companies",
+		SourceColumn:   "activity_text_original",
 		SourceText:     "source",
 		SourceTextHash: hash,
-		SourceLang:     SourceLang,
-		TargetLang:     TargetLang,
+		SourceLang:     "no",
+		TargetLang:     "en",
 		TranslatedText: "translated",
 		Provider:       "local",
 		Model:          "qwen3:6b",

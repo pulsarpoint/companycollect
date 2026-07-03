@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
+	"github.com/pulsarpoint/corpscout/translator/internal/engine"
 	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 )
 
@@ -21,7 +21,7 @@ func TestSourceActionStartsWorkflow(t *testing.T) {
 			RunID:      "run-1",
 		},
 	}
-	router := NewRouter(starter)
+	router := NewRouter(starter, []string{"norway_brreg"})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sources/norway_brreg/run", nil)
 	resp := httptest.NewRecorder()
@@ -53,11 +53,11 @@ func TestSourceActionStartsWorkflow(t *testing.T) {
 func TestSourceActionStartsLoadAndRunWorkflow(t *testing.T) {
 	starter := &fakeWorkflowStarter{
 		result: orchestration.WorkflowActionResult{
-			WorkflowID: brreg.WorkflowID,
+			WorkflowID: "translator/norway_brreg",
 			RunID:      "run-1",
 		},
 	}
-	router := NewRouter(starter)
+	router := NewRouter(starter, []string{"norway_brreg"})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sources/norway_brreg/load-and-run", nil)
 	resp := httptest.NewRecorder()
@@ -67,13 +67,13 @@ func TestSourceActionStartsLoadAndRunWorkflow(t *testing.T) {
 	if resp.Code != http.StatusAccepted {
 		t.Fatalf("expected status 202, got %d body=%s", resp.Code, resp.Body.String())
 	}
-	if starter.source != brreg.SourceName || starter.action != brreg.ActionLoadAndRun {
-		t.Fatalf("expected starter call %s/%s, got %s/%s", brreg.SourceName, brreg.ActionLoadAndRun, starter.source, starter.action)
+	if starter.source != "norway_brreg" || starter.action != engine.ActionLoadAndRun {
+		t.Fatalf("expected starter call %s/%s, got %s/%s", "norway_brreg", engine.ActionLoadAndRun, starter.source, starter.action)
 	}
 }
 
 func TestSourceActionRejectsUnknownSource(t *testing.T) {
-	router := NewRouter(&fakeWorkflowStarter{})
+	router := NewRouter(&fakeWorkflowStarter{}, []string{"norway_brreg"})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sources/unknown/run", nil)
 	resp := httptest.NewRecorder()
@@ -92,7 +92,7 @@ func TestSourceActionLogsAcceptedWorkflowTrigger(t *testing.T) {
 			WorkflowID: "translator/norway_brreg",
 			RunID:      "run-1",
 		},
-	}, slog.New(slog.NewJSONHandler(&logs, nil)))
+	}, []string{"norway_brreg"}, slog.New(slog.NewJSONHandler(&logs, nil)))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sources/norway_brreg/run", nil)
 	resp := httptest.NewRecorder()
@@ -114,6 +114,28 @@ func TestSourceActionLogsAcceptedWorkflowTrigger(t *testing.T) {
 		if !strings.Contains(logText, fragment) {
 			t.Fatalf("expected router logs to contain %s\nlogs:\n%s", fragment, logText)
 		}
+	}
+}
+
+func TestSourceActionAcceptsAnyConfiguredSource(t *testing.T) {
+	starter := &fakeWorkflowStarter{
+		result: orchestration.WorkflowActionResult{
+			WorkflowID: "translator/sweden_scb",
+			RunID:      "run-2",
+		},
+	}
+	router := NewRouter(starter, []string{"norway_brreg", "sweden_scb"})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sources/sweden_scb/run", nil)
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if starter.source != "sweden_scb" {
+		t.Fatalf("expected starter call for sweden_scb, got %s", starter.source)
 	}
 }
 

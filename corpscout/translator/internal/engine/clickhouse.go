@@ -1,4 +1,4 @@
-package brreg
+package engine
 
 import (
 	"context"
@@ -80,27 +80,27 @@ func (c *ClickHouse) QueryTranslationInput(ctx context.Context, query string) ([
 	return items, nil
 }
 
-func (c *ClickHouse) QueryStaticLegalForms(ctx context.Context, query string) ([]StaticLegalFormInput, error) {
+func (c *ClickHouse) QueryStaticInput(ctx context.Context, query string) ([]StaticInput, error) {
 	rows, err := c.conn.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("query static legal forms: %w", err)
+		return nil, fmt.Errorf("query static input: %w", err)
 	}
 	defer rows.Close()
 
-	var items []StaticLegalFormInput
+	var items []StaticInput
 	for rows.Next() {
-		var item StaticLegalFormInput
+		var item StaticInput
 		if err := rows.Scan(
 			&item.SourceText,
 			&item.SourceTextHash,
-			&item.LegalFormCode,
+			&item.Key,
 		); err != nil {
-			return nil, fmt.Errorf("scan static legal form: %w", err)
+			return nil, fmt.Errorf("scan static input: %w", err)
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read static legal forms: %w", err)
+		return nil, fmt.Errorf("read static input: %w", err)
 	}
 	return items, nil
 }
@@ -172,4 +172,37 @@ func insertTextTranslationsBatched(
 		inserted += chunkRows
 	}
 	return inserted, nil
+}
+
+// InputItem is one distinct untranslated text produced by an LLM-column scan
+// query and queued for translation.
+type InputItem struct {
+	SourceTable    string
+	SourceColumn   string
+	SourceText     string
+	SourceTextHash uint64
+	SourceLang     string
+	TargetLang     string
+}
+
+// StaticInput is one distinct untranslated text produced by a static-column
+// scan query; Key indexes the column's StaticSpec.Values map.
+type StaticInput struct {
+	SourceText     string
+	SourceTextHash uint64
+	Key            string
+}
+
+// TextTranslation is one row of corpscout.text_translations.
+type TextTranslation struct {
+	SourceTable    string
+	SourceColumn   string
+	SourceText     string
+	SourceTextHash uint64
+	SourceLang     string
+	TargetLang     string
+	TranslatedText string
+	Provider       string
+	Model          string
+	Version        int64
 }

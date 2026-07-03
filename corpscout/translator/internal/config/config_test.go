@@ -30,21 +30,18 @@ func TestLoadBuildsClickHouseNativeURLFromDagsterEnv(t *testing.T) {
 	}
 }
 
-func TestLoadEndpointPromptLanguages(t *testing.T) {
+func TestLoadParsesSourceDefinitionPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "translator.json")
-	if err := os.WriteFile(path, []byte(`{
-  "endpoints": {
-    "local_llm": {
-      "model": "qwen3:6b",
-      "base_url": "http://127.0.0.1:8888/v1",
-      "api_key_default": "not-needed",
-      "prompt_data": {
-        "source_language": "Norwegian",
-        "target_language": "English"
-      }
+	content := `{
+  "sources": {
+    "norway_brreg": {
+      "queue_path": "data/translator/norway_brreg.duckdb",
+      "endpoint_id": "local_llm",
+      "definition_path": "config/sources/norway_brreg.json"
     }
   }
-}`), 0o644); err != nil {
+}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -53,12 +50,9 @@ func TestLoadEndpointPromptLanguages(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 
-	endpoint := cfg.Endpoints["local_llm"]
-	if endpoint.PromptData.SourceLanguage != "Norwegian" {
-		t.Fatalf("unexpected source language: %q", endpoint.PromptData.SourceLanguage)
-	}
-	if endpoint.PromptData.TargetLanguage != "English" {
-		t.Fatalf("unexpected target language: %q", endpoint.PromptData.TargetLanguage)
+	source := cfg.Sources["norway_brreg"]
+	if source.DefinitionPath != "config/sources/norway_brreg.json" {
+		t.Fatalf("expected definition path, got %q", source.DefinitionPath)
 	}
 }
 

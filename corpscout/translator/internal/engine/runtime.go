@@ -1,4 +1,4 @@
-package brreg
+package engine
 
 import (
 	"context"
@@ -24,6 +24,7 @@ type Runtime struct {
 	db           *sql.DB
 	queue        *queue.Queue
 	source       ClickHouseSource
+	definition   Definition
 	translator   translation.Translator
 	providerName string
 	model        string
@@ -33,6 +34,7 @@ type Runtime struct {
 
 type RuntimeConfig struct {
 	QueuePath    string
+	Definition   Definition
 	Source       ClickHouseSource
 	Translator   translation.Translator
 	ProviderName string
@@ -60,6 +62,9 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	if config.QueuePath == "" {
 		return nil, errors.New("queue path is required")
 	}
+	if err := config.Definition.Validate(); err != nil {
+		return nil, fmt.Errorf("source definition: %w", err)
+	}
 	if config.Source == nil {
 		return nil, errors.New("clickhouse source is required")
 	}
@@ -77,8 +82,8 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	logger = logger.With(
-		"component", "brreg_runtime",
-		"source", "norway_brreg",
+		"component", "translator_runtime",
+		"source", config.Definition.Source,
 		"queue_path", config.QueuePath,
 	)
 
@@ -114,13 +119,14 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		db:           db,
 		queue:        q,
 		source:       config.Source,
+		definition:   config.Definition,
 		translator:   config.Translator,
 		providerName: config.ProviderName,
 		model:        config.Model,
 		logger:       logger,
 	}
 	logger.Info(
-		"brreg runtime initialized",
+		"runtime initialized",
 		"queue_created", created,
 		"provider", config.ProviderName,
 		"model", config.Model,
@@ -129,21 +135,21 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	return runtime, nil
 }
 
-func (r *Runtime) LoadNewInput(ctx context.Context) (InitResult, error) {
+func (r *Runtime) LoadNewInput(ctx context.Context) (LoadResult, error) {
 	if r.closed {
-		return InitResult{}, errors.New("brreg runtime is closed")
+		return LoadResult{}, errors.New("translator runtime is closed")
 	}
 
 	start := time.Now()
-	r.logger.Info("brreg load input started")
-	result, err := initializeTranslationWithDB(ctx, r.source, r.db, r.queuePath, r.queueCreated)
+	r.logger.Info("load input started")
+	result, err := loadInputWithDB(ctx, r.source, r.definition, r.db, r.queuePath, r.queueCreated)
 	r.queueCreated = false
 	if err != nil {
-		r.logger.Error("brreg load input failed", "err", err, "duration_ms", elapsedMillis(start))
+		r.logger.Error("load input failed", "err", err, "duration_ms", elapsedMillis(start))
 		return result, err
 	}
 	r.logger.Info(
-		"brreg load input completed",
+		"load input completed",
 		"rows_seen", result.RowsSeen,
 		"rows_inserted", result.RowsInserted,
 		"static_rows_seen", result.StaticRowsSeen,
@@ -156,12 +162,12 @@ func (r *Runtime) LoadNewInput(ctx context.Context) (InitResult, error) {
 
 func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (ProcessResult, error) {
 	if r.closed {
-		return ProcessResult{}, errors.New("brreg runtime is closed")
+		return ProcessResult{}, errors.New("translator runtime is closed")
 	}
 
 	start := time.Now()
 	r.logger.Info(
-		"brreg process batch started",
+		"process batch started",
 		"batch_size", input.BatchSize,
 		"timeout_seconds", input.TimeoutSeconds,
 		"provider", r.providerName,
@@ -170,7 +176,7 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 	items, err := r.queue.GetBatch(ctx, input.BatchSize)
 	if err != nil {
 		r.logger.Error(
-			"brreg process batch failed",
+			"process batch failed",
 			"err", err,
 			"batch_size", input.BatchSize,
 			"timeout_seconds", input.TimeoutSeconds,
@@ -191,7 +197,7 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 		)
 		if err != nil {
 			r.logger.Error(
-				"brreg process batch failed",
+				"process batch failed",
 				"err", err,
 				"batch_size", input.BatchSize,
 				"timeout_seconds", input.TimeoutSeconds,
@@ -201,7 +207,7 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 		}
 		if err := r.queue.SaveBatch(ctx, output); err != nil {
 			r.logger.Error(
-				"brreg process batch failed",
+				"process batch failed",
 				"err", err,
 				"batch_size", input.BatchSize,
 				"timeout_seconds", input.TimeoutSeconds,
@@ -211,7 +217,7 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 		}
 		if err := r.queue.SaveFailed(ctx, failed); err != nil {
 			r.logger.Error(
-				"brreg process batch failed",
+				"process batch failed",
 				"err", err,
 				"batch_size", input.BatchSize,
 				"timeout_seconds", input.TimeoutSeconds,
@@ -223,11 +229,11 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 	}
 	counts, err := r.queueCounts(ctx)
 	if err != nil {
-		r.logger.Error("brreg queue counts failed", "err", err, "duration_ms", elapsedMillis(start))
+		r.logger.Error("queue counts failed", "err", err, "duration_ms", elapsedMillis(start))
 		return ProcessResult{}, err
 	}
 	r.logger.Info(
-		"brreg process batch completed",
+		"process batch completed",
 		"translated_count", translatedCount,
 		"input_count", counts.input,
 		"output_count", counts.output,
@@ -245,25 +251,25 @@ func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (Proc
 
 func (r *Runtime) UploadOutput(ctx context.Context) (UploadResult, error) {
 	if r.closed {
-		return UploadResult{}, errors.New("brreg runtime is closed")
+		return UploadResult{}, errors.New("translator runtime is closed")
 	}
 
 	start := time.Now()
-	r.logger.Info("brreg upload output started")
+	r.logger.Info("upload output started")
 	translations, err := r.outputTranslations(ctx)
 	if err != nil {
-		r.logger.Error("brreg upload output failed", "err", err, "duration_ms", elapsedMillis(start))
+		r.logger.Error("upload output failed", "err", err, "duration_ms", elapsedMillis(start))
 		return UploadResult{}, err
 	}
 	if len(translations) == 0 {
-		r.logger.Info("brreg upload output completed", "rows_seen", 0, "rows_inserted", 0, "duration_ms", elapsedMillis(start))
+		r.logger.Info("upload output completed", "rows_seen", 0, "rows_inserted", 0, "duration_ms", elapsedMillis(start))
 		return UploadResult{}, nil
 	}
 
 	inserted, err := r.source.InsertTextTranslations(ctx, translations)
 	if err != nil {
 		r.logger.Error(
-			"brreg upload output failed",
+			"upload output failed",
 			"err", err,
 			"rows_seen", len(translations),
 			"duration_ms", elapsedMillis(start),
@@ -271,7 +277,7 @@ func (r *Runtime) UploadOutput(ctx context.Context) (UploadResult, error) {
 		return UploadResult{RowsSeen: len(translations)}, err
 	}
 	r.logger.Info(
-		"brreg upload output completed",
+		"upload output completed",
 		"rows_seen", len(translations),
 		"rows_inserted", inserted,
 		"duration_ms", elapsedMillis(start),

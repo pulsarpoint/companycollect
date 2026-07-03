@@ -25,10 +25,6 @@
       "api_key_env": "TRANSLATION_PROVIDER_LOCAL_API_KEY",
       "api_key_default": "not-needed",
       "max_tokens": 32768,
-      "prompt_data": {
-        "source_language": "Norwegian",
-        "target_language": "English"
-      },
       "extra_body": {
         "chat_template_kwargs": {
           "enable_thinking": false
@@ -39,7 +35,8 @@
   "sources": {
     "norway_brreg": {
       "queue_path": "data/translator/norway_brreg.duckdb",
-      "endpoint_id": "local_llm"
+      "endpoint_id": "local_llm",
+      "definition_path": "config/sources/norway_brreg.json"
     }
   }
 }

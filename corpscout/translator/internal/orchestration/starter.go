@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
+	"github.com/pulsarpoint/corpscout/translator/internal/engine"
 	"go.temporal.io/sdk/client"
 )
 
@@ -27,22 +27,28 @@ type WorkflowActionResult struct {
 
 type TemporalWorkflowStarter struct {
 	client         temporalSignalStarter
-	taskQueue      string
+	sources        map[string]bool
 	batchSize      int
 	timeoutSeconds int
 	batchesPerRun  int
 }
 
+// NewTemporalWorkflowStarter builds a starter that can signal-with-start the
+// translation workflow for any of the configured sources.
 func NewTemporalWorkflowStarter(
 	temporalClient temporalSignalStarter,
-	taskQueue string,
+	sources []string,
 	batchSize int,
 	timeoutSeconds int,
 	batchesPerRun int,
 ) *TemporalWorkflowStarter {
+	known := make(map[string]bool, len(sources))
+	for _, source := range sources {
+		known[source] = true
+	}
 	return &TemporalWorkflowStarter{
 		client:         temporalClient,
-		taskQueue:      taskQueue,
+		sources:        known,
 		batchSize:      batchSize,
 		timeoutSeconds: timeoutSeconds,
 		batchesPerRun:  batchesPerRun,
@@ -57,10 +63,7 @@ func (s *TemporalWorkflowStarter) StartSourceAction(
 	if s.client == nil {
 		return WorkflowActionResult{}, fmt.Errorf("temporal client is required")
 	}
-	if s.taskQueue == "" {
-		return WorkflowActionResult{}, fmt.Errorf("temporal task queue is required")
-	}
-	if source != brreg.SourceName {
+	if !s.sources[source] {
 		return WorkflowActionResult{}, fmt.Errorf("unsupported source: %s", source)
 	}
 
@@ -71,15 +74,16 @@ func (s *TemporalWorkflowStarter) StartSourceAction(
 
 	run, err := s.client.SignalWithStartWorkflow(
 		ctx,
-		brreg.WorkflowID,
-		brreg.SignalSourceAction,
-		brreg.SourceActionSignal{Action: workflowAction},
+		engine.WorkflowID(source),
+		engine.SignalSourceAction,
+		engine.SourceActionSignal{Action: workflowAction},
 		client.StartWorkflowOptions{
-			ID:        brreg.WorkflowID,
-			TaskQueue: s.taskQueue,
+			ID:        engine.WorkflowID(source),
+			TaskQueue: engine.TaskQueue(source),
 		},
-		brreg.NorwayBRREGWorkflow,
-		brreg.WorkflowInput{
+		engine.TranslationWorkflow,
+		engine.WorkflowInput{
+			Source:         source,
 			BatchSize:      s.batchSize,
 			TimeoutSeconds: s.timeoutSeconds,
 			BatchesPerRun:  s.batchesPerRun,
@@ -97,12 +101,8 @@ func (s *TemporalWorkflowStarter) StartSourceAction(
 
 func normalizeWorkflowAction(action string) (string, error) {
 	switch action {
-	case brreg.ActionLoadAndRun:
-		return brreg.ActionLoadAndRun, nil
-	case brreg.ActionLoadQueue:
-		return brreg.ActionLoadQueue, nil
-	case brreg.ActionRun:
-		return brreg.ActionRun, nil
+	case engine.ActionLoadAndRun, engine.ActionLoadQueue, engine.ActionRun:
+		return action, nil
 	default:
 		return "", fmt.Errorf("unsupported action: %s", action)
 	}
