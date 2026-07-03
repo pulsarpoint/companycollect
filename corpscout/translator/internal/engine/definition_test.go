@@ -34,6 +34,58 @@ const validDefinitionJSON = `{
   ]
 }`
 
+// TestLoadDefinitionParsesShippedNorwayDefinition pins the production Norway
+// definition file: a typo in a column name, language code, or legal-form
+// entry would otherwise pass the whole suite and surface only in production.
+func TestLoadDefinitionParsesShippedNorwayDefinition(t *testing.T) {
+	def, err := LoadDefinition(filepath.Join("..", "..", "config", "sources", "norway_brreg.json"))
+	if err != nil {
+		t.Fatalf("load shipped norway definition: %v", err)
+	}
+
+	if def.Source != "norway_brreg" {
+		t.Fatalf("expected source norway_brreg, got %q", def.Source)
+	}
+	if def.SourceLang != "no" || def.TargetLang != "en" {
+		t.Fatalf("expected no->en, got %s->%s", def.SourceLang, def.TargetLang)
+	}
+	if def.SourceLanguageName != "Norwegian" || def.TargetLanguageName != "English" {
+		t.Fatalf("expected Norwegian->English names, got %q->%q", def.SourceLanguageName, def.TargetLanguageName)
+	}
+	if len(def.Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %d", len(def.Columns))
+	}
+	for i, want := range []string{"articles_purpose_original", "activity_text_original", "legal_form_description_original"} {
+		if def.Columns[i].Table != "corpscout.no_companies" || def.Columns[i].Column != want {
+			t.Fatalf("column %d: expected corpscout.no_companies.%s, got %s.%s", i, want, def.Columns[i].Table, def.Columns[i].Column)
+		}
+	}
+	if def.Columns[0].Static != nil || def.Columns[1].Static != nil {
+		t.Fatal("LLM columns must not have static specs")
+	}
+	static := def.Columns[2].Static
+	if static == nil {
+		t.Fatal("legal_form_description_original must have a static spec")
+	}
+	if static.KeyColumn != "legal_form_code" {
+		t.Fatalf("expected key column legal_form_code, got %q", static.KeyColumn)
+	}
+	if len(static.Values) != 40 {
+		t.Fatalf("expected 40 legal-form entries, got %d", len(static.Values))
+	}
+	spotChecks := map[string]string{
+		"AS":   "Private limited company",
+		"ENK":  "Sole proprietorship",
+		"SÆR":  "Other enterprise under special legislation",
+		"VPFO": "Securities fund",
+	}
+	for code, want := range spotChecks {
+		if got := static.Values[code]; got != want {
+			t.Fatalf("legal form %s: expected %q, got %q", code, want, got)
+		}
+	}
+}
+
 func TestLoadDefinitionParsesValidDefinition(t *testing.T) {
 	path := writeDefinitionFile(t, t.TempDir(), validDefinitionJSON)
 

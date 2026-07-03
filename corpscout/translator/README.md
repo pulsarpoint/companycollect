@@ -218,6 +218,23 @@ also send the same `source-action` signal through `temporal workflow
 signal-with-start`; set `SOURCE=<name>` to target a source other than the
 `norway_brreg` default.
 
+### Migrating from `internal/brreg`
+
+The workflow type changed from `NorwayBRREGWorkflow` to `TranslationWorkflow`
+and activity names changed from `brreg.*` to `norway_brreg.*`. Any existing
+`translator/norway_brreg` workflow run — including one idly waiting for a
+signal — was started against the old workflow type and cannot be processed by
+the new worker. Terminate it FIRST, then send the first new signal; signaling
+before terminating attaches the signal to the stuck old run instead of
+starting a new one:
+
+```bash
+temporal workflow terminate --workflow-id "translator/norway_brreg" --reason "translator generic engine cutover"
+scripts/trigger-translator-workflow.sh load-and-run
+```
+
+The queue and anti-join dedupe make the re-trigger idempotent.
+
 ## Build
 
 DuckDB is linked through `github.com/marcboeker/go-duckdb`, which requires cgo.
@@ -291,7 +308,10 @@ TRANSLATOR_INTEGRATION_TESTS=true go test ./internal/engine -run TestCreateInput
    `columns` to translate. A column is LLM-translated by default; add
    `"static": {"key_column": ..., "values": {...}}` for map-based translation,
    or `"custom_sql_file": "<name>/<file>.sql"` (path relative to the
-   definition file) to override the generated scan query.
+   definition file) to override the generated scan query. Table, column,
+   key-column, and language values from the definition are interpolated into
+   generated ClickHouse SQL without escaping — definition files are trusted,
+   developer-authored config and must never be built from untrusted input.
 2. Add the source to `config/translator.json` under `sources` with
    `queue_path`, `endpoint_id`, and `definition_path`.
 3. Restart the worker. The source gets workflow ID `translator/<name>` and
