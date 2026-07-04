@@ -1,47 +1,19 @@
-# Denmark — license & terms notes
+# License and access notes
 
-## Summary
+CVR company data is publicly accessible for lookup through CVR.dk/DataCVR, and Erhvervsstyrelsen states that CVR data is publicly available. Public visibility should not be treated as permission for high-volume automated extraction or redistribution.
 
-CVR (Det Centrale Virksomhedsregister) data is **public and free to reuse, including for
-commercial purposes**, under Danish law (CVR-loven — Lov om Det Centrale Virksomhedsregister).
-Erhvervsstyrelsen distributes it at no charge via `distribution.virk.dk`. No payment is required
-for either the base register or the financial statements.
+The official system-to-system API requires credentials and likely comes with access terms. Those terms were not available without entering the access process.
 
-## Base register (cvr-permanent)
+`cvrapi.dk` publishes custom terms effective from 2019. The terms allow copying, distribution, publication, modification, combination with other material, and commercial/non-commercial use. They prohibit charging for separate features such as name search or charging for showing information received from CVR API. They also prohibit bypassing the daily limit by rotating IP addresses or obscuring the User-Agent.
 
-- **Access:** free, but requires HTTP Basic credentials obtained by emailing
-  `cvrselvbetjening@erst.dk`. As part of access you sign a **declaration** committing to comply
-  with the rules on **protected persons / address protection** and data-protection conditions.
-- **Reuse:** permitted, including commercially. CVR basic data is explicitly intended for reuse.
+`cvrapi.dk` requires careful handling of advertising-protected companies. Information about advertising-protected companies must not be used for advertising contact, and downstream disclosure has specific declaration requirements under Danish CVR law.
 
-## Financial statements (offentliggoerelser / regnskaber)
+Beneficial ownership data should be treated as restricted. Danish rules changed in 2025 so access to beneficial ownership information is limited to qualified users, with login or API access based on access category and declarations.
 
-- **Access:** completely open, no credentials. Documents (XBRL/iXBRL/PDF) downloadable freely.
-- **Reuse:** same free-reuse basis; published annual reports are public records.
+For no-auth collection, avoid:
 
-## Key obligation: Reklamebeskyttelse (advertising protection)
-
-- Companies/units can register **reklamebeskyttelse** in CVR. Their basic data **may not be used
-  by private parties for direct marketing**.
-- When redistributing CVR data, advertising-protected entities **must be clearly flagged**.
-- Erhvervsstyrelsen can **restrict access** for parties that violate these rules.
-- Practical implication: carry the protection flag through to the internal model and gate any
-  marketing/outreach use on it.
-
-## GDPR / personal data
-
-- `deltager` (participants) and beneficial-ownership (*reelle ejere*) data include natural
-  persons. This is public via CVR but still personal data — handle under GDPR, respect address
-  protection, and avoid uses incompatible with the register's purpose.
-
-## Uncertainty / to confirm
-
-- Exact wording of the signed declaration and any attribution requirement is established at the
-  point of requesting credentials — confirm with Erhvervsstyrelsen during onboarding.
-- Recommended attribution string: **"Kilde: CVR / Erhvervsstyrelsen"**.
-
-## References
-
-- CVR-loven (Lov om Det Centrale Virksomhedsregister): https://www.retsinformation.dk/eli/lta/2019/1052
-- Erhvervsstyrelsen — CVR samler og udstiller data: https://erhvervsstyrelsen.dk/cvr-samler-og-udstiller-data
-- System-til-system adgang (catalog): http://datahub.virk.dk/dataset/system-til-system-adgang-til-cvr-data
+- bypassing Cloudflare or other access controls
+- bypassing `cvrapi.dk` daily limits
+- collecting login-gated or beneficial ownership data
+- redistributing raw public UI data without legal review
+- using third-party APIs without checking commercial and redistribution terms

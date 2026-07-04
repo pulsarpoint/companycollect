@@ -1,89 +1,78 @@
-# Denmark — company open-data investigation
+# Denmark CVR crawl investigation
 
-## Conclusion
+Investigation date: 2026-07-03
 
-Denmark is one of the easiest jurisdictions for open company data. A single publisher,
-**Erhvervsstyrelsen (Danish Business Authority)**, exposes both base company data and full
-financial statements through one Elasticsearch distribution at `distribution.virk.dk`.
+## Source
 
-- **Base company data** (`cvr-permanent`) — comprehensive, but behind **free HTTP Basic
-  credentials** (request by email, sign a protected-data declaration). No payment.
-- **Financial data** (`offentliggoerelser`) — **completely open, no auth**, with direct
-  download of machine-readable **XBRL / Inline XBRL** annual reports.
+Denmark's official company register is the Central Business Register (CVR), published through CVR.dk/DataCVR and maintained by Erhvervsstyrelsen, the Danish Business Authority.
 
-Both were live-verified on 2026-06-13.
+The public web application at `https://datacvr.virk.dk/` is a JavaScript application. Direct non-browser requests from this environment returned a Cloudflare challenge page with HTTP 403 and `cf-mitigated: challenge`, including for the public search/detail endpoints.
 
-## What was found
+## Public UI endpoints observed
 
-### 1. CVR — Det Centrale Virksomhedsregister (base register)
+Public references and indexed metadata identify these URL shapes:
 
-The CVR is the single authoritative register of all Danish legal entities (active and
-historical). Official system-to-system access is an Elasticsearch v1.7.x cluster:
+- Search: `https://datacvr.virk.dk/data/visninger?soeg={query}&type=Alle`
+- Detail: `https://datacvr.virk.dk/data/visenhed?enhedstype=virksomhed&id={cvr}`
+- Human detail route: `https://datacvr.virk.dk/enhed/virksomhed/{cvr}`
 
-- Base URL: `http://distribution.virk.dk/cvr-permanent` (HTTP only).
-- Indexes and live counts:
-  - `virksomhed` — **2,194,982** companies
-  - `produktionsenhed` — **2,787,126** production units (P-numbers / establishments)
-  - `deltager` — **1,772,344** participants (owners, board, persons & legal entities)
-- Auth: **HTTP Basic**, credentials free from `cvrselvbetjening@erst.dk`. A declaration about
-  handling address-protected persons must be signed.
-- Querying: standard `/{index}/_search`, capped at **3,000 documents per query**; the
-  **scroll API** is the supported way to extract the full register (there is no plain CSV dump).
-- Record content: CVR number, full name history with validity periods, company form
-  (virksomhedsform), status (NORMAL / bankruptcy / dissolved…), addresses, main + secondary
-  industry codes (DB07/NACE), registered capital and purpose (attributter), employment figures,
-  lifecycle dates, and participant/ownership relations (incl. beneficial owners — *reelle ejere*).
+These are suitable only for bounded lookup flows where we already have a company name or CVR number. They are not suitable for full-registry discovery.
 
-A live `match_all` query without credentials returned **HTTP 401**, confirming the auth gate.
+## Robots and anti-abuse constraints
 
-### 2. Offentliggørelser / Regnskaber (financial statements) — OPEN
+`https://datacvr.virk.dk/robots.txt` declares `Crawl-delay: 10` for all user agents and disallows several paths, including `/search/`, Drupal internals, and several product/cart/document publication paths. The observed Cloudflare managed challenge is a strong signal that automated access should be very conservative and should not attempt to bypass access controls.
 
-All Danish companies must file an annual report (årsrapport) with Erhvervsstyrelsen. Published
-filings are distributed via a **second, open Elasticsearch index**:
+## Official API
 
-- Endpoint: `http://distribution.virk.dk/offentliggoerelser/_search` — **no authentication**.
-- Live total: **6,295,759** published filings.
-- Each hit carries the CVR number, accounting period (`regnskabsperiode.startDato/slutDato`),
-  publication timestamp, and a `dokumenter[]` array. Each document has a `dokumentType`
-  (AARSRAPPORT, DELAARSRAPPORT, DELAARSRAPPORT_ESEF, ESEF_EXTENSION…), a MIME type, and a direct
-  `dokumentUrl` on `regnskaber.virk.dk`.
-- Documents are openly downloadable. Modern filings are **XBRL / Inline XBRL** (`application/xml`,
-  `application/xhtml+xml`) built on the Danish **DCCA taxonomy** (`xbrl.dcca.dk/fsa` financial
-  statements, `/gsd` general, `/cmn` common); listed groups add IFRS + ESEF. Pre-digital filings
-  are PDF/TIFF images.
-- The XBRL instances contain the **actual line-item figures** (income statement + balance sheet),
-  so financial data is structured and extractable, not just a document link.
+Erhvervsstyrelsen documents an Elasticsearch-style API at `distribution.virk.dk/cvr-permanent`. It supports `_search`, Query DSL, scroll search, and source-field filtering. The documentation explicitly assumes issued credentials. It is the correct technical route for bulk-like extraction and incremental updates, but it is unavailable under the user's stated no-auth constraint.
 
-Verified end-to-end: queried Maersk (CVR 22756214) → latest = Q1 2026 interim with iXBRL + XBRL +
-ESEF documents → downloaded one XBRL doc → decompressed (gzip) → valid Danish iXBRL instance.
+Important official guidance from the Elasticsearch documentation:
 
-### 3. Registreringstekster (registration texts)
+- Prefer Query DSL and restrict `_source` fields.
+- Use `size` to limit responses.
+- For local copies, use scroll with `scroll=1m` and small batches.
+- Reduce batch size if processing cannot keep up.
+- Clear scroll contexts when done.
+- The authority reserves the right to block access if scroll guidance is not followed.
 
-Same distribution provides `registreringstekster` — the textual registration/change events per
-CVR number. Same free-credential gate as `cvr-permanent`. Useful as an audit/history secondary source.
+## Third-party API: cvrapi.dk
 
-### 4. Catalog & third-party wrappers
+`https://cvrapi.dk/` is a third-party API for lookup in the Danish and Norwegian company registers. It exposes:
 
-- `datahub.virk.dk` / Virk Data is the open-data catalog confirming the publisher and the
-  system-to-system route.
-- `cvr.dev` (live cache, official Go/Python clients), `cvrapi.dk`, and `apicvr.dk` are convenience
-  REST wrappers over CVR. Fine for single lookups/prototyping; for full ingestion use the official
-  `distribution.virk.dk` source.
+- Base URL: `https://cvrapi.dk/api`
+- Methods: GET or POST
+- Required parameters: `search`, `country`
+- Countries: `dk`, `no`
+- Optional output format: `json`, `xml`
+- Optional token parameter for issued tokens
+- Search options: CVR/VAT number, company name, production unit, phone
 
-## What was not found / not pursued
+The documentation states that callers must use a descriptive User-Agent containing company/project/contact information. It also documents a free limit of 50 lookups per day and error responses including `QUOTA_EXCEEDED`, `BANNED`, `INVALID_VAT`, `NOT_FOUND`, `INTERNAL_ERROR`, and `INVALID_UA`.
 
-- No official plain-CSV / single-file bulk dump of the whole CVR — the scroll API is the bulk path.
-- No payment-walled official data encountered for base + financials (paid offerings exist for
-  value-added/historical image services but are not required for open ingestion).
+Terms published from 2019 allow copying, distribution, publication, modification, combination with other material, and commercial/non-commercial use, but they also prohibit charging for separate features such as name search or for showing information received from CVR API. They prohibit bypassing the daily limit by rotating IPs or obscuring the User-Agent. They also include specific restrictions for advertising-protected companies.
 
-## Recommendation
+A single sample lookup from this environment to `https://cvrapi.dk/api?search=30714024&country=dk` returned HTTP 403 with an empty body. This may be environment/IP related, but the collector should treat it as a hard stop, not a retryable transient failure.
 
-Use the official Erhvervsstyrelsen distribution for both layers:
+## Recommended no-auth crawl strategy
 
-1. **Base:** request CVR credentials, scroll `virksomhed` + `produktionsenhed` + `deltager` for a
-   full load; refresh incrementally on `sidstOpdateret`.
-2. **Financials:** poll `offentliggoerelser` by `cvrNummer` (or incrementally on `sidstOpdateret`)
-   to discover filings, then download the XBRL/iXBRL document and parse DCCA-taxonomy facts.
+Use a seeded lookup collector, not a broad crawler:
 
-Registry keys: `denmark/cvr` (base) and `denmark/cvrregnskab` (financials). Attribution:
-"Kilde: CVR / Erhvervsstyrelsen". Honour the `reklamebeskyttelse` flag for any marketing use.
+1. Input must be a known CVR number list, or a user-supplied company-name list.
+2. First try `cvrapi.dk` for exact CVR numbers if the expected volume is within quota and its terms fit the use case.
+3. Use DataCVR public detail lookup only as a fallback for exact CVR numbers.
+4. Cache by normalized query and by CVR number.
+5. For `cvrapi.dk`, keep well under 50 free lookups/day unless a token or commercial arrangement is obtained.
+6. For DataCVR, enforce a global per-host delay of at least 10 seconds, preferably 15-30 seconds with jitter.
+7. Run single concurrency per host.
+8. Stop automatically on `QUOTA_EXCEEDED`, `BANNED`, `INVALID_UA`, HTTP 403, 429, 503, Cloudflare challenge HTML, or unexpected consent/login/challenge pages.
+9. Persist raw HTML/JSON response metadata, status code, content hash, and retrieval time.
+10. Do not scrape beneficial ownership data or login-gated data.
+11. Do not attempt ID-space enumeration of 8-digit CVR numbers.
+
+## Why not exhaustive crawling
+
+Exhaustive crawling would require either enumerating search terms or enumerating CVR numbers. Both are inefficient and server-heavy, and CVR.dk is protected against automation. The official API exists specifically for systematic extraction, but it requires credentials. Without credentials, the only defensible strategy is sparse, demand-driven lookup.
+
+## Data fields likely available
+
+Public CVR pages and the official API schema indicate availability of company identifier, current and historical names, legal form, status/life-cycle periods, registered address, municipality, industry codes, production units, contact details where public, employment intervals, and update timestamps. Beneficial ownership access changed in 2025 and should be treated as restricted unless the requester has a legitimate access basis.

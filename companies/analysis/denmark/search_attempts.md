@@ -1,74 +1,101 @@
-# Denmark — search attempts log
+# Search attempts
 
-## Attempt 1 — locate official CVR system-to-system access
+## Attempt 1
 
-- Date/time: 2026-06-13
-- Search engine or source: WebSearch
-- Query: `CVR Erhvervsstyrelsen system-til-system adgang distribution.virk.dk Elasticsearch API company register`
-- Language: Danish/English
-- Why this query was tried: CVR (Det Centrale Virksomhedsregister), run by Erhvervsstyrelsen,
-  is the known official Danish business register; find the technical access route.
-- Top relevant URLs:
-  - https://erhvervsstyrelsen.dk/kom-godt-igang-med-elasticSearch
-  - http://datahub.virk.dk/dataset/system-til-system-adgang-til-cvr-data
-  - https://brokk-sindre.github.io/cvr-documentation/api-reference/overview/
-- Result: Official access is an Elasticsearch distribution at `http://distribution.virk.dk/cvr-permanent`.
-  Free credentials via email `cvrselvbetjening@erst.dk` after signing a protected-data declaration.
-  Indexes: `virksomhed`, `produktionsenhed`, `deltager`; also `registreringstekster`.
-- Decision: CVR-permanent = primary base-data source (auth required, free).
+- Date/time: 2026-07-03T22:42:43Z
+- Source: Web search
+- Query: `site:datacvr.virk.dk API CVR search Virk`
+- Language: English/Danish mixed
+- Why: Find official public endpoints and API docs.
+- Relevant URLs:
+  - `https://datacvr.virk.dk/`
+  - `https://datacvr.virk.dk/data/cvr-help/cvr-api`
+- Result: Confirmed public site and help pages, but HTML is a JavaScript app.
+- Decision: Inspect endpoint references and official documentation.
 
-## Attempt 2 — locate financial statements (regnskaber) API
+## Attempt 2
 
-- Date/time: 2026-06-13
-- Search engine or source: WebSearch
-- Query: `Erhvervsstyrelsen regnskaber XBRL annual reports API offentliggoerelser distribution.virk.dk financial statements`
-- Language: Danish/English
-- Why: User explicitly needs financial data; locate the digital annual-report distribution.
-- Top relevant URLs:
-  - https://datacvr.virk.dk/data/
-  - https://erhvervsstyrelsen.dk/vejledning-xbrl-og-inline-xbrl-rest-klient-eksempel-i-java
-  - https://sprogteknologi.dk/dataset/regnskabsdata
-- Result: All Danish companies must file annual reports to Erhvervsstyrelsen; published via the
-  Offentliggørelser distribution. Documents available as XBRL/iXBRL/ESEF/PDF. Endpoint
-  `http://distribution.virk.dk/offentliggoerelser/_search`. Since Jan 2025 non-financial
-  companies must file iXBRL.
-- Decision: Offentliggørelser = financial-data source (open, document URLs + XBRL figures).
+- Date/time: 2026-07-03T22:42:43Z
+- Source: Direct HTTP
+- Query: `https://datacvr.virk.dk/robots.txt`
+- Language: n/a
+- Why: Determine crawling rules.
+- Relevant URLs:
+  - `https://datacvr.virk.dk/robots.txt`
+- Result: `Crawl-delay: 10`; multiple disallowed paths including `/search/`.
+- Decision: Any no-auth crawl must be single-host throttled and avoid disallowed paths.
 
-## Attempt 3 — license / reuse terms
+## Attempt 3
 
-- Date/time: 2026-06-13
-- Search engine or source: WebSearch
-- Query: `CVR-data gratis genbruge erhvervsstyrelsen vilkår reklamebeskyttelse license commercial reuse terms`
-- Result: CVR base data is free to reuse including commercially under CVR-loven (Lov om Det
-  Centrale Virksomhedsregister). Caveat: *reklamebeskyttelse* (advertising protection) —
-  protected entities may not be used for direct marketing and must be flagged when redistributed.
-- Decision: Recorded in `license_notes.md`.
+- Date/time: 2026-07-03T22:42:43Z
+- Source: Direct HTTP
+- Query: `https://datacvr.virk.dk/data/visninger?soeg=30714024&type=Alle&language=da`
+- Language: Danish
+- Why: Test public search endpoint.
+- Relevant URLs:
+  - `https://datacvr.virk.dk/data/visninger?soeg=30714024&type=Alle&language=da`
+- Result: HTTP 403 Cloudflare managed challenge from this environment.
+- Decision: Do not attempt to bypass. Treat public endpoint as browser-oriented and fragile for automation.
 
-## Attempt 4 — live API verification (curl)
+## Attempt 4
 
-- Date/time: 2026-06-13
-- Source: direct HTTP to distribution.virk.dk
-- Calls + results:
-  - `POST /offentliggoerelser/_search {term cvrNummer:25313763}` → **200**, 29 filings, doc URL returned
-  - `POST /offentliggoerelser/_search {term cvrNummer:22756214 (Maersk), sort desc}` → **200**, 85 filings,
-    latest = Q1 2026 interim with DELAARSRAPPORT iXBRL + XBRL + ESEF + ESEF_EXTENSION zip
-  - `POST /offentliggoerelser/_search {match_all, size:0}` → **200**, total = **6,295,759**
-  - `POST /cvr-permanent/virksomhed/_search {match_all}` → **401 Authorization Required** (auth needed, as documented)
-- Decision: Financial API is fully open and key-less; CVR base needs free credentials. Saved raw samples.
+- Date/time: 2026-07-03T22:42:43Z
+- Source: Direct HTTP
+- Query: `https://datacvr.virk.dk/data/visenhed?enhedstype=virksomhed&id=30714024&language=da`
+- Language: Danish
+- Why: Test public detail endpoint.
+- Relevant URLs:
+  - `https://datacvr.virk.dk/data/visenhed?enhedstype=virksomhed&id=30714024&language=da`
+- Result: HTTP 403 Cloudflare managed challenge from this environment.
+- Decision: Detail lookups can be part of a browser-based manual/sparse flow, but not a reliable bulk crawler.
 
-## Attempt 5 — XBRL document download
+## Attempt 5
 
-- Date/time: 2026-06-13
-- Source: regnskaber.virk.dk document URL from Attempt 4
-- Result: `GET .../<token>.xml` → **200**, gzip-compressed Inline XBRL. Decompressed → valid iXBRL
-  using Danish DCCA taxonomy (`xbrl.dcca.dk/fsa`, `/gsd`, `/cmn`) + IFRS/ESEF namespaces.
-  Confirms machine-readable figures are openly downloadable.
-- Decision: Financial figures extractable end-to-end. Saved to `data/denmark/raw/samples/`.
+- Date/time: 2026-07-03T22:42:43Z
+- Source: Official Erhvervsstyrelsen documentation
+- Query: `Kom godt igang med Elasticsearch CVR`
+- Language: Danish
+- Why: Verify official API, pagination, and bulk-like access route.
+- Relevant URLs:
+  - `https://erhvervsstyrelsen.dk/kom-godt-igang-med-elasticSearch`
+- Result: Official API supports Query DSL, `_source`, and scroll. Requires issued username/password.
+- Decision: Recommended for systematic extraction only if credentials become available.
 
-## Attempt 6 — index/field documentation
+## Attempt 6
 
-- Date/time: 2026-06-13
-- Source: WebFetch community CVR API reference (brokk-sindre.github.io/cvr-documentation)
-- Result: Confirmed record counts (virksomhed 2,194,982 / deltager 1,772,344 / produktionsenhed
-  2,787,126), HTTP Basic auth, 3,000-doc query cap with scroll API for bulk, core field list.
-- Decision: Recorded counts and fields in `source_inventory.json` and `schema_notes.md`.
+- Date/time: 2026-07-03T22:42:43Z
+- Source: Wikidata property metadata
+- Query: `CVR number P1059 formatter URL`
+- Language: English
+- Why: Cross-check public formatter/search URL shapes.
+- Relevant URLs:
+  - `https://www.wikidata.org/wiki/Property:P1059`
+- Result: Confirms public formatter and search formatter URL shapes for DataCVR.
+- Decision: Use endpoint shapes for lookup-only recommendation, not broad crawling.
+
+## Attempt 7
+
+- Date/time: 2026-07-03T22:55:09Z
+- Source: CVR API documentation
+- Query: `https://cvrapi.dk/documentation`
+- Language: Danish
+- Why: Check third-party no-auth API mentioned by user.
+- Relevant URLs:
+  - `https://cvrapi.dk/`
+  - `https://cvrapi.dk/documentation`
+  - `https://cvrapi.dk/terms`
+  - `https://cvrapi.dk/help`
+- Result: Found simple GET/POST API at `https://cvrapi.dk/api` with required `search` and `country`, JSON/XML output, 50 free lookups/day, descriptive User-Agent requirement, quota and ban errors, and published terms.
+- Decision: Add as preferred no-auth low-volume lookup fallback, below official credentialed API.
+
+## Attempt 8
+
+- Date/time: 2026-07-03T22:55:09Z
+- Source: Direct HTTP sample
+- Query: `https://cvrapi.dk/api?search=30714024&country=dk`
+- Language: n/a
+- Why: Test whether a bounded sample lookup works from this environment.
+- Relevant URLs:
+  - `https://cvrapi.dk/api?search=30714024&country=dk`
+- Result: HTTP 403 with empty body, using a descriptive User-Agent.
+- Decision: Record sample failure and require collector to stop on 403 rather than retry aggressively.

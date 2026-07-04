@@ -1,34 +1,53 @@
 [
   {
-    "name": "Offentliggoerelser — financial filings by CVR (OPEN, URI search)",
-    "slug": "dk_offentliggoerelser_maersk",
-    "type": "bulk",
-    "url": "http://distribution.virk.dk/offentliggoerelser/_search?q=cvrNummer:22756214&sort=offentliggoerelsesTidspunkt:desc&size=5",
+    "name": "CVR API low-volume lookup",
+    "slug": "cvrapi_lookup",
+    "type": "api_lookup",
+    "url_template": "https://cvrapi.dk/api?search={query}&country=dk&format=json",
     "method": "GET",
-    "headers": { "Accept": "application/json" },
-    "max_pages": 0,
-    "note": "Open, no auth. Returns filing metadata + document URLs (XBRL/iXBRL/ESEF/PDF). Body-based POST queries (term/range on sidstOpdateret) are richer — see README."
-  },
-  {
-    "name": "Offentliggoerelser — total count (size=0, OPEN)",
-    "slug": "dk_offentliggoerelser_count",
-    "type": "bulk",
-    "url": "http://distribution.virk.dk/offentliggoerelser/_search?size=0",
-    "method": "GET",
-    "headers": { "Accept": "application/json" },
-    "max_pages": 0
-  },
-  {
-    "name": "CVR-permanent virksomhed — single company (REQUIRES free HTTP Basic auth)",
-    "slug": "dk_cvr_virksomhed_maersk",
-    "type": "bulk",
-    "url": "http://distribution.virk.dk/cvr-permanent/virksomhed/_search?q=cvrNummer:22756214",
-    "method": "GET",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "free_quota_per_day": 50,
     "headers": {
-      "Accept": "application/json",
-      "Authorization": "Basic REPLACE_WITH_BASE64_USER_COLON_PASS"
+      "User-Agent": "PulsarPoint companycollect research contact@example.com",
+      "Accept": "application/json"
     },
-    "max_pages": 0,
-    "note": "401 without credentials. Request free access at cvrselvbetjening@erst.dk. For full load use the Elasticsearch scroll API, not this single search."
+    "max_concurrency_per_host": 1,
+    "stop_on_status": [403, 429, 503],
+    "stop_on_error_codes": ["QUOTA_EXCEEDED", "BANNED", "INVALID_UA"],
+    "notes": "Best no-auth option for bounded known-CVR lookups if terms fit. Replace User-Agent contact before production use."
+  },
+  {
+    "name": "DataCVR public search lookup",
+    "slug": "datacvr_public_search",
+    "type": "seeded_lookup",
+    "url_template": "https://datacvr.virk.dk/data/visninger?soeg={query}&type=Alle&language=da",
+    "method": "GET",
+    "requires_authentication": false,
+    "min_delay_seconds": 10,
+    "max_concurrency_per_host": 1,
+    "stop_on_status": [403, 429, 503],
+    "notes": "Use only for bounded user-provided names or CVR numbers. Do not enumerate search terms."
+  },
+  {
+    "name": "DataCVR public company detail",
+    "slug": "datacvr_public_detail",
+    "type": "seeded_lookup",
+    "url_template": "https://datacvr.virk.dk/data/visenhed?enhedstype=virksomhed&id={cvr}&language=da",
+    "method": "GET",
+    "requires_authentication": false,
+    "min_delay_seconds": 10,
+    "max_concurrency_per_host": 1,
+    "stop_on_status": [403, 429, 503],
+    "notes": "Use only for known CVR numbers. Do not enumerate the 8-digit CVR space."
+  },
+  {
+    "name": "CVR system-to-system API",
+    "slug": "cvr_distribution_api",
+    "type": "credentialed_api",
+    "url": "http://distribution.virk.dk/cvr-permanent/virksomhed/_search",
+    "method": "POST",
+    "requires_authentication": true,
+    "notes": "Correct systematic ingestion route if Danish Business Authority credentials become available."
   }
 ]
