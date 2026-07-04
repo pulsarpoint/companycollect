@@ -127,6 +127,10 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         # The NACE classifier runs at the end of every register refresh so
         # newly landed activity texts are classified.
         "latvia_ur_nace_classification",
+        # The company-contacts asset runs at the end of every register
+        # refresh so newly landed legal names are scanned for embedded
+        # domains/emails.
+        "latvia_ur_clickhouse_company_contacts",
     }
 
     # full transitive chain: 4 raw multi-asset outputs + pivot + metrics + usd + 2 exports = 9
@@ -171,6 +175,19 @@ def test_nace_classification_asset_deps_and_group():
     # works while the embedder and LLM boxes are up.
     assert spec.tags.get("requires_llm") == "true"
     assert spec.tags.get("requires_embedder") == "true"
+
+
+def test_company_contacts_asset_deps_and_group():
+    from dagster_v3.defs.latvia_ur import contacts as latvia_contacts
+
+    import dagster as dg
+
+    asset = latvia_contacts.latvia_ur_clickhouse_company_contacts
+    spec = asset.specs_by_key[asset.key]
+    assert dg.AssetKey("latvia_ur_clickhouse_companies") in {
+        dep.asset_key for dep in spec.deps
+    }
+    assert spec.group_name == "latvia_ur"
 
 
 def test_nace_classification_config_defaults_to_env():

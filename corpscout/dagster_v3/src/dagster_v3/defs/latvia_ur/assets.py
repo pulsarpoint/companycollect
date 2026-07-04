@@ -17,6 +17,7 @@ from dagster_v3.defs.common.duckdb_resources import (
 from dagster_v3.defs.latvia_ur import resources, tables
 from dagster_v3.defs.latvia_ur.classification import latvia_ur_nace_classification
 from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_companies
+from dagster_v3.defs.latvia_ur.contacts import latvia_ur_clickhouse_company_contacts
 from dagster_v3.defs.latvia_ur.translation import (
     latvia_ur_translation_load,
     latvia_ur_translator_stats_check,
@@ -441,15 +442,17 @@ def _duckdb_table_count(*, duckdb_connection: Any, table_name: str) -> int:
 
 # --- Jobs & schedules (mirrors estonia_ar; see dagster_v3/CLAUDE.md "Scheduling") -------
 # Register-only full-refresh chain. Latvia financial assets live in defs/latvia_financial.
-# Selecting from both leaves (translation loader + NACE classification, both
-# downstream of latvia_ur_clickhouse_companies) pulls the whole register
-# chain via upstream() AND runs both after ClickHouse lands, so newly
-# ingested texts are enqueued to the translator service AND classified every
-# refresh.
+# Selecting from all three leaves (translation loader + NACE classification +
+# company contacts, all downstream of latvia_ur_clickhouse_companies) pulls
+# the whole register chain via upstream() AND runs all three after ClickHouse
+# lands, so newly ingested texts are enqueued to the translator service,
+# classified, and scanned for name-embedded contacts every refresh.
 latvia_ur_register_job = dg.define_asset_job(
     "latvia_ur_register_job",
     selection=dg.AssetSelection.assets(
-        "latvia_ur_translation_load", "latvia_ur_nace_classification"
+        "latvia_ur_translation_load",
+        "latvia_ur_nace_classification",
+        "latvia_ur_clickhouse_company_contacts",
     ).upstream(),
 )
 latvia_ur_register_schedule = dg.ScheduleDefinition(
@@ -470,6 +473,7 @@ defs = dg.Definitions(
         latvia_ur_clickhouse_companies,
         latvia_ur_translation_load,
         latvia_ur_nace_classification,
+        latvia_ur_clickhouse_company_contacts,
     ],
     asset_checks=[
         latvia_ur_translator_stats_check,

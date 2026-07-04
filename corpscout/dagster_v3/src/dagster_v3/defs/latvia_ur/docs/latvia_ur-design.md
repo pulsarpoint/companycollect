@@ -53,6 +53,14 @@
 - Legal form → **static map** `LATVIA_LEGAL_FORM_DESCRIPTION_EN_BY_CODE` (`legal_form_text` +
   `legal_form_description_en`). **No LLM.** Names/addresses not translated.
 
+## 6b. Contacts (§8b)
+- Latvia UR has **no structured contact fields**, but ~1.3k `lv_companies.legal_name` values embed a
+  domain (e.g. `SIA "cenuklubs.lv"`). The `latvia_ur_clickhouse_company_contacts` asset scans for
+  these via the shared `dagster_v3/contact_extraction.py` (IDN-aware — Latvian domains use
+  diacritics), validates each candidate against `commoncrawl_domains` (`domain_source='commoncrawl'`,
+  confidence `0.95`) or DNS NS-record resolution (`domain_source='dns'`, `0.70`), and atomically
+  replaces `corpscout.lv_company_contacts`, keyed on `regcode`. Full recompute per run.
+
 ## 7. Currency
 - **EUR + legacy LVL**: ~388 k pre-2014 statements are in **LVL**, which is **not in the ECB set** →
   they keep native-only (`*_usd` NULL); EUR rows convert. Documented; deriving LVL→USD via the fixed

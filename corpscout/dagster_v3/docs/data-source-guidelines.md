@@ -224,6 +224,11 @@ contact information is mandatory, not optional.** When you analyse a new source,
 - Pull contacts on the source's normal cadence; they sit alongside the register, not the financials.
 - **Mandatory alongside currency (§7) and translation (§8).** Reference impl: `estonia_ar`
   (`ee_company_contacts`/`ee_company_domains` from `yldandmed`).
+- **When a source has no structured contact fields but embeds domains/emails in free text** (e.g. a
+  legal name like `SIA "cenuklubs.lv"`), use the shared `dagster_v3/contact_extraction.py` module
+  (IDN-aware candidate parsing, CommonCrawl/DNS validation, atomic table replace) instead of
+  hand-rolling extraction — mirror the thin per-country orchestrators `defs/latvia_ur/contacts.py`
+  or `defs/czech_ares/contacts.py`.
 
 ## 8c. Cross-cutting standard D — industry / NACE (ALWAYS connect it)
 **Every company should connect to the unified NACE id.** The data inventory **must check for an
