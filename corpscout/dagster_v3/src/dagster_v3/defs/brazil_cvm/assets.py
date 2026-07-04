@@ -1,8 +1,11 @@
 from pathlib import Path
 
 import dagster as dg
+from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
+from dagster_v3.defs.brazil_cvm import tables
+from dagster_v3.defs.brazil_cvm.clickhouse import export_brazil_cvm_dfp_clickhouse
 from dagster_v3.defs.brazil_cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
     DFP_AUDITOR_REPORTS_TABLE,
@@ -20,7 +23,10 @@ from dagster_v3.defs.brazil_cvm.source import (
 from dagster_v3.defs.brazil_cvm.usd_conversion import (
     apply_brazil_cvm_statement_rows_usd_conversion,
 )
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+from dagster_v3.defs.common.duckdb_resources import (
+    duckdb_resource,
+    read_only_duckdb_connection,
+)
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
 BRAZIL_CVM_DUCKDB_PATH = Path("data/brazil_cvm_source.duckdb")
@@ -117,6 +123,32 @@ def brazil_cvm_dfp_statement_rows_usd_duckdb(
     return dg.MaterializeResult(metadata=counts)
 
 
+@dg.asset(
+    deps=[dg.AssetKey("brazil_cvm_dfp_statement_rows_usd_duckdb")],
+    group_name=BRAZIL_CVM_GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "cvm", "dfp"},
+    pool="brazil_cvm_duckdb",
+    metadata={"tables": ", ".join(tables.BR_CVM_DFP_TABLES)},
+    description="Exports converted Brazil CVM DFP DuckDB tables to ClickHouse.",
+)
+def brazil_cvm_dfp_raw_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+    brazil_cvm_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Exporting Brazil CVM DFP DuckDB tables to ClickHouse: tables=%s",
+        tables.BR_CVM_DFP_TABLES,
+    )
+    with read_only_duckdb_connection(brazil_cvm_duckdb) as connection:
+        counts = export_brazil_cvm_dfp_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata=counts)
+
+
 brazil_cvm_dfp_raw_backfill_job = dg.define_asset_job(
     "brazil_cvm_dfp_raw_backfill_job",
     selection=dg.AssetSelection.assets(
@@ -131,6 +163,7 @@ defs = dg.Definitions(
         brazil_cvm_dfp_raw_archives_s3,
         brazil_cvm_dfp_raw_duckdb,
         brazil_cvm_dfp_statement_rows_usd_duckdb,
+        brazil_cvm_dfp_raw_clickhouse,
     ],
     jobs=[brazil_cvm_dfp_raw_backfill_job],
     resources={

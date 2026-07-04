@@ -3,6 +3,7 @@ import dagster as dg
 
 def test_brazil_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     from dagster_v3.defs.brazil_cvm.assets import (
+        brazil_cvm_dfp_raw_clickhouse,
         brazil_cvm_dfp_raw_archives_s3,
         brazil_cvm_dfp_raw_duckdb,
         brazil_cvm_dfp_statement_rows_usd_duckdb,
@@ -16,9 +17,11 @@ def test_brazil_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     ]
     assert brazil_cvm_dfp_raw_duckdb.partitions_def is partitions_def
     assert brazil_cvm_dfp_statement_rows_usd_duckdb.partitions_def is None
+    assert brazil_cvm_dfp_raw_clickhouse.partitions_def is None
     assert brazil_cvm_dfp_raw_archives_s3.op.pool is None
     assert brazil_cvm_dfp_raw_duckdb.op.pool == "brazil_cvm_duckdb"
     assert brazil_cvm_dfp_statement_rows_usd_duckdb.op.pool == "brazil_cvm_duckdb"
+    assert brazil_cvm_dfp_raw_clickhouse.op.pool == "brazil_cvm_duckdb"
     assert (
         brazil_cvm_dfp_raw_archives_s3.group_names_by_key[
             dg.AssetKey("brazil_cvm_dfp_raw_archives_s3")
@@ -28,7 +31,10 @@ def test_brazil_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
 
 
 def test_brazil_cvm_dfp_raw_backfill_job_selects_raw_archive_asset() -> None:
+    from dagster_clickhouse import ClickhouseResource
+
     from dagster_v3.defs.brazil_cvm.assets import (
+        brazil_cvm_dfp_raw_clickhouse,
         brazil_cvm_dfp_raw_archives_s3,
         brazil_cvm_dfp_raw_backfill_job,
         brazil_cvm_dfp_raw_duckdb,
@@ -43,12 +49,14 @@ def test_brazil_cvm_dfp_raw_backfill_job_selects_raw_archive_asset() -> None:
             brazil_cvm_dfp_raw_archives_s3,
             brazil_cvm_dfp_raw_duckdb,
             brazil_cvm_dfp_statement_rows_usd_duckdb,
+            brazil_cvm_dfp_raw_clickhouse,
         ],
         jobs=[brazil_cvm_dfp_raw_backfill_job],
         resources={
             "brazil_cvm_dfp": BrazilCvmDfpResource(),
             "brazil_cvm_duckdb": duckdb_resource(":memory:"),
             "object_store": ObjectStoreResource(),
+            "clickhouse": ClickhouseResource(host="localhost"),
         },
     ).resolve_job_def("brazil_cvm_dfp_raw_backfill_job")
 
@@ -80,6 +88,40 @@ def test_brazil_cvm_dfp_statement_rows_usd_depends_on_raw_duckdb_asset() -> None
     asset = repository.asset_graph.get(brazil_cvm_dfp_statement_rows_usd_duckdb.key)
 
     assert asset.parent_keys == {dg.AssetKey("brazil_cvm_dfp_raw_duckdb")}
+
+
+def test_brazil_cvm_dfp_raw_clickhouse_depends_on_usd_duckdb_asset() -> None:
+    from dagster_clickhouse import ClickhouseResource
+
+    from dagster_v3.defs.brazil_cvm.assets import (
+        brazil_cvm_dfp_raw_clickhouse,
+        brazil_cvm_dfp_raw_archives_s3,
+        brazil_cvm_dfp_raw_duckdb,
+        brazil_cvm_dfp_statement_rows_usd_duckdb,
+    )
+    from dagster_v3.defs.brazil_cvm.source import BrazilCvmDfpResource
+    from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+    from dagster_v3.defs.common.resources import ObjectStoreResource
+
+    repository = dg.Definitions(
+        assets=[
+            brazil_cvm_dfp_raw_archives_s3,
+            brazil_cvm_dfp_raw_duckdb,
+            brazil_cvm_dfp_statement_rows_usd_duckdb,
+            brazil_cvm_dfp_raw_clickhouse,
+        ],
+        resources={
+            "brazil_cvm_dfp": BrazilCvmDfpResource(),
+            "brazil_cvm_duckdb": duckdb_resource(":memory:"),
+            "object_store": ObjectStoreResource(),
+            "clickhouse": ClickhouseResource(host="localhost"),
+        },
+    ).get_repository_def()
+    asset = repository.asset_graph.get(brazil_cvm_dfp_raw_clickhouse.key)
+
+    assert asset.parent_keys == {
+        dg.AssetKey("brazil_cvm_dfp_statement_rows_usd_duckdb")
+    }
 
 
 class FakeBrazilCvmDfpResource:

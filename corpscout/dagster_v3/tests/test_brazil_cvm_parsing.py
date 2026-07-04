@@ -172,6 +172,105 @@ def test_load_brazil_cvm_dfp_archive_replaces_only_requested_year(
     assert rows == [(2025, 150000, "run-old"), (2026, 159999, "run-2")]
 
 
+def test_load_brazil_cvm_dfp_archive_upgrades_old_statement_rows_table(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "dfp_cia_aberta_2026.zip"
+    _write_dfp_zip(archive_path, year="2026")
+    connection = duckdb.connect(str(tmp_path / "source.duckdb"))
+    connection.execute(f"create schema {BRAZIL_CVM_DUCKDB_SCHEMA}")
+    connection.execute(
+        f"""
+        create table {BRAZIL_CVM_DUCKDB_SCHEMA}.dfp_statement_rows (
+            country_iso2 varchar,
+            source_slug varchar,
+            source_run_id varchar,
+            source_record_id varchar,
+            dfp_year integer,
+            cnpj varchar,
+            cnpj_basico varchar,
+            company_name varchar,
+            cvm_code varchar,
+            reference_date date,
+            version integer,
+            statement_code varchar,
+            statement_name varchar,
+            consolidation_type varchar,
+            grupo_dfp varchar,
+            currency varchar,
+            scale varchar,
+            original_order varchar,
+            period_start_date date,
+            period_end_date date,
+            equity_column varchar,
+            account_code varchar,
+            account_description_original varchar,
+            amount_original decimal(38, 10),
+            fixed_account_flag varchar,
+            source_archive_key varchar,
+            source_file_name varchar,
+            source_row_number bigint,
+            resolved_at timestamp
+        )
+        """
+    )
+
+    counts = load_brazil_cvm_dfp_archive(
+        connection=connection,
+        archive_path=archive_path,
+        year="2026",
+        source_archive_key="brazil_cvm/dfp/raw_archives/year=2026/archive.zip",
+        source_run_id="run-1",
+        resolved_at=datetime(2026, 7, 4, tzinfo=UTC),
+    )
+
+    columns = {
+        row[0]
+        for row in connection.execute(
+            f"describe {BRAZIL_CVM_DUCKDB_SCHEMA}.dfp_statement_rows"
+        ).fetchall()
+    }
+    row = connection.execute(
+        f"""
+        select amount_usd, fx_rate_to_usd, fx_rate_date, fx_source
+        from {BRAZIL_CVM_DUCKDB_SCHEMA}.dfp_statement_rows
+        limit 1
+        """
+    ).fetchone()
+
+    assert counts["statement_row_count"] == 3
+    assert {"amount_usd", "fx_rate_to_usd", "fx_rate_date", "fx_source"} <= columns
+    assert row == (None, None, None, "")
+
+
+def test_load_brazil_cvm_dfp_archive_reads_windows_1252_auditor_report(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "dfp_cia_aberta_2018.zip"
+    _write_dfp_zip(
+        archive_path,
+        year="2018",
+        encoding="cp1252",
+        auditor_report_text="Companhia amparada pela lei 9.964ƒ2000.",
+    )
+    connection = duckdb.connect(str(tmp_path / "source.duckdb"))
+
+    counts = load_brazil_cvm_dfp_archive(
+        connection=connection,
+        archive_path=archive_path,
+        year="2018",
+        source_archive_key="brazil_cvm/dfp/raw_archives/year=2018/archive.zip",
+        source_run_id="run-1",
+        resolved_at=datetime(2026, 7, 4, tzinfo=UTC),
+    )
+    report_text = connection.execute(
+        f"select report_text_original from {BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_AUDITOR_REPORTS_TABLE}"
+    ).fetchone()[0]
+
+    assert counts["auditor_report_row_count"] == 1
+    assert report_text == "Companhia amparada pela lei 9.964ƒ2000."
+
+
 def test_load_brazil_cvm_dfp_archive_rejects_unknown_csv_member(tmp_path: Path) -> None:
     archive_path = tmp_path / "dfp_cia_aberta_2026.zip"
     _write_dfp_zip(
@@ -198,6 +297,8 @@ def _write_dfp_zip(
     year: str,
     document_id: str = "159112",
     include_capital: bool = False,
+    encoding: str = "latin-1",
+    auditor_report_text: str = "Texto das Demonstrações Financeiras aprovado.",
     extra_members: dict[str, str] | None = None,
 ) -> None:
     files = {
@@ -232,7 +333,7 @@ def _write_dfp_zip(
             "CNPJ_CIA;DT_REFER;VERSAO;DENOM_CIA;TP_RELAT_AUD;TP_PARECER_DECL;NUM_ITEM_PARECER_DECL;TXT_PARECER_DECL\n"
             f"02.635.522/0001-95;{year}-03-31;1;JALLES AÇÚCAR S.A.;;"
             "Declaração dos Diretores sobre as Demonstrações Financeiras;1;"
-            "Texto das Demonstrações Financeiras aprovado.\n"
+            f"{auditor_report_text}\n"
         ),
     }
     if include_capital:
@@ -247,4 +348,4 @@ def _write_dfp_zip(
 
     with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as zip_file:
         for name, content in files.items():
-            zip_file.writestr(name, content.encode("latin-1"))
+            zip_file.writestr(name, content.encode(encoding))

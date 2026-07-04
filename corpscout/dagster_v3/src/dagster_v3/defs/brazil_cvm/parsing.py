@@ -21,6 +21,43 @@ DFP_PARSE_RUNS_TABLE = "dfp_parse_runs"
 
 SOURCE_SLUG = "brazil_cvm_dfp"
 CSV_ENCODING = "latin-1"
+CSV_FALLBACK_ENCODING = "utf-8"
+CSV_WINDOWS_1252_ENCODING = "cp1252"
+DFP_STATEMENT_ROWS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "dfp_year",
+    "cnpj",
+    "cnpj_basico",
+    "company_name",
+    "cvm_code",
+    "reference_date",
+    "version",
+    "statement_code",
+    "statement_name",
+    "consolidation_type",
+    "grupo_dfp",
+    "currency",
+    "scale",
+    "original_order",
+    "period_start_date",
+    "period_end_date",
+    "equity_column",
+    "account_code",
+    "account_description_original",
+    "amount_original",
+    "amount_usd",
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "fixed_account_flag",
+    "source_archive_key",
+    "source_file_name",
+    "source_row_number",
+    "resolved_at",
+)
 
 _STATEMENT_BY_CODE = {
     "BPA": "balance_sheet_assets",
@@ -296,6 +333,7 @@ def _ensure_tables(connection: Any) -> None:
         )
         """
     )
+    _ensure_statement_rows_usd_columns(connection)
     connection.execute(
         f"""
         create table if not exists {BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_CAPITAL_COMPOSITION_TABLE} (
@@ -361,6 +399,22 @@ def _ensure_tables(connection: Any) -> None:
             resolved_at timestamp
         )
         """
+    )
+
+
+def _ensure_statement_rows_usd_columns(connection: Any) -> None:
+    qualified_table = f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_STATEMENT_ROWS_TABLE}"
+    connection.execute(
+        f"alter table {qualified_table} add column if not exists amount_usd decimal(38, 6)"
+    )
+    connection.execute(
+        f"alter table {qualified_table} add column if not exists fx_rate_to_usd decimal(38, 12)"
+    )
+    connection.execute(
+        f"alter table {qualified_table} add column if not exists fx_rate_date date"
+    )
+    connection.execute(
+        f"alter table {qualified_table} add column if not exists fx_source varchar"
     )
 
 
@@ -445,9 +499,11 @@ def _load_statement_rows(
         else "NULL::date"
     )
     equity_column_expr = "coalesce(COLUNA_DF, '')" if "COLUNA_DF" in columns else "''"
+    insert_columns = ", ".join(DFP_STATEMENT_ROWS_COLUMNS)
     connection.execute(
         f"""
         insert into {BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_STATEMENT_ROWS_TABLE}
+        ({insert_columns})
         select
             'BR',
             ?,
@@ -598,6 +654,29 @@ def _load_auditor_reports(
 
 
 def _read_member_to_temp_table(*, connection: Any, csv_path: Path) -> None:
+    try:
+        _read_member_to_temp_table_with_encoding(
+            connection=connection,
+            csv_path=csv_path,
+            encoding=CSV_ENCODING,
+        )
+    except Exception as exc:
+        if "File is not latin-1 encoded" not in str(exc):
+            raise
+        fallback_path = _transcode_windows_1252_csv_to_utf8(csv_path)
+        _read_member_to_temp_table_with_encoding(
+            connection=connection,
+            csv_path=fallback_path,
+            encoding=CSV_FALLBACK_ENCODING,
+        )
+
+
+def _read_member_to_temp_table_with_encoding(
+    *,
+    connection: Any,
+    csv_path: Path,
+    encoding: str,
+) -> None:
     connection.execute(
         f"""
         create or replace temporary table _brazil_cvm_dfp_member as
@@ -609,12 +688,21 @@ def _read_member_to_temp_table(*, connection: Any, csv_path: Path) -> None:
             delim=';',
             header=true,
             all_varchar=true,
-            encoding='{CSV_ENCODING}',
+            encoding='{encoding}',
             ignore_errors=false
         )
         """,
         [str(csv_path)],
     )
+
+
+def _transcode_windows_1252_csv_to_utf8(csv_path: Path) -> Path:
+    fallback_path = csv_path.with_suffix(f"{csv_path.suffix}.utf8")
+    fallback_path.write_text(
+        csv_path.read_bytes().decode(CSV_WINDOWS_1252_ENCODING),
+        encoding=CSV_FALLBACK_ENCODING,
+    )
+    return fallback_path
 
 
 def _year_counts(*, connection: Any, year: str) -> dict[str, int]:
