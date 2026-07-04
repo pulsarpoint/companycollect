@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dagster_v3.defs.brazil_cnae import tables as brazil_cnae_tables
+from dagster_v3.defs.brazil_companies.cnae import tables as brazil_cnae_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
@@ -1040,7 +1040,7 @@ def test_commoncrawl_page_signals_migration_covers_emails_and_socials() -> None:
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_signals" in down_sql
 
 
-def test_brazil_cnae_mapping_migration_covers_exported_columns() -> None:
+def test_brazil_comp_cnae_mapping_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000050_corpscout_br_cnae_to_nace.up.sql")
     down_sql = _migration_sql("000050_corpscout_br_cnae_to_nace.down.sql")
 

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from dagster_v3.defs.brazil_cnae import tables
+from dagster_v3.defs.brazil_companies.cnae import tables
 
 
 REQUIRED_FIXTURE_COLUMNS = (
@@ -46,7 +46,9 @@ def build_br_cnae_to_nace_rows(
     resolved_fixture_path = Path(fixture_path)
     payload = resolved_fixture_path.read_bytes()
     source_payload_hash = hashlib.sha256(payload).hexdigest()
-    resolved_pulled_at = pulled_at if pulled_at is not None else datetime.now(timezone.utc)
+    resolved_pulled_at = (
+        pulled_at if pulled_at is not None else datetime.now(timezone.utc)
+    )
 
     rows: list[MappingRow] = []
     seen_edges: set[tuple[str, str, str, str]] = set()
@@ -181,7 +183,7 @@ def _load_valid_nace_targets(clickhouse_client: Any) -> set[NormalizedNaceTarget
 
 def _qualified_clickhouse_table(table: str) -> str:
     return (
-        f"{_quote_clickhouse_identifier(tables.BRAZIL_CNAE_DATABASE)}."
+        f"{_quote_clickhouse_identifier(tables.BRAZIL_COMP_CNAE_DATABASE)}."
         f"{_quote_clickhouse_identifier(table)}"
     )
 
@@ -194,8 +196,7 @@ def _quote_clickhouse_identifier(identifier: str) -> str:
 def _validate_fixture_header(fieldnames: Sequence[str] | None) -> None:
     if fieldnames is None:
         raise ValueError(
-            "Missing required fixture columns: "
-            + ", ".join(REQUIRED_FIXTURE_COLUMNS)
+            "Missing required fixture columns: " + ", ".join(REQUIRED_FIXTURE_COLUMNS)
         )
 
     missing_columns = [

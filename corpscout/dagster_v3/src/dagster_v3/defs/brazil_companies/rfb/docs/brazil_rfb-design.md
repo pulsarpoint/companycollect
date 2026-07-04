@@ -12,9 +12,9 @@ statement grain.
   by Receita Federal do Brasil / SERPRO.
 - **Module**: `defs/brazil_companies/rfb/` - stage-specific DuckDB files under `data/`
   with one writer pool per stage.
-- **Related reference module**: `defs/brazil_cnae/`, which publishes
+- **Related reference module**: `defs/brazil_companies/cnae/`, which publishes
   `corpscout.br_cnae_to_nace` from curated fixture data. The registry industry
-  build depends on `brazil_cnae_to_nace_clickhouse`.
+  build depends on `brazil_comp_cnae_to_nace_clickhouse`.
 - **ClickHouse tables planned**:
   - `corpscout.br_companies`: one row per legal entity (`cnpj_basico`).
   - `corpscout.br_establishments`: one row per full 14-digit establishment CNPJ.
@@ -287,7 +287,7 @@ statement grain.
   ClickHouse export still replaces current-state serving tables for each selected
   partition.
 - **Manual full refresh**: group-level job for all `brazil_comp_rfb` assets. Ensure
-  upstream `brazil_cnae_to_nace_clickhouse` and `nace_categories_clickhouse` have
+  upstream `brazil_comp_cnae_to_nace_clickhouse` and `nace_categories_clickhouse` have
   been materialized before the Brazil run.
 - **Cron staggering**: choose a different hour/day from Estonia/France/UK monthly
   jobs because Brazil's `Estabelecimentos` file family is large.
@@ -333,7 +333,7 @@ statement grain.
 - **Dagster checks**: `uv run dg check defs`.
 - **Live validation**:
   - Run ClickHouse migrations.
-  - Materialize `nace_categories_clickhouse`, `brazil_cnae_to_nace_clickhouse`,
+  - Materialize `nace_categories_clickhouse`, `brazil_comp_cnae_to_nace_clickhouse`,
     then the `brazil_comp_rfb` group.
   - Spot-check counts for `br_companies`, `br_establishments`,
     `br_company_contacts`, `br_company_domains`, and `br_industries`.

@@ -7,8 +7,8 @@ import dagster as dg
 import pytest
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.brazil_cnae import tables
-from dagster_v3.defs.brazil_cnae.mapping import (
+from dagster_v3.defs.brazil_companies.cnae import tables
+from dagster_v3.defs.brazil_companies.cnae.mapping import (
     build_br_cnae_to_nace_rows,
     normalize_cnae_code,
     normalize_nace_code,
@@ -278,7 +278,7 @@ def test_replace_clickhouse_uses_stage_insert_exchange_and_drop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dagster_v3.defs.brazil_cnae import mapping
+    from dagster_v3.defs.brazil_companies.cnae import mapping
 
     fixture = _write_fixture(
         tmp_path,
@@ -337,7 +337,7 @@ def test_replace_clickhouse_drops_stage_after_insert_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dagster_v3.defs.brazil_cnae import mapping
+    from dagster_v3.defs.brazil_companies.cnae import mapping
 
     class FailingInsertClient(FakeClickHouseClient):
         def execute(
@@ -381,7 +381,7 @@ def test_replace_clickhouse_drops_stage_after_insert_failure(
 
 
 def test_seed_fixture_builds_non_empty_rows() -> None:
-    from dagster_v3.defs.brazil_cnae.assets import BR_CNAE_TO_NACE_FIXTURE
+    from dagster_v3.defs.brazil_companies.cnae.assets import BR_CNAE_TO_NACE_FIXTURE
 
     rows = build_br_cnae_to_nace_rows(
         fixture_path=BR_CNAE_TO_NACE_FIXTURE,
@@ -397,19 +397,19 @@ def test_seed_fixture_builds_non_empty_rows() -> None:
     assert len(rows) == 3
 
 
-def test_brazil_cnae_asset_is_registered() -> None:
+def test_brazil_comp_cnae_asset_is_registered() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
     keys = {key.to_user_string() for key in repo.asset_graph.get_all_asset_keys()}
 
-    assert "brazil_cnae_to_nace_clickhouse" in keys
+    assert "brazil_comp_cnae_to_nace_clickhouse" in keys
 
 
-def test_brazil_cnae_asset_asserts_clickhouse_target_table_before_publish(
+def test_brazil_comp_cnae_asset_asserts_clickhouse_target_table_before_publish(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dagster_v3.defs.brazil_cnae import assets
+    from dagster_v3.defs.brazil_companies.cnae import assets
 
     calls: dict[str, object] = {}
     events: list[str] = []
@@ -461,7 +461,7 @@ def test_brazil_cnae_asset_asserts_clickhouse_target_table_before_publish(
     )
 
     result = dg.materialize(
-        [assets.brazil_cnae_to_nace_clickhouse],
+        [assets.brazil_comp_cnae_to_nace_clickhouse],
         resources={"clickhouse": clickhouse},
     )
 
@@ -469,7 +469,7 @@ def test_brazil_cnae_asset_asserts_clickhouse_target_table_before_publish(
     assert events == ["assert", "connection", "replace"]
     assert calls["assert"] == {
         "clickhouse": clickhouse,
-        "database": tables.BRAZIL_CNAE_DATABASE,
+        "database": tables.BRAZIL_COMP_CNAE_DATABASE,
         "tables": (tables.BR_CNAE_TO_NACE_TABLE,),
     }
     assert calls["replace"]["clickhouse_client"] is client

@@ -4,13 +4,13 @@ import dagster as dg
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.brazil_cnae import tables
-from dagster_v3.defs.brazil_cnae.mapping import (
+from dagster_v3.defs.brazil_companies.cnae import tables
+from dagster_v3.defs.brazil_companies.cnae.mapping import (
     replace_br_cnae_to_nace_clickhouse,
 )
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 
-GROUP_NAME = "brazil_cnae"
+GROUP_NAME = "brazil_comp_cnae"
 BR_CNAE_TO_NACE_FIXTURE = Path(__file__).parent / "fixtures" / "br_cnae_to_nace.csv"
 
 
@@ -22,13 +22,13 @@ BR_CNAE_TO_NACE_FIXTURE = Path(__file__).parent / "fixtures" / "br_cnae_to_nace.
         "Brazil CNAE to NACE many-to-many mapping edges from curated fixture data."
     ),
 )
-def brazil_cnae_to_nace_clickhouse(
+def brazil_comp_cnae_to_nace_clickhouse(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
-        database=tables.BRAZIL_CNAE_DATABASE,
+        database=tables.BRAZIL_COMP_CNAE_DATABASE,
         tables=(tables.BR_CNAE_TO_NACE_TABLE,),
     )
     with clickhouse.get_connection() as client:
