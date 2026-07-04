@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from dagster_v3.defs.brazil_cnae import tables as brazil_cnae_tables
+from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
 from dagster_v3.defs.brazil_rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.domains import tables as domain_tables
@@ -1051,6 +1052,21 @@ def test_brazil_cnae_mapping_migration_covers_exported_columns() -> None:
         in sql
     )
     assert "DROP TABLE IF EXISTS corpscout.br_cnae_to_nace" in down_sql
+
+
+def test_brazil_fin_cvm_dfp_capital_composition_allows_signed_treasury_shares() -> None:
+    sql = _migration_sql("000087_corpscout_br_cvm_dfp_tables.up.sql")
+
+    assert (
+        f"CREATE TABLE IF NOT EXISTS "
+        f"{brazil_fin_cvm_tables.QUALIFIED_BR_CVM_DFP_CAPITAL_COMPOSITION_TABLE}" in sql
+    )
+    assert "    ordinary_shares_paid_in UInt64," in sql
+    assert "    preferred_shares_paid_in UInt64," in sql
+    assert "    total_shares_paid_in UInt64," in sql
+    assert "    ordinary_shares_treasury Int64," in sql
+    assert "    preferred_shares_treasury Int64," in sql
+    assert "    total_shares_treasury Int64," in sql
 
 
 def test_lei_wikidata_company_view_joins_gleif_and_wikidata_lei_identifiers() -> None:
