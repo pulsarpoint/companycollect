@@ -245,6 +245,38 @@ def test_scb_raw_loader_disables_parallel_csv_scan_with_null_padding(
     assert "parallel=false" in executed_sql[0]
 
 
+def test_scb_raw_loader_treats_quote_as_literal_data(tmp_path: Path) -> None:
+    scb_path = tmp_path / "scb_bulkfil.txt"
+    header = "\t".join(tables.SCB_SOURCE_COLUMNS)
+    values_by_column = {
+        column: "1"
+        for column in tables.SCB_SOURCE_COLUMNS
+    }
+    values_by_column["PeOrgNr"] = "168024131248"
+    values_by_column["Namn"] = '"(S-) FÖRENINGEN I AUGUSTENDAL'
+    row = "\t".join(values_by_column[column] for column in tables.SCB_SOURCE_COLUMNS)
+    scb_path.write_text(f"{header}\r\n{row}\r\n", encoding="latin-1", newline="")
+
+    with duckdb.connect(str(tmp_path / "sweden_company_source.duckdb")) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+
+        raw_duckdb._replace_scb_raw_table(
+            connection=connection,
+            csv_path=scb_path,
+            source_run_id="run-1",
+            source_s3_key="raw/scb.zip",
+        )
+
+        scb = connection.execute(
+            f"""
+            select source_record_id, Namn
+            from {tables.DLT_DATASET_NAME}.scb_raw
+            """
+        ).fetchone()
+
+    assert scb == ("168024131248", '"(S-) FÖRENINGEN I AUGUSTENDAL')
+
+
 def test_load_sweden_company_raw_manifest_rejects_partial_manifest_before_replacing_raw_files(
     tmp_path: Path,
 ) -> None:

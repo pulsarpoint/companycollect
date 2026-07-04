@@ -206,8 +206,8 @@ def _replace_scb_raw_table(
                 delim='\t',
                 header=true,
                 all_varchar=true,
-                quote='"',
-                escape='"',
+                quote='',
+                escape='',
                 null_padding=true,
                 strict_mode=false,
                 parallel=false
