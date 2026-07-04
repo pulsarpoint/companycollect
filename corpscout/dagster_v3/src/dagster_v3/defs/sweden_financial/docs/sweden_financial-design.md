@@ -10,9 +10,10 @@ https://vardefulla-datamangder.bolagsverket.se/arsredovisningar-bulkfiler?prefix
 ```
 
 The listing returns object keys such as `arsredovisningar/2020/08_2.zip`. The
-year component is a real upstream boundary, so the Dagster assets are partitioned
-by report archive year. The download URL is the listing host plus the upstream
-key:
+source denies year-specific listing prefixes, so the resource lists the allowed
+root prefix `arsredovisningar/`, starts year scans with a marker such as
+`arsredovisningar/2026/`, and filters returned keys client-side. The download URL
+is the listing host plus the upstream key:
 
 ```text
 https://vardefulla-datamangder.bolagsverket.se/arsredovisningar-bulkfiler/arsredovisningar/2020/08_2.zip
@@ -29,14 +30,14 @@ into deterministic object keys and catalogs them in DuckDB.
 `SwedenFinancialReportsResource` owns the source-specific behavior:
 
 - list archives from the XML listing endpoint, including `NextMarker` pagination;
-- filter listings by partition year, for example `arsredovisningar/2020/`;
+- scan by year using a marker and client-side key filtering;
 - build download URLs from upstream keys;
 - derive deterministic object keys from year, archive name, and upstream
   `LastModified`;
 - skip existing archive objects before issuing the archive `GET`;
 - stream missing ZIP downloads to a temporary file;
 - upload missing ZIPs through the shared `ObjectStoreResource`;
-- emit counts and sample S3 keys in materialization metadata.
+- emit changed/unchanged counts and sample S3 keys in materialization metadata.
 
 This is a concrete resource rather than a generic downloader because the source
 uses a specific S3 XML listing endpoint, a specific download URL rewrite, and
@@ -44,9 +45,12 @@ source-specific object-key conventions.
 
 ## Asset
 
-`sweden_financial_raw_archives_s3` materializes the raw archive layer. It uses a
-static year partition set that includes the 2020-2025 backfill years plus the
-current runtime year when that year is outside the backfill range.
+`sweden_financial_backfill_raw_archives_s3` materializes the raw backfill archive
+layer. It uses static year partitions `2020` through `2026`.
+
+`sweden_financial_current_raw_archives_s3` materializes the current refresh
+archive layer. It uses 7-day date partitions from `2026-07-04` through the end of
+2026 and scans upstream archive year `2026` on each run.
 
 It writes to bucket:
 
@@ -71,8 +75,9 @@ There is no manifest file for the raw archive layer. The raw archive objects are
 self-describing enough for the next asset to list by partition prefix and parse
 metadata from the object key.
 
-`sweden_financial_report_xhtml_catalog_duckdb` materializes the extracted XHTML
-catalog for the same year partition. It reads raw archive objects from:
+`sweden_financial_backfill_report_xhtml_catalog_duckdb` materializes the
+extracted XHTML catalog for a full backfill year partition. It reads raw archive
+objects from:
 
 ```text
 sweden_financial/raw_archives/year=<partition_year>/
@@ -91,24 +96,34 @@ sweden_financial/report_xhtml/
   report.xhtml
 ```
 
+`sweden_financial_current_report_xhtml_catalog_duckdb` materializes only changed
+current ZIPs for the same Dagster run. It reads changed archive keys from
+`sweden_financial.archive_sync_catalog` where `downloaded = true`, parses those
+ZIPs, and replaces catalog rows only for the affected archive names.
+
 The DuckDB table `sweden_financial.report_xhtml_catalog` stores one row per
 extracted report XHTML with the partition year, company id, report-period end,
 source archive object key, nested ZIP name, report object key, content length,
-content hash, and `source_run_id`. Materializing one partition replaces only that
-partition's catalog rows.
+content hash, and `source_run_id`.
+
+The DuckDB table `sweden_financial.archive_sync_catalog` stores one row per
+archive observed in each materialization run, including the upstream key,
+`LastModified`, ETag, source size, object-storage key, and whether the archive
+was downloaded or reused.
 
 ## Job And Schedule
 
 `sweden_financial_backfill_job` selects both
-`sweden_financial_raw_archives_s3` and
-`sweden_financial_report_xhtml_catalog_duckdb`. Backfill should materialize the
-2020-2025 partitions.
+`sweden_financial_backfill_raw_archives_s3` and
+`sweden_financial_backfill_report_xhtml_catalog_duckdb`. Backfill should
+materialize the 2020-2026 partitions.
 
-`sweden_financial_current_year_job` selects the same assets and is used by the
-active refresh path.
+`sweden_financial_current_year_job` selects
+`sweden_financial_current_raw_archives_s3` and
+`sweden_financial_current_report_xhtml_catalog_duckdb`.
 
-`sweden_financial_current_year_weekly` runs at `45 6 * * 1` in
-`Europe/Belgrade`, targets the current calendar year partition, and is enabled by
+`sweden_financial_current_year_weekly` runs at `45 6 * * 6` in
+`Europe/Belgrade`, targets the matching 7-day partition date, and is enabled by
 default. Each weekly run can discover upstream `LastModified` changes and add
 new raw archive versions while reusing unchanged archive objects.
 

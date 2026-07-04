@@ -2,15 +2,14 @@
 
 ## Next Task
 
-Create a `brazil_cvm` financial-data investigation and implementation plan.
-Use [brazil-financial-sources.md](brazil-financial-sources.md) as the source
-analysis input.
+Implement the DFP parser asset that reads ZIPs stored by
+`brazil_cvm_dfp_raw_archives_s3` and loads the CVM CSV family rows into DuckDB.
 
 Minimum scope:
 
-1. Inspect CVM DFP and ITR ZIP schemas and dictionaries.
+1. Read each raw archive from `source-brazil-cvm`.
 2. Identify join keys to `br_companies`, especially CNPJ and CVM company code.
-3. Define annual and quarterly financial statement tables.
+3. Load the DFP document index and statement-family rows as raw DuckDB tables.
 4. Define normalized metric rows for revenue, net income, assets, liabilities,
    equity, cash flow, and reporting period.
 5. Document coverage limits clearly: CVM covers public/open companies, not all

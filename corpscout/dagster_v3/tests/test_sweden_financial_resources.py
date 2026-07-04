@@ -183,6 +183,57 @@ def test_sweden_financial_reports_skips_existing_last_modified_archives() -> Non
     assert result.metadata["reused_archive_count"] == 1
 
 
+def test_sweden_financial_reports_sync_exposes_changed_and_unchanged_keys() -> None:
+    resource = SwedenFinancialReportsResource()
+    listing_url = resource.listing_url(marker="arsredovisningar/2026/")
+    archive_url = (
+        f"{resource.archive_base_url}/arsredovisningar/2026/01_1.zip"
+    )
+    unchanged_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/02_1.zip",
+        source_last_modified="2026-07-01T09:13:53.713Z",
+    )
+    changed_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/01_1.zip",
+        source_last_modified="2026-07-04T09:13:53.713Z",
+    )
+    object_store = FakeObjectStore()
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, unchanged_key)] = b"old"
+    session = FakeSession(
+        {
+            listing_url: _listing_xml_many(
+                [
+                    {
+                        "key": "arsredovisningar/2026/01_1.zip",
+                        "last_modified": "2026-07-04T09:13:53.713Z",
+                        "etag": '"changed"',
+                        "size": 7,
+                    },
+                    {
+                        "key": "arsredovisningar/2026/02_1.zip",
+                        "last_modified": "2026-07-01T09:13:53.713Z",
+                        "etag": '"same"',
+                        "size": 3,
+                    },
+                ]
+            ),
+            archive_url: b"changed",
+        }
+    )
+
+    result = resource.sync_raw_archives(
+        object_store=object_store,
+        session=session,
+        year="2026",
+    )
+
+    assert session.requested_urls == [listing_url, archive_url]
+    assert result.changed_s3_keys == [changed_key]
+    assert result.unchanged_s3_keys == [unchanged_key]
+    assert result.metadata["changed_archive_count"] == 1
+    assert result.metadata["unchanged_archive_count"] == 1
+
+
 def test_sweden_financial_reports_follows_listing_pagination() -> None:
     resource = SwedenFinancialReportsResource()
     first_url = resource.listing_url()
@@ -419,6 +470,71 @@ def test_extract_sweden_financial_report_xhtml_catalog_replaces_only_partition_y
     assert rows == [
         ("2020", "5560000000", "2020-12-31"),
         ("2021", "5560000001", "2021-12-31"),
+    ]
+
+
+def test_extract_sweden_financial_report_xhtml_catalog_merges_changed_archives(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    old_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/01_1.zip",
+        source_last_modified="2026-07-01T09:13:53.713Z",
+    )
+    unchanged_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/02_1.zip",
+        source_last_modified="2026-07-01T09:13:53.713Z",
+    )
+    changed_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/01_1.zip",
+        source_last_modified="2026-07-04T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, old_archive_key)] = _outer_zip(
+        nested_name="5560000000_2026-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=b"<html>old changed archive</html>",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, unchanged_archive_key)] = _outer_zip(
+        nested_name="5560000001_2026-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=b"<html>unchanged archive</html>",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, changed_archive_key)] = _outer_zip(
+        nested_name="5560000002_2026-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=b"<html>new changed archive</html>",
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="initial",
+            partition_year="2026",
+            source_archive_keys=[old_archive_key, unchanged_archive_key],
+            replace_scope="partition",
+        )
+        counts = extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="current",
+            partition_year="2026",
+            source_archive_keys=[changed_archive_key],
+            replace_scope="archive",
+        )
+        rows = connection.execute(
+            """
+            select source_archive_name, company_id
+            from sweden_financial.report_xhtml_catalog
+            where partition_year = '2026'
+            order by source_archive_name, company_id
+            """
+        ).fetchall()
+
+    assert counts["source_archive_count"] == 1
+    assert rows == [
+        ("01_1.zip", "5560000002"),
+        ("02_1.zip", "5560000001"),
     ]
 
 

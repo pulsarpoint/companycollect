@@ -24,12 +24,17 @@ def extract_sweden_financial_report_xhtml_catalog(
     object_store: ObjectStoreResource,
     source_run_id: str,
     partition_year: str,
+    source_archive_keys: list[str] | None = None,
+    replace_scope: str = "partition",
 ) -> dict[str, int]:
     object_store.ensure_bucket(SWEDEN_FINANCIAL_RAW_BUCKET)
-    source_archive_keys = object_store.list_keys(
-        f"{RAW_ARCHIVE_PREFIX}year={partition_year}/",
-        bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
-    )
+    if source_archive_keys is None:
+        source_archive_keys = object_store.list_keys(
+            f"{RAW_ARCHIVE_PREFIX}year={partition_year}/",
+            bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
+        )
+    else:
+        source_archive_keys = sorted(source_archive_keys)
     rows: list[tuple[Any, ...]] = []
     nested_zip_count = 0
     downloaded_report_count = 0
@@ -68,6 +73,13 @@ def extract_sweden_financial_report_xhtml_catalog(
         connection=connection,
         partition_year=partition_year,
         rows=rows,
+        replace_scope=replace_scope,
+        source_archive_names=sorted(
+            {
+                _archive_name_from_object_key(source_archive_key)
+                for source_archive_key in source_archive_keys
+            }
+        ),
     )
     return {
         "partition_year": partition_year,
@@ -173,6 +185,8 @@ def _replace_report_xhtml_catalog(
     connection: Any,
     partition_year: str,
     rows: list[tuple[Any, ...]],
+    replace_scope: str,
+    source_archive_names: list[str],
 ) -> None:
     connection.execute(f"create schema if not exists {SWEDEN_FINANCIAL_DATASET_NAME}")
     connection.execute(
@@ -194,13 +208,27 @@ def _replace_report_xhtml_catalog(
         )
         """
     )
-    connection.execute(
-        f"""
-        delete from {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
-        where partition_year = ?
-        """,
-        [partition_year],
-    )
+    if replace_scope == "partition":
+        connection.execute(
+            f"""
+            delete from {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
+            where partition_year = ?
+            """,
+            [partition_year],
+        )
+    elif replace_scope == "archive":
+        if source_archive_names:
+            placeholders = ", ".join("?" for _ in source_archive_names)
+            connection.execute(
+                f"""
+                delete from {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
+                where partition_year = ?
+                  and source_archive_name in ({placeholders})
+                """,
+                [partition_year, *source_archive_names],
+            )
+    else:
+        raise ValueError(f"Unknown Sweden financial XHTML replace scope: {replace_scope}")
     if rows:
         connection.executemany(
             f"""

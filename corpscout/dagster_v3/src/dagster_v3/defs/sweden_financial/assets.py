@@ -1,10 +1,15 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import dagster as dg
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.sweden_financial.archive_state import (
+    changed_sweden_financial_archive_keys_for_run,
+    record_sweden_financial_archive_sync,
+)
 from dagster_v3.defs.sweden_financial.parsing import (
     SWEDEN_FINANCIAL_DUCKDB_PATH,
     extract_sweden_financial_report_xhtml_catalog,
@@ -13,63 +18,108 @@ from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsRes
 
 GROUP_NAME = "sweden_financial"
 SWEDEN_FINANCIAL_DUCKDB_POOL = "sweden_financial_duckdb"
-SWEDEN_FINANCIAL_BACKFILL_YEARS = tuple(str(year) for year in range(2020, 2026))
-SWEDEN_FINANCIAL_YEAR_PARTITIONS = dg.StaticPartitionsDefinition(
-    [
-        *SWEDEN_FINANCIAL_BACKFILL_YEARS,
-        *(
-            [str(datetime.now(UTC).year)]
-            if str(datetime.now(UTC).year) not in SWEDEN_FINANCIAL_BACKFILL_YEARS
-            else []
-        ),
-    ]
+
+
+def _weekly_dates(*, start_date: date, end_date: date) -> list[date]:
+    dates: list[date] = []
+    current = start_date
+    while current < end_date:
+        dates.append(current)
+        current += timedelta(days=7)
+    return dates
+
+
+SWEDEN_FINANCIAL_BACKFILL_YEARS = tuple(str(year) for year in range(2020, 2027))
+SWEDEN_FINANCIAL_CURRENT_YEAR = "2026"
+SWEDEN_FINANCIAL_CURRENT_START_DATE = date(2026, 7, 4)
+SWEDEN_FINANCIAL_CURRENT_END_DATE = date(2027, 1, 1)
+SWEDEN_FINANCIAL_TIMEZONE = "Europe/Belgrade"
+SWEDEN_FINANCIAL_BACKFILL_PARTITIONS = dg.StaticPartitionsDefinition(
+    list(SWEDEN_FINANCIAL_BACKFILL_YEARS)
+)
+SWEDEN_FINANCIAL_CURRENT_PARTITION_KEYS = tuple(
+    partition_date.isoformat()
+    for partition_date in _weekly_dates(
+        start_date=SWEDEN_FINANCIAL_CURRENT_START_DATE,
+        end_date=SWEDEN_FINANCIAL_CURRENT_END_DATE,
+    )
+)
+SWEDEN_FINANCIAL_CURRENT_PARTITIONS = dg.StaticPartitionsDefinition(
+    list(SWEDEN_FINANCIAL_CURRENT_PARTITION_KEYS)
+)
+SWEDEN_FINANCIAL_CURRENT_PARTITION_KEY_SET = set(
+    SWEDEN_FINANCIAL_CURRENT_PARTITION_KEYS
 )
 
 
-def current_sweden_financial_year() -> str:
-    return str(datetime.now(UTC).year)
+def _sync_raw_archives(
+    *,
+    context: dg.AssetExecutionContext,
+    sweden_financial_reports: SwedenFinancialReportsResource,
+    object_store: ObjectStoreResource,
+    sweden_financial_duckdb: DuckDBResource,
+    sync_kind: str,
+    archive_year: str,
+) -> dg.MaterializeResult:
+    started_at = datetime.now(UTC)
+    sync_result = sweden_financial_reports.sync_raw_archives(
+        object_store=object_store,
+        year=archive_year,
+        log_info=context.log.info,
+    )
+    SWEDEN_FINANCIAL_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sweden_financial_duckdb.get_connection() as connection:
+        record_sweden_financial_archive_sync(
+            connection=connection,
+            sync_result=sync_result,
+            sync_kind=sync_kind,
+            source_run_id=context.run_id,
+            load_partition_key=context.partition_key,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **sync_result.metadata,
+            "archive_year": archive_year,
+            "sync_kind": sync_kind,
+            "load_partition_key": context.partition_key,
+            "started_at": started_at.isoformat(),
+            "finished_at": datetime.now(UTC).isoformat(),
+        }
+    )
 
 
 @dg.asset(
     group_name=GROUP_NAME,
     kinds={"python", "s3", "zip", "bolagsverket", "xbrl"},
-    partitions_def=SWEDEN_FINANCIAL_YEAR_PARTITIONS,
-    description=(
-        "Downloads Sweden annual-report outer ZIP archives from Bolagsverket "
-        "to object storage. This asset does not extract XHTML or parse reports."
-    ),
+    partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    description="Downloads Sweden annual-report outer ZIP archives for 2020-2026 backfill.",
 )
-def sweden_financial_raw_archives_s3(
+def sweden_financial_backfill_raw_archives_s3(
     context: dg.AssetExecutionContext,
     sweden_financial_reports: SwedenFinancialReportsResource,
     object_store: ObjectStoreResource,
+    sweden_financial_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    started_at = datetime.now(UTC)
-    partition_year = context.partition_key
-    result = sweden_financial_reports.download_raw_archives(
+    return _sync_raw_archives(
+        context=context,
+        sweden_financial_reports=sweden_financial_reports,
         object_store=object_store,
-        year=partition_year,
-        log_info=context.log.info,
+        sweden_financial_duckdb=sweden_financial_duckdb,
+        sync_kind="backfill",
+        archive_year=context.partition_key,
     )
-    metadata = dict(result.metadata or {})
-    metadata["partition_year"] = partition_year
-    metadata["started_at"] = started_at.isoformat()
-    metadata["finished_at"] = datetime.now(UTC).isoformat()
-    return dg.MaterializeResult(metadata=metadata)
 
 
 @dg.asset(
-    deps=["sweden_financial_raw_archives_s3"],
+    deps=["sweden_financial_backfill_raw_archives_s3"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "zip", "xhtml", "xbrl"},
-    partitions_def=SWEDEN_FINANCIAL_YEAR_PARTITIONS,
+    partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
     pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
-    description=(
-        "Extracts nested annual-report XHTML files from Sweden financial raw "
-        "archives into object storage and writes a DuckDB catalog."
-    ),
+    description="Extracts Sweden backfill report XHTML files and replaces the year catalog.",
 )
-def sweden_financial_report_xhtml_catalog_duckdb(
+def sweden_financial_backfill_report_xhtml_catalog_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
     sweden_financial_duckdb: DuckDBResource,
@@ -81,6 +131,7 @@ def sweden_financial_report_xhtml_catalog_duckdb(
             object_store=object_store,
             source_run_id=context.run_id,
             partition_year=context.partition_key,
+            replace_scope="partition",
         )
     return dg.MaterializeResult(
         metadata={
@@ -90,35 +141,109 @@ def sweden_financial_report_xhtml_catalog_duckdb(
     )
 
 
-SWEDEN_FINANCIAL_ASSET_SELECTION = dg.AssetSelection.assets(
-    "sweden_financial_raw_archives_s3",
-    "sweden_financial_report_xhtml_catalog_duckdb",
+@dg.asset(
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "zip", "bolagsverket", "xbrl"},
+    partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    description="Checks 2026 Sweden annual-report ZIP archives every 7 days.",
+)
+def sweden_financial_current_raw_archives_s3(
+    context: dg.AssetExecutionContext,
+    sweden_financial_reports: SwedenFinancialReportsResource,
+    object_store: ObjectStoreResource,
+    sweden_financial_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    return _sync_raw_archives(
+        context=context,
+        sweden_financial_reports=sweden_financial_reports,
+        object_store=object_store,
+        sweden_financial_duckdb=sweden_financial_duckdb,
+        sync_kind="current",
+        archive_year=SWEDEN_FINANCIAL_CURRENT_YEAR,
+    )
+
+
+@dg.asset(
+    deps=["sweden_financial_current_raw_archives_s3"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "s3", "zip", "xhtml", "xbrl"},
+    partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    description="Extracts changed 2026 Sweden report XHTML archives for current refreshes.",
+)
+def sweden_financial_current_report_xhtml_catalog_duckdb(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+    sweden_financial_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    SWEDEN_FINANCIAL_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sweden_financial_duckdb.get_connection() as connection:
+        changed_keys = changed_sweden_financial_archive_keys_for_run(
+            connection=connection,
+            source_run_id=context.run_id,
+        )
+        counts = extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id=context.run_id,
+            partition_year=SWEDEN_FINANCIAL_CURRENT_YEAR,
+            source_archive_keys=changed_keys,
+            replace_scope="archive",
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "changed_source_archive_count": len(changed_keys),
+            "load_partition_key": context.partition_key,
+            "duckdb_path": str(SWEDEN_FINANCIAL_DUCKDB_PATH),
+        }
+    )
+
+
+SWEDEN_FINANCIAL_BACKFILL_SELECTION = dg.AssetSelection.assets(
+    "sweden_financial_backfill_raw_archives_s3",
+    "sweden_financial_backfill_report_xhtml_catalog_duckdb",
+)
+SWEDEN_FINANCIAL_CURRENT_SELECTION = dg.AssetSelection.assets(
+    "sweden_financial_current_raw_archives_s3",
+    "sweden_financial_current_report_xhtml_catalog_duckdb",
 )
 
 
 sweden_financial_backfill_job = dg.define_asset_job(
     "sweden_financial_backfill_job",
-    selection=SWEDEN_FINANCIAL_ASSET_SELECTION,
+    selection=SWEDEN_FINANCIAL_BACKFILL_SELECTION,
 )
 
 sweden_financial_current_year_job = dg.define_asset_job(
     "sweden_financial_current_year_job",
-    selection=SWEDEN_FINANCIAL_ASSET_SELECTION,
+    selection=SWEDEN_FINANCIAL_CURRENT_SELECTION,
 )
 
 
-def _current_year_run_request(_: dg.ScheduleEvaluationContext) -> dg.RunRequest:
-    partition_key = current_sweden_financial_year()
-    return dg.RunRequest(
-        partition_key=partition_key,
-    )
+def _current_year_run_request(
+    context: dg.ScheduleEvaluationContext,
+) -> dg.RunRequest | dg.SkipReason:
+    if context.scheduled_execution_time is None:
+        partition_key = SWEDEN_FINANCIAL_CURRENT_PARTITION_KEYS[0]
+    else:
+        partition_date = context.scheduled_execution_time.astimezone(
+            ZoneInfo(SWEDEN_FINANCIAL_TIMEZONE)
+        ).date()
+        partition_key = partition_date.isoformat()
+    if partition_key not in SWEDEN_FINANCIAL_CURRENT_PARTITION_KEY_SET:
+        return dg.SkipReason(
+            f"No Sweden financial current partition for schedule date {partition_key}"
+        )
+    return dg.RunRequest(partition_key=partition_key)
 
 
 sweden_financial_current_year_weekly = dg.ScheduleDefinition(
     name="sweden_financial_current_year_weekly",
     job=sweden_financial_current_year_job,
-    cron_schedule="45 6 * * 1",
-    execution_timezone="Europe/Belgrade",
+    cron_schedule="45 6 * * 6",
+    execution_timezone=SWEDEN_FINANCIAL_TIMEZONE,
     execution_fn=_current_year_run_request,
     default_status=dg.DefaultScheduleStatus.RUNNING,
 )
@@ -126,8 +251,10 @@ sweden_financial_current_year_weekly = dg.ScheduleDefinition(
 
 defs = dg.Definitions(
     assets=[
-        sweden_financial_raw_archives_s3,
-        sweden_financial_report_xhtml_catalog_duckdb,
+        sweden_financial_backfill_raw_archives_s3,
+        sweden_financial_backfill_report_xhtml_catalog_duckdb,
+        sweden_financial_current_raw_archives_s3,
+        sweden_financial_current_report_xhtml_catalog_duckdb,
     ],
     jobs=[
         sweden_financial_backfill_job,

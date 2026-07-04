@@ -3,23 +3,23 @@ from pathlib import Path
 import dagster as dg
 
 
-def test_sweden_financial_year_partitioned_jobs_and_schedule_registered() -> None:
+def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
     schedule = repo.get_schedule_def("sweden_financial_current_year_weekly")
-    assert schedule.cron_schedule == "45 6 * * 1"
+    assert schedule.cron_schedule == "45 6 * * 6"
     assert schedule.job.name == "sweden_financial_current_year_job"
 
-    asset_keys = {
+    backfill_asset_keys = {
         key.path[-1]
         for key in repo.get_job(
             "sweden_financial_backfill_job"
         ).asset_layer.executable_asset_keys
     }
-    assert asset_keys == {
-        "sweden_financial_raw_archives_s3",
-        "sweden_financial_report_xhtml_catalog_duckdb",
+    assert backfill_asset_keys == {
+        "sweden_financial_backfill_raw_archives_s3",
+        "sweden_financial_backfill_report_xhtml_catalog_duckdb",
     }
 
     current_job_asset_keys = {
@@ -28,26 +28,54 @@ def test_sweden_financial_year_partitioned_jobs_and_schedule_registered() -> Non
             "sweden_financial_current_year_job"
         ).asset_layer.executable_asset_keys
     }
-    assert current_job_asset_keys == asset_keys
+    assert current_job_asset_keys == {
+        "sweden_financial_current_raw_archives_s3",
+        "sweden_financial_current_report_xhtml_catalog_duckdb",
+    }
 
-    asset_node = repo.asset_graph.get(dg.AssetKey("sweden_financial_raw_archives_s3"))
-    assert asset_node.group_name == "sweden_financial"
-    assert type(asset_node.partitions_def).__name__ == "StaticPartitionsDefinition"
-    assert asset_node.partitions_def.get_partition_keys()[:6] == [
+    backfill_raw_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_backfill_raw_archives_s3")
+    )
+    assert backfill_raw_node.group_name == "sweden_financial"
+    assert type(backfill_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
+    assert backfill_raw_node.partitions_def.get_partition_keys() == [
         "2020",
         "2021",
         "2022",
         "2023",
         "2024",
         "2025",
+        "2026",
     ]
 
-    catalog_node = repo.asset_graph.get(
-        dg.AssetKey("sweden_financial_report_xhtml_catalog_duckdb")
+    backfill_catalog_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_backfill_report_xhtml_catalog_duckdb")
     )
-    assert catalog_node.group_name == "sweden_financial"
-    assert catalog_node.parent_keys == {dg.AssetKey("sweden_financial_raw_archives_s3")}
-    assert catalog_node.partitions_def is asset_node.partitions_def
+    assert backfill_catalog_node.group_name == "sweden_financial"
+    assert backfill_catalog_node.parent_keys == {
+        dg.AssetKey("sweden_financial_backfill_raw_archives_s3")
+    }
+    assert backfill_catalog_node.partitions_def is backfill_raw_node.partitions_def
+
+    current_raw_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_current_raw_archives_s3")
+    )
+    assert current_raw_node.group_name == "sweden_financial"
+    assert type(current_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
+    current_keys = current_raw_node.partitions_def.get_partition_keys()
+    assert current_keys[0] == "2026-07-04"
+    assert current_keys[1] == "2026-07-11"
+    assert current_keys[-1] == "2026-12-26"
+    assert "2026" not in current_keys
+
+    current_catalog_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_current_report_xhtml_catalog_duckdb")
+    )
+    assert current_catalog_node.group_name == "sweden_financial"
+    assert current_catalog_node.parent_keys == {
+        dg.AssetKey("sweden_financial_current_raw_archives_s3")
+    }
+    assert current_catalog_node.partitions_def is current_raw_node.partitions_def
 
 
 def test_sweden_financial_docs_describe_raw_archive_scope() -> None:

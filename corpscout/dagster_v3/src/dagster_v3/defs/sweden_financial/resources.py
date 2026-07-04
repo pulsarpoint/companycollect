@@ -65,6 +65,20 @@ class SwedenFinancialStoredArchive:
     content_type: str
 
 
+@dataclass(frozen=True)
+class SwedenFinancialArchiveSyncResult:
+    stored_archives: list[SwedenFinancialStoredArchive]
+    metadata: dict[str, object]
+
+    @property
+    def changed_s3_keys(self) -> list[str]:
+        return [archive.s3_key for archive in self.stored_archives if archive.downloaded]
+
+    @property
+    def unchanged_s3_keys(self) -> list[str]:
+        return [archive.s3_key for archive in self.stored_archives if not archive.downloaded]
+
+
 def archive_object_key(*, upstream_key: str, source_last_modified: str) -> str:
     archive_name = Path(upstream_key).name
     year = _year_from_upstream_key(upstream_key)
@@ -88,14 +102,14 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
     download_retry_base_seconds: float = DEFAULT_DOWNLOAD_RETRY_BASE_SECONDS
     user_agent: str = DEFAULT_USER_AGENT
 
-    def download_raw_archives(
+    def sync_raw_archives(
         self,
         *,
         object_store: ObjectStoreResource,
         year: str | None = None,
         session: Any | None = None,
         log_info: Callable[..., object] | None = None,
-    ) -> dg.MaterializeResult:
+    ) -> SwedenFinancialArchiveSyncResult:
         http_session = session or self._session()
         object_store.ensure_bucket(SWEDEN_FINANCIAL_RAW_BUCKET)
         archives = list(self.iter_archives(session=http_session, year=year))
@@ -109,34 +123,58 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
             )
             for archive in archives
         ]
-        downloaded_count = sum(1 for archive in stored_archives if archive.downloaded)
-        reused_count = len(stored_archives) - downloaded_count
+        changed_count = sum(1 for archive in stored_archives if archive.downloaded)
+        unchanged_count = len(stored_archives) - changed_count
         downloaded_size_bytes = sum(
             archive.stored_size_bytes or 0
             for archive in stored_archives
             if archive.downloaded
         )
+        metadata: dict[str, object] = {
+            "s3_bucket": SWEDEN_FINANCIAL_RAW_BUCKET,
+            "archive_count": len(stored_archives),
+            "changed_archive_count": changed_count,
+            "unchanged_archive_count": unchanged_count,
+            "downloaded_archive_count": changed_count,
+            "reused_archive_count": unchanged_count,
+            "downloaded_size_bytes": downloaded_size_bytes,
+            "sample_s3_keys": [archive.s3_key for archive in stored_archives[:10]],
+            "changed_s3_keys": [
+                archive.s3_key for archive in stored_archives if archive.downloaded
+            ][:10],
+        }
+        if year is not None:
+            metadata["partition_year"] = year
         if log_info is not None:
             log_info(
-                "Sweden financial raw archive download complete: bucket=%s archives=%s "
-                "downloaded=%s reused=%s bytes=%s",
+                "Sweden financial raw archive sync complete: bucket=%s archives=%s "
+                "changed=%s unchanged=%s bytes=%s",
                 SWEDEN_FINANCIAL_RAW_BUCKET,
                 len(stored_archives),
-                downloaded_count,
-                reused_count,
+                changed_count,
+                unchanged_count,
                 downloaded_size_bytes,
             )
-        return dg.MaterializeResult(
-            metadata={
-                "s3_bucket": SWEDEN_FINANCIAL_RAW_BUCKET,
-                "archive_count": len(stored_archives),
-                "downloaded_archive_count": downloaded_count,
-                "reused_archive_count": reused_count,
-                "downloaded_size_bytes": downloaded_size_bytes,
-                "sample_s3_keys": [archive.s3_key for archive in stored_archives[:10]],
-                **({"partition_year": year} if year is not None else {}),
-            }
+        return SwedenFinancialArchiveSyncResult(
+            stored_archives=stored_archives,
+            metadata=metadata,
         )
+
+    def download_raw_archives(
+        self,
+        *,
+        object_store: ObjectStoreResource,
+        year: str | None = None,
+        session: Any | None = None,
+        log_info: Callable[..., object] | None = None,
+    ) -> dg.MaterializeResult:
+        result = self.sync_raw_archives(
+            object_store=object_store,
+            year=year,
+            session=session,
+            log_info=log_info,
+        )
+        return dg.MaterializeResult(metadata=result.metadata)
 
     def iter_archives(
         self,

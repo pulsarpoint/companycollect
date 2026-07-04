@@ -43,6 +43,15 @@ Official pages:
 - Direct data directory: https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/
 - Historical note: https://dados.cvm.gov.br/dataset/cia_aberta-doc-dfp
 
+### Implementation Status
+
+First asset implemented: `brazil_cvm_dfp_raw_archives_s3`.
+
+It is partitioned by year from `2010` through `2026`, downloads the raw
+`dfp_cia_aberta_<year>.zip` archive into `source-brazil-cvm`, and skips the
+download when `brazil_cvm/dfp/raw_archives/year=<year>/archive.zip` already
+exists. Parsing and metric extraction are separate follow-up assets.
+
 ### What Can Be Pulled
 
 Each yearly ZIP is named:
