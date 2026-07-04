@@ -4,7 +4,7 @@ import datetime as dt
 
 import duckdb
 
-from dagster_v3.defs.czech_ares import industries, resources, tables
+from dagster_v3.defs.czech_ares import contacts, industries, resources, tables
 from tests.canonical_contact_tables import (
     assert_canonical_contacts_ddl,
     assert_canonical_domains_ddl,
@@ -162,6 +162,7 @@ def test_clickhouse_candidate_batches_load_100k_company_names_after_ico():
 def test_contacts_and_domains_conform_to_canonical_migration():
     assert_canonical_contacts_ddl(CANONICAL_CONTACTS_MIGRATION, tables.COMPANY_CONTACTS_TABLE_CH)
     assert_canonical_domains_ddl(CANONICAL_CONTACTS_MIGRATION, tables.COMPANY_DOMAINS_TABLE_CH)
+    assert contacts.REGISTRY_ID_TYPE == "ico"
 
 
 def test_legal_form_map():

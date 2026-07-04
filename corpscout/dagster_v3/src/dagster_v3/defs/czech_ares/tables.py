@@ -3,12 +3,6 @@ CZECH_DATABASE = "corpscout"
 # CSU RES open data — stable URL, refreshed twice monthly. Free, no credentials.
 RES_DATA_URL = "https://opendata.csu.gov.cz/soubory/od/od_org03/res_data.csv"
 
-# Czech registry id semantics (canonical contact/domain standard — spec:
-# docs/superpowers/specs/2026-07-04-company-contacts-domains-standard-design.md,
-# Key decisions #1): `registry_id` in the canonical tables carries this source's
-# native id (ICO), recorded once here rather than per-row.
-REGISTRY_ID_TYPE = "ico"
-
 _EXCLUDED = frozenset({"raw_entity", "source_payload_hash"})
 
 

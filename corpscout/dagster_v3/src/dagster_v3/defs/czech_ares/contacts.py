@@ -35,6 +35,13 @@ CLICKHOUSE_COMPANY_BATCH_SIZE = 100_000
 # interface; no shared meaning outside this module.
 CLICKHOUSE_QUERY_BATCH_SIZE = 10_000
 
+# Czech registry id semantics (canonical contact/domain standard — spec:
+# docs/superpowers/specs/2026-07-04-company-contacts-domains-standard-design.md,
+# Key decisions #1, Phase E): `registry_id` in the canonical tables carries this
+# source's native id (ICO), recorded once here rather than per-row. Used by domain-graph
+# Phase E to identify which registry_id_type applies to each company in company_info.
+REGISTRY_ID_TYPE = "ico"
+
 
 def load_company_contact_candidate_batch(
     clickhouse_client: Any,

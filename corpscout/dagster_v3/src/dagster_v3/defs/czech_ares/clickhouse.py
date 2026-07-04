@@ -72,7 +72,7 @@ def export_czech_ares_clickhouse_company_contacts(
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Replace corpscout.cz_company_contacts from contacts embedded in cz_companies.name."""
+    """Replace corpscout.cz_company_contacts and corpscout.cz_company_domains from contacts embedded in cz_companies.name."""
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.CZECH_DATABASE,
@@ -80,6 +80,7 @@ def export_czech_ares_clickhouse_company_contacts(
             tables.COMPANIES_TABLE_CH,
             "commoncrawl_domains",
             tables.COMPANY_CONTACTS_TABLE_CH,
+            tables.COMPANY_DOMAINS_TABLE_CH,
         ),
     )
     if log is not None:
