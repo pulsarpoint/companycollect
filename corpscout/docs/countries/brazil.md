@@ -2,10 +2,11 @@
 
 ## Summary
 
-Brazil is processed from Receita Federal CNPJ open data. The implemented
-Corpscout source is `brazil_rfb`, backed by monthly full bulk snapshots. It
-currently produces legal entities, establishments, native contact rows, and
-email-derived domain rows. It does not use an incremental source feed.
+Brazil is processed from Receita Federal CNPJ open data. The implemented source
+slug is `brazil_rfb`; the Dagster company-registry group is
+`brazil_comp_rfb`, backed by monthly full bulk snapshots. It currently produces
+legal entities, establishments, native contact rows, and email-derived domain
+rows. It does not use an incremental source feed.
 
 Related notes:
 
@@ -21,9 +22,10 @@ Related notes:
 | Source URL | Official historical path: `https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/`. Current implementation default mirror: `https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/`. |
 | Access | Public ZIP CSV bulk files, no authentication. |
 | Implemented source slug | `brazil_rfb`. |
+| Dagster package/group | `dagster_v3.defs.brazil_companies.rfb` / `brazil_comp_rfb`. |
 | Ingestion strategy | Full bulk download per monthly snapshot. No incremental/delta feed is used. |
 | Partitioning | Yes. Dagster monthly partitions start at `2024-01-01`; partition `YYYY-MM-01` resolves to snapshot month `YYYY-MM`. |
-| Scheduler activation | Run monthly after the source publishes a complete snapshot directory for the month. The code does not define a calendar schedule; it defines the partitioned job `brazil_rfb_resolve_job`. |
+| Scheduler activation | Run monthly after the source publishes a complete snapshot directory for the month. The code does not define a calendar schedule; it defines the partitioned job `brazil_comp_rfb_resolve_job`. |
 | Snapshot isolation | Stage files are written under `data/brazil_rfb/<YYYY-MM>/`, so reruns and backfills stay snapshot-scoped. |
 | Serving-table behavior | ClickHouse exports replace current serving tables for the selected partition. |
 | Raw file families used | `Empresas`, `Estabelecimentos`, `Simples`, and reference tables: `Cnaes`, `Naturezas`, `Municipios`, `Paises`, `Qualificacoes`, `Motivos`. |
@@ -37,7 +39,7 @@ Related notes:
 | `corpscout.br_establishments` | One row per full 14-digit CNPJ establishment. | Keeps branch-level status, address, contact fields, and CNAE fields. |
 | `corpscout.br_company_contact_info` | One row per normalized establishment contact. | Unpivots native email, phone 1, phone 2, and fax. |
 | `corpscout.br_websites` | One row per accepted `(cnpj_basico, root_domain)`. | Derived from email domains only; no official website URL is present in RFB CNPJ. |
-| `corpscout.br_cnae_to_nace` | Reference mapping edge from CNAE to NACE. | Curated seed fixture exists. Full company-industry materialization is planned in the design doc but is not wired in the current `brazil_rfb` asset list. |
+| `corpscout.br_cnae_to_nace` | Reference mapping edge from CNAE to NACE. | Curated seed fixture exists through `brazil_comp_cnae_to_nace_clickhouse`. Full company-industry materialization is planned in the design doc but is not wired in the current `brazil_comp_rfb` asset list. |
 
 ## Company Data Coverage
 
@@ -80,5 +82,5 @@ Related notes:
 - The pipeline is file-backed and resumable. Existing non-empty stage DuckDB
   files are reused for reruns of the same partition.
 - Empty raw-family inputs are not allowed to replace existing staging tables.
-- `brazil_rfb_resolve_job` selects the full `brazil_rfb` asset group for one
+- `brazil_comp_rfb_resolve_job` selects the full `brazil_comp_rfb` asset group for one
   monthly partition.

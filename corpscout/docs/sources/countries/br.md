@@ -69,7 +69,8 @@
 | Notes  | Large/listed Brazilian companies; Bovespa/B3-listed entities well covered |
 
 ## Corpscout Status
-- [ ] Adapter implemented
-- Source name: `—`
+- [x] Adapter implemented
+- Source name: `brazil_rfb`
+- Dagster group: `brazil_comp_rfb`
 - Recommended source: Receita Federal CNPJ bulk download (free, monthly, comprehensive, no auth — exceptional dataset)
 - Priority: High

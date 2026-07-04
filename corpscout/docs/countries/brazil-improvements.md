@@ -2,13 +2,13 @@
 
 ## Current Gap
 
-The implemented Brazil source, `brazil_rfb`, gives strong registry coverage but
-weak financial coverage. That is expected for this source: Receita Federal CNPJ
-open data is a company-registration dataset. It contains legal identity, status,
-address, CNAE, contact fields, Simples/MEI flags, partner-file data that we have
-deferred, and registered share capital. It does not publish balance sheets,
-income statements, revenue, profit, assets, liabilities, cash-flow statements,
-or employee counts.
+The implemented Brazil company-registry pipeline, `brazil_comp_rfb`, uses the
+source slug `brazil_rfb` and gives strong registry coverage but weak financial
+coverage. That is expected for this source: Receita Federal CNPJ open data is a
+company-registration dataset. It contains legal identity, status, address, CNAE,
+contact fields, Simples/MEI flags, partner-file data that we have deferred, and
+registered share capital. It does not publish balance sheets, income statements,
+revenue, profit, assets, liabilities, cash-flow statements, or employee counts.
 
 Source evidence:
 
@@ -64,7 +64,7 @@ problem is source coverage and source grain:
 
 | Area | Improvement | Reason |
 |---|---|---|
-| Financial data | Add a separate `brazil_cvm` source for DFP and ITR. | Gives real annual and quarterly statements for public companies. |
+| Financial data | Extend the separate `brazil_fin_cvm` source with ITR. | Gives real annual and quarterly statements for public companies. |
 | Financial coverage labeling | Mark RFB financial coverage as `share_capital_only`. | Prevents users from assuming revenue/profit data exists for all Brazilian companies. |
 | Company join keys | Build a robust CVM-to-RFB join using CNPJ where available and CVM company identifiers where needed. | CVM and RFB have different source grains and identifiers. |
 | NACE/company industries | Finish company-level `br_industries` materialization from native CNAE plus `br_cnae_to_nace`. | Current docs/design mention it, but the current asset list does not export a company industry table. |
@@ -78,15 +78,15 @@ problem is source coverage and source grain:
 
 ## Recommended Financial Strategy
 
-Keep `brazil_rfb` as the broad national registry source and add a separate
-`brazil_cvm` financial source:
+Keep `brazil_comp_rfb` as the broad national registry pipeline and use the
+separate `brazil_fin_cvm` financial source:
 
-- `brazil_rfb`: all CNPJ entities/establishments, monthly full snapshot,
+- `brazil_comp_rfb`: all CNPJ entities/establishments, monthly full snapshot,
   share-capital-only financial field.
-- `brazil_cvm_dfp`: annual financial statements for public companies, yearly ZIP
-  files, weekly refresh for re-presentations.
-- `brazil_cvm_itr`: quarterly financial statements for public companies, yearly
-  ZIP files, weekly refresh for re-presentations.
+- `brazil_fin_cvm_dfp`: annual financial statements for public companies,
+  yearly ZIP files, weekly refresh for re-presentations.
+- `brazil_fin_cvm_itr`: quarterly financial statements for public companies,
+  yearly ZIP files, weekly refresh for re-presentations.
 
 Do not try to force CVM financials into the RFB ingestion stage. CVM has a
 different cadence, schema, and coverage. It should produce separate financial

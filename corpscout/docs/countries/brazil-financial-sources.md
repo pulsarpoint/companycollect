@@ -5,7 +5,7 @@
 Brazil has multiple financial-data sources, but they do not all solve the same
 problem.
 
-Use `brazil_rfb` for broad national company coverage and only
+Use `brazil_comp_rfb` for broad national company coverage and only
 `share_capital_amount_original`. Use CVM DFP/ITR for real structured financial
 statements, but only for public/open companies regulated by CVM. Treat Central
 de Balancos as a promising but harder second phase for private-company
@@ -45,7 +45,10 @@ Official pages:
 
 ### Implementation Status
 
-First asset implemented: `brazil_cvm_dfp_raw_archives_s3`.
+First DFP assets implemented under the `brazil_fin_cvm` Dagster group:
+`brazil_fin_cvm_dfp_raw_archives_s3`, `brazil_fin_cvm_dfp_raw_duckdb`,
+`brazil_fin_cvm_dfp_statement_rows_usd_duckdb`, and
+`brazil_fin_cvm_dfp_raw_clickhouse`.
 
 It is partitioned by year from `2010` through `2026`, downloads the raw
 `dfp_cia_aberta_<year>.zip` archive into `source-brazil-cvm`, and skips the
@@ -327,7 +330,7 @@ br_cvm_companies
 ### What It Is
 
 The RFB CNPJ public bulk source is the broad national company registry already
-used by `brazil_rfb`. It is excellent for identity, status, industry, address,
+used by `brazil_comp_rfb`. It is excellent for identity, status, industry, address,
 contact, and tax-regime data, but it is not a financial statement source.
 
 Official/source pages:
@@ -349,7 +352,7 @@ metric.
 
 ### How To Pull
 
-Already implemented through `brazil_rfb` monthly full snapshots. For financial
+Already implemented through `brazil_comp_rfb` monthly full snapshots. For financial
 classification, label it:
 
 ```text
@@ -616,13 +619,13 @@ Do not implement without explicit lawful access and a privacy/legal design.
 Implement:
 
 ```text
-brazil_cvm_companies
-brazil_cvm_dfp_documents
-brazil_cvm_dfp_statement_rows
-brazil_cvm_dfp_metrics
-brazil_cvm_itr_documents
-brazil_cvm_itr_statement_rows
-brazil_cvm_itr_metrics
+brazil_fin_cvm_companies
+brazil_fin_cvm_dfp_documents
+brazil_fin_cvm_dfp_statement_rows
+brazil_fin_cvm_dfp_metrics
+brazil_fin_cvm_itr_documents
+brazil_fin_cvm_itr_statement_rows
+brazil_fin_cvm_itr_metrics
 ```
 
 Metric extraction should start with:
@@ -668,7 +671,7 @@ revenue/procurement signals only after the core CVM financials are stable.
   sectors?
 - Should CVM re-presentations overwrite previous metrics, or should all versions
   remain queryable with an `is_latest` flag?
-- Should `brazil_cvm` materialize both raw statement rows and wide metrics, or
+- Should `brazil_fin_cvm` materialize both raw statement rows and wide metrics, or
   only long metric rows?
 - How should banking/insurance issuers be handled when CVM and BCB account
   taxonomies diverge?
