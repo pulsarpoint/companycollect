@@ -131,7 +131,7 @@ def test_sweden_financial_reports_downloads_missing_archives_to_s3() -> None:
         }
     )
 
-    result = resource.download_raw_archives(
+    result = resource.sync_raw_archives(
         object_store=object_store,
         session=session,
     )
@@ -171,7 +171,7 @@ def test_sweden_financial_reports_skips_existing_last_modified_archives() -> Non
         }
     )
 
-    result = resource.download_raw_archives(
+    result = resource.sync_raw_archives(
         object_store=object_store,
         session=session,
     )
@@ -265,7 +265,7 @@ def test_sweden_financial_reports_follows_listing_pagination() -> None:
         }
     )
 
-    result = resource.download_raw_archives(
+    result = resource.sync_raw_archives(
         object_store=object_store,
         session=session,
     )
@@ -299,7 +299,7 @@ def test_sweden_financial_reports_filters_listing_by_year_partition() -> None:
         }
     )
 
-    result = resource.download_raw_archives(
+    result = resource.sync_raw_archives(
         object_store=object_store,
         session=session,
         year="2020",
@@ -342,7 +342,7 @@ def test_sweden_financial_reports_skips_later_year_archives_on_listing_page() ->
         }
     )
 
-    result = resource.download_raw_archives(
+    result = resource.sync_raw_archives(
         object_store=object_store,
         session=session,
         year="2020",

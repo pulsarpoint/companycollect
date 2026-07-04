@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 
 import dagster as dg
@@ -37,6 +38,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_backfill_raw_archives_s3")
     )
     assert backfill_raw_node.group_name == "sweden_financial"
+    assert backfill_raw_node.pools == set()
     assert type(backfill_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
     assert backfill_raw_node.partitions_def.get_partition_keys() == [
         "2020",
@@ -52,6 +54,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_backfill_report_xhtml_catalog_duckdb")
     )
     assert backfill_catalog_node.group_name == "sweden_financial"
+    assert backfill_catalog_node.pools == {"sweden_financial_duckdb"}
     assert backfill_catalog_node.parent_keys == {
         dg.AssetKey("sweden_financial_backfill_raw_archives_s3")
     }
@@ -61,6 +64,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_current_raw_archives_s3")
     )
     assert current_raw_node.group_name == "sweden_financial"
+    assert current_raw_node.pools == set()
     assert type(current_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
     current_keys = current_raw_node.partitions_def.get_partition_keys()
     assert current_keys[0] == "2026-07-04"
@@ -72,10 +76,28 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_current_report_xhtml_catalog_duckdb")
     )
     assert current_catalog_node.group_name == "sweden_financial"
+    assert current_catalog_node.pools == {"sweden_financial_duckdb"}
     assert current_catalog_node.parent_keys == {
         dg.AssetKey("sweden_financial_current_raw_archives_s3")
     }
     assert current_catalog_node.partitions_def is current_raw_node.partitions_def
+
+
+def test_sweden_financial_raw_assets_do_not_require_duckdb_resource() -> None:
+    from dagster_v3.defs.sweden_financial.assets import (
+        sweden_financial_backfill_raw_archives_s3,
+        sweden_financial_current_raw_archives_s3,
+    )
+
+    backfill_parameters = inspect.signature(
+        sweden_financial_backfill_raw_archives_s3
+    ).parameters
+    current_parameters = inspect.signature(
+        sweden_financial_current_raw_archives_s3
+    ).parameters
+
+    assert "sweden_financial_duckdb" not in backfill_parameters
+    assert "sweden_financial_duckdb" not in current_parameters
 
 
 def test_sweden_financial_docs_describe_raw_archive_scope() -> None:
@@ -91,5 +113,5 @@ def test_sweden_financial_docs_describe_raw_archive_scope() -> None:
 
     text = doc_path.read_text(encoding="utf-8")
     assert "outer ZIP" in text
-    assert "no manifest" in text
+    assert "archive sync manifest" in text
     assert "XHTML extraction" in text

@@ -1,12 +1,27 @@
-import dagster as dg
+from pathlib import Path
 
+import dagster as dg
+from dagster_duckdb import DuckDBResource
+
+from dagster_v3.defs.brazil_cvm.parsing import (
+    BRAZIL_CVM_DUCKDB_SCHEMA,
+    DFP_AUDITOR_REPORTS_TABLE,
+    DFP_CAPITAL_COMPOSITION_TABLE,
+    DFP_DOCUMENTS_TABLE,
+    DFP_STATEMENT_ROWS_TABLE,
+    parse_brazil_cvm_dfp_archive_from_object_store,
+)
 from dagster_v3.defs.brazil_cvm.source import (
     BRAZIL_CVM_DFP_END_YEAR,
     BRAZIL_CVM_DFP_START_YEAR,
     BRAZIL_CVM_GROUP_NAME,
     BrazilCvmDfpResource,
 )
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
+
+BRAZIL_CVM_DUCKDB_PATH = Path("data/brazil_cvm_source.duckdb")
+BRAZIL_CVM_DUCKDB_POOL = "brazil_cvm_duckdb"
 
 BRAZIL_CVM_DFP_RAW_PARTITIONS = dg.StaticPartitionsDefinition(
     [
@@ -36,14 +51,56 @@ def brazil_cvm_dfp_raw_archives_s3(
     return dg.MaterializeResult(metadata=result.metadata())
 
 
+@dg.asset(
+    deps=[dg.AssetKey("brazil_cvm_dfp_raw_archives_s3")],
+    group_name=BRAZIL_CVM_GROUP_NAME,
+    kinds={"python", "duckdb", "csv", "zip", "cvm", "dfp"},
+    partitions_def=BRAZIL_CVM_DFP_RAW_PARTITIONS,
+    pool=BRAZIL_CVM_DUCKDB_POOL,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    description="Parses Brazil CVM DFP yearly ZIP archives from object storage into DuckDB.",
+)
+def brazil_cvm_dfp_raw_duckdb(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+    brazil_cvm_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    BRAZIL_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with brazil_cvm_duckdb.get_connection() as connection:
+        counts = parse_brazil_cvm_dfp_archive_from_object_store(
+            connection=connection,
+            object_store=object_store,
+            year=context.partition_key,
+            source_run_id=context.run_id,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "dfp_year": context.partition_key,
+            "duckdb_path": str(BRAZIL_CVM_DUCKDB_PATH),
+            "duckdb_schema": BRAZIL_CVM_DUCKDB_SCHEMA,
+            "document_table": DFP_DOCUMENTS_TABLE,
+            "statement_rows_table": DFP_STATEMENT_ROWS_TABLE,
+            "capital_composition_table": DFP_CAPITAL_COMPOSITION_TABLE,
+            "auditor_reports_table": DFP_AUDITOR_REPORTS_TABLE,
+        }
+    )
+
+
 brazil_cvm_dfp_raw_backfill_job = dg.define_asset_job(
     "brazil_cvm_dfp_raw_backfill_job",
-    selection=dg.AssetSelection.assets("brazil_cvm_dfp_raw_archives_s3"),
+    selection=dg.AssetSelection.assets(
+        "brazil_cvm_dfp_raw_archives_s3",
+        "brazil_cvm_dfp_raw_duckdb",
+    ),
 )
 
 
 defs = dg.Definitions(
-    assets=[brazil_cvm_dfp_raw_archives_s3],
+    assets=[brazil_cvm_dfp_raw_archives_s3, brazil_cvm_dfp_raw_duckdb],
     jobs=[brazil_cvm_dfp_raw_backfill_job],
-    resources={"brazil_cvm_dfp": BrazilCvmDfpResource()},
+    resources={
+        "brazil_cvm_dfp": BrazilCvmDfpResource(),
+        "brazil_cvm_duckdb": duckdb_resource(BRAZIL_CVM_DUCKDB_PATH),
+    },
 )

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -160,29 +158,15 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
             metadata=metadata,
         )
 
-    def download_raw_archives(
-        self,
-        *,
-        object_store: ObjectStoreResource,
-        year: str | None = None,
-        session: Any | None = None,
-        log_info: Callable[..., object] | None = None,
-    ) -> dg.MaterializeResult:
-        result = self.sync_raw_archives(
-            object_store=object_store,
-            year=year,
-            session=session,
-            log_info=log_info,
-        )
-        return dg.MaterializeResult(metadata=result.metadata)
-
     def iter_archives(
         self,
         *,
         session: Any,
         year: str | None = None,
     ) -> Iterator[SwedenFinancialArchive]:
-        marker = self._listing_marker_for_year(year)
+        marker = (
+            None if year is None else f"{self.listing_prefix.rstrip('/')}/{year}/"
+        )
         while True:
             url = self.listing_url(marker=marker)
             response = session.get(url, timeout=self.request_timeout_seconds, stream=False)
@@ -203,7 +187,6 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
         self,
         *,
         marker: str | None = None,
-        year: str | None = None,
     ) -> str:
         query = {
             "prefix": self.listing_prefix,
@@ -212,11 +195,6 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
         if marker is not None:
             query["marker"] = marker
         return f"{self.archive_base_url}?{urlencode(query)}"
-
-    def _listing_marker_for_year(self, year: str | None) -> str | None:
-        if year is None:
-            return None
-        return f"{self.listing_prefix.rstrip('/')}/{year}/"
 
     def archive_url(self, upstream_key: str) -> str:
         return f"{self.archive_base_url}/{quote(upstream_key, safe='/')}"

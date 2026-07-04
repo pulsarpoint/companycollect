@@ -2,7 +2,10 @@ import dagster as dg
 
 
 def test_brazil_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
-    from dagster_v3.defs.brazil_cvm.assets import brazil_cvm_dfp_raw_archives_s3
+    from dagster_v3.defs.brazil_cvm.assets import (
+        brazil_cvm_dfp_raw_archives_s3,
+        brazil_cvm_dfp_raw_duckdb,
+    )
 
     partitions_def = brazil_cvm_dfp_raw_archives_s3.partitions_def
 
@@ -10,6 +13,7 @@ def test_brazil_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     assert partitions_def.get_partition_keys() == [
         str(year) for year in range(2010, 2027)
     ]
+    assert brazil_cvm_dfp_raw_duckdb.partitions_def is partitions_def
     assert (
         brazil_cvm_dfp_raw_archives_s3.group_names_by_key[
             dg.AssetKey("brazil_cvm_dfp_raw_archives_s3")
@@ -22,15 +26,18 @@ def test_brazil_cvm_dfp_raw_backfill_job_selects_raw_archive_asset() -> None:
     from dagster_v3.defs.brazil_cvm.assets import (
         brazil_cvm_dfp_raw_archives_s3,
         brazil_cvm_dfp_raw_backfill_job,
+        brazil_cvm_dfp_raw_duckdb,
     )
     from dagster_v3.defs.brazil_cvm.source import BrazilCvmDfpResource
+    from dagster_v3.defs.common.duckdb_resources import duckdb_resource
     from dagster_v3.defs.common.resources import ObjectStoreResource
 
     resolved = dg.Definitions(
-        assets=[brazil_cvm_dfp_raw_archives_s3],
+        assets=[brazil_cvm_dfp_raw_archives_s3, brazil_cvm_dfp_raw_duckdb],
         jobs=[brazil_cvm_dfp_raw_backfill_job],
         resources={
             "brazil_cvm_dfp": BrazilCvmDfpResource(),
+            "brazil_cvm_duckdb": duckdb_resource(":memory:"),
             "object_store": ObjectStoreResource(),
         },
     ).resolve_job_def("brazil_cvm_dfp_raw_backfill_job")

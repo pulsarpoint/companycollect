@@ -71,9 +71,19 @@ sweden_financial/raw_archives/
 If the same upstream key and `LastModified` timestamp already exists in object
 storage, materialization reuses it and does not download the ZIP again.
 
-There is no manifest file for the raw archive layer. The raw archive objects are
-self-describing enough for the next asset to list by partition prefix and parse
-metadata from the object key.
+Each raw archive asset also writes an archive sync manifest to object storage:
+
+```text
+sweden_financial/raw_archive_sync_manifests/
+  sync_kind=backfill/
+  load_partition_key=2026/
+  manifest.json
+```
+
+The manifest records every archive observed in that raw materialization,
+including upstream key, `LastModified`, ETag, object-storage key, and whether the
+ZIP was downloaded or reused. Raw archive assets do not use DuckDB and do not run
+in the `sweden_financial_duckdb` pool.
 
 `sweden_financial_backfill_report_xhtml_catalog_duckdb` materializes the
 extracted XHTML catalog for a full backfill year partition. It reads raw archive
@@ -97,9 +107,10 @@ sweden_financial/report_xhtml/
 ```
 
 `sweden_financial_current_report_xhtml_catalog_duckdb` materializes only changed
-current ZIPs for the same Dagster run. It reads changed archive keys from
-`sweden_financial.archive_sync_catalog` where `downloaded = true`, parses those
-ZIPs, and replaces catalog rows only for the affected archive names.
+current ZIPs for the same Dagster run. It reads the raw asset's archive sync
+manifest, writes `sweden_financial.archive_sync_catalog` in DuckDB, reads changed
+archive keys where `downloaded = true`, parses those ZIPs, and replaces catalog
+rows only for the affected archive names.
 
 The DuckDB table `sweden_financial.report_xhtml_catalog` stores one row per
 extracted report XHTML with the partition year, company id, report-period end,
@@ -107,9 +118,9 @@ source archive object key, nested ZIP name, report object key, content length,
 content hash, and `source_run_id`.
 
 The DuckDB table `sweden_financial.archive_sync_catalog` stores one row per
-archive observed in each materialization run, including the upstream key,
-`LastModified`, ETag, source size, object-storage key, and whether the archive
-was downloaded or reused.
+archive sync manifest consumed by the catalog assets, including the upstream
+key, `LastModified`, ETag, source size, object-storage key, and whether the
+archive was downloaded or reused.
 
 ## Job And Schedule
 
