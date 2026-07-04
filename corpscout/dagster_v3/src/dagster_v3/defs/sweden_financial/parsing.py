@@ -23,10 +23,11 @@ def extract_sweden_financial_report_xhtml_catalog(
     connection: Any,
     object_store: ObjectStoreResource,
     source_run_id: str,
+    partition_year: str,
 ) -> dict[str, int]:
     object_store.ensure_bucket(SWEDEN_FINANCIAL_RAW_BUCKET)
     source_archive_keys = object_store.list_keys(
-        RAW_ARCHIVE_PREFIX,
+        f"{RAW_ARCHIVE_PREFIX}year={partition_year}/",
         bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
     )
     rows: list[tuple[Any, ...]] = []
@@ -54,6 +55,7 @@ def extract_sweden_financial_report_xhtml_catalog(
                         nested_zip_member=nested_member.filename,
                         source_archive_key=source_archive_key,
                         source_run_id=source_run_id,
+                        partition_year=partition_year,
                         object_store=object_store,
                     )
                     rows.append(row)
@@ -62,8 +64,13 @@ def extract_sweden_financial_report_xhtml_catalog(
                     else:
                         reused_report_count += 1
 
-    _replace_report_xhtml_catalog(connection=connection, rows=rows)
+    _replace_report_xhtml_catalog(
+        connection=connection,
+        partition_year=partition_year,
+        rows=rows,
+    )
     return {
+        "partition_year": partition_year,
         "source_archive_count": len(source_archive_keys),
         "nested_zip_count": nested_zip_count,
         "report_xhtml_count": len(rows),
@@ -75,6 +82,7 @@ def extract_sweden_financial_report_xhtml_catalog(
 
 def report_xhtml_object_key(
     *,
+    partition_year: str,
     source_archive_key: str,
     nested_zip_member: str,
     company_id: str,
@@ -82,12 +90,15 @@ def report_xhtml_object_key(
     xhtml_member: str,
 ) -> str:
     source_archive = _safe_path_segment(_archive_name_from_object_key(source_archive_key))
+    source_archive_hash = sha256(source_archive_key.encode()).hexdigest()[:16]
     nested_zip = _safe_path_segment(Path(nested_zip_member).stem)
     xhtml_name = _safe_path_segment(Path(xhtml_member).name)
     return (
         f"{REPORT_XHTML_PREFIX}"
+        f"year={partition_year}/"
         f"company_id={company_id or 'unknown'}/"
         f"report_period_end={report_period_end or 'unknown'}/"
+        f"source_archive_hash={source_archive_hash}/"
         f"source_archive={source_archive}/"
         f"nested_zip={nested_zip}/"
         f"{xhtml_name}"
@@ -100,6 +111,7 @@ def _extract_nested_report(
     nested_zip_member: str,
     source_archive_key: str,
     source_run_id: str,
+    partition_year: str,
     object_store: ObjectStoreResource,
 ) -> tuple[tuple[Any, ...], bool]:
     with zipfile.ZipFile(BytesIO(nested_zip_body)) as nested_zip:
@@ -118,6 +130,7 @@ def _extract_nested_report(
 
     company_id, report_period_end = _metadata_from_nested_zip_name(nested_zip_member)
     xhtml_s3_key = report_xhtml_object_key(
+        partition_year=partition_year,
         source_archive_key=source_archive_key,
         nested_zip_member=nested_zip_member,
         company_id=company_id,
@@ -138,6 +151,7 @@ def _extract_nested_report(
     return (
         (
             source_run_id,
+            partition_year,
             source_archive_key,
             nested_zip_member,
             xhtml_member.filename,
@@ -154,12 +168,18 @@ def _extract_nested_report(
     )
 
 
-def _replace_report_xhtml_catalog(*, connection: Any, rows: list[tuple[Any, ...]]) -> None:
+def _replace_report_xhtml_catalog(
+    *,
+    connection: Any,
+    partition_year: str,
+    rows: list[tuple[Any, ...]],
+) -> None:
     connection.execute(f"create schema if not exists {SWEDEN_FINANCIAL_DATASET_NAME}")
     connection.execute(
         f"""
-        create or replace table {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog (
+        create table if not exists {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog (
             source_run_id varchar,
+            partition_year varchar,
             source_archive_key varchar,
             nested_zip_member varchar,
             xhtml_member varchar,
@@ -174,11 +194,18 @@ def _replace_report_xhtml_catalog(*, connection: Any, rows: list[tuple[Any, ...]
         )
         """
     )
+    connection.execute(
+        f"""
+        delete from {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
+        where partition_year = ?
+        """,
+        [partition_year],
+    )
     if rows:
         connection.executemany(
             f"""
             insert into {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )

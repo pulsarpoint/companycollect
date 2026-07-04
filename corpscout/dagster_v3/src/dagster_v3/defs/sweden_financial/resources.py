@@ -92,12 +92,13 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
         self,
         *,
         object_store: ObjectStoreResource,
+        year: str | None = None,
         session: Any | None = None,
         log_info: Callable[..., object] | None = None,
     ) -> dg.MaterializeResult:
         http_session = session or self._session()
         object_store.ensure_bucket(SWEDEN_FINANCIAL_RAW_BUCKET)
-        archives = list(self.iter_archives(session=http_session))
+        archives = list(self.iter_archives(session=http_session, year=year))
 
         stored_archives = [
             self._download_or_reuse_archive(
@@ -133,13 +134,19 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
                 "reused_archive_count": reused_count,
                 "downloaded_size_bytes": downloaded_size_bytes,
                 "sample_s3_keys": [archive.s3_key for archive in stored_archives[:10]],
+                **({"partition_year": year} if year is not None else {}),
             }
         )
 
-    def iter_archives(self, *, session: Any) -> Iterator[SwedenFinancialArchive]:
+    def iter_archives(
+        self,
+        *,
+        session: Any,
+        year: str | None = None,
+    ) -> Iterator[SwedenFinancialArchive]:
         marker: str | None = None
         while True:
-            url = self.listing_url(marker=marker)
+            url = self.listing_url(marker=marker, year=year)
             response = session.get(url, timeout=self.request_timeout_seconds, stream=False)
             response.raise_for_status()
             archives, marker = _parse_listing_xml(response.text)
@@ -147,14 +154,24 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
             if marker is None or marker == "":
                 break
 
-    def listing_url(self, *, marker: str | None = None) -> str:
+    def listing_url(
+        self,
+        *,
+        marker: str | None = None,
+        year: str | None = None,
+    ) -> str:
         query = {
-            "prefix": self.listing_prefix,
+            "prefix": self._listing_prefix_for_year(year),
             "delimiter": self.listing_delimiter,
         }
         if marker is not None:
             query["marker"] = marker
         return f"{self.archive_base_url}?{urlencode(query)}"
+
+    def _listing_prefix_for_year(self, year: str | None) -> str:
+        if year is None:
+            return self.listing_prefix
+        return f"{self.listing_prefix.rstrip('/')}/{year}/"
 
     def archive_url(self, upstream_key: str) -> str:
         return f"{self.archive_base_url}/{quote(upstream_key, safe='/')}"

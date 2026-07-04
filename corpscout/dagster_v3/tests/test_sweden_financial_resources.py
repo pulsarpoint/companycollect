@@ -1,4 +1,5 @@
 import zipfile
+from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 
@@ -228,6 +229,37 @@ def test_sweden_financial_reports_follows_listing_pagination() -> None:
     assert result.metadata["downloaded_archive_count"] == 2
 
 
+def test_sweden_financial_reports_filters_listing_by_year_partition() -> None:
+    resource = SwedenFinancialReportsResource()
+    listing_url = resource.listing_url(year="2020")
+    archive_url = (
+        f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
+    )
+    object_store = FakeObjectStore()
+    session = FakeSession(
+        {
+            listing_url: _listing_xml(
+                key="arsredovisningar/2020/08_2.zip",
+                last_modified="2025-02-07T09:13:53.713Z",
+                etag='"1bb9cb50"',
+                size=6,
+            ),
+            archive_url: b"zip-bytes",
+        }
+    )
+
+    result = resource.download_raw_archives(
+        object_store=object_store,
+        session=session,
+        year="2020",
+    )
+
+    assert "prefix=arsredovisningar%2F2020%2F" in listing_url
+    assert session.requested_urls == [listing_url, archive_url]
+    assert result.metadata["partition_year"] == "2020"
+    assert result.metadata["archive_count"] == 1
+
+
 def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
     tmp_path: Path,
 ) -> None:
@@ -247,10 +279,12 @@ def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
             connection=connection,
             object_store=object_store,
             source_run_id="run-1",
+            partition_year="2020",
         )
         catalog_rows = connection.execute(
             """
             select
+                partition_year,
                 company_id,
                 report_period_end,
                 source_archive_key,
@@ -263,6 +297,7 @@ def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
         ).fetchall()
 
     assert counts == {
+        "partition_year": "2020",
         "source_archive_count": 1,
         "nested_zip_count": 1,
         "report_xhtml_count": 1,
@@ -272,14 +307,17 @@ def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
     }
     assert catalog_rows == [
         (
+            "2020",
             "5560000000",
             "2023-12-31",
             raw_archive_key,
             "5560000000_2023-12-31.zip",
             "report.xhtml",
             (
-                f"{REPORT_XHTML_PREFIX}company_id=5560000000/"
+                f"{REPORT_XHTML_PREFIX}year=2020/"
+                "company_id=5560000000/"
                 "report_period_end=2023-12-31/"
+                f"source_archive_hash={sha256(raw_archive_key.encode()).hexdigest()[:16]}/"
                 "source_archive=08_2.zip/"
                 "nested_zip=5560000000_2023-12-31/"
                 "report.xhtml"
@@ -288,9 +326,59 @@ def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
         )
     ]
     assert (
-        object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, catalog_rows[0][5])]
+        object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, catalog_rows[0][6])]
         == b"<html><body>annual report</body></html>"
     )
+
+
+def test_extract_sweden_financial_report_xhtml_catalog_replaces_only_partition_year(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    archive_2020_key = archive_object_key(
+        upstream_key="arsredovisningar/2020/08_2.zip",
+        source_last_modified="2025-02-07T09:13:53.713Z",
+    )
+    archive_2021_key = archive_object_key(
+        upstream_key="arsredovisningar/2021/01_1.zip",
+        source_last_modified="2025-02-10T10:00:00.000Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, archive_2020_key)] = _outer_zip(
+        nested_name="5560000000_2020-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=b"<html>2020</html>",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, archive_2021_key)] = _outer_zip(
+        nested_name="5560000001_2021-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=b"<html>2021</html>",
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="run-2021",
+            partition_year="2021",
+        )
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="run-2020",
+            partition_year="2020",
+        )
+        rows = connection.execute(
+            """
+            select partition_year, company_id, report_period_end
+            from sweden_financial.report_xhtml_catalog
+            order by partition_year
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("2020", "5560000000", "2020-12-31"),
+        ("2021", "5560000001", "2021-12-31"),
+    ]
 
 
 def _listing_xml(
