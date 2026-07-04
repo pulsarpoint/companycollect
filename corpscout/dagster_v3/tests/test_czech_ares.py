@@ -188,3 +188,68 @@ def test_register_job_and_schedule():
         "czech_ares_industries_duckdb",
         "czech_ares_clickhouse_industries",
     }
+
+
+def test_tally_contact_rows_counts_while_passing_rows_through():
+    """Test that _tally_contact_rows counts domains and domain_source while yielding rows unchanged."""
+    from dagster_v3.defs.czech_ares import contacts
+
+    # Build 3 fixture 9-tuples (source_slug, source_record_id, record_id, contact_type,
+    # contact_value, domain, domain_source, confidence, resolved_at)
+    rows = [
+        # Two contacts on asseco.cz, both commoncrawl-validated
+        (
+            "czech_ares_contact_extraction",
+            "asseco_1",
+            "asseco_contact_1",
+            "domain",
+            "https://www.asseco.cz",
+            "asseco.cz",
+            "commoncrawl",
+            0.95,
+            dt.datetime(2024, 1, 1),
+        ),
+        (
+            "czech_ares_contact_extraction",
+            "asseco_2",
+            "asseco_contact_2",
+            "email",
+            "info@asseco.cz",
+            "asseco.cz",
+            "commoncrawl",
+            0.80,
+            dt.datetime(2024, 1, 1),
+        ),
+        # One contact on example.cz, dns-validated
+        (
+            "czech_ares_contact_extraction",
+            "example_1",
+            "example_contact_1",
+            "email",
+            "contact@example.cz",
+            "example.cz",
+            "dns",
+            1.0,
+            dt.datetime(2024, 1, 1),
+        ),
+    ]
+
+    # Drive _tally_contact_rows with the fixture rows
+    counts = {"contacts": 0, "domains": 0, "commoncrawl_validated": 0, "dns_validated": 0}
+    seen_domains: set[str] = set()
+    yielded_rows = list(contacts._tally_contact_rows(iter(rows), counts=counts, seen_domains=seen_domains))
+
+    # Assert yielded rows match input rows in order
+    assert yielded_rows == rows
+
+    # Assert counts match original _insert_contact_rows semantics:
+    # - contacts: 3 (all rows)
+    # - domains: 2 (asseco.cz counted once, example.cz counted once)
+    # - commoncrawl_validated: 2 (both rows with domain_source "commoncrawl")
+    # - dns_validated: 1 (one row with domain_source "dns")
+    assert counts == {
+        "contacts": 3,
+        "domains": 2,
+        "commoncrawl_validated": 2,
+        "dns_validated": 1,
+    }
