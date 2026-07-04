@@ -22,6 +22,12 @@ def test_sweden_financial_raw_archive_job_and_schedule_registered() -> None:
     asset_node = repo.asset_graph.get(dg.AssetKey("sweden_financial_raw_archives_s3"))
     assert asset_node.group_name == "sweden_financial"
 
+    catalog_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_report_xhtml_catalog_duckdb")
+    )
+    assert catalog_node.group_name == "sweden_financial"
+    assert catalog_node.parent_keys == {dg.AssetKey("sweden_financial_raw_archives_s3")}
+
 
 def test_sweden_financial_docs_describe_raw_archive_scope() -> None:
     doc_path = (

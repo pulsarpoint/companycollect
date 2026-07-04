@@ -1,5 +1,13 @@
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
+import duckdb
+
+from dagster_v3.defs.sweden_financial.parsing import (
+    REPORT_XHTML_PREFIX,
+    extract_sweden_financial_report_xhtml_catalog,
+)
 from dagster_v3.defs.sweden_financial.resources import (
     SWEDEN_FINANCIAL_RAW_BUCKET,
     SwedenFinancialReportsResource,
@@ -30,6 +38,31 @@ class FakeObjectStore:
         assert bucket is not None
         self.uploaded_files.append((bucket, key))
         self.objects[(bucket, key)] = Path(source_path).read_bytes()
+
+    def download_file(
+        self,
+        key: str,
+        target_path: str | Path,
+        bucket: str | None = None,
+    ) -> None:
+        assert bucket is not None
+        Path(target_path).write_bytes(self.objects[(bucket, key)])
+
+    def write_bytes(self, key: str, body: bytes, bucket: str | None = None) -> None:
+        assert bucket is not None
+        self.objects[(bucket, key)] = body
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        assert bucket is not None
+        return self.objects[(bucket, key)]
+
+    def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        assert bucket is not None
+        return sorted(
+            key
+            for object_bucket, key in self.objects
+            if object_bucket == bucket and key.startswith(prefix)
+        )
 
 
 class FakeResponse:
@@ -195,6 +228,71 @@ def test_sweden_financial_reports_follows_listing_pagination() -> None:
     assert result.metadata["downloaded_archive_count"] == 2
 
 
+def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2020/08_2.zip",
+        source_last_modified="2025-02-07T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = _outer_zip(
+        nested_name="5560000000_2023-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=b"<html><body>annual report</body></html>",
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        counts = extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="run-1",
+        )
+        catalog_rows = connection.execute(
+            """
+            select
+                company_id,
+                report_period_end,
+                source_archive_key,
+                nested_zip_member,
+                xhtml_member,
+                xhtml_s3_key,
+                size_bytes
+            from sweden_financial.report_xhtml_catalog
+            """
+        ).fetchall()
+
+    assert counts == {
+        "source_archive_count": 1,
+        "nested_zip_count": 1,
+        "report_xhtml_count": 1,
+        "downloaded_report_xhtml_count": 1,
+        "reused_report_xhtml_count": 0,
+        "catalog_row_count": 1,
+    }
+    assert catalog_rows == [
+        (
+            "5560000000",
+            "2023-12-31",
+            raw_archive_key,
+            "5560000000_2023-12-31.zip",
+            "report.xhtml",
+            (
+                f"{REPORT_XHTML_PREFIX}company_id=5560000000/"
+                "report_period_end=2023-12-31/"
+                "source_archive=08_2.zip/"
+                "nested_zip=5560000000_2023-12-31/"
+                "report.xhtml"
+            ),
+            len(b"<html><body>annual report</body></html>"),
+        )
+    ]
+    assert (
+        object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, catalog_rows[0][5])]
+        == b"<html><body>annual report</body></html>"
+    )
+
+
 def _listing_xml(
     *,
     key: str,
@@ -219,3 +317,14 @@ def _listing_xml(
   {next_marker_xml}
 </ListBucketResult>
 """.encode("utf-8")
+
+
+def _outer_zip(*, nested_name: str, xhtml_name: str, xhtml_body: bytes) -> bytes:
+    nested_buffer = BytesIO()
+    with zipfile.ZipFile(nested_buffer, "w", compression=zipfile.ZIP_DEFLATED) as nested:
+        nested.writestr(xhtml_name, xhtml_body)
+
+    outer_buffer = BytesIO()
+    with zipfile.ZipFile(outer_buffer, "w", compression=zipfile.ZIP_DEFLATED) as outer:
+        outer.writestr(nested_name, nested_buffer.getvalue())
+    return outer_buffer.getvalue()
