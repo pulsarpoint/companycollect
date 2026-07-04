@@ -3,6 +3,7 @@ import datetime as dt
 from dagster_v3 import contact_extraction
 from dagster_v3.contact_extraction import (
     DNS_CONFIDENCE,
+    ContactCandidate,
     commoncrawl_domains,
     extract_contact_candidates,
     extract_contact_candidates_by_domain,
@@ -467,3 +468,110 @@ def test_pinned_mode_falls_back_to_soa_then_empty(monkeypatch):
     monkeypatch.setattr(contact_extraction, "_stub_resolver", _FakeStubResolver)
     assert contact_extraction.nameservers_for_domain("soa-only.lv") == ("ns.master.example",)
     assert contact_extraction.nameservers_for_domain("gone.lv") == ()
+
+
+def test_vocabularies_are_closed_sets():
+    assert contact_extraction.CONTACT_TYPE_VALUES == {
+        "email", "phone", "mobile", "fax", "website", "domain_in_name", "other"
+    }
+    assert contact_extraction.DOMAIN_SOURCE_VALUES == {"website", "email", "name_embedded"}
+    assert contact_extraction.VALIDATION_METHOD_VALUES == {"", "commoncrawl", "dns"}
+    assert contact_extraction.WEBSITE_CONFIDENCE == 1.0
+    assert contact_extraction.EMAIL_UNIQUE_CONFIDENCE == 0.9
+
+
+def test_shared_denylist_superset_of_country_copies():
+    # Drift guards until Estonia (Phase B) and Brazil (Phase C) swap their imports.
+    from dagster_v3.defs.brazil_rfb import contacts as br
+    from dagster_v3.defs.estonia_ar import resources as ee
+
+    assert ee.EMAIL_PROVIDER_DENYLIST <= contact_extraction.EMAIL_PROVIDER_DENYLIST
+    assert br.EMAIL_PROVIDER_DENYLIST <= contact_extraction.EMAIL_PROVIDER_DENYLIST
+    assert ee.EMAIL_DOMAIN_MAX_COMPANIES == contact_extraction.EMAIL_DOMAIN_MAX_COMPANIES
+    assert br.EMAIL_DOMAIN_MAX_COMPANIES == contact_extraction.EMAIL_DOMAIN_MAX_COMPANIES
+
+
+def test_title_labels_guard_rejects_academic_title_domains():
+    for text in ("Dr.Ing. Jan Novák", "Josef Svoboda, dipl.Ing.", "EUR.ING Karel Dvořák"):
+        assert extract_contact_candidates(record_id="1", text=text, home_tlds=frozenset({"cz"})) == [], text
+
+
+def test_title_labels_guard_keeps_brandlike_ing_domains():
+    # all-labels rule: only fires when EVERY label is a title token.
+    kept = extract_contact_candidates(record_id="1", text="boe.ing", home_tlds=frozenset())
+    assert [c.domain for c in kept] == ["boe.ing"]
+    kept = extract_contact_candidates(record_id="1", text="ing.cz s.r.o.", home_tlds=frozenset({"cz"}))
+    assert [c.domain for c in kept] == ["ing.cz"]
+
+
+def _fact_kwargs():
+    return dict(country_iso2="CZ", source_slug="czech_ares", source_field="name",
+                resolved_at=dt.datetime(2026, 7, 4, tzinfo=dt.UTC))
+
+
+def test_contact_fact_rows_cover_all_candidates_regardless_of_validation():
+    candidates = {
+        "asseco.cz": [
+            ContactCandidate("123", "email", "info@asseco.cz", "asseco.cz"),
+            ContactCandidate("123", "domain", "www.asseco.cz", "asseco.cz"),
+        ],
+        "never-validates.cz": [
+            ContactCandidate("456", "domain", "never-validates.cz", "never-validates.cz"),
+        ],
+    }
+    rows = list(contact_extraction.iter_contact_fact_rows(candidates, **_fact_kwargs()))
+    assert len(rows) == 3  # facts are validation-independent
+    by_value = {row[7]: row for row in rows}
+    email = by_value["info@asseco.cz"]
+    assert email[:7] == ("CZ", "czech_ares", "", "123", "123", "email", "")
+    assert email[8:12] == ("name", 1, None, "")
+    domain_fact = by_value["www.asseco.cz"]
+    assert domain_fact[5] == "domain_in_name"
+    assert len(email) == len(contact_extraction.COMPANY_CONTACTS_COLUMNS)
+
+
+def test_company_domain_rows_validated_only_and_deduped_per_registry_domain():
+    candidates = {
+        "asseco.cz": [
+            ContactCandidate("123", "email", "info@asseco.cz", "asseco.cz"),
+            ContactCandidate("123", "domain", "www.asseco.cz", "asseco.cz"),
+        ],
+        "dnsonly.cz": [ContactCandidate("456", "domain", "dnsonly.cz", "dnsonly.cz")],
+        "dead.cz": [ContactCandidate("789", "domain", "dead.cz", "dead.cz")],
+    }
+    rows = list(contact_extraction.iter_company_domain_rows(
+        candidates,
+        commoncrawl_domains={"asseco.cz"},
+        nameservers_by_domain={"dnsonly.cz": ("ns1.x.cz",), "dead.cz": ()},
+        country_iso2="CZ", source_slug="czech_ares",
+        resolved_at=dt.datetime(2026, 7, 4, tzinfo=dt.UTC),
+    ))
+    assert len(rows) == 2  # asseco deduped to ONE row despite two candidates; dead dropped
+    by_domain = {row[5]: row for row in rows}
+    cc = by_domain["asseco.cz"]
+    assert cc[6:9] == ("name_embedded", "commoncrawl", contact_extraction.COMMONCRAWL_CONFIDENCE)
+    assert cc[9:12] == ("", "", "")   # no website columns for name-embedded
+    assert cc[12:14] == (1, 0)        # is_current=1, is_primary decided by election
+    dns = by_domain["dnsonly.cz"]
+    assert dns[7:9] == ("dns", contact_extraction.DNS_CONFIDENCE)
+    assert len(cc) == len(contact_extraction.COMPANY_DOMAINS_COLUMNS)
+
+
+def test_elect_primary_domains_one_winner_per_registry():
+    def row(registry, domain, source, confidence, current=1):
+        return ("CZ", "s", "", registry, registry, domain, source, "commoncrawl",
+                confidence, "", "", "", current, 0,
+                dt.datetime(2026, 7, 4, tzinfo=dt.UTC))
+
+    rows = [
+        row("1", "bbb.cz", "name_embedded", 0.95),
+        row("1", "aa.cz", "name_embedded", 0.95),    # shorter domain wins at equal confidence
+        row("2", "low.cz", "name_embedded", 0.70),
+        row("2", "site.cz", "website", 0.70),        # website source beats higher-ranked others
+        row("3", "only.cz", "name_embedded", 0.70),
+    ]
+    elected = contact_extraction.elect_primary_domains(rows)
+    primaries = {r[4]: r[5] for r in elected if r[13] == 1}
+    assert primaries == {"1": "aa.cz", "2": "site.cz", "3": "only.cz"}
+    assert sum(1 for r in elected if r[13] == 1) == 3
+    assert len(elected) == len(rows)  # non-winners kept with is_primary=0
