@@ -83,7 +83,7 @@ func main() {
 	modeF := fs.String("mode", "", "pass to run: industry | tech | embed  (required; embed = vectors only, no ClickHouse)")
 	partsF := fs.String("parts", "", "part range lo-hi, or a single part N  (required)")
 	crawlF := fs.String("crawl", env("CRAWL", ""), "CommonCrawl crawl id, e.g. CC-MAIN-2026-25  (required; or env CRAWL)")
-	dataF := fs.String("data", env("DATA", "data/crawl"), "data dir (shards, output, logs)")
+	baseF := fs.String("base", env("OUT_BASE_DIR", ""), "output ROOT (required; or env OUT_BASE_DIR) — all output lives under <base>/<crawl>/")
 	builderF := fs.String("builder-dir", env("BUILDER_DIR", "index-builder"), "index_builder project dir")
 	workerF := fs.String("worker", env("WORKER", "cc-enrich-worker/bin/cc-enrich-worker"), "cc-enrich-worker binary")
 	maxPagesF := fs.String("max-pages", env("MAX_PAGES", "25"), "tech: max pages per domain (0 = all)")
@@ -113,7 +113,15 @@ func main() {
 	if err != nil {
 		fail("-parts %q: %v", *partsF, err)
 	}
-	crawl, data, builder, worker, maxPages := *crawlF, *dataF, *builderF, *workerF, *maxPagesF
+	crawl, builder, worker, maxPages := *crawlF, *builderF, *workerF, *maxPagesF
+	// Output root MUST come from OUT_BASE_DIR — no silent default, so data can never scatter to an
+	// unexpected place. Everything for a crawl lives under <OUT_BASE_DIR>/<crawl>/ (crawl/: shards +
+	// per-part output + logs; embedding/: the vector tree), so different crawls never collide/overwrite.
+	base := *baseF
+	if base == "" {
+		fail("-base is required (output root; or env OUT_BASE_DIR), e.g. /opt/companycollect/corpscout/commoncrawl/data")
+	}
+	data := filepath.Join(base, crawl, "crawl")
 	// Resolve to absolute paths: index_builder runs with cwd=builder, so a relative --out would land
 	// under builder/, not data/. Absolute paths make every child write to the right place.
 	for _, p := range []*string{&data, &builder, &worker} {

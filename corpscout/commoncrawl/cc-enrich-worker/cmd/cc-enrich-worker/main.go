@@ -76,7 +76,7 @@ AWS_* (region defaults to us-east-1 — the CommonCrawl bucket), CC_BASE_URL.
 // opts holds the parsed flags for a run. Mode-specific fields are only registered (and meaningful)
 // for the relevant command.
 type opts struct {
-	worklist, crawlID, out string
+	worklist, crawlID, out, base string
 	concurrency, chunk     int
 	anonymous              bool
 	s3Bucket, s3Prefix     string
@@ -92,7 +92,8 @@ func parse(mode string, args []string) opts {
 	// common to every command
 	fs.StringVar(&o.worklist, "worklist", "", "worklist parquet shard (required)")
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
-	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default ../data/crawl/<worklist-name>/, unique per shard; an explicit dir must be empty)")
+	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/crawl/<worklist-name>/, unique per shard; an explicit dir must be empty)")
+	fs.StringVar(&o.base, "base", os.Getenv("OUT_BASE_DIR"), "output ROOT for the default --out (or env OUT_BASE_DIR); required when --out is not given")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "worklist rows (pages) per fetch+process chunk (tech/both)")
 	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch via the HTTPS CDN data.commoncrawl.org (off-AWS; rate-limited — signed S3 preferred)")
@@ -257,13 +258,17 @@ func run(mode string, o opts) {
 	ctx := context.Background()
 
 	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so
-	// `load --dir` knows which file → which table. The default is unique per shard
-	// (../data/crawl/<worklist-stem>/) so parallel shard runs never collide; an explicit --out must
-	// be empty so a manual run can't clobber another's output.
+	// `load --dir` knows which file → which table. cc-crawl always passes --out; for a standalone run the
+	// default is derived from OUT_BASE_DIR (REQUIRED — no silent fallback that could scatter data) as
+	// <OUT_BASE_DIR>/<crawl>/crawl/<worklist-stem>/, unique per shard so parallel runs never collide. The
+	// embedding tree is a sibling under <OUT_BASE_DIR>/<crawl>/embedding/ (derived from outDir below).
 	outDir := o.out
 	if outDir == "" {
+		if o.base == "" {
+			log.Fatal("no --out and no -base / OUT_BASE_DIR — refusing to guess an output directory")
+		}
 		stem := strings.TrimSuffix(filepath.Base(o.worklist), filepath.Ext(o.worklist))
-		outDir = filepath.Join("../data/crawl", stem)
+		outDir = filepath.Join(o.base, o.crawlID, "crawl", stem)
 	}
 	// embed VERIFY-AND-SKIP: a part is DONE if its embed folder already holds a complete vector file under
 	// EITHER name — embeddings.parquet (fp32, fresh from this pass) or embeddings_fp16.parquet (converted
