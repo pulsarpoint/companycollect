@@ -12,6 +12,8 @@ or employee counts.
 
 Source evidence:
 
+- Detailed source-by-source pull analysis:
+  [brazil-financial-sources.md](brazil-financial-sources.md)
 - Receita Federal CNPJ layout lists `CAPITAL SOCIAL DA EMPRESA` under
   `EMPRESAS`, plus registration, status, CNAE, address, phone, email, Simples,
   and partner fields. It does not list full accounting statements:

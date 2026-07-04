@@ -24,4 +24,4 @@ Each country page should answer two groups of questions:
 
 | Country | ISO2 | Primary source | Strategy | Profile |
 |---|---|---|---|---|
-| Brazil | BR | Receita Federal CNPJ bulk snapshots | Monthly full bulk snapshot | [profile](brazil.md), [improvements](brazil-improvements.md), [todo](brazil-todo.md) |
+| Brazil | BR | Receita Federal CNPJ bulk snapshots | Monthly full bulk snapshot | [profile](brazil.md), [financial sources](brazil-financial-sources.md), [improvements](brazil-improvements.md), [todo](brazil-todo.md) |

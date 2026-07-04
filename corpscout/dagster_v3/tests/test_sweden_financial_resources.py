@@ -231,7 +231,7 @@ def test_sweden_financial_reports_follows_listing_pagination() -> None:
 
 def test_sweden_financial_reports_filters_listing_by_year_partition() -> None:
     resource = SwedenFinancialReportsResource()
-    listing_url = resource.listing_url(year="2020")
+    listing_url = resource.listing_url(marker="arsredovisningar/2020/")
     archive_url = (
         f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
     )
@@ -254,9 +254,50 @@ def test_sweden_financial_reports_filters_listing_by_year_partition() -> None:
         year="2020",
     )
 
-    assert "prefix=arsredovisningar%2F2020%2F" in listing_url
+    assert "prefix=arsredovisningar%2F" in listing_url
+    assert "marker=arsredovisningar%2F2020%2F" in listing_url
     assert session.requested_urls == [listing_url, archive_url]
     assert result.metadata["partition_year"] == "2020"
+    assert result.metadata["archive_count"] == 1
+
+
+def test_sweden_financial_reports_skips_later_year_archives_on_listing_page() -> None:
+    resource = SwedenFinancialReportsResource()
+    listing_url = resource.listing_url(marker="arsredovisningar/2020/")
+    archive_url = (
+        f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
+    )
+    object_store = FakeObjectStore()
+    session = FakeSession(
+        {
+            listing_url: _listing_xml_many(
+                [
+                    {
+                        "key": "arsredovisningar/2020/08_2.zip",
+                        "last_modified": "2025-02-07T09:13:53.713Z",
+                        "etag": '"2020"',
+                        "size": 6,
+                    },
+                    {
+                        "key": "arsredovisningar/2025/26_2.zip",
+                        "last_modified": "2026-02-07T09:13:53.713Z",
+                        "etag": '"2025"',
+                        "size": 9,
+                    },
+                ],
+                next_marker="arsredovisningar/2025/26_2.zip",
+            ),
+            archive_url: b"zip-bytes",
+        }
+    )
+
+    result = resource.download_raw_archives(
+        object_store=object_store,
+        session=session,
+        year="2020",
+    )
+
+    assert session.requested_urls == [listing_url, archive_url]
     assert result.metadata["archive_count"] == 1
 
 
@@ -402,6 +443,35 @@ def _listing_xml(
     <ETag>{etag}</ETag>
     <Size>{size}</Size>
   </Contents>
+  {next_marker_xml}
+</ListBucketResult>
+""".encode("utf-8")
+
+
+def _listing_xml_many(
+    archives: list[dict[str, object]],
+    *,
+    next_marker: str | None = None,
+) -> bytes:
+    contents_xml = "\n".join(
+        f"""
+  <Contents>
+    <Key>{archive["key"]}</Key>
+    <LastModified>{archive["last_modified"]}</LastModified>
+    <ETag>{archive["etag"]}</ETag>
+    <Size>{archive["size"]}</Size>
+  </Contents>
+"""
+        for archive in archives
+    )
+    next_marker_xml = (
+        f"<NextMarker>{next_marker}</NextMarker>" if next_marker is not None else ""
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <Name>bulkfil-paketering-zipfiler-prod</Name>
+  <Prefix>arsredovisningar/</Prefix>
+  {contents_xml}
   {next_marker_xml}
 </ListBucketResult>
 """.encode("utf-8")

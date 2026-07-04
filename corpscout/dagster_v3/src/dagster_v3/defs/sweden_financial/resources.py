@@ -144,13 +144,20 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
         session: Any,
         year: str | None = None,
     ) -> Iterator[SwedenFinancialArchive]:
-        marker: str | None = None
+        marker = self._listing_marker_for_year(year)
         while True:
-            url = self.listing_url(marker=marker, year=year)
+            url = self.listing_url(marker=marker)
             response = session.get(url, timeout=self.request_timeout_seconds, stream=False)
             response.raise_for_status()
             archives, marker = _parse_listing_xml(response.text)
-            yield from archives
+            if year is None:
+                yield from archives
+            else:
+                yield from (
+                    archive for archive in archives if archive.year == year
+                )
+                if _listing_has_passed_year(archives, year):
+                    break
             if marker is None or marker == "":
                 break
 
@@ -161,16 +168,16 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
         year: str | None = None,
     ) -> str:
         query = {
-            "prefix": self._listing_prefix_for_year(year),
+            "prefix": self.listing_prefix,
             "delimiter": self.listing_delimiter,
         }
         if marker is not None:
             query["marker"] = marker
         return f"{self.archive_base_url}?{urlencode(query)}"
 
-    def _listing_prefix_for_year(self, year: str | None) -> str:
+    def _listing_marker_for_year(self, year: str | None) -> str | None:
         if year is None:
-            return self.listing_prefix
+            return None
         return f"{self.listing_prefix.rstrip('/')}/{year}/"
 
     def archive_url(self, upstream_key: str) -> str:
@@ -323,6 +330,16 @@ def _parse_listing_xml(body: str) -> tuple[list[SwedenFinancialArchive], str | N
         )
     next_marker = _child_text(root, "NextMarker") or None
     return archives, next_marker
+
+
+def _listing_has_passed_year(
+    archives: list[SwedenFinancialArchive],
+    target_year: str,
+) -> bool:
+    for archive in archives:
+        if archive.year.isdigit() and archive.year > target_year:
+            return True
+    return False
 
 
 def _children(element: ElementTree.Element, local_name: str) -> list[ElementTree.Element]:

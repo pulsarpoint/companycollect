@@ -9,6 +9,7 @@ email-derived domain rows. It does not use an incremental source feed.
 
 Related notes:
 
+- [Brazil financial sources](brazil-financial-sources.md)
 - [Brazil improvements](brazil-improvements.md)
 - [Brazil todo](brazil-todo.md)
 

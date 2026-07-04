@@ -3,6 +3,8 @@
 ## Next Task
 
 Create a `brazil_cvm` financial-data investigation and implementation plan.
+Use [brazil-financial-sources.md](brazil-financial-sources.md) as the source
+analysis input.
 
 Minimum scope:
 
