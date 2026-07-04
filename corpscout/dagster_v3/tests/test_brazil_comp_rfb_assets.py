@@ -3,10 +3,10 @@ import duckdb
 
 
 RAW_STAGE_ASSET_KEYS = {
-    "brazil_rfb_empresas_duckdb",
-    "brazil_rfb_estabelecimentos_duckdb",
-    "brazil_rfb_simples_duckdb",
-    "brazil_rfb_reference_duckdb",
+    "brazil_comp_rfb_empresas_duckdb",
+    "brazil_comp_rfb_estabelecimentos_duckdb",
+    "brazil_comp_rfb_simples_duckdb",
+    "brazil_comp_rfb_reference_duckdb",
 }
 
 
@@ -22,91 +22,97 @@ class _FakeContext:
 
 
 def _create_brazil_schema(database_path) -> None:
-    from dagster_v3.defs.brazil_rfb import tables
+    from dagster_v3.defs.brazil_companies.rfb import tables
 
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
 
 
-def test_brazil_rfb_assets_are_registered_with_stage_specific_pools() -> None:
+def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
     keys = {key.path[-1] for key in repo.asset_graph.get_all_asset_keys()}
 
-    assert "brazil_rfb_snapshot_files_duckdb" in keys
-    assert "brazil_rfb_raw_files_duckdb" not in keys
+    assert "brazil_comp_rfb_snapshot_files_duckdb" in keys
+    assert "brazil_comp_rfb_raw_files_duckdb" not in keys
     assert RAW_STAGE_ASSET_KEYS.issubset(keys)
-    assert "brazil_rfb_companies_duckdb" in keys
-    assert "brazil_rfb_contact_info_duckdb" in keys
-    assert "brazil_rfb_websites_duckdb" in keys
-    assert "brazil_rfb_clickhouse_companies" in keys
-    assert "brazil_rfb_clickhouse_establishments" in keys
-    assert "brazil_rfb_clickhouse_contact_info" in keys
-    assert "brazil_rfb_clickhouse_websites" in keys
+    assert "brazil_comp_rfb_companies_duckdb" in keys
+    assert "brazil_comp_rfb_contact_info_duckdb" in keys
+    assert "brazil_comp_rfb_websites_duckdb" in keys
+    assert "brazil_comp_rfb_clickhouse_companies" in keys
+    assert "brazil_comp_rfb_clickhouse_establishments" in keys
+    assert "brazil_comp_rfb_clickhouse_contact_info" in keys
+    assert "brazil_comp_rfb_clickhouse_websites" in keys
 
     snapshot_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_snapshot_files_duckdb")
+        dg.AssetKey("brazil_comp_rfb_snapshot_files_duckdb")
     ]
-    empresas_asset = repo.assets_defs_by_key[dg.AssetKey("brazil_rfb_empresas_duckdb")]
+    empresas_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_empresas_duckdb")
+    ]
     estabelecimentos_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_estabelecimentos_duckdb")
+        dg.AssetKey("brazil_comp_rfb_estabelecimentos_duckdb")
     ]
-    simples_asset = repo.assets_defs_by_key[dg.AssetKey("brazil_rfb_simples_duckdb")]
+    simples_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_simples_duckdb")
+    ]
     reference_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_reference_duckdb")
+        dg.AssetKey("brazil_comp_rfb_reference_duckdb")
     ]
     companies_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_companies_duckdb")
+        dg.AssetKey("brazil_comp_rfb_companies_duckdb")
     ]
     contact_info_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_contact_info_duckdb")
+        dg.AssetKey("brazil_comp_rfb_contact_info_duckdb")
     ]
-    websites_asset = repo.assets_defs_by_key[dg.AssetKey("brazil_rfb_websites_duckdb")]
+    websites_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_websites_duckdb")
+    ]
     clickhouse_companies_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_clickhouse_companies")
+        dg.AssetKey("brazil_comp_rfb_clickhouse_companies")
     ]
     clickhouse_establishments_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_clickhouse_establishments")
+        dg.AssetKey("brazil_comp_rfb_clickhouse_establishments")
     ]
     clickhouse_contact_info_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_clickhouse_contact_info")
+        dg.AssetKey("brazil_comp_rfb_clickhouse_contact_info")
     ]
     clickhouse_websites_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_rfb_clickhouse_websites")
+        dg.AssetKey("brazil_comp_rfb_clickhouse_websites")
     ]
-    assert snapshot_asset.op.pool == "brazil_rfb_manifest_duckdb"
-    assert empresas_asset.op.pool == "brazil_rfb_empresas_duckdb"
-    assert estabelecimentos_asset.op.pool == "brazil_rfb_estabelecimentos_duckdb"
-    assert simples_asset.op.pool == "brazil_rfb_simples_duckdb"
-    assert reference_asset.op.pool == "brazil_rfb_reference_duckdb"
-    assert companies_asset.op.pool == "brazil_rfb_companies_duckdb"
-    assert contact_info_asset.op.pool == "brazil_rfb_contact_info_duckdb"
-    assert websites_asset.op.pool == "brazil_rfb_websites_duckdb"
+    assert snapshot_asset.op.pool == "brazil_comp_rfb_manifest_duckdb"
+    assert empresas_asset.op.pool == "brazil_comp_rfb_empresas_duckdb"
+    assert estabelecimentos_asset.op.pool == "brazil_comp_rfb_estabelecimentos_duckdb"
+    assert simples_asset.op.pool == "brazil_comp_rfb_simples_duckdb"
+    assert reference_asset.op.pool == "brazil_comp_rfb_reference_duckdb"
+    assert companies_asset.op.pool == "brazil_comp_rfb_companies_duckdb"
+    assert contact_info_asset.op.pool == "brazil_comp_rfb_contact_info_duckdb"
+    assert websites_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
     assert clickhouse_companies_asset.op.pool is None
     assert clickhouse_establishments_asset.op.pool is None
     assert clickhouse_contact_info_asset.op.pool is None
     assert clickhouse_websites_asset.op.pool is None
 
 
-def test_brazil_rfb_assets_use_monthly_snapshot_partitions() -> None:
+def test_brazil_comp_rfb_assets_use_monthly_snapshot_partitions() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
     expected_snapshot_assets = (
-        "brazil_rfb_snapshot_files_duckdb",
-        "brazil_rfb_empresas_duckdb",
-        "brazil_rfb_estabelecimentos_duckdb",
-        "brazil_rfb_simples_duckdb",
-        "brazil_rfb_reference_duckdb",
-        "brazil_rfb_companies_duckdb",
-        "brazil_rfb_contact_info_duckdb",
-        "brazil_rfb_websites_duckdb",
-        "brazil_rfb_clickhouse_companies",
-        "brazil_rfb_clickhouse_establishments",
-        "brazil_rfb_clickhouse_contact_info",
-        "brazil_rfb_clickhouse_websites",
+        "brazil_comp_rfb_snapshot_files_duckdb",
+        "brazil_comp_rfb_empresas_duckdb",
+        "brazil_comp_rfb_estabelecimentos_duckdb",
+        "brazil_comp_rfb_simples_duckdb",
+        "brazil_comp_rfb_reference_duckdb",
+        "brazil_comp_rfb_companies_duckdb",
+        "brazil_comp_rfb_contact_info_duckdb",
+        "brazil_comp_rfb_websites_duckdb",
+        "brazil_comp_rfb_clickhouse_companies",
+        "brazil_comp_rfb_clickhouse_establishments",
+        "brazil_comp_rfb_clickhouse_contact_info",
+        "brazil_comp_rfb_clickhouse_websites",
     )
 
     for asset_name in expected_snapshot_assets:
@@ -115,10 +121,12 @@ def test_brazil_rfb_assets_use_monthly_snapshot_partitions() -> None:
         assert node.partitions_def.get_first_partition_key() == "2024-01-01"
 
 
-def test_brazil_rfb_snapshot_config_uses_partition_for_snapshot_year_month() -> None:
-    from dagster_v3.defs.brazil_rfb.assets import BrazilRfbConfig
+def test_brazil_comp_rfb_snapshot_config_uses_partition_for_snapshot_year_month() -> (
+    None
+):
+    from dagster_v3.defs.brazil_companies.rfb.assets import BrazilCompRfbConfig
 
-    fields = BrazilRfbConfig.model_fields
+    fields = BrazilCompRfbConfig.model_fields
 
     assert "snapshot_year_month" not in fields
     assert "snapshot_month" not in fields
@@ -132,11 +140,11 @@ def test_brazil_rfb_snapshot_config_uses_partition_for_snapshot_year_month() -> 
     )
 
 
-def test_brazil_rfb_stage_paths_are_snapshot_scoped() -> None:
-    from dagster_v3.defs.brazil_rfb import assets
+def test_brazil_comp_rfb_stage_paths_are_snapshot_scoped() -> None:
+    from dagster_v3.defs.brazil_companies.rfb import assets
 
-    paths = assets.brazil_rfb_stage_paths("2026-05")
-    snapshot_root = assets.BRAZIL_RFB_DATA_ROOT / "2026-05"
+    paths = assets.brazil_comp_rfb_stage_paths("2026-05")
+    snapshot_root = assets.BRAZIL_COMP_RFB_DATA_ROOT / "2026-05"
 
     assert paths.manifest == snapshot_root / "manifest.duckdb"
     assert paths.empresas == snapshot_root / "empresas.duckdb"
@@ -148,10 +156,10 @@ def test_brazil_rfb_stage_paths_are_snapshot_scoped() -> None:
     assert paths.websites == snapshot_root / "websites.duckdb"
 
 
-def test_brazil_rfb_snapshot_asset_uses_partition_snapshot_year_month(
+def test_brazil_comp_rfb_snapshot_asset_uses_partition_snapshot_year_month(
     monkeypatch,
 ) -> None:
-    from dagster_v3.defs.brazil_rfb import assets
+    from dagster_v3.defs.brazil_companies.rfb import assets
 
     calls = {}
 
@@ -176,9 +184,9 @@ def test_brazil_rfb_snapshot_asset_uses_partition_snapshot_year_month(
     monkeypatch.setattr(assets.source, "brazil_rfb_pipeline", fake_pipeline)
 
     result = list(
-        assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
+        assets.brazil_comp_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
             FakeContext(),
-            assets.BrazilRfbConfig(
+            assets.BrazilCompRfbConfig(
                 snapshot_base_url="https://mirror.test/cnpj/",
             ),
             FakeDlt(),
@@ -189,22 +197,25 @@ def test_brazil_rfb_snapshot_asset_uses_partition_snapshot_year_month(
     assert calls["source"]["source_run_id"] == "run-1"
     assert calls["source"]["snapshot_year_month"] == "2024-02"
     assert calls["source"]["snapshot_base_url"] == "https://mirror.test/cnpj/"
-    assert calls["source"]["download_dir"] == assets.BRAZIL_RFB_DOWNLOAD_DIR / "2024-02"
+    assert (
+        calls["source"]["download_dir"]
+        == assets.BRAZIL_COMP_RFB_DOWNLOAD_DIR / "2024-02"
+    )
     assert calls["pipeline_database_path"] == (
-        assets.BRAZIL_RFB_DATA_ROOT / "2024-02" / "manifest.duckdb"
+        assets.BRAZIL_COMP_RFB_DATA_ROOT / "2024-02" / "manifest.duckdb"
     )
     assert calls["run"]["dlt_source"] == "dlt-source"
     assert calls["run"]["dlt_pipeline"] == "dlt-pipeline"
 
 
-def test_brazil_rfb_snapshot_asset_reuses_existing_manifest(
+def test_brazil_comp_rfb_snapshot_asset_reuses_existing_manifest(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from dagster_v3.defs.brazil_rfb import assets, source, tables
+    from dagster_v3.defs.brazil_companies.rfb import assets, source, tables
 
-    monkeypatch.setattr(assets, "BRAZIL_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
-    stage_paths = assets.brazil_rfb_stage_paths("2026-04")
+    monkeypatch.setattr(assets, "BRAZIL_COMP_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
+    stage_paths = assets.brazil_comp_rfb_stage_paths("2026-04")
     stage_paths.ensure_root()
     csv_paths = {}
     for family in source.DEFAULT_FAMILIES:
@@ -262,9 +273,9 @@ def test_brazil_rfb_snapshot_asset_reuses_existing_manifest(
     monkeypatch.setattr(assets.source, "brazil_rfb_pipeline", fake_pipeline)
 
     result = list(
-        assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
+        assets.brazil_comp_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
             _FakeContext(),
-            assets.BrazilRfbConfig(
+            assets.BrazilCompRfbConfig(
                 snapshot_base_url="https://mirror.test/cnpj/",
             ),
             FakeDlt(),
@@ -281,14 +292,14 @@ def test_brazil_rfb_snapshot_asset_reuses_existing_manifest(
     assert calls["pipeline_database_path"] == stage_paths.manifest
 
 
-def test_brazil_rfb_empresas_asset_reuses_existing_stage(
+def test_brazil_comp_rfb_empresas_asset_reuses_existing_stage(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from dagster_v3.defs.brazil_rfb import assets, tables
+    from dagster_v3.defs.brazil_companies.rfb import assets, tables
 
-    monkeypatch.setattr(assets, "BRAZIL_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
-    stage_paths = assets.brazil_rfb_stage_paths("2026-04")
+    monkeypatch.setattr(assets, "BRAZIL_COMP_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
+    stage_paths = assets.brazil_comp_rfb_stage_paths("2026-04")
     _create_brazil_schema(stage_paths.empresas)
     with duckdb.connect(str(stage_paths.empresas)) as connection:
         connection.execute(
@@ -303,21 +314,21 @@ def test_brazil_rfb_empresas_asset_reuses_existing_stage(
 
     monkeypatch.setattr(assets.staging, "load_raw_family_from_manifest", fail_load)
 
-    result = assets.brazil_rfb_empresas_duckdb.node_def.compute_fn.decorated_fn(
+    result = assets.brazil_comp_rfb_empresas_duckdb.node_def.compute_fn.decorated_fn(
         _FakeContext()
     )
 
     assert result.metadata == {"empresas": 1, "reused_existing_stage": True}
 
 
-def test_brazil_rfb_companies_asset_reuses_existing_stage(
+def test_brazil_comp_rfb_companies_asset_reuses_existing_stage(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from dagster_v3.defs.brazil_rfb import assets, tables
+    from dagster_v3.defs.brazil_companies.rfb import assets, tables
 
-    monkeypatch.setattr(assets, "BRAZIL_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
-    stage_paths = assets.brazil_rfb_stage_paths("2026-04")
+    monkeypatch.setattr(assets, "BRAZIL_COMP_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
+    stage_paths = assets.brazil_comp_rfb_stage_paths("2026-04")
     _create_brazil_schema(stage_paths.companies)
     with duckdb.connect(str(stage_paths.companies)) as connection:
         connection.execute(
@@ -344,7 +355,7 @@ def test_brazil_rfb_companies_asset_reuses_existing_stage(
         fail_build,
     )
 
-    result = assets.brazil_rfb_companies_duckdb.node_def.compute_fn.decorated_fn(
+    result = assets.brazil_comp_rfb_companies_duckdb.node_def.compute_fn.decorated_fn(
         _FakeContext()
     )
 
@@ -356,7 +367,7 @@ def test_brazil_rfb_companies_asset_reuses_existing_stage(
     }
 
 
-def test_brazil_rfb_raw_assets_depend_on_snapshot_manifest_only() -> None:
+def test_brazil_comp_rfb_raw_assets_depend_on_snapshot_manifest_only() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
@@ -366,47 +377,49 @@ def test_brazil_rfb_raw_assets_depend_on_snapshot_manifest_only() -> None:
             for parent in repo.asset_graph.get(dg.AssetKey(asset_name)).parent_keys
         }
 
-        assert parents == {"brazil_rfb_snapshot_files_duckdb"}
+        assert parents == {"brazil_comp_rfb_snapshot_files_duckdb"}
 
 
-def test_brazil_rfb_companies_asset_depends_on_raw_files() -> None:
+def test_brazil_comp_rfb_companies_asset_depends_on_raw_files() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
     parents = {
         parent.path[-1]
         for parent in repo.asset_graph.get(
-            dg.AssetKey("brazil_rfb_companies_duckdb")
+            dg.AssetKey("brazil_comp_rfb_companies_duckdb")
         ).parent_keys
     }
 
     assert parents == RAW_STAGE_ASSET_KEYS
 
 
-def test_brazil_rfb_clickhouse_assets_depend_on_normalized_companies() -> None:
+def test_brazil_comp_rfb_clickhouse_assets_depend_on_normalized_companies() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
     for asset_name in (
-        "brazil_rfb_clickhouse_companies",
-        "brazil_rfb_clickhouse_establishments",
+        "brazil_comp_rfb_clickhouse_companies",
+        "brazil_comp_rfb_clickhouse_establishments",
     ):
         parents = {
             parent.path[-1]
             for parent in repo.asset_graph.get(dg.AssetKey(asset_name)).parent_keys
         }
-        assert parents == {"brazil_rfb_companies_duckdb"}
+        assert parents == {"brazil_comp_rfb_companies_duckdb"}
 
 
-def test_brazil_rfb_contact_domain_assets_have_ordered_dependencies() -> None:
+def test_brazil_comp_rfb_contact_domain_assets_have_ordered_dependencies() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
     expected_parents = {
-        "brazil_rfb_contact_info_duckdb": {"brazil_rfb_companies_duckdb"},
-        "brazil_rfb_websites_duckdb": {"brazil_rfb_contact_info_duckdb"},
-        "brazil_rfb_clickhouse_contact_info": {"brazil_rfb_contact_info_duckdb"},
-        "brazil_rfb_clickhouse_websites": {"brazil_rfb_websites_duckdb"},
+        "brazil_comp_rfb_contact_info_duckdb": {"brazil_comp_rfb_companies_duckdb"},
+        "brazil_comp_rfb_websites_duckdb": {"brazil_comp_rfb_contact_info_duckdb"},
+        "brazil_comp_rfb_clickhouse_contact_info": {
+            "brazil_comp_rfb_contact_info_duckdb"
+        },
+        "brazil_comp_rfb_clickhouse_websites": {"brazil_comp_rfb_websites_duckdb"},
     }
 
     for asset_name, expected in expected_parents.items():
@@ -417,13 +430,13 @@ def test_brazil_rfb_contact_domain_assets_have_ordered_dependencies() -> None:
         assert parents == expected
 
 
-def test_brazil_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None:
+def test_brazil_comp_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
 
-    assert "brazil_rfb_resolve_job" in set(repo.job_names)
-    resolve_job = repo.get_job("brazil_rfb_resolve_job")
+    assert "brazil_comp_rfb_resolve_job" in set(repo.job_names)
+    resolve_job = repo.get_job("brazil_comp_rfb_resolve_job")
     resolve_keys = {
         key.path[-1] for key in resolve_job.asset_layer.executable_asset_keys
     }
@@ -431,18 +444,18 @@ def test_brazil_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None
     assert type(resolve_job.partitions_def).__name__ == "MonthlyPartitionsDefinition"
     assert resolve_job.run_config is None
     assert {
-        "brazil_rfb_snapshot_files_duckdb",
-        "brazil_rfb_empresas_duckdb",
-        "brazil_rfb_estabelecimentos_duckdb",
-        "brazil_rfb_simples_duckdb",
-        "brazil_rfb_reference_duckdb",
-        "brazil_rfb_companies_duckdb",
-        "brazil_rfb_contact_info_duckdb",
-        "brazil_rfb_websites_duckdb",
-        "brazil_rfb_clickhouse_companies",
-        "brazil_rfb_clickhouse_establishments",
-        "brazil_rfb_clickhouse_contact_info",
-        "brazil_rfb_clickhouse_websites",
+        "brazil_comp_rfb_snapshot_files_duckdb",
+        "brazil_comp_rfb_empresas_duckdb",
+        "brazil_comp_rfb_estabelecimentos_duckdb",
+        "brazil_comp_rfb_simples_duckdb",
+        "brazil_comp_rfb_reference_duckdb",
+        "brazil_comp_rfb_companies_duckdb",
+        "brazil_comp_rfb_contact_info_duckdb",
+        "brazil_comp_rfb_websites_duckdb",
+        "brazil_comp_rfb_clickhouse_companies",
+        "brazil_comp_rfb_clickhouse_establishments",
+        "brazil_comp_rfb_clickhouse_contact_info",
+        "brazil_comp_rfb_clickhouse_websites",
     }.issubset(resolve_keys)
     assert "domains_clickhouse" not in resolve_keys
     assert "estonia_ar_general_data_duckdb" not in resolve_keys

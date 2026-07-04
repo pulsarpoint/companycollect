@@ -5,8 +5,10 @@ from pathlib import Path
 
 import duckdb
 
-from dagster_v3.defs.brazil_rfb import tables
-from dagster_v3.defs.brazil_rfb.duckdb_attach import attached_read_only_database
+from dagster_v3.defs.brazil_companies.rfb import tables
+from dagster_v3.defs.brazil_companies.rfb.duckdb_attach import (
+    attached_read_only_database,
+)
 from dagster_v3.domains import root_domain
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
@@ -277,9 +279,9 @@ def build_brazil_rfb_websites(
     if not contact_info_path.exists():
         raise FileNotFoundError(
             "Brazil RFB websites require the contact-info DuckDB stage at "
-            f"{contact_info_path}. Materialize brazil_rfb_contact_info_duckdb "
-            "before brazil_rfb_websites_duckdb. If this is a retry after the "
-            "contact/websites stage split, rerun brazil_rfb_contact_info_duckdb "
+            f"{contact_info_path}. Materialize brazil_comp_rfb_contact_info_duckdb "
+            "before brazil_comp_rfb_websites_duckdb. If this is a retry after the "
+            "contact/websites stage split, rerun brazil_comp_rfb_contact_info_duckdb "
             "first for the same monthly partition so the snapshot-scoped "
             "contact_info.duckdb stage is created."
         )

@@ -4,8 +4,8 @@ from pathlib import Path
 
 import duckdb
 
-from dagster_v3.defs.brazil_rfb import tables
-from dagster_v3.defs.brazil_rfb.duckdb_attach import (
+from dagster_v3.defs.brazil_companies.rfb import tables
+from dagster_v3.defs.brazil_companies.rfb.duckdb_attach import (
     attached_read_only_database,
     sql_literal,
 )
@@ -62,31 +62,44 @@ def build_brazil_rfb_companies_and_establishments(
     size_en = _case_map("emp.porte", COMPANY_SIZE_EN_BY_CODE)
 
     connection.execute(f"create schema if not exists {dataset}")
-    with attached_read_only_database(
-        connection,
-        database_path=empresas_database_path,
-        alias="empresas_db",
-    ) as empresas_alias, attached_read_only_database(
-        connection,
-        database_path=estabelecimentos_database_path,
-        alias="estabelecimentos_db",
-    ) as estabelecimentos_alias, attached_read_only_database(
-        connection,
-        database_path=simples_database_path,
-        alias="simples_db",
-    ) as simples_alias, attached_read_only_database(
-        connection,
-        database_path=reference_database_path,
-        alias="reference_db",
-    ) as reference_alias:
-        empresas_raw = f"{empresas_alias}.{dataset}.{tables.RAW_TABLE_BY_FAMILY['empresas']}"
+    with (
+        attached_read_only_database(
+            connection,
+            database_path=empresas_database_path,
+            alias="empresas_db",
+        ) as empresas_alias,
+        attached_read_only_database(
+            connection,
+            database_path=estabelecimentos_database_path,
+            alias="estabelecimentos_db",
+        ) as estabelecimentos_alias,
+        attached_read_only_database(
+            connection,
+            database_path=simples_database_path,
+            alias="simples_db",
+        ) as simples_alias,
+        attached_read_only_database(
+            connection,
+            database_path=reference_database_path,
+            alias="reference_db",
+        ) as reference_alias,
+    ):
+        empresas_raw = (
+            f"{empresas_alias}.{dataset}.{tables.RAW_TABLE_BY_FAMILY['empresas']}"
+        )
         estabelecimentos_raw = (
             f"{estabelecimentos_alias}.{dataset}."
             f"{tables.RAW_TABLE_BY_FAMILY['estabelecimentos']}"
         )
-        simples_raw = f"{simples_alias}.{dataset}.{tables.RAW_TABLE_BY_FAMILY['simples']}"
-        municipios_raw = f"{reference_alias}.{dataset}.{tables.RAW_TABLE_BY_FAMILY['municipios']}"
-        naturezas_raw = f"{reference_alias}.{dataset}.{tables.RAW_TABLE_BY_FAMILY['naturezas']}"
+        simples_raw = (
+            f"{simples_alias}.{dataset}.{tables.RAW_TABLE_BY_FAMILY['simples']}"
+        )
+        municipios_raw = (
+            f"{reference_alias}.{dataset}.{tables.RAW_TABLE_BY_FAMILY['municipios']}"
+        )
+        naturezas_raw = (
+            f"{reference_alias}.{dataset}.{tables.RAW_TABLE_BY_FAMILY['naturezas']}"
+        )
 
         connection.execute(
             f"""

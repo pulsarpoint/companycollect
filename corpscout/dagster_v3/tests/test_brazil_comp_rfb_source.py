@@ -4,7 +4,7 @@ from pathlib import Path
 
 from requests import HTTPError
 
-from dagster_v3.defs.brazil_rfb import source
+from dagster_v3.defs.brazil_companies.rfb import source
 
 
 def _zip_bytes(member_name: str, body: bytes) -> bytes:
@@ -52,24 +52,40 @@ class FakeSession:
 
 
 def test_family_from_archive_name_matches_rfb_patterns() -> None:
-    assert source.family_from_archive_name("K3241.K03200Y0.D30612.EMPRECSV.zip") == "empresas"
+    assert (
+        source.family_from_archive_name("K3241.K03200Y0.D30612.EMPRECSV.zip")
+        == "empresas"
+    )
     assert source.family_from_archive_name("Empresas0.zip") == "empresas"
     assert (
         source.family_from_archive_name("K3241.K03200Y0.D30612.ESTABELE.zip")
         == "estabelecimentos"
     )
-    assert source.family_from_archive_name("Estabelecimentos9.zip") == "estabelecimentos"
-    assert source.family_from_archive_name("K3241.K03200Y0.D30612.SIMPLES.CSV.zip") == "simples"
+    assert (
+        source.family_from_archive_name("Estabelecimentos9.zip") == "estabelecimentos"
+    )
+    assert (
+        source.family_from_archive_name("K3241.K03200Y0.D30612.SIMPLES.CSV.zip")
+        == "simples"
+    )
     assert source.family_from_archive_name("Simples.zip") == "simples"
     assert source.family_from_archive_name("F.K03200$Z.D30612.CNAECSV.zip") == "cnaes"
     assert source.family_from_archive_name("Cnaes.zip") == "cnaes"
-    assert source.family_from_archive_name("F.K03200$Z.D30612.NATJUCSV.zip") == "naturezas"
+    assert (
+        source.family_from_archive_name("F.K03200$Z.D30612.NATJUCSV.zip") == "naturezas"
+    )
     assert source.family_from_archive_name("Naturezas.zip") == "naturezas"
-    assert source.family_from_archive_name("F.K03200$Z.D30612.MUNICCSV.zip") == "municipios"
+    assert (
+        source.family_from_archive_name("F.K03200$Z.D30612.MUNICCSV.zip")
+        == "municipios"
+    )
     assert source.family_from_archive_name("Municipios.zip") == "municipios"
     assert source.family_from_archive_name("F.K03200$Z.D30612.PAISCSV.zip") == "paises"
     assert source.family_from_archive_name("Paises.zip") == "paises"
-    assert source.family_from_archive_name("F.K03200$Z.D30612.QUALSCSV.zip") == "qualificacoes"
+    assert (
+        source.family_from_archive_name("F.K03200$Z.D30612.QUALSCSV.zip")
+        == "qualificacoes"
+    )
     assert source.family_from_archive_name("Qualificacoes.zip") == "qualificacoes"
     assert source.family_from_archive_name("F.K03200$Z.D30612.MOTICSV.zip") == "motivos"
     assert source.family_from_archive_name("Motivos.zip") == "motivos"
@@ -127,23 +143,32 @@ def test_discover_current_snapshot_zip_urls_from_mirror_html() -> None:
     )
 
     assert len(files) == 10
-    assert source.BrazilRfbRemoteFile(
-        family="empresas",
-        url="https://example.test/arquivos/2026-05-10/Empresas0.zip",
-        archive_name="Empresas0.zip",
-    ) in files
-    assert source.BrazilRfbRemoteFile(
-        family="estabelecimentos",
-        url="https://example.test/arquivos/2026-05-10/Estabelecimentos0.zip",
-        archive_name="Estabelecimentos0.zip",
-    ) in files
+    assert (
+        source.BrazilRfbRemoteFile(
+            family="empresas",
+            url="https://example.test/arquivos/2026-05-10/Empresas0.zip",
+            archive_name="Empresas0.zip",
+        )
+        in files
+    )
+    assert (
+        source.BrazilRfbRemoteFile(
+            family="estabelecimentos",
+            url="https://example.test/arquivos/2026-05-10/Estabelecimentos0.zip",
+            archive_name="Estabelecimentos0.zip",
+        )
+        in files
+    )
 
 
 def test_snapshot_year_month_builds_month_directory_url() -> None:
-    assert source.build_year_month_base_url(
-        snapshot_year_month="2026-05",
-        base_url="https://example.test/dados_abertos_cnpj/",
-    ) == "https://example.test/dados_abertos_cnpj/2026-05/"
+    assert (
+        source.build_year_month_base_url(
+            snapshot_year_month="2026-05",
+            base_url="https://example.test/dados_abertos_cnpj/",
+        )
+        == "https://example.test/dados_abertos_cnpj/2026-05/"
+    )
 
 
 def test_default_base_url_points_to_fetchable_cnpj_mirror() -> None:
@@ -162,11 +187,14 @@ def test_dated_snapshot_directory_resolves_latest_day_for_month() -> None:
     </body></html>
     """
 
-    assert source.resolve_dated_snapshot_directory_url(
-        html,
-        base_url="https://example.test/arquivos/",
-        snapshot_year_month="2026-05",
-    ) == "https://example.test/arquivos/2026-05-10/"
+    assert (
+        source.resolve_dated_snapshot_directory_url(
+            html,
+            base_url="https://example.test/arquivos/",
+            snapshot_year_month="2026-05",
+        )
+        == "https://example.test/arquivos/2026-05-10/"
+    )
 
 
 def test_fetch_snapshot_remote_files_falls_back_to_dated_month_directory() -> None:
@@ -299,16 +327,24 @@ def test_download_extract_logs_file_progress(tmp_path: Path) -> None:
     )
 
     assert len(rows) == 1
-    assert any(message.startswith("Downloading empresas archive 1/1") for message in messages)
-    assert any(message.startswith("Downloaded empresas archive 1/1") for message in messages)
-    assert any(message.startswith("Extracted empresas archive 1/1") for message in messages)
+    assert any(
+        message.startswith("Downloading empresas archive 1/1") for message in messages
+    )
+    assert any(
+        message.startswith("Downloaded empresas archive 1/1") for message in messages
+    )
+    assert any(
+        message.startswith("Extracted empresas archive 1/1") for message in messages
+    )
     assert any(
         message.startswith("Recorded Brazil RFB snapshot manifest row")
         for message in messages
     )
 
 
-def test_download_extract_normalizes_dirty_latin1_csv_for_duckdb(tmp_path: Path) -> None:
+def test_download_extract_normalizes_dirty_latin1_csv_for_duckdb(
+    tmp_path: Path,
+) -> None:
     archive_url = "https://example.test/K3241.K03200Y0.D30612.EMPRECSV.zip"
     session = FakeSession(
         {

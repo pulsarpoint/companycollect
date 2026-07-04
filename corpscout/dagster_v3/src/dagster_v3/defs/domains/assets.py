@@ -20,7 +20,7 @@ GROUP_NAME = "domains"
         dg.AssetKey("norway_brreg_entities_snapshot_clickhouse"),
         dg.AssetKey("wikidata_company_seed_clickhouse"),
         dg.AssetKey("estonia_ar_clickhouse_company_domains"),
-        dg.AssetKey("brazil_rfb_clickhouse_websites"),
+        dg.AssetKey("brazil_comp_rfb_clickhouse_websites"),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse"},
@@ -64,8 +64,12 @@ def replace_domain_clickhouse_tables(clickhouse_client: Any) -> dict[str, int]:
             f"{_qualified_table(tables.COMPANY_WEBSITE_DOMAINS_TABLE)}"
         )
 
-        clickhouse_client.execute(_company_website_domains_insert_sql(company_links_stage))
-        clickhouse_client.execute(_domains_insert_sql(domains_stage, company_links_stage))
+        clickhouse_client.execute(
+            _company_website_domains_insert_sql(company_links_stage)
+        )
+        clickhouse_client.execute(
+            _domains_insert_sql(domains_stage, company_links_stage)
+        )
 
         clickhouse_client.execute(
             f"EXCHANGE TABLES {_qualified_table(domains_stage)} "

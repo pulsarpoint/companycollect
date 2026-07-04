@@ -111,8 +111,8 @@ METRIC_COLUMNS = (
 
 
 def test_sweden_financial_tables_migration_covers_reports_facts_and_usd_metrics() -> None:
-    sql = _migration_sql("000088_corpscout_se_financial_tables.up.sql")
-    down_sql = _migration_sql("000088_corpscout_se_financial_tables.down.sql")
+    sql = _migration_sql("000090_corpscout_se_financial_tables.up.sql")
+    down_sql = _migration_sql("000090_corpscout_se_financial_tables.down.sql")
 
     expected_columns_by_table = {
         "corpscout.se_financial_reports": REPORT_COLUMNS,
@@ -134,9 +134,12 @@ def test_sweden_financial_tables_migration_covers_reports_facts_and_usd_metrics(
         assert f"{metric_name}_amount_usd Nullable(Decimal(38, 6))" in sql
 
     assert sql.count("ENGINE = ReplacingMergeTree(resolved_at)") == 3
-    assert "ORDER BY (company_id, report_period_end, statement_key)" in sql
+    assert "ORDER BY (company_id, report_period_end, statement_key)" not in sql
+    assert sql.count("ifNull(report_period_end, toDate32('1970-01-01'))") == 3
     assert (
-        "ORDER BY (company_id, report_period_end, statement_key, fact_ordinal)"
+        "    ifNull(report_period_end, toDate32('1970-01-01')),\n"
+        "    statement_key,\n"
+        "    fact_ordinal"
     ) in sql
 
 

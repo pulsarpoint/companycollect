@@ -3,7 +3,7 @@ from typing import Any
 
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.brazil_rfb import tables
+from dagster_v3.defs.brazil_companies.rfb import tables
 from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
@@ -22,7 +22,7 @@ CLICKHOUSE_DATE32_EXPORT_EXPRESSIONS = {
 }
 
 
-def export_brazil_rfb_clickhouse_companies(
+def export_brazil_comp_rfb_clickhouse_companies(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
@@ -31,7 +31,7 @@ def export_brazil_rfb_clickhouse_companies(
     """Replace corpscout.br_companies with the normalized DuckDB companies table."""
     assert_clickhouse_tables_exist(
         clickhouse,
-        database=tables.BRAZIL_RFB_DATABASE,
+        database=tables.BRAZIL_COMP_RFB_DATABASE,
         tables=(tables.BR_COMPANIES_TABLE_CH,),
     )
     if log is not None:
@@ -45,7 +45,7 @@ def export_brazil_rfb_clickhouse_companies(
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.COMPANIES_TABLE,
-            clickhouse_database=tables.BRAZIL_RFB_DATABASE,
+            clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
             clickhouse_table=tables.BR_COMPANIES_TABLE_CH,
             columns=tables.BR_COMPANIES_EXPORT_COLUMNS,
             truncate=True,
@@ -56,7 +56,7 @@ def export_brazil_rfb_clickhouse_companies(
     return rows
 
 
-def export_brazil_rfb_clickhouse_establishments(
+def export_brazil_comp_rfb_clickhouse_establishments(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
@@ -65,7 +65,7 @@ def export_brazil_rfb_clickhouse_establishments(
     """Replace corpscout.br_establishments with the normalized DuckDB establishments table."""
     assert_clickhouse_tables_exist(
         clickhouse,
-        database=tables.BRAZIL_RFB_DATABASE,
+        database=tables.BRAZIL_COMP_RFB_DATABASE,
         tables=(tables.BR_ESTABLISHMENTS_TABLE_CH,),
     )
     if log is not None:
@@ -79,7 +79,7 @@ def export_brazil_rfb_clickhouse_establishments(
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.ESTABLISHMENTS_TABLE,
-            clickhouse_database=tables.BRAZIL_RFB_DATABASE,
+            clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
             clickhouse_table=tables.BR_ESTABLISHMENTS_TABLE_CH,
             columns=tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS,
             truncate=True,
@@ -90,7 +90,7 @@ def export_brazil_rfb_clickhouse_establishments(
     return rows
 
 
-def export_brazil_rfb_clickhouse_contact_info(
+def export_brazil_comp_rfb_clickhouse_contact_info(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
@@ -99,7 +99,7 @@ def export_brazil_rfb_clickhouse_contact_info(
     """Replace corpscout.br_company_contact_info with the DuckDB contact table."""
     assert_clickhouse_tables_exist(
         clickhouse,
-        database=tables.BRAZIL_RFB_DATABASE,
+        database=tables.BRAZIL_COMP_RFB_DATABASE,
         tables=(tables.BR_COMPANY_CONTACT_INFO_TABLE_CH,),
     )
     if log is not None:
@@ -113,7 +113,7 @@ def export_brazil_rfb_clickhouse_contact_info(
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.COMPANY_CONTACT_INFO_TABLE,
-            clickhouse_database=tables.BRAZIL_RFB_DATABASE,
+            clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
             clickhouse_table=tables.BR_COMPANY_CONTACT_INFO_TABLE_CH,
             columns=tables.BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS,
             truncate=True,
@@ -123,7 +123,7 @@ def export_brazil_rfb_clickhouse_contact_info(
     return rows
 
 
-def export_brazil_rfb_clickhouse_websites(
+def export_brazil_comp_rfb_clickhouse_websites(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
@@ -132,7 +132,7 @@ def export_brazil_rfb_clickhouse_websites(
     """Replace corpscout.br_websites with the DuckDB domain feeder table."""
     assert_clickhouse_tables_exist(
         clickhouse,
-        database=tables.BRAZIL_RFB_DATABASE,
+        database=tables.BRAZIL_COMP_RFB_DATABASE,
         tables=(tables.BR_WEBSITES_TABLE_CH,),
     )
     if log is not None:
@@ -146,7 +146,7 @@ def export_brazil_rfb_clickhouse_websites(
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.WEBSITES_TABLE,
-            clickhouse_database=tables.BRAZIL_RFB_DATABASE,
+            clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
             clickhouse_table=tables.BR_WEBSITES_TABLE_CH,
             columns=tables.BR_WEBSITES_EXPORT_COLUMNS,
             truncate=True,

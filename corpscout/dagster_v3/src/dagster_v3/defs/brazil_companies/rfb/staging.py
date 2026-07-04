@@ -4,8 +4,8 @@ from pathlib import Path
 
 import duckdb
 
-from dagster_v3.defs.brazil_rfb import source, tables
-from dagster_v3.defs.brazil_rfb.duckdb_attach import (
+from dagster_v3.defs.brazil_companies.rfb import source, tables
+from dagster_v3.defs.brazil_companies.rfb.duckdb_attach import (
     attached_read_only_database,
     sql_literal,
 )
@@ -58,8 +58,7 @@ def load_raw_family_from_manifest(
         raise ValueError(f"Brazil RFB family {family} produced no rows")
 
     csv_paths = tuple(
-        str(source.normalize_csv_for_duckdb(csv_path))
-        for csv_path in raw_csv_paths
+        str(source.normalize_csv_for_duckdb(csv_path)) for csv_path in raw_csv_paths
     )
     read_csv_paths = _list_literal(csv_paths)
     read_csv_columns = _list_literal(column_names)

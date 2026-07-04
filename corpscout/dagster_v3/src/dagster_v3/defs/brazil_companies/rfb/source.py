@@ -18,7 +18,7 @@ from dlt.pipeline.pipeline import Pipeline
 from dlt.sources.helpers import requests as dlt_requests
 from requests import HTTPError
 
-from dagster_v3.defs.brazil_rfb import tables
+from dagster_v3.defs.brazil_companies.rfb import tables
 
 DEFAULT_BASE_URL = "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
 DEFAULT_TIMEOUT_SECONDS = 600
@@ -204,7 +204,9 @@ def fetch_snapshot_remote_files(
     )
     missing = sorted(set(families) - {item.family for item in files})
     if missing:
-        raise LookupError(f"missing Brazil RFB snapshot file families: {', '.join(missing)}")
+        raise LookupError(
+            f"missing Brazil RFB snapshot file families: {', '.join(missing)}"
+        )
     return files
 
 
@@ -268,7 +270,9 @@ def _download(
                     "Downloading %s: downloaded_mb=%s expected_mb=%s",
                     progress_label,
                     _format_mb(downloaded_bytes),
-                    _format_mb(expected_bytes) if expected_bytes is not None else "unknown",
+                    _format_mb(expected_bytes)
+                    if expected_bytes is not None
+                    else "unknown",
                 )
                 next_progress_bytes += DOWNLOAD_PROGRESS_LOG_BYTES
     _log_progress(
@@ -301,11 +305,14 @@ def normalize_csv_for_duckdb(csv_path: str | Path) -> Path:
         return normalized_path
 
     temp_path = normalized_path.with_name(normalized_path.name + ".tmp")
-    with source_path.open("rb") as source_file, temp_path.open(
-        "w",
-        encoding="utf-8",
-        newline="",
-    ) as normalized_file:
+    with (
+        source_path.open("rb") as source_file,
+        temp_path.open(
+            "w",
+            encoding="utf-8",
+            newline="",
+        ) as normalized_file,
+    ):
         while chunk := source_file.read(TEXT_NORMALIZATION_CHUNK_BYTES):
             text = chunk.decode(RFB_CSV_SOURCE_ENCODING, errors="replace")
             normalized_file.write(text.translate(UNSUPPORTED_CONTROL_TRANSLATION))
@@ -325,7 +332,9 @@ def _extract_single_csv(
     with zipfile.ZipFile(zip_path) as archive:
         members = [name for name in archive.namelist() if not name.endswith("/")]
         if len(members) != 1:
-            raise ValueError(f"expected exactly one CSV member in {zip_path}, found {members}")
+            raise ValueError(
+                f"expected exactly one CSV member in {zip_path}, found {members}"
+            )
         member = members[0]
         archive.extract(member, dest_dir)
         csv_path = dest_dir / member
@@ -417,7 +426,9 @@ def download_extract_snapshot_files(
     write_disposition="replace",
     columns=tables.SNAPSHOT_FILE_COLUMNS,
 )
-def snapshot_files_resource(rows: Sequence[dict[str, object]]) -> Iterator[dict[str, object]]:
+def snapshot_files_resource(
+    rows: Sequence[dict[str, object]],
+) -> Iterator[dict[str, object]]:
     yield from rows
 
 
@@ -436,9 +447,13 @@ def brazil_rfb_source(
     if manifest_rows is not None:
         return snapshot_files_resource(manifest_rows)
     if snapshot_year_month is None:
-        raise ValueError("snapshot_year_month is required when manifest_rows is not provided")
+        raise ValueError(
+            "snapshot_year_month is required when manifest_rows is not provided"
+        )
     resolved_download_dir = (
-        Path(download_dir) if download_dir is not None else Path(tempfile.gettempdir()) / "brazil_rfb"
+        Path(download_dir)
+        if download_dir is not None
+        else Path(tempfile.gettempdir()) / "brazil_rfb"
     )
     _log_progress(
         log,
@@ -483,7 +498,7 @@ def _response_content_length(response: Any) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -506,7 +521,9 @@ def brazil_rfb_pipeline(
     database_file = Path(database_path)
     database_file.parent.mkdir(parents=True, exist_ok=True)
     working_dir = (
-        Path(pipelines_dir) if pipelines_dir is not None else database_file.parent / ".dlt"
+        Path(pipelines_dir)
+        if pipelines_dir is not None
+        else database_file.parent / ".dlt"
     )
     working_dir.mkdir(parents=True, exist_ok=True)
     return dlt.pipeline(

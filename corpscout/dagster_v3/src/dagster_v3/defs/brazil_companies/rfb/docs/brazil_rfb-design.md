@@ -1,4 +1,4 @@
-# brazil_rfb design doc
+# brazil_comp_rfb design doc
 
 Ingest the Brazil Receita Federal Dados Publicos CNPJ bulk registry into DuckDB
 and ClickHouse. This phase covers the national company registry, establishment
@@ -10,7 +10,7 @@ statement grain.
 
 - **Country / registry**: Brazil - Receita Federal Dados Publicos CNPJ, published
   by Receita Federal do Brasil / SERPRO.
-- **Module**: `defs/brazil_rfb/` - stage-specific DuckDB files under `data/`
+- **Module**: `defs/brazil_companies/rfb/` - stage-specific DuckDB files under `data/`
   with one writer pool per stage.
 - **Related reference module**: `defs/brazil_cnae/`, which publishes
   `corpscout.br_cnae_to_nace` from curated fixture data. The registry industry
@@ -63,7 +63,7 @@ statement grain.
   appear in some registry rows. RFB uses fixed published column order per file
   family. Dates are `YYYYMMDD`. Monetary values such as `capital_social` use
   Brazilian decimal formatting.
-- **Dagster partitioning**: every `brazil_rfb` asset uses monthly partitions from
+- **Dagster partitioning**: every `brazil_comp_rfb` asset uses monthly partitions from
   `2024-01-01`. Stage files are stored under
   `data/brazil_rfb/<YYYY-MM>/` so different snapshots cannot share anonymous
   DuckDB filenames. ClickHouse exports still replace current-state serving tables
@@ -75,7 +75,7 @@ statement grain.
   snapshot file list from the asset partition key and downloads ZIP files with
   retry/backoff. It records the source URLs, file hashes, byte sizes, and retrieved
   timestamp.
-- **Launch config**: launch `brazil_rfb_resolve_job` for one monthly partition.
+- **Launch config**: launch `brazil_comp_rfb_resolve_job` for one monthly partition.
   Valid partition examples are `2024-01-01`, `2026-05-01`, and `2026-06-01`.
 
   Override the base URL only for tests or if the official RFB host becomes
@@ -83,7 +83,7 @@ statement grain.
 
   ```yaml
   ops:
-    brazil_rfb_snapshot_files_duckdb:
+    brazil_comp_rfb_snapshot_files_duckdb:
       config:
         snapshot_base_url: "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
   ```
@@ -93,10 +93,10 @@ statement grain.
   normalization because DuckDB rejects some dirty Latin-1 control bytes before
   row parsing.
 - **File-family checkpoints**:
-  - `brazil_rfb_empresas_duckdb`
-  - `brazil_rfb_estabelecimentos_duckdb`
-  - `brazil_rfb_simples_duckdb`
-  - `brazil_rfb_reference_duckdb`
+  - `brazil_comp_rfb_empresas_duckdb`
+  - `brazil_comp_rfb_estabelecimentos_duckdb`
+  - `brazil_comp_rfb_simples_duckdb`
+  - `brazil_comp_rfb_reference_duckdb`
 - **DuckDB stage artifacts**:
   - `data/brazil_rfb/<YYYY-MM>/manifest.duckdb`: dlt snapshot manifest only.
   - `data/brazil_rfb/<YYYY-MM>/empresas.duckdb`: `empresas_raw`.
@@ -279,14 +279,14 @@ statement grain.
 
 ## 8. Scheduling
 
-- **`brazil_rfb_resolve_job`**: manual monthly-partitioned full-refresh job for
-  all `brazil_rfb` assets. Run `domains_clickhouse` separately after the selected
+- **`brazil_comp_rfb_resolve_job`**: manual monthly-partitioned full-refresh job for
+  all `brazil_comp_rfb` assets. Run `domains_clickhouse` separately after the selected
   Brazil partition exports `br_websites`.
 - **Backfills**: each month is a full registry snapshot. Backfill only when the
   operator explicitly wants to persist separate snapshot-stage artifacts; the
   ClickHouse export still replaces current-state serving tables for each selected
   partition.
-- **Manual full refresh**: group-level job for all `brazil_rfb` assets. Ensure
+- **Manual full refresh**: group-level job for all `brazil_comp_rfb` assets. Ensure
   upstream `brazil_cnae_to_nace_clickhouse` and `nace_categories_clickhouse` have
   been materialized before the Brazil run.
 - **Cron staggering**: choose a different hour/day from Estonia/France/UK monthly
@@ -321,12 +321,12 @@ statement grain.
 ## 10. Verification
 
 - **Tests**:
-  - `tests/test_brazil_rfb_resources.py`: URL resolver, CNPJ normalization, date
+  - `tests/test_brazil_comp_rfb_resources.py`: URL resolver, CNPJ normalization, date
     parsing, capital parsing, no-header schemas.
-  - `tests/test_brazil_rfb_tables.py`: ClickHouse DDL and export columns.
-  - `tests/test_brazil_rfb_transforms.py`: company fallback selection, contacts
+  - `tests/test_brazil_comp_rfb_tables.py`: ClickHouse DDL and export columns.
+  - `tests/test_brazil_comp_rfb_transforms.py`: company fallback selection, contacts
     unpivot, email-domain uniqueness, CNAE split/dedup.
-  - `tests/test_brazil_rfb_assets.py`: asset dependencies, empty-input refusal,
+  - `tests/test_brazil_comp_rfb_assets.py`: asset dependencies, empty-input refusal,
     ClickHouse table preflight.
   - `tests/test_clickhouse_migrations.py`: migration registration and schema
     shape.
@@ -334,7 +334,7 @@ statement grain.
 - **Live validation**:
   - Run ClickHouse migrations.
   - Materialize `nace_categories_clickhouse`, `brazil_cnae_to_nace_clickhouse`,
-    then the `brazil_rfb` group.
+    then the `brazil_comp_rfb` group.
   - Spot-check counts for `br_companies`, `br_establishments`,
     `br_company_contacts`, `br_company_domains`, and `br_industries`.
   - Verify known rows by CNPJ formatting, status translation, share-capital cast,

@@ -6,7 +6,7 @@ from typing import Any
 
 import duckdb
 
-from dagster_v3.defs.brazil_rfb import tables
+from dagster_v3.defs.brazil_companies.rfb import tables
 
 
 def _qualified_table_name(table_name: str) -> str:

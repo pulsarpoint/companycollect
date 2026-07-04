@@ -2,7 +2,7 @@ from pathlib import Path
 
 import duckdb
 
-from dagster_v3.defs.brazil_rfb import resume, source, tables
+from dagster_v3.defs.brazil_companies.rfb import resume, source, tables
 
 
 def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:

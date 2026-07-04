@@ -4,7 +4,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from dagster_v3.defs.brazil_rfb import contacts, tables, transforms
+from dagster_v3.defs.brazil_companies.rfb import contacts, tables, transforms
 
 
 def test_register_domain_udfs_can_reuse_connection() -> None:
@@ -423,7 +423,9 @@ def test_build_websites_requires_contact_info_database(tmp_path: Path) -> None:
     missing_contact_info_path = tmp_path / "br_contact_info.duckdb"
 
     with duckdb.connect(str(websites_path)) as connection:
-        with pytest.raises(FileNotFoundError, match="brazil_rfb_contact_info_duckdb"):
+        with pytest.raises(
+            FileNotFoundError, match="brazil_comp_rfb_contact_info_duckdb"
+        ):
             contacts.build_brazil_rfb_websites(
                 connection=connection,
                 contact_info_database_path=missing_contact_info_path,

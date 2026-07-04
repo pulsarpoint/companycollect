@@ -3,7 +3,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from dagster_v3.defs.brazil_rfb import staging, tables
+from dagster_v3.defs.brazil_companies.rfb import staging, tables
 
 
 def test_rfb_raw_column_layouts_match_published_file_families() -> None:
@@ -144,7 +144,9 @@ def test_load_raw_family_uses_latin1_no_header_csv(tmp_path: Path) -> None:
     with duckdb.connect(str(raw_path), read_only=True) as connection:
         schemas = {
             row[0]
-            for row in connection.execute("select schema_name from duckdb_schemas()").fetchall()
+            for row in connection.execute(
+                "select schema_name from duckdb_schemas()"
+            ).fetchall()
         }
     assert "manifest_db" not in schemas
 

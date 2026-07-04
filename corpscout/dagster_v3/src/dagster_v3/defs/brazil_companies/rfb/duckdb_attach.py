@@ -19,7 +19,9 @@ def attached_read_only_database(
     alias: str,
 ) -> Iterator[str]:
     if not alias.replace("_", "").isalnum():
-        raise ValueError(f"DuckDB attach alias must be alphanumeric/underscore: {alias!r}")
+        raise ValueError(
+            f"DuckDB attach alias must be alphanumeric/underscore: {alias!r}"
+        )
 
     path = Path(database_path).expanduser()
     if not path.is_absolute():

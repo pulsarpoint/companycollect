@@ -51,8 +51,7 @@ def test_replace_domain_clickhouse_tables_uses_stage_exchange(
         "company_website_domains": 3,
     }
     assert client.statements[0] == (
-        "CREATE TABLE `corpscout`.`_tmp_domains_domain_dim` AS "
-        "`corpscout`.`domains`"
+        "CREATE TABLE `corpscout`.`_tmp_domains_domain_dim` AS `corpscout`.`domains`"
     )
     assert client.statements[1] == (
         "CREATE TABLE `corpscout`.`_tmp_company_website_domains_links` AS "
@@ -103,7 +102,7 @@ def test_domains_clickhouse_depends_on_brazil_websites() -> None:
         for parent in repo.asset_graph.get(AssetKey("domains_clickhouse")).parent_keys
     }
 
-    assert "brazil_rfb_clickhouse_websites" in parents
+    assert "brazil_comp_rfb_clickhouse_websites" in parents
 
 
 def test_domains_clickhouse_depends_on_current_norway_brreg_websites() -> None:

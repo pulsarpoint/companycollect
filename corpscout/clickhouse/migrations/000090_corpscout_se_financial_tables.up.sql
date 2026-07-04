@@ -29,7 +29,11 @@ CREATE TABLE IF NOT EXISTS corpscout.se_financial_reports
     resolved_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (company_id, report_period_end, statement_key);
+ORDER BY (
+    company_id,
+    ifNull(report_period_end, toDate32('1970-01-01')),
+    statement_key
+);
 
 CREATE TABLE IF NOT EXISTS corpscout.se_financial_facts
 (
@@ -64,7 +68,12 @@ CREATE TABLE IF NOT EXISTS corpscout.se_financial_facts
     resolved_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (company_id, report_period_end, statement_key, fact_ordinal);
+ORDER BY (
+    company_id,
+    ifNull(report_period_end, toDate32('1970-01-01')),
+    statement_key,
+    fact_ordinal
+);
 
 CREATE TABLE IF NOT EXISTS corpscout.se_financial_metrics
 (
@@ -114,4 +123,8 @@ CREATE TABLE IF NOT EXISTS corpscout.se_financial_metrics
     resolved_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (company_id, report_period_end, statement_key);
+ORDER BY (
+    company_id,
+    ifNull(report_period_end, toDate32('1970-01-01')),
+    statement_key
+);

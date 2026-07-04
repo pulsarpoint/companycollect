@@ -175,7 +175,7 @@ class _FakeContext:
 
 class _FakeClassifySourceClient:
     """Distinguishes corpus load / anti-join scan / insert by SQL content,
-    same pattern as tests/test_brazil_rfb_clickhouse.py's FakeClickHouseClient.
+    same pattern as tests/test_brazil_comp_rfb_clickhouse.py's FakeClickHouseClient.
     """
 
     def __init__(self, pending_rows, corpus_size=900):
