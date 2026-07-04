@@ -4,6 +4,7 @@ CommonCrawl/DNS domain validation, and the atomic stage/EXCHANGE contact-table r
 Per-country modules own their candidate SQL, id semantics, and table names.
 """
 
+import os
 import re
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -220,10 +221,57 @@ def iter_valid_contact_rows(
             )
 
 
+def pinned_dns_servers() -> tuple[str, ...]:
+    """Resolver IPs from CONTACT_EXTRACTION_DNS_SERVERS (comma-separated), or ().
+
+    When set, DNS validation runs in pinned stub mode: plain NS/SOA queries
+    against ONLY these servers, instead of the default parent-zone walk that
+    queries arbitrary authoritative nameservers directly. Use a dedicated
+    recursive resolver (e.g. unbound on a host you control) when the local
+    network's resolver path is flaky or rate-limits sustained lookups.
+    """
+    raw = os.environ.get("CONTACT_EXTRACTION_DNS_SERVERS", "")
+    return tuple(server.strip() for server in raw.split(",") if server.strip())
+
+
+def _stub_resolver(servers: Sequence[str]) -> dns.resolver.Resolver:
+    resolver = dns.resolver.Resolver(configure=False)
+    resolver.nameservers = list(servers)
+    resolver.timeout = DNS_QUERY_TIMEOUT_SECONDS
+    resolver.lifetime = DNS_QUERY_TIMEOUT_SECONDS
+    return resolver
+
+
+def _pinned_stub_nameservers(ascii_domain: str, servers: Sequence[str]) -> tuple[str, ...]:
+    """Validate a domain via plain stub queries against the pinned servers.
+
+    NS answer wins; on NoAnswer (NS lives at a zone cut above), an SOA answer
+    still proves the name exists in DNS — slightly stricter than the parent
+    walk (lame delegations SERVFAIL here), acceptable for a validation gate.
+    """
+    resolver = _stub_resolver(servers)
+    try:
+        return _answer_nameservers(resolver.resolve(ascii_domain, "NS"))
+    except dns.resolver.NoAnswer:
+        pass
+    except dns.exception.DNSException:
+        return ()
+    try:
+        answers = resolver.resolve(ascii_domain, "SOA")
+    except dns.exception.DNSException:
+        return ()
+    return tuple(
+        sorted({str(getattr(answer, "mname", answer)).rstrip(".").lower() for answer in answers})
+    )
+
+
 def nameservers_for_domain(domain: str) -> tuple[str, ...]:
     ascii_domain = idna_ascii(domain)
     if ascii_domain is None:
         return ()
+    pinned = pinned_dns_servers()
+    if pinned:
+        return _pinned_stub_nameservers(ascii_domain, pinned)
     parent_zone = _parent_zone_for_domain(ascii_domain)
     if parent_zone == "":
         return ()
@@ -355,6 +403,17 @@ def resolve_nameservers_concurrently(domains: Sequence[str]) -> dict[str, tuple[
             results[domain] = ()
             continue
         ascii_domain_by_original[domain] = ascii_domain
+
+    pinned = pinned_dns_servers()
+    if pinned:
+        with ThreadPoolExecutor(max_workers=DNS_RESOLVE_WORKERS) as executor:
+            future_by_domain = {
+                executor.submit(_pinned_stub_nameservers, ascii_domain, pinned): original
+                for original, ascii_domain in ascii_domain_by_original.items()
+            }
+            for future in as_completed(future_by_domain):
+                results[future_by_domain[future]] = future.result()
+        return results
 
     domains_by_parent_zone: dict[str, list[str]] = {}
     for original_domain, ascii_domain in ascii_domain_by_original.items():

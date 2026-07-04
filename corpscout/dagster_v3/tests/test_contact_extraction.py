@@ -409,3 +409,61 @@ def test_commoncrawl_lookup_tries_unicode_and_idna_forms():
     assert found == {"metinājumi.lv"}  # hit on the idna form counts for the unicode domain
     queried = str(client.queries)
     assert "xn--metinjumi-9bb.lv" in queried
+
+
+def test_pinned_dns_servers_parses_env(monkeypatch):
+    monkeypatch.delenv("CONTACT_EXTRACTION_DNS_SERVERS", raising=False)
+    assert contact_extraction.pinned_dns_servers() == ()
+    monkeypatch.setenv("CONTACT_EXTRACTION_DNS_SERVERS", "100.64.0.53, 100.64.0.54,")
+    assert contact_extraction.pinned_dns_servers() == ("100.64.0.53", "100.64.0.54")
+
+
+def test_pinned_mode_stub_queries_only_pinned_servers(monkeypatch):
+    monkeypatch.setenv("CONTACT_EXTRACTION_DNS_SERVERS", "100.64.0.53")
+    seen = {}
+
+    class _FakeStubResolver:
+        def __init__(self, servers):
+            seen["servers"] = tuple(servers)
+
+        def resolve(self, domain, record_type):
+            seen.setdefault("queries", []).append((domain, record_type))
+            if record_type == "NS":
+                return ["ns1.pinned.example.", "ns2.pinned.example."]
+            raise AssertionError("SOA should not be queried when NS answers")
+
+    monkeypatch.setattr(contact_extraction, "_stub_resolver", _FakeStubResolver)
+    # Parent-walk internals must never be touched in pinned mode.
+    monkeypatch.setattr(
+        contact_extraction,
+        "_parent_nameserver_addresses",
+        lambda parent_zone: (_ for _ in ()).throw(AssertionError("parent walk used")),
+    )
+
+    results = contact_extraction.resolve_nameservers_concurrently(["metinājumi.lv"])
+    assert results == {"metinājumi.lv": ("ns1.pinned.example", "ns2.pinned.example")}
+    assert seen["servers"] == ("100.64.0.53",)
+    # The wire query uses the IDNA2008 form even in pinned mode.
+    assert seen["queries"] == [("xn--metinjumi-9bb.lv", "NS")]
+
+
+def test_pinned_mode_falls_back_to_soa_then_empty(monkeypatch):
+    monkeypatch.setenv("CONTACT_EXTRACTION_DNS_SERVERS", "100.64.0.53")
+
+    class _SoaAnswer:
+        mname = "ns.master.example."
+
+    class _FakeStubResolver:
+        def __init__(self, servers):
+            pass
+
+        def resolve(self, domain, record_type):
+            if domain == "soa-only.lv":
+                if record_type == "NS":
+                    raise contact_extraction.dns.resolver.NoAnswer()
+                return [_SoaAnswer()]
+            raise contact_extraction.dns.resolver.NXDOMAIN()
+
+    monkeypatch.setattr(contact_extraction, "_stub_resolver", _FakeStubResolver)
+    assert contact_extraction.nameservers_for_domain("soa-only.lv") == ("ns.master.example",)
+    assert contact_extraction.nameservers_for_domain("gone.lv") == ()
