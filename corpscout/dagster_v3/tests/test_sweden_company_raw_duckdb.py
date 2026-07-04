@@ -116,6 +116,7 @@ def test_load_sweden_company_raw_manifest_creates_raw_duckdb_tables(tmp_path: Pa
     assert counts == {
         "raw_files": 2,
         "bolagsverket_raw": 1,
+        "bolagsverket_raw_rejected_lines": 0,
         "scb_raw": 1,
     }
     assert raw_files == [
@@ -218,9 +219,82 @@ def test_load_sweden_company_raw_manifest_streams_scb_latin1_transcode(
     assert counts == {
         "raw_files": 2,
         "bolagsverket_raw": 1,
+        "bolagsverket_raw_rejected_lines": 0,
         "scb_raw": 1,
     }
     assert scb == ("5560000000", "ÅÄÖ SCB")
+
+
+def test_bolagsverket_raw_loader_skips_and_records_malformed_csv_rows(
+    tmp_path: Path,
+) -> None:
+    bolagsverket_path = tmp_path / "bolagsverket_bulkfil.txt"
+    header = ";".join(tables.BOLAGSVERKET_SOURCE_COLUMNS)
+    valid_row = ";".join(
+        [
+            '"5560000000$ORGNR-IDORG"',
+            '"1"',
+            '"SE-LAND"',
+            '"Acme AB$FORETAGSNAMN-ORGNAM$2020-01-01"',
+            '"AB-ORGFO"',
+            '""',
+            '""',
+            '""',
+            '"2020-01-01"',
+            '"Runs acme.se"',
+            '"Box 1$$STOCKHOLM$11122$SE-LAND"',
+        ]
+    )
+    malformed_row = ";".join(
+        [
+            '"5560000001$ORGNR-IDORG',
+            '"1"',
+            '"SE-LAND"',
+            '"Broken AB"',
+            '"AB-ORGFO"',
+            '""',
+            '""',
+            '""',
+            '"2020-01-02"',
+            '"Runs broken.se"',
+            '"Box 2"',
+        ]
+    )
+    bolagsverket_path.write_text(
+        f"{header}\n{valid_row}\n{malformed_row}\n",
+        encoding="utf-8",
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_company_source.duckdb")) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+
+        raw_duckdb._replace_bolagsverket_raw_table(
+            connection=connection,
+            csv_path=bolagsverket_path,
+            source_run_id="run-1",
+            source_s3_key="raw/bolagsverket.zip",
+        )
+
+        bolagsverket_rows = connection.execute(
+            f"""
+            select source_record_id, organisationsnamn
+            from {tables.DLT_DATASET_NAME}.bolagsverket_raw
+            """
+        ).fetchall()
+        rejected_lines = connection.execute(
+            f"""
+            select count(distinct line)
+            from {tables.DLT_DATASET_NAME}.bolagsverket_raw_rejects
+            """
+        ).fetchone()[0]
+
+    assert bolagsverket_rows == [
+        (
+            "5560000000$ORGNR-IDORG",
+            "Acme AB$FORETAGSNAMN-ORGNAM$2020-01-01",
+        )
+    ]
+    assert rejected_lines == 1
 
 
 def test_scb_raw_loader_disables_parallel_csv_scan_with_null_padding(

@@ -9,6 +9,11 @@ from dagster_v3.defs.sweden_company import tables
 from dagster_v3.defs.sweden_company.resources import SWEDEN_COMPANY_RAW_BUCKET
 
 EXPECTED_SOURCE_SLUGS = frozenset({"bolagsverket_bulkfil", "scb_bulkfil"})
+BOLAGSVERKET_RAW_REJECTS_TABLE = "bolagsverket_raw_rejects"
+BOLAGSVERKET_RAW_REJECTS_TEMP_TABLE = "sweden_company_bolagsverket_raw_rejects"
+BOLAGSVERKET_RAW_REJECT_SCANS_TEMP_TABLE = (
+    "sweden_company_bolagsverket_raw_reject_scans"
+)
 
 
 def load_sweden_company_raw_manifest(
@@ -46,6 +51,9 @@ def load_sweden_company_raw_manifest(
                     )
                     counts["bolagsverket_raw"] = _table_count(
                         connection, "bolagsverket_raw"
+                    )
+                    counts["bolagsverket_raw_rejected_lines"] = (
+                        _distinct_count(connection, BOLAGSVERKET_RAW_REJECTS_TABLE, "line")
                     )
                 elif source_slug == "scb_bulkfil":
                     _replace_scb_raw_table(
@@ -151,7 +159,10 @@ def _replace_bolagsverket_raw_table(
     column_select = ",\n                ".join(
         _quoted(column) for column in tables.BOLAGSVERKET_SOURCE_COLUMNS
     )
+    duckdb_columns = _duckdb_varchar_columns_sql(tables.BOLAGSVERKET_SOURCE_COLUMNS)
     raw_record_sql = _raw_record_sql(tables.BOLAGSVERKET_SOURCE_COLUMNS)
+    connection.execute(f"drop table if exists {BOLAGSVERKET_RAW_REJECTS_TEMP_TABLE}")
+    connection.execute(f"drop table if exists {BOLAGSVERKET_RAW_REJECT_SCANS_TEMP_TABLE}")
     connection.execute(
         f"""
         create or replace table {tables.DLT_DATASET_NAME}.bolagsverket_raw as
@@ -159,7 +170,20 @@ def _replace_bolagsverket_raw_table(
             select
                 row_number() over ()::bigint as source_line_number,
                 {column_select}
-            from read_csv(?, delim=';', header=true, all_varchar=true, quote='"', escape='"')
+            from read_csv(
+                ?,
+                delim=';',
+                header=true,
+                all_varchar=true,
+                auto_detect=false,
+                columns={duckdb_columns},
+                quote='"',
+                escape='"',
+                strict_mode=false,
+                store_rejects=true,
+                rejects_table='{BOLAGSVERKET_RAW_REJECTS_TEMP_TABLE}',
+                rejects_scan='{BOLAGSVERKET_RAW_REJECT_SCANS_TEMP_TABLE}'
+            )
         ),
         with_raw_record as (
             select
@@ -179,6 +203,14 @@ def _replace_bolagsverket_raw_table(
         """,
         [str(csv_path), source_run_id, source_s3_key],
     )
+    connection.execute(
+        f"""
+        create or replace table {tables.DLT_DATASET_NAME}.{BOLAGSVERKET_RAW_REJECTS_TABLE} as
+        select * from {BOLAGSVERKET_RAW_REJECTS_TEMP_TABLE}
+        """
+    )
+    connection.execute(f"drop table {BOLAGSVERKET_RAW_REJECTS_TEMP_TABLE}")
+    connection.execute(f"drop table {BOLAGSVERKET_RAW_REJECT_SCANS_TEMP_TABLE}")
 
 
 def _replace_scb_raw_table(
@@ -247,6 +279,11 @@ def _raw_record_sql(source_columns: tuple[str, ...]) -> str:
     return f"to_json(map([{keys}], [{values}]))"
 
 
+def _duckdb_varchar_columns_sql(source_columns: tuple[str, ...]) -> str:
+    columns = ", ".join(f"'{column}': 'VARCHAR'" for column in source_columns)
+    return "{" + columns + "}"
+
+
 def _extract_single_member(*, zip_path: Path, output_dir: Path) -> Path:
     with zipfile.ZipFile(zip_path) as archive:
         members = [
@@ -267,6 +304,13 @@ def _extract_single_member(*, zip_path: Path, output_dir: Path) -> Path:
 def _table_count(connection: Any, table_name: str) -> int:
     value = connection.execute(
         f"select count(*) from {tables.DLT_DATASET_NAME}.{table_name}"
+    ).fetchone()[0]
+    return int(value)
+
+
+def _distinct_count(connection: Any, table_name: str, column_name: str) -> int:
+    value = connection.execute(
+        f"select count(distinct {_quoted(column_name)}) from {tables.DLT_DATASET_NAME}.{table_name}"
     ).fetchone()[0]
     return int(value)
 

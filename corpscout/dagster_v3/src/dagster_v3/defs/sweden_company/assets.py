@@ -73,6 +73,9 @@ def sweden_company_raw_duckdb(
             "retrieved_date": str(manifest["retrieved_date"]),
             "raw_file_count": counts["raw_files"],
             "bolagsverket_row_count": counts.get("bolagsverket_raw", 0),
+            "bolagsverket_rejected_line_count": counts.get(
+                "bolagsverket_raw_rejected_lines", 0
+            ),
             "scb_row_count": counts.get("scb_raw", 0),
         }
     )
