@@ -34,6 +34,10 @@ Every source gets the same two tables:
   provenance and confidence. This is the ONLY thing the domain graph reads,
   through one uniform query per source.
 
+`domain_in_name` and `email` fact rows are unvalidated observations; consumers
+wanting company↔domain associations must join `<src>_company_domains`, never
+derive them from the contacts table.
+
 A source with no contact data still gets both tables (empty) — uniformity is
 the point; consumers never special-case.
 
