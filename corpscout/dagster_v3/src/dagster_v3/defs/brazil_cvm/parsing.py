@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -83,14 +81,12 @@ def load_brazil_cvm_dfp_archive(
 ) -> dict[str, int]:
     normalized_year = normalize_dfp_year(year)
     resolved_at = resolved_at or datetime.now(UTC)
-    archive_path = Path(archive_path)
 
     with tempfile.TemporaryDirectory(prefix="brazil_cvm_dfp_csv_") as tmpdir:
-        temp_dir = Path(tmpdir)
         members = _extract_known_members(
-            archive_path=archive_path,
+            archive_path=Path(archive_path),
             year=normalized_year,
-            target_dir=temp_dir,
+            target_dir=Path(tmpdir),
         )
         _ensure_tables(connection)
         _replace_year(connection=connection, year=normalized_year)
@@ -208,13 +204,13 @@ def _extract_known_members(
 
             target_path = target_dir / member_name
             if member_name == document_name:
-                _write_member(zip_file, member_name, target_path)
+                target_path.write_bytes(zip_file.read(member_name))
                 document_path = target_path
             elif member_name == capital_name:
-                _write_member(zip_file, member_name, target_path)
+                target_path.write_bytes(zip_file.read(member_name))
                 capital_path = target_path
             elif member_name == auditor_name:
-                _write_member(zip_file, member_name, target_path)
+                target_path.write_bytes(zip_file.read(member_name))
                 auditor_path = target_path
             else:
                 try:
@@ -223,7 +219,7 @@ def _extract_known_members(
                     raise ValueError(
                         f"Unexpected Brazil CVM DFP CSV member: {member_name}"
                     ) from exc
-                _write_member(zip_file, member_name, target_path)
+                target_path.write_bytes(zip_file.read(member_name))
                 statements.append((statement, target_path))
 
     return _ExtractedMembers(
@@ -232,10 +228,6 @@ def _extract_known_members(
         capital_composition=capital_path,
         auditor_reports=auditor_path,
     )
-
-
-def _write_member(zip_file: ZipFile, member_name: str, target_path: Path) -> None:
-    target_path.write_bytes(zip_file.read(member_name))
 
 
 def _ensure_tables(connection: Any) -> None:
@@ -391,7 +383,6 @@ def _load_documents(
     resolved_at: datetime,
 ) -> None:
     _read_member_to_temp_table(connection=connection, csv_path=csv_path)
-    source_file_name = csv_path.name
     connection.execute(
         f"""
         insert into {BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_DOCUMENTS_TABLE}
@@ -423,7 +414,7 @@ def _load_documents(
             year,
             int(year),
             source_archive_key,
-            source_file_name,
+            csv_path.name,
             resolved_at,
         ],
     )
@@ -440,8 +431,10 @@ def _load_statement_rows(
     resolved_at: datetime,
 ) -> None:
     _read_member_to_temp_table(connection=connection, csv_path=csv_path)
-    source_file_name = csv_path.name
-    columns = _temp_columns(connection)
+    columns = {
+        row[0]
+        for row in connection.execute("describe _brazil_cvm_dfp_member").fetchall()
+    }
     period_start_expr = (
         "try_cast(nullif(DT_INI_EXERC, '') as date)"
         if "DT_INI_EXERC" in columns
@@ -494,7 +487,7 @@ def _load_statement_rows(
             member.statement_name,
             member.consolidation_type,
             source_archive_key,
-            source_file_name,
+            csv_path.name,
             resolved_at,
         ],
     )
@@ -510,7 +503,6 @@ def _load_capital_composition(
     resolved_at: datetime,
 ) -> None:
     _read_member_to_temp_table(connection=connection, csv_path=csv_path)
-    source_file_name = csv_path.name
     connection.execute(
         f"""
         insert into {BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_CAPITAL_COMPOSITION_TABLE}
@@ -544,7 +536,7 @@ def _load_capital_composition(
             year,
             int(year),
             source_archive_key,
-            source_file_name,
+            csv_path.name,
             resolved_at,
         ],
     )
@@ -560,7 +552,6 @@ def _load_auditor_reports(
     resolved_at: datetime,
 ) -> None:
     _read_member_to_temp_table(connection=connection, csv_path=csv_path)
-    source_file_name = csv_path.name
     connection.execute(
         f"""
         insert into {BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_AUDITOR_REPORTS_TABLE}
@@ -592,7 +583,7 @@ def _load_auditor_reports(
             year,
             int(year),
             source_archive_key,
-            source_file_name,
+            csv_path.name,
             resolved_at,
         ],
     )
@@ -616,11 +607,6 @@ def _read_member_to_temp_table(*, connection: Any, csv_path: Path) -> None:
         """,
         [str(csv_path)],
     )
-
-
-def _temp_columns(connection: Any) -> set[str]:
-    rows = connection.execute("describe _brazil_cvm_dfp_member").fetchall()
-    return {row[0] for row in rows}
 
 
 def _year_counts(*, connection: Any, year: str) -> dict[str, int]:

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import tempfile
 import time
@@ -144,14 +142,13 @@ class BrazilCvmDfpResource(dg.ConfigurableResource):
                 BRAZIL_CVM_RAW_BUCKET,
                 archive_key,
             )
-        http_session = session or self._session()
         with tempfile.TemporaryDirectory(prefix="brazil_cvm_dfp_") as tmpdir:
             target_path = Path(tmpdir) / dfp_archive_name(normalized_year)
             size_bytes, digest, content_type, source_last_modified = (
                 self._download_to_path(
                     url=source_url,
                     target_path=target_path,
-                    session=http_session,
+                    session=session or self._session(),
                     log_info=log_info,
                 )
             )

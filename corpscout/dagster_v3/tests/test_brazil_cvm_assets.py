@@ -14,6 +14,8 @@ def test_brazil_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
         str(year) for year in range(2010, 2027)
     ]
     assert brazil_cvm_dfp_raw_duckdb.partitions_def is partitions_def
+    assert brazil_cvm_dfp_raw_archives_s3.op.pool is None
+    assert brazil_cvm_dfp_raw_duckdb.op.pool == "brazil_cvm_duckdb"
     assert (
         brazil_cvm_dfp_raw_archives_s3.group_names_by_key[
             dg.AssetKey("brazil_cvm_dfp_raw_archives_s3")

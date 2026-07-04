@@ -21,7 +21,6 @@ from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
 BRAZIL_CVM_DUCKDB_PATH = Path("data/brazil_cvm_source.duckdb")
-BRAZIL_CVM_DUCKDB_POOL = "brazil_cvm_duckdb"
 
 BRAZIL_CVM_DFP_RAW_PARTITIONS = dg.StaticPartitionsDefinition(
     [
@@ -56,7 +55,7 @@ def brazil_cvm_dfp_raw_archives_s3(
     group_name=BRAZIL_CVM_GROUP_NAME,
     kinds={"python", "duckdb", "csv", "zip", "cvm", "dfp"},
     partitions_def=BRAZIL_CVM_DFP_RAW_PARTITIONS,
-    pool=BRAZIL_CVM_DUCKDB_POOL,
+    pool="brazil_cvm_duckdb",
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description="Parses Brazil CVM DFP yearly ZIP archives from object storage into DuckDB.",
 )
