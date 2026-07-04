@@ -2,8 +2,8 @@ from typing import Any
 
 import pytest
 
-from dagster_v3.defs.brazil_cvm import tables
-from dagster_v3.defs.brazil_cvm.parsing import (
+from dagster_v3.defs.brazil_financial.cvm import tables
+from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
     DFP_AUDITOR_REPORTS_TABLE,
     DFP_CAPITAL_COMPOSITION_TABLE,
@@ -53,10 +53,10 @@ class _Connection:
         return None
 
 
-def test_export_brazil_cvm_dfp_clickhouse_exports_all_duckdb_tables(
+def test_export_brazil_fin_cvm_dfp_clickhouse_exports_all_duckdb_tables(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dagster_v3.defs.brazil_cvm import clickhouse
+    from dagster_v3.defs.brazil_financial.cvm import clickhouse
 
     asserted_tables: list[tuple[str, tuple[str, ...]]] = []
     exports: list[dict[str, object]] = []
@@ -84,7 +84,7 @@ def test_export_brazil_cvm_dfp_clickhouse_exports_all_duckdb_tables(
         fake_export_duckdb_connection_table_to_clickhouse,
     )
 
-    row_counts = clickhouse.export_brazil_cvm_dfp_clickhouse(
+    row_counts = clickhouse.export_brazil_fin_cvm_dfp_clickhouse(
         duckdb_connection=FakeDuckDBConnection(),
         clickhouse=FakeClickHouseResource(),
     )
@@ -152,10 +152,10 @@ def test_export_brazil_cvm_dfp_clickhouse_exports_all_duckdb_tables(
     ]
 
 
-def test_export_brazil_cvm_dfp_clickhouse_refuses_empty_duckdb_table(
+def test_export_brazil_fin_cvm_dfp_clickhouse_refuses_empty_duckdb_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dagster_v3.defs.brazil_cvm import clickhouse
+    from dagster_v3.defs.brazil_financial.cvm import clickhouse
 
     exported = False
 
@@ -176,7 +176,7 @@ def test_export_brazil_cvm_dfp_clickhouse_refuses_empty_duckdb_table(
     )
 
     with pytest.raises(ValueError, match="Brazil CVM DFP DuckDB table is empty"):
-        clickhouse.export_brazil_cvm_dfp_clickhouse(
+        clickhouse.export_brazil_fin_cvm_dfp_clickhouse(
             duckdb_connection=FakeDuckDBConnection(
                 counts={
                     (BRAZIL_CVM_DUCKDB_SCHEMA, DFP_DOCUMENTS_TABLE): 1,

@@ -1,0 +1,1 @@
+"""Brazil financial Dagster assets."""

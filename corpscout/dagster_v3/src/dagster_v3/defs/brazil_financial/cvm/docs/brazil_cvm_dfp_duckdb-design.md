@@ -3,10 +3,10 @@
 ## 1. Source Overview
 
 - **Country / registry**: Brazil - CVM DFP annual financial statements for public/open companies.
-- **Module**: `defs/brazil_cvm/` · DuckDB file `data/brazil_cvm_source.duckdb` · pool `brazil_cvm_duckdb`.
-- **Existing raw asset**: `brazil_cvm_dfp_raw_archives_s3`.
-- **New parser asset**: `brazil_cvm_dfp_raw_duckdb`.
-- **Later export asset**: `brazil_cvm_dfp_raw_clickhouse`.
+- **Module**: `defs/brazil_financial/cvm/` · DuckDB file `data/brazil_cvm_source.duckdb` · pool `brazil_fin_cvm_duckdb`.
+- **Existing raw asset**: `brazil_fin_cvm_dfp_raw_archives_s3`.
+- **New parser asset**: `brazil_fin_cvm_dfp_raw_duckdb`.
+- **Later export asset**: `brazil_fin_cvm_dfp_raw_clickhouse`.
 - **ClickHouse migration**: `000087_corpscout_br_cvm_dfp_tables`.
 - **ClickHouse tables**:
   - `corpscout.br_cvm_dfp_documents`
@@ -162,7 +162,7 @@ Statement columns:
 ## 6. DuckDB To ClickHouse Shape
 
 The DuckDB final tables should already match the ClickHouse export columns in
-`dagster_v3.defs.brazil_cvm.tables`.
+`dagster_v3.defs.brazil_financial.cvm.tables`.
 
 ### `dfp_documents`
 
@@ -290,20 +290,20 @@ The parser should still preserve `cnpj`, `cnpj_basico`, `company_name`, and
 Planned assets:
 
 ```text
-brazil_cvm_dfp_raw_archives_s3
-  -> brazil_cvm_dfp_raw_duckdb
-  -> brazil_cvm_dfp_raw_clickhouse
+brazil_fin_cvm_dfp_raw_archives_s3
+  -> brazil_fin_cvm_dfp_raw_duckdb
+  -> brazil_fin_cvm_dfp_raw_clickhouse
 ```
 
-`brazil_cvm_dfp_raw_duckdb`:
+`brazil_fin_cvm_dfp_raw_duckdb`:
 
-- partitions: same static year partitions as `brazil_cvm_dfp_raw_archives_s3`
-- pool: `brazil_cvm_duckdb`
-- resources: `object_store`, `brazil_cvm_dfp`, `brazil_cvm_duckdb`
+- partitions: same static year partitions as `brazil_fin_cvm_dfp_raw_archives_s3`
+- pool: `brazil_fin_cvm_duckdb`
+- resources: `object_store`, `brazil_fin_cvm_dfp`, `brazil_fin_cvm_duckdb`
 - input: S3/RustFS archive key for `context.partition_key`
 - output: rows replaced for `dfp_year=context.partition_key`
 
-`brazil_cvm_dfp_raw_clickhouse`:
+`brazil_fin_cvm_dfp_raw_clickhouse`:
 
 - first version can be non-partitioned and export all parsed DuckDB rows;
 - later version can become partition-aware if row volume requires year-scoped
@@ -312,7 +312,7 @@ brazil_cvm_dfp_raw_archives_s3
 Jobs:
 
 ```text
-brazil_cvm_dfp_raw_backfill_job
+brazil_fin_cvm_dfp_raw_backfill_job
 ```
 
 should eventually select all three raw-stage assets for historical backfill.
@@ -331,7 +331,7 @@ Unit tests:
 
 Dagster tests:
 
-- `brazil_cvm_dfp_raw_duckdb` has same partitions as raw archive asset;
+- `brazil_fin_cvm_dfp_raw_duckdb` has same partitions as raw archive asset;
 - asset uses `context.partition_key` as `dfp_year`;
 - job selection includes archive -> DuckDB -> ClickHouse chain.
 

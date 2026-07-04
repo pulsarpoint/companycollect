@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from dagster_v3.defs.brazil_cvm.parsing import (
+from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
     DFP_STATEMENT_ROWS_TABLE,
 )

@@ -14,7 +14,7 @@ from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
-BRAZIL_CVM_GROUP_NAME = "brazil_cvm"
+BRAZIL_FIN_CVM_GROUP_NAME = "brazil_fin_cvm"
 BRAZIL_CVM_RAW_BUCKET = "source-brazil-cvm"
 BRAZIL_CVM_DFP_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS"
 BRAZIL_CVM_DFP_START_YEAR = 2010
@@ -137,7 +137,7 @@ class BrazilCvmDfpResource(dg.ConfigurableResource):
                 BRAZIL_CVM_RAW_BUCKET,
                 archive_key,
             )
-        with tempfile.TemporaryDirectory(prefix="brazil_cvm_dfp_") as tmpdir:
+        with tempfile.TemporaryDirectory(prefix="brazil_fin_cvm_dfp_") as tmpdir:
             target_path = Path(tmpdir) / dfp_archive_name(normalized_year)
             size_bytes, digest, content_type, source_last_modified = (
                 self._download_to_path(

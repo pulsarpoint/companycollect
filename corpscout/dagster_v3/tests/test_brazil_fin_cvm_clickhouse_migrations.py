@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from dagster_v3.defs.brazil_cvm import tables as brazil_cvm_tables
+from dagster_v3.defs.brazil_financial.cvm import tables as brazil_cvm_tables
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
 
 
-def test_brazil_cvm_dfp_tables_migration_covers_exported_columns() -> None:
+def test_brazil_fin_cvm_dfp_tables_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000087_corpscout_br_cvm_dfp_tables.up.sql")
     down_sql = _migration_sql("000087_corpscout_br_cvm_dfp_tables.down.sql")
 

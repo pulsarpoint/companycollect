@@ -4,7 +4,7 @@ from pathlib import Path
 
 import duckdb
 
-from dagster_v3.defs.brazil_cvm.parsing import (
+from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
     DFP_STATEMENT_ROWS_TABLE,
 )
@@ -36,7 +36,7 @@ class _StubExchangeRates:
 def test_statement_rows_usd_conversion_maps_real_to_brl_and_applies_scale(
     tmp_path: Path,
 ) -> None:
-    from dagster_v3.defs.brazil_cvm.usd_conversion import (
+    from dagster_v3.defs.brazil_financial.cvm.usd_conversion import (
         apply_brazil_cvm_statement_rows_usd_conversion,
     )
 
@@ -83,7 +83,7 @@ def test_statement_rows_usd_conversion_maps_real_to_brl_and_applies_scale(
 def test_statement_rows_usd_conversion_without_rates_leaves_usd_null(
     tmp_path: Path,
 ) -> None:
-    from dagster_v3.defs.brazil_cvm.usd_conversion import (
+    from dagster_v3.defs.brazil_financial.cvm.usd_conversion import (
         apply_brazil_cvm_statement_rows_usd_conversion,
     )
 
@@ -113,7 +113,7 @@ def test_statement_rows_usd_conversion_without_rates_leaves_usd_null(
 def test_statement_rows_usd_conversion_handles_large_scaled_amounts(
     tmp_path: Path,
 ) -> None:
-    from dagster_v3.defs.brazil_cvm.usd_conversion import (
+    from dagster_v3.defs.brazil_financial.cvm.usd_conversion import (
         apply_brazil_cvm_statement_rows_usd_conversion,
     )
 

@@ -6,7 +6,7 @@ import re
 from typing import Any
 from zipfile import ZipFile
 
-from dagster_v3.defs.brazil_cvm.source import (
+from dagster_v3.defs.brazil_financial.cvm.source import (
     BRAZIL_CVM_RAW_BUCKET,
     dfp_archive_object_key,
     normalize_dfp_year,
@@ -107,7 +107,7 @@ def parse_dfp_statement_member_name(
     )
 
 
-def load_brazil_cvm_dfp_archive(
+def load_brazil_fin_cvm_dfp_archive(
     *,
     connection: Any,
     archive_path: str | Path,
@@ -119,7 +119,7 @@ def load_brazil_cvm_dfp_archive(
     normalized_year = normalize_dfp_year(year)
     resolved_at = resolved_at or datetime.now(UTC)
 
-    with tempfile.TemporaryDirectory(prefix="brazil_cvm_dfp_csv_") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="brazil_fin_cvm_dfp_csv_") as tmpdir:
         members = _extract_known_members(
             archive_path=Path(archive_path),
             year=normalized_year,
@@ -177,7 +177,7 @@ def load_brazil_cvm_dfp_archive(
     return counts
 
 
-def parse_brazil_cvm_dfp_archive_from_object_store(
+def parse_brazil_fin_cvm_dfp_archive_from_object_store(
     *,
     connection: Any,
     object_store: Any,
@@ -187,14 +187,14 @@ def parse_brazil_cvm_dfp_archive_from_object_store(
 ) -> dict[str, int]:
     normalized_year = normalize_dfp_year(year)
     archive_key = dfp_archive_object_key(normalized_year)
-    with tempfile.TemporaryDirectory(prefix="brazil_cvm_dfp_archive_") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="brazil_fin_cvm_dfp_archive_") as tmpdir:
         archive_path = Path(tmpdir) / f"dfp_cia_aberta_{normalized_year}.zip"
         object_store.download_file(
             archive_key,
             archive_path,
             bucket=BRAZIL_CVM_RAW_BUCKET,
         )
-        return load_brazil_cvm_dfp_archive(
+        return load_brazil_fin_cvm_dfp_archive(
             connection=connection,
             archive_path=archive_path,
             year=normalized_year,
@@ -464,7 +464,7 @@ def _load_documents(
             ?,
             source_row_number,
             ?
-        from _brazil_cvm_dfp_member
+        from _brazil_fin_cvm_dfp_member
         """,
         [
             SOURCE_SLUG,
@@ -491,7 +491,7 @@ def _load_statement_rows(
     _read_member_to_temp_table(connection=connection, csv_path=csv_path)
     columns = {
         row[0]
-        for row in connection.execute("describe _brazil_cvm_dfp_member").fetchall()
+        for row in connection.execute("describe _brazil_fin_cvm_dfp_member").fetchall()
     }
     period_start_expr = (
         "try_cast(nullif(DT_INI_EXERC, '') as date)"
@@ -538,7 +538,7 @@ def _load_statement_rows(
             ?,
             source_row_number,
             ?
-        from _brazil_cvm_dfp_member
+        from _brazil_fin_cvm_dfp_member
         """,
         [
             SOURCE_SLUG,
@@ -592,7 +592,7 @@ def _load_capital_composition(
             ?,
             source_row_number,
             ?
-        from _brazil_cvm_dfp_member
+        from _brazil_fin_cvm_dfp_member
         """,
         [
             SOURCE_SLUG,
@@ -639,7 +639,7 @@ def _load_auditor_reports(
             ?,
             source_row_number,
             ?
-        from _brazil_cvm_dfp_member
+        from _brazil_fin_cvm_dfp_member
         """,
         [
             SOURCE_SLUG,
@@ -679,7 +679,7 @@ def _read_member_to_temp_table_with_encoding(
 ) -> None:
     connection.execute(
         f"""
-        create or replace temporary table _brazil_cvm_dfp_member as
+        create or replace temporary table _brazil_fin_cvm_dfp_member as
         select
             row_number() over ()::bigint as source_row_number,
             *

@@ -5,12 +5,12 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import duckdb
 import pytest
 
-from dagster_v3.defs.brazil_cvm.parsing import (
+from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
     DFP_AUDITOR_REPORTS_TABLE,
     DFP_DOCUMENTS_TABLE,
     DFP_STATEMENT_ROWS_TABLE,
-    load_brazil_cvm_dfp_archive,
+    load_brazil_fin_cvm_dfp_archive,
     parse_dfp_statement_member_name,
 )
 
@@ -26,14 +26,14 @@ def test_parse_dfp_statement_member_name_derives_statement_and_consolidation() -
     assert member.consolidation_type == "consolidated"
 
 
-def test_load_brazil_cvm_dfp_archive_normalizes_known_csv_families(
+def test_load_brazil_fin_cvm_dfp_archive_normalizes_known_csv_families(
     tmp_path: Path,
 ) -> None:
     archive_path = tmp_path / "dfp_cia_aberta_2026.zip"
     _write_dfp_zip(archive_path, year="2026", include_capital=True)
     connection = duckdb.connect(str(tmp_path / "source.duckdb"))
 
-    counts = load_brazil_cvm_dfp_archive(
+    counts = load_brazil_fin_cvm_dfp_archive(
         connection=connection,
         archive_path=archive_path,
         year="2026",
@@ -137,7 +137,7 @@ def test_load_brazil_cvm_dfp_archive_normalizes_known_csv_families(
     assert "Demonstrações Financeiras" in report_text
 
 
-def test_load_brazil_cvm_dfp_archive_replaces_only_requested_year(
+def test_load_brazil_fin_cvm_dfp_archive_replaces_only_requested_year(
     tmp_path: Path,
 ) -> None:
     connection = duckdb.connect(str(tmp_path / "source.duckdb"))
@@ -153,7 +153,7 @@ def test_load_brazil_cvm_dfp_archive_replaces_only_requested_year(
         ("2025", old_archive, "run-old"),
         ("2026", second_archive, "run-2"),
     ):
-        load_brazil_cvm_dfp_archive(
+        load_brazil_fin_cvm_dfp_archive(
             connection=connection,
             archive_path=path,
             year=year,
@@ -172,7 +172,7 @@ def test_load_brazil_cvm_dfp_archive_replaces_only_requested_year(
     assert rows == [(2025, 150000, "run-old"), (2026, 159999, "run-2")]
 
 
-def test_load_brazil_cvm_dfp_archive_upgrades_old_statement_rows_table(
+def test_load_brazil_fin_cvm_dfp_archive_upgrades_old_statement_rows_table(
     tmp_path: Path,
 ) -> None:
     archive_path = tmp_path / "dfp_cia_aberta_2026.zip"
@@ -215,7 +215,7 @@ def test_load_brazil_cvm_dfp_archive_upgrades_old_statement_rows_table(
         """
     )
 
-    counts = load_brazil_cvm_dfp_archive(
+    counts = load_brazil_fin_cvm_dfp_archive(
         connection=connection,
         archive_path=archive_path,
         year="2026",
@@ -243,7 +243,7 @@ def test_load_brazil_cvm_dfp_archive_upgrades_old_statement_rows_table(
     assert row == (None, None, None, "")
 
 
-def test_load_brazil_cvm_dfp_archive_reads_windows_1252_auditor_report(
+def test_load_brazil_fin_cvm_dfp_archive_reads_windows_1252_auditor_report(
     tmp_path: Path,
 ) -> None:
     archive_path = tmp_path / "dfp_cia_aberta_2018.zip"
@@ -255,7 +255,7 @@ def test_load_brazil_cvm_dfp_archive_reads_windows_1252_auditor_report(
     )
     connection = duckdb.connect(str(tmp_path / "source.duckdb"))
 
-    counts = load_brazil_cvm_dfp_archive(
+    counts = load_brazil_fin_cvm_dfp_archive(
         connection=connection,
         archive_path=archive_path,
         year="2018",
@@ -271,7 +271,9 @@ def test_load_brazil_cvm_dfp_archive_reads_windows_1252_auditor_report(
     assert report_text == "Companhia amparada pela lei 9.964ƒ2000."
 
 
-def test_load_brazil_cvm_dfp_archive_rejects_unknown_csv_member(tmp_path: Path) -> None:
+def test_load_brazil_fin_cvm_dfp_archive_rejects_unknown_csv_member(
+    tmp_path: Path,
+) -> None:
     archive_path = tmp_path / "dfp_cia_aberta_2026.zip"
     _write_dfp_zip(
         archive_path,
@@ -281,7 +283,7 @@ def test_load_brazil_cvm_dfp_archive_rejects_unknown_csv_member(tmp_path: Path) 
     connection = duckdb.connect(str(tmp_path / "source.duckdb"))
 
     with pytest.raises(ValueError, match="Unexpected Brazil CVM DFP CSV member"):
-        load_brazil_cvm_dfp_archive(
+        load_brazil_fin_cvm_dfp_archive(
             connection=connection,
             archive_path=archive_path,
             year="2026",

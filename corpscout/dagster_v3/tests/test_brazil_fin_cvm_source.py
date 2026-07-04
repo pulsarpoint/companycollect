@@ -3,7 +3,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from dagster_v3.defs.brazil_cvm.source import (
+from dagster_v3.defs.brazil_financial.cvm.source import (
     BRAZIL_CVM_RAW_BUCKET,
     BrazilCvmDfpResource,
     dfp_archive_object_key,
@@ -105,7 +105,7 @@ def test_dfp_source_url_and_object_keys_are_deterministic() -> None:
     )
 
 
-def test_brazil_cvm_dfp_resource_downloads_missing_year_archive() -> None:
+def test_brazil_fin_cvm_dfp_resource_downloads_missing_year_archive() -> None:
     resource = BrazilCvmDfpResource()
     object_store = FakeObjectStore()
     url = dfp_source_url("2026")
@@ -134,7 +134,7 @@ def test_brazil_cvm_dfp_resource_downloads_missing_year_archive() -> None:
     assert result.sha256
 
 
-def test_brazil_cvm_dfp_resource_skips_existing_year_archive_without_http() -> None:
+def test_brazil_fin_cvm_dfp_resource_skips_existing_year_archive_without_http() -> None:
     resource = BrazilCvmDfpResource()
     object_store = FakeObjectStore()
     archive_key = dfp_archive_object_key("2026")
@@ -160,7 +160,7 @@ def test_brazil_cvm_dfp_resource_skips_existing_year_archive_without_http() -> N
     assert result.sha256 == sha256(b"already-there").hexdigest()
 
 
-def test_brazil_cvm_dfp_resource_reuses_existing_metadata_for_existing_archive() -> (
+def test_brazil_fin_cvm_dfp_resource_reuses_existing_metadata_for_existing_archive() -> (
     None
 ):
     resource = BrazilCvmDfpResource()

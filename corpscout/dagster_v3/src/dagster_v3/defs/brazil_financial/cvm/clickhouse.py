@@ -3,8 +3,8 @@ from typing import Any
 
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.brazil_cvm import tables
-from dagster_v3.defs.brazil_cvm.parsing import (
+from dagster_v3.defs.brazil_financial.cvm import tables
+from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
     DFP_AUDITOR_REPORTS_TABLE,
     DFP_CAPITAL_COMPOSITION_TABLE,
@@ -40,7 +40,7 @@ EXPORT_TABLES = (
 )
 
 
-def export_brazil_cvm_dfp_clickhouse(
+def export_brazil_fin_cvm_dfp_clickhouse(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
