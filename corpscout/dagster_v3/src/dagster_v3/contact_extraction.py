@@ -1,0 +1,507 @@
+"""Shared contact-candidate extraction from free text (emails + domains, IDN-aware),
+CommonCrawl/DNS domain validation, and the atomic stage/EXCHANGE contact-table replace.
+
+Per-country modules own their candidate SQL, id semantics, and table names.
+"""
+
+import re
+import uuid
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from typing import Any
+
+import dns.exception
+import dns.rdatatype
+import dns.resolver
+
+from dagster_v3.domains import root_domain, website_host
+
+COMMONCRAWL_CONFIDENCE = 0.95
+DNS_CONFIDENCE = 0.70
+DNS_RESOLVE_WORKERS = 32
+DNS_QUERY_TIMEOUT_SECONDS = 2.0
+CLICKHOUSE_INSERT_BATCH_SIZE = 50_000
+
+# Internal batching size for CommonCrawl domain-membership lookups. Not part of the
+# public interface (the Czech-specific CLICKHOUSE_QUERY_BATCH_SIZE/
+# CLICKHOUSE_COMPANY_BATCH_SIZE constants stay in czech_ares — they also govern the
+# per-country candidate-row scan batch size, which has no shared meaning here).
+_COMMONCRAWL_QUERY_BATCH_SIZE = 10_000
+
+# Label classes gain the Latin-1 Supplement + Latin Extended-A range (À-ſ) so IDN
+# domains (e.g. Latvian ā/č/š/ž/ģ/ķ/ļ/ņ) are recognized as candidates alongside ASCII.
+EMAIL_RE = re.compile(
+    r"\b[A-Z0-9._%+\-]+@(?:[A-Z0-9À-ſ](?:[A-Z0-9À-ſ\-]{0,61}[A-Z0-9À-ſ])?\.)+"
+    r"[A-Z0-9À-ſ](?:[A-Z0-9À-ſ\-]{0,61}[A-Z0-9À-ſ])?\b",
+    re.IGNORECASE,
+)
+DOMAIN_RE = re.compile(
+    r"(?<!@)\b(?:https?://)?(?:[A-Z0-9À-ſ](?:[A-Z0-9À-ſ\-]{0,61}[A-Z0-9À-ſ])?\.)+"
+    r"[A-Z0-9À-ſ](?:[A-Z0-9À-ſ\-]{0,61}[A-Z0-9À-ſ])?(?:/[^\s,;)]*)?",
+    re.IGNORECASE,
+)
+# ClickHouse RE2 match() prefilter — broader than the Python regexes above, just cheap
+# enough to cut down rows before Python-side parsing. RE2 supports \p{L} (any Unicode
+# letter) for the bare-domain alternative's leading label; the TLD stays [A-Za-z]{2,}
+# since real TLDs (ccTLD or gTLD) are always ASCII, even for IDN domains (the TLD is
+# never punycode-encoded on its own).
+CANDIDATE_TEXT_FILTER = "(?i)(@|https?://|www\\.|[\\p{L}0-9][\\p{L}0-9-]*\\.[A-Za-z]{2,})"
+
+
+@dataclass(frozen=True)
+class ContactCandidate:
+    record_id: str
+    contact_type: str
+    contact_value: str
+    domain: str
+
+
+def idna_ascii(domain: str) -> str | None:
+    """ASCII (punycode) form of a possibly-IDN domain; None if unencodable."""
+    try:
+        import idna
+
+        return idna.encode(domain).decode("ascii")
+    except Exception:  # noqa: BLE001 - any encode failure means "not a resolvable IDN"
+        # idna.encode() enforces IDNA2008's ban on hyphens in a label's 3rd/4th
+        # position (avoids collisions with the "xn--" ACE prefix) even for domains
+        # that are already plain ASCII and perfectly valid DNS names, e.g.
+        # "aa--bb.com" (empirically confirmed against idna==3.18). Fall back to the
+        # untouched input for those; a non-ASCII domain idna can't encode has no
+        # ASCII form at all.
+        if domain and domain.isascii():
+            return domain
+        return None
+
+
+def extract_contact_candidates(*, record_id: str, text: str) -> list[ContactCandidate]:
+    """Extract email and domain candidates embedded in free text (IDN-aware)."""
+    candidates: list[ContactCandidate] = []
+    seen: set[tuple[str, str]] = set()
+    extracted: list[tuple[int, str, str, str]] = []
+
+    for match in EMAIL_RE.finditer(text):
+        value = match.group(0).lower()
+        domain = root_domain(value.rsplit("@", maxsplit=1)[-1])
+        if domain:
+            extracted.append((match.start(), "email", value, domain))
+
+    for match in DOMAIN_RE.finditer(text):
+        value = _normalized_domain_contact_value(match.group(0))
+        domain = root_domain(value)
+        if domain:
+            extracted.append((match.start(), "domain", value, domain))
+
+    for _position, contact_type, contact_value, domain in sorted(extracted):
+        _append_candidate(
+            candidates,
+            seen,
+            record_id=record_id,
+            contact_type=contact_type,
+            contact_value=contact_value,
+            domain=domain,
+        )
+
+    return candidates
+
+
+def extract_contact_candidates_by_domain(
+    rows: Iterable[tuple[str, str]],
+) -> dict[str, list[ContactCandidate]]:
+    candidates_by_domain: dict[str, list[ContactCandidate]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for record_id_raw, text_raw in rows:
+        record_id = str(record_id_raw)
+        text = str(text_raw)
+        for parsed_candidate in extract_contact_candidates(record_id=record_id, text=text):
+            candidate = ContactCandidate(
+                record_id=parsed_candidate.record_id,
+                contact_type=parsed_candidate.contact_type,
+                contact_value=parsed_candidate.contact_value,
+                domain=parsed_candidate.domain,
+            )
+            key = (candidate.record_id, candidate.contact_type, candidate.contact_value)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates_by_domain.setdefault(candidate.domain, []).append(candidate)
+    return candidates_by_domain
+
+
+def merge_domain_candidates(
+    into: dict[str, list[ContactCandidate]],
+    new: dict[str, list[ContactCandidate]],
+) -> None:
+    seen = {
+        (domain, candidate.record_id, candidate.contact_type, candidate.contact_value)
+        for domain, candidates in into.items()
+        for candidate in candidates
+    }
+    for domain, candidates in new.items():
+        target_candidates = into.setdefault(domain, [])
+        for candidate in candidates:
+            key = (domain, candidate.record_id, candidate.contact_type, candidate.contact_value)
+            if key in seen:
+                continue
+            seen.add(key)
+            target_candidates.append(candidate)
+
+
+def iter_valid_contact_rows(
+    candidates_by_domain: dict[str, list[ContactCandidate]],
+    *,
+    commoncrawl_domains: set[str],
+    nameservers_by_domain: dict[str, tuple[str, ...]],
+    source_slug: str,
+    resolved_at: datetime,
+) -> Iterator[tuple]:
+    """Yield 9-tuples for domains validated via CommonCrawl or DNS parent-zone NS
+    lookup, dropping unvalidated domains.
+
+    Yields: (source_slug, source_record_id, record_id, contact_type, contact_value,
+    domain, domain_source, confidence, resolved_at).
+    """
+    for domain in sorted(candidates_by_domain):
+        validation = _validated_domain(
+            domain,
+            commoncrawl_domains=commoncrawl_domains,
+            nameservers_by_domain=nameservers_by_domain,
+        )
+        if validation is None:
+            continue
+        domain_source, confidence = validation
+        for candidate in candidates_by_domain[domain]:
+            yield (
+                source_slug,
+                candidate.record_id,
+                candidate.record_id,
+                candidate.contact_type,
+                candidate.contact_value,
+                domain,
+                domain_source,
+                confidence,
+                resolved_at,
+            )
+
+
+def nameservers_for_domain(domain: str) -> tuple[str, ...]:
+    ascii_domain = idna_ascii(domain)
+    if ascii_domain is None:
+        return ()
+    parent_zone = _parent_zone_for_domain(ascii_domain)
+    if parent_zone == "":
+        return ()
+    parent_nameserver_addresses = _parent_nameserver_addresses(parent_zone)
+    if not parent_nameserver_addresses:
+        return ()
+    return _resolve_domain_nameservers_from_parent(
+        ascii_domain,
+        parent_nameserver_addresses,
+    )
+
+
+def _parent_zone_for_domain(domain: str) -> str:
+    # No new tldextract.TLDExtract instance here (per module contract) — derive the
+    # public suffix from the shared root_domain() instead. root_domain() returns
+    # "<registrable-label>.<public-suffix>" (e.g. "example.co.uk"), so the public
+    # suffix is everything after the first label, which is exactly tldextract's
+    # `.suffix` for any real (non-bare-suffix) domain. Empirically verified equivalent
+    # to tldextract(domain).suffix across single- and multi-label suffixes (cz, co.uk,
+    # com, lv). Bare-suffix inputs (e.g. domain == "cz" itself) return "" here instead
+    # of the suffix itself, but domains reaching this function always come from
+    # root_domain()-validated candidates, so a bare suffix never occurs in practice.
+    registrable = root_domain(domain)
+    if not registrable or "." not in registrable:
+        return ""
+    return registrable.split(".", maxsplit=1)[-1]
+
+
+def _parent_nameserver_addresses(parent_zone: str) -> tuple[str, ...]:
+    return _nameserver_addresses(_recursive_nameservers(parent_zone))
+
+
+def _recursive_nameservers(domain: str) -> tuple[str, ...]:
+    try:
+        answers = dns.resolver.resolve(
+            domain,
+            "NS",
+            lifetime=DNS_QUERY_TIMEOUT_SECONDS,
+        )
+    except dns.exception.DNSException:
+        return ()
+    return _answer_nameservers(answers)
+
+
+def _nameserver_addresses(nameservers: Sequence[str]) -> tuple[str, ...]:
+    addresses: set[str] = set()
+    for nameserver in nameservers:
+        for record_type in ("A", "AAAA"):
+            try:
+                answers = dns.resolver.resolve(
+                    nameserver,
+                    record_type,
+                    lifetime=DNS_QUERY_TIMEOUT_SECONDS,
+                )
+            except dns.exception.DNSException:
+                continue
+            addresses.update(str(answer).rstrip(".") for answer in answers)
+    return tuple(sorted(addresses))
+
+
+def _resolve_domain_nameservers_from_parent(
+    domain: str,
+    parent_nameserver_addresses: Sequence[str],
+) -> tuple[str, ...]:
+    for address in parent_nameserver_addresses:
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.nameservers = [address]
+        resolver.timeout = DNS_QUERY_TIMEOUT_SECONDS
+        resolver.lifetime = DNS_QUERY_TIMEOUT_SECONDS
+        try:
+            answers = resolver.resolve(
+                domain,
+                "NS",
+                lifetime=DNS_QUERY_TIMEOUT_SECONDS,
+            )
+        except dns.resolver.NoAnswer as exc:
+            nameservers = _authority_nameservers(exc.response())
+            if nameservers:
+                return nameservers
+            continue
+        except dns.exception.DNSException:
+            continue
+        nameservers = _answer_nameservers(answers)
+        if nameservers:
+            return nameservers
+    return ()
+
+
+def _answer_nameservers(answers: Any) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(getattr(answer, "target", answer)).rstrip(".").lower()
+                for answer in answers
+            }
+        )
+    )
+
+
+def _authority_nameservers(response: Any | None) -> tuple[str, ...]:
+    if response is None:
+        return ()
+    nameservers: set[str] = set()
+    for rrset in response.authority:
+        if rrset.rdtype != dns.rdatatype.NS:
+            continue
+        nameservers.update(str(record.target).rstrip(".").lower() for record in rrset)
+    return tuple(sorted(nameservers))
+
+
+def resolve_nameservers_concurrently(domains: Sequence[str]) -> dict[str, tuple[str, ...]]:
+    unique_domains = tuple(dict.fromkeys(domains))
+    if not unique_domains:
+        return {}
+
+    domains_by_parent_zone: dict[str, list[str]] = {}
+    results: dict[str, tuple[str, ...]] = {}
+    for domain in unique_domains:
+        parent_zone = _parent_zone_for_domain(domain)
+        if parent_zone == "":
+            results[domain] = ()
+            continue
+        domains_by_parent_zone.setdefault(parent_zone, []).append(domain)
+
+    parent_addresses_by_zone = {
+        parent_zone: _parent_nameserver_addresses(parent_zone)
+        for parent_zone in sorted(domains_by_parent_zone)
+    }
+
+    with ThreadPoolExecutor(max_workers=DNS_RESOLVE_WORKERS) as executor:
+        future_by_domain = {}
+        for parent_zone, zone_domains in domains_by_parent_zone.items():
+            parent_addresses = parent_addresses_by_zone[parent_zone]
+            if not parent_addresses:
+                results.update({domain: () for domain in zone_domains})
+                continue
+            for domain in zone_domains:
+                future_by_domain[
+                    executor.submit(
+                        _resolve_domain_nameservers_from_parent,
+                        domain,
+                        parent_addresses,
+                    )
+                ] = domain
+        for future in as_completed(future_by_domain):
+            domain = future_by_domain[future]
+            try:
+                results[domain] = tuple(future.result())
+            except OSError:
+                results[domain] = ()
+    return results
+
+
+def _append_candidate(
+    candidates: list[ContactCandidate],
+    seen: set[tuple[str, str]],
+    *,
+    record_id: str,
+    contact_type: str,
+    contact_value: str,
+    domain: str,
+) -> None:
+    key = (contact_type, contact_value)
+    if key in seen:
+        return
+    seen.add(key)
+    candidates.append(
+        ContactCandidate(
+            record_id=record_id,
+            contact_type=contact_type,
+            contact_value=contact_value,
+            domain=domain,
+        )
+    )
+
+
+def _normalized_domain_contact_value(raw: str) -> str:
+    stripped = raw.strip().rstrip(".,;:")
+    host = website_host(stripped)
+    return host or stripped.lower()
+
+
+def _validated_domain(
+    domain: str,
+    *,
+    commoncrawl_domains: set[str],
+    nameservers_by_domain: dict[str, tuple[str, ...]],
+) -> tuple[str, float] | None:
+    if domain in commoncrawl_domains:
+        return "commoncrawl", COMMONCRAWL_CONFIDENCE
+    if nameservers_by_domain.get(domain):
+        return "dns", DNS_CONFIDENCE
+    return None
+
+
+def commoncrawl_domains(
+    clickhouse_client: Any,
+    domains: Sequence[str],
+) -> set[str]:
+    """Which of `domains` are known to CommonCrawl, tried in both unicode and idna
+    (punycode) form — a hit on either form validates the (unicode) input domain."""
+    query_form_by_domain: dict[str, str] = {}
+    for domain in domains:
+        query_form_by_domain[domain] = domain
+        ascii_domain = idna_ascii(domain)
+        if ascii_domain is not None and ascii_domain != domain:
+            query_form_by_domain[ascii_domain] = domain
+
+    query_forms = tuple(query_form_by_domain)
+    found: set[str] = set()
+    for batch in _batches(query_forms, _COMMONCRAWL_QUERY_BATCH_SIZE):
+        rows = clickhouse_client.execute(
+            """
+            SELECT DISTINCT root_domain
+            FROM corpscout.commoncrawl_domains FINAL
+            WHERE root_domain IN %(domains)s
+            """,
+            {"domains": tuple(batch)},
+        )
+        for row in rows:
+            matched_domain = query_form_by_domain.get(str(row[0]))
+            if matched_domain is not None:
+                found.add(matched_domain)
+    return found
+
+
+def replace_contact_table(
+    clickhouse_client: Any,
+    *,
+    qualified_table: str,
+    columns: Sequence[str],
+    rows: Iterable[tuple],
+    batch_size: int = CLICKHOUSE_INSERT_BATCH_SIZE,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Atomically replace `qualified_table`'s contents via stage table + EXCHANGE
+    TABLES. Returns the number of rows written."""
+    database, _, bare_table = qualified_table.rpartition(".")
+    stage = f"{database}._tmp_{bare_table}_{uuid.uuid4().hex}"
+    primary_error: Exception | None = None
+    written = 0
+    try:
+        clickhouse_client.execute(f"CREATE TABLE {stage} AS {qualified_table}")
+        written = _insert_contact_rows(
+            clickhouse_client,
+            stage,
+            rows,
+            columns=columns,
+            batch_size=batch_size,
+        )
+        clickhouse_client.execute(f"EXCHANGE TABLES {stage} AND {qualified_table}")
+    except Exception as exc:
+        primary_error = exc
+        raise
+    finally:
+        try:
+            clickhouse_client.execute(f"DROP TABLE IF EXISTS {stage}")
+        except Exception:
+            if primary_error is None:
+                raise
+    if log is not None:
+        log(
+            "Replaced contact table %s: rows_written=%s",
+            qualified_table,
+            written,
+        )
+    return written
+
+
+def _insert_contact_rows(
+    clickhouse_client: Any,
+    qualified_table: str,
+    rows: Iterable[tuple],
+    *,
+    columns: Sequence[str],
+    batch_size: int,
+) -> int:
+    written = 0
+    batch: list[tuple] = []
+
+    def flush() -> None:
+        nonlocal written
+        if not batch:
+            return
+        insert_rows = getattr(clickhouse_client, "insert_rows", None)
+        if callable(insert_rows):
+            insert_rows(
+                qualified_table.rsplit(".", maxsplit=1)[-1],
+                list(batch),
+                columns=columns,
+                database=qualified_table.split(".", maxsplit=1)[0],
+            )
+        else:
+            clickhouse_client.execute(
+                f"INSERT INTO {qualified_table} ({_column_list(columns)}) VALUES",
+                list(batch),
+            )
+        written += len(batch)
+        batch.clear()
+
+    for row in rows:
+        batch.append(row)
+        if len(batch) >= batch_size:
+            flush()
+    flush()
+    return written
+
+
+def _column_list(columns: Sequence[str]) -> str:
+    return ", ".join(f"`{column}`" for column in columns)
+
+
+def _batches(values: Sequence[Any], batch_size: int) -> Iterable[Sequence[Any]]:
+    for offset in range(0, len(values), batch_size):
+        yield values[offset : offset + batch_size]
