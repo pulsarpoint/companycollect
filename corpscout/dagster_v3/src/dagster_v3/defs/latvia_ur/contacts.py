@@ -72,7 +72,7 @@ def replace_latvia_company_contacts_clickhouse(
         row_pairs = [(str(regcode), str(legal_name)) for regcode, legal_name in rows]
         merge_domain_candidates(
             candidates_by_domain,
-            extract_contact_candidates_by_domain(row_pairs),
+            extract_contact_candidates_by_domain(row_pairs, home_tlds=frozenset({"lv"})),
         )
         after = row_pairs[-1][0]
         if len(rows) < SCAN_BATCH_SIZE:

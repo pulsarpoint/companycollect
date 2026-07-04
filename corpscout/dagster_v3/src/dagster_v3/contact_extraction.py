@@ -49,6 +49,13 @@ DOMAIN_RE = re.compile(
 # never punycode-encoded on its own).
 CANDIDATE_TEXT_FILTER = "(?i)(@|https?://|www\\.|[\\p{L}0-9][\\p{L}0-9-]*\\.[A-Za-z]{2,})"
 
+# Dotted abbreviations in legal names (e.g. "V.J.V.Ltd", "NADA TRADING CO.LTD.") parse
+# as real domains because .ltd/.co/.group/etc. are real TLDs. These labels, when they
+# make up the WHOLE matched host, mean "abbreviation", never a real company domain.
+_LEGAL_FORM_LABELS = frozenset(
+    {"co", "ltd", "inc", "pte", "gmbh", "llc", "plc", "corp", "limited", "sia", "as", "ik"}
+)
+
 
 @dataclass(frozen=True)
 class ContactCandidate:
@@ -76,23 +83,46 @@ def idna_ascii(domain: str) -> str | None:
         return None
 
 
-def extract_contact_candidates(*, record_id: str, text: str) -> list[ContactCandidate]:
-    """Extract email and domain candidates embedded in free text (IDN-aware)."""
+def extract_contact_candidates(
+    *, record_id: str, text: str, home_tlds: frozenset[str] = frozenset()
+) -> list[ContactCandidate]:
+    """Extract email and domain candidates embedded in free text (IDN-aware).
+
+    `home_tlds` exempts a country's own ccTLD (e.g. {"cz"}, {"lv"}) from the
+    single-char-nonhome abbreviation guard below — see `_rejected_as_abbreviation`.
+    """
     candidates: list[ContactCandidate] = []
     seen: set[tuple[str, str]] = set()
     extracted: list[tuple[int, str, str, str]] = []
 
     for match in EMAIL_RE.finditer(text):
         value = match.group(0).lower()
-        domain = root_domain(value.rsplit("@", maxsplit=1)[-1])
-        if domain:
-            extracted.append((match.start(), "email", value, domain))
+        email_domain = value.rsplit("@", maxsplit=1)[-1]
+        domain = root_domain(email_domain)
+        if not domain:
+            continue
+        if _rejected_as_abbreviation(
+            labels=email_domain.split("."),
+            registrable=domain,
+            home_tlds=home_tlds,
+            check_initials=False,
+        ):
+            continue
+        extracted.append((match.start(), "email", value, domain))
 
     for match in DOMAIN_RE.finditer(text):
         value = _normalized_domain_contact_value(match.group(0))
         domain = root_domain(value)
-        if domain:
-            extracted.append((match.start(), "domain", value, domain))
+        if not domain:
+            continue
+        if _rejected_as_abbreviation(
+            labels=value.split("."),
+            registrable=domain,
+            home_tlds=home_tlds,
+            check_initials=True,
+        ):
+            continue
+        extracted.append((match.start(), "domain", value, domain))
 
     for _position, contact_type, contact_value, domain in sorted(extracted):
         _append_candidate(
@@ -109,13 +139,17 @@ def extract_contact_candidates(*, record_id: str, text: str) -> list[ContactCand
 
 def extract_contact_candidates_by_domain(
     rows: Iterable[tuple[str, str]],
+    *,
+    home_tlds: frozenset[str] = frozenset(),
 ) -> dict[str, list[ContactCandidate]]:
     candidates_by_domain: dict[str, list[ContactCandidate]] = {}
     seen: set[tuple[str, str, str]] = set()
     for record_id_raw, text_raw in rows:
         record_id = str(record_id_raw)
         text = str(text_raw)
-        for parsed_candidate in extract_contact_candidates(record_id=record_id, text=text):
+        for parsed_candidate in extract_contact_candidates(
+            record_id=record_id, text=text, home_tlds=home_tlds
+        ):
             candidate = ContactCandidate(
                 record_id=parsed_candidate.record_id,
                 contact_type=parsed_candidate.contact_type,
@@ -301,18 +335,34 @@ def _authority_nameservers(response: Any | None) -> tuple[str, ...]:
 
 
 def resolve_nameservers_concurrently(domains: Sequence[str]) -> dict[str, tuple[str, ...]]:
+    """Resolve nameservers for each of `domains` concurrently.
+
+    Mirrors `nameservers_for_domain`'s explicit `idna_ascii` encoding (rather than
+    relying on dnspython's implicit IDNA2003 handling) so the actual DNS query uses
+    the IDNA2008 punycode form; a domain `idna_ascii` can't encode resolves to `()`.
+    The returned dict is keyed by the ORIGINAL (unicode) domain in `domains`, since
+    that's the form callers use to key their candidates.
+    """
     unique_domains = tuple(dict.fromkeys(domains))
     if not unique_domains:
         return {}
 
-    domains_by_parent_zone: dict[str, list[str]] = {}
     results: dict[str, tuple[str, ...]] = {}
+    ascii_domain_by_original: dict[str, str] = {}
     for domain in unique_domains:
-        parent_zone = _parent_zone_for_domain(domain)
-        if parent_zone == "":
+        ascii_domain = idna_ascii(domain)
+        if ascii_domain is None:
             results[domain] = ()
             continue
-        domains_by_parent_zone.setdefault(parent_zone, []).append(domain)
+        ascii_domain_by_original[domain] = ascii_domain
+
+    domains_by_parent_zone: dict[str, list[str]] = {}
+    for original_domain, ascii_domain in ascii_domain_by_original.items():
+        parent_zone = _parent_zone_for_domain(ascii_domain)
+        if parent_zone == "":
+            results[original_domain] = ()
+            continue
+        domains_by_parent_zone.setdefault(parent_zone, []).append(original_domain)
 
     parent_addresses_by_zone = {
         parent_zone: _parent_nameserver_addresses(parent_zone)
@@ -326,20 +376,20 @@ def resolve_nameservers_concurrently(domains: Sequence[str]) -> dict[str, tuple[
             if not parent_addresses:
                 results.update({domain: () for domain in zone_domains})
                 continue
-            for domain in zone_domains:
+            for original_domain in zone_domains:
                 future_by_domain[
                     executor.submit(
                         _resolve_domain_nameservers_from_parent,
-                        domain,
+                        ascii_domain_by_original[original_domain],
                         parent_addresses,
                     )
-                ] = domain
+                ] = original_domain
         for future in as_completed(future_by_domain):
-            domain = future_by_domain[future]
+            original_domain = future_by_domain[future]
             try:
-                results[domain] = tuple(future.result())
+                results[original_domain] = tuple(future.result())
             except OSError:
-                results[domain] = ()
+                results[original_domain] = ()
     return results
 
 
@@ -370,6 +420,41 @@ def _normalized_domain_contact_value(raw: str) -> str:
     stripped = raw.strip().rstrip(".,;:")
     host = website_host(stripped)
     return host or stripped.lower()
+
+
+def _rejected_as_abbreviation(
+    *,
+    labels: Sequence[str],
+    registrable: str,
+    home_tlds: frozenset[str],
+    check_initials: bool,
+) -> bool:
+    """True if `labels` (the raw matched host's dot-separated labels, lowercased)
+    look like a dotted abbreviation rather than a real domain:
+
+    1. initials: >=2 single-character labels in the raw match (e.g. "v.j.v.ltd") —
+       DOMAIN candidates only; an email's local part legitimately uses initials
+       (j.k.novak@firma.cz), so callers skip this clause for emails.
+    2. legal-form: every label is a bare legal-form abbreviation (e.g. "co.ltd",
+       "pte.ltd") — never a real registrable domain. Also applied to the
+       registrable domain's own labels, so a longer match like "vinse.co.ltd"
+       (from "HD VinSe.co.ltd,s.r.o.") can't attribute co.ltd either.
+    3. single-char-nonhome: the registrable domain's first label is a single
+       character (e.g. "a.group", "v.ltd") and its suffix isn't one of the
+       country's own home TLDs (a hypothetical "b.cz" for Czech survives).
+    """
+    if not labels:
+        return False
+    if check_initials and sum(1 for label in labels if len(label) == 1) >= 2:
+        return True
+    if all(label in _LEGAL_FORM_LABELS for label in labels):
+        return True
+    if all(label in _LEGAL_FORM_LABELS for label in registrable.split(".")):
+        return True
+    registrable_first, _dot, registrable_suffix = registrable.partition(".")
+    if len(registrable_first) == 1 and registrable_suffix not in home_tlds:
+        return True
+    return False
 
 
 def _validated_domain(

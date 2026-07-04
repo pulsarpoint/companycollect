@@ -216,6 +216,44 @@ def test_concurrent_nameserver_resolution_reuses_parent_zone_addresses(monkeypat
     ]
 
 
+def test_concurrent_nameserver_resolution_encodes_idna_before_dns_keyed_by_unicode(monkeypatch):
+    # Mirrors test_nameservers_for_domain_idna_encodes_before_dns, but for the
+    # concurrent resolver used by the production orchestrators: it must submit the
+    # idna (punycode) form for DNS resolution, not rely on dnspython's implicit
+    # IDNA2003 encoding, while the returned dict stays keyed by the unicode domain
+    # callers use to key their candidates.
+    zone_calls = []
+
+    def fake_parent_zone(domain):
+        zone_calls.append(domain)
+        return "lv"
+
+    monkeypatch.setattr(contact_extraction, "_parent_zone_for_domain", fake_parent_zone)
+    monkeypatch.setattr(
+        contact_extraction,
+        "_parent_nameserver_addresses",
+        lambda parent_zone: ("192.0.2.53",),
+    )
+
+    resolve_calls = []
+
+    def fake_resolve(domain, parent_nameserver_addresses):
+        resolve_calls.append(domain)
+        return (f"ns1.{domain}",)
+
+    monkeypatch.setattr(
+        contact_extraction,
+        "_resolve_domain_nameservers_from_parent",
+        fake_resolve,
+    )
+
+    results = contact_extraction.resolve_nameservers_concurrently(["metinājumi.lv"])
+
+    assert zone_calls == ["xn--metinjumi-9bb.lv"]
+    assert resolve_calls == ["xn--metinjumi-9bb.lv"]
+    assert results == {"metinājumi.lv": ("ns1.xn--metinjumi-9bb.lv",)}
+
+
 def test_authoritative_nameserver_lookup_uses_dns_resolver(monkeypatch):
     class FakeAnswer:
         target = "NS1.Example.CZ."
@@ -272,6 +310,54 @@ def test_ascii_extraction_unchanged_by_idn_extension():
         ("email", "info@asseco.cz"),
     ]
     assert {c.domain for c in candidates} == {"asseco.cz"}
+
+
+def test_dotted_initials_abbreviation_yields_no_candidates():
+    # "V.J.V.Ltd" parses as a domain (v.ltd is a real TLD) but is really initials +
+    # legal form; >=2 single-char labels in the raw match kills it.
+    assert extract_contact_candidates(record_id="1", text="V.J.V.Ltd") == []
+
+
+def test_legal_form_only_abbreviation_yields_no_candidates():
+    # "CO.LTD" would otherwise resolve fine (co.ltd is a real domain shape), but every
+    # label is a bare legal-form abbreviation.
+    assert extract_contact_candidates(record_id="1", text="NADA TRADING CO.LTD.") == []
+
+
+def test_legal_form_registrable_domain_rejected_even_with_real_subdomain_label():
+    # Found live in cz_company_contacts: "HD VinSe.co.ltd,s.r.o." matches host
+    # "vinse.co.ltd", whose labels are NOT all legal-form — but the ATTRIBUTED
+    # registrable domain is co.ltd, pure legal-form abbreviation junk.
+    assert extract_contact_candidates(record_id="1", text="HD VinSe.co.ltd,s.r.o.") == []
+
+
+def test_single_char_label_on_non_home_tld_yields_no_candidates():
+    # "a.group" is a syntactically valid domain (.group is a real gTLD), but a
+    # single-character label under a non-home TLD is almost always an abbreviation
+    # ("A" as in "A. Group" / "A.Company"), not a real company domain.
+    assert extract_contact_candidates(record_id="1", text="A.Group") == []
+
+
+def test_multi_char_first_label_survives_the_abbreviation_guard():
+    for text, home_tlds in (
+        ("24dressup.lv", frozenset({"lv"})),
+        ("la.lv", frozenset()),
+        ("o2.cz", frozenset({"cz"})),
+        ("dvm.co", frozenset()),  # 2-char first label allowed; only 1-char is rejected
+    ):
+        candidates = extract_contact_candidates(record_id="1", text=text, home_tlds=home_tlds)
+        assert [c.contact_value for c in candidates] == [text.lower()], text
+
+
+def test_email_local_part_initials_are_not_penalized():
+    # The initials clause only looks at the matched DOMAIN host, never the email's
+    # local part, so a legitimate initials-based email address survives.
+    candidates = extract_contact_candidates(
+        record_id="1", text="kontakt: j.k.novak@asseco.cz"
+    )
+    assert [(c.contact_type, c.contact_value, c.domain) for c in candidates] == [
+        ("email", "j.k.novak@asseco.cz", "asseco.cz")
+    ]
 
 
 def test_idna_ascii_encodes_idn_and_passes_ascii_through():

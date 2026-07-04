@@ -73,7 +73,7 @@ def replace_czech_company_contacts_clickhouse(
             break
         merge_domain_candidates(
             candidates_by_domain,
-            extract_contact_candidates_by_domain(company_rows),
+            extract_contact_candidates_by_domain(company_rows, home_tlds=frozenset({"cz"})),
         )
         last_ico = company_rows[-1][0]
 
