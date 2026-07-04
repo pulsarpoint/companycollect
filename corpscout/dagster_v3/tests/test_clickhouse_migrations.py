@@ -101,6 +101,8 @@ EXPECTED_MIGRATIONS = (
     "000085_corpscout_text_classifications",
     "000086_corpscout_lv_company_contacts",
     "000087_corpscout_br_cvm_dfp_tables",
+    "000088_corpscout_cz_canonical_contacts",
+    "000089_corpscout_lv_canonical_contacts",
     "000090_corpscout_se_financial_tables",
 )
 
