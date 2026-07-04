@@ -162,10 +162,24 @@ def test_nace_classification_asset_deps_and_group():
     import dagster as dg
 
     asset = latvia_classification.latvia_ur_nace_classification
+    spec = asset.specs_by_key[asset.key]
     assert dg.AssetKey("latvia_ur_clickhouse_companies") in {
-        dep.asset_key for dep in asset.specs_by_key[asset.key].deps
+        dep.asset_key for dep in spec.deps
     }
-    assert asset.specs_by_key[asset.key].group_name == "latvia_ur"
+    assert spec.group_name == "latvia_ur"
+    # GPU-endpoint dependencies must be visible to operators: the asset only
+    # works while the embedder and LLM boxes are up.
+    assert spec.tags.get("requires_llm") == "true"
+    assert spec.tags.get("requires_embedder") == "true"
+
+
+def test_nace_classification_config_defaults_to_env():
+    from dagster_v3.defs.latvia_ur.classification import NaceClassificationConfig
+
+    config = NaceClassificationConfig()
+    assert config.embed_base_url is None
+    assert config.llm_base_url is None
+    assert config.llm_model is None
 
 
 def test_pipeline_loads_register_rows_into_duckdb(tmp_path: Path):

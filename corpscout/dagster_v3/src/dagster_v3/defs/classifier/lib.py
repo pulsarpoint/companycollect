@@ -34,12 +34,17 @@ class EmbeddingClient:
         self._batch = batch
 
     @classmethod
-    def from_env(cls) -> "EmbeddingClient":
-        base_url = os.environ["COMMONCRAWL_EMBED_BASE_URL"]
+    def from_env(cls, *, base_url=None, model=None, api_key=None) -> "EmbeddingClient":
+        """Build from COMMONCRAWL_EMBED_* env vars; explicit args override.
+
+        Overrides exist because the GPU box hosting the endpoint moves
+        between addresses — assets expose them as run config so an operator
+        can retarget a materialization without editing .env and restarting.
+        """
         return cls(
-            base_url=base_url,
-            api_key=os.environ.get("COMMONCRAWL_EMBED_API_KEY", "x"),
-            model=os.environ.get("COMMONCRAWL_EMBED_MODEL") or None,
+            base_url=base_url or os.environ["COMMONCRAWL_EMBED_BASE_URL"],
+            api_key=api_key or os.environ.get("COMMONCRAWL_EMBED_API_KEY", "x"),
+            model=model or os.environ.get("COMMONCRAWL_EMBED_MODEL") or None,
         )
 
     def embed(self, texts, instruction=None):
@@ -225,14 +230,17 @@ def _adjudicate(llm_call, items, *, labels_by_code):
     return {item_id: "" for item_id in expected}
 
 
-def _llm_call_from_env():
+def llm_call_from_env(*, base_url=None, model=None, api_key=None):
+    """Chat-completions call factory from TRANSLATION_PROVIDER_LOCAL_* env
+    vars; explicit args override (see EmbeddingClient.from_env for why).
+    Returns (call, model)."""
     from openai import OpenAI
 
-    base_url = os.environ["TRANSLATION_PROVIDER_LOCAL_BASE_URL"]
-    model = os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"]
+    base_url = base_url or os.environ["TRANSLATION_PROVIDER_LOCAL_BASE_URL"]
+    model = model or os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"]
     client = OpenAI(
         base_url=base_url,
-        api_key=os.environ.get("TRANSLATION_PROVIDER_LOCAL_API_KEY", "not-needed"),
+        api_key=api_key or os.environ.get("TRANSLATION_PROVIDER_LOCAL_API_KEY", "not-needed"),
         timeout=120,
     )
 
@@ -263,7 +271,7 @@ def classify_source(
     """Classify all unclassified distinct texts of one source column."""
     embedder = embedder or EmbeddingClient.from_env()
     if llm_call is None:
-        llm_call, llm_model = _llm_call_from_env()
+        llm_call, llm_model = llm_call_from_env()
     version = int(time.time())
 
     with clickhouse.get_connection() as client:
