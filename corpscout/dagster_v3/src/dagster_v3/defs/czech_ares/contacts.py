@@ -22,7 +22,9 @@ from dagster_v3.contact_extraction import (
 )
 from dagster_v3.defs.czech_ares import tables
 
-CONTACTS_SOURCE_SLUG = "czech_ares_contact_extraction"
+# Source-name slug, matching the latvia_ur convention (and the defs group name),
+# so domain-graph consumers can trace rows back to their source uniformly.
+CONTACTS_SOURCE_SLUG = "czech_ares"
 CLICKHOUSE_COMPANY_BATCH_SIZE = 100_000
 # Not wired into the shared commoncrawl_domains() lookup (it owns its own internal
 # query-batch size) — kept as a Czech-facing constant per the module's public

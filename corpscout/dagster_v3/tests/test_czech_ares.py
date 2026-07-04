@@ -199,7 +199,7 @@ def test_tally_contact_rows_counts_while_passing_rows_through():
     rows = [
         # Two contacts on asseco.cz, both commoncrawl-validated
         (
-            "czech_ares_contact_extraction",
+            "czech_ares",
             "asseco_1",
             "asseco_contact_1",
             "domain",
@@ -210,7 +210,7 @@ def test_tally_contact_rows_counts_while_passing_rows_through():
             dt.datetime(2024, 1, 1),
         ),
         (
-            "czech_ares_contact_extraction",
+            "czech_ares",
             "asseco_2",
             "asseco_contact_2",
             "email",
@@ -222,7 +222,7 @@ def test_tally_contact_rows_counts_while_passing_rows_through():
         ),
         # One contact on example.cz, dns-validated
         (
-            "czech_ares_contact_extraction",
+            "czech_ares",
             "example_1",
             "example_contact_1",
             "email",
