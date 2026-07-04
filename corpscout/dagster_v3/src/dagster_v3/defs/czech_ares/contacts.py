@@ -6,16 +6,20 @@ module, which owns candidate parsing, CommonCrawl/DNS validation, and the atomic
 ClickHouse table replace.
 """
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
 from dagster_v3.contact_extraction import (
     CANDIDATE_TEXT_FILTER,
+    COMPANY_CONTACTS_COLUMNS,
+    COMPANY_DOMAINS_COLUMNS,
     ContactCandidate,
     commoncrawl_domains,
+    elect_primary_domains,
     extract_contact_candidates_by_domain,
-    iter_valid_contact_rows,
+    iter_company_domain_rows,
+    iter_contact_fact_rows,
     merge_domain_candidates,
     replace_contact_table,
     resolve_nameservers_concurrently,
@@ -85,13 +89,6 @@ def replace_czech_company_contacts_clickhouse(
         [domain for domain in candidate_domains if domain not in found_commoncrawl_domains]
     )
 
-    contact_rows = iter_valid_contact_rows(
-        candidates_by_domain,
-        commoncrawl_domains=found_commoncrawl_domains,
-        nameservers_by_domain=nameservers_by_domain,
-        source_slug=CONTACTS_SOURCE_SLUG,
-        resolved_at=resolved_timestamp,
-    )
     if log is not None:
         log(
             "Built Czech company contact candidates: domains=%s commoncrawl_domains=%s dns_domains=%s",
@@ -100,36 +97,42 @@ def replace_czech_company_contacts_clickhouse(
             sum(1 for nameservers in nameservers_by_domain.values() if nameservers),
         )
 
-    counts = {"contacts": 0, "domains": 0, "commoncrawl_validated": 0, "dns_validated": 0}
-    seen_domains: set[str] = set()
-    replace_contact_table(
+    fact_rows = iter_contact_fact_rows(
+        candidates_by_domain,
+        country_iso2="CZ",
+        source_slug=CONTACTS_SOURCE_SLUG,
+        source_field="name",
+        resolved_at=resolved_timestamp,
+    )
+    domain_rows = elect_primary_domains(
+        iter_company_domain_rows(
+            candidates_by_domain,
+            commoncrawl_domains=found_commoncrawl_domains,
+            nameservers_by_domain=nameservers_by_domain,
+            country_iso2="CZ",
+            source_slug=CONTACTS_SOURCE_SLUG,
+            resolved_at=resolved_timestamp,
+        )
+    )
+
+    contact_facts = replace_contact_table(
         clickhouse_client,
         qualified_table=tables.QUALIFIED_COMPANY_CONTACTS_TABLE,
-        columns=tables.CZ_COMPANY_CONTACTS_EXPORT_COLUMNS,
-        rows=_tally_contact_rows(contact_rows, counts=counts, seen_domains=seen_domains),
+        columns=COMPANY_CONTACTS_COLUMNS,
+        rows=fact_rows,
         log=log,
     )
-    return counts
-
-
-def _tally_contact_rows(
-    rows: Iterable[tuple],
-    *,
-    counts: dict[str, int],
-    seen_domains: set[str],
-) -> Iterable[tuple]:
-    """Pass rows through to the writer while tallying per-domain-source counts —
-    mirrors the bookkeeping the old private `_insert_contact_rows` used to do
-    inline, now that the shared `replace_contact_table` only reports a row total.
-    """
-    for row in rows:
-        counts["contacts"] += 1
-        domain, domain_source = row[5], row[6]
-        if domain not in seen_domains:
-            seen_domains.add(domain)
-            counts["domains"] += 1
-        if domain_source == "commoncrawl":
-            counts["commoncrawl_validated"] += 1
-        elif domain_source == "dns":
-            counts["dns_validated"] += 1
-        yield row
+    replace_contact_table(
+        clickhouse_client,
+        qualified_table=tables.QUALIFIED_COMPANY_DOMAINS_TABLE,
+        columns=COMPANY_DOMAINS_COLUMNS,
+        rows=domain_rows,
+        log=log,
+    )
+    return {
+        "contact_facts": contact_facts,
+        "domains": len(domain_rows),
+        "primary_domains": sum(1 for row in domain_rows if row[13] == 1),
+        "commoncrawl_validated": sum(1 for row in domain_rows if row[7] == "commoncrawl"),
+        "dns_validated": sum(1 for row in domain_rows if row[7] == "dns"),
+    }

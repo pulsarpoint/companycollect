@@ -3,6 +3,12 @@ CZECH_DATABASE = "corpscout"
 # CSU RES open data — stable URL, refreshed twice monthly. Free, no credentials.
 RES_DATA_URL = "https://opendata.csu.gov.cz/soubory/od/od_org03/res_data.csv"
 
+# Czech registry id semantics (canonical contact/domain standard — spec:
+# docs/superpowers/specs/2026-07-04-company-contacts-domains-standard-design.md,
+# Key decisions #1): `registry_id` in the canonical tables carries this source's
+# native id (ICO), recorded once here rather than per-row.
+REGISTRY_ID_TYPE = "ico"
+
 _EXCLUDED = frozenset({"raw_entity", "source_payload_hash"})
 
 
@@ -65,18 +71,13 @@ CZ_INDUSTRIES_COLUMNS = (
 )
 CZ_INDUSTRIES_EXPORT_COLUMNS = _export_columns(CZ_INDUSTRIES_COLUMNS)
 
-# --- cz_company_contacts (domains / emails extracted from company names) -----
+# --- cz_company_contacts / cz_company_domains (canonical contact/domain pair,
+# extracted from company names) -----------------------------------------------
+# Column order/types for both tables are owned by the shared canonical standard
+# (dagster_v3.contact_extraction.COMPANY_CONTACTS_COLUMNS/COMPANY_DOMAINS_COLUMNS,
+# conformance-tested against the migration by tests/canonical_contact_tables.py)
+# — no per-source export-columns constant needed here anymore.
 COMPANY_CONTACTS_TABLE_CH = "cz_company_contacts"
 QUALIFIED_COMPANY_CONTACTS_TABLE = f"{CZECH_DATABASE}.{COMPANY_CONTACTS_TABLE_CH}"
-CZ_COMPANY_CONTACTS_COLUMNS = (
-    "source_slug",
-    "source_record_id",
-    "ico",
-    "contact_type",
-    "contact_value",
-    "domain",
-    "domain_source",
-    "confidence",
-    "resolved_at",
-)
-CZ_COMPANY_CONTACTS_EXPORT_COLUMNS = _export_columns(CZ_COMPANY_CONTACTS_COLUMNS)
+COMPANY_DOMAINS_TABLE_CH = "cz_company_domains"
+QUALIFIED_COMPANY_DOMAINS_TABLE = f"{CZECH_DATABASE}.{COMPANY_DOMAINS_TABLE_CH}"

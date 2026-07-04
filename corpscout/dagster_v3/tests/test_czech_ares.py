@@ -5,11 +5,17 @@ import datetime as dt
 import duckdb
 
 from dagster_v3.defs.czech_ares import industries, resources, tables
+from tests.canonical_contact_tables import (
+    assert_canonical_contacts_ddl,
+    assert_canonical_domains_ddl,
+)
 
 MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
 COMPANIES_MIGRATION = (MIG_DIR / "000038_corpscout_cz_companies.up.sql").read_text()
 INDUSTRIES_MIGRATION = (MIG_DIR / "000039_corpscout_cz_industries.up.sql").read_text()
-CONTACTS_MIGRATION = (MIG_DIR / "000083_corpscout_cz_company_contacts.up.sql").read_text()
+CANONICAL_CONTACTS_MIGRATION = sorted(
+    MIG_DIR.glob("*_corpscout_cz_canonical_contacts.up.sql")
+)[-1].read_text()
 
 HEADER = (
     "ICO,OKRESLAU,DDATVZN,DDATZAN,ZPZAN,DDATPAKT,FORMA,ROSFORMA,KATPO,NACE,NACE2025,"
@@ -153,15 +159,9 @@ def test_clickhouse_candidate_batches_load_100k_company_names_after_ico():
     assert params["after_ico"] == "12345678"
 
 
-def test_contacts_export_columns_match_migration():
-    assert f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_COMPANY_CONTACTS_TABLE}" in CONTACTS_MIGRATION
-    for column in tables.CZ_COMPANY_CONTACTS_EXPORT_COLUMNS:
-        assert f"    {column} " in CONTACTS_MIGRATION, f"missing {column} in 000083"
-    for column in ("country_iso2", "source_run_id", "company_name", "source_url"):
-        assert f"    {column} " not in CONTACTS_MIGRATION
-        assert column not in tables.CZ_COMPANY_CONTACTS_EXPORT_COLUMNS
-    assert "ENGINE = ReplacingMergeTree(resolved_at)" in CONTACTS_MIGRATION
-    assert "ORDER BY (ico, contact_type, contact_value)" in CONTACTS_MIGRATION
+def test_contacts_and_domains_conform_to_canonical_migration():
+    assert_canonical_contacts_ddl(CANONICAL_CONTACTS_MIGRATION, tables.COMPANY_CONTACTS_TABLE_CH)
+    assert_canonical_domains_ddl(CANONICAL_CONTACTS_MIGRATION, tables.COMPANY_DOMAINS_TABLE_CH)
 
 
 def test_legal_form_map():
@@ -190,66 +190,78 @@ def test_register_job_and_schedule():
     }
 
 
-def test_tally_contact_rows_counts_while_passing_rows_through():
-    """Test that _tally_contact_rows counts domains and domain_source while yielding rows unchanged."""
+def test_replace_czech_company_contacts_writes_canonical_contact_and_domain_tables(monkeypatch):
+    """Orchestrator writes BOTH canonical tables (two stage/EXCHANGE sequences) and
+    returns the Task 4-shared counts-dict contract."""
     from dagster_v3.defs.czech_ares import contacts
 
-    # Build 3 fixture 9-tuples (source_slug, source_record_id, record_id, contact_type,
-    # contact_value, domain, domain_source, confidence, resolved_at)
-    rows = [
-        # Two contacts on asseco.cz, both commoncrawl-validated
-        (
-            "czech_ares",
-            "asseco_1",
-            "asseco_contact_1",
-            "domain",
-            "https://www.asseco.cz",
-            "asseco.cz",
-            "commoncrawl",
-            0.95,
-            dt.datetime(2024, 1, 1),
-        ),
-        (
-            "czech_ares",
-            "asseco_2",
-            "asseco_contact_2",
-            "email",
-            "info@asseco.cz",
-            "asseco.cz",
-            "commoncrawl",
-            0.80,
-            dt.datetime(2024, 1, 1),
-        ),
-        # One contact on example.cz, dns-validated
-        (
-            "czech_ares",
-            "example_1",
-            "example_contact_1",
-            "email",
-            "contact@example.cz",
-            "example.cz",
-            "dns",
-            1.0,
-            dt.datetime(2024, 1, 1),
-        ),
-    ]
+    class FakeClient:
+        def __init__(self):
+            self.commands: list[str] = []
+            self.inserted: list[tuple] = []
+            self._company_batches = [
+                [
+                    ("11111111", "Asseco a.s. www.asseco.cz info@asseco.cz"),
+                    ("22222222", "DNS only dns-only.cz"),
+                ],
+                [],
+            ]
 
-    # Drive _tally_contact_rows with the fixture rows
-    counts = {"contacts": 0, "domains": 0, "commoncrawl_validated": 0, "dns_validated": 0}
-    seen_domains: set[str] = set()
-    yielded_rows = list(contacts._tally_contact_rows(iter(rows), counts=counts, seen_domains=seen_domains))
+        def execute(self, sql, params=None):
+            stripped = sql.strip()
+            self.commands.append(stripped)
+            if stripped.startswith("SELECT ico, name"):
+                return self._company_batches.pop(0)
+            if "commoncrawl_domains" in stripped:
+                return [("asseco.cz",)]
+            return []
 
-    # Assert yielded rows match input rows in order
-    assert yielded_rows == rows
+        def insert_rows(self, table, rows, *, columns, database):
+            self.inserted.append((database, table, list(rows), columns))
 
-    # Assert counts match original _insert_contact_rows semantics:
-    # - contacts: 3 (all rows)
-    # - domains: 2 (asseco.cz counted once, example.cz counted once)
-    # - commoncrawl_validated: 2 (both rows with domain_source "commoncrawl")
-    # - dns_validated: 1 (one row with domain_source "dns")
-    assert counts == {
-        "contacts": 3,
-        "domains": 2,
-        "commoncrawl_validated": 2,
-        "dns_validated": 1,
+    # asseco.cz validates via CommonCrawl (see FakeClient.execute above); dns-only.cz
+    # has no CommonCrawl hit, so the orchestrator asks for its nameservers here —
+    # stub it out so the test never touches real DNS.
+    monkeypatch.setattr(
+        contacts,
+        "resolve_nameservers_concurrently",
+        lambda domains: {domain: ("ns1.example.cz",) for domain in domains},
+    )
+
+    fake = FakeClient()
+    counts = contacts.replace_czech_company_contacts_clickhouse(
+        clickhouse_client=fake,
+        resolved_at=dt.datetime(2026, 7, 4, tzinfo=dt.UTC),
+    )
+
+    assert counts.keys() == {
+        "contact_facts", "domains", "primary_domains",
+        "commoncrawl_validated", "dns_validated",
     }
+    assert counts["contact_facts"] == 3  # www.asseco.cz, info@asseco.cz, dns-only.cz facts
+    assert counts["domains"] == 2  # one row per registry_id (asseco.cz, dns-only.cz)
+    assert counts["primary_domains"] == 2  # each registry_id has exactly one domain -> primary
+    assert counts["commoncrawl_validated"] == 1
+    assert counts["dns_validated"] == 1
+
+    # Two stage/EXCHANGE sequences: contacts table first, then domains table.
+    create_cmds = [c for c in fake.commands if c.startswith("CREATE TABLE")]
+    exchange_cmds = [c for c in fake.commands if c.startswith("EXCHANGE TABLES")]
+    drop_cmds = [c for c in fake.commands if c.startswith("DROP TABLE IF EXISTS")]
+    assert len(create_cmds) == len(exchange_cmds) == len(drop_cmds) == 2
+    assert create_cmds[0].endswith(f"AS {tables.QUALIFIED_COMPANY_CONTACTS_TABLE}")
+    assert create_cmds[1].endswith(f"AS {tables.QUALIFIED_COMPANY_DOMAINS_TABLE}")
+    assert tables.QUALIFIED_COMPANY_CONTACTS_TABLE in exchange_cmds[0]
+    assert tables.QUALIFIED_COMPANY_DOMAINS_TABLE in exchange_cmds[1]
+
+    # Correct qualified target tables and column lists for each write.
+    assert len(fake.inserted) == 2
+    contacts_database, contacts_stage_table, contact_rows, contact_columns = fake.inserted[0]
+    domains_database, domains_stage_table, domain_rows, domain_columns = fake.inserted[1]
+    assert contacts_database == domains_database == "corpscout"
+    assert contacts_stage_table.startswith(f"_tmp_{tables.COMPANY_CONTACTS_TABLE_CH}_")
+    assert domains_stage_table.startswith(f"_tmp_{tables.COMPANY_DOMAINS_TABLE_CH}_")
+    assert contact_columns == contacts.COMPANY_CONTACTS_COLUMNS
+    assert domain_columns == contacts.COMPANY_DOMAINS_COLUMNS
+    assert len(contact_rows) == 3
+    assert len(domain_rows) == 2

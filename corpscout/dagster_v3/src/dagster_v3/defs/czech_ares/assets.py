@@ -85,10 +85,14 @@ def czech_ares_clickhouse_companies(
     deps=[dg.AssetKey("czech_ares_clickhouse_companies")],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse"},
-    metadata={"table": tables.QUALIFIED_COMPANY_CONTACTS_TABLE},
+    metadata={
+        "contacts_table": tables.QUALIFIED_COMPANY_CONTACTS_TABLE,
+        "domains_table": tables.QUALIFIED_COMPANY_DOMAINS_TABLE,
+    },
     description=(
-        "Czech ARES company contacts extracted from corpscout.cz_companies.name, "
-        "validated against commoncrawl_domains or DNS."
+        "Czech ARES canonical company contacts (all candidates) and company "
+        "domains (commoncrawl/DNS-validated, elected primary) extracted from "
+        "corpscout.cz_companies.name."
     ),
 )
 def czech_ares_clickhouse_company_contacts(
@@ -100,7 +104,11 @@ def czech_ares_clickhouse_company_contacts(
         log=context.log.info,
     )
     return dg.MaterializeResult(
-        metadata={**counts, "table": tables.QUALIFIED_COMPANY_CONTACTS_TABLE}
+        metadata={
+            **counts,
+            "contacts_table": tables.QUALIFIED_COMPANY_CONTACTS_TABLE,
+            "domains_table": tables.QUALIFIED_COMPANY_DOMAINS_TABLE,
+        }
     )
 
 
