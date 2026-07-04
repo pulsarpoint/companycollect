@@ -55,10 +55,10 @@ def apply_brazil_cvm_statement_rows_usd_conversion(
     duckdb_connection.execute(
         f"""
         update {qualified_table} as statement_rows
-        set amount_usd = cast(
-                statement_rows.amount_original
+        set amount_usd = try_cast(
+                cast(statement_rows.amount_original as double)
                 * {_scale_factor_expression("statement_rows.scale")}
-                * fx.fx_rate
+                * cast(fx.fx_rate as double)
                 as decimal(38, 6)
             ),
             fx_rate_to_usd = fx.fx_rate,
