@@ -2,7 +2,7 @@ from pathlib import Path
 
 from dagster_v3.defs.brazil_cnae import tables as brazil_cnae_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
-from dagster_v3.defs.brazil_rfb import tables as brazil_rfb_tables
+from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.finland_ytj import resolved_tables as finland_resolved_tables
@@ -101,7 +101,7 @@ EXPECTED_MIGRATIONS = (
     "000085_corpscout_text_classifications",
     "000086_corpscout_lv_company_contacts",
     "000087_corpscout_br_cvm_dfp_tables",
-    "000088_corpscout_se_financial_tables",
+    "000090_corpscout_se_financial_tables",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1098,7 +1098,7 @@ def test_lei_wikidata_company_view_joins_gleif_and_wikidata_lei_identifiers() ->
     assert "DROP VIEW IF EXISTS corpscout.lei_wikidata_companies" in down_sql
 
 
-def test_brazil_rfb_registry_migration_covers_exported_columns() -> None:
+def test_brazil_comp_rfb_registry_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000054_corpscout_br_rfb_registry.up.sql")
     down_sql = _migration_sql("000054_corpscout_br_rfb_registry.down.sql")
 
@@ -1119,7 +1119,7 @@ def test_brazil_rfb_registry_migration_covers_exported_columns() -> None:
     assert "DROP TABLE IF EXISTS corpscout.br_companies" in down_sql
 
 
-def test_brazil_rfb_contact_domains_migration_covers_exported_columns() -> None:
+def test_brazil_comp_rfb_contact_domains_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000055_corpscout_br_rfb_contact_domains.up.sql")
     down_sql = _migration_sql("000055_corpscout_br_rfb_contact_domains.down.sql")
 
@@ -1145,7 +1145,7 @@ def test_brazil_rfb_contact_domains_migration_covers_exported_columns() -> None:
     assert "DROP TABLE IF EXISTS corpscout.br_company_contact_info" in down_sql
 
 
-def test_brazil_rfb_registry_dates_are_date32_for_historical_rows() -> None:
+def test_brazil_comp_rfb_registry_dates_are_date32_for_historical_rows() -> None:
     sql = _migration_sql("000071_corpscout_br_rfb_registry_date32.up.sql")
     down_sql = _migration_sql("000071_corpscout_br_rfb_registry_date32.down.sql")
 
