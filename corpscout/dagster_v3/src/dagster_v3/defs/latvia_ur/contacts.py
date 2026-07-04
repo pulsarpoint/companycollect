@@ -3,8 +3,10 @@
 Latvia UR has no structured contact fields, but ~1.3k companies carry their
 domain as the legal name ('SIA "cenuklubs.lv"'). Candidates are extracted
 with the shared contact_extraction module (IDN-aware — Latvian domains use
-diacritics), validated against CommonCrawl/DNS, and atomically replace
-corpscout.lv_company_contacts. Full recompute per run.
+diacritics), validated against CommonCrawl/DNS, and used to atomically
+replace the canonical corpscout.lv_company_contacts (all guard-surviving
+candidates, validation-independent) and corpscout.lv_company_domains
+(validated-only, per-registry primary election) pair. Full recompute per run.
 """
 
 from collections.abc import Callable
@@ -17,11 +19,15 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.contact_extraction import (
     CANDIDATE_TEXT_FILTER,
+    COMPANY_CONTACTS_COLUMNS,
+    COMPANY_DOMAINS_COLUMNS,
     ContactCandidate,
     commoncrawl_domains,
+    elect_primary_domains,
     extract_contact_candidates,
     extract_contact_candidates_by_domain,
-    iter_valid_contact_rows,
+    iter_company_domain_rows,
+    iter_contact_fact_rows,
     merge_domain_candidates,
     replace_contact_table,
     resolve_nameservers_concurrently,
@@ -29,10 +35,14 @@ from dagster_v3.contact_extraction import (
 
 LV_CONTACTS_SOURCE_SLUG = "latvia_ur"
 QUALIFIED_LV_CONTACTS_TABLE = "corpscout.lv_company_contacts"
-LV_CONTACT_COLUMNS = (
-    "source_slug", "source_record_id", "regcode", "contact_type",
-    "contact_value", "domain", "domain_source", "confidence", "resolved_at",
-)
+QUALIFIED_LV_DOMAINS_TABLE = "corpscout.lv_company_domains"
+
+# Latvia registry id semantics (canonical contact/domain standard — spec:
+# docs/superpowers/specs/2026-07-04-company-contacts-domains-standard-design.md,
+# Key decisions #1): `registry_id` in the canonical tables carries this source's
+# native id (regcode), recorded once here rather than per-row.
+REGISTRY_ID_TYPE = "regcode"
+
 SCAN_BATCH_SIZE = 100_000
 
 
@@ -84,13 +94,6 @@ def replace_latvia_company_contacts_clickhouse(
         [domain for domain in candidate_domains if domain not in found_commoncrawl_domains]
     )
 
-    contact_rows = iter_valid_contact_rows(
-        candidates_by_domain,
-        commoncrawl_domains=found_commoncrawl_domains,
-        nameservers_by_domain=nameservers_by_domain,
-        source_slug=LV_CONTACTS_SOURCE_SLUG,
-        resolved_at=resolved_timestamp,
-    )
     if log is not None:
         log(
             "Built Latvia company contact candidates: scanned=%s domains=%s "
@@ -101,17 +104,44 @@ def replace_latvia_company_contacts_clickhouse(
             sum(1 for nameservers in nameservers_by_domain.values() if nameservers),
         )
 
-    written = replace_contact_table(
+    fact_rows = iter_contact_fact_rows(
+        candidates_by_domain,
+        country_iso2="LV",
+        source_slug=LV_CONTACTS_SOURCE_SLUG,
+        source_field="legal_name",
+        resolved_at=resolved_timestamp,
+    )
+    domain_rows = elect_primary_domains(
+        iter_company_domain_rows(
+            candidates_by_domain,
+            commoncrawl_domains=found_commoncrawl_domains,
+            nameservers_by_domain=nameservers_by_domain,
+            country_iso2="LV",
+            source_slug=LV_CONTACTS_SOURCE_SLUG,
+            resolved_at=resolved_timestamp,
+        )
+    )
+
+    contact_facts = replace_contact_table(
         clickhouse_client,
         qualified_table=QUALIFIED_LV_CONTACTS_TABLE,
-        columns=LV_CONTACT_COLUMNS,
-        rows=contact_rows,
+        columns=COMPANY_CONTACTS_COLUMNS,
+        rows=fact_rows,
+        log=log,
+    )
+    replace_contact_table(
+        clickhouse_client,
+        qualified_table=QUALIFIED_LV_DOMAINS_TABLE,
+        columns=COMPANY_DOMAINS_COLUMNS,
+        rows=domain_rows,
         log=log,
     )
     return {
-        "scanned": scanned,
-        "candidate_domains": len(candidate_domains),
-        "written": written,
+        "contact_facts": contact_facts,
+        "domains": len(domain_rows),
+        "primary_domains": sum(1 for row in domain_rows if row[13] == 1),
+        "commoncrawl_validated": sum(1 for row in domain_rows if row[7] == "commoncrawl"),
+        "dns_validated": sum(1 for row in domain_rows if row[7] == "dns"),
     }
 
 
@@ -119,10 +149,15 @@ def replace_latvia_company_contacts_clickhouse(
     deps=[dg.AssetKey("latvia_ur_clickhouse_companies")],
     group_name="latvia_ur",
     kinds={"python", "clickhouse"},
+    metadata={
+        "contacts_table": QUALIFIED_LV_CONTACTS_TABLE,
+        "domains_table": QUALIFIED_LV_DOMAINS_TABLE,
+    },
     description=(
         "Extract domains embedded in Latvian legal names ('SIA \"cenuklubs.lv\"'), "
-        "validate via CommonCrawl/DNS, and atomically replace "
-        "corpscout.lv_company_contacts."
+        "validate via CommonCrawl/DNS, and atomically replace the canonical "
+        "corpscout.lv_company_contacts (all candidates) and "
+        "corpscout.lv_company_domains (validated, elected primary) pair."
     ),
 )
 def latvia_ur_clickhouse_company_contacts(
@@ -134,4 +169,10 @@ def latvia_ur_clickhouse_company_contacts(
             resolved_at=datetime.now(UTC),
             log=context.log.info,
         )
-    return dg.MaterializeResult(metadata=dict(counts))
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "contacts_table": QUALIFIED_LV_CONTACTS_TABLE,
+            "domains_table": QUALIFIED_LV_DOMAINS_TABLE,
+        }
+    )

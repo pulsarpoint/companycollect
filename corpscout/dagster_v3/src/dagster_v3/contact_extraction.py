@@ -232,46 +232,6 @@ def merge_domain_candidates(
             target_candidates.append(candidate)
 
 
-def iter_valid_contact_rows(
-    candidates_by_domain: dict[str, list[ContactCandidate]],
-    *,
-    commoncrawl_domains: set[str],
-    nameservers_by_domain: dict[str, tuple[str, ...]],
-    source_slug: str,
-    resolved_at: datetime,
-) -> Iterator[tuple]:
-    """Yield 9-tuples for domains validated via CommonCrawl or DNS parent-zone NS
-    lookup, dropping unvalidated domains.
-
-    Yields: (source_slug, source_record_id, record_id, contact_type, contact_value,
-    domain, domain_source, confidence, resolved_at).
-
-    DEPRECATED — replaced by iter_contact_fact_rows/iter_company_domain_rows;
-    deleted when the last consumer migrates (Phase A Tasks 3-4).
-    """
-    for domain in sorted(candidates_by_domain):
-        validation = _validated_domain(
-            domain,
-            commoncrawl_domains=commoncrawl_domains,
-            nameservers_by_domain=nameservers_by_domain,
-        )
-        if validation is None:
-            continue
-        domain_source, confidence = validation
-        for candidate in candidates_by_domain[domain]:
-            yield (
-                source_slug,
-                candidate.record_id,
-                candidate.record_id,
-                candidate.contact_type,
-                candidate.contact_value,
-                domain,
-                domain_source,
-                confidence,
-                resolved_at,
-            )
-
-
 def iter_contact_fact_rows(
     candidates_by_domain: dict[str, list[ContactCandidate]],
     *,

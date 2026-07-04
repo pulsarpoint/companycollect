@@ -204,29 +204,48 @@ contact information is mandatory, not optional.** When you analyse a new source,
   *look for it.* Estonia: `lihtandmed` (register CSV) has **none**; `yldandmed` (general data JSON)
   has `sidevahendid` (`{liik, sisu}` = type, value) with `WWW`/`EMAIL`/`MOB`/`TEL`/`FAX`. If a source
   truly has no contact data, the design doc must say so explicitly.
-- **Store normalized**: one **`<cc>_company_contacts`** table, one row per contact
-  `(reg_code, contact_type, contact_type_en, contact_value, is_current, …)`, capturing **all** types.
-  Don't fold contacts into the company row; a company has many.
-- **Website AND email are domain signals.** Add **`domain` + `domain_source`** (`'website'|'email'|''`)
-  to the contacts table, computed at build time:
+- **Write the canonical pair, not a per-source shape.** Every source writes ONE
+  **`<src>_company_contacts`** table (contact facts as found in the register — no inference; a
+  website URL, an email, a phone number, and a domain-looking company name are all facts) and ONE
+  **`<src>_company_domains`** table (derived company↔domain associations with provenance and
+  confidence — the ONLY thing the domain graph reads). Column order/types for both tables are
+  owned by the standard spec (`docs/superpowers/specs/2026-07-04-company-contacts-domains-standard-design.md`)
+  and the shared `dagster_v3.contact_extraction.COMPANY_CONTACTS_COLUMNS`/`COMPANY_DOMAINS_COLUMNS`
+  constants — don't invent a per-source shape. A source with no contact data still gets both tables
+  (empty); consumers never special-case. Conformance is test-enforced: any
+  `<src>_company_contacts`/`<src>_company_domains` migration must match the canonical DDL modulo
+  table name, checked by the shared helper `tests/canonical_contact_tables.py`
+  (`assert_canonical_contacts_ddl`/`assert_canonical_domains_ddl`).
+- **Website AND email are domain signals.** A register website field yields a
+  `contact_type='website'` fact row AND a `domain_source='website'` domain row (deliberate
+  duplication — the contacts table preserves what the register said, the domains table is the
+  joinable distillation):
   - **Website** → `root_domain(contact_value)` via the shared `dagster_v3.domains` tldextract UDFs
     (`root_domain`/`normalized_url`/`website_host`) — register them on the DuckDB connection.
   - **Email** → the email suffix, **but only if it is unique to one company.** Count *distinct
     companies* per suffix (not contact rows) and drop any suffix used by `> EMAIL_DOMAIN_MAX_COMPANIES`
     (default 1). This single rule auto-excludes mail providers (gmail, hot.ee) *and* shared
     accounting/formation-agent domains (one bookkeeper fronting hundreds of shell clients) — no magic
-    threshold. Keep a small provider denylist only as a backstop. **Email matters**: far more companies
+    threshold. Keep a small provider denylist only as a backstop (the shared
+    `EMAIL_PROVIDER_DENYLIST` in `contact_extraction.py`). **Email matters**: far more companies
     have a same-domain email than a website (Estonia: ~340k vs ~21k).
-- **Feed the cross-source graph.** Build a deduped **`<cc>_company_domains`** table (one row per
-  `(reg_code, domain)`, website preferred over email, one `is_primary`/company; website rows carry
-  `website_url/_normalized_url/_host`), then add a UNION branch + the `domain_source` column to
-  `domains/assets.py` so it lands in `company_website_domains` → `domains`.
+- **`<src>_company_domains` feeds the cross-source graph**: one row per `(registry_id, domain)`,
+  website preferred over email, exactly one `is_primary` per `registry_id` via the shared
+  `elect_primary_domains()` election rule (website-sourced first, then current, then confidence,
+  then shortest/alphabetical domain); website rows carry `website_url/_normalized_url/_host`. Add a
+  UNION branch + the `domain_source` column to `domains/assets.py` so it lands in
+  `company_website_domains` → `domains`.
 - Pull contacts on the source's normal cadence; they sit alongside the register, not the financials.
-- **Mandatory alongside currency (§7) and translation (§8).** Reference impl: `estonia_ar`
-  (`ee_company_contacts`/`ee_company_domains` from `yldandmed`).
+- **Mandatory alongside currency (§7) and translation (§8).** Reference impl (canonical pair):
+  `czech_ares` (`cz_company_contacts`/`cz_company_domains`) and `latvia_ur`
+  (`lv_company_contacts`/`lv_company_domains`), both extracted from free-text legal names via the
+  shared module below. Estonia/Brazil/Norway/Finland/wikidata reshape to this pair in later phases
+  (see the standard spec's migration strategy) — until each source's phase lands, its existing
+  tables keep their pre-standard shape.
 - **When a source has no structured contact fields but embeds domains/emails in free text** (e.g. a
   legal name like `SIA "cenuklubs.lv"`), use the shared `dagster_v3/contact_extraction.py` module
-  (IDN-aware candidate parsing, CommonCrawl/DNS validation, atomic table replace) instead of
+  (IDN-aware candidate parsing, CommonCrawl/DNS validation, atomic table replace, canonical-column
+  builders `iter_contact_fact_rows`/`iter_company_domain_rows`/`elect_primary_domains`) instead of
   hand-rolling extraction — mirror the thin per-country orchestrators `defs/latvia_ur/contacts.py`
   or `defs/czech_ares/contacts.py`.
 

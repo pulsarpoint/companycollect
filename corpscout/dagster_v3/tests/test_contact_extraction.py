@@ -8,7 +8,6 @@ from dagster_v3.contact_extraction import (
     extract_contact_candidates,
     extract_contact_candidates_by_domain,
     idna_ascii,
-    iter_valid_contact_rows,
     nameservers_for_domain,
     replace_contact_table,
 )
@@ -36,37 +35,6 @@ def test_contact_candidates_extract_domains_and_emails_from_company_name():
         "asseco.cz",
     ]
     assert all(candidate.record_id == "27074358" for candidate in candidates)
-
-
-def test_contact_rows_keep_commoncrawl_and_dns_validated_domains_only():
-    candidates_by_domain = extract_contact_candidates_by_domain(
-        [
-            ("27074358", "Asseco a.s. www.asseco.cz info@asseco.cz"),
-            ("12345678", "DNS only dns-only.cz"),
-            ("87654321", "Invalid missing.example"),
-        ]
-    )
-    rows = list(
-        iter_valid_contact_rows(
-            candidates_by_domain,
-            commoncrawl_domains={"asseco.cz"},
-            nameservers_by_domain={"dns-only.cz": ("ns1.dns-only.cz",)},
-            source_slug="test_contact_extraction",
-            resolved_at=dt.datetime(2026, 7, 3, 12, 0, tzinfo=dt.UTC),
-        )
-    )
-
-    # Tuple layout: (source_slug, source_record_id, record_id, contact_type,
-    # contact_value, domain, domain_source, confidence, resolved_at).
-    assert [row[4] for row in rows] == ["www.asseco.cz", "info@asseco.cz", "dns-only.cz"]
-    assert [row[6] for row in rows] == ["commoncrawl", "commoncrawl", "dns"]
-    assert [row[7] for row in rows] == [0.95, 0.95, 0.7]
-    assert all(row[5] in {"asseco.cz", "dns-only.cz"} for row in rows)
-    assert all(row[0] == "test_contact_extraction" for row in rows)
-    assert all(row[2] == row[1] for row in rows)  # record_id == source_record_id
-    # A 9-tuple has no room for legacy per-country fields (country_iso2,
-    # source_run_id, company_name, source_url) — structurally guaranteed here.
-    assert all(len(row) == 9 for row in rows)
 
 
 def test_contact_extraction_returns_domain_dictionary_before_validation():
