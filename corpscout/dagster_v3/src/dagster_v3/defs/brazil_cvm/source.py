@@ -1,7 +1,7 @@
 import json
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -120,17 +120,12 @@ class BrazilCvmDfpResource(dg.ConfigurableResource):
                     BRAZIL_CVM_RAW_BUCKET,
                     archive_key,
                 )
-            return BrazilCvmDfpArchiveSyncResult(
+            return self._reuse_existing_archive(
+                object_store=object_store,
                 year=normalized_year,
                 source_url=source_url,
                 archive_key=archive_key,
                 metadata_key=metadata_key,
-                downloaded=False,
-                reused_existing_archive=True,
-                size_bytes=None,
-                sha256=None,
-                content_type="",
-                source_last_modified="",
                 synced_at=synced_at,
             )
 
@@ -169,6 +164,46 @@ class BrazilCvmDfpResource(dg.ConfigurableResource):
             sha256=digest,
             content_type=content_type,
             source_last_modified=source_last_modified,
+            synced_at=synced_at,
+        )
+        object_store.write_json(
+            metadata_key,
+            json.dumps(asdict(result), indent=2, sort_keys=True),
+            bucket=BRAZIL_CVM_RAW_BUCKET,
+        )
+        return result
+
+    def _reuse_existing_archive(
+        self,
+        *,
+        object_store: ObjectStoreResource,
+        year: str,
+        source_url: str,
+        archive_key: str,
+        metadata_key: str,
+        synced_at: str,
+    ) -> BrazilCvmDfpArchiveSyncResult:
+        stored_metadata = _read_stored_metadata(object_store, metadata_key)
+        size_bytes = _metadata_int(stored_metadata, "size_bytes")
+        digest = _metadata_str(stored_metadata, "sha256")
+        if size_bytes is None or digest == "":
+            archive_body = object_store.read_bytes(
+                archive_key, bucket=BRAZIL_CVM_RAW_BUCKET
+            )
+            size_bytes = len(archive_body)
+            digest = sha256(archive_body).hexdigest()
+
+        result = BrazilCvmDfpArchiveSyncResult(
+            year=year,
+            source_url=source_url,
+            archive_key=archive_key,
+            metadata_key=metadata_key,
+            downloaded=False,
+            reused_existing_archive=True,
+            size_bytes=size_bytes,
+            sha256=digest,
+            content_type=_metadata_str(stored_metadata, "content_type"),
+            source_last_modified=_metadata_str(stored_metadata, "source_last_modified"),
             synced_at=synced_at,
         )
         object_store.write_json(
@@ -256,3 +291,29 @@ def _optional_int(value: str | None) -> int | None:
     if value is None or value.strip() == "":
         return None
     return int(value)
+
+
+def _read_stored_metadata(
+    object_store: ObjectStoreResource,
+    metadata_key: str,
+) -> Mapping[str, object]:
+    if not object_store.exists(metadata_key, bucket=BRAZIL_CVM_RAW_BUCKET):
+        return {}
+    metadata = json.loads(
+        object_store.read_bytes(metadata_key, bucket=BRAZIL_CVM_RAW_BUCKET).decode(
+            "utf-8"
+        )
+    )
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _metadata_int(metadata: Mapping[str, object], key: str) -> int | None:
+    value = metadata.get(key)
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def _metadata_str(metadata: Mapping[str, object], key: str) -> str:
+    value = metadata.get(key)
+    return value if isinstance(value, str) else ""

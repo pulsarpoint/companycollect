@@ -63,6 +63,10 @@ def test_load_brazil_cvm_dfp_archive_normalizes_known_csv_families(
             account_code,
             account_description_original,
             amount_original,
+            amount_usd,
+            fx_rate_to_usd,
+            fx_rate_date,
+            fx_source,
             source_file_name
         from {BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_STATEMENT_ROWS_TABLE}
         order by statement_code, account_code, equity_column
@@ -82,6 +86,10 @@ def test_load_brazil_cvm_dfp_archive_normalizes_known_csv_families(
             "1",
             "Ativo Total",
             7420477,
+            None,
+            None,
+            None,
+            "",
             "dfp_cia_aberta_BPA_con_2026.csv",
         ),
         (
@@ -97,6 +105,10 @@ def test_load_brazil_cvm_dfp_archive_normalizes_known_csv_families(
             "5.01",
             "Saldos Iniciais",
             1039266,
+            None,
+            None,
+            None,
+            "",
             "dfp_cia_aberta_DMPL_con_2026.csv",
         ),
         (
@@ -112,6 +124,10 @@ def test_load_brazil_cvm_dfp_archive_normalizes_known_csv_families(
             "3.01",
             "Receita de Venda de Bens e/ou Serviços",
             2148915,
+            None,
+            None,
+            None,
+            "",
             "dfp_cia_aberta_DRE_con_2026.csv",
         ),
     ]

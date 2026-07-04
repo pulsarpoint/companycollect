@@ -1,3 +1,5 @@
+import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,10 @@ class FakeObjectStore:
         assert bucket is not None
         self.uploaded_files.append((bucket, key))
         self.objects[(bucket, key)] = Path(source_path).read_bytes()
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        assert bucket is not None
+        return self.objects[(bucket, key)]
 
     def write_json(self, key: str, body: str, bucket: str | None = None) -> None:
         assert bucket is not None
@@ -143,10 +149,47 @@ def test_brazil_cvm_dfp_resource_skips_existing_year_archive_without_http() -> N
 
     assert session.requested_urls == []
     assert object_store.uploaded_files == []
-    assert object_store.written_json == []
+    assert object_store.written_json == [
+        (BRAZIL_CVM_RAW_BUCKET, dfp_metadata_object_key("2026"))
+    ]
     assert result.downloaded is False
     assert result.reused_existing_archive is True
     assert result.year == "2026"
     assert result.archive_key == archive_key
-    assert result.size_bytes is None
-    assert result.sha256 is None
+    assert result.size_bytes == len(b"already-there")
+    assert result.sha256 == sha256(b"already-there").hexdigest()
+
+
+def test_brazil_cvm_dfp_resource_reuses_existing_metadata_for_existing_archive() -> (
+    None
+):
+    resource = BrazilCvmDfpResource()
+    object_store = FakeObjectStore()
+    archive_key = dfp_archive_object_key("2026")
+    metadata_key = dfp_metadata_object_key("2026")
+    object_store.objects[(BRAZIL_CVM_RAW_BUCKET, archive_key)] = b"already-there"
+    object_store.objects[(BRAZIL_CVM_RAW_BUCKET, metadata_key)] = json.dumps(
+        {
+            "size_bytes": 12345,
+            "sha256": "stored-digest",
+            "content_type": "application/zip",
+            "source_last_modified": "Sun, 28 Jun 2026 07:13:00 GMT",
+        }
+    ).encode("utf-8")
+    session = NoDownloadSession()
+
+    result = resource.sync_year_archive(
+        year="2026",
+        object_store=object_store,
+        session=session,
+    )
+
+    assert session.requested_urls == []
+    assert object_store.uploaded_files == []
+    assert object_store.written_json == [(BRAZIL_CVM_RAW_BUCKET, metadata_key)]
+    assert result.downloaded is False
+    assert result.reused_existing_archive is True
+    assert result.size_bytes == 12345
+    assert result.sha256 == "stored-digest"
+    assert result.content_type == "application/zip"
+    assert result.source_last_modified == "Sun, 28 Jun 2026 07:13:00 GMT"

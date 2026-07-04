@@ -41,6 +41,10 @@ def test_brazil_cvm_dfp_tables_migration_covers_exported_columns() -> None:
     ) in sql
     assert "ifNull(period_end_date, toDate32('1970-01-01'))" in sql
     assert "amount_original Nullable(Decimal(38, 10))" in sql
+    assert "amount_usd Nullable(Decimal(38, 6))" in sql
+    assert "fx_rate_to_usd Nullable(Decimal(38, 12))" in sql
+    assert "fx_rate_date Nullable(Date)" in sql
+    assert "fx_source String" in sql
     assert "report_text_original String" in sql
 
 

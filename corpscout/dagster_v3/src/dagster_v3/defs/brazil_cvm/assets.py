@@ -17,6 +17,9 @@ from dagster_v3.defs.brazil_cvm.source import (
     BRAZIL_CVM_GROUP_NAME,
     BrazilCvmDfpResource,
 )
+from dagster_v3.defs.brazil_cvm.usd_conversion import (
+    apply_brazil_cvm_statement_rows_usd_conversion,
+)
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
@@ -86,6 +89,34 @@ def brazil_cvm_dfp_raw_duckdb(
     )
 
 
+@dg.asset(
+    deps=[
+        dg.AssetDep(
+            dg.AssetKey("brazil_cvm_dfp_raw_duckdb"),
+            partition_mapping=dg.AllPartitionMapping(),
+        )
+    ],
+    group_name=BRAZIL_CVM_GROUP_NAME,
+    kinds={"python", "duckdb", "currency", "fx", "cvm", "dfp"},
+    pool="brazil_cvm_duckdb",
+    description="Adds USD and FX metadata columns to Brazil CVM DFP statement rows in DuckDB.",
+)
+def brazil_cvm_dfp_statement_rows_usd_duckdb(
+    context: dg.AssetExecutionContext,
+    brazil_cvm_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    BRAZIL_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with brazil_cvm_duckdb.get_connection() as connection:
+        counts = apply_brazil_cvm_statement_rows_usd_conversion(
+            duckdb_connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata=counts)
+
+
 brazil_cvm_dfp_raw_backfill_job = dg.define_asset_job(
     "brazil_cvm_dfp_raw_backfill_job",
     selection=dg.AssetSelection.assets(
@@ -96,7 +127,11 @@ brazil_cvm_dfp_raw_backfill_job = dg.define_asset_job(
 
 
 defs = dg.Definitions(
-    assets=[brazil_cvm_dfp_raw_archives_s3, brazil_cvm_dfp_raw_duckdb],
+    assets=[
+        brazil_cvm_dfp_raw_archives_s3,
+        brazil_cvm_dfp_raw_duckdb,
+        brazil_cvm_dfp_statement_rows_usd_duckdb,
+    ],
     jobs=[brazil_cvm_dfp_raw_backfill_job],
     resources={
         "brazil_cvm_dfp": BrazilCvmDfpResource(),
