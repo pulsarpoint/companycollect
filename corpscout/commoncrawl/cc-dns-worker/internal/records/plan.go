@@ -29,25 +29,25 @@ type Query struct {
 func Plan(domain string, cfg Config) []Query {
 	fqdn := dns.Fqdn(domain)
 	qs := []Query{
-		{fqdn, dns.TypeA, "@"},
-		{fqdn, dns.TypeAAAA, "@"},
-		{fqdn, dns.TypeMX, ""},
-		{fqdn, dns.TypeTXT, ""},
-		{fqdn, dns.TypeNS, ""},
-		{fqdn, dns.TypeSOA, ""},
-		{fqdn, dns.TypeCAA, ""},
-		{fqdn, dns.TypeDNSKEY, ""},
-		{"_dmarc." + fqdn, dns.TypeTXT, "dmarc"},
-		{"_mta-sts." + fqdn, dns.TypeTXT, "mta_sts"},
-		{"_smtp._tls." + fqdn, dns.TypeTXT, "tls_rpt"},
-		{"default._bimi." + fqdn, dns.TypeTXT, "bimi"},
+		{Name: fqdn, Type: dns.TypeA, Slot: "@"},
+		{Name: fqdn, Type: dns.TypeAAAA, Slot: "@"},
+		{Name: fqdn, Type: dns.TypeMX, Slot: ""},
+		{Name: fqdn, Type: dns.TypeTXT, Slot: ""},
+		{Name: fqdn, Type: dns.TypeNS, Slot: ""},
+		{Name: fqdn, Type: dns.TypeSOA, Slot: ""},
+		{Name: fqdn, Type: dns.TypeCAA, Slot: ""},
+		{Name: fqdn, Type: dns.TypeDNSKEY, Slot: ""},
+		{Name: "_dmarc." + fqdn, Type: dns.TypeTXT, Slot: "dmarc"},
+		{Name: "_mta-sts." + fqdn, Type: dns.TypeTXT, Slot: "mta_sts"},
+		{Name: "_smtp._tls." + fqdn, Type: dns.TypeTXT, Slot: "tls_rpt"},
+		{Name: "default._bimi." + fqdn, Type: dns.TypeTXT, Slot: "bimi"},
 	}
 	for _, h := range cfg.Hostnames {
 		hn := dns.Fqdn(h + "." + domain)
-		qs = append(qs, Query{hn, dns.TypeA, h}, Query{hn, dns.TypeAAAA, h})
+		qs = append(qs, Query{Name: hn, Type: dns.TypeA, Slot: h}, Query{Name: hn, Type: dns.TypeAAAA, Slot: h})
 	}
 	for _, sel := range cfg.DKIMSelectors {
-		qs = append(qs, Query{dns.Fqdn(sel + "._domainkey." + domain), dns.TypeTXT, sel})
+		qs = append(qs, Query{Name: dns.Fqdn(sel + "._domainkey." + domain), Type: dns.TypeTXT, Slot: sel})
 	}
 	return qs
 }

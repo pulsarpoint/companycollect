@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS scan_domains (
   queries_total INTEGER DEFAULT 0,
   queries_ok    INTEGER DEFAULT 0,
   error         TEXT DEFAULT '',
+  source_run_id TEXT DEFAULT '',
   resolved_at   TEXT DEFAULT '',
   PRIMARY KEY (scan_id, root_domain)
 );
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS scan_records (
   ttl          INTEGER DEFAULT 0,
   priority     INTEGER DEFAULT 0,
   rcode        TEXT DEFAULT '',
+  source_run_id TEXT DEFAULT '',
   resolved_at  TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_records_domain ON scan_records (scan_id, root_domain);
@@ -126,15 +128,15 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 	}
 	defer del.Close()
 	insR, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
-		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, resolved_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source_run_id, resolved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer insR.Close()
 	upD, err := tx.PrepareContext(ctx, `UPDATE scan_domains SET
 		status=?, etld=?, nameservers=?, ns_ips=?, dnssec_signed=?, ds_present=?,
-		queries_total=?, queries_ok=?, error=?, resolved_at=?
+		queries_total=?, queries_ok=?, error=?, source_run_id=?, resolved_at=?
 		WHERE scan_id=? AND root_domain=?`)
 	if err != nil {
 		return err
@@ -148,7 +150,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		ts := res.ResolvedAt.UTC().Format(time.RFC3339Nano)
 		for _, rec := range res.Records {
 			if _, err := insR.ExecContext(ctx, res.ScanID, res.RootDomain, rec.Name, rec.RecordType,
-				rec.Slot, rec.Value, rec.TTL, rec.Priority, rec.Rcode, ts); err != nil {
+				rec.Slot, rec.Value, rec.TTL, rec.Priority, rec.Rcode, res.SourceRunID, ts); err != nil {
 				return err
 			}
 		}
@@ -156,7 +158,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		nsips, _ := json.Marshal(res.NSIPs)
 		res2, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips),
 			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.QueriesTotal, res.QueriesOK,
-			res.Error, ts, res.ScanID, res.RootDomain)
+			res.Error, res.SourceRunID, ts, res.ScanID, res.RootDomain)
 		if err != nil {
 			return err
 		}
@@ -172,7 +174,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 // StagedRecords reads the record stage for a scan into CH RecordRow shape.
 func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.RecordRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT scan_id, root_domain, name, record_type, slot, value,
-		ttl, priority, rcode, resolved_at FROM scan_records WHERE scan_id = ?`, scanID)
+		ttl, priority, rcode, source_run_id, resolved_at FROM scan_records WHERE scan_id = ?`, scanID)
 	if err != nil {
 		return nil, err
 	}
@@ -182,11 +184,10 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 		var r model.RecordRow
 		var ts string
 		if err := rows.Scan(&r.ScanID, &r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
-			&r.TTL, &r.Priority, &r.Rcode, &ts); err != nil {
+			&r.TTL, &r.Priority, &r.Rcode, &r.SourceRunID, &ts); err != nil {
 			return nil, err
 		}
 		r.ResolvedAt = parseTS(ts)
-		r.SourceRunID = scanID
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -195,7 +196,7 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 // StagedDomains reads finished domain summaries for a scan into CH ScanRow shape.
 func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT scan_id, root_domain, etld, nameservers, ns_ips,
-		dnssec_signed, ds_present, status, error, queries_total, queries_ok, resolved_at
+		dnssec_signed, ds_present, status, error, queries_total, queries_ok, source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status IN ('done','error')`, scanID)
 	if err != nil {
 		return nil, err
@@ -207,7 +208,7 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 		var ns, nsips, ts string
 		var dnssec, ds int
 		if err := rows.Scan(&r.ScanID, &r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
-			&r.Status, &r.Error, &r.QueriesTotal, &r.QueriesOK, &ts); err != nil {
+			&r.Status, &r.Error, &r.QueriesTotal, &r.QueriesOK, &r.SourceRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
@@ -215,7 +216,6 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
 		r.ResolvedAt = parseTS(ts)
-		r.SourceRunID = scanID
 		out = append(out, r)
 	}
 	return out, rows.Err()

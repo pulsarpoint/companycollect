@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -40,6 +41,10 @@ func runScan(args []string) error {
 	}
 	if *workers <= 0 {
 		*workers = 1
+	}
+	resolverList := cleanResolvers(strings.Split(*resolvers, ","))
+	if len(resolverList) == 0 {
+		return fmt.Errorf("--resolvers is empty")
 	}
 	ctx := context.Background()
 
@@ -80,7 +85,7 @@ func runScan(args []string) error {
 	// 2) Two schedulers: discovery (recursive resolvers) and authoritative (per-NS-IP politeness).
 	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *inflight})
 	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight})
-	disc := resolve.NewDiscoverer(resolve.NewExchanger(discSched, *timeout), strings.Split(*resolvers, ","))
+	disc := resolve.NewDiscoverer(resolve.NewExchanger(discSched, *timeout), resolverList)
 	rec := resolve.NewResolver(resolve.NewExchanger(authSched, *timeout))
 	cfg := records.DefaultConfig()
 
@@ -139,4 +144,17 @@ func runScan(args []string) error {
 	writerWG.Wait()
 	log.Printf("scan_id=%s: done (%d domains resolved this run)", *scanID, len(pending))
 	return nil
+}
+
+// cleanResolvers drops empty/whitespace-only tokens (e.g. from a trailing comma or blank
+// --resolvers flag) so a malformed flag can't silently produce a zero-length resolver list that
+// then fails every domain's discovery one at a time.
+func cleanResolvers(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	for _, r := range raw {
+		if t := strings.TrimSpace(r); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

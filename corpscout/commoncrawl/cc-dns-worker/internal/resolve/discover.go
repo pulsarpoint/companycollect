@@ -60,7 +60,7 @@ func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation,
 	if dsResp, err := d.query(ctx, fqdn, dns.TypeDS); err == nil && dsResp != nil {
 		for _, rr := range dsResp.Answer {
 			if ds, ok := rr.(*dns.DS); ok {
-				del.DS = append(del.DS, ds.String())
+				del.DS = append(del.DS, strings.TrimSpace(ds.String()[len(ds.Hdr.String()):]))
 			}
 		}
 	}

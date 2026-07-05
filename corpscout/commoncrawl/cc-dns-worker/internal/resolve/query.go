@@ -97,6 +97,8 @@ func collect(q records.Query, resp *dns.Msg, rcode string) []model.DNSRecord {
 			rec.RecordType, rec.Value = "DNSKEY", strings.TrimSpace(v.String()[len(v.Hdr.String()):])
 		case *dns.TXT:
 			rec.RecordType, rec.Value = "TXT", strings.Join(v.Txt, "")
+		case *dns.CNAME:
+			rec.RecordType, rec.Value = "CNAME", strings.TrimSuffix(strings.ToLower(v.Target), ".")
 		default:
 			continue
 		}

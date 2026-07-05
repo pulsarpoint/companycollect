@@ -72,3 +72,26 @@ func TestResolveProducesRecords(t *testing.T) {
 		}
 	}
 }
+
+// TestCollectCapturesCNAME covers a hostname (e.g. www/mail/autodiscover) that is a CNAME rather
+// than an A/AAAA record — common for CDNs, M365, and Google Workspace. Before this fix, collect()
+// silently dropped the RR via the switch's default case, losing the hostname entirely.
+func TestCollectCapturesCNAME(t *testing.T) {
+	z := map[string][]dns.RR{
+		"www.example.com./A": {mustRR(t, "www.example.com. 300 IN CNAME foo.cdn.net.")},
+	}
+	r := &Resolver{Ex: stubEx{z: z}}
+	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
+
+	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del, records.DefaultConfig(), time.Unix(0, 0).UTC())
+
+	found := false
+	for _, rec := range res.Records {
+		if rec.RecordType == "CNAME" && rec.Slot == "www" && rec.Value == "foo.cdn.net" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("missing CNAME record for www (slot=www, value=foo.cdn.net); records=%+v", res.Records)
+	}
+}

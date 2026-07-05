@@ -53,7 +53,7 @@ func TestCommitBatchAndResume(t *testing.T) {
 	err = s.CommitBatch(ctx, []model.DomainResult{{
 		ScanID: "sc", RootDomain: "a.com", ETLD: "com", Status: "done",
 		Nameservers: []string{"ns1.a.com"}, NSIPs: []string{"1.1.1.1"},
-		QueriesTotal: 10, QueriesOK: 9, ResolvedAt: now,
+		QueriesTotal: 10, QueriesOK: 9, ResolvedAt: now, SourceRunID: "run-xyz",
 		Records: []model.DNSRecord{{Name: "a.com", RecordType: "MX", Value: "mail.a.com", Priority: 10, Rcode: "NOERROR"}},
 	}})
 	if err != nil {
@@ -77,9 +77,17 @@ func TestCommitBatchAndResume(t *testing.T) {
 	if len(recs) != 1 || recs[0].RecordType != "MX" || recs[0].Priority != 10 {
 		t.Fatalf("staged records = %+v", recs)
 	}
+	// source_run_id must be the run-id threaded through DomainResult, not the scan_id (they can
+	// legitimately differ: --run-id lets multiple scan-ids share one logical run).
+	if recs[0].SourceRunID != "run-xyz" {
+		t.Errorf("staged record source_run_id = %q, want %q (not scan_id %q)", recs[0].SourceRunID, "run-xyz", "sc")
+	}
 	rows, _ := s2.StagedDomains(ctx, "sc")
 	if len(rows) != 1 || rows[0].RootDomain != "a.com" || len(rows[0].Nameservers) != 1 {
 		t.Fatalf("staged domains = %+v", rows)
+	}
+	if rows[0].SourceRunID != "run-xyz" {
+		t.Errorf("staged domain source_run_id = %q, want %q (not scan_id %q)", rows[0].SourceRunID, "run-xyz", "sc")
 	}
 }
 
