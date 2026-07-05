@@ -66,10 +66,12 @@
   dataset → would be LLM-translated (`description_en` + `_translated_at/_provider/_model`) when added.
 
 ## 6b. Company contacts (§8b mandatory)
-- **Table `ee_company_contacts`** (migration `000027`, `ReplacingMergeTree`,
-  `ORDER BY (reg_code, contact_type, contact_value)`). One row per contact —
-  `contact_type`/`contact_type_en` (`WWW`→Website, `EMAIL`→Email, `MOB`→Mobile, `TEL`→Phone,
-  `FAX`→Fax, `MUU`→Other), `contact_value`, `is_current` (0 once `end_date` set), `source_url`.
+- **Table `ee_company_contacts`** — canonical standard shape (see
+  `docs/superpowers/specs/2026-07-04-company-contacts-domains-standard-design.md`; migration
+  `000096` reshaped the original `000027` table data-preserving), `ReplacingMergeTree`,
+  `ORDER BY (registry_id, contact_type, contact_value)`. One row per contact —
+  `contact_type`/`contact_type_raw` (`WWW`→website, `EMAIL`→email, `MOB`→mobile, `TEL`→phone,
+  `FAX`→fax, else→other), `contact_value`, `is_current` (0 once `valid_to` set), `source_url`.
 - **Source = the richer `…__yldandmed.json.zip`** (the `lihtandmed` register CSV carries no
   contacts). Each company's `yldandmed.sidevahendid[]` array holds the contacts. **Website
   (`contact_type='WWW'`) is the domain-discovery signal** corpscout exists to capture.
@@ -82,17 +84,20 @@
   `general_data.py` + `clickhouse.py`). No `raw_*`/hash columns; export == full tuple.
 
 ### Website/email → domain connection
-- `ee_company_contacts` carries **`domain` + `domain_source`** (`'website'|'email'|''`), computed at
-  build time: `root_domain(contact_value)` (shared `dagster_v3.domains` tldextract UDF) for WWW rows;
+- The DuckDB staging table computes **`domain` + `domain_source`** (`'website'|'email'|''`) per
+  contact — `root_domain(contact_value)` (shared `dagster_v3.domains` tldextract UDF) for WWW rows;
   for EMAIL rows the email suffix **only if it is unique to one company**. Counting *distinct
-  companies* per suffix (migration `000028`) auto-drops every mail provider (gmail @190k companies)
-  and shared accounting/formation-agent domain (kvatro.ee @286) — no magic threshold, just the
-  uniqueness rule (`EMAIL_DOMAIN_MAX_COMPANIES`, default 1) + a small provider denylist backstop.
+  `registry_id`* per suffix auto-drops every mail provider (gmail @190k companies) and shared
+  accounting/formation-agent domain (kvatro.ee @286) — no magic threshold, just the uniqueness rule
+  (`EMAIL_DOMAIN_MAX_COMPANIES`, default 1) + a small provider denylist backstop. Only
+  `ee_company_domains` (below) carries these columns; the canonical `ee_company_contacts` export
+  omits them.
 - **Why email matters**: only ~21k companies have a website but ~340k have an email on their own
   domain → email mining is the main domain-coverage source.
-- **`ee_company_domains`** (migration `000029`) — deduped one row per `(reg_code, domain)` feeder
-  (`company_domains.py`), website source preferred over email, exactly one `is_primary` per company;
-  website rows carry `website_url`/`_normalized_url`/`_host`, email rows leave them empty.
+- **`ee_company_domains`** — canonical standard shape (same spec; migration `000096` reshaped the
+  original `000029` table data-preserving) — deduped one row per `(registry_id, domain)` feeder
+  (`company_domains.py`), website source preferred over email, exactly one `is_primary` per
+  `registry_id`; website rows carry `website_url`/`_normalized_url`/`_host`, email rows leave them empty.
 - Flows into the **cross-source `company_website_domains`** graph: the `domains_clickhouse` asset adds
   an `ee_company_domains` UNION branch and a new **`domain_source`** column (migration `000030`;
   fi/no/wikidata branches backfilled `'website'`). `domains` rolls up per `root_domain` as before.

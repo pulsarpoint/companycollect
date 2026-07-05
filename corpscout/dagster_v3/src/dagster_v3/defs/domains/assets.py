@@ -199,12 +199,12 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
             'ee_company_domains' AS source_website_table,
             ifNull(
                 nullIf(trim(websites.source_record_id), ''),
-                concat('ee_company_domains:', websites.reg_code, ':', websites.domain)
+                concat('ee_company_domains:', websites.registry_id, ':', websites.domain)
             ) AS source_website_id,
             'EE' AS country_iso2,
             'estonia_ar' AS source_slug,
             'reg_code' AS company_id_type,
-            websites.reg_code AS company_id,
+            websites.registry_id AS company_id,
             websites.website_url AS website_url,
             websites.website_normalized_url AS website_normalized_url,
             websites.website_host AS website_host,

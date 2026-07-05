@@ -68,6 +68,10 @@ def test_replace_domain_clickhouse_tables_uses_stage_exchange(
         and "companies.headquarters_country_iso2" in statement
         and "'brazil_rfb' AS source_slug" in statement
         and "'cnpj_basico' AS company_id_type" in statement
+        and "'estonia_ar' AS source_slug" in statement
+        and "'reg_code' AS company_id_type" in statement
+        and "websites.registry_id AS company_id" in statement
+        and "websites.reg_code" not in statement
         and "source_website_table" in statement
         and "source_website_id" in statement
         and "domain_source" in statement

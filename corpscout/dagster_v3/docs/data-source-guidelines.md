@@ -239,9 +239,9 @@ contact information is mandatory, not optional.** When you analyse a new source,
 - **Mandatory alongside currency (§7) and translation (§8).** Reference impl (canonical pair):
   `czech_ares` (`cz_company_contacts`/`cz_company_domains`) and `latvia_ur`
   (`lv_company_contacts`/`lv_company_domains`), both extracted from free-text legal names via the
-  shared module below. Estonia/Brazil/Norway/Finland/wikidata reshape to this pair in later phases
-  (see the standard spec's migration strategy) — until each source's phase lands, its existing
-  tables keep their pre-standard shape.
+  shared module below. Brazil/Norway/Finland/wikidata reshape to this pair in later phases (see the
+  standard spec's migration strategy) — until each source's phase lands, its existing tables keep
+  their pre-standard shape. Estonia already reshaped (migration `000096`, data-preserving).
 - **When a source has no structured contact fields but embeds domains/emails in free text** (e.g. a
   legal name like `SIA "cenuklubs.lv"`), use the shared `dagster_v3/contact_extraction.py` module
   (IDN-aware candidate parsing, CommonCrawl/DNS validation, atomic table replace, canonical-column
