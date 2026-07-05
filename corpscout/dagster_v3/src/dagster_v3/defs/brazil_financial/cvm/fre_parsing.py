@@ -946,7 +946,7 @@ def _common_select_sql() -> str:
 
 def _read_member_to_temp_table(*, connection: Any, csv_path: Path) -> None:
     try:
-        _read_member_to_temp_table_with_encoding(
+        _read_member_to_temp_table_with_quote_sanitizer(
             connection=connection,
             csv_path=csv_path,
             encoding=CSV_ENCODING,
@@ -955,11 +955,40 @@ def _read_member_to_temp_table(*, connection: Any, csv_path: Path) -> None:
         if "File is not latin-1 encoded" not in str(exc):
             raise
         fallback_path = _transcode_windows_1252_csv_to_utf8(csv_path)
-        _read_member_to_temp_table_with_encoding(
+        _read_member_to_temp_table_with_quote_sanitizer(
             connection=connection,
             csv_path=fallback_path,
             encoding=CSV_FALLBACK_ENCODING,
         )
+
+
+def _read_member_to_temp_table_with_quote_sanitizer(
+    *,
+    connection: Any,
+    csv_path: Path,
+    encoding: str,
+) -> None:
+    try:
+        _read_member_to_temp_table_with_encoding(
+            connection=connection,
+            csv_path=csv_path,
+            encoding=encoding,
+        )
+        if _fre_member_temp_table_has_identifier_column(connection):
+            return
+    except Exception as exc:
+        if not _is_malformed_quote_csv_error(exc):
+            raise
+
+    sanitized_path = _sanitize_malformed_literal_quote_fields(
+        csv_path,
+        encoding=encoding,
+    )
+    _read_member_to_temp_table_with_encoding(
+        connection=connection,
+        csv_path=sanitized_path,
+        encoding=encoding,
+    )
 
 
 def _read_member_to_temp_table_with_encoding(
@@ -987,6 +1016,14 @@ def _read_member_to_temp_table_with_encoding(
     )
 
 
+def _fre_member_temp_table_has_identifier_column(connection: Any) -> bool:
+    column_names = {
+        row[0]
+        for row in connection.execute("describe _brazil_fin_cvm_fre_member").fetchall()
+    }
+    return "CNPJ_CIA" in column_names or "CNPJ_Companhia" in column_names
+
+
 def _transcode_windows_1252_csv_to_utf8(csv_path: Path) -> Path:
     fallback_path = csv_path.with_suffix(f"{csv_path.suffix}.utf8")
     fallback_path.write_text(
@@ -994,6 +1031,81 @@ def _transcode_windows_1252_csv_to_utf8(csv_path: Path) -> Path:
         encoding=CSV_FALLBACK_ENCODING,
     )
     return fallback_path
+
+
+def _is_malformed_quote_csv_error(exc: Exception) -> bool:
+    message = str(exc)
+    return (
+        "unterminated quote" in message
+        or "not possible to automatically detect the CSV parsing dialect" in message
+    )
+
+
+def _sanitize_malformed_literal_quote_fields(csv_path: Path, *, encoding: str) -> Path:
+    sanitized_path = csv_path.with_suffix(f"{csv_path.suffix}.sanitized")
+    sanitized_path.write_text(
+        "\n".join(
+            _sanitize_malformed_literal_quote_line(line)
+            for line in csv_path.read_text(encoding=encoding).splitlines()
+        )
+        + "\n",
+        encoding=encoding,
+    )
+    return sanitized_path
+
+
+def _sanitize_malformed_literal_quote_line(line: str) -> str:
+    fields = _split_semicolon_csv_line_preserving_quotes(line)
+    return ";".join(_sanitize_malformed_literal_quote_field(field) for field in fields)
+
+
+def _split_semicolon_csv_line_preserving_quotes(line: str) -> list[str]:
+    fields: list[str] = []
+    index = 0
+    while index <= len(line):
+        if index == len(line):
+            fields.append("")
+            break
+        if line[index] == ";":
+            fields.append("")
+            index += 1
+            continue
+        field_end = _find_semicolon_csv_field_end(line, index)
+        fields.append(line[index:field_end])
+        index = field_end + 1
+    if line and line[-1] != ";":
+        return fields[:-1] if fields and fields[-1] == "" else fields
+    return fields
+
+
+def _find_semicolon_csv_field_end(line: str, field_start: int) -> int:
+    if line[field_start] != '"':
+        delimiter_index = line.find(";", field_start)
+        return len(line) if delimiter_index == -1 else delimiter_index
+
+    quote_index = field_start + 1
+    while quote_index < len(line):
+        if line[quote_index] != '"':
+            quote_index += 1
+            continue
+        next_index = quote_index + 1
+        if next_index < len(line) and line[next_index] == '"':
+            quote_index += 2
+            continue
+        if next_index == len(line) or line[next_index] == ";":
+            return next_index
+        delimiter_index = line.find(";", field_start)
+        return len(line) if delimiter_index == -1 else delimiter_index
+    return len(line)
+
+
+def _sanitize_malformed_literal_quote_field(field: str) -> str:
+    if not field.startswith('"'):
+        return field
+    closing_quote_index = field.find('"', 1)
+    if closing_quote_index == -1 or closing_quote_index == len(field) - 1:
+        return field
+    return '"' + field.replace('"', '""') + '"'
 
 
 def _year_counts(*, connection: Any, year: str) -> dict[str, int]:

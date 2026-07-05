@@ -2,11 +2,15 @@
 
 ## Summary
 
-Brazil is processed from Receita Federal CNPJ open data. The implemented source
-slug is `brazil_rfb`; the Dagster company-registry group is
-`brazil_comp_rfb`, backed by monthly full bulk snapshots. It currently produces
-legal entities, establishments, native contact rows, and email-derived domain
-rows. It does not use an incremental source feed.
+Brazil company registry data is processed from Receita Federal CNPJ open data.
+The implemented source slug is `brazil_rfb`; the Dagster company-registry group
+is `brazil_comp_rfb`, backed by monthly full bulk snapshots. It currently
+produces legal entities, establishments, native contact rows, and email-derived
+domain rows. It does not use an incremental source feed.
+
+Brazil company risk/debt enrichment is also started from PGFN Dívida Ativa open
+data under `brazil_comp_pgfn`. PGFN is not a financial-statement source; it is a
+CNPJ-level public debt/risk signal.
 
 Related notes:
 
@@ -31,6 +35,21 @@ Related notes:
 | Raw file families used | `Empresas`, `Estabelecimentos`, `Simples`, and reference tables: `Cnaes`, `Naturezas`, `Municipios`, `Paises`, `Qualificacoes`, `Motivos`. |
 | Deferred file families | `Socios` is intentionally deferred because it contains natural-person partner data and needs a privacy-specific ingestion design. |
 
+## Risk Enrichment Source
+
+| Question | Answer |
+|---|---|
+| Source | PGFN `Devedores da União` / Dívida Ativa da União and FGTS open data. |
+| Source URL | `https://www.gov.br/pgfn/pt-br/assuntos/divida-ativa-da-uniao/transparencia-fiscal-1/dados-abertos`. |
+| Access | Public ZIP CSV files, no authentication. |
+| Implemented source slug | `brazil_pgfn`. |
+| Dagster package/group | `dagster_v3.defs.brazil_companies.pgfn` / `brazil_comp_pgfn`. |
+| Ingestion strategy | Full quarterly snapshot ZIP downloads. No incremental/delta feed is used. |
+| Partitioning | Yes. Static quarterly partitions currently cover `2020-Q1` through `2026-Q1`, matching the official published inventory checked on 2026-07-05. |
+| Scheduler activation | Run after PGFN publishes the next quarterly dataset. |
+| Data scope | Company/CNPJ debt rows only; CPF/person rows are ignored. |
+| Source systems | `nao_previdenciario`, `fgts`, and `previdenciario`. |
+
 ## Data Products
 
 | Output | Grain | Notes |
@@ -40,6 +59,7 @@ Related notes:
 | `corpscout.br_company_contact_info` | One row per normalized establishment contact. | Unpivots native email, phone 1, phone 2, and fax. |
 | `corpscout.br_websites` | One row per accepted `(cnpj_basico, root_domain)`. | Derived from email domains only; no official website URL is present in RFB CNPJ. |
 | `corpscout.br_cnae_to_nace` | Reference mapping edge from CNAE to NACE. | Curated seed fixture exists through `brazil_comp_cnae_to_nace_clickhouse`. Full company-industry materialization is planned in the design doc but is not wired in the current `brazil_comp_rfb` asset list. |
+| `corpscout.br_pgfn_company_debts` | One row per company debt inscription in a quarterly PGFN snapshot. | Public debt/risk enrichment keyed by full CNPJ and `cnpj_basico`; includes situation, source system, inscription date, judicial-collection flag, and consolidated BRL amount. |
 
 ## Company Data Coverage
 
@@ -57,6 +77,7 @@ Related notes:
 | How extensive are the financial data? | Very limited. There are no balance sheets, income statements, revenue, profit, assets, liabilities, or filing periods from `brazil_rfb`. CVM listed-company financials are documented as a later separate phase, not part of this implemented source. |
 | Do we have number of employees? | No. RFB CNPJ does not provide employee counts in this pipeline. |
 | Do we have ownership/partners? | Not in the current implementation. The `Socios` file is deferred because it includes masked CPF and natural-person partner information. |
+| Do we have public debt/risk signals? | Yes, via PGFN Dívida Ativa in `br_pgfn_company_debts`. This is not a financial statement; it is a public tax/FGTS debt enrichment source. |
 
 ## Important Source Fields
 
@@ -72,6 +93,7 @@ Related notes:
 | Tax regime | `Simples.opcao_simples`, `Simples.opcao_mei` | `is_simples`, `is_mei`. |
 | Contact | `correio_eletronico`, `ddd_1`, `telefone_1`, `ddd_2`, `telefone_2`, `ddd_fax`, `fax` | Rows in `br_company_contact_info`. |
 | Financial | `Empresas.capital_social` | `share_capital_amount_original` in BRL-like source decimal format parsed to decimal. |
+| Public debt | PGFN `CPF_CNPJ`, `NUMERO_INSCRICAO`, `SITUACAO_INSCRICAO`, `TIPO_SITUACAO_INSCRICAO`, `INDICADOR_AJUIZADO`, `VALOR_CONSOLIDADO` | `br_pgfn_company_debts` CNPJ debt/risk rows. |
 
 ## Operational Notes
 
@@ -84,3 +106,6 @@ Related notes:
 - Empty raw-family inputs are not allowed to replace existing staging tables.
 - `brazil_comp_rfb_resolve_job` selects the full `brazil_comp_rfb` asset group for one
   monthly partition.
+- PGFN source files are semicolon-delimited CSV inside ZIP archives with a
+  header row. The parser preserves raw quarterly ZIPs in object storage and
+  filters to company/CNPJ rows before loading `br_pgfn_company_debts`.

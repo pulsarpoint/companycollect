@@ -1,10 +1,11 @@
 from pathlib import Path
 
 from dagster_v3.defs.brazil_companies.cnae import tables as brazil_cnae_tables
-from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
+from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
-from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
+from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
 from dagster_v3.defs.domains import tables as domain_tables
+from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.finland_ytj import resolved_tables as finland_resolved_tables
 from dagster_v3.defs.nace import tables as nace_tables
 from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
@@ -112,6 +113,10 @@ EXPECTED_MIGRATIONS = (
     "000097_corpscout_no_canonical_contacts",
     "000098_corpscout_fi_canonical_contacts",
     "000099_corpscout_wikidata_canonical_contacts",
+    "000100_corpscout_br_cvm_fre_tables",
+    "000101_corpscout_commoncrawl_domain_dns_records",
+    "000102_corpscout_commoncrawl_domain_dns_scan",
+    "000103_corpscout_br_pgfn_company_debts",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1279,6 +1284,27 @@ def test_brazil_comp_rfb_registry_dates_are_date32_for_historical_rows() -> None
             assert f"MODIFY COLUMN {column_name} Nullable(Date32)" in sql
             assert f"ALTER TABLE corpscout.{table_name}" in down_sql
             assert f"MODIFY COLUMN {column_name} Nullable(Date)" in down_sql
+
+
+def test_brazil_comp_pgfn_company_debts_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000103_corpscout_br_pgfn_company_debts.up.sql")
+    down_sql = _migration_sql("000103_corpscout_br_pgfn_company_debts.down.sql")
+
+    assert (
+        f"CREATE TABLE IF NOT EXISTS "
+        f"{brazil_pgfn_tables.QUALIFIED_BR_PGFN_COMPANY_DEBTS_TABLE}"
+    ) in sql
+    for column_name in brazil_pgfn_tables.BR_PGFN_COMPANY_DEBTS_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql, (
+            f"missing {column_name} in br_pgfn_company_debts"
+        )
+
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "snapshot_year," in sql
+    assert "snapshot_quarter," in sql
+    assert "cnpj," in sql
+    assert "inscription_number," in sql
+    assert "DROP TABLE IF EXISTS corpscout.br_pgfn_company_debts" in down_sql
 
 
 def test_drop_raw_norway_exports_migration_removes_orphaned_tables() -> None:

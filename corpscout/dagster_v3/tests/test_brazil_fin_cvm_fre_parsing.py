@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import duckdb
 
@@ -86,6 +86,57 @@ def test_load_brazil_fin_cvm_fre_archive_loads_selected_enrichment_tables(
         "Uniao",
         "4801722831.330000",
         "4.801.722.831,33",
+    )
+
+
+def test_load_brazil_fin_cvm_fre_archive_treats_literal_quotes_as_data(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "fre_cia_aberta_2021.zip"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as zip_file:
+        zip_file.writestr(
+            "fre_cia_aberta_transacao_parte_relacionada_2021.csv",
+            (
+                "CNPJ_Companhia;Data_Referencia;Versao;ID_Documento;"
+                "Nome_Companhia;Parte_Relacionada;Tipo_Pessoa;"
+                "Documento_Parte_Relacionada;Relacao_Emissor;Data_Transacao;"
+                "Objeto_Contrato;Montante_Envolvido;Saldo_Existente;"
+                "Montante_Interesse_Parte_Relacionada;Garantia_Seguro;"
+                "Duracao_Transacao;Emprestimo_Divida;Rescisao;"
+                "Natureza_Razao_Operacao;Taxa_Juros;Posicao_Contratual_Emissor;"
+                "Especificacao_Posicao_Contratual_Emissor\n"
+                "00.000.000/0001-91;2021-12-31;1;158931;BCO BRASIL S.A.;"
+                "Uniao;PJ;00.000.000/0001-00;Controlador;2021-01-02;"
+                '"Contrato; com ponto e virgula";4801722831.33;'
+                "4.801.722.831,33;100%;N/A;60 meses;;;"
+                'Credito;"Taxa" de mercado;Devedor;"Contrato" com partes\n'
+            ).encode("latin-1"),
+        )
+
+    with duckdb.connect(str(tmp_path / "source.duckdb")) as connection:
+        counts = load_brazil_fin_cvm_fre_archive(
+            connection=connection,
+            archive_path=archive_path,
+            year="2021",
+            source_archive_key=fre_archive_object_key("2021"),
+            source_run_id="run-1",
+            resolved_at=datetime(2026, 7, 5, tzinfo=UTC),
+        )
+        row = connection.execute(
+            f"""
+            select
+                contract_object,
+                interest_rate,
+                issuer_contractual_position_specification
+            from {BRAZIL_CVM_DUCKDB_SCHEMA}.{FRE_RELATED_PARTY_TRANSACTIONS_TABLE}
+            """
+        ).fetchone()
+
+    assert counts["related_party_transaction_row_count"] == 1
+    assert row == (
+        "Contrato; com ponto e virgula",
+        '"Taxa" de mercado',
+        '"Contrato" com partes',
     )
 
 
