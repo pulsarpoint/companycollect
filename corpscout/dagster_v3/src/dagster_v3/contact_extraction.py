@@ -1,5 +1,7 @@
 """Shared contact-candidate extraction from free text (emails + domains, IDN-aware),
-CommonCrawl/DNS domain validation, and the atomic stage/EXCHANGE contact-table replace.
+CommonCrawl/DNS domain validation, and the atomic stage/EXCHANGE table replacers
+(`replace_contact_table` for Python-materialized rows, `replace_table_from_select`
+for a CH-native INSERT-SELECT).
 
 Per-country modules own their candidate SQL, id semantics, and table names.
 """
@@ -722,6 +724,37 @@ def replace_contact_table(
             qualified_table,
             written,
         )
+    return written
+
+
+def replace_table_from_select(
+    clickhouse_client: Any,
+    *,
+    qualified_table: str,
+    columns: Sequence[str],
+    select_sql: str,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Atomically replace `qualified_table`'s contents from a SELECT over other
+    ClickHouse tables (stage CREATE AS target -> INSERT INTO stage (cols) SELECT
+    -> EXCHANGE TABLES -> drop stage). CH-native, INSERT-SELECT sibling of
+    `replace_contact_table` (which batches Python-materialized rows) for the
+    canonical-pair derivation assets, which read straight from other ClickHouse
+    tables; per-source SELECTs are duplicated in their backfill migrations by
+    design. Returns the row count read back after the exchange."""
+    database, _, bare_table = qualified_table.rpartition(".")
+    stage = f"{database}._tmp_{bare_table}_{uuid.uuid4().hex}"
+    clickhouse_client.execute(f"CREATE TABLE {stage} AS {qualified_table}")
+    try:
+        clickhouse_client.execute(
+            f"INSERT INTO {stage} ({', '.join(columns)}) {select_sql}"
+        )
+        clickhouse_client.execute(f"EXCHANGE TABLES {stage} AND {qualified_table}")
+    finally:
+        clickhouse_client.execute(f"DROP TABLE IF EXISTS {stage}")
+    written = int(clickhouse_client.execute(f"SELECT count() FROM {qualified_table}")[0][0])
+    if log is not None:
+        log("Replaced %s from select: rows=%s", qualified_table, written)
     return written
 
 

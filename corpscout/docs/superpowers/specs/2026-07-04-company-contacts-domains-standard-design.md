@@ -140,6 +140,17 @@ any row.
    config list of `(table, registry_id_type)` pairs. `corpscout.domains`
    aggregation is unchanged.
 
+## Addendum (2026-07-05, Phase D): decision 5 correction
+
+`wikidata_company_websites.confidence` is a hardcoded literal `'wikidata'`
+on every row (verified against the builder SQL and live data) — the
+high/medium/low mapping described in decision 5 has nothing to map from.
+Wikidata website rows take the standard explicit-website confidence **1.0**,
+like every other register website field. `website_kind`/`validation_status`
+are likewise constants and carry no signal; they do not survive into the
+canonical shape. `is_primary_candidate` is constantly 1, so the canonical
+`is_primary` comes from the standard election (one winner per wikidata_id).
+
 ## Per-source conversion inventory
 
 | Source | Contacts | Domains | Notes |

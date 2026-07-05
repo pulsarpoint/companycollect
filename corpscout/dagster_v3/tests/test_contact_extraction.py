@@ -115,6 +115,59 @@ def test_replace_contact_table_inserts_contact_rows_in_batches():
     assert any(cmd.strip().startswith("DROP TABLE IF EXISTS") for cmd in fake.commands)
 
 
+class _FakeStageExchangeClient:
+    def __init__(self):
+        self.statements = []
+
+    def execute(self, sql, params=None):
+        self.statements.append(" ".join(str(sql).split()))
+        if "count()" in str(sql):
+            return [(42,)]
+        return []
+
+
+def test_replace_table_from_select_stage_exchange_order():
+    client = _FakeStageExchangeClient()
+    written = contact_extraction.replace_table_from_select(
+        client,
+        qualified_table="corpscout.no_company_domains",
+        columns=("a", "b"),
+        select_sql="SELECT a, b FROM corpscout.no_websites",
+    )
+    assert written == 42
+    joined = " || ".join(client.statements)
+    create = next(i for i, s in enumerate(client.statements) if s.startswith("CREATE TABLE"))
+    insert = next(i for i, s in enumerate(client.statements) if s.startswith("INSERT INTO"))
+    exchange = next(i for i, s in enumerate(client.statements) if s.startswith("EXCHANGE TABLES"))
+    drop = next(i for i, s in enumerate(client.statements) if s.startswith("DROP TABLE"))
+    assert create < insert < exchange < drop, joined
+    assert "(a, b)" in client.statements[insert]
+    assert "AS corpscout.no_company_domains" in client.statements[create]
+
+
+def test_replace_table_from_select_drops_stage_on_failure():
+    class _FailingClient(_FakeStageExchangeClient):
+        def execute(self, sql, params=None):
+            super().execute(sql, params)
+            if str(sql).strip().startswith("INSERT"):
+                raise RuntimeError("boom")
+            if "count()" in str(sql):
+                return [(0,)]
+            return []
+
+    client = _FailingClient()
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        contact_extraction.replace_table_from_select(
+            client,
+            qualified_table="corpscout.no_company_domains",
+            columns=("a",),
+            select_sql="SELECT a FROM x",
+        )
+    assert any(s.startswith("DROP TABLE") for s in client.statements)  # finally-cleanup
+
+
 def test_nameservers_for_domain_uses_parent_zone_authority(monkeypatch):
     class FakeNsAnswer:
         target = "A.NS.NIC.CZ."
