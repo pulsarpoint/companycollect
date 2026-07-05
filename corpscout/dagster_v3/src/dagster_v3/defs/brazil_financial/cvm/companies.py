@@ -281,7 +281,7 @@ def load_brazil_fin_cvm_companies_csv(
             coalesce(DDD_FAX_RESP, ''),
             coalesce(FAX_RESP, ''),
             coalesce(EMAIL_RESP, ''),
-            regexp_replace(CNPJ_AUDITOR, '[^0-9]', '', 'g'),
+            coalesce(regexp_replace(CNPJ_AUDITOR, '[^0-9]', '', 'g'), ''),
             coalesce(AUDITOR, ''),
             ?,
             ?,

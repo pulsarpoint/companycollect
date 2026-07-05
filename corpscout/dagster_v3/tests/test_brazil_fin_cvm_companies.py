@@ -84,6 +84,40 @@ def test_load_brazil_fin_cvm_companies_csv_normalizes_issuer_rows(tmp_path) -> N
     )
 
 
+def test_load_brazil_fin_cvm_companies_csv_normalizes_missing_auditor_cnpj_to_empty_string(
+    tmp_path,
+) -> None:
+    from dagster_v3.defs.brazil_financial.cvm import companies
+
+    csv_path = tmp_path / "cad_cia_aberta.csv"
+    header = "CNPJ_CIA;DENOM_SOCIAL;DENOM_COMERC;DT_REG;DT_CONST;DT_CANCEL;MOTIVO_CANCEL;SIT;DT_INI_SIT;CD_CVM;SETOR_ATIV;TP_MERC;CATEG_REG;DT_INI_CATEG;SIT_EMISSOR;DT_INI_SIT_EMISSOR;CONTROLE_ACIONARIO;TP_ENDER;LOGRADOURO;COMPL;BAIRRO;MUN;UF;PAIS;CEP;DDD_TEL;TEL;DDD_FAX;FAX;EMAIL;TP_RESP;RESP;DT_INI_RESP;LOGRADOURO_RESP;COMPL_RESP;BAIRRO_RESP;MUN_RESP;UF_RESP;PAIS_RESP;CEP_RESP;DDD_TEL_RESP;TEL_RESP;DDD_FAX_RESP;FAX_RESP;EMAIL_RESP;CNPJ_AUDITOR;AUDITOR"
+    values = [""] * len(header.split(";"))
+    values[0] = "08.773.135/0001-00"
+    values[1] = "2W ECOBANK S.A."
+    values[3] = "2020-10-29"
+    values[7] = "ATIVO"
+    values[9] = "25224"
+    csv_path.write_text(
+        f"{header}\n{';'.join(values)}",
+        encoding="latin-1",
+    )
+
+    connection = duckdb.connect(":memory:")
+    companies.load_brazil_fin_cvm_companies_csv(
+        connection=connection,
+        csv_path=csv_path,
+        source_url="https://example.test/cad_cia_aberta.csv",
+        source_run_id="run-1",
+        resolved_at=datetime(2026, 7, 5, tzinfo=UTC),
+    )
+
+    row = connection.execute(
+        "select auditor_cnpj, auditor_name from brazil_cvm.companies"
+    ).fetchone()
+
+    assert row == ("", "")
+
+
 def test_load_brazil_fin_cvm_companies_csv_replaces_existing_table(tmp_path) -> None:
     from dagster_v3.defs.brazil_financial.cvm import companies
 

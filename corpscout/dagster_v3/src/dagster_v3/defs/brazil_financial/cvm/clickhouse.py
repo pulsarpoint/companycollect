@@ -145,6 +145,7 @@ def export_brazil_fin_cvm_companies_clickhouse(
             clickhouse_database=tables.BRAZIL_CVM_DATABASE,
             clickhouse_table=tables.BR_CVM_COMPANIES_TABLE,
             columns=tables.BR_CVM_COMPANIES_EXPORT_COLUMNS,
+            column_expressions={"auditor_cnpj": "coalesce(auditor_cnpj, '')"},
             truncate=True,
         )
     return {f"{tables.BR_CVM_COMPANIES_TABLE}_row_count": rows}

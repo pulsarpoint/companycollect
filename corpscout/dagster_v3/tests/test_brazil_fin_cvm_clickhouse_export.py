@@ -223,6 +223,7 @@ def test_export_brazil_fin_cvm_companies_clickhouse_exports_company_table(
             export["clickhouse_table"],
             export["columns"],
             export["truncate"],
+            export["column_expressions"],
         )
         for export in exports
     ] == [
@@ -233,6 +234,7 @@ def test_export_brazil_fin_cvm_companies_clickhouse_exports_company_table(
             tables.BR_CVM_COMPANIES_TABLE,
             tables.BR_CVM_COMPANIES_EXPORT_COLUMNS,
             True,
+            {"auditor_cnpj": "coalesce(auditor_cnpj, '')"},
         )
     ]
 
