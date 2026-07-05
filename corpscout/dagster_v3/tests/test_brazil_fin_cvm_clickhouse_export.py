@@ -39,6 +39,7 @@ class FakeDuckDBConnection:
             (BRAZIL_CVM_DUCKDB_SCHEMA, ITR_STATEMENT_ROWS_TABLE): 7,
             (BRAZIL_CVM_DUCKDB_SCHEMA, ITR_CAPITAL_COMPOSITION_TABLE): 8,
             (BRAZIL_CVM_DUCKDB_SCHEMA, ITR_AUDITOR_REPORTS_TABLE): 9,
+            (BRAZIL_CVM_DUCKDB_SCHEMA, "financial_metrics"): 10,
         }
         self._last_count: int | None = None
 
@@ -394,3 +395,69 @@ def test_export_brazil_fin_cvm_companies_clickhouse_refuses_empty_duckdb_table(
         )
 
     assert exported is False
+
+
+def test_export_brazil_fin_cvm_financial_metrics_clickhouse_exports_metrics_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dagster_v3.defs.brazil_financial.cvm import clickhouse
+    from dagster_v3.defs.brazil_financial.cvm.metrics import FINANCIAL_METRICS_TABLE
+
+    asserted_tables: list[tuple[str, tuple[str, ...]]] = []
+    exports: list[dict[str, object]] = []
+
+    def fake_assert_clickhouse_tables_exist(
+        clickhouse_resource: FakeClickHouseResource,
+        *,
+        database: str,
+        tables: tuple[str, ...],
+    ) -> None:
+        asserted_tables.append((database, tables))
+
+    def fake_export_duckdb_connection_table_to_clickhouse(**kwargs: object) -> int:
+        exports.append(kwargs)
+        return 10
+
+    monkeypatch.setattr(
+        clickhouse,
+        "assert_clickhouse_tables_exist",
+        fake_assert_clickhouse_tables_exist,
+    )
+    monkeypatch.setattr(
+        clickhouse,
+        "export_duckdb_connection_table_to_clickhouse",
+        fake_export_duckdb_connection_table_to_clickhouse,
+    )
+
+    row_counts = clickhouse.export_brazil_fin_cvm_financial_metrics_clickhouse(
+        duckdb_connection=FakeDuckDBConnection(),
+        clickhouse=FakeClickHouseResource(),
+    )
+
+    assert asserted_tables == [
+        (
+            tables.BRAZIL_CVM_DATABASE,
+            (tables.BR_CVM_FINANCIAL_METRICS_TABLE,),
+        )
+    ]
+    assert row_counts == {"br_cvm_financial_metrics_row_count": 10}
+    assert [
+        (
+            export["duckdb_schema"],
+            export["duckdb_table"],
+            export["clickhouse_database"],
+            export["clickhouse_table"],
+            export["columns"],
+            export["truncate"],
+        )
+        for export in exports
+    ] == [
+        (
+            BRAZIL_CVM_DUCKDB_SCHEMA,
+            FINANCIAL_METRICS_TABLE,
+            tables.BRAZIL_CVM_DATABASE,
+            tables.BR_CVM_FINANCIAL_METRICS_TABLE,
+            tables.BR_CVM_FINANCIAL_METRICS_EXPORT_COLUMNS,
+            True,
+        )
+    ]

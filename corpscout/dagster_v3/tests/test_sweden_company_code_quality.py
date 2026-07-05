@@ -65,6 +65,7 @@ def test_sweden_company_clickhouse_export_has_no_local_forwarding_helper() -> No
     }
 
     assert "_export_table" not in defined_functions
+    assert "export_sweden_company_clickhouse" not in defined_functions
 
 
 def test_sweden_company_tables_keeps_only_external_table_contracts() -> None:

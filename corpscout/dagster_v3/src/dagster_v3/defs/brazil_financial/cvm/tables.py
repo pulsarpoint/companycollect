@@ -9,6 +9,7 @@ BR_CVM_ITR_DOCUMENTS_TABLE = "br_cvm_itr_documents"
 BR_CVM_ITR_STATEMENT_ROWS_TABLE = "br_cvm_itr_statement_rows"
 BR_CVM_ITR_CAPITAL_COMPOSITION_TABLE = "br_cvm_itr_capital_composition"
 BR_CVM_ITR_AUDITOR_REPORTS_TABLE = "br_cvm_itr_auditor_reports"
+BR_CVM_FINANCIAL_METRICS_TABLE = "br_cvm_financial_metrics"
 
 QUALIFIED_BR_CVM_COMPANIES_TABLE = f"{BRAZIL_CVM_DATABASE}.{BR_CVM_COMPANIES_TABLE}"
 QUALIFIED_BR_CVM_DFP_DOCUMENTS_TABLE = (
@@ -34,6 +35,9 @@ QUALIFIED_BR_CVM_ITR_CAPITAL_COMPOSITION_TABLE = (
 )
 QUALIFIED_BR_CVM_ITR_AUDITOR_REPORTS_TABLE = (
     f"{BRAZIL_CVM_DATABASE}.{BR_CVM_ITR_AUDITOR_REPORTS_TABLE}"
+)
+QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE = (
+    f"{BRAZIL_CVM_DATABASE}.{BR_CVM_FINANCIAL_METRICS_TABLE}"
 )
 
 BR_CVM_COMPANIES_COLUMNS = (
@@ -227,6 +231,46 @@ BR_CVM_ITR_AUDITOR_REPORTS_COLUMNS = tuple(
     for column_name in BR_CVM_DFP_AUDITOR_REPORTS_COLUMNS
 )
 BR_CVM_ITR_AUDITOR_REPORTS_EXPORT_COLUMNS = BR_CVM_ITR_AUDITOR_REPORTS_COLUMNS
+
+BR_CVM_FINANCIAL_METRICS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "source_dataset",
+    "source_year",
+    "cnpj",
+    "cnpj_basico",
+    "company_name",
+    "cvm_code",
+    "reference_date",
+    "period_start_date",
+    "period_end_date",
+    "period_type",
+    "version",
+    "is_latest_version",
+    "consolidation_type",
+    "metric_name",
+    "metric_label",
+    "currency",
+    "amount_original",
+    "amount_usd",
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "source_statement_code",
+    "source_statement_name",
+    "source_account_codes",
+    "source_account_descriptions_original",
+    "source_statement_run_ids",
+    "source_statement_record_ids",
+    "source_archive_keys",
+    "source_file_names",
+    "source_statement_row_count",
+    "metric_mapping_version",
+    "resolved_at",
+)
+BR_CVM_FINANCIAL_METRICS_EXPORT_COLUMNS = BR_CVM_FINANCIAL_METRICS_COLUMNS
 
 BR_CVM_DFP_TABLES = (
     BR_CVM_DFP_DOCUMENTS_TABLE,

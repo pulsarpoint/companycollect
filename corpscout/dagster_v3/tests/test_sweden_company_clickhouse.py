@@ -6,12 +6,17 @@ import duckdb
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.sweden_company import tables
-from dagster_v3.defs.sweden_company.clickhouse import export_sweden_company_clickhouse
+from dagster_v3.defs.sweden_company.clickhouse import (
+    export_sweden_company_clickhouse_addresses,
+    export_sweden_company_clickhouse_companies,
+    export_sweden_company_clickhouse_industries,
+)
 
 
 class FakeClickHouseClient:
     def __init__(self) -> None:
         self.statements: list[str] = []
+        self.table_checks: list[tuple[str, ...]] = []
         self.insert_calls: list[tuple[str, list[tuple[object, ...]]]] = []
 
     def execute(
@@ -22,6 +27,7 @@ class FakeClickHouseClient:
         self.statements.append(sql)
         if "system.tables" in sql:
             requested = tuple(params["tables"]) if params else ()
+            self.table_checks.append(requested)
             return [(table,) for table in requested]
         if sql.startswith("CREATE TABLE") or sql.startswith("EXCHANGE TABLES"):
             return []
@@ -43,11 +49,10 @@ class FakeClickHouseClient:
         self.insert_calls.append((f"INSERT INTO {table} ({columns}) VALUES", rows))
 
 
-def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_industries(
+def test_export_sweden_company_clickhouse_companies_replaces_companies(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    database_path = tmp_path / "sweden_company_source.duckdb"
     client = FakeClickHouseClient()
     resource = ClickhouseResource(host="localhost")
 
@@ -57,6 +62,106 @@ def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_indus
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
+    with _sweden_company_duckdb(tmp_path) as connection:
+        rows = export_sweden_company_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=resource,
+        )
+
+    assert rows == 1
+    assert client.table_checks == [(tables.COMPANIES_TABLE_CH,)]
+    assert (
+        f"CREATE TABLE `corpscout`.`_tmp_{tables.COMPANIES_TABLE_CH}_"
+        in client.statements[1]
+    )
+    assert len(client.insert_calls) == 1
+    assert client.insert_calls[0][0].startswith(
+        "INSERT INTO `corpscout`.`_tmp_se_companies_"
+    )
+    assert client.insert_calls[0][1][0][0:4] == (
+        "5560000000",
+        "5560000000",
+        "5560000000$ORGNR-IDORG",
+        "5560000000",
+    )
+
+
+def test_export_sweden_company_clickhouse_addresses_replaces_addresses(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = FakeClickHouseClient()
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    with _sweden_company_duckdb(tmp_path) as connection:
+        rows = export_sweden_company_clickhouse_addresses(
+            duckdb_connection=connection,
+            clickhouse=resource,
+        )
+
+    assert rows == 1
+    assert client.table_checks == [(tables.COMPANY_ADDRESSES_TABLE_CH,)]
+    assert (
+        f"CREATE TABLE `corpscout`.`_tmp_{tables.COMPANY_ADDRESSES_TABLE_CH}_"
+        in client.statements[1]
+    )
+    assert len(client.insert_calls) == 1
+    assert client.insert_calls[0][0].startswith(
+        "INSERT INTO `corpscout`.`_tmp_se_company_addresses_"
+    )
+    assert client.insert_calls[0][1][0][0:3] == (
+        "5560000000",
+        "postal",
+        "bolagsverket",
+    )
+
+
+def test_export_sweden_company_clickhouse_industries_replaces_industries(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = FakeClickHouseClient()
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    with _sweden_company_duckdb(tmp_path) as connection:
+        rows = export_sweden_company_clickhouse_industries(
+            duckdb_connection=connection,
+            clickhouse=resource,
+        )
+
+    assert rows == 1
+    assert client.table_checks == [(tables.INDUSTRIES_TABLE_CH,)]
+    assert (
+        f"CREATE TABLE `corpscout`.`_tmp_{tables.INDUSTRIES_TABLE_CH}_"
+        in client.statements[1]
+    )
+    assert len(client.insert_calls) == 1
+    assert client.insert_calls[0][0].startswith(
+        "INSERT INTO `corpscout`.`_tmp_se_industries_"
+    )
+    assert client.insert_calls[0][1][0][0:4] == (
+        "5560000000",
+        1,
+        True,
+        "62010",
+    )
+
+
+@contextmanager
+def _sweden_company_duckdb(tmp_path: Path) -> Iterator[duckdb.DuckDBPyConnection]:
+    database_path = tmp_path / "sweden_company_source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
         connection.execute(
@@ -180,27 +285,4 @@ def test_export_sweden_company_clickhouse_replaces_companies_addresses_and_indus
             )
             """
         )
-
-        counts = export_sweden_company_clickhouse(
-            duckdb_connection=connection,
-            clickhouse=resource,
-        )
-
-    assert counts == {
-        tables.COMPANIES_TABLE_CH: 1,
-        tables.COMPANY_ADDRESSES_TABLE_CH: 1,
-        tables.INDUSTRIES_TABLE_CH: 1,
-    }
-    assert (
-        f"CREATE TABLE `corpscout`.`_tmp_{tables.COMPANIES_TABLE_CH}_"
-        in client.statements[1]
-    )
-    assert client.insert_calls[0][0].startswith(
-        "INSERT INTO `corpscout`.`_tmp_se_companies_"
-    )
-    assert client.insert_calls[0][1][0][0:4] == (
-        "5560000000",
-        "5560000000",
-        "5560000000$ORGNR-IDORG",
-        "5560000000",
-    )
+        yield connection

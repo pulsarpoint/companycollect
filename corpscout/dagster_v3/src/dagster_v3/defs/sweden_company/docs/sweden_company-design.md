@@ -71,7 +71,7 @@ data/sweden_company_source.duckdb
 The DuckDB schema is `sweden_company`.
 
 | table | source | purpose |
-|---|---|---|
+|---|---|---|---|
 | `raw_files` | manifest | one row per source ZIP used for the load |
 | `bolagsverket_raw` | `bolagsverket_bulkfil.zip` | raw legal-register rows from the semicolon-separated file |
 | `scb_raw` | `scb_bulkfil.zip` | raw SCB/FDB rows from the tab-separated file |
@@ -101,21 +101,21 @@ The industry-code table stores the raw 5-digit SNI code and derives `nace_rev2_c
 
 Contact extraction is intentionally separate. Domains, emails, and phone numbers in these sources are unstructured text candidates, not canonical registry fields, and should be handled later by `sweden_company_contact_candidates_duckdb`.
 
-`sweden_company_clickhouse` publishes the normalized DuckDB tables to ClickHouse.
+The table-specific ClickHouse assets publish the normalized DuckDB tables to ClickHouse.
 
 It asserts that migrations have already created the target tables and then full-replaces each table through a staging-table swap:
 
-| DuckDB table | ClickHouse table | purpose |
+| asset | DuckDB table | ClickHouse table | purpose |
 |---|---|---|
-| `sweden_company.companies` | `corpscout.se_companies` | one row per normalized organization identifier |
-| `sweden_company.company_addresses` | `corpscout.se_company_addresses` | source-specific postal/visiting address observations |
-| `sweden_company.company_industry_codes` | `corpscout.se_industries` | SCB SNI activity codes with derived 4-digit NACE Rev. 2 class code |
+| `sweden_company_companies_clickhouse` | `sweden_company.companies` | `corpscout.se_companies` | one row per normalized organization identifier |
+| `sweden_company_addresses_clickhouse` | `sweden_company.company_addresses` | `corpscout.se_company_addresses` | source-specific postal/visiting address observations |
+| `sweden_company_industries_clickhouse` | `sweden_company.company_industry_codes` | `corpscout.se_industries` | SCB SNI activity codes with derived 4-digit NACE Rev. 2 class code |
 
 The ClickHouse tables are created only by migrations. Dagster does not run DDL beyond temporary stage-table creation during export.
 
 ## Job And Schedule
 
-`sweden_company_refresh_job` selects `sweden_company_clickhouse` with its upstream dependencies, so the job runs raw S3 download/reuse, raw DuckDB rebuild, normalized DuckDB rebuild, and ClickHouse publish.
+`sweden_company_refresh_job` selects the three ClickHouse publish assets with their upstream dependencies, so the job runs raw S3 download/reuse, raw DuckDB rebuild, normalized DuckDB rebuild, and table-specific ClickHouse publish.
 
 `sweden_company_refresh_weekly` runs at `15 6 * * 1` in `Europe/Belgrade`, matching the observed roughly weekly source refresh and staggering it from other country jobs. The schedule is `STOPPED` by default until the first live materialization is validated.
 

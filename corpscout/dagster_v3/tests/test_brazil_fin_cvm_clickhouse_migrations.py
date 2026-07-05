@@ -107,5 +107,31 @@ def test_brazil_fin_cvm_itr_tables_migration_covers_exported_columns() -> None:
     assert "amount_usd Nullable(Decimal(38, 6))" in sql
 
 
+def test_brazil_fin_cvm_financial_metrics_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000093_corpscout_br_cvm_financial_metrics.up.sql")
+    down_sql = _migration_sql("000093_corpscout_br_cvm_financial_metrics.down.sql")
+
+    assert (
+        f"CREATE TABLE IF NOT EXISTS "
+        f"{brazil_cvm_tables.QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE}" in sql
+    )
+    for column_name in brazil_cvm_tables.BR_CVM_FINANCIAL_METRICS_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql, (
+            f"missing {column_name} in "
+            f"{brazil_cvm_tables.QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE}"
+        )
+    assert (
+        f"DROP TABLE IF EXISTS "
+        f"{brazil_cvm_tables.QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE}" in down_sql
+    )
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "source_dataset LowCardinality(String)" in sql
+    assert "metric_name LowCardinality(String)" in sql
+    assert "is_latest_version Bool" in sql
+    assert "amount_original Nullable(Decimal(38, 6))" in sql
+    assert "amount_usd Nullable(Decimal(38, 6))" in sql
+    assert "ORDER BY (" in sql
+
+
 def _migration_sql(file_name: str) -> str:
     return (MIGRATIONS_DIR / file_name).read_text()

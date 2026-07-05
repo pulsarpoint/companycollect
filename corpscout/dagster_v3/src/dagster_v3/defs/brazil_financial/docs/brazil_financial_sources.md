@@ -214,14 +214,13 @@ Target metric examples:
 | cash and equivalents | DFP + ITR | BPA | mapping requires account-code/description review |
 | debt | DFP + ITR + FRE | BPP/FRE | only if reliably mappable |
 
-Recommended output tables:
+Implemented output table:
 
 ```text
 br_cvm_financial_metrics
-br_cvm_financial_metric_sources
 ```
 
-Recommended grain:
+Implemented grain:
 
 ```text
 source_dataset
@@ -242,6 +241,32 @@ source_account_code
 source_filing_version
 is_latest_version
 ```
+
+The first implementation keeps source lineage in string columns on
+`br_cvm_financial_metrics`:
+
+- `source_statement_record_ids`
+- `source_account_codes`
+- `source_account_descriptions_original`
+- `source_archive_keys`
+- `source_file_names`
+
+Initial mapped metrics:
+
+| Metric | Main account mapping | Notes |
+|---|---|---|
+| revenue | DRE `3.01` | revenue from goods/services |
+| net income | DRE `3.11` | consolidated/period profit or loss |
+| total assets | BPA `1` | total assets |
+| total liabilities | BPP `2.01` + `2.02` | current + non-current liabilities, excludes equity |
+| equity | BPP `2.03` | equity |
+| operating cash flow | DFC-MI/DFC-MD `6.01` | indirect method preferred when both exist |
+| cash and equivalents | BPA `1.01.01` | cash and cash equivalents |
+
+Debt is intentionally not mapped in v1. It needs a separate review because
+Brazilian statement rows do not always expose a single reliable debt account
+across issuer types. FRE debt/obligations data may be a better enrichment source
+for this metric.
 
 Versioning rule:
 

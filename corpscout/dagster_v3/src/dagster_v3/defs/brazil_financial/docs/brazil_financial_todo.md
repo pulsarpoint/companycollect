@@ -37,12 +37,44 @@
   `br_cvm_itr_statement_rows`,
   `br_cvm_itr_capital_composition`,
   `br_cvm_itr_auditor_reports`.
+- Implemented first normalized CVM metrics layer:
+  `brazil_fin_cvm_financial_metrics_duckdb` and
+  `brazil_fin_cvm_financial_metrics_clickhouse`.
+- Created ClickHouse normalized metrics table:
+  `br_cvm_financial_metrics`.
+- First metrics mapping covers:
+  revenue,
+  net income,
+  total assets,
+  total liabilities,
+  equity,
+  operating cash flow,
+  cash and equivalents.
+- Metrics preserve DFP/ITR source dataset, source account codes/descriptions,
+  source statement record IDs, original amount, USD amount, FX metadata, and
+  `is_latest_version`.
 - Documented the DFP DuckDB parser design in
   `cvm/docs/brazil_cvm_dfp_duckdb-design.md`.
 
 ## Next
 
-1. Refactor shared CVM filing parser code where it removes real duplication.
+1. Validate normalized metrics against real materialized DFP/ITR data.
+   - Review account-code coverage by issuer type:
+     - non-financial companies;
+     - banks;
+     - insurers;
+     - funds/holding companies if present.
+   - Check row counts per metric and source dataset.
+   - Confirm whether `DFC_MI`/`DFC_MD` operating cash flow priority is enough
+     or whether source-specific exclusions are needed.
+   - Keep debt out until the mapping is reliable.
+
+2. Add a latest-only metrics view/table if downstream consumers should not
+   filter `is_latest_version` themselves.
+   - Raw DFP/ITR rows and `br_cvm_financial_metrics` keep all versions.
+   - A latest-only table/view can filter `is_latest_version = true`.
+
+3. Refactor shared CVM filing parser code where it removes real duplication.
    - Share only the stable DFP/ITR mechanics:
      - yearly ZIP URL construction;
      - archive object-key construction;
@@ -50,30 +82,6 @@
      - DuckDB load helpers;
      - common statement row normalization.
    - Keep document-specific constants explicit.
-
-2. Build normalized metrics layer over DFP + ITR.
-   - Initial metrics:
-     - revenue;
-     - net income;
-     - total assets;
-     - total liabilities;
-     - equity;
-     - operating cash flow;
-     - cash and equivalents;
-     - debt only if reliably mappable.
-   - Required behavior:
-     - preserve source dataset (`DFP` or `ITR`);
-     - preserve consolidation type;
-     - preserve original account code and description;
-     - expose `is_latest_version`;
-     - keep source lineage back to raw statement rows.
-
-3. Add latest-version logic.
-   - Raw rows should keep all filing versions.
-   - Metrics should either expose `is_latest_version` or create a latest-only
-     view/table.
-   - Version selection must account for `CNPJ_CIA`, `CD_CVM`, reference date,
-     statement family, consolidation type, account code, and filing version.
 
 4. Add FRE financial enrichment after ITR and first metrics.
    - Source: `https://dados.cvm.gov.br/dataset/cia_aberta-doc-fre`

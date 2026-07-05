@@ -4,10 +4,17 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+from dagster_v3.defs.common.duckdb_resources import (
+    duckdb_resource,
+    read_only_duckdb_connection,
+)
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_company import tables
-from dagster_v3.defs.sweden_company.clickhouse import export_sweden_company_clickhouse
+from dagster_v3.defs.sweden_company.clickhouse import (
+    export_sweden_company_clickhouse_addresses,
+    export_sweden_company_clickhouse_companies,
+    export_sweden_company_clickhouse_industries,
+)
 from dagster_v3.defs.sweden_company.normalized_duckdb import (
     replace_sweden_company_normalized_tables,
 )
@@ -119,45 +126,81 @@ def sweden_company_normalized_duckdb(
     deps=["sweden_company_normalized_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
-    pool=SWEDEN_COMPANY_DUCKDB_POOL,
-    metadata={
-        "tables": [
-            tables.QUALIFIED_COMPANIES_TABLE,
-            tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
-            tables.QUALIFIED_INDUSTRIES_TABLE,
-        ]
-    },
-    description=(
-        "Exports normalized Sweden company DuckDB tables to migrated ClickHouse "
-        "tables in corpscout."
-    ),
+    metadata={"table": tables.QUALIFIED_COMPANIES_TABLE},
+    description="Exports normalized Sweden companies to ClickHouse corpscout.se_companies.",
 )
-def sweden_company_clickhouse(
+def sweden_company_companies_clickhouse(
     context: dg.AssetExecutionContext,
     sweden_company_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    with sweden_company_duckdb.get_connection() as connection:
-        counts = export_sweden_company_clickhouse(
+    with read_only_duckdb_connection(sweden_company_duckdb) as connection:
+        rows = export_sweden_company_clickhouse_companies(
             duckdb_connection=connection,
             clickhouse=clickhouse,
             log=context.log.info,
         )
     return dg.MaterializeResult(
-        metadata={
-            "company_rows": counts[tables.COMPANIES_TABLE_CH],
-            "address_rows": counts[tables.COMPANY_ADDRESSES_TABLE_CH],
-            "industry_rows": counts[tables.INDUSTRIES_TABLE_CH],
-            "company_table": tables.QUALIFIED_COMPANIES_TABLE,
-            "address_table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
-            "industry_table": tables.QUALIFIED_INDUSTRIES_TABLE,
-        }
+        metadata={"rows": rows, "table": tables.QUALIFIED_COMPANIES_TABLE}
+    )
+
+
+@dg.asset(
+    deps=["sweden_company_normalized_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
+    metadata={"table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE},
+    description=(
+        "Exports normalized Sweden company addresses to ClickHouse "
+        "corpscout.se_company_addresses."
+    ),
+)
+def sweden_company_addresses_clickhouse(
+    context: dg.AssetExecutionContext,
+    sweden_company_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with read_only_duckdb_connection(sweden_company_duckdb) as connection:
+        rows = export_sweden_company_clickhouse_addresses(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE}
+    )
+
+
+@dg.asset(
+    deps=["sweden_company_normalized_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
+    metadata={"table": tables.QUALIFIED_INDUSTRIES_TABLE},
+    description="Exports normalized Sweden industries to ClickHouse corpscout.se_industries.",
+)
+def sweden_company_industries_clickhouse(
+    context: dg.AssetExecutionContext,
+    sweden_company_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with read_only_duckdb_connection(sweden_company_duckdb) as connection:
+        rows = export_sweden_company_clickhouse_industries(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_INDUSTRIES_TABLE}
     )
 
 
 sweden_company_refresh_job = dg.define_asset_job(
     "sweden_company_refresh_job",
-    selection=dg.AssetSelection.assets("sweden_company_clickhouse").upstream(),
+    selection=dg.AssetSelection.assets(
+        "sweden_company_companies_clickhouse",
+        "sweden_company_addresses_clickhouse",
+        "sweden_company_industries_clickhouse",
+    ).upstream(),
 )
 
 sweden_company_refresh_weekly = dg.ScheduleDefinition(
@@ -174,7 +217,9 @@ defs = dg.Definitions(
         sweden_company_raw_snapshot_s3,
         sweden_company_raw_duckdb,
         sweden_company_normalized_duckdb,
-        sweden_company_clickhouse,
+        sweden_company_companies_clickhouse,
+        sweden_company_addresses_clickhouse,
+        sweden_company_industries_clickhouse,
     ],
     jobs=[sweden_company_refresh_job],
     schedules=[sweden_company_refresh_weekly],
