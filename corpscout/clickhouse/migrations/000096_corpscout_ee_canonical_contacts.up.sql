@@ -7,6 +7,8 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- TABLES pattern from 000014 (fi_names order-key fix) instead of drop+recreate --
 -- existing rows survive the reshape under new column names/vocabulary.
 
+DROP TABLE IF EXISTS corpscout.ee_company_contacts__canonical;
+
 CREATE TABLE IF NOT EXISTS corpscout.ee_company_contacts__canonical
 (
     country_iso2      LowCardinality(String),
@@ -58,6 +60,8 @@ FROM corpscout.ee_company_contacts;
 EXCHANGE TABLES corpscout.ee_company_contacts__canonical AND corpscout.ee_company_contacts;
 
 DROP TABLE IF EXISTS corpscout.ee_company_contacts__canonical;
+
+DROP TABLE IF EXISTS corpscout.ee_company_domains__canonical;
 
 CREATE TABLE IF NOT EXISTS corpscout.ee_company_domains__canonical
 (
