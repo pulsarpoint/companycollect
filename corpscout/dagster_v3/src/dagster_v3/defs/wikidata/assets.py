@@ -1169,9 +1169,14 @@ def delete_old_wikidata_raw_snapshot_objects(
     return object_store.delete_keys(stale_keys, bucket=WIKIDATA_RAW_BUCKET)
 
 
-wikidata_company_seed_selection = dg.AssetSelection.assets(
-    "wikidata_company_seed_clickhouse"
-).upstream()
+# The canonical-contacts derivation (wikidata_clickhouse_canonical_contacts,
+# defs/wikidata/contacts.py) runs after wikidata_company_seed_clickhouse lands
+# corpscout.wikidata_company_websites/wikidata_companies, joined via an explicit
+# union (not .upstream(), which already covers everything the export needs).
+wikidata_company_seed_selection = (
+    dg.AssetSelection.assets("wikidata_company_seed_clickhouse").upstream()
+    | dg.AssetSelection.assets("wikidata_clickhouse_canonical_contacts")
+)
 
 wikidata_company_seed_weekly_job = dg.define_asset_job(
     "wikidata_company_seed_weekly_job",

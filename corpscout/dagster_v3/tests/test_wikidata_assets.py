@@ -92,6 +92,35 @@ def test_wikidata_weekly_refresh_job_and_schedule_are_registered() -> None:
     assert weekly_schedule.execution_timezone == "Europe/Belgrade"
 
 
+def test_wikidata_canonical_contacts_asset_is_registered() -> None:
+    repository = load_project_defs().get_repository_def()
+    asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
+
+    assert "wikidata_clickhouse_canonical_contacts" in asset_keys
+
+
+def test_wikidata_canonical_contacts_depends_on_seed_clickhouse_export() -> None:
+    repository = load_project_defs().get_repository_def()
+
+    deps = repository.asset_graph.get(
+        AssetKey(["wikidata_clickhouse_canonical_contacts"])
+    ).parent_keys
+
+    assert deps == {AssetKey(["wikidata_company_seed_clickhouse"])}
+
+
+def test_wikidata_canonical_contacts_asset_in_weekly_job() -> None:
+    repository = load_project_defs().get_repository_def()
+    job_asset_keys = {
+        key.path[-1]
+        for key in repository.get_job(
+            "wikidata_company_seed_weekly_job"
+        ).asset_layer.executable_asset_keys
+    }
+
+    assert "wikidata_clickhouse_canonical_contacts" in job_asset_keys
+
+
 def test_wikidata_raw_object_asset_has_no_upstream_dependencies() -> None:
     repository = load_project_defs().get_repository_def()
 
