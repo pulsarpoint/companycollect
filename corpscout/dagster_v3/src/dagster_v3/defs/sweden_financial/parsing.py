@@ -37,9 +37,13 @@ _NUMERIC_CLEAN_RE = re.compile(r"[^0-9.\-]")
 _XML_PARSER = etree.XMLParser(recover=True, huge_tree=True, resolve_entities=False)
 
 
-def sweden_financial_source_duckdb_path(year: str | int) -> Path:
+def sweden_financial_source_duckdb_path(
+    year: str | int,
+    *,
+    root: str | Path = SWEDEN_FINANCIAL_DUCKDB_ROOT,
+) -> Path:
     normalized_year = _normalize_year(year)
-    return SWEDEN_FINANCIAL_DUCKDB_ROOT / f"sweden_financial_source_{normalized_year}.duckdb"
+    return Path(root) / f"sweden_financial_source_{normalized_year}.duckdb"
 
 
 def extract_sweden_financial_report_xhtml_catalog(

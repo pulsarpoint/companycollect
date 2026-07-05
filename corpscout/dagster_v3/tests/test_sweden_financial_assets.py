@@ -104,6 +104,30 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     }
     assert current_parsed_node.partitions_def is current_raw_node.partitions_def
 
+    clickhouse_job_asset_keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "sweden_financial_clickhouse_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert clickhouse_job_asset_keys == {
+        "sweden_financial_reports_clickhouse",
+        "sweden_financial_facts_clickhouse",
+    }
+
+    for asset_key in (
+        "sweden_financial_reports_clickhouse",
+        "sweden_financial_facts_clickhouse",
+    ):
+        clickhouse_node = repo.asset_graph.get(dg.AssetKey(asset_key))
+        assert clickhouse_node.group_name == "sweden_financial"
+        assert clickhouse_node.pools == set()
+        assert clickhouse_node.partitions_def is None
+        assert clickhouse_node.parent_keys == {
+            dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb"),
+            dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),
+        }
+
 
 def test_sweden_financial_raw_assets_do_not_require_duckdb_resource() -> None:
     from dagster_v3.defs.sweden_financial.assets import (

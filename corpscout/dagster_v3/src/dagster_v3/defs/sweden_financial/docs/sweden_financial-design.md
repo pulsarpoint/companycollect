@@ -149,6 +149,13 @@ The parsed DuckDB tables are:
 - `sweden_financial.parse_errors` - one row per XHTML document that failed
   parsing, so a bad report does not block the rest of the partition.
 
+`sweden_financial_reports_clickhouse` and
+`sweden_financial_facts_clickhouse` publish those parsed DuckDB tables into
+`corpscout.se_financial_reports` and `corpscout.se_financial_facts`. Each
+ClickHouse asset represents one physical ClickHouse table. The assets build a
+read-only union view across existing per-year DuckDB files and replace the full
+ClickHouse table from that combined parsed dataset.
+
 ## Job And Schedule
 
 `sweden_financial_backfill_job` selects both
@@ -167,8 +174,12 @@ materialize the 2020-2026 partitions.
 default. Each weekly run can discover upstream `LastModified` changes and add
 new raw archive versions while reusing unchanged archive objects.
 
+`sweden_financial_clickhouse_job` selects
+`sweden_financial_reports_clickhouse` and `sweden_financial_facts_clickhouse`.
+Run it after the relevant parsed DuckDB partitions are materialized.
+
 ## Out Of Scope
 
-ClickHouse publishing, financial metric mapping, and USD conversion are
-downstream layers. The parsed report assets preserve report and fact-level XBRL
-data in DuckDB so those publishing and metric layers can be built separately.
+Financial metric mapping and USD conversion are downstream layers. The parsed
+report assets preserve report and fact-level XBRL data in DuckDB so those
+metric layers can be built separately.
