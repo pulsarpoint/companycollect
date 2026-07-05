@@ -324,3 +324,68 @@ def test_export_brazil_fin_cvm_companies_clickhouse_refuses_empty_duckdb_table(
         )
 
     assert exported is False
+
+
+def test_brazil_fin_cvm_fre_export_tables_map_duckdb_tables_to_clickhouse_tables() -> (
+    None
+):
+    from dagster_v3.defs.brazil_financial.cvm import clickhouse
+    from dagster_v3.defs.brazil_financial.cvm.fre_parsing import (
+        FRE_AUDITORS_TABLE,
+        FRE_CAPITAL_DISTRIBUTION_TABLE,
+        FRE_CAPITAL_SOCIAL_CLASSES_TABLE,
+        FRE_CAPITAL_SOCIAL_TABLE,
+        FRE_DOCUMENTS_TABLE,
+        FRE_RELATED_PARTY_TRANSACTIONS_TABLE,
+        FRE_REMUNERATION_TOTAL_ORGANS_TABLE,
+        FRE_RESPONSIBLES_TABLE,
+        FRE_SHAREHOLDERS_TABLE,
+    )
+
+    assert clickhouse.FRE_EXPORT_TABLES == (
+        (
+            FRE_DOCUMENTS_TABLE,
+            tables.BR_CVM_FRE_DOCUMENTS_TABLE,
+            tables.BR_CVM_FRE_DOCUMENTS_EXPORT_COLUMNS,
+        ),
+        (
+            FRE_CAPITAL_SOCIAL_TABLE,
+            tables.BR_CVM_FRE_CAPITAL_SOCIAL_TABLE,
+            tables.BR_CVM_FRE_CAPITAL_SOCIAL_EXPORT_COLUMNS,
+        ),
+        (
+            FRE_CAPITAL_SOCIAL_CLASSES_TABLE,
+            tables.BR_CVM_FRE_CAPITAL_SOCIAL_CLASSES_TABLE,
+            tables.BR_CVM_FRE_CAPITAL_SOCIAL_CLASSES_EXPORT_COLUMNS,
+        ),
+        (
+            FRE_CAPITAL_DISTRIBUTION_TABLE,
+            tables.BR_CVM_FRE_CAPITAL_DISTRIBUTION_TABLE,
+            tables.BR_CVM_FRE_CAPITAL_DISTRIBUTION_EXPORT_COLUMNS,
+        ),
+        (
+            FRE_AUDITORS_TABLE,
+            tables.BR_CVM_FRE_AUDITORS_TABLE,
+            tables.BR_CVM_FRE_AUDITORS_EXPORT_COLUMNS,
+        ),
+        (
+            FRE_RESPONSIBLES_TABLE,
+            tables.BR_CVM_FRE_RESPONSIBLES_TABLE,
+            tables.BR_CVM_FRE_RESPONSIBLES_EXPORT_COLUMNS,
+        ),
+        (
+            FRE_RELATED_PARTY_TRANSACTIONS_TABLE,
+            tables.BR_CVM_FRE_RELATED_PARTY_TRANSACTIONS_TABLE,
+            tables.BR_CVM_FRE_RELATED_PARTY_TRANSACTIONS_EXPORT_COLUMNS,
+        ),
+        (
+            FRE_REMUNERATION_TOTAL_ORGANS_TABLE,
+            tables.BR_CVM_FRE_REMUNERATION_TOTAL_ORGANS_TABLE,
+            tables.BR_CVM_FRE_REMUNERATION_TOTAL_ORGANS_EXPORT_COLUMNS,
+        ),
+        (
+            FRE_SHAREHOLDERS_TABLE,
+            tables.BR_CVM_FRE_SHAREHOLDERS_TABLE,
+            tables.BR_CVM_FRE_SHAREHOLDERS_EXPORT_COLUMNS,
+        ),
+    )

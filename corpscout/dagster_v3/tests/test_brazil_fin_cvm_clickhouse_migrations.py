@@ -107,6 +107,60 @@ def test_brazil_fin_cvm_itr_tables_migration_covers_exported_columns() -> None:
     assert "amount_usd Nullable(Decimal(38, 6))" in sql
 
 
+def test_brazil_fin_cvm_fre_tables_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000100_corpscout_br_cvm_fre_tables.up.sql")
+    down_sql = _migration_sql("000100_corpscout_br_cvm_fre_tables.down.sql")
+
+    table_columns = {
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_DOCUMENTS_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_DOCUMENTS_EXPORT_COLUMNS
+        ),
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_CAPITAL_SOCIAL_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_CAPITAL_SOCIAL_EXPORT_COLUMNS
+        ),
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_CAPITAL_SOCIAL_CLASSES_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_CAPITAL_SOCIAL_CLASSES_EXPORT_COLUMNS
+        ),
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_CAPITAL_DISTRIBUTION_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_CAPITAL_DISTRIBUTION_EXPORT_COLUMNS
+        ),
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_AUDITORS_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_AUDITORS_EXPORT_COLUMNS
+        ),
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_RESPONSIBLES_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_RESPONSIBLES_EXPORT_COLUMNS
+        ),
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_RELATED_PARTY_TRANSACTIONS_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_RELATED_PARTY_TRANSACTIONS_EXPORT_COLUMNS
+        ),
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_REMUNERATION_TOTAL_ORGANS_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_REMUNERATION_TOTAL_ORGANS_EXPORT_COLUMNS
+        ),
+        brazil_cvm_tables.QUALIFIED_BR_CVM_FRE_SHAREHOLDERS_TABLE: (
+            brazil_cvm_tables.BR_CVM_FRE_SHAREHOLDERS_EXPORT_COLUMNS
+        ),
+    }
+
+    for table_name, column_names in table_columns.items():
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in sql
+        for column_name in column_names:
+            assert f"    {column_name} " in sql, (
+                f"missing {column_name} in {table_name}"
+            )
+        assert f"DROP TABLE IF EXISTS {table_name}" in down_sql
+
+    assert sql.count("ENGINE = ReplacingMergeTree(resolved_at)") == 9
+    assert "fre_year UInt16" in sql
+    assert "capital_amount Nullable(Decimal(38, 6))" in sql
+    assert "transaction_amount Nullable(Decimal(38, 6))" in sql
+    assert "total_remuneration Nullable(Decimal(38, 6))" in sql
+    assert "ORDER BY (cnpj, reference_date, version, document_id)" in sql
+    assert (
+        "ORDER BY (cnpj, reference_date, version, related_party, data_transaction)"
+        in sql
+    )
+
+
 def test_brazil_fin_cvm_financial_metrics_migration_creates_view() -> None:
     sql = _migration_sql("000095_corpscout_br_cvm_financial_metrics.up.sql")
     down_sql = _migration_sql("000095_corpscout_br_cvm_financial_metrics.down.sql")

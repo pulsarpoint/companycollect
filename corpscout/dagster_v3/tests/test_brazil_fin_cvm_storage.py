@@ -20,6 +20,11 @@ def test_brazil_fin_cvm_source_duckdb_path_is_partitioned_by_family_and_year(
         year="2026",
         root=tmp_path,
     ) == (tmp_path / "dfp" / "year=2026" / "source.duckdb")
+    assert brazil_fin_cvm_source_duckdb_path(
+        family="fre",
+        year="2026",
+        root=tmp_path,
+    ) == (tmp_path / "fre" / "year=2026" / "source.duckdb")
 
 
 def test_existing_source_duckdb_connection_requires_partition_file(

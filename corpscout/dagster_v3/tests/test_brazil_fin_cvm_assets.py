@@ -14,6 +14,18 @@ ITR_CLICKHOUSE_ASSET_NAMES = (
     "brazil_fin_cvm_itr_auditor_reports_clickhouse",
 )
 
+FRE_CLICKHOUSE_ASSET_NAMES = (
+    "brazil_fin_cvm_fre_documents_clickhouse",
+    "brazil_fin_cvm_fre_capital_social_clickhouse",
+    "brazil_fin_cvm_fre_capital_social_classes_clickhouse",
+    "brazil_fin_cvm_fre_capital_distribution_clickhouse",
+    "brazil_fin_cvm_fre_auditors_clickhouse",
+    "brazil_fin_cvm_fre_responsibles_clickhouse",
+    "brazil_fin_cvm_fre_related_party_transactions_clickhouse",
+    "brazil_fin_cvm_fre_remuneration_total_organs_clickhouse",
+    "brazil_fin_cvm_fre_shareholders_clickhouse",
+)
+
 
 def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     from dagster_v3.defs.brazil_financial.cvm.assets import (
@@ -27,6 +39,17 @@ def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
         brazil_fin_cvm_dfp_raw_duckdb,
         brazil_fin_cvm_dfp_statement_rows_clickhouse,
         brazil_fin_cvm_dfp_statement_rows_usd_duckdb,
+        brazil_fin_cvm_fre_auditors_clickhouse,
+        brazil_fin_cvm_fre_capital_distribution_clickhouse,
+        brazil_fin_cvm_fre_capital_social_classes_clickhouse,
+        brazil_fin_cvm_fre_capital_social_clickhouse,
+        brazil_fin_cvm_fre_documents_clickhouse,
+        brazil_fin_cvm_fre_raw_archives_s3,
+        brazil_fin_cvm_fre_raw_duckdb,
+        brazil_fin_cvm_fre_related_party_transactions_clickhouse,
+        brazil_fin_cvm_fre_remuneration_total_organs_clickhouse,
+        brazil_fin_cvm_fre_responsibles_clickhouse,
+        brazil_fin_cvm_fre_shareholders_clickhouse,
         brazil_fin_cvm_itr_auditor_reports_clickhouse,
         brazil_fin_cvm_itr_capital_composition_clickhouse,
         brazil_fin_cvm_itr_documents_clickhouse,
@@ -38,6 +61,7 @@ def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
 
     partitions_def = brazil_fin_cvm_dfp_raw_archives_s3.partitions_def
     itr_partitions_def = brazil_fin_cvm_itr_raw_archives_s3.partitions_def
+    fre_partitions_def = brazil_fin_cvm_fre_raw_archives_s3.partitions_def
 
     assert isinstance(partitions_def, dg.StaticPartitionsDefinition)
     assert partitions_def.get_partition_keys() == [
@@ -46,6 +70,10 @@ def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     assert isinstance(itr_partitions_def, dg.StaticPartitionsDefinition)
     assert itr_partitions_def.get_partition_keys() == [
         str(year) for year in range(2011, 2027)
+    ]
+    assert isinstance(fre_partitions_def, dg.StaticPartitionsDefinition)
+    assert fre_partitions_def.get_partition_keys() == [
+        str(year) for year in range(2010, 2027)
     ]
     assert brazil_fin_cvm_dfp_raw_duckdb.partitions_def is partitions_def
     assert brazil_fin_cvm_dfp_statement_rows_usd_duckdb.partitions_def is partitions_def
@@ -62,6 +90,20 @@ def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     assert brazil_fin_cvm_itr_statement_rows_clickhouse.partitions_def is None
     assert brazil_fin_cvm_itr_capital_composition_clickhouse.partitions_def is None
     assert brazil_fin_cvm_itr_auditor_reports_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_fre_raw_duckdb.partitions_def is fre_partitions_def
+    assert brazil_fin_cvm_fre_documents_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_fre_capital_social_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_fre_capital_social_classes_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_fre_capital_distribution_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_fre_auditors_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_fre_responsibles_clickhouse.partitions_def is None
+    assert (
+        brazil_fin_cvm_fre_related_party_transactions_clickhouse.partitions_def is None
+    )
+    assert (
+        brazil_fin_cvm_fre_remuneration_total_organs_clickhouse.partitions_def is None
+    )
+    assert brazil_fin_cvm_fre_shareholders_clickhouse.partitions_def is None
     assert brazil_fin_cvm_dfp_raw_archives_s3.op.pool is None
     assert brazil_fin_cvm_dfp_raw_duckdb.op.pool is None
     assert brazil_fin_cvm_dfp_statement_rows_usd_duckdb.op.pool is None
@@ -76,6 +118,17 @@ def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     assert brazil_fin_cvm_itr_statement_rows_clickhouse.op.pool is None
     assert brazil_fin_cvm_itr_capital_composition_clickhouse.op.pool is None
     assert brazil_fin_cvm_itr_auditor_reports_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_raw_archives_s3.op.pool is None
+    assert brazil_fin_cvm_fre_raw_duckdb.op.pool is None
+    assert brazil_fin_cvm_fre_documents_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_capital_social_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_capital_social_classes_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_capital_distribution_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_auditors_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_responsibles_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_related_party_transactions_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_remuneration_total_organs_clickhouse.op.pool is None
+    assert brazil_fin_cvm_fre_shareholders_clickhouse.op.pool is None
     assert brazil_fin_cvm_companies_duckdb.partitions_def is None
     assert brazil_fin_cvm_companies_clickhouse.partitions_def is None
     assert brazil_fin_cvm_companies_raw_csv_s3.partitions_def is None
@@ -273,6 +326,63 @@ def test_brazil_fin_cvm_itr_clickhouse_table_assets_depend_on_usd_and_companies_
         }
 
 
+def test_brazil_fin_cvm_fre_clickhouse_table_assets_depend_on_raw_and_companies_assets() -> (
+    None
+):
+    from dagster_clickhouse import ClickhouseResource
+
+    from dagster_v3.defs.brazil_financial.cvm.assets import (
+        brazil_fin_cvm_companies_clickhouse,
+        brazil_fin_cvm_companies_duckdb,
+        brazil_fin_cvm_companies_raw_csv_s3,
+        brazil_fin_cvm_fre_auditors_clickhouse,
+        brazil_fin_cvm_fre_capital_distribution_clickhouse,
+        brazil_fin_cvm_fre_capital_social_classes_clickhouse,
+        brazil_fin_cvm_fre_capital_social_clickhouse,
+        brazil_fin_cvm_fre_documents_clickhouse,
+        brazil_fin_cvm_fre_raw_archives_s3,
+        brazil_fin_cvm_fre_raw_duckdb,
+        brazil_fin_cvm_fre_related_party_transactions_clickhouse,
+        brazil_fin_cvm_fre_remuneration_total_organs_clickhouse,
+        brazil_fin_cvm_fre_responsibles_clickhouse,
+        brazil_fin_cvm_fre_shareholders_clickhouse,
+    )
+    from dagster_v3.defs.brazil_financial.cvm.source import BrazilCvmFreResource
+    from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+    from dagster_v3.defs.common.resources import ObjectStoreResource
+
+    repository = dg.Definitions(
+        assets=[
+            brazil_fin_cvm_companies_raw_csv_s3,
+            brazil_fin_cvm_companies_duckdb,
+            brazil_fin_cvm_companies_clickhouse,
+            brazil_fin_cvm_fre_raw_archives_s3,
+            brazil_fin_cvm_fre_raw_duckdb,
+            brazil_fin_cvm_fre_documents_clickhouse,
+            brazil_fin_cvm_fre_capital_social_clickhouse,
+            brazil_fin_cvm_fre_capital_social_classes_clickhouse,
+            brazil_fin_cvm_fre_capital_distribution_clickhouse,
+            brazil_fin_cvm_fre_auditors_clickhouse,
+            brazil_fin_cvm_fre_responsibles_clickhouse,
+            brazil_fin_cvm_fre_related_party_transactions_clickhouse,
+            brazil_fin_cvm_fre_remuneration_total_organs_clickhouse,
+            brazil_fin_cvm_fre_shareholders_clickhouse,
+        ],
+        resources={
+            "brazil_fin_cvm_fre": BrazilCvmFreResource(),
+            "brazil_fin_cvm_duckdb": duckdb_resource(":memory:"),
+            "object_store": ObjectStoreResource(),
+            "clickhouse": ClickhouseResource(host="localhost"),
+        },
+    ).get_repository_def()
+    for asset_name in FRE_CLICKHOUSE_ASSET_NAMES:
+        asset = repository.asset_graph.get(dg.AssetKey(asset_name))
+        assert asset.parent_keys == {
+            dg.AssetKey("brazil_fin_cvm_fre_raw_duckdb"),
+            dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
+        }
+
+
 def test_brazil_fin_cvm_companies_clickhouse_depends_on_duckdb_asset() -> None:
     from dagster_clickhouse import ClickhouseResource
 
@@ -436,6 +546,55 @@ def test_brazil_fin_cvm_itr_raw_archive_asset_uses_partition_year() -> None:
     result = brazil_fin_cvm_itr_raw_archives_s3(
         dg.build_asset_context(partition_key="2026"),
         brazil_fin_cvm_itr=fake_resource,
+        object_store=object(),
+    )
+
+    assert fake_resource.requested_years == ["2026"]
+    assert result.metadata["year"] == "2026"
+    assert result.metadata["reused_existing_archive"] is True
+    assert result.metadata["downloaded"] is False
+
+
+class FakeBrazilCvmFreResource:
+    def __init__(self) -> None:
+        self.requested_years: list[str] = []
+
+    def sync_year_archive(
+        self,
+        *,
+        year: str,
+        object_store: object,
+        log_info: object | None = None,
+    ) -> object:
+        from dagster_v3.defs.brazil_financial.cvm.source import (
+            BrazilCvmFreArchiveSyncResult,
+        )
+
+        self.requested_years.append(year)
+        return BrazilCvmFreArchiveSyncResult(
+            year=year,
+            source_url=f"https://example.test/fre_cia_aberta_{year}.zip",
+            archive_key=f"brazil_cvm/fre/raw_archives/year={year}/archive.zip",
+            metadata_key=f"brazil_cvm/fre/raw_archives/year={year}/metadata.json",
+            downloaded=False,
+            reused_existing_archive=True,
+            size_bytes=None,
+            sha256=None,
+            content_type="",
+            source_last_modified="",
+            synced_at="2026-07-04T00:00:00+00:00",
+        )
+
+
+def test_brazil_fin_cvm_fre_raw_archive_asset_uses_partition_year() -> None:
+    from dagster_v3.defs.brazil_financial.cvm.assets import (
+        brazil_fin_cvm_fre_raw_archives_s3,
+    )
+
+    fake_resource = FakeBrazilCvmFreResource()
+    result = brazil_fin_cvm_fre_raw_archives_s3(
+        dg.build_asset_context(partition_key="2026"),
+        brazil_fin_cvm_fre=fake_resource,
         object_store=object(),
     )
 

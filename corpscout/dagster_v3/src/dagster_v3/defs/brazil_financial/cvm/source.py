@@ -18,10 +18,13 @@ BRAZIL_FIN_CVM_GROUP_NAME = "brazil_fin_cvm"
 BRAZIL_CVM_RAW_BUCKET = "source-brazil-cvm"
 BRAZIL_CVM_DFP_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS"
 BRAZIL_CVM_ITR_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS"
+BRAZIL_CVM_FRE_BASE_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FRE/DADOS"
 BRAZIL_CVM_DFP_START_YEAR = 2010
 BRAZIL_CVM_DFP_END_YEAR = 2026
 BRAZIL_CVM_ITR_START_YEAR = 2011
 BRAZIL_CVM_ITR_END_YEAR = 2026
+BRAZIL_CVM_FRE_START_YEAR = 2010
+BRAZIL_CVM_FRE_END_YEAR = 2026
 
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 1_800
 DEFAULT_DOWNLOAD_MAX_ATTEMPTS = 4
@@ -98,6 +101,37 @@ class BrazilCvmItrArchiveSyncResult:
         }
 
 
+@dataclass(frozen=True)
+class BrazilCvmFreArchiveSyncResult:
+    year: str
+    source_url: str
+    archive_key: str
+    metadata_key: str
+    downloaded: bool
+    reused_existing_archive: bool
+    size_bytes: int | None
+    sha256: str | None
+    content_type: str
+    source_last_modified: str
+    synced_at: str
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "year": self.year,
+            "source_url": self.source_url,
+            "s3_bucket": BRAZIL_CVM_RAW_BUCKET,
+            "archive_key": self.archive_key,
+            "metadata_key": self.metadata_key,
+            "downloaded": self.downloaded,
+            "reused_existing_archive": self.reused_existing_archive,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+            "content_type": self.content_type,
+            "source_last_modified": self.source_last_modified,
+            "synced_at": self.synced_at,
+        }
+
+
 def normalize_dfp_year(year: str | int) -> str:
     year_int = int(str(year))
     if year_int < BRAZIL_CVM_DFP_START_YEAR or year_int > BRAZIL_CVM_DFP_END_YEAR:
@@ -114,6 +148,16 @@ def normalize_itr_year(year: str | int) -> str:
         raise ValueError(
             f"Brazil CVM ITR year must be between {BRAZIL_CVM_ITR_START_YEAR} "
             f"and {BRAZIL_CVM_ITR_END_YEAR}: {year}"
+        )
+    return str(year_int)
+
+
+def normalize_fre_year(year: str | int) -> str:
+    year_int = int(str(year))
+    if year_int < BRAZIL_CVM_FRE_START_YEAR or year_int > BRAZIL_CVM_FRE_END_YEAR:
+        raise ValueError(
+            f"Brazil CVM FRE year must be between {BRAZIL_CVM_FRE_START_YEAR} "
+            f"and {BRAZIL_CVM_FRE_END_YEAR}: {year}"
         )
     return str(year_int)
 
@@ -148,6 +192,22 @@ def itr_archive_object_key(year: str | int) -> str:
 
 def itr_metadata_object_key(year: str | int) -> str:
     return f"brazil_cvm/itr/raw_archives/year={normalize_itr_year(year)}/metadata.json"
+
+
+def fre_archive_name(year: str | int) -> str:
+    return f"fre_cia_aberta_{normalize_fre_year(year)}.zip"
+
+
+def fre_source_url(year: str | int) -> str:
+    return f"{BRAZIL_CVM_FRE_BASE_URL}/{fre_archive_name(year)}"
+
+
+def fre_archive_object_key(year: str | int) -> str:
+    return f"brazil_cvm/fre/raw_archives/year={normalize_fre_year(year)}/archive.zip"
+
+
+def fre_metadata_object_key(year: str | int) -> str:
+    return f"brazil_cvm/fre/raw_archives/year={normalize_fre_year(year)}/metadata.json"
 
 
 class BrazilCvmDfpResource(dg.ConfigurableResource):
@@ -301,7 +361,7 @@ class BrazilCvmDfpResource(dg.ConfigurableResource):
                 sleep_seconds = self.download_retry_base_seconds * attempt
                 if log_info is not None:
                     log_info(
-                        "Retrying Brazil CVM DFP archive download after stream error: "
+                        "Retrying Brazil CVM archive download after stream error: "
                         "url=%s attempt=%s sleep_seconds=%s error=%s",
                         url,
                         attempt,
@@ -341,7 +401,7 @@ class BrazilCvmDfpResource(dg.ConfigurableResource):
 
         if expected_size is not None and size_bytes != expected_size:
             raise requests.exceptions.ChunkedEncodingError(
-                f"Brazil CVM DFP archive size mismatch for {url}: "
+                f"Brazil CVM archive size mismatch for {url}: "
                 f"expected {expected_size}, got {size_bytes}"
             )
         return size_bytes, digest.hexdigest(), content_type, source_last_modified
@@ -448,6 +508,127 @@ class BrazilCvmItrResource(BrazilCvmDfpResource):
             digest = sha256(archive_body).hexdigest()
 
         result = BrazilCvmItrArchiveSyncResult(
+            year=year,
+            source_url=source_url,
+            archive_key=archive_key,
+            metadata_key=metadata_key,
+            downloaded=False,
+            reused_existing_archive=True,
+            size_bytes=size_bytes,
+            sha256=digest,
+            content_type=_metadata_str(stored_metadata, "content_type"),
+            source_last_modified=_metadata_str(stored_metadata, "source_last_modified"),
+            synced_at=synced_at,
+        )
+        object_store.write_json(
+            metadata_key,
+            json.dumps(asdict(result), indent=2, sort_keys=True),
+            bucket=BRAZIL_CVM_RAW_BUCKET,
+        )
+        return result
+
+
+class BrazilCvmFreResource(BrazilCvmDfpResource):
+    """Downloads CVM FRE reference-form ZIP archives into object storage."""
+
+    user_agent: str = "corpscout-dagster-v3-brazil-cvm-fre/0.1"
+
+    def sync_year_archive(
+        self,
+        *,
+        year: str | int,
+        object_store: ObjectStoreResource,
+        session: Any | None = None,
+        log_info: Callable[..., object] | None = None,
+    ) -> BrazilCvmFreArchiveSyncResult:
+        normalized_year = normalize_fre_year(year)
+        archive_key = fre_archive_object_key(normalized_year)
+        metadata_key = fre_metadata_object_key(normalized_year)
+        source_url = fre_source_url(normalized_year)
+        synced_at = datetime.now(UTC).isoformat()
+
+        object_store.ensure_bucket(BRAZIL_CVM_RAW_BUCKET)
+        if object_store.exists(archive_key, bucket=BRAZIL_CVM_RAW_BUCKET):
+            if log_info is not None:
+                log_info(
+                    "Reusing existing Brazil CVM FRE archive: bucket=%s key=%s",
+                    BRAZIL_CVM_RAW_BUCKET,
+                    archive_key,
+                )
+            return self._reuse_existing_fre_archive(
+                object_store=object_store,
+                year=normalized_year,
+                source_url=source_url,
+                archive_key=archive_key,
+                metadata_key=metadata_key,
+                synced_at=synced_at,
+            )
+
+        if log_info is not None:
+            log_info(
+                "Downloading Brazil CVM FRE archive: year=%s url=%s bucket=%s key=%s",
+                normalized_year,
+                source_url,
+                BRAZIL_CVM_RAW_BUCKET,
+                archive_key,
+            )
+        with tempfile.TemporaryDirectory(prefix="brazil_fin_cvm_fre_") as tmpdir:
+            target_path = Path(tmpdir) / fre_archive_name(normalized_year)
+            size_bytes, digest, content_type, source_last_modified = (
+                self._download_to_path(
+                    url=source_url,
+                    target_path=target_path,
+                    session=session or self._session(),
+                    log_info=log_info,
+                )
+            )
+            object_store.upload_file(
+                archive_key,
+                target_path,
+                bucket=BRAZIL_CVM_RAW_BUCKET,
+            )
+
+        result = BrazilCvmFreArchiveSyncResult(
+            year=normalized_year,
+            source_url=source_url,
+            archive_key=archive_key,
+            metadata_key=metadata_key,
+            downloaded=True,
+            reused_existing_archive=False,
+            size_bytes=size_bytes,
+            sha256=digest,
+            content_type=content_type,
+            source_last_modified=source_last_modified,
+            synced_at=synced_at,
+        )
+        object_store.write_json(
+            metadata_key,
+            json.dumps(asdict(result), indent=2, sort_keys=True),
+            bucket=BRAZIL_CVM_RAW_BUCKET,
+        )
+        return result
+
+    def _reuse_existing_fre_archive(
+        self,
+        *,
+        object_store: ObjectStoreResource,
+        year: str,
+        source_url: str,
+        archive_key: str,
+        metadata_key: str,
+        synced_at: str,
+    ) -> BrazilCvmFreArchiveSyncResult:
+        stored_metadata = _read_stored_metadata(object_store, metadata_key)
+        size_bytes = _metadata_int(stored_metadata, "size_bytes")
+        digest = _metadata_str(stored_metadata, "sha256")
+        if size_bytes is None or digest == "":
+            archive_body = object_store.read_bytes(
+                archive_key, bucket=BRAZIL_CVM_RAW_BUCKET
+            )
+            size_bytes = len(archive_body)
+            digest = sha256(archive_body).hexdigest()
+
+        result = BrazilCvmFreArchiveSyncResult(
             year=year,
             source_url=source_url,
             archive_key=archive_key,

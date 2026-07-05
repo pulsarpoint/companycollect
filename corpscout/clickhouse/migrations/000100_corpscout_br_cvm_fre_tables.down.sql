@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_shareholders;
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_remuneration_total_organs;
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_related_party_transactions;
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_responsibles;
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_auditors;
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_capital_distribution;
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_capital_social_classes;
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_capital_social;
+DROP TABLE IF EXISTS corpscout.br_cvm_fre_documents;

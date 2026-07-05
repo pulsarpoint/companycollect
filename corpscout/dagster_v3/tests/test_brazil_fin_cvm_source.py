@@ -6,10 +6,14 @@ from typing import Any
 from dagster_v3.defs.brazil_financial.cvm.source import (
     BRAZIL_CVM_RAW_BUCKET,
     BrazilCvmDfpResource,
+    BrazilCvmFreResource,
     BrazilCvmItrResource,
     dfp_archive_object_key,
     dfp_metadata_object_key,
     dfp_source_url,
+    fre_archive_object_key,
+    fre_metadata_object_key,
+    fre_source_url,
     itr_archive_object_key,
     itr_metadata_object_key,
     itr_source_url,
@@ -124,6 +128,21 @@ def test_itr_source_url_and_object_keys_are_deterministic() -> None:
     )
 
 
+def test_fre_source_url_and_object_keys_are_deterministic() -> None:
+    assert (
+        fre_source_url("2026")
+        == "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FRE/DADOS/fre_cia_aberta_2026.zip"
+    )
+    assert (
+        fre_archive_object_key("2026")
+        == "brazil_cvm/fre/raw_archives/year=2026/archive.zip"
+    )
+    assert (
+        fre_metadata_object_key("2026")
+        == "brazil_cvm/fre/raw_archives/year=2026/metadata.json"
+    )
+
+
 def test_brazil_fin_cvm_dfp_resource_downloads_missing_year_archive() -> None:
     resource = BrazilCvmDfpResource()
     object_store = FakeObjectStore()
@@ -182,6 +201,35 @@ def test_brazil_fin_cvm_itr_resource_downloads_missing_year_archive() -> None:
     assert result.sha256
 
 
+def test_brazil_fin_cvm_fre_resource_downloads_missing_year_archive() -> None:
+    resource = BrazilCvmFreResource()
+    object_store = FakeObjectStore()
+    url = fre_source_url("2026")
+    session = FakeSession({url: b"fre-zip-body"})
+
+    result = resource.sync_year_archive(
+        year="2026",
+        object_store=object_store,
+        session=session,
+    )
+
+    archive_key = fre_archive_object_key("2026")
+    metadata_key = fre_metadata_object_key("2026")
+    assert object_store.created_buckets == [BRAZIL_CVM_RAW_BUCKET]
+    assert session.requested_urls == [url]
+    assert object_store.uploaded_files == [(BRAZIL_CVM_RAW_BUCKET, archive_key)]
+    assert object_store.objects[(BRAZIL_CVM_RAW_BUCKET, archive_key)] == b"fre-zip-body"
+    assert object_store.written_json == [(BRAZIL_CVM_RAW_BUCKET, metadata_key)]
+    assert result.downloaded is True
+    assert result.reused_existing_archive is False
+    assert result.year == "2026"
+    assert result.source_url == url
+    assert result.archive_key == archive_key
+    assert result.metadata_key == metadata_key
+    assert result.size_bytes == len(b"fre-zip-body")
+    assert result.sha256
+
+
 def test_brazil_fin_cvm_dfp_resource_skips_existing_year_archive_without_http() -> None:
     resource = BrazilCvmDfpResource()
     object_store = FakeObjectStore()
@@ -225,6 +273,32 @@ def test_brazil_fin_cvm_itr_resource_skips_existing_year_archive_without_http() 
     assert object_store.uploaded_files == []
     assert object_store.written_json == [
         (BRAZIL_CVM_RAW_BUCKET, itr_metadata_object_key("2026"))
+    ]
+    assert result.downloaded is False
+    assert result.reused_existing_archive is True
+    assert result.year == "2026"
+    assert result.archive_key == archive_key
+    assert result.size_bytes == len(b"already-there")
+    assert result.sha256 == sha256(b"already-there").hexdigest()
+
+
+def test_brazil_fin_cvm_fre_resource_skips_existing_year_archive_without_http() -> None:
+    resource = BrazilCvmFreResource()
+    object_store = FakeObjectStore()
+    archive_key = fre_archive_object_key("2026")
+    object_store.objects[(BRAZIL_CVM_RAW_BUCKET, archive_key)] = b"already-there"
+    session = NoDownloadSession()
+
+    result = resource.sync_year_archive(
+        year="2026",
+        object_store=object_store,
+        session=session,
+    )
+
+    assert session.requested_urls == []
+    assert object_store.uploaded_files == []
+    assert object_store.written_json == [
+        (BRAZIL_CVM_RAW_BUCKET, fre_metadata_object_key("2026"))
     ]
     assert result.downloaded is False
     assert result.reused_existing_archive is True

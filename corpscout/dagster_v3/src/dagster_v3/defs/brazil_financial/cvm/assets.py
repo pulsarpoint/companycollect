@@ -5,6 +5,7 @@ from dagster_duckdb import DuckDBResource
 from dagster_v3.defs.brazil_financial.cvm import tables
 from dagster_v3.defs.brazil_financial.cvm.clickhouse import (
     EXPORT_TABLES,
+    FRE_EXPORT_TABLES,
     ITR_EXPORT_TABLES,
     export_brazil_fin_cvm_clickhouse_table,
     export_brazil_fin_cvm_companies_clickhouse,
@@ -20,6 +21,18 @@ from dagster_v3.defs.brazil_financial.cvm.companies import (
     load_brazil_fin_cvm_companies_from_object_store,
     sync_brazil_fin_cvm_companies_csv,
 )
+from dagster_v3.defs.brazil_financial.cvm.fre_parsing import (
+    FRE_AUDITORS_TABLE,
+    FRE_CAPITAL_DISTRIBUTION_TABLE,
+    FRE_CAPITAL_SOCIAL_CLASSES_TABLE,
+    FRE_CAPITAL_SOCIAL_TABLE,
+    FRE_DOCUMENTS_TABLE,
+    FRE_RELATED_PARTY_TRANSACTIONS_TABLE,
+    FRE_REMUNERATION_TOTAL_ORGANS_TABLE,
+    FRE_RESPONSIBLES_TABLE,
+    FRE_SHAREHOLDERS_TABLE,
+    parse_brazil_fin_cvm_fre_archive_from_object_store,
+)
 from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
     DFP_AUDITOR_REPORTS_TABLE,
@@ -31,10 +44,13 @@ from dagster_v3.defs.brazil_financial.cvm.parsing import (
 from dagster_v3.defs.brazil_financial.cvm.source import (
     BRAZIL_CVM_DFP_END_YEAR,
     BRAZIL_CVM_DFP_START_YEAR,
+    BRAZIL_CVM_FRE_END_YEAR,
+    BRAZIL_CVM_FRE_START_YEAR,
     BRAZIL_CVM_ITR_END_YEAR,
     BRAZIL_CVM_ITR_START_YEAR,
     BRAZIL_FIN_CVM_GROUP_NAME,
     BrazilCvmDfpResource,
+    BrazilCvmFreResource,
     BrazilCvmItrResource,
 )
 from dagster_v3.defs.brazil_financial.cvm.usd_conversion import (
@@ -76,6 +92,13 @@ ITR_CLICKHOUSE_DEPENDENCIES = [
     ),
     dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
 ]
+FRE_CLICKHOUSE_DEPENDENCIES = [
+    dg.AssetDep(
+        dg.AssetKey("brazil_fin_cvm_fre_raw_duckdb"),
+        partition_mapping=dg.AllPartitionMapping(),
+    ),
+    dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
+]
 DFP_CLICKHOUSE_ASSET_SPECS = (
     ("brazil_fin_cvm_dfp_documents_clickhouse", *EXPORT_TABLES[0]),
     ("brazil_fin_cvm_dfp_statement_rows_clickhouse", *EXPORT_TABLES[1]),
@@ -88,6 +111,23 @@ ITR_CLICKHOUSE_ASSET_SPECS = (
     ("brazil_fin_cvm_itr_capital_composition_clickhouse", *ITR_EXPORT_TABLES[2]),
     ("brazil_fin_cvm_itr_auditor_reports_clickhouse", *ITR_EXPORT_TABLES[3]),
 )
+FRE_CLICKHOUSE_ASSET_SPECS = (
+    ("brazil_fin_cvm_fre_documents_clickhouse", *FRE_EXPORT_TABLES[0]),
+    ("brazil_fin_cvm_fre_capital_social_clickhouse", *FRE_EXPORT_TABLES[1]),
+    ("brazil_fin_cvm_fre_capital_social_classes_clickhouse", *FRE_EXPORT_TABLES[2]),
+    ("brazil_fin_cvm_fre_capital_distribution_clickhouse", *FRE_EXPORT_TABLES[3]),
+    ("brazil_fin_cvm_fre_auditors_clickhouse", *FRE_EXPORT_TABLES[4]),
+    ("brazil_fin_cvm_fre_responsibles_clickhouse", *FRE_EXPORT_TABLES[5]),
+    (
+        "brazil_fin_cvm_fre_related_party_transactions_clickhouse",
+        *FRE_EXPORT_TABLES[6],
+    ),
+    (
+        "brazil_fin_cvm_fre_remuneration_total_organs_clickhouse",
+        *FRE_EXPORT_TABLES[7],
+    ),
+    ("brazil_fin_cvm_fre_shareholders_clickhouse", *FRE_EXPORT_TABLES[8]),
+)
 
 BRAZIL_FIN_CVM_DFP_RAW_PARTITIONS = dg.StaticPartitionsDefinition(
     [
@@ -99,6 +139,12 @@ BRAZIL_FIN_CVM_ITR_RAW_PARTITIONS = dg.StaticPartitionsDefinition(
     [
         str(year)
         for year in range(BRAZIL_CVM_ITR_START_YEAR, BRAZIL_CVM_ITR_END_YEAR + 1)
+    ]
+)
+BRAZIL_FIN_CVM_FRE_RAW_PARTITIONS = dg.StaticPartitionsDefinition(
+    [
+        str(year)
+        for year in range(BRAZIL_CVM_FRE_START_YEAR, BRAZIL_CVM_FRE_END_YEAR + 1)
     ]
 )
 
@@ -136,6 +182,26 @@ def brazil_fin_cvm_itr_raw_archives_s3(
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     result = brazil_fin_cvm_itr.sync_year_archive(
+        year=context.partition_key,
+        object_store=object_store,
+        log_info=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=result.metadata())
+
+
+@dg.asset(
+    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
+    kinds={"python", "s3", "zip", "cvm", "fre"},
+    partitions_def=BRAZIL_FIN_CVM_FRE_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    description="Downloads Brazil CVM FRE yearly ZIP archives for 2010-2026 into object storage.",
+)
+def brazil_fin_cvm_fre_raw_archives_s3(
+    context: dg.AssetExecutionContext,
+    brazil_fin_cvm_fre: BrazilCvmFreResource,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    result = brazil_fin_cvm_fre.sync_year_archive(
         year=context.partition_key,
         object_store=object_store,
         log_info=context.log.info,
@@ -294,6 +360,51 @@ def brazil_fin_cvm_itr_raw_duckdb(
 
 
 @dg.asset(
+    deps=[dg.AssetKey("brazil_fin_cvm_fre_raw_archives_s3")],
+    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
+    kinds={"python", "duckdb", "csv", "zip", "cvm", "fre"},
+    partitions_def=BRAZIL_FIN_CVM_FRE_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    description="Parses Brazil CVM FRE yearly ZIP archives from object storage into DuckDB.",
+)
+def brazil_fin_cvm_fre_raw_duckdb(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    duckdb_path = brazil_fin_cvm_source_duckdb_path(
+        family="fre",
+        year=context.partition_key,
+    )
+    with brazil_fin_cvm_source_duckdb_connection(
+        family="fre",
+        year=context.partition_key,
+    ) as connection:
+        counts = parse_brazil_fin_cvm_fre_archive_from_object_store(
+            connection=connection,
+            object_store=object_store,
+            year=context.partition_key,
+            source_run_id=context.run_id,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "fre_year": context.partition_key,
+            "duckdb_path": str(duckdb_path),
+            "duckdb_schema": BRAZIL_CVM_DUCKDB_SCHEMA,
+            "document_table": FRE_DOCUMENTS_TABLE,
+            "capital_social_table": FRE_CAPITAL_SOCIAL_TABLE,
+            "capital_social_classes_table": FRE_CAPITAL_SOCIAL_CLASSES_TABLE,
+            "capital_distribution_table": FRE_CAPITAL_DISTRIBUTION_TABLE,
+            "auditors_table": FRE_AUDITORS_TABLE,
+            "responsibles_table": FRE_RESPONSIBLES_TABLE,
+            "related_party_transactions_table": FRE_RELATED_PARTY_TRANSACTIONS_TABLE,
+            "remuneration_total_organs_table": FRE_REMUNERATION_TOTAL_ORGANS_TABLE,
+            "shareholders_table": FRE_SHAREHOLDERS_TABLE,
+        }
+    )
+
+
+@dg.asset(
     deps=[dg.AssetKey("brazil_fin_cvm_dfp_raw_duckdb")],
     group_name=BRAZIL_FIN_CVM_GROUP_NAME,
     kinds={"python", "duckdb", "currency", "fx", "cvm", "dfp"},
@@ -432,6 +543,8 @@ def _partition_years_for_family(family: str) -> tuple[str, ...]:
         return tuple(BRAZIL_FIN_CVM_DFP_RAW_PARTITIONS.get_partition_keys())
     if family == "itr":
         return tuple(BRAZIL_FIN_CVM_ITR_RAW_PARTITIONS.get_partition_keys())
+    if family == "fre":
+        return tuple(BRAZIL_FIN_CVM_FRE_RAW_PARTITIONS.get_partition_keys())
     raise ValueError(f"Unsupported Brazil CVM source family: {family}")
 
 
@@ -509,6 +622,92 @@ brazil_fin_cvm_itr_auditor_reports_clickhouse = (
         columns=ITR_CLICKHOUSE_ASSET_SPECS[3][3],
         family="ITR",
         deps=ITR_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_fre_documents_clickhouse = _build_brazil_fin_cvm_clickhouse_table_asset(
+    asset_name=FRE_CLICKHOUSE_ASSET_SPECS[0][0],
+    duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[0][1],
+    clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[0][2],
+    columns=FRE_CLICKHOUSE_ASSET_SPECS[0][3],
+    family="FRE",
+    deps=FRE_CLICKHOUSE_DEPENDENCIES,
+)
+brazil_fin_cvm_fre_capital_social_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=FRE_CLICKHOUSE_ASSET_SPECS[1][0],
+        duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[1][1],
+        clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[1][2],
+        columns=FRE_CLICKHOUSE_ASSET_SPECS[1][3],
+        family="FRE",
+        deps=FRE_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_fre_capital_social_classes_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=FRE_CLICKHOUSE_ASSET_SPECS[2][0],
+        duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[2][1],
+        clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[2][2],
+        columns=FRE_CLICKHOUSE_ASSET_SPECS[2][3],
+        family="FRE",
+        deps=FRE_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_fre_capital_distribution_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=FRE_CLICKHOUSE_ASSET_SPECS[3][0],
+        duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[3][1],
+        clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[3][2],
+        columns=FRE_CLICKHOUSE_ASSET_SPECS[3][3],
+        family="FRE",
+        deps=FRE_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_fre_auditors_clickhouse = _build_brazil_fin_cvm_clickhouse_table_asset(
+    asset_name=FRE_CLICKHOUSE_ASSET_SPECS[4][0],
+    duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[4][1],
+    clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[4][2],
+    columns=FRE_CLICKHOUSE_ASSET_SPECS[4][3],
+    family="FRE",
+    deps=FRE_CLICKHOUSE_DEPENDENCIES,
+)
+brazil_fin_cvm_fre_responsibles_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=FRE_CLICKHOUSE_ASSET_SPECS[5][0],
+        duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[5][1],
+        clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[5][2],
+        columns=FRE_CLICKHOUSE_ASSET_SPECS[5][3],
+        family="FRE",
+        deps=FRE_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_fre_related_party_transactions_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=FRE_CLICKHOUSE_ASSET_SPECS[6][0],
+        duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[6][1],
+        clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[6][2],
+        columns=FRE_CLICKHOUSE_ASSET_SPECS[6][3],
+        family="FRE",
+        deps=FRE_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_fre_remuneration_total_organs_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=FRE_CLICKHOUSE_ASSET_SPECS[7][0],
+        duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[7][1],
+        clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[7][2],
+        columns=FRE_CLICKHOUSE_ASSET_SPECS[7][3],
+        family="FRE",
+        deps=FRE_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_fre_shareholders_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=FRE_CLICKHOUSE_ASSET_SPECS[8][0],
+        duckdb_table=FRE_CLICKHOUSE_ASSET_SPECS[8][1],
+        clickhouse_table=FRE_CLICKHOUSE_ASSET_SPECS[8][2],
+        columns=FRE_CLICKHOUSE_ASSET_SPECS[8][3],
+        family="FRE",
+        deps=FRE_CLICKHOUSE_DEPENDENCIES,
     )
 )
 
@@ -615,6 +814,14 @@ brazil_fin_cvm_itr_raw_backfill_job = dg.define_asset_job(
     ),
 )
 
+brazil_fin_cvm_fre_raw_backfill_job = dg.define_asset_job(
+    "brazil_fin_cvm_fre_raw_backfill_job",
+    selection=dg.AssetSelection.assets(
+        "brazil_fin_cvm_fre_raw_archives_s3",
+        "brazil_fin_cvm_fre_raw_duckdb",
+    ),
+)
+
 
 defs = dg.Definitions(
     assets=[
@@ -635,6 +842,17 @@ defs = dg.Definitions(
         brazil_fin_cvm_itr_statement_rows_clickhouse,
         brazil_fin_cvm_itr_capital_composition_clickhouse,
         brazil_fin_cvm_itr_auditor_reports_clickhouse,
+        brazil_fin_cvm_fre_raw_archives_s3,
+        brazil_fin_cvm_fre_raw_duckdb,
+        brazil_fin_cvm_fre_documents_clickhouse,
+        brazil_fin_cvm_fre_capital_social_clickhouse,
+        brazil_fin_cvm_fre_capital_social_classes_clickhouse,
+        brazil_fin_cvm_fre_capital_distribution_clickhouse,
+        brazil_fin_cvm_fre_auditors_clickhouse,
+        brazil_fin_cvm_fre_responsibles_clickhouse,
+        brazil_fin_cvm_fre_related_party_transactions_clickhouse,
+        brazil_fin_cvm_fre_remuneration_total_organs_clickhouse,
+        brazil_fin_cvm_fre_shareholders_clickhouse,
     ],
     asset_checks=[
         brazil_fin_cvm_dfp_statement_rows_usd_complete,
@@ -644,10 +862,15 @@ defs = dg.Definitions(
         brazil_fin_cvm_dfp_financial_metrics_present,
         brazil_fin_cvm_itr_financial_metrics_present,
     ],
-    jobs=[brazil_fin_cvm_dfp_raw_backfill_job, brazil_fin_cvm_itr_raw_backfill_job],
+    jobs=[
+        brazil_fin_cvm_dfp_raw_backfill_job,
+        brazil_fin_cvm_itr_raw_backfill_job,
+        brazil_fin_cvm_fre_raw_backfill_job,
+    ],
     resources={
         "brazil_fin_cvm_dfp": BrazilCvmDfpResource(),
         "brazil_fin_cvm_itr": BrazilCvmItrResource(),
+        "brazil_fin_cvm_fre": BrazilCvmFreResource(),
         "brazil_fin_cvm_duckdb": duckdb_resource(BRAZIL_FIN_CVM_COMPANIES_DUCKDB_PATH),
     },
 )

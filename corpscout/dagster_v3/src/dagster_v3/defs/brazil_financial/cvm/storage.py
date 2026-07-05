@@ -13,7 +13,7 @@ from dagster_v3.defs.common.duckdb_resources import (
 
 BRAZIL_FIN_CVM_DUCKDB_ROOT = Path("data/brazil_cvm")
 BRAZIL_FIN_CVM_COMPANIES_DUCKDB_PATH = BRAZIL_FIN_CVM_DUCKDB_ROOT / "companies.duckdb"
-BRAZIL_FIN_CVM_SOURCE_FAMILIES = frozenset({"dfp", "itr"})
+BRAZIL_FIN_CVM_SOURCE_FAMILIES = frozenset({"dfp", "fre", "itr"})
 
 
 def brazil_fin_cvm_source_duckdb_path(
