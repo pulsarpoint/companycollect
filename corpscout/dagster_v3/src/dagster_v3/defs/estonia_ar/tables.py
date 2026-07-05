@@ -1,5 +1,7 @@
 from typing import Any
 
+from dagster_v3.contact_extraction import COMPANY_CONTACTS_COLUMNS, COMPANY_DOMAINS_COLUMNS
+
 DLT_DATASET_NAME = "estonia_ar"
 ENTITIES_TABLE = "entities"
 
@@ -200,27 +202,16 @@ EE_COMPANY_CONTACTS_TABLE = "ee_company_contacts"
 QUALIFIED_EE_COMPANY_CONTACTS_TABLE = (
     f"{ESTONIA_AR_DATABASE}.{EE_COMPANY_CONTACTS_TABLE}"
 )
-EE_COMPANY_CONTACTS_COLUMNS = (
-    "country_iso2",
-    "source_slug",
-    "source_run_id",
-    "source_record_id",
-    "reg_code",
-    "contact_type",
-    "contact_type_en",
-    "contact_value",
-    "is_current",
-    "end_date",
-    "source_url",
-    # Domain signal derived at build time: root_domain(website) for WWW rows, and
-    # the email suffix for EMAIL rows whose suffix is unique to one company.
-    # `domain_source` is 'website' | 'email' | '' (empty when no domain derived).
-    "domain",
-    "domain_source",
-)
-EE_COMPANY_CONTACTS_EXPORT_COLUMNS = _export_columns(EE_COMPANY_CONTACTS_COLUMNS)
-# Columns added by migration 000028 (ALTER) on top of the 000027 base table.
-EE_COMPANY_CONTACTS_DOMAIN_COLUMNS = ("domain", "domain_source")
+# DuckDB staging table: the canonical 13 (COMPANY_CONTACTS_COLUMNS, spec: contacts
+# standard) FIRST, then trailing internal-only enrichment columns consumed by the
+# company_domains build below. Domain signal derived at build time:
+# root_domain(website) for WWW rows, and the email suffix for EMAIL rows whose
+# suffix is unique to one company. `domain_source` is 'website' | 'email' | ''
+# (empty when no domain derived).
+EE_COMPANY_CONTACTS_STAGE_COLUMNS = COMPANY_CONTACTS_COLUMNS + ("domain", "domain_source")
+# ClickHouse export ships ONLY the canonical 13 — never the internal enrichment
+# pair above (identity with the shared standard, no country-specific columns).
+EE_COMPANY_CONTACTS_EXPORT_COLUMNS = COMPANY_CONTACTS_COLUMNS
 
 
 # --- Company domains (website OR email-derived → cross-source graph feeder) ---
@@ -231,22 +222,9 @@ EE_COMPANY_DOMAINS_TABLE = "ee_company_domains"
 QUALIFIED_EE_COMPANY_DOMAINS_TABLE = (
     f"{ESTONIA_AR_DATABASE}.{EE_COMPANY_DOMAINS_TABLE}"
 )
-EE_COMPANY_DOMAINS_COLUMNS = (
-    "country_iso2",
-    "source_slug",
-    "source_run_id",
-    "source_record_id",
-    "reg_code",
-    "domain",
-    "domain_source",
-    "website_url",
-    "website_normalized_url",
-    "website_host",
-    "is_current",
-    "is_primary",
-    "resolved_at",
-)
-EE_COMPANY_DOMAINS_EXPORT_COLUMNS = _export_columns(EE_COMPANY_DOMAINS_COLUMNS)
+# DuckDB staging table IS the canonical 15 (COMPANY_DOMAINS_COLUMNS, spec: contacts
+# standard) — no internal-only columns here (unlike company_contacts above).
+EE_COMPANY_DOMAINS_EXPORT_COLUMNS = COMPANY_DOMAINS_COLUMNS
 
 
 # --- Industry / NACE (EMTAK → NACE, source-provided) -------------------------

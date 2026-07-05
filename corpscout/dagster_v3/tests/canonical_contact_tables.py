@@ -56,3 +56,39 @@ def assert_canonical_contacts_ddl(sql: str, table: str) -> None:
 def assert_canonical_domains_ddl(sql: str, table: str) -> None:
     _assert_ddl(sql, table, COMPANY_DOMAINS_COLUMNS, _DOMAINS_TYPES,
                 "(registry_id, domain)")
+
+
+def assert_canonical_contact_row(row) -> None:
+    assert len(row) == len(COMPANY_CONTACTS_COLUMNS)
+    values = dict(zip(COMPANY_CONTACTS_COLUMNS, row))
+    from dagster_v3.contact_extraction import CONTACT_TYPE_VALUES
+
+    assert values["contact_type"] in CONTACT_TYPE_VALUES
+    assert values["registry_id"] != ""
+
+
+def assert_canonical_domain_row(row) -> None:
+    assert len(row) == len(COMPANY_DOMAINS_COLUMNS)
+    values = dict(zip(COMPANY_DOMAINS_COLUMNS, row))
+    from dagster_v3.contact_extraction import (
+        DOMAIN_SOURCE_VALUES,
+        VALIDATION_METHOD_VALUES,
+    )
+
+    assert values["domain_source"] in DOMAIN_SOURCE_VALUES
+    assert values["validation_method"] in VALIDATION_METHOD_VALUES
+    assert 0.0 < values["confidence"] <= 1.0
+    assert values["domain"] != "" and values["registry_id"] != ""
+    if values["domain_source"] != "website":
+        assert values["website_url"] == ""
+        assert values["website_normalized_url"] == ""
+        assert values["website_host"] == ""
+    else:
+        # Website-sourced rows are the domain-discovery signal itself — a row
+        # claiming domain_source='website' with no actual URL captured would be
+        # a silent producer bug (spec: contacts standard requires real
+        # website_url/website_normalized_url/website_host for these rows).
+        assert values["website_url"] != ""
+        assert values["website_normalized_url"] != ""
+        assert values["website_host"] != ""
+    assert values["is_primary"] in (0, 1)

@@ -84,43 +84,23 @@ EE_REPORT_CATEGORY_EN_BY_NAME = {
     "Suurettevõtja": "Large enterprise",
 }
 
-# Contact (`sidevahendid`) type codes (`liik`) -> canonical English. Website is the
-# domain-discovery signal. Unknown -> "".
-EE_CONTACT_TYPE_EN_BY_CODE = {
-    "WWW": "Website",
-    "EMAIL": "Email",
-    "MOB": "Mobile",
-    "TEL": "Phone",
-    "FAX": "Fax",
-    "MUU": "Other",
+# Contact (`sidevahendid`) type codes (`liik`) -> canonical contact_type (spec:
+# contacts standard, COMPANY_CONTACTS_COLUMNS). Website is the domain-discovery
+# signal. The raw code is preserved verbatim in contact_type_raw; any code NOT
+# in this map (e.g. the live-data TELEX code) falls back to "other" in the build
+# SQL's CASE, same as the explicit "MUU" -> "other" entry below.
+EE_CONTACT_TYPE_BY_CODE = {
+    "WWW": "website",
+    "EMAIL": "email",
+    "TEL": "phone",
+    "MOB": "mobile",
+    "FAX": "fax",
+    "MUU": "other",
 }
 
-# An email suffix is only treated as a company's own domain if it is unique to a
-# single company (see `domain`/`domain_source` on ee_company_contacts). The
-# uniqueness rule already drops every high-frequency mail provider and shared
-# accounting/formation-agent domain (gmail, hot.ee, kvatro.ee, …) because those
-# appear across thousands of distinct companies. This denylist is only a backstop
-# for a well-known provider that coincidentally shows up for exactly one company.
-EMAIL_PROVIDER_DENYLIST = frozenset(
-    {
-        # global webmail
-        "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
-        "msn.com", "yahoo.com", "ymail.com", "rocketmail.com", "icloud.com",
-        "me.com", "mac.com", "aol.com", "gmx.com", "gmx.net", "gmx.de",
-        "mail.com", "zoho.com", "proton.me", "protonmail.com", "pm.me",
-        "fastmail.com", "tutanota.com", "hey.com",
-        # RU/LV webmail (common in EE data)
-        "mail.ru", "list.ru", "bk.ru", "inbox.ru", "internet.ru", "rambler.ru",
-        "yandex.ru", "yandex.com", "ya.ru", "inbox.lv", "one.lv", "apollo.lv",
-        # EE webmail / portals
-        "hot.ee", "mail.ee", "online.ee", "neti.ee", "starman.ee", "eesti.ee",
-    }
-)
-
-# Keep an email suffix as a company domain only when it maps to <= this many
-# distinct companies. 1 = strictly unique (the user's rule); raise to allow
-# small corporate groups sharing one domain.
-EMAIL_DOMAIN_MAX_COMPANIES = 1
+# EMAIL_PROVIDER_DENYLIST / EMAIL_DOMAIN_MAX_COMPANIES moved to the shared
+# dagster_v3.contact_extraction module (single source of truth across
+# countries); contacts.py imports them directly from there.
 
 
 class HttpSession(Protocol):

@@ -6,6 +6,7 @@ from pathlib import Path
 import duckdb
 from duckdb import DuckDBPyConnection
 
+from dagster_v3.contact_extraction import EMAIL_DOMAIN_MAX_COMPANIES, EMAIL_PROVIDER_DENYLIST
 from dagster_v3.defs.estonia_ar import resources, tables
 from dagster_v3.domains import normalized_url, root_domain, website_host
 
@@ -18,7 +19,7 @@ def _denylist_sql() -> str:
     """The provider denylist as a SQL IN-list literal."""
     items = ", ".join(
         "'" + d.replace("'", "''") + "'"
-        for d in sorted(resources.EMAIL_PROVIDER_DENYLIST)
+        for d in sorted(EMAIL_PROVIDER_DENYLIST)
     )
     return items or "''"
 
@@ -66,17 +67,22 @@ def _extract_single_json(zip_path: Path, dest_dir: Path) -> Path:
 def _build_contacts_from_json(
     *, duckdb_connection: DuckDBPyConnection, json_path: Path, source_run_id: str
 ) -> dict[str, int]:
-    contact_type_en = "\n            ".join(
-        f"when '{code}' then '{en}'"
-        for code, en in resources.EE_CONTACT_TYPE_EN_BY_CODE.items()
+    # Canonical contact_type CASE (spec: contacts standard). ANY code not in
+    # EE_CONTACT_TYPE_BY_CODE (e.g. the live-data TELEX code) falls back to the
+    # `else 'other'`; contact_type_raw below preserves the source code verbatim
+    # regardless of whether it was mapped.
+    contact_type_case = "\n                ".join(
+        f"when '{code}' then '{canonical}'"
+        for code, canonical in resources.EE_CONTACT_TYPE_BY_CODE.items()
     )
     # An email suffix is a company domain only if (a) not a known provider and
     # (b) it maps to <= EMAIL_DOMAIN_MAX_COMPANIES distinct companies — i.e. it is
-    # unique to this company. Counting distinct reg_code (not contact rows) drops
-    # every provider and shared accounting/formation-agent domain automatically.
+    # unique to this company. Counting distinct registry_id (not contact rows)
+    # drops every provider and shared accounting/formation-agent domain
+    # automatically.
     keep_email = (
         f"e.email_domain <> '' "
-        f"and ec.company_count <= {resources.EMAIL_DOMAIN_MAX_COMPANIES} "
+        f"and ec.company_count <= {EMAIL_DOMAIN_MAX_COMPANIES} "
         f"and e.email_domain not in ({_denylist_sql()})"
     )
     sql = f"""
@@ -98,24 +104,26 @@ def _build_contacts_from_json(
                 '{CONTACTS_SOURCE_SLUG}' as source_slug,
                 {_sql_literal(source_run_id)} as source_run_id,
                 reg_code as source_record_id,
-                reg_code,
-                sv.liik as contact_type,
+                reg_code as registry_id,
+                sv.liik as contact_type_raw,
                 case sv.liik
-                {contact_type_en}
-                else '' end as contact_type_en,
+                {contact_type_case}
+                else 'other' end as contact_type,
                 trim(sv.sisu) as contact_value,
+                'sidevahendid' as source_field,
                 case when sv.lopp_kpv is null or sv.lopp_kpv = '' then 1 else 0 end as is_current,
-                try_strptime(sv.lopp_kpv, '%d.%m.%Y')::date as end_date,
-                {_sql_literal(tables.GENERAL_DATA_URL)} as source_url
+                try_strptime(sv.lopp_kpv, '%d.%m.%Y')::date as valid_to,
+                {_sql_literal(tables.GENERAL_DATA_URL)} as source_url,
+                now() as resolved_at
             from exploded
             where coalesce(trim(sv.sisu), '') <> ''
         ),
         enriched as (
             select
                 *,
-                case when contact_type = 'WWW'
+                case when contact_type = 'website'
                      then coalesce(root_domain(contact_value), '') else '' end as website_domain,
-                case when contact_type = 'EMAIL' and contains(contact_value, '@')
+                case when contact_type = 'email' and contains(contact_value, '@')
                      then nullif(lower(trim(regexp_extract(contact_value, '[^@]+$'))), '')
                      else '' end as email_domain_raw
             from base
@@ -127,13 +135,14 @@ def _build_contacts_from_json(
             from enriched
         ),
         email_counts as (
-            select email_domain, count(distinct reg_code) as company_count
+            select email_domain, count(distinct registry_id) as company_count
             from enriched2 where email_domain <> ''
             group by email_domain
         )
         select
-            e.country_iso2, e.source_slug, e.source_run_id, e.source_record_id, e.reg_code,
-            e.contact_type, e.contact_type_en, e.contact_value, e.is_current, e.end_date, e.source_url,
+            e.country_iso2, e.source_slug, e.source_run_id, e.source_record_id, e.registry_id,
+            e.contact_type, e.contact_type_raw, e.contact_value, e.source_field, e.is_current,
+            e.valid_to, e.source_url, e.resolved_at,
             case
                 when e.website_domain <> '' then e.website_domain
                 when {keep_email} then e.email_domain
