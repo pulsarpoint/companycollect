@@ -108,6 +108,7 @@ EXPECTED_MIGRATIONS = (
     "000092_corpscout_br_canonical_contacts",
     "000094_corpscout_br_cvm_itr_tables",
     "000095_corpscout_br_cvm_financial_metrics",
+    "000096_corpscout_ee_canonical_contacts",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

@@ -1,7 +1,7 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-DROP VIEW IF EXISTS corpscout.br_cvm_financial_metrics;
 DROP TABLE IF EXISTS corpscout.br_cvm_financial_metrics;
+DROP VIEW IF EXISTS corpscout.br_cvm_financial_metrics;
 
 CREATE VIEW IF NOT EXISTS corpscout.br_cvm_financial_metrics AS
 WITH
