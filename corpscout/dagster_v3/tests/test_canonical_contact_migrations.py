@@ -41,3 +41,21 @@ def test_ee_canonical_migration_conforms():
     sql = _read("*_corpscout_ee_canonical_contacts.up.sql")
     assert_canonical_contacts_ddl(sql, "ee_company_contacts__canonical")
     assert_canonical_domains_ddl(sql, "ee_company_domains__canonical")
+
+
+def test_no_canonical_migration_conforms():
+    sql = _read("*_corpscout_no_canonical_contacts.up.sql")
+    assert_canonical_contacts_ddl(sql, "no_company_contacts")
+    assert_canonical_domains_ddl(sql, "no_company_domains")
+
+
+def test_fi_canonical_migration_conforms():
+    sql = _read("*_corpscout_fi_canonical_contacts.up.sql")
+    assert_canonical_contacts_ddl(sql, "fi_company_contacts")
+    assert_canonical_domains_ddl(sql, "fi_company_domains")
+
+
+def test_wikidata_canonical_migration_conforms():
+    sql = _read("*_corpscout_wikidata_canonical_contacts.up.sql")
+    assert_canonical_contacts_ddl(sql, "wikidata_company_contacts")
+    assert_canonical_domains_ddl(sql, "wikidata_company_domains")
