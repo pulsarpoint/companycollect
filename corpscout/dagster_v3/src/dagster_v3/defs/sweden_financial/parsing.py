@@ -55,7 +55,7 @@ def extract_sweden_financial_report_xhtml_catalog(
                         continue
                     nested_zip_count += 1
                     nested_zip_body = outer_zip.read(nested_member)
-                    row, downloaded = _extract_nested_report(
+                    nested_reports = _extract_nested_reports(
                         nested_zip_body=nested_zip_body,
                         nested_zip_member=nested_member.filename,
                         source_archive_key=source_archive_key,
@@ -63,11 +63,12 @@ def extract_sweden_financial_report_xhtml_catalog(
                         partition_year=partition_year,
                         object_store=object_store,
                     )
-                    rows.append(row)
-                    if downloaded:
-                        downloaded_report_count += 1
-                    else:
-                        reused_report_count += 1
+                    for row, downloaded in nested_reports:
+                        rows.append(row)
+                        if downloaded:
+                            downloaded_report_count += 1
+                        else:
+                            reused_report_count += 1
 
     _replace_report_xhtml_catalog(
         connection=connection,
@@ -117,7 +118,7 @@ def report_xhtml_object_key(
     )
 
 
-def _extract_nested_report(
+def _extract_nested_reports(
     *,
     nested_zip_body: bytes,
     nested_zip_member: str,
@@ -125,59 +126,65 @@ def _extract_nested_report(
     source_run_id: str,
     partition_year: str,
     object_store: ObjectStoreResource,
-) -> tuple[tuple[Any, ...], bool]:
+) -> list[tuple[tuple[Any, ...], bool]]:
+    company_id, report_period_end = _metadata_from_nested_zip_name(nested_zip_member)
+    source_archive_year = _year_from_archive_object_key(source_archive_key)
+    source_archive_name = _archive_name_from_object_key(source_archive_key)
+    reports: list[tuple[tuple[Any, ...], bool]] = []
+
     with zipfile.ZipFile(BytesIO(nested_zip_body)) as nested_zip:
         xhtml_members = [
             member
             for member in _zip_file_members(nested_zip)
             if member.filename.lower().endswith((".xhtml", ".html"))
         ]
-        if len(xhtml_members) != 1:
-            names = [member.filename for member in xhtml_members]
+        if not xhtml_members:
             raise ValueError(
-                f"Expected one XHTML file in nested archive {nested_zip_member}, got {names}"
+                f"Expected at least one XHTML file in nested archive {nested_zip_member}"
             )
-        xhtml_member = xhtml_members[0]
-        xhtml_body = nested_zip.read(xhtml_member)
 
-    company_id, report_period_end = _metadata_from_nested_zip_name(nested_zip_member)
-    xhtml_s3_key = report_xhtml_object_key(
-        partition_year=partition_year,
-        source_archive_key=source_archive_key,
-        nested_zip_member=nested_zip_member,
-        company_id=company_id,
-        report_period_end=report_period_end,
-        xhtml_member=xhtml_member.filename,
-    )
-    downloaded = not object_store.exists(
-        xhtml_s3_key,
-        bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
-    )
-    if downloaded:
-        object_store.write_bytes(
-            xhtml_s3_key,
-            xhtml_body,
-            bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
-        )
+        for xhtml_member in xhtml_members:
+            xhtml_body = nested_zip.read(xhtml_member)
+            xhtml_s3_key = report_xhtml_object_key(
+                partition_year=partition_year,
+                source_archive_key=source_archive_key,
+                nested_zip_member=nested_zip_member,
+                company_id=company_id,
+                report_period_end=report_period_end,
+                xhtml_member=xhtml_member.filename,
+            )
+            downloaded = not object_store.exists(
+                xhtml_s3_key,
+                bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
+            )
+            if downloaded:
+                object_store.write_bytes(
+                    xhtml_s3_key,
+                    xhtml_body,
+                    bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
+                )
+            reports.append(
+                (
+                    (
+                        source_run_id,
+                        partition_year,
+                        source_archive_key,
+                        nested_zip_member,
+                        xhtml_member.filename,
+                        SWEDEN_FINANCIAL_RAW_BUCKET,
+                        xhtml_s3_key,
+                        company_id,
+                        report_period_end,
+                        source_archive_year,
+                        source_archive_name,
+                        len(xhtml_body),
+                        sha256(xhtml_body).hexdigest(),
+                    ),
+                    downloaded,
+                )
+            )
 
-    return (
-        (
-            source_run_id,
-            partition_year,
-            source_archive_key,
-            nested_zip_member,
-            xhtml_member.filename,
-            SWEDEN_FINANCIAL_RAW_BUCKET,
-            xhtml_s3_key,
-            company_id,
-            report_period_end,
-            _year_from_archive_object_key(source_archive_key),
-            _archive_name_from_object_key(source_archive_key),
-            len(xhtml_body),
-            sha256(xhtml_body).hexdigest(),
-        ),
-        downloaded,
-    )
+    return reports
 
 
 def _replace_report_xhtml_catalog(

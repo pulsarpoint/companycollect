@@ -24,26 +24,25 @@
   `brazil_fin_cvm_companies_clickhouse`.
 - Created ClickHouse CVM company support table:
   `br_cvm_companies`.
+- Implemented ITR yearly raw archive download asset:
+  `brazil_fin_cvm_itr_raw_archives_s3`.
+- Implemented ITR raw ZIP parsing into DuckDB:
+  `brazil_fin_cvm_itr_raw_duckdb`.
+- Implemented ITR statement-row USD conversion in DuckDB:
+  `brazil_fin_cvm_itr_statement_rows_usd_duckdb`.
+- Implemented ITR raw ClickHouse export:
+  `brazil_fin_cvm_itr_raw_clickhouse`.
+- Created ClickHouse ITR raw tables:
+  `br_cvm_itr_documents`,
+  `br_cvm_itr_statement_rows`,
+  `br_cvm_itr_capital_composition`,
+  `br_cvm_itr_auditor_reports`.
 - Documented the DFP DuckDB parser design in
   `cvm/docs/brazil_cvm_dfp_duckdb-design.md`.
 
 ## Next
 
-1. Add ITR pipeline.
-   - Source: `https://dados.cvm.gov.br/dataset/cia_aberta-doc-itr`
-   - Direct files:
-     `https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/itr_cia_aberta_<year>.zip`
-   - Assets:
-     - `brazil_fin_cvm_itr_raw_archives_s3`
-     - `brazil_fin_cvm_itr_raw_duckdb`
-     - `brazil_fin_cvm_itr_statement_rows_usd_duckdb`
-     - `brazil_fin_cvm_itr_raw_clickhouse`
-   - Purpose:
-     - quarterly/interim statement rows;
-     - latest financial trends before annual DFP exists;
-     - same statement families as DFP.
-
-2. Refactor shared CVM filing parser code where it removes real duplication.
+1. Refactor shared CVM filing parser code where it removes real duplication.
    - Share only the stable DFP/ITR mechanics:
      - yearly ZIP URL construction;
      - archive object-key construction;
@@ -52,7 +51,7 @@
      - common statement row normalization.
    - Keep document-specific constants explicit.
 
-3. Build normalized metrics layer over DFP + ITR.
+2. Build normalized metrics layer over DFP + ITR.
    - Initial metrics:
      - revenue;
      - net income;
@@ -69,14 +68,14 @@
      - expose `is_latest_version`;
      - keep source lineage back to raw statement rows.
 
-4. Add latest-version logic.
+3. Add latest-version logic.
    - Raw rows should keep all filing versions.
    - Metrics should either expose `is_latest_version` or create a latest-only
      view/table.
    - Version selection must account for `CNPJ_CIA`, `CD_CVM`, reference date,
      statement family, consolidation type, account code, and filing version.
 
-5. Add FRE financial enrichment after ITR and first metrics.
+4. Add FRE financial enrichment after ITR and first metrics.
    - Source: `https://dados.cvm.gov.br/dataset/cia_aberta-doc-fre`
    - Start with:
      - financial summary;
@@ -86,7 +85,7 @@
      - related-party transactions.
    - Do not treat FRE as the primary accounting statement source.
 
-6. Add FCA metadata/contact enrichment after FRE.
+5. Add FCA metadata/contact enrichment after FRE.
    - Source: `https://dados.cvm.gov.br/dataset/cia_aberta-doc-fca`
    - Start with:
      - issuer metadata;
@@ -97,7 +96,7 @@
      - shareholder department contacts;
      - disclosure channels.
 
-7. Define schedules/sensors.
+6. Define schedules/sensors.
    - Current year DFP: weekly.
    - Current year ITR: weekly.
    - Last five years DFP/ITR: weekly or monthly based on cost.
@@ -105,7 +104,7 @@
    - FRE/FCA: monthly after implementation, unless active restatement tracking
      requires weekly.
 
-8. Investigate Central de Balancos.
+7. Investigate Central de Balancos.
    - Goal:
      - determine whether a stable public endpoint can pull private-company
        financial documents by CNPJ or bounded search.
@@ -114,10 +113,8 @@
 
 ## Open Questions
 
-- Should the CVM company support table be implemented before ITR to simplify
-  joins and ClickHouse exports?
-- Should ITR reuse DFP table shapes exactly with `itr_*` table names, or should
-  DFP and ITR statement rows be combined only at the metrics layer?
+- Should DFP and ITR statement rows be combined only at the metrics layer, or do
+  we also need a raw union view?
 - Should the first normalized metrics table store one row per metric or a wide
   row per company-period?
 - Which account-code mappings are reliable across non-financial issuers, banks,

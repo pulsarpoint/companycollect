@@ -19,7 +19,22 @@ def apply_brazil_cvm_statement_rows_usd_conversion(
     exchange_rates: ExchangeRates,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    qualified_table = f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_STATEMENT_ROWS_TABLE}"
+    return apply_brazil_cvm_statement_rows_usd_conversion_for_table(
+        duckdb_connection=duckdb_connection,
+        exchange_rates=exchange_rates,
+        statement_rows_table=DFP_STATEMENT_ROWS_TABLE,
+        log=log,
+    )
+
+
+def apply_brazil_cvm_statement_rows_usd_conversion_for_table(
+    *,
+    duckdb_connection: Any,
+    exchange_rates: ExchangeRates,
+    statement_rows_table: str,
+    log: Callable[..., object] | None = None,
+) -> dict[str, int]:
+    qualified_table = f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{statement_rows_table}"
     _ensure_usd_columns(duckdb_connection, qualified_table)
 
     pairs = _rate_pairs(duckdb_connection, qualified_table)
@@ -83,7 +98,8 @@ def apply_brazil_cvm_statement_rows_usd_conversion(
     }
     if log is not None:
         log(
-            "Applied Brazil CVM statement row USD conversion: rate_pairs=%s rates_found=%s rows_converted=%s",
+            "Applied Brazil CVM statement row USD conversion: table=%s rate_pairs=%s rates_found=%s rows_converted=%s",
+            qualified_table,
             counts["rate_pairs"],
             counts["rates_found"],
             counts["rows_converted"],

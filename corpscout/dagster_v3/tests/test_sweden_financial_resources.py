@@ -423,6 +423,57 @@ def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
     )
 
 
+def test_extract_sweden_financial_report_xhtml_catalog_keeps_multiple_xhtml_members(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2020/08_2.zip",
+        source_last_modified="2025-02-07T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = _outer_zip(
+        nested_name="5566235023_2020-06-30.zip",
+        xhtml_files={
+            "a64ce432-a97d-4e74-a35f-a77d66523c72.xhtml": b"<html>first</html>",
+            "c38e1b06-f6cf-4ad4-bce5-887f0e775455.xhtml": b"<html>second</html>",
+        },
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        counts = extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="run-1",
+            partition_year="2020",
+        )
+        catalog_rows = connection.execute(
+            """
+            select company_id, report_period_end, nested_zip_member, xhtml_member
+            from sweden_financial.report_xhtml_catalog
+            order by xhtml_member
+            """
+        ).fetchall()
+
+    assert counts["nested_zip_count"] == 1
+    assert counts["report_xhtml_count"] == 2
+    assert counts["downloaded_report_xhtml_count"] == 2
+    assert counts["catalog_row_count"] == 2
+    assert catalog_rows == [
+        (
+            "5566235023",
+            "2020-06-30",
+            "5566235023_2020-06-30.zip",
+            "a64ce432-a97d-4e74-a35f-a77d66523c72.xhtml",
+        ),
+        (
+            "5566235023",
+            "2020-06-30",
+            "5566235023_2020-06-30.zip",
+            "c38e1b06-f6cf-4ad4-bce5-887f0e775455.xhtml",
+        ),
+    ]
+
+
 def test_extract_sweden_financial_report_xhtml_catalog_replaces_only_partition_year(
     tmp_path: Path,
 ) -> None:
@@ -593,10 +644,18 @@ def _listing_xml_many(
 """.encode("utf-8")
 
 
-def _outer_zip(*, nested_name: str, xhtml_name: str, xhtml_body: bytes) -> bytes:
+def _outer_zip(
+    *,
+    nested_name: str,
+    xhtml_name: str = "report.xhtml",
+    xhtml_body: bytes = b"<html>report</html>",
+    xhtml_files: dict[str, bytes] | None = None,
+) -> bytes:
     nested_buffer = BytesIO()
     with zipfile.ZipFile(nested_buffer, "w", compression=zipfile.ZIP_DEFLATED) as nested:
-        nested.writestr(xhtml_name, xhtml_body)
+        files = xhtml_files or {xhtml_name: xhtml_body}
+        for name, body in files.items():
+            nested.writestr(name, body)
 
     outer_buffer = BytesIO()
     with zipfile.ZipFile(outer_buffer, "w", compression=zipfile.ZIP_DEFLATED) as outer:
