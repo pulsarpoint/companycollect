@@ -1,9 +1,11 @@
 import re
 import tempfile
 import zipfile
+from collections.abc import Callable
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
@@ -13,6 +15,7 @@ SWEDEN_FINANCIAL_DATASET_NAME = "sweden_financial"
 SWEDEN_FINANCIAL_DUCKDB_PATH = Path("data/sweden_financial_source.duckdb")
 RAW_ARCHIVE_PREFIX = "sweden_financial/raw_archives/"
 REPORT_XHTML_PREFIX = "sweden_financial/report_xhtml/"
+LOG_EVERY_NESTED_ZIPS = 1_000
 
 _DATE_PATTERN = re.compile(r"(?P<year>\d{4})[-_]? (?P<month>\d{2})[-_]? (?P<day>\d{2})", re.X)
 _COMPANY_ID_PATTERN = re.compile(r"(?<!\d)(\d{10,12})(?!\d)")
@@ -26,7 +29,9 @@ def extract_sweden_financial_report_xhtml_catalog(
     partition_year: str,
     source_archive_keys: list[str] | None = None,
     replace_scope: str = "partition",
+    log_info: Callable[..., object] | None = None,
 ) -> dict[str, int]:
+    started_at = monotonic()
     object_store.ensure_bucket(SWEDEN_FINANCIAL_RAW_BUCKET)
     if source_archive_keys is None:
         source_archive_keys = object_store.list_keys(
@@ -35,6 +40,15 @@ def extract_sweden_financial_report_xhtml_catalog(
         )
     else:
         source_archive_keys = sorted(source_archive_keys)
+    archive_count = len(source_archive_keys)
+    if log_info is not None:
+        log_info(
+            "Starting Sweden financial XHTML catalog extraction: "
+            "partition_year=%s archives=%s replace_scope=%s",
+            partition_year,
+            archive_count,
+            replace_scope,
+        )
     rows: list[tuple[Any, ...]] = []
     nested_zip_count = 0
     skipped_nested_zip_count = 0
@@ -43,7 +57,25 @@ def extract_sweden_financial_report_xhtml_catalog(
 
     with tempfile.TemporaryDirectory(prefix="sweden_financial_parse_") as tmpdir:
         temp_dir = Path(tmpdir)
-        for source_archive_key in sorted(source_archive_keys):
+        for archive_index, source_archive_key in enumerate(
+            sorted(source_archive_keys),
+            start=1,
+        ):
+            archive_started_at = monotonic()
+            archive_nested_zip_count = 0
+            archive_report_count = 0
+            archive_skipped_nested_zip_count = 0
+            archive_downloaded_report_count = 0
+            archive_reused_report_count = 0
+            if log_info is not None:
+                log_info(
+                    "Processing Sweden financial archive: partition_year=%s "
+                    "archive_index=%s archive_count=%s source_archive_key=%s",
+                    partition_year,
+                    archive_index,
+                    archive_count,
+                    source_archive_key,
+                )
             archive_path = temp_dir / f"{sha256(source_archive_key.encode()).hexdigest()}.zip"
             object_store.download_file(
                 source_archive_key,
@@ -55,6 +87,7 @@ def extract_sweden_financial_report_xhtml_catalog(
                     if not nested_member.filename.lower().endswith(".zip"):
                         continue
                     nested_zip_count += 1
+                    archive_nested_zip_count += 1
                     nested_zip_body = outer_zip.read(nested_member)
                     nested_reports = _extract_nested_reports(
                         nested_zip_body=nested_zip_body,
@@ -66,13 +99,60 @@ def extract_sweden_financial_report_xhtml_catalog(
                     )
                     if not nested_reports:
                         skipped_nested_zip_count += 1
+                        archive_skipped_nested_zip_count += 1
                     for row, downloaded in nested_reports:
                         rows.append(row)
+                        archive_report_count += 1
                         if downloaded:
                             downloaded_report_count += 1
+                            archive_downloaded_report_count += 1
                         else:
                             reused_report_count += 1
+                            archive_reused_report_count += 1
+                    if log_info is not None and (
+                        archive_nested_zip_count == 1
+                        or archive_nested_zip_count % LOG_EVERY_NESTED_ZIPS == 0
+                    ):
+                        log_info(
+                            "Processing Sweden financial nested ZIPs: "
+                            "partition_year=%s archive_index=%s archive_count=%s "
+                            "nested_zips_in_archive=%s reports_in_archive=%s "
+                            "skipped_nested_zips_in_archive=%s total_reports=%s",
+                            partition_year,
+                            archive_index,
+                            archive_count,
+                            archive_nested_zip_count,
+                            archive_report_count,
+                            archive_skipped_nested_zip_count,
+                            len(rows),
+                        )
+            if log_info is not None:
+                log_info(
+                    "Processed Sweden financial archive: partition_year=%s "
+                    "archive_index=%s archive_count=%s nested_zips=%s reports=%s "
+                    "skipped_nested_zips=%s downloaded_reports=%s reused_reports=%s "
+                    "total_reports=%s elapsed_seconds=%.1f source_archive_key=%s",
+                    partition_year,
+                    archive_index,
+                    archive_count,
+                    archive_nested_zip_count,
+                    archive_report_count,
+                    archive_skipped_nested_zip_count,
+                    archive_downloaded_report_count,
+                    archive_reused_report_count,
+                    len(rows),
+                    monotonic() - archive_started_at,
+                    source_archive_key,
+                )
 
+    if log_info is not None:
+        log_info(
+            "Replacing Sweden financial XHTML catalog rows: partition_year=%s "
+            "replace_scope=%s rows=%s",
+            partition_year,
+            replace_scope,
+            len(rows),
+        )
     _replace_report_xhtml_catalog(
         connection=connection,
         partition_year=partition_year,
@@ -85,6 +165,20 @@ def extract_sweden_financial_report_xhtml_catalog(
             }
         ),
     )
+    if log_info is not None:
+        log_info(
+            "Finished Sweden financial XHTML catalog extraction: partition_year=%s "
+            "archives=%s nested_zips=%s skipped_nested_zips=%s reports=%s "
+            "downloaded_reports=%s reused_reports=%s elapsed_seconds=%.1f",
+            partition_year,
+            archive_count,
+            nested_zip_count,
+            skipped_nested_zip_count,
+            len(rows),
+            downloaded_report_count,
+            reused_report_count,
+            monotonic() - started_at,
+        )
     return {
         "partition_year": partition_year,
         "source_archive_count": len(source_archive_keys),

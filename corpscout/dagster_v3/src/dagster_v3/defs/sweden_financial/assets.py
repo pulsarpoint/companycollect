@@ -130,6 +130,7 @@ def sweden_financial_backfill_report_xhtml_catalog_duckdb(
             source_run_id=context.run_id,
             partition_year=context.partition_key,
             replace_scope="partition",
+            log_info=context.log.info,
         )
     return dg.MaterializeResult(
         metadata={
@@ -197,6 +198,7 @@ def sweden_financial_current_report_xhtml_catalog_duckdb(
             partition_year=SWEDEN_FINANCIAL_CURRENT_YEAR,
             source_archive_keys=changed_keys,
             replace_scope="archive",
+            log_info=context.log.info,
         )
     return dg.MaterializeResult(
         metadata={

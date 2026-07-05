@@ -509,6 +509,40 @@ def test_extract_sweden_financial_report_xhtml_catalog_skips_nested_zip_without_
     assert catalog_count == 0
 
 
+def test_extract_sweden_financial_report_xhtml_catalog_logs_archive_progress(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2020/08_2.zip",
+        source_last_modified="2025-02-07T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = _outer_zip(
+        nested_name="5560000000_2023-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=b"<html><body>annual report</body></html>",
+    )
+    log_messages: list[str] = []
+
+    def log_info(message: str, *args: object) -> None:
+        log_messages.append(message % args)
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="run-1",
+            partition_year="2020",
+            log_info=log_info,
+        )
+
+    assert any("Starting Sweden financial XHTML catalog extraction" in message for message in log_messages)
+    assert any("Processing Sweden financial archive" in message for message in log_messages)
+    assert any("Processing Sweden financial nested ZIPs" in message for message in log_messages)
+    assert any("Processed Sweden financial archive" in message for message in log_messages)
+    assert any("Finished Sweden financial XHTML catalog extraction" in message for message in log_messages)
+
+
 def test_extract_sweden_financial_report_xhtml_catalog_replaces_only_partition_year(
     tmp_path: Path,
 ) -> None:
