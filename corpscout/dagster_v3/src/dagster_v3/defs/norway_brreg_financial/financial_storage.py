@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from typing import Any
+from urllib.parse import quote
 
 import dagster as dg
 import polars as pl
@@ -16,6 +18,8 @@ from dagster_v3.defs.norway_brreg_financial.financial_fetches import (
 )
 
 RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
+BOOTSTRAP_FETCH_PREFIX = "norway_brreg/financial/bootstrap/fetches/"
+LEGACY_BOOTSTRAP_RAW_REPORT_PREFIX = "norway_brreg/finance/raw_reports/"
 
 
 class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
@@ -70,6 +74,61 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         if not frames:
             return pl.DataFrame(schema=financial_fetches_parquet_schema())
         return pl.concat(frames, how="vertical_relaxed")
+
+    def list_bootstrap_chunk_keys(self, bucket_key: str) -> list[str]:
+        return sorted(
+            key
+            for key in self.object_store.list_keys(
+                financial_bootstrap_bucket_prefix(bucket_key),
+                bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
+            )
+            if key.endswith(".parquet")
+        )
+
+    def read_bootstrap_bucket_fetches(self, bucket_key: str) -> pl.DataFrame:
+        frames = [self._read_frame(key) for key in self.list_bootstrap_chunk_keys(bucket_key)]
+        if not frames:
+            return pl.DataFrame(schema=financial_fetches_parquet_schema())
+        return pl.concat(frames, how="vertical_relaxed")
+
+    def write_bootstrap_chunk(
+        self,
+        bucket_key: str,
+        chunk_index: int,
+        frame: pl.DataFrame,
+    ) -> str:
+        return self._write_frame(
+            financial_bootstrap_chunk_object_key(bucket_key, chunk_index),
+            frame,
+        )
+
+    def read_legacy_bootstrap_done_marker(self, org_number: str) -> dict[str, Any] | None:
+        key = legacy_bootstrap_done_marker_key(org_number)
+        if not self.object_store.exists(key, bucket=NORWAY_BRREG_FINANCIAL_BUCKET):
+            return None
+        marker = json.loads(
+            self.object_store.read_bytes(key, bucket=NORWAY_BRREG_FINANCIAL_BUCKET)
+        )
+        if not isinstance(marker, dict):
+            raise RuntimeError(
+                f"Legacy Norway bootstrap done marker is not a JSON object: {key}"
+            )
+        return marker
+
+    def read_legacy_bootstrap_raw_reports(
+        self, raw_report_keys: list[str]
+    ) -> list[dict[str, Any]]:
+        reports: list[dict[str, Any]] = []
+        for key in raw_report_keys:
+            report = json.loads(
+                self.object_store.read_bytes(key, bucket=NORWAY_BRREG_FINANCIAL_BUCKET)
+            )
+            if not isinstance(report, dict):
+                raise RuntimeError(
+                    f"Legacy Norway bootstrap raw report is not a JSON object: {key}"
+                )
+            reports.append(report)
+        return reports
 
     def write_snapshot_fetches(self, frame: pl.DataFrame) -> str:
         return self._write_frame(financial_fetches_snapshot_object_key(), frame)
@@ -147,6 +206,36 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
                 bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
             )
         )
+
+
+def financial_bootstrap_bucket_prefix(bucket_key: str) -> str:
+    return f"{BOOTSTRAP_FETCH_PREFIX}bucket={_safe_key_component(bucket_key)}/"
+
+
+def financial_bootstrap_chunk_object_key(bucket_key: str, chunk_index: int) -> str:
+    if chunk_index < 0:
+        raise ValueError("Norway bootstrap chunk_index must not be negative")
+    return f"{financial_bootstrap_bucket_prefix(bucket_key)}chunk={chunk_index:04d}.parquet"
+
+
+def legacy_bootstrap_done_marker_key(org_number: str) -> str:
+    return (
+        f"{LEGACY_BOOTSTRAP_RAW_REPORT_PREFIX}"
+        f"org={_safe_key_component(org_number)}/status/done.json"
+    )
+
+
+def latest_fetch_rows_per_org(frame: pl.DataFrame) -> pl.DataFrame:
+    if frame.is_empty():
+        return frame
+    return frame.sort("fetched_at").unique(subset=["org_number"], keep="last")
+
+
+def _safe_key_component(value: str) -> str:
+    component = str(value).strip()
+    if component == "":
+        raise RuntimeError("Norway financial S3 key component is empty")
+    return quote(component, safe="")
 
 
 def financial_fetches_snapshot_object_key() -> str:

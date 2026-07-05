@@ -70,6 +70,35 @@ def financial_fetches_parquet_schema() -> dict[str, pl.DataType]:
     }
 
 
+def financial_fetches_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
+    schema = financial_fetches_parquet_schema()
+    if not rows:
+        return pl.DataFrame(schema=schema)
+    frame = pl.DataFrame(rows)
+    return frame.select(
+        [
+            _financial_fetch_column_expression(frame, column_name, data_type)
+            for column_name, data_type in schema.items()
+        ]
+    )
+
+
+def _financial_fetch_column_expression(
+    frame: pl.DataFrame,
+    column_name: str,
+    data_type: pl.DataType,
+) -> pl.Expr:
+    if column_name not in frame.columns:
+        return pl.lit(None, dtype=data_type).alias(column_name)
+    if data_type == FINANCIAL_FETCHED_AT_DTYPE and frame.schema[column_name] == pl.Utf8:
+        return (
+            pl.col(column_name)
+            .str.to_datetime(time_unit="ms", time_zone="UTC", strict=False)
+            .alias(column_name)
+        )
+    return pl.col(column_name).cast(data_type, strict=False).alias(column_name)
+
+
 def financial_fetch_success_row(
     *,
     org: Mapping[str, Any],

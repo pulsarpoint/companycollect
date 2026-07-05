@@ -1,6 +1,7 @@
 import dagster as dg
 
 from dagster_v3.defs.norway_brreg_financial.assets import (
+    norway_brreg_financial_bootstrap_fetches_parquet,
     norway_brreg_financial_fetches_snapshot_parquet,
     norway_brreg_financial_fetches_updates_parquet,
     norway_brreg_financial_snapshot_job,
@@ -19,6 +20,7 @@ from dagster_v3.defs.norway_brreg_financial.financial_storage import (
 
 defs = dg.Definitions(
     assets=[
+        norway_brreg_financial_bootstrap_fetches_parquet,
         norway_brreg_financial_fetches_snapshot_parquet,
         norway_brreg_financial_fetches_updates_parquet,
         norway_brreg_financial_statements_snapshot_parquet,
