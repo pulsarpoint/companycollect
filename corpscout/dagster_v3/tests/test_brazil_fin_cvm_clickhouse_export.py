@@ -28,7 +28,11 @@ class FakeClickHouseResource:
 
 
 class FakeDuckDBConnection:
-    def __init__(self, counts: dict[tuple[str, str], int] | None = None) -> None:
+    def __init__(
+        self,
+        counts: dict[tuple[str, str], int] | None = None,
+        missing_usd_counts: dict[tuple[str, str], int] | None = None,
+    ) -> None:
         self.counts = counts or {
             (BRAZIL_CVM_DUCKDB_SCHEMA, CVM_COMPANIES_TABLE): 5,
             (BRAZIL_CVM_DUCKDB_SCHEMA, DFP_DOCUMENTS_TABLE): 1,
@@ -40,11 +44,20 @@ class FakeDuckDBConnection:
             (BRAZIL_CVM_DUCKDB_SCHEMA, ITR_CAPITAL_COMPOSITION_TABLE): 8,
             (BRAZIL_CVM_DUCKDB_SCHEMA, ITR_AUDITOR_REPORTS_TABLE): 9,
         }
+        self.missing_usd_counts = missing_usd_counts or {}
         self._last_count: int | None = None
 
     def execute(self, sql: str) -> "FakeDuckDBConnection":
+        sql_lower = sql.lower()
+        if "amount_usd is null" in sql_lower:
+            for (schema, table), count in self.missing_usd_counts.items():
+                if f"from {schema}.{table}" in sql_lower:
+                    self._last_count = count
+                    return self
+            self._last_count = 0
+            return self
         for (schema, table), count in self.counts.items():
-            if f"from {schema}.{table}" in sql.lower():
+            if f"from {schema}.{table}" in sql_lower:
                 self._last_count = count
                 return self
         raise AssertionError(f"unexpected DuckDB SQL: {sql}")
@@ -166,6 +179,46 @@ def test_export_brazil_fin_cvm_clickhouse_table_refuses_empty_duckdb_table(
             duckdb_table=DFP_DOCUMENTS_TABLE,
             clickhouse_table=tables.BR_CVM_DFP_DOCUMENTS_TABLE,
             columns=tables.BR_CVM_DFP_DOCUMENTS_EXPORT_COLUMNS,
+            family="DFP",
+        )
+
+    assert exported is False
+
+
+def test_export_brazil_fin_cvm_clickhouse_table_refuses_statement_rows_without_usd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dagster_v3.defs.brazil_financial.cvm import clickhouse
+
+    exported = False
+
+    def fake_export_duckdb_connection_table_to_clickhouse(**kwargs: object) -> int:
+        nonlocal exported
+        exported = True
+        return 1
+
+    monkeypatch.setattr(
+        clickhouse,
+        "assert_clickhouse_tables_exist",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        clickhouse,
+        "export_duckdb_connection_table_to_clickhouse",
+        fake_export_duckdb_connection_table_to_clickhouse,
+    )
+
+    with pytest.raises(ValueError, match="missing USD conversion"):
+        clickhouse.export_brazil_fin_cvm_clickhouse_table(
+            duckdb_connection=FakeDuckDBConnection(
+                missing_usd_counts={
+                    (BRAZIL_CVM_DUCKDB_SCHEMA, DFP_STATEMENT_ROWS_TABLE): 4
+                }
+            ),
+            clickhouse=FakeClickHouseResource(),
+            duckdb_table=DFP_STATEMENT_ROWS_TABLE,
+            clickhouse_table=tables.BR_CVM_DFP_STATEMENT_ROWS_TABLE,
+            columns=tables.BR_CVM_DFP_STATEMENT_ROWS_EXPORT_COLUMNS,
             family="DFP",
         )
 

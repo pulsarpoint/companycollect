@@ -91,6 +91,11 @@ def export_brazil_fin_cvm_clickhouse_table(
         duckdb_table=duckdb_table,
         family=family,
     )
+    _assert_statement_rows_usd_complete(
+        duckdb_connection,
+        duckdb_table=duckdb_table,
+        family=family,
+    )
 
     if log is not None:
         log(
@@ -162,6 +167,52 @@ def _assert_duckdb_table_has_rows(
             f"Brazil CVM {family} DuckDB table is empty; refusing to replace "
             f"ClickHouse table from {BRAZIL_CVM_DUCKDB_SCHEMA}.{duckdb_table}"
         )
+
+
+def _assert_statement_rows_usd_complete(
+    duckdb_connection: Any,
+    *,
+    duckdb_table: str,
+    family: str,
+) -> None:
+    if duckdb_table not in (DFP_STATEMENT_ROWS_TABLE, ITR_STATEMENT_ROWS_TABLE):
+        return
+
+    missing_usd_count = _eligible_statement_rows_missing_usd(
+        duckdb_connection,
+        duckdb_table=duckdb_table,
+    )
+    if missing_usd_count == 0:
+        return
+
+    raise ValueError(
+        f"Brazil CVM {family} statement rows have {missing_usd_count} rows "
+        "missing USD conversion; refusing to replace ClickHouse table from "
+        f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{duckdb_table}"
+    )
+
+
+def _eligible_statement_rows_missing_usd(
+    duckdb_connection: Any,
+    *,
+    duckdb_table: str,
+) -> int:
+    row = duckdb_connection.execute(
+        f"""
+        select count(*)
+        from {BRAZIL_CVM_DUCKDB_SCHEMA}.{duckdb_table}
+        where amount_original is not null
+          and nullif(trim(currency), '') is not null
+          and period_end_date is not null
+          and (
+              amount_usd is null
+              or fx_rate_to_usd is null
+          )
+        """
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(row[0] or 0)
 
 
 def _duckdb_row_count(duckdb_connection: Any, duckdb_table: str) -> int:

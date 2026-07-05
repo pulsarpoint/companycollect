@@ -9,6 +9,11 @@ from dagster_v3.defs.brazil_financial.cvm.clickhouse import (
     export_brazil_fin_cvm_clickhouse_table,
     export_brazil_fin_cvm_companies_clickhouse,
 )
+from dagster_v3.defs.brazil_financial.cvm.checks import (
+    financial_metrics_dataset_check,
+    statement_rows_row_count_matches_duckdb_check,
+    statement_rows_usd_coverage_check,
+)
 from dagster_v3.defs.brazil_financial.cvm.companies import (
     CVM_COMPANIES_SOURCE_URL,
     CVM_COMPANIES_TABLE,
@@ -508,6 +513,92 @@ brazil_fin_cvm_itr_auditor_reports_clickhouse = (
 )
 
 
+@dg.asset_check(
+    asset="brazil_fin_cvm_dfp_statement_rows_clickhouse",
+    name="dfp_statement_rows_usd_complete",
+)
+def brazil_fin_cvm_dfp_statement_rows_usd_complete(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    return statement_rows_usd_coverage_check(
+        clickhouse=clickhouse,
+        clickhouse_table=tables.BR_CVM_DFP_STATEMENT_ROWS_TABLE,
+        year_column="dfp_year",
+    )
+
+
+@dg.asset_check(
+    asset="brazil_fin_cvm_itr_statement_rows_clickhouse",
+    name="itr_statement_rows_usd_complete",
+)
+def brazil_fin_cvm_itr_statement_rows_usd_complete(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    return statement_rows_usd_coverage_check(
+        clickhouse=clickhouse,
+        clickhouse_table=tables.BR_CVM_ITR_STATEMENT_ROWS_TABLE,
+        year_column="itr_year",
+    )
+
+
+@dg.asset_check(
+    asset="brazil_fin_cvm_dfp_statement_rows_clickhouse",
+    name="dfp_statement_rows_row_count_matches_duckdb",
+)
+def brazil_fin_cvm_dfp_statement_rows_row_count_matches_duckdb(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    return statement_rows_row_count_matches_duckdb_check(
+        clickhouse=clickhouse,
+        family="DFP",
+        clickhouse_table=tables.BR_CVM_DFP_STATEMENT_ROWS_TABLE,
+        duckdb_table=DFP_STATEMENT_ROWS_TABLE,
+        years=_partition_years_for_family("dfp"),
+    )
+
+
+@dg.asset_check(
+    asset="brazil_fin_cvm_itr_statement_rows_clickhouse",
+    name="itr_statement_rows_row_count_matches_duckdb",
+)
+def brazil_fin_cvm_itr_statement_rows_row_count_matches_duckdb(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    return statement_rows_row_count_matches_duckdb_check(
+        clickhouse=clickhouse,
+        family="ITR",
+        clickhouse_table=tables.BR_CVM_ITR_STATEMENT_ROWS_TABLE,
+        duckdb_table=ITR_STATEMENT_ROWS_TABLE,
+        years=_partition_years_for_family("itr"),
+    )
+
+
+@dg.asset_check(
+    asset="brazil_fin_cvm_dfp_statement_rows_clickhouse",
+    name="dfp_financial_metrics_present",
+)
+def brazil_fin_cvm_dfp_financial_metrics_present(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    return financial_metrics_dataset_check(
+        clickhouse=clickhouse,
+        source_dataset="DFP",
+    )
+
+
+@dg.asset_check(
+    asset="brazil_fin_cvm_itr_statement_rows_clickhouse",
+    name="itr_financial_metrics_present",
+)
+def brazil_fin_cvm_itr_financial_metrics_present(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    return financial_metrics_dataset_check(
+        clickhouse=clickhouse,
+        source_dataset="ITR",
+    )
+
+
 brazil_fin_cvm_dfp_raw_backfill_job = dg.define_asset_job(
     "brazil_fin_cvm_dfp_raw_backfill_job",
     selection=dg.AssetSelection.assets(
@@ -544,6 +635,14 @@ defs = dg.Definitions(
         brazil_fin_cvm_itr_statement_rows_clickhouse,
         brazil_fin_cvm_itr_capital_composition_clickhouse,
         brazil_fin_cvm_itr_auditor_reports_clickhouse,
+    ],
+    asset_checks=[
+        brazil_fin_cvm_dfp_statement_rows_usd_complete,
+        brazil_fin_cvm_itr_statement_rows_usd_complete,
+        brazil_fin_cvm_dfp_statement_rows_row_count_matches_duckdb,
+        brazil_fin_cvm_itr_statement_rows_row_count_matches_duckdb,
+        brazil_fin_cvm_dfp_financial_metrics_present,
+        brazil_fin_cvm_itr_financial_metrics_present,
     ],
     jobs=[brazil_fin_cvm_dfp_raw_backfill_job, brazil_fin_cvm_itr_raw_backfill_job],
     resources={

@@ -331,6 +331,22 @@ def test_brazil_fin_cvm_financial_metrics_are_clickhouse_views_not_assets() -> N
     assert not hasattr(assets, "brazil_fin_cvm_financial_metrics_clickhouse")
 
 
+def test_brazil_fin_cvm_clickhouse_asset_checks_are_registered() -> None:
+    from dagster_v3.definitions import defs as load_project_defs
+
+    repository = load_project_defs().get_repository_def()
+    check_names = {key.name for key in repository.asset_graph.asset_check_keys}
+
+    assert {
+        "dfp_statement_rows_usd_complete",
+        "itr_statement_rows_usd_complete",
+        "dfp_statement_rows_row_count_matches_duckdb",
+        "itr_statement_rows_row_count_matches_duckdb",
+        "dfp_financial_metrics_present",
+        "itr_financial_metrics_present",
+    } <= check_names
+
+
 class FakeBrazilCvmDfpResource:
     def __init__(self) -> None:
         self.requested_years: list[str] = []
