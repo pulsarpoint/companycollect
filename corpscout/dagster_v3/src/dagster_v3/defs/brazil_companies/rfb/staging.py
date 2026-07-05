@@ -45,10 +45,10 @@ def load_raw_family_from_manifest(
             f"""
             select csv_path, archive_url, csv_member_name
             from {manifest}
-            where family = ? and source_run_id = ?
+            where family = ?
             order by archive_name, csv_member_name
             """,
-            [family, source_run_id],
+            [family],
         ).fetchall()
     if not manifest_rows:
         raise ValueError(f"No Brazil RFB manifest rows found for family {family}")

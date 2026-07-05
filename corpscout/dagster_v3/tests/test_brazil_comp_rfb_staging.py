@@ -151,6 +151,35 @@ def test_load_raw_family_uses_latin1_no_header_csv(tmp_path: Path) -> None:
     assert "manifest_db" not in schemas
 
 
+def test_load_raw_family_reuses_manifest_from_previous_dagster_run(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "empresas.csv"
+    csv_path.write_bytes("12345678;CAFE LTDA;2062;49;1000,00;01;\n".encode())
+    manifest_path = tmp_path / "br_manifest.duckdb"
+    raw_path = tmp_path / "br_empresas.duckdb"
+    _write_manifest_database(manifest_path, csv_path)
+
+    with duckdb.connect(str(raw_path)) as connection:
+        count = staging.load_raw_family_from_manifest(
+            connection=connection,
+            manifest_database_path=manifest_path,
+            family="empresas",
+            source_run_id="new-downstream-run",
+        )
+
+    assert count == 1
+    with duckdb.connect(str(raw_path), read_only=True) as connection:
+        row = connection.execute(
+            f"""
+            select cnpj_basico, source_run_id
+            from {tables.DLT_DATASET_NAME}.{tables.RAW_TABLE_BY_FAMILY["empresas"]}
+            """
+        ).fetchone()
+
+    assert row == ("12345678", "new-downstream-run")
+
+
 def test_load_raw_family_normalizes_dirty_latin1_manifest_path(tmp_path: Path) -> None:
     csv_path = tmp_path / "empresas.csv"
     csv_path.write_bytes(
