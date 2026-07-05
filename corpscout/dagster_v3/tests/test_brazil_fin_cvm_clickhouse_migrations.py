@@ -48,5 +48,29 @@ def test_brazil_fin_cvm_dfp_tables_migration_covers_exported_columns() -> None:
     assert "report_text_original String" in sql
 
 
+def test_brazil_fin_cvm_companies_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000091_corpscout_br_cvm_companies.up.sql")
+    down_sql = _migration_sql("000091_corpscout_br_cvm_companies.down.sql")
+
+    assert (
+        f"CREATE TABLE IF NOT EXISTS {brazil_cvm_tables.QUALIFIED_BR_CVM_COMPANIES_TABLE}"
+        in sql
+    )
+    for column_name in brazil_cvm_tables.BR_CVM_COMPANIES_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql, (
+            f"missing {column_name} in "
+            f"{brazil_cvm_tables.QUALIFIED_BR_CVM_COMPANIES_TABLE}"
+        )
+    assert (
+        f"DROP TABLE IF EXISTS {brazil_cvm_tables.QUALIFIED_BR_CVM_COMPANIES_TABLE}"
+        in down_sql
+    )
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (cnpj, cvm_code)" in sql
+    assert "source_url String" in sql
+    assert "registration_date Nullable(Date32)" in sql
+    assert "auditor_cnpj String" in sql
+
+
 def _migration_sql(file_name: str) -> str:
     return (MIGRATIONS_DIR / file_name).read_text()

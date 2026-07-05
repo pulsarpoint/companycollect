@@ -104,6 +104,7 @@ EXPECTED_MIGRATIONS = (
     "000088_corpscout_cz_canonical_contacts",
     "000089_corpscout_lv_canonical_contacts",
     "000090_corpscout_se_financial_tables",
+    "000091_corpscout_br_cvm_companies",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -515,7 +516,9 @@ def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
     }
 
     for migration_file, expected_ddl in expected_ddl_by_file.items():
-        assert _normalize_sql(expected_ddl) in _normalize_sql(_migration_sql(migration_file))
+        assert _normalize_sql(expected_ddl) in _normalize_sql(
+            _migration_sql(migration_file)
+        )
 
 
 def test_exchange_rate_migration_defines_reference_table_schema() -> None:
@@ -545,7 +548,9 @@ def test_finland_resolved_migrations_cover_exported_columns() -> None:
         ),
     }
 
-    assert set(migration_file_by_table) == set(finland_resolved_tables.FINLAND_YTJ_RESOLVED_TABLES)
+    assert set(migration_file_by_table) == set(
+        finland_resolved_tables.FINLAND_YTJ_RESOLVED_TABLES
+    )
 
     for table_name, migration_file in migration_file_by_table.items():
         sql = _migration_sql(migration_file)
@@ -558,7 +563,9 @@ def test_finland_financial_migrations_cover_statements_and_usd_metrics() -> None
     financial_statements_sql = _migration_sql(
         "000008_corpscout_fi_financial_statements.up.sql"
     )
-    financial_metrics_sql = _migration_sql("000009_corpscout_fi_financial_metrics.up.sql")
+    financial_metrics_sql = _migration_sql(
+        "000009_corpscout_fi_financial_metrics.up.sql"
+    )
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.fi_financial_statements" in (
         financial_statements_sql
@@ -611,7 +618,10 @@ def test_finland_names_history_order_key_preserves_versions() -> None:
         in sql
     )
     assert "INSERT INTO corpscout.fi_names__history_order_key" in sql
-    assert "EXCHANGE TABLES corpscout.fi_names__history_order_key AND corpscout.fi_names" in sql
+    assert (
+        "EXCHANGE TABLES corpscout.fi_names__history_order_key AND corpscout.fi_names"
+        in sql
+    )
     assert "DROP TABLE IF EXISTS corpscout.fi_names__history_order_key;" in down_sql
 
 
@@ -627,14 +637,16 @@ def test_finland_xbrl_raw_first_migration_covers_reprocessible_statement_data() 
             assert f"    {column_name} " in sql
 
 
-NO_COMPANIES_ALTER_COLUMNS = frozenset({
-    # Added later via ALTER migration 000059; company_description_original was
-    # subsequently dropped by migration 000070 and removed from RESOLVED_TABLE_COLUMNS.
-    "articles_purpose_original",
-    "activity_text_original",
-    # Added later via ALTER migration 000075 for the financial fetch parquet inputs.
-    "last_submitted_accounts_year",
-})
+NO_COMPANIES_ALTER_COLUMNS = frozenset(
+    {
+        # Added later via ALTER migration 000059; company_description_original was
+        # subsequently dropped by migration 000070 and removed from RESOLVED_TABLE_COLUMNS.
+        "articles_purpose_original",
+        "activity_text_original",
+        # Added later via ALTER migration 000075 for the financial fetch parquet inputs.
+        "last_submitted_accounts_year",
+    }
+)
 
 NO_COMPANIES_ALTER_COLUMN_MIGRATIONS = {
     "articles_purpose_original": "000059_corpscout_no_companies_free_text_columns.up.sql",
@@ -667,7 +679,9 @@ def test_norway_resolved_migration_covers_exported_columns() -> None:
 def test_norway_financial_statements_sort_key_avoids_nullable_fiscal_year() -> None:
     sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
 
-    assert "ORDER BY (org_number, fiscal_year, accounts_type, source_record_id)" not in sql
+    assert (
+        "ORDER BY (org_number, fiscal_year, accounts_type, source_record_id)" not in sql
+    )
     assert (
         "ORDER BY (org_number, ifNull(fiscal_year, 0), accounts_type, source_record_id)"
         in sql
@@ -691,7 +705,9 @@ def test_no_companies_date32_migration_alters_existing_date_columns() -> None:
 
 def test_no_companies_last_accounts_year_migration_adds_existing_table_column() -> None:
     sql = _migration_sql("000075_corpscout_no_companies_last_accounts_year.up.sql")
-    down_sql = _migration_sql("000075_corpscout_no_companies_last_accounts_year.down.sql")
+    down_sql = _migration_sql(
+        "000075_corpscout_no_companies_last_accounts_year.down.sql"
+    )
 
     assert (
         "ALTER TABLE corpscout.no_companies "
@@ -749,10 +765,7 @@ def test_open_page_rank_domains_migration_creates_current_rank_table() -> None:
         assert f"    {column_name} " in sql
 
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
-    assert (
-        "ORDER BY (root_domain, source_system, source_list_name, domain)"
-        in sql
-    )
+    assert "ORDER BY (root_domain, source_system, source_list_name, domain)" in sql
     assert "DROP TABLE IF EXISTS corpscout.open_page_rank_domains" in down_sql
 
 
@@ -805,9 +818,13 @@ def test_wikidata_company_country_migration_adds_headquarters_country_columns() 
         assert f"DROP COLUMN IF EXISTS {column_name}" in down_sql
 
 
-def test_wikidata_company_augmentations_migration_adds_profile_and_property_columns() -> None:
+def test_wikidata_company_augmentations_migration_adds_profile_and_property_columns() -> (
+    None
+):
     sql = _migration_sql("000018_corpscout_wikidata_company_augmentations.up.sql")
-    down_sql = _migration_sql("000018_corpscout_wikidata_company_augmentations.down.sql")
+    down_sql = _migration_sql(
+        "000018_corpscout_wikidata_company_augmentations.down.sql"
+    )
 
     assert "ALTER TABLE corpscout.wikidata_companies" in sql
     for column_name in (
@@ -886,11 +903,27 @@ def test_commoncrawl_domains_migration_covers_industry_and_top3_audit() -> None:
     down_sql = _migration_sql("000046_corpscout_commoncrawl_domains.down.sql")
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domains" in sql
     for column_name in (
-        "crawl_id", "url", "root_domain", "subdomain", "emails", "email_count",
-        "page_type", "page_type_score", "nace_code", "nace_label", "nace_division",
-        "nace_confident", "nace_margin", "nace_score", "nace_method",
-        "nace_top3_codes", "nace_top3_labels", "nace_top3_scores",
-        "source_url", "source_run_id", "resolved_at",
+        "crawl_id",
+        "url",
+        "root_domain",
+        "subdomain",
+        "emails",
+        "email_count",
+        "page_type",
+        "page_type_score",
+        "nace_code",
+        "nace_label",
+        "nace_division",
+        "nace_confident",
+        "nace_margin",
+        "nace_score",
+        "nace_method",
+        "nace_top3_codes",
+        "nace_top3_labels",
+        "nace_top3_scores",
+        "source_url",
+        "source_run_id",
+        "resolved_at",
     ):
         assert f"    {column_name} " in sql
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
@@ -914,11 +947,27 @@ def test_commoncrawl_industries_migration_is_multi_row_per_domain() -> None:
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_industries" in sql
     # one row per (domain, nace_code): rank + is_primary, no top3 arrays, no contacts
     for column_name in (
-        "crawl_id", "root_domain", "nace_code", "nace_label", "nace_division",
-        "rank", "is_primary", "score", "nace_method", "source_url", "source_run_id", "resolved_at",
+        "crawl_id",
+        "root_domain",
+        "nace_code",
+        "nace_label",
+        "nace_division",
+        "rank",
+        "is_primary",
+        "score",
+        "nace_method",
+        "source_url",
+        "source_run_id",
+        "resolved_at",
     ):
         assert f"    {column_name} " in sql
-    for absent in ("nace_top3", "emails", "page_type", "nace_confidence", "nace_margin"):
+    for absent in (
+        "nace_top3",
+        "emails",
+        "page_type",
+        "nace_confidence",
+        "nace_margin",
+    ):
         assert absent not in sql
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
     assert "ORDER BY (root_domain, crawl_id, nace_code)" in sql
@@ -931,9 +980,16 @@ def test_commoncrawl_page_signals_migration_holds_page_and_decision_signals() ->
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_signals" in sql
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_page_signals" in sql
     for column_name in (
-        "crawl_id", "root_domain", "subdomain", "source_url",
-        "page_type", "page_type_score", "nace_confident", "nace_margin",
-        "source_run_id", "resolved_at",
+        "crawl_id",
+        "root_domain",
+        "subdomain",
+        "source_url",
+        "page_type",
+        "page_type_score",
+        "nace_confident",
+        "nace_margin",
+        "source_run_id",
+        "resolved_at",
     ):
         assert f"    {column_name} " in sql
     # contacts/socials moved out (profile owns them)
@@ -945,8 +1001,14 @@ def test_commoncrawl_page_signals_migration_holds_page_and_decision_signals() ->
 
 
 def test_commoncrawl_industries_signals_backfill_from_domains() -> None:
-    sql = _migration_sql("000065_corpscout_commoncrawl_industries_signals_backfill.up.sql")
-    down_sql = _migration_sql("000065_corpscout_commoncrawl_industries_signals_backfill.up.sql".replace(".up.", ".down."))
+    sql = _migration_sql(
+        "000065_corpscout_commoncrawl_industries_signals_backfill.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000065_corpscout_commoncrawl_industries_signals_backfill.up.sql".replace(
+            ".up.", ".down."
+        )
+    )
     assert "INSERT INTO corpscout.commoncrawl_page_signals" in sql
     assert "INSERT INTO corpscout.commoncrawl_industries" in sql
     assert "FROM corpscout.commoncrawl_domains FINAL" in sql
@@ -963,10 +1025,21 @@ def test_commoncrawl_domains_slim_drops_classification_columns() -> None:
     down_sql = _migration_sql("000066_corpscout_commoncrawl_domains_slim.down.sql")
     assert "ALTER TABLE corpscout.commoncrawl_domains" in sql
     for column_name in (
-        "emails", "email_count", "page_type", "page_type_score",
-        "nace_code", "nace_label", "nace_division", "nace_confident", "nace_confidence",
-        "nace_margin", "nace_score", "nace_method",
-        "nace_top3_codes", "nace_top3_labels", "nace_top3_scores",
+        "emails",
+        "email_count",
+        "page_type",
+        "page_type_score",
+        "nace_code",
+        "nace_label",
+        "nace_division",
+        "nace_confident",
+        "nace_confidence",
+        "nace_margin",
+        "nace_score",
+        "nace_method",
+        "nace_top3_codes",
+        "nace_top3_labels",
+        "nace_top3_scores",
     ):
         assert f"DROP COLUMN IF EXISTS {column_name}" in sql
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in down_sql
@@ -977,8 +1050,19 @@ def test_commoncrawl_domain_metadata_migration_is_self_reported_about() -> None:
     down_sql = _migration_sql("000067_corpscout_commoncrawl_domain_metadata.down.sql")
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_metadata" in sql
     for column_name in (
-        "crawl_id", "root_domain", "subdomain", "name", "description", "logo", "country",
-        "founding_year", "employee_count", "source", "source_url", "source_run_id", "resolved_at",
+        "crawl_id",
+        "root_domain",
+        "subdomain",
+        "name",
+        "description",
+        "logo",
+        "country",
+        "founding_year",
+        "employee_count",
+        "source",
+        "source_url",
+        "source_run_id",
+        "resolved_at",
     ):
         assert f"    {column_name} " in sql
     # contacts and authoritative company facts live elsewhere -> not here
@@ -990,11 +1074,19 @@ def test_commoncrawl_domain_metadata_migration_is_self_reported_about() -> None:
 
 def test_commoncrawl_domain_contact_info_migration_is_multi_valued() -> None:
     sql = _migration_sql("000068_corpscout_commoncrawl_domain_contact_info.up.sql")
-    down_sql = _migration_sql("000068_corpscout_commoncrawl_domain_contact_info.down.sql")
+    down_sql = _migration_sql(
+        "000068_corpscout_commoncrawl_domain_contact_info.down.sql"
+    )
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_contact_info" in sql
     for column_name in (
-        "crawl_id", "root_domain", "contact_type", "value", "source",
-        "source_url", "source_run_id", "resolved_at",
+        "crawl_id",
+        "root_domain",
+        "contact_type",
+        "value",
+        "source",
+        "source_url",
+        "source_run_id",
+        "resolved_at",
     ):
         assert f"    {column_name} " in sql
     # one row per (domain, type, value) -> many emails/phones/socials per domain
@@ -1004,7 +1096,9 @@ def test_commoncrawl_domain_contact_info_migration_is_multi_valued() -> None:
 
 def test_commoncrawl_domain_identifiers_migration_holds_raw_codes() -> None:
     sql = _migration_sql("000051_corpscout_commoncrawl_domain_identifiers.up.sql")
-    down_sql = _migration_sql("000051_corpscout_commoncrawl_domain_identifiers.down.sql")
+    down_sql = _migration_sql(
+        "000051_corpscout_commoncrawl_domain_identifiers.down.sql"
+    )
     # renamed in place from company_identifiers -> no trace of the old name
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_identifiers" in sql
     assert "company_identifiers" not in sql
@@ -1018,8 +1112,17 @@ def test_commoncrawl_technologies_migration_is_normalized_per_page_tech() -> Non
     down_sql = _migration_sql("000047_corpscout_commoncrawl_technologies.down.sql")
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_technologies" in sql
     for column_name in (
-        "crawl_id", "url", "root_domain", "subdomain", "technology", "category",
-        "version", "confidence", "source_url", "source_run_id", "resolved_at",
+        "crawl_id",
+        "url",
+        "root_domain",
+        "subdomain",
+        "technology",
+        "category",
+        "version",
+        "confidence",
+        "source_url",
+        "source_run_id",
+        "resolved_at",
     ):
         assert f"    {column_name} " in sql
     # one row per page x technology -> technology is part of the sort key
@@ -1032,8 +1135,15 @@ def test_commoncrawl_page_signals_migration_covers_emails_and_socials() -> None:
     down_sql = _migration_sql("000048_corpscout_commoncrawl_page_signals.down.sql")
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_page_signals" in sql
     for column_name in (
-        "crawl_id", "url", "root_domain", "subdomain", "emails", "social_platforms",
-        "source_url", "source_run_id", "resolved_at",
+        "crawl_id",
+        "url",
+        "root_domain",
+        "subdomain",
+        "emails",
+        "social_platforms",
+        "source_url",
+        "source_run_id",
+        "resolved_at",
     ):
         assert f"    {column_name} " in sql
     assert "ORDER BY (root_domain, url, crawl_id)" in sql
@@ -1104,7 +1214,10 @@ def test_brazil_comp_rfb_registry_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000054_corpscout_br_rfb_registry.up.sql")
     down_sql = _migration_sql("000054_corpscout_br_rfb_registry.down.sql")
 
-    assert f"CREATE TABLE IF NOT EXISTS {brazil_rfb_tables.QUALIFIED_BR_COMPANIES_TABLE}" in sql
+    assert (
+        f"CREATE TABLE IF NOT EXISTS {brazil_rfb_tables.QUALIFIED_BR_COMPANIES_TABLE}"
+        in sql
+    )
     assert (
         f"CREATE TABLE IF NOT EXISTS {brazil_rfb_tables.QUALIFIED_BR_ESTABLISHMENTS_TABLE}"
         in sql
@@ -1112,7 +1225,9 @@ def test_brazil_comp_rfb_registry_migration_covers_exported_columns() -> None:
     for column_name in brazil_rfb_tables.BR_COMPANIES_EXPORT_COLUMNS:
         assert f"    {column_name} " in sql, f"missing {column_name} in br_companies"
     for column_name in brazil_rfb_tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS:
-        assert f"    {column_name} " in sql, f"missing {column_name} in br_establishments"
+        assert f"    {column_name} " in sql, (
+            f"missing {column_name} in br_establishments"
+        )
 
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
     assert "ORDER BY (cnpj_basico)" in sql
@@ -1134,9 +1249,9 @@ def test_brazil_comp_rfb_contact_domains_migration_covers_exported_columns() -> 
         in sql
     )
     for column_name in brazil_rfb_tables.BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS:
-        assert (
-            f"    {column_name} " in sql
-        ), f"missing {column_name} in br_company_contact_info"
+        assert f"    {column_name} " in sql, (
+            f"missing {column_name} in br_company_contact_info"
+        )
     for column_name in brazil_rfb_tables.BR_WEBSITES_EXPORT_COLUMNS:
         assert f"    {column_name} " in sql, f"missing {column_name} in br_websites"
 

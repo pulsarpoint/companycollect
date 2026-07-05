@@ -6,7 +6,13 @@ from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.brazil_financial.cvm import tables
 from dagster_v3.defs.brazil_financial.cvm.clickhouse import (
+    export_brazil_fin_cvm_companies_clickhouse,
     export_brazil_fin_cvm_dfp_clickhouse,
+)
+from dagster_v3.defs.brazil_financial.cvm.companies import (
+    CVM_COMPANIES_SOURCE_URL,
+    CVM_COMPANIES_TABLE,
+    load_brazil_fin_cvm_companies_from_url,
 )
 from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
@@ -59,6 +65,57 @@ def brazil_fin_cvm_dfp_raw_archives_s3(
         log_info=context.log.info,
     )
     return dg.MaterializeResult(metadata=result.metadata())
+
+
+@dg.asset(
+    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
+    kinds={"python", "duckdb", "csv", "cvm", "companies"},
+    pool="brazil_fin_cvm_duckdb",
+    description="Loads the Brazil CVM public-company support table into DuckDB.",
+)
+def brazil_fin_cvm_companies_duckdb(
+    context: dg.AssetExecutionContext,
+    brazil_fin_cvm_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    BRAZIL_FIN_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with brazil_fin_cvm_duckdb.get_connection() as connection:
+        counts = load_brazil_fin_cvm_companies_from_url(
+            connection=connection,
+            source_run_id=context.run_id,
+            source_url=CVM_COMPANIES_SOURCE_URL,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "source_url": CVM_COMPANIES_SOURCE_URL,
+            "duckdb_path": str(BRAZIL_FIN_CVM_DUCKDB_PATH),
+            "duckdb_schema": BRAZIL_CVM_DUCKDB_SCHEMA,
+            "company_table": CVM_COMPANIES_TABLE,
+        }
+    )
+
+
+@dg.asset(
+    deps=[dg.AssetKey("brazil_fin_cvm_companies_duckdb")],
+    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "cvm", "companies"},
+    pool="brazil_fin_cvm_duckdb",
+    metadata={"table": tables.QUALIFIED_BR_CVM_COMPANIES_TABLE},
+    description="Exports the Brazil CVM public-company support table to ClickHouse.",
+)
+def brazil_fin_cvm_companies_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+    brazil_fin_cvm_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    with read_only_duckdb_connection(brazil_fin_cvm_duckdb) as connection:
+        counts = export_brazil_fin_cvm_companies_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata=counts)
 
 
 @dg.asset(
@@ -162,6 +219,8 @@ brazil_fin_cvm_dfp_raw_backfill_job = dg.define_asset_job(
 
 defs = dg.Definitions(
     assets=[
+        brazil_fin_cvm_companies_duckdb,
+        brazil_fin_cvm_companies_clickhouse,
         brazil_fin_cvm_dfp_raw_archives_s3,
         brazil_fin_cvm_dfp_raw_duckdb,
         brazil_fin_cvm_dfp_statement_rows_usd_duckdb,
