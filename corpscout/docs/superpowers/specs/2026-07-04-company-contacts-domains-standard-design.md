@@ -162,7 +162,7 @@ canonical shape. `is_primary_candidate` is constantly 1, so the canonical
 | norway_brreg | NEW `no_company_contacts` (website facts) | `no_websites` → `no_company_domains` | register has no phone/email (verified) | DONE (Phase D) |
 | finland_ytj | NEW `fi_company_contacts` (website facts) | `fi_websites` → `fi_company_domains` | dbt model adjusts | DONE (Phase D) |
 | wikidata | NEW (website facts) | `wikidata_company_websites` → `wikidata_company_domains` | decision 5 | DONE (Phase D) |
-| sweden_company (future) | implements the pair from day one | | its design doc's deferred `contact_candidates` lands directly in this shape | NOT STARTED — no source module exists yet; out of scope for this program's phases A–E |
+| sweden_company (future) | implements the pair from day one | | its design doc's deferred `contact_candidates` lands directly in this shape | NOT STARTED — register module live since 2026-07-03; contact slice not started, implements the canonical pair when it lands; out of scope for this program's phases A–E |
 
 All seven active sources are DONE as of Phase E (2026-07-05): the domain graph reads only their
 `<src>_company_domains` tables (see Migration strategy below). `sweden_company` is a future source,

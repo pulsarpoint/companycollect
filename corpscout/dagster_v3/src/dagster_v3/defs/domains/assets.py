@@ -28,7 +28,7 @@ GROUP_NAME = "domains"
     kinds={"clickhouse"},
     description=(
         "Builds the website domain dimension and company-to-domain links from "
-        "resolved source website tables."
+        "the seven canonical <src>_company_domains tables."
     ),
 )
 def domains_clickhouse(
