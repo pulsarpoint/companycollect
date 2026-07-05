@@ -35,6 +35,12 @@ func runScan(args []string) error {
 	if *runID == "" {
 		*runID = *scanID
 	}
+	if *seedChunk <= 0 {
+		*seedChunk = 5000
+	}
+	if *workers <= 0 {
+		*workers = 1
+	}
 	ctx := context.Background()
 
 	// 1) Seed the durable queue from ClickHouse (idempotent; resumes if scan.db already has rows).
@@ -72,8 +78,8 @@ func runScan(args []string) error {
 	log.Printf("scan_id=%s: %d domains from CH (%d new); %d pending to resolve", *scanID, len(domains), added, len(pending))
 
 	// 2) Two schedulers: discovery (recursive resolvers) and authoritative (per-NS-IP politeness).
-	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: int(*discoveryQPS), MaxInFlight: *inflight})
-	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: int(*qps), MaxInFlight: *inflight})
+	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *inflight})
+	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight})
 	disc := resolve.NewDiscoverer(resolve.NewExchanger(discSched, *timeout), strings.Split(*resolvers, ","))
 	rec := resolve.NewResolver(resolve.NewExchanger(authSched, *timeout))
 	cfg := records.DefaultConfig()
