@@ -58,32 +58,45 @@ analyze later" pattern.
 
 ## 3. The rate-limiting model (core of the design)
 
-### 3.1 Two tiers of shared, rate-limited servers
+### 3.1 Two tiers of DNS work
 
-To query authoritative servers "directly" we must first learn them, which is itself iterative
-resolution. That produces two tiers of shared infrastructure that must each be paced:
+To query authoritative servers "directly" we must first learn them. We split that into two tiers:
 
-**Tier 1 — NS discovery (parent/TLD-zone bound).** For each domain we compute its public suffix
-(eTLD) via `golang.org/x/net/publicsuffix`, learn the TLD's nameservers **once per run** (cached),
-then query a TLD nameserver for the domain's `NS` delegation + glue. Every `.com` domain's NS
-delegation comes from the same ~13 gtld-servers → these queries are paced **per TLD-server IP**.
+**Tier 1 — NS discovery (recursive).** For each domain we compute its public suffix (eTLD) via
+`golang.org/x/net/publicsuffix`, then send **recursive** (RD=1) queries to a small set of configured
+recursive resolvers — `NS` (authoritative nameserver names), `A`/`AAAA` per NS name (their IPs), and
+`DS` (parent DNSSEC). The recursive resolver's cache absorbs the root/TLD load and transparently
+resolves cross-TLD / glue-less nameservers, so **we never walk roots or hammer TLD servers.** Default
+resolvers are public (1.1.1.1/8.8.8.8/9.9.9.9); for large runs point `--resolvers` at a local
+`unbound` (`127.0.0.1:53`) to remove public-resolver dependence and get natural TLD caching.
 
-**Tier 2 — record queries (authoritative-NS bound).** Once domain D's authoritative NS set is
-known (e.g. `ns1.cloudflare.com`, `ns2.cloudflare.com` → their IPs), all of D's record queries go
-to those IPs. Many domains share Cloudflare → those IPs are paced **per authoritative-NS-server IP**.
+> **Decision — why not iterative-from-roots.** Walking root→TLD→auth ourselves (the original idea)
+> would let us pace the TLD tier directly, but it forces a hand-rolled iterative resolver (referrals,
+> glue resolution for out-of-bailiwick NS, CNAME chains, per-run TLD caching) that is hard to get
+> right and, done naively, hammers roots/TLDs once per domain. Delegating discovery to a recursive
+> resolver eliminates that entire class of work and bugs. We keep "direct to authoritative" where it
+> actually matters — the record queries (Tier 2).
+
+**Tier 2 — record queries (authoritative-NS bound).** Once domain D's authoritative NS IPs are
+known, all of D's record queries go **directly to those IPs** (RD=0). Many domains share Cloudflare
+→ those IPs are paced **per authoritative-NS-server IP**; a small domain on its own single nameserver
+is protected by the same per-server limiter. This is where per-server rate limiting earns its keep.
 
 ### 3.2 The unifying abstraction: one limiter per target server IP
 
 **Every outbound query targets a specific server IP. There is exactly one token-bucket rate
 limiter per server IP (default ~10 qps, small burst, configurable), plus a small per-server
 in-flight cap (e.g. 2–3). A query may only be sent once its target server's limiter grants a
-token.** Tier 1 and Tier 2 are the same mechanism keyed on different server IPs. This is §3.2's
-abstraction; the concurrency that drives it is in §3.6.
+token.** Both tiers use the same mechanism keyed on different server IPs, via two `Scheduler`
+instances: a **discovery** scheduler (the few recursive resolvers, a higher default qps — or very
+high for a local unbound) and an **authoritative** scheduler (per-NS-IP, ~10 qps). The concurrency
+that drives them is in §3.6.
 
-Massive parallelism is *free*: there are hundreds of thousands of distinct authoritative server
-IPs across the domain set, so total throughput = sum over all servers, while each individual
-server stays gentle. We saturate egress by having many servers in flight, not by hitting any one
-server hard.
+Massive parallelism is *free* on the authoritative tier: there are hundreds of thousands of distinct
+authoritative server IPs across the domain set, so total throughput = sum over all servers, while
+each individual server stays gentle. We saturate egress by having many servers in flight, not by
+hitting any one server hard. (Tier-1 throughput is bounded by the recursive resolvers, which is why
+a local unbound is recommended at full scale.)
 
 The user's mental model — "group domains that share an NS, queue their requests together" — is
 exactly what falls out of this: work for a shared server naturally lands in that server's queue
@@ -124,15 +137,22 @@ batched transactions (fast — tens of thousands of row-inserts/sec), it is a re
 (so it holds the queue + status for resume), and it is a single local file with no external service.
 The final `load` step bulk-copies SQLite → ClickHouse over the native protocol.
 
-### 3.5 Iterative resolver mechanics
+### 3.5 Resolver mechanics
 
-Library: `github.com/miekg/dns` (already the org's DNS library, per pulsarprotectrunner2).
+Library: `github.com/miekg/dns` (already the org's DNS library, per pulsarprotectrunner2). The
+monorepo also has `pulsarprotectrunner2/pkg/dns` (a recursive engine with health tracking, racing,
+`GetAuthoritativeNameservers`); we model discovery on it but implement a lean in-module client rather
+than import that module's heavy dependency tree (geoip, otel). If reuse is later preferred, extract
+`pkg/dns` into a shared module first.
 
-Per-run caches: static root hints; TLD nameserver sets + glue IPs (learned once per TLD);
-per-domain authoritative NS. Per query: EDNS0 (bufsize 1232, DO bit set for DNSSEC capture),
-UDP first with **TCP fallback on truncation (TC bit)**, 2 retries with backoff across the domain's
-alternate NS IPs, per-query timeout. Every query's outcome (`NOERROR/NXDOMAIN/SERVFAIL/timeout`)
-is recorded in a `query_status` map for observability.
+- **Tier-1 discovery:** recursive (RD=1) `NS`/`A`/`AAAA`/`DS` queries to the configured resolvers,
+  rotating across them with 2 attempts each. Because recursive answers arrive in the ANSWER section,
+  discovery is deterministically unit-testable against an in-process server.
+- **Tier-2 records:** direct (RD=0) queries to the domain's NS IPs, rotating across them with retry.
+- Every query: EDNS0 (bufsize 1232, DO bit set for DS/DNSKEY capture), UDP first with **TCP fallback
+  on truncation (TC bit)**, per-query timeout. Retries are rotation-based (the per-server limiter
+  spaces retries to the same server); an explicit backoff + per-server circuit breaker is deferred.
+- Per-domain `queries_total`/`queries_ok` and each record's `rcode` capture outcome for observability.
 
 ### 3.6 Concurrency shape
 
@@ -153,8 +173,10 @@ corpscout.commoncrawl_domains (CH)
         ▼
   cc-dns-worker  scan  ──seed──▶  scan.db (SQLite): scan_domains queue (status)
         │
-        │  resolver pool: Tier-1 NS discovery + Tier-2 record queries
-        │  (per-server-IP limiters)      ─▶ DomainResult channel
+        │  resolver pool per domain:
+        │    Tier-1 discovery → recursive resolvers (discovery scheduler; or local unbound)
+        │    Tier-2 records   → domain's authoritative NS IPs directly (per-NS-IP scheduler)
+        │                                 ─▶ DomainResult channel
         │                                         │
         │                          single writer goroutine (batched txns)
         ▼                                         ▼
@@ -173,7 +195,7 @@ corpscout.commoncrawl_domain_dns_records  (one row per DNS record; the normalize
 commoncrawl/cc-dns-worker/
   cmd/cc-dns-worker/main.go     # subcommands: scan | load
   internal/input/               # read domain worklist from CH
-  internal/resolve/             # iterative resolver, root/TLD/NS caches, record queries, DNSSEC
+  internal/resolve/             # recursive NS discovery + direct-authoritative record queries, DNSSEC
   internal/scheduler/           # per-server-IP token-bucket limiters + in-flight caps (interface)
   internal/records/             # query planning: hostnames, DKIM selectors, mail/policy qnames
   internal/model/               # DomainResult, DNSRecord, ScanSummary (ch tags for load)
@@ -201,9 +223,10 @@ CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records
     record_type  LowCardinality(String),    -- A, AAAA, MX, TXT, NS, SOA, CAA, DNSKEY, DS
     slot         LowCardinality(String),    -- semantic tag: "@", "www", "dmarc", "mta_sts", "bimi",
                                              --   "tls_rpt", DKIM selector, "" for infra records
-    value        String,                    -- rdata verbatim (full TXT string, "mail.x. " host, IP, ...)
+    value        String,                    -- rdata verbatim (full TXT, IP, ...); MX = "<pref> <host>"
+                                             --   so the sort key can't collapse two MX at diff prefs
     ttl          UInt32,
-    priority     UInt16,                     -- MX preference; 0 otherwise
+    priority     UInt16,                     -- MX preference (also embedded in value); 0 otherwise
     rcode        LowCardinality(String),     -- query rcode: NOERROR / NXDOMAIN / SERVFAIL / error
     source_run_id String,
     resolved_at  DateTime64(3, 'UTC')
@@ -221,7 +244,7 @@ CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_scan
     root_domain   String,
     etld          LowCardinality(String),
     nameservers   Array(String),            -- authoritative NS names
-    ns_ips        Array(String),            -- resolved NS IPs (glue or A/AAAA)
+    ns_ips        Array(String),            -- resolved NS IPs (A/AAAA of the NS hostnames)
     dnssec_signed UInt8,                     -- DNSKEY present at apex
     ds_present    UInt8,                     -- DS present at parent
     status        LowCardinality(String),   -- done | error
@@ -249,8 +272,8 @@ these and inserts into the two CH tables above.
 - Tier-1 failure (cannot learn NS): the domain is written to `scan_domains` with `status='error'`
   and the reason in `error`, so a dead/parked domain is still recorded as scanned (and not retried
   endlessly within a scan).
-- Server-level: repeated timeouts to a server IP trip a short circuit-breaker so we stop wasting
-  budget on a dead server without starving others.
+- Server-level: a per-server circuit breaker (short-circuit a server IP after N consecutive timeouts)
+  is **deferred**; v1 relies on the per-server limiter + bounded retries.
 - **Resume:** because status transitions are one SQLite transaction per domain, a crash leaves the
   DB consistent; restarting `scan` reclaims `pending` (and resets any `in_progress`) and continues.
 
@@ -259,9 +282,10 @@ these and inserts into the two CH tables above.
   response→records mapping, per-server limiter pacing (assert ≤ configured qps).
 - **SQLite store:** seed a queue, mark some domains done, reopen the DB and assert the pending set
   is exactly the not-done domains (the resume contract); assert batched record writes round-trip.
-- **Deterministic integration:** spin an in-process `miekg/dns` authoritative server on 127.0.0.1
-  serving a crafted zone; drive the resolver + scheduler against it and assert the emitted records +
-  that per-server pacing held. (No external network; fully reproducible.)
+- **Deterministic discovery + records:** an in-process `miekg/dns` server on 127.0.0.1 serving a
+  crafted zone doubles as a stand-in recursive resolver (answers in the ANSWER section), so both
+  `DiscoverNS` (NS names, cross-TLD NS IPs, DS) **and** the record `collect` path are unit-tested with
+  no external network — fully reproducible.
 - **Real-DNS smoke (build-tagged):** resolve a few known-stable domains (e.g. `cloudflare.com` NS,
   `google.com` MX) to confirm real-world shape — network-permitting, per the "real integration
   tests" preference.
@@ -277,9 +301,11 @@ stage locally, load to CH) while letting dagster own scheduling.
 
 ## 9. Key decisions summary
 1. **Go worker** under `commoncrawl/cc-dns-worker`, mirroring `cc-enrich-worker` (scan + load).
-2. **Iterative resolution** with `miekg/dns`, querying authoritative servers directly.
-3. **One token-bucket limiter per target server IP** (~10 qps, configurable) is the single
-   rate-limit primitive for both TLD (Tier 1) and authoritative-NS (Tier 2) tiers.
+2. **Recursive NS discovery** (Tier 1) to configured resolvers (public, or a local `unbound`) — no
+   root walk — then **direct-to-authoritative record queries** (Tier 2) with `miekg/dns`. Lean
+   in-module client modeled on `pulsarprotectrunner2/pkg/dns` (not imported — heavy deps).
+3. **One token-bucket limiter per target server IP** (configurable) via two `Scheduler` instances: a
+   discovery scheduler (recursive resolvers, higher qps) and an authoritative scheduler (~10 qps/NS-IP).
 4. **Single node, no Redis.** Limiters in memory; **durable embedded SQLite** holds the work queue +
    status + staged records so a killed run **resumes** where it stopped. Scale-out (deferred) via
    shard-by-server-IP.

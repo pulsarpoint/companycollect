@@ -4,7 +4,9 @@
 
 **Goal:** Build a Go worker (`cc-dns-worker`) that reads domains from ClickHouse, resolves a rich DNS record set directly from each domain's authoritative nameservers under strict per-server rate limits, stages results in a durable embedded SQLite database (crash-resumable), and loads them into two normalized, historical ClickHouse tables.
 
-**Architecture:** Iterative DNS resolution with `miekg/dns`. Every outbound query targets a specific server IP; a single token-bucket limiter per server IP (default ~10 qps) paces both the TLD tier (NS discovery) and the authoritative-NS tier (record queries). Single node, no Redis: limiters are in-memory, but the work queue + per-domain status + staged records live in an embedded SQLite `scan.db` written by one dedicated writer goroutine, so a killed run resumes the remaining `pending` domains. A `load` subcommand bulk-copies SQLite → ClickHouse over the native protocol into `commoncrawl_domain_dns_records` (one row per record) and `commoncrawl_domain_dns_scan` (per-domain summary/status).
+**Architecture:** Two-tier DNS with `miekg/dns`. **Tier 1 (NS discovery)** sends recursive (RD=1) queries to configured recursive resolvers (default public: 1.1.1.1/8.8.8.8/9.9.9.9; override with a local `unbound` at 127.0.0.1:53) to learn each domain's authoritative NS names and IPs and its parent DS — the resolver's cache absorbs the root/TLD load, so we never walk roots or hammer TLD servers. **Tier 2 (record queries)** goes **directly to the domain's authoritative NS IPs** (RD=0), where a token-bucket limiter per NS-IP (default ~10 qps) enforces politeness — this is where per-server rate limiting matters (small domains on their own nameserver). Single node, no Redis: limiters are in-memory; the work queue + per-domain status + staged records live in an embedded SQLite `scan.db` written by one dedicated writer goroutine, so a killed run resumes the remaining `pending` domains. A `load` subcommand bulk-copies SQLite → ClickHouse over the native protocol into `commoncrawl_domain_dns_records` (one row per record) and `commoncrawl_domain_dns_scan` (per-domain summary/status).
+
+> **Reuse note:** `pulsarprotectrunner2/pkg/dns` already implements a recursive DNS engine with health tracking, racing, TCP fallback, and `GetAuthoritativeNameservers`. We model the lean discovery client below on it but do **not** import it — that module (`github.com/pulsarpoint/pulsarprotectrunner2.git`) pulls a heavy dep tree (geoip, otel, ip_analysis) unsuitable for this standalone worker. If reuse is later preferred over the ~80-line lean client, extract `pkg/dns` into a shared module first.
 
 **Tech Stack:** Go 1.24, `github.com/miekg/dns`, `golang.org/x/time/rate`, `golang.org/x/net/publicsuffix`, `modernc.org/sqlite` (pure-Go, no cgo), `github.com/ClickHouse/clickhouse-go/v2`.
 
@@ -16,10 +18,12 @@
 - Go version floor: `go 1.24` in `go.mod`.
 - SQLite driver: `modernc.org/sqlite` (pure Go, no cgo), registered `database/sql` driver name `"sqlite"`. Open with `?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)`.
 - CH load structs carry a `ch:"col"` tag on every stored field naming the exact CH column; a struct-tag test pins the expected column set.
-- Default per-server rate: `10` qps, burst `10`; default per-server in-flight cap `3`. Configurable via flags.
+- **Two tiers:** Tier-1 NS discovery uses recursive resolvers (`--resolvers`, default `1.1.1.1:53,8.8.8.8:53,9.9.9.9:53`; set a local `unbound` like `127.0.0.1:53` for large runs). Tier-2 record queries go directly to the domain's authoritative NS IPs with `RecursionDesired=false`.
+- Default per-authoritative-NS rate: `10` qps, burst `10`; per-NS in-flight cap `3`. Default discovery rate: `50` qps per resolver (bump high for a local unbound). All configurable via flags.
+- Retries: each query is retried across the available servers (Tier-1: rotate resolvers, 2 attempts each; Tier-2: rotate the domain's NS IPs); the per-server limiter spaces retries to the same server. No explicit sleep-backoff in v1 (a per-server circuit breaker is deferred — see end).
 - Default hostnames (5; apex always resolved separately, apex stored under slot `@`): `www, mail, webmail, smtp, autodiscover`.
 - Default DKIM selectors (10): `default, google, selector1, selector2, k1, dkim, s1, s2, mail, mandrill`.
-- EDNS0 UDP buffer size `1232`, DO bit set on every query.
+- EDNS0 UDP buffer size `1232`, DO bit set on every query (needed for DS/DNSKEY capture).
 - ClickHouse database `corpscout`; new tables `corpscout.commoncrawl_domain_dns_records` and `corpscout.commoncrawl_domain_dns_scan`.
 - Resume contract: a domain is flipped to `done`/`error` in one SQLite transaction only after its results are written; a crash leaves unfinished domains `pending`, and re-running `scan` processes exactly the not-`done`/not-`error` set.
 - Follow Conventional Commits. Run `go fmt ./...` and `go vet ./...` before each commit. Working dir for the module: `commoncrawl/cc-dns-worker/`.
@@ -629,7 +633,7 @@ git commit -m "feat(dns): per-server-IP token-bucket scheduler with in-flight ca
 
 ---
 
-### Task 5: Iterative resolver — scheduled exchange + NS discovery
+### Task 5: Scheduled exchange + recursive NS discovery
 
 **Files:**
 - Create: `commoncrawl/cc-dns-worker/internal/resolve/exchange.go`
@@ -642,9 +646,16 @@ git commit -m "feat(dns): per-server-IP token-bucket scheduler with in-flight ca
   - `resolve.Exchanger` interface: `Exchange(ctx, m *dns.Msg, serverIP string) (*dns.Msg, error)`
   - `resolve.NewExchanger(sched *scheduler.Scheduler, timeout time.Duration) Exchanger`
   - `resolve.Delegation{ ETLD string; NS []string; NSIPs []string; DS []string }`
-  - `resolve.Resolver{ Ex Exchanger; Roots []string }`, `resolve.NewResolver(ex Exchanger) *Resolver`
-  - `(*Resolver).DiscoverNS(ctx, domain string) (Delegation, error)`
+  - `resolve.DefaultResolvers []string`
+  - `resolve.Discoverer{ Ex Exchanger; Resolvers []string }`, `resolve.NewDiscoverer(ex Exchanger, resolvers []string) *Discoverer`
+  - `(*Discoverer).DiscoverNS(ctx, domain string) (Delegation, error)`
 - Consumes: `scheduler.Scheduler`, `miekg/dns`, `golang.org/x/net/publicsuffix`.
+
+**Design:** Tier-1 discovery sends **recursive** (RD=1) queries to configured resolvers — `NS` (auth
+nameservers), `A`/`AAAA` per NS name (their IPs; the resolver transparently handles glue and
+cross-TLD nameservers), and `DS` (parent DNSSEC). No root walk, no manual glue resolution — that is
+the whole point of this direction. Because a recursive resolver returns answers in the ANSWER
+section, the in-process test server can serve them directly, so `DiscoverNS` is **unit-tested here**.
 
 - [ ] **Step 1: Write the in-process authoritative test server helper**
 
@@ -659,6 +670,8 @@ import (
 	"github.com/miekg/dns"
 )
 
+// zone maps "qname/qtype" to the RRs the server returns in ANSWER — exactly what a recursive
+// resolver returns, so it doubles as a stand-in recursive resolver for discovery tests.
 type zone map[string][]dns.RR
 
 func startAuth(t *testing.T, z zone) (string, func()) {
@@ -692,7 +705,7 @@ func mustRR(t *testing.T, s string) dns.RR {
 }
 ```
 
-- [ ] **Step 2: Write the failing exchange test**
+- [ ] **Step 2: Write the failing exchange + discovery tests**
 
 Create `commoncrawl/cc-dns-worker/internal/resolve/resolve_test.go`:
 ```go
@@ -733,23 +746,62 @@ func TestExchangeRoundTrip(t *testing.T) {
 		t.Errorf("bad answer %v", resp.Answer[0])
 	}
 }
+
+// DiscoverNS against a stand-in recursive resolver: NS names, their IPs (including a cross-TLD NS
+// the recursive resolver resolves for us), and the parent DS.
+func TestDiscoverNS(t *testing.T) {
+	addr, stop := startAuth(t, zone{
+		"example.com./NS": {
+			mustRR(t, "example.com. 300 IN NS ns1.example.com."),
+			mustRR(t, "example.com. 300 IN NS ns2.example.net."), // cross-TLD, no glue needed
+		},
+		"ns1.example.com./A": {mustRR(t, "ns1.example.com. 300 IN A 1.1.1.1")},
+		"ns2.example.net./A": {mustRR(t, "ns2.example.net. 300 IN A 2.2.2.2")},
+		"example.com./DS":    {mustRR(t, "example.com. 3600 IN DS 12345 13 2 E2D3C916F6DEEAC73294E8268FB5885044A833FC5459588F4A9184CFC41A5766")},
+	})
+	defer stop()
+
+	d := NewDiscoverer(newTestExchanger(), []string{addr})
+	del, err := d.DiscoverNS(context.Background(), "example.com")
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if del.ETLD != "com" {
+		t.Errorf("etld = %q, want com", del.ETLD)
+	}
+	if len(del.NS) != 2 {
+		t.Errorf("NS = %v, want 2", del.NS)
+	}
+	hasIP := func(ip string) bool {
+		for _, x := range del.NSIPs {
+			if x == ip {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasIP("1.1.1.1") || !hasIP("2.2.2.2") {
+		t.Errorf("NSIPs = %v, want both 1.1.1.1 and 2.2.2.2", del.NSIPs)
+	}
+	if len(del.DS) == 0 {
+		t.Errorf("expected DS captured")
+	}
+}
 ```
 
-Note: `DiscoverNS`'s full root→TLD→auth walk is exercised end-to-end in the real-DNS smoke test (Task
-10). Keep its logic small; the exchange primitive + pacing are unit-pinned here.
-
-- [ ] **Step 3: Run test to verify it fails**
+- [ ] **Step 3: Run tests to verify they fail**
 
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/resolve/`
-Expected: FAIL — undefined `Exchanger`/`NewExchanger`.
+Expected: FAIL — undefined `Exchanger`/`NewExchanger`/`NewDiscoverer`.
 
 - [ ] **Step 4: Write the exchange primitive**
 
 Create `commoncrawl/cc-dns-worker/internal/resolve/exchange.go`:
 ```go
-// Package resolve does iterative DNS resolution directly against authoritative servers. exchange.go
-// is the transport primitive: one UDP query (TCP on truncation) routed through the per-server
-// scheduler so no server is hit too fast.
+// Package resolve queries DNS in two tiers: Tier-1 discovery via recursive resolvers (discover.go)
+// and Tier-2 record queries directly against authoritative servers (query.go). exchange.go is the
+// shared transport: one UDP query (TCP on truncation) routed through a per-server scheduler so no
+// server is hit too fast.
 package resolve
 
 import (
@@ -775,7 +827,8 @@ type client struct {
 }
 
 // NewExchanger returns an Exchanger that paces every send through sched. serverIP may be a bare IP
-// (port 53 assumed) or ip:port.
+// (port 53 assumed) or ip:port. The caller sets RecursionDesired on m (true for discovery, false
+// for direct-authoritative record queries).
 func NewExchanger(sched *scheduler.Scheduler, timeout time.Duration) Exchanger {
 	return &client{
 		sched:   sched,
@@ -821,7 +874,7 @@ func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dn
 }
 ```
 
-- [ ] **Step 5: Write NS discovery (iterative walk)**
+- [ ] **Step 5: Write recursive NS discovery**
 
 Create `commoncrawl/cc-dns-worker/internal/resolve/discover.go`:
 ```go
@@ -836,14 +889,11 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// rootServers are the 13 IANA root server IPv4 addresses (a–m.root-servers.net).
-var rootServers = []string{
-	"198.41.0.4", "170.247.170.2", "192.33.4.12", "199.7.91.13",
-	"192.203.230.10", "192.5.5.241", "192.112.36.4", "198.97.190.53",
-	"192.36.148.17", "192.58.128.30", "193.0.14.129", "199.7.83.42", "202.12.27.33",
-}
+// DefaultResolvers are the recursive resolvers used for NS discovery. Override with a local unbound
+// ("127.0.0.1:53") to remove any dependence on public resolvers and get natural TLD caching.
+var DefaultResolvers = []string{"1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"}
 
-// Delegation is the authoritative delegation learned for a domain.
+// Delegation is what discovery learned for a domain.
 type Delegation struct {
 	ETLD  string
 	NS    []string
@@ -851,161 +901,112 @@ type Delegation struct {
 	DS    []string
 }
 
-// Resolver performs iterative resolution using an Exchanger.
-type Resolver struct {
-	Ex    Exchanger
-	Roots []string
+// Discoverer finds a domain's authoritative NS (+ IPs) and parent DS via recursive resolvers. It
+// does NOT walk roots: the recursive resolver's cache absorbs the root/TLD load (polite + fast) and
+// transparently resolves cross-TLD / glue-less nameservers. Record queries (query.go) then go
+// directly to the discovered NS IPs.
+type Discoverer struct {
+	Ex        Exchanger
+	Resolvers []string
 }
 
-// NewResolver seeds the root server list.
-func NewResolver(ex Exchanger) *Resolver {
-	return &Resolver{Ex: ex, Roots: append([]string(nil), rootServers...)}
+// NewDiscoverer returns a Discoverer; empty resolvers falls back to DefaultResolvers.
+func NewDiscoverer(ex Exchanger, resolvers []string) *Discoverer {
+	if len(resolvers) == 0 {
+		resolvers = DefaultResolvers
+	}
+	return &Discoverer{Ex: ex, Resolvers: append([]string(nil), resolvers...)}
 }
 
-// DiscoverNS walks root -> TLD -> authoritative to learn a domain's NS set and parent DS, following
-// referrals (NS in AUTHORITY, glue in ADDITIONAL). domain has no trailing dot.
-func (r *Resolver) DiscoverNS(ctx context.Context, domain string) (Delegation, error) {
+// DiscoverNS resolves NS names, their IPs, and the parent DS for a domain (no trailing dot).
+func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation, error) {
 	etld, _ := publicsuffix.PublicSuffix(domain)
 	del := Delegation{ETLD: etld}
 	fqdn := dns.Fqdn(domain)
 
-	servers := append([]string(nil), r.Roots...)
-	for hop := 0; hop < 8; hop++ {
-		m := new(dns.Msg)
-		m.SetQuestion(fqdn, dns.TypeNS)
-		resp, err := r.exchangeAny(ctx, m, servers)
-		if err != nil {
-			return del, err
+	nsResp, err := d.query(ctx, fqdn, dns.TypeNS)
+	if err != nil {
+		return del, err
+	}
+	for _, rr := range nsResp.Answer {
+		if ns, ok := rr.(*dns.NS); ok {
+			del.NS = append(del.NS, strings.ToLower(ns.Ns))
 		}
-		for _, rr := range resp.Ns {
+	}
+	if len(del.NS) == 0 {
+		return del, errors.New("no NS records")
+	}
+
+	if dsResp, err := d.query(ctx, fqdn, dns.TypeDS); err == nil && dsResp != nil {
+		for _, rr := range dsResp.Answer {
 			if ds, ok := rr.(*dns.DS); ok {
 				del.DS = append(del.DS, ds.String())
 			}
 		}
-		if auth := answerNS(resp, fqdn); len(auth) > 0 {
-			del.NS = auth
-			del.NSIPs = resolveNSIPs(ctx, r, auth, extractGlue(resp))
-			return del, nil
-		}
-		nsNames, glue := extractDelegation(resp)
-		if len(nsNames) == 0 {
-			return del, errors.New("no delegation and no authoritative NS")
-		}
-		next := ipsFor(nsNames, glue)
-		if len(next) == 0 {
-			next = resolveNSIPs(ctx, r, nsNames, nil)
-		}
-		if len(next) == 0 {
-			del.NS = nsNames
-			del.NSIPs = resolveNSIPs(ctx, r, nsNames, glue)
-			return del, nil
-		}
-		servers = next
 	}
-	return del, errors.New("referral loop exceeded")
-}
 
-func (r *Resolver) exchangeAny(ctx context.Context, m *dns.Msg, servers []string) (*dns.Msg, error) {
-	var lastErr error
-	for _, s := range servers {
-		resp, err := r.Ex.Exchange(ctx, m.Copy(), s)
-		if err == nil && resp != nil {
-			return resp, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = errors.New("all servers failed")
-	}
-	return nil, lastErr
-}
-
-func extractGlue(resp *dns.Msg) map[string][]string {
-	glue := map[string][]string{}
-	for _, rr := range resp.Extra {
-		switch a := rr.(type) {
-		case *dns.A:
-			n := strings.ToLower(a.Hdr.Name)
-			glue[n] = append(glue[n], a.A.String())
-		case *dns.AAAA:
-			n := strings.ToLower(a.Hdr.Name)
-			glue[n] = append(glue[n], a.AAAA.String())
-		}
-	}
-	return glue
-}
-
-func extractDelegation(resp *dns.Msg) (ns []string, glue map[string][]string) {
-	for _, rr := range resp.Ns {
-		if n, ok := rr.(*dns.NS); ok {
-			ns = append(ns, strings.ToLower(n.Ns))
-		}
-	}
-	return ns, extractGlue(resp)
-}
-
-func answerNS(resp *dns.Msg, fqdn string) []string {
-	var out []string
-	for _, rr := range resp.Answer {
-		if n, ok := rr.(*dns.NS); ok && strings.EqualFold(n.Hdr.Name, fqdn) {
-			out = append(out, strings.ToLower(n.Ns))
-		}
-	}
-	return out
-}
-
-func ipsFor(names []string, glue map[string][]string) []string {
-	var out []string
-	for _, n := range names {
-		out = append(out, glue[strings.ToLower(n)]...)
-	}
-	return out
-}
-
-// resolveNSIPs resolves NS hostnames to IPs, using glue when available, else an A query via roots.
-func resolveNSIPs(ctx context.Context, r *Resolver, names []string, glue map[string][]string) []string {
 	seen := map[string]bool{}
-	var out []string
 	add := func(ip string) {
 		if ip != "" && !seen[ip] {
 			seen[ip] = true
-			out = append(out, ip)
+			del.NSIPs = append(del.NSIPs, ip)
 		}
 	}
-	for _, n := range names {
-		if g := glue[strings.ToLower(n)]; len(g) > 0 {
-			for _, ip := range g {
-				add(ip)
+	for _, ns := range del.NS {
+		for _, qt := range []uint16{dns.TypeA, dns.TypeAAAA} {
+			resp, err := d.query(ctx, dns.Fqdn(ns), qt)
+			if err != nil || resp == nil {
+				continue
 			}
-			continue
-		}
-		m := new(dns.Msg)
-		m.SetQuestion(dns.Fqdn(n), dns.TypeA)
-		if resp, err := r.exchangeAny(ctx, m, r.Roots); err == nil && resp != nil {
 			for _, rr := range resp.Answer {
-				if a, ok := rr.(*dns.A); ok {
+				switch a := rr.(type) {
+				case *dns.A:
 					add(a.A.String())
+				case *dns.AAAA:
+					add(a.AAAA.String())
 				}
 			}
 		}
 	}
-	return out
+	if len(del.NSIPs) == 0 {
+		return del, errors.New("no NS IPs resolved")
+	}
+	return del, nil
+}
+
+// query sends a recursive (RD=1) query, rotating across resolvers with 2 attempts each. SetQuestion
+// sets RecursionDesired=true by default, which is what we want here.
+func (d *Discoverer) query(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {
+	var lastErr error
+	for _, srv := range d.Resolvers {
+		for attempt := 0; attempt < 2; attempt++ {
+			m := new(dns.Msg)
+			m.SetQuestion(name, qtype)
+			resp, err := d.Ex.Exchange(ctx, m, srv)
+			if err == nil && resp != nil && resp.Rcode != dns.RcodeServerFailure {
+				return resp, nil
+			}
+			lastErr = err
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("all resolvers failed")
+	}
+	return nil, lastErr
 }
 ```
-
-Note: root/TLD responses are cached per run in Task 8 so we don't re-walk the same TLD for every domain.
 
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/resolve/`
-Expected: PASS (`TestExchangeRoundTrip`).
+Expected: PASS (`TestExchangeRoundTrip`, `TestDiscoverNS`).
 
 - [ ] **Step 7: Commit**
 
 ```bash
 cd commoncrawl/cc-dns-worker && go fmt ./... && go vet ./...
 git add commoncrawl/cc-dns-worker/internal/resolve
-git commit -m "feat(dns): iterative resolver — scheduled exchange + NS discovery walk"
+git commit -m "feat(dns): scheduled exchange + recursive NS discovery"
 ```
 
 ---
@@ -1017,8 +1018,10 @@ git commit -m "feat(dns): iterative resolver — scheduled exchange + NS discove
 - Test: `commoncrawl/cc-dns-worker/internal/resolve/query_test.go`
 
 **Interfaces:**
-- Consumes: `Resolver`/`Exchanger` (Task 5), `records.Plan`/`Config` (Task 3), `model` (Task 2).
-- Produces: `(*Resolver).Resolve(ctx, domain, scanID, runID string, del Delegation, cfg records.Config, now time.Time) model.DomainResult`.
+- Consumes: `Exchanger` (Task 5), `records.Plan`/`Config` (Task 3), `model` (Task 2).
+- Produces:
+  - `resolve.Resolver{ Ex Exchanger }`, `resolve.NewResolver(ex Exchanger) *Resolver`
+  - `(*Resolver).Resolve(ctx, domain, scanID, runID string, del Delegation, cfg records.Config, now time.Time) model.DomainResult`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1045,8 +1048,6 @@ func (s stubEx) Exchange(_ context.Context, m *dns.Msg, _ string) (*dns.Msg, err
 	r.Answer = append(r.Answer, s.z[q.Name+"/"+dns.TypeToString[q.Qtype]]...)
 	return r, nil
 }
-
-func recBySlot(recs []interface{ }) {} // placeholder; not used
 
 func TestResolveProducesRecords(t *testing.T) {
 	z := map[string][]dns.RR{
@@ -1089,7 +1090,11 @@ func TestResolveProducesRecords(t *testing.T) {
 	if !find("TXT", "google", "") {
 		t.Errorf("missing DKIM google")
 	}
-	// MX preference is captured.
+	// MX preference is captured in both the priority column and the value (so the ReplacingMergeTree
+	// sort key, which includes value but not priority, never collapses two MX at different prefs).
+	if !find("MX", "", "10 mail.example.com") {
+		t.Errorf("MX value should be full rdata '10 mail.example.com'; records=%+v", res.Records)
+	}
 	for _, rec := range res.Records {
 		if rec.RecordType == "MX" && rec.Priority != 10 {
 			t.Errorf("MX priority = %d, want 10", rec.Priority)
@@ -1097,8 +1102,6 @@ func TestResolveProducesRecords(t *testing.T) {
 	}
 }
 ```
-
-Delete the unused `recBySlot` stub before running (it is scaffolding; remove that line).
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1113,6 +1116,7 @@ package resolve
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1122,8 +1126,14 @@ import (
 	"github.com/miekg/dns"
 )
 
-// Resolve runs every Tier-2 query for a domain against its authoritative NS IPs (round-robin, with
-// fallback across the NS set) and assembles a DomainResult. Delegation must already be discovered.
+// Resolver runs Tier-2 record queries directly against a domain's authoritative NS IPs.
+type Resolver struct{ Ex Exchanger }
+
+// NewResolver wraps an Exchanger (configured with the authoritative-NS scheduler).
+func NewResolver(ex Exchanger) *Resolver { return &Resolver{Ex: ex} }
+
+// Resolve runs every Tier-2 query for a domain directly against its authoritative NS IPs, rotating
+// across them with retry, and assembles a DomainResult. Delegation must already be discovered.
 func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, del Delegation, cfg records.Config, now time.Time) model.DomainResult {
 	res := model.DomainResult{
 		ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
@@ -1132,23 +1142,14 @@ func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, de
 		SourceRunID: runID, ResolvedAt: now,
 	}
 	for _, ds := range del.DS {
-		res.Records = append(res.Records, model.DNSRecord{Name: domain, RecordType: "DS", Value: ds, Rcode: "NOERROR"})
+		res.Records = append(res.Records, model.DNSRecord{Name: domain, RecordType: "DS", Slot: "", Value: ds, Rcode: "NOERROR"})
 	}
 
 	servers := del.NSIPs
 	i := 0
 	for _, q := range records.Plan(domain, cfg) {
 		res.QueriesTotal++
-		m := new(dns.Msg)
-		m.SetQuestion(q.Name, q.Type)
-		var resp *dns.Msg
-		var err error
-		for attempt := 0; attempt < len(servers); attempt++ {
-			resp, err = r.Ex.Exchange(ctx, m.Copy(), servers[(i+attempt)%len(servers)])
-			if err == nil && resp != nil {
-				break
-			}
-		}
+		resp, err := r.queryAuth(ctx, q, servers, i)
 		i++
 		rcode := "error"
 		if err == nil && resp != nil {
@@ -1163,9 +1164,24 @@ func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, de
 			}
 		}
 	}
-	qn := dns.Fqdn(domain)
-	_ = qn
 	return res
+}
+
+// queryAuth sends one authoritative query (RecursionDesired=false), rotating across the domain's NS
+// IPs so each is tried once per pass and twice overall; the per-server limiter spaces retries.
+func (r *Resolver) queryAuth(ctx context.Context, q records.Query, servers []string, start int) (*dns.Msg, error) {
+	var lastErr error
+	for attempt := 0; attempt < len(servers)*2; attempt++ {
+		m := new(dns.Msg)
+		m.SetQuestion(q.Name, q.Type)
+		m.RecursionDesired = false // authoritative servers don't recurse
+		resp, err := r.Ex.Exchange(ctx, m, servers[(start+attempt)%len(servers)])
+		if err == nil && resp != nil && resp.Rcode != dns.RcodeServerFailure {
+			return resp, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 // collect turns one query's ANSWER RRs into DNSRecords, tagging them with the query's slot.
@@ -1180,7 +1196,11 @@ func collect(q records.Query, resp *dns.Msg, rcode string) []model.DNSRecord {
 		case *dns.AAAA:
 			rec.RecordType, rec.Value = "AAAA", v.AAAA.String()
 		case *dns.MX:
-			rec.RecordType, rec.Value, rec.Priority = "MX", strings.TrimSuffix(v.Mx, "."), v.Preference
+			// value = full rdata "<pref> <host>" so the ReplacingMergeTree sort key (which includes
+			// value but not the priority column) can't collapse two MX at different preferences.
+			rec.RecordType = "MX"
+			rec.Priority = v.Preference
+			rec.Value = strconv.Itoa(int(v.Preference)) + " " + strings.TrimSuffix(strings.ToLower(v.Mx), ".")
 		case *dns.NS:
 			rec.RecordType, rec.Value = "NS", strings.TrimSuffix(strings.ToLower(v.Ns), ".")
 		case *dns.SOA:
@@ -1731,6 +1751,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -1749,10 +1770,13 @@ func runScan(args []string) error {
 	dbPath := fs.String("db", "scan.db", "SQLite stage path")
 	query := fs.String("query", input.DefaultQuery, "ClickHouse query returning root_domain")
 	limit := fs.Int("limit", 0, "cap number of domains (0 = all)")
-	qps := fs.Float64("per-server-qps", 10, "max queries/sec per server IP")
-	inflight := fs.Int("per-server-inflight", 3, "max concurrent queries per server IP")
+	resolvers := fs.String("resolvers", strings.Join(resolve.DefaultResolvers, ","), "comma-separated recursive resolvers for NS discovery (use 127.0.0.1:53 for a local unbound)")
+	discoveryQPS := fs.Float64("discovery-qps", 50, "max queries/sec per recursive resolver (bump high for local unbound)")
+	qps := fs.Float64("per-server-qps", 10, "max queries/sec per authoritative NS IP")
+	inflight := fs.Int("per-server-inflight", 3, "max concurrent queries per NS IP")
 	workers := fs.Int("workers", 4000, "max domains resolved concurrently")
 	batchN := fs.Int("commit-batch", 200, "domains per SQLite commit")
+	seedChunk := fs.Int("seed-chunk", 5000, "domains per SQLite seed transaction")
 	timeout := fs.Duration("query-timeout", 5*time.Second, "per-query timeout")
 	_ = fs.Parse(args)
 	if *runID == "" {
@@ -1776,9 +1800,17 @@ func runScan(args []string) error {
 	if err != nil {
 		return err
 	}
-	added, err := st.Seed(ctx, *scanID, domains)
-	if err != nil {
-		return err
+	added := 0
+	for i := 0; i < len(domains); i += *seedChunk {
+		end := i + *seedChunk
+		if end > len(domains) {
+			end = len(domains)
+		}
+		n, err := st.Seed(ctx, *scanID, domains[i:end])
+		if err != nil {
+			return err
+		}
+		added += n
 	}
 	pending, err := st.Pending(ctx, *scanID)
 	if err != nil {
@@ -1786,11 +1818,14 @@ func runScan(args []string) error {
 	}
 	log.Printf("scan_id=%s: %d domains from CH (%d new); %d pending to resolve", *scanID, len(domains), added, len(pending))
 
-	// 2) Resolver pool -> results channel -> single writer goroutine (batched SQLite commits).
-	sched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: int(*qps), MaxInFlight: *inflight})
-	res := resolve.NewResolver(resolve.NewExchanger(sched, *timeout))
+	// 2) Two schedulers: discovery (recursive resolvers) and authoritative (per-NS-IP politeness).
+	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: int(*discoveryQPS), MaxInFlight: *inflight})
+	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: int(*qps), MaxInFlight: *inflight})
+	disc := resolve.NewDiscoverer(resolve.NewExchanger(discSched, *timeout), strings.Split(*resolvers, ","))
+	rec := resolve.NewResolver(resolve.NewExchanger(authSched, *timeout))
 	cfg := records.DefaultConfig()
 
+	// 3) Resolver pool -> results channel -> single writer goroutine (batched SQLite commits).
 	results := make(chan model.DomainResult, *batchN*2)
 	var writerWG sync.WaitGroup
 	writerWG.Add(1)
@@ -1824,7 +1859,7 @@ func runScan(args []string) error {
 			defer wg.Done()
 			defer func() { <-sem }()
 			now := time.Now().UTC()
-			del, derr := res.DiscoverNS(ctx, domain)
+			del, derr := disc.DiscoverNS(ctx, domain)
 			if derr != nil || len(del.NSIPs) == 0 {
 				msg := "no authoritative NS IPs"
 				if derr != nil {
@@ -1837,7 +1872,7 @@ func runScan(args []string) error {
 				}
 				return
 			}
-			results <- res.Resolve(ctx, domain, *scanID, *runID, del, cfg, now)
+			results <- rec.Resolve(ctx, domain, *scanID, *runID, del, cfg, now)
 		}(d)
 	}
 	wg.Wait()
@@ -1891,9 +1926,10 @@ CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records
     name          String,
     record_type   LowCardinality(String),
     slot          LowCardinality(String),
-    value         String,
+    value         String,                     -- rdata verbatim; MX value is "<pref> <host>" so the
+                                              -- sort key below can't collapse two MX at different prefs
     ttl           UInt32,
-    priority      UInt16,
+    priority      UInt16,                     -- MX preference (convenience; also embedded in value)
     rcode         LowCardinality(String),
     source_run_id String,
     resolved_at   DateTime64(3, 'UTC')
@@ -2131,11 +2167,13 @@ import (
 )
 
 func TestSmokeRealDomains(t *testing.T) {
-	s := scheduler.New(scheduler.Config{PerServerQPS: 10, Burst: 10, MaxInFlight: 3})
-	r := NewResolver(NewExchanger(s, 5*time.Second))
+	discSched := scheduler.New(scheduler.Config{PerServerQPS: 50, Burst: 50, MaxInFlight: 3})
+	authSched := scheduler.New(scheduler.Config{PerServerQPS: 10, Burst: 10, MaxInFlight: 3})
+	disc := NewDiscoverer(NewExchanger(discSched, 5*time.Second), nil) // nil -> DefaultResolvers
+	r := NewResolver(NewExchanger(authSched, 5*time.Second))
 	ctx := context.Background()
 
-	del, err := r.DiscoverNS(ctx, "cloudflare.com")
+	del, err := disc.DiscoverNS(ctx, "cloudflare.com")
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
@@ -2307,10 +2345,12 @@ Expected: nonzero record count; ~20 domain rows.
 
 - [ ] **Step 4: Write the README**
 
-Create `commoncrawl/cc-dns-worker/README.md` documenting: purpose; the two-tier per-server rate model;
-the SQLite stage + resume contract; `scan`/`load` usage and flags; the two CH tables and how history
-works (`scan_id`); env vars (`CLICKHOUSE_*`); and deferred items (Redis/shard-by-server scale-out,
-CT-log hostnames, DNSSEC validation, dagster scheduling). Match `cc-enrich-worker/README.md` tone.
+Create `commoncrawl/cc-dns-worker/README.md` documenting: purpose; the two-tier model (recursive
+discovery via `--resolvers`, incl. the recommended local `unbound` for large runs; direct-to-authoritative
+record queries with per-NS-IP rate limiting); the SQLite stage + resume contract; `scan`/`load` usage
+and flags; the two CH tables and how history works (`scan_id`); env vars (`CLICKHOUSE_*`); and deferred
+items (circuit breaker, streaming input, Redis/shard-by-server scale-out, CT-log hostnames, DNSSEC
+validation, dagster scheduling). Match `cc-enrich-worker/README.md` tone.
 
 - [ ] **Step 5: Clean up smoke data and commit**
 
@@ -2326,6 +2366,9 @@ git commit -m "docs(dns): cc-dns-worker README and end-to-end smoke/resume notes
 ---
 
 ## Deferred (documented, not built in v1)
+- **Per-server circuit breaker** — after N consecutive timeouts to a server IP, short-circuit its queries so a dead nameserver stops burning per-query timeout budget. v1 relies on the per-server limiter + bounded retries only.
+- **Local `unbound` for discovery** — recommended for large runs: run `unbound` on the scan box and pass `--resolvers 127.0.0.1:53 --discovery-qps 2000`. Removes public-resolver dependence and gives natural TLD caching. (The worker already supports it via flags; deploying unbound is the deferred part.)
+- **Streaming domain input** — `input.FromClickHouse` currently materializes all root_domains before seeding; for full-corpus runs switch to a streaming reader that seeds in chunks without holding the whole list in memory. (Seeding is already chunked; the read is not.)
 - **Redis-backed distributed scheduler** via shard-by-server-IP (spec §3.3) — only when one box is too slow.
 - **CT-log hostname discovery** feeding the hostname list (spec §2) — replaces the static 5.
 - **DNSSEC chain validation** — v1 only captures DNSKEY/DS presence.
@@ -2333,10 +2376,12 @@ git commit -m "docs(dns): cc-dns-worker README and end-to-end smoke/resume notes
 
 ## Self-review notes
 - Spec §2 record families → Task 3 (plan) + Task 6 (collect) + smoke Task 10. ✓
-- Spec §3.2/3.3 rate model + single-node → Task 4 (scheduler) + Task 5 (exchange routes through it). ✓
-- Spec §3.3/§3.4 durable queue + SQLite stage + resume → Task 7 (store) + Task 8 (seed/pending/writer). ✓
-- Spec §3.5 iterative walk → Task 5 (discover). ✓
-- Spec §5 two normalized tables → Task 9 migrations; §5.3 SQLite stage → Task 7; column match → Task 2/9 tests. ✓
-- Spec §6 resume-on-crash → Task 7 `TestCommitBatchAndResume` + Task 11 Step 2. ✓
-- Spec §7 testing (store resume, in-process server, real-DNS smoke, CH load) → Tasks 7/10. ✓
-- Type consistency: `DomainResult`/`DNSRecord` (Task 2) used by `Resolve` (Task 6), `store` (Task 7), `scan` (Task 8); `RecordRow`/`ScanRow` (Task 2) used by `store` staged-readers (Task 7) and `load` (Task 9). ✓
+- Rate model + single-node → Task 4 (scheduler); two schedulers (discovery + authoritative) wired in Task 8. ✓
+- Recursive discovery (no root walk; cross-TLD/glue handled by the resolver) → Task 5 (`Discoverer`), deterministically unit-tested by `TestDiscoverNS`. ✓
+- Direct-to-authoritative record queries with per-NS-IP limiting + retry → Task 6 (`Resolver.queryAuth`, RD=false). ✓
+- Durable queue + SQLite stage + resume → Task 7 (store) + Task 8 (chunked seed/pending/writer). ✓
+- Two normalized tables → Task 9 migrations; SQLite stage → Task 7; column match → Task 2/9 tests. ✓
+- MX ReplacingMergeTree-key collision fixed: MX `value` is full rdata `"<pref> <host>"` (Task 6 `collect`), asserted in Task 6 test. ✓
+- Resume-on-crash → Task 7 `TestCommitBatchAndResume` + Task 11 Step 2. ✓
+- Testing (discovery unit test, store resume, real-DNS smoke, CH load) → Tasks 5/7/10. ✓
+- Type consistency: `DomainResult`/`DNSRecord` (Task 2) used by `Resolve` (Task 6), `store` (Task 7), `scan` (Task 8); `Discoverer` (Task 5) + `Resolver` (Task 6) both consume `Exchanger` (Task 5); `RecordRow`/`ScanRow` (Task 2) used by `store` (Task 7) and `load` (Task 9). ✓
