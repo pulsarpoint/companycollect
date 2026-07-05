@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Go worker (`cc-dns-worker`) that reads domains from ClickHouse, resolves a rich DNS record set directly from each domain's authoritative nameservers under strict per-server rate limits, writes one row per domain to Parquet, and loads it into a historical ClickHouse table.
+**Goal:** Build a Go worker (`cc-dns-worker`) that reads domains from ClickHouse, resolves a rich DNS record set directly from each domain's authoritative nameservers under strict per-server rate limits, stages results in a durable embedded SQLite database (crash-resumable), and loads them into two normalized, historical ClickHouse tables.
 
-**Architecture:** Iterative DNS resolution with `miekg/dns`. Every outbound query targets a specific server IP; a single token-bucket limiter per server IP (default ~10 qps) paces both the TLD tier (NS discovery) and the authoritative-NS tier (record queries). Single-process, in-memory for v1. Output mirrors `cc-enrich-worker`: rolling Parquet with dual `parquet`/`ch`-tagged row structs, plus a `load` subcommand that batch-inserts via the ClickHouse native protocol into `corpscout.commoncrawl_domain_dns` (ReplacingMergeTree, historical by `scan_id`).
+**Architecture:** Iterative DNS resolution with `miekg/dns`. Every outbound query targets a specific server IP; a single token-bucket limiter per server IP (default ~10 qps) paces both the TLD tier (NS discovery) and the authoritative-NS tier (record queries). Single node, no Redis: limiters are in-memory, but the work queue + per-domain status + staged records live in an embedded SQLite `scan.db` written by one dedicated writer goroutine, so a killed run resumes the remaining `pending` domains. A `load` subcommand bulk-copies SQLite → ClickHouse over the native protocol into `commoncrawl_domain_dns_records` (one row per record) and `commoncrawl_domain_dns_scan` (per-domain summary/status).
 
-**Tech Stack:** Go 1.24, `github.com/miekg/dns`, `golang.org/x/time/rate`, `golang.org/x/net/publicsuffix`, `github.com/parquet-go/parquet-go`, `github.com/ClickHouse/clickhouse-go/v2`.
+**Tech Stack:** Go 1.24, `github.com/miekg/dns`, `golang.org/x/time/rate`, `golang.org/x/net/publicsuffix`, `modernc.org/sqlite` (pure-Go, no cgo), `github.com/ClickHouse/clickhouse-go/v2`.
 
 **Spec:** `docs/superpowers/specs/2026-07-05-commoncrawl-dns-scanner-design.md`
 
@@ -14,14 +14,15 @@
 
 - Go module name: `cc-dns-worker`; all internal imports are `cc-dns-worker/internal/...`.
 - Go version floor: `go 1.24` in `go.mod`.
-- Every Parquet row struct field carries BOTH a `parquet:"col"` and `ch:"col"` tag naming the same column; a struct-tag test pins them equal (mirrors `cc-enrich-worker`).
-- Default per-server rate: `10` qps, burst `10`; default per-server in-flight cap `3`. All configurable via flags/env.
-- Default hostnames (5, apex always added separately, apex stored under key `@`): `www, mail, webmail, smtp, autodiscover`.
+- SQLite driver: `modernc.org/sqlite` (pure Go, no cgo), registered `database/sql` driver name `"sqlite"`. Open with `?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)`.
+- CH load structs carry a `ch:"col"` tag on every stored field naming the exact CH column; a struct-tag test pins the expected column set.
+- Default per-server rate: `10` qps, burst `10`; default per-server in-flight cap `3`. Configurable via flags.
+- Default hostnames (5; apex always resolved separately, apex stored under slot `@`): `www, mail, webmail, smtp, autodiscover`.
 - Default DKIM selectors (10): `default, google, selector1, selector2, k1, dkim, s1, s2, mail, mandrill`.
 - EDNS0 UDP buffer size `1232`, DO bit set on every query.
-- ClickHouse database `corpscout`; new table `corpscout.commoncrawl_domain_dns`.
-- Follow Conventional Commits. Run `go fmt ./...` and `go vet ./...` before each commit.
-- Working directory for the module: `commoncrawl/cc-dns-worker/`.
+- ClickHouse database `corpscout`; new tables `corpscout.commoncrawl_domain_dns_records` and `corpscout.commoncrawl_domain_dns_scan`.
+- Resume contract: a domain is flipped to `done`/`error` in one SQLite transaction only after its results are written; a crash leaves unfinished domains `pending`, and re-running `scan` processes exactly the not-`done`/not-`error` set.
+- Follow Conventional Commits. Run `go fmt ./...` and `go vet ./...` before each commit. Working dir for the module: `commoncrawl/cc-dns-worker/`.
 
 ---
 
@@ -30,30 +31,29 @@
 **Files:**
 - Create: `commoncrawl/cc-dns-worker/go.mod`
 - Create: `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/main.go`
+- Create: `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/scan.go`
+- Create: `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/load.go`
 - Create: `commoncrawl/cc-dns-worker/Makefile`
 
 **Interfaces:**
-- Consumes: nothing.
-- Produces: a buildable binary with `scan` and `load` subcommands (stubs that print usage).
+- Produces: a buildable binary with `scan` and `load` subcommand stubs.
 
-- [ ] **Step 1: Create the module**
+- [ ] **Step 1: Create the module + deps**
 
 Run:
 ```bash
-cd commoncrawl/cc-dns-worker && go mod init cc-dns-worker && go get github.com/miekg/dns@latest golang.org/x/time/rate@latest golang.org/x/net/publicsuffix@latest github.com/parquet-go/parquet-go@latest github.com/ClickHouse/clickhouse-go/v2@latest
+cd commoncrawl/cc-dns-worker && go mod init cc-dns-worker && \
+go get github.com/miekg/dns@latest golang.org/x/time/rate@latest golang.org/x/net/publicsuffix@latest \
+       modernc.org/sqlite@latest github.com/ClickHouse/clickhouse-go/v2@latest
 ```
-Expected: `go.mod` and `go.sum` created with those requires; `go 1.24` line present (add/adjust if the toolchain writes a different floor).
+Expected: `go.mod`/`go.sum` created; ensure the `go` line reads `go 1.24` (edit if the toolchain wrote a higher floor).
 
 - [ ] **Step 2: Write the CLI skeleton**
 
 Create `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/main.go`:
 ```go
 // Command cc-dns-worker resolves DNS for corpscout domains directly from authoritative
-// nameservers and loads the results into ClickHouse.
-//
-// Usage:
-//   cc-dns-worker scan  [flags]   resolve domains -> dns.parquet
-//   cc-dns-worker load  [flags]   load dns.parquet -> corpscout.commoncrawl_domain_dns
+// nameservers, stages results in SQLite (resumable), and loads them into ClickHouse.
 package main
 
 import (
@@ -68,8 +68,8 @@ Usage:
   cc-dns-worker <command> [flags]
 
 Commands:
-  scan   resolve domains from ClickHouse (or a worklist parquet) into dns.parquet
-  load   load an already-produced dns.parquet into corpscout.commoncrawl_domain_dns
+  scan   resolve domains from ClickHouse into a durable SQLite stage (resumable)
+  load   bulk-copy the SQLite stage into corpscout ClickHouse tables
 
 Run "cc-dns-worker <command> -h" for that command's flags.
 `)
@@ -142,7 +142,7 @@ fmt:
 - [ ] **Step 4: Verify it builds**
 
 Run: `cd commoncrawl/cc-dns-worker && go build ./... && go vet ./...`
-Expected: no output, exit 0.
+Expected: exit 0, no output.
 
 - [ ] **Step 5: Commit**
 
@@ -154,14 +154,20 @@ git commit -m "feat(dns): scaffold cc-dns-worker module and CLI skeleton"
 
 ---
 
-### Task 2: The DomainDNSRow model with pinned parquet/ch tags
+### Task 2: Domain-result and CH-load models
 
 **Files:**
 - Create: `commoncrawl/cc-dns-worker/internal/model/model.go`
 - Test: `commoncrawl/cc-dns-worker/internal/model/model_test.go`
 
 **Interfaces:**
-- Produces: `model.DomainDNSRow` — the one struct written to Parquet and inserted into ClickHouse. Fields consumed by output (Task 7), load (Task 9), and worker assembly (Task 8).
+- Produces:
+  - `model.DNSRecord{ Name, RecordType, Slot, Value, Rcode string; TTL uint32; Priority uint16 }`
+  - `model.DomainResult{ ScanID, RootDomain, ETLD string; Nameservers, NSIPs []string;
+    DNSSECSigned, DSPresent bool; Status, Error string; QueriesTotal, QueriesOK int;
+    Records []DNSRecord; SourceRunID string; ResolvedAt time.Time }` — what a resolver emits and the
+    store commits (Tasks 6, 7, 8).
+  - `model.RecordRow` / `model.ScanRow` — CH-load structs (ch tags), used by load (Task 9).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -174,87 +180,110 @@ import (
 	"testing"
 )
 
-// The load path INSERTs using ch tags; the file is written using parquet tags. They must name the
-// same column or the loaded data lands in the wrong column silently.
-func TestDomainDNSRowTagsMatch(t *testing.T) {
-	rt := reflect.TypeOf(DomainDNSRow{})
+func chCols(v any) map[string]bool {
+	rt := reflect.TypeOf(v)
+	out := map[string]bool{}
 	for i := 0; i < rt.NumField(); i++ {
-		f := rt.Field(i)
-		pq := f.Tag.Get("parquet")
-		ch := f.Tag.Get("ch")
-		if pq == "" || ch == "" {
-			t.Fatalf("field %s missing a tag: parquet=%q ch=%q", f.Name, pq, ch)
+		if c := rt.Field(i).Tag.Get("ch"); c != "" {
+			out[c] = true
 		}
-		// parquet tag may carry options after a comma (e.g. "resolved_at,timestamp").
-		pqCol := pq
-		if idx := indexByte(pq, ','); idx >= 0 {
-			pqCol = pq[:idx]
-		}
-		if pqCol != ch {
-			t.Errorf("field %s: parquet col %q != ch col %q", f.Name, pqCol, ch)
+	}
+	return out
+}
+
+func TestRecordRowColumns(t *testing.T) {
+	cols := chCols(RecordRow{})
+	for _, c := range []string{"scan_id", "root_domain", "name", "record_type", "slot", "value", "ttl", "priority", "rcode", "source_run_id", "resolved_at"} {
+		if !cols[c] {
+			t.Errorf("RecordRow missing ch column %q", c)
 		}
 	}
 }
 
-func indexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
+func TestScanRowColumns(t *testing.T) {
+	cols := chCols(ScanRow{})
+	for _, c := range []string{"scan_id", "root_domain", "etld", "nameservers", "ns_ips", "dnssec_signed", "ds_present", "status", "error", "queries_total", "queries_ok", "source_run_id", "resolved_at"} {
+		if !cols[c] {
+			t.Errorf("ScanRow missing ch column %q", c)
 		}
 	}
-	return -1
 }
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/model/`
-Expected: FAIL — `DomainDNSRow` undefined.
+Expected: FAIL — `RecordRow`, `ScanRow` undefined.
 
 - [ ] **Step 3: Write the model**
 
 Create `commoncrawl/cc-dns-worker/internal/model/model.go`:
 ```go
-// Package model defines DomainDNSRow, the single row written to Parquet and inserted into
-// corpscout.commoncrawl_domain_dns. Every field carries matching parquet and ch tags; the two
-// must name the same column (pinned by TestDomainDNSRowTagsMatch).
+// Package model holds the in-memory result a resolver emits (DomainResult/DNSRecord) and the
+// ClickHouse-load row structs (RecordRow/ScanRow) whose ch tags name the target columns.
 package model
 
 import "time"
 
-// DomainDNSRow is one domain's DNS posture for one scan. Records are stored verbatim; SPF/DMARC/
-// DKIM parsing and scoring are derived later in SQL.
-type DomainDNSRow struct {
-	ScanID     string `parquet:"scan_id" ch:"scan_id"`
-	RootDomain string `parquet:"root_domain" ch:"root_domain"`
-	ETLD       string `parquet:"etld" ch:"etld"`
+// DNSRecord is one resolved resource record, stored verbatim.
+type DNSRecord struct {
+	Name       string // qname queried (FQDN without trailing dot)
+	RecordType string // A, AAAA, MX, TXT, NS, SOA, CAA, DNSKEY, DS
+	Slot       string // "@", hostname, DKIM selector, "dmarc"/"mta_sts"/"tls_rpt"/"bimi", or ""
+	Value      string // rdata verbatim
+	Rcode      string // query rcode for the query that produced this record
+	TTL        uint32
+	Priority   uint16 // MX preference; 0 otherwise
+}
 
-	Nameservers []string `parquet:"nameservers" ch:"nameservers"`
-	NSIPs       []string `parquet:"ns_ips" ch:"ns_ips"`
+// DomainResult is everything learned for one domain in one scan.
+type DomainResult struct {
+	ScanID       string
+	RootDomain   string
+	ETLD         string
+	Nameservers  []string
+	NSIPs        []string
+	DNSSECSigned bool
+	DSPresent    bool
+	Status       string // "done" | "error"
+	Error        string
+	QueriesTotal int
+	QueriesOK    int
+	Records      []DNSRecord
+	SourceRunID  string
+	ResolvedAt   time.Time
+}
 
-	A    map[string][]string `parquet:"a" ch:"a"`
-	AAAA map[string][]string `parquet:"aaaa" ch:"aaaa"`
+// RecordRow mirrors corpscout.commoncrawl_domain_dns_records.
+type RecordRow struct {
+	ScanID      string    `ch:"scan_id"`
+	RootDomain  string    `ch:"root_domain"`
+	Name        string    `ch:"name"`
+	RecordType  string    `ch:"record_type"`
+	Slot        string    `ch:"slot"`
+	Value       string    `ch:"value"`
+	TTL         uint32    `ch:"ttl"`
+	Priority    uint16    `ch:"priority"`
+	Rcode       string    `ch:"rcode"`
+	SourceRunID string    `ch:"source_run_id"`
+	ResolvedAt  time.Time `ch:"resolved_at"`
+}
 
-	MX     []string          `parquet:"mx" ch:"mx"`
-	TXT    []string          `parquet:"txt" ch:"txt"`
-	DMARC  string            `parquet:"dmarc" ch:"dmarc"`
-	DKIM   map[string]string `parquet:"dkim" ch:"dkim"`
-	MTASTS string            `parquet:"mta_sts" ch:"mta_sts"`
-	TLSRPT string            `parquet:"tls_rpt" ch:"tls_rpt"`
-	BIMI   string            `parquet:"bimi" ch:"bimi"`
-
-	CAA []string `parquet:"caa" ch:"caa"`
-	SOA string   `parquet:"soa" ch:"soa"`
-
-	DNSSECSigned uint8    `parquet:"dnssec_signed" ch:"dnssec_signed"`
-	DSPresent    uint8    `parquet:"ds_present" ch:"ds_present"`
-	DNSKEY       []string `parquet:"dnskey" ch:"dnskey"`
-	DS           []string `parquet:"ds" ch:"ds"`
-
-	QueryStatus  map[string]string `parquet:"query_status" ch:"query_status"`
-	ResolverPath string            `parquet:"resolver_path" ch:"resolver_path"`
-	SourceRunID  string            `parquet:"source_run_id" ch:"source_run_id"`
-	ResolvedAt   time.Time         `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+// ScanRow mirrors corpscout.commoncrawl_domain_dns_scan.
+type ScanRow struct {
+	ScanID       string    `ch:"scan_id"`
+	RootDomain   string    `ch:"root_domain"`
+	ETLD         string    `ch:"etld"`
+	Nameservers  []string  `ch:"nameservers"`
+	NSIPs        []string  `ch:"ns_ips"`
+	DNSSECSigned uint8     `ch:"dnssec_signed"`
+	DSPresent    uint8     `ch:"ds_present"`
+	Status       string    `ch:"status"`
+	Error        string    `ch:"error"`
+	QueriesTotal uint16    `ch:"queries_total"`
+	QueriesOK    uint16    `ch:"queries_ok"`
+	SourceRunID  string    `ch:"source_run_id"`
+	ResolvedAt   time.Time `ch:"resolved_at"`
 }
 ```
 
@@ -268,7 +297,7 @@ Expected: PASS.
 ```bash
 cd commoncrawl/cc-dns-worker && go fmt ./... && go vet ./...
 git add commoncrawl/cc-dns-worker/internal/model
-git commit -m "feat(dns): DomainDNSRow model with pinned parquet/ch tags"
+git commit -m "feat(dns): DomainResult + normalized RecordRow/ScanRow models"
 ```
 
 ---
@@ -281,13 +310,9 @@ git commit -m "feat(dns): DomainDNSRow model with pinned parquet/ch tags"
 
 **Interfaces:**
 - Produces:
-  - `records.Config{ Hostnames []string; DKIMSelectors []string }`
-  - `records.DefaultConfig() Config`
-  - `records.Query{ Name string; Type uint16; Slot string }` — `Slot` is the map key used when
-    storing the answer (e.g. `www`, `@`, a DKIM selector).
-  - `records.Plan(domain string, cfg Config) []Query` — the full per-domain query list (Tier 2;
-    NS discovery is separate, in Task 5).
-- Consumes: `github.com/miekg/dns` type constants.
+  - `records.Config{ Hostnames []string; DKIMSelectors []string }`, `records.DefaultConfig() Config`
+  - `records.Query{ Name string; Type uint16; Slot string }`
+  - `records.Plan(domain string, cfg Config) []Query` — the Tier-2 query list (NS discovery is Task 5).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -302,22 +327,18 @@ import (
 )
 
 func TestPlanCoversAllRecordFamilies(t *testing.T) {
-	cfg := DefaultConfig()
-	qs := Plan("example.com", cfg)
-
-	// Index by "name/type" for assertions.
+	qs := Plan("example.com", DefaultConfig())
 	got := map[string]bool{}
 	for _, q := range qs {
 		got[q.Name+"/"+dns.TypeToString[q.Type]] = true
 	}
-
 	want := []string{
-		"example.com./A", "example.com./AAAA", // apex host
-		"www.example.com./A", "mail.example.com./A", // sample subdomains
+		"example.com./A", "example.com./AAAA",
+		"www.example.com./A", "mail.example.com./A",
 		"example.com./MX", "example.com./TXT",
 		"_dmarc.example.com./TXT",
-		"default._domainkey.example.com./TXT",   // first DKIM selector
-		"mandrill._domainkey.example.com./TXT",  // last DKIM selector
+		"default._domainkey.example.com./TXT",
+		"mandrill._domainkey.example.com./TXT",
 		"_mta-sts.example.com./TXT",
 		"_smtp._tls.example.com./TXT",
 		"default._bimi.example.com./TXT",
@@ -343,27 +364,25 @@ func TestPlanApexSlotIsAt(t *testing.T) {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/records/`
-Expected: FAIL — `DefaultConfig`, `Plan`, `Query` undefined.
+Expected: FAIL — undefined `Plan`/`DefaultConfig`/`Query`.
 
 - [ ] **Step 3: Write the plan**
 
 Create `commoncrawl/cc-dns-worker/internal/records/plan.go`:
 ```go
-// Package records builds the per-domain list of DNS queries (Tier 2 — sent to the domain's own
+// Package records builds the per-domain list of Tier-2 DNS queries (sent to the domain's own
 // authoritative nameservers). NS discovery (Tier 1) lives in package resolve.
 package records
 
-import (
-	"github.com/miekg/dns"
-)
+import "github.com/miekg/dns"
 
-// Config controls which hostnames get A/AAAA queries and which DKIM selectors are brute-forced.
+// Config controls A/AAAA hostnames and brute-forced DKIM selectors.
 type Config struct {
-	Hostnames     []string // subdomains, apex is always added separately
+	Hostnames     []string // subdomains; apex is added separately
 	DKIMSelectors []string
 }
 
-// DefaultConfig is the spec's default hostname (5) and DKIM selector (10) lists.
+// DefaultConfig is the spec's default 5 hostnames and 10 DKIM selectors.
 func DefaultConfig() Config {
 	return Config{
 		Hostnames:     []string{"www", "mail", "webmail", "smtp", "autodiscover"},
@@ -371,28 +390,25 @@ func DefaultConfig() Config {
 	}
 }
 
-// Query is one DNS question plus the map key ("slot") under which its answer is stored.
+// Query is one DNS question plus the semantic slot its answers are tagged with.
 type Query struct {
 	Name string // FQDN with trailing dot
 	Type uint16
-	Slot string // "@" for apex; hostname for A/AAAA; selector for DKIM; "" when N/A
+	Slot string // "@" apex host; hostname; DKIM selector; "dmarc"/"mta_sts"/"tls_rpt"/"bimi"; "" infra
 }
 
-// Plan returns every Tier-2 query for a domain. domain has no trailing dot.
+// Plan returns every Tier-2 query for a domain (no trailing dot on input).
 func Plan(domain string, cfg Config) []Query {
 	fqdn := dns.Fqdn(domain)
 	qs := []Query{
-		// apex host
 		{fqdn, dns.TypeA, "@"},
 		{fqdn, dns.TypeAAAA, "@"},
-		// zone/infra
 		{fqdn, dns.TypeMX, ""},
 		{fqdn, dns.TypeTXT, ""},
 		{fqdn, dns.TypeNS, ""},
 		{fqdn, dns.TypeSOA, ""},
 		{fqdn, dns.TypeCAA, ""},
 		{fqdn, dns.TypeDNSKEY, ""},
-		// mail policy
 		{"_dmarc." + fqdn, dns.TypeTXT, "dmarc"},
 		{"_mta-sts." + fqdn, dns.TypeTXT, "mta_sts"},
 		{"_smtp._tls." + fqdn, dns.TypeTXT, "tls_rpt"},
@@ -432,12 +448,9 @@ git commit -m "feat(dns): per-domain query plan (hosts, DKIM, mail policy, DNSSE
 
 **Interfaces:**
 - Produces:
-  - `scheduler.Config{ PerServerQPS float64; Burst int; MaxInFlight int }`
-  - `scheduler.New(cfg Config) *Scheduler`
-  - `(*Scheduler).Do(ctx context.Context, serverIP string, fn func() error) error` — acquires the
-    server's token + in-flight slot, runs `fn`, releases the slot. This is the single choke point
-    every outbound query passes through (Task 5 calls it).
-- Consumes: `golang.org/x/time/rate`.
+  - `scheduler.Config{ PerServerQPS float64; Burst int; MaxInFlight int }`, `scheduler.New(cfg) *Scheduler`
+  - `(*Scheduler).Do(ctx context.Context, serverIP string, fn func() error) error` — the single choke
+    point every outbound query passes through (Task 5).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -453,7 +466,6 @@ import (
 	"time"
 )
 
-// With 5 qps and burst 1, 6 calls to one server must take >= ~1s (5 tokens/sec after the first).
 func TestPerServerPacing(t *testing.T) {
 	s := New(Config{PerServerQPS: 5, Burst: 1, MaxInFlight: 100})
 	ctx := context.Background()
@@ -461,10 +473,7 @@ func TestPerServerPacing(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 6; i++ {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = s.Do(ctx, "1.2.3.4", func() error { return nil })
-		}()
+		go func() { defer wg.Done(); _ = s.Do(ctx, "1.2.3.4", func() error { return nil }) }()
 	}
 	wg.Wait()
 	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
@@ -472,7 +481,6 @@ func TestPerServerPacing(t *testing.T) {
 	}
 }
 
-// Two different servers are independent: 6 calls split across two servers finish fast.
 func TestServersAreIndependent(t *testing.T) {
 	s := New(Config{PerServerQPS: 5, Burst: 3, MaxInFlight: 100})
 	ctx := context.Background()
@@ -484,10 +492,7 @@ func TestServersAreIndependent(t *testing.T) {
 			ip = "2.2.2.2"
 		}
 		wg.Add(1)
-		go func(ip string) {
-			defer wg.Done()
-			_ = s.Do(ctx, ip, func() error { return nil })
-		}(ip)
+		go func(ip string) { defer wg.Done(); _ = s.Do(ctx, ip, func() error { return nil }) }(ip)
 	}
 	wg.Wait()
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
@@ -495,7 +500,6 @@ func TestServersAreIndependent(t *testing.T) {
 	}
 }
 
-// MaxInFlight caps concurrent fn execution per server.
 func TestMaxInFlightCap(t *testing.T) {
 	s := New(Config{PerServerQPS: 1000, Burst: 1000, MaxInFlight: 2})
 	ctx := context.Background()
@@ -529,17 +533,15 @@ func TestMaxInFlightCap(t *testing.T) {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/scheduler/`
-Expected: FAIL — `New`, `Config` undefined.
+Expected: FAIL — undefined `New`/`Config`.
 
 - [ ] **Step 3: Write the scheduler**
 
 Create `commoncrawl/cc-dns-worker/internal/scheduler/scheduler.go`:
 ```go
-// Package scheduler paces outbound work per target server IP. Every DNS query passes through
-// Do(), which grants a token from that server's bucket and a per-server in-flight slot before
-// running fn. This is the whole rate-limiting model: hundreds of thousands of independent
-// server buckets, each gentle, run in parallel. Single-process only; see the spec's shard-by-
-// server scale-out note for the distributed path.
+// Package scheduler paces outbound work per target server IP. Every DNS query passes through Do(),
+// which grants a token from that server's bucket and a per-server in-flight slot before running fn.
+// Single-process, in-memory; see the spec's shard-by-server note for the distributed path.
 package scheduler
 
 import (
@@ -568,7 +570,7 @@ type server struct {
 	slot chan struct{}
 }
 
-// New returns a Scheduler. Zero/negative knobs fall back to safe defaults.
+// New returns a Scheduler; zero/negative knobs fall back to safe defaults.
 func New(cfg Config) *Scheduler {
 	if cfg.PerServerQPS <= 0 {
 		cfg.PerServerQPS = 10
@@ -596,8 +598,7 @@ func (s *Scheduler) forServer(ip string) *server {
 	return sv
 }
 
-// Do waits for a token and an in-flight slot for serverIP, then runs fn. It returns ctx.Err() if
-// the context is cancelled while waiting, otherwise fn's error.
+// Do waits for a token and an in-flight slot for serverIP, then runs fn.
 func (s *Scheduler) Do(ctx context.Context, serverIP string, fn func() error) error {
 	sv := s.forServer(serverIP)
 	select {
@@ -616,7 +617,7 @@ func (s *Scheduler) Do(ctx context.Context, serverIP string, fn func() error) er
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/scheduler/`
-Expected: PASS (all three tests).
+Expected: PASS (all three).
 
 - [ ] **Step 5: Commit**
 
@@ -628,7 +629,7 @@ git commit -m "feat(dns): per-server-IP token-bucket scheduler with in-flight ca
 
 ---
 
-### Task 5: Iterative resolver — a low-level exchange + NS discovery
+### Task 5: Iterative resolver — scheduled exchange + NS discovery
 
 **Files:**
 - Create: `commoncrawl/cc-dns-worker/internal/resolve/exchange.go`
@@ -639,13 +640,11 @@ git commit -m "feat(dns): per-server-IP token-bucket scheduler with in-flight ca
 **Interfaces:**
 - Produces:
   - `resolve.Exchanger` interface: `Exchange(ctx, m *dns.Msg, serverIP string) (*dns.Msg, error)`
-  - `resolve.NewExchanger(sched *scheduler.Scheduler, timeout time.Duration) Exchanger` — the real
-    UDP-with-TCP-fallback client, every send routed through `sched.Do`.
-  - `resolve.Resolver{ Ex Exchanger; Roots []string }`
-  - `resolve.NewResolver(ex Exchanger) *Resolver` — seeds `Roots` with the 13 root server IPs.
-  - `(*Resolver).DiscoverNS(ctx, domain string) (Delegation, error)` where
-    `Delegation{ ETLD string; NS []string; NSIPs []string; DS []string }`.
-- Consumes: `scheduler.Scheduler` (Task 4), `github.com/miekg/dns`, `golang.org/x/net/publicsuffix`.
+  - `resolve.NewExchanger(sched *scheduler.Scheduler, timeout time.Duration) Exchanger`
+  - `resolve.Delegation{ ETLD string; NS []string; NSIPs []string; DS []string }`
+  - `resolve.Resolver{ Ex Exchanger; Roots []string }`, `resolve.NewResolver(ex Exchanger) *Resolver`
+  - `(*Resolver).DiscoverNS(ctx, domain string) (Delegation, error)`
+- Consumes: `scheduler.Scheduler`, `miekg/dns`, `golang.org/x/net/publicsuffix`.
 
 - [ ] **Step 1: Write the in-process authoritative test server helper**
 
@@ -660,11 +659,8 @@ import (
 	"github.com/miekg/dns"
 )
 
-// zone maps an exact "qname/qtype" to the RRs an authoritative server returns in ANSWER.
 type zone map[string][]dns.RR
 
-// startAuth spins a UDP miekg/dns server on 127.0.0.1:0 answering from z. It returns the server's
-// ip:port host and a cleanup func.
 func startAuth(t *testing.T, z zone) (string, func()) {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
@@ -676,8 +672,7 @@ func startAuth(t *testing.T, z zone) (string, func()) {
 		m := new(dns.Msg)
 		m.SetReply(r)
 		q := r.Question[0]
-		key := q.Name + "/" + dns.TypeToString[q.Qtype]
-		if rrs, ok := z[key]; ok {
+		if rrs, ok := z[q.Name+"/"+dns.TypeToString[q.Qtype]]; ok {
 			m.Answer = append(m.Answer, rrs...)
 		}
 		_ = w.WriteMsg(m)
@@ -697,7 +692,7 @@ func mustRR(t *testing.T, s string) dns.RR {
 }
 ```
 
-- [ ] **Step 2: Write the failing exchange + discovery test**
+- [ ] **Step 2: Write the failing exchange test**
 
 Create `commoncrawl/cc-dns-worker/internal/resolve/resolve_test.go`:
 ```go
@@ -740,23 +735,21 @@ func TestExchangeRoundTrip(t *testing.T) {
 }
 ```
 
-Note: `DiscoverNS` is exercised end-to-end in the real-DNS smoke test (Task 10) because a faithful
-root→TLD→auth walk against fake in-process servers requires wiring referral responses; the unit
-layer here pins the exchange primitive and pacing. Keep `DiscoverNS` logic small and covered by the
-smoke test.
+Note: `DiscoverNS`'s full root→TLD→auth walk is exercised end-to-end in the real-DNS smoke test (Task
+10). Keep its logic small; the exchange primitive + pacing are unit-pinned here.
 
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/resolve/`
-Expected: FAIL — `Exchanger`, `NewExchanger` undefined.
+Expected: FAIL — undefined `Exchanger`/`NewExchanger`.
 
 - [ ] **Step 4: Write the exchange primitive**
 
 Create `commoncrawl/cc-dns-worker/internal/resolve/exchange.go`:
 ```go
 // Package resolve does iterative DNS resolution directly against authoritative servers. exchange.go
-// is the transport primitive: a single UDP query (TCP on truncation) routed through the per-server
-// scheduler so no server is ever hit too fast.
+// is the transport primitive: one UDP query (TCP on truncation) routed through the per-server
+// scheduler so no server is hit too fast.
 package resolve
 
 import (
@@ -799,9 +792,15 @@ func withPort(ip string) string {
 	return net.JoinHostPort(ip, "53")
 }
 
+func hostOnly(ip string) string {
+	if h, _, err := net.SplitHostPort(ip); err == nil {
+		return h
+	}
+	return ip
+}
+
 func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dns.Msg, error) {
-	// Request DNSSEC records (DO bit) and a large UDP buffer on every query.
-	m.SetEdns0(1232, true)
+	m.SetEdns0(1232, true) // DO bit + large UDP buffer on every query
 	addr := withPort(serverIP)
 	var resp *dns.Msg
 	err := c.sched.Do(ctx, hostOnly(serverIP), func() error {
@@ -819,13 +818,6 @@ func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dn
 		return nil
 	})
 	return resp, err
-}
-
-func hostOnly(ip string) string {
-	if h, _, err := net.SplitHostPort(ip); err == nil {
-		return h
-	}
-	return ip
 }
 ```
 
@@ -853,13 +845,13 @@ var rootServers = []string{
 
 // Delegation is the authoritative delegation learned for a domain.
 type Delegation struct {
-	ETLD  string   // public suffix (registrable-domain suffix), e.g. "com" or "co.uk"
-	NS    []string // authoritative nameserver hostnames
-	NSIPs []string // resolved NS IPs (glue where present, else A/AAAA)
-	DS    []string // DS records at the parent (DNSSEC), verbatim
+	ETLD  string
+	NS    []string
+	NSIPs []string
+	DS    []string
 }
 
-// Resolver performs iterative resolution using an Exchanger. Roots is the starting server set.
+// Resolver performs iterative resolution using an Exchanger.
 type Resolver struct {
 	Ex    Exchanger
 	Roots []string
@@ -870,15 +862,14 @@ func NewResolver(ex Exchanger) *Resolver {
 	return &Resolver{Ex: ex, Roots: append([]string(nil), rootServers...)}
 }
 
-// DiscoverNS walks root -> TLD -> authoritative to learn a domain's NS set and parent DS. It follows
-// referrals (NS in AUTHORITY, glue A in ADDITIONAL). domain has no trailing dot.
+// DiscoverNS walks root -> TLD -> authoritative to learn a domain's NS set and parent DS, following
+// referrals (NS in AUTHORITY, glue in ADDITIONAL). domain has no trailing dot.
 func (r *Resolver) DiscoverNS(ctx context.Context, domain string) (Delegation, error) {
 	etld, _ := publicsuffix.PublicSuffix(domain)
 	del := Delegation{ETLD: etld}
 	fqdn := dns.Fqdn(domain)
 
 	servers := append([]string(nil), r.Roots...)
-	// Walk down at most a handful of referral hops (root, TLD, sld, safety margin).
 	for hop := 0; hop < 8; hop++ {
 		m := new(dns.Msg)
 		m.SetQuestion(fqdn, dns.TypeNS)
@@ -886,30 +877,25 @@ func (r *Resolver) DiscoverNS(ctx context.Context, domain string) (Delegation, e
 		if err != nil {
 			return del, err
 		}
-
-		nsNames, glue := extractDelegation(resp)
 		for _, rr := range resp.Ns {
 			if ds, ok := rr.(*dns.DS); ok {
 				del.DS = append(del.DS, ds.String())
 			}
 		}
-
-		// Authoritative answer: NS records for the domain in ANSWER.
-		if authoritativeNS := answerNS(resp, fqdn); len(authoritativeNS) > 0 {
-			del.NS = authoritativeNS
-			del.NSIPs = resolveNSIPs(ctx, r, authoritativeNS, glue)
+		if auth := answerNS(resp, fqdn); len(auth) > 0 {
+			del.NS = auth
+			del.NSIPs = resolveNSIPs(ctx, r, auth, extractGlue(resp))
 			return del, nil
 		}
+		nsNames, glue := extractDelegation(resp)
 		if len(nsNames) == 0 {
 			return del, errors.New("no delegation and no authoritative NS")
 		}
-		// Descend: prefer glue IPs; else resolve one NS name via the roots.
 		next := ipsFor(nsNames, glue)
 		if len(next) == 0 {
 			next = resolveNSIPs(ctx, r, nsNames, nil)
 		}
 		if len(next) == 0 {
-			// Last referral gave us the auth NS names even without an ANSWER section.
 			del.NS = nsNames
 			del.NSIPs = resolveNSIPs(ctx, r, nsNames, glue)
 			return del, nil
@@ -934,22 +920,28 @@ func (r *Resolver) exchangeAny(ctx context.Context, m *dns.Msg, servers []string
 	return nil, lastErr
 }
 
+func extractGlue(resp *dns.Msg) map[string][]string {
+	glue := map[string][]string{}
+	for _, rr := range resp.Extra {
+		switch a := rr.(type) {
+		case *dns.A:
+			n := strings.ToLower(a.Hdr.Name)
+			glue[n] = append(glue[n], a.A.String())
+		case *dns.AAAA:
+			n := strings.ToLower(a.Hdr.Name)
+			glue[n] = append(glue[n], a.AAAA.String())
+		}
+	}
+	return glue
+}
+
 func extractDelegation(resp *dns.Msg) (ns []string, glue map[string][]string) {
-	glue = map[string][]string{}
 	for _, rr := range resp.Ns {
 		if n, ok := rr.(*dns.NS); ok {
 			ns = append(ns, strings.ToLower(n.Ns))
 		}
 	}
-	for _, rr := range resp.Extra {
-		switch a := rr.(type) {
-		case *dns.A:
-			glue[strings.ToLower(a.Hdr.Name)] = append(glue[strings.ToLower(a.Hdr.Name)], a.A.String())
-		case *dns.AAAA:
-			glue[strings.ToLower(a.Hdr.Name)] = append(glue[strings.ToLower(a.Hdr.Name)], a.AAAA.String())
-		}
-	}
-	return ns, glue
+	return ns, extractGlue(resp)
 }
 
 func answerNS(resp *dns.Msg, fqdn string) []string {
@@ -1001,9 +993,7 @@ func resolveNSIPs(ctx context.Context, r *Resolver, names []string, glue map[str
 }
 ```
 
-Note on the walk: querying roots/TLDs for `NS domain` returns a referral (NS in AUTHORITY + glue in
-ADDITIONAL) until we reach a server authoritative for the domain, which answers with NS in ANSWER.
-Root/TLD responses are cached per run in Task 8 to avoid re-walking the same TLD for every domain.
+Note: root/TLD responses are cached per run in Task 8 so we don't re-walk the same TLD for every domain.
 
 - [ ] **Step 6: Run tests to verify they pass**
 
@@ -1020,19 +1010,15 @@ git commit -m "feat(dns): iterative resolver — scheduled exchange + NS discove
 
 ---
 
-### Task 6: Record querying + row assembly
+### Task 6: Tier-2 record querying → DomainResult
 
 **Files:**
 - Create: `commoncrawl/cc-dns-worker/internal/resolve/query.go`
 - Test: `commoncrawl/cc-dns-worker/internal/resolve/query_test.go`
 
 **Interfaces:**
-- Consumes: `Resolver` + `Exchanger` (Task 5), `records.Plan`/`records.Config` (Task 3),
-  `model.DomainDNSRow` (Task 2).
-- Produces:
-  - `(*Resolver).QueryRecords(ctx, domain string, del Delegation, cfg records.Config) *ResultSet`
-    where `ResultSet` holds every answer keyed by slot + a `Status map[string]string`.
-  - `resolve.AssembleRow(domain, scanID, runID string, del Delegation, rs *ResultSet, now time.Time) model.DomainDNSRow`.
+- Consumes: `Resolver`/`Exchanger` (Task 5), `records.Plan`/`Config` (Task 3), `model` (Task 2).
+- Produces: `(*Resolver).Resolve(ctx, domain, scanID, runID string, del Delegation, cfg records.Config, now time.Time) model.DomainResult`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1050,7 +1036,6 @@ import (
 	"github.com/miekg/dns"
 )
 
-// A stub Exchanger that answers from an in-memory table keyed by "qname/qtype".
 type stubEx struct{ z map[string][]dns.RR }
 
 func (s stubEx) Exchange(_ context.Context, m *dns.Msg, _ string) (*dns.Msg, error) {
@@ -1061,45 +1046,64 @@ func (s stubEx) Exchange(_ context.Context, m *dns.Msg, _ string) (*dns.Msg, err
 	return r, nil
 }
 
-func TestQueryRecordsAndAssemble(t *testing.T) {
+func recBySlot(recs []interface{ }) {} // placeholder; not used
+
+func TestResolveProducesRecords(t *testing.T) {
 	z := map[string][]dns.RR{
-		"example.com./MX":                    {mx(t, "example.com. 300 IN MX 10 mail.example.com.")},
-		"example.com./TXT":                   {txt(t, `example.com. 300 IN TXT "v=spf1 include:_spf.example.com ~all"`)},
-		"_dmarc.example.com./TXT":            {txt(t, `_dmarc.example.com. 300 IN TXT "v=DMARC1; p=reject"`)},
+		"example.com./MX":                    {mustRR(t, "example.com. 300 IN MX 10 mail.example.com.")},
+		"example.com./TXT":                   {mustRR(t, `example.com. 300 IN TXT "v=spf1 include:_spf.example.com ~all"`)},
+		"_dmarc.example.com./TXT":            {mustRR(t, `_dmarc.example.com. 300 IN TXT "v=DMARC1; p=reject"`)},
 		"www.example.com./A":                 {mustRR(t, "www.example.com. 300 IN A 1.2.3.4")},
-		"google._domainkey.example.com./TXT": {txt(t, `google._domainkey.example.com. 300 IN TXT "v=DKIM1; k=rsa; p=MII"`)},
+		"google._domainkey.example.com./TXT": {mustRR(t, `google._domainkey.example.com. 300 IN TXT "v=DKIM1; k=rsa; p=MII"`)},
 	}
 	r := &Resolver{Ex: stubEx{z: z}}
 	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
 
-	rs := r.QueryRecords(context.Background(), "example.com", del, records.DefaultConfig())
-	row := AssembleRow("example.com", "2026-07-05", "run1", del, rs, time.Unix(0, 0).UTC())
+	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del, records.DefaultConfig(), time.Unix(0, 0).UTC())
 
-	if len(row.MX) != 1 || row.MX[0] != "10 mail.example.com." {
-		t.Errorf("MX = %v", row.MX)
+	if res.RootDomain != "example.com" || res.ScanID != "2026-07-05" || res.Status != "done" {
+		t.Fatalf("identity/status wrong: %+v", res)
 	}
-	if len(row.TXT) != 1 || row.DMARC == "" {
-		t.Errorf("TXT=%v DMARC=%q", row.TXT, row.DMARC)
+	find := func(rt, slot, wantVal string) bool {
+		for _, rec := range res.Records {
+			if rec.RecordType == rt && rec.Slot == slot {
+				if wantVal == "" || rec.Value == wantVal {
+					return true
+				}
+			}
+		}
+		return false
 	}
-	if got := row.A["www"]; len(got) != 1 || got[0] != "1.2.3.4" {
-		t.Errorf("A[www] = %v", got)
+	if !find("MX", "", "") {
+		t.Errorf("missing MX record; records=%+v", res.Records)
 	}
-	if row.DKIM["google"] == "" {
+	if !find("TXT", "", "") {
+		t.Errorf("missing apex TXT (SPF)")
+	}
+	if !find("TXT", "dmarc", "") {
+		t.Errorf("missing DMARC")
+	}
+	if !find("A", "www", "1.2.3.4") {
+		t.Errorf("missing www A")
+	}
+	if !find("TXT", "google", "") {
 		t.Errorf("missing DKIM google")
 	}
-	if row.RootDomain != "example.com" || row.ScanID != "2026-07-05" {
-		t.Errorf("identity fields wrong: %+v", row)
+	// MX preference is captured.
+	for _, rec := range res.Records {
+		if rec.RecordType == "MX" && rec.Priority != 10 {
+			t.Errorf("MX priority = %d, want 10", rec.Priority)
+		}
 	}
 }
-
-func mx(t *testing.T, s string) dns.RR   { return mustRR(t, s) }
-func txt(t *testing.T, s string) dns.RR  { return mustRR(t, s) }
 ```
+
+Delete the unused `recBySlot` stub before running (it is scaffolding; remove that line).
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd commoncrawl/cc-dns-worker && go test ./internal/resolve/ -run TestQueryRecords`
-Expected: FAIL — `QueryRecords`, `AssembleRow`, `ResultSet` undefined.
+Run: `cd commoncrawl/cc-dns-worker && go test ./internal/resolve/ -run TestResolveProducesRecords`
+Expected: FAIL — `Resolve` undefined.
 
 - [ ] **Step 3: Write query + assembly**
 
@@ -1109,8 +1113,8 @@ package resolve
 
 import (
 	"context"
-	"strconv"
 	"strings"
+	"time"
 
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/records"
@@ -1118,144 +1122,83 @@ import (
 	"github.com/miekg/dns"
 )
 
-// ResultSet collects every Tier-2 answer for a domain, plus a per-query status map.
-type ResultSet struct {
-	A      map[string][]string // slot -> IPv4s
-	AAAA   map[string][]string // slot -> IPv6s
-	MX     []string
-	TXT    []string
-	NS     []string
-	SOA    string
-	CAA    []string
-	DNSKEY []string
-	DMARC  string
-	DKIM   map[string]string
-	MTASTS string
-	TLSRPT string
-	BIMI   string
-	Status map[string]string
-}
-
-// QueryRecords runs every Tier-2 query against the domain's authoritative NS IPs (round-robin),
-// recording each answer and its rcode/error. Falls back across NS IPs on failure.
-func (r *Resolver) QueryRecords(ctx context.Context, domain string, del Delegation, cfg records.Config) *ResultSet {
-	rs := &ResultSet{
-		A: map[string][]string{}, AAAA: map[string][]string{}, DKIM: map[string]string{},
-		Status: map[string]string{},
+// Resolve runs every Tier-2 query for a domain against its authoritative NS IPs (round-robin, with
+// fallback across the NS set) and assembles a DomainResult. Delegation must already be discovered.
+func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, del Delegation, cfg records.Config, now time.Time) model.DomainResult {
+	res := model.DomainResult{
+		ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
+		Nameservers: del.NS, NSIPs: del.NSIPs,
+		DSPresent: len(del.DS) > 0, Status: "done",
+		SourceRunID: runID, ResolvedAt: now,
 	}
+	for _, ds := range del.DS {
+		res.Records = append(res.Records, model.DNSRecord{Name: domain, RecordType: "DS", Value: ds, Rcode: "NOERROR"})
+	}
+
 	servers := del.NSIPs
 	i := 0
 	for _, q := range records.Plan(domain, cfg) {
+		res.QueriesTotal++
 		m := new(dns.Msg)
 		m.SetQuestion(q.Name, q.Type)
 		var resp *dns.Msg
 		var err error
-		// Round-robin start, fall back across the rest.
 		for attempt := 0; attempt < len(servers); attempt++ {
-			srv := servers[(i+attempt)%len(servers)]
-			resp, err = r.Ex.Exchange(ctx, m.Copy(), srv)
+			resp, err = r.Ex.Exchange(ctx, m.Copy(), servers[(i+attempt)%len(servers)])
 			if err == nil && resp != nil {
 				break
 			}
 		}
 		i++
-		key := q.Name + "/" + dns.TypeToString[q.Type]
-		if err != nil || resp == nil {
-			rs.Status[key] = "error"
-			continue
-		}
-		rs.Status[key] = dns.RcodeToString[resp.Rcode]
-		collect(rs, q, resp)
-	}
-	return rs
-}
-
-func collect(rs *ResultSet, q records.Query, resp *dns.Msg) {
-	for _, rr := range resp.Answer {
-		switch v := rr.(type) {
-		case *dns.A:
-			rs.A[q.Slot] = append(rs.A[q.Slot], v.A.String())
-		case *dns.AAAA:
-			rs.AAAA[q.Slot] = append(rs.AAAA[q.Slot], v.AAAA.String())
-		case *dns.MX:
-			rs.MX = append(rs.MX, strconv.Itoa(int(v.Preference))+" "+v.Mx)
-		case *dns.NS:
-			rs.NS = append(rs.NS, strings.ToLower(v.Ns))
-		case *dns.SOA:
-			rs.SOA = v.String()
-		case *dns.CAA:
-			rs.CAA = append(rs.CAA, v.String())
-		case *dns.DNSKEY:
-			rs.DNSKEY = append(rs.DNSKEY, v.String())
-		case *dns.TXT:
-			joined := strings.Join(v.Txt, "")
-			switch q.Slot {
-			case "dmarc":
-				rs.DMARC = joined
-			case "mta_sts":
-				rs.MTASTS = joined
-			case "tls_rpt":
-				rs.TLSRPT = joined
-			case "bimi":
-				rs.BIMI = joined
-			case "": // apex TXT
-				rs.TXT = append(rs.TXT, joined)
-			default: // DKIM selector
-				rs.DKIM[q.Slot] = joined
+		rcode := "error"
+		if err == nil && resp != nil {
+			rcode = dns.RcodeToString[resp.Rcode]
+			res.QueriesOK++
+			recs := collect(q, resp, rcode)
+			res.Records = append(res.Records, recs...)
+			for _, rec := range recs {
+				if rec.RecordType == "DNSKEY" {
+					res.DNSSECSigned = true
+				}
 			}
 		}
 	}
+	qn := dns.Fqdn(domain)
+	_ = qn
+	return res
 }
 
-// AssembleRow flattens a Delegation + ResultSet into the stored row. now must be passed in (the
-// caller stamps time; deterministic in tests).
-func AssembleRow(domain, scanID, runID string, del Delegation, rs *ResultSet, now interface{ }) model.DomainDNSRow {
-	panic("replaced below") // see real signature in Step 3b
-}
-```
-
-- [ ] **Step 3b: Fix the AssembleRow signature (real code)**
-
-Replace the placeholder `AssembleRow` at the bottom of `query.go` with:
-```go
-// AssembleRow flattens a Delegation + ResultSet into the stored row.
-func AssembleRow(domain, scanID, runID string, del Delegation, rs *ResultSet, now time.Time) model.DomainDNSRow {
-	b2u := func(b bool) uint8 {
-		if b {
-			return 1
+// collect turns one query's ANSWER RRs into DNSRecords, tagging them with the query's slot.
+func collect(q records.Query, resp *dns.Msg, rcode string) []model.DNSRecord {
+	name := strings.TrimSuffix(q.Name, ".")
+	var out []model.DNSRecord
+	for _, rr := range resp.Answer {
+		rec := model.DNSRecord{Name: name, Slot: q.Slot, Rcode: rcode, TTL: rr.Header().Ttl}
+		switch v := rr.(type) {
+		case *dns.A:
+			rec.RecordType, rec.Value = "A", v.A.String()
+		case *dns.AAAA:
+			rec.RecordType, rec.Value = "AAAA", v.AAAA.String()
+		case *dns.MX:
+			rec.RecordType, rec.Value, rec.Priority = "MX", strings.TrimSuffix(v.Mx, "."), v.Preference
+		case *dns.NS:
+			rec.RecordType, rec.Value = "NS", strings.TrimSuffix(strings.ToLower(v.Ns), ".")
+		case *dns.SOA:
+			rec.RecordType, rec.Value = "SOA", strings.TrimSpace(v.String()[len(v.Hdr.String()):])
+		case *dns.CAA:
+			rec.RecordType, rec.Value = "CAA", strings.TrimSpace(v.String()[len(v.Hdr.String()):])
+		case *dns.DNSKEY:
+			rec.RecordType, rec.Value = "DNSKEY", strings.TrimSpace(v.String()[len(v.Hdr.String()):])
+		case *dns.TXT:
+			rec.RecordType, rec.Value = "TXT", strings.Join(v.Txt, "")
+		default:
+			continue
 		}
-		return 0
+		out = append(out, rec)
 	}
-	return model.DomainDNSRow{
-		ScanID:       scanID,
-		RootDomain:   domain,
-		ETLD:         del.ETLD,
-		Nameservers:  del.NS,
-		NSIPs:        del.NSIPs,
-		A:            rs.A,
-		AAAA:         rs.AAAA,
-		MX:           rs.MX,
-		TXT:          rs.TXT,
-		DMARC:        rs.DMARC,
-		DKIM:         rs.DKIM,
-		MTASTS:       rs.MTASTS,
-		TLSRPT:       rs.TLSRPT,
-		BIMI:         rs.BIMI,
-		CAA:          rs.CAA,
-		SOA:          rs.SOA,
-		DNSSECSigned: b2u(len(rs.DNSKEY) > 0),
-		DSPresent:    b2u(len(del.DS) > 0),
-		DNSKEY:       rs.DNSKEY,
-		DS:           del.DS,
-		QueryStatus:  rs.Status,
-		ResolverPath: "iterative",
-		SourceRunID:  runID,
-		ResolvedAt:   now,
-	}
+	return out
 }
 ```
-Add `"time"` to the imports of `query.go` and delete the placeholder `AssembleRow` (the one that
-panics). The `interface{}` version was scaffolding only.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1267,164 +1210,407 @@ Expected: PASS.
 ```bash
 cd commoncrawl/cc-dns-worker && go fmt ./... && go vet ./...
 git add commoncrawl/cc-dns-worker/internal/resolve
-git commit -m "feat(dns): Tier-2 record querying and row assembly"
+git commit -m "feat(dns): Tier-2 record querying assembling DomainResult"
 ```
 
 ---
 
-### Task 7: Rolling Parquet output writer
+### Task 7: Durable SQLite store (queue + status + staged records)
 
 **Files:**
-- Create: `commoncrawl/cc-dns-worker/internal/output/output.go`
-- Test: `commoncrawl/cc-dns-worker/internal/output/output_test.go`
+- Create: `commoncrawl/cc-dns-worker/internal/store/store.go`
+- Test: `commoncrawl/cc-dns-worker/internal/store/store_test.go`
 
 **Interfaces:**
-- Consumes: `model.DomainDNSRow` (Task 2).
+- Consumes: `model.DomainResult` (Task 2), `modernc.org/sqlite`.
 - Produces:
-  - `output.NewWriter(path string) (*Writer, error)` — writes `dns.parquet` at path (dir or file;
-    if dir, filename is `dns.parquet`).
-  - `(*Writer).Write(row model.DomainDNSRow) error`
-  - `(*Writer).Close() error`
+  - `store.Open(path string) (*Store, error)` — opens WAL SQLite, creates `scan_domains` + `scan_records`.
+  - `(*Store).Seed(ctx, scanID string, domains []string) (int, error)` — INSERT OR IGNORE pending rows; returns count newly added.
+  - `(*Store).Pending(ctx, scanID string) ([]string, error)` — domains whose status is neither `done` nor `error` (the resume set).
+  - `(*Store).CommitBatch(ctx, results []model.DomainResult) error` — one transaction: for each result, delete its prior `scan_records`, insert new records, upsert its `scan_domains` summary/status.
+  - `(*Store).StagedDomains(ctx, scanID string) ([]model.ScanRow, error)` and `(*Store).StagedRecords(ctx, scanID string) ([]model.RecordRow, error)` — read the stage for load (Task 9).
+  - `(*Store).Close() error`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `commoncrawl/cc-dns-worker/internal/output/output_test.go`:
+Create `commoncrawl/cc-dns-worker/internal/store/store_test.go`:
 ```go
-package output
+package store
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"cc-dns-worker/internal/model"
-
-	"github.com/parquet-go/parquet-go"
 )
 
-func TestWriteAndReadBack(t *testing.T) {
-	dir := t.TempDir()
-	w, err := NewWriter(dir)
+func openTemp(t *testing.T) *Store {
+	t.Helper()
+	s, err := Open(filepath.Join(t.TempDir(), "scan.db"))
 	if err != nil {
-		t.Fatalf("new: %v", err)
+		t.Fatalf("open: %v", err)
 	}
-	row := model.DomainDNSRow{
-		ScanID: "2026-07-05", RootDomain: "example.com", ETLD: "com",
-		A:      map[string][]string{"@": {"1.2.3.4"}},
-		MX:     []string{"10 mail.example.com."},
-		DKIM:   map[string]string{"google": "v=DKIM1"},
-		Status: nil,
-		ResolvedAt: time.Unix(0, 0).UTC(),
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+func TestSeedAndPending(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	n, err := s.Seed(ctx, "sc", []string{"a.com", "b.com", "c.com"})
+	if err != nil || n != 3 {
+		t.Fatalf("seed n=%d err=%v", n, err)
 	}
-	row.QueryStatus = map[string]string{"example.com./MX": "NOERROR"}
-	if err := w.Write(row); err != nil {
-		t.Fatalf("write: %v", err)
+	// Re-seeding is idempotent.
+	n2, _ := s.Seed(ctx, "sc", []string{"a.com", "d.com"})
+	if n2 != 1 {
+		t.Errorf("re-seed added %d, want 1 (only d.com)", n2)
 	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("close: %v", err)
+	pend, _ := s.Pending(ctx, "sc")
+	if len(pend) != 4 {
+		t.Fatalf("pending = %d, want 4", len(pend))
+	}
+}
+
+func TestCommitBatchAndResume(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scan.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Seed(ctx, "sc", []string{"a.com", "b.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	err = s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "a.com", ETLD: "com", Status: "done",
+		Nameservers: []string{"ns1.a.com"}, NSIPs: []string{"1.1.1.1"},
+		QueriesTotal: 10, QueriesOK: 9, ResolvedAt: now,
+		Records: []model.DNSRecord{{Name: "a.com", RecordType: "MX", Value: "mail.a.com", Priority: 10, Rcode: "NOERROR"}},
+	}})
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
 	}
 
-	rows, err := parquet.ReadFile[model.DomainDNSRow](filepath.Join(dir, "dns.parquet"))
+	// Reopen: a.com is done, so only b.com remains pending (the resume contract).
+	s2, err := Open(path)
 	if err != nil {
-		t.Fatalf("read: %v", err)
+		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].RootDomain != "example.com" || rows[0].A["@"][0] != "1.2.3.4" {
-		t.Fatalf("round-trip mismatch: %+v", rows)
+	defer s2.Close()
+	pend, _ := s2.Pending(ctx, "sc")
+	if len(pend) != 1 || pend[0] != "b.com" {
+		t.Fatalf("pending after resume = %v, want [b.com]", pend)
+	}
+	recs, _ := s2.StagedRecords(ctx, "sc")
+	if len(recs) != 1 || recs[0].RecordType != "MX" || recs[0].Priority != 10 {
+		t.Fatalf("staged records = %+v", recs)
+	}
+	rows, _ := s2.StagedDomains(ctx, "sc")
+	if len(rows) != 1 || rows[0].RootDomain != "a.com" || len(rows[0].Nameservers) != 1 {
+		t.Fatalf("staged domains = %+v", rows)
+	}
+}
+
+func TestCommitBatchIsIdempotentPerDomain(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	_, _ = s.Seed(ctx, "sc", []string{"a.com"})
+	now := time.Unix(0, 0).UTC()
+	res := model.DomainResult{ScanID: "sc", RootDomain: "a.com", Status: "done", ResolvedAt: now,
+		Records: []model.DNSRecord{{Name: "a.com", RecordType: "A", Slot: "@", Value: "1.2.3.4", Rcode: "NOERROR"}}}
+	_ = s.CommitBatch(ctx, []model.DomainResult{res})
+	_ = s.CommitBatch(ctx, []model.DomainResult{res}) // re-commit must not duplicate
+	recs, _ := s.StagedRecords(ctx, "sc")
+	if len(recs) != 1 {
+		t.Fatalf("records after double-commit = %d, want 1", len(recs))
 	}
 }
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd commoncrawl/cc-dns-worker && go test ./internal/output/`
-Expected: FAIL — `NewWriter` undefined.
+Run: `cd commoncrawl/cc-dns-worker && go test ./internal/store/`
+Expected: FAIL — `Open` undefined.
 
-- [ ] **Step 3: Write the writer**
+- [ ] **Step 3: Write the store**
 
-Create `commoncrawl/cc-dns-worker/internal/output/output.go`:
+Create `commoncrawl/cc-dns-worker/internal/store/store.go`:
 ```go
-// Package output writes DomainDNSRow records to a single dns.parquet file (one row per domain).
-package output
+// Package store is the durable local stage: an embedded SQLite DB holding the domain work queue
+// (via scan_domains.status), the per-domain summary, and the resolved records. It is written by one
+// dedicated goroutine (CommitBatch) so SQLite's single-writer lock is never contended, and it makes
+// scan resumable — a crash leaves unfinished domains not-'done', which Pending returns.
+package store
 
 import (
-	"os"
-	"path/filepath"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
 
 	"cc-dns-worker/internal/model"
 
-	"github.com/parquet-go/parquet-go"
+	_ "modernc.org/sqlite"
 )
 
-// Writer streams rows into dns.parquet.
-type Writer struct {
-	f  *os.File
-	pw *parquet.GenericWriter[model.DomainDNSRow]
-}
+// Store wraps the SQLite stage.
+type Store struct{ db *sql.DB }
 
-// NewWriter creates dns.parquet. If path is an existing dir (or has no .parquet suffix), the file
-// is path/dns.parquet; otherwise path is used verbatim.
-func NewWriter(path string) (*Writer, error) {
-	target := path
-	if filepath.Ext(path) != ".parquet" {
-		target = filepath.Join(path, "dns.parquet")
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return nil, err
-	}
-	f, err := os.Create(target)
+const schema = `
+CREATE TABLE IF NOT EXISTS scan_domains (
+  scan_id       TEXT NOT NULL,
+  root_domain   TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  etld          TEXT DEFAULT '',
+  nameservers   TEXT DEFAULT '[]',
+  ns_ips        TEXT DEFAULT '[]',
+  dnssec_signed INTEGER DEFAULT 0,
+  ds_present    INTEGER DEFAULT 0,
+  queries_total INTEGER DEFAULT 0,
+  queries_ok    INTEGER DEFAULT 0,
+  error         TEXT DEFAULT '',
+  resolved_at   TEXT DEFAULT '',
+  PRIMARY KEY (scan_id, root_domain)
+);
+CREATE TABLE IF NOT EXISTS scan_records (
+  scan_id      TEXT NOT NULL,
+  root_domain  TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  record_type  TEXT NOT NULL,
+  slot         TEXT DEFAULT '',
+  value        TEXT NOT NULL,
+  ttl          INTEGER DEFAULT 0,
+  priority     INTEGER DEFAULT 0,
+  rcode        TEXT DEFAULT '',
+  resolved_at  TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_records_domain ON scan_records (scan_id, root_domain);
+`
+
+// Open opens (creating if needed) the SQLite stage in WAL mode and ensures the schema.
+func Open(path string) (*Store, error) {
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	return &Writer{f: f, pw: parquet.NewGenericWriter[model.DomainDNSRow](f)}, nil
+	// One writer goroutine calls CommitBatch, but reads may be concurrent; a single open conn keeps
+	// writes serialized deterministically.
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("schema: %w", err)
+	}
+	return &Store{db: db}, nil
 }
 
-// Write appends one row.
-func (w *Writer) Write(row model.DomainDNSRow) error {
-	_, err := w.pw.Write([]model.DomainDNSRow{row})
-	return err
+// Seed inserts pending rows for domains, ignoring any already present. Returns rows newly added.
+func (s *Store) Seed(ctx context.Context, scanID string, domains []string) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO scan_domains (scan_id, root_domain) VALUES (?, ?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+	added := 0
+	for _, d := range domains {
+		r, err := stmt.ExecContext(ctx, scanID, d)
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := r.RowsAffected(); n > 0 {
+			added++
+		}
+	}
+	return added, tx.Commit()
 }
 
-// Close flushes the parquet footer and closes the file.
-func (w *Writer) Close() error {
-	if err := w.pw.Close(); err != nil {
-		_ = w.f.Close()
+// Pending returns domains for scanID whose status is neither 'done' nor 'error'.
+func (s *Store) Pending(ctx context.Context, scanID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT root_domain FROM scan_domains WHERE scan_id = ? AND status NOT IN ('done','error') ORDER BY root_domain`, scanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// CommitBatch writes a batch of results in one transaction, replacing each domain's records so a
+// re-commit is idempotent.
+func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	return w.f.Close()
+	defer tx.Rollback()
+
+	del, err := tx.PrepareContext(ctx, `DELETE FROM scan_records WHERE scan_id = ? AND root_domain = ?`)
+	if err != nil {
+		return err
+	}
+	defer del.Close()
+	insR, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
+		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, resolved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insR.Close()
+	upD, err := tx.PrepareContext(ctx, `UPDATE scan_domains SET
+		status=?, etld=?, nameservers=?, ns_ips=?, dnssec_signed=?, ds_present=?,
+		queries_total=?, queries_ok=?, error=?, resolved_at=?
+		WHERE scan_id=? AND root_domain=?`)
+	if err != nil {
+		return err
+	}
+	defer upD.Close()
+
+	for _, res := range results {
+		if _, err := del.ExecContext(ctx, res.ScanID, res.RootDomain); err != nil {
+			return err
+		}
+		ts := res.ResolvedAt.UTC().Format(time.RFC3339Nano)
+		for _, rec := range res.Records {
+			if _, err := insR.ExecContext(ctx, res.ScanID, res.RootDomain, rec.Name, rec.RecordType,
+				rec.Slot, rec.Value, rec.TTL, rec.Priority, rec.Rcode, ts); err != nil {
+				return err
+			}
+		}
+		ns, _ := json.Marshal(res.Nameservers)
+		nsips, _ := json.Marshal(res.NSIPs)
+		if _, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips),
+			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.QueriesTotal, res.QueriesOK,
+			res.Error, ts, res.ScanID, res.RootDomain); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// StagedRecords reads the record stage for a scan into CH RecordRow shape.
+func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.RecordRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT scan_id, root_domain, name, record_type, slot, value,
+		ttl, priority, rcode, resolved_at FROM scan_records WHERE scan_id = ?`, scanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.RecordRow
+	for rows.Next() {
+		var r model.RecordRow
+		var ts string
+		if err := rows.Scan(&r.ScanID, &r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
+			&r.TTL, &r.Priority, &r.Rcode, &ts); err != nil {
+			return nil, err
+		}
+		r.ResolvedAt = parseTS(ts)
+		r.SourceRunID = scanID
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// StagedDomains reads finished domain summaries for a scan into CH ScanRow shape.
+func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT scan_id, root_domain, etld, nameservers, ns_ips,
+		dnssec_signed, ds_present, status, error, queries_total, queries_ok, resolved_at
+		FROM scan_domains WHERE scan_id = ? AND status IN ('done','error')`, scanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.ScanRow
+	for rows.Next() {
+		var r model.ScanRow
+		var ns, nsips, ts string
+		var dnssec, ds int
+		if err := rows.Scan(&r.ScanID, &r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
+			&r.Status, &r.Error, &r.QueriesTotal, &r.QueriesOK, &ts); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
+		_ = json.Unmarshal([]byte(nsips), &r.NSIPs)
+		r.DNSSECSigned = uint8(dnssec)
+		r.DSPresent = uint8(ds)
+		r.ResolvedAt = parseTS(ts)
+		r.SourceRunID = scanID
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Close closes the DB.
+func (s *Store) Close() error { return s.db.Close() }
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func parseTS(s string) time.Time {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t.UTC()
+	}
+	return time.Unix(0, 0).UTC()
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd commoncrawl/cc-dns-worker && go test ./internal/output/`
-Expected: PASS.
+Run: `cd commoncrawl/cc-dns-worker && go test ./internal/store/`
+Expected: PASS (seed idempotency, resume, per-domain idempotency).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd commoncrawl/cc-dns-worker && go fmt ./... && go vet ./...
-git add commoncrawl/cc-dns-worker/internal/output
-git commit -m "feat(dns): dns.parquet output writer"
+git add commoncrawl/cc-dns-worker/internal/store
+git commit -m "feat(dns): durable SQLite stage — queue, status, staged records, resume"
 ```
 
 ---
 
-### Task 8: Domain input reader + scan orchestration wiring
+### Task 8: Domain input reader + scan orchestration (resumable)
 
 **Files:**
 - Create: `commoncrawl/cc-dns-worker/internal/input/input.go`
 - Test: `commoncrawl/cc-dns-worker/internal/input/input_test.go`
+- Create: `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/ch.go`
 - Modify: `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/scan.go`
 
 **Interfaces:**
-- Consumes: everything above; `github.com/ClickHouse/clickhouse-go/v2`.
+- Consumes: `store`, `resolve`, `records`, `scheduler`, `input`, `clickhouse-go/v2`.
 - Produces:
-  - `input.FromClickHouse(ctx, conn driver.Conn, query string, limit int) ([]string, error)` —
-    returns distinct root_domains.
-  - `input.DefaultQuery = "SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains"`.
-  - Wired `runScan` that resolves all domains and writes `dns.parquet`.
+  - `input.DefaultQuery` and `input.FromClickHouse(ctx, conn driver.Conn, query string, limit int) ([]string, error)`.
+  - `chConn()` helper (in `ch.go`, shared by scan + load).
+  - Wired `runScan`: seed queue from CH → resolver pool → single writer goroutine batches into SQLite.
 
-- [ ] **Step 1: Write the failing test (query builder is pure/testable)**
+- [ ] **Step 1: Write the failing input test**
 
 Create `commoncrawl/cc-dns-worker/internal/input/input_test.go`:
 ```go
@@ -1502,136 +1688,18 @@ func FromClickHouse(ctx context.Context, conn driver.Conn, query string, limit i
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/input/`
 Expected: PASS.
 
-- [ ] **Step 5: Wire runScan**
+- [ ] **Step 5: Write the shared CH connection helper**
 
-Replace `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/scan.go` with:
+Create `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/ch.go`:
 ```go
 package main
 
 import (
-	"context"
-	"flag"
-	"fmt"
-	"log"
 	"os"
-	"sync"
-	"time"
-
-	"cc-dns-worker/internal/input"
-	"cc-dns-worker/internal/output"
-	"cc-dns-worker/internal/records"
-	"cc-dns-worker/internal/resolve"
-	"cc-dns-worker/internal/scheduler"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
-
-func runScan(args []string) error {
-	fs := flag.NewFlagSet("scan", flag.ExitOnError)
-	scanID := fs.String("scan-id", time.Now().UTC().Format("2006-01-02"), "scan batch id (default today, UTC)")
-	runID := fs.String("run-id", "", "source run id (defaults to scan-id)")
-	out := fs.String("out", ".", "output dir or dns.parquet path")
-	query := fs.String("query", input.DefaultQuery, "ClickHouse query returning root_domain")
-	limit := fs.Int("limit", 0, "cap number of domains (0 = all)")
-	qps := fs.Float64("per-server-qps", 10, "max queries/sec per server IP")
-	inflight := fs.Int("per-server-inflight", 3, "max concurrent queries per server IP")
-	domainConc := fs.Int("domain-concurrency", 5000, "max domains resolved concurrently")
-	timeout := fs.Duration("query-timeout", 5*time.Second, "per-query timeout")
-	_ = fs.Parse(args)
-	if *runID == "" {
-		*runID = *scanID
-	}
-
-	ctx := context.Background()
-	conn, err := chConn()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	domains, err := input.FromClickHouse(ctx, conn, *query, *limit)
-	if err != nil {
-		return err
-	}
-	log.Printf("scanning %d domains (scan_id=%s)", len(domains), *scanID)
-
-	sched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: int(*qps), MaxInFlight: *inflight})
-	ex := resolve.NewExchanger(sched, *timeout)
-	res := resolve.NewResolver(ex)
-	cfg := records.DefaultConfig()
-
-	w, err := output.NewWriter(*out)
-	if err != nil {
-		return err
-	}
-	var wmu sync.Mutex
-
-	sem := make(chan struct{}, *domainConc)
-	var wg sync.WaitGroup
-	var done int64
-	var dmu sync.Mutex
-	for _, d := range domains {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(domain string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			del, err := res.DiscoverNS(ctx, domain)
-			var rs *resolve.ResultSet
-			if err == nil && len(del.NSIPs) > 0 {
-				rs = res.QueryRecords(ctx, domain, del, cfg)
-			} else {
-				rs = &resolve.ResultSet{
-					A: map[string][]string{}, AAAA: map[string][]string{},
-					DKIM: map[string]string{}, Status: map[string]string{"_discover": errString(err)},
-				}
-			}
-			row := resolve.AssembleRow(domain, *scanID, *runID, del, rs, time.Now().UTC())
-			wmu.Lock()
-			werr := w.Write(row)
-			wmu.Unlock()
-			if werr != nil {
-				log.Printf("write %s: %v", domain, werr)
-			}
-			dmu.Lock()
-			done++
-			if done%1000 == 0 {
-				log.Printf("resolved %d/%d", done, len(domains))
-			}
-			dmu.Unlock()
-		}(d)
-	}
-	wg.Wait()
-	if err := w.Close(); err != nil {
-		return err
-	}
-	log.Printf("done: %d domains -> %s", len(domains), *out)
-	return nil
-}
-
-func errString(err error) string {
-	if err == nil {
-		return "ok"
-	}
-	return err.Error()
-}
-
-// chConn connects to ClickHouse from CLICKHOUSE_* env (ADDR host:port, DB, USER, PASSWORD).
-func chConn() (driver.Conn, error) {
-	addr := os.Getenv("CLICKHOUSE_ADDR")
-	if addr == "" {
-		addr = "localhost:9000"
-	}
-	return clickhouse.Open(&clickhouse.Options{
-		Addr: []string{addr},
-		Auth: clickhouse.Auth{
-			Database: envOr("CLICKHOUSE_DB", "corpscout"),
-			Username: envOr("CLICKHOUSE_USER", "default"),
-			Password: os.Getenv("CLICKHOUSE_PASSWORD"),
-		},
-	})
-}
 
 func envOr(k, d string) string {
 	if v := os.Getenv(k); v != "" {
@@ -1640,85 +1708,235 @@ func envOr(k, d string) string {
 	return d
 }
 
-var _ = fmt.Sprint
+// chConn connects to ClickHouse from CLICKHOUSE_* env.
+func chConn() (driver.Conn, error) {
+	return clickhouse.Open(&clickhouse.Options{
+		Addr: []string{envOr("CLICKHOUSE_ADDR", "localhost:9000")},
+		Auth: clickhouse.Auth{
+			Database: envOr("CLICKHOUSE_DB", "corpscout"),
+			Username: envOr("CLICKHOUSE_USER", "default"),
+			Password: os.Getenv("CLICKHOUSE_PASSWORD"),
+		},
+	})
+}
 ```
 
-- [ ] **Step 6: Verify build**
+- [ ] **Step 6: Wire runScan**
+
+Replace `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/scan.go` with:
+```go
+package main
+
+import (
+	"context"
+	"flag"
+	"log"
+	"sync"
+	"time"
+
+	"cc-dns-worker/internal/input"
+	"cc-dns-worker/internal/model"
+	"cc-dns-worker/internal/records"
+	"cc-dns-worker/internal/resolve"
+	"cc-dns-worker/internal/scheduler"
+	"cc-dns-worker/internal/store"
+)
+
+func runScan(args []string) error {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	scanID := fs.String("scan-id", time.Now().UTC().Format("2006-01-02"), "scan batch id (default today, UTC)")
+	runID := fs.String("run-id", "", "source run id (defaults to scan-id)")
+	dbPath := fs.String("db", "scan.db", "SQLite stage path")
+	query := fs.String("query", input.DefaultQuery, "ClickHouse query returning root_domain")
+	limit := fs.Int("limit", 0, "cap number of domains (0 = all)")
+	qps := fs.Float64("per-server-qps", 10, "max queries/sec per server IP")
+	inflight := fs.Int("per-server-inflight", 3, "max concurrent queries per server IP")
+	workers := fs.Int("workers", 4000, "max domains resolved concurrently")
+	batchN := fs.Int("commit-batch", 200, "domains per SQLite commit")
+	timeout := fs.Duration("query-timeout", 5*time.Second, "per-query timeout")
+	_ = fs.Parse(args)
+	if *runID == "" {
+		*runID = *scanID
+	}
+	ctx := context.Background()
+
+	// 1) Seed the durable queue from ClickHouse (idempotent; resumes if scan.db already has rows).
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	conn, err := chConn()
+	if err != nil {
+		return err
+	}
+	domains, err := input.FromClickHouse(ctx, conn, *query, *limit)
+	conn.Close()
+	if err != nil {
+		return err
+	}
+	added, err := st.Seed(ctx, *scanID, domains)
+	if err != nil {
+		return err
+	}
+	pending, err := st.Pending(ctx, *scanID)
+	if err != nil {
+		return err
+	}
+	log.Printf("scan_id=%s: %d domains from CH (%d new); %d pending to resolve", *scanID, len(domains), added, len(pending))
+
+	// 2) Resolver pool -> results channel -> single writer goroutine (batched SQLite commits).
+	sched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: int(*qps), MaxInFlight: *inflight})
+	res := resolve.NewResolver(resolve.NewExchanger(sched, *timeout))
+	cfg := records.DefaultConfig()
+
+	results := make(chan model.DomainResult, *batchN*2)
+	var writerWG sync.WaitGroup
+	writerWG.Add(1)
+	go func() {
+		defer writerWG.Done()
+		batch := make([]model.DomainResult, 0, *batchN)
+		flush := func() {
+			if len(batch) == 0 {
+				return
+			}
+			if err := st.CommitBatch(ctx, batch); err != nil {
+				log.Printf("commit batch: %v", err)
+			}
+			batch = batch[:0]
+		}
+		for r := range results {
+			batch = append(batch, r)
+			if len(batch) >= *batchN {
+				flush()
+			}
+		}
+		flush()
+	}()
+
+	sem := make(chan struct{}, *workers)
+	var wg sync.WaitGroup
+	for _, d := range pending {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(domain string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			now := time.Now().UTC()
+			del, derr := res.DiscoverNS(ctx, domain)
+			if derr != nil || len(del.NSIPs) == 0 {
+				msg := "no authoritative NS IPs"
+				if derr != nil {
+					msg = derr.Error()
+				}
+				results <- model.DomainResult{
+					ScanID: *scanID, RootDomain: domain, ETLD: del.ETLD,
+					Nameservers: del.NS, DSPresent: len(del.DS) > 0,
+					Status: "error", Error: msg, SourceRunID: *runID, ResolvedAt: now,
+				}
+				return
+			}
+			results <- res.Resolve(ctx, domain, *scanID, *runID, del, cfg, now)
+		}(d)
+	}
+	wg.Wait()
+	close(results)
+	writerWG.Wait()
+	log.Printf("scan_id=%s: done (%d domains resolved this run)", *scanID, len(pending))
+	return nil
+}
+```
+
+- [ ] **Step 7: Verify build**
 
 Run: `cd commoncrawl/cc-dns-worker && go build ./... && go vet ./...`
 Expected: exit 0.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 cd commoncrawl/cc-dns-worker && go fmt ./...
 git add commoncrawl/cc-dns-worker
-git commit -m "feat(dns): domain input reader and scan orchestration"
+git commit -m "feat(dns): resumable scan orchestration (CH seed, resolver pool, batched writer)"
 ```
 
 ---
 
-### Task 9: ClickHouse migration + load subcommand
+### Task 9: ClickHouse migrations + load subcommand (SQLite → CH)
 
 **Files:**
-- Create: `clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns.up.sql` (use the next free
-  migration number — check `ls clickhouse/migrations/ | tail`)
-- Create: `clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns.down.sql`
+- Create: `clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns_records.up.sql` (next free number — `ls clickhouse/migrations/ | tail`)
+- Create: `clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns_records.down.sql`
+- Create: `clickhouse/migrations/0000MM_corpscout_commoncrawl_domain_dns_scan.up.sql` (next number after records)
+- Create: `clickhouse/migrations/0000MM_corpscout_commoncrawl_domain_dns_scan.down.sql`
 - Create: `commoncrawl/cc-dns-worker/internal/load/load.go`
-- Modify: `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/load.go`
 - Test: `commoncrawl/cc-dns-worker/internal/load/load_test.go`
+- Modify: `commoncrawl/cc-dns-worker/cmd/cc-dns-worker/load.go`
 
 **Interfaces:**
-- Consumes: `model.DomainDNSRow`, the CH connection helper from Task 8.
-- Produces:
-  - `load.FromFile(ctx, conn driver.Conn, path string) (int, error)` — reads `dns.parquet`, inserts
-    into `corpscout.commoncrawl_domain_dns`.
-  - Wired `runLoad`.
+- Consumes: `store.StagedRecords`/`StagedDomains`, `model.RecordRow`/`ScanRow`, `chConn()`.
+- Produces: `load.FromStore(ctx, conn driver.Conn, st *store.Store, scanID string) (records int, domains int, err error)`; wired `runLoad`.
 
-- [ ] **Step 1: Write the migration**
+- [ ] **Step 1: Write the migrations**
 
-Create `clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns.up.sql` (copy the schema from
-the spec §5 verbatim):
+Create `clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns_records.up.sql`:
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns
+CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records
 (
-    scan_id        LowCardinality(String),
-    root_domain    String,
-    etld           LowCardinality(String),
-    nameservers    Array(String),
-    ns_ips         Array(String),
-    a              Map(LowCardinality(String), Array(String)),
-    aaaa           Map(LowCardinality(String), Array(String)),
-    mx             Array(String),
-    txt            Array(String),
-    dmarc          String,
-    dkim           Map(LowCardinality(String), String),
-    mta_sts        String,
-    tls_rpt        String,
-    bimi           String,
-    caa            Array(String),
-    soa            String,
-    dnssec_signed  UInt8,
-    ds_present     UInt8,
-    dnskey         Array(String),
-    ds             Array(String),
-    query_status   Map(LowCardinality(String), String),
-    resolver_path  LowCardinality(String),
-    source_run_id  String,
-    resolved_at    DateTime64(3, 'UTC')
+    scan_id       LowCardinality(String),
+    root_domain   String,
+    name          String,
+    record_type   LowCardinality(String),
+    slot          LowCardinality(String),
+    value         String,
+    ttl           UInt32,
+    priority      UInt16,
+    rcode         LowCardinality(String),
+    source_run_id String,
+    resolved_at   DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (root_domain, scan_id, record_type, name, value);
+```
+
+Create `clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns_records.down.sql`:
+```sql
+DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records;
+```
+
+Create `clickhouse/migrations/0000MM_corpscout_commoncrawl_domain_dns_scan.up.sql`:
+```sql
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_scan
+(
+    scan_id       LowCardinality(String),
+    root_domain   String,
+    etld          LowCardinality(String),
+    nameservers   Array(String),
+    ns_ips        Array(String),
+    dnssec_signed UInt8,
+    ds_present    UInt8,
+    status        LowCardinality(String),
+    error         String,
+    queries_total UInt16,
+    queries_ok    UInt16,
+    source_run_id String,
+    resolved_at   DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(resolved_at)
 ORDER BY (root_domain, scan_id);
 ```
 
-Create `clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns.down.sql`:
+Create `clickhouse/migrations/0000MM_corpscout_commoncrawl_domain_dns_scan.down.sql`:
 ```sql
-DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns;
+DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_scan;
 ```
 
-- [ ] **Step 2: Write the failing load test (column list is pure/testable)**
+- [ ] **Step 2: Write the failing load test**
 
 Create `commoncrawl/cc-dns-worker/internal/load/load_test.go`:
 ```go
@@ -1731,16 +1949,14 @@ import (
 	"cc-dns-worker/internal/model"
 )
 
-func TestInsertColumnsMatchModel(t *testing.T) {
-	cols := chColumns[model.DomainDNSRow]()
-	joined := strings.Join(cols, ",")
-	for _, must := range []string{"scan_id", "root_domain", "a", "dkim", "query_status", "resolved_at"} {
-		if !strings.Contains(joined, must) {
-			t.Errorf("column list missing %q: %s", must, joined)
-		}
+func TestColumnLists(t *testing.T) {
+	rc := chColumns[model.RecordRow]()
+	if !strings.Contains(strings.Join(rc, ","), "record_type") || len(rc) < 11 {
+		t.Errorf("RecordRow columns wrong: %v", rc)
 	}
-	if len(cols) < 20 {
-		t.Errorf("expected all model columns, got %d", len(cols))
+	sc := chColumns[model.ScanRow]()
+	if !strings.Contains(strings.Join(sc, ","), "nameservers") || len(sc) < 13 {
+		t.Errorf("ScanRow columns wrong: %v", sc)
 	}
 }
 ```
@@ -1750,11 +1966,12 @@ func TestInsertColumnsMatchModel(t *testing.T) {
 Run: `cd commoncrawl/cc-dns-worker && go test ./internal/load/`
 Expected: FAIL — `chColumns` undefined.
 
-- [ ] **Step 4: Write the loader (mirror cc-enrich-worker/internal/load)**
+- [ ] **Step 4: Write the loader**
 
 Create `commoncrawl/cc-dns-worker/internal/load/load.go`:
 ```go
-// Package load inserts dns.parquet into corpscout.commoncrawl_domain_dns over the native protocol.
+// Package load bulk-copies the SQLite stage into the two corpscout ClickHouse tables over the
+// native protocol.
 package load
 
 import (
@@ -1764,12 +1981,15 @@ import (
 	"strings"
 
 	"cc-dns-worker/internal/model"
+	"cc-dns-worker/internal/store"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/parquet-go/parquet-go"
 )
 
-const table = "corpscout.commoncrawl_domain_dns"
+const (
+	recordsTable = "corpscout.commoncrawl_domain_dns_records"
+	scanTable    = "corpscout.commoncrawl_domain_dns_scan"
+)
 
 // chColumns returns the ch tag of each field of T in declaration order.
 func chColumns[T any]() []string {
@@ -1783,30 +2003,43 @@ func chColumns[T any]() []string {
 	return cols
 }
 
-// FromFile reads dns.parquet and batch-inserts every row.
-func FromFile(ctx context.Context, conn driver.Conn, path string) (int, error) {
-	rows, err := parquet.ReadFile[model.DomainDNSRow](path)
-	if err != nil {
-		return 0, fmt.Errorf("read %s: %w", path, err)
-	}
+func insert[T any](ctx context.Context, conn driver.Conn, table string, rows []T) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	query := "INSERT INTO " + table + " (" + strings.Join(chColumns[model.DomainDNSRow](), ", ") + ")"
-	batch, err := conn.PrepareBatch(ctx, query)
+	q := "INSERT INTO " + table + " (" + strings.Join(chColumns[T](), ", ") + ")"
+	batch, err := conn.PrepareBatch(ctx, q)
 	if err != nil {
-		return 0, fmt.Errorf("prepare: %w", err)
+		return 0, fmt.Errorf("prepare %s: %w", table, err)
 	}
 	for i := range rows {
 		if err := batch.AppendStruct(&rows[i]); err != nil {
 			_ = batch.Abort()
-			return 0, fmt.Errorf("append row %d: %w", i, err)
+			return 0, fmt.Errorf("append %s row %d: %w", table, i, err)
 		}
 	}
 	if err := batch.Send(); err != nil {
-		return 0, fmt.Errorf("send: %w", err)
+		return 0, fmt.Errorf("send %s: %w", table, err)
 	}
 	return len(rows), nil
+}
+
+// FromStore reads the stage for scanID and inserts records + domain summaries into ClickHouse.
+func FromStore(ctx context.Context, conn driver.Conn, st *store.Store, scanID string) (int, int, error) {
+	recs, err := st.StagedRecords(ctx, scanID)
+	if err != nil {
+		return 0, 0, err
+	}
+	nr, err := insert(ctx, conn, recordsTable, recs)
+	if err != nil {
+		return 0, 0, err
+	}
+	doms, err := st.StagedDomains(ctx, scanID)
+	if err != nil {
+		return nr, 0, err
+	}
+	nd, err := insert(ctx, conn, scanTable, doms)
+	return nr, nd, err
 }
 ```
 
@@ -1825,54 +2058,60 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"time"
 
 	"cc-dns-worker/internal/load"
+	"cc-dns-worker/internal/store"
 )
 
 func runLoad(args []string) error {
 	fs := flag.NewFlagSet("load", flag.ExitOnError)
-	path := fs.String("file", "dns.parquet", "path to dns.parquet")
+	dbPath := fs.String("db", "scan.db", "SQLite stage path")
+	scanID := fs.String("scan-id", time.Now().UTC().Format("2006-01-02"), "scan id to load")
 	_ = fs.Parse(args)
 
 	ctx := context.Background()
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
 	conn, err := chConn()
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	n, err := load.FromFile(ctx, conn, *path)
+	nr, nd, err := load.FromStore(ctx, conn, st, *scanID)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("loaded %d rows into corpscout.commoncrawl_domain_dns\n", n)
+	fmt.Printf("loaded %d records and %d domain summaries for scan_id=%s\n", nr, nd, *scanID)
 	return nil
 }
 ```
 
-- [ ] **Step 7: Verify build + tests**
+- [ ] **Step 7: Verify build + all unit tests**
 
 Run: `cd commoncrawl/cc-dns-worker && go build ./... && go test ./... && go vet ./...`
-Expected: build + all unit tests pass.
+Expected: build + unit tests pass.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 cd commoncrawl/cc-dns-worker && go fmt ./...
 git add commoncrawl/cc-dns-worker clickhouse/migrations
-git commit -m "feat(dns): commoncrawl_domain_dns migration and load subcommand"
+git commit -m "feat(dns): CH migrations (records + scan) and SQLite->CH load subcommand"
 ```
 
 ---
 
-### Task 10: Real-DNS smoke test + ClickHouse load integration test
+### Task 10: Real-DNS smoke + ClickHouse load integration tests
 
 **Files:**
-- Create: `commoncrawl/cc-dns-worker/internal/resolve/smoke_test.go` (build tag `//go:build integration`)
-- Create: `commoncrawl/cc-dns-worker/internal/load/integration_test.go` (build tag `//go:build integration`)
-
-**Interfaces:**
-- Consumes: the full stack; a reachable network (smoke) and a real ClickHouse (load).
+- Create: `commoncrawl/cc-dns-worker/internal/resolve/smoke_test.go` (`//go:build integration`)
+- Create: `commoncrawl/cc-dns-worker/internal/load/integration_test.go` (`//go:build integration`)
 
 - [ ] **Step 1: Write the real-DNS smoke test**
 
@@ -1891,7 +2130,6 @@ import (
 	"cc-dns-worker/internal/scheduler"
 )
 
-// Resolves real, stable domains straight from authoritative servers. Requires outbound UDP/53.
 func TestSmokeRealDomains(t *testing.T) {
 	s := scheduler.New(scheduler.Config{PerServerQPS: 10, Burst: 10, MaxInFlight: 3})
 	r := NewResolver(NewExchanger(s, 5*time.Second))
@@ -1904,11 +2142,20 @@ func TestSmokeRealDomains(t *testing.T) {
 	if len(del.NS) == 0 || len(del.NSIPs) == 0 {
 		t.Fatalf("no NS learned: %+v", del)
 	}
-	rs := r.QueryRecords(ctx, "cloudflare.com", del, records.DefaultConfig())
-	if len(rs.MX) == 0 {
+	res := r.Resolve(ctx, "cloudflare.com", "smoke", "smoke", del, records.DefaultConfig(), time.Now().UTC())
+	var haveMX, haveA bool
+	for _, rec := range res.Records {
+		if rec.RecordType == "MX" {
+			haveMX = true
+		}
+		if rec.RecordType == "A" {
+			haveA = true
+		}
+	}
+	if !haveMX {
 		t.Errorf("expected MX for cloudflare.com")
 	}
-	if len(rs.A["@"]) == 0 && len(rs.A["www"]) == 0 {
+	if !haveA {
 		t.Errorf("expected some A records")
 	}
 }
@@ -1917,10 +2164,10 @@ func TestSmokeRealDomains(t *testing.T) {
 - [ ] **Step 2: Run the smoke test**
 
 Run: `cd commoncrawl/cc-dns-worker && go test -tags=integration ./internal/resolve/ -run TestSmokeRealDomains -v`
-Expected: PASS when network is available. (If the environment blocks UDP/53, document it as skipped —
-do NOT weaken the assertions.)
+Expected: PASS when outbound UDP/53 is available. If the environment blocks it, record it as skipped —
+do NOT weaken assertions.
 
-- [ ] **Step 3: Write the ClickHouse load integration test**
+- [ ] **Step 3: Write the CH load integration test**
 
 Create `commoncrawl/cc-dns-worker/internal/load/integration_test.go`:
 ```go
@@ -1936,27 +2183,11 @@ import (
 	"time"
 
 	"cc-dns-worker/internal/model"
-	"cc-dns-worker/internal/output"
+	"cc-dns-worker/internal/store"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
-
-func testConn(t *testing.T) driver.Conn {
-	t.Helper()
-	addr := os.Getenv("CLICKHOUSE_ADDR")
-	if addr == "" {
-		addr = "localhost:9000"
-	}
-	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr: []string{addr},
-		Auth: clickhouse.Auth{Database: "corpscout", Username: envOr("CLICKHOUSE_USER", "default"), Password: os.Getenv("CLICKHOUSE_PASSWORD")},
-	})
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	return conn
-}
 
 func envOr(k, d string) string {
 	if v := os.Getenv(k); v != "" {
@@ -1965,130 +2196,147 @@ func envOr(k, d string) string {
 	return d
 }
 
-// Writes a row to parquet, loads it, and reads it back from ClickHouse. Requires the migration
-// applied to a reachable ClickHouse.
-func TestLoadRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	conn := testConn(t)
-	defer conn.Close()
+func testConn(t *testing.T) driver.Conn {
+	t.Helper()
+	conn, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{envOr("CLICKHOUSE_ADDR", "localhost:9000")},
+		Auth: clickhouse.Auth{Database: "corpscout", Username: envOr("CLICKHOUSE_USER", "default"), Password: os.Getenv("CLICKHOUSE_PASSWORD")},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	return conn
+}
 
-	dir := t.TempDir()
-	w, err := output.NewWriter(dir)
+// Stages one domain + records in a temp scan.db, loads to CH, reads back. Requires the migrations
+// applied to a reachable ClickHouse.
+func TestLoadFromStoreRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := model.DomainDNSRow{
-		ScanID: "itest", RootDomain: "example.test", ETLD: "test",
-		A:      map[string][]string{"@": {"1.2.3.4"}},
-		DKIM:   map[string]string{"google": "v=DKIM1"},
-		QueryStatus: map[string]string{"example.test./MX": "NOERROR"},
-		ResolverPath: "iterative", ResolvedAt: time.Now().UTC(),
-	}
-	if err := w.Write(row); err != nil {
+	defer st.Close()
+	if _, err := st.Seed(ctx, "itest", []string{"example.test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(); err != nil {
+	now := time.Now().UTC()
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "itest", RootDomain: "example.test", ETLD: "test", Status: "done",
+		Nameservers: []string{"ns1.example.test"}, NSIPs: []string{"1.1.1.1"},
+		QueriesTotal: 2, QueriesOK: 2, ResolvedAt: now,
+		Records: []model.DNSRecord{{Name: "example.test", RecordType: "MX", Value: "mail.example.test", Priority: 10, Rcode: "NOERROR", TTL: 300}},
+	}}); err != nil {
 		t.Fatal(err)
 	}
 
-	n, err := FromFile(ctx, conn, filepath.Join(dir, "dns.parquet"))
+	conn := testConn(t)
+	defer conn.Close()
+	nr, nd, err := FromStore(ctx, conn, st, "itest")
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("loaded %d rows, want 1", n)
+	if nr != 1 || nd != 1 {
+		t.Fatalf("loaded records=%d domains=%d, want 1/1", nr, nd)
 	}
 
-	var got string
+	var rt string
 	if err := conn.QueryRow(ctx,
-		"SELECT root_domain FROM corpscout.commoncrawl_domain_dns FINAL WHERE scan_id = 'itest' LIMIT 1",
-	).Scan(&got); err != nil {
+		"SELECT record_type FROM corpscout.commoncrawl_domain_dns_records FINAL WHERE scan_id='itest' LIMIT 1").Scan(&rt); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if got != "example.test" {
-		t.Errorf("got %q", got)
+	if rt != "MX" {
+		t.Errorf("record_type = %q, want MX", rt)
 	}
-	_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns WHERE scan_id = 'itest'")
+	_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_records WHERE scan_id='itest'")
+	_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE scan_id='itest'")
 }
 ```
 
-- [ ] **Step 4: Apply the migration and run the load integration test**
+- [ ] **Step 4: Apply migrations and run the load integration test**
 
 Run:
 ```bash
-# apply the migration (adjust to the repo's migration runner / clickhouse-client)
-clickhouse-client --host "${CLICKHOUSE_HOST:-localhost}" --multiquery < clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns.up.sql
-cd commoncrawl/cc-dns-worker && go test -tags=integration ./internal/load/ -run TestLoadRoundTrip -v
+clickhouse-client --host "${CLICKHOUSE_HOST:-localhost}" --multiquery < clickhouse/migrations/0000NN_corpscout_commoncrawl_domain_dns_records.up.sql
+clickhouse-client --host "${CLICKHOUSE_HOST:-localhost}" --multiquery < clickhouse/migrations/0000MM_corpscout_commoncrawl_domain_dns_scan.up.sql
+cd commoncrawl/cc-dns-worker && go test -tags=integration ./internal/load/ -run TestLoadFromStoreRoundTrip -v
 ```
-Expected: PASS (1 row loaded and read back).
+Expected: PASS (1 record + 1 domain loaded and read back).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd commoncrawl/cc-dns-worker && go fmt ./...
 git add commoncrawl/cc-dns-worker
-git commit -m "test(dns): real-DNS smoke and ClickHouse load integration tests"
+git commit -m "test(dns): real-DNS smoke and SQLite->CH load integration tests"
 ```
 
 ---
 
-### Task 11: End-to-end scan smoke + README
+### Task 11: End-to-end scan+resume smoke + README
 
 **Files:**
 - Create: `commoncrawl/cc-dns-worker/README.md`
 
-**Interfaces:** none new — this validates the wired binary against a tiny real slice.
-
-- [ ] **Step 1: Run a bounded real scan against ClickHouse**
+- [ ] **Step 1: Run a bounded real scan into SQLite**
 
 Run:
 ```bash
 cd commoncrawl/cc-dns-worker && go build -o bin/cc-dns-worker ./cmd/cc-dns-worker
-CLICKHOUSE_ADDR=localhost:9000 ./bin/cc-dns-worker scan --limit 20 --out /tmp/dnsout --scan-id smoke
+CLICKHOUSE_ADDR=localhost:9000 ./bin/cc-dns-worker scan --limit 20 --db /tmp/dns-smoke.db --scan-id smoke
 ```
-Expected: log `scanning 20 domains`, then `done: 20 domains -> /tmp/dnsout`, and
-`/tmp/dnsout/dns.parquet` exists.
+Expected: log `20 domains from CH ... 20 pending`, then `done (20 domains resolved this run)`; `/tmp/dns-smoke.db` exists.
 
-- [ ] **Step 2: Load the smoke output and verify**
+- [ ] **Step 2: Verify the resume contract**
 
 Run:
 ```bash
-CLICKHOUSE_ADDR=localhost:9000 ./bin/cc-dns-worker load --file /tmp/dnsout/dns.parquet
-clickhouse-client -q "SELECT count(), uniqExact(root_domain) FROM corpscout.commoncrawl_domain_dns FINAL WHERE scan_id='smoke'"
+CLICKHOUSE_ADDR=localhost:9000 ./bin/cc-dns-worker scan --limit 20 --db /tmp/dns-smoke.db --scan-id smoke
 ```
-Expected: `loaded 20 rows`; count and uniqExact both ~20 (some domains may share; count == rows).
+Expected: log shows `0 pending to resolve` (all already done/error) — proving resume skips finished domains.
 
-- [ ] **Step 3: Write the README**
+- [ ] **Step 3: Load and verify in ClickHouse**
 
-Create `commoncrawl/cc-dns-worker/README.md` documenting: purpose, the two-tier per-server rate
-model, `scan`/`load` usage and flags, the CH table, env vars (`CLICKHOUSE_*`), and the deferred
-items (Redis scale-out, CT-log hostnames, DNSSEC validation, raw record table). Keep it aligned with
-`commoncrawl/cc-enrich-worker/README.md` in tone.
+Run:
+```bash
+CLICKHOUSE_ADDR=localhost:9000 ./bin/cc-dns-worker load --db /tmp/dns-smoke.db --scan-id smoke
+clickhouse-client -q "SELECT count() FROM corpscout.commoncrawl_domain_dns_records FINAL WHERE scan_id='smoke'"
+clickhouse-client -q "SELECT count(), countIf(status='done') FROM corpscout.commoncrawl_domain_dns_scan FINAL WHERE scan_id='smoke'"
+```
+Expected: nonzero record count; ~20 domain rows.
 
-- [ ] **Step 4: Clean up smoke data and commit**
+- [ ] **Step 4: Write the README**
+
+Create `commoncrawl/cc-dns-worker/README.md` documenting: purpose; the two-tier per-server rate model;
+the SQLite stage + resume contract; `scan`/`load` usage and flags; the two CH tables and how history
+works (`scan_id`); env vars (`CLICKHOUSE_*`); and deferred items (Redis/shard-by-server scale-out,
+CT-log hostnames, DNSSEC validation, dagster scheduling). Match `cc-enrich-worker/README.md` tone.
+
+- [ ] **Step 5: Clean up smoke data and commit**
 
 ```bash
-clickhouse-client -q "DELETE FROM corpscout.commoncrawl_domain_dns WHERE scan_id='smoke'"
+clickhouse-client -q "DELETE FROM corpscout.commoncrawl_domain_dns_records WHERE scan_id='smoke'"
+clickhouse-client -q "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE scan_id='smoke'"
+rm -f /tmp/dns-smoke.db*
 cd commoncrawl/cc-dns-worker
 git add README.md
-git commit -m "docs(dns): cc-dns-worker README and end-to-end smoke notes"
+git commit -m "docs(dns): cc-dns-worker README and end-to-end smoke/resume notes"
 ```
 
 ---
 
 ## Deferred (documented, not built in v1)
-- **Redis-backed distributed scheduler** via shard-by-server-IP (spec §3.3) — only when one box is
-  too slow.
+- **Redis-backed distributed scheduler** via shard-by-server-IP (spec §3.3) — only when one box is too slow.
 - **CT-log hostname discovery** feeding the hostname list (spec §2) — replaces the static 5.
-- **DNSSEC chain validation** — v1 only captures DNSKEY/DS/RRSIG presence.
-- **Raw long record table** `commoncrawl_domain_dns_records` (spec §5 open decision) — add if
-  per-record TTL/RRSIG fidelity is needed.
+- **DNSSEC chain validation** — v1 only captures DNSKEY/DS presence.
 - **dagster asset** wrapping `scan`+`load` on an every-few-days partitioned schedule (spec §8).
 
 ## Self-review notes
 - Spec §2 record families → Task 3 (plan) + Task 6 (collect) + smoke Task 10. ✓
-- Spec §3 rate model → Task 4 (scheduler) + Task 5 (exchange routes through it). ✓
-- Spec §3.4 iterative walk → Task 5 (discover). ✓
-- Spec §5 schema → Task 9 migration + Task 2 model (columns match). ✓
-- Spec §7 testing (deterministic in-process server, real-DNS smoke, CH load) → Tasks 5/10. ✓
-- Global constraint parquet==ch tag pin → Task 2 test. ✓
+- Spec §3.2/3.3 rate model + single-node → Task 4 (scheduler) + Task 5 (exchange routes through it). ✓
+- Spec §3.3/§3.4 durable queue + SQLite stage + resume → Task 7 (store) + Task 8 (seed/pending/writer). ✓
+- Spec §3.5 iterative walk → Task 5 (discover). ✓
+- Spec §5 two normalized tables → Task 9 migrations; §5.3 SQLite stage → Task 7; column match → Task 2/9 tests. ✓
+- Spec §6 resume-on-crash → Task 7 `TestCommitBatchAndResume` + Task 11 Step 2. ✓
+- Spec §7 testing (store resume, in-process server, real-DNS smoke, CH load) → Tasks 7/10. ✓
+- Type consistency: `DomainResult`/`DNSRecord` (Task 2) used by `Resolve` (Task 6), `store` (Task 7), `scan` (Task 8); `RecordRow`/`ScanRow` (Task 2) used by `store` staged-readers (Task 7) and `load` (Task 9). ✓
