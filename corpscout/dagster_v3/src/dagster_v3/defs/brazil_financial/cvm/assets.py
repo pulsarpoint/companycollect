@@ -183,7 +183,10 @@ def brazil_fin_cvm_dfp_statement_rows_usd_duckdb(
 
 
 @dg.asset(
-    deps=[dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb")],
+    deps=[
+        dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
+        dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
+    ],
     group_name=BRAZIL_FIN_CVM_GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "cvm", "dfp"},
     pool="brazil_fin_cvm_duckdb",

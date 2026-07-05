@@ -108,6 +108,8 @@ def test_brazil_fin_cvm_dfp_raw_clickhouse_depends_on_usd_duckdb_asset() -> None
     from dagster_clickhouse import ClickhouseResource
 
     from dagster_v3.defs.brazil_financial.cvm.assets import (
+        brazil_fin_cvm_companies_clickhouse,
+        brazil_fin_cvm_companies_duckdb,
         brazil_fin_cvm_dfp_raw_clickhouse,
         brazil_fin_cvm_dfp_raw_archives_s3,
         brazil_fin_cvm_dfp_raw_duckdb,
@@ -119,6 +121,8 @@ def test_brazil_fin_cvm_dfp_raw_clickhouse_depends_on_usd_duckdb_asset() -> None
 
     repository = dg.Definitions(
         assets=[
+            brazil_fin_cvm_companies_duckdb,
+            brazil_fin_cvm_companies_clickhouse,
             brazil_fin_cvm_dfp_raw_archives_s3,
             brazil_fin_cvm_dfp_raw_duckdb,
             brazil_fin_cvm_dfp_statement_rows_usd_duckdb,
@@ -134,7 +138,8 @@ def test_brazil_fin_cvm_dfp_raw_clickhouse_depends_on_usd_duckdb_asset() -> None
     asset = repository.asset_graph.get(brazil_fin_cvm_dfp_raw_clickhouse.key)
 
     assert asset.parent_keys == {
-        dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb")
+        dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
+        dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
     }
 
 
