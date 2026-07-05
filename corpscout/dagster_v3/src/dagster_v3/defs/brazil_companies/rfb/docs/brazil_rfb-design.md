@@ -18,9 +18,13 @@ statement grain.
 - **ClickHouse tables planned**:
   - `corpscout.br_companies`: one row per legal entity (`cnpj_basico`).
   - `corpscout.br_establishments`: one row per full 14-digit establishment CNPJ.
-  - `corpscout.br_company_contact_info`: one row per establishment contact.
+  - `corpscout.br_company_contacts`: canonical company-grain contact facts, one
+    row per `(registry_id, contact_type, contact_value)`; identical contacts
+    across establishments collapse.
+  - `corpscout.br_company_domains`: derived email domains, feeds the domain
+    graph in Phase E.
   - `corpscout.br_websites`: deduped company-domain feeder for the common
-    domain graph.
+    domain graph (legacy graph feed until Phase E).
   - `corpscout.br_industries`: one row per deduped legal-entity CNAE activity,
     mapped to one or more NACE categories through `br_cnae_to_nace`.
 - **Datasets used**:
@@ -189,14 +193,19 @@ statement grain.
     `activity_start_date`, address columns, `primary_cnae_code`,
     `secondary_cnae_codes`, source columns.
   - `ORDER BY (cnpj_basico, cnpj)`.
-- **`br_company_contact_info`**: one row per normalized contact.
-  - Core columns: `cnpj_basico`, `cnpj`, `contact_type`, `contact_type_en`,
-    `contact_value`, `root_domain`, `domain_source`, `is_current`, source columns.
-  - `domain_source` is `email` when a unique company email domain is accepted,
-    otherwise empty. There is no website field in RFB CNPJ.
-  - `ORDER BY (cnpj_basico, contact_type, contact_value, cnpj)`.
+- **`br_company_contacts`**: company-grain contact facts, one row per
+  `(registry_id, contact_type, contact_value)`. Identical contacts across
+  establishments collapse; the establishment CNPJ survives only inside
+  `source_record_id`. Canonical standard shape (see
+  `docs/superpowers/specs/2026-07-04-company-contacts-domains-standard-design.md`):
+  `registry_id = cnpj_basico`; `contact_type_raw=''`.
+  - `ORDER BY (registry_id, contact_type, contact_value)`.
+- **`br_company_domains`**: derived email domains for the Phase E domain graph,
+  canonical standard shape: `domain_source='email'`, confidence 0.9,
+  `is_primary` election.
+  - `ORDER BY (registry_id, domain)`.
 - **`br_websites`**: one row per `(cnpj_basico, root_domain)` for the shared
-  `company_website_domains` graph.
+  `company_website_domains` graph (legacy graph feed until Phase E).
   - Email-derived domains are accepted only when the suffix belongs to one
     distinct `cnpj_basico`, with the same `EMAIL_DOMAIN_MAX_COMPANIES=1` rule used
     by Estonia. A small provider denylist remains a backstop.
@@ -245,7 +254,10 @@ statement grain.
 - **Contact data found**: yes, in `Estabelecimentos`.
 - **Types present**: email, phone 1, phone 2, fax. No official website URL exists
   in RFB CNPJ.
-- **Storage**: `br_company_contacts`, one row per establishment contact.
+- **Storage**: `br_company_contacts`, company-grain — one row per
+  `(registry_id, contact_type, contact_value)`; identical contacts across
+  establishments collapse, and the establishment CNPJ survives only inside
+  `source_record_id`.
 - **Domain extraction**: email suffix only, accepted when unique to a single
   `cnpj_basico`. This feeds `br_company_domains`, then the shared
   `company_website_domains` / `domains` graph with `domain_source='email'`.

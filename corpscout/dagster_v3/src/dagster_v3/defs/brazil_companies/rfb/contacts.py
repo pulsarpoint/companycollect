@@ -271,7 +271,7 @@ def build_brazil_rfb_contact_info(
                 *,
                 row_number() over (
                     partition by registry_id, contact_type, contact_value
-                    order by is_current desc, cnpj
+                    order by is_current desc, cnpj, source_field
                 ) as rn
             from folded
         )
