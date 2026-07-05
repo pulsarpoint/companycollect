@@ -449,12 +449,14 @@ def test_vocabularies_are_closed_sets():
 
 
 def test_shared_denylist_superset_of_country_copies():
-    # Drift guards until Estonia (Phase B) and Brazil (Phase C) swap their imports.
+    # Drift guard until Estonia (Phase B) swaps its import. Brazil (Phase C) now
+    # imports the shared denylist directly, so its check is identity rather than
+    # a subset comparison.
     from dagster_v3.defs.brazil_companies.rfb import contacts as br
     from dagster_v3.defs.estonia_ar import resources as ee
 
     assert ee.EMAIL_PROVIDER_DENYLIST <= contact_extraction.EMAIL_PROVIDER_DENYLIST
-    assert br.EMAIL_PROVIDER_DENYLIST <= contact_extraction.EMAIL_PROVIDER_DENYLIST
+    assert br.EMAIL_PROVIDER_DENYLIST is contact_extraction.EMAIL_PROVIDER_DENYLIST
     assert ee.EMAIL_DOMAIN_MAX_COMPANIES == contact_extraction.EMAIL_DOMAIN_MAX_COMPANIES
     assert br.EMAIL_DOMAIN_MAX_COMPANIES == contact_extraction.EMAIL_DOMAIN_MAX_COMPANIES
 

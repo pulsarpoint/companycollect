@@ -98,6 +98,13 @@ ESTABLISHMENTS_TABLE = "establishments"
 COMPANY_CONTACT_INFO_TABLE = "company_contact_info"
 WEBSITES_TABLE = "websites"
 
+# Canonical (spec-standard) stage tables — company/domain-grain, deduped, column
+# names matching dagster_v3.contact_extraction.COMPANY_CONTACTS_COLUMNS /
+# COMPANY_DOMAINS_COLUMNS. Built alongside the legacy company_contact_info/websites
+# stages above (which stay in place for the legacy ClickHouse export until Task 3).
+COMPANY_CONTACTS_STAGE_TABLE = "company_contacts"
+COMPANY_DOMAINS_STAGE_TABLE = "company_domains"
+
 BR_COMPANIES_TABLE_CH = "br_companies"
 BR_ESTABLISHMENTS_TABLE_CH = "br_establishments"
 BR_COMPANY_CONTACT_INFO_TABLE_CH = "br_company_contact_info"
@@ -185,6 +192,11 @@ BR_ESTABLISHMENTS_COLUMNS = (
 )
 BR_ESTABLISHMENTS_EXPORT_COLUMNS = BR_ESTABLISHMENTS_COLUMNS
 
+# Legacy ClickHouse export contract (br_company_contact_info). The internal
+# company_contact_info DuckDB stage now carries one additional trailing
+# `source_field` column (feeds the canonical company_contacts stage below) that
+# is NOT part of this contract — the export selects this explicit column list
+# rather than `select *`, so the extra stage column is invisible to it.
 BR_COMPANY_CONTACT_INFO_COLUMNS = (
     "country_iso2",
     "source_slug",

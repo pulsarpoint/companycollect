@@ -5,6 +5,11 @@ from pathlib import Path
 
 import duckdb
 
+from dagster_v3.contact_extraction import (
+    EMAIL_DOMAIN_MAX_COMPANIES,
+    EMAIL_PROVIDER_DENYLIST,
+    EMAIL_UNIQUE_CONFIDENCE,
+)
 from dagster_v3.defs.brazil_companies.rfb import tables
 from dagster_v3.defs.brazil_companies.rfb.duckdb_attach import (
     attached_read_only_database,
@@ -15,35 +20,6 @@ DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 DOMAINS_SOURCE_SLUG = "brazil_rfb"
 EMAIL_CONTACT_DOMAINS_TABLE = "email_contact_domains"
 EMAIL_ROOT_DOMAIN_MAP_TABLE = "email_root_domain_map"
-EMAIL_DOMAIN_MAX_COMPANIES = 1
-EMAIL_PROVIDER_DENYLIST = frozenset(
-    {
-        "gmail.com",
-        "googlemail.com",
-        "outlook.com",
-        "hotmail.com",
-        "live.com",
-        "msn.com",
-        "yahoo.com",
-        "ymail.com",
-        "icloud.com",
-        "me.com",
-        "mac.com",
-        "aol.com",
-        "gmx.com",
-        "mail.com",
-        "zoho.com",
-        "proton.me",
-        "protonmail.com",
-        "fastmail.com",
-        "uol.com.br",
-        "bol.com.br",
-        "terra.com.br",
-        "ig.com.br",
-        "globo.com",
-        "r7.com",
-    }
-)
 
 
 def _sql_literal(value: str) -> str:
@@ -142,7 +118,8 @@ def build_brazil_rfb_contact_info(
                     lower(trim(correio_eletronico)) as contact_value,
                     lower(trim(regexp_extract(correio_eletronico, '[^@]+$')))
                     as raw_email_domain,
-                    case when status_code = '02' then 1 else 0 end as is_current
+                    case when status_code = '02' then 1 else 0 end as is_current,
+                    'correio_eletronico' as source_field
                 from {establishments_table}
                 where nullif(trim(correio_eletronico), '') is not null
 
@@ -159,7 +136,8 @@ def build_brazil_rfb_contact_info(
                     trim(ddd_1) as contact_area_code,
                     trim(telefone_1) as contact_value,
                     '' as raw_email_domain,
-                    case when status_code = '02' then 1 else 0 end as is_current
+                    case when status_code = '02' then 1 else 0 end as is_current,
+                    'telefone_1' as source_field
                 from {establishments_table}
                 where nullif(trim(telefone_1), '') is not null
 
@@ -176,7 +154,8 @@ def build_brazil_rfb_contact_info(
                     trim(ddd_2) as contact_area_code,
                     trim(telefone_2) as contact_value,
                     '' as raw_email_domain,
-                    case when status_code = '02' then 1 else 0 end as is_current
+                    case when status_code = '02' then 1 else 0 end as is_current,
+                    'telefone_2' as source_field
                 from {establishments_table}
                 where nullif(trim(telefone_2), '') is not null
 
@@ -193,7 +172,8 @@ def build_brazil_rfb_contact_info(
                     trim(ddd_fax) as contact_area_code,
                     trim(fax) as contact_value,
                     '' as raw_email_domain,
-                    case when status_code = '02' then 1 else 0 end as is_current
+                    case when status_code = '02' then 1 else 0 end as is_current,
+                    'fax' as source_field
                 from {establishments_table}
                 where nullif(trim(fax), '') is not null
             ),
@@ -231,7 +211,8 @@ def build_brazil_rfb_contact_info(
                 is_current,
                 case when {keep_email} then email_root_domain else '' end as root_domain,
                 case when {keep_email} then 'email' else '' end as domain_source,
-                now() as resolved_at
+                now() as resolved_at,
+                source_field
             from enriched
             left join email_counts using (email_root_domain)
             """
@@ -253,17 +234,73 @@ def build_brazil_rfb_contact_info(
             f"select count(distinct cnpj_basico) from {contacts_table}"
         ).fetchone()[0]
     )
+
+    # Canonical company_contacts stage (spec-standard COMPANY_CONTACTS_COLUMNS):
+    # company-grain (registry_id/contact_type/contact_value) dedupe of the raw
+    # per-establishment facts above, with area code folded into contact_value.
+    # Built from ALL rows of the internal stage (facts are validation-independent —
+    # a denylisted-provider email still appears here; only the domains stage below
+    # filters on domain acceptance).
+    company_contacts_stage = f"{DLT_DATASET_NAME}.{tables.COMPANY_CONTACTS_STAGE_TABLE}"
+    connection.execute(
+        f"""
+        create or replace table {company_contacts_stage} as
+        with folded as (
+            select
+                country_iso2,
+                source_slug,
+                source_run_id,
+                source_record_id,
+                cnpj,
+                cnpj_basico as registry_id,
+                contact_type,
+                '' as contact_type_raw,
+                case
+                    when contact_area_code <> '' then contact_area_code || ' ' || contact_value
+                    else contact_value
+                end as contact_value,
+                source_field,
+                is_current,
+                cast(null as date) as valid_to,
+                '' as source_url,
+                resolved_at
+            from {contacts_table}
+        ),
+        deduped as (
+            select
+                *,
+                row_number() over (
+                    partition by registry_id, contact_type, contact_value
+                    order by is_current desc, cnpj
+                ) as rn
+            from folded
+        )
+        select
+            country_iso2, source_slug, source_run_id, source_record_id,
+            registry_id, contact_type, contact_type_raw, contact_value,
+            source_field, is_current, valid_to, source_url, resolved_at
+        from deduped
+        where rn = 1
+        """
+    )
+    contact_facts = int(
+        connection.execute(f"select count(*) from {company_contacts_stage}").fetchone()[0]
+    )
+
     if log is not None:
         log(
-            "Built Brazil RFB contact info: contacts=%s email_domains=%s companies=%s",
+            "Built Brazil RFB contact info: contacts=%s email_domains=%s companies=%s "
+            "contact_facts=%s",
             contacts,
             email_domains,
             companies_with_contacts,
+            contact_facts,
         )
     return {
         "contacts": contacts,
         "email_domains": email_domains,
         "companies_with_contacts": companies_with_contacts,
+        "contact_facts": contact_facts,
     }
 
 
@@ -352,6 +389,71 @@ def build_brazil_rfb_websites(
             from primaried
             """
         )
+
+        # Canonical company_domains stage (spec-standard COMPANY_DOMAINS_COLUMNS):
+        # same src/deduped/picked/primaried election as the legacy websites stage
+        # above, re-derived from the attached contact-info stage (root_domain <> ''
+        # already excludes denylisted-provider and over-shared email domains).
+        company_domains_stage = (
+            f"{DLT_DATASET_NAME}.{tables.COMPANY_DOMAINS_STAGE_TABLE}"
+        )
+        connection.execute(
+            f"""
+            create or replace table {company_domains_stage} as
+            with src as (
+                select
+                    country_iso2,
+                    source_slug,
+                    source_run_id,
+                    source_record_id,
+                    cnpj_basico,
+                    root_domain,
+                    domain_source,
+                    is_current
+                from {contacts_table}
+                where root_domain <> ''
+            ),
+            deduped as (
+                select
+                    *,
+                    row_number() over (
+                        partition by cnpj_basico, root_domain
+                        order by is_current desc, source_record_id
+                    ) as rn
+                from src
+            ),
+            picked as (
+                select * from deduped where rn = 1
+            ),
+            primaried as (
+                select
+                    *,
+                    case when row_number() over (
+                        partition by cnpj_basico
+                        order by is_current desc, length(root_domain), root_domain
+                    ) = 1 then 1 else 0 end as is_primary
+                from picked
+            )
+            select
+                country_iso2,
+                source_slug,
+                source_run_id,
+                concat('br_company_domains:', cnpj_basico, ':', root_domain)
+                as source_record_id,
+                cnpj_basico as registry_id,
+                root_domain as domain,
+                domain_source,
+                '' as validation_method,
+                cast({EMAIL_UNIQUE_CONFIDENCE} as double) as confidence,
+                '' as website_url,
+                '' as website_normalized_url,
+                '' as website_host,
+                is_current,
+                is_primary,
+                now() as resolved_at
+            from primaried
+            """
+        )
     websites = int(
         connection.execute(f"select count(*) from {websites_table}").fetchone()[0]
     )
@@ -360,14 +462,38 @@ def build_brazil_rfb_websites(
             f"select count(distinct cnpj_basico) from {websites_table}"
         ).fetchone()[0]
     )
+    company_domains = int(
+        connection.execute(f"select count(*) from {company_domains_stage}").fetchone()[0]
+    )
+    primary_domains = int(
+        connection.execute(
+            f"select coalesce(sum(is_primary), 0) from {company_domains_stage}"
+        ).fetchone()[0]
+    )
+    distinct_domain_registries = int(
+        connection.execute(
+            f"select count(distinct registry_id) from {company_domains_stage}"
+        ).fetchone()[0]
+    )
+    if primary_domains != distinct_domain_registries:
+        raise ValueError(
+            "Brazil RFB company_domains primary-domain count "
+            f"({primary_domains}) does not match distinct registry count "
+            f"({distinct_domain_registries}); refusing to proceed"
+        )
 
     if log is not None:
         log(
-            "Built Brazil RFB websites: websites=%s companies=%s",
+            "Built Brazil RFB websites: websites=%s companies=%s company_domains=%s "
+            "primary_domains=%s",
             websites,
             companies_with_websites,
+            company_domains,
+            primary_domains,
         )
     return {
         "websites": websites,
         "companies_with_websites": companies_with_websites,
+        "company_domains": company_domains,
+        "primary_domains": primary_domains,
     }

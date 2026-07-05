@@ -4,6 +4,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from dagster_v3 import contact_extraction
 from dagster_v3.defs.brazil_companies.rfb import contacts, tables, transforms
 
 
@@ -299,7 +300,19 @@ def _insert_contact_filter_rows(database_path: Path) -> None:
                  '55555555', '0001', '00', 1, 'FAX ONLY', '02', 'Active',
                  date '2020-01-01', '', date '2020-01-01', '6201501', '',
                  '', '', '', '', '', '', '', '', '', '', '', '', '', '31',
-                 '33333333', '', '', '', now())
+                 '33333333', '', '', '', now()),
+                ('BR', 'brazil_rfb', 'run-1', '66666666000100', '66666666000100',
+                 '66666666', '0001', '00', 1, 'SHARED PHONE HQ', '02', 'Active',
+                 date '2020-01-01', '', date '2020-01-01', '6201501',
+                 '', '', '', '', '', '', '', '', '', '',
+                 '11', '34567890', '', '', '', '',
+                 '', '', '', now()),
+                ('BR', 'brazil_rfb', 'run-1', '66666666000200', '66666666000200',
+                 '66666666', '0002', '00', 0, 'SHARED PHONE BRANCH', '02', 'Active',
+                 date '2020-01-01', '', date '2020-01-01', '6201501',
+                 '', '', '', '', '', '', '', '', '', '',
+                 '11', '34567890', '', '', '', '',
+                 '', '', '', now())
             ) as t({column_list})
             """
         )
@@ -334,13 +347,16 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
         )
 
     assert contact_counts == {
-        "contacts": 6,
+        "contacts": 8,
         "email_domains": 1,
-        "companies_with_contacts": 5,
+        "companies_with_contacts": 6,
+        "contact_facts": 7,
     }
     assert website_counts == {
         "websites": 1,
         "companies_with_websites": 1,
+        "company_domains": 1,
+        "primary_domains": 1,
     }
     with duckdb.connect(str(contacts_path), read_only=True) as connection:
         contact_rows = connection.execute(
@@ -390,6 +406,66 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
     assert website_rows == [
         ("12345678", "acme.com.br", "email", "", "", "", 1),
     ]
+
+    with duckdb.connect(str(contacts_path), read_only=True) as connection:
+        canonical_contact_columns = [
+            row[0]
+            for row in connection.execute(
+                f"describe {tables.DLT_DATASET_NAME}.{tables.COMPANY_CONTACTS_STAGE_TABLE}"
+            ).fetchall()
+        ]
+        canonical_contact_rows = connection.execute(
+            f"""
+            select registry_id, contact_type, contact_value, source_field
+            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_CONTACTS_STAGE_TABLE}
+            order by registry_id, contact_type, contact_value
+            """
+        ).fetchall()
+    with duckdb.connect(str(websites_path), read_only=True) as connection:
+        canonical_domain_columns = [
+            row[0]
+            for row in connection.execute(
+                f"describe {tables.DLT_DATASET_NAME}.{tables.COMPANY_DOMAINS_STAGE_TABLE}"
+            ).fetchall()
+        ]
+        canonical_domain_rows = connection.execute(
+            f"""
+            select registry_id, domain, validation_method, confidence, is_primary
+            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_DOMAINS_STAGE_TABLE}
+            order by registry_id, domain
+            """
+        ).fetchall()
+
+    assert canonical_contact_columns == list(contact_extraction.COMPANY_CONTACTS_COLUMNS)
+    assert canonical_domain_columns == list(contact_extraction.COMPANY_DOMAINS_COLUMNS)
+
+    # source_field literals carried through correctly per base UNION branch.
+    assert (
+        "12345678", "email", "info@acme.com.br", "correio_eletronico"
+    ) in canonical_contact_rows
+    assert ("12345678", "phone", "11 11111111", "telefone_1") in canonical_contact_rows
+    assert ("55555555", "fax", "31 33333333", "fax") in canonical_contact_rows
+
+    # A phone shared by two establishments of the SAME company (registry_id=66666666,
+    # both establishments carry ddd_1/telefone_1 = 11/34567890) folds to one value and
+    # appears exactly ONCE in the canonical stage despite contributing 2 base facts.
+    assert (
+        "66666666", "phone", "11 34567890", "telefone_1"
+    ) in canonical_contact_rows
+    assert [
+        row for row in canonical_contact_rows if row[0] == "66666666"
+    ] == [("66666666", "phone", "11 34567890", "telefone_1")]
+
+    # Denylisted-provider email is a FACT (present in contacts) but never a domain.
+    assert (
+        "44444444", "email", "owner@gmail.com", "correio_eletronico"
+    ) in canonical_contact_rows
+    assert all(row[1] != "gmail.com" for row in canonical_domain_rows)
+    assert canonical_domain_rows == [("12345678", "acme.com.br", "", 0.9, 1)]
+    assert {row[0] for row in canonical_domain_rows if row[4] == 1} == {
+        row[0] for row in canonical_domain_rows
+    }
+
     with duckdb.connect(str(contacts_path), read_only=True) as connection:
         raw_domain_rows = connection.execute(
             f"""
@@ -464,7 +540,11 @@ def test_contact_domain_tables_match_clickhouse_export_contract(tmp_path: Path) 
             ).fetchall()
         ]
 
-    assert contact_columns == list(tables.BR_COMPANY_CONTACT_INFO_COLUMNS)
+    # The internal company_contact_info stage now carries one additional trailing
+    # `source_field` column beyond the legacy ClickHouse export contract (feeds the
+    # canonical company_contacts stage) — the export itself is unaffected since it
+    # selects BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS explicitly, not `select *`.
+    assert contact_columns == [*tables.BR_COMPANY_CONTACT_INFO_COLUMNS, "source_field"]
     assert website_columns == list(tables.BR_WEBSITES_COLUMNS)
     assert tables.BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS == (
         tables.BR_COMPANY_CONTACT_INFO_COLUMNS
