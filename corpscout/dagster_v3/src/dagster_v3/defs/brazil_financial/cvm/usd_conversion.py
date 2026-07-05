@@ -35,6 +35,7 @@ def apply_brazil_cvm_statement_rows_usd_conversion_for_table(
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     qualified_table = f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{statement_rows_table}"
+    _require_statement_rows_table(duckdb_connection, statement_rows_table)
     _ensure_usd_columns(duckdb_connection, qualified_table)
 
     pairs = _rate_pairs(duckdb_connection, qualified_table)
@@ -105,6 +106,36 @@ def apply_brazil_cvm_statement_rows_usd_conversion_for_table(
             counts["rows_converted"],
         )
     return counts
+
+
+def _require_statement_rows_table(
+    duckdb_connection: Any,
+    statement_rows_table: str,
+) -> None:
+    exists = bool(
+        duckdb_connection.execute(
+            """
+            select count(*)
+            from information_schema.tables
+            where table_schema = ?
+              and table_name = ?
+            """,
+            [BRAZIL_CVM_DUCKDB_SCHEMA, statement_rows_table],
+        ).fetchone()[0]
+    )
+    if exists:
+        return
+
+    qualified_table = f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{statement_rows_table}"
+    upstream_asset = (
+        "brazil_fin_cvm_itr_raw_duckdb"
+        if statement_rows_table.startswith("itr_")
+        else "brazil_fin_cvm_dfp_raw_duckdb"
+    )
+    raise RuntimeError(
+        f"Brazil CVM source table is missing: {qualified_table}. Materialize "
+        f"{upstream_asset} for this partition before running USD conversion."
+    )
 
 
 def _ensure_usd_columns(duckdb_connection: Any, qualified_table: str) -> None:

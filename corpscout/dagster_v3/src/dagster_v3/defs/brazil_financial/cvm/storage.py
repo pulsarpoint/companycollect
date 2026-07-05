@@ -44,6 +44,31 @@ def brazil_fin_cvm_source_duckdb_connection(
         yield connection
 
 
+@contextmanager
+def brazil_fin_cvm_existing_source_duckdb_connection(
+    *,
+    family: str,
+    year: str | int,
+    root: str | Path = BRAZIL_FIN_CVM_DUCKDB_ROOT,
+) -> Iterator[Any]:
+    normalized_family = _normalize_family(family)
+    normalized_year = _normalize_year(year)
+    db_path = brazil_fin_cvm_source_duckdb_path(
+        family=normalized_family,
+        year=normalized_year,
+        root=root,
+    )
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"Brazil CVM {normalized_family.upper()} DuckDB partition file is missing "
+            f"for year {normalized_year}: {db_path}. Materialize "
+            f"brazil_fin_cvm_{normalized_family}_raw_duckdb for this partition before "
+            "running USD conversion."
+        )
+    with duckdb_resource(db_path).get_connection() as connection:
+        yield connection
+
+
 def existing_brazil_fin_cvm_source_duckdb_paths(
     *,
     family: str,

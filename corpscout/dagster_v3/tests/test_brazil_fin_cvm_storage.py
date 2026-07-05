@@ -22,6 +22,33 @@ def test_brazil_fin_cvm_source_duckdb_path_is_partitioned_by_family_and_year(
     ) == (tmp_path / "dfp" / "year=2026" / "source.duckdb")
 
 
+def test_existing_source_duckdb_connection_requires_partition_file(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    from dagster_v3.defs.brazil_financial.cvm.storage import (
+        brazil_fin_cvm_existing_source_duckdb_connection,
+        brazil_fin_cvm_source_duckdb_path,
+    )
+
+    db_path = brazil_fin_cvm_source_duckdb_path(
+        family="dfp",
+        year="2026",
+        root=tmp_path,
+    )
+
+    with pytest.raises(FileNotFoundError, match="brazil_fin_cvm_dfp_raw_duckdb"):
+        with brazil_fin_cvm_existing_source_duckdb_connection(
+            family="dfp",
+            year="2026",
+            root=tmp_path,
+        ):
+            pass
+
+    assert not db_path.exists()
+
+
 def test_read_only_partitioned_duckdb_connection_unions_existing_year_files(
     tmp_path: Path,
 ) -> None:

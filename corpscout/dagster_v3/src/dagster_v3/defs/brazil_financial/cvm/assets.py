@@ -45,6 +45,7 @@ from dagster_v3.defs.brazil_financial.cvm.itr_parsing import (
 )
 from dagster_v3.defs.brazil_financial.cvm.storage import (
     BRAZIL_FIN_CVM_COMPANIES_DUCKDB_PATH,
+    brazil_fin_cvm_existing_source_duckdb_connection,
     brazil_fin_cvm_read_only_partitioned_connection,
     brazil_fin_cvm_source_duckdb_connection,
     brazil_fin_cvm_source_duckdb_path,
@@ -307,7 +308,7 @@ def brazil_fin_cvm_dfp_statement_rows_usd_duckdb(
         family="dfp",
         year=context.partition_key,
     )
-    with brazil_fin_cvm_source_duckdb_connection(
+    with brazil_fin_cvm_existing_source_duckdb_connection(
         family="dfp",
         year=context.partition_key,
     ) as connection:
@@ -345,7 +346,7 @@ def brazil_fin_cvm_itr_statement_rows_usd_duckdb(
         family="itr",
         year=context.partition_key,
     )
-    with brazil_fin_cvm_source_duckdb_connection(
+    with brazil_fin_cvm_existing_source_duckdb_connection(
         family="itr",
         year=context.partition_key,
     ) as connection:

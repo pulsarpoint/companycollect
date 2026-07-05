@@ -163,6 +163,24 @@ def test_statement_rows_usd_conversion_handles_large_scaled_amounts(
     assert amount_usd == Decimal("-30961187158197952674.004992")
 
 
+def test_statement_rows_usd_conversion_requires_source_table(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    from dagster_v3.defs.brazil_financial.cvm.usd_conversion import (
+        apply_brazil_cvm_statement_rows_usd_conversion,
+    )
+
+    db_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(db_path)) as connection:
+        with pytest.raises(RuntimeError, match="brazil_cvm.dfp_statement_rows"):
+            apply_brazil_cvm_statement_rows_usd_conversion(
+                duckdb_connection=connection,
+                exchange_rates=_StubExchangeRates(),
+            )
+
+
 def _seed_statement_rows(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(f"create schema if not exists {BRAZIL_CVM_DUCKDB_SCHEMA}")
     connection.execute(
