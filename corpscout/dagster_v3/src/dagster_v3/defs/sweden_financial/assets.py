@@ -13,6 +13,7 @@ from dagster_v3.defs.sweden_financial.archive_state import (
 )
 from dagster_v3.defs.sweden_financial.parsing import (
     extract_sweden_financial_report_xhtml_catalog,
+    parse_sweden_financial_report_xhtml_catalog,
     sweden_financial_source_duckdb_path,
 )
 from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsResource
@@ -209,13 +210,85 @@ def sweden_financial_current_report_xhtml_catalog_duckdb(
     )
 
 
+@dg.asset(
+    deps=["sweden_financial_backfill_report_xhtml_catalog_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "s3", "xhtml", "xbrl"},
+    partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    description=(
+        "Parses Sweden backfill XHTML/iXBRL reports into structured report and "
+        "fact tables in the year DuckDB file."
+    ),
+)
+def sweden_financial_backfill_parsed_reports_duckdb(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    duckdb_path = sweden_financial_source_duckdb_path(context.partition_key)
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb_resource(duckdb_path).get_connection() as connection:
+        counts = parse_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id=context.run_id,
+            partition_year=context.partition_key,
+            replace_scope="partition",
+            log_info=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "duckdb_path": str(duckdb_path),
+        }
+    )
+
+
+@dg.asset(
+    deps=["sweden_financial_current_report_xhtml_catalog_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "s3", "xhtml", "xbrl"},
+    partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    description=(
+        "Parses changed Sweden current-year XHTML/iXBRL reports into structured "
+        "report and fact tables in the active-year DuckDB file."
+    ),
+)
+def sweden_financial_current_parsed_reports_duckdb(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    duckdb_path = sweden_financial_source_duckdb_path(SWEDEN_FINANCIAL_CURRENT_YEAR)
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb_resource(duckdb_path).get_connection() as connection:
+        counts = parse_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id=context.run_id,
+            partition_year=SWEDEN_FINANCIAL_CURRENT_YEAR,
+            replace_scope="archive",
+            catalog_source_run_id=context.run_id,
+            log_info=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "duckdb_path": str(duckdb_path),
+            "load_partition_key": context.partition_key,
+        }
+    )
+
+
 SWEDEN_FINANCIAL_BACKFILL_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_backfill_raw_archives_s3",
     "sweden_financial_backfill_report_xhtml_catalog_duckdb",
+    "sweden_financial_backfill_parsed_reports_duckdb",
 )
 SWEDEN_FINANCIAL_CURRENT_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_current_raw_archives_s3",
     "sweden_financial_current_report_xhtml_catalog_duckdb",
+    "sweden_financial_current_parsed_reports_duckdb",
 )
 
 
@@ -261,8 +334,10 @@ defs = dg.Definitions(
     assets=[
         sweden_financial_backfill_raw_archives_s3,
         sweden_financial_backfill_report_xhtml_catalog_duckdb,
+        sweden_financial_backfill_parsed_reports_duckdb,
         sweden_financial_current_raw_archives_s3,
         sweden_financial_current_report_xhtml_catalog_duckdb,
+        sweden_financial_current_parsed_reports_duckdb,
     ],
     jobs=[
         sweden_financial_backfill_job,

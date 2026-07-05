@@ -1,12 +1,17 @@
+import json
 import re
 import tempfile
 import zipfile
 from collections.abc import Callable
+from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from time import monotonic
 from typing import Any
+
+from lxml import etree
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_financial.resources import SWEDEN_FINANCIAL_RAW_BUCKET
@@ -19,9 +24,17 @@ SWEDEN_FINANCIAL_DUCKDB_PATH = (
 RAW_ARCHIVE_PREFIX = "sweden_financial/raw_archives/"
 REPORT_XHTML_PREFIX = "sweden_financial/report_xhtml/"
 LOG_EVERY_NESTED_ZIPS = 1_000
+SWEDEN_FINANCIAL_XHTML_PARSER_VERSION = "sweden-financial-ixbrl-v1"
+IX_NS = "http://www.xbrl.org/2013/inlineXBRL"
+XBRLI_NS = "http://www.xbrl.org/2003/instance"
+XBRLDI_NS = "http://xbrl.org/2006/xbrldi"
+LINK_NS = "http://www.xbrl.org/2003/linkbase"
+XLINK_NS = "http://www.w3.org/1999/xlink"
 
 _DATE_PATTERN = re.compile(r"(?P<year>\d{4})[-_]? (?P<month>\d{2})[-_]? (?P<day>\d{2})", re.X)
 _COMPANY_ID_PATTERN = re.compile(r"(?<!\d)(\d{10,12})(?!\d)")
+_NUMERIC_CLEAN_RE = re.compile(r"[^0-9.\-]")
+_XML_PARSER = etree.XMLParser(recover=True, huge_tree=True, resolve_entities=False)
 
 
 def sweden_financial_source_duckdb_path(year: str | int) -> Path:
@@ -199,6 +212,143 @@ def extract_sweden_financial_report_xhtml_catalog(
     }
 
 
+def parse_sweden_financial_report_xhtml_catalog(
+    *,
+    connection: Any,
+    object_store: ObjectStoreResource,
+    source_run_id: str,
+    partition_year: str,
+    replace_scope: str = "partition",
+    catalog_source_run_id: str | None = None,
+    log_info: Callable[..., object] | None = None,
+) -> dict[str, int]:
+    _ensure_parsed_report_tables(connection)
+    catalog_rows = _report_xhtml_catalog_rows(
+        connection=connection,
+        partition_year=partition_year,
+        catalog_source_run_id=catalog_source_run_id,
+    )
+    source_archive_names = sorted(
+        {
+            str(row["source_archive_name"])
+            for row in catalog_rows
+            if str(row["source_archive_name"]).strip()
+        }
+    )
+    _delete_parsed_report_scope(
+        connection=connection,
+        replace_scope=replace_scope,
+        source_archive_names=source_archive_names,
+    )
+
+    if log_info is not None:
+        log_info(
+            "Starting Sweden financial XHTML parse: partition_year=%s catalog_rows=%s replace_scope=%s",
+            partition_year,
+            len(catalog_rows),
+            replace_scope,
+        )
+
+    resolved_at = datetime.now(UTC)
+    report_rows: list[tuple[Any, ...]] = []
+    fact_rows: list[tuple[Any, ...]] = []
+    error_rows: list[tuple[Any, ...]] = []
+
+    for index, catalog_row in enumerate(catalog_rows, start=1):
+        try:
+            body = object_store.read_bytes(
+                str(catalog_row["xhtml_s3_key"]),
+                bucket=str(catalog_row["xhtml_s3_bucket"]),
+            )
+            report_row, report_fact_rows = _parse_report_xhtml(
+                catalog_row=catalog_row,
+                body=body,
+                source_run_id=source_run_id,
+                resolved_at=resolved_at,
+            )
+            report_rows.append(report_row)
+            fact_rows.extend(report_fact_rows)
+        except Exception as exc:  # noqa: BLE001 - persist bad XHTML and keep parsing.
+            error_rows.append(
+                (
+                    source_run_id,
+                    partition_year,
+                    catalog_row["source_archive_name"],
+                    catalog_row["company_id"],
+                    catalog_row["report_period_end"],
+                    catalog_row["xhtml_s3_key"],
+                    f"{type(exc).__name__}: {exc}",
+                    resolved_at,
+                )
+            )
+            if log_info is not None:
+                log_info(
+                    "Sweden financial XHTML parse failed: partition_year=%s index=%s/%s xhtml_key=%s error=%s: %s",
+                    partition_year,
+                    index,
+                    len(catalog_rows),
+                    catalog_row["xhtml_s3_key"],
+                    type(exc).__name__,
+                    exc,
+                )
+            continue
+
+        if log_info is not None and (
+            index == 1 or index == len(catalog_rows) or index % 100 == 0
+        ):
+            log_info(
+                "Sweden financial XHTML parse progress: partition_year=%s parsed=%s/%s facts=%s",
+                partition_year,
+                index,
+                len(catalog_rows),
+                len(fact_rows),
+            )
+
+    if report_rows:
+        connection.executemany(
+            f"""
+            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.reports
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            report_rows,
+        )
+    if fact_rows:
+        connection.executemany(
+            f"""
+            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.facts
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            fact_rows,
+        )
+    if error_rows:
+        connection.executemany(
+            f"""
+            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            error_rows,
+        )
+
+    if log_info is not None:
+        log_info(
+            "Finished Sweden financial XHTML parse: partition_year=%s reports=%s facts=%s errors=%s",
+            partition_year,
+            len(report_rows),
+            len(fact_rows),
+            len(error_rows),
+        )
+
+    return {
+        "partition_year": partition_year,
+        "catalog_row_count": len(catalog_rows),
+        "reports_parsed_count": len(report_rows),
+        "reports_failed_count": len(error_rows),
+        "report_row_count": len(report_rows),
+        "fact_row_count": len(fact_rows),
+        "parse_error_row_count": len(error_rows),
+    }
+
+
 def report_xhtml_object_key(
     *,
     partition_year: str,
@@ -348,6 +498,459 @@ def _replace_report_xhtml_catalog(
             """,
             rows,
         )
+
+
+def _ensure_parsed_report_tables(connection: Any) -> None:
+    connection.execute(f"create schema if not exists {SWEDEN_FINANCIAL_DATASET_NAME}")
+    connection.execute(
+        f"""
+        create table if not exists {SWEDEN_FINANCIAL_DATASET_NAME}.reports (
+            country_iso2 varchar,
+            source_slug varchar,
+            source_run_id varchar,
+            source_record_id varchar,
+            statement_key varchar,
+            company_id varchar,
+            report_period_start date,
+            report_period_end date,
+            fiscal_year integer,
+            reported_company_name varchar,
+            report_language varchar,
+            source_archive_key varchar,
+            source_archive_name varchar,
+            nested_zip_name varchar,
+            xhtml_object_key varchar,
+            xhtml_sha256 varchar,
+            xhtml_size_bytes bigint,
+            taxonomy_entrypoint varchar,
+            schema_refs varchar,
+            contexts_count bigint,
+            units_count bigint,
+            facts_count bigint,
+            parser_version varchar,
+            source_payload_hash varchar,
+            resolved_at timestamp
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        create table if not exists {SWEDEN_FINANCIAL_DATASET_NAME}.facts (
+            country_iso2 varchar,
+            source_slug varchar,
+            source_run_id varchar,
+            source_record_id varchar,
+            statement_key varchar,
+            company_id varchar,
+            report_period_end date,
+            fact_ordinal bigint,
+            concept_qname varchar,
+            concept_namespace varchar,
+            concept_local_name varchar,
+            context_id varchar,
+            unit_id varchar,
+            decimals varchar,
+            precision varchar,
+            value_kind varchar,
+            raw_value varchar,
+            amount_original decimal(38, 10),
+            amount_usd decimal(38, 10),
+            date_value date,
+            text_value varchar,
+            currency varchar,
+            dimensions varchar,
+            fx_rate_to_usd decimal(38, 12),
+            fx_rate_date date,
+            fx_source varchar,
+            parser_version varchar,
+            source_payload_hash varchar,
+            resolved_at timestamp
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        create table if not exists {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors (
+            source_run_id varchar,
+            partition_year varchar,
+            source_archive_name varchar,
+            company_id varchar,
+            report_period_end varchar,
+            xhtml_object_key varchar,
+            error varchar,
+            resolved_at timestamp
+        )
+        """
+    )
+
+
+def _report_xhtml_catalog_rows(
+    *,
+    connection: Any,
+    partition_year: str,
+    catalog_source_run_id: str | None,
+) -> list[dict[str, Any]]:
+    where = "where partition_year = ?"
+    params: list[Any] = [partition_year]
+    if catalog_source_run_id is not None:
+        where += " and source_run_id = ?"
+        params.append(catalog_source_run_id)
+    rows = connection.execute(
+        f"""
+        select
+            source_run_id,
+            partition_year,
+            source_archive_key,
+            nested_zip_member,
+            xhtml_member,
+            xhtml_s3_bucket,
+            xhtml_s3_key,
+            company_id,
+            report_period_end,
+            source_archive_year,
+            source_archive_name,
+            size_bytes,
+            sha256
+        from {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
+        {where}
+        order by source_archive_key, nested_zip_member, xhtml_member
+        """,
+        params,
+    ).fetchall()
+    columns = (
+        "source_run_id",
+        "partition_year",
+        "source_archive_key",
+        "nested_zip_member",
+        "xhtml_member",
+        "xhtml_s3_bucket",
+        "xhtml_s3_key",
+        "company_id",
+        "report_period_end",
+        "source_archive_year",
+        "source_archive_name",
+        "size_bytes",
+        "sha256",
+    )
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
+def _delete_parsed_report_scope(
+    *,
+    connection: Any,
+    replace_scope: str,
+    source_archive_names: list[str],
+) -> None:
+    if replace_scope == "partition":
+        for table_name in ("facts", "reports", "parse_errors"):
+            connection.execute(f"delete from {SWEDEN_FINANCIAL_DATASET_NAME}.{table_name}")
+        return
+    if replace_scope != "archive":
+        raise ValueError(f"Unknown Sweden financial parsed replace scope: {replace_scope}")
+    if not source_archive_names:
+        return
+    placeholders = ", ".join("?" for _ in source_archive_names)
+    connection.execute(
+        f"""
+        delete from {SWEDEN_FINANCIAL_DATASET_NAME}.facts
+        where statement_key in (
+            select statement_key
+            from {SWEDEN_FINANCIAL_DATASET_NAME}.reports
+            where source_archive_name in ({placeholders})
+        )
+        """,
+        source_archive_names,
+    )
+    connection.execute(
+        f"""
+        delete from {SWEDEN_FINANCIAL_DATASET_NAME}.reports
+        where source_archive_name in ({placeholders})
+        """,
+        source_archive_names,
+    )
+    connection.execute(
+        f"""
+        delete from {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors
+        where source_archive_name in ({placeholders})
+        """,
+        source_archive_names,
+    )
+
+
+def _parse_report_xhtml(
+    *,
+    catalog_row: dict[str, Any],
+    body: bytes,
+    source_run_id: str,
+    resolved_at: datetime,
+) -> tuple[tuple[Any, ...], list[tuple[Any, ...]]]:
+    root = etree.fromstring(body, parser=_XML_PARSER)
+    schema_refs = _schema_refs(root)
+    contexts = _contexts_by_id(root)
+    units = _units_by_id(root)
+    facts = list(_fact_elements(root))
+    source_payload_hash = str(catalog_row["sha256"])
+    statement_key = sha256(
+        f"{catalog_row['xhtml_s3_key']}:{source_payload_hash}".encode()
+    ).hexdigest()
+    report_period_end = _parse_date(str(catalog_row["report_period_end"])) or _latest_period_end(
+        contexts,
+    )
+    report_period_start = _period_start_for_report_end(contexts, report_period_end)
+    fiscal_year = report_period_end.year if report_period_end is not None else None
+    report_language = root.get("{http://www.w3.org/XML/1998/namespace}lang") or root.get("lang")
+
+    report_row = (
+        "SE",
+        SWEDEN_FINANCIAL_DATASET_NAME,
+        source_run_id,
+        statement_key,
+        statement_key,
+        catalog_row["company_id"],
+        report_period_start,
+        report_period_end,
+        fiscal_year,
+        _reported_company_name(facts),
+        report_language,
+        catalog_row["source_archive_key"],
+        catalog_row["source_archive_name"],
+        catalog_row["nested_zip_member"],
+        catalog_row["xhtml_s3_key"],
+        source_payload_hash,
+        catalog_row["size_bytes"],
+        schema_refs[0] if schema_refs else None,
+        json.dumps(schema_refs, ensure_ascii=False),
+        len(contexts),
+        len(units),
+        len(facts),
+        SWEDEN_FINANCIAL_XHTML_PARSER_VERSION,
+        source_payload_hash,
+        resolved_at,
+    )
+    fact_rows = [
+        _parsed_fact_row(
+            fact=fact,
+            fact_ordinal=ordinal,
+            statement_key=statement_key,
+            company_id=str(catalog_row["company_id"]),
+            report_period_end=report_period_end,
+            contexts=contexts,
+            units=units,
+            source_run_id=source_run_id,
+            source_payload_hash=source_payload_hash,
+            resolved_at=resolved_at,
+        )
+        for ordinal, fact in enumerate(facts, start=1)
+    ]
+    return report_row, fact_rows
+
+
+def _schema_refs(root: etree._Element) -> list[str]:
+    return [
+        href
+        for element in root.findall(f".//{{{LINK_NS}}}schemaRef")
+        if (href := element.get(f"{{{XLINK_NS}}}href") or element.get("href"))
+    ]
+
+
+def _contexts_by_id(root: etree._Element) -> dict[str, dict[str, Any]]:
+    return {
+        context["context_id"]: context
+        for element in root.findall(f".//{{{XBRLI_NS}}}context")
+        if (context := _context_row(element))["context_id"]
+    }
+
+
+def _context_row(element: etree._Element) -> dict[str, Any]:
+    period = element.find(f"{{{XBRLI_NS}}}period")
+    instant = _parse_date(period.findtext(f"{{{XBRLI_NS}}}instant")) if period is not None else None
+    start = _parse_date(period.findtext(f"{{{XBRLI_NS}}}startDate")) if period is not None else None
+    end = _parse_date(period.findtext(f"{{{XBRLI_NS}}}endDate")) if period is not None else None
+    dimensions = {
+        str(member.get("dimension")): (member.text or "").strip()
+        for member in element.findall(f".//{{{XBRLDI_NS}}}explicitMember")
+        if member.get("dimension") and (member.text or "").strip()
+    }
+    return {
+        "context_id": element.get("id", ""),
+        "period_start": start,
+        "period_end": instant or end,
+        "dimensions": dimensions,
+    }
+
+
+def _units_by_id(root: etree._Element) -> dict[str, str]:
+    units: dict[str, str] = {}
+    for element in root.findall(f".//{{{XBRLI_NS}}}unit"):
+        unit_id = element.get("id")
+        measure = element.findtext(f".//{{{XBRLI_NS}}}measure")
+        if unit_id:
+            units[unit_id] = (measure or "").strip()
+    return units
+
+
+def _fact_elements(root: etree._Element) -> list[etree._Element]:
+    return [
+        element
+        for element in root.iter()
+        if element.tag in {f"{{{IX_NS}}}nonFraction", f"{{{IX_NS}}}nonNumeric"}
+        and element.get("name")
+        and element.get("contextRef")
+    ]
+
+
+def _parsed_fact_row(
+    *,
+    fact: etree._Element,
+    fact_ordinal: int,
+    statement_key: str,
+    company_id: str,
+    report_period_end: date | None,
+    contexts: dict[str, dict[str, Any]],
+    units: dict[str, str],
+    source_run_id: str,
+    source_payload_hash: str,
+    resolved_at: datetime,
+) -> tuple[Any, ...]:
+    concept_qname = fact.get("name", "")
+    concept_namespace, concept_local_name = _resolve_qname(concept_qname, fact.nsmap)
+    context_id = fact.get("contextRef", "")
+    context = contexts.get(context_id, {"dimensions": {}})
+    unit_id = fact.get("unitRef")
+    raw_value = " ".join("".join(fact.itertext()).split())
+    amount_original = None
+    date_value = None
+    text_value = None
+    if fact.tag == f"{{{IX_NS}}}nonFraction":
+        amount_original = _parse_decimal(
+            raw_value,
+            scale=fact.get("scale"),
+            sign=fact.get("sign"),
+        )
+        value_kind = "numeric" if amount_original is not None else "text"
+        if amount_original is None:
+            text_value = raw_value or None
+    else:
+        date_value = _parse_date(raw_value)
+        if date_value is not None:
+            value_kind = "date"
+        elif raw_value:
+            value_kind = "text"
+            text_value = raw_value
+        else:
+            value_kind = "empty"
+    return (
+        "SE",
+        SWEDEN_FINANCIAL_DATASET_NAME,
+        source_run_id,
+        f"{statement_key}:{fact_ordinal}",
+        statement_key,
+        company_id,
+        report_period_end,
+        fact_ordinal,
+        concept_qname,
+        concept_namespace,
+        concept_local_name,
+        context_id,
+        unit_id,
+        fact.get("decimals"),
+        fact.get("precision"),
+        value_kind,
+        raw_value,
+        amount_original,
+        None,
+        date_value,
+        text_value,
+        _currency_from_unit(unit_id=unit_id, units=units),
+        json.dumps(context.get("dimensions", {}), ensure_ascii=False),
+        None,
+        None,
+        "",
+        SWEDEN_FINANCIAL_XHTML_PARSER_VERSION,
+        source_payload_hash,
+        resolved_at,
+    )
+
+
+def _resolve_qname(qname: str, nsmap: dict[str | None, str]) -> tuple[str, str]:
+    if ":" not in qname:
+        return "", qname
+    prefix, local_name = qname.split(":", 1)
+    return nsmap.get(prefix, ""), local_name
+
+
+def _parse_date(value: str | None) -> date | None:
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
+
+
+def _parse_decimal(
+    raw_value: str,
+    *,
+    scale: str | None,
+    sign: str | None,
+) -> Decimal | None:
+    if not raw_value:
+        return None
+    negative = sign == "-" or raw_value.startswith("(")
+    cleaned = _NUMERIC_CLEAN_RE.sub("", raw_value.replace(",", ""))
+    cleaned = cleaned.replace("-", "")
+    if cleaned in {"", "."}:
+        return None
+    try:
+        value = Decimal(cleaned)
+        if scale:
+            value *= Decimal(10) ** int(scale)
+    except (InvalidOperation, ValueError):
+        return None
+    return -value if negative else value
+
+
+def _currency_from_unit(
+    *,
+    unit_id: str | None,
+    units: dict[str, str],
+) -> str | None:
+    if unit_id is None:
+        return None
+    measure = units.get(unit_id, "")
+    candidate = measure.rsplit(":", 1)[-1].strip().upper() if measure else unit_id.strip().upper()
+    if len(candidate) == 3 and candidate.isalpha():
+        return candidate
+    return None
+
+
+def _latest_period_end(contexts: dict[str, dict[str, Any]]) -> date | None:
+    dates = [
+        context["period_end"]
+        for context in contexts.values()
+        if context.get("period_end") is not None
+    ]
+    return max(dates) if dates else None
+
+
+def _period_start_for_report_end(
+    contexts: dict[str, dict[str, Any]],
+    report_period_end: date | None,
+) -> date | None:
+    for context in contexts.values():
+        if context.get("period_end") == report_period_end and context.get("period_start") is not None:
+            return context["period_start"]
+    return None
+
+
+def _reported_company_name(facts: list[etree._Element]) -> str | None:
+    for fact in facts:
+        concept_name = fact.get("name", "").rsplit(":", 1)[-1].lower()
+        if concept_name in {"companyname", "entityname", "foretagsnamn", "företagsnamn"}:
+            value = " ".join("".join(fact.itertext()).split())
+            if value:
+                return value
+    return None
 
 
 def _zip_file_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:

@@ -131,16 +131,36 @@ data/sweden_finacial/sweden_financial_source_<year>.duckdb
 Backfill partitions write their own year file. Current refresh partitions write
 the active archive-year file, currently `sweden_financial_source_2026.duckdb`.
 
+`sweden_financial_backfill_parsed_reports_duckdb` reads the XHTML catalog rows
+for its backfill year after XHTML extraction, loads each XHTML body from object
+storage, parses inline XBRL facts, and replaces parsed rows in the same year
+DuckDB file.
+
+`sweden_financial_current_parsed_reports_duckdb` reads only catalog rows written
+by the current refresh run and replaces parsed rows for those changed archive
+names in `sweden_financial_source_2026.duckdb`.
+
+The parsed DuckDB tables are:
+
+- `sweden_financial.reports` - one row per parsed XHTML report, aligned with the
+  ClickHouse `corpscout.se_financial_reports` shape.
+- `sweden_financial.facts` - one row per parsed inline XBRL fact, aligned with
+  the ClickHouse `corpscout.se_financial_facts` shape.
+- `sweden_financial.parse_errors` - one row per XHTML document that failed
+  parsing, so a bad report does not block the rest of the partition.
+
 ## Job And Schedule
 
 `sweden_financial_backfill_job` selects both
 `sweden_financial_backfill_raw_archives_s3` and
-`sweden_financial_backfill_report_xhtml_catalog_duckdb`. Backfill should
+`sweden_financial_backfill_report_xhtml_catalog_duckdb`, then
+`sweden_financial_backfill_parsed_reports_duckdb`. Backfill should
 materialize the 2020-2026 partitions.
 
 `sweden_financial_current_year_job` selects
 `sweden_financial_current_raw_archives_s3` and
-`sweden_financial_current_report_xhtml_catalog_duckdb`.
+`sweden_financial_current_report_xhtml_catalog_duckdb`, then
+`sweden_financial_current_parsed_reports_duckdb`.
 
 `sweden_financial_current_year_weekly` runs at `45 6 * * 6` in
 `Europe/Belgrade`, targets the matching 7-day partition date, and is enabled by
@@ -149,7 +169,6 @@ new raw archive versions while reusing unchanged archive objects.
 
 ## Out Of Scope
 
-Nested ZIP preservation, ClickHouse tables, XBRL fact parsing, and financial
-metric mapping are intentionally out of scope for this slice. XHTML extraction is
-represented by the report XHTML catalog asset; parsing those XHTML/XBRL facts
-into normalized financial statement tables is the next pipeline layer.
+ClickHouse publishing, financial metric mapping, and USD conversion are
+downstream layers. The parsed report assets preserve report and fact-level XBRL
+data in DuckDB so those publishing and metric layers can be built separately.

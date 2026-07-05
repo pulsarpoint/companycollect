@@ -1,4 +1,6 @@
 import zipfile
+from datetime import date
+from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -8,6 +10,7 @@ import duckdb
 from dagster_v3.defs.sweden_financial.parsing import (
     REPORT_XHTML_PREFIX,
     extract_sweden_financial_report_xhtml_catalog,
+    parse_sweden_financial_report_xhtml_catalog,
 )
 from dagster_v3.defs.sweden_financial.resources import (
     SWEDEN_FINANCIAL_RAW_BUCKET,
@@ -424,6 +427,246 @@ def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
     )
 
 
+def test_parse_sweden_financial_report_xhtml_catalog_writes_reports_and_facts(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2020/08_2.zip",
+        source_last_modified="2025-02-07T09:13:53.713Z",
+    )
+    xhtml_body = b"""<?xml version="1.0"?>
+<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance"
+      xmlns:link="http://www.xbrl.org/2003/linkbase"
+      xmlns:xlink="http://www.w3.org/1999/xlink"
+      xmlns:iso4217="http://www.xbrl.org/2003/iso4217"
+      xmlns:se="http://example.test/se">
+<head>
+  <link:schemaRef xlink:href="https://example.test/taxonomy.xsd" />
+</head>
+<body>
+  <xbrli:context id="duration">
+    <xbrli:entity>
+      <xbrli:identifier scheme="https://bolagsverket.se/">5560000000</xbrli:identifier>
+    </xbrli:entity>
+    <xbrli:period>
+      <xbrli:startDate>2023-01-01</xbrli:startDate>
+      <xbrli:endDate>2023-12-31</xbrli:endDate>
+    </xbrli:period>
+  </xbrli:context>
+  <xbrli:unit id="SEK">
+    <xbrli:measure>iso4217:SEK</xbrli:measure>
+  </xbrli:unit>
+  <ix:nonFraction name="se:Revenue" contextRef="duration" unitRef="SEK" decimals="0" scale="3">123</ix:nonFraction>
+  <ix:nonNumeric name="se:CompanyName" contextRef="duration">Example AB</ix:nonNumeric>
+</body>
+</html>
+"""
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = _outer_zip(
+        nested_name="5560000000_2023-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=xhtml_body,
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="catalog-run",
+            partition_year="2020",
+        )
+        counts = parse_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="parse-run",
+            partition_year="2020",
+            replace_scope="partition",
+        )
+        report_row = connection.execute(
+            """
+            select
+                country_iso2,
+                source_slug,
+                source_run_id,
+                company_id,
+                report_period_start,
+                report_period_end,
+                fiscal_year,
+                source_archive_name,
+                contexts_count,
+                units_count,
+                facts_count,
+                taxonomy_entrypoint
+            from sweden_financial.reports
+            """
+        ).fetchone()
+        fact_rows = connection.execute(
+            """
+            select
+                fact_ordinal,
+                concept_qname,
+                concept_namespace,
+                concept_local_name,
+                context_id,
+                unit_id,
+                value_kind,
+                raw_value,
+                amount_original,
+                text_value,
+                currency
+            from sweden_financial.facts
+            order by fact_ordinal
+            """
+        ).fetchall()
+
+    assert counts == {
+        "partition_year": "2020",
+        "catalog_row_count": 1,
+        "reports_parsed_count": 1,
+        "reports_failed_count": 0,
+        "report_row_count": 1,
+        "fact_row_count": 2,
+        "parse_error_row_count": 0,
+    }
+    assert report_row == (
+        "SE",
+        "sweden_financial",
+        "parse-run",
+        "5560000000",
+        date(2023, 1, 1),
+        date(2023, 12, 31),
+        2023,
+        "08_2.zip",
+        1,
+        1,
+        2,
+        "https://example.test/taxonomy.xsd",
+    )
+    assert fact_rows == [
+        (
+            1,
+            "se:Revenue",
+            "http://example.test/se",
+            "Revenue",
+            "duration",
+            "SEK",
+            "numeric",
+            "123",
+            Decimal("123000.0000000000"),
+            None,
+            "SEK",
+        ),
+        (
+            2,
+            "se:CompanyName",
+            "http://example.test/se",
+            "CompanyName",
+            "duration",
+            None,
+            "text",
+            "Example AB",
+            None,
+            "Example AB",
+            None,
+        ),
+    ]
+
+
+def test_parse_sweden_financial_report_xhtml_catalog_replaces_changed_archives(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    old_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/01_1.zip",
+        source_last_modified="2026-07-01T09:13:53.713Z",
+    )
+    unchanged_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/02_1.zip",
+        source_last_modified="2026-07-01T09:13:53.713Z",
+    )
+    changed_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2026/01_1.zip",
+        source_last_modified="2026-07-04T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, old_archive_key)] = _outer_zip(
+        nested_name="5560000000_2026-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=_sample_ixbrl_body(company_id="5560000000", amount="100"),
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, unchanged_archive_key)] = (
+        _outer_zip(
+            nested_name="5560000001_2026-12-31.zip",
+            xhtml_name="report.xhtml",
+            xhtml_body=_sample_ixbrl_body(company_id="5560000001", amount="200"),
+        )
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, changed_archive_key)] = _outer_zip(
+        nested_name="5560000002_2026-12-31.zip",
+        xhtml_name="report.xhtml",
+        xhtml_body=_sample_ixbrl_body(company_id="5560000002", amount="300"),
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="initial-catalog",
+            partition_year="2026",
+            source_archive_keys=[old_archive_key, unchanged_archive_key],
+            replace_scope="partition",
+        )
+        parse_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="initial-parse",
+            partition_year="2026",
+            replace_scope="partition",
+        )
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="current-catalog",
+            partition_year="2026",
+            source_archive_keys=[changed_archive_key],
+            replace_scope="archive",
+        )
+        counts = parse_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="current-parse",
+            partition_year="2026",
+            replace_scope="archive",
+            catalog_source_run_id="current-catalog",
+        )
+        report_rows = connection.execute(
+            """
+            select source_archive_name, company_id, source_run_id
+            from sweden_financial.reports
+            order by source_archive_name, company_id
+            """
+        ).fetchall()
+        fact_rows = connection.execute(
+            """
+            select reports.source_archive_name, facts.company_id, facts.raw_value
+            from sweden_financial.facts as facts
+            join sweden_financial.reports as reports using (statement_key)
+            order by reports.source_archive_name, facts.company_id
+            """
+        ).fetchall()
+
+    assert counts["catalog_row_count"] == 1
+    assert counts["reports_parsed_count"] == 1
+    assert report_rows == [
+        ("01_1.zip", "5560000002", "current-parse"),
+        ("02_1.zip", "5560000001", "initial-parse"),
+    ]
+    assert fact_rows == [
+        ("01_1.zip", "5560000002", "300"),
+        ("02_1.zip", "5560000001", "200"),
+    ]
+
+
 def test_extract_sweden_financial_report_xhtml_catalog_keeps_multiple_xhtml_members(
     tmp_path: Path,
 ) -> None:
@@ -656,6 +899,31 @@ def test_extract_sweden_financial_report_xhtml_catalog_merges_changed_archives(
         ("01_1.zip", "5560000002"),
         ("02_1.zip", "5560000001"),
     ]
+
+
+def _sample_ixbrl_body(*, company_id: str, amount: str) -> bytes:
+    return f"""<?xml version="1.0"?>
+<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance"
+      xmlns:iso4217="http://www.xbrl.org/2003/iso4217"
+      xmlns:se="http://example.test/se">
+<body>
+  <xbrli:context id="duration">
+    <xbrli:entity>
+      <xbrli:identifier scheme="https://bolagsverket.se/">{company_id}</xbrli:identifier>
+    </xbrli:entity>
+    <xbrli:period>
+      <xbrli:startDate>2026-01-01</xbrli:startDate>
+      <xbrli:endDate>2026-12-31</xbrli:endDate>
+    </xbrli:period>
+  </xbrli:context>
+  <xbrli:unit id="SEK">
+    <xbrli:measure>iso4217:SEK</xbrli:measure>
+  </xbrli:unit>
+  <ix:nonFraction name="se:Revenue" contextRef="duration" unitRef="SEK" decimals="0">{amount}</ix:nonFraction>
+</body>
+</html>
+""".encode()
 
 
 def _listing_xml(

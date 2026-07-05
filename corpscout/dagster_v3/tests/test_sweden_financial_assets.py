@@ -21,6 +21,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     assert backfill_asset_keys == {
         "sweden_financial_backfill_raw_archives_s3",
         "sweden_financial_backfill_report_xhtml_catalog_duckdb",
+        "sweden_financial_backfill_parsed_reports_duckdb",
     }
 
     current_job_asset_keys = {
@@ -32,6 +33,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     assert current_job_asset_keys == {
         "sweden_financial_current_raw_archives_s3",
         "sweden_financial_current_report_xhtml_catalog_duckdb",
+        "sweden_financial_current_parsed_reports_duckdb",
     }
 
     backfill_raw_node = repo.asset_graph.get(
@@ -60,6 +62,16 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     }
     assert backfill_catalog_node.partitions_def is backfill_raw_node.partitions_def
 
+    backfill_parsed_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb")
+    )
+    assert backfill_parsed_node.group_name == "sweden_financial"
+    assert backfill_parsed_node.pools == {"sweden_financial_duckdb"}
+    assert backfill_parsed_node.parent_keys == {
+        dg.AssetKey("sweden_financial_backfill_report_xhtml_catalog_duckdb")
+    }
+    assert backfill_parsed_node.partitions_def is backfill_raw_node.partitions_def
+
     current_raw_node = repo.asset_graph.get(
         dg.AssetKey("sweden_financial_current_raw_archives_s3")
     )
@@ -81,6 +93,16 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_current_raw_archives_s3")
     }
     assert current_catalog_node.partitions_def is current_raw_node.partitions_def
+
+    current_parsed_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_current_parsed_reports_duckdb")
+    )
+    assert current_parsed_node.group_name == "sweden_financial"
+    assert current_parsed_node.pools == {"sweden_financial_duckdb"}
+    assert current_parsed_node.parent_keys == {
+        dg.AssetKey("sweden_financial_current_report_xhtml_catalog_duckdb")
+    }
+    assert current_parsed_node.partitions_def is current_raw_node.partitions_def
 
 
 def test_sweden_financial_raw_assets_do_not_require_duckdb_resource() -> None:
