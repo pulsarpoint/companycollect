@@ -1,0 +1,9 @@
+.PHONY: build test vet fmt
+build:
+	go build -o bin/cc-dns-worker ./cmd/cc-dns-worker
+test:
+	go test ./...
+vet:
+	go vet ./...
+fmt:
+	go fmt ./...
