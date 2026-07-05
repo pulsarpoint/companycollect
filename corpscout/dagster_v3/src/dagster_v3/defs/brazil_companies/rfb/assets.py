@@ -10,6 +10,7 @@ from dagster_dlt.translator import DltResourceTranslatorData
 from pydantic import Field
 
 from dagster_v3.defs.brazil_companies.rfb import (
+    cleanup,
     contacts,
     resume,
     source,
@@ -37,7 +38,7 @@ BRAZIL_COMP_RFB_REFERENCE_DUCKDB_POOL = "brazil_comp_rfb_reference_duckdb"
 BRAZIL_COMP_RFB_COMPANIES_DUCKDB_POOL = "brazil_comp_rfb_companies_duckdb"
 BRAZIL_COMP_RFB_CONTACT_INFO_DUCKDB_POOL = "brazil_comp_rfb_contact_info_duckdb"
 BRAZIL_COMP_RFB_WEBSITES_DUCKDB_POOL = "brazil_comp_rfb_websites_duckdb"
-BRAZIL_COMP_RFB_PARTITIONS = dg.MonthlyPartitionsDefinition(start_date="2024-01-01")
+BRAZIL_COMP_RFB_PARTITIONS = dg.MonthlyPartitionsDefinition(start_date="2026-04-01")
 BRAZIL_COMP_RFB_DATA_ROOT = Path("data/brazil_rfb")
 BRAZIL_COMP_RFB_DEFINITION_MANIFEST_DUCKDB_PATH = (
     BRAZIL_COMP_RFB_DATA_ROOT / "__definition__" / "manifest.duckdb"
@@ -55,6 +56,7 @@ CLICKHOUSE_COMPANIES_ASSET_KEY = "brazil_comp_rfb_clickhouse_companies"
 CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY = "brazil_comp_rfb_clickhouse_establishments"
 CLICKHOUSE_CONTACT_INFO_ASSET_KEY = "brazil_comp_rfb_clickhouse_contact_info"
 CLICKHOUSE_WEBSITES_ASSET_KEY = "brazil_comp_rfb_clickhouse_websites"
+PREVIOUS_PARTITION_CLEANUP_ASSET_KEY = "brazil_comp_rfb_previous_partition_cleanup"
 REFERENCE_FAMILIES = (
     "cnaes",
     "naturezas",
@@ -580,6 +582,53 @@ def brazil_comp_rfb_clickhouse_websites(
     )
 
 
+@dg.asset(
+    name=PREVIOUS_PARTITION_CLEANUP_ASSET_KEY,
+    deps=[
+        dg.AssetKey(CLICKHOUSE_COMPANIES_ASSET_KEY),
+        dg.AssetKey(CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY),
+        dg.AssetKey(CLICKHOUSE_CONTACT_INFO_ASSET_KEY),
+        dg.AssetKey(CLICKHOUSE_WEBSITES_ASSET_KEY),
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "filesystem"},
+    partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    description=(
+        "Remove previous Brazil RFB partition stage/download folders after the "
+        "current partition has been exported to ClickHouse."
+    ),
+)
+def brazil_comp_rfb_previous_partition_cleanup(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    result = cleanup.cleanup_previous_partition_files(
+        partition_key=context.partition_key,
+        data_root=BRAZIL_COMP_RFB_DATA_ROOT,
+        download_root=BRAZIL_COMP_RFB_DOWNLOAD_DIR,
+    )
+    context.log.info(
+        "Brazil RFB previous partition cleanup complete: "
+        "target_partition=%s removed_partition=%s removed_paths=%s "
+        "missing_paths=%s removed_file_count=%s removed_bytes=%s",
+        result.target_partition,
+        result.removed_partition,
+        result.removed_paths,
+        result.missing_paths,
+        result.removed_file_count,
+        result.removed_bytes,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "target_partition": result.target_partition,
+            "removed_partition": result.removed_partition or "",
+            "removed_paths": list(result.removed_paths),
+            "missing_paths": list(result.missing_paths),
+            "removed_file_count": result.removed_file_count,
+            "removed_bytes": result.removed_bytes,
+        }
+    )
+
+
 brazil_comp_rfb_resolve_job = dg.define_asset_job(
     "brazil_comp_rfb_resolve_job",
     selection=dg.AssetSelection.groups(GROUP_NAME),
@@ -600,6 +649,7 @@ defs = dg.Definitions(
         brazil_comp_rfb_clickhouse_establishments,
         brazil_comp_rfb_clickhouse_contact_info,
         brazil_comp_rfb_clickhouse_websites,
+        brazil_comp_rfb_previous_partition_cleanup,
     ],
     jobs=[brazil_comp_rfb_resolve_job],
 )

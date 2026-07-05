@@ -45,6 +45,7 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert "brazil_comp_rfb_clickhouse_establishments" in keys
     assert "brazil_comp_rfb_clickhouse_contact_info" in keys
     assert "brazil_comp_rfb_clickhouse_websites" in keys
+    assert "brazil_comp_rfb_previous_partition_cleanup" in keys
 
     snapshot_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_snapshot_files_duckdb")
@@ -82,6 +83,9 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     clickhouse_websites_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_clickhouse_websites")
     ]
+    cleanup_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_previous_partition_cleanup")
+    ]
     assert snapshot_asset.op.pool == "brazil_comp_rfb_manifest_duckdb"
     assert empresas_asset.op.pool == "brazil_comp_rfb_empresas_duckdb"
     assert estabelecimentos_asset.op.pool == "brazil_comp_rfb_estabelecimentos_duckdb"
@@ -94,6 +98,7 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert clickhouse_establishments_asset.op.pool is None
     assert clickhouse_contact_info_asset.op.pool is None
     assert clickhouse_websites_asset.op.pool is None
+    assert cleanup_asset.op.pool is None
 
 
 def test_brazil_comp_rfb_assets_use_monthly_snapshot_partitions() -> None:
@@ -113,12 +118,13 @@ def test_brazil_comp_rfb_assets_use_monthly_snapshot_partitions() -> None:
         "brazil_comp_rfb_clickhouse_establishments",
         "brazil_comp_rfb_clickhouse_contact_info",
         "brazil_comp_rfb_clickhouse_websites",
+        "brazil_comp_rfb_previous_partition_cleanup",
     )
 
     for asset_name in expected_snapshot_assets:
         node = repo.asset_graph.get(dg.AssetKey(asset_name))
         assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
-        assert node.partitions_def.get_first_partition_key() == "2024-01-01"
+        assert node.partitions_def.get_first_partition_key() == "2026-04-01"
 
 
 def test_brazil_comp_rfb_snapshot_config_uses_partition_for_snapshot_year_month() -> (
@@ -430,6 +436,25 @@ def test_brazil_comp_rfb_contact_domain_assets_have_ordered_dependencies() -> No
         assert parents == expected
 
 
+def test_brazil_comp_rfb_cleanup_depends_on_clickhouse_exports() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    parents = {
+        parent.path[-1]
+        for parent in repo.asset_graph.get(
+            dg.AssetKey("brazil_comp_rfb_previous_partition_cleanup")
+        ).parent_keys
+    }
+
+    assert parents == {
+        "brazil_comp_rfb_clickhouse_companies",
+        "brazil_comp_rfb_clickhouse_establishments",
+        "brazil_comp_rfb_clickhouse_contact_info",
+        "brazil_comp_rfb_clickhouse_websites",
+    }
+
+
 def test_brazil_comp_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None:
     from dagster_v3.definitions import defs as load_defs
 
@@ -456,6 +481,7 @@ def test_brazil_comp_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() ->
         "brazil_comp_rfb_clickhouse_establishments",
         "brazil_comp_rfb_clickhouse_contact_info",
         "brazil_comp_rfb_clickhouse_websites",
+        "brazil_comp_rfb_previous_partition_cleanup",
     }.issubset(resolve_keys)
     assert "domains_clickhouse" not in resolve_keys
     assert "estonia_ar_general_data_duckdb" not in resolve_keys

@@ -64,7 +64,7 @@ statement grain.
   family. Dates are `YYYYMMDD`. Monetary values such as `capital_social` use
   Brazilian decimal formatting.
 - **Dagster partitioning**: every `brazil_comp_rfb` asset uses monthly partitions from
-  `2024-01-01`. Stage files are stored under
+  `2026-04-01`. Stage files are stored under
   `data/brazil_rfb/<YYYY-MM>/` so different snapshots cannot share anonymous
   DuckDB filenames. ClickHouse exports still replace current-state serving tables
   for the selected partition.
@@ -76,7 +76,7 @@ statement grain.
   retry/backoff. It records the source URLs, file hashes, byte sizes, and retrieved
   timestamp.
 - **Launch config**: launch `brazil_comp_rfb_resolve_job` for one monthly partition.
-  Valid partition examples are `2024-01-01`, `2026-05-01`, and `2026-06-01`.
+  Valid partition examples are `2026-04-01`, `2026-05-01`, and `2026-06-01`.
 
   Override the base URL only for tests or if the official RFB host becomes
   directly browsable again:

@@ -24,7 +24,7 @@ Related notes:
 | Implemented source slug | `brazil_rfb`. |
 | Dagster package/group | `dagster_v3.defs.brazil_companies.rfb` / `brazil_comp_rfb`. |
 | Ingestion strategy | Full bulk download per monthly snapshot. No incremental/delta feed is used. |
-| Partitioning | Yes. Dagster monthly partitions start at `2024-01-01`; partition `YYYY-MM-01` resolves to snapshot month `YYYY-MM`. |
+| Partitioning | Yes. Dagster monthly partitions start at `2026-04-01`; partition `YYYY-MM-01` resolves to snapshot month `YYYY-MM`. |
 | Scheduler activation | Run monthly after the source publishes a complete snapshot directory for the month. The code does not define a calendar schedule; it defines the partitioned job `brazil_comp_rfb_resolve_job`. |
 | Snapshot isolation | Stage files are written under `data/brazil_rfb/<YYYY-MM>/`, so reruns and backfills stay snapshot-scoped. |
 | Serving-table behavior | ClickHouse exports replace current serving tables for the selected partition. |
