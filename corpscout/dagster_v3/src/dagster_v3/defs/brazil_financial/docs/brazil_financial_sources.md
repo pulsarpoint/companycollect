@@ -412,12 +412,23 @@ auditor fields where present
 address fields where present
 ```
 
-Recommended asset:
+Implemented assets:
 
 ```text
+brazil_fin_cvm_companies_raw_csv_s3
 brazil_fin_cvm_companies_duckdb
 brazil_fin_cvm_companies_clickhouse
 ```
+
+Raw storage:
+
+```text
+brazil_cvm/cad/raw_csv/sha256=<sha256>/cad_cia_aberta.csv
+brazil_cvm/cad/raw_csv/latest/metadata.json
+```
+
+The DuckDB asset reads the stored raw CSV from object storage. It does not
+download directly from the CVM URL.
 
 How it relates:
 

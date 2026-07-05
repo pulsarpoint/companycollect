@@ -1,6 +1,9 @@
+import json
 import tempfile
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -12,11 +15,16 @@ from dagster_v3.defs.brazil_financial.cvm.parsing import (
     CSV_FALLBACK_ENCODING,
     CSV_WINDOWS_1252_ENCODING,
 )
+from dagster_v3.defs.brazil_financial.cvm.source import BRAZIL_CVM_RAW_BUCKET
 
 CVM_COMPANIES_SOURCE_URL = (
     "https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv"
 )
 CVM_COMPANIES_SOURCE_FILE_NAME = "cad_cia_aberta.csv"
+CVM_COMPANIES_CSV_OBJECT_PREFIX = "brazil_cvm/cad/raw_csv"
+CVM_COMPANIES_METADATA_OBJECT_KEY = (
+    f"{CVM_COMPANIES_CSV_OBJECT_PREFIX}/latest/metadata.json"
+)
 CVM_COMPANIES_TABLE = "companies"
 CVM_COMPANIES_SOURCE_SLUG = "brazil_cvm_companies"
 CVM_COMPANIES_COLUMNS = (
@@ -79,41 +87,129 @@ CVM_COMPANIES_COLUMNS = (
 )
 
 
-def download_brazil_fin_cvm_companies_csv(
+@dataclass(frozen=True)
+class BrazilCvmCompaniesCsvSyncResult:
+    source_url: str
+    csv_key: str
+    metadata_key: str
+    downloaded: bool
+    reused_existing_csv: bool
+    size_bytes: int
+    sha256: str
+    content_type: str
+    source_last_modified: str
+    synced_at: str
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "source_url": self.source_url,
+            "s3_bucket": BRAZIL_CVM_RAW_BUCKET,
+            "csv_key": self.csv_key,
+            "metadata_key": self.metadata_key,
+            "downloaded": self.downloaded,
+            "reused_existing_csv": self.reused_existing_csv,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+            "content_type": self.content_type,
+            "source_last_modified": self.source_last_modified,
+            "synced_at": self.synced_at,
+        }
+
+
+def cvm_companies_csv_object_key(content_sha256: str) -> str:
+    return (
+        f"{CVM_COMPANIES_CSV_OBJECT_PREFIX}/sha256={content_sha256}/"
+        f"{CVM_COMPANIES_SOURCE_FILE_NAME}"
+    )
+
+
+def sync_brazil_fin_cvm_companies_csv(
     *,
-    target_path: Path,
+    object_store: Any,
     source_url: str = CVM_COMPANIES_SOURCE_URL,
+    session: Any | None = None,
     timeout_seconds: int = 300,
-) -> None:
-    response = requests.get(source_url, timeout=timeout_seconds)
+    synced_at: datetime | None = None,
+    log: Callable[..., object] | None = None,
+) -> BrazilCvmCompaniesCsvSyncResult:
+    session = session or requests
+    synced_at = synced_at or datetime.now(UTC)
+    response = session.get(source_url, timeout=timeout_seconds)
     response.raise_for_status()
-    target_path.write_bytes(response.content)
+    body = response.content
+    content_sha256 = sha256(body).hexdigest()
+    csv_key = cvm_companies_csv_object_key(content_sha256)
+
+    object_store.ensure_bucket(BRAZIL_CVM_RAW_BUCKET)
+    reused_existing_csv = object_store.exists(csv_key, bucket=BRAZIL_CVM_RAW_BUCKET)
+    if not reused_existing_csv:
+        object_store.write_bytes(csv_key, body, bucket=BRAZIL_CVM_RAW_BUCKET)
+        if log is not None:
+            log("Stored Brazil CVM companies raw CSV: key=%s", csv_key)
+    elif log is not None:
+        log("Reusing Brazil CVM companies raw CSV: key=%s", csv_key)
+
+    result = BrazilCvmCompaniesCsvSyncResult(
+        source_url=source_url,
+        csv_key=csv_key,
+        metadata_key=CVM_COMPANIES_METADATA_OBJECT_KEY,
+        downloaded=True,
+        reused_existing_csv=reused_existing_csv,
+        size_bytes=len(body),
+        sha256=content_sha256,
+        content_type=str(response.headers.get("Content-Type", "")),
+        source_last_modified=str(response.headers.get("Last-Modified", "")),
+        synced_at=synced_at.isoformat(),
+    )
+    metadata = {
+        **asdict(result),
+        "source_file_name": CVM_COMPANIES_SOURCE_FILE_NAME,
+    }
+    object_store.write_json(
+        CVM_COMPANIES_METADATA_OBJECT_KEY,
+        json.dumps(metadata, sort_keys=True),
+        bucket=BRAZIL_CVM_RAW_BUCKET,
+    )
+    return result
 
 
-def load_brazil_fin_cvm_companies_from_url(
+def load_brazil_fin_cvm_companies_from_object_store(
     *,
     connection: Any,
+    object_store: Any,
     source_run_id: str,
-    source_url: str = CVM_COMPANIES_SOURCE_URL,
+    metadata_key: str = CVM_COMPANIES_METADATA_OBJECT_KEY,
     resolved_at: datetime | None = None,
     log: Callable[..., object] | None = None,
-) -> dict[str, int]:
-    resolved_at = resolved_at or datetime.now(UTC)
-    with tempfile.TemporaryDirectory(prefix="brazil_fin_cvm_companies_") as tmpdir:
-        csv_path = Path(tmpdir) / CVM_COMPANIES_SOURCE_FILE_NAME
-        if log is not None:
-            log("Downloading Brazil CVM companies CSV: url=%s", source_url)
-        download_brazil_fin_cvm_companies_csv(
-            target_path=csv_path,
-            source_url=source_url,
+) -> dict[str, int | str]:
+    metadata = json.loads(
+        object_store.read_bytes(metadata_key, bucket=BRAZIL_CVM_RAW_BUCKET).decode(
+            "utf-8"
         )
-        return load_brazil_fin_cvm_companies_csv(
+    )
+    csv_key = str(metadata["csv_key"])
+    csv_body = object_store.read_bytes(csv_key, bucket=BRAZIL_CVM_RAW_BUCKET)
+
+    with tempfile.TemporaryDirectory(prefix="brazil_fin_cvm_companies_raw_") as tmpdir:
+        csv_path = Path(tmpdir) / str(
+            metadata.get("source_file_name", CVM_COMPANIES_SOURCE_FILE_NAME)
+        )
+        csv_path.write_bytes(csv_body)
+        if log is not None:
+            log("Loading Brazil CVM companies CSV from object storage: key=%s", csv_key)
+        counts = load_brazil_fin_cvm_companies_csv(
             connection=connection,
             csv_path=csv_path,
-            source_url=source_url,
+            source_url=str(metadata["source_url"]),
             source_run_id=source_run_id,
             resolved_at=resolved_at,
         )
+    return {
+        **counts,
+        "raw_csv_key": csv_key,
+        "raw_metadata_key": metadata_key,
+        "raw_sha256": str(metadata.get("sha256", "")),
+    }
 
 
 def load_brazil_fin_cvm_companies_csv(

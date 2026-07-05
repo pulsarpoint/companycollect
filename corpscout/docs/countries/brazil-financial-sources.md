@@ -306,12 +306,17 @@ curl -L -O https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.cs
 
 Implementation strategy:
 
-1. Download daily or before every CVM financial refresh.
-2. Normalize `CNPJ_CIA` by stripping punctuation.
-3. Join to `br_companies.cnpj_basico` by the first eight CNPJ digits and to
+1. Download daily or before every CVM financial refresh into object storage.
+2. Store raw CSV versions by content hash:
+   `brazil_cvm/cad/raw_csv/sha256=<sha256>/cad_cia_aberta.csv`.
+3. Store latest raw metadata at:
+   `brazil_cvm/cad/raw_csv/latest/metadata.json`.
+4. Load DuckDB from the stored raw CSV, not directly from the CVM URL.
+5. Normalize `CNPJ_CIA` by stripping punctuation.
+6. Join to `br_companies.cnpj_basico` by the first eight CNPJ digits and to
    `br_establishments.cnpj` by the full 14 digits.
-4. Preserve `CD_CVM` as the stable CVM join key for DFP/ITR.
-5. Store status, sector, category, and auditor for context.
+7. Preserve `CD_CVM` as the stable CVM join key for DFP/ITR.
+8. Store status, sector, category, and auditor for context.
 
 Recommended table:
 

@@ -20,8 +20,12 @@
   `br_cvm_dfp_capital_composition`,
   `br_cvm_dfp_auditor_reports`.
 - Implemented CVM company support table assets:
-  `brazil_fin_cvm_companies_duckdb` and
-  `brazil_fin_cvm_companies_clickhouse`.
+  `brazil_fin_cvm_companies_raw_csv_s3`,
+  `brazil_fin_cvm_companies_duckdb`,
+  and `brazil_fin_cvm_companies_clickhouse`.
+- The raw CVM company cadastro CSV is stored in object storage under
+  `brazil_cvm/cad/raw_csv/sha256=<sha256>/cad_cia_aberta.csv`, with latest
+  metadata at `brazil_cvm/cad/raw_csv/latest/metadata.json`.
 - Created ClickHouse CVM company support table:
   `br_cvm_companies`.
 - Implemented ITR yearly raw archive download asset:

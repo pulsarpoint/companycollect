@@ -13,7 +13,8 @@ from dagster_v3.defs.brazil_financial.cvm.clickhouse import (
 from dagster_v3.defs.brazil_financial.cvm.companies import (
     CVM_COMPANIES_SOURCE_URL,
     CVM_COMPANIES_TABLE,
-    load_brazil_fin_cvm_companies_from_url,
+    load_brazil_fin_cvm_companies_from_object_store,
+    sync_brazil_fin_cvm_companies_csv,
 )
 from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
@@ -107,20 +108,39 @@ def brazil_fin_cvm_itr_raw_archives_s3(
 
 @dg.asset(
     group_name=BRAZIL_FIN_CVM_GROUP_NAME,
+    kinds={"python", "s3", "csv", "cvm", "companies"},
+    description="Downloads the Brazil CVM public-company cadastro CSV into object storage.",
+)
+def brazil_fin_cvm_companies_raw_csv_s3(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    result = sync_brazil_fin_cvm_companies_csv(
+        object_store=object_store,
+        source_url=CVM_COMPANIES_SOURCE_URL,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=result.metadata())
+
+
+@dg.asset(
+    deps=[dg.AssetKey("brazil_fin_cvm_companies_raw_csv_s3")],
+    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
     kinds={"python", "duckdb", "csv", "cvm", "companies"},
     pool="brazil_fin_cvm_duckdb",
     description="Loads the Brazil CVM public-company support table into DuckDB.",
 )
 def brazil_fin_cvm_companies_duckdb(
     context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
     brazil_fin_cvm_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     BRAZIL_FIN_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with brazil_fin_cvm_duckdb.get_connection() as connection:
-        counts = load_brazil_fin_cvm_companies_from_url(
+        counts = load_brazil_fin_cvm_companies_from_object_store(
             connection=connection,
+            object_store=object_store,
             source_run_id=context.run_id,
-            source_url=CVM_COMPANIES_SOURCE_URL,
             log=context.log.info,
         )
     return dg.MaterializeResult(
@@ -362,6 +382,7 @@ brazil_fin_cvm_itr_raw_backfill_job = dg.define_asset_job(
 
 defs = dg.Definitions(
     assets=[
+        brazil_fin_cvm_companies_raw_csv_s3,
         brazil_fin_cvm_companies_duckdb,
         brazil_fin_cvm_companies_clickhouse,
         brazil_fin_cvm_dfp_raw_archives_s3,
