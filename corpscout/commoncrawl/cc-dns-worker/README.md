@@ -108,15 +108,12 @@ fetched, peak memory is **bounded** to roughly one `--dispatch-batch` of in-flig
 20000 domains) — a full-corpus run (~33.6M domains) never holds the whole seed list or the whole
 pending queue in memory at once.
 
-> **Gotcha confirmed in e2e testing:** the default `--query` (`SELECT DISTINCT root_domain FROM
-> corpscout.commoncrawl_domains`) has no `ORDER BY`. Combined with `--limit N`, ClickHouse does
-> **not** guarantee the same N rows across repeated executions of the same query — so re-running
-> `scan --limit 20 --scan-id X` twice can seed a *different* 20 domains the second time (each new to
-> the stage, so each shows up as "N new; N pending" rather than "0 pending"), even though the resume
-> mechanism itself (skip-if-done) is working correctly. This only matters when `--limit` is small; a
-> full-corpus run (`--limit 0`, the production case) or any `--query` with an explicit `ORDER BY`
-> does not have this issue. For a reproducible bounded smoke test, pass a query with
-> `ORDER BY root_domain` explicitly.
+> **Note on `--limit` reproducibility:** the default `--query` ends with `ORDER BY root_domain`, so
+> `--limit N` returns the *same* N domains on every run. A re-run of `scan --limit N --scan-id X`
+> therefore finds them already done and reports "0 pending" (deterministic resume). If you pass a
+> *custom* `--query` together with `--limit`, add your own `ORDER BY` for the same guarantee — without
+> a stable order ClickHouse may return a different N rows each run (harmless for a full `--limit 0`
+> run, which seeds every domain regardless of order).
 
 Only one goroutine ever calls `CommitBatch` (`db.SetMaxOpenConns(1)`), so SQLite's single-writer lock
 is never contended: within each dispatch batch, `resolveBatch` fans the batch out across up to
@@ -152,7 +149,7 @@ cc-dns-worker/
 │   ├── load.go   # runLoad: SQLite stage -> ClickHouse
 │   └── ch.go     # chConn: CLICKHOUSE_* env -> native driver.Conn
 ├── internal/
-│   ├── input/      # FromClickHouse: SELECT root_domain (+ optional LIMIT)
+│   ├── input/      # StreamClickHouse: batch-stream root_domain from CH (bounded-memory seed)
 │   ├── resolve/     # Tier-1 Discoverer (discover.go), Tier-2 Resolver (query.go),
 │   │                #   shared Exchanger transport (exchange.go: UDP+EDNS0, TCP fallback on truncation)
 │   ├── scheduler/   # per-server-IP token-bucket limiter + in-flight cap
@@ -177,7 +174,7 @@ Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending
 | `--scan-id` | string | today, UTC (`2006-01-02`) | scan batch id; ties `scan` and `load` together and becomes the CH `scan_id` column |
 | `--run-id` | string | `= --scan-id` | source run id stamped on rows (`source_run_id`); override to distinguish multiple `scan` invocations that share one `--scan-id` |
 | `--db` | string | `scan.db` | SQLite stage path |
-| `--query` | string | `SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains` | ClickHouse query returning one `root_domain` column (see the `ORDER BY` gotcha above if you also pass `--limit`) |
+| `--query` | string | `SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains ORDER BY root_domain` | ClickHouse query returning one `root_domain` column (keep an `ORDER BY` if you customize it and use `--limit` — see the reproducibility note above) |
 | `--limit` | int | `0` (all) | cap on domains pulled from CH this invocation |
 | `--resolvers` | string (CSV) | `1.1.1.1:53,8.8.8.8:53,9.9.9.9:53` | recursive resolvers for Tier-1 NS discovery; use `127.0.0.1:53` for a local unbound |
 | `--discovery-qps` | float | `50` | max queries/sec **per** recursive resolver; raise substantially (e.g. `2000`) for a local unbound |
