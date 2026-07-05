@@ -26,13 +26,18 @@ CREATE TABLE IF NOT EXISTS corpscout.ee_company_contacts__canonical
 ENGINE = ReplacingMergeTree(resolved_at)
 ORDER BY (registry_id, contact_type, contact_value);
 
+-- The multiIf below deliberately has NO 'AS contact_type' alias: a ClickHouse
+-- expression alias shadows the same-named source column everywhere else in the
+-- SELECT list, which would make the bare 'contact_type' on the next line (the
+-- contact_type_raw value) resolve to the mapped alias instead of the raw source
+-- column. Positional INSERT SELECT needs no aliases at all.
 INSERT INTO corpscout.ee_company_contacts__canonical
 SELECT
     country_iso2,
     source_slug,
     source_run_id,
     source_record_id,
-    reg_code AS registry_id,
+    reg_code,
     multiIf(
         contact_type = 'WWW', 'website',
         contact_type = 'EMAIL', 'email',
@@ -40,14 +45,14 @@ SELECT
         contact_type = 'MOB', 'mobile',
         contact_type = 'FAX', 'fax',
         'other'
-    ) AS contact_type,
-    contact_type AS contact_type_raw,
+    ),
+    contact_type,
     contact_value,
-    'sidevahendid' AS source_field,
+    'sidevahendid',
     is_current,
-    end_date AS valid_to,
+    end_date,
     source_url,
-    now64(3, 'UTC') AS resolved_at
+    now64(3, 'UTC')
 FROM corpscout.ee_company_contacts;
 
 EXCHANGE TABLES corpscout.ee_company_contacts__canonical AND corpscout.ee_company_contacts;
