@@ -89,15 +89,24 @@ server's limiter.
   the primary key, `status` is `pending` until a domain finishes, then `done` or `error`.
 - `scan_records` stages every resolved DNS record for a scan.
 
-**Resume contract:** on `scan` start, domains are (re-)seeded from the CH query with
-`INSERT OR IGNORE` — rows that already exist (from a prior, possibly crashed run) are left alone.
-`Pending()` then returns only domains whose status is **not** `done`/`error`. A domain's records +
-summary are written and its status flipped in **one SQLite transaction**
-(`Store.CommitBatch`) — a kill mid-domain simply leaves it `pending`, so it's picked up and retried
-on the next `scan` invocation with the same `--scan-id`/`--db`. A domain that already finished is
-never re-resolved. This makes `scan` **idempotent and restartable**: `--limit 0` (full corpus) runs
-can be killed and re-run indefinitely, converging on "0 pending" only when every domain has a
-terminal status.
+**Resume contract:** on `scan` start, the seed is **streamed** from ClickHouse (`input.StreamClickHouse`)
+in `--seed-chunk` batches and `INSERT OR IGNORE`-ed into SQLite as each batch arrives — rows that
+already exist (from a prior, possibly crashed run) are left alone, and the CH result set is never
+materialized in full. Dispatch is streamed the same way: `Store.PendingBatch` returns up to
+`--dispatch-batch` domains whose status is **not** `done`/`error`, ordered by `root_domain` starting
+after a cursor; `runScan` resolves and commits that whole batch, advances the cursor to the batch's
+last domain, and only then fetches the next `PendingBatch` (a commit barrier — no batch is dispatched
+until the previous one is durably committed). A domain's records + summary are written and its status
+flipped in **one SQLite transaction** (`Store.CommitBatch`) — a kill mid-domain simply leaves it
+`pending`, so it's picked up and retried on the next `scan` invocation with the same
+`--scan-id`/`--db`. A domain that already finished is never re-resolved. This makes `scan` **idempotent
+and restartable**: `--limit 0` (full corpus) runs can be killed and re-run indefinitely, converging on
+"0 pending" only when every domain has a terminal status.
+
+Because seeding and dispatch are both chunked with each batch fully committed before the next is
+fetched, peak memory is **bounded** to roughly one `--dispatch-batch` of in-flight results (default
+20000 domains) — a full-corpus run (~33.6M domains) never holds the whole seed list or the whole
+pending queue in memory at once.
 
 > **Gotcha confirmed in e2e testing:** the default `--query` (`SELECT DISTINCT root_domain FROM
 > corpscout.commoncrawl_domains`) has no `ORDER BY`. Combined with `--limit N`, ClickHouse does
@@ -110,8 +119,10 @@ terminal status.
 > `ORDER BY root_domain` explicitly.
 
 Only one goroutine ever calls `CommitBatch` (`db.SetMaxOpenConns(1)`), so SQLite's single-writer lock
-is never contended; the resolver pool sends `model.DomainResult` on a channel that this one writer
-batches into transactions of `--commit-batch` (default 200) domains at a time.
+is never contended: within each dispatch batch, `resolveBatch` fans the batch out across up to
+`--workers` resolver goroutines, collects their `model.DomainResult`s off a channel, then that one
+goroutine commits them in `--commit-batch` (default 200) domain transactions before `runScan` advances
+the cursor and fetches the next `--dispatch-batch`.
 
 ## Build & run
 
@@ -175,6 +186,7 @@ Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending
 | `--workers` | int | `4000` | max domains resolved concurrently (semaphore-bounded goroutine pool) |
 | `--commit-batch` | int | `200` | domains per SQLite commit transaction |
 | `--seed-chunk` | int | `5000` | domains per SQLite seed transaction (only affects the initial `INSERT OR IGNORE` pass) |
+| `--dispatch-batch` | int | `20000` | domains fetched from the queue and resolved per barrier iteration; bounds peak memory independently of corpus size |
 | `--query-timeout` | duration | `5s` | per-DNS-query timeout (both tiers) |
 
 ### `load`
@@ -272,10 +284,14 @@ protocol, never HTTP.
   127.0.0.1:53 --discovery-qps 2000`); standing up `unbound` itself on the scan box is the deferred
   operational step, recommended for large/full-corpus runs to remove public-resolver dependence and
   get natural TLD caching.
-- **Streaming domain input** — `input.FromClickHouse` currently materializes the full `root_domain`
-  result set before seeding. Seeding into SQLite is already chunked (`--seed-chunk`); the CH *read* is
-  not — for full-corpus runs (~34M rows) switch to a streaming reader that seeds in chunks without
-  holding the whole list in memory.
+- **Disk footprint for full-corpus scans** — seeding (`--seed-chunk`) and dispatch (`--dispatch-batch`)
+  are now both streamed/batched, so peak **memory** is bounded to roughly one dispatch-batch regardless
+  of corpus size (see the SQLite stage section above). What's still deferred is **disk**: `scan_records`
+  stages every resolved record for the whole scan before `load` runs, so a full-corpus (~33.6M domain)
+  `scan.db` can grow to the tens-of-GB range before it's loaded into ClickHouse and can be removed.
+  Follow-ups: an incremental CH flush (load staged rows periodically during `scan` instead of only at
+  the end) or partitioning full-corpus runs into several `--query`-scoped `scan_id`s that are each
+  loaded and cleared before the next starts.
 - **Redis-backed distributed scheduler**, shard-by-server-IP (design spec §3.3) — only needed once a
   single box can't keep up; each server IP would be owned by one machine (consistent hash) so its
   limiter stays local with zero coordination, and only the per-domain accumulator would need sharing.
