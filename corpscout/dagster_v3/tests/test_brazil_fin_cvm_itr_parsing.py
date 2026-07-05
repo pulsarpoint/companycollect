@@ -125,6 +125,53 @@ def test_load_brazil_fin_cvm_itr_archive_normalizes_known_csv_families(
     assert "Informações Trimestrais" in report_text
 
 
+def test_load_brazil_fin_cvm_itr_archive_treats_quotes_in_account_description_as_data(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "itr_cia_aberta_2017.zip"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as zip_file:
+        zip_file.writestr(
+            "itr_cia_aberta_DFC_MI_ind_2017.csv",
+            (
+                "CNPJ_CIA;DT_REFER;VERSAO;DENOM_CIA;CD_CVM;GRUPO_DFP;MOEDA;"
+                "ESCALA_MOEDA;ORDEM_EXERC;DT_INI_EXERC;DT_FIM_EXERC;CD_CONTA;"
+                "DS_CONTA;VL_CONTA;ST_CONTA_FIXA\n"
+                "22.266.175/0001-88;2017-03-31;1;FERTILIZANTES HERINGER S.A.;"
+                "020621;DF Individual - Demonstração do Fluxo de Caixa "
+                "(Método Indireto);REAL;MIL;PENÚLTIMO;2016-01-01;2016-03-31;"
+                '6.01.01.13;"Conta com; ponto e vírgula";1000.0000000000;S\n'
+                "22.266.175/0001-88;2017-03-31;1;FERTILIZANTES HERINGER S.A.;"
+                "020621;DF Individual - Demonstração do Fluxo de Caixa "
+                "(Método Indireto);REAL;MIL;PENÚLTIMO;2016-01-01;2016-03-31;"
+                '6.01.01.14;"Swaps" não realizados;134320.0000000000;N\n'
+            ).encode("latin-1"),
+        )
+    connection = duckdb.connect(str(tmp_path / "source.duckdb"))
+
+    counts = load_brazil_fin_cvm_itr_archive(
+        connection=connection,
+        archive_path=archive_path,
+        year="2017",
+        source_archive_key="brazil_cvm/itr/raw_archives/year=2017/archive.zip",
+        source_run_id="run-1",
+        resolved_at=datetime(2026, 7, 5, tzinfo=UTC),
+    )
+
+    row = connection.execute(
+        f"""
+        select account_description_original, amount_original
+        from {BRAZIL_CVM_DUCKDB_SCHEMA}.{ITR_STATEMENT_ROWS_TABLE}
+        order by account_code
+        """
+    ).fetchall()
+
+    assert counts["statement_row_count"] == 2
+    assert row == [
+        ("Conta com; ponto e vírgula", 1000),
+        ('"Swaps" não realizados', 134320),
+    ]
+
+
 def _write_itr_zip(archive_path: Path, *, year: str) -> None:
     files = {
         f"itr_cia_aberta_{year}.csv": (
