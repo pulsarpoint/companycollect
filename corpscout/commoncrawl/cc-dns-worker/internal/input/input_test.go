@@ -32,3 +32,52 @@ func TestDefaultQueryIsDeterministic(t *testing.T) {
 		t.Errorf("ORDER BY must come before LIMIT: %q", limited)
 	}
 }
+
+func TestDrainRows(t *testing.T) {
+	// Fake row source: yields the slice one at a time; empty strings must be dropped.
+	src := []string{"a", "", "b", "c", "d"}
+	run := func(batchSize int) [][]string {
+		i := -1
+		var got [][]string
+		_ = drainRows(
+			func() bool { i++; return i < len(src) },
+			func(p *string) error { *p = src[i]; return nil },
+			func() error { return nil },
+			batchSize,
+			func(b []string) error { got = append(got, append([]string(nil), b...)); return nil },
+		)
+		return got
+	}
+	// batchSize 2 over [a,b,c,d] (empty dropped) -> [a,b],[c,d]
+	if got := run(2); len(got) != 2 || got[0][0] != "a" || got[0][1] != "b" || got[1][0] != "c" || got[1][1] != "d" {
+		t.Fatalf("batchSize 2 -> %v", got)
+	}
+	// batchSize 3 -> [a,b,c],[d]  (final partial batch flushed)
+	if got := run(3); len(got) != 2 || len(got[0]) != 3 || len(got[1]) != 1 || got[1][0] != "d" {
+		t.Fatalf("batchSize 3 -> %v", got)
+	}
+}
+
+func TestDrainRowsEmptyAndError(t *testing.T) {
+	// Empty source -> fn never called.
+	called := false
+	_ = drainRows(func() bool { return false }, func(*string) error { return nil }, func() error { return nil }, 2,
+		func([]string) error { called = true; return nil })
+	if called {
+		t.Errorf("fn should not be called for empty source")
+	}
+	// fn error propagates.
+	i := -1
+	src := []string{"a", "b"}
+	err := drainRows(func() bool { i++; return i < len(src) }, func(p *string) error { *p = src[i]; return nil }, func() error { return nil }, 1,
+		func([]string) error { return errTest })
+	if err != errTest {
+		t.Errorf("want errTest, got %v", err)
+	}
+}
+
+var errTest = errorString("boom")
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }
