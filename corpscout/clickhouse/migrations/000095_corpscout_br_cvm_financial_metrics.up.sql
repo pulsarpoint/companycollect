@@ -125,9 +125,9 @@ WITH
             multiIf(statement_code = 'DFC_MI', 1, statement_code = 'DFC_MD', 2, 1) AS mapping_priority,
             source_row_number,
             resolved_at
-        FROM statement_rows
-        WHERE amount_original IS NOT NULL
-          AND currency != ''
+        FROM statement_rows AS source_rows
+        WHERE source_rows.amount_original IS NOT NULL
+          AND source_rows.currency != ''
           AND (
               (statement_code = 'DRE' AND account_code IN ('3.01', '3.11'))
               OR (statement_code = 'BPA' AND account_code IN ('1', '1.01.01'))
@@ -196,55 +196,55 @@ WITH
     liability_metric_rows AS
     (
         SELECT
-            any(country_iso2) AS country_iso2,
+            any(liability_source_rows.country_iso2) AS country_iso2,
             'brazil_cvm_financial_metrics' AS source_slug,
-            arrayStringConcat(arraySort(groupArray(source_run_id)), '|') AS source_run_id,
-            source_dataset,
-            source_year,
-            cnpj,
-            any(cnpj_basico) AS cnpj_basico,
-            any(company_name) AS company_name,
-            cvm_code,
-            reference_date,
-            period_start_date,
-            period_end_date,
-            period_type,
-            version,
-            consolidation_type,
+            arrayStringConcat(arraySort(groupArray(liability_source_rows.source_run_id)), '|') AS source_run_id,
+            liability_source_rows.source_dataset AS source_dataset,
+            liability_source_rows.source_year AS source_year,
+            liability_source_rows.cnpj AS cnpj,
+            any(liability_source_rows.cnpj_basico) AS cnpj_basico,
+            any(liability_source_rows.company_name) AS company_name,
+            liability_source_rows.cvm_code AS cvm_code,
+            liability_source_rows.reference_date AS reference_date,
+            liability_source_rows.period_start_date AS period_start_date,
+            liability_source_rows.period_end_date AS period_end_date,
+            liability_source_rows.period_type AS period_type,
+            liability_source_rows.version AS version,
+            liability_source_rows.consolidation_type AS consolidation_type,
             'total_liabilities' AS metric_name,
             'Total liabilities' AS metric_label,
-            upper(any(currency)) AS currency,
-            CAST(sum(amount_original), 'Nullable(Decimal(38, 6))') AS amount_original,
-            CAST(sum(amount_usd), 'Nullable(Decimal(38, 6))') AS amount_usd,
-            CAST(max(fx_rate_to_usd), 'Nullable(Decimal(38, 12))') AS fx_rate_to_usd,
-            max(fx_rate_date) AS fx_rate_date,
-            any(fx_source) AS fx_source,
+            upper(any(liability_source_rows.currency)) AS currency,
+            CAST(sum(liability_source_rows.amount_original), 'Nullable(Decimal(38, 6))') AS amount_original,
+            CAST(sum(liability_source_rows.amount_usd), 'Nullable(Decimal(38, 6))') AS amount_usd,
+            CAST(max(liability_source_rows.fx_rate_to_usd), 'Nullable(Decimal(38, 12))') AS fx_rate_to_usd,
+            max(liability_source_rows.fx_rate_date) AS fx_rate_date,
+            any(liability_source_rows.fx_source) AS fx_source,
             'BPP' AS source_statement_code,
-            any(statement_name) AS source_statement_name,
-            arrayStringConcat(arrayMap(x -> x.1, arraySort(groupArray(tuple(account_code, account_description_original)))), '|') AS source_account_codes,
-            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(account_code, account_description_original)))), '|') AS source_account_descriptions_original,
-            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(account_code, source_run_id)))), '|') AS source_statement_run_ids,
-            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(account_code, source_record_id)))), '|') AS source_statement_record_ids,
-            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(account_code, source_archive_key)))), '|') AS source_archive_keys,
-            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(account_code, source_file_name)))), '|') AS source_file_names,
+            any(liability_source_rows.statement_name) AS source_statement_name,
+            arrayStringConcat(arrayMap(x -> x.1, arraySort(groupArray(tuple(liability_source_rows.account_code, liability_source_rows.account_description_original)))), '|') AS source_account_codes,
+            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(liability_source_rows.account_code, liability_source_rows.account_description_original)))), '|') AS source_account_descriptions_original,
+            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(liability_source_rows.account_code, liability_source_rows.source_run_id)))), '|') AS source_statement_run_ids,
+            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(liability_source_rows.account_code, liability_source_rows.source_record_id)))), '|') AS source_statement_record_ids,
+            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(liability_source_rows.account_code, liability_source_rows.source_archive_key)))), '|') AS source_archive_keys,
+            arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray(tuple(liability_source_rows.account_code, liability_source_rows.source_file_name)))), '|') AS source_file_names,
             count() AS source_statement_row_count,
-            max(resolved_at) AS resolved_at
-        FROM statement_rows
-        WHERE statement_code = 'BPP'
-          AND account_code IN ('2.01', '2.02')
-          AND amount_original IS NOT NULL
-          AND currency != ''
+            max(liability_source_rows.resolved_at) AS resolved_at
+        FROM statement_rows AS liability_source_rows
+        WHERE liability_source_rows.statement_code = 'BPP'
+          AND liability_source_rows.account_code IN ('2.01', '2.02')
+          AND liability_source_rows.amount_original IS NOT NULL
+          AND liability_source_rows.currency != ''
         GROUP BY
-            source_dataset,
-            source_year,
-            cnpj,
-            cvm_code,
-            reference_date,
-            period_start_date,
-            period_end_date,
-            period_type,
-            version,
-            consolidation_type
+            liability_source_rows.source_dataset,
+            liability_source_rows.source_year,
+            liability_source_rows.cnpj,
+            liability_source_rows.cvm_code,
+            liability_source_rows.reference_date,
+            liability_source_rows.period_start_date,
+            liability_source_rows.period_end_date,
+            liability_source_rows.period_type,
+            liability_source_rows.version,
+            liability_source_rows.consolidation_type
     ),
     candidate_metric_rows AS
     (

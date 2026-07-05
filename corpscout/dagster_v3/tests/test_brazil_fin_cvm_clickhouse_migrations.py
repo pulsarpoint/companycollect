@@ -135,6 +135,17 @@ def test_brazil_fin_cvm_financial_metrics_migration_creates_view() -> None:
     assert "metric_name" in sql
     assert "is_latest_version" in sql
     assert "ENGINE = ReplacingMergeTree" not in sql
+    assert "FROM statement_rows AS source_rows" in sql
+    assert "source_rows.amount_original IS NOT NULL" in sql
+    assert "source_rows.currency != ''" in sql
+    assert "FROM statement_rows AS liability_source_rows" in sql
+    assert "liability_source_rows.amount_original IS NOT NULL" in sql
+    assert "liability_source_rows.currency != ''" in sql
+    assert "groupArray(liability_source_rows.source_run_id)" in sql
+    assert "sum(liability_source_rows.amount_original)" in sql
+    assert "groupArray(tuple(liability_source_rows.account_code" in sql
+    assert "WHERE amount_original IS NOT NULL" not in sql
+    assert "AND amount_original IS NOT NULL" not in sql
 
 
 def _migration_sql(file_name: str) -> str:
