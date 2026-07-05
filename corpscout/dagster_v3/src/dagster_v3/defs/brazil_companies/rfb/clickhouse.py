@@ -90,36 +90,69 @@ def export_brazil_comp_rfb_clickhouse_establishments(
     return rows
 
 
-def export_brazil_comp_rfb_clickhouse_contact_info(
+def export_brazil_comp_rfb_clickhouse_company_contacts(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
-    """Replace corpscout.br_company_contact_info with the DuckDB contact table."""
+    """Replace corpscout.br_company_contacts with the canonical DuckDB contacts stage."""
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.BRAZIL_COMP_RFB_DATABASE,
-        tables=(tables.BR_COMPANY_CONTACT_INFO_TABLE_CH,),
+        tables=(tables.BR_COMPANY_CONTACTS_TABLE_CH,),
     )
     if log is not None:
         log(
-            "Exporting Brazil RFB contact info to ClickHouse: table=%s",
-            tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE,
+            "Exporting Brazil RFB company contacts to ClickHouse: table=%s",
+            tables.QUALIFIED_BR_COMPANY_CONTACTS_TABLE,
         )
     with clickhouse.get_connection() as client:
         rows = export_duckdb_connection_table_to_clickhouse(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
-            duckdb_table=tables.COMPANY_CONTACT_INFO_TABLE,
+            duckdb_table=tables.COMPANY_CONTACTS_STAGE_TABLE,
             clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
-            clickhouse_table=tables.BR_COMPANY_CONTACT_INFO_TABLE_CH,
-            columns=tables.BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS,
+            clickhouse_table=tables.BR_COMPANY_CONTACTS_TABLE_CH,
+            columns=tables.BR_COMPANY_CONTACTS_EXPORT_COLUMNS,
             truncate=True,
         )
     if log is not None:
-        log("Finished Brazil RFB contact info ClickHouse export: rows=%s", rows)
+        log("Finished Brazil RFB company contacts ClickHouse export: rows=%s", rows)
+    return rows
+
+
+def export_brazil_comp_rfb_clickhouse_company_domains(
+    *,
+    duckdb_connection: Any,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Replace corpscout.br_company_domains with the canonical DuckDB domains stage."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.BRAZIL_COMP_RFB_DATABASE,
+        tables=(tables.BR_COMPANY_DOMAINS_TABLE_CH,),
+    )
+    if log is not None:
+        log(
+            "Exporting Brazil RFB company domains to ClickHouse: table=%s",
+            tables.QUALIFIED_BR_COMPANY_DOMAINS_TABLE,
+        )
+    with clickhouse.get_connection() as client:
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=tables.COMPANY_DOMAINS_STAGE_TABLE,
+            clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
+            clickhouse_table=tables.BR_COMPANY_DOMAINS_TABLE_CH,
+            columns=tables.BR_COMPANY_DOMAINS_EXPORT_COLUMNS,
+            truncate=True,
+        )
+    if log is not None:
+        log("Finished Brazil RFB company domains ClickHouse export: rows=%s", rows)
     return rows
 
 

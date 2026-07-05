@@ -19,8 +19,9 @@ from dagster_v3.defs.brazil_companies.rfb import (
     transforms,
 )
 from dagster_v3.defs.brazil_companies.rfb.clickhouse import (
-    export_brazil_comp_rfb_clickhouse_contact_info,
     export_brazil_comp_rfb_clickhouse_companies,
+    export_brazil_comp_rfb_clickhouse_company_contacts,
+    export_brazil_comp_rfb_clickhouse_company_domains,
     export_brazil_comp_rfb_clickhouse_establishments,
     export_brazil_comp_rfb_clickhouse_websites,
 )
@@ -54,7 +55,8 @@ CONTACT_INFO_ASSET_KEY = "brazil_comp_rfb_contact_info_duckdb"
 WEBSITES_ASSET_KEY = "brazil_comp_rfb_websites_duckdb"
 CLICKHOUSE_COMPANIES_ASSET_KEY = "brazil_comp_rfb_clickhouse_companies"
 CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY = "brazil_comp_rfb_clickhouse_establishments"
-CLICKHOUSE_CONTACT_INFO_ASSET_KEY = "brazil_comp_rfb_clickhouse_contact_info"
+CLICKHOUSE_COMPANY_CONTACTS_ASSET_KEY = "brazil_comp_rfb_clickhouse_company_contacts"
+CLICKHOUSE_COMPANY_DOMAINS_ASSET_KEY = "brazil_comp_rfb_clickhouse_company_domains"
 CLICKHOUSE_WEBSITES_ASSET_KEY = "brazil_comp_rfb_clickhouse_websites"
 PREVIOUS_PARTITION_CLEANUP_ASSET_KEY = "brazil_comp_rfb_previous_partition_cleanup"
 REFERENCE_FAMILIES = (
@@ -520,18 +522,18 @@ def brazil_comp_rfb_clickhouse_establishments(
 
 
 @dg.asset(
-    name=CLICKHOUSE_CONTACT_INFO_ASSET_KEY,
+    name=CLICKHOUSE_COMPANY_CONTACTS_ASSET_KEY,
     deps=[dg.AssetKey(CONTACT_INFO_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
-    metadata={"table": tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE},
+    metadata={"table": tables.QUALIFIED_BR_COMPANY_CONTACTS_TABLE},
     description=(
-        "Brazil RFB company contact info exported to ClickHouse "
-        "corpscout.br_company_contact_info."
+        "Brazil RFB canonical company contacts exported to ClickHouse "
+        "corpscout.br_company_contacts."
     ),
 )
-def brazil_comp_rfb_clickhouse_contact_info(
+def brazil_comp_rfb_clickhouse_company_contacts(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
@@ -539,7 +541,7 @@ def brazil_comp_rfb_clickhouse_contact_info(
     with read_only_duckdb_connection(
         duckdb_resource(stage_paths.contact_info)
     ) as connection:
-        rows = export_brazil_comp_rfb_clickhouse_contact_info(
+        rows = export_brazil_comp_rfb_clickhouse_company_contacts(
             duckdb_connection=connection,
             clickhouse=clickhouse,
             log=context.log.info,
@@ -547,7 +549,40 @@ def brazil_comp_rfb_clickhouse_contact_info(
     return dg.MaterializeResult(
         metadata={
             "rows": rows,
-            "table": tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE,
+            "table": tables.QUALIFIED_BR_COMPANY_CONTACTS_TABLE,
+        },
+    )
+
+
+@dg.asset(
+    name=CLICKHOUSE_COMPANY_DOMAINS_ASSET_KEY,
+    deps=[dg.AssetKey(WEBSITES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    metadata={"table": tables.QUALIFIED_BR_COMPANY_DOMAINS_TABLE},
+    description=(
+        "Brazil RFB canonical company domains exported to ClickHouse "
+        "corpscout.br_company_domains."
+    ),
+)
+def brazil_comp_rfb_clickhouse_company_domains(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    stage_paths = _stage_paths_for_context(context)
+    with read_only_duckdb_connection(
+        duckdb_resource(stage_paths.websites)
+    ) as connection:
+        rows = export_brazil_comp_rfb_clickhouse_company_domains(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "rows": rows,
+            "table": tables.QUALIFIED_BR_COMPANY_DOMAINS_TABLE,
         },
     )
 
@@ -587,7 +622,8 @@ def brazil_comp_rfb_clickhouse_websites(
     deps=[
         dg.AssetKey(CLICKHOUSE_COMPANIES_ASSET_KEY),
         dg.AssetKey(CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY),
-        dg.AssetKey(CLICKHOUSE_CONTACT_INFO_ASSET_KEY),
+        dg.AssetKey(CLICKHOUSE_COMPANY_CONTACTS_ASSET_KEY),
+        dg.AssetKey(CLICKHOUSE_COMPANY_DOMAINS_ASSET_KEY),
         dg.AssetKey(CLICKHOUSE_WEBSITES_ASSET_KEY),
     ],
     group_name=GROUP_NAME,
@@ -647,7 +683,8 @@ defs = dg.Definitions(
         brazil_comp_rfb_websites_duckdb,
         brazil_comp_rfb_clickhouse_companies,
         brazil_comp_rfb_clickhouse_establishments,
-        brazil_comp_rfb_clickhouse_contact_info,
+        brazil_comp_rfb_clickhouse_company_contacts,
+        brazil_comp_rfb_clickhouse_company_domains,
         brazil_comp_rfb_clickhouse_websites,
         brazil_comp_rfb_previous_partition_cleanup,
     ],

@@ -1,3 +1,8 @@
+from dagster_v3.contact_extraction import (
+    COMPANY_CONTACTS_COLUMNS,
+    COMPANY_DOMAINS_COLUMNS,
+)
+
 DLT_DATASET_NAME = "brazil_rfb"
 SNAPSHOT_FILES_TABLE = "snapshot_files"
 
@@ -105,6 +110,23 @@ WEBSITES_TABLE = "websites"
 COMPANY_CONTACTS_STAGE_TABLE = "company_contacts"
 COMPANY_DOMAINS_STAGE_TABLE = "company_domains"
 
+# Canonical ClickHouse export contract for the pair above. Column order/types are
+# owned by the shared canonical standard (COMPANY_CONTACTS_COLUMNS/
+# COMPANY_DOMAINS_COLUMNS), conformance-tested against the migration by
+# tests/canonical_contact_tables.py — these are direct aliases (not copies), so an
+# identity test can pin that the DuckDB stage, the export, and the migration DDL
+# can never diverge.
+BR_COMPANY_CONTACTS_TABLE_CH = "br_company_contacts"
+BR_COMPANY_DOMAINS_TABLE_CH = "br_company_domains"
+QUALIFIED_BR_COMPANY_CONTACTS_TABLE = (
+    f"{BRAZIL_COMP_RFB_DATABASE}.{BR_COMPANY_CONTACTS_TABLE_CH}"
+)
+QUALIFIED_BR_COMPANY_DOMAINS_TABLE = (
+    f"{BRAZIL_COMP_RFB_DATABASE}.{BR_COMPANY_DOMAINS_TABLE_CH}"
+)
+BR_COMPANY_CONTACTS_EXPORT_COLUMNS = COMPANY_CONTACTS_COLUMNS
+BR_COMPANY_DOMAINS_EXPORT_COLUMNS = COMPANY_DOMAINS_COLUMNS
+
 BR_COMPANIES_TABLE_CH = "br_companies"
 BR_ESTABLISHMENTS_TABLE_CH = "br_establishments"
 BR_COMPANY_CONTACT_INFO_TABLE_CH = "br_company_contact_info"
@@ -192,11 +214,16 @@ BR_ESTABLISHMENTS_COLUMNS = (
 )
 BR_ESTABLISHMENTS_EXPORT_COLUMNS = BR_ESTABLISHMENTS_COLUMNS
 
-# Legacy ClickHouse export contract (br_company_contact_info). The internal
-# company_contact_info DuckDB stage now carries one additional trailing
+# Historical ClickHouse export contract for the now-dropped br_company_contact_info
+# table (migrations 000054/000055 created it; 000092 dropped it in favor of the
+# canonical br_company_contacts/br_company_domains pair above — no export function
+# targets this table anymore). Kept only so the immutable historical migration DDL
+# conformance test (test_clickhouse_migrations.py) and the internal
+# company_contact_info DuckDB stage column-drift test (test_brazil_comp_rfb_transforms.py)
+# keep working — the internal stage now carries one additional trailing
 # `source_field` column (feeds the canonical company_contacts stage below) that
-# is NOT part of this contract — the export selects this explicit column list
-# rather than `select *`, so the extra stage column is invisible to it.
+# is NOT part of this contract — the historical export selected this explicit
+# column list rather than `select *`, so the extra stage column was invisible to it.
 BR_COMPANY_CONTACT_INFO_COLUMNS = (
     "country_iso2",
     "source_slug",

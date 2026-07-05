@@ -43,7 +43,8 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert "brazil_comp_rfb_websites_duckdb" in keys
     assert "brazil_comp_rfb_clickhouse_companies" in keys
     assert "brazil_comp_rfb_clickhouse_establishments" in keys
-    assert "brazil_comp_rfb_clickhouse_contact_info" in keys
+    assert "brazil_comp_rfb_clickhouse_company_contacts" in keys
+    assert "brazil_comp_rfb_clickhouse_company_domains" in keys
     assert "brazil_comp_rfb_clickhouse_websites" in keys
     assert "brazil_comp_rfb_previous_partition_cleanup" in keys
 
@@ -77,8 +78,11 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     clickhouse_establishments_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_clickhouse_establishments")
     ]
-    clickhouse_contact_info_asset = repo.assets_defs_by_key[
-        dg.AssetKey("brazil_comp_rfb_clickhouse_contact_info")
+    clickhouse_company_contacts_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_clickhouse_company_contacts")
+    ]
+    clickhouse_company_domains_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_clickhouse_company_domains")
     ]
     clickhouse_websites_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_clickhouse_websites")
@@ -96,7 +100,8 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert websites_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
     assert clickhouse_companies_asset.op.pool is None
     assert clickhouse_establishments_asset.op.pool is None
-    assert clickhouse_contact_info_asset.op.pool is None
+    assert clickhouse_company_contacts_asset.op.pool is None
+    assert clickhouse_company_domains_asset.op.pool is None
     assert clickhouse_websites_asset.op.pool is None
     assert cleanup_asset.op.pool is None
 
@@ -116,7 +121,8 @@ def test_brazil_comp_rfb_assets_use_monthly_snapshot_partitions() -> None:
         "brazil_comp_rfb_websites_duckdb",
         "brazil_comp_rfb_clickhouse_companies",
         "brazil_comp_rfb_clickhouse_establishments",
-        "brazil_comp_rfb_clickhouse_contact_info",
+        "brazil_comp_rfb_clickhouse_company_contacts",
+        "brazil_comp_rfb_clickhouse_company_domains",
         "brazil_comp_rfb_clickhouse_websites",
         "brazil_comp_rfb_previous_partition_cleanup",
     )
@@ -422,8 +428,11 @@ def test_brazil_comp_rfb_contact_domain_assets_have_ordered_dependencies() -> No
     expected_parents = {
         "brazil_comp_rfb_contact_info_duckdb": {"brazil_comp_rfb_companies_duckdb"},
         "brazil_comp_rfb_websites_duckdb": {"brazil_comp_rfb_contact_info_duckdb"},
-        "brazil_comp_rfb_clickhouse_contact_info": {
+        "brazil_comp_rfb_clickhouse_company_contacts": {
             "brazil_comp_rfb_contact_info_duckdb"
+        },
+        "brazil_comp_rfb_clickhouse_company_domains": {
+            "brazil_comp_rfb_websites_duckdb"
         },
         "brazil_comp_rfb_clickhouse_websites": {"brazil_comp_rfb_websites_duckdb"},
     }
@@ -450,7 +459,8 @@ def test_brazil_comp_rfb_cleanup_depends_on_clickhouse_exports() -> None:
     assert parents == {
         "brazil_comp_rfb_clickhouse_companies",
         "brazil_comp_rfb_clickhouse_establishments",
-        "brazil_comp_rfb_clickhouse_contact_info",
+        "brazil_comp_rfb_clickhouse_company_contacts",
+        "brazil_comp_rfb_clickhouse_company_domains",
         "brazil_comp_rfb_clickhouse_websites",
     }
 
@@ -479,7 +489,8 @@ def test_brazil_comp_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() ->
         "brazil_comp_rfb_websites_duckdb",
         "brazil_comp_rfb_clickhouse_companies",
         "brazil_comp_rfb_clickhouse_establishments",
-        "brazil_comp_rfb_clickhouse_contact_info",
+        "brazil_comp_rfb_clickhouse_company_contacts",
+        "brazil_comp_rfb_clickhouse_company_domains",
         "brazil_comp_rfb_clickhouse_websites",
         "brazil_comp_rfb_previous_partition_cleanup",
     }.issubset(resolve_keys)
