@@ -37,6 +37,7 @@ def extract_sweden_financial_report_xhtml_catalog(
         source_archive_keys = sorted(source_archive_keys)
     rows: list[tuple[Any, ...]] = []
     nested_zip_count = 0
+    skipped_nested_zip_count = 0
     downloaded_report_count = 0
     reused_report_count = 0
 
@@ -63,6 +64,8 @@ def extract_sweden_financial_report_xhtml_catalog(
                         partition_year=partition_year,
                         object_store=object_store,
                     )
+                    if not nested_reports:
+                        skipped_nested_zip_count += 1
                     for row, downloaded in nested_reports:
                         rows.append(row)
                         if downloaded:
@@ -86,6 +89,7 @@ def extract_sweden_financial_report_xhtml_catalog(
         "partition_year": partition_year,
         "source_archive_count": len(source_archive_keys),
         "nested_zip_count": nested_zip_count,
+        "skipped_nested_zip_count": skipped_nested_zip_count,
         "report_xhtml_count": len(rows),
         "downloaded_report_xhtml_count": downloaded_report_count,
         "reused_report_xhtml_count": reused_report_count,
@@ -139,9 +143,7 @@ def _extract_nested_reports(
             if member.filename.lower().endswith((".xhtml", ".html"))
         ]
         if not xhtml_members:
-            raise ValueError(
-                f"Expected at least one XHTML file in nested archive {nested_zip_member}"
-            )
+            return []
 
         for xhtml_member in xhtml_members:
             xhtml_body = nested_zip.read(xhtml_member)

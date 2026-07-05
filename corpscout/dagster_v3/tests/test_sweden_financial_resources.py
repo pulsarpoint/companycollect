@@ -392,6 +392,7 @@ def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
         "partition_year": "2020",
         "source_archive_count": 1,
         "nested_zip_count": 1,
+        "skipped_nested_zip_count": 0,
         "report_xhtml_count": 1,
         "downloaded_report_xhtml_count": 1,
         "reused_report_xhtml_count": 0,
@@ -472,6 +473,40 @@ def test_extract_sweden_financial_report_xhtml_catalog_keeps_multiple_xhtml_memb
             "c38e1b06-f6cf-4ad4-bce5-887f0e775455.xhtml",
         ),
     ]
+
+
+def test_extract_sweden_financial_report_xhtml_catalog_skips_nested_zip_without_xhtml(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2025/12_31.zip",
+        source_last_modified="2026-01-02T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = _outer_zip(
+        nested_name="5594386681_2025-12-31.zip",
+        xhtml_files={
+            "metadata.xml": b"<metadata />",
+            "readme.txt": b"no inline xhtml in this nested archive",
+        },
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        counts = extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="run-1",
+            partition_year="2025",
+        )
+        catalog_count = connection.execute(
+            "select count(*) from sweden_financial.report_xhtml_catalog"
+        ).fetchone()[0]
+
+    assert counts["nested_zip_count"] == 1
+    assert counts["skipped_nested_zip_count"] == 1
+    assert counts["report_xhtml_count"] == 0
+    assert counts["catalog_row_count"] == 0
+    assert catalog_count == 0
 
 
 def test_extract_sweden_financial_report_xhtml_catalog_replaces_only_partition_year(
