@@ -8,8 +8,12 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// DefaultQuery selects every distinct domain known to the commoncrawl pipeline.
-const DefaultQuery = "SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains"
+// DefaultQuery selects every distinct domain known to the commoncrawl pipeline. The ORDER BY makes
+// the result deterministic so a --limit run returns the SAME domains every time; without it
+// ClickHouse may return a different LIMIT-N slice per run, which breaks resume-by-rescan (the second
+// run would seed a different set instead of finding all domains already done). For a full (unlimited)
+// run the order is immaterial — every domain is seeded regardless.
+const DefaultQuery = "SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains ORDER BY root_domain"
 
 func applyLimit(q string, limit int) string {
 	if limit <= 0 {
