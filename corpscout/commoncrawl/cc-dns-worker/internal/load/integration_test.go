@@ -58,7 +58,13 @@ func TestLoadFromStoreRoundTrip(t *testing.T) {
 	}
 
 	conn := testConn(t)
-	defer conn.Close()
+	// Register cleanup up front so the itest rows are removed from shared ClickHouse even if an
+	// assertion below fails via t.Fatalf (which would skip trailing statements). Close last.
+	t.Cleanup(func() {
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_records WHERE scan_id='itest'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE scan_id='itest'")
+		_ = conn.Close()
+	})
 	nr, nd, err := FromStore(ctx, conn, st, "itest")
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -75,6 +81,4 @@ func TestLoadFromStoreRoundTrip(t *testing.T) {
 	if rt != "MX" {
 		t.Errorf("record_type = %q, want MX", rt)
 	}
-	_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_records WHERE scan_id='itest'")
-	_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE scan_id='itest'")
 }
