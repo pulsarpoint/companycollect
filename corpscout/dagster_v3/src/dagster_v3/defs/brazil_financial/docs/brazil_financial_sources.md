@@ -102,7 +102,10 @@ Current implementation:
 brazil_fin_cvm_dfp_raw_archives_s3
 brazil_fin_cvm_dfp_raw_duckdb
 brazil_fin_cvm_dfp_statement_rows_usd_duckdb
-brazil_fin_cvm_dfp_raw_clickhouse
+brazil_fin_cvm_dfp_documents_clickhouse
+brazil_fin_cvm_dfp_statement_rows_clickhouse
+brazil_fin_cvm_dfp_capital_composition_clickhouse
+brazil_fin_cvm_dfp_auditor_reports_clickhouse
 ```
 
 Current raw storage and schema choices:
@@ -163,7 +166,10 @@ logic where the file structure is genuinely identical:
 brazil_fin_cvm_itr_raw_archives_s3
 brazil_fin_cvm_itr_raw_duckdb
 brazil_fin_cvm_itr_statement_rows_usd_duckdb
-brazil_fin_cvm_itr_raw_clickhouse
+brazil_fin_cvm_itr_documents_clickhouse
+brazil_fin_cvm_itr_statement_rows_clickhouse
+brazil_fin_cvm_itr_capital_composition_clickhouse
+brazil_fin_cvm_itr_auditor_reports_clickhouse
 ```
 
 Expected raw storage:

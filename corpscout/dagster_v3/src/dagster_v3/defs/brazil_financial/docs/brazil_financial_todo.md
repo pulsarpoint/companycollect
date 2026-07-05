@@ -12,8 +12,11 @@
   `brazil_fin_cvm_dfp_raw_duckdb`.
 - Implemented DFP statement-row USD conversion in DuckDB:
   `brazil_fin_cvm_dfp_statement_rows_usd_duckdb`.
-- Implemented DFP raw ClickHouse export:
-  `brazil_fin_cvm_dfp_raw_clickhouse`.
+- Implemented DFP raw ClickHouse table exports:
+  `brazil_fin_cvm_dfp_documents_clickhouse`,
+  `brazil_fin_cvm_dfp_statement_rows_clickhouse`,
+  `brazil_fin_cvm_dfp_capital_composition_clickhouse`,
+  `brazil_fin_cvm_dfp_auditor_reports_clickhouse`.
 - Created ClickHouse DFP raw tables:
   `br_cvm_dfp_documents`,
   `br_cvm_dfp_statement_rows`,
@@ -34,8 +37,11 @@
   `brazil_fin_cvm_itr_raw_duckdb`.
 - Implemented ITR statement-row USD conversion in DuckDB:
   `brazil_fin_cvm_itr_statement_rows_usd_duckdb`.
-- Implemented ITR raw ClickHouse export:
-  `brazil_fin_cvm_itr_raw_clickhouse`.
+- Implemented ITR raw ClickHouse table exports:
+  `brazil_fin_cvm_itr_documents_clickhouse`,
+  `brazil_fin_cvm_itr_statement_rows_clickhouse`,
+  `brazil_fin_cvm_itr_capital_composition_clickhouse`,
+  `brazil_fin_cvm_itr_auditor_reports_clickhouse`.
 - Created ClickHouse ITR raw tables:
   `br_cvm_itr_documents`,
   `br_cvm_itr_statement_rows`,

@@ -65,7 +65,7 @@ class _Connection:
         return None
 
 
-def test_export_brazil_fin_cvm_dfp_clickhouse_exports_all_duckdb_tables(
+def test_export_brazil_fin_cvm_clickhouse_table_exports_one_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dagster_v3.defs.brazil_financial.cvm import clickhouse
@@ -83,7 +83,7 @@ def test_export_brazil_fin_cvm_dfp_clickhouse_exports_all_duckdb_tables(
 
     def fake_export_duckdb_connection_table_to_clickhouse(**kwargs: object) -> int:
         exports.append(kwargs)
-        return len(exports) * 10
+        return 10
 
     monkeypatch.setattr(
         clickhouse,
@@ -96,28 +96,22 @@ def test_export_brazil_fin_cvm_dfp_clickhouse_exports_all_duckdb_tables(
         fake_export_duckdb_connection_table_to_clickhouse,
     )
 
-    row_counts = clickhouse.export_brazil_fin_cvm_dfp_clickhouse(
+    rows = clickhouse.export_brazil_fin_cvm_clickhouse_table(
         duckdb_connection=FakeDuckDBConnection(),
         clickhouse=FakeClickHouseResource(),
+        duckdb_table=DFP_DOCUMENTS_TABLE,
+        clickhouse_table=tables.BR_CVM_DFP_DOCUMENTS_TABLE,
+        columns=tables.BR_CVM_DFP_DOCUMENTS_EXPORT_COLUMNS,
+        family="DFP",
     )
 
+    assert rows == 10
     assert asserted_tables == [
         (
             tables.BRAZIL_CVM_DATABASE,
-            (
-                tables.BR_CVM_DFP_DOCUMENTS_TABLE,
-                tables.BR_CVM_DFP_STATEMENT_ROWS_TABLE,
-                tables.BR_CVM_DFP_CAPITAL_COMPOSITION_TABLE,
-                tables.BR_CVM_DFP_AUDITOR_REPORTS_TABLE,
-            ),
+            (tables.BR_CVM_DFP_DOCUMENTS_TABLE,),
         )
     ]
-    assert row_counts == {
-        "br_cvm_dfp_documents_row_count": 10,
-        "br_cvm_dfp_statement_rows_row_count": 20,
-        "br_cvm_dfp_capital_composition_row_count": 30,
-        "br_cvm_dfp_auditor_reports_row_count": 40,
-    }
     assert [
         (
             export["duckdb_schema"],
@@ -136,35 +130,11 @@ def test_export_brazil_fin_cvm_dfp_clickhouse_exports_all_duckdb_tables(
             tables.BR_CVM_DFP_DOCUMENTS_TABLE,
             tables.BR_CVM_DFP_DOCUMENTS_EXPORT_COLUMNS,
             True,
-        ),
-        (
-            BRAZIL_CVM_DUCKDB_SCHEMA,
-            DFP_STATEMENT_ROWS_TABLE,
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_DFP_STATEMENT_ROWS_TABLE,
-            tables.BR_CVM_DFP_STATEMENT_ROWS_EXPORT_COLUMNS,
-            True,
-        ),
-        (
-            BRAZIL_CVM_DUCKDB_SCHEMA,
-            DFP_CAPITAL_COMPOSITION_TABLE,
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_DFP_CAPITAL_COMPOSITION_TABLE,
-            tables.BR_CVM_DFP_CAPITAL_COMPOSITION_EXPORT_COLUMNS,
-            True,
-        ),
-        (
-            BRAZIL_CVM_DUCKDB_SCHEMA,
-            DFP_AUDITOR_REPORTS_TABLE,
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_DFP_AUDITOR_REPORTS_TABLE,
-            tables.BR_CVM_DFP_AUDITOR_REPORTS_EXPORT_COLUMNS,
-            True,
-        ),
+        )
     ]
 
 
-def test_export_brazil_fin_cvm_dfp_clickhouse_refuses_empty_duckdb_table(
+def test_export_brazil_fin_cvm_clickhouse_table_refuses_empty_duckdb_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dagster_v3.defs.brazil_financial.cvm import clickhouse
@@ -188,113 +158,18 @@ def test_export_brazil_fin_cvm_dfp_clickhouse_refuses_empty_duckdb_table(
     )
 
     with pytest.raises(ValueError, match="Brazil CVM DFP DuckDB table is empty"):
-        clickhouse.export_brazil_fin_cvm_dfp_clickhouse(
+        clickhouse.export_brazil_fin_cvm_clickhouse_table(
             duckdb_connection=FakeDuckDBConnection(
-                counts={
-                    (BRAZIL_CVM_DUCKDB_SCHEMA, DFP_DOCUMENTS_TABLE): 1,
-                    (BRAZIL_CVM_DUCKDB_SCHEMA, DFP_STATEMENT_ROWS_TABLE): 0,
-                    (BRAZIL_CVM_DUCKDB_SCHEMA, DFP_CAPITAL_COMPOSITION_TABLE): 3,
-                    (BRAZIL_CVM_DUCKDB_SCHEMA, DFP_AUDITOR_REPORTS_TABLE): 4,
-                }
+                counts={(BRAZIL_CVM_DUCKDB_SCHEMA, DFP_DOCUMENTS_TABLE): 0}
             ),
             clickhouse=FakeClickHouseResource(),
+            duckdb_table=DFP_DOCUMENTS_TABLE,
+            clickhouse_table=tables.BR_CVM_DFP_DOCUMENTS_TABLE,
+            columns=tables.BR_CVM_DFP_DOCUMENTS_EXPORT_COLUMNS,
+            family="DFP",
         )
 
     assert exported is False
-
-
-def test_export_brazil_fin_cvm_itr_clickhouse_exports_all_duckdb_tables(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dagster_v3.defs.brazil_financial.cvm import clickhouse
-
-    asserted_tables: list[tuple[str, tuple[str, ...]]] = []
-    exports: list[dict[str, object]] = []
-
-    def fake_assert_clickhouse_tables_exist(
-        clickhouse_resource: FakeClickHouseResource,
-        *,
-        database: str,
-        tables: tuple[str, ...],
-    ) -> None:
-        asserted_tables.append((database, tables))
-
-    def fake_export_duckdb_connection_table_to_clickhouse(**kwargs: object) -> int:
-        exports.append(kwargs)
-        return len(exports) * 10
-
-    monkeypatch.setattr(
-        clickhouse,
-        "assert_clickhouse_tables_exist",
-        fake_assert_clickhouse_tables_exist,
-    )
-    monkeypatch.setattr(
-        clickhouse,
-        "export_duckdb_connection_table_to_clickhouse",
-        fake_export_duckdb_connection_table_to_clickhouse,
-    )
-
-    row_counts = clickhouse.export_brazil_fin_cvm_itr_clickhouse(
-        duckdb_connection=FakeDuckDBConnection(),
-        clickhouse=FakeClickHouseResource(),
-    )
-
-    assert asserted_tables == [
-        (
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_ITR_TABLES,
-        )
-    ]
-    assert row_counts == {
-        "br_cvm_itr_documents_row_count": 10,
-        "br_cvm_itr_statement_rows_row_count": 20,
-        "br_cvm_itr_capital_composition_row_count": 30,
-        "br_cvm_itr_auditor_reports_row_count": 40,
-    }
-    assert [
-        (
-            export["duckdb_schema"],
-            export["duckdb_table"],
-            export["clickhouse_database"],
-            export["clickhouse_table"],
-            export["columns"],
-            export["truncate"],
-        )
-        for export in exports
-    ] == [
-        (
-            BRAZIL_CVM_DUCKDB_SCHEMA,
-            ITR_DOCUMENTS_TABLE,
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_ITR_DOCUMENTS_TABLE,
-            tables.BR_CVM_ITR_DOCUMENTS_EXPORT_COLUMNS,
-            True,
-        ),
-        (
-            BRAZIL_CVM_DUCKDB_SCHEMA,
-            ITR_STATEMENT_ROWS_TABLE,
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_ITR_STATEMENT_ROWS_TABLE,
-            tables.BR_CVM_ITR_STATEMENT_ROWS_EXPORT_COLUMNS,
-            True,
-        ),
-        (
-            BRAZIL_CVM_DUCKDB_SCHEMA,
-            ITR_CAPITAL_COMPOSITION_TABLE,
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_ITR_CAPITAL_COMPOSITION_TABLE,
-            tables.BR_CVM_ITR_CAPITAL_COMPOSITION_EXPORT_COLUMNS,
-            True,
-        ),
-        (
-            BRAZIL_CVM_DUCKDB_SCHEMA,
-            ITR_AUDITOR_REPORTS_TABLE,
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_ITR_AUDITOR_REPORTS_TABLE,
-            tables.BR_CVM_ITR_AUDITOR_REPORTS_EXPORT_COLUMNS,
-            True,
-        ),
-    ]
 
 
 def test_export_brazil_fin_cvm_companies_clickhouse_exports_company_table(

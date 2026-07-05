@@ -6,9 +6,10 @@ from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.brazil_financial.cvm import tables
 from dagster_v3.defs.brazil_financial.cvm.clickhouse import (
+    EXPORT_TABLES,
+    ITR_EXPORT_TABLES,
+    export_brazil_fin_cvm_clickhouse_table,
     export_brazil_fin_cvm_companies_clickhouse,
-    export_brazil_fin_cvm_dfp_clickhouse,
-    export_brazil_fin_cvm_itr_clickhouse,
 )
 from dagster_v3.defs.brazil_financial.cvm.companies import (
     CVM_COMPANIES_SOURCE_URL,
@@ -51,6 +52,26 @@ from dagster_v3.defs.common.duckdb_resources import (
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
 BRAZIL_FIN_CVM_DUCKDB_PATH = Path("data/brazil_cvm_source.duckdb")
+DFP_CLICKHOUSE_DEPENDENCIES = [
+    dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
+    dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
+]
+ITR_CLICKHOUSE_DEPENDENCIES = [
+    dg.AssetKey("brazil_fin_cvm_itr_statement_rows_usd_duckdb"),
+    dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
+]
+DFP_CLICKHOUSE_ASSET_SPECS = (
+    ("brazil_fin_cvm_dfp_documents_clickhouse", *EXPORT_TABLES[0]),
+    ("brazil_fin_cvm_dfp_statement_rows_clickhouse", *EXPORT_TABLES[1]),
+    ("brazil_fin_cvm_dfp_capital_composition_clickhouse", *EXPORT_TABLES[2]),
+    ("brazil_fin_cvm_dfp_auditor_reports_clickhouse", *EXPORT_TABLES[3]),
+)
+ITR_CLICKHOUSE_ASSET_SPECS = (
+    ("brazil_fin_cvm_itr_documents_clickhouse", *ITR_EXPORT_TABLES[0]),
+    ("brazil_fin_cvm_itr_statement_rows_clickhouse", *ITR_EXPORT_TABLES[1]),
+    ("brazil_fin_cvm_itr_capital_composition_clickhouse", *ITR_EXPORT_TABLES[2]),
+    ("brazil_fin_cvm_itr_auditor_reports_clickhouse", *ITR_EXPORT_TABLES[3]),
+)
 
 BRAZIL_FIN_CVM_DFP_RAW_PARTITIONS = dg.StaticPartitionsDefinition(
     [
@@ -305,62 +326,129 @@ def brazil_fin_cvm_itr_statement_rows_usd_duckdb(
     return dg.MaterializeResult(metadata=counts)
 
 
-@dg.asset(
-    deps=[
-        dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
-        dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
-    ],
-    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "cvm", "dfp"},
-    pool="brazil_fin_cvm_duckdb",
-    metadata={"tables": ", ".join(tables.BR_CVM_DFP_TABLES)},
-    description="Exports converted Brazil CVM DFP DuckDB tables to ClickHouse.",
-)
-def brazil_fin_cvm_dfp_raw_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-    brazil_fin_cvm_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    context.log.info(
-        "Exporting Brazil CVM DFP DuckDB tables to ClickHouse: tables=%s",
-        tables.BR_CVM_DFP_TABLES,
+def _build_brazil_fin_cvm_clickhouse_table_asset(
+    *,
+    asset_name: str,
+    duckdb_table: str,
+    clickhouse_table: str,
+    columns: tuple[str, ...],
+    family: str,
+    deps: list[dg.AssetKey],
+) -> dg.AssetsDefinition:
+    @dg.asset(
+        name=asset_name,
+        deps=deps,
+        group_name=BRAZIL_FIN_CVM_GROUP_NAME,
+        kinds={"python", "duckdb", "clickhouse", "cvm", family.lower()},
+        metadata={"table": f"{tables.BRAZIL_CVM_DATABASE}.{clickhouse_table}"},
+        description=(
+            f"Exports Brazil CVM {family} DuckDB table {duckdb_table} to "
+            f"ClickHouse table {clickhouse_table}."
+        ),
     )
-    with read_only_duckdb_connection(brazil_fin_cvm_duckdb) as connection:
-        counts = export_brazil_fin_cvm_dfp_clickhouse(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
+    def _asset(
+        context: dg.AssetExecutionContext,
+        clickhouse: ClickhouseResource,
+        brazil_fin_cvm_duckdb: DuckDBResource,
+    ) -> dg.MaterializeResult:
+        with read_only_duckdb_connection(brazil_fin_cvm_duckdb) as connection:
+            rows = export_brazil_fin_cvm_clickhouse_table(
+                duckdb_connection=connection,
+                clickhouse=clickhouse,
+                duckdb_table=duckdb_table,
+                clickhouse_table=clickhouse_table,
+                columns=columns,
+                family=family,
+                log=context.log.info,
+            )
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": rows,
+                f"{clickhouse_table}_row_count": rows,
+                "duckdb_table": f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{duckdb_table}",
+                "clickhouse_table": f"{tables.BRAZIL_CVM_DATABASE}.{clickhouse_table}",
+            }
         )
-    return dg.MaterializeResult(metadata=counts)
+
+    return _asset
 
 
-@dg.asset(
-    deps=[
-        dg.AssetKey("brazil_fin_cvm_itr_statement_rows_usd_duckdb"),
-        dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
-    ],
-    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "cvm", "itr"},
-    pool="brazil_fin_cvm_duckdb",
-    metadata={"tables": ", ".join(tables.BR_CVM_ITR_TABLES)},
-    description="Exports converted Brazil CVM ITR DuckDB tables to ClickHouse.",
+brazil_fin_cvm_dfp_documents_clickhouse = _build_brazil_fin_cvm_clickhouse_table_asset(
+    asset_name=DFP_CLICKHOUSE_ASSET_SPECS[0][0],
+    duckdb_table=DFP_CLICKHOUSE_ASSET_SPECS[0][1],
+    clickhouse_table=DFP_CLICKHOUSE_ASSET_SPECS[0][2],
+    columns=DFP_CLICKHOUSE_ASSET_SPECS[0][3],
+    family="DFP",
+    deps=DFP_CLICKHOUSE_DEPENDENCIES,
 )
-def brazil_fin_cvm_itr_raw_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-    brazil_fin_cvm_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    context.log.info(
-        "Exporting Brazil CVM ITR DuckDB tables to ClickHouse: tables=%s",
-        tables.BR_CVM_ITR_TABLES,
+brazil_fin_cvm_dfp_statement_rows_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=DFP_CLICKHOUSE_ASSET_SPECS[1][0],
+        duckdb_table=DFP_CLICKHOUSE_ASSET_SPECS[1][1],
+        clickhouse_table=DFP_CLICKHOUSE_ASSET_SPECS[1][2],
+        columns=DFP_CLICKHOUSE_ASSET_SPECS[1][3],
+        family="DFP",
+        deps=DFP_CLICKHOUSE_DEPENDENCIES,
     )
-    with read_only_duckdb_connection(brazil_fin_cvm_duckdb) as connection:
-        counts = export_brazil_fin_cvm_itr_clickhouse(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(metadata=counts)
+)
+brazil_fin_cvm_dfp_capital_composition_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=DFP_CLICKHOUSE_ASSET_SPECS[2][0],
+        duckdb_table=DFP_CLICKHOUSE_ASSET_SPECS[2][1],
+        clickhouse_table=DFP_CLICKHOUSE_ASSET_SPECS[2][2],
+        columns=DFP_CLICKHOUSE_ASSET_SPECS[2][3],
+        family="DFP",
+        deps=DFP_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_dfp_auditor_reports_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=DFP_CLICKHOUSE_ASSET_SPECS[3][0],
+        duckdb_table=DFP_CLICKHOUSE_ASSET_SPECS[3][1],
+        clickhouse_table=DFP_CLICKHOUSE_ASSET_SPECS[3][2],
+        columns=DFP_CLICKHOUSE_ASSET_SPECS[3][3],
+        family="DFP",
+        deps=DFP_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_itr_documents_clickhouse = _build_brazil_fin_cvm_clickhouse_table_asset(
+    asset_name=ITR_CLICKHOUSE_ASSET_SPECS[0][0],
+    duckdb_table=ITR_CLICKHOUSE_ASSET_SPECS[0][1],
+    clickhouse_table=ITR_CLICKHOUSE_ASSET_SPECS[0][2],
+    columns=ITR_CLICKHOUSE_ASSET_SPECS[0][3],
+    family="ITR",
+    deps=ITR_CLICKHOUSE_DEPENDENCIES,
+)
+brazil_fin_cvm_itr_statement_rows_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=ITR_CLICKHOUSE_ASSET_SPECS[1][0],
+        duckdb_table=ITR_CLICKHOUSE_ASSET_SPECS[1][1],
+        clickhouse_table=ITR_CLICKHOUSE_ASSET_SPECS[1][2],
+        columns=ITR_CLICKHOUSE_ASSET_SPECS[1][3],
+        family="ITR",
+        deps=ITR_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_itr_capital_composition_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=ITR_CLICKHOUSE_ASSET_SPECS[2][0],
+        duckdb_table=ITR_CLICKHOUSE_ASSET_SPECS[2][1],
+        clickhouse_table=ITR_CLICKHOUSE_ASSET_SPECS[2][2],
+        columns=ITR_CLICKHOUSE_ASSET_SPECS[2][3],
+        family="ITR",
+        deps=ITR_CLICKHOUSE_DEPENDENCIES,
+    )
+)
+brazil_fin_cvm_itr_auditor_reports_clickhouse = (
+    _build_brazil_fin_cvm_clickhouse_table_asset(
+        asset_name=ITR_CLICKHOUSE_ASSET_SPECS[3][0],
+        duckdb_table=ITR_CLICKHOUSE_ASSET_SPECS[3][1],
+        clickhouse_table=ITR_CLICKHOUSE_ASSET_SPECS[3][2],
+        columns=ITR_CLICKHOUSE_ASSET_SPECS[3][3],
+        family="ITR",
+        deps=ITR_CLICKHOUSE_DEPENDENCIES,
+    )
+)
 
 
 brazil_fin_cvm_dfp_raw_backfill_job = dg.define_asset_job(
@@ -388,11 +476,17 @@ defs = dg.Definitions(
         brazil_fin_cvm_dfp_raw_archives_s3,
         brazil_fin_cvm_dfp_raw_duckdb,
         brazil_fin_cvm_dfp_statement_rows_usd_duckdb,
-        brazil_fin_cvm_dfp_raw_clickhouse,
+        brazil_fin_cvm_dfp_documents_clickhouse,
+        brazil_fin_cvm_dfp_statement_rows_clickhouse,
+        brazil_fin_cvm_dfp_capital_composition_clickhouse,
+        brazil_fin_cvm_dfp_auditor_reports_clickhouse,
         brazil_fin_cvm_itr_raw_archives_s3,
         brazil_fin_cvm_itr_raw_duckdb,
         brazil_fin_cvm_itr_statement_rows_usd_duckdb,
-        brazil_fin_cvm_itr_raw_clickhouse,
+        brazil_fin_cvm_itr_documents_clickhouse,
+        brazil_fin_cvm_itr_statement_rows_clickhouse,
+        brazil_fin_cvm_itr_capital_composition_clickhouse,
+        brazil_fin_cvm_itr_auditor_reports_clickhouse,
     ],
     jobs=[brazil_fin_cvm_dfp_raw_backfill_job, brazil_fin_cvm_itr_raw_backfill_job],
     resources={

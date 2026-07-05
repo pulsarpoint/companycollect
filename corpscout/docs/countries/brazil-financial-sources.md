@@ -47,8 +47,8 @@ Official pages:
 
 First DFP assets implemented under the `brazil_fin_cvm` Dagster group:
 `brazil_fin_cvm_dfp_raw_archives_s3`, `brazil_fin_cvm_dfp_raw_duckdb`,
-`brazil_fin_cvm_dfp_statement_rows_usd_duckdb`, and
-`brazil_fin_cvm_dfp_raw_clickhouse`.
+`brazil_fin_cvm_dfp_statement_rows_usd_duckdb`, and table-level ClickHouse
+assets for documents, statement rows, capital composition, and auditor reports.
 
 It is partitioned by year from `2010` through `2026`, downloads the raw
 `dfp_cia_aberta_<year>.zip` archive into `source-brazil-cvm`, and skips the

@@ -1,18 +1,38 @@
 import dagster as dg
 
+DFP_CLICKHOUSE_ASSET_NAMES = (
+    "brazil_fin_cvm_dfp_documents_clickhouse",
+    "brazil_fin_cvm_dfp_statement_rows_clickhouse",
+    "brazil_fin_cvm_dfp_capital_composition_clickhouse",
+    "brazil_fin_cvm_dfp_auditor_reports_clickhouse",
+)
+
+ITR_CLICKHOUSE_ASSET_NAMES = (
+    "brazil_fin_cvm_itr_documents_clickhouse",
+    "brazil_fin_cvm_itr_statement_rows_clickhouse",
+    "brazil_fin_cvm_itr_capital_composition_clickhouse",
+    "brazil_fin_cvm_itr_auditor_reports_clickhouse",
+)
+
 
 def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     from dagster_v3.defs.brazil_financial.cvm.assets import (
         brazil_fin_cvm_companies_clickhouse,
         brazil_fin_cvm_companies_duckdb,
         brazil_fin_cvm_companies_raw_csv_s3,
-        brazil_fin_cvm_dfp_raw_clickhouse,
+        brazil_fin_cvm_dfp_auditor_reports_clickhouse,
+        brazil_fin_cvm_dfp_capital_composition_clickhouse,
+        brazil_fin_cvm_dfp_documents_clickhouse,
         brazil_fin_cvm_dfp_raw_archives_s3,
         brazil_fin_cvm_dfp_raw_duckdb,
+        brazil_fin_cvm_dfp_statement_rows_clickhouse,
         brazil_fin_cvm_dfp_statement_rows_usd_duckdb,
-        brazil_fin_cvm_itr_raw_clickhouse,
+        brazil_fin_cvm_itr_auditor_reports_clickhouse,
+        brazil_fin_cvm_itr_capital_composition_clickhouse,
+        brazil_fin_cvm_itr_documents_clickhouse,
         brazil_fin_cvm_itr_raw_archives_s3,
         brazil_fin_cvm_itr_raw_duckdb,
+        brazil_fin_cvm_itr_statement_rows_clickhouse,
         brazil_fin_cvm_itr_statement_rows_usd_duckdb,
     )
 
@@ -29,22 +49,34 @@ def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
     ]
     assert brazil_fin_cvm_dfp_raw_duckdb.partitions_def is partitions_def
     assert brazil_fin_cvm_dfp_statement_rows_usd_duckdb.partitions_def is None
-    assert brazil_fin_cvm_dfp_raw_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_dfp_documents_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_dfp_statement_rows_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_dfp_capital_composition_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_dfp_auditor_reports_clickhouse.partitions_def is None
     assert brazil_fin_cvm_itr_raw_duckdb.partitions_def is itr_partitions_def
     assert brazil_fin_cvm_itr_statement_rows_usd_duckdb.partitions_def is None
-    assert brazil_fin_cvm_itr_raw_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_itr_documents_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_itr_statement_rows_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_itr_capital_composition_clickhouse.partitions_def is None
+    assert brazil_fin_cvm_itr_auditor_reports_clickhouse.partitions_def is None
     assert brazil_fin_cvm_dfp_raw_archives_s3.op.pool is None
     assert brazil_fin_cvm_dfp_raw_duckdb.op.pool == "brazil_fin_cvm_duckdb"
     assert (
         brazil_fin_cvm_dfp_statement_rows_usd_duckdb.op.pool == "brazil_fin_cvm_duckdb"
     )
-    assert brazil_fin_cvm_dfp_raw_clickhouse.op.pool == "brazil_fin_cvm_duckdb"
+    assert brazil_fin_cvm_dfp_documents_clickhouse.op.pool is None
+    assert brazil_fin_cvm_dfp_statement_rows_clickhouse.op.pool is None
+    assert brazil_fin_cvm_dfp_capital_composition_clickhouse.op.pool is None
+    assert brazil_fin_cvm_dfp_auditor_reports_clickhouse.op.pool is None
     assert brazil_fin_cvm_itr_raw_archives_s3.op.pool is None
     assert brazil_fin_cvm_itr_raw_duckdb.op.pool == "brazil_fin_cvm_duckdb"
     assert (
         brazil_fin_cvm_itr_statement_rows_usd_duckdb.op.pool == "brazil_fin_cvm_duckdb"
     )
-    assert brazil_fin_cvm_itr_raw_clickhouse.op.pool == "brazil_fin_cvm_duckdb"
+    assert brazil_fin_cvm_itr_documents_clickhouse.op.pool is None
+    assert brazil_fin_cvm_itr_statement_rows_clickhouse.op.pool is None
+    assert brazil_fin_cvm_itr_capital_composition_clickhouse.op.pool is None
+    assert brazil_fin_cvm_itr_auditor_reports_clickhouse.op.pool is None
     assert brazil_fin_cvm_companies_duckdb.partitions_def is None
     assert brazil_fin_cvm_companies_clickhouse.partitions_def is None
     assert brazil_fin_cvm_companies_raw_csv_s3.partitions_def is None
@@ -69,7 +101,6 @@ def test_brazil_fin_cvm_dfp_raw_backfill_job_selects_raw_archive_asset() -> None
     from dagster_clickhouse import ClickhouseResource
 
     from dagster_v3.defs.brazil_financial.cvm.assets import (
-        brazil_fin_cvm_dfp_raw_clickhouse,
         brazil_fin_cvm_dfp_raw_archives_s3,
         brazil_fin_cvm_dfp_raw_backfill_job,
         brazil_fin_cvm_dfp_raw_duckdb,
@@ -90,7 +121,6 @@ def test_brazil_fin_cvm_dfp_raw_backfill_job_selects_raw_archive_asset() -> None
             brazil_fin_cvm_dfp_raw_archives_s3,
             brazil_fin_cvm_dfp_raw_duckdb,
             brazil_fin_cvm_dfp_statement_rows_usd_duckdb,
-            brazil_fin_cvm_dfp_raw_clickhouse,
         ],
         jobs=[brazil_fin_cvm_dfp_raw_backfill_job],
         resources={
@@ -146,16 +176,21 @@ def test_brazil_fin_cvm_dfp_statement_rows_usd_depends_on_raw_duckdb_asset() -> 
     assert asset.parent_keys == {dg.AssetKey("brazil_fin_cvm_dfp_raw_duckdb")}
 
 
-def test_brazil_fin_cvm_dfp_raw_clickhouse_depends_on_usd_duckdb_asset() -> None:
+def test_brazil_fin_cvm_dfp_clickhouse_table_assets_depend_on_usd_duckdb_asset() -> (
+    None
+):
     from dagster_clickhouse import ClickhouseResource
 
     from dagster_v3.defs.brazil_financial.cvm.assets import (
         brazil_fin_cvm_companies_clickhouse,
         brazil_fin_cvm_companies_duckdb,
         brazil_fin_cvm_companies_raw_csv_s3,
-        brazil_fin_cvm_dfp_raw_clickhouse,
+        brazil_fin_cvm_dfp_auditor_reports_clickhouse,
+        brazil_fin_cvm_dfp_capital_composition_clickhouse,
+        brazil_fin_cvm_dfp_documents_clickhouse,
         brazil_fin_cvm_dfp_raw_archives_s3,
         brazil_fin_cvm_dfp_raw_duckdb,
+        brazil_fin_cvm_dfp_statement_rows_clickhouse,
         brazil_fin_cvm_dfp_statement_rows_usd_duckdb,
     )
     from dagster_v3.defs.brazil_financial.cvm.source import BrazilCvmDfpResource
@@ -170,7 +205,10 @@ def test_brazil_fin_cvm_dfp_raw_clickhouse_depends_on_usd_duckdb_asset() -> None
             brazil_fin_cvm_dfp_raw_archives_s3,
             brazil_fin_cvm_dfp_raw_duckdb,
             brazil_fin_cvm_dfp_statement_rows_usd_duckdb,
-            brazil_fin_cvm_dfp_raw_clickhouse,
+            brazil_fin_cvm_dfp_documents_clickhouse,
+            brazil_fin_cvm_dfp_statement_rows_clickhouse,
+            brazil_fin_cvm_dfp_capital_composition_clickhouse,
+            brazil_fin_cvm_dfp_auditor_reports_clickhouse,
         ],
         resources={
             "brazil_fin_cvm_dfp": BrazilCvmDfpResource(),
@@ -179,15 +217,15 @@ def test_brazil_fin_cvm_dfp_raw_clickhouse_depends_on_usd_duckdb_asset() -> None
             "clickhouse": ClickhouseResource(host="localhost"),
         },
     ).get_repository_def()
-    asset = repository.asset_graph.get(brazil_fin_cvm_dfp_raw_clickhouse.key)
+    for asset_name in DFP_CLICKHOUSE_ASSET_NAMES:
+        asset = repository.asset_graph.get(dg.AssetKey(asset_name))
+        assert asset.parent_keys == {
+            dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
+            dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
+        }
 
-    assert asset.parent_keys == {
-        dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
-        dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
-    }
 
-
-def test_brazil_fin_cvm_itr_raw_clickhouse_depends_on_usd_and_companies_assets() -> (
+def test_brazil_fin_cvm_itr_clickhouse_table_assets_depend_on_usd_and_companies_assets() -> (
     None
 ):
     from dagster_clickhouse import ClickhouseResource
@@ -196,9 +234,12 @@ def test_brazil_fin_cvm_itr_raw_clickhouse_depends_on_usd_and_companies_assets()
         brazil_fin_cvm_companies_clickhouse,
         brazil_fin_cvm_companies_duckdb,
         brazil_fin_cvm_companies_raw_csv_s3,
-        brazil_fin_cvm_itr_raw_clickhouse,
+        brazil_fin_cvm_itr_auditor_reports_clickhouse,
+        brazil_fin_cvm_itr_capital_composition_clickhouse,
+        brazil_fin_cvm_itr_documents_clickhouse,
         brazil_fin_cvm_itr_raw_archives_s3,
         brazil_fin_cvm_itr_raw_duckdb,
+        brazil_fin_cvm_itr_statement_rows_clickhouse,
         brazil_fin_cvm_itr_statement_rows_usd_duckdb,
     )
     from dagster_v3.defs.brazil_financial.cvm.source import BrazilCvmItrResource
@@ -213,7 +254,10 @@ def test_brazil_fin_cvm_itr_raw_clickhouse_depends_on_usd_and_companies_assets()
             brazil_fin_cvm_itr_raw_archives_s3,
             brazil_fin_cvm_itr_raw_duckdb,
             brazil_fin_cvm_itr_statement_rows_usd_duckdb,
-            brazil_fin_cvm_itr_raw_clickhouse,
+            brazil_fin_cvm_itr_documents_clickhouse,
+            brazil_fin_cvm_itr_statement_rows_clickhouse,
+            brazil_fin_cvm_itr_capital_composition_clickhouse,
+            brazil_fin_cvm_itr_auditor_reports_clickhouse,
         ],
         resources={
             "brazil_fin_cvm_itr": BrazilCvmItrResource(),
@@ -222,12 +266,12 @@ def test_brazil_fin_cvm_itr_raw_clickhouse_depends_on_usd_and_companies_assets()
             "clickhouse": ClickhouseResource(host="localhost"),
         },
     ).get_repository_def()
-    asset = repository.asset_graph.get(brazil_fin_cvm_itr_raw_clickhouse.key)
-
-    assert asset.parent_keys == {
-        dg.AssetKey("brazil_fin_cvm_itr_statement_rows_usd_duckdb"),
-        dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
-    }
+    for asset_name in ITR_CLICKHOUSE_ASSET_NAMES:
+        asset = repository.asset_graph.get(dg.AssetKey(asset_name))
+        assert asset.parent_keys == {
+            dg.AssetKey("brazil_fin_cvm_itr_statement_rows_usd_duckdb"),
+            dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
+        }
 
 
 def test_brazil_fin_cvm_companies_clickhouse_depends_on_duckdb_asset() -> None:

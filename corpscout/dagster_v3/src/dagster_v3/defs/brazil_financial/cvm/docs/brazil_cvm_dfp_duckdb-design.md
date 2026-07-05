@@ -6,7 +6,10 @@
 - **Module**: `defs/brazil_financial/cvm/` · DuckDB file `data/brazil_cvm_source.duckdb` · pool `brazil_fin_cvm_duckdb`.
 - **Existing raw asset**: `brazil_fin_cvm_dfp_raw_archives_s3`.
 - **New parser asset**: `brazil_fin_cvm_dfp_raw_duckdb`.
-- **Later export asset**: `brazil_fin_cvm_dfp_raw_clickhouse`.
+- **ClickHouse export assets**: `brazil_fin_cvm_dfp_documents_clickhouse`,
+  `brazil_fin_cvm_dfp_statement_rows_clickhouse`,
+  `brazil_fin_cvm_dfp_capital_composition_clickhouse`,
+  `brazil_fin_cvm_dfp_auditor_reports_clickhouse`.
 - **ClickHouse migration**: `000087_corpscout_br_cvm_dfp_tables`.
 - **ClickHouse tables**:
   - `corpscout.br_cvm_dfp_documents`
@@ -292,7 +295,8 @@ Planned assets:
 ```text
 brazil_fin_cvm_dfp_raw_archives_s3
   -> brazil_fin_cvm_dfp_raw_duckdb
-  -> brazil_fin_cvm_dfp_raw_clickhouse
+  -> brazil_fin_cvm_dfp_statement_rows_usd_duckdb
+  -> brazil_fin_cvm_dfp_*_clickhouse
 ```
 
 `brazil_fin_cvm_dfp_raw_duckdb`:
@@ -303,10 +307,12 @@ brazil_fin_cvm_dfp_raw_archives_s3
 - input: S3/RustFS archive key for `context.partition_key`
 - output: rows replaced for `dfp_year=context.partition_key`
 
-`brazil_fin_cvm_dfp_raw_clickhouse`:
+`brazil_fin_cvm_dfp_*_clickhouse`:
 
-- first version can be non-partitioned and export all parsed DuckDB rows;
-- later version can become partition-aware if row volume requires year-scoped
+- non-partitioned table-level ClickHouse assets export all parsed DuckDB rows;
+- each ClickHouse table has its own Dagster asset for lineage and row-count
+  metadata;
+- later versions can become partition-aware if row volume requires year-scoped
   replacement.
 
 Jobs:
