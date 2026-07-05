@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS corpscout.br_cvm_fre_related_party_transactions
     resolved_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (cnpj, reference_date, version, related_party, data_transaction);
+ORDER BY (cnpj, reference_date, version, related_party, coalesce(data_transaction, toDate32('1900-01-01')), source_record_id);
 
 CREATE TABLE IF NOT EXISTS corpscout.br_cvm_fre_remuneration_total_organs
 (
@@ -245,7 +245,7 @@ CREATE TABLE IF NOT EXISTS corpscout.br_cvm_fre_remuneration_total_organs
     resolved_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (cnpj, reference_date, version, document_id, administration_body, fiscal_year_end_date);
+ORDER BY (cnpj, reference_date, version, document_id, administration_body, coalesce(fiscal_year_end_date, toDate32('1900-01-01')), source_record_id);
 
 CREATE TABLE IF NOT EXISTS corpscout.br_cvm_fre_shareholders
 (

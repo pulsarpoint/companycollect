@@ -156,7 +156,12 @@ def test_brazil_fin_cvm_fre_tables_migration_covers_exported_columns() -> None:
     assert "total_remuneration Nullable(Decimal(38, 6))" in sql
     assert "ORDER BY (cnpj, reference_date, version, document_id)" in sql
     assert (
-        "ORDER BY (cnpj, reference_date, version, related_party, data_transaction)"
+        "ORDER BY (cnpj, reference_date, version, related_party, "
+        "coalesce(data_transaction, toDate32('1900-01-01')), source_record_id)" in sql
+    )
+    assert (
+        "ORDER BY (cnpj, reference_date, version, document_id, administration_body, "
+        "coalesce(fiscal_year_end_date, toDate32('1900-01-01')), source_record_id)"
         in sql
     )
 
