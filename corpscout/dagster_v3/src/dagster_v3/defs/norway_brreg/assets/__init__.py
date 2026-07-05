@@ -20,6 +20,9 @@ from dagster_v3.defs.norway_brreg.assets.entity_clickhouse import (
     norway_brreg_entities_snapshot_clickhouse,
     norway_brreg_entity_updates_clickhouse,
 )
+from dagster_v3.defs.norway_brreg.assets.contacts import (
+    norway_brreg_clickhouse_canonical_contacts,
+)
 from dagster_v3.defs.norway_brreg.assets.translation import (
     LEGAL_FORM_DESCRIPTION_EN_BY_CODE,
     norway_brreg_translation_load,
@@ -40,6 +43,7 @@ __all__ = [
     "entity_snapshot_object_key",
     "entity_update_window",
     "entity_updates_object_key",
+    "norway_brreg_clickhouse_canonical_contacts",
     "norway_brreg_entries_snapshot_raw_s3",
     "norway_brreg_entities_full_snapshot_job",
     "norway_brreg_entities_snapshot_clickhouse",

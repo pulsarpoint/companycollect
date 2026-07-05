@@ -62,6 +62,7 @@ def test_norway_brreg_all_assets_registered() -> None:
     assert "norway_brreg_financial_statements_updates_clickhouse" in asset_names
     assert "norway_brreg_translation_load" in asset_names
     assert "norway_brreg_translation_trigger" not in asset_names
+    assert "norway_brreg_clickhouse_canonical_contacts" in asset_names
 
     # Raw Brreg ClickHouse exports and old translation-in-graph assets are gone.
     assert "norway_brreg_clickhouse_companies" not in asset_names
@@ -81,6 +82,9 @@ def test_norway_brreg_asset_dependency_edges() -> None:
         dg.AssetKey("norway_brreg_entity_updates_clickhouse")
     )
     loader_node = asset_graph.get(dg.AssetKey("norway_brreg_translation_load"))
+    canonical_contacts_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_clickhouse_canonical_contacts")
+    )
     snapshot_raw_node = asset_graph.get(dg.AssetKey("norway_brreg_entries_snapshot_raw_s3"))
     snapshot_s3_node = asset_graph.get(dg.AssetKey("norway_brreg_entities_snapshot_s3"))
     snapshot_fetches_node = asset_graph.get(
@@ -124,6 +128,12 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     # the translation loader, so newly ingested texts are enqueued whichever
     # path landed them.
     assert {k.path[-1] for k in loader_node.parent_keys} == {
+        "norway_brreg_entities_snapshot_clickhouse",
+        "norway_brreg_entity_updates_clickhouse",
+    }
+    # Same reasoning as the translation loader: the canonical-contacts derivation
+    # reshapes corpscout.no_websites, which either ClickHouse landing path writes.
+    assert {k.path[-1] for k in canonical_contacts_node.parent_keys} == {
         "norway_brreg_entities_snapshot_clickhouse",
         "norway_brreg_entity_updates_clickhouse",
     }
@@ -172,7 +182,8 @@ def test_norway_brreg_entities_full_snapshot_job_membership() -> None:
             "norway_brreg_entities_full_snapshot_job"
         ).asset_layer.executable_asset_keys
     }
-    # The translation loader runs after the parquet-backed full snapshot publish.
+    # The translation loader and canonical-contacts derivation run after the
+    # parquet-backed full snapshot publish.
     assert refresh == {
         "norway_brreg_entries_snapshot_raw_s3",
         "norway_brreg_entities_snapshot_s3",
@@ -183,6 +194,7 @@ def test_norway_brreg_entities_full_snapshot_job_membership() -> None:
         "norway_brreg_entities_snapshot_removed_orgs_parquet",
         "norway_brreg_entities_snapshot_clickhouse",
         "norway_brreg_translation_load",
+        "norway_brreg_clickhouse_canonical_contacts",
     }
     assert "norway_resolved_clickhouse" not in refresh
     assert "norway_resolved_no_companies" not in refresh
@@ -214,6 +226,9 @@ def test_norway_brreg_entity_updates_job_membership() -> None:
         # The translation loader runs at the end of every daily update run so
         # newly landed texts are enqueued to the translator service.
         "norway_brreg_translation_load",
+        # The canonical-contacts derivation reshapes corpscout.no_websites at the
+        # end of every daily update run too.
+        "norway_brreg_clickhouse_canonical_contacts",
     }
 
 

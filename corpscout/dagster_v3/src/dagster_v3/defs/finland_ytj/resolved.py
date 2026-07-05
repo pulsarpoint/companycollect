@@ -108,10 +108,16 @@ def finland_ytj_resolved_clickhouse(
 # .upstream() pulls the finland_ytj register load (via the dbt source dep) + the
 # dbt models + the export — no translation/Temporal gating. finland_xbrl
 # financials are a separate partitioned pipeline with their own incremental and
-# publish jobs.
+# publish jobs. The canonical-contacts derivation
+# (finland_ytj_clickhouse_canonical_contacts, defs/finland_ytj/contacts.py) runs
+# after the export lands corpscout.fi_websites, joined via an explicit union
+# (not .upstream(), which already covers everything the export needs).
 finland_ytj_resolved_job = dg.define_asset_job(
     "finland_ytj_resolved_job",
-    selection=dg.AssetSelection.assets("finland_ytj_resolved_clickhouse").upstream(),
+    selection=(
+        dg.AssetSelection.assets("finland_ytj_resolved_clickhouse").upstream()
+        | dg.AssetSelection.assets("finland_ytj_clickhouse_canonical_contacts")
+    ),
 )
 finland_ytj_resolved_schedule = dg.ScheduleDefinition(
     name="finland_ytj_resolved_schedule",

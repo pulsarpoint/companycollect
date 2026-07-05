@@ -2,6 +2,7 @@ import dagster as dg
 from dagster_aws.s3 import S3Resource
 
 from dagster_v3.defs.norway_brreg.assets import (
+    norway_brreg_clickhouse_canonical_contacts,
     norway_brreg_entries_snapshot_raw_s3,
     norway_brreg_entities_full_snapshot_job,
     norway_brreg_entities_snapshot_clickhouse,
@@ -31,6 +32,7 @@ defs = dg.Definitions(
         norway_brreg_entities_snapshot_clickhouse,
         norway_brreg_entity_updates_clickhouse,
         norway_brreg_translation_load,
+        norway_brreg_clickhouse_canonical_contacts,
     ],
     asset_checks=[
         norway_brreg_translator_stats_check,

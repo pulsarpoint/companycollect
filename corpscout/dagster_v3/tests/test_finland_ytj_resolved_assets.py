@@ -12,6 +12,7 @@ def test_dbt_models_and_clickhouse_registered() -> None:
     assert "finland_ytj_resolved_fi_industries" in keys
     assert "finland_ytj_resolved_clickhouse" in keys
     assert "finland_ytj_resolved_duckdb" not in keys
+    assert "finland_ytj_clickhouse_canonical_contacts" in keys
 
 
 def test_clickhouse_depends_on_dbt_models() -> None:
@@ -26,6 +27,18 @@ def test_clickhouse_depends_on_dbt_models() -> None:
     } <= dep_names
 
 
+def test_canonical_contacts_depends_on_resolved_clickhouse() -> None:
+    """finland_ytj_clickhouse_canonical_contacts reshapes corpscout.fi_websites,
+    which finland_ytj_resolved_clickhouse writes, so it's the sole dep (mirrors
+    the Norway loader/derivation wiring in norway_brreg/assets/translation.py and
+    contacts.py)."""
+    repo = load_project_defs().get_repository_def()
+    deps = repo.asset_graph.get(
+        AssetKey(["finland_ytj_clickhouse_canonical_contacts"])
+    ).parent_keys
+    assert {k.path[-1] for k in deps} == {"finland_ytj_resolved_clickhouse"}
+
+
 def test_ytj_register_and_resolved_assets_share_dagster_group() -> None:
     repo = load_project_defs().get_repository_def()
 
@@ -36,6 +49,7 @@ def test_ytj_register_and_resolved_assets_share_dagster_group() -> None:
         "finland_ytj_resolved_fi_websites",
         "finland_ytj_resolved_fi_industries",
         "finland_ytj_resolved_clickhouse",
+        "finland_ytj_clickhouse_canonical_contacts",
     ):
         assert repo.asset_graph.get(AssetKey([asset_name])).group_name == "finland_ytj"
 
@@ -52,6 +66,8 @@ def test_resolved_schedule_covers_register_dbt_and_export() -> None:
     }
     assert "finland_ytj_all_companies_duckdb" in keys  # register load (finland_ytj module)
     assert "finland_ytj_resolved_clickhouse" in keys  # export (finland_ytj package)
+    # canonical-contacts derivation joined via an explicit union (defs/finland_ytj/contacts.py)
+    assert "finland_ytj_clickhouse_canonical_contacts" in keys
     assert {
         "finland_ytj_resolved_fi_companies",
         "finland_ytj_resolved_fi_names",
