@@ -11,7 +11,6 @@ from dagster_v3.defs.brazil_financial.cvm.itr_parsing import (
     ITR_DOCUMENTS_TABLE,
     ITR_STATEMENT_ROWS_TABLE,
 )
-from dagster_v3.defs.brazil_financial.cvm.metrics import FINANCIAL_METRICS_TABLE
 from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
     DFP_AUDITOR_REPORTS_TABLE,
@@ -189,44 +188,6 @@ def export_brazil_fin_cvm_itr_clickhouse(
     if log is not None:
         log("Finished Brazil CVM ITR ClickHouse export: row_counts=%s", row_counts)
     return row_counts
-
-
-def export_brazil_fin_cvm_financial_metrics_clickhouse(
-    *,
-    duckdb_connection: Any,
-    clickhouse: ClickhouseResource,
-    log: Callable[..., object] | None = None,
-) -> dict[str, int]:
-    """Replace Brazil CVM normalized financial metrics in ClickHouse from DuckDB."""
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=tables.BRAZIL_CVM_DATABASE,
-        tables=(tables.BR_CVM_FINANCIAL_METRICS_TABLE,),
-    )
-    if _duckdb_row_count(duckdb_connection, FINANCIAL_METRICS_TABLE) == 0:
-        raise ValueError(
-            "Brazil CVM financial metrics DuckDB table is empty; refusing to replace "
-            f"ClickHouse table from {BRAZIL_CVM_DUCKDB_SCHEMA}.{FINANCIAL_METRICS_TABLE}"
-        )
-
-    if log is not None:
-        log(
-            "Exporting Brazil CVM financial metrics to ClickHouse: table=%s.%s",
-            tables.BRAZIL_CVM_DATABASE,
-            tables.BR_CVM_FINANCIAL_METRICS_TABLE,
-        )
-    with clickhouse.get_connection() as client:
-        rows = export_duckdb_connection_table_to_clickhouse(
-            duckdb_connection=duckdb_connection,
-            clickhouse_client=client,
-            duckdb_schema=BRAZIL_CVM_DUCKDB_SCHEMA,
-            duckdb_table=FINANCIAL_METRICS_TABLE,
-            clickhouse_database=tables.BRAZIL_CVM_DATABASE,
-            clickhouse_table=tables.BR_CVM_FINANCIAL_METRICS_TABLE,
-            columns=tables.BR_CVM_FINANCIAL_METRICS_EXPORT_COLUMNS,
-            truncate=True,
-        )
-    return {f"{tables.BR_CVM_FINANCIAL_METRICS_TABLE}_row_count": rows}
 
 
 def _assert_duckdb_tables_have_rows(duckdb_connection: Any) -> None:

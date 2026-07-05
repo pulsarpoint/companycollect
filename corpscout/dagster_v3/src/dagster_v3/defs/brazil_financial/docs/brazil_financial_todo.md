@@ -37,11 +37,11 @@
   `br_cvm_itr_statement_rows`,
   `br_cvm_itr_capital_composition`,
   `br_cvm_itr_auditor_reports`.
-- Implemented first normalized CVM metrics layer:
-  `brazil_fin_cvm_financial_metrics_duckdb` and
-  `brazil_fin_cvm_financial_metrics_clickhouse`.
-- Created ClickHouse normalized metrics table:
+- Implemented first normalized CVM metrics layer as a ClickHouse view:
   `br_cvm_financial_metrics`.
+- The view is created by migration
+  `000095_corpscout_br_cvm_financial_metrics` and reads from:
+  `br_cvm_dfp_statement_rows` and `br_cvm_itr_statement_rows`.
 - First metrics mapping covers:
   revenue,
   net income,

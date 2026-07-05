@@ -214,10 +214,19 @@ Target metric examples:
 | cash and equivalents | DFP + ITR | BPA | mapping requires account-code/description review |
 | debt | DFP + ITR + FRE | BPP/FRE | only if reliably mappable |
 
-Implemented output table:
+Implemented output view:
 
 ```text
 br_cvm_financial_metrics
+```
+
+This is a ClickHouse view, not a Dagster/DuckDB materialized asset. It is
+defined by migration `000095_corpscout_br_cvm_financial_metrics` and reads the
+exported raw statement rows from:
+
+```text
+br_cvm_dfp_statement_rows
+br_cvm_itr_statement_rows
 ```
 
 Implemented grain:
@@ -242,7 +251,7 @@ source_filing_version
 is_latest_version
 ```
 
-The first implementation keeps source lineage in string columns on
+The view keeps source lineage in string columns on
 `br_cvm_financial_metrics`:
 
 - `source_statement_record_ids`

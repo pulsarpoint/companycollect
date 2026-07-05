@@ -73,8 +73,8 @@ def test_brazil_fin_cvm_companies_migration_covers_exported_columns() -> None:
 
 
 def test_brazil_fin_cvm_itr_tables_migration_covers_exported_columns() -> None:
-    sql = _migration_sql("000092_corpscout_br_cvm_itr_tables.up.sql")
-    down_sql = _migration_sql("000092_corpscout_br_cvm_itr_tables.down.sql")
+    sql = _migration_sql("000094_corpscout_br_cvm_itr_tables.up.sql")
+    down_sql = _migration_sql("000094_corpscout_br_cvm_itr_tables.down.sql")
 
     table_columns = {
         brazil_cvm_tables.QUALIFIED_BR_CVM_ITR_DOCUMENTS_TABLE: (
@@ -107,30 +107,34 @@ def test_brazil_fin_cvm_itr_tables_migration_covers_exported_columns() -> None:
     assert "amount_usd Nullable(Decimal(38, 6))" in sql
 
 
-def test_brazil_fin_cvm_financial_metrics_migration_covers_exported_columns() -> None:
-    sql = _migration_sql("000093_corpscout_br_cvm_financial_metrics.up.sql")
-    down_sql = _migration_sql("000093_corpscout_br_cvm_financial_metrics.down.sql")
+def test_brazil_fin_cvm_financial_metrics_migration_creates_view() -> None:
+    sql = _migration_sql("000095_corpscout_br_cvm_financial_metrics.up.sql")
+    down_sql = _migration_sql("000095_corpscout_br_cvm_financial_metrics.down.sql")
 
     assert (
-        f"CREATE TABLE IF NOT EXISTS "
+        f"CREATE VIEW IF NOT EXISTS "
         f"{brazil_cvm_tables.QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE}" in sql
     )
     for column_name in brazil_cvm_tables.BR_CVM_FINANCIAL_METRICS_EXPORT_COLUMNS:
-        assert f"    {column_name} " in sql, (
+        assert f" as {column_name}" in sql or f" AS {column_name}" in sql, (
             f"missing {column_name} in "
             f"{brazil_cvm_tables.QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE}"
         )
     assert (
-        f"DROP TABLE IF EXISTS "
+        f"DROP VIEW IF EXISTS "
         f"{brazil_cvm_tables.QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE}" in down_sql
     )
-    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
-    assert "source_dataset LowCardinality(String)" in sql
-    assert "metric_name LowCardinality(String)" in sql
-    assert "is_latest_version Bool" in sql
-    assert "amount_original Nullable(Decimal(38, 6))" in sql
-    assert "amount_usd Nullable(Decimal(38, 6))" in sql
-    assert "ORDER BY (" in sql
+    assert (
+        f"DROP TABLE IF EXISTS "
+        f"{brazil_cvm_tables.QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE}" in sql
+    )
+    lower_sql = sql.lower()
+    assert "from corpscout.br_cvm_dfp_statement_rows" in lower_sql
+    assert "from corpscout.br_cvm_itr_statement_rows" in lower_sql
+    assert "union all" in lower_sql
+    assert "metric_name" in sql
+    assert "is_latest_version" in sql
+    assert "ENGINE = ReplacingMergeTree" not in sql
 
 
 def _migration_sql(file_name: str) -> str:

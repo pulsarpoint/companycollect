@@ -8,7 +8,6 @@ from dagster_v3.defs.brazil_financial.cvm import tables
 from dagster_v3.defs.brazil_financial.cvm.clickhouse import (
     export_brazil_fin_cvm_companies_clickhouse,
     export_brazil_fin_cvm_dfp_clickhouse,
-    export_brazil_fin_cvm_financial_metrics_clickhouse,
     export_brazil_fin_cvm_itr_clickhouse,
 )
 from dagster_v3.defs.brazil_financial.cvm.companies import (
@@ -43,10 +42,6 @@ from dagster_v3.defs.brazil_financial.cvm.itr_parsing import (
     ITR_DOCUMENTS_TABLE,
     ITR_STATEMENT_ROWS_TABLE,
     parse_brazil_fin_cvm_itr_archive_from_object_store,
-)
-from dagster_v3.defs.brazil_financial.cvm.metrics import (
-    FINANCIAL_METRICS_TABLE,
-    build_brazil_fin_cvm_financial_metrics,
 )
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
@@ -348,60 +343,6 @@ def brazil_fin_cvm_itr_raw_clickhouse(
     return dg.MaterializeResult(metadata=counts)
 
 
-@dg.asset(
-    deps=[
-        dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
-        dg.AssetKey("brazil_fin_cvm_itr_statement_rows_usd_duckdb"),
-    ],
-    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
-    kinds={"python", "duckdb", "sql", "cvm", "metrics"},
-    pool="brazil_fin_cvm_duckdb",
-    metadata={"table": f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{FINANCIAL_METRICS_TABLE}"},
-    description="Builds normalized Brazil CVM financial metrics from converted DFP and ITR statement rows.",
-)
-def brazil_fin_cvm_financial_metrics_duckdb(
-    context: dg.AssetExecutionContext,
-    brazil_fin_cvm_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    BRAZIL_FIN_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with brazil_fin_cvm_duckdb.get_connection() as connection:
-        counts = build_brazil_fin_cvm_financial_metrics(
-            duckdb_connection=connection,
-            source_run_id=context.run_id,
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(
-        metadata={
-            **counts,
-            "duckdb_path": str(BRAZIL_FIN_CVM_DUCKDB_PATH),
-            "duckdb_schema": BRAZIL_CVM_DUCKDB_SCHEMA,
-            "metrics_table": FINANCIAL_METRICS_TABLE,
-        }
-    )
-
-
-@dg.asset(
-    deps=[dg.AssetKey("brazil_fin_cvm_financial_metrics_duckdb")],
-    group_name=BRAZIL_FIN_CVM_GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "cvm", "metrics"},
-    pool="brazil_fin_cvm_duckdb",
-    metadata={"table": tables.QUALIFIED_BR_CVM_FINANCIAL_METRICS_TABLE},
-    description="Exports normalized Brazil CVM financial metrics to ClickHouse.",
-)
-def brazil_fin_cvm_financial_metrics_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-    brazil_fin_cvm_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    with read_only_duckdb_connection(brazil_fin_cvm_duckdb) as connection:
-        counts = export_brazil_fin_cvm_financial_metrics_clickhouse(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(metadata=counts)
-
-
 brazil_fin_cvm_dfp_raw_backfill_job = dg.define_asset_job(
     "brazil_fin_cvm_dfp_raw_backfill_job",
     selection=dg.AssetSelection.assets(
@@ -431,8 +372,6 @@ defs = dg.Definitions(
         brazil_fin_cvm_itr_raw_duckdb,
         brazil_fin_cvm_itr_statement_rows_usd_duckdb,
         brazil_fin_cvm_itr_raw_clickhouse,
-        brazil_fin_cvm_financial_metrics_duckdb,
-        brazil_fin_cvm_financial_metrics_clickhouse,
     ],
     jobs=[brazil_fin_cvm_dfp_raw_backfill_job, brazil_fin_cvm_itr_raw_backfill_job],
     resources={
