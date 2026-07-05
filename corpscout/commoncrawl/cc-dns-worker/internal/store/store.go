@@ -154,10 +154,16 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		}
 		ns, _ := json.Marshal(res.Nameservers)
 		nsips, _ := json.Marshal(res.NSIPs)
-		if _, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips),
+		res2, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips),
 			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.QueriesTotal, res.QueriesOK,
-			res.Error, ts, res.ScanID, res.RootDomain); err != nil {
+			res.Error, ts, res.ScanID, res.RootDomain)
+		if err != nil {
 			return err
+		}
+		if n, err := res2.RowsAffected(); err != nil {
+			return err
+		} else if n != 1 {
+			return fmt.Errorf("commit domain %q: %d rows updated (not seeded?)", res.RootDomain, n)
 		}
 	}
 	return tx.Commit()

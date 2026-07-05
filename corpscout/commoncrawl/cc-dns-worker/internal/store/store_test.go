@@ -97,3 +97,64 @@ func TestCommitBatchIsIdempotentPerDomain(t *testing.T) {
 		t.Fatalf("records after double-commit = %d, want 1", len(recs))
 	}
 }
+
+func TestPendingExcludesErrorStatus(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com", "b.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "a.com", Status: "error", Error: "timeout", ResolvedAt: now,
+	}})
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	pend, err := s.Pending(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 1 || pend[0] != "b.com" {
+		t.Fatalf("pending = %v, want [b.com] (a.com is status=error, must be excluded)", pend)
+	}
+
+	rows, err := s.StagedDomains(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].RootDomain != "a.com" || rows[0].Status != "error" {
+		t.Fatalf("staged domains = %+v, want a.com with status=error", rows)
+	}
+}
+
+func TestCommitBatchUnseededDomainErrors(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	// Seed a different domain; "unseeded.com" is never seeded.
+	if _, err := s.Seed(ctx, "sc", []string{"seeded.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	res := model.DomainResult{
+		ScanID: "sc", RootDomain: "unseeded.com", Status: "done", ResolvedAt: now,
+		Records: []model.DNSRecord{{Name: "unseeded.com", RecordType: "A", Slot: "@", Value: "1.2.3.4", Rcode: "NOERROR"}},
+	}
+	if err := s.CommitBatch(ctx, []model.DomainResult{res}); err == nil {
+		t.Fatal("CommitBatch on an unseeded domain: want error, got nil")
+	}
+
+	recs, err := s.StagedRecords(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.RootDomain == "unseeded.com" {
+			t.Fatalf("found record for unseeded.com after failed commit was rolled back: %+v", r)
+		}
+	}
+	if len(recs) != 0 {
+		t.Fatalf("staged records = %d, want 0 (rollback should have undone the insert)", len(recs))
+	}
+}
