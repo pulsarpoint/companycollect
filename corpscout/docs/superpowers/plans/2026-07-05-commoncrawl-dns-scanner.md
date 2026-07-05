@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - Go module name: `cc-dns-worker`; all internal imports are `cc-dns-worker/internal/...`.
-- Go version floor: `go 1.24` in `go.mod`.
+- Go version floor: `go 1.25.0` in `go.mod` (raised from 1.24 during Task 4 — `golang.org/x/time v0.15.0`, the pinned rate-limiter dep, declares `go 1.25.0`, which the toolchain propagates to the module; verified via `go list -m`).
 - SQLite driver: `modernc.org/sqlite` (pure Go, no cgo), registered `database/sql` driver name `"sqlite"`. Open with `?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)`.
 - CH load structs carry a `ch:"col"` tag on every stored field naming the exact CH column; a struct-tag test pins the expected column set.
 - **Two tiers:** Tier-1 NS discovery uses recursive resolvers (`--resolvers`, default `1.1.1.1:53,8.8.8.8:53,9.9.9.9:53`; set a local `unbound` like `127.0.0.1:53` for large runs). Tier-2 record queries go directly to the domain's authoritative NS IPs with `RecursionDesired=false`.
