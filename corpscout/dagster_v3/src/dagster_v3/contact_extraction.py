@@ -745,13 +745,21 @@ def replace_table_from_select(
     database, _, bare_table = qualified_table.rpartition(".")
     stage = f"{database}._tmp_{bare_table}_{uuid.uuid4().hex}"
     clickhouse_client.execute(f"CREATE TABLE {stage} AS {qualified_table}")
+    primary_error: Exception | None = None
     try:
         clickhouse_client.execute(
             f"INSERT INTO {stage} ({', '.join(columns)}) {select_sql}"
         )
         clickhouse_client.execute(f"EXCHANGE TABLES {stage} AND {qualified_table}")
+    except Exception as exc:
+        primary_error = exc
+        raise
     finally:
-        clickhouse_client.execute(f"DROP TABLE IF EXISTS {stage}")
+        try:
+            clickhouse_client.execute(f"DROP TABLE IF EXISTS {stage}")
+        except Exception:
+            if primary_error is None:
+                raise
     written = int(clickhouse_client.execute(f"SELECT count() FROM {qualified_table}")[0][0])
     if log is not None:
         log("Replaced %s from select: rows=%s", qualified_table, written)

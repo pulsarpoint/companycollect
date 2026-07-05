@@ -179,7 +179,10 @@ Additive and reversible at every step:
   the uniform tables; verify `corpscout.domains` output is a superset of
   today's (row-count + spot-check parity gate); then deprecate
   `fi_websites`/`no_websites`/`wikidata_company_websites`/`br_websites`/
-  old-shape tables (drop migrations one release later).
+  old-shape tables (drop migrations one release later) — NOTE (Phase D): the
+  no/fi/wikidata canonical pairs DERIVE from those websites tables; Phase E
+  must first either demote them to internal stages or move the derivations
+  upstream into each source's native pipeline.
 
 Old tables keep working until Phase E — the graph switches last, so nothing
 downstream breaks mid-program. Each phase is its own plan+review cycle
