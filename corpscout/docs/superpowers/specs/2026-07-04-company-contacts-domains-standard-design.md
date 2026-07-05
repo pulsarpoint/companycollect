@@ -153,16 +153,20 @@ canonical shape. `is_primary_candidate` is constantly 1, so the canonical
 
 ## Per-source conversion inventory
 
-| Source | Contacts | Domains | Notes |
-|---|---|---|---|
-| czech_ares | reshape `cz_company_contacts` | NEW `cz_company_domains` | split fused rows (decision 3) |
-| latvia_ur | reshape `lv_company_contacts` | NEW `lv_company_domains` | same |
-| estonia_ar | reshape `ee_company_contacts` (drop inline domain cols, `reg_code`→`registry_id`, map contact_type vocab) | reshape `ee_company_domains` (+confidence/validation_method) | closest to target |
-| brazil_rfb | reshape `br_company_contact_info` | `br_websites` → `br_company_domains` (drop the lie: no fake URL columns filled with '' — they stay '' but honestly, `domain_source='email'`) | + denylist consolidation (decision 6) |
-| norway_brreg | NEW `no_company_contacts` (website facts) | `no_websites` → `no_company_domains` | register has no phone/email (verified) |
-| finland_ytj | NEW `fi_company_contacts` (website facts) | `fi_websites` → `fi_company_domains` | dbt model adjusts |
-| wikidata | NEW (website facts) | `wikidata_company_websites` → `wikidata_company_domains` | decision 5 |
-| sweden_company (future) | implements the pair from day one | | its design doc's deferred `contact_candidates` lands directly in this shape |
+| Source | Contacts | Domains | Notes | Status |
+|---|---|---|---|---|
+| czech_ares | reshape `cz_company_contacts` | NEW `cz_company_domains` | split fused rows (decision 3) | DONE (Phase A) |
+| latvia_ur | reshape `lv_company_contacts` | NEW `lv_company_domains` | same | DONE (Phase A) |
+| estonia_ar | reshape `ee_company_contacts` (drop inline domain cols, `reg_code`→`registry_id`, map contact_type vocab) | reshape `ee_company_domains` (+confidence/validation_method) | closest to target | DONE (Phase B) |
+| brazil_rfb | reshape `br_company_contact_info` | `br_websites` → `br_company_domains` (drop the lie: no fake URL columns filled with '' — they stay '' but honestly, `domain_source='email'`) | + denylist consolidation (decision 6) | DONE (Phase C) |
+| norway_brreg | NEW `no_company_contacts` (website facts) | `no_websites` → `no_company_domains` | register has no phone/email (verified) | DONE (Phase D) |
+| finland_ytj | NEW `fi_company_contacts` (website facts) | `fi_websites` → `fi_company_domains` | dbt model adjusts | DONE (Phase D) |
+| wikidata | NEW (website facts) | `wikidata_company_websites` → `wikidata_company_domains` | decision 5 | DONE (Phase D) |
+| sweden_company (future) | implements the pair from day one | | its design doc's deferred `contact_candidates` lands directly in this shape | NOT STARTED — no source module exists yet; out of scope for this program's phases A–E |
+
+All seven active sources are DONE as of Phase E (2026-07-05): the domain graph reads only their
+`<src>_company_domains` tables (see Migration strategy below). `sweden_company` is a future source,
+not a conversion in progress — it is excluded from the phase count.
 
 ## Migration strategy (program, not one plan)
 
@@ -175,18 +179,29 @@ Additive and reversible at every step:
 - **Phase C — Brazil** (+ denylist consolidation; DuckDB engine untouched —
   only output shapes change).
 - **Phase D — Norway/Finland/wikidata** (mechanical website-fact sources).
-- **Phase E — domain-graph switch**: `company_website_domains` build reads
-  the uniform tables; verify `corpscout.domains` output is a superset of
-  today's (row-count + spot-check parity gate); then deprecate
-  `fi_websites`/`no_websites`/`wikidata_company_websites`/`br_websites`/
-  old-shape tables (drop migrations one release later) — NOTE (Phase D): the
-  no/fi/wikidata canonical pairs DERIVE from those websites tables; Phase E
-  must first either demote them to internal stages or move the derivations
-  upstream into each source's native pipeline.
+- **Phase E — domain-graph switch: EXECUTED (2026-07-05).**
+  `company_website_domains`/`domains` now build from a single templated
+  UNION ALL over the seven `<src>_company_domains` tables (czech_ares +
+  latvia_ur debut in the graph for the first time; the five hand-written
+  per-source SQL arms are gone). Live parity gate passed (zero missing
+  baseline edges on unchanged sources; brazil_rfb's edge churn traced to an
+  upstream monthly-refresh timing race and explained, not a graph defect;
+  see the Task 2 evidence report). **Demotion outcome (documentation only,
+  per the user decision — no drops, no pipeline surgery):** the no/fi/wikidata
+  canonical pairs still DERIVE from their websites tables, so those three
+  were demoted to *documented internal stages* rather than moved upstream —
+  `fi_websites`/`no_websites`/`wikidata_company_websites` keep running and
+  are consumed only by their source's canonical derivation
+  (`defs/finland_ytj/contacts.py`, `defs/norway_brreg/assets/contacts.py`,
+  `defs/wikidata/contacts.py`); `br_websites` keeps running too but now has
+  **zero consumers** — retire it via a future drop migration. Do not build
+  new consumers on any of the four. No DDL/behavior changes were made to any
+  of them this phase.
 
 Old tables keep working until Phase E — the graph switches last, so nothing
 downstream breaks mid-program. Each phase is its own plan+review cycle
-against this spec.
+against this spec. **The canonical-contacts program is now complete**: seven
+sources, two uniform tables each, one templated graph.
 
 ## Prerequisite carried in
 

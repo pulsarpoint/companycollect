@@ -239,13 +239,18 @@ contact information is mandatory, not optional.** When you analyse a new source,
 - **Mandatory alongside currency (§7) and translation (§8).** Reference impl (canonical pair):
   `czech_ares` (`cz_company_contacts`/`cz_company_domains`) and `latvia_ur`
   (`lv_company_contacts`/`lv_company_domains`), both extracted from free-text legal names via the
-  shared module below. Brazil/Norway/Finland/wikidata reshape to this pair in later phases (see the
-  standard spec's migration strategy) — until each source's phase lands, its existing tables keep
-  their pre-standard shape. Estonia already reshaped (migration `000096`, data-preserving).
-- **A source whose contacts already live in a `<src>_websites`-shaped table derives the canonical
-  pair with a ClickHouse-native INSERT-SELECT** (`dagster_v3.contact_extraction.replace_table_from_select`),
-  not Python-materialized rows — see `defs/norway_brreg/assets/contacts.py`,
-  `defs/finland_ytj/contacts.py`, and `defs/wikidata/contacts.py`.
+  shared module below. Estonia reshaped in migration `000096` (data-preserving); Brazil/Norway/
+  Finland/wikidata reshaped in Phase D. **All seven sources now write the canonical pair; Phase E
+  (2026-07-05) switched the domain graph to read only the seven `<src>_company_domains` tables.**
+- **The pre-standard `<src>_websites`-shaped tables (`fi_websites`, `no_websites`,
+  `wikidata_company_websites`, `br_websites`) are demoted to internal stages** — the domain graph no
+  longer reads them. `fi_websites`/`no_websites`/`wikidata_company_websites` are consumed only by
+  their source's canonical derivation (`defs/finland_ytj/contacts.py`,
+  `defs/norway_brreg/assets/contacts.py`, `defs/wikidata/contacts.py` respectively); `br_websites` has
+  zero consumers (retire via a future migration). **Do not build new consumers on any of the four.**
+  A source whose contacts already live in a `<src>_websites`-shaped table derives the canonical
+  pair with a ClickHouse-native INSERT-SELECT (`dagster_v3.contact_extraction.replace_table_from_select`),
+  not Python-materialized rows — see the three derivation modules above.
 - **When a source has no structured contact fields but embeds domains/emails in free text** (e.g. a
   legal name like `SIA "cenuklubs.lv"`), use the shared `dagster_v3/contact_extraction.py` module
   (IDN-aware candidate parsing, CommonCrawl/DNS validation, atomic table replace, canonical-column

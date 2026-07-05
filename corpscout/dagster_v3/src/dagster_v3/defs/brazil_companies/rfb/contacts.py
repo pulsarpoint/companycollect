@@ -310,6 +310,9 @@ def build_brazil_rfb_websites(
     contact_info_database_path: str | Path,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
+    """Builds the br_websites feeder table (exported as corpscout.br_websites).
+    Internal stage with no consumers — the domain graph reads br_company_domains
+    instead. Retire br_websites via a future migration; do not build new consumers."""
     contact_info_path = Path(contact_info_database_path).expanduser()
     if not contact_info_path.is_absolute():
         contact_info_path = contact_info_path.resolve()

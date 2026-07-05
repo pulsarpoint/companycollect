@@ -1,5 +1,8 @@
 {{ config(materialized='table') }}
 
+-- Internal stage: the domain graph no longer reads fi_websites directly.
+-- Consumed only by finland_ytj/contacts.py's canonical derivation
+-- (fi_company_contacts / fi_company_domains). Do not build new consumers on it.
 select
   business_id,
   website_url,

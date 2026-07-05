@@ -438,6 +438,9 @@ def _no_websites_row(
     *,
     resolved_at: datetime,
 ) -> dict[str, Any] | None:
+    """Internal stage: the domain graph no longer reads no_websites directly.
+    Consumed only by norway_brreg/assets/contacts.py's canonical derivation
+    (no_company_contacts / no_company_domains). Do not build new consumers on it."""
     website = _string(row.get("website"))
     normalized = normalized_url(website)
     host = website_host(website)

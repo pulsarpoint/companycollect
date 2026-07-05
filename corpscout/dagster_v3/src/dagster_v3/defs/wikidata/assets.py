@@ -618,6 +618,10 @@ def _create_wikidata_company_websites_table(
     source_table: str,
     target_schema: str,
 ) -> None:
+    # Internal stage: the domain graph no longer reads wikidata_company_websites
+    # directly. Consumed only by wikidata/contacts.py's canonical derivation
+    # (wikidata_company_contacts / wikidata_company_domains). Do not build new
+    # consumers on it.
     connection.execute(
         f"""
         create or replace table {target_schema}.{tables.WIKIDATA_COMPANY_WEBSITES_TABLE} as
