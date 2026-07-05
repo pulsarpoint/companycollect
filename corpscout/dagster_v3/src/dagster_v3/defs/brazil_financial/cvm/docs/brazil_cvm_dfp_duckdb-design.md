@@ -3,7 +3,7 @@
 ## 1. Source Overview
 
 - **Country / registry**: Brazil - CVM DFP annual financial statements for public/open companies.
-- **Module**: `defs/brazil_financial/cvm/` · DuckDB file `data/brazil_cvm_source.duckdb` · pool `brazil_fin_cvm_duckdb`.
+- **Module**: `defs/brazil_financial/cvm/` · DuckDB files `data/brazil_cvm/dfp/year=<year>/source.duckdb`.
 - **Existing raw asset**: `brazil_fin_cvm_dfp_raw_archives_s3`.
 - **New parser asset**: `brazil_fin_cvm_dfp_raw_duckdb`.
 - **ClickHouse export assets**: `brazil_fin_cvm_dfp_documents_clickhouse`,
@@ -302,14 +302,15 @@ brazil_fin_cvm_dfp_raw_archives_s3
 `brazil_fin_cvm_dfp_raw_duckdb`:
 
 - partitions: same static year partitions as `brazil_fin_cvm_dfp_raw_archives_s3`
-- pool: `brazil_fin_cvm_duckdb`
-- resources: `object_store`, `brazil_fin_cvm_dfp`, `brazil_fin_cvm_duckdb`
+- pool: none; each partition writes its own DuckDB file
+- resources: `object_store`, `brazil_fin_cvm_dfp`
 - input: S3/RustFS archive key for `context.partition_key`
-- output: rows replaced for `dfp_year=context.partition_key`
+- output: rows replaced inside `data/brazil_cvm/dfp/year=<year>/source.duckdb`
 
 `brazil_fin_cvm_dfp_*_clickhouse`:
 
-- non-partitioned table-level ClickHouse assets export all parsed DuckDB rows;
+- non-partitioned table-level ClickHouse assets read read-only union views across
+  existing yearly DuckDB files and export all parsed rows;
 - each ClickHouse table has its own Dagster asset for lineage and row-count
   metadata;
 - later versions can become partition-aware if row volume requires year-scoped

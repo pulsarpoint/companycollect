@@ -48,49 +48,34 @@ def test_brazil_fin_cvm_dfp_raw_archive_asset_has_expected_partitions() -> None:
         str(year) for year in range(2011, 2027)
     ]
     assert brazil_fin_cvm_dfp_raw_duckdb.partitions_def is partitions_def
-    assert brazil_fin_cvm_dfp_statement_rows_usd_duckdb.partitions_def is None
+    assert brazil_fin_cvm_dfp_statement_rows_usd_duckdb.partitions_def is partitions_def
     assert brazil_fin_cvm_dfp_documents_clickhouse.partitions_def is None
     assert brazil_fin_cvm_dfp_statement_rows_clickhouse.partitions_def is None
     assert brazil_fin_cvm_dfp_capital_composition_clickhouse.partitions_def is None
     assert brazil_fin_cvm_dfp_auditor_reports_clickhouse.partitions_def is None
     assert brazil_fin_cvm_itr_raw_duckdb.partitions_def is itr_partitions_def
-    assert brazil_fin_cvm_itr_statement_rows_usd_duckdb.partitions_def is None
+    assert (
+        brazil_fin_cvm_itr_statement_rows_usd_duckdb.partitions_def
+        is itr_partitions_def
+    )
     assert brazil_fin_cvm_itr_documents_clickhouse.partitions_def is None
     assert brazil_fin_cvm_itr_statement_rows_clickhouse.partitions_def is None
     assert brazil_fin_cvm_itr_capital_composition_clickhouse.partitions_def is None
     assert brazil_fin_cvm_itr_auditor_reports_clickhouse.partitions_def is None
     assert brazil_fin_cvm_dfp_raw_archives_s3.op.pool is None
-    assert brazil_fin_cvm_dfp_raw_duckdb.op.pool == "brazil_fin_cvm_duckdb"
-    assert (
-        brazil_fin_cvm_dfp_statement_rows_usd_duckdb.op.pool == "brazil_fin_cvm_duckdb"
-    )
-    assert brazil_fin_cvm_dfp_documents_clickhouse.op.pool == "brazil_fin_cvm_duckdb"
-    assert (
-        brazil_fin_cvm_dfp_statement_rows_clickhouse.op.pool == "brazil_fin_cvm_duckdb"
-    )
-    assert (
-        brazil_fin_cvm_dfp_capital_composition_clickhouse.op.pool
-        == "brazil_fin_cvm_duckdb"
-    )
-    assert (
-        brazil_fin_cvm_dfp_auditor_reports_clickhouse.op.pool == "brazil_fin_cvm_duckdb"
-    )
+    assert brazil_fin_cvm_dfp_raw_duckdb.op.pool is None
+    assert brazil_fin_cvm_dfp_statement_rows_usd_duckdb.op.pool is None
+    assert brazil_fin_cvm_dfp_documents_clickhouse.op.pool is None
+    assert brazil_fin_cvm_dfp_statement_rows_clickhouse.op.pool is None
+    assert brazil_fin_cvm_dfp_capital_composition_clickhouse.op.pool is None
+    assert brazil_fin_cvm_dfp_auditor_reports_clickhouse.op.pool is None
     assert brazil_fin_cvm_itr_raw_archives_s3.op.pool is None
-    assert brazil_fin_cvm_itr_raw_duckdb.op.pool == "brazil_fin_cvm_duckdb"
-    assert (
-        brazil_fin_cvm_itr_statement_rows_usd_duckdb.op.pool == "brazil_fin_cvm_duckdb"
-    )
-    assert brazil_fin_cvm_itr_documents_clickhouse.op.pool == "brazil_fin_cvm_duckdb"
-    assert (
-        brazil_fin_cvm_itr_statement_rows_clickhouse.op.pool == "brazil_fin_cvm_duckdb"
-    )
-    assert (
-        brazil_fin_cvm_itr_capital_composition_clickhouse.op.pool
-        == "brazil_fin_cvm_duckdb"
-    )
-    assert (
-        brazil_fin_cvm_itr_auditor_reports_clickhouse.op.pool == "brazil_fin_cvm_duckdb"
-    )
+    assert brazil_fin_cvm_itr_raw_duckdb.op.pool is None
+    assert brazil_fin_cvm_itr_statement_rows_usd_duckdb.op.pool is None
+    assert brazil_fin_cvm_itr_documents_clickhouse.op.pool is None
+    assert brazil_fin_cvm_itr_statement_rows_clickhouse.op.pool is None
+    assert brazil_fin_cvm_itr_capital_composition_clickhouse.op.pool is None
+    assert brazil_fin_cvm_itr_auditor_reports_clickhouse.op.pool is None
     assert brazil_fin_cvm_companies_duckdb.partitions_def is None
     assert brazil_fin_cvm_companies_clickhouse.partitions_def is None
     assert brazil_fin_cvm_companies_raw_csv_s3.partitions_def is None

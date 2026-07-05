@@ -113,7 +113,7 @@ Current raw storage and schema choices:
 ```text
 bucket: source-brazil-cvm
 raw key: brazil_cvm/dfp/raw_archives/year=<year>/archive.zip
-DuckDB file: data/brazil_cvm_source.duckdb
+DuckDB file: data/brazil_cvm/dfp/year=<year>/source.duckdb
 DuckDB schema: brazil_cvm
 ClickHouse tables: br_cvm_dfp_*
 ```
@@ -177,7 +177,7 @@ Expected raw storage:
 ```text
 bucket: source-brazil-cvm
 raw key: brazil_cvm/itr/raw_archives/year=<year>/archive.zip
-DuckDB file: data/brazil_cvm_source.duckdb
+DuckDB file: data/brazil_cvm/itr/year=<year>/source.duckdb
 DuckDB schema: brazil_cvm
 ClickHouse tables: br_cvm_itr_*
 ```

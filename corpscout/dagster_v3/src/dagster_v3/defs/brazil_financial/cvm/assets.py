@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
@@ -45,19 +43,31 @@ from dagster_v3.defs.brazil_financial.cvm.itr_parsing import (
     ITR_STATEMENT_ROWS_TABLE,
     parse_brazil_fin_cvm_itr_archive_from_object_store,
 )
+from dagster_v3.defs.brazil_financial.cvm.storage import (
+    BRAZIL_FIN_CVM_COMPANIES_DUCKDB_PATH,
+    brazil_fin_cvm_read_only_partitioned_connection,
+    brazil_fin_cvm_source_duckdb_connection,
+    brazil_fin_cvm_source_duckdb_path,
+    existing_brazil_fin_cvm_source_duckdb_paths,
+)
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
     read_only_duckdb_connection,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
-BRAZIL_FIN_CVM_DUCKDB_PATH = Path("data/brazil_cvm_source.duckdb")
 DFP_CLICKHOUSE_DEPENDENCIES = [
-    dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
+    dg.AssetDep(
+        dg.AssetKey("brazil_fin_cvm_dfp_statement_rows_usd_duckdb"),
+        partition_mapping=dg.AllPartitionMapping(),
+    ),
     dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
 ]
 ITR_CLICKHOUSE_DEPENDENCIES = [
-    dg.AssetKey("brazil_fin_cvm_itr_statement_rows_usd_duckdb"),
+    dg.AssetDep(
+        dg.AssetKey("brazil_fin_cvm_itr_statement_rows_usd_duckdb"),
+        partition_mapping=dg.AllPartitionMapping(),
+    ),
     dg.AssetKey("brazil_fin_cvm_companies_clickhouse"),
 ]
 DFP_CLICKHOUSE_ASSET_SPECS = (
@@ -156,7 +166,7 @@ def brazil_fin_cvm_companies_duckdb(
     object_store: ObjectStoreResource,
     brazil_fin_cvm_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    BRAZIL_FIN_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BRAZIL_FIN_CVM_COMPANIES_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with brazil_fin_cvm_duckdb.get_connection() as connection:
         counts = load_brazil_fin_cvm_companies_from_object_store(
             connection=connection,
@@ -168,7 +178,7 @@ def brazil_fin_cvm_companies_duckdb(
         metadata={
             **counts,
             "source_url": CVM_COMPANIES_SOURCE_URL,
-            "duckdb_path": str(BRAZIL_FIN_CVM_DUCKDB_PATH),
+            "duckdb_path": str(BRAZIL_FIN_CVM_COMPANIES_DUCKDB_PATH),
             "duckdb_schema": BRAZIL_CVM_DUCKDB_SCHEMA,
             "company_table": CVM_COMPANIES_TABLE,
         }
@@ -202,17 +212,21 @@ def brazil_fin_cvm_companies_clickhouse(
     group_name=BRAZIL_FIN_CVM_GROUP_NAME,
     kinds={"python", "duckdb", "csv", "zip", "cvm", "dfp"},
     partitions_def=BRAZIL_FIN_CVM_DFP_RAW_PARTITIONS,
-    pool="brazil_fin_cvm_duckdb",
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description="Parses Brazil CVM DFP yearly ZIP archives from object storage into DuckDB.",
 )
 def brazil_fin_cvm_dfp_raw_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
-    brazil_fin_cvm_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    BRAZIL_FIN_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with brazil_fin_cvm_duckdb.get_connection() as connection:
+    duckdb_path = brazil_fin_cvm_source_duckdb_path(
+        family="dfp",
+        year=context.partition_key,
+    )
+    with brazil_fin_cvm_source_duckdb_connection(
+        family="dfp",
+        year=context.partition_key,
+    ) as connection:
         counts = parse_brazil_fin_cvm_dfp_archive_from_object_store(
             connection=connection,
             object_store=object_store,
@@ -223,7 +237,7 @@ def brazil_fin_cvm_dfp_raw_duckdb(
         metadata={
             **counts,
             "dfp_year": context.partition_key,
-            "duckdb_path": str(BRAZIL_FIN_CVM_DUCKDB_PATH),
+            "duckdb_path": str(duckdb_path),
             "duckdb_schema": BRAZIL_CVM_DUCKDB_SCHEMA,
             "document_table": DFP_DOCUMENTS_TABLE,
             "statement_rows_table": DFP_STATEMENT_ROWS_TABLE,
@@ -238,17 +252,21 @@ def brazil_fin_cvm_dfp_raw_duckdb(
     group_name=BRAZIL_FIN_CVM_GROUP_NAME,
     kinds={"python", "duckdb", "csv", "zip", "cvm", "itr"},
     partitions_def=BRAZIL_FIN_CVM_ITR_RAW_PARTITIONS,
-    pool="brazil_fin_cvm_duckdb",
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description="Parses Brazil CVM ITR yearly ZIP archives from object storage into DuckDB.",
 )
 def brazil_fin_cvm_itr_raw_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
-    brazil_fin_cvm_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    BRAZIL_FIN_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with brazil_fin_cvm_duckdb.get_connection() as connection:
+    duckdb_path = brazil_fin_cvm_source_duckdb_path(
+        family="itr",
+        year=context.partition_key,
+    )
+    with brazil_fin_cvm_source_duckdb_connection(
+        family="itr",
+        year=context.partition_key,
+    ) as connection:
         counts = parse_brazil_fin_cvm_itr_archive_from_object_store(
             connection=connection,
             object_store=object_store,
@@ -259,7 +277,7 @@ def brazil_fin_cvm_itr_raw_duckdb(
         metadata={
             **counts,
             "itr_year": context.partition_key,
-            "duckdb_path": str(BRAZIL_FIN_CVM_DUCKDB_PATH),
+            "duckdb_path": str(duckdb_path),
             "duckdb_schema": BRAZIL_CVM_DUCKDB_SCHEMA,
             "document_table": ITR_DOCUMENTS_TABLE,
             "statement_rows_table": ITR_STATEMENT_ROWS_TABLE,
@@ -270,60 +288,80 @@ def brazil_fin_cvm_itr_raw_duckdb(
 
 
 @dg.asset(
-    deps=[
-        dg.AssetDep(
-            dg.AssetKey("brazil_fin_cvm_dfp_raw_duckdb"),
-            partition_mapping=dg.AllPartitionMapping(),
-        )
-    ],
+    deps=[dg.AssetKey("brazil_fin_cvm_dfp_raw_duckdb")],
     group_name=BRAZIL_FIN_CVM_GROUP_NAME,
     kinds={"python", "duckdb", "currency", "fx", "cvm", "dfp"},
-    pool="brazil_fin_cvm_duckdb",
-    description="Adds USD and FX metadata columns to Brazil CVM DFP statement rows in DuckDB.",
+    partitions_def=BRAZIL_FIN_CVM_DFP_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    description=(
+        "Adds USD and FX metadata columns to Brazil CVM DFP statement rows in the "
+        "yearly DuckDB partition file."
+    ),
 )
 def brazil_fin_cvm_dfp_statement_rows_usd_duckdb(
     context: dg.AssetExecutionContext,
-    brazil_fin_cvm_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
-    BRAZIL_FIN_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with brazil_fin_cvm_duckdb.get_connection() as connection:
+    duckdb_path = brazil_fin_cvm_source_duckdb_path(
+        family="dfp",
+        year=context.partition_key,
+    )
+    with brazil_fin_cvm_source_duckdb_connection(
+        family="dfp",
+        year=context.partition_key,
+    ) as connection:
         counts = apply_brazil_cvm_statement_rows_usd_conversion(
             duckdb_connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),
             log=context.log.info,
         )
-    return dg.MaterializeResult(metadata=counts)
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "dfp_year": context.partition_key,
+            "duckdb_path": str(duckdb_path),
+        }
+    )
 
 
 @dg.asset(
-    deps=[
-        dg.AssetDep(
-            dg.AssetKey("brazil_fin_cvm_itr_raw_duckdb"),
-            partition_mapping=dg.AllPartitionMapping(),
-        )
-    ],
+    deps=[dg.AssetKey("brazil_fin_cvm_itr_raw_duckdb")],
     group_name=BRAZIL_FIN_CVM_GROUP_NAME,
     kinds={"python", "duckdb", "currency", "fx", "cvm", "itr"},
-    pool="brazil_fin_cvm_duckdb",
-    description="Adds USD and FX metadata columns to Brazil CVM ITR statement rows in DuckDB.",
+    partitions_def=BRAZIL_FIN_CVM_ITR_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    description=(
+        "Adds USD and FX metadata columns to Brazil CVM ITR statement rows in the "
+        "yearly DuckDB partition file."
+    ),
 )
 def brazil_fin_cvm_itr_statement_rows_usd_duckdb(
     context: dg.AssetExecutionContext,
-    brazil_fin_cvm_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
-    BRAZIL_FIN_CVM_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with brazil_fin_cvm_duckdb.get_connection() as connection:
+    duckdb_path = brazil_fin_cvm_source_duckdb_path(
+        family="itr",
+        year=context.partition_key,
+    )
+    with brazil_fin_cvm_source_duckdb_connection(
+        family="itr",
+        year=context.partition_key,
+    ) as connection:
         counts = apply_brazil_cvm_statement_rows_usd_conversion_for_table(
             duckdb_connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),
             statement_rows_table=ITR_STATEMENT_ROWS_TABLE,
             log=context.log.info,
         )
-    return dg.MaterializeResult(metadata=counts)
+    return dg.MaterializeResult(
+        metadata={
+            **counts,
+            "itr_year": context.partition_key,
+            "duckdb_path": str(duckdb_path),
+        }
+    )
 
 
 def _build_brazil_fin_cvm_clickhouse_table_asset(
@@ -333,14 +371,13 @@ def _build_brazil_fin_cvm_clickhouse_table_asset(
     clickhouse_table: str,
     columns: tuple[str, ...],
     family: str,
-    deps: list[dg.AssetKey],
+    deps: list[dg.AssetDep | dg.AssetKey],
 ) -> dg.AssetsDefinition:
     @dg.asset(
         name=asset_name,
         deps=deps,
         group_name=BRAZIL_FIN_CVM_GROUP_NAME,
         kinds={"python", "duckdb", "clickhouse", "cvm", family.lower()},
-        pool="brazil_fin_cvm_duckdb",
         metadata={"table": f"{tables.BRAZIL_CVM_DATABASE}.{clickhouse_table}"},
         description=(
             f"Exports Brazil CVM {family} DuckDB table {duckdb_table} to "
@@ -350,9 +387,18 @@ def _build_brazil_fin_cvm_clickhouse_table_asset(
     def _asset(
         context: dg.AssetExecutionContext,
         clickhouse: ClickhouseResource,
-        brazil_fin_cvm_duckdb: DuckDBResource,
     ) -> dg.MaterializeResult:
-        with read_only_duckdb_connection(brazil_fin_cvm_duckdb) as connection:
+        source_family = family.lower()
+        partition_years = _partition_years_for_family(source_family)
+        duckdb_paths = existing_brazil_fin_cvm_source_duckdb_paths(
+            family=source_family,
+            years=partition_years,
+        )
+        with brazil_fin_cvm_read_only_partitioned_connection(
+            family=source_family,
+            years=partition_years,
+            table_names=(duckdb_table,),
+        ) as connection:
             rows = export_brazil_fin_cvm_clickhouse_table(
                 duckdb_connection=connection,
                 clickhouse=clickhouse,
@@ -367,11 +413,20 @@ def _build_brazil_fin_cvm_clickhouse_table_asset(
                 "row_count": rows,
                 f"{clickhouse_table}_row_count": rows,
                 "duckdb_table": f"{BRAZIL_CVM_DUCKDB_SCHEMA}.{duckdb_table}",
+                "duckdb_paths": [str(path) for path in duckdb_paths],
                 "clickhouse_table": f"{tables.BRAZIL_CVM_DATABASE}.{clickhouse_table}",
             }
         )
 
     return _asset
+
+
+def _partition_years_for_family(family: str) -> tuple[str, ...]:
+    if family == "dfp":
+        return tuple(BRAZIL_FIN_CVM_DFP_RAW_PARTITIONS.get_partition_keys())
+    if family == "itr":
+        return tuple(BRAZIL_FIN_CVM_ITR_RAW_PARTITIONS.get_partition_keys())
+    raise ValueError(f"Unsupported Brazil CVM source family: {family}")
 
 
 brazil_fin_cvm_dfp_documents_clickhouse = _build_brazil_fin_cvm_clickhouse_table_asset(
@@ -493,6 +548,6 @@ defs = dg.Definitions(
     resources={
         "brazil_fin_cvm_dfp": BrazilCvmDfpResource(),
         "brazil_fin_cvm_itr": BrazilCvmItrResource(),
-        "brazil_fin_cvm_duckdb": duckdb_resource(BRAZIL_FIN_CVM_DUCKDB_PATH),
+        "brazil_fin_cvm_duckdb": duckdb_resource(BRAZIL_FIN_CVM_COMPANIES_DUCKDB_PATH),
     },
 )
