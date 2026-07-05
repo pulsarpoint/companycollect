@@ -24,3 +24,9 @@ def test_lv_canonical_migration_conforms():
     sql = _read("*_corpscout_lv_canonical_contacts.up.sql")
     assert_canonical_contacts_ddl(sql, "lv_company_contacts")
     assert_canonical_domains_ddl(sql, "lv_company_domains")
+
+
+def test_br_canonical_migration_conforms():
+    sql = _read("*_corpscout_br_canonical_contacts.up.sql")
+    assert_canonical_contacts_ddl(sql, "br_company_contacts")
+    assert_canonical_domains_ddl(sql, "br_company_domains")
