@@ -113,6 +113,30 @@ func (s *Store) Pending(ctx context.Context, scanID string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// PendingBatch returns up to limit not-yet-terminal domains for scanID whose root_domain is greater
+// than afterRootDomain, ordered by root_domain. afterRootDomain="" starts at the beginning.
+// Cursor-paginating on the (scan_id, root_domain) primary key keeps streaming dispatch ~O(n) instead
+// of re-walking the growing done/error prefix on every call.
+func (s *Store) PendingBatch(ctx context.Context, scanID, afterRootDomain string, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT root_domain FROM scan_domains
+		 WHERE scan_id = ? AND root_domain > ? AND status NOT IN ('done','error')
+		 ORDER BY root_domain LIMIT ?`, scanID, afterRootDomain, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // CommitBatch writes a batch of results in one transaction, replacing each domain's records so a
 // re-commit is idempotent.
 func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) error {

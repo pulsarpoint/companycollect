@@ -166,3 +166,37 @@ func TestCommitBatchUnseededDomainErrors(t *testing.T) {
 		t.Fatalf("staged records = %d, want 0 (rollback should have undone the insert)", len(recs))
 	}
 }
+
+func TestPendingBatchCursor(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	// seed a..e; mark b done and c error, so the not-done set (in order) is a, d, e.
+	if _, err := s.Seed(ctx, "sc", []string{"a.com", "b.com", "c.com", "d.com", "e.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	mark := func(domain, status string) {
+		if err := s.CommitBatch(ctx, []model.DomainResult{{ScanID: "sc", RootDomain: domain, Status: status, ResolvedAt: now}}); err != nil {
+			t.Fatalf("commit %s: %v", domain, err)
+		}
+	}
+	mark("b.com", "done")
+	mark("c.com", "error")
+
+	// Walk the not-done set two at a time via the cursor.
+	b1, err := s.PendingBatch(ctx, "sc", "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b1) != 2 || b1[0] != "a.com" || b1[1] != "d.com" {
+		t.Fatalf("batch1 = %v, want [a.com d.com]", b1)
+	}
+	b2, _ := s.PendingBatch(ctx, "sc", b1[len(b1)-1], 2)
+	if len(b2) != 1 || b2[0] != "e.com" {
+		t.Fatalf("batch2 = %v, want [e.com]", b2)
+	}
+	b3, _ := s.PendingBatch(ctx, "sc", b2[len(b2)-1], 2)
+	if len(b3) != 0 {
+		t.Fatalf("batch3 = %v, want empty (terminates)", b3)
+	}
+}
