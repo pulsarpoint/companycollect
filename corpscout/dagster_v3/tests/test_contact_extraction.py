@@ -450,7 +450,7 @@ def test_vocabularies_are_closed_sets():
 
 def test_shared_denylist_superset_of_country_copies():
     # Drift guards until Estonia (Phase B) and Brazil (Phase C) swap their imports.
-    from dagster_v3.defs.brazil_rfb import contacts as br
+    from dagster_v3.defs.brazil_companies.rfb import contacts as br
     from dagster_v3.defs.estonia_ar import resources as ee
 
     assert ee.EMAIL_PROVIDER_DENYLIST <= contact_extraction.EMAIL_PROVIDER_DENYLIST
