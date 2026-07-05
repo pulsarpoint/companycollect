@@ -340,6 +340,7 @@ def _build_brazil_fin_cvm_clickhouse_table_asset(
         deps=deps,
         group_name=BRAZIL_FIN_CVM_GROUP_NAME,
         kinds={"python", "duckdb", "clickhouse", "cvm", family.lower()},
+        pool="brazil_fin_cvm_duckdb",
         metadata={"table": f"{tables.BRAZIL_CVM_DATABASE}.{clickhouse_table}"},
         description=(
             f"Exports Brazil CVM {family} DuckDB table {duckdb_table} to "
