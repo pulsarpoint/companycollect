@@ -106,8 +106,11 @@ func runScan(args []string) error {
 		if err != nil {
 			return err
 		}
+		// Defensive: a non-empty batch should always commit at least one domain (every worker sends
+		// exactly one result, and real CommitBatch errors already return via the err != nil path
+		// above). This only guards the theoretical zero-progress case so the cursor loop can't spin.
 		if committed == 0 {
-			return fmt.Errorf("no progress: batch of %d domains committed 0 (wedged writer?)", len(batch))
+			return fmt.Errorf("no progress: batch of %d domains committed 0", len(batch))
 		}
 		cursor = batch[len(batch)-1]
 		resolved += committed
