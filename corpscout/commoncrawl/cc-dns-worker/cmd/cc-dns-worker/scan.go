@@ -31,6 +31,7 @@ func runScan(args []string) error {
 	workers := fs.Int("workers", 4000, "max domains resolved concurrently")
 	batchN := fs.Int("commit-batch", 200, "domains per SQLite commit")
 	seedChunk := fs.Int("seed-chunk", 5000, "domains per SQLite seed transaction")
+	dispatchBatch := fs.Int("dispatch-batch", 20000, "domains fetched from the queue and resolved per barrier iteration (bounds memory)")
 	timeout := fs.Duration("query-timeout", 5*time.Second, "per-query timeout")
 	_ = fs.Parse(args)
 	if *runID == "" {
@@ -42,113 +43,143 @@ func runScan(args []string) error {
 	if *workers <= 0 {
 		*workers = 1
 	}
+	if *dispatchBatch <= 0 {
+		*dispatchBatch = 20000
+	}
+	if *batchN <= 0 {
+		*batchN = 200
+	}
 	resolverList := cleanResolvers(strings.Split(*resolvers, ","))
 	if len(resolverList) == 0 {
 		return fmt.Errorf("--resolvers is empty")
 	}
 	ctx := context.Background()
 
-	// 1) Seed the durable queue from ClickHouse (idempotent; resumes if scan.db already has rows).
 	st, err := store.Open(*dbPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
+	// 1) Stream the queue seed from ClickHouse in batches — never materialize the whole domain list.
 	conn, err := chConn()
 	if err != nil {
 		return err
 	}
-	domains, err := input.FromClickHouse(ctx, conn, *query, *limit)
+	added, total := 0, 0
+	err = input.StreamClickHouse(ctx, conn, *query, *limit, *seedChunk, func(batch []string) error {
+		n, serr := st.Seed(ctx, *scanID, batch)
+		if serr != nil {
+			return serr
+		}
+		added += n
+		total += len(batch)
+		return nil
+	})
 	conn.Close()
 	if err != nil {
 		return err
 	}
-	added := 0
-	for i := 0; i < len(domains); i += *seedChunk {
-		end := i + *seedChunk
-		if end > len(domains) {
-			end = len(domains)
-		}
-		n, err := st.Seed(ctx, *scanID, domains[i:end])
-		if err != nil {
-			return err
-		}
-		added += n
-	}
-	pending, err := st.Pending(ctx, *scanID)
-	if err != nil {
-		return err
-	}
-	log.Printf("scan_id=%s: %d domains from CH (%d new); %d pending to resolve", *scanID, len(domains), added, len(pending))
+	log.Printf("scan_id=%s: seeded %d domains from CH (%d new)", *scanID, total, added)
 
-	// 2) Two schedulers: discovery (recursive resolvers) and authoritative (per-NS-IP politeness).
+	// 2) Two schedulers + resolver (unchanged).
 	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *inflight})
 	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight})
 	disc := resolve.NewDiscoverer(resolve.NewExchanger(discSched, *timeout), resolverList)
 	rec := resolve.NewResolver(resolve.NewExchanger(authSched, *timeout))
 	cfg := records.DefaultConfig()
 
-	// 3) Resolver pool -> results channel -> single writer goroutine (batched SQLite commits).
-	results := make(chan model.DomainResult, *batchN*2)
-	var writerWG sync.WaitGroup
-	writerWG.Add(1)
+	// 3) Dispatch the pending queue in ordered batches. Each batch is fully resolved AND committed
+	// before the next is fetched (commit barrier), so peak memory is one dispatch-batch and in-flight
+	// domains are never re-fetched. The cursor advances by root_domain to keep this ~O(n).
+	cursor := ""
+	resolved := 0
+	for {
+		batch, err := st.PendingBatch(ctx, *scanID, cursor, *dispatchBatch)
+		if err != nil {
+			return err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		committed, err := resolveBatch(ctx, st, disc, rec, cfg, batch, *scanID, *runID, *workers, *batchN)
+		if err != nil {
+			return err
+		}
+		if committed == 0 {
+			return fmt.Errorf("no progress: batch of %d domains committed 0 (wedged writer?)", len(batch))
+		}
+		cursor = batch[len(batch)-1]
+		resolved += committed
+		log.Printf("scan_id=%s: resolved %d domains (cursor=%q)", *scanID, resolved, cursor)
+	}
+	log.Printf("scan_id=%s: done (%d domains resolved this run)", *scanID, resolved)
+	return nil
+}
+
+// resolveBatch resolves one dispatch-batch of domains concurrently (bounded by workers), collects
+// their DomainResults, and commits them to SQLite in commit-batch chunks. It returns the number of
+// domains committed. Peak memory is the batch's results, so the caller's cursor loop stays bounded.
+func resolveBatch(ctx context.Context, st *store.Store, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, batch []string, scanID, runID string, workers, commitBatch int) (int, error) {
+	results := make(chan model.DomainResult, commitBatch*2)
+	collected := make([]model.DomainResult, 0, len(batch))
+	var collectWG sync.WaitGroup
+	collectWG.Add(1)
 	go func() {
-		defer writerWG.Done()
-		batch := make([]model.DomainResult, 0, *batchN)
-		flush := func() {
-			if len(batch) == 0 {
-				return
-			}
-			if err := st.CommitBatch(ctx, batch); err != nil {
-				log.Printf("commit batch: %v", err)
-			}
-			batch = batch[:0]
-		}
+		defer collectWG.Done()
 		for r := range results {
-			batch = append(batch, r)
-			if len(batch) >= *batchN {
-				flush()
-			}
+			collected = append(collected, r)
 		}
-		flush()
 	}()
 
-	sem := make(chan struct{}, *workers)
+	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
-	for _, d := range pending {
+	for _, d := range batch {
 		sem <- struct{}{}
 		wg.Add(1)
 		go func(domain string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			now := time.Now().UTC()
-			del, derr := disc.DiscoverNS(ctx, domain)
-			if derr != nil || len(del.NSIPs) == 0 {
-				msg := "no authoritative NS IPs"
-				if derr != nil {
-					msg = derr.Error()
-				}
-				results <- model.DomainResult{
-					ScanID: *scanID, RootDomain: domain, ETLD: del.ETLD,
-					Nameservers: del.NS, DSPresent: len(del.DS) > 0,
-					Status: "error", Error: msg, SourceRunID: *runID, ResolvedAt: now,
-				}
-				return
-			}
-			results <- rec.Resolve(ctx, domain, *scanID, *runID, del, cfg, now)
+			results <- resolveDomain(ctx, disc, rec, cfg, domain, scanID, runID)
 		}(d)
 	}
 	wg.Wait()
 	close(results)
-	writerWG.Wait()
-	log.Printf("scan_id=%s: done (%d domains resolved this run)", *scanID, len(pending))
-	return nil
+	collectWG.Wait()
+
+	committed := 0
+	for i := 0; i < len(collected); i += commitBatch {
+		end := min(i+commitBatch, len(collected))
+		if err := st.CommitBatch(ctx, collected[i:end]); err != nil {
+			return committed, fmt.Errorf("commit batch: %w", err)
+		}
+		committed += end - i
+	}
+	return committed, nil
+}
+
+// resolveDomain discovers a domain's authoritative NS then resolves its Tier-2 records into a
+// DomainResult; on discovery failure or no NS IPs it returns a status="error" result.
+func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, domain, scanID, runID string) model.DomainResult {
+	now := time.Now().UTC()
+	del, derr := disc.DiscoverNS(ctx, domain)
+	if derr != nil || len(del.NSIPs) == 0 {
+		msg := "no authoritative NS IPs"
+		if derr != nil {
+			msg = derr.Error()
+		}
+		return model.DomainResult{
+			ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
+			Nameservers: del.NS, DSPresent: len(del.DS) > 0,
+			Status: "error", Error: msg, SourceRunID: runID, ResolvedAt: now,
+		}
+	}
+	return rec.Resolve(ctx, domain, scanID, runID, del, cfg, now)
 }
 
 // cleanResolvers drops empty/whitespace-only tokens (e.g. from a trailing comma or blank
-// --resolvers flag) so a malformed flag can't silently produce a zero-length resolver list that
-// then fails every domain's discovery one at a time.
+// --resolvers flag) so a malformed flag can't silently produce a zero-length resolver list that then
+// fails every domain's discovery one at a time.
 func cleanResolvers(raw []string) []string {
 	out := make([]string, 0, len(raw))
 	for _, r := range raw {
