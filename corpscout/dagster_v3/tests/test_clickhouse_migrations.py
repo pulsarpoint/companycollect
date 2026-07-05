@@ -459,6 +459,17 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
         assert "TRUNCATE" not in sql.upper()  # never truncate in an up migration
 
 
+def test_clickhouse_migration_line_comments_do_not_contain_semicolons() -> None:
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            comment_start = line.find("--")
+            if comment_start == -1:
+                continue
+            assert ";" not in line[comment_start:], (
+                f"{path.name}:{line_number} has a semicolon inside a line comment"
+            )
+
+
 def test_clickhouse_migrations_have_down_files() -> None:
     for migration_file in EXPECTED_MIGRATIONS:
         sql = _migration_sql(f"{migration_file}.down.sql")
