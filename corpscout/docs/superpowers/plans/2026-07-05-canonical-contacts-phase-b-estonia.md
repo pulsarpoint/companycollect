@@ -215,3 +215,26 @@ git commit -m "feat(dagster): domain graph reads estonia canonical registry_id"
 ## Deployment note (not a code task)
 
 The migration reshapes live data in Task 1, so there's a window where the deployed (old) graph SQL references `reg_code` against the renamed column — the graph only runs with its job, fails loudly if triggered, and Task 3 + deploy closes it. Deploy this branch to the dagster box together with everything else pending. Estonia's next monthly run (8th) writes canonical shapes natively; no manual re-run needed. After Phase B: only Phase D (Norway/Finland/wikidata — the `registered_on` decision documented in this session goes in that plan) and Phase E (graph collapse: templated SELECT over uniform tables, "domains swaps last", parity gate) remain.
+
+## PROD DEPLOY RUNBOOK (added post-review — sequence BEFORE the 8th monthly job)
+
+The dagster box's migration ledger is independent of the lab's and sits below 95.
+When `make clickhouse-migrate-up` runs there it WILL dirty-fail at 000095
+(br_cvm_financial_metrics view SQL is broken: ClickHouse err 184, sum() in
+WHERE — confirmed by executing the SELECT body). Recovery (the exact sequence
+the lab exercised):
+
+1. Expect the failure at 95; verify the view is simply absent:
+   `SELECT name FROM system.tables WHERE database='corpscout' AND name='br_cvm_financial_metrics'` → empty.
+2. `make clickhouse-migrate-force VERSION=95`
+3. `make clickhouse-migrate-up` → applies 000096 (Estonia reshape; alias-free,
+   idempotent via shadow-drop guards; safe against prod's old-shape tables).
+4. `br_cvm_financial_metrics` stays ABSENT until the Brazil-CVM workstream
+   ships corrected view SQL as a NEW migration (000097+). Do not fix it here.
+
+Deployment-window note: if Estonia's monthly job (8th, 06:00) fires with
+mismatched writer/table shapes in either direction, the export fails LOUDLY
+at the stage-insert (no corruption; stage dropped in finally) — acceptable,
+but sequence the deploy before the 8th to avoid the noise. Historical note:
+000095's file was rewritten after the lab force-mark (forward-only-ledger
+exception) — justified because no environment ever executed the original SQL.
