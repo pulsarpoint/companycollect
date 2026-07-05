@@ -16,11 +16,13 @@ GROUP_NAME = "domains"
 
 @dg.asset(
     deps=[
-        dg.AssetKey("finland_ytj_resolved_clickhouse"),
-        dg.AssetKey("norway_brreg_entities_snapshot_clickhouse"),
-        dg.AssetKey("wikidata_company_seed_clickhouse"),
+        dg.AssetKey("czech_ares_clickhouse_company_contacts"),
+        dg.AssetKey("latvia_ur_clickhouse_company_contacts"),
         dg.AssetKey("estonia_ar_clickhouse_company_domains"),
-        dg.AssetKey("brazil_comp_rfb_clickhouse_websites"),
+        dg.AssetKey("brazil_comp_rfb_clickhouse_company_domains"),
+        dg.AssetKey("norway_brreg_clickhouse_canonical_contacts"),
+        dg.AssetKey("finland_ytj_clickhouse_canonical_contacts"),
+        dg.AssetKey("wikidata_clickhouse_canonical_contacts"),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse"},
@@ -71,13 +73,15 @@ def replace_domain_clickhouse_tables(clickhouse_client: Any) -> dict[str, int]:
             _domains_insert_sql(domains_stage, company_links_stage)
         )
 
-        clickhouse_client.execute(
-            f"EXCHANGE TABLES {_qualified_table(domains_stage)} "
-            f"AND {_qualified_table(tables.DOMAINS_TABLE)}"
-        )
+        # links swap first: the aggregate is computed FROM the links and must
+        # never be newer than what links readers see
         clickhouse_client.execute(
             f"EXCHANGE TABLES {_qualified_table(company_links_stage)} "
             f"AND {_qualified_table(tables.COMPANY_WEBSITE_DOMAINS_TABLE)}"
+        )
+        clickhouse_client.execute(
+            f"EXCHANGE TABLES {_qualified_table(domains_stage)} "
+            f"AND {_qualified_table(tables.DOMAINS_TABLE)}"
         )
 
         return {
@@ -101,8 +105,35 @@ def replace_domain_clickhouse_tables(clickhouse_client: Any) -> dict[str, int]:
         )
 
 
+def _canonical_domain_arm(source: dict[str, str]) -> str:
+    table = source["table"]
+    return f"""
+        SELECT
+            '{table}' AS source_website_table,
+            ifNull(
+                nullIf(trim(websites.source_record_id), ''),
+                concat('{table}:', websites.registry_id, ':', websites.domain)
+            ) AS source_website_id,
+            nullIf(trim(websites.country_iso2), '') AS country_iso2,
+            '{source["source_slug"]}' AS source_slug,
+            '{source["registry_id_type"]}' AS company_id_type,
+            websites.registry_id AS company_id,
+            websites.website_url AS website_url,
+            websites.website_normalized_url AS website_normalized_url,
+            websites.website_host AS website_host,
+            websites.domain AS root_domain,
+            websites.domain_source AS domain_source,
+            websites.is_current AS is_current,
+            websites.is_primary AS is_primary
+        FROM {_qualified_table(table)} AS websites
+        WHERE nullIf(trim(websites.domain), '') IS NOT NULL"""
+
+
 def _company_website_domains_insert_sql(stage_table: str) -> str:
     columns = _column_list(tables.COMPANY_WEBSITE_DOMAINS_COLUMNS)
+    arms = "\n\n        UNION ALL\n".join(
+        _canonical_domain_arm(source) for source in tables.CANONICAL_DOMAIN_SOURCES
+    )
     return f"""
     INSERT INTO {_qualified_table(stage_table)} ({columns})
     SELECT
@@ -122,120 +153,7 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
         now64(3) AS resolved_at
     FROM
     (
-        SELECT
-            'fi_websites' AS source_website_table,
-            ifNull(
-                nullIf(trim(websites.source_record_id), ''),
-                concat('fi_websites:', websites.business_id, ':', websites.website_normalized_url)
-            ) AS source_website_id,
-            'FI' AS country_iso2,
-            'finland_ytj' AS source_slug,
-            'business_id' AS company_id_type,
-            websites.business_id AS company_id,
-            websites.website_url AS website_url,
-            websites.website_normalized_url AS website_normalized_url,
-            websites.website_host AS website_host,
-            websites.root_domain AS root_domain,
-            'website' AS domain_source,
-            websites.is_current AS is_current,
-            websites.is_primary AS is_primary
-        FROM {_qualified_table("fi_websites")} AS websites
-        WHERE nullIf(trim(websites.root_domain), '') IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            'no_websites' AS source_website_table,
-            ifNull(
-                nullIf(trim(websites.source_record_id), ''),
-                concat('no_websites:', websites.org_number, ':', websites.website_normalized_url)
-            ) AS source_website_id,
-            'NO' AS country_iso2,
-            'norway_brreg' AS source_slug,
-            'org_number' AS company_id_type,
-            websites.org_number AS company_id,
-            websites.website_url AS website_url,
-            websites.website_normalized_url AS website_normalized_url,
-            websites.website_host AS website_host,
-            websites.root_domain AS root_domain,
-            'website' AS domain_source,
-            websites.is_current AS is_current,
-            websites.is_primary AS is_primary
-        FROM {_qualified_table("no_websites")} AS websites
-        WHERE nullIf(trim(websites.root_domain), '') IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            'wikidata_company_websites' AS source_website_table,
-            ifNull(
-                nullIf(trim(websites.source_record_id), ''),
-                concat(
-                    'wikidata_company_websites:',
-                    websites.wikidata_id,
-                    ':',
-                    websites.website_normalized_url
-                )
-            ) AS source_website_id,
-            nullIf(trim(ifNull(companies.headquarters_country_iso2, '')), '') AS country_iso2,
-            'wikidata' AS source_slug,
-            'wikidata_id' AS company_id_type,
-            websites.wikidata_id AS company_id,
-            websites.website_url AS website_url,
-            websites.website_normalized_url AS website_normalized_url,
-            websites.website_host AS website_host,
-            websites.root_domain AS root_domain,
-            'website' AS domain_source,
-            1 AS is_current,
-            websites.is_primary_candidate AS is_primary
-        FROM {_qualified_table("wikidata_company_websites")} AS websites
-        LEFT JOIN {_qualified_table("wikidata_companies")} AS companies
-            ON companies.wikidata_id = websites.wikidata_id
-        WHERE nullIf(trim(websites.root_domain), '') IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            'ee_company_domains' AS source_website_table,
-            ifNull(
-                nullIf(trim(websites.source_record_id), ''),
-                concat('ee_company_domains:', websites.registry_id, ':', websites.domain)
-            ) AS source_website_id,
-            'EE' AS country_iso2,
-            'estonia_ar' AS source_slug,
-            'reg_code' AS company_id_type,
-            websites.registry_id AS company_id,
-            websites.website_url AS website_url,
-            websites.website_normalized_url AS website_normalized_url,
-            websites.website_host AS website_host,
-            websites.domain AS root_domain,
-            websites.domain_source AS domain_source,
-            websites.is_current AS is_current,
-            websites.is_primary AS is_primary
-        FROM {_qualified_table("ee_company_domains")} AS websites
-        WHERE nullIf(trim(websites.domain), '') IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            'br_websites' AS source_website_table,
-            ifNull(
-                nullIf(trim(websites.source_record_id), ''),
-                concat('br_websites:', websites.cnpj_basico, ':', websites.root_domain)
-            ) AS source_website_id,
-            'BR' AS country_iso2,
-            'brazil_rfb' AS source_slug,
-            'cnpj_basico' AS company_id_type,
-            websites.cnpj_basico AS company_id,
-            websites.website_url AS website_url,
-            websites.website_normalized_url AS website_normalized_url,
-            websites.website_host AS website_host,
-            websites.root_domain AS root_domain,
-            websites.domain_source AS domain_source,
-            websites.is_current AS is_current,
-            websites.is_primary AS is_primary
-        FROM {_qualified_table("br_websites")} AS websites
-        WHERE nullIf(trim(websites.root_domain), '') IS NOT NULL
+{arms}
     )
     """
 
