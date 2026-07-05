@@ -86,18 +86,38 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
 def test_sweden_financial_raw_assets_do_not_require_duckdb_resource() -> None:
     from dagster_v3.defs.sweden_financial.assets import (
         sweden_financial_backfill_raw_archives_s3,
+        sweden_financial_backfill_report_xhtml_catalog_duckdb,
         sweden_financial_current_raw_archives_s3,
+        sweden_financial_current_report_xhtml_catalog_duckdb,
     )
 
     backfill_parameters = inspect.signature(
         sweden_financial_backfill_raw_archives_s3
     ).parameters
+    backfill_catalog_parameters = inspect.signature(
+        sweden_financial_backfill_report_xhtml_catalog_duckdb
+    ).parameters
     current_parameters = inspect.signature(
         sweden_financial_current_raw_archives_s3
     ).parameters
+    current_catalog_parameters = inspect.signature(
+        sweden_financial_current_report_xhtml_catalog_duckdb
+    ).parameters
 
     assert "sweden_financial_duckdb" not in backfill_parameters
+    assert "sweden_financial_duckdb" not in backfill_catalog_parameters
     assert "sweden_financial_duckdb" not in current_parameters
+    assert "sweden_financial_duckdb" not in current_catalog_parameters
+
+
+def test_sweden_financial_duckdb_path_is_partitioned_by_year() -> None:
+    from dagster_v3.defs.sweden_financial.parsing import (
+        sweden_financial_source_duckdb_path,
+    )
+
+    assert sweden_financial_source_duckdb_path("2026") == Path(
+        "data/sweden_finacial/sweden_financial_source_2026.duckdb"
+    )
 
 
 def test_sweden_financial_docs_describe_raw_archive_scope() -> None:

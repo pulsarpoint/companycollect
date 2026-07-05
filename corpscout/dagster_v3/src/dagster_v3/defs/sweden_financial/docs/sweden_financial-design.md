@@ -122,6 +122,15 @@ archive sync manifest consumed by the catalog assets, including the upstream
 key, `LastModified`, ETag, source size, object-storage key, and whether the
 archive was downloaded or reused.
 
+Catalog DuckDB files are partitioned by archive year. The file path is:
+
+```text
+data/sweden_finacial/sweden_financial_source_<year>.duckdb
+```
+
+Backfill partitions write their own year file. Current refresh partitions write
+the active archive-year file, currently `sweden_financial_source_2026.duckdb`.
+
 ## Job And Schedule
 
 `sweden_financial_backfill_job` selects both

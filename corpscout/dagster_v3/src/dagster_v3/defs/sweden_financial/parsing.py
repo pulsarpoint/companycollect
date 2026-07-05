@@ -12,13 +12,21 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_financial.resources import SWEDEN_FINANCIAL_RAW_BUCKET
 
 SWEDEN_FINANCIAL_DATASET_NAME = "sweden_financial"
-SWEDEN_FINANCIAL_DUCKDB_PATH = Path("data/sweden_financial_source.duckdb")
+SWEDEN_FINANCIAL_DUCKDB_ROOT = Path("data/sweden_finacial")
+SWEDEN_FINANCIAL_DUCKDB_PATH = (
+    SWEDEN_FINANCIAL_DUCKDB_ROOT / "sweden_financial_source_2026.duckdb"
+)
 RAW_ARCHIVE_PREFIX = "sweden_financial/raw_archives/"
 REPORT_XHTML_PREFIX = "sweden_financial/report_xhtml/"
 LOG_EVERY_NESTED_ZIPS = 1_000
 
 _DATE_PATTERN = re.compile(r"(?P<year>\d{4})[-_]? (?P<month>\d{2})[-_]? (?P<day>\d{2})", re.X)
 _COMPANY_ID_PATTERN = re.compile(r"(?<!\d)(\d{10,12})(?!\d)")
+
+
+def sweden_financial_source_duckdb_path(year: str | int) -> Path:
+    normalized_year = _normalize_year(year)
+    return SWEDEN_FINANCIAL_DUCKDB_ROOT / f"sweden_financial_source_{normalized_year}.duckdb"
 
 
 def extract_sweden_financial_report_xhtml_catalog(
@@ -377,6 +385,13 @@ def _archive_name_from_object_key(source_archive_key: str) -> str:
         if part.startswith("archive="):
             return part.removeprefix("archive=")
     return Path(source_archive_key).name
+
+
+def _normalize_year(year: str | int) -> str:
+    normalized = str(year).strip()
+    if not normalized.isdigit() or len(normalized) != 4:
+        raise ValueError(f"Sweden financial source year must be a four-digit year: {year!r}")
+    return normalized
 
 
 def _safe_path_segment(value: str) -> str:

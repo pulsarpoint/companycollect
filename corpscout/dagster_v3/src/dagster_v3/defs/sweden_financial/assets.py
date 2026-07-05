@@ -2,7 +2,6 @@ from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import dagster as dg
-from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
@@ -13,8 +12,8 @@ from dagster_v3.defs.sweden_financial.archive_state import (
     write_sweden_financial_archive_sync_manifest,
 )
 from dagster_v3.defs.sweden_financial.parsing import (
-    SWEDEN_FINANCIAL_DUCKDB_PATH,
     extract_sweden_financial_report_xhtml_catalog,
+    sweden_financial_source_duckdb_path,
 )
 from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsResource
 
@@ -108,15 +107,15 @@ def sweden_financial_backfill_raw_archives_s3(
 def sweden_financial_backfill_report_xhtml_catalog_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
-    sweden_financial_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    SWEDEN_FINANCIAL_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    duckdb_path = sweden_financial_source_duckdb_path(context.partition_key)
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
     sync_result = read_sweden_financial_archive_sync_manifest(
         object_store=object_store,
         sync_kind="backfill",
         load_partition_key=context.partition_key,
     )
-    with sweden_financial_duckdb.get_connection() as connection:
+    with duckdb_resource(duckdb_path).get_connection() as connection:
         record_sweden_financial_archive_sync(
             connection=connection,
             sync_result=sync_result,
@@ -135,7 +134,7 @@ def sweden_financial_backfill_report_xhtml_catalog_duckdb(
     return dg.MaterializeResult(
         metadata={
             **counts,
-            "duckdb_path": str(SWEDEN_FINANCIAL_DUCKDB_PATH),
+            "duckdb_path": str(duckdb_path),
         }
     )
 
@@ -171,15 +170,15 @@ def sweden_financial_current_raw_archives_s3(
 def sweden_financial_current_report_xhtml_catalog_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
-    sweden_financial_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    SWEDEN_FINANCIAL_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    duckdb_path = sweden_financial_source_duckdb_path(SWEDEN_FINANCIAL_CURRENT_YEAR)
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
     sync_result = read_sweden_financial_archive_sync_manifest(
         object_store=object_store,
         sync_kind="current",
         load_partition_key=context.partition_key,
     )
-    with sweden_financial_duckdb.get_connection() as connection:
+    with duckdb_resource(duckdb_path).get_connection() as connection:
         record_sweden_financial_archive_sync(
             connection=connection,
             sync_result=sync_result,
@@ -205,7 +204,7 @@ def sweden_financial_current_report_xhtml_catalog_duckdb(
             **counts,
             "changed_source_archive_count": len(changed_keys),
             "load_partition_key": context.partition_key,
-            "duckdb_path": str(SWEDEN_FINANCIAL_DUCKDB_PATH),
+            "duckdb_path": str(duckdb_path),
         }
     )
 
@@ -271,7 +270,6 @@ defs = dg.Definitions(
     ],
     schedules=[sweden_financial_current_year_weekly],
     resources={
-        "sweden_financial_duckdb": duckdb_resource(SWEDEN_FINANCIAL_DUCKDB_PATH),
         "sweden_financial_reports": SwedenFinancialReportsResource(),
     },
 )
