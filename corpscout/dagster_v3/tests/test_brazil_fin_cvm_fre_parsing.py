@@ -8,6 +8,7 @@ from dagster_v3.defs.brazil_financial.cvm.fre_parsing import (
     FRE_CAPITAL_SOCIAL_TABLE,
     FRE_DOCUMENTS_TABLE,
     FRE_RELATED_PARTY_TRANSACTIONS_TABLE,
+    _sanitize_malformed_literal_quote_line,
     load_brazil_fin_cvm_fre_archive,
 )
 from dagster_v3.defs.brazil_financial.cvm.parsing import BRAZIL_CVM_DUCKDB_SCHEMA
@@ -137,6 +138,63 @@ def test_load_brazil_fin_cvm_fre_archive_treats_literal_quotes_as_data(
         "Contrato; com ponto e virgula",
         '"Taxa" de mercado',
         '"Contrato" com partes',
+    )
+
+
+def test_load_brazil_fin_cvm_fre_archive_treats_unclosed_quote_as_data(
+    tmp_path: Path,
+) -> None:
+    archive_path = tmp_path / "fre_cia_aberta_2018.zip"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as zip_file:
+        zip_file.writestr(
+            "fre_cia_aberta_transacao_parte_relacionada_2018.csv",
+            (
+                "CNPJ_Companhia;Data_Referencia;Versao;ID_Documento;"
+                "Nome_Companhia;Parte_Relacionada;Tipo_Pessoa;"
+                "Documento_Parte_Relacionada;Relacao_Emissor;Data_Transacao;"
+                "Objeto_Contrato;Montante_Envolvido;Saldo_Existente;"
+                "Montante_Interesse_Parte_Relacionada;Garantia_Seguro;"
+                "Duracao_Transacao;Emprestimo_Divida;Rescisao;"
+                "Natureza_Razao_Operacao;Taxa_Juros;Posicao_Contratual_Emissor;"
+                "Especificacao_Posicao_Contratual_Emissor\n"
+                "33.000.167/0001-01;2018-01-01;27;81763;"
+                "PETROLEO BRASILEIRO S.A. PETROBRAS;GUARA B.V.;PJ;;"
+                "OPERACOES EM CONJUNTO;2015-09-29;Afretamento FPSO;"
+                "9522320846.38;R$ 8.436.178.315,73;N/A;"
+                '"A CONTRATADA devera providenciar seguros sem fechamento;'
+                "3.915 dias;N;Rescisao prevista;;0.000000;Devedor;\n"
+            ).encode("latin-1"),
+        )
+
+    with duckdb.connect(str(tmp_path / "source.duckdb")) as connection:
+        counts = load_brazil_fin_cvm_fre_archive(
+            connection=connection,
+            archive_path=archive_path,
+            year="2018",
+            source_archive_key=fre_archive_object_key("2018"),
+            source_run_id="run-1",
+            resolved_at=datetime(2026, 7, 5, tzinfo=UTC),
+        )
+        row = connection.execute(
+            f"""
+            select insurance_guarantee, transaction_duration
+            from {BRAZIL_CVM_DUCKDB_SCHEMA}.{FRE_RELATED_PARTY_TRANSACTIONS_TABLE}
+            """
+        ).fetchone()
+
+    assert counts["related_party_transaction_row_count"] == 1
+    assert row == (
+        '"A CONTRATADA devera providenciar seguros sem fechamento',
+        "3.915 dias",
+    )
+
+
+def test_fre_quote_sanitizer_closes_unclosed_literal_quote_fields() -> None:
+    assert (
+        _sanitize_malformed_literal_quote_line(
+            'cnpj;"A CONTRATADA devera providenciar seguros sem fechamento;duration'
+        )
+        == 'cnpj;"""A CONTRATADA devera providenciar seguros sem fechamento";duration'
     )
 
 

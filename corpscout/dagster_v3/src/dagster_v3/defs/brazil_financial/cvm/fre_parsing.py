@@ -1096,14 +1096,15 @@ def _find_semicolon_csv_field_end(line: str, field_start: int) -> int:
             return next_index
         delimiter_index = line.find(";", field_start)
         return len(line) if delimiter_index == -1 else delimiter_index
-    return len(line)
+    delimiter_index = line.find(";", field_start)
+    return len(line) if delimiter_index == -1 else delimiter_index
 
 
 def _sanitize_malformed_literal_quote_field(field: str) -> str:
     if not field.startswith('"'):
         return field
     closing_quote_index = field.find('"', 1)
-    if closing_quote_index == -1 or closing_quote_index == len(field) - 1:
+    if closing_quote_index == len(field) - 1:
         return field
     return '"' + field.replace('"', '""') + '"'
 
