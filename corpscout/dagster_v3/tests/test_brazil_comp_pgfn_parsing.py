@@ -169,11 +169,10 @@ def test_load_pgfn_archive_allows_missing_source_version_enrichment_columns(
                     "CPF_CNPJ;TIPO_PESSOA;TIPO_DEVEDOR;NOME_DEVEDOR;"
                     "UNIDADE_RESPONSAVEL;NUMERO_INSCRICAO;"
                     "TIPO_SITUACAO_INSCRICAO;SITUACAO_INSCRICAO;"
-                    "RECEITA_PRINCIPAL;DATA_INSCRICAO;INDICADOR_AJUIZADO;"
-                    "VALOR_CONSOLIDADO",
+                    "DATA_INSCRICAO;INDICADOR_AJUIZADO;VALOR_CONSOLIDADO",
                     "16.584.543/0001-33;Pessoa jurídica;Principal;Company;"
-                    "ACRE;FGAC202500025;Em cobrança;INSCRITA;IRPJ;"
-                    "03/04/2025;NAO;312038.84",
+                    "ACRE;FGAC202500025;Em cobrança;INSCRITA;03/04/2025;NAO;"
+                    "312038.84",
                 ]
             ),
         )
@@ -193,7 +192,7 @@ def test_load_pgfn_archive_allows_missing_source_version_enrichment_columns(
         )
         row = connection.execute(
             f"""
-            select debtor_state, responsible_entity, inscription_unit
+            select debtor_state, responsible_entity, inscription_unit, main_revenue
             from {parsing.BRAZIL_PGFN_DUCKDB_SCHEMA}.{tables.COMPANY_DEBTS_TABLE}
             """
         ).fetchone()
@@ -202,7 +201,7 @@ def test_load_pgfn_archive_allows_missing_source_version_enrichment_columns(
         "source_file_count": 1,
         "company_debts": 1,
     }
-    assert row == (None, None, None)
+    assert row == (None, None, None, None)
 
 
 def _zip_body(member_name: str, csv_text: str) -> bytes:
