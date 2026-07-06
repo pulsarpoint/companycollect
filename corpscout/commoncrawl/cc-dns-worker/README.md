@@ -45,8 +45,8 @@ hammers TLD servers itself.** Implemented in `internal/resolve/discover.go` (`Di
   `--resolvers 127.0.0.1:53 --discovery-qps 2000`. Hammering public resolvers (1.1.1.1/8.8.8.8/…)
   with a full-corpus discovery run gets you throttled/blocked; a local resolver removes that
   dependence and gives natural TLD-level caching (a `.com` lookup is warm after the first few
-  thousand domains). Deploying the resolver itself is out of scope for this repo; the worker just
-  needs an address.
+  thousand domains). See **[Local recursive resolver (required)](#local-recursive-resolver-required)**
+  below for the recommended topology, hardware sizing, and a tuned `unbound` config.
 
 **Tier 2 — record queries (direct-to-authoritative).** Once a domain's authoritative NS IPs are
 known, every record query for that domain goes **directly to those IPs** (`RD=0`), rotating across
@@ -87,6 +87,105 @@ circuit opens and its queries fast-fail for `--breaker-cooldown` (default `30s`)
 waiting out the full `--query-timeout`. This caps the cost of dead or firewalled nameservers,
 especially when many domains share one. It counts transport failures only — a `SERVFAIL` response is
 a normal (non-error) exchange and does not trip it. Set `--breaker-threshold 0` to disable.
+
+## Local recursive resolver (required)
+
+Tier-1 NS discovery **must** run against a recursive resolver you control (`--resolvers`) — there is
+no public-resolver default, because pointing a full-corpus discovery run at 1.1.1.1/8.8.8.8/… gets you
+throttled or blocked. A local `unbound` on a dedicated box removes that dependence and gives natural
+TLD-level caching (the `.com` delegation is served from cache after the first lookup, so you never
+re-walk roots/TLDs). Tier-2 record queries do **not** use it — they go directly to each domain's
+authoritative servers.
+
+### Topology
+
+Two hosts is the clean setup:
+
+- **Resolver host** — a plain LAN box running `unbound`; **no Tailscale** (keeps it clear of MagicDNS /
+  `resolv.conf` management). Needs LAN reachability from the worker + internet egress for iterative
+  resolution. Lock it down — an open recursive resolver is a DDoS-amplification vector.
+- **Worker host** — runs `cc-dns-worker` with Tailscale (for ClickHouse over the tailnet) and broad
+  outbound UDP/53 (Tier-2 record queries leave from here). Points at
+  `--resolvers <resolver-lan-ip>:53 --discovery-qps 2000` (`--discovery-inflight`, default 500, keeps
+  the resolver fed).
+
+Co-location on one box works **only if** `unbound` binds `127.0.0.1:53` (not `0.0.0.0`, which would
+collide with Tailscale's interface), but you lose cache longevity + resource isolation — prefer two
+hosts.
+
+### Rough hardware
+
+Both loads are modest for a target of ~130–400 domains/s (33.6M every 2–3 days / daily). Start small
+and scale whatever the stats say is the bottleneck.
+
+| | Resolver | Worker |
+|---|---|---|
+| CPU | 4–8 cores | 8–16 cores |
+| RAM | 16–32 GB (all cache) | 16–32 GB |
+| Disk | 40 GB SSD | **200–500 GB NVMe** — the SQLite stage holds a full sweep's records (~20–50 GB/run) before `load`; use NVMe or the single writer bottlenecks |
+| Net | 1 Gbps (bandwidth is tiny; watch packet-rate / conntrack) | 1 Gbps + OS tuning (below) — emits ~10k small UDP/53 packets/s to distinct IPs |
+
+### `unbound` install + config (resolver host)
+
+```bash
+apt install unbound            # or: dnf install unbound
+# put the config below in /etc/unbound/unbound.conf.d/scanner.conf
+systemctl enable --now unbound
+```
+
+`/etc/unbound/unbound.conf.d/scanner.conf` — tuned for the iterative-heavy, single-client scan load:
+
+```yaml
+server:
+    interface: 127.0.0.1
+    interface: 10.0.0.5              # this resolver host's LAN IP
+    port: 53
+    # LOCK DOWN — open resolvers are abused for amplification DDoS.
+    access-control: 127.0.0.0/8 allow
+    access-control: 10.0.0.0/24 allow   # your LAN / the worker's subnet
+    access-control: 0.0.0.0/0 refuse
+    module-config: "iterator"       # no DNSSEC validation (the worker captures DS/DNSKEY itself)
+    num-threads: 8                  # = cores
+    so-reuseport: yes
+    so-rcvbuf: 8m
+    so-sndbuf: 8m
+    msg-cache-size: 4g
+    rrset-cache-size: 8g
+    cache-min-ttl: 60
+    cache-max-ttl: 86400
+    prefetch: yes
+    prefetch-key: yes
+    outgoing-range: 4096            # per thread — needs file descriptors (see OS tuning)
+    num-queries-per-thread: 2048
+    infra-cache-numhosts: 1000000   # you hit a huge number of distinct authoritative servers
+    qname-minimisation: yes
+    extended-statistics: yes
+    # do-ip6: no                    # uncomment if the host has no IPv6 egress
+remote-control:
+    control-enable: yes             # enables `unbound-control stats`
+```
+
+### OS tuning (both hosts, the worker especially)
+
+DNS scanners are killed by network *state*, not CPU:
+
+- **File descriptors** — `outgoing-range 4096 × 8 threads ≈ 33k` FDs for unbound alone; the worker
+  churns a socket per in-flight UDP query. Raise limits (`systemctl edit unbound` →
+  `[Service]` / `LimitNOFILE=131072`; worker side `ulimit -n 131072` and matching `fs.file-max`).
+- **conntrack** — thousands of short UDP/53 flows to unique IPs blow out a stateful firewall/NAT's
+  conntrack table (drops look like timeouts). Bump `net.netfilter.nf_conntrack_max`, shorten UDP
+  timeouts, or avoid conntracking outbound `:53`.
+- **Ephemeral ports** (worker) — widen `net.ipv4.ip_local_port_range` (e.g. `1024 65535`).
+
+### Verify
+
+```bash
+dig @10.0.0.5 NS cloudflare.com +short                              # from the worker: does it answer?
+unbound-control stats | grep -E 'num.(queries|cachehits|cachemiss)'  # cache hit rate
+```
+
+Watch `cachehits / (cachehits + cachemiss)` next to the worker's `--stats-interval` `queries/s` line
+for the full resolver-side + worker-side traffic picture.
 
 ## The SQLite stage + resume contract
 
