@@ -188,10 +188,51 @@ def test_transport_failure_status_is_retryable_failure_for_downstream_guard() ->
     )
 
     assert row["fetch_status"] == "server_error"
-    for fetch_status in ("success", "not_found", "gone", "empty"):
+    for fetch_status in ("success", "not_found", "unsupported_layout", "gone", "empty"):
         assert financial_fetches.financial_fetch_status_requires_failure(fetch_status) is False
     for fetch_status in ("server_error", "network_error", "invalid_payload"):
         assert financial_fetches.financial_fetch_status_requires_failure(fetch_status) is True
+
+
+def test_unsupported_statement_layout_500_is_terminal_source_outcome() -> None:
+    org_url = "https://data.brreg.no/regnskapsregisteret/regnskap/894924322"
+    body = (
+        '{"timestamp":"2026-07-06T15:57:03.777+0000","status":"500",'
+        '"error":"Internal Server Error","message":"Regnskapet inneholder en '
+        'oppstillingsplan som ikke er stottet (IDEELL)",'
+        '"path":"/regnskapsregisteret/regnskap/894924322"}'
+    )
+    client = FakeDltRequestsClient(
+        {org_url: FakeResponse(status_code=500, text=body)}
+    )
+
+    [row] = financial_fetches.fetch_financial_rows_for_orgs(
+        orgs=[{"org_number": "894924322", "legal_name": "IDEELL ORG"}],
+        source_run_id="run-1",
+        client=client,
+    )
+
+    assert row["fetch_status"] == "unsupported_layout"
+    assert row["http_status"] == 500
+    assert row["error_type"] == "UnsupportedStatementLayout"
+    assert row["raw_response"] == body
+    assert financial_fetches.financial_fetch_status_requires_failure(row["fetch_status"]) is False
+
+
+def test_plain_500_without_layout_marker_stays_retryable_server_error() -> None:
+    org_url = "https://data.brreg.no/regnskapsregisteret/regnskap/814115232"
+    client = FakeDltRequestsClient(
+        {org_url: FakeResponse(status_code=500, text="Internal Server Error")}
+    )
+
+    [row] = financial_fetches.fetch_financial_rows_for_orgs(
+        orgs=[{"org_number": "814115232", "legal_name": "SERVER AS"}],
+        source_run_id="run-1",
+        client=client,
+    )
+
+    assert row["fetch_status"] == "server_error"
+    assert financial_fetches.financial_fetch_status_requires_failure(row["fetch_status"]) is True
 
 
 def test_fetch_financial_rows_for_orgs_fetches_supplied_orgs_without_duckdb() -> None:

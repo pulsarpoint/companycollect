@@ -21,9 +21,15 @@ FINANCIAL_FETCH_STATUS_NOT_FOUND = "not_found"
 FINANCIAL_FETCH_STATUS_SERVER_ERROR = "server_error"
 FINANCIAL_FETCH_STATUS_NETWORK_ERROR = "network_error"
 FINANCIAL_FETCH_STATUS_INVALID_PAYLOAD = "invalid_payload"
+FINANCIAL_FETCH_STATUS_UNSUPPORTED_LAYOUT = "unsupported_layout"
+# BRREG's structured regnskap API answers HTTP 500 with this validation message
+# for statement layouts it permanently refuses to serve (IDEELL, BEGREN, SKADE,
+# PENSJ, ...) — retrying such orgs never succeeds.
+UNSUPPORTED_LAYOUT_RESPONSE_MARKER = "oppstillingsplan"
 SOURCE_OUTCOME_FETCH_STATUSES = {
     FINANCIAL_FETCH_STATUS_SUCCESS,
     FINANCIAL_FETCH_STATUS_NOT_FOUND,
+    FINANCIAL_FETCH_STATUS_UNSUPPORTED_LAYOUT,
     "gone",
     "empty",
 }
@@ -305,6 +311,24 @@ def _fetch_brreg_financial_statement(
         )
 
     if response.status_code >= 400:
+        response_text = _response_text(response)
+        if UNSUPPORTED_LAYOUT_RESPONSE_MARKER in response_text:
+            return financial_fetch_failure_row(
+                org=org,
+                source_url=source_url,
+                source_run_id=source_run_id,
+                source_line_number=source_line_number,
+                status_code=response.status_code,
+                fetch_status=FINANCIAL_FETCH_STATUS_UNSUPPORTED_LAYOUT,
+                error_type="UnsupportedStatementLayout",
+                error_message=(
+                    f"HTTP {response.status_code}: BRREG does not serve this "
+                    "statement layout"
+                ),
+                fetched_at=fetched_at,
+                attempt_count=1,
+                raw_response=response_text,
+            )
         return financial_fetch_failure_row(
             org=org,
             source_url=source_url,
@@ -316,7 +340,7 @@ def _fetch_brreg_financial_statement(
             error_message=f"HTTP {response.status_code}",
             fetched_at=fetched_at,
             attempt_count=1,
-            raw_response=_response_text(response),
+            raw_response=response_text,
         )
 
     try:
