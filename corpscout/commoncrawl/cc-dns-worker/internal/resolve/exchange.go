@@ -9,6 +9,7 @@ import (
 	"net"
 	"time"
 
+	"cc-dns-worker/internal/metrics"
 	"cc-dns-worker/internal/scheduler"
 
 	"github.com/miekg/dns"
@@ -21,6 +22,7 @@ type Exchanger interface {
 
 type client struct {
 	sched   *scheduler.Scheduler
+	stats   *metrics.Stats // optional; counts queries actually sent + their errors
 	udp     *dns.Client
 	tcp     *dns.Client
 	timeout time.Duration
@@ -30,8 +32,16 @@ type client struct {
 // (port 53 assumed) or ip:port. The caller sets RecursionDesired on m (true for discovery, false
 // for direct-authoritative record queries).
 func NewExchanger(sched *scheduler.Scheduler, timeout time.Duration) Exchanger {
+	return NewExchangerWithStats(sched, timeout, nil)
+}
+
+// NewExchangerWithStats is NewExchanger plus a metrics counter: every DNS query actually sent (past
+// the scheduler's rate/breaker gate) increments stats.Queries, and a failed send increments
+// stats.QueryErrors. stats may be nil (no metrics).
+func NewExchangerWithStats(sched *scheduler.Scheduler, timeout time.Duration, stats *metrics.Stats) Exchanger {
 	return &client{
 		sched:   sched,
+		stats:   stats,
 		udp:     &dns.Client{Net: "udp", Timeout: timeout, UDPSize: 1232},
 		tcp:     &dns.Client{Net: "tcp", Timeout: timeout},
 		timeout: timeout,
@@ -57,15 +67,20 @@ func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dn
 	addr := withPort(serverIP)
 	var resp *dns.Msg
 	err := c.sched.Do(ctx, hostOnly(serverIP), func() error {
-		r, _, err := c.udp.ExchangeContext(ctx, m, addr)
-		if err != nil {
-			return err
+		// Inside Do => past the rate/breaker gate, so a real query is being sent (an open circuit
+		// returns before this runs and is not counted as traffic).
+		if c.stats != nil {
+			c.stats.Queries.Add(1)
 		}
-		if r.Truncated {
+		r, _, err := c.udp.ExchangeContext(ctx, m, addr)
+		if err == nil && r.Truncated {
 			r, _, err = c.tcp.ExchangeContext(ctx, m, addr)
-			if err != nil {
-				return err
+		}
+		if err != nil {
+			if c.stats != nil {
+				c.stats.QueryErrors.Add(1)
 			}
+			return err
 		}
 		resp = r
 		return nil

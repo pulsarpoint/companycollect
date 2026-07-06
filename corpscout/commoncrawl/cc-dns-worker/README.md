@@ -195,6 +195,16 @@ Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending
 | `--query-timeout` | duration | `5s` | per-DNS-query timeout (both tiers) |
 | `--breaker-threshold` | int | `5` | consecutive transport failures before a server IP's circuit opens (`0` disables) |
 | `--breaker-cooldown` | duration | `30s` | how long a server IP's circuit stays open before a half-open probe |
+| `--stats-interval` | duration | `5s` | how often to print a live throughput/traffic stats line to **stdout** (`0` = off) |
+
+While `scan` runs it prints a live stats line to **stdout** every `--stats-interval` (progress logs go
+to stderr), so you can see throughput and how much DNS traffic is being generated — plus a final
+summary line with run averages:
+```
+stats: elapsed=8s domains=13 (6/s, avg 2/s) queries=1316 (498/s, 101.2/domain) err: q=18.2% dom=0.0%
+```
+`queries` counts DNS queries actually sent (the traffic), `queries/domain` includes per-query NS-IP
+retries, and `q`/`dom` are the query- and domain-level error rates.
 
 ### `load`
 

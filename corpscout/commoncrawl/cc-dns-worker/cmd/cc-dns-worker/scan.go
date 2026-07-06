@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cc-dns-worker/internal/input"
+	"cc-dns-worker/internal/metrics"
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/records"
 	"cc-dns-worker/internal/resolve"
@@ -35,6 +36,7 @@ func runScan(args []string) error {
 	timeout := fs.Duration("query-timeout", 5*time.Second, "per-query timeout")
 	breakerThreshold := fs.Int("breaker-threshold", 5, "consecutive transport failures before a server IP's circuit opens (0 disables)")
 	breakerCooldown := fs.Duration("breaker-cooldown", 30*time.Second, "how long a server IP's circuit stays open before a half-open probe")
+	statsInterval := fs.Duration("stats-interval", 5*time.Second, "how often to print live throughput/traffic stats to stdout (0 = off)")
 	_ = fs.Parse(args)
 	if *runID == "" {
 		*runID = *scanID
@@ -84,12 +86,39 @@ func runScan(args []string) error {
 	}
 	log.Printf("scan_id=%s: seeded %d domains from CH (%d new)", *scanID, total, added)
 
-	// 2) Two schedulers + resolver (unchanged).
+	// Live metrics: DNS queries sent (traffic) + domains resolved, counted in the hot paths below.
+	stats := &metrics.Stats{}
+
+	// 2) Two schedulers + resolver. The exchangers count every query they send into stats.
 	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *inflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
 	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
-	disc := resolve.NewDiscoverer(resolve.NewExchanger(discSched, *timeout), resolverList)
-	rec := resolve.NewResolver(resolve.NewExchanger(authSched, *timeout))
+	disc := resolve.NewDiscoverer(resolve.NewExchangerWithStats(discSched, *timeout, stats), resolverList)
+	rec := resolve.NewResolver(resolve.NewExchangerWithStats(authSched, *timeout, stats))
 	cfg := records.DefaultConfig()
+
+	// Print live stats to stdout every --stats-interval while the dispatch loop runs.
+	runStart := time.Now()
+	stopReporter := make(chan struct{})
+	var reporterWG sync.WaitGroup
+	if *statsInterval > 0 {
+		reporterWG.Add(1)
+		go func() {
+			defer reporterWG.Done()
+			ticker := time.NewTicker(*statsInterval)
+			defer ticker.Stop()
+			prev := metrics.Snapshot{At: runStart}
+			for {
+				select {
+				case <-stopReporter:
+					return
+				case now := <-ticker.C:
+					cur := stats.Snapshot(now)
+					fmt.Println(metrics.Line(prev, cur, runStart))
+					prev = cur
+				}
+			}
+		}()
+	}
 
 	// 3) Dispatch the pending queue in ordered batches. Each batch is fully resolved AND committed
 	// before the next is fetched (commit barrier), so peak memory is one dispatch-batch and in-flight
@@ -104,7 +133,7 @@ func runScan(args []string) error {
 		if len(batch) == 0 {
 			break
 		}
-		committed, err := resolveBatch(ctx, st, disc, rec, cfg, batch, *scanID, *runID, *workers, *batchN)
+		committed, err := resolveBatch(ctx, st, disc, rec, cfg, batch, *scanID, *runID, *workers, *batchN, stats)
 		if err != nil {
 			return err
 		}
@@ -118,6 +147,11 @@ func runScan(args []string) error {
 		resolved += committed
 		log.Printf("scan_id=%s: resolved %d domains (cursor=%q)", *scanID, resolved, cursor)
 	}
+	close(stopReporter)
+	reporterWG.Wait()
+	if *statsInterval > 0 {
+		fmt.Println(metrics.Line(metrics.Snapshot{At: runStart}, stats.Snapshot(time.Now()), runStart))
+	}
 	log.Printf("scan_id=%s: done (%d domains resolved this run)", *scanID, resolved)
 	return nil
 }
@@ -125,7 +159,7 @@ func runScan(args []string) error {
 // resolveBatch resolves one dispatch-batch of domains concurrently (bounded by workers), collects
 // their DomainResults, and commits them to SQLite in commit-batch chunks. It returns the number of
 // domains committed. Peak memory is the batch's results, so the caller's cursor loop stays bounded.
-func resolveBatch(ctx context.Context, st *store.Store, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, batch []string, scanID, runID string, workers, commitBatch int) (int, error) {
+func resolveBatch(ctx context.Context, st *store.Store, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, batch []string, scanID, runID string, workers, commitBatch int, stats *metrics.Stats) (int, error) {
 	results := make(chan model.DomainResult, commitBatch*2)
 	collected := make([]model.DomainResult, 0, len(batch))
 	var collectWG sync.WaitGroup
@@ -134,6 +168,12 @@ func resolveBatch(ctx context.Context, st *store.Store, disc *resolve.Discoverer
 		defer collectWG.Done()
 		for r := range results {
 			collected = append(collected, r)
+			if stats != nil {
+				stats.Domains.Add(1)
+				if r.Status == "error" {
+					stats.DomainErrors.Add(1)
+				}
+			}
 		}
 	}()
 
