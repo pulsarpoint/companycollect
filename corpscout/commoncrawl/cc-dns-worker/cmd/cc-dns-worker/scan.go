@@ -34,7 +34,7 @@ func runScan(args []string) error {
 	workers := fs.Int("workers", 4000, "max domains resolved concurrently")
 	batchN := fs.Int("commit-batch", 200, "domains per SQLite commit")
 	seedChunk := fs.Int("seed-chunk", 5000, "domains per SQLite seed transaction")
-	dispatchBatch := fs.Int("dispatch-batch", 20000, "domains fetched from the queue and resolved per barrier iteration (bounds memory)")
+	dispatchBatch := fs.Int("dispatch-batch", 20000, "domains the feeder pulls from the queue per fetch (streaming — just keeps workers fed; memory is bounded by the channel buffers, not this)")
 	timeout := fs.Duration("query-timeout", 5*time.Second, "per-query timeout")
 	breakerThreshold := fs.Int("breaker-threshold", 5, "consecutive transport failures before a server IP's circuit opens (0 disables)")
 	breakerCooldown := fs.Duration("breaker-cooldown", 30*time.Second, "how long a server IP's circuit stays open before a half-open probe")
@@ -138,32 +138,93 @@ func runScan(args []string) error {
 		}()
 	}
 
-	// 3) Dispatch the pending queue in ordered batches. Each batch is fully resolved AND committed
-	// before the next is fetched (commit barrier), so peak memory is one dispatch-batch and in-flight
-	// domains are never re-fetched. The cursor advances by root_domain to keep this ~O(n).
-	cursor := ""
-	resolved := 0
-	for {
-		batch, err := st.PendingBatch(ctx, *scanID, cursor, *dispatchBatch)
-		if err != nil {
-			return err
+	// 3) Streaming dispatch — no commit barrier. A feeder cursor-marches the pending queue onto a
+	// work channel; --workers goroutines resolve concurrently; a single committer batch-commits
+	// results as they arrive. An idle worker immediately pulls the next pending domain instead of
+	// waiting for a whole batch's slow tail to finish, so the box stays fully fed. Peak memory is
+	// bounded by the channel buffers + one feeder chunk, not the size of the queue.
+	work := make(chan string, *workers)
+	results := make(chan model.DomainResult, *batchN*2)
+
+	// Feeder: pull pending domains in --dispatch-batch chunks, advancing a root_domain cursor so each
+	// domain is dispatched exactly once per run. Committed domains drop out of "pending", so a resume
+	// (cursor reset to "") re-dispatches only what never finished. The buffered work channel is the
+	// backpressure — the feeder blocks here rather than racing ahead of the workers.
+	var feedErr error
+	go func() {
+		defer close(work)
+		cursor := ""
+		for {
+			batch, err := st.PendingBatch(ctx, *scanID, cursor, *dispatchBatch)
+			if err != nil {
+				feedErr = err
+				return
+			}
+			if len(batch) == 0 {
+				return
+			}
+			for _, d := range batch {
+				select {
+				case work <- d:
+				case <-ctx.Done():
+					return
+				}
+			}
+			cursor = batch[len(batch)-1]
 		}
-		if len(batch) == 0 {
-			break
+	}()
+
+	// Workers: resolve each domain and hand the result to the committer.
+	var workerWG sync.WaitGroup
+	for i := 0; i < *workers; i++ {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			for d := range work {
+				results <- resolveDomain(ctx, disc, rec, cfg, d, *scanID, *runID)
+			}
+		}()
+	}
+	go func() { workerWG.Wait(); close(results) }()
+
+	// Committer (single writer): batch-commit results as they stream in, so progress is durable on a
+	// rolling basis — a crash loses only the in-flight window, not a whole barrier's worth.
+	resolved, lastLog := 0, 0
+	buf := make([]model.DomainResult, 0, *batchN)
+	flush := func() error {
+		if len(buf) == 0 {
+			return nil
 		}
-		committed, err := resolveBatch(ctx, st, disc, rec, cfg, batch, *scanID, *runID, *workers, *batchN, stats)
-		if err != nil {
-			return err
+		if err := st.CommitBatch(ctx, buf); err != nil {
+			return fmt.Errorf("commit batch: %w", err)
 		}
-		// Defensive: a non-empty batch should always commit at least one domain (every worker sends
-		// exactly one result, and real CommitBatch errors already return via the err != nil path
-		// above). This only guards the theoretical zero-progress case so the cursor loop can't spin.
-		if committed == 0 {
-			return fmt.Errorf("no progress: batch of %d domains committed 0", len(batch))
+		resolved += len(buf)
+		buf = buf[:0]
+		if resolved-lastLog >= 20000 { // coarse progress marker; the stats line carries the live rate
+			log.Printf("scan_id=%s: resolved %d domains", *scanID, resolved)
+			lastLog = resolved
 		}
-		cursor = batch[len(batch)-1]
-		resolved += committed
-		log.Printf("scan_id=%s: resolved %d domains (cursor=%q)", *scanID, resolved, cursor)
+		return nil
+	}
+	for r := range results {
+		if stats != nil {
+			stats.Domains.Add(1)
+			if r.Status == "error" {
+				stats.DomainErrors.Add(1)
+			}
+		}
+		buf = append(buf, r)
+		if len(buf) >= *batchN {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return err
+	}
+	if feedErr != nil {
+		return feedErr
 	}
 	close(stopReporter)
 	reporterWG.Wait()
@@ -172,53 +233,6 @@ func runScan(args []string) error {
 	}
 	log.Printf("scan_id=%s: done (%d domains resolved this run)", *scanID, resolved)
 	return nil
-}
-
-// resolveBatch resolves one dispatch-batch of domains concurrently (bounded by workers), collects
-// their DomainResults, and commits them to SQLite in commit-batch chunks. It returns the number of
-// domains committed. Peak memory is the batch's results, so the caller's cursor loop stays bounded.
-func resolveBatch(ctx context.Context, st *store.Store, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, batch []string, scanID, runID string, workers, commitBatch int, stats *metrics.Stats) (int, error) {
-	results := make(chan model.DomainResult, commitBatch*2)
-	collected := make([]model.DomainResult, 0, len(batch))
-	var collectWG sync.WaitGroup
-	collectWG.Add(1)
-	go func() {
-		defer collectWG.Done()
-		for r := range results {
-			collected = append(collected, r)
-			if stats != nil {
-				stats.Domains.Add(1)
-				if r.Status == "error" {
-					stats.DomainErrors.Add(1)
-				}
-			}
-		}
-	}()
-
-	sem := make(chan struct{}, workers)
-	var wg sync.WaitGroup
-	for _, d := range batch {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(domain string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			results <- resolveDomain(ctx, disc, rec, cfg, domain, scanID, runID)
-		}(d)
-	}
-	wg.Wait()
-	close(results)
-	collectWG.Wait()
-
-	committed := 0
-	for i := 0; i < len(collected); i += commitBatch {
-		end := min(i+commitBatch, len(collected))
-		if err := st.CommitBatch(ctx, collected[i:end]); err != nil {
-			return committed, fmt.Errorf("commit batch: %w", err)
-		}
-		committed += end - i
-	}
-	return committed, nil
 }
 
 // resolveDomain discovers a domain's authoritative NS then resolves its Tier-2 records into a

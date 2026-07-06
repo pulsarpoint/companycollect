@@ -275,21 +275,25 @@ loop starts resolving immediately). Otherwise the seed is **streamed** from Clic
 (`input.StreamClickHouse`) in `--seed-chunk` batches and `INSERT OR IGNORE`-ed into SQLite as each
 batch arrives — rows that already exist (from a prior, possibly crashed run) are left alone, the CH
 result set is never materialized in full, and `seed_complete` is set only **after** the full stream
-succeeds (so an interrupted seed re-runs and can't leave the queue partially populated). Dispatch is streamed the same way: `Store.PendingBatch` returns up to
-`--dispatch-batch` domains whose status is **not** `done`/`error`, ordered by `root_domain` starting
-after a cursor; `runScan` resolves and commits that whole batch, advances the cursor to the batch's
-last domain, and only then fetches the next `PendingBatch` (a commit barrier — no batch is dispatched
-until the previous one is durably committed). A domain's records + summary are written and its status
-flipped in **one SQLite transaction** (`Store.CommitBatch`) — a kill mid-domain simply leaves it
-`pending`, so it's picked up and retried on the next `scan` invocation with the same
-`--scan-id`/`--db`. A domain that already finished is never re-resolved. This makes `scan` **idempotent
-and restartable**: `--limit 0` (full corpus) runs can be killed and re-run indefinitely, converging on
-"0 pending" only when every domain has a terminal status.
+succeeds (so an interrupted seed re-runs and can't leave the queue partially populated). Dispatch is
+**streamed with no commit barrier**: a feeder goroutine cursor-marches `Store.PendingBatch`
+(`--dispatch-batch` domains whose status is **not** `done`/`error`, ordered by `root_domain` after a
+cursor) onto a work channel; a pool of `--workers` goroutines resolves concurrently; and a single
+committer batch-commits results (`--commit-batch` at a time) *as they arrive*. An idle worker
+immediately pulls the next pending domain rather than waiting for a whole batch's slow tail — so the
+box stays fully fed instead of sawtoothing to near-idle at every batch boundary. A domain's records +
+summary are written and its status flipped in **one SQLite transaction** (`Store.CommitBatch`) — a
+kill mid-domain simply leaves it `pending`, so it's picked up and retried on the next `scan`
+invocation with the same `--scan-id`/`--db` (the cursor resets to `""` and `PendingBatch`'s status
+filter skips everything already `done`/`error`). A domain that already finished is never re-resolved.
+This makes `scan` **idempotent and restartable**: `--limit 0` (full corpus) runs can be killed and
+re-run indefinitely, converging on "0 pending" only when every domain has a terminal status.
 
-Because seeding and dispatch are both chunked with each batch fully committed before the next is
-fetched, peak memory is **bounded** to roughly one `--dispatch-batch` of in-flight results (default
-20000 domains) — a full-corpus run (~33.6M domains) never holds the whole seed list or the whole
-pending queue in memory at once.
+Peak memory is **bounded by the pipeline's channel buffers + one feeder chunk**, not the queue size:
+the work channel holds `--workers`, the results channel `2×--commit-batch`, plus the in-flight
+window — a full-corpus run (~33.6M domains) never holds the whole seed list or pending queue at once.
+`--dispatch-batch` is now just how many the feeder grabs per fetch to stay ahead of the workers;
+unlike the old barrier design it no longer governs throughput, so there's no reason to inflate it.
 
 > **Note on `--limit` reproducibility:** the default `--query` ends with `ORDER BY root_domain`, so
 > `--limit N` returns the *same* N domains on every run. A re-run of `scan --limit N --scan-id X`
@@ -299,10 +303,11 @@ pending queue in memory at once.
 > run, which seeds every domain regardless of order).
 
 Only one goroutine ever calls `CommitBatch` (`db.SetMaxOpenConns(1)`), so SQLite's single-writer lock
-is never contended: within each dispatch batch, `resolveBatch` fans the batch out across up to
-`--workers` resolver goroutines, collects their `model.DomainResult`s off a channel, then that one
-goroutine commits them in `--commit-batch` (default 200) domain transactions before `runScan` advances
-the cursor and fetches the next `--dispatch-batch`.
+is never contended: the `--workers` resolver goroutines only touch the network and hand their
+`model.DomainResult`s to the lone committer over a channel, and that committer is the sole writer,
+flushing `--commit-batch` (default 200) domains per transaction. The feeder's `PendingBatch` reads
+and the committer's writes share the single connection and simply serialize on it — both are
+infrequent relative to the thousands of in-flight network queries, so neither starves the workers.
 
 ## Build & run
 
