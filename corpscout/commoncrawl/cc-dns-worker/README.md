@@ -80,6 +80,13 @@ server IPs in flight at once, each individually gentle. `--workers` (default 400
 domains are being resolved concurrently; most of those goroutines are simply blocked waiting on a
 server's limiter.
 
+Each per-server-IP entry in the scheduler also runs a **circuit breaker**: after `--breaker-threshold`
+(default `5`) consecutive *transport* failures (timeouts) to one authoritative NS IP, that IP's
+circuit opens and its queries fast-fail for `--breaker-cooldown` (default `30s`) instead of each
+waiting out the full `--query-timeout`. This caps the cost of dead or firewalled nameservers,
+especially when many domains share one. It counts transport failures only — a `SERVFAIL` response is
+a normal (non-error) exchange and does not trip it. Set `--breaker-threshold 0` to disable.
+
 ## The SQLite stage + resume contract
 
 `scan` never writes ClickHouse directly. It stages everything in an embedded SQLite database
@@ -185,6 +192,8 @@ Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending
 | `--seed-chunk` | int | `5000` | domains per SQLite seed transaction (only affects the initial `INSERT OR IGNORE` pass) |
 | `--dispatch-batch` | int | `20000` | domains fetched from the queue and resolved per barrier iteration; bounds peak memory independently of corpus size |
 | `--query-timeout` | duration | `5s` | per-DNS-query timeout (both tiers) |
+| `--breaker-threshold` | int | `5` | consecutive transport failures before a server IP's circuit opens (`0` disables) |
+| `--breaker-cooldown` | duration | `30s` | how long a server IP's circuit stays open before a half-open probe |
 
 ### `load`
 
@@ -274,9 +283,6 @@ protocol, never HTTP.
 
 ## Deferred (documented, not built in v1)
 
-- **Per-server circuit breaker** — after N consecutive timeouts to a server IP, short-circuit its
-  queries so a dead nameserver stops burning per-query timeout budget. v1 relies on the per-server
-  limiter + bounded rotation-based retries only.
 - **Deploying local `unbound` for discovery** — the worker already supports it (`--resolvers
   127.0.0.1:53 --discovery-qps 2000`); standing up `unbound` itself on the scan box is the deferred
   operational step, recommended for large/full-corpus runs to remove public-resolver dependence and

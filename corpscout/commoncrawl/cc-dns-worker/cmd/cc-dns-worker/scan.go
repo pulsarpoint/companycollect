@@ -33,6 +33,8 @@ func runScan(args []string) error {
 	seedChunk := fs.Int("seed-chunk", 5000, "domains per SQLite seed transaction")
 	dispatchBatch := fs.Int("dispatch-batch", 20000, "domains fetched from the queue and resolved per barrier iteration (bounds memory)")
 	timeout := fs.Duration("query-timeout", 5*time.Second, "per-query timeout")
+	breakerThreshold := fs.Int("breaker-threshold", 5, "consecutive transport failures before a server IP's circuit opens (0 disables)")
+	breakerCooldown := fs.Duration("breaker-cooldown", 30*time.Second, "how long a server IP's circuit stays open before a half-open probe")
 	_ = fs.Parse(args)
 	if *runID == "" {
 		*runID = *scanID
@@ -83,8 +85,8 @@ func runScan(args []string) error {
 	log.Printf("scan_id=%s: seeded %d domains from CH (%d new)", *scanID, total, added)
 
 	// 2) Two schedulers + resolver (unchanged).
-	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *inflight})
-	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight})
+	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *inflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
+	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
 	disc := resolve.NewDiscoverer(resolve.NewExchanger(discSched, *timeout), resolverList)
 	rec := resolve.NewResolver(resolve.NewExchanger(authSched, *timeout))
 	cfg := records.DefaultConfig()
