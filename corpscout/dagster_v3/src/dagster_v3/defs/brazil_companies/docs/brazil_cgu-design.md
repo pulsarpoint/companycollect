@@ -24,7 +24,8 @@ The first implementation is raw-first:
 
 1. Discover the current snapshot date for each Portal dataset.
 2. Download missing ZIP archives into object storage.
-3. Reuse existing archive objects for the same dataset/date.
+3. Re-fetch existing same-date archives, compare SHA-256, and replace the
+   stored object only when the source hash changed.
 4. Parse ZIP CSV members into DuckDB raw tables.
 5. Export one ClickHouse table per DuckDB table.
 
@@ -32,6 +33,13 @@ Dagster assets are not partitioned in this first pass because the Portal pages
 advertise only the current available date per dataset, and those dates can differ
 between CEIS, CNEP, CEPIM, and leniency agreements. Object-store keys are still
 partitioned by source dataset and source snapshot date.
+
+Same-date republishing is handled at the raw archive step. The downloader keeps
+stable object keys for each dataset/date, but it re-downloads the currently
+advertised ZIP and compares its SHA-256 with stored metadata. If the hash is
+unchanged, the object is not rewritten. If the hash changes, the object and
+metadata are replaced so downstream DuckDB/ClickHouse materializations can pick
+up the corrected source file.
 
 ## Object Keys
 

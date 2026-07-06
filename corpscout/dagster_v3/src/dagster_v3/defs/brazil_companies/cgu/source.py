@@ -63,6 +63,9 @@ class BrazilCguArchiveSyncResult:
     metadata_key: str
     downloaded: bool
     reused_existing_archive: bool
+    checked_existing_archive: bool
+    source_hash_changed: bool
+    previous_sha256: str | None
     size_bytes: int | None
     sha256: str | None
     content_type: str
@@ -79,6 +82,9 @@ class BrazilCguArchiveSyncResult:
             "metadata_key": self.metadata_key,
             "downloaded": self.downloaded,
             "reused_existing_archive": self.reused_existing_archive,
+            "checked_existing_archive": self.checked_existing_archive,
+            "source_hash_changed": self.source_hash_changed,
+            "previous_sha256": self.previous_sha256,
             "size_bytes": self.size_bytes,
             "sha256": self.sha256,
             "content_type": self.content_type,
@@ -99,6 +105,12 @@ class BrazilCguSyncResult:
             ),
             "reused_existing_archive_count": sum(
                 archive.reused_existing_archive for archive in self.archives
+            ),
+            "checked_existing_archive_count": sum(
+                archive.checked_existing_archive for archive in self.archives
+            ),
+            "source_hash_changed_count": sum(
+                archive.source_hash_changed for archive in self.archives
             ),
             "datasets": [archive.dataset for archive in self.archives],
             "snapshot_dates": {
@@ -241,31 +253,23 @@ class BrazilCguResource(dg.ConfigurableResource):
             source_file.dataset, source_file.snapshot_date
         )
         synced_at = datetime.now(UTC).isoformat()
+        archive_exists = object_store.exists(archive_key, bucket=BRAZIL_CGU_RAW_BUCKET)
+        stored_metadata = (
+            _read_stored_metadata(object_store, metadata_key) if archive_exists else {}
+        )
+        previous_digest = _metadata_str(stored_metadata, "sha256") or None
 
-        if object_store.exists(archive_key, bucket=BRAZIL_CGU_RAW_BUCKET):
-            if log_info is not None:
-                log_info(
-                    "Reusing existing Brazil CGU archive: bucket=%s key=%s",
-                    BRAZIL_CGU_RAW_BUCKET,
-                    archive_key,
-                )
-            return self._reuse_existing_archive(
-                source_file=source_file,
-                object_store=object_store,
-                archive_key=archive_key,
-                metadata_key=metadata_key,
-                synced_at=synced_at,
-            )
-
-        if log_info is not None:
-            log_info(
-                "Downloading Brazil CGU archive: dataset=%s snapshot_date=%s url=%s",
-                source_file.dataset,
-                source_file.snapshot_date,
-                source_file.url,
-            )
         with tempfile.TemporaryDirectory(prefix="brazil_comp_cgu_") as tmpdir:
             target_path = Path(tmpdir) / f"{source_file.dataset}.zip"
+            if log_info is not None:
+                log_info(
+                    "Downloading Brazil CGU archive for hash check: "
+                    "dataset=%s snapshot_date=%s url=%s existing=%s",
+                    source_file.dataset,
+                    source_file.snapshot_date,
+                    source_file.url,
+                    archive_exists,
+                )
             size_bytes, digest, content_type, source_last_modified = (
                 self._download_to_path(
                     url=source_file.url,
@@ -274,6 +278,39 @@ class BrazilCguResource(dg.ConfigurableResource):
                     log_info=log_info,
                 )
             )
+            if archive_exists and previous_digest == digest:
+                if log_info is not None:
+                    log_info(
+                        "Brazil CGU archive unchanged after hash check: "
+                        "bucket=%s key=%s sha256=%s",
+                        BRAZIL_CGU_RAW_BUCKET,
+                        archive_key,
+                        digest,
+                    )
+                result = BrazilCguArchiveSyncResult(
+                    dataset=source_file.dataset,
+                    snapshot_date=source_file.snapshot_date,
+                    source_url=source_file.url,
+                    archive_key=archive_key,
+                    metadata_key=metadata_key,
+                    downloaded=False,
+                    reused_existing_archive=True,
+                    checked_existing_archive=True,
+                    source_hash_changed=False,
+                    previous_sha256=previous_digest,
+                    size_bytes=size_bytes,
+                    sha256=digest,
+                    content_type=content_type,
+                    source_last_modified=source_last_modified,
+                    synced_at=synced_at,
+                )
+                object_store.write_json(
+                    metadata_key,
+                    json.dumps(asdict(result), indent=2, sort_keys=True),
+                    bucket=BRAZIL_CGU_RAW_BUCKET,
+                )
+                return result
+
             object_store.upload_file(
                 archive_key,
                 target_path,
@@ -288,44 +325,13 @@ class BrazilCguResource(dg.ConfigurableResource):
             metadata_key=metadata_key,
             downloaded=True,
             reused_existing_archive=False,
+            checked_existing_archive=archive_exists,
+            source_hash_changed=archive_exists,
+            previous_sha256=previous_digest,
             size_bytes=size_bytes,
             sha256=digest,
             content_type=content_type,
             source_last_modified=source_last_modified,
-            synced_at=synced_at,
-        )
-        object_store.write_json(
-            metadata_key,
-            json.dumps(asdict(result), indent=2, sort_keys=True),
-            bucket=BRAZIL_CGU_RAW_BUCKET,
-        )
-        return result
-
-    def _reuse_existing_archive(
-        self,
-        *,
-        source_file: BrazilCguSourceFile,
-        object_store: ObjectStoreResource,
-        archive_key: str,
-        metadata_key: str,
-        synced_at: str,
-    ) -> BrazilCguArchiveSyncResult:
-        stored_metadata = _read_stored_metadata(object_store, metadata_key)
-        size_bytes = _metadata_int(stored_metadata, "size_bytes")
-        digest = _metadata_str(stored_metadata, "sha256")
-
-        result = BrazilCguArchiveSyncResult(
-            dataset=source_file.dataset,
-            snapshot_date=source_file.snapshot_date,
-            source_url=source_file.url,
-            archive_key=archive_key,
-            metadata_key=metadata_key,
-            downloaded=False,
-            reused_existing_archive=True,
-            size_bytes=size_bytes,
-            sha256=digest or None,
-            content_type=_metadata_str(stored_metadata, "content_type"),
-            source_last_modified=_metadata_str(stored_metadata, "source_last_modified"),
             synced_at=synced_at,
         )
         object_store.write_json(

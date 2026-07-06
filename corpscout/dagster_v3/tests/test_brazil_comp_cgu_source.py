@@ -75,18 +75,6 @@ class FakeSession:
         return FakeResponse(self.responses_by_url[url])
 
 
-class NoDownloadSession:
-    def __init__(self, page_responses_by_url: dict[str, bytes]) -> None:
-        self.page_responses_by_url = page_responses_by_url
-        self.requested_urls: list[str] = []
-
-    def get(self, url: str, **kwargs: Any) -> FakeResponse:
-        self.requested_urls.append(url)
-        if url not in self.page_responses_by_url:
-            raise AssertionError(f"unexpected archive download: {url}")
-        return FakeResponse(self.page_responses_by_url[url])
-
-
 def test_cgu_source_files_are_resolved_from_portal_pages() -> None:
     files = cgu_source_files_from_pages(
         {
@@ -163,13 +151,16 @@ def test_cgu_resource_downloads_missing_latest_archives() -> None:
         assert metadata["archive_key"] == archive_key
 
 
-def test_cgu_resource_skips_existing_latest_archives() -> None:
+def test_cgu_resource_checks_existing_latest_archives_without_reupload_when_hash_matches() -> (
+    None
+):
     resource = BrazilCguResource()
     object_store = FakeObjectStore()
     page_responses = _page_responses()
     source_files = cgu_source_files_from_pages(
         {dataset: page.decode("utf-8") for dataset, page in page_responses.items()}
     )
+    archive_responses = {}
     for source_file in source_files:
         archive_key = cgu_archive_object_key(
             source_file.dataset, source_file.snapshot_date
@@ -178,6 +169,7 @@ def test_cgu_resource_skips_existing_latest_archives() -> None:
             source_file.dataset, source_file.snapshot_date
         )
         body = f"existing-{source_file.dataset}".encode()
+        archive_responses[source_file.url] = body
         object_store.objects[(BRAZIL_CGU_RAW_BUCKET, archive_key)] = body
         object_store.objects[(BRAZIL_CGU_RAW_BUCKET, metadata_key)] = json.dumps(
             {
@@ -188,7 +180,7 @@ def test_cgu_resource_skips_existing_latest_archives() -> None:
             }
         ).encode()
 
-    session = NoDownloadSession(resource_page_urls(page_responses))
+    session = FakeSession({**resource_page_urls(page_responses), **archive_responses})
     result = resource.sync_latest_archives(
         object_store=object_store,
         session=session,
@@ -196,9 +188,71 @@ def test_cgu_resource_skips_existing_latest_archives() -> None:
 
     assert session.requested_urls == [
         resource.source_page_url(dataset) for dataset in page_responses
-    ]
+    ] + [source_file.url for source_file in source_files]
+    assert object_store.uploaded_files == []
     assert all(archive.downloaded is False for archive in result.archives)
     assert all(archive.reused_existing_archive is True for archive in result.archives)
+    assert all(archive.checked_existing_archive is True for archive in result.archives)
+    assert all(archive.source_hash_changed is False for archive in result.archives)
+
+
+def test_cgu_resource_replaces_existing_latest_archive_when_hash_changes() -> None:
+    resource = BrazilCguResource()
+    object_store = FakeObjectStore()
+    page_responses = _page_responses()
+    source_files = cgu_source_files_from_pages(
+        {dataset: page.decode("utf-8") for dataset, page in page_responses.items()}
+    )
+    archive_responses = {}
+    for source_file in source_files:
+        archive_key = cgu_archive_object_key(
+            source_file.dataset, source_file.snapshot_date
+        )
+        metadata_key = cgu_metadata_object_key(
+            source_file.dataset, source_file.snapshot_date
+        )
+        old_body = f"old-{source_file.dataset}".encode()
+        new_body = f"new-{source_file.dataset}".encode()
+        archive_responses[source_file.url] = new_body
+        object_store.objects[(BRAZIL_CGU_RAW_BUCKET, archive_key)] = old_body
+        object_store.objects[(BRAZIL_CGU_RAW_BUCKET, metadata_key)] = json.dumps(
+            {
+                "size_bytes": len(old_body),
+                "sha256": sha256(old_body).hexdigest(),
+                "content_type": "application/x-zip-compressed",
+                "source_last_modified": "Mon, 06 Jul 2026 18:00:04 GMT",
+            }
+        ).encode()
+
+    session = FakeSession({**resource_page_urls(page_responses), **archive_responses})
+    result = resource.sync_latest_archives(
+        object_store=object_store,
+        session=session,
+    )
+
+    assert session.requested_urls[: len(page_responses)] == [
+        resource.source_page_url(dataset) for dataset in page_responses
+    ]
+    assert session.requested_urls[len(page_responses) :] == [
+        source_file.url for source_file in source_files
+    ]
+    assert len(object_store.uploaded_files) == len(source_files)
+    for archive in result.archives:
+        archive_key = cgu_archive_object_key(archive.dataset, archive.snapshot_date)
+        metadata_key = cgu_metadata_object_key(archive.dataset, archive.snapshot_date)
+        new_body = f"new-{archive.dataset}".encode()
+        old_body = f"old-{archive.dataset}".encode()
+        assert object_store.objects[(BRAZIL_CGU_RAW_BUCKET, archive_key)] == new_body
+        assert archive.downloaded is True
+        assert archive.reused_existing_archive is False
+        assert archive.checked_existing_archive is True
+        assert archive.source_hash_changed is True
+        assert archive.previous_sha256 == sha256(old_body).hexdigest()
+        metadata = json.loads(
+            object_store.objects[(BRAZIL_CGU_RAW_BUCKET, metadata_key)]
+        )
+        assert metadata["sha256"] == sha256(new_body).hexdigest()
+        assert metadata["previous_sha256"] == sha256(old_body).hexdigest()
 
 
 def _portal_page(origin: str, year: str, month: str, day: str) -> str:

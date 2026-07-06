@@ -9,6 +9,20 @@ from dagster_v3.defs.clickhouse.resolved import (
     export_duckdb_connection_table_to_clickhouse,
 )
 
+_REQUIRED_DATE_COLUMNS = frozenset({"snapshot_date"})
+_NULLABLE_DATE_COLUMNS = frozenset(
+    {
+        "sanction_start_date",
+        "sanction_end_date",
+        "publication_date",
+        "final_judgment_date",
+        "source_information_date",
+        "agreement_start_date",
+        "agreement_end_date",
+        "information_date",
+    }
+)
+
 
 def export_brazil_comp_cgu_table_clickhouse(
     *,
@@ -39,7 +53,20 @@ def export_brazil_comp_cgu_table_clickhouse(
             clickhouse_table=table.clickhouse_table,
             columns=table.columns,
             truncate=True,
+            column_expressions=_date_column_expressions(table.columns),
         )
     if log is not None:
         log("Finished Brazil CGU ClickHouse export: rows=%s", rows)
     return rows
+
+
+def _date_column_expressions(columns: tuple[str, ...]) -> dict[str, str]:
+    expressions: dict[str, str] = {}
+    for column in columns:
+        if column in _REQUIRED_DATE_COLUMNS:
+            expressions[column] = f"cast({column} as date)"
+        elif column in _NULLABLE_DATE_COLUMNS:
+            expressions[column] = (
+                f"try_cast(nullif(cast({column} as varchar), '') as date)"
+            )
+    return expressions
