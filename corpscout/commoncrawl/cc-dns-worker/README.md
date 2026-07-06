@@ -40,12 +40,13 @@ name (their IPs), and `DS` (parent DNSSEC). The recursive resolver's cache absor
 and transparently resolves cross-TLD / glue-less nameservers — **the worker never walks roots or
 hammers TLD servers itself.** Implemented in `internal/resolve/discover.go` (`Discoverer.DiscoverNS`).
 
-- Default resolvers are public: `1.1.1.1:53, 8.8.8.8:53, 9.9.9.9:53` (`resolve.DefaultResolvers`).
-- **For large runs, run a local `unbound`** on the scan box and pass
-  `--resolvers 127.0.0.1:53 --discovery-qps 2000`. This removes any dependence on public resolvers
-  and gives natural TLD-level caching (a `.com` lookup is warm after the first few thousand domains).
-  Deploying `unbound` itself is out of scope for this repo — the worker already supports pointing at
-  one via flags.
+- **`--resolvers` is REQUIRED — there is no public-resolver default.** Point it at a **local
+  recursive resolver** (`unbound` / PowerDNS Recursor / knot-resolver) on the scan box:
+  `--resolvers 127.0.0.1:53 --discovery-qps 2000`. Hammering public resolvers (1.1.1.1/8.8.8.8/…)
+  with a full-corpus discovery run gets you throttled/blocked; a local resolver removes that
+  dependence and gives natural TLD-level caching (a `.com` lookup is warm after the first few
+  thousand domains). Deploying the resolver itself is out of scope for this repo; the worker just
+  needs an address.
 
 **Tier 2 — record queries (direct-to-authoritative).** Once a domain's authoritative NS IPs are
 known, every record query for that domain goes **directly to those IPs** (`RD=0`), rotating across
@@ -183,7 +184,7 @@ Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending
 | `--db` | string | `scan.db` | SQLite stage path |
 | `--query` | string | `SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains ORDER BY root_domain` | ClickHouse query returning one `root_domain` column (keep an `ORDER BY` if you customize it and use `--limit` — see the reproducibility note above) |
 | `--limit` | int | `0` (all) | cap on domains pulled from CH this invocation |
-| `--resolvers` | string (CSV) | `1.1.1.1:53,8.8.8.8:53,9.9.9.9:53` | recursive resolvers for Tier-1 NS discovery; use `127.0.0.1:53` for a local unbound |
+| `--resolvers` | string (CSV) | *(required, no default)* | recursive resolvers for Tier-1 NS discovery — point at a local resolver, e.g. `127.0.0.1:53` (unbound / PowerDNS Recursor); the run errors if unset |
 | `--discovery-qps` | float | `50` | max queries/sec **per** recursive resolver; raise substantially (e.g. `2000`) for a local unbound |
 | `--per-server-qps` | float | `10` | max queries/sec **per** authoritative NS IP (Tier 2) |
 | `--per-server-inflight` | int | `3` | max concurrent queries per NS IP (either tier's scheduler) |
