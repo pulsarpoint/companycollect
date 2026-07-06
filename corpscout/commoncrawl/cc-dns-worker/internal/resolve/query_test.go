@@ -95,3 +95,34 @@ func TestCollectCapturesCNAME(t *testing.T) {
 		t.Errorf("missing CNAME record for www (slot=www, value=foo.cdn.net); records=%+v", res.Records)
 	}
 }
+
+// TestCollectCapturesSRVAndHTTPS covers the service-discovery additions: an SRV answer (tagged by
+// its service slot, with the priority captured) and an apex HTTPS/SVCB answer.
+func TestCollectCapturesSRVAndHTTPS(t *testing.T) {
+	z := map[string][]dns.RR{
+		"_autodiscover._tcp.example.com./SRV": {mustRR(t, "_autodiscover._tcp.example.com. 300 IN SRV 0 5 443 autodiscover.outlook.com.")},
+		"example.com./HTTPS":                  {mustRR(t, `example.com. 300 IN HTTPS 1 . alpn="h2,h3"`)},
+	}
+	r := &Resolver{Ex: stubEx{z: z}}
+	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
+	res := r.Resolve(context.Background(), "example.com", "sc", "run", del, records.DefaultConfig(), time.Unix(0, 0).UTC())
+
+	var srv, https bool
+	for _, rec := range res.Records {
+		if rec.RecordType == "SRV" && rec.Slot == "_autodiscover._tcp" {
+			srv = true
+			if rec.Priority != 0 || rec.Value == "" {
+				t.Errorf("SRV record wrong: %+v", rec)
+			}
+		}
+		if rec.RecordType == "HTTPS" && rec.Slot == "@" && rec.Value != "" {
+			https = true
+		}
+	}
+	if !srv {
+		t.Errorf("missing SRV record; records=%+v", res.Records)
+	}
+	if !https {
+		t.Errorf("missing HTTPS record; records=%+v", res.Records)
+	}
+}

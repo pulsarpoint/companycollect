@@ -53,12 +53,23 @@ known, every record query for that domain goes **directly to those IPs** (`RD=0`
 them with retry. Implemented in `internal/resolve/query.go` (`Resolver.Resolve` / `queryAuth`). The
 query plan (`internal/records/plan.go`) is per domain, no trailing dot needed on input:
 
-- `A`/`AAAA` at apex (`@`) plus 5 default subdomains: `www, mail, webmail, smtp, autodiscover`.
-- `MX`, `TXT` (verbatim — SPF lives here), `NS`, `SOA`, `CAA`, `DNSKEY` at apex.
+- `A`/`AAAA` at apex (`@`) plus 5 default subdomains: `www, mail, webmail, smtp, autodiscover`
+  (a subdomain that's a `CNAME` is captured verbatim rather than dropped).
+- `MX`, `TXT` (verbatim — SPF *and* the service-verification tokens like `google-site-verification`,
+  `MS=`, … live here in one query), `NS`, `SOA`, `CAA`, `DNSKEY` at apex.
+- `HTTPS` (SVCB) at apex + `www` — ALPN, ECH, IP hints, CDN.
 - Mail/policy: `_dmarc` (DMARC), `_mta-sts`, `_smtp._tls` (TLS-RPT), `default._bimi` — all `TXT`.
 - **DKIM brute force**: `TXT <selector>._domainkey.<domain>` for 10 default selectors (`default,
   google, selector1, selector2, k1, dkim, s1, s2, mail, mandrill`).
+- **SRV service discovery** (brute force, ~27 default `_service._proto` names): SIP/Teams, Exchange
+  autodiscover, Active Directory (`_ldap`/`_kerberos`/`_gc`), Windows KMS, XMPP, cal/carddav, mail
+  discovery, Matrix, STUN/TURN, game servers. Configurable via `records.Config.SRVServices`.
 - `DS` at the parent zone, captured from Tier-1 discovery.
+
+> The DKIM and SRV brute-force lists dominate query volume (~61 queries/domain by default, most of
+> the SRV ones `NXDOMAIN`). Trim `SRVServices`/`DKIMSelectors` if you want less traffic — the
+> `--stats-interval` line shows the live queries/domain — and they're the prime candidates for a
+> slower re-scan cadence since they change rarely.
 
 Everything is stored **verbatim** (raw rdata). SPF/DMARC/DKIM parsing and hygiene scoring are
 **derived later in SQL**, not by this worker.

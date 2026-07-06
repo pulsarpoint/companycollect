@@ -24,6 +24,8 @@ func TestPlanCoversAllRecordFamilies(t *testing.T) {
 		"default._bimi.example.com./TXT",
 		"example.com./CAA", "example.com./SOA", "example.com./NS",
 		"example.com./DNSKEY",
+		"example.com./HTTPS", "www.example.com./HTTPS",
+		"_autodiscover._tcp.example.com./SRV", "_sip._tcp.example.com./SRV",
 	}
 	for _, w := range want {
 		if !got[w] {
@@ -103,6 +105,22 @@ func TestPlanSlots(t *testing.T) {
 		q := sel + "._domainkey.example.com./TXT"
 		if got := lookup[q]; got != sel {
 			t.Errorf("%s slot = %q, want %q", q, got, sel)
+		}
+	}
+
+	// HTTPS at apex ("@") and www
+	if got := lookup["example.com./HTTPS"]; got != "@" {
+		t.Errorf("example.com./HTTPS slot = %q, want @", got)
+	}
+	if got := lookup["www.example.com./HTTPS"]; got != "www" {
+		t.Errorf("www.example.com./HTTPS slot = %q, want www", got)
+	}
+
+	// Check SRV services with slot == service (driven from DefaultConfig)
+	for _, s := range cfg.SRVServices {
+		q := s + ".example.com./SRV"
+		if got := lookup[q]; got != s {
+			t.Errorf("%s slot = %q, want %q", q, got, s)
 		}
 	}
 }

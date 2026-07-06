@@ -99,6 +99,15 @@ func collect(q records.Query, resp *dns.Msg, rcode string) []model.DNSRecord {
 			rec.RecordType, rec.Value = "TXT", strings.Join(v.Txt, "")
 		case *dns.CNAME:
 			rec.RecordType, rec.Value = "CNAME", strings.TrimSuffix(strings.ToLower(v.Target), ".")
+		case *dns.SRV:
+			// value = full rdata "<pri> <weight> <port> <target>"; SvcPriority also in the priority col.
+			rec.RecordType = "SRV"
+			rec.Priority = v.Priority
+			rec.Value = strings.TrimSpace(v.String()[len(v.Hdr.String()):])
+		case *dns.HTTPS:
+			rec.RecordType = "HTTPS"
+			rec.Priority = v.Priority // SvcPriority (0 = AliasMode)
+			rec.Value = strings.TrimSpace(v.String()[len(v.Hdr.String()):])
 		default:
 			continue
 		}
