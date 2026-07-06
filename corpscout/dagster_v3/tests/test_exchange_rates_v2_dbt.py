@@ -130,13 +130,16 @@ def test_exchange_rates_v2_dbt_uses_absolute_default_duckdb_path() -> None:
     assert Path(os.environ["EXCHANGE_RATES_V2_DUCKDB_PATH"]).is_absolute()
 
 
-def test_exchange_rates_v2_is_not_partitioned() -> None:
-    # No partitions: a single run pulls the whole window; the source batches API
-    # requests internally.
-    assert not hasattr(fx_v2_assets, "EXCHANGE_RATES_V2_PARTITIONS")
-    start, end = fx_v2_assets._full_range()
-    assert start == fx_v2_assets.EXCHANGE_RATES_V2_START_DATE == "2006-01-01"
-    assert end >= start  # [START_DATE, today]
+def test_exchange_rates_v2_uses_yearly_partitions() -> None:
+    partition_keys = fx_v2_assets.EXCHANGE_RATES_V2_PARTITIONS.get_partition_keys()
+
+    assert partition_keys[0] == "2006"
+    assert partition_keys[-1] == str(date.today().year)
+    assert fx_v2_assets._partition_range("2006") == ("2006-01-01", "2006-12-31")
+    assert fx_v2_assets._partition_range(str(date.today().year))[0] == (
+        f"{date.today().year}-01-01"
+    )
+    assert fx_v2_assets._partition_range(str(date.today().year))[1] == date.today().isoformat()
 
 
 def test_config_defaults_to_full_ecb_reference_set() -> None:
@@ -441,8 +444,10 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
         is ClickhouseResource
     )
-    # de-partitioned: every v2 asset is non-partitioned now.
-    assert partitions_defs == {None}
+    assert partitions_defs == {fx_v2_assets.EXCHANGE_RATES_V2_PARTITIONS}
+    assert repository.get_job("exchange_rates_v2_job").partitions_def is (
+        fx_v2_assets.EXCHANGE_RATES_V2_PARTITIONS
+    )
     # all DuckDB-touching assets still share one pool so overlapping runs
     # serialize against the single-writer DuckDB file.
     pools = {
@@ -461,6 +466,7 @@ def test_exchange_rates_v2_daily_schedule_registered() -> None:
     sched = repository.get_schedule_def("exchange_rates_v2_daily_schedule")
     assert sched.cron_schedule == "30 18 * * 1-5"
     assert sched.job.name == "exchange_rates_v2_job"
+    assert sched.execution_timezone == fx_v2_assets.EXCHANGE_RATES_V2_TIMEZONE
 
 
 def _create_raw_payload_table(

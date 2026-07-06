@@ -538,3 +538,6 @@ into `bin/`; binaries and `data/` are gitignored — code dirs never hold binary
 
 
 ./cc-crawl/bin/cc-crawl -crawl CC-MAIN-2026-25 -mode industry -parts 64-220
+
+
+./cc-crawl/bin/cc-crawl -base /opt/companycollect/corpscout/commoncrawl/data -mode tech -tech-conc 32 -parts 30-50 -crawl CC-MAIN-2026-25

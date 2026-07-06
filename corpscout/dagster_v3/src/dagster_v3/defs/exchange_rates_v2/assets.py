@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import dagster as dg
 import dlt as dlt_lib
@@ -34,19 +35,22 @@ from dagster_v3.defs.exchange_rates_v2.source import (
 )
 
 GROUP_NAME = "exchange_rates_v2"
+EXCHANGE_RATES_V2_TIMEZONE = "Europe/Belgrade"
 EXCHANGE_RATES_V2_DUCKDB_PATH = Path(
     os.environ.get("EXCHANGE_RATES_V2_DUCKDB_PATH", "data/exchange_rates_v2_source.duckdb")
 ).expanduser()
 if not EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute():
     EXCHANGE_RATES_V2_DUCKDB_PATH = EXCHANGE_RATES_V2_DUCKDB_PATH.resolve()
-# No partitions. A single non-partitioned run pulls [START_DATE, today], with the
-# ECB API requests split into calendar-year batches to keep each payload bounded.
-# The run rebuilds the DuckDB dbt tables and republishes the entire ClickHouse
-# window. This also means one materialization event per asset per run (not one
-# per month), so it can never storm the shared Postgres event log — the original
-# reason partitions existed. The daily schedule just re-runs the full pull;
-# ReplacingMergeTree(pulled_at) + the per-run DELETE window keep it idempotent.
 EXCHANGE_RATES_V2_START_DATE = "2006-01-01"
+EXCHANGE_RATES_V2_PARTITIONS = dg.StaticPartitionsDefinition(
+    [
+        str(year)
+        for year in range(
+            date.fromisoformat(EXCHANGE_RATES_V2_START_DATE).year,
+            date.today().year + 1,
+        )
+    ]
+)
 # All three DuckDB-writing assets share one pool so overlapping runs (e.g. a
 # manual run racing the daily schedule) serialize against the single-writer file.
 EXCHANGE_RATES_V2_DUCKDB_POOL = "exchange_rates_v2_duckdb"
@@ -106,6 +110,7 @@ class ExchangeRatesV2Config(dg.Config):
     ),
     name="exchange_rates_v2_raw_duckdb",
     dagster_dlt_translator=ExchangeRatesV2DltTranslator(),
+    partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
 )
 def exchange_rates_v2_raw_duckdb_asset(
@@ -113,12 +118,13 @@ def exchange_rates_v2_raw_duckdb_asset(
     config: ExchangeRatesV2Config,
     dlt: DagsterDltResource,
 ) -> Iterator[Any]:
-    start_date, end_date = _full_range()
+    start_date, end_date = _partition_range(context.partition_key)
     EXCHANGE_RATES_V2_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     context.log.info(
         "Loading raw ECB exchange-rate v2 payload to DuckDB: duckdb_path=%s, "
-        "start_date=%s, end_date=%s, currencies=%s",
+        "partition=%s, start_date=%s, end_date=%s, currencies=%s",
         EXCHANGE_RATES_V2_DUCKDB_PATH,
+        context.partition_key,
         start_date,
         end_date,
         config.currencies,
@@ -150,13 +156,14 @@ def exchange_rates_v2_raw_duckdb_asset(
     manifest=exchange_rates_v2_dbt_project.manifest_path,
     project=exchange_rates_v2_dbt_project,
     dagster_dbt_translator=ExchangeRatesV2DbtTranslator(),
+    partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
 )
 def exchange_rates_v2_dbt_assets(
     context: AssetExecutionContext,
     dbt: DbtCliResource,
 ) -> Iterator[Any]:
-    start_date, end_date = _full_range()
+    start_date, end_date = _partition_range(context.partition_key)
     yield from dbt.cli(
         [
             "build",
@@ -173,6 +180,7 @@ def exchange_rates_v2_dbt_assets(
         get_asset_key_for_model([exchange_rates_v2_dbt_assets], "identity_rates"),
     ],
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
+    partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
     group_name=GROUP_NAME,
     kinds={"duckdb", "clickhouse"},
     description="Exchange-rate v2 dbt rows exported from DuckDB to migrated ClickHouse table.",
@@ -182,7 +190,7 @@ def exchange_rates_v2_clickhouse(
     clickhouse: ClickhouseResource,
     exchange_rates_v2_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    start_date, end_date = _full_range()
+    start_date, end_date = _partition_range(context.partition_key)
     with exchange_rates_v2_duckdb.get_connection() as connection:
         counts = export_exchange_rates_v2_clickhouse(
             duckdb_connection=connection,
@@ -259,15 +267,29 @@ exchange_rates_v2_job = dg.define_asset_job(
     selection=exchange_rates_v2_selection,
 )
 
-# Replaces the retired v1 daily schedule. Weekdays 18:30 Belgrade, after ECB's
-# ~16:00 CET reference-rate publish. Non-partitioned: each run re-pulls the full
-# [START_DATE, today] window in one request, so it both backfills history and
-# picks up the new day.
+
+def _current_year_run_request(
+    context: dg.ScheduleEvaluationContext,
+) -> dg.RunRequest | dg.SkipReason:
+    scheduled_time = context.scheduled_execution_time
+    if scheduled_time is None:
+        partition_key = str(date.today().year)
+    else:
+        partition_key = str(scheduled_time.astimezone(ZoneInfo(EXCHANGE_RATES_V2_TIMEZONE)).year)
+    if partition_key not in EXCHANGE_RATES_V2_PARTITIONS.get_partition_keys():
+        return dg.SkipReason(f"No exchange-rate v2 partition for schedule year {partition_key}")
+    return dg.RunRequest(partition_key=partition_key)
+
+
+# Weekdays 18:30 Belgrade, after ECB's ~16:00 CET reference-rate publish. The
+# schedule refreshes the current calendar-year partition; historical years are
+# backfilled by materializing the yearly partitions explicitly.
 exchange_rates_v2_daily_schedule = dg.ScheduleDefinition(
     name="exchange_rates_v2_daily_schedule",
     job=exchange_rates_v2_job,
     cron_schedule="30 18 * * 1-5",
-    execution_timezone="Europe/Belgrade",
+    execution_timezone=EXCHANGE_RATES_V2_TIMEZONE,
+    execution_fn=_current_year_run_request,
 )
 
 
@@ -283,9 +305,13 @@ def _validate_exchange_rates_v2_duckdb_table(
     )
 
 
-def _full_range() -> tuple[str, str]:
-    """The whole reference window: [START_DATE, today]. The source batches it by year."""
-    return EXCHANGE_RATES_V2_START_DATE, date.today().isoformat()
+def _partition_range(partition_key: str) -> tuple[str, str]:
+    year = int(partition_key)
+    start_date = max(date(year, 1, 1), date.fromisoformat(EXCHANGE_RATES_V2_START_DATE))
+    end_date = min(date(year, 12, 31), date.today())
+    if start_date > end_date:
+        raise ValueError(f"Exchange-rate v2 partition {partition_key} is outside the active window")
+    return start_date.isoformat(), end_date.isoformat()
 
 
 def _clear_exchange_rates_v2_raw_window(
