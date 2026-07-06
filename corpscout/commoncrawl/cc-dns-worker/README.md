@@ -253,7 +253,7 @@ make fmt     # go fmt ./...
 A minimal scan-then-load round trip (`--resolvers` is required — point it at your local recursive
 resolver; see [Local recursive resolver](#local-recursive-resolver-required)):
 ```bash
-export CLICKHOUSE_ADDR=<host>:9002 CLICKHOUSE_USER=default CLICKHOUSE_PASSWORD=*** CLICKHOUSE_DB=corpscout
+export CLICKHOUSE_HOST=<host> CLICKHOUSE_NATIVE_PORT=9002 CLICKHOUSE_USER=default CLICKHOUSE_PASSWORD=*** CLICKHOUSE_DATABASE=corpscout
 ./bin/cc-dns-worker scan --resolvers 127.0.0.1:53 --db scan.db --scan-id 2026-07-06   # full corpus (--limit 0 default)
 ./bin/cc-dns-worker load --db scan.db --scan-id 2026-07-06
 ```
@@ -383,10 +383,13 @@ Read via `envOr()` in `cmd/cc-dns-worker/ch.go`. Used by both `scan` (reads `com
 and `load` (writes the two `commoncrawl_domain_dns_*` tables) — always the **native** ClickHouse
 protocol, never HTTP.
 
+Variable names are identical to `cc-enrich-worker` / `cc-crawl`:
+
 | Var | Default | Controls |
 |---|---|---|
-| `CLICKHOUSE_ADDR` | `localhost:9000` | ClickHouse native-protocol `host:port` |
-| `CLICKHOUSE_DB` | `corpscout` | database |
+| `CLICKHOUSE_HOST` | `localhost` | ClickHouse host |
+| `CLICKHOUSE_NATIVE_PORT` | `9000` | native-protocol port |
+| `CLICKHOUSE_DATABASE` | `corpscout` | database |
 | `CLICKHOUSE_USER` | `default` | user |
 | `CLICKHOUSE_PASSWORD` | (empty) | password |
 

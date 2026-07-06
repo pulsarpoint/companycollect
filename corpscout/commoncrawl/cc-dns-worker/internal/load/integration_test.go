@@ -26,8 +26,8 @@ func envOr(k, d string) string {
 func testConn(t *testing.T) driver.Conn {
 	t.Helper()
 	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr: []string{envOr("CLICKHOUSE_ADDR", "localhost:9000")},
-		Auth: clickhouse.Auth{Database: "corpscout", Username: envOr("CLICKHOUSE_USER", "default"), Password: os.Getenv("CLICKHOUSE_PASSWORD")},
+		Addr: []string{envOr("CLICKHOUSE_HOST", "localhost") + ":" + envOr("CLICKHOUSE_NATIVE_PORT", "9000")},
+		Auth: clickhouse.Auth{Database: envOr("CLICKHOUSE_DATABASE", "corpscout"), Username: envOr("CLICKHOUSE_USER", "default"), Password: envOr("CLICKHOUSE_PASSWORD", "")},
 	})
 	if err != nil {
 		t.Fatalf("connect: %v", err)

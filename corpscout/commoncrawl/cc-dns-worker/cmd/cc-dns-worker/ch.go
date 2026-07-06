@@ -14,14 +14,15 @@ func envOr(k, d string) string {
 	return d
 }
 
-// chConn connects to ClickHouse from CLICKHOUSE_* env.
+// chConn connects to ClickHouse from CLICKHOUSE_* env. The variable names match cc-enrich-worker
+// and cc-crawl exactly (CLICKHOUSE_HOST + CLICKHOUSE_NATIVE_PORT, CLICKHOUSE_DATABASE).
 func chConn() (driver.Conn, error) {
 	return clickhouse.Open(&clickhouse.Options{
-		Addr: []string{envOr("CLICKHOUSE_ADDR", "localhost:9000")},
+		Addr: []string{envOr("CLICKHOUSE_HOST", "localhost") + ":" + envOr("CLICKHOUSE_NATIVE_PORT", "9000")},
 		Auth: clickhouse.Auth{
-			Database: envOr("CLICKHOUSE_DB", "corpscout"),
+			Database: envOr("CLICKHOUSE_DATABASE", "corpscout"),
 			Username: envOr("CLICKHOUSE_USER", "default"),
-			Password: os.Getenv("CLICKHOUSE_PASSWORD"),
+			Password: envOr("CLICKHOUSE_PASSWORD", ""),
 		},
 	})
 }
