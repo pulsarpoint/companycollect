@@ -185,9 +185,10 @@ Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending
 | `--query` | string | `SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains ORDER BY root_domain` | ClickHouse query returning one `root_domain` column (keep an `ORDER BY` if you customize it and use `--limit` — see the reproducibility note above) |
 | `--limit` | int | `0` (all) | cap on domains pulled from CH this invocation |
 | `--resolvers` | string (CSV) | *(required, no default)* | recursive resolvers for Tier-1 NS discovery — point at a local resolver, e.g. `127.0.0.1:53` (unbound / PowerDNS Recursor); the run errors if unset |
-| `--discovery-qps` | float | `50` | max queries/sec **per** recursive resolver; raise substantially (e.g. `2000`) for a local unbound |
+| `--discovery-qps` | float | `50` | max queries/sec **per** recursive resolver; raise substantially (e.g. `2000`) for a local resolver |
+| `--discovery-inflight` | int | `500` | max concurrent in-flight queries **per** recursive resolver — keep high so a local resolver isn't starved |
 | `--per-server-qps` | float | `10` | max queries/sec **per** authoritative NS IP (Tier 2) |
-| `--per-server-inflight` | int | `3` | max concurrent queries per NS IP (either tier's scheduler) |
+| `--per-server-inflight` | int | `3` | max concurrent queries per **authoritative** NS IP (Tier-2 politeness; discovery uses `--discovery-inflight`) |
 | `--workers` | int | `4000` | max domains resolved concurrently (semaphore-bounded goroutine pool) |
 | `--commit-batch` | int | `200` | domains per SQLite commit transaction |
 | `--seed-chunk` | int | `5000` | domains per SQLite seed transaction (only affects the initial `INSERT OR IGNORE` pass) |

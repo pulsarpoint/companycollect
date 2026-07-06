@@ -26,9 +26,10 @@ func runScan(args []string) error {
 	query := fs.String("query", input.DefaultQuery, "ClickHouse query returning root_domain")
 	limit := fs.Int("limit", 0, "cap number of domains (0 = all)")
 	resolvers := fs.String("resolvers", "", "REQUIRED: comma-separated recursive resolvers for NS discovery — point at a local resolver, e.g. 127.0.0.1:53 (unbound / PowerDNS Recursor)")
-	discoveryQPS := fs.Float64("discovery-qps", 50, "max queries/sec per recursive resolver (bump high for local unbound)")
+	discoveryQPS := fs.Float64("discovery-qps", 50, "max queries/sec per recursive resolver (bump high for a local resolver)")
+	discoveryInflight := fs.Int("discovery-inflight", 500, "max concurrent in-flight queries per recursive resolver — keep high for a local resolver (the authoritative --per-server-inflight stays low)")
 	qps := fs.Float64("per-server-qps", 10, "max queries/sec per authoritative NS IP")
-	inflight := fs.Int("per-server-inflight", 3, "max concurrent queries per NS IP")
+	inflight := fs.Int("per-server-inflight", 3, "max concurrent queries per authoritative NS IP (Tier-2 politeness; discovery uses --discovery-inflight)")
 	workers := fs.Int("workers", 4000, "max domains resolved concurrently")
 	batchN := fs.Int("commit-batch", 200, "domains per SQLite commit")
 	seedChunk := fs.Int("seed-chunk", 5000, "domains per SQLite seed transaction")
@@ -52,6 +53,9 @@ func runScan(args []string) error {
 	}
 	if *batchN <= 0 {
 		*batchN = 200
+	}
+	if *discoveryInflight <= 0 {
+		*discoveryInflight = 500
 	}
 	resolverList := cleanResolvers(strings.Split(*resolvers, ","))
 	if len(resolverList) == 0 {
@@ -90,7 +94,7 @@ func runScan(args []string) error {
 	stats := &metrics.Stats{}
 
 	// 2) Two schedulers + resolver. The exchangers count every query they send into stats.
-	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *inflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
+	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *discoveryInflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
 	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
 	disc := resolve.NewDiscoverer(resolve.NewExchangerWithStats(discSched, *timeout, stats), resolverList)
 	rec := resolve.NewResolver(resolve.NewExchangerWithStats(authSched, *timeout, stats))
