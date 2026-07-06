@@ -250,10 +250,11 @@ make vet     # go vet ./...
 make fmt     # go fmt ./...
 ```
 
-A minimal scan-then-load round trip:
+A minimal scan-then-load round trip (`--resolvers` is required — point it at your local recursive
+resolver; see [Local recursive resolver](#local-recursive-resolver-required)):
 ```bash
 export CLICKHOUSE_ADDR=<host>:9002 CLICKHOUSE_USER=default CLICKHOUSE_PASSWORD=*** CLICKHOUSE_DB=corpscout
-./bin/cc-dns-worker scan --db scan.db --scan-id 2026-07-06         # full corpus (--limit 0 default)
+./bin/cc-dns-worker scan --resolvers 127.0.0.1:53 --db scan.db --scan-id 2026-07-06   # full corpus (--limit 0 default)
 ./bin/cc-dns-worker load --db scan.db --scan-id 2026-07-06
 ```
 
