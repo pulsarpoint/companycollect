@@ -17,10 +17,7 @@ _REQUIRED_SOURCE_COLUMNS = (
     "TIPO_PESSOA",
     "TIPO_DEVEDOR",
     "NOME_DEVEDOR",
-    "UF_DEVEDOR",
     "UNIDADE_RESPONSAVEL",
-    "ENTIDADE_RESPONSAVEL",
-    "UNIDADE_INSCRICAO",
     "NUMERO_INSCRICAO",
     "TIPO_SITUACAO_INSCRICAO",
     "SITUACAO_INSCRICAO",
@@ -28,6 +25,11 @@ _REQUIRED_SOURCE_COLUMNS = (
     "DATA_INSCRICAO",
     "INDICADOR_AJUIZADO",
     "VALOR_CONSOLIDADO",
+)
+_OPTIONAL_SOURCE_COLUMNS = (
+    "UF_DEVEDOR",
+    "ENTIDADE_RESPONSAVEL",
+    "UNIDADE_INSCRICAO",
 )
 
 
@@ -209,6 +211,7 @@ def _load_csv_member(
         )
         """
     )
+    _add_missing_optional_columns(connection, source_table)
     _assert_required_columns(connection, source_table)
     snapshot_year, snapshot_quarter_number = _snapshot_year_quarter(snapshot_quarter)
     snapshot_month = _snapshot_month(source_file_name, snapshot_quarter)
@@ -298,16 +301,29 @@ def _load_csv_member(
     return int(rows)
 
 
+def _add_missing_optional_columns(connection: Any, table_name: str) -> None:
+    columns = _source_columns(connection, table_name)
+    for column in _OPTIONAL_SOURCE_COLUMNS:
+        if column not in columns:
+            connection.execute(
+                f'alter table {table_name} add column "{column}" varchar'
+            )
+
+
 def _assert_required_columns(connection: Any, table_name: str) -> None:
-    columns = {
-        row[1]
-        for row in connection.execute(f"pragma table_info({table_name})").fetchall()
-    }
+    columns = _source_columns(connection, table_name)
     missing = [column for column in _REQUIRED_SOURCE_COLUMNS if column not in columns]
     if missing:
         raise ValueError(
             f"Brazil PGFN CSV is missing required columns: {', '.join(missing)}"
         )
+
+
+def _source_columns(connection: Any, table_name: str) -> set[str]:
+    return {
+        row[1]
+        for row in connection.execute(f"pragma table_info({table_name})").fetchall()
+    }
 
 
 def _snapshot_year_quarter(snapshot_quarter: str) -> tuple[int, int]:

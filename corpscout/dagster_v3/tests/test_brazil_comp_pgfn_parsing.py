@@ -156,6 +156,55 @@ def test_parse_pgfn_archives_replaces_existing_snapshot_rows() -> None:
     assert run_ids == [("run-2",)]
 
 
+def test_load_pgfn_archive_allows_missing_source_version_enrichment_columns(
+    tmp_path: Path,
+) -> None:
+    source_file = source.pgfn_snapshot_source_files("2026-Q1")[0]
+    archive_path = tmp_path / "pgfn_missing_enrichment_columns.zip"
+    archive_path.write_bytes(
+        _zip_body(
+            "arquivo_lai_Nao_Previdenciario_1_202603.csv",
+            "\n".join(
+                [
+                    "CPF_CNPJ;TIPO_PESSOA;TIPO_DEVEDOR;NOME_DEVEDOR;"
+                    "UNIDADE_RESPONSAVEL;NUMERO_INSCRICAO;"
+                    "TIPO_SITUACAO_INSCRICAO;SITUACAO_INSCRICAO;"
+                    "RECEITA_PRINCIPAL;DATA_INSCRICAO;INDICADOR_AJUIZADO;"
+                    "VALOR_CONSOLIDADO",
+                    "16.584.543/0001-33;Pessoa jurídica;Principal;Company;"
+                    "ACRE;FGAC202500025;Em cobrança;INSCRITA;IRPJ;"
+                    "03/04/2025;NAO;312038.84",
+                ]
+            ),
+        )
+    )
+
+    with duckdb.connect(":memory:") as connection:
+        counts = parsing.load_brazil_comp_pgfn_archive(
+            connection=connection,
+            archive_path=archive_path,
+            snapshot_quarter="2026-Q1",
+            source_system=source_file.source_system,
+            source_url=source_file.url,
+            archive_key=source.pgfn_archive_object_key(
+                "2026-Q1", source_file.source_system
+            ),
+            source_run_id="run-1",
+        )
+        row = connection.execute(
+            f"""
+            select debtor_state, responsible_entity, inscription_unit
+            from {parsing.BRAZIL_PGFN_DUCKDB_SCHEMA}.{tables.COMPANY_DEBTS_TABLE}
+            """
+        ).fetchone()
+
+    assert counts == {
+        "source_file_count": 1,
+        "company_debts": 1,
+    }
+    assert row == (None, None, None)
+
+
 def _zip_body(member_name: str, csv_text: str) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
