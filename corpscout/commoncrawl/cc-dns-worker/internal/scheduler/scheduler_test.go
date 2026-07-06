@@ -193,3 +193,36 @@ func TestBreakerDisabledWhenThresholdZero(t *testing.T) {
 		t.Errorf("breaker disabled: fn should run every time; calls=%d want 10", calls)
 	}
 }
+
+// TestBreakerConcurrentNoRace hammers one dead server IP from many goroutines with the breaker
+// enabled: it validates (under -race) that the per-server breaker state is safe under contention,
+// and that once the circuit opens most calls are fast-failed rather than running fn. The frozen
+// clock + long cooldown mean the circuit stays open for the whole test once tripped.
+func TestBreakerConcurrentNoRace(t *testing.T) {
+	s := New(Config{PerServerQPS: 100000, Burst: 100000, MaxInFlight: 8, BreakerThreshold: 5, BreakerCooldown: time.Hour})
+	clk := time.Unix(0, 0).UTC()
+	frozen(s, &clk)
+	ctx := context.Background()
+	var ran, opened int64
+	var wg sync.WaitGroup
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := s.Do(ctx, "9.9.9.9", func() error {
+				atomic.AddInt64(&ran, 1)
+				return errors.New("dead")
+			})
+			if err == ErrCircuitOpen {
+				atomic.AddInt64(&opened, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if opened == 0 {
+		t.Error("expected an open circuit to fast-fail some concurrent calls")
+	}
+	if ran >= 200 {
+		t.Errorf("fn ran %d times; an open circuit should have prevented most (want < 200)", ran)
+	}
+}
