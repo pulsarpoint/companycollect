@@ -36,7 +36,18 @@ func TestRunScanRejectsEmptyResolvers(t *testing.T) {
 	if err == nil {
 		t.Fatal("runScan with blank --resolvers: want error, got nil")
 	}
-	if !strings.Contains(err.Error(), "--resolvers is empty") {
-		t.Fatalf("runScan error = %q, want to contain %q", err.Error(), "--resolvers is empty")
+	if !strings.Contains(err.Error(), "--resolvers is required") {
+		t.Fatalf("runScan error = %q, want to contain %q", err.Error(), "--resolvers is required")
+	}
+}
+
+// TestRunScanRequiresResolversByDefault proves there is NO public-resolver default: omitting
+// --resolvers entirely fails fast (NS discovery must run against an explicitly-configured, ideally
+// local, recursive resolver).
+func TestRunScanRequiresResolversByDefault(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "scan.db")
+	err := runScan([]string{"-db", dbPath}) // no -resolvers at all
+	if err == nil || !strings.Contains(err.Error(), "--resolvers is required") {
+		t.Fatalf("runScan without --resolvers: want '--resolvers is required' error, got %v", err)
 	}
 }

@@ -9,10 +9,6 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// DefaultResolvers are the recursive resolvers used for NS discovery. Override with a local unbound
-// ("127.0.0.1:53") to remove any dependence on public resolvers and get natural TLD caching.
-var DefaultResolvers = []string{"1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"}
-
 // Delegation is what discovery learned for a domain.
 type Delegation struct {
 	ETLD  string
@@ -30,11 +26,10 @@ type Discoverer struct {
 	Resolvers []string
 }
 
-// NewDiscoverer returns a Discoverer; empty resolvers falls back to DefaultResolvers.
+// NewDiscoverer returns a Discoverer over the given recursive resolvers. resolvers must be non-empty
+// — there is no public-resolver default; NS discovery is meant to run against a local recursive
+// resolver (e.g. unbound / PowerDNS Recursor at 127.0.0.1:53). The caller validates non-emptiness.
 func NewDiscoverer(ex Exchanger, resolvers []string) *Discoverer {
-	if len(resolvers) == 0 {
-		resolvers = DefaultResolvers
-	}
 	return &Discoverer{Ex: ex, Resolvers: append([]string(nil), resolvers...)}
 }
 

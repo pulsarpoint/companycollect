@@ -24,7 +24,7 @@ func runScan(args []string) error {
 	dbPath := fs.String("db", "scan.db", "SQLite stage path")
 	query := fs.String("query", input.DefaultQuery, "ClickHouse query returning root_domain")
 	limit := fs.Int("limit", 0, "cap number of domains (0 = all)")
-	resolvers := fs.String("resolvers", strings.Join(resolve.DefaultResolvers, ","), "comma-separated recursive resolvers for NS discovery (use 127.0.0.1:53 for a local unbound)")
+	resolvers := fs.String("resolvers", "", "REQUIRED: comma-separated recursive resolvers for NS discovery — point at a local resolver, e.g. 127.0.0.1:53 (unbound / PowerDNS Recursor)")
 	discoveryQPS := fs.Float64("discovery-qps", 50, "max queries/sec per recursive resolver (bump high for local unbound)")
 	qps := fs.Float64("per-server-qps", 10, "max queries/sec per authoritative NS IP")
 	inflight := fs.Int("per-server-inflight", 3, "max concurrent queries per NS IP")
@@ -53,7 +53,7 @@ func runScan(args []string) error {
 	}
 	resolverList := cleanResolvers(strings.Split(*resolvers, ","))
 	if len(resolverList) == 0 {
-		return fmt.Errorf("--resolvers is empty")
+		return fmt.Errorf("--resolvers is required: give a recursive resolver address, e.g. a local unbound/PowerDNS Recursor at 127.0.0.1:53")
 	}
 	ctx := context.Background()
 

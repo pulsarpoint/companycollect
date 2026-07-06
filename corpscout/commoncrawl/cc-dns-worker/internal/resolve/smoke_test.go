@@ -4,6 +4,7 @@ package resolve
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -14,7 +15,13 @@ import (
 func TestSmokeRealDomains(t *testing.T) {
 	discSched := scheduler.New(scheduler.Config{PerServerQPS: 50, Burst: 50, MaxInFlight: 3})
 	authSched := scheduler.New(scheduler.Config{PerServerQPS: 10, Burst: 10, MaxInFlight: 3})
-	disc := NewDiscoverer(NewExchanger(discSched, 5*time.Second), nil) // nil -> DefaultResolvers
+	// Production mandates a local recursive resolver; this real-DNS smoke just needs any working
+	// recursive resolver — default to a public one, override via SMOKE_RESOLVER (e.g. 127.0.0.1:53).
+	resolver := "1.1.1.1:53"
+	if v := os.Getenv("SMOKE_RESOLVER"); v != "" {
+		resolver = v
+	}
+	disc := NewDiscoverer(NewExchanger(discSched, 5*time.Second), []string{resolver})
 	r := NewResolver(NewExchanger(authSched, 5*time.Second))
 	ctx := context.Background()
 
