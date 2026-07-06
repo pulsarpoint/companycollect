@@ -15,10 +15,12 @@ Recommended naming:
 dagster_v3.defs.brazil_companies.rfb
 dagster_v3.defs.brazil_companies.cnae
 dagster_v3.defs.brazil_companies.pgfn
+dagster_v3.defs.brazil_companies.cgu
 
 brazil_comp_rfb_*
 brazil_comp_cnae_*
 brazil_comp_pgfn_*
+brazil_comp_cgu_*
 ```
 
 ## Source Hierarchy
@@ -28,9 +30,9 @@ Brazil companies domain
   RFB - national company registry and establishment data
   CNAE - Brazil activity-code to NACE reference mapping
   PGFN - public active-debt and tax/FGTS debt enrichment
+  CGU - public sanctions and leniency agreement enrichment
   Future sources
     Receita Federal special status/reference enrichments
-    Public sanctions and compliance lists
     Government procurement supplier signals
 ```
 
@@ -41,10 +43,11 @@ Brazil companies domain
 | RFB | canonical company and establishment registry | CNPJ, CNPJ basico | monthly full snapshot |
 | CNAE | activity-code reference mapping | CNAE code, NACE code | small static/reference table |
 | PGFN | company debt/risk enrichment | CNPJ, CNPJ basico | quarterly snapshot |
+| CGU | sanctions/compliance enrichment | CNPJ, CNPJ basico, agreement id | latest published snapshot |
 
-RFB remains the canonical identity source for Brazilian companies. PGFN should
-not create companies by itself; it should enrich companies that can be joined to
-RFB by CNPJ or CNPJ basico.
+RFB remains the canonical identity source for Brazilian companies. PGFN and CGU
+should not create companies by themselves; they should enrich companies that can
+be joined to RFB by CNPJ or CNPJ basico.
 
 ## RFB - Company Registry
 
@@ -136,6 +139,54 @@ Detailed PGFN design:
 docs/brazil_pgfn-design.md
 ```
 
+## CGU - Sanctions And Leniency Agreements
+
+Source package:
+
+```text
+dagster_v3.defs.brazil_companies.cgu
+```
+
+What it is:
+
+Portal da Transparencia publishes bulk ZIP CSV files for public sanctions and
+leniency agreements. The source is company-risk/compliance enrichment, not
+canonical company identity and not financial statements.
+
+What we pull:
+
+| Dataset family | Meaning | Use |
+|---|---|---|
+| CEIS | ineligible/suspended companies | public sanctions and supplier risk |
+| CNEP | punished companies | anti-corruption/company penalty signal |
+| CEPIM | blocked non-profit entities | public transfer/convênio restriction signal |
+| Acordos de Leniência | leniency agreements and effects | compliance context and agreement obligations |
+
+Implemented assets:
+
+```text
+brazil_comp_cgu_raw_archives_s3
+brazil_comp_cgu_ceis_company_sanctions_duckdb
+brazil_comp_cgu_cnep_company_sanctions_duckdb
+brazil_comp_cgu_cepim_blocked_entities_duckdb
+brazil_comp_cgu_leniency_agreements_duckdb
+brazil_comp_cgu_leniency_agreement_effects_duckdb
+```
+
+Each DuckDB table has a matching ClickHouse export asset. The first
+implementation filters person rows from CEIS/CNEP and stores only company rows
+with 14-digit CNPJs.
+
+Implemented ClickHouse tables:
+
+```text
+br_cgu_ceis_company_sanctions
+br_cgu_cnep_company_sanctions
+br_cgu_cepim_blocked_entities
+br_cgu_leniency_agreements
+br_cgu_leniency_agreement_effects
+```
+
 ## Scheduling
 
 | Source | Suggested cadence | Reason |
@@ -143,6 +194,7 @@ docs/brazil_pgfn-design.md
 | RFB | monthly | source publishes full registry snapshots |
 | CNAE | manual/on-change | local reference mapping changes rarely |
 | PGFN | quarterly | source publishes complete active-debt base quarterly |
+| CGU | daily initially | Portal exposes current ZIP snapshots; cadence can be tightened after raw stability |
 
 PGFN and RFB are both full-snapshot sources. For old partitions, prefer cleanup
 assets over retaining every local extracted staging directory forever.

@@ -1,8 +1,6 @@
 {{
   config(
-    materialized='incremental',
-    unique_key=['rate_date', 'base_currency', 'quote_currency', 'source'],
-    incremental_strategy='delete+insert'
+    materialized='table'
   )
 }}
 
@@ -57,6 +55,7 @@ typed_rows as (
         cast(cast(pulled_at as timestamp with time zone) at time zone 'UTC' as timestamp) as pulled_at
     from observations
     where observation_value is not null
+      and json_extract_string(observation_value, '$[0]') is not null
 )
 
 select

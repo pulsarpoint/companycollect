@@ -39,14 +39,14 @@ EXCHANGE_RATES_V2_DUCKDB_PATH = Path(
 ).expanduser()
 if not EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute():
     EXCHANGE_RATES_V2_DUCKDB_PATH = EXCHANGE_RATES_V2_DUCKDB_PATH.resolve()
-# No partitions. The ECB API returns the whole multi-year history for every
-# reference currency in ONE ~1 MB request, so a single non-partitioned run pulls
-# [START_DATE, today], rebuilds the DuckDB dbt tables, and republishes the entire
-# ClickHouse window. This also means one materialization event per asset per run
-# (not one per month), so it can never storm the shared Postgres event log — the
-# original reason partitions existed. The daily schedule just re-runs the full
-# pull; ReplacingMergeTree(pulled_at) + the per-run DELETE window keep it idempotent.
-EXCHANGE_RATES_V2_START_DATE = "2023-01-01"
+# No partitions. A single non-partitioned run pulls [START_DATE, today], with the
+# ECB API requests split into calendar-year batches to keep each payload bounded.
+# The run rebuilds the DuckDB dbt tables and republishes the entire ClickHouse
+# window. This also means one materialization event per asset per run (not one
+# per month), so it can never storm the shared Postgres event log — the original
+# reason partitions existed. The daily schedule just re-runs the full pull;
+# ReplacingMergeTree(pulled_at) + the per-run DELETE window keep it idempotent.
+EXCHANGE_RATES_V2_START_DATE = "2006-01-01"
 # All three DuckDB-writing assets share one pool so overlapping runs (e.g. a
 # manual run racing the daily schedule) serialize against the single-writer file.
 EXCHANGE_RATES_V2_DUCKDB_POOL = "exchange_rates_v2_duckdb"
@@ -123,6 +123,12 @@ def exchange_rates_v2_raw_duckdb_asset(
         end_date,
         config.currencies,
     )
+    with duckdb.connect(str(EXCHANGE_RATES_V2_DUCKDB_PATH)) as connection:
+        _clear_exchange_rates_v2_raw_window(
+            connection,
+            start_date=start_date,
+            end_date=end_date,
+        )
     yield from dlt.run(
         context=context,
         dlt_source=exchange_rates_v2_raw_range_source(
@@ -278,8 +284,36 @@ def _validate_exchange_rates_v2_duckdb_table(
 
 
 def _full_range() -> tuple[str, str]:
-    """The whole reference window: [START_DATE, today]. One ECB request covers it."""
+    """The whole reference window: [START_DATE, today]. The source batches it by year."""
     return EXCHANGE_RATES_V2_START_DATE, date.today().isoformat()
+
+
+def _clear_exchange_rates_v2_raw_window(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    start_date: str,
+    end_date: str,
+) -> None:
+    table_exists = bool(
+        connection.execute(
+            """
+            select count(*)
+            from information_schema.tables
+            where table_schema = ? and table_name = ?
+            """,
+            [EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME, EXCHANGE_RATES_V2_RAW_DLT_TABLE],
+        ).fetchone()[0]
+    )
+    if not table_exists:
+        return
+    connection.execute(
+        f"""
+        delete from {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.{EXCHANGE_RATES_V2_RAW_DLT_TABLE}
+        where cast(start_date as date) <= cast(? as date)
+          and cast(end_date as date) >= cast(? as date)
+        """,
+        [end_date, start_date],
+    )
 
 
 def _sql_escape(value: str) -> str:

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from dagster_v3.defs.brazil_companies.cnae import tables as brazil_cnae_tables
+from dagster_v3.defs.brazil_companies.cgu import tables as brazil_cgu_tables
 from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
@@ -117,6 +118,7 @@ EXPECTED_MIGRATIONS = (
     "000101_corpscout_commoncrawl_domain_dns_records",
     "000102_corpscout_commoncrawl_domain_dns_scan",
     "000103_corpscout_br_pgfn_company_debts",
+    "000104_corpscout_br_cgu_sanctions",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1316,6 +1318,23 @@ def test_brazil_comp_pgfn_company_debts_migration_covers_exported_columns() -> N
     assert "cnpj," in sql
     assert "inscription_number," in sql
     assert "DROP TABLE IF EXISTS corpscout.br_pgfn_company_debts" in down_sql
+
+
+def test_brazil_comp_cgu_sanctions_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000104_corpscout_br_cgu_sanctions.up.sql")
+    down_sql = _migration_sql("000104_corpscout_br_cgu_sanctions.down.sql")
+
+    for table in brazil_cgu_tables.CGU_TABLES.values():
+        assert (f"CREATE TABLE IF NOT EXISTS corpscout.{table.clickhouse_table}") in sql
+        for column_name in table.columns:
+            assert f"    {column_name} " in sql, (
+                f"missing {column_name} in {table.clickhouse_table}"
+            )
+        assert f"DROP TABLE IF EXISTS corpscout.{table.clickhouse_table}" in down_sql
+
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (snapshot_date, cnpj, sanction_id, process_number)" in sql
+    assert "ORDER BY (snapshot_date, agreement_id, agreement_effect)" in sql
 
 
 def test_drop_raw_norway_exports_migration_removes_orphaned_tables() -> None:

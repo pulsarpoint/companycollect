@@ -1,8 +1,6 @@
 {{
   config(
-    materialized='incremental',
-    unique_key=['rate_date', 'base_currency', 'quote_currency', 'source'],
-    incremental_strategy='delete+insert'
+    materialized='table'
   )
 }}
 
