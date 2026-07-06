@@ -176,17 +176,71 @@ remote-control:
     control-enable: yes             # enables `unbound-control stats`
 ```
 
-### OS tuning (both hosts, the worker especially)
+### OS tuning (Ubuntu — the scan VM)
 
-DNS scanners are killed by network *state*, not CPU:
+DNS scanners are killed by network *state*, not CPU. Three fixes, all on the box running the worker
+(and the FD bump also applies to a co-located unbound). Commands are for Ubuntu.
 
-- **File descriptors** — `outgoing-range 4096 × 8 threads ≈ 33k` FDs for unbound alone; the worker
-  churns a socket per in-flight UDP query. Raise limits (`systemctl edit unbound` →
-  `[Service]` / `LimitNOFILE=131072`; worker side `ulimit -n 131072` and matching `fs.file-max`).
-- **conntrack** — thousands of short UDP/53 flows to unique IPs blow out a stateful firewall/NAT's
-  conntrack table (drops look like timeouts). Bump `net.netfilter.nf_conntrack_max`, shorten UDP
-  timeouts, or avoid conntracking outbound `:53`.
-- **Ephemeral ports** (worker) — widen `net.ipv4.ip_local_port_range` (e.g. `1024 65535`).
+**1. sysctl — file-max, ephemeral ports, conntrack.** One drop-in file:
+```bash
+sudo tee /etc/sysctl.d/99-cc-dns.conf >/dev/null <<'EOF'
+# each in-flight UDP query is a socket — allow lots of open files system-wide
+fs.file-max = 2097152
+# widen the ephemeral source-port range for high outbound QPS
+net.ipv4.ip_local_port_range = 1024 65535
+# bigger conntrack table + shorter UDP entries (thousands of short :53 flows)
+net.netfilter.nf_conntrack_max = 1048576
+net.netfilter.nf_conntrack_udp_timeout = 30
+net.netfilter.nf_conntrack_udp_timeout_stream = 60
+EOF
+sudo modprobe nf_conntrack     # so the nf_conntrack_* keys exist
+sudo sysctl --system           # apply now + on every boot
+```
+If the `nf_conntrack_*` lines error as "unknown key", the module wasn't loaded — the `modprobe`
+line fixes that (persist it with `echo nf_conntrack | sudo tee /etc/modules-load.d/nf_conntrack.conf`).
+On a VM with **no** stateful firewall you can drop the three conntrack lines entirely.
+
+**2. File descriptors.** The worker opens a socket per in-flight query; unbound needs ~33k
+(`outgoing-range 4096 × 8 threads`).
+- Worker run from a shell — raise the login limit, then re-login:
+  ```bash
+  sudo tee /etc/security/limits.d/99-cc-dns.conf >/dev/null <<'EOF'
+  *  soft  nofile  1048576
+  *  hard  nofile  1048576
+  EOF
+  # log out and back in (pam_limits applies at login), then check:
+  ulimit -n        # want 1048576
+  ```
+- Worker or unbound run as a systemd service — set it on the unit instead:
+  ```bash
+  sudo systemctl edit unbound          # opens a drop-in; add the block below
+  ```
+  ```ini
+  [Service]
+  LimitNOFILE=131072
+  ```
+  ```bash
+  sudo systemctl daemon-reload && sudo systemctl restart unbound
+  ```
+
+**3. conntrack — the cleaner option (optional).** Bumping the max in step 1 is usually enough. At
+full-corpus scale the tidier fix is to **not track outbound DNS at all** — exempt `:53` in the raw
+table:
+```bash
+sudo iptables -t raw -A OUTPUT     -p udp --dport 53 -j NOTRACK
+sudo iptables -t raw -A PREROUTING -p udp --sport 53 -j NOTRACK
+sudo iptables -t raw -A OUTPUT     -p tcp --dport 53 -j NOTRACK
+sudo iptables -t raw -A PREROUTING -p tcp --sport 53 -j NOTRACK
+sudo apt install -y iptables-persistent && sudo netfilter-persistent save   # survive reboot
+```
+
+**Verify:**
+```bash
+sysctl net.netfilter.nf_conntrack_max net.ipv4.ip_local_port_range fs.file-max
+ulimit -n
+# during a scan — conntrack usage should stay well under the max:
+watch -n1 'wc -l < /proc/net/nf_conntrack'
+```
 
 ### Verify
 
