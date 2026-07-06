@@ -60,7 +60,7 @@ class FakeFinancialStorage:
         self.update_fetches: dict[str, pl.DataFrame] = {}
         self.update_candidates: dict[str, pl.DataFrame] = {}
 
-    def read_historical_raw_fetches(self) -> pl.DataFrame:
+    def read_consolidated_historical_fetches(self) -> pl.DataFrame:
         self.historical_raw_fetch_reads += 1
         assert self.historical_raw_fetches_frame is not None
         return self.historical_raw_fetches_frame

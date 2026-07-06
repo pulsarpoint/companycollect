@@ -75,6 +75,23 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             return pl.DataFrame(schema=financial_fetches_parquet_schema())
         return pl.concat(frames, how="vertical_relaxed")
 
+    def read_consolidated_historical_fetches(self) -> pl.DataFrame:
+        """Latest fetch row per org across bootstrap bucket chunks and the
+        per-org raw_fetches layout written by the update assets."""
+        frames = [self._read_frame(key) for key in self.list_all_bootstrap_chunk_keys()]
+        frames.append(self.read_historical_raw_fetches())
+        return latest_fetch_rows_per_org(pl.concat(frames, how="vertical_relaxed"))
+
+    def list_all_bootstrap_chunk_keys(self) -> list[str]:
+        return sorted(
+            key
+            for key in self.object_store.list_keys(
+                BOOTSTRAP_FETCH_PREFIX,
+                bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
+            )
+            if key.endswith(".parquet")
+        )
+
     def list_bootstrap_chunk_keys(self, bucket_key: str) -> list[str]:
         return sorted(
             key

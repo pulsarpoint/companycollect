@@ -128,7 +128,7 @@ def norway_brreg_financial_statements_snapshot_parquet(
     context.log.info(
         "Building Norway Brreg snapshot financial statements parquet from historical raw fetches"
     )
-    fetch_frame = norway_brreg_financial_storage.read_historical_raw_fetches()
+    fetch_frame = norway_brreg_financial_storage.read_consolidated_historical_fetches()
     statement_frame = _original_statement_frame(fetch_frame)
     output_key = norway_brreg_financial_storage.write_snapshot_statements(
         statement_frame

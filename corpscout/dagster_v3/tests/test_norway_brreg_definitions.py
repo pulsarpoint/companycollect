@@ -141,7 +141,9 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     assert {k.path[-1] for k in snapshot_s3_node.parent_keys} == {
         "norway_brreg_entries_snapshot_raw_s3"
     }
-    assert {k.path[-1] for k in snapshot_fetches_node.parent_keys} == set()
+    assert {k.path[-1] for k in snapshot_fetches_node.parent_keys} == {
+        "norway_brreg_financial_bootstrap_fetches_parquet"
+    }
     assert {k.path[-1] for k in update_fetches_node.parent_keys} == {
         "norway_brreg_entity_updates_no_companies_parquet"
     }

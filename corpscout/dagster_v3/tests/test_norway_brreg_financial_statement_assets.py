@@ -88,7 +88,7 @@ class FakeFinancialStorage:
         self.snapshot_usd_reads = 0
         self.update_usd_reads: list[str] = []
 
-    def read_historical_raw_fetches(self) -> pl.DataFrame:
+    def read_consolidated_historical_fetches(self) -> pl.DataFrame:
         self.historical_raw_fetch_reads += 1
         assert self.historical_raw_fetches_frame is not None
         return self.historical_raw_fetches_frame

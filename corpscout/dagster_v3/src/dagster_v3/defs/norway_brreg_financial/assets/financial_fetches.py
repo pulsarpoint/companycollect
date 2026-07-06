@@ -38,10 +38,13 @@ NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS = dg.DailyPartitionsDefinition(
 
 @dg.asset(
     name="norway_brreg_financial_fetches_snapshot_parquet",
+    deps=[dg.AssetKey("norway_brreg_financial_bootstrap_fetches_parquet")],
     group_name=GROUP_NAME,
     kinds=FINANCIAL_FETCH_PARQUET_KINDS,
     description=(
-        "Inventories externally bootstrapped Norway Brreg historical raw financial fetch parquet."
+        "Inventories consolidated Norway Brreg historical raw financial fetches "
+        "(bootstrap bucket chunks unioned with per-org raw fetch parquet, latest "
+        "row per org)."
     ),
 )
 def norway_brreg_financial_fetches_snapshot_parquet(
@@ -49,7 +52,7 @@ def norway_brreg_financial_fetches_snapshot_parquet(
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
     context.log.info("Inventorying Norway Brreg historical raw financial fetches")
-    fetch_frame = norway_brreg_financial_storage.read_historical_raw_fetches()
+    fetch_frame = norway_brreg_financial_storage.read_consolidated_historical_fetches()
     status_counts = _status_counts(fetch_frame.to_dicts())
     context.log.info(
         "Completed Norway Brreg historical raw financial fetch inventory: "

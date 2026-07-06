@@ -85,6 +85,68 @@ def test_bootstrap_partitions_and_chunk_keys_are_stable() -> None:
     )
 
 
+def test_snapshot_inventory_depends_on_bootstrap_asset() -> None:
+    from dagster_v3.defs.norway_brreg_financial.assets.financial_fetches import (
+        norway_brreg_financial_fetches_snapshot_parquet,
+    )
+
+    assert dg.AssetKey("norway_brreg_financial_bootstrap_fetches_parquet") in (
+        norway_brreg_financial_fetches_snapshot_parquet.asset_deps[
+            dg.AssetKey("norway_brreg_financial_fetches_snapshot_parquet")
+        ]
+    )
+
+
+def test_consolidated_historical_fetches_union_bootstrap_and_raw_with_latest_per_org() -> None:
+    storage, _object_store = _storage()
+    storage.write_bootstrap_chunk(
+        "bucket_00",
+        0,
+        financial_fetches.financial_fetches_frame(
+            [
+                _failure_row(_candidate("811111111"), fetch_status="server_error"),
+                _success_row(_candidate("822222222")),
+            ]
+        ),
+    )
+    storage.write_bootstrap_chunk(
+        "bucket_01",
+        0,
+        financial_fetches.financial_fetches_frame(
+            [_success_row(_candidate("833333333"))]
+        ),
+    )
+    # Newer per-org raw fetch (update-asset layout) must win over the older
+    # bootstrap failure row for the same org.
+    update_row = _success_row(_candidate("811111111"))
+    update_row["fetched_at"] = "2026-07-06T00:00:00.000Z"
+    storage.write_raw_fetch(
+        "811111111",
+        "2024",
+        financial_fetches.financial_fetches_frame([update_row]),
+        overwrite=True,
+    )
+
+    consolidated = storage.read_consolidated_historical_fetches()
+
+    rows = {
+        row["org_number"]: row["fetch_status"]
+        for row in consolidated.select(["org_number", "fetch_status"]).to_dicts()
+    }
+    assert rows == {
+        "811111111": "success",
+        "822222222": "success",
+        "833333333": "success",
+    }
+
+
+def test_consolidated_historical_fetches_empty_layouts_return_empty_schema_frame() -> None:
+    storage, _object_store = _storage()
+    consolidated = storage.read_consolidated_historical_fetches()
+    assert consolidated.is_empty()
+    assert consolidated.columns == list(financial_fetches.BRREG_FINANCIAL_FETCHES_COLUMNS)
+
+
 def test_bootstrap_candidate_query_uses_bucket_predicate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
