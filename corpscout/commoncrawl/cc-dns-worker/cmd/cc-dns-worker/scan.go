@@ -70,25 +70,38 @@ func runScan(args []string) error {
 	defer st.Close()
 
 	// 1) Stream the queue seed from ClickHouse in batches — never materialize the whole domain list.
-	conn, err := chConn()
+	// On a restart where the seed already finished, skip the re-stream entirely and resume straight
+	// from the SQLite queue (the marker is only set after a full seed, so an interrupted seed re-runs).
+	seeded, err := st.SeedComplete(ctx, *scanID)
 	if err != nil {
 		return err
 	}
-	added, total := 0, 0
-	err = input.StreamClickHouse(ctx, conn, *query, *limit, *seedChunk, func(batch []string) error {
-		n, serr := st.Seed(ctx, *scanID, batch)
-		if serr != nil {
-			return serr
+	if seeded {
+		log.Printf("scan_id=%s: seed already complete — skipping ClickHouse re-stream, resuming from queue", *scanID)
+	} else {
+		conn, err := chConn()
+		if err != nil {
+			return err
 		}
-		added += n
-		total += len(batch)
-		return nil
-	})
-	conn.Close()
-	if err != nil {
-		return err
+		added, total := 0, 0
+		err = input.StreamClickHouse(ctx, conn, *query, *limit, *seedChunk, func(batch []string) error {
+			n, serr := st.Seed(ctx, *scanID, batch)
+			if serr != nil {
+				return serr
+			}
+			added += n
+			total += len(batch)
+			return nil
+		})
+		conn.Close()
+		if err != nil {
+			return err
+		}
+		if err := st.MarkSeedComplete(ctx, *scanID); err != nil {
+			return err
+		}
+		log.Printf("scan_id=%s: seeded %d domains from CH (%d new)", *scanID, total, added)
 	}
-	log.Printf("scan_id=%s: seeded %d domains from CH (%d new)", *scanID, total, added)
 
 	// Live metrics: DNS queries sent (traffic) + domains resolved, counted in the hot paths below.
 	stats := &metrics.Stats{}

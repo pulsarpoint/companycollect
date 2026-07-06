@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS scan_records (
   resolved_at  TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_records_domain ON scan_records (scan_id, root_domain);
+CREATE TABLE IF NOT EXISTS scan_meta (
+  scan_id       TEXT PRIMARY KEY,
+  seed_complete INTEGER NOT NULL DEFAULT 0,
+  seeded_at     TEXT DEFAULT ''
+);
 `
 
 // Open opens (creating if needed) the SQLite stage in WAL mode and ensures the schema.
@@ -92,6 +97,31 @@ func (s *Store) Seed(ctx context.Context, scanID string, domains []string) (int,
 		}
 	}
 	return added, tx.Commit()
+}
+
+// SeedComplete reports whether scanID's seed already finished, so a restart can skip re-streaming
+// the whole domain list from ClickHouse and resume straight from the SQLite queue. It returns false
+// if the seed never ran or was interrupted mid-stream (the marker is only set after a full seed).
+func (s *Store) SeedComplete(ctx context.Context, scanID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT seed_complete FROM scan_meta WHERE scan_id = ?`, scanID).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// MarkSeedComplete records that scanID has been fully seeded. Call it only after the seed stream
+// finishes without error; subsequent runs then skip the ClickHouse re-stream.
+func (s *Store) MarkSeedComplete(ctx context.Context, scanID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO scan_meta (scan_id, seed_complete, seeded_at) VALUES (?, 1, ?)
+		 ON CONFLICT(scan_id) DO UPDATE SET seed_complete = 1, seeded_at = excluded.seeded_at`,
+		scanID, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 // Pending returns domains for scanID whose status is neither 'done' nor 'error'.

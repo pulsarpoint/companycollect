@@ -260,11 +260,16 @@ for the full resolver-side + worker-side traffic picture.
 - `scan_domains` is **both the work queue and the per-domain summary**: `(scan_id, root_domain)` is
   the primary key, `status` is `pending` until a domain finishes, then `done` or `error`.
 - `scan_records` stages every resolved DNS record for a scan.
+- `scan_meta` records, per `scan_id`, whether the seed finished (`seed_complete`).
 
-**Resume contract:** on `scan` start, the seed is **streamed** from ClickHouse (`input.StreamClickHouse`)
-in `--seed-chunk` batches and `INSERT OR IGNORE`-ed into SQLite as each batch arrives — rows that
-already exist (from a prior, possibly crashed run) are left alone, and the CH result set is never
-materialized in full. Dispatch is streamed the same way: `Store.PendingBatch` returns up to
+**Resume contract:** on `scan` start, if `scan_meta` shows the seed already completed for this
+`--scan-id`, the ClickHouse re-stream is **skipped entirely** — the run resumes straight from the
+SQLite queue (no redundant re-read of the whole domain list, so a crash-restart under the auto-resume
+loop starts resolving immediately). Otherwise the seed is **streamed** from ClickHouse
+(`input.StreamClickHouse`) in `--seed-chunk` batches and `INSERT OR IGNORE`-ed into SQLite as each
+batch arrives — rows that already exist (from a prior, possibly crashed run) are left alone, the CH
+result set is never materialized in full, and `seed_complete` is set only **after** the full stream
+succeeds (so an interrupted seed re-runs and can't leave the queue partially populated). Dispatch is streamed the same way: `Store.PendingBatch` returns up to
 `--dispatch-batch` domains whose status is **not** `done`/`error`, ordered by `root_domain` starting
 after a cursor; `runScan` resolves and commits that whole batch, advances the cursor to the batch's
 last domain, and only then fetches the next `PendingBatch` (a commit barrier — no batch is dispatched

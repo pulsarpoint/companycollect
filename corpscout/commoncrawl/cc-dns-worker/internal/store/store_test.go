@@ -37,6 +37,29 @@ func TestSeedAndPending(t *testing.T) {
 	}
 }
 
+func TestSeedCompleteMarker(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	// Unmarked scan-id reads as not complete (so a fresh/interrupted seed re-streams).
+	if done, err := s.SeedComplete(ctx, "sc"); err != nil || done {
+		t.Fatalf("fresh SeedComplete = %v, err=%v; want false", done, err)
+	}
+	if err := s.MarkSeedComplete(ctx, "sc"); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	if done, err := s.SeedComplete(ctx, "sc"); err != nil || !done {
+		t.Fatalf("after mark SeedComplete = %v, err=%v; want true", done, err)
+	}
+	// The marker is per scan-id; a different scan-id is unaffected.
+	if done, _ := s.SeedComplete(ctx, "other"); done {
+		t.Errorf("unrelated scan-id reported seeded")
+	}
+	// Marking twice is idempotent (upsert), not an error.
+	if err := s.MarkSeedComplete(ctx, "sc"); err != nil {
+		t.Errorf("re-mark: %v", err)
+	}
+}
+
 func TestCommitBatchAndResume(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
