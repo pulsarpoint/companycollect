@@ -83,14 +83,20 @@ Two independent `Scheduler` instances back the two tiers:
 - **discovery scheduler** — the handful of recursive resolvers, `--discovery-qps` (default 50; bump
   much higher, e.g. 2000, for a local unbound).
 - **authoritative scheduler** — one bucket per authoritative NS IP, `--per-server-qps` (default 10)
-  and `--per-server-inflight` (default 3).
+  and `--per-server-inflight` (default 3), **except** IPs in a known large anycast provider range
+  (Cloudflare, Google Cloud DNS, AWS Route 53 — see `scheduler/providers.go`), which get the elevated
+  `--hyperscaler-qps` (default 200). Those operators absorb orders of magnitude more than a
+  self-hosted nameserver, so pacing them at 10/s needlessly serializes the huge share of domains
+  behind them and leaves the box idle; an unlisted provider just falls back to the polite default.
 
 Because millions of domains share the same handful of nameserver providers (Cloudflare, Route 53,
 GoDaddy, …), this per-IP keying is what keeps any single shared server from being hammered while
 still saturating egress — total throughput is the *sum* over hundreds of thousands of distinct
-server IPs in flight at once, each individually gentle. `--workers` (default 4000) bounds how many
-domains are being resolved concurrently; most of those goroutines are simply blocked waiting on a
-server's limiter.
+server IPs in flight at once, each individually gentle. The hyperscaler override matters precisely
+*because* of that concentration: a full-corpus run's tail is dominated by the big providers, so
+without it Cloudflare et al. become the throughput long-pole (the box sits near-idle, throttling
+itself to 10/s per anycast IP). `--workers` (default 4000) bounds how many domains are being resolved
+concurrently; most of those goroutines are simply blocked waiting on a server's limiter.
 
 Each per-server-IP entry in the scheduler also runs a **circuit breaker**: after `--breaker-threshold`
 (default `5`) consecutive *transport* failures (timeouts) to one authoritative NS IP, that IP's
@@ -359,6 +365,7 @@ Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending
 | `--discovery-inflight` | int | `500` | max concurrent in-flight queries **per** recursive resolver — keep high so a local resolver isn't starved |
 | `--per-server-qps` | float | `10` | max queries/sec **per** authoritative NS IP (Tier 2) |
 | `--per-server-inflight` | int | `3` | max concurrent queries per **authoritative** NS IP (Tier-2 politeness; discovery uses `--discovery-inflight`) |
+| `--hyperscaler-qps` | float | `200` | elevated per-server QPS for big anycast providers (Cloudflare/Google/Route53); `0` disables the override |
 | `--workers` | int | `4000` | max domains resolved concurrently (semaphore-bounded goroutine pool) |
 | `--commit-batch` | int | `200` | domains per SQLite commit transaction |
 | `--seed-chunk` | int | `5000` | domains per SQLite seed transaction (only affects the initial `INSERT OR IGNORE` pass) |

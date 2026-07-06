@@ -30,6 +30,7 @@ func runScan(args []string) error {
 	discoveryInflight := fs.Int("discovery-inflight", 500, "max concurrent in-flight queries per recursive resolver — keep high for a local resolver (the authoritative --per-server-inflight stays low)")
 	qps := fs.Float64("per-server-qps", 10, "max queries/sec per authoritative NS IP")
 	inflight := fs.Int("per-server-inflight", 3, "max concurrent queries per authoritative NS IP (Tier-2 politeness; discovery uses --discovery-inflight)")
+	hyperscalerQPS := fs.Float64("hyperscaler-qps", 200, "elevated per-server QPS for big anycast DNS providers (Cloudflare/Google/AWS Route53), which absorb far more than --per-server-qps; 0 disables")
 	workers := fs.Int("workers", 4000, "max domains resolved concurrently")
 	batchN := fs.Int("commit-batch", 200, "domains per SQLite commit")
 	seedChunk := fs.Int("seed-chunk", 5000, "domains per SQLite seed transaction")
@@ -108,7 +109,7 @@ func runScan(args []string) error {
 
 	// 2) Two schedulers + resolver. The exchangers count every query they send into stats.
 	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *discoveryInflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
-	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
+	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight, HyperscalerQPS: *hyperscalerQPS, HyperscalerInFlight: max(*inflight, 40), BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
 	disc := resolve.NewDiscoverer(resolve.NewExchangerWithStats(discSched, *timeout, stats), resolverList)
 	rec := resolve.NewResolver(resolve.NewExchangerWithStats(authSched, *timeout, stats))
 	cfg := records.DefaultConfig()

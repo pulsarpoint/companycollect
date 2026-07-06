@@ -25,6 +25,12 @@ type Config struct {
 	PerServerQPS float64
 	Burst        int
 	MaxInFlight  int
+	// HyperscalerQPS / HyperscalerInFlight override PerServerQPS / MaxInFlight for server IPs in a
+	// known large anycast DNS provider range (see providers.go). <= 0 disables the override (every
+	// server paced at the default). These providers safely absorb far more than a small nameserver,
+	// so this stops Cloudflare/Google/Route53 from being the throughput long-pole.
+	HyperscalerQPS      float64
+	HyperscalerInFlight int
 	// BreakerThreshold is the number of CONSECUTIVE transport failures (fn errors) to one server IP
 	// that opens its circuit. <= 0 disables the breaker (Do never fast-fails).
 	BreakerThreshold int
@@ -71,9 +77,19 @@ func (s *Scheduler) forServer(ip string) *server {
 	if sv, ok := s.lims[ip]; ok {
 		return sv
 	}
+	qps, burst, inflight := s.cfg.PerServerQPS, s.cfg.Burst, s.cfg.MaxInFlight
+	if s.cfg.HyperscalerQPS > 0 && isHyperscaler(ip) {
+		qps = s.cfg.HyperscalerQPS
+		if s.cfg.HyperscalerInFlight > 0 {
+			inflight = s.cfg.HyperscalerInFlight
+		}
+		if int(qps) > burst { // let the elevated rate actually burst
+			burst = int(qps)
+		}
+	}
 	sv := &server{
-		lim:  rate.NewLimiter(rate.Limit(s.cfg.PerServerQPS), s.cfg.Burst),
-		slot: make(chan struct{}, s.cfg.MaxInFlight),
+		lim:  rate.NewLimiter(rate.Limit(qps), burst),
+		slot: make(chan struct{}, inflight),
 	}
 	s.lims[ip] = sv
 	return sv
