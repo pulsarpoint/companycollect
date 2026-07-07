@@ -108,7 +108,13 @@ func runScan(args []string) error {
 	stats := &metrics.Stats{}
 
 	// 2) Two schedulers + resolver. The exchangers count every query they send into stats.
-	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *discoveryInflight, BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
+	// NO circuit breaker on discovery: it talks only to the local recursive resolver(s) — a single
+	// shared dependency for EVERY domain. A per-server breaker here is catastrophic: one transient
+	// burst of slow responses trips the resolver's circuit and then fast-fails ALL discovery with
+	// ErrCircuitOpen, mass-marking domains error (observed: 2M+ domains falsely errored). The breaker
+	// belongs on authSched, where skipping one genuinely dead authoritative server is correct; a slow
+	// resolver is instead handled by the per-query retry in Discoverer.query.
+	discSched := scheduler.New(scheduler.Config{PerServerQPS: *discoveryQPS, Burst: max(1, int(*discoveryQPS)), MaxInFlight: *discoveryInflight, BreakerThreshold: 0, BreakerCooldown: *breakerCooldown})
 	authSched := scheduler.New(scheduler.Config{PerServerQPS: *qps, Burst: max(1, int(*qps)), MaxInFlight: *inflight, HyperscalerQPS: *hyperscalerQPS, HyperscalerInFlight: max(*inflight, 40), BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown})
 	disc := resolve.NewDiscoverer(resolve.NewExchangerWithStats(discSched, *timeout, stats), resolverList)
 	rec := resolve.NewResolver(resolve.NewExchangerWithStats(authSched, *timeout, stats))
