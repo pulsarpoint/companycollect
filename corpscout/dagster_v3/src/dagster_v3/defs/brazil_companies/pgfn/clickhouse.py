@@ -9,6 +9,21 @@ from dagster_v3.defs.clickhouse.resolved import (
     export_duckdb_connection_table_to_clickhouse,
 )
 
+_REQUIRED_DATE_COLUMNS = frozenset({"snapshot_reference_date"})
+_NULLABLE_DATE_COLUMNS = frozenset({"inscription_date"})
+_NON_STRING_COLUMNS = (
+    _REQUIRED_DATE_COLUMNS
+    | _NULLABLE_DATE_COLUMNS
+    | {
+        "snapshot_year",
+        "snapshot_quarter",
+        "source_row_number",
+        "is_lawsuit",
+        "consolidated_amount_brl",
+        "resolved_at",
+    }
+)
+
 
 def export_brazil_comp_pgfn_company_debts_clickhouse(
     *,
@@ -37,7 +52,24 @@ def export_brazil_comp_pgfn_company_debts_clickhouse(
             clickhouse_table=tables.BR_PGFN_COMPANY_DEBTS_TABLE_CH,
             columns=tables.BR_PGFN_COMPANY_DEBTS_EXPORT_COLUMNS,
             truncate=True,
+            column_expressions=_clickhouse_export_expressions(
+                tables.BR_PGFN_COMPANY_DEBTS_EXPORT_COLUMNS
+            ),
         )
     if log is not None:
         log("Finished Brazil PGFN company debts ClickHouse export: rows=%s", rows)
     return rows
+
+
+def _clickhouse_export_expressions(columns: tuple[str, ...]) -> dict[str, str]:
+    expressions: dict[str, str] = {}
+    for column in columns:
+        if column in _REQUIRED_DATE_COLUMNS:
+            expressions[column] = f"cast({column} as date)"
+        elif column in _NULLABLE_DATE_COLUMNS:
+            expressions[column] = (
+                f"try_cast(nullif(cast({column} as varchar), '') as date)"
+            )
+        elif column not in _NON_STRING_COLUMNS:
+            expressions[column] = f"coalesce(cast({column} as varchar), '')"
+    return expressions
