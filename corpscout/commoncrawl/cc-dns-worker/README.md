@@ -409,9 +409,10 @@ incrementally load → repeat**, crash-safe:
 - While a scan runs, a background loader **incrementally loads new records to ClickHouse** every
   `--load-interval`, walking `scan_records` by a monotonic `rowid` watermark — so it never misses a
   late-finishing domain, and re-runs dedup in CH. After the scan finishes, a final flush loads the rest.
-- A **state file** (`orchestrator-state.json`, `{cycle_id, db, phase}`) makes a restart/reboot
-  **resume the current cycle's phase**; a *new* cycle starts only once the current one is fully
-  scanned and loaded. A crash never restarts the scan from scratch or skips the load.
+- A **state file** (`orchestrator-state.json`, `{cycle_id, phase}` — the db is always derived as
+  `scan-<cycle_id>.db`, one source of truth) makes a restart/reboot **resume the current cycle's
+  phase**; a *new* cycle starts only once the current one is fully scanned and loaded. A crash never
+  restarts the scan from scratch or skips the load.
 - After a cycle completes, old cycle DBs are pruned, keeping `--keep-dbs` previous (default 1).
 
 | Flag | Type | Default | Meaning |

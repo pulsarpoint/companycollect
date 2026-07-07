@@ -17,9 +17,9 @@ import (
 
 // cycleState is persisted (orchestrator-state.json) so a restart resumes the current cycle's phase
 // instead of starting a new scan. A new cycle is minted only once the current one is fully done.
+// The db path is NOT stored — it's always derived from CycleID (dbName) so there's one source of truth.
 type cycleState struct {
 	CycleID string `json:"cycle_id"`
-	DB      string `json:"db"`
 	Phase   string `json:"phase"` // scanning | flushing | done
 }
 
@@ -28,6 +28,9 @@ const (
 	phaseFlushing = "flushing"
 	phaseDone     = "done"
 )
+
+// dbName derives the SQLite stage filename for a cycle from its id.
+func dbName(cycleID string) string { return "scan-" + cycleID + ".db" }
 
 // runOrchestrator loops forever: mint-or-resume a cycle, scan it (incrementally loading to CH as it
 // goes), final-flush the load, prune old DBs, then start the next cycle. Designed as the systemd
@@ -53,7 +56,7 @@ func runOrchestrator(args []string) error {
 		if err != nil {
 			return err
 		}
-		dbPath := filepath.Join(*dir, state.DB)
+		dbPath := filepath.Join(*dir, dbName(state.CycleID))
 
 		if state.Phase == phaseScanning {
 			if err := runScanPhase(ctx, state, dbPath, cfg, *loadInterval, *loadBatch); err != nil {
@@ -92,16 +95,15 @@ func loadOrStartCycle(statePath string) (cycleState, error) {
 	if b, err := os.ReadFile(statePath); err == nil {
 		var s cycleState
 		if json.Unmarshal(b, &s) == nil && s.CycleID != "" && s.Phase != phaseDone {
-			log.Printf("resuming cycle %s (phase=%s, db=%s)", s.CycleID, s.Phase, s.DB)
+			log.Printf("resuming cycle %s (phase=%s, db=%s)", s.CycleID, s.Phase, dbName(s.CycleID))
 			return s, nil
 		}
 	}
-	id := time.Now().UTC().Format("20060102T150405Z")
-	s := cycleState{CycleID: id, DB: "scan-" + id + ".db", Phase: phaseScanning}
+	s := cycleState{CycleID: time.Now().UTC().Format("20060102T150405Z"), Phase: phaseScanning}
 	if err := saveState(statePath, s); err != nil {
 		return cycleState{}, err
 	}
-	log.Printf("starting new cycle %s (db=%s)", s.CycleID, s.DB)
+	log.Printf("starting new cycle %s (db=%s)", s.CycleID, dbName(s.CycleID))
 	return s, nil
 }
 
