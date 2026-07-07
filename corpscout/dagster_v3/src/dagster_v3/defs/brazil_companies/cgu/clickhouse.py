@@ -22,6 +22,11 @@ _NULLABLE_DATE_COLUMNS = frozenset(
         "information_date",
     }
 )
+_NON_STRING_COLUMNS = (
+    _REQUIRED_DATE_COLUMNS
+    | _NULLABLE_DATE_COLUMNS
+    | {"source_row_number", "fine_amount_brl", "resolved_at"}
+)
 
 
 def export_brazil_comp_cgu_table_clickhouse(
@@ -53,14 +58,14 @@ def export_brazil_comp_cgu_table_clickhouse(
             clickhouse_table=table.clickhouse_table,
             columns=table.columns,
             truncate=True,
-            column_expressions=_date_column_expressions(table.columns),
+            column_expressions=_clickhouse_export_expressions(table.columns),
         )
     if log is not None:
         log("Finished Brazil CGU ClickHouse export: rows=%s", rows)
     return rows
 
 
-def _date_column_expressions(columns: tuple[str, ...]) -> dict[str, str]:
+def _clickhouse_export_expressions(columns: tuple[str, ...]) -> dict[str, str]:
     expressions: dict[str, str] = {}
     for column in columns:
         if column in _REQUIRED_DATE_COLUMNS:
@@ -69,4 +74,6 @@ def _date_column_expressions(columns: tuple[str, ...]) -> dict[str, str]:
             expressions[column] = (
                 f"try_cast(nullif(cast({column} as varchar), '') as date)"
             )
+        elif column not in _NON_STRING_COLUMNS:
+            expressions[column] = f"coalesce(cast({column} as varchar), '')"
     return expressions

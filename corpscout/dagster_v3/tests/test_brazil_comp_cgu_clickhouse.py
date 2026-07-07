@@ -108,18 +108,18 @@ def test_cgu_clickhouse_export_casts_varchar_sanction_dates(tmp_path: Path) -> N
                 'HYLUX REFORMAS E SERVICOS LTDA'::varchar as sanctioned_name,
                 'HYLUX REFORMAS E SERVICOS LTDA'::varchar as sanctioning_agency_reported_name,
                 'HYLUX REFORMAS E SERVICOS LTDA'::varchar as receita_legal_name,
-                'HYLUX SERVICOS'::varchar as receita_trade_name,
+                null::varchar as receita_trade_name,
                 '0200150272334'::varchar as process_number,
                 'Declaração de Inidoneidade'::varchar as sanction_category,
                 '2018-01-20'::varchar as sanction_start_date,
                 null::varchar as sanction_end_date,
                 '2018-01-20'::varchar as publication_date,
                 'Diário Oficial'::varchar as publication,
-                ''::varchar as publication_detail,
+                null::varchar as publication_detail,
                 null::varchar as final_judgment_date,
                 'Nacional'::varchar as sanction_scope,
                 'Prefeitura'::varchar as sanctioning_agency,
-                'SP'::varchar as sanctioning_agency_state,
+                null::varchar as sanctioning_agency_state,
                 'Municipal'::varchar as sanctioning_agency_sphere,
                 'Lei 8666'::varchar as legal_basis,
                 '2026-07-06'::varchar as source_information_date,
@@ -148,3 +148,6 @@ def test_cgu_clickhouse_export_casts_varchar_sanction_dates(tmp_path: Path) -> N
     assert inserted_rows[0][columns.index("source_information_date")] == date(
         2026, 7, 6
     )
+    assert inserted_rows[0][columns.index("receita_trade_name")] == ""
+    assert inserted_rows[0][columns.index("publication_detail")] == ""
+    assert inserted_rows[0][columns.index("sanctioning_agency_state")] == ""
