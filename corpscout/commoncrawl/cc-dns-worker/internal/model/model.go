@@ -33,24 +33,27 @@ type DomainResult struct {
 	ResolvedAt   time.Time
 }
 
-// RecordRow mirrors corpscout.commoncrawl_domain_dns_records.
+// RecordRow mirrors corpscout.commoncrawl_domain_dns_records (distinct model). Each scan inserts one
+// row per record with FirstSeen = LastSeen = scan time and Scans = 1; the AggregatingMergeTree merges
+// duplicates to min(first_seen) / max(last_seen) / sum(scans).
 type RecordRow struct {
-	ScanID      string    `ch:"scan_id"`
-	RootDomain  string    `ch:"root_domain"`
-	Name        string    `ch:"name"`
-	RecordType  string    `ch:"record_type"`
-	Slot        string    `ch:"slot"`
-	Value       string    `ch:"value"`
-	TTL         uint32    `ch:"ttl"`
-	Priority    uint16    `ch:"priority"`
-	Rcode       string    `ch:"rcode"`
-	SourceRunID string    `ch:"source_run_id"`
-	ResolvedAt  time.Time `ch:"resolved_at"`
+	RootDomain string    `ch:"root_domain"`
+	RecordType string    `ch:"record_type"`
+	Slot       string    `ch:"slot"`
+	Name       string    `ch:"name"`
+	Value      string    `ch:"value"`
+	TTL        uint32    `ch:"ttl"`
+	Priority   uint16    `ch:"priority"`
+	Rcode      string    `ch:"rcode"`
+	LastRunID  string    `ch:"last_run_id"`
+	FirstSeen  time.Time `ch:"first_seen"`
+	LastSeen   time.Time `ch:"last_seen"`
+	Scans      uint64    `ch:"scans"`
 }
 
-// ScanRow mirrors corpscout.commoncrawl_domain_dns_scan.
+// ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
+// successful scans are loaded, so a failed re-scan never clobbers a domain's last-good summary.
 type ScanRow struct {
-	ScanID       string    `ch:"scan_id"`
 	RootDomain   string    `ch:"root_domain"`
 	ETLD         string    `ch:"etld"`
 	Nameservers  []string  `ch:"nameservers"`
@@ -58,9 +61,8 @@ type ScanRow struct {
 	DNSSECSigned uint8     `ch:"dnssec_signed"`
 	DSPresent    uint8     `ch:"ds_present"`
 	Status       string    `ch:"status"`
-	Error        string    `ch:"error"`
 	QueriesTotal uint16    `ch:"queries_total"`
 	QueriesOK    uint16    `ch:"queries_ok"`
-	SourceRunID  string    `ch:"source_run_id"`
+	LastRunID    string    `ch:"last_run_id"`
 	ResolvedAt   time.Time `ch:"resolved_at"`
 }

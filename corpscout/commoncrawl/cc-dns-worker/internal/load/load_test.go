@@ -9,11 +9,11 @@ import (
 
 func TestColumnLists(t *testing.T) {
 	rc := chColumns[model.RecordRow]()
-	if !strings.Contains(strings.Join(rc, ","), "record_type") || len(rc) < 11 {
+	if !strings.Contains(strings.Join(rc, ","), "first_seen") || len(rc) != 12 {
 		t.Errorf("RecordRow columns wrong: %v", rc)
 	}
 	sc := chColumns[model.ScanRow]()
-	if !strings.Contains(strings.Join(sc, ","), "nameservers") || len(sc) < 13 {
+	if !strings.Contains(strings.Join(sc, ","), "nameservers") || len(sc) != 11 {
 		t.Errorf("ScanRow columns wrong: %v", sc)
 	}
 }

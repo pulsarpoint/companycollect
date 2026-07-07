@@ -18,7 +18,7 @@ func chCols(v any) map[string]bool {
 
 func TestRecordRowColumns(t *testing.T) {
 	cols := chCols(RecordRow{})
-	for _, c := range []string{"scan_id", "root_domain", "name", "record_type", "slot", "value", "ttl", "priority", "rcode", "source_run_id", "resolved_at"} {
+	for _, c := range []string{"root_domain", "record_type", "slot", "name", "value", "ttl", "priority", "rcode", "last_run_id", "first_seen", "last_seen", "scans"} {
 		if !cols[c] {
 			t.Errorf("RecordRow missing ch column %q", c)
 		}
@@ -27,7 +27,7 @@ func TestRecordRowColumns(t *testing.T) {
 
 func TestScanRowColumns(t *testing.T) {
 	cols := chCols(ScanRow{})
-	for _, c := range []string{"scan_id", "root_domain", "etld", "nameservers", "ns_ips", "dnssec_signed", "ds_present", "status", "error", "queries_total", "queries_ok", "source_run_id", "resolved_at"} {
+	for _, c := range []string{"root_domain", "etld", "nameservers", "ns_ips", "dnssec_signed", "ds_present", "status", "queries_total", "queries_ok", "last_run_id", "resolved_at"} {
 		if !cols[c] {
 			t.Errorf("ScanRow missing ch column %q", c)
 		}

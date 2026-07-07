@@ -225,9 +225,11 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 	return tx.Commit()
 }
 
-// StagedRecords reads the record stage for a scan into CH RecordRow shape.
+// StagedRecords reads the record stage for a scan into the distinct-model RecordRow shape. Each row
+// carries first_seen = last_seen = resolved_at and scans = 1; ClickHouse's AggregatingMergeTree folds
+// them into the record's lifespan on merge.
 func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.RecordRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT scan_id, root_domain, name, record_type, slot, value,
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, name, record_type, slot, value,
 		ttl, priority, rcode, source_run_id, resolved_at FROM scan_records WHERE scan_id = ?`, scanID)
 	if err != nil {
 		return nil, err
@@ -237,21 +239,24 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 	for rows.Next() {
 		var r model.RecordRow
 		var ts string
-		if err := rows.Scan(&r.ScanID, &r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
-			&r.TTL, &r.Priority, &r.Rcode, &r.SourceRunID, &ts); err != nil {
+		if err := rows.Scan(&r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
+			&r.TTL, &r.Priority, &r.Rcode, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
-		r.ResolvedAt = parseTS(ts)
+		t := parseTS(ts)
+		r.FirstSeen, r.LastSeen, r.Scans = t, t, 1
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
-// StagedDomains reads finished domain summaries for a scan into CH ScanRow shape.
+// StagedDomains reads the per-domain summaries for a scan into ScanRow shape. Only status='done'
+// domains are returned: a failed re-scan must not clobber a domain's last-good summary, and a domain
+// that never resolves has no DNS state to record.
 func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT scan_id, root_domain, etld, nameservers, ns_ips,
-		dnssec_signed, ds_present, status, error, queries_total, queries_ok, source_run_id, resolved_at
-		FROM scan_domains WHERE scan_id = ? AND status IN ('done','error')`, scanID)
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
+		dnssec_signed, ds_present, status, queries_total, queries_ok, source_run_id, resolved_at
+		FROM scan_domains WHERE scan_id = ? AND status = 'done'`, scanID)
 	if err != nil {
 		return nil, err
 	}
@@ -261,8 +266,8 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 		var r model.ScanRow
 		var ns, nsips, ts string
 		var dnssec, ds int
-		if err := rows.Scan(&r.ScanID, &r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
-			&r.Status, &r.Error, &r.QueriesTotal, &r.QueriesOK, &r.SourceRunID, &ts); err != nil {
+		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
+			&r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)

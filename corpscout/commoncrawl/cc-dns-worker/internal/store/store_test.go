@@ -100,17 +100,21 @@ func TestCommitBatchAndResume(t *testing.T) {
 	if len(recs) != 1 || recs[0].RecordType != "MX" || recs[0].Priority != 10 {
 		t.Fatalf("staged records = %+v", recs)
 	}
-	// source_run_id must be the run-id threaded through DomainResult, not the scan_id (they can
+	// last_run_id carries the run-id threaded through DomainResult, not the scan_id (they can
 	// legitimately differ: --run-id lets multiple scan-ids share one logical run).
-	if recs[0].SourceRunID != "run-xyz" {
-		t.Errorf("staged record source_run_id = %q, want %q (not scan_id %q)", recs[0].SourceRunID, "run-xyz", "sc")
+	if recs[0].LastRunID != "run-xyz" {
+		t.Errorf("staged record last_run_id = %q, want %q (not scan_id %q)", recs[0].LastRunID, "run-xyz", "sc")
+	}
+	// Distinct model: first_seen == last_seen == resolved_at, scans == 1 on a fresh insert.
+	if recs[0].Scans != 1 || !recs[0].FirstSeen.Equal(recs[0].LastSeen) {
+		t.Errorf("staged record scans/first/last wrong: %+v", recs[0])
 	}
 	rows, _ := s2.StagedDomains(ctx, "sc")
 	if len(rows) != 1 || rows[0].RootDomain != "a.com" || len(rows[0].Nameservers) != 1 {
 		t.Fatalf("staged domains = %+v", rows)
 	}
-	if rows[0].SourceRunID != "run-xyz" {
-		t.Errorf("staged domain source_run_id = %q, want %q (not scan_id %q)", rows[0].SourceRunID, "run-xyz", "sc")
+	if rows[0].LastRunID != "run-xyz" {
+		t.Errorf("staged domain last_run_id = %q, want %q (not scan_id %q)", rows[0].LastRunID, "run-xyz", "sc")
 	}
 }
 
@@ -151,12 +155,14 @@ func TestPendingExcludesErrorStatus(t *testing.T) {
 		t.Fatalf("pending = %v, want [b.com] (a.com is status=error, must be excluded)", pend)
 	}
 
+	// Error domains are NOT staged for the CH summary (done-only), so a failed re-scan can never
+	// clobber a domain's last-good state — a.com errored, so it produces no summary row.
 	rows, err := s.StagedDomains(ctx, "sc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].RootDomain != "a.com" || rows[0].Status != "error" {
-		t.Fatalf("staged domains = %+v, want a.com with status=error", rows)
+	if len(rows) != 0 {
+		t.Fatalf("staged domains = %+v, want none (error domains are not loaded to the summary)", rows)
 	}
 }
 

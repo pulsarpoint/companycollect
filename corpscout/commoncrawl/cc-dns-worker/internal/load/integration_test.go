@@ -49,7 +49,7 @@ func TestLoadFromStoreRoundTrip(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	if err := st.CommitBatch(ctx, []model.DomainResult{{
-		ScanID: "itest", RootDomain: "example.test", ETLD: "test", Status: "done",
+		ScanID: "itest", RootDomain: "example.test", ETLD: "test", Status: "done", SourceRunID: "itest",
 		Nameservers: []string{"ns1.example.test"}, NSIPs: []string{"1.1.1.1"},
 		QueriesTotal: 2, QueriesOK: 2, ResolvedAt: now,
 		Records: []model.DNSRecord{{Name: "example.test", RecordType: "MX", Value: "mail.example.test", Priority: 10, Rcode: "NOERROR", TTL: 300}},
@@ -61,8 +61,8 @@ func TestLoadFromStoreRoundTrip(t *testing.T) {
 	// Register cleanup up front so the itest rows are removed from shared ClickHouse even if an
 	// assertion below fails via t.Fatalf (which would skip trailing statements). Close last.
 	t.Cleanup(func() {
-		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_records WHERE scan_id='itest'")
-		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE scan_id='itest'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_records WHERE root_domain='example.test'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='example.test'")
 		_ = conn.Close()
 	})
 	nr, nd, err := FromStore(ctx, conn, st, "itest")
@@ -73,12 +73,19 @@ func TestLoadFromStoreRoundTrip(t *testing.T) {
 		t.Fatalf("loaded records=%d domains=%d, want 1/1", nr, nd)
 	}
 
-	var rt string
+	var rt, runID string
+	var scans uint64
 	if err := conn.QueryRow(ctx,
-		"SELECT record_type FROM corpscout.commoncrawl_domain_dns_records FINAL WHERE scan_id='itest' LIMIT 1").Scan(&rt); err != nil {
+		"SELECT record_type, last_run_id, scans FROM corpscout.commoncrawl_domain_dns_records FINAL WHERE root_domain='example.test' LIMIT 1").Scan(&rt, &runID, &scans); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if rt != "MX" {
 		t.Errorf("record_type = %q, want MX", rt)
+	}
+	if runID != "itest" {
+		t.Errorf("last_run_id = %q, want itest", runID)
+	}
+	if scans != 1 {
+		t.Errorf("scans = %d, want 1 (single insert)", scans)
 	}
 }
