@@ -172,6 +172,23 @@ def test_snapshot_financial_candidates_use_active_companies_without_website_filt
     assert [row["org_number"] for row in rows] == ["1", "2"]
 
 
+def test_financial_candidates_treat_legacy_no_companies_without_accounts_year_as_empty() -> None:
+    frame = pl.DataFrame(
+        [
+            {
+                "org_number": "1",
+                "name": "Legacy Active",
+                "is_active": True,
+                "primary_website_url": "https://legacy.no",
+            }
+        ]
+    )
+
+    rows = financial_fetches.financial_fetch_candidates_from_no_companies(frame)
+
+    assert rows == []
+
+
 def test_transport_failure_status_is_retryable_failure_for_downstream_guard() -> None:
     row = financial_fetches.financial_fetch_failure_row(
         org={"org_number": "999", "legal_name": "Broken AS"},

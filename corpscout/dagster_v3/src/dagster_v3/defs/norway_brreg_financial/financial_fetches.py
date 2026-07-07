@@ -170,6 +170,10 @@ def financial_fetch_status_requires_failure(fetch_status: str) -> bool:
 def financial_fetch_candidates_from_no_companies(frame: pl.DataFrame) -> list[dict[str, Any]]:
     if frame.is_empty():
         return []
+    if "last_submitted_accounts_year" not in frame.columns:
+        frame = frame.with_columns(
+            pl.lit(None, dtype=pl.Utf8).alias("last_submitted_accounts_year")
+        )
     return [
         {
             "org_number": str(row["org_number"]),
