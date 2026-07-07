@@ -15,7 +15,9 @@ import pytest
 
 from dagster_v3.defs.norway_brreg_financial import financial_normalize
 from dagster_v3.defs.norway_brreg_financial.assets import financial_statements
-from dagster_v3.defs.norway_brreg_financial.constants import NORWAY_BRREG_FINANCIAL_BUCKET
+from dagster_v3.defs.norway_brreg_financial.constants import (
+    NORWAY_BRREG_FINANCIAL_BUCKET,
+)
 from dagster_v3.defs.norway_brreg_financial.assets.financial_statements import (
     norway_brreg_financial_statements_snapshot_clickhouse,
     norway_brreg_financial_statements_snapshot_parquet,
@@ -44,10 +46,11 @@ class FakeExchangeRates:
         self.requests: list[tuple[str, str]] = []
 
     def usd_rates(self, requests):
-        self.requests.extend((request.currency, request.rate_date) for request in requests)
+        self.requests.extend(
+            (request.currency, request.rate_date) for request in requests
+        )
         return {
-            (request.currency, request.rate_date): FakeUsdRate()
-            for request in requests
+            (request.currency, request.rate_date): FakeUsdRate() for request in requests
         }
 
 
@@ -87,10 +90,18 @@ class FakeFinancialStorage:
         self.update_statement_reads: list[str] = []
         self.snapshot_usd_reads = 0
         self.update_usd_reads: list[str] = []
+        self.consolidated_fetch_log_calls = 0
+        self.snapshot_statement_write_log_calls = 0
 
-    def read_consolidated_historical_fetches(self) -> pl.DataFrame:
+    def read_consolidated_historical_fetches(self, *, log=None) -> pl.DataFrame:
         self.historical_raw_fetch_reads += 1
         assert self.historical_raw_fetches_frame is not None
+        if log is not None:
+            self.consolidated_fetch_log_calls += 1
+            log(
+                "storage progress marker: historical_fetch_rows=%d",
+                self.historical_raw_fetches_frame.height,
+            )
         return self.historical_raw_fetches_frame
 
     def read_snapshot_fetches(self) -> pl.DataFrame:
@@ -102,8 +113,11 @@ class FakeFinancialStorage:
         self.update_fetch_reads.append(partition_date)
         return self.update_fetches[partition_date]
 
-    def write_snapshot_statements(self, frame: pl.DataFrame) -> str:
+    def write_snapshot_statements(self, frame: pl.DataFrame, *, log=None) -> str:
         self.snapshot_statements = frame
+        if log is not None:
+            self.snapshot_statement_write_log_calls += 1
+            log("storage write marker: statement_rows=%d", frame.height)
         return "snapshot/statements.parquet"
 
     def write_update_statements(self, partition_date: str, frame: pl.DataFrame) -> str:
@@ -123,7 +137,9 @@ class FakeFinancialStorage:
         self.snapshot_usd_statements = frame
         return "snapshot/statements_usd.parquet"
 
-    def write_update_usd_statements(self, partition_date: str, frame: pl.DataFrame) -> str:
+    def write_update_usd_statements(
+        self, partition_date: str, frame: pl.DataFrame
+    ) -> str:
         self.update_usd_statements[partition_date] = frame
         return f"updates/{partition_date}/statements_usd.parquet"
 
@@ -197,7 +213,17 @@ class FakeArrowClickHouseClient(FakeClickHouseClient):
         self.arrow_inserts.append((database, table, arrow_table))
 
 
-def test_snapshot_statement_asset_reads_historical_raw_fetches_without_fetching_brreg() -> None:
+class CapturingLog:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def info(self, message: str, *args: object) -> None:
+        self.messages.append(message % args if args else message)
+
+
+def test_snapshot_statement_asset_reads_historical_raw_fetches_without_fetching_brreg() -> (
+    None
+):
     storage = FakeFinancialStorage(
         historical_raw_fetches_frame=pl.DataFrame(
             [
@@ -228,6 +254,47 @@ def test_snapshot_statement_asset_reads_historical_raw_fetches_without_fetching_
     assert result.metadata["statement_row_count"] == 1
     assert result.metadata["s3_bucket"] == NORWAY_BRREG_FINANCIAL_BUCKET
     assert result.metadata["s3_key"] == "snapshot/statements.parquet"
+
+
+def test_snapshot_statement_asset_logs_historical_read_and_normalization_progress() -> (
+    None
+):
+    storage = FakeFinancialStorage(
+        historical_raw_fetches_frame=pl.DataFrame(
+            [
+                _success_fetch_row("923609016", [_financial_record()]),
+                _failure_fetch_row("811685852"),
+            ]
+        )
+    )
+
+    norway_brreg_financial_statements_snapshot_parquet(
+        context=dg.build_asset_context(),
+        norway_brreg_financial_storage=storage,
+    )
+
+    assert storage.consolidated_fetch_log_calls == 1
+    assert storage.snapshot_statement_write_log_calls == 1
+
+
+def test_original_statement_frame_logs_normalization_progress() -> None:
+    log = CapturingLog()
+    fetch_frame = pl.DataFrame(
+        [
+            _success_fetch_row("923609016", [_financial_record()]),
+            _failure_fetch_row("811685852"),
+        ]
+    )
+
+    financial_statements._original_statement_frame(
+        fetch_frame,
+        log=log.info,
+    )
+
+    assert any(
+        "Normalizing Norway Brreg snapshot financial statement rows" in message
+        for message in log.messages
+    )
 
 
 def test_update_statements_asset_writes_empty_partition_with_resolved_columns() -> None:
@@ -319,7 +386,9 @@ def test_update_usd_asset_allows_empty_partitions(
     assert result.metadata["rate_date_count"] == 0
 
 
-def test_snapshot_clickhouse_publish_replaces_target_table_from_snapshot_usd_parquet() -> None:
+def test_snapshot_clickhouse_publish_replaces_target_table_from_snapshot_usd_parquet() -> (
+    None
+):
     storage = FakeFinancialStorage(
         snapshot_usd_statements=_financial_frame(
             [_resolved_financial_row(org_number="923609016", usd=True)]
@@ -371,7 +440,9 @@ def test_snapshot_clickhouse_publish_exports_date_columns_as_arrow_dates() -> No
     assert pa.types.is_date(arrow_table.schema.field("fx_rate_date").type)
 
 
-def test_update_clickhouse_publish_deletes_affected_orgs_then_inserts_replacements() -> None:
+def test_update_clickhouse_publish_deletes_affected_orgs_then_inserts_replacements() -> (
+    None
+):
     storage = FakeFinancialStorage(
         update_usd_statements={
             "2026-06-30": _financial_frame(
@@ -414,7 +485,9 @@ def test_update_clickhouse_publish_deletes_affected_orgs_then_inserts_replacemen
     assert result.metadata["row_count"] == 1
 
 
-def test_update_clickhouse_publish_deletes_affected_orgs_even_without_replacements() -> None:
+def test_update_clickhouse_publish_deletes_affected_orgs_even_without_replacements() -> (
+    None
+):
     storage = FakeFinancialStorage(
         update_usd_statements={"2026-06-30": _empty_financial_frame()}
     )
@@ -484,7 +557,9 @@ def test_update_clickhouse_publish_rejects_replacements_without_affected_orgs() 
         }
     )
 
-    with pytest.raises(ValueError, match="replacement financial statement rows but no affected orgs"):
+    with pytest.raises(
+        ValueError, match="replacement financial statement rows but no affected orgs"
+    ):
         norway_brreg_financial_statements_updates_clickhouse(
             context=dg.build_asset_context(partition_key="2026-06-30"),
             clickhouse=FakeClickHouseResource(FakeClickHouseClient()),
@@ -493,7 +568,9 @@ def test_update_clickhouse_publish_rejects_replacements_without_affected_orgs() 
         )
 
 
-def _success_fetch_row(org_number: str, records: list[dict[str, Any]]) -> dict[str, Any]:
+def _success_fetch_row(
+    org_number: str, records: list[dict[str, Any]]
+) -> dict[str, Any]:
     return {
         "org_number": org_number,
         "legal_name": f"{org_number} AS",
@@ -549,7 +626,10 @@ def _financial_record() -> dict[str, Any]:
         "avviklingsregnskap": False,
         "oppstillingsplan": "store",
         "revisjon": {"ikkeRevidertAarsregnskap": False, "fravalgRevisjon": False},
-        "regnkapsprinsipper": {"smaaForetak": False, "regnskapsregler": "forenkletAnvendelseIFRS"},
+        "regnkapsprinsipper": {
+            "smaaForetak": False,
+            "regnskapsregler": "forenkletAnvendelseIFRS",
+        },
         "egenkapitalGjeld": {
             "egenkapital": {"sumEgenkapital": 41090000000},
             "gjeldOversikt": {
@@ -621,7 +701,9 @@ def _resolved_financial_row(*, org_number: str, usd: bool) -> dict[str, Any]:
 
 def _financial_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
     columns = no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_FINANCIAL_STATEMENTS_TABLE]
-    return pl.DataFrame([{column: row.get(column) for column in columns} for row in rows])
+    return pl.DataFrame(
+        [{column: row.get(column) for column in columns} for row in rows]
+    )
 
 
 def _empty_financial_frame() -> pl.DataFrame:

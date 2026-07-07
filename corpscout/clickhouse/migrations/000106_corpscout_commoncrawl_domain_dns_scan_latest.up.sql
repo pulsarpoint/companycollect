@@ -1,10 +1,9 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- Latest-good-state-per-domain summary (supersedes 000102, which is empty). The loader inserts ONLY
--- successful (status='done') scans, so a transient re-scan failure never clobbers a domain's last-good
--- nameservers / DNSSEC data; ReplacingMergeTree(resolved_at) keeps the most recent successful summary
--- per domain. Domains that never resolve simply never appear here (they have no DNS state); the
--- distinct records table's last_seen already tells you when a domain last answered.
+-- Latest-good-state-per-domain summary superseding the empty table from 000102. The loader inserts
+-- ONLY successful (status done) scans, so a transient re-scan failure never clobbers a domain's
+-- last-good nameservers or DNSSEC data. Domains that never resolve simply never appear here, and the
+-- distinct records table last_seen already shows when a domain last answered.
 DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_scan;
 
 CREATE TABLE corpscout.commoncrawl_domain_dns_scan

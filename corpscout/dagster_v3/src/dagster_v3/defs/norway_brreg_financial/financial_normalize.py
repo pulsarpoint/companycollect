@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -29,10 +30,13 @@ FINANCIAL_AMOUNT_NAMES = (
     "current_liabilities",
     "long_term_liabilities",
 )
+NORMALIZATION_PROGRESS_INTERVAL = 10_000
 
 
 class ExchangeRates(Protocol):
-    def usd_rates(self, requests: list[ExchangeRateRequest]) -> dict[tuple[str, str], Any]: ...
+    def usd_rates(
+        self, requests: list[ExchangeRateRequest]
+    ) -> dict[tuple[str, str], Any]: ...
 
 
 def build_financial_statement_rows_from_fetch_rows(
@@ -51,7 +55,9 @@ def build_financial_statement_rows_from_fetch_rows(
                 rate_date=period_end_date,
             )
 
-    rates = _load_available_usd_rates(exchange_rates, list(rate_requests_by_key.values()))
+    rates = _load_available_usd_rates(
+        exchange_rates, list(rate_requests_by_key.values())
+    )
     rows: list[dict[str, Any]] = []
     for fetch_row, record, line_number in successful_records:
         currency = _string(record.get("valuta")).upper()
@@ -73,23 +79,58 @@ def build_resolved_financial_statement_original_rows_from_fetch_rows(
     fetch_rows: list[dict[str, Any]],
     *,
     resolved_at: Any,
+    log: Callable[..., object] | None = None,
+    progress_interval: int = NORMALIZATION_PROGRESS_INTERVAL,
 ) -> list[dict[str, Any]]:
+    _validate_progress_interval(progress_interval)
+    _log(
+        log,
+        "Starting Norway Brreg financial statement normalization: fetch_rows=%d",
+        len(fetch_rows),
+    )
     rows: list[dict[str, Any]] = []
-    for fetch_row, record, line_number in _successful_financial_records_from_fetch_rows(fetch_rows):
-        staging_row = _financial_statement_row(
-            record,
-            org=fetch_row,
-            line_number=line_number,
-            fx_rate=None,
-            run_id=_string(fetch_row.get("source_run_id")),
-            source_url=_string(fetch_row.get("source_url")),
-        )
-        rows.append(
-            _resolved_financial_statement_row(
-                staging_row,
-                resolved_at=resolved_at,
+    successful_fetches = 0
+    for index, fetch_row in enumerate(fetch_rows, start=1):
+        if fetch_row.get("fetch_status") == "success":
+            successful_fetches += 1
+            payload = json.loads(_string(fetch_row.get("raw_response")) or "[]")
+            if isinstance(payload, list):
+                for line_number, record in enumerate(payload, start=1):
+                    if not isinstance(record, dict):
+                        continue
+                    staging_row = _financial_statement_row(
+                        record,
+                        org=fetch_row,
+                        line_number=line_number,
+                        fx_rate=None,
+                        run_id=_string(fetch_row.get("source_run_id")),
+                        source_url=_string(fetch_row.get("source_url")),
+                    )
+                    rows.append(
+                        _resolved_financial_statement_row(
+                            staging_row,
+                            resolved_at=resolved_at,
+                        )
+                    )
+        if _should_log_progress(index, len(fetch_rows), progress_interval):
+            _log(
+                log,
+                "Processed Norway Brreg financial statement normalization: "
+                "processed_fetch_rows=%d total_fetch_rows=%d successful_fetches=%d "
+                "statement_rows=%d",
+                index,
+                len(fetch_rows),
+                successful_fetches,
+                len(rows),
             )
-        )
+    _log(
+        log,
+        "Completed Norway Brreg financial statement normalization: "
+        "fetch_rows=%d successful_fetches=%d statement_rows=%d",
+        len(fetch_rows),
+        successful_fetches,
+        len(rows),
+    )
     return rows
 
 
@@ -108,7 +149,9 @@ def build_resolved_financial_statement_usd_rows(
                 rate_date=period_end_date,
             )
 
-    rates = _load_available_usd_rates(exchange_rates, list(rate_requests_by_key.values()))
+    rates = _load_available_usd_rates(
+        exchange_rates, list(rate_requests_by_key.values())
+    )
     rows: list[dict[str, Any]] = []
     for row in financial_statements:
         currency = _string(row.get("currency")).upper()
@@ -139,7 +182,9 @@ def build_financial_statement_rows(
         "org_number": _string(org.get("org_number")),
         "legal_name": _string(org.get("legal_name")),
         "website": _string(org.get("website")),
-        "last_submitted_accounts_year": _string(org.get("last_submitted_accounts_year")),
+        "last_submitted_accounts_year": _string(
+            org.get("last_submitted_accounts_year")
+        ),
         "source_run_id": run_id,
         "source_url": source_url,
         "fetch_status": "success",
@@ -263,7 +308,9 @@ def _financial_statement_row(
         "operating_costs": _decimal_or_none(costs.get("sumDriftskostnad")),
         "operating_result": _decimal_or_none(operating.get("driftsresultat")),
         "net_financial_items": _decimal_or_none(financial.get("nettoFinans")),
-        "pretax_result": _decimal_or_none(result.get("ordinaertResultatFoerSkattekostnad")),
+        "pretax_result": _decimal_or_none(
+            result.get("ordinaertResultatFoerSkattekostnad")
+        ),
         "net_result": _decimal_or_none(result.get("aarsresultat")),
         "total_assets": _decimal_or_none(assets.get("sumEiendeler")),
         "current_assets": _decimal_or_none(current_assets.get("sumOmloepsmidler")),
@@ -285,7 +332,9 @@ def _financial_statement_row(
         or _string(org.get("org_number")),
         "legal_name": _string(org.get("legal_name")),
         "website": _string(org.get("website")),
-        "last_submitted_accounts_year": _string(org.get("last_submitted_accounts_year")),
+        "last_submitted_accounts_year": _string(
+            org.get("last_submitted_accounts_year")
+        ),
         "filing_id": _int_or_none(record.get("id")),
         "journal_number": _string(record.get("journalnr")),
         "accounts_type": _string(record.get("regnskapstype")),
@@ -362,6 +411,20 @@ def _fiscal_year(period_end_date: str) -> int | None:
 
 def _string(value: Any) -> str:
     return "" if value is None else str(value)
+
+
+def _should_log_progress(index: int, total: int, interval: int) -> bool:
+    return index == 1 or index == total or index % interval == 0
+
+
+def _validate_progress_interval(progress_interval: int) -> None:
+    if progress_interval < 1:
+        raise ValueError("progress_interval must be greater than zero")
+
+
+def _log(log: Callable[..., object] | None, message: str, *args: object) -> None:
+    if log is not None:
+        log(message, *args)
 
 
 def _none_if_empty(value: Any) -> Any:

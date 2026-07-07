@@ -128,23 +128,39 @@ def norway_brreg_financial_statements_snapshot_parquet(
     context.log.info(
         "Building Norway Brreg snapshot financial statements parquet from historical raw fetches"
     )
-    fetch_frame = norway_brreg_financial_storage.read_consolidated_historical_fetches()
-    statement_frame = _original_statement_frame(fetch_frame)
+    fetch_frame = norway_brreg_financial_storage.read_consolidated_historical_fetches(
+        log=context.log.info,
+    )
+    successful_fetch_count = _successful_fetch_count(fetch_frame)
+    context.log.info(
+        "Loaded Norway Brreg historical raw fetches for statement normalization: "
+        "fetch_rows=%d successful_fetches=%d",
+        fetch_frame.height,
+        successful_fetch_count,
+    )
+    statement_frame = _original_statement_frame(fetch_frame, log=context.log.info)
+    context.log.info(
+        "Writing Norway Brreg snapshot financial statements parquet: "
+        "statement_rows=%d bucket=%s",
+        statement_frame.height,
+        NORWAY_BRREG_FINANCIAL_BUCKET,
+    )
     output_key = norway_brreg_financial_storage.write_snapshot_statements(
-        statement_frame
+        statement_frame,
+        log=context.log.info,
     )
     context.log.info(
         "Completed Norway Brreg snapshot financial statements parquet: "
         "historical_raw_fetch_rows=%d successful_fetches=%d statement_rows=%d s3_key=%s",
         fetch_frame.height,
-        _successful_fetch_count(fetch_frame),
+        successful_fetch_count,
         statement_frame.height,
         output_key,
     )
     return dg.MaterializeResult(
         metadata={
             "fetch_row_count": fetch_frame.height,
-            "successful_fetch_count": _successful_fetch_count(fetch_frame),
+            "successful_fetch_count": successful_fetch_count,
             "statement_row_count": statement_frame.height,
             "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
@@ -303,7 +319,9 @@ def norway_brreg_financial_statements_snapshot_clickhouse(
     clickhouse: ClickhouseResource,
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
-    context.log.info("Publishing Norway Brreg snapshot financial statements to ClickHouse")
+    context.log.info(
+        "Publishing Norway Brreg snapshot financial statements to ClickHouse"
+    )
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RESOLVED_DATABASE,
@@ -503,10 +521,34 @@ def apply_financial_statement_update_parquet_to_clickhouse(
     return row_counts
 
 
-def _original_statement_frame(fetch_frame: pl.DataFrame) -> pl.DataFrame:
+def _original_statement_frame(
+    fetch_frame: pl.DataFrame,
+    *,
+    log: Callable[..., object] | None = None,
+) -> pl.DataFrame:
+    _log(
+        log,
+        "Converting Norway Brreg snapshot financial fetch frame to Python rows: "
+        "fetch_rows=%d",
+        fetch_frame.height,
+    )
+    fetch_rows = fetch_frame.to_dicts()
+    _log(
+        log,
+        "Normalizing Norway Brreg snapshot financial statement rows: fetch_rows=%d",
+        len(fetch_rows),
+    )
     rows = financial_normalize.build_resolved_financial_statement_original_rows_from_fetch_rows(
-        fetch_frame.to_dicts(),
+        fetch_rows,
         resolved_at=datetime.now(UTC),
+        log=log,
+    )
+    _log(
+        log,
+        "Coercing Norway Brreg snapshot financial statement rows to parquet schema: "
+        "statement_rows=%d columns=%d",
+        len(rows),
+        len(FINANCIAL_STATEMENT_SCHEMA),
     )
     return _financial_statement_frame(rows)
 

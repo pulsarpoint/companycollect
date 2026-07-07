@@ -10,6 +10,7 @@ from dagster_v3.defs.norway_brreg_financial.constants import (
 )
 from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
+    financial_bootstrap_chunk_object_key,
     financial_fetches_snapshot_object_key,
     financial_fetches_update_object_key,
     financial_raw_fetch_object_key,
@@ -223,7 +224,41 @@ def test_financial_storage_reads_empty_historical_raw_fetches_with_schema() -> N
     historical_frame = storage.read_historical_raw_fetches()
 
     assert historical_frame.height == 0
-    assert historical_frame.schema == financial_fetches.financial_fetches_parquet_schema()
+    assert (
+        historical_frame.schema == financial_fetches.financial_fetches_parquet_schema()
+    )
+
+
+def test_financial_storage_logs_consolidated_historical_fetch_progress() -> None:
+    object_store = FakeObjectStore()
+    bootstrap_key = financial_bootstrap_chunk_object_key("bucket_01", 0)
+    raw_key = financial_raw_fetch_object_key("200", "2024")
+    object_store.objects[(NORWAY_BRREG_FINANCIAL_BUCKET, bootstrap_key)] = (
+        _parquet_bytes(_fetch_frame("100", "success", "2026-06-01T10:00:00+00:00"))
+    )
+    object_store.objects[(NORWAY_BRREG_FINANCIAL_BUCKET, raw_key)] = _parquet_bytes(
+        _fetch_frame("200", "not_found", "2026-06-01T11:00:00+00:00")
+    )
+    messages: list[str] = []
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+
+    consolidated = storage.read_consolidated_historical_fetches(
+        log=lambda message, *args: messages.append(message % args)
+    )
+
+    assert consolidated.height == 2
+    assert any(
+        "Preparing Norway Brreg consolidated historical financial fetch read" in message
+        for message in messages
+    )
+    assert any(
+        "Read Norway Brreg bootstrap financial fetch parquet chunks" in message
+        for message in messages
+    )
+    assert any(
+        "Completed Norway Brreg consolidated historical financial fetch read" in message
+        for message in messages
+    )
 
 
 def test_update_candidates_write_and_read_round_trip() -> None:
@@ -285,3 +320,17 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
+
+
+def _fetch_frame(
+    org_number: str,
+    fetch_status: str,
+    fetched_at: str,
+) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "org_number": [org_number],
+            "fetch_status": [fetch_status],
+            "fetched_at": [fetched_at],
+        }
+    )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from io import BytesIO
 from typing import Any
 from urllib.parse import quote
@@ -20,6 +21,7 @@ from dagster_v3.defs.norway_brreg_financial.financial_fetches import (
 RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
 BOOTSTRAP_FETCH_PREFIX = "norway_brreg/financial/bootstrap/fetches/"
 LEGACY_BOOTSTRAP_RAW_REPORT_PREFIX = "norway_brreg/finance/raw_reports/"
+READ_PROGRESS_INTERVAL = 100
 
 
 class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
@@ -55,7 +57,9 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         return self._write_frame(key, frame)
 
     def read_raw_fetch(self, org_number: str, accounts_year: str) -> pl.DataFrame:
-        return self._read_frame(financial_raw_fetch_object_key(org_number, accounts_year))
+        return self._read_frame(
+            financial_raw_fetch_object_key(org_number, accounts_year)
+        )
 
     def list_historical_raw_fetch_keys(self) -> list[str]:
         return sorted(
@@ -67,20 +71,79 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             if key.endswith("/financial_fetch.parquet")
         )
 
-    def read_historical_raw_fetches(self) -> pl.DataFrame:
-        frames = [
-            self._read_frame(key) for key in self.list_historical_raw_fetch_keys()
-        ]
+    def read_historical_raw_fetches(
+        self,
+        *,
+        log: Callable[..., object] | None = None,
+    ) -> pl.DataFrame:
+        keys = self.list_historical_raw_fetch_keys()
+        frames = self._read_frames_with_progress(
+            keys,
+            label="per-org raw financial fetch parquet files",
+            log=log,
+        )
         if not frames:
-            return pl.DataFrame(schema=financial_fetches_parquet_schema())
-        return pl.concat(frames, how="vertical_relaxed")
+            frame = pl.DataFrame(schema=financial_fetches_parquet_schema())
+        else:
+            frame = pl.concat(frames, how="vertical_relaxed")
+        _log(
+            log,
+            "Completed Norway Brreg historical raw financial fetch parquet read: "
+            "file_count=%d row_count=%d",
+            len(keys),
+            frame.height,
+        )
+        return frame
 
-    def read_consolidated_historical_fetches(self) -> pl.DataFrame:
+    def read_consolidated_historical_fetches(
+        self,
+        *,
+        log: Callable[..., object] | None = None,
+    ) -> pl.DataFrame:
         """Latest fetch row per org across bootstrap bucket chunks and the
         per-org raw_fetches layout written by the update assets."""
-        frames = [self._read_frame(key) for key in self.list_all_bootstrap_chunk_keys()]
-        frames.append(self.read_historical_raw_fetches())
-        return latest_fetch_rows_per_org(pl.concat(frames, how="vertical_relaxed"))
+        bootstrap_keys = self.list_all_bootstrap_chunk_keys()
+        raw_keys = self.list_historical_raw_fetch_keys()
+        _log(
+            log,
+            "Preparing Norway Brreg consolidated historical financial fetch read: "
+            "bootstrap_chunk_count=%d raw_file_count=%d",
+            len(bootstrap_keys),
+            len(raw_keys),
+        )
+        frames = self._read_frames_with_progress(
+            bootstrap_keys,
+            label="bootstrap financial fetch parquet chunks",
+            log=log,
+        )
+        frames.extend(
+            self._read_frames_with_progress(
+                raw_keys,
+                label="per-org raw financial fetch parquet files",
+                log=log,
+            )
+        )
+        if not frames:
+            combined = pl.DataFrame(schema=financial_fetches_parquet_schema())
+        else:
+            combined = pl.concat(frames, how="vertical_relaxed")
+        _log(
+            log,
+            "Consolidating latest Norway Brreg historical financial fetch rows: "
+            "input_rows=%d",
+            combined.height,
+        )
+        consolidated = latest_fetch_rows_per_org(combined)
+        _log(
+            log,
+            "Completed Norway Brreg consolidated historical financial fetch read: "
+            "input_rows=%d output_rows=%d bootstrap_chunk_count=%d raw_file_count=%d",
+            combined.height,
+            consolidated.height,
+            len(bootstrap_keys),
+            len(raw_keys),
+        )
+        return consolidated
 
     def list_all_bootstrap_chunk_keys(self) -> list[str]:
         return sorted(
@@ -103,7 +166,9 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         )
 
     def read_bootstrap_bucket_fetches(self, bucket_key: str) -> pl.DataFrame:
-        frames = [self._read_frame(key) for key in self.list_bootstrap_chunk_keys(bucket_key)]
+        frames = [
+            self._read_frame(key) for key in self.list_bootstrap_chunk_keys(bucket_key)
+        ]
         if not frames:
             return pl.DataFrame(schema=financial_fetches_parquet_schema())
         return pl.concat(frames, how="vertical_relaxed")
@@ -119,7 +184,9 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             frame,
         )
 
-    def read_legacy_bootstrap_done_marker(self, org_number: str) -> dict[str, Any] | None:
+    def read_legacy_bootstrap_done_marker(
+        self, org_number: str
+    ) -> dict[str, Any] | None:
         key = legacy_bootstrap_done_marker_key(org_number)
         if not self.object_store.exists(key, bucket=NORWAY_BRREG_FINANCIAL_BUCKET):
             return None
@@ -174,8 +241,17 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
     def read_update_financial_candidates(self, partition_date: str) -> pl.DataFrame:
         return self._read_frame(financial_update_candidates_object_key(partition_date))
 
-    def write_snapshot_statements(self, frame: pl.DataFrame) -> str:
-        return self._write_frame(financial_statements_snapshot_object_key(), frame)
+    def write_snapshot_statements(
+        self,
+        frame: pl.DataFrame,
+        *,
+        log: Callable[..., object] | None = None,
+    ) -> str:
+        return self._write_frame(
+            financial_statements_snapshot_object_key(),
+            frame,
+            log=log,
+        )
 
     def write_update_statements(self, partition_date: str, frame: pl.DataFrame) -> str:
         return self._write_frame(
@@ -207,12 +283,39 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             financial_statements_usd_update_object_key(partition_date)
         )
 
-    def _write_frame(self, key: str, frame: pl.DataFrame) -> str:
+    def _write_frame(
+        self,
+        key: str,
+        frame: pl.DataFrame,
+        *,
+        log: Callable[..., object] | None = None,
+    ) -> str:
         self.object_store.ensure_bucket(NORWAY_BRREG_FINANCIAL_BUCKET)
+        _log(
+            log,
+            "Serializing Norway Brreg financial parquet frame: key=%s rows=%d columns=%d",
+            key,
+            frame.height,
+            len(frame.columns),
+        )
+        body = _parquet_bytes(frame)
+        _log(
+            log,
+            "Uploading Norway Brreg financial parquet frame: key=%s size_bytes=%d",
+            key,
+            len(body),
+        )
         self.object_store.write_bytes(
             key,
-            _parquet_bytes(frame),
+            body,
             bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
+        )
+        _log(
+            log,
+            "Completed Norway Brreg financial parquet write: key=%s rows=%d columns=%d",
+            key,
+            frame.height,
+            len(frame.columns),
         )
         return key
 
@@ -223,6 +326,44 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
                 bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
             )
         )
+
+    def _read_frames_with_progress(
+        self,
+        keys: list[str],
+        *,
+        label: str,
+        log: Callable[..., object] | None,
+    ) -> list[pl.DataFrame]:
+        if not keys:
+            _log(log, "No Norway Brreg %s found", label)
+            return []
+
+        total_files = len(keys)
+        _log(
+            log,
+            "Reading Norway Brreg %s: total_files=%d",
+            label,
+            total_files,
+        )
+        frames: list[pl.DataFrame] = []
+        for index, key in enumerate(keys, start=1):
+            frames.append(self._read_frame(key))
+            if _should_log_progress(index, total_files, READ_PROGRESS_INTERVAL):
+                _log(
+                    log,
+                    "Read Norway Brreg %s: files_read=%d total_files=%d latest_key=%s",
+                    label,
+                    index,
+                    total_files,
+                    key,
+                )
+        _log(
+            log,
+            "Completed reading Norway Brreg %s: total_files=%d",
+            label,
+            total_files,
+        )
+        return frames
 
 
 def financial_bootstrap_bucket_prefix(bucket_key: str) -> str:
@@ -307,3 +448,12 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
+
+
+def _should_log_progress(index: int, total: int, interval: int) -> bool:
+    return index == 1 or index == total or index % interval == 0
+
+
+def _log(log: Callable[..., object] | None, message: str, *args: object) -> None:
+    if log is not None:
+        log(message, *args)
