@@ -30,7 +30,7 @@ from dagster_v3.defs.sweden_financial.storage import (
 )
 
 GROUP_NAME = "sweden_financial"
-SWEDEN_FINANCIAL_DUCKDB_POOL = "sweden_financial_duckdb"
+SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL = "sweden_financial_current_2026_duckdb"
 
 
 SWEDEN_FINANCIAL_BACKFILL_YEARS = tuple(str(year) for year in range(2020, 2027))
@@ -113,7 +113,6 @@ def sweden_financial_backfill_raw_archives_s3(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "zip", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
-    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     description="Extracts Sweden backfill report XHTML files and replaces the year catalog.",
 )
 def sweden_financial_backfill_report_xhtml_catalog_duckdb(
@@ -176,7 +175,7 @@ def sweden_financial_current_raw_archives_s3(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "zip", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
-    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
     description="Extracts changed 2026 Sweden report XHTML archives for current refreshes.",
 )
 def sweden_financial_current_report_xhtml_catalog_duckdb(
@@ -226,7 +225,6 @@ def sweden_financial_current_report_xhtml_catalog_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
-    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     description=(
         "Parses Sweden backfill XHTML/iXBRL reports into structured report and "
         "fact tables in the year DuckDB file."
@@ -260,7 +258,7 @@ def sweden_financial_backfill_parsed_reports_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
-    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
+    pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
     description=(
         "Parses changed Sweden current-year XHTML/iXBRL reports into structured "
         "report and fact tables in the active-year DuckDB file."
