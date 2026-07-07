@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -286,5 +287,37 @@ func TestPendingBatchCursor(t *testing.T) {
 	b3, _ := s.PendingBatch(ctx, "sc", b2[len(b2)-1], 2)
 	if len(b3) != 0 {
 		t.Fatalf("batch3 = %v, want empty (terminates)", b3)
+	}
+}
+
+// RecordsAfter must page by walking the rowid primary key up from the watermark. If the query
+// planner instead picks the (scan_id, root_domain) covering index, every batch re-reads and
+// re-sorts the scan's entire record set (temp B-tree), which collapses incremental-load
+// throughput on multi-GB stages.
+func TestRecordsAfterUsesRowidScan(t *testing.T) {
+	s := openTemp(t)
+	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+recordsAfterQuery, "sc", 0, 10)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	joined := strings.Join(plan, "; ")
+	if !strings.Contains(joined, "USING INTEGER PRIMARY KEY (rowid>?)") {
+		t.Errorf("plan does not walk the rowid primary key: %s", joined)
+	}
+	if strings.Contains(joined, "TEMP B-TREE") {
+		t.Errorf("plan sorts with a temp B-tree instead of reading in rowid order: %s", joined)
 	}
 }

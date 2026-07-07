@@ -313,14 +313,18 @@ func (s *Store) SetLoadedRowid(ctx context.Context, scanID string, rowid int64) 
 	return err
 }
 
+// The unary + on scan_id stops the planner from picking idx_records_domain (which would re-sort
+// the scan's entire record set per batch); the query must walk the rowid primary key instead.
+const recordsAfterQuery = `SELECT rowid, root_domain, name, record_type, slot, value,
+	ttl, priority, rcode, source_run_id, resolved_at FROM scan_records
+	WHERE +scan_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`
+
 // RecordsAfter returns up to limit records for scanID with rowid > afterRowid, ordered by rowid (i.e.
 // commit order, which is monotonic even for late-finishing domains). It also returns the max rowid in
 // the batch (the new watermark) and the distinct root_domains touched (so the caller can load their
 // summaries). A short batch (< limit) means the loader has caught up.
 func (s *Store) RecordsAfter(ctx context.Context, scanID string, afterRowid int64, limit int) ([]model.RecordRow, int64, []string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT rowid, root_domain, name, record_type, slot, value,
-		ttl, priority, rcode, source_run_id, resolved_at FROM scan_records
-		WHERE scan_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`, scanID, afterRowid, limit)
+	rows, err := s.db.QueryContext(ctx, recordsAfterQuery, scanID, afterRowid, limit)
 	if err != nil {
 		return nil, afterRowid, nil, err
 	}
