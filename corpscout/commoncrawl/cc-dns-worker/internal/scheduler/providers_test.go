@@ -8,7 +8,9 @@ func TestIsHyperscaler(t *testing.T) {
 		"172.64.53.25", "162.159.48.223", "172.64.52.239", // Cloudflare (observed)
 		"104.16.1.1", "173.245.49.10", // Cloudflare
 		"216.239.32.10", "216.239.38.10", // Google ns-cloud
-		"205.251.195.10", // AWS Route 53
+		"205.251.195.10",                    // AWS Route 53
+		"156.154.132.200", "156.154.133.200", // UltraDNS (Namecheap, observed jamming)
+		"204.74.108.1",                      // UltraDNS
 	}
 	no := []string{
 		"8.8.8.8", "1.1.1.1", // public resolvers, not in the auth ranges

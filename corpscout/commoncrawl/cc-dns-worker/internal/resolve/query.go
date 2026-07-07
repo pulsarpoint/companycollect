@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cc-dns-worker/internal/model"
@@ -31,17 +32,38 @@ func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, de
 		res.Records = append(res.Records, model.DNSRecord{Name: domain, RecordType: "DS", Slot: "", Value: ds, Rcode: "NOERROR"})
 	}
 
+	// Fire the plan's queries CONCURRENTLY instead of one-at-a-time. Each still passes through the
+	// per-server scheduler (rate + in-flight), so a shared authoritative server stays paced — but a
+	// domain no longer serializes 60+ round-trips end to end. Critically, on a rate-limited provider
+	// (e.g. many domains behind one registrar's anycast NS), serial queries made every domain advance
+	// one token at a time and finish in lockstep after a long freeze; firing them up front lets each
+	// domain complete as its own queries drain, so throughput is steady instead of stalled. Results
+	// are assembled after the barrier, so no shared state is mutated concurrently.
 	servers := del.NSIPs
-	i := 0
-	for _, q := range records.Plan(domain, cfg) {
+	plan := records.Plan(domain, cfg)
+	type qResult struct {
+		q    records.Query
+		resp *dns.Msg
+		err  error
+	}
+	out := make([]qResult, len(plan))
+	var wg sync.WaitGroup
+	for idx := range plan {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			resp, err := r.queryAuth(ctx, plan[idx], servers, idx)
+			out[idx] = qResult{plan[idx], resp, err}
+		}(idx)
+	}
+	wg.Wait()
+
+	for _, o := range out {
 		res.QueriesTotal++
-		resp, err := r.queryAuth(ctx, q, servers, i)
-		i++
-		rcode := "error"
-		if err == nil && resp != nil {
-			rcode = dns.RcodeToString[resp.Rcode]
+		if o.err == nil && o.resp != nil {
+			rcode := dns.RcodeToString[o.resp.Rcode]
 			res.QueriesOK++
-			recs := collect(q, resp, rcode)
+			recs := collect(o.q, o.resp, rcode)
 			res.Records = append(res.Records, recs...)
 			for _, rec := range recs {
 				if rec.RecordType == "DNSKEY" {

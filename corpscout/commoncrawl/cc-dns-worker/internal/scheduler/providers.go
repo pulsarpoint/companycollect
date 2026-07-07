@@ -19,6 +19,8 @@ var hyperscalerCIDRs = parseCIDRs([]string{
 	"216.239.32.0/19", "2001:4860:4802::/48",
 	// AWS Route 53 — ns-*.awsdns-*
 	"205.251.192.0/18", "2600:9000::/28",
+	// UltraDNS / Neustar / Vercara — registrar-servers.com (Namecheap), name.com, many registrars
+	"156.154.0.0/16", "204.74.0.0/16", "2610:a1::/32",
 })
 
 func parseCIDRs(cidrs []string) []*net.IPNet {
