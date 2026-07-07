@@ -51,7 +51,8 @@ func insert[T any](ctx context.Context, conn driver.Conn, table string, rows []T
 	return len(rows), nil
 }
 
-// FromStore reads the stage for scanID and inserts records + domain summaries into ClickHouse.
+// FromStore reads the whole stage for scanID and inserts records + domain summaries into ClickHouse.
+// Idempotent (the CH tables dedup on merge), so it is safe to re-run.
 func FromStore(ctx context.Context, conn driver.Conn, st *store.Store, scanID string) (int, int, error) {
 	recs, err := st.StagedRecords(ctx, scanID)
 	if err != nil {
@@ -67,4 +68,49 @@ func FromStore(ctx context.Context, conn driver.Conn, st *store.Store, scanID st
 	}
 	nd, err := insert(ctx, conn, scanTable, doms)
 	return nr, nd, err
+}
+
+// Incremental loads every scan_records row committed since the persisted rowid watermark for scanID,
+// in batches, advancing the watermark after each batch. It also loads the done-summaries for the
+// domains in each batch. Because it walks scan_records by rowid (commit order), it never misses a
+// late-finishing domain, and re-runs are safe (CH dedups). It returns the number of record rows
+// loaded. Call it periodically during a scan and once more after the scan finishes.
+func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batch int) (int, error) {
+	if batch <= 0 {
+		batch = 20000
+	}
+	w, err := st.LoadedRowid(ctx, scanID)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for {
+		recs, maxRowid, domains, err := st.RecordsAfter(ctx, scanID, w, batch)
+		if err != nil {
+			return total, err
+		}
+		if len(recs) == 0 {
+			return total, nil
+		}
+		if _, err := insert(ctx, conn, recordsTable, recs); err != nil {
+			return total, err
+		}
+		sums, err := st.SummariesFor(ctx, scanID, domains)
+		if err != nil {
+			return total, err
+		}
+		if _, err := insert(ctx, conn, scanTable, sums); err != nil {
+			return total, err
+		}
+		// Advance the watermark only after CH accepted the batch — a crash before this just re-loads
+		// the batch next time (idempotent).
+		if err := st.SetLoadedRowid(ctx, scanID, maxRowid); err != nil {
+			return total, err
+		}
+		w = maxRowid
+		total += len(recs)
+		if len(recs) < batch {
+			return total, nil
+		}
+	}
 }

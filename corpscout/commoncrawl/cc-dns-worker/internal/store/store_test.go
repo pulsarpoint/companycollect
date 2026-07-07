@@ -118,6 +118,65 @@ func TestCommitBatchAndResume(t *testing.T) {
 	}
 }
 
+func TestIncrementalStaging(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com", "b.com", "c.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	commit := func(d string) {
+		if err := s.CommitBatch(ctx, []model.DomainResult{{
+			ScanID: "sc", RootDomain: d, Status: "done", SourceRunID: "run1", ResolvedAt: now,
+			Nameservers: []string{"ns." + d}, NSIPs: []string{"1.2.3.4"},
+			Records: []model.DNSRecord{{Name: d, RecordType: "A", Value: "1.2.3.4", Rcode: "NOERROR"}},
+		}}); err != nil {
+			t.Fatalf("commit %s: %v", d, err)
+		}
+	}
+
+	if w, _ := s.LoadedRowid(ctx, "sc"); w != 0 {
+		t.Fatalf("initial watermark = %d, want 0", w)
+	}
+	commit("a.com")
+	commit("b.com")
+
+	recs, maxRowid, domains, err := s.RecordsAfter(ctx, "sc", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || maxRowid == 0 || len(domains) != 2 {
+		t.Fatalf("RecordsAfter(0): recs=%d maxRowid=%d domains=%v", len(recs), maxRowid, domains)
+	}
+	if recs[0].Scans != 1 || !recs[0].FirstSeen.Equal(recs[0].LastSeen) || recs[0].LastRunID != "run1" {
+		t.Errorf("record shape wrong: %+v", recs[0])
+	}
+
+	if err := s.SetLoadedRowid(ctx, "sc", maxRowid); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := s.LoadedRowid(ctx, "sc"); w != maxRowid {
+		t.Fatalf("watermark after set = %d, want %d", w, maxRowid)
+	}
+	// Nothing new past the watermark yet.
+	if recs2, _, _, _ := s.RecordsAfter(ctx, "sc", maxRowid, 100); len(recs2) != 0 {
+		t.Fatalf("RecordsAfter(watermark) = %d, want 0", len(recs2))
+	}
+	// A late-committing domain shows up next — the watermark walks commit order, never misses it.
+	commit("c.com")
+	recs3, max3, doms3, _ := s.RecordsAfter(ctx, "sc", maxRowid, 100)
+	if len(recs3) != 1 || recs3[0].RootDomain != "c.com" || max3 <= maxRowid || len(doms3) != 1 {
+		t.Fatalf("incremental after watermark: recs=%d (%+v) max=%d", len(recs3), recs3, max3)
+	}
+
+	if n, _ := s.PendingCount(ctx, "sc"); n != 0 {
+		t.Errorf("PendingCount = %d, want 0 (all done)", n)
+	}
+	if sums, _ := s.SummariesFor(ctx, "sc", []string{"a.com", "c.com"}); len(sums) != 2 {
+		t.Errorf("SummariesFor = %d, want 2", len(sums))
+	}
+}
+
 func TestCommitBatchIsIdempotentPerDomain(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)

@@ -399,13 +399,47 @@ Bulk-copies one scan's SQLite stage into ClickHouse. Safe to re-run (target tabl
 | `--db` | string | `scan.db` | SQLite stage path (must match the `scan` that produced it) |
 | `--scan-id` | string | today, UTC | which scan's staged rows to load |
 
-## ClickHouse tables & history via `scan_id`
+### `run`
 
-Two tables, both `ReplacingMergeTree(resolved_at)` with `scan_id` inside `ORDER BY` — so re-scanning
-the same domains every few days **accumulates as history** rather than overwriting; a duplicate row
-for the same key within one scan dedupes to the newest `resolved_at` when read with `FINAL`.
-Migrations: `../../clickhouse/migrations/000101_corpscout_commoncrawl_domain_dns_records.up.sql` and
-`000102_corpscout_commoncrawl_domain_dns_scan.up.sql`.
+Continuous orchestrator — the production entry point (systemd `ExecStart`). It loops **scan →
+incrementally load → repeat**, crash-safe:
+
+- Each **cycle** is keyed by its UTC start time: a fresh SQLite db `scan-<timestamp>.db` and matching
+  scan-id. A fresh db re-seeds from ClickHouse, so every cycle picks up newly-discovered domains.
+- While a scan runs, a background loader **incrementally loads new records to ClickHouse** every
+  `--load-interval`, walking `scan_records` by a monotonic `rowid` watermark — so it never misses a
+  late-finishing domain, and re-runs dedup in CH. After the scan finishes, a final flush loads the rest.
+- A **state file** (`orchestrator-state.json`, `{cycle_id, db, phase}`) makes a restart/reboot
+  **resume the current cycle's phase**; a *new* cycle starts only once the current one is fully
+  scanned and loaded. A crash never restarts the scan from scratch or skips the load.
+- After a cycle completes, old cycle DBs are pruned, keeping `--keep-dbs` previous (default 1).
+
+| Flag | Type | Default | Meaning |
+|---|---|---|---|
+| `--dir` | string | `.` | directory for cycle DBs + the state file |
+| `--load-interval` | dur | `30m` | how often to incrementally load the running cycle to CH |
+| `--load-batch` | int | `20000` | records per incremental-load batch |
+| `--keep-dbs` | int | `1` | previous cycle DBs to keep (older deleted) |
+
+…plus every `scan` flag except `--scan-id`/`--db` (those are per-cycle). systemd runs
+`cc-dns-worker run --resolvers 127.0.0.1:53 …` with `Restart=always` as a backstop.
+
+## ClickHouse tables
+
+Two tables (migrations `../../clickhouse/migrations/000105_…_records_distinct` and
+`000106_…_scan_latest`):
+
+- **`commoncrawl_domain_dns_records`** — `AggregatingMergeTree`, one row per distinct
+  `(root_domain, record_type, slot, name, value)` with `first_seen = min`, `last_seen = max`,
+  `scans = sum`, and `anyLast` for ttl/priority/rcode/last_run_id. Re-scans dedup: storage grows only
+  for genuinely new records, a value change appears as a new row with sequential spans, and a missed
+  scan just fails to advance `last_seen` (no false "removed"). Read with `FINAL` or a `GROUP BY`.
+- **`commoncrawl_domain_dns_scan`** — `ReplacingMergeTree(resolved_at)` keyed on `root_domain`
+  (latest good state per domain). The loader stages only `status='done'` domains, so a failed re-scan
+  never clobbers a domain's last-good nameservers/DNSSEC data.
+
+Both are idempotent under re-load — which is exactly what makes `run`'s incremental + retry-on-crash
+loading safe.
 
 **`commoncrawl_domain_dns_records`** — one row per resolved record (the normalized table; absence of
 a record = no row, not a null):

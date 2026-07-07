@@ -16,6 +16,7 @@ Usage:
 Commands:
   scan   resolve domains from ClickHouse into a durable SQLite stage (resumable)
   load   bulk-copy the SQLite stage into corpscout ClickHouse tables
+  run    continuous orchestrator: scan -> incrementally load -> repeat, crash-safe
 
 Run "cc-dns-worker <command> -h" for that command's flags.
 `)
@@ -35,6 +36,11 @@ func main() {
 	case "load":
 		if err := runLoad(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "load:", err)
+			os.Exit(1)
+		}
+	case "run":
+		if err := runOrchestrator(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "run:", err)
 			os.Exit(1)
 		}
 	default:

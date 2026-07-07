@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"cc-dns-worker/internal/model"
@@ -54,6 +55,10 @@ CREATE TABLE IF NOT EXISTS scan_meta (
   scan_id       TEXT PRIMARY KEY,
   seed_complete INTEGER NOT NULL DEFAULT 0,
   seeded_at     TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS load_state (
+  scan_id      TEXT PRIMARY KEY,
+  loaded_rowid INTEGER NOT NULL DEFAULT 0
 );
 `
 
@@ -257,6 +262,111 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
 		dnssec_signed, ds_present, status, queries_total, queries_ok, source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done'`, scanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.ScanRow
+	for rows.Next() {
+		var r model.ScanRow
+		var ns, nsips, ts string
+		var dnssec, ds int
+		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
+			&r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
+		_ = json.Unmarshal([]byte(nsips), &r.NSIPs)
+		r.DNSSECSigned = uint8(dnssec)
+		r.DSPresent = uint8(ds)
+		r.ResolvedAt = parseTS(ts)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// PendingCount returns how many domains for scanID are still not terminal (used to detect a finished
+// scan: 0 means every domain reached done/error).
+func (s *Store) PendingCount(ctx context.Context, scanID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM scan_domains WHERE scan_id = ? AND status NOT IN ('done','error')`, scanID).Scan(&n)
+	return n, err
+}
+
+// LoadedRowid returns the highest scan_records rowid already loaded to ClickHouse for scanID (0 if
+// none). The incremental loader reads records with rowid greater than this.
+func (s *Store) LoadedRowid(ctx context.Context, scanID string) (int64, error) {
+	var rid int64
+	err := s.db.QueryRowContext(ctx, `SELECT loaded_rowid FROM load_state WHERE scan_id = ?`, scanID).Scan(&rid)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return rid, err
+}
+
+// SetLoadedRowid advances the loaded-up-to watermark for scanID.
+func (s *Store) SetLoadedRowid(ctx context.Context, scanID string, rowid int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO load_state (scan_id, loaded_rowid) VALUES (?, ?)
+		 ON CONFLICT(scan_id) DO UPDATE SET loaded_rowid = excluded.loaded_rowid`, scanID, rowid)
+	return err
+}
+
+// RecordsAfter returns up to limit records for scanID with rowid > afterRowid, ordered by rowid (i.e.
+// commit order, which is monotonic even for late-finishing domains). It also returns the max rowid in
+// the batch (the new watermark) and the distinct root_domains touched (so the caller can load their
+// summaries). A short batch (< limit) means the loader has caught up.
+func (s *Store) RecordsAfter(ctx context.Context, scanID string, afterRowid int64, limit int) ([]model.RecordRow, int64, []string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, root_domain, name, record_type, slot, value,
+		ttl, priority, rcode, source_run_id, resolved_at FROM scan_records
+		WHERE scan_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`, scanID, afterRowid, limit)
+	if err != nil {
+		return nil, afterRowid, nil, err
+	}
+	defer rows.Close()
+	var out []model.RecordRow
+	var domains []string
+	seen := map[string]bool{}
+	maxRowid := afterRowid
+	for rows.Next() {
+		var r model.RecordRow
+		var rid int64
+		var ts string
+		if err := rows.Scan(&rid, &r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
+			&r.TTL, &r.Priority, &r.Rcode, &r.LastRunID, &ts); err != nil {
+			return nil, afterRowid, nil, err
+		}
+		t := parseTS(ts)
+		r.FirstSeen, r.LastSeen, r.Scans = t, t, 1
+		out = append(out, r)
+		if rid > maxRowid {
+			maxRowid = rid
+		}
+		if !seen[r.RootDomain] {
+			seen[r.RootDomain] = true
+			domains = append(domains, r.RootDomain)
+		}
+	}
+	return out, maxRowid, domains, rows.Err()
+}
+
+// SummariesFor returns the done-summary rows for the given domains (skips non-'done'). Used by the
+// incremental loader to load summaries alongside a batch of records.
+func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []string) ([]model.ScanRow, error) {
+	if len(domains) == 0 {
+		return nil, nil
+	}
+	ph := strings.Repeat("?,", len(domains))
+	ph = ph[:len(ph)-1]
+	args := make([]any, 0, len(domains)+1)
+	args = append(args, scanID)
+	for _, d := range domains {
+		args = append(args, d)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
+		dnssec_signed, ds_present, status, queries_total, queries_ok, source_run_id, resolved_at
+		FROM scan_domains WHERE scan_id = ? AND status = 'done' AND root_domain IN (`+ph+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
