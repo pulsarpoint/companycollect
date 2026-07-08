@@ -73,25 +73,36 @@ class FakeObjectStore:
 class TrackingDuckDbConnection:
     def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
         self._connection = connection
-        self.report_insert_batch_sizes: list[int] = []
-        self.fact_insert_batch_sizes: list[int] = []
-        self.error_insert_batch_sizes: list[int] = []
+        self.report_arrow_batch_sizes: list[int] = []
+        self.fact_arrow_batch_sizes: list[int] = []
+        self.error_arrow_batch_sizes: list[int] = []
+        self.commit_count = 0
 
     def execute(self, *args: Any, **kwargs: Any) -> duckdb.DuckDBPyConnection:
         return self._connection.execute(*args, **kwargs)
+
+    def register(self, view_name: str, python_object: Any) -> duckdb.DuckDBPyConnection:
+        if "reports" in view_name:
+            self.report_arrow_batch_sizes.append(python_object.num_rows)
+        elif "facts" in view_name:
+            self.fact_arrow_batch_sizes.append(python_object.num_rows)
+        elif "parse_errors" in view_name:
+            self.error_arrow_batch_sizes.append(python_object.num_rows)
+        return self._connection.register(view_name, python_object)
+
+    def unregister(self, view_name: str) -> duckdb.DuckDBPyConnection:
+        return self._connection.unregister(view_name)
+
+    def commit(self) -> None:
+        self.commit_count += 1
+        self._connection.commit()
 
     def executemany(
         self,
         query: str,
         rows: list[tuple[Any, ...]],
     ) -> duckdb.DuckDBPyConnection:
-        if ".reports" in query:
-            self.report_insert_batch_sizes.append(len(rows))
-        elif ".facts" in query:
-            self.fact_insert_batch_sizes.append(len(rows))
-        elif ".parse_errors" in query:
-            self.error_insert_batch_sizes.append(len(rows))
-        return self._connection.executemany(query, rows)
+        raise AssertionError("Sweden financial parser should use Arrow bulk inserts")
 
 
 class FakeResponse:
@@ -625,8 +636,9 @@ def test_parse_sweden_financial_report_xhtml_catalog_flushes_insert_batches(
 
     assert counts["report_row_count"] == 3
     assert counts["fact_row_count"] == 3
-    assert tracking_connection.report_insert_batch_sizes == [2, 1]
-    assert tracking_connection.fact_insert_batch_sizes == [2, 1]
+    assert tracking_connection.report_arrow_batch_sizes == [2, 1]
+    assert tracking_connection.fact_arrow_batch_sizes == [2, 1]
+    assert tracking_connection.commit_count == 2
 
 
 def test_parse_sweden_financial_report_xhtml_catalog_partition_replace_keeps_other_partitions(

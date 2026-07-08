@@ -1,6 +1,7 @@
 import json
 import re
 import tempfile
+import uuid
 import zipfile
 from collections.abc import Callable
 from datetime import UTC, date, datetime
@@ -11,6 +12,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
+import pyarrow as pa
 from lxml import etree
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
@@ -38,6 +40,148 @@ _DATE_PATTERN = re.compile(
 _COMPANY_ID_PATTERN = re.compile(r"(?<!\d)(\d{10,12})(?!\d)")
 _NUMERIC_CLEAN_RE = re.compile(r"[^0-9.\-]")
 _XML_PARSER = etree.XMLParser(recover=True, huge_tree=True, resolve_entities=False)
+_REPORT_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "statement_key",
+    "company_id",
+    "report_period_start",
+    "report_period_end",
+    "fiscal_year",
+    "reported_company_name",
+    "report_language",
+    "source_archive_key",
+    "source_archive_name",
+    "nested_zip_name",
+    "xhtml_object_key",
+    "xhtml_sha256",
+    "xhtml_size_bytes",
+    "taxonomy_entrypoint",
+    "schema_refs",
+    "contexts_count",
+    "units_count",
+    "facts_count",
+    "parser_version",
+    "source_payload_hash",
+    "resolved_at",
+)
+_FACT_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "statement_key",
+    "company_id",
+    "report_period_end",
+    "fact_ordinal",
+    "concept_qname",
+    "concept_namespace",
+    "concept_local_name",
+    "context_id",
+    "unit_id",
+    "decimals",
+    "precision",
+    "value_kind",
+    "raw_value",
+    "amount_original",
+    "amount_usd",
+    "date_value",
+    "text_value",
+    "currency",
+    "dimensions",
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "parser_version",
+    "source_payload_hash",
+    "resolved_at",
+)
+_PARSE_ERROR_COLUMNS = (
+    "source_run_id",
+    "partition_year",
+    "source_archive_name",
+    "company_id",
+    "report_period_end",
+    "xhtml_object_key",
+    "error",
+    "resolved_at",
+)
+_STRING = pa.string()
+_INT64 = pa.int64()
+_DATE32 = pa.date32()
+_TIMESTAMP_US = pa.timestamp("us")
+_DECIMAL_38_10 = pa.decimal128(38, 10)
+_DECIMAL_38_12 = pa.decimal128(38, 12)
+_REPORT_ARROW_TYPES = (
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _DATE32,
+    _DATE32,
+    _INT64,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _INT64,
+    _STRING,
+    _STRING,
+    _INT64,
+    _INT64,
+    _INT64,
+    _STRING,
+    _STRING,
+    _TIMESTAMP_US,
+)
+_FACT_ARROW_TYPES = (
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _DATE32,
+    _INT64,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _DECIMAL_38_10,
+    _DECIMAL_38_10,
+    _DATE32,
+    _STRING,
+    _STRING,
+    _STRING,
+    _DECIMAL_38_12,
+    _DATE32,
+    _STRING,
+    _STRING,
+    _STRING,
+    _TIMESTAMP_US,
+)
+_PARSE_ERROR_ARROW_TYPES = (
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _TIMESTAMP_US,
+)
 
 
 def sweden_financial_source_duckdb_path(
@@ -779,33 +923,82 @@ def _flush_parsed_report_rows(
     fact_row_count = len(fact_rows)
     error_row_count = len(error_rows)
     if report_rows:
-        connection.executemany(
-            f"""
-            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.reports
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            report_rows,
+        _insert_rows_from_arrow(
+            connection=connection,
+            table_name="reports",
+            columns=_REPORT_COLUMNS,
+            arrow_types=_REPORT_ARROW_TYPES,
+            rows=report_rows,
         )
         report_rows.clear()
     if fact_rows:
-        connection.executemany(
-            f"""
-            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.facts
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            fact_rows,
+        _insert_rows_from_arrow(
+            connection=connection,
+            table_name="facts",
+            columns=_FACT_COLUMNS,
+            arrow_types=_FACT_ARROW_TYPES,
+            rows=fact_rows,
         )
         fact_rows.clear()
     if error_rows:
-        connection.executemany(
-            f"""
-            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors
-            values (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            error_rows,
+        _insert_rows_from_arrow(
+            connection=connection,
+            table_name="parse_errors",
+            columns=_PARSE_ERROR_COLUMNS,
+            arrow_types=_PARSE_ERROR_ARROW_TYPES,
+            rows=error_rows,
         )
         error_rows.clear()
+    if report_row_count > 0 or fact_row_count > 0 or error_row_count > 0:
+        connection.commit()
     return report_row_count, fact_row_count, error_row_count
+
+
+def _insert_rows_from_arrow(
+    *,
+    connection: Any,
+    table_name: str,
+    columns: tuple[str, ...],
+    arrow_types: tuple[pa.DataType, ...],
+    rows: list[tuple[Any, ...]],
+) -> None:
+    arrow_table = _arrow_table_from_rows(
+        columns=columns,
+        arrow_types=arrow_types,
+        rows=rows,
+    )
+    registered_name = f"_sweden_financial_{table_name}_batch_{uuid.uuid4().hex}"
+    column_list = ", ".join(_quote_duckdb_identifier(column) for column in columns)
+    connection.register(registered_name, arrow_table)
+    try:
+        connection.execute(
+            f"""
+            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.{table_name}
+            ({column_list})
+            select {column_list}
+            from {_quote_duckdb_identifier(registered_name)}
+            """
+        )
+    finally:
+        connection.unregister(registered_name)
+
+
+def _arrow_table_from_rows(
+    *,
+    columns: tuple[str, ...],
+    arrow_types: tuple[pa.DataType, ...],
+    rows: list[tuple[Any, ...]],
+) -> pa.Table:
+    column_values = tuple(zip(*rows, strict=True))
+    arrays = [
+        pa.array(values, type=arrow_type)
+        for values, arrow_type in zip(column_values, arrow_types, strict=True)
+    ]
+    return pa.Table.from_arrays(arrays, names=columns)
+
+
+def _quote_duckdb_identifier(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
 
 
 def _parse_report_xhtml(
