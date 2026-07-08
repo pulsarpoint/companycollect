@@ -41,7 +41,9 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     )
     assert backfill_raw_node.group_name == "sweden_financial"
     assert backfill_raw_node.pools == set()
-    assert type(backfill_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
+    assert (
+        type(backfill_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
+    )
     assert backfill_raw_node.partitions_def.get_partition_keys() == [
         "2020",
         "2021",
@@ -77,7 +79,9 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     )
     assert current_raw_node.group_name == "sweden_financial"
     assert current_raw_node.pools == set()
-    assert type(current_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
+    assert (
+        type(current_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
+    )
     current_keys = current_raw_node.partitions_def.get_partition_keys()
     assert current_keys[0] == "2026-07-04"
     assert current_keys[1] == "2026-07-11"
@@ -162,7 +166,7 @@ def test_sweden_financial_duckdb_path_is_partitioned_by_year() -> None:
     )
 
     assert sweden_financial_source_duckdb_path("2026") == Path(
-        "data/sweden_finacial/sweden_financial_source_2026.duckdb"
+        "data/sweden_financial/sweden_financial_source_2026.duckdb"
     )
 
 

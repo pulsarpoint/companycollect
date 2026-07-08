@@ -19,7 +19,7 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_financial.resources import SWEDEN_FINANCIAL_RAW_BUCKET
 
 SWEDEN_FINANCIAL_DATASET_NAME = "sweden_financial"
-SWEDEN_FINANCIAL_DUCKDB_ROOT = Path("data/sweden_finacial")
+SWEDEN_FINANCIAL_DUCKDB_ROOT = Path("data/sweden_financial")
 SWEDEN_FINANCIAL_DUCKDB_PATH = (
     SWEDEN_FINANCIAL_DUCKDB_ROOT / "sweden_financial_source_2026.duckdb"
 )

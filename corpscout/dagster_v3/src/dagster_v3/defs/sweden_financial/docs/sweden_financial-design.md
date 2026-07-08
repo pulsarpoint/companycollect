@@ -125,7 +125,7 @@ archive was downloaded or reused.
 Catalog DuckDB files are partitioned by archive year. The file path is:
 
 ```text
-data/sweden_finacial/sweden_financial_source_<year>.duckdb
+data/sweden_financial/sweden_financial_source_<year>.duckdb
 ```
 
 Backfill partitions write their own year file. Current refresh partitions write
