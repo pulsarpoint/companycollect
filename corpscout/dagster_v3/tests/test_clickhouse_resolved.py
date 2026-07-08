@@ -194,6 +194,49 @@ def test_export_duckdb_connection_table_to_clickhouse_inserts_rows_in_batches(
     ]
 
 
+def test_export_duckdb_connection_table_to_clickhouse_logs_row_batch_progress(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            "create table finland_resolved.fi_companies (business_id varchar)"
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_companies values
+              ('1000001-1'),
+              ('1000002-2'),
+              ('1000003-3')
+            """
+        )
+
+        client = FakeInsertClickHouseClient()
+        messages: list[str] = []
+
+        row_count = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=connection,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            duckdb_table="fi_companies",
+            clickhouse_database="corpscout",
+            clickhouse_table="fi_companies",
+            columns=("business_id",),
+            truncate=False,
+            batch_size=2,
+            log=lambda message, *args: messages.append(message % args),
+        )
+
+    assert row_count == 3
+    assert messages == [
+        "Inserted ClickHouse row batch: table=corpscout.fi_companies "
+        "batch_number=1 batch_rows=2 total_rows=2",
+        "Inserted ClickHouse row batch: table=corpscout.fi_companies "
+        "batch_number=2 batch_rows=1 total_rows=3",
+    ]
+
+
 def test_export_duckdb_connection_table_to_clickhouse_prefers_arrow_batches(
     tmp_path,
 ) -> None:
@@ -290,7 +333,7 @@ def test_export_duckdb_connection_table_to_clickhouse_applies_column_expressions
                     "then activity_start_date else null end"
                 ),
             },
-    )
+        )
 
     assert row_count == 2
     assert client.arrow_insert_calls == []

@@ -146,3 +146,75 @@ def test_pgfn_clickhouse_export_coalesces_null_strings(tmp_path: Path) -> None:
     assert inserted_rows[0][columns.index("inscription_date")] is None
     assert inserted_rows[0][columns.index("is_lawsuit")] is None
     assert inserted_rows[0][columns.index("consolidated_amount_brl")] is None
+
+
+def test_pgfn_clickhouse_export_uses_small_insert_batches(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_assert_tables_exist(*args, **kwargs) -> None:
+        captured["asserted"] = True
+
+    def fake_export_duckdb_connection_table_to_clickhouse(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 123
+
+    monkeypatch.setattr(
+        clickhouse, "assert_clickhouse_tables_exist", fake_assert_tables_exist
+    )
+    monkeypatch.setattr(
+        clickhouse,
+        "export_duckdb_connection_table_to_clickhouse",
+        fake_export_duckdb_connection_table_to_clickhouse,
+    )
+
+    rows = clickhouse.export_brazil_comp_pgfn_company_debts_clickhouse(
+        duckdb_connection=duckdb.connect(str(tmp_path / "pgfn.duckdb")),
+        clickhouse=FakeClickHouseResource(FakeClickHouseClient()),
+    )
+
+    assert rows == 123
+    assert captured["batch_size"] == clickhouse.PGFN_CLICKHOUSE_INSERT_BATCH_SIZE
+    assert clickhouse.PGFN_CLICKHOUSE_INSERT_BATCH_SIZE < 50_000
+
+
+def test_pgfn_clickhouse_export_passes_log_to_shared_export(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_assert_tables_exist(*args, **kwargs) -> None:
+        captured["asserted"] = True
+
+    def fake_export_duckdb_connection_table_to_clickhouse(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 123
+
+    monkeypatch.setattr(
+        clickhouse, "assert_clickhouse_tables_exist", fake_assert_tables_exist
+    )
+    monkeypatch.setattr(
+        clickhouse,
+        "export_duckdb_connection_table_to_clickhouse",
+        fake_export_duckdb_connection_table_to_clickhouse,
+    )
+
+    messages: list[str] = []
+    rows = clickhouse.export_brazil_comp_pgfn_company_debts_clickhouse(
+        duckdb_connection=duckdb.connect(str(tmp_path / "pgfn.duckdb")),
+        clickhouse=FakeClickHouseResource(FakeClickHouseClient()),
+        snapshot_quarter="2026-Q1",
+        log=lambda message, *args: messages.append(message % args),
+    )
+
+    assert rows == 123
+    assert captured["log"] is not None
+    captured_log = captured["log"]
+    assert callable(captured_log)
+    captured_log("batch marker %d", 1)
+    assert any(
+        "snapshot_quarter=2026-Q1 batch marker 1" in message for message in messages
+    )

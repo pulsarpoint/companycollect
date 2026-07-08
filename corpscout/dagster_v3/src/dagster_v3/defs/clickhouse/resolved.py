@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import pyarrow as pa
@@ -60,6 +60,7 @@ def export_duckdb_connection_table_to_clickhouse(
     truncate: bool,
     batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
     column_expressions: Mapping[str, str] | None = None,
+    log: Callable[..., object] | None = None,
 ) -> int:
     _validate_batch_size(batch_size)
     _validate_column_expressions(columns, column_expressions)
@@ -83,6 +84,8 @@ def export_duckdb_connection_table_to_clickhouse(
             columns=columns,
             batch_size=batch_size,
             column_expressions=column_expressions,
+            log=log,
+            log_table=f"{clickhouse_database}.{clickhouse_table}",
         )
 
     clickhouse_stage_table = _clickhouse_stage_table_name(clickhouse_table)
@@ -108,6 +111,8 @@ def export_duckdb_connection_table_to_clickhouse(
             columns=columns,
             batch_size=batch_size,
             column_expressions=column_expressions,
+            log=log,
+            log_table=f"{clickhouse_database}.{clickhouse_table}",
         )
         clickhouse_client.execute(
             f"EXCHANGE TABLES {clickhouse_qualified_stage_table} AND {clickhouse_qualified_table}"
@@ -240,6 +245,8 @@ def _insert_duckdb_table_in_batches(
     columns: Sequence[str],
     batch_size: int,
     column_expressions: Mapping[str, str] | None = None,
+    log: Callable[..., object] | None = None,
+    log_table: str = "",
 ) -> int:
     if callable(getattr(clickhouse_client, "insert_arrow", None)):
         return _insert_duckdb_arrow_batches(
@@ -254,6 +261,8 @@ def _insert_duckdb_table_in_batches(
             columns=columns,
             batch_size=batch_size,
             column_expressions=column_expressions,
+            log=log,
+            log_table=log_table,
         )
     return _insert_duckdb_rows_in_batches(
         duckdb_connection=duckdb_connection,
@@ -265,6 +274,8 @@ def _insert_duckdb_table_in_batches(
         columns=columns,
         batch_size=batch_size,
         column_expressions=column_expressions,
+        log=log,
+        log_table=log_table,
     )
 
 
@@ -281,6 +292,8 @@ def _insert_duckdb_arrow_batches(
     columns: Sequence[str],
     batch_size: int,
     column_expressions: Mapping[str, str] | None = None,
+    log: Callable[..., object] | None = None,
+    log_table: str = "",
 ) -> int:
     duckdb_columns = _duckdb_select_list(columns, column_expressions)
     duckdb_qualified_table = (
@@ -292,9 +305,11 @@ def _insert_duckdb_arrow_batches(
     )
 
     row_count = 0
+    batch_number = 0
     for record_batch in result.to_arrow_reader(batch_size=batch_size):
         if record_batch.num_rows < 1:
             continue
+        batch_number += 1
         if _arrow_batch_has_nullable_date(record_batch):
             rows = _arrow_batch_rows(record_batch, columns)
             insert_rows = getattr(clickhouse_client, "insert_rows", None)
@@ -311,6 +326,14 @@ def _insert_duckdb_arrow_batches(
                     rows,
                 )
             row_count += record_batch.num_rows
+            _log_clickhouse_batch(
+                log,
+                batch_kind="row",
+                log_table=log_table,
+                batch_number=batch_number,
+                batch_rows=record_batch.num_rows,
+                total_rows=row_count,
+            )
             continue
         clickhouse_client.insert_arrow(
             clickhouse_table,
@@ -318,6 +341,14 @@ def _insert_duckdb_arrow_batches(
             database=clickhouse_database,
         )
         row_count += record_batch.num_rows
+        _log_clickhouse_batch(
+            log,
+            batch_kind="arrow",
+            log_table=log_table,
+            batch_number=batch_number,
+            batch_rows=record_batch.num_rows,
+            total_rows=row_count,
+        )
     return row_count
 
 
@@ -333,8 +364,7 @@ def _arrow_batch_rows(
     columns: Sequence[str],
 ) -> list[tuple[object, ...]]:
     return [
-        tuple(row[column] for column in columns)
-        for row in record_batch.to_pylist()
+        tuple(row[column] for column in columns) for row in record_batch.to_pylist()
     ]
 
 
@@ -349,6 +379,8 @@ def _insert_duckdb_rows_in_batches(
     columns: Sequence[str],
     batch_size: int,
     column_expressions: Mapping[str, str] | None = None,
+    log: Callable[..., object] | None = None,
+    log_table: str = "",
 ) -> int:
     duckdb_columns = _duckdb_select_list(columns, column_expressions)
     duckdb_qualified_table = (
@@ -360,6 +392,7 @@ def _insert_duckdb_rows_in_batches(
     )
 
     row_count = 0
+    batch_number = 0
     while True:
         rows = result.fetchmany(batch_size)
         if not rows:
@@ -369,6 +402,15 @@ def _insert_duckdb_rows_in_batches(
             rows,
         )
         row_count += len(rows)
+        batch_number += 1
+        _log_clickhouse_batch(
+            log,
+            batch_kind="row",
+            log_table=log_table,
+            batch_number=batch_number,
+            batch_rows=len(rows),
+            total_rows=row_count,
+        )
 
 
 def _validate_batch_size(batch_size: int) -> None:
@@ -400,6 +442,28 @@ def _duckdb_select_list(
         if column in expressions
         else _quote_duckdb_identifier(column)
         for column in columns
+    )
+
+
+def _log_clickhouse_batch(
+    log: Callable[..., object] | None,
+    *,
+    batch_kind: str,
+    log_table: str,
+    batch_number: int,
+    batch_rows: int,
+    total_rows: int,
+) -> None:
+    if log is None:
+        return
+    log(
+        "Inserted ClickHouse %s batch: table=%s batch_number=%d "
+        "batch_rows=%d total_rows=%d",
+        batch_kind,
+        log_table,
+        batch_number,
+        batch_rows,
+        total_rows,
     )
 
 

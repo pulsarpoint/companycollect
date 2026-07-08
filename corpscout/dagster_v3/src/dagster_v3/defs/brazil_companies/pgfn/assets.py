@@ -104,6 +104,7 @@ def brazil_comp_pgfn_company_debts_clickhouse(
         rows = export_brazil_comp_pgfn_company_debts_clickhouse(
             duckdb_connection=connection,
             clickhouse=clickhouse,
+            snapshot_quarter=context.partition_key,
             log=context.log.info,
         )
     return dg.MaterializeResult(
