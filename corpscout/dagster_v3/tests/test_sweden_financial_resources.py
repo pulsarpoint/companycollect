@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.sweden_financial.parsing import (
     REPORT_XHTML_PREFIX,
@@ -598,6 +599,81 @@ def test_parse_sweden_financial_report_xhtml_catalog_writes_reports_and_facts(
             None,
         ),
     ]
+
+
+def test_parse_sweden_financial_report_xhtml_catalog_requires_catalog_table(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        with pytest.raises(
+            ValueError,
+            match="sweden_financial_backfill_report_xhtml_catalog_duckdb",
+        ):
+            parse_sweden_financial_report_xhtml_catalog(
+                connection=connection,
+                object_store=object_store,
+                source_run_id="parse-run",
+                partition_year="2025",
+                replace_scope="partition",
+            )
+        tables = connection.execute(
+            """
+            select table_name
+            from information_schema.tables
+            where table_schema = 'sweden_financial'
+            order by table_name
+            """
+        ).fetchall()
+
+    assert tables == []
+
+
+def test_parse_sweden_financial_report_xhtml_catalog_requires_partition_catalog_rows(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        connection.execute("create schema sweden_financial")
+        connection.execute(
+            """
+            create table sweden_financial.report_xhtml_catalog (
+                source_run_id varchar,
+                partition_year varchar,
+                source_archive_key varchar,
+                nested_zip_member varchar,
+                xhtml_member varchar,
+                xhtml_s3_bucket varchar,
+                xhtml_s3_key varchar,
+                company_id varchar,
+                report_period_end varchar,
+                source_archive_year varchar,
+                source_archive_name varchar,
+                size_bytes bigint,
+                sha256 varchar
+            )
+            """
+        )
+        with pytest.raises(ValueError, match="No Sweden financial XHTML catalog rows"):
+            parse_sweden_financial_report_xhtml_catalog(
+                connection=connection,
+                object_store=object_store,
+                source_run_id="parse-run",
+                partition_year="2025",
+                replace_scope="partition",
+            )
+        tables = connection.execute(
+            """
+            select table_name
+            from information_schema.tables
+            where table_schema = 'sweden_financial'
+            order by table_name
+            """
+        ).fetchall()
+
+    assert tables == [("report_xhtml_catalog",)]
 
 
 def test_parse_sweden_financial_report_xhtml_catalog_flushes_insert_batches(

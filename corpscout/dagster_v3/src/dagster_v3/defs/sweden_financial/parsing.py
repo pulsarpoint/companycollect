@@ -378,12 +378,22 @@ def parse_sweden_financial_report_xhtml_catalog(
 ) -> dict[str, int]:
     if insert_batch_size < 1:
         raise ValueError("Sweden financial XHTML insert batch size must be positive")
-    _ensure_parsed_report_tables(connection)
+    _assert_report_xhtml_catalog_exists(
+        connection=connection,
+        partition_year=partition_year,
+    )
     catalog_rows = _report_xhtml_catalog_rows(
         connection=connection,
         partition_year=partition_year,
         catalog_source_run_id=catalog_source_run_id,
     )
+    if not catalog_rows and replace_scope == "partition":
+        raise ValueError(
+            "No Sweden financial XHTML catalog rows found for partition "
+            f"{partition_year}. Materialize "
+            "sweden_financial_backfill_report_xhtml_catalog_duckdb for the same "
+            "partition before running sweden_financial_backfill_parsed_reports_duckdb."
+        )
     source_archive_names = sorted(
         {
             str(row["source_archive_name"])
@@ -391,6 +401,7 @@ def parse_sweden_financial_report_xhtml_catalog(
             if str(row["source_archive_name"]).strip()
         }
     )
+    _ensure_parsed_report_tables(connection)
     _delete_parsed_report_scope(
         connection=connection,
         replace_scope=replace_scope,
@@ -786,6 +797,32 @@ def _ensure_parsed_report_tables(connection: Any) -> None:
         )
         """
     )
+
+
+def _assert_report_xhtml_catalog_exists(
+    *,
+    connection: Any,
+    partition_year: str,
+) -> None:
+    exists = bool(
+        connection.execute(
+            """
+            select count(*) > 0
+            from information_schema.tables
+            where table_schema = ?
+              and table_name = 'report_xhtml_catalog'
+            """,
+            [SWEDEN_FINANCIAL_DATASET_NAME],
+        ).fetchone()[0]
+    )
+    if not exists:
+        raise ValueError(
+            "Sweden financial XHTML catalog table is missing for partition "
+            f"{partition_year}. Materialize "
+            "sweden_financial_backfill_report_xhtml_catalog_duckdb for the same "
+            "partition after moving/renaming the DuckDB data directory, or run "
+            "sweden_financial_backfill_job for that partition."
+        )
 
 
 def _report_xhtml_catalog_rows(
