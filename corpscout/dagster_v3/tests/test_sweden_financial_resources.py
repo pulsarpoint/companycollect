@@ -4,6 +4,7 @@ from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
@@ -69,6 +70,30 @@ class FakeObjectStore:
         )
 
 
+class TrackingDuckDbConnection:
+    def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
+        self._connection = connection
+        self.report_insert_batch_sizes: list[int] = []
+        self.fact_insert_batch_sizes: list[int] = []
+        self.error_insert_batch_sizes: list[int] = []
+
+    def execute(self, *args: Any, **kwargs: Any) -> duckdb.DuckDBPyConnection:
+        return self._connection.execute(*args, **kwargs)
+
+    def executemany(
+        self,
+        query: str,
+        rows: list[tuple[Any, ...]],
+    ) -> duckdb.DuckDBPyConnection:
+        if ".reports" in query:
+            self.report_insert_batch_sizes.append(len(rows))
+        elif ".facts" in query:
+            self.fact_insert_batch_sizes.append(len(rows))
+        elif ".parse_errors" in query:
+            self.error_insert_batch_sizes.append(len(rows))
+        return self._connection.executemany(query, rows)
+
+
 class FakeResponse:
     def __init__(
         self,
@@ -118,9 +143,7 @@ class ListingOnlySession:
 def test_sweden_financial_reports_downloads_missing_archives_to_s3() -> None:
     resource = SwedenFinancialReportsResource()
     listing_url = resource.listing_url()
-    archive_url = (
-        f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
-    )
+    archive_url = f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
     object_store = FakeObjectStore()
     session = FakeSession(
         {
@@ -144,7 +167,10 @@ def test_sweden_financial_reports_downloads_missing_archives_to_s3() -> None:
         source_last_modified="2025-02-07T09:13:53.713Z",
     )
     assert object_store.created_buckets == [SWEDEN_FINANCIAL_RAW_BUCKET]
-    assert object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, expected_key)] == b"zip-bytes"
+    assert (
+        object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, expected_key)]
+        == b"zip-bytes"
+    )
     assert object_store.uploaded_files == [(SWEDEN_FINANCIAL_RAW_BUCKET, expected_key)]
     assert session.requested_urls == [listing_url, archive_url]
     assert result.metadata["archive_count"] == 1
@@ -189,9 +215,7 @@ def test_sweden_financial_reports_skips_existing_last_modified_archives() -> Non
 def test_sweden_financial_reports_sync_exposes_changed_and_unchanged_keys() -> None:
     resource = SwedenFinancialReportsResource()
     listing_url = resource.listing_url(marker="arsredovisningar/2026/")
-    archive_url = (
-        f"{resource.archive_base_url}/arsredovisningar/2026/01_1.zip"
-    )
+    archive_url = f"{resource.archive_base_url}/arsredovisningar/2026/01_1.zip"
     unchanged_key = archive_object_key(
         upstream_key="arsredovisningar/2026/02_1.zip",
         source_last_modified="2026-07-01T09:13:53.713Z",
@@ -241,12 +265,8 @@ def test_sweden_financial_reports_follows_listing_pagination() -> None:
     resource = SwedenFinancialReportsResource()
     first_url = resource.listing_url()
     second_url = resource.listing_url(marker="arsredovisningar/2020/08_2.zip")
-    first_archive_url = (
-        f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
-    )
-    second_archive_url = (
-        f"{resource.archive_base_url}/arsredovisningar/2021/01_1.zip"
-    )
+    first_archive_url = f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
+    second_archive_url = f"{resource.archive_base_url}/arsredovisningar/2021/01_1.zip"
     object_store = FakeObjectStore()
     session = FakeSession(
         {
@@ -286,9 +306,7 @@ def test_sweden_financial_reports_follows_listing_pagination() -> None:
 def test_sweden_financial_reports_filters_listing_by_year_partition() -> None:
     resource = SwedenFinancialReportsResource()
     listing_url = resource.listing_url(marker="arsredovisningar/2020/")
-    archive_url = (
-        f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
-    )
+    archive_url = f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
     object_store = FakeObjectStore()
     session = FakeSession(
         {
@@ -318,9 +336,7 @@ def test_sweden_financial_reports_filters_listing_by_year_partition() -> None:
 def test_sweden_financial_reports_skips_later_year_archives_on_listing_page() -> None:
     resource = SwedenFinancialReportsResource()
     listing_url = resource.listing_url(marker="arsredovisningar/2020/")
-    archive_url = (
-        f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
-    )
+    archive_url = f"{resource.archive_base_url}/arsredovisningar/2020/08_2.zip"
     object_store = FakeObjectStore()
     session = FakeSession(
         {
@@ -573,6 +589,112 @@ def test_parse_sweden_financial_report_xhtml_catalog_writes_reports_and_facts(
     ]
 
 
+def test_parse_sweden_financial_report_xhtml_catalog_flushes_insert_batches(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2025/12_31.zip",
+        source_last_modified="2026-01-02T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = _outer_zip(
+        nested_name="5594386681_2025-12-31.zip",
+        xhtml_files={
+            "first.xhtml": _sample_ixbrl_body(company_id="5594386681", amount="100"),
+            "second.xhtml": _sample_ixbrl_body(company_id="5594386681", amount="200"),
+            "third.xhtml": _sample_ixbrl_body(company_id="5594386681", amount="300"),
+        },
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="catalog-run",
+            partition_year="2025",
+        )
+        tracking_connection = TrackingDuckDbConnection(connection)
+        counts = parse_sweden_financial_report_xhtml_catalog(
+            connection=tracking_connection,
+            object_store=object_store,
+            source_run_id="parse-run",
+            partition_year="2025",
+            replace_scope="partition",
+            insert_batch_size=2,
+        )
+
+    assert counts["report_row_count"] == 3
+    assert counts["fact_row_count"] == 3
+    assert tracking_connection.report_insert_batch_sizes == [2, 1]
+    assert tracking_connection.fact_insert_batch_sizes == [2, 1]
+
+
+def test_parse_sweden_financial_report_xhtml_catalog_partition_replace_keeps_other_partitions(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    archive_2024_key = archive_object_key(
+        upstream_key="arsredovisningar/2024/01_1.zip",
+        source_last_modified="2025-01-02T09:13:53.713Z",
+    )
+    archive_2025_key = archive_object_key(
+        upstream_key="arsredovisningar/2025/01_1.zip",
+        source_last_modified="2026-01-02T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, archive_2024_key)] = _outer_zip(
+        nested_name="5560000000_2024-12-31.zip",
+        xhtml_body=_sample_ixbrl_body(company_id="5560000000", amount="100"),
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, archive_2025_key)] = _outer_zip(
+        nested_name="5560000001_2025-12-31.zip",
+        xhtml_body=_sample_ixbrl_body(company_id="5560000001", amount="200"),
+    )
+
+    with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="catalog-2024",
+            partition_year="2024",
+            source_archive_keys=[archive_2024_key],
+            replace_scope="partition",
+        )
+        parse_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="parse-2024",
+            partition_year="2024",
+            replace_scope="partition",
+        )
+        extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="catalog-2025",
+            partition_year="2025",
+            source_archive_keys=[archive_2025_key],
+            replace_scope="partition",
+        )
+        parse_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="parse-2025",
+            partition_year="2025",
+            replace_scope="partition",
+        )
+        rows = connection.execute(
+            """
+            select source_archive_key, company_id
+            from sweden_financial.reports
+            order by source_archive_key
+            """
+        ).fetchall()
+
+    assert rows == [
+        (archive_2024_key, "5560000000"),
+        (archive_2025_key, "5560000001"),
+    ]
+
+
 def test_parse_sweden_financial_report_xhtml_catalog_replaces_changed_archives(
     tmp_path: Path,
 ) -> None:
@@ -601,10 +723,12 @@ def test_parse_sweden_financial_report_xhtml_catalog_replaces_changed_archives(
             xhtml_body=_sample_ixbrl_body(company_id="5560000001", amount="200"),
         )
     )
-    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, changed_archive_key)] = _outer_zip(
-        nested_name="5560000002_2026-12-31.zip",
-        xhtml_name="report.xhtml",
-        xhtml_body=_sample_ixbrl_body(company_id="5560000002", amount="300"),
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, changed_archive_key)] = (
+        _outer_zip(
+            nested_name="5560000002_2026-12-31.zip",
+            xhtml_name="report.xhtml",
+            xhtml_body=_sample_ixbrl_body(company_id="5560000002", amount="300"),
+        )
     )
 
     with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
@@ -779,11 +903,23 @@ def test_extract_sweden_financial_report_xhtml_catalog_logs_archive_progress(
             log_info=log_info,
         )
 
-    assert any("Starting Sweden financial XHTML catalog extraction" in message for message in log_messages)
-    assert any("Processing Sweden financial archive" in message for message in log_messages)
-    assert any("Processing Sweden financial nested ZIPs" in message for message in log_messages)
-    assert any("Processed Sweden financial archive" in message for message in log_messages)
-    assert any("Finished Sweden financial XHTML catalog extraction" in message for message in log_messages)
+    assert any(
+        "Starting Sweden financial XHTML catalog extraction" in message
+        for message in log_messages
+    )
+    assert any(
+        "Processing Sweden financial archive" in message for message in log_messages
+    )
+    assert any(
+        "Processing Sweden financial nested ZIPs" in message for message in log_messages
+    )
+    assert any(
+        "Processed Sweden financial archive" in message for message in log_messages
+    )
+    assert any(
+        "Finished Sweden financial XHTML catalog extraction" in message
+        for message in log_messages
+    )
 
 
 def test_extract_sweden_financial_report_xhtml_catalog_replaces_only_partition_year(
@@ -857,15 +993,19 @@ def test_extract_sweden_financial_report_xhtml_catalog_merges_changed_archives(
         xhtml_name="report.xhtml",
         xhtml_body=b"<html>old changed archive</html>",
     )
-    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, unchanged_archive_key)] = _outer_zip(
-        nested_name="5560000001_2026-12-31.zip",
-        xhtml_name="report.xhtml",
-        xhtml_body=b"<html>unchanged archive</html>",
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, unchanged_archive_key)] = (
+        _outer_zip(
+            nested_name="5560000001_2026-12-31.zip",
+            xhtml_name="report.xhtml",
+            xhtml_body=b"<html>unchanged archive</html>",
+        )
     )
-    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, changed_archive_key)] = _outer_zip(
-        nested_name="5560000002_2026-12-31.zip",
-        xhtml_name="report.xhtml",
-        xhtml_body=b"<html>new changed archive</html>",
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, changed_archive_key)] = (
+        _outer_zip(
+            nested_name="5560000002_2026-12-31.zip",
+            xhtml_name="report.xhtml",
+            xhtml_body=b"<html>new changed archive</html>",
+        )
     )
 
     with duckdb.connect(str(tmp_path / "sweden_financial_source.duckdb")) as connection:
@@ -989,7 +1129,9 @@ def _outer_zip(
     xhtml_files: dict[str, bytes] | None = None,
 ) -> bytes:
     nested_buffer = BytesIO()
-    with zipfile.ZipFile(nested_buffer, "w", compression=zipfile.ZIP_DEFLATED) as nested:
+    with zipfile.ZipFile(
+        nested_buffer, "w", compression=zipfile.ZIP_DEFLATED
+    ) as nested:
         files = xhtml_files or {xhtml_name: xhtml_body}
         for name, body in files.items():
             nested.writestr(name, body)

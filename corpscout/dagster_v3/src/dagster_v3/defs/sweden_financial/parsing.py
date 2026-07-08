@@ -25,13 +25,16 @@ RAW_ARCHIVE_PREFIX = "sweden_financial/raw_archives/"
 REPORT_XHTML_PREFIX = "sweden_financial/report_xhtml/"
 LOG_EVERY_NESTED_ZIPS = 1_000
 SWEDEN_FINANCIAL_XHTML_PARSER_VERSION = "sweden-financial-ixbrl-v1"
+PARSED_REPORT_INSERT_BATCH_SIZE = 50_000
 IX_NS = "http://www.xbrl.org/2013/inlineXBRL"
 XBRLI_NS = "http://www.xbrl.org/2003/instance"
 XBRLDI_NS = "http://xbrl.org/2006/xbrldi"
 LINK_NS = "http://www.xbrl.org/2003/linkbase"
 XLINK_NS = "http://www.w3.org/1999/xlink"
 
-_DATE_PATTERN = re.compile(r"(?P<year>\d{4})[-_]? (?P<month>\d{2})[-_]? (?P<day>\d{2})", re.X)
+_DATE_PATTERN = re.compile(
+    r"(?P<year>\d{4})[-_]? (?P<month>\d{2})[-_]? (?P<day>\d{2})", re.X
+)
 _COMPANY_ID_PATTERN = re.compile(r"(?<!\d)(\d{10,12})(?!\d)")
 _NUMERIC_CLEAN_RE = re.compile(r"[^0-9.\-]")
 _XML_PARSER = etree.XMLParser(recover=True, huge_tree=True, resolve_entities=False)
@@ -101,7 +104,9 @@ def extract_sweden_financial_report_xhtml_catalog(
                     archive_count,
                     source_archive_key,
                 )
-            archive_path = temp_dir / f"{sha256(source_archive_key.encode()).hexdigest()}.zip"
+            archive_path = (
+                temp_dir / f"{sha256(source_archive_key.encode()).hexdigest()}.zip"
+            )
             object_store.download_file(
                 source_archive_key,
                 archive_path,
@@ -224,8 +229,11 @@ def parse_sweden_financial_report_xhtml_catalog(
     partition_year: str,
     replace_scope: str = "partition",
     catalog_source_run_id: str | None = None,
+    insert_batch_size: int = PARSED_REPORT_INSERT_BATCH_SIZE,
     log_info: Callable[..., object] | None = None,
 ) -> dict[str, int]:
+    if insert_batch_size < 1:
+        raise ValueError("Sweden financial XHTML insert batch size must be positive")
     _ensure_parsed_report_tables(connection)
     catalog_rows = _report_xhtml_catalog_rows(
         connection=connection,
@@ -242,6 +250,7 @@ def parse_sweden_financial_report_xhtml_catalog(
     _delete_parsed_report_scope(
         connection=connection,
         replace_scope=replace_scope,
+        partition_year=partition_year,
         source_archive_names=source_archive_names,
     )
 
@@ -257,6 +266,9 @@ def parse_sweden_financial_report_xhtml_catalog(
     report_rows: list[tuple[Any, ...]] = []
     fact_rows: list[tuple[Any, ...]] = []
     error_rows: list[tuple[Any, ...]] = []
+    report_row_count = 0
+    fact_row_count = 0
+    error_row_count = 0
 
     for index, catalog_row in enumerate(catalog_rows, start=1):
         try:
@@ -295,7 +307,62 @@ def parse_sweden_financial_report_xhtml_catalog(
                     type(exc).__name__,
                     exc,
                 )
+            if len(error_rows) >= insert_batch_size:
+                inserted_reports, inserted_facts, inserted_errors = (
+                    _flush_parsed_report_rows(
+                        connection=connection,
+                        report_rows=report_rows,
+                        fact_rows=fact_rows,
+                        error_rows=error_rows,
+                    )
+                )
+                report_row_count += inserted_reports
+                fact_row_count += inserted_facts
+                error_row_count += inserted_errors
+                if log_info is not None:
+                    log_info(
+                        "Inserted Sweden financial XHTML parse batch: partition_year=%s "
+                        "batch_reports=%s batch_facts=%s batch_errors=%s "
+                        "total_reports=%s total_facts=%s total_errors=%s",
+                        partition_year,
+                        inserted_reports,
+                        inserted_facts,
+                        inserted_errors,
+                        report_row_count,
+                        fact_row_count,
+                        error_row_count,
+                    )
             continue
+
+        if (
+            len(fact_rows) >= insert_batch_size
+            or len(report_rows) >= insert_batch_size
+            or len(error_rows) >= insert_batch_size
+        ):
+            inserted_reports, inserted_facts, inserted_errors = (
+                _flush_parsed_report_rows(
+                    connection=connection,
+                    report_rows=report_rows,
+                    fact_rows=fact_rows,
+                    error_rows=error_rows,
+                )
+            )
+            report_row_count += inserted_reports
+            fact_row_count += inserted_facts
+            error_row_count += inserted_errors
+            if log_info is not None:
+                log_info(
+                    "Inserted Sweden financial XHTML parse batch: partition_year=%s "
+                    "batch_reports=%s batch_facts=%s batch_errors=%s "
+                    "total_reports=%s total_facts=%s total_errors=%s",
+                    partition_year,
+                    inserted_reports,
+                    inserted_facts,
+                    inserted_errors,
+                    report_row_count,
+                    fact_row_count,
+                    error_row_count,
+                )
 
         if log_info is not None and (
             index == 1 or index == len(catalog_rows) or index % 100 == 0
@@ -305,51 +372,36 @@ def parse_sweden_financial_report_xhtml_catalog(
                 partition_year,
                 index,
                 len(catalog_rows),
-                len(fact_rows),
+                fact_row_count + len(fact_rows),
             )
 
-    if report_rows:
-        connection.executemany(
-            f"""
-            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.reports
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            report_rows,
-        )
-    if fact_rows:
-        connection.executemany(
-            f"""
-            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.facts
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            fact_rows,
-        )
-    if error_rows:
-        connection.executemany(
-            f"""
-            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors
-            values (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            error_rows,
-        )
+    inserted_reports, inserted_facts, inserted_errors = _flush_parsed_report_rows(
+        connection=connection,
+        report_rows=report_rows,
+        fact_rows=fact_rows,
+        error_rows=error_rows,
+    )
+    report_row_count += inserted_reports
+    fact_row_count += inserted_facts
+    error_row_count += inserted_errors
 
     if log_info is not None:
         log_info(
             "Finished Sweden financial XHTML parse: partition_year=%s reports=%s facts=%s errors=%s",
             partition_year,
-            len(report_rows),
-            len(fact_rows),
-            len(error_rows),
+            report_row_count,
+            fact_row_count,
+            error_row_count,
         )
 
     return {
         "partition_year": partition_year,
         "catalog_row_count": len(catalog_rows),
-        "reports_parsed_count": len(report_rows),
-        "reports_failed_count": len(error_rows),
-        "report_row_count": len(report_rows),
-        "fact_row_count": len(fact_rows),
-        "parse_error_row_count": len(error_rows),
+        "reports_parsed_count": report_row_count,
+        "reports_failed_count": error_row_count,
+        "report_row_count": report_row_count,
+        "fact_row_count": fact_row_count,
+        "parse_error_row_count": error_row_count,
     }
 
 
@@ -362,7 +414,9 @@ def report_xhtml_object_key(
     report_period_end: str,
     xhtml_member: str,
 ) -> str:
-    source_archive = _safe_path_segment(_archive_name_from_object_key(source_archive_key))
+    source_archive = _safe_path_segment(
+        _archive_name_from_object_key(source_archive_key)
+    )
     source_archive_hash = sha256(source_archive_key.encode()).hexdigest()[:16]
     nested_zip = _safe_path_segment(Path(nested_zip_member).stem)
     xhtml_name = _safe_path_segment(Path(xhtml_member).name)
@@ -493,7 +547,9 @@ def _replace_report_xhtml_catalog(
                 [partition_year, *source_archive_names],
             )
     else:
-        raise ValueError(f"Unknown Sweden financial XHTML replace scope: {replace_scope}")
+        raise ValueError(
+            f"Unknown Sweden financial XHTML replace scope: {replace_scope}"
+        )
     if rows:
         connection.executemany(
             f"""
@@ -643,42 +699,113 @@ def _delete_parsed_report_scope(
     *,
     connection: Any,
     replace_scope: str,
+    partition_year: str,
     source_archive_names: list[str],
 ) -> None:
+    source_archive_year_prefix = f"{RAW_ARCHIVE_PREFIX}year={partition_year}/%"
     if replace_scope == "partition":
-        for table_name in ("facts", "reports", "parse_errors"):
-            connection.execute(f"delete from {SWEDEN_FINANCIAL_DATASET_NAME}.{table_name}")
+        _delete_parsed_reports_for_filter(
+            connection=connection,
+            report_filter_sql="source_archive_key like ?",
+            report_filter_params=[source_archive_year_prefix],
+        )
+        connection.execute(
+            f"""
+            delete from {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors
+            where partition_year = ?
+            """,
+            [partition_year],
+        )
         return
     if replace_scope != "archive":
-        raise ValueError(f"Unknown Sweden financial parsed replace scope: {replace_scope}")
+        raise ValueError(
+            f"Unknown Sweden financial parsed replace scope: {replace_scope}"
+        )
     if not source_archive_names:
         return
     placeholders = ", ".join("?" for _ in source_archive_names)
+    report_filter_params = [source_archive_year_prefix, *source_archive_names]
+    _delete_parsed_reports_for_filter(
+        connection=connection,
+        report_filter_sql=(
+            f"source_archive_key like ? and source_archive_name in ({placeholders})"
+        ),
+        report_filter_params=report_filter_params,
+    )
+    connection.execute(
+        f"""
+        delete from {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors
+        where partition_year = ?
+          and source_archive_name in ({placeholders})
+        """,
+        [partition_year, *source_archive_names],
+    )
+
+
+def _delete_parsed_reports_for_filter(
+    *,
+    connection: Any,
+    report_filter_sql: str,
+    report_filter_params: list[Any],
+) -> None:
     connection.execute(
         f"""
         delete from {SWEDEN_FINANCIAL_DATASET_NAME}.facts
         where statement_key in (
             select statement_key
             from {SWEDEN_FINANCIAL_DATASET_NAME}.reports
-            where source_archive_name in ({placeholders})
+            where {report_filter_sql}
         )
         """,
-        source_archive_names,
+        report_filter_params,
     )
     connection.execute(
         f"""
         delete from {SWEDEN_FINANCIAL_DATASET_NAME}.reports
-        where source_archive_name in ({placeholders})
+        where {report_filter_sql}
         """,
-        source_archive_names,
+        report_filter_params,
     )
-    connection.execute(
-        f"""
-        delete from {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors
-        where source_archive_name in ({placeholders})
-        """,
-        source_archive_names,
-    )
+
+
+def _flush_parsed_report_rows(
+    *,
+    connection: Any,
+    report_rows: list[tuple[Any, ...]],
+    fact_rows: list[tuple[Any, ...]],
+    error_rows: list[tuple[Any, ...]],
+) -> tuple[int, int, int]:
+    report_row_count = len(report_rows)
+    fact_row_count = len(fact_rows)
+    error_row_count = len(error_rows)
+    if report_rows:
+        connection.executemany(
+            f"""
+            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.reports
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            report_rows,
+        )
+        report_rows.clear()
+    if fact_rows:
+        connection.executemany(
+            f"""
+            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.facts
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            fact_rows,
+        )
+        fact_rows.clear()
+    if error_rows:
+        connection.executemany(
+            f"""
+            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.parse_errors
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            error_rows,
+        )
+        error_rows.clear()
+    return report_row_count, fact_row_count, error_row_count
 
 
 def _parse_report_xhtml(
@@ -697,12 +824,16 @@ def _parse_report_xhtml(
     statement_key = sha256(
         f"{catalog_row['xhtml_s3_key']}:{source_payload_hash}".encode()
     ).hexdigest()
-    report_period_end = _parse_date(str(catalog_row["report_period_end"])) or _latest_period_end(
+    report_period_end = _parse_date(
+        str(catalog_row["report_period_end"])
+    ) or _latest_period_end(
         contexts,
     )
     report_period_start = _period_start_for_report_end(contexts, report_period_end)
     fiscal_year = report_period_end.year if report_period_end is not None else None
-    report_language = root.get("{http://www.w3.org/XML/1998/namespace}lang") or root.get("lang")
+    report_language = root.get(
+        "{http://www.w3.org/XML/1998/namespace}lang"
+    ) or root.get("lang")
 
     report_row = (
         "SE",
@@ -767,9 +898,21 @@ def _contexts_by_id(root: etree._Element) -> dict[str, dict[str, Any]]:
 
 def _context_row(element: etree._Element) -> dict[str, Any]:
     period = element.find(f"{{{XBRLI_NS}}}period")
-    instant = _parse_date(period.findtext(f"{{{XBRLI_NS}}}instant")) if period is not None else None
-    start = _parse_date(period.findtext(f"{{{XBRLI_NS}}}startDate")) if period is not None else None
-    end = _parse_date(period.findtext(f"{{{XBRLI_NS}}}endDate")) if period is not None else None
+    instant = (
+        _parse_date(period.findtext(f"{{{XBRLI_NS}}}instant"))
+        if period is not None
+        else None
+    )
+    start = (
+        _parse_date(period.findtext(f"{{{XBRLI_NS}}}startDate"))
+        if period is not None
+        else None
+    )
+    end = (
+        _parse_date(period.findtext(f"{{{XBRLI_NS}}}endDate"))
+        if period is not None
+        else None
+    )
     dimensions = {
         str(member.get("dimension")): (member.text or "").strip()
         for member in element.findall(f".//{{{XBRLDI_NS}}}explicitMember")
@@ -909,7 +1052,7 @@ def _parse_decimal(
         value = Decimal(cleaned)
         if scale:
             value *= Decimal(10) ** int(scale)
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
     return -value if negative else value
 
@@ -922,7 +1065,11 @@ def _currency_from_unit(
     if unit_id is None:
         return None
     measure = units.get(unit_id, "")
-    candidate = measure.rsplit(":", 1)[-1].strip().upper() if measure else unit_id.strip().upper()
+    candidate = (
+        measure.rsplit(":", 1)[-1].strip().upper()
+        if measure
+        else unit_id.strip().upper()
+    )
     if len(candidate) == 3 and candidate.isalpha():
         return candidate
     return None
@@ -942,7 +1089,10 @@ def _period_start_for_report_end(
     report_period_end: date | None,
 ) -> date | None:
     for context in contexts.values():
-        if context.get("period_end") == report_period_end and context.get("period_start") is not None:
+        if (
+            context.get("period_end") == report_period_end
+            and context.get("period_start") is not None
+        ):
             return context["period_start"]
     return None
 
@@ -950,7 +1100,12 @@ def _period_start_for_report_end(
 def _reported_company_name(facts: list[etree._Element]) -> str | None:
     for fact in facts:
         concept_name = fact.get("name", "").rsplit(":", 1)[-1].lower()
-        if concept_name in {"companyname", "entityname", "foretagsnamn", "företagsnamn"}:
+        if concept_name in {
+            "companyname",
+            "entityname",
+            "foretagsnamn",
+            "företagsnamn",
+        }:
             value = " ".join("".join(fact.itertext()).split())
             if value:
                 return value
@@ -974,9 +1129,7 @@ def _metadata_from_nested_zip_name(nested_zip_member: str) -> tuple[str, str]:
     company_id = company_match.group(1) if company_match is not None else ""
     report_period_end = ""
     if date_match is not None:
-        report_period_end = (
-            f"{date_match.group('year')}-{date_match.group('month')}-{date_match.group('day')}"
-        )
+        report_period_end = f"{date_match.group('year')}-{date_match.group('month')}-{date_match.group('day')}"
     return company_id, report_period_end
 
 
@@ -997,7 +1150,9 @@ def _archive_name_from_object_key(source_archive_key: str) -> str:
 def _normalize_year(year: str | int) -> str:
     normalized = str(year).strip()
     if not normalized.isdigit() or len(normalized) != 4:
-        raise ValueError(f"Sweden financial source year must be a four-digit year: {year!r}")
+        raise ValueError(
+            f"Sweden financial source year must be a four-digit year: {year!r}"
+        )
     return normalized
 
 
