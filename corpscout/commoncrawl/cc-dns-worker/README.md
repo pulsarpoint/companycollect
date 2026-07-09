@@ -442,48 +442,48 @@ Two tables (migrations `../../clickhouse/migrations/000105_…_records_distinct`
 Both are idempotent under re-load — which is exactly what makes `run`'s incremental + retry-on-crash
 loading safe.
 
-**`commoncrawl_domain_dns_records`** — one row per resolved record (the normalized table; absence of
+**`commoncrawl_domain_dns_records`** — one row per distinct record (the normalized table; absence of
 a record = no row, not a null):
 
 | Column | Type | Notes |
 |---|---|---|
-| `scan_id` | `LowCardinality(String)` | |
 | `root_domain` | `String` | |
-| `name` | `String` | qname queried, e.g. `www.example.com`, `_dmarc.example.com` |
 | `record_type` | `LowCardinality(String)` | `A, AAAA, MX, TXT, NS, SOA, CAA, DNSKEY, DS` |
 | `slot` | `LowCardinality(String)` | `@`, subdomain name, DKIM selector, `dmarc`/`mta_sts`/`tls_rpt`/`bimi`, or `""` for infra records |
+| `name` | `String` | qname queried, e.g. `www.example.com`, `_dmarc.example.com` |
 | `value` | `String` | rdata verbatim; **MX is `"<pref> <host>"`** so the sort key (which excludes `priority`) can't collapse two MX at different preferences |
-| `ttl` | `UInt32` | |
-| `priority` | `UInt16` | MX preference (also embedded in `value`); `0` otherwise |
-| `rcode` | `LowCardinality(String)` | rcode of the query that produced this record |
+| `ttl` | `UInt32` | last observed TTL (anyLast aggregate) |
+| `priority` | `UInt16` | MX preference (also embedded in `value`); `0` otherwise; anyLast aggregate |
+| `rcode` | `LowCardinality(String)` | rcode of the last query that produced this record (anyLast aggregate) |
+| `last_run_id` | `String` | scan ID that last saw this record (anyLast aggregate) |
+| `first_seen` | `DateTime64(3, 'UTC')` | earliest observation time (min aggregate) |
+| `last_seen` | `DateTime64(3, 'UTC')` | latest observation time (max aggregate) |
+| `scans` | `UInt64` | count of scans that observed this record (sum aggregate) |
 | `source` | `LowCardinality(String)` | `query` or `axfr`; how the record was discovered (default `query`) |
-| `source_run_id` | `String` | |
-| `resolved_at` | `DateTime64(3, 'UTC')` | record last-seen timestamp (used in AggregatingMergeTree merge) |
 
 `ORDER BY (root_domain, record_type, slot, name, value, source)`.
 
-**`commoncrawl_domain_dns_scan`** — one row per (domain, scan): zone-level summary + outcome:
+**`commoncrawl_domain_dns_scan`** — one row per domain: latest-good-state summary per domain:
 
 | Column | Type | Notes |
 |---|---|---|
-| `scan_id` | `LowCardinality(String)` | |
 | `root_domain` | `String` | |
 | `etld` | `LowCardinality(String)` | public suffix, via `publicsuffix` |
 | `nameservers` | `Array(String)` | authoritative NS names |
 | `ns_ips` | `Array(String)` | resolved NS IPs (A/AAAA of the NS names) |
 | `dnssec_signed` | `UInt8` | DNSKEY present at apex |
 | `ds_present` | `UInt8` | DS present at the parent zone |
-| `status` | `LowCardinality(String)` | `done` \| `error` |
-| `error` | `String` | discovery/scan error text; empty on success |
-| `queries_total` / `queries_ok` | `UInt16` | Tier-2 query attempt/success counters |
+| `status` | `LowCardinality(String)` | `done` (loader only loads successful scans) |
+| `queries_total` | `UInt16` | Tier-2 query attempts |
+| `queries_ok` | `UInt16` | Tier-2 query successes |
+| `last_run_id` | `String` | ID of the scan that produced this row |
+| `resolved_at` | `DateTime64(3, 'UTC')` | ReplacingMergeTree version column |
 | `axfr_open` | `UInt8` | 1 if the domain's nameservers allowed a zone transfer (open-AXFR misconfiguration flag) |
 | `axfr_records` | `UInt32` | count of records seen in the transferred zone (0 if not open) |
 | `axfr_truncated` | `UInt8` | 1 if the transfer hit a cap (records/bytes/deadline) before completing |
 | `axfr_server` | `String` | the NS IP that answered the zone transfer (`''` when the zone is closed) |
-| `source_run_id` | `String` | |
-| `resolved_at` | `DateTime64(3, 'UTC')` | ReplacingMergeTree version column |
 
-`ORDER BY (root_domain, scan_id)`.
+`ORDER BY (root_domain)`.
 
 The `load` column list is derived from each Go struct's `ch` tag (`internal/model`, `internal/load`
 `chColumns[T]`), so a table may carry extra defaulted columns the worker doesn't populate.
