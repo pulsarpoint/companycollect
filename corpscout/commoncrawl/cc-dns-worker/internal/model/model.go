@@ -18,20 +18,23 @@ type DNSRecord struct {
 
 // DomainResult is everything learned for one domain in one scan.
 type DomainResult struct {
-	ScanID       string
-	RootDomain   string
-	ETLD         string
-	Nameservers  []string
-	NSIPs        []string
-	DNSSECSigned bool
-	DSPresent    bool
-	Status       string // "done" | "error"
-	Error        string
-	QueriesTotal int
-	QueriesOK    int
-	Records      []DNSRecord
-	SourceRunID  string
-	ResolvedAt   time.Time
+	ScanID        string
+	RootDomain    string
+	ETLD          string
+	Nameservers   []string
+	NSIPs         []string
+	DNSSECSigned  bool
+	DSPresent     bool
+	Status        string // "done" | "error"
+	Error         string
+	QueriesTotal  int
+	QueriesOK     int
+	Records       []DNSRecord
+	AXFROpen      bool
+	AXFRRecords   int
+	AXFRTruncated bool
+	SourceRunID   string
+	ResolvedAt    time.Time
 }
 
 // RecordRow mirrors corpscout.commoncrawl_domain_dns_records (distinct model). Each scan inserts one
@@ -56,15 +59,18 @@ type RecordRow struct {
 // ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
 // successful scans are loaded, so a failed re-scan never clobbers a domain's last-good summary.
 type ScanRow struct {
-	RootDomain   string    `ch:"root_domain"`
-	ETLD         string    `ch:"etld"`
-	Nameservers  []string  `ch:"nameservers"`
-	NSIPs        []string  `ch:"ns_ips"`
-	DNSSECSigned uint8     `ch:"dnssec_signed"`
-	DSPresent    uint8     `ch:"ds_present"`
-	Status       string    `ch:"status"`
-	QueriesTotal uint16    `ch:"queries_total"`
-	QueriesOK    uint16    `ch:"queries_ok"`
-	LastRunID    string    `ch:"last_run_id"`
-	ResolvedAt   time.Time `ch:"resolved_at"`
+	RootDomain    string    `ch:"root_domain"`
+	ETLD          string    `ch:"etld"`
+	Nameservers   []string  `ch:"nameservers"`
+	NSIPs         []string  `ch:"ns_ips"`
+	DNSSECSigned  uint8     `ch:"dnssec_signed"`
+	DSPresent     uint8     `ch:"ds_present"`
+	Status        string    `ch:"status"`
+	QueriesTotal  uint16    `ch:"queries_total"`
+	QueriesOK     uint16    `ch:"queries_ok"`
+	LastRunID     string    `ch:"last_run_id"`
+	ResolvedAt    time.Time `ch:"resolved_at"`
+	AXFROpen      uint8     `ch:"axfr_open"`
+	AXFRRecords   uint32    `ch:"axfr_records"`
+	AXFRTruncated uint8     `ch:"axfr_truncated"`
 }

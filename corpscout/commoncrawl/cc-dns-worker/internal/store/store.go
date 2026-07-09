@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS scan_domains (
   ds_present    INTEGER DEFAULT 0,
   queries_total INTEGER DEFAULT 0,
   queries_ok    INTEGER DEFAULT 0,
+  axfr_open     INTEGER DEFAULT 0,
+  axfr_records  INTEGER DEFAULT 0,
+  axfr_truncated INTEGER DEFAULT 0,
   error         TEXT DEFAULT '',
   source_run_id TEXT DEFAULT '',
   resolved_at   TEXT DEFAULT '',
@@ -210,7 +213,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 	defer insR.Close()
 	upD, err := tx.PrepareContext(ctx, `UPDATE scan_domains SET
 		status=?, etld=?, nameservers=?, ns_ips=?, dnssec_signed=?, ds_present=?,
-		queries_total=?, queries_ok=?, error=?, source_run_id=?, resolved_at=?
+		queries_total=?, queries_ok=?, axfr_open=?, axfr_records=?, axfr_truncated=?, error=?, source_run_id=?, resolved_at=?
 		WHERE scan_id=? AND root_domain=?`)
 	if err != nil {
 		return err
@@ -232,6 +235,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		nsips, _ := json.Marshal(res.NSIPs)
 		res2, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips),
 			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.QueriesTotal, res.QueriesOK,
+			b2i(res.AXFROpen), res.AXFRRecords, b2i(res.AXFRTruncated),
 			res.Error, res.SourceRunID, ts, res.ScanID, res.RootDomain)
 		if err != nil {
 			return err
@@ -275,7 +279,8 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 // that never resolves has no DNS state to record.
 func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
-		dnssec_signed, ds_present, status, queries_total, queries_ok, source_run_id, resolved_at
+		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated,
+		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done'`, scanID)
 	if err != nil {
 		return nil, err
@@ -285,15 +290,19 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 	for rows.Next() {
 		var r model.ScanRow
 		var ns, nsips, ts string
-		var dnssec, ds int
+		var dnssec, ds, axfrOpen, axfrTrunc int
+		var axfrRecs uint32
 		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
-			&r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
+			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
 		_ = json.Unmarshal([]byte(nsips), &r.NSIPs)
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
+		r.AXFROpen = uint8(axfrOpen)
+		r.AXFRRecords = axfrRecs
+		r.AXFRTruncated = uint8(axfrTrunc)
 		r.ResolvedAt = parseTS(ts)
 		out = append(out, r)
 	}
@@ -384,7 +393,8 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 		args = append(args, d)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
-		dnssec_signed, ds_present, status, queries_total, queries_ok, source_run_id, resolved_at
+		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated,
+		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done' AND root_domain IN (`+ph+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -394,15 +404,19 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 	for rows.Next() {
 		var r model.ScanRow
 		var ns, nsips, ts string
-		var dnssec, ds int
+		var dnssec, ds, axfrOpen, axfrTrunc int
+		var axfrRecs uint32
 		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
-			&r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
+			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
 		_ = json.Unmarshal([]byte(nsips), &r.NSIPs)
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
+		r.AXFROpen = uint8(axfrOpen)
+		r.AXFRRecords = axfrRecs
+		r.AXFRTruncated = uint8(axfrTrunc)
 		r.ResolvedAt = parseTS(ts)
 		out = append(out, r)
 	}
