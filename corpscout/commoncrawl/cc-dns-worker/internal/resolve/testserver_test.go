@@ -40,3 +40,40 @@ func mustRR(t *testing.T, s string) dns.RR {
 	}
 	return rr
 }
+
+// startAXFRServer starts a TCP DNS server that answers an AXFR query for any zone. If refuse is true
+// it replies REFUSED; otherwise it streams rrs (which MUST start and end with the zone SOA for a
+// well-formed transfer). Non-AXFR queries get an empty NOERROR reply.
+func startAXFRServer(t *testing.T, rrs []dns.RR, refuse bool) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	mux := dns.NewServeMux()
+	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		if r.Question[0].Qtype == dns.TypeAXFR {
+			if refuse {
+				m := new(dns.Msg)
+				m.SetReply(r)
+				m.Rcode = dns.RcodeRefused
+				_ = w.WriteMsg(m)
+				return
+			}
+			ch := make(chan *dns.Envelope)
+			tr := new(dns.Transfer)
+			go func() {
+				ch <- &dns.Envelope{RR: rrs}
+				close(ch)
+			}()
+			_ = tr.Out(w, r, ch)
+			return
+		}
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	srv := &dns.Server{Listener: l, Handler: mux}
+	go func() { _ = srv.ActivateAndServe() }()
+	return l.Addr().String(), func() { _ = srv.Shutdown() }
+}
