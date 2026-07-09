@@ -2,7 +2,7 @@
 
 Status: **spec only, not implemented.** Original decisions 2026-07-07. **Revised
 2026-07-09** — storage reversed from *infer-and-discard* to *retain-with-provenance*
-(§5, §8), after the primary purpose was fixed as **technology detection** over
+(§5 + Risk), after the primary purpose was fixed as **technology detection** over
 third-party (CommonCrawl-wide) domains rather than authorized per-target scanning.
 
 Add an opportunistic AXFR (full DNS zone transfer) probe to `cc-dns-worker`. Most
@@ -132,11 +132,13 @@ records themselves, and the near-free enrichment value justifies retention (see
   and the CH DDL. This is the cheap lever that makes the retention decision reversible: it
   lets downstream weight AXFR-derived signals and, critically, **filter the AXFR-only
   slice** without a re-scan.
-- **New "publicly corroborated" marker.** Tag whether an AXFR name is also independently
-  discoverable (present in Certificate Transparency / passive DNS / actively resolvable).
-  Corroborated names carry near-zero incremental exposure; internal-only names are the
-  single contestable slice. This can be computed at load or downstream, but the marker is
-  what gates client exposure (see §8).
+- **Corroboration + exposure gating are downstream, not in the worker.** Whether an AXFR
+  name is independently discoverable (Certificate Transparency / passive DNS / actively
+  resolvable) is *not* computed here — it belongs to the downstream technology-inference
+  project, which first needs other data settled (GeoIP for every IP; curated CNAME/IP maps
+  for hosting / PaaS / application providers). The worker's only contribution to that later
+  filtering is the `source='axfr'` tag. See
+  [Out of scope](#out-of-scope--downstream-dependencies).
 - **Scan-summary flags.** Add `axfr_open UInt8`, `axfr_records`, `axfr_truncated` to
   `ScanRow` / `corpscout.commoncrawl_domain_dns_scan`. `axfr_open` is the security-posture
   signal and is the always-safe, always-exposable part.
@@ -232,16 +234,32 @@ also in those channels, the incremental risk of retaining it is near zero. The g
 contestable slice is the **internal-only names that appear nowhere public** — which is
 also the highest-value tech-detection slice.
 
-**Resolution (this spec): retain with a filterable hedge.**
+**Resolution (this spec): retain with the `source` tag; gating is owned elsewhere.**
 
-- Persist all AXFR records with `source='axfr'` and the public-corroboration marker (§5).
-- **Freely exposable to clients:** derived technology facts ("uses tech Y"),
-  publicly-corroborated records, and the `axfr_open` flag. Deriving and publishing an
-  abstracted technology fact is the low-risk, industry-standard output.
-- **Gated behind DPO/counsel sign-off:** client-facing display of the *raw internal-only*
-  AXFR names (the slice not corroborated by CT/passive DNS). The `source` +
-  corroboration markers let this be filtered downstream — retention now, exposure decided
-  later, no re-scan.
-- **Required before productionizing retention:** a written legitimate-interest basis and
-  a retention window for holding raw third-party zones (a one-page DPO memo, not a
-  blocker). Recommended: an allowlist/skip for out-of-scope domains.
+- The worker persists all AXFR records with `source='axfr'` and sets `axfr_open`. That is
+  the full extent of its responsibility.
+- **Exposure gating and GDPR-sensitivity classification are out of scope** — they belong
+  to a separate, cross-source service (see
+  [Out of scope](#out-of-scope--downstream-dependencies)) that spans every producer's
+  personal-data risk (DNS internal hostnames, company contact information with personal
+  names, etc.), not AXFR alone.
+- The `source='axfr'` tag is the hook that lets that service filter the internal-only
+  slice downstream — retention now, exposure decided later, no re-scan.
+- Freely computable/exposable regardless of that work: the `axfr_open` flag and derived
+  technology facts ("uses tech Y") — the low-risk, industry-standard outputs.
+
+## Out of scope — downstream dependencies
+
+Two separate projects consume what this worker produces; neither is built here, and the
+AXFR worker must not take on their responsibilities:
+
+- **Cross-source technology inference.** Consumes the loaded DNS records (including
+  `source='axfr'`) and derives "domain X uses technology Y". Runs as query-time analytics,
+  not inline. Depends on other data settling first: **GeoIP for every IP address**, and
+  **curated CNAME/IP → provider maps** across hosting, PaaS, and application providers.
+  Computes the public-corroboration signal. This is its own project.
+- **GDPR-sensitivity classification service.** A cross-source service that flags
+  potential personal data across *all* producers — DNS internal hostnames here, but also
+  company contact information with personal names and other sources. Owns exposure gating,
+  the legitimate-interest basis, and retention windows. Productionizing raw-zone retention
+  depends on this service, tracked separately — not a blocker on landing the probe.
