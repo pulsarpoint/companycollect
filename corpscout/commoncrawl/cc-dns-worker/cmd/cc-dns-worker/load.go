@@ -34,5 +34,11 @@ func runLoad(args []string) error {
 		return err
 	}
 	fmt.Printf("loaded %d records and %d domain summaries for scan_id=%s\n", nr, nd, *scanID)
+
+	nh, err := load.WriteHostnameRegistry(ctx, conn, st, *scanID, time.Now())
+	if err != nil {
+		return err
+	}
+	fmt.Printf("registered %d discovered hostnames for scan_id=%s\n", nh, *scanID)
 	return nil
 }

@@ -427,6 +427,42 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 	return out, rows.Err()
 }
 
+// DiscoveredHostnames returns the distinct non-static hosts (discovery in ct/axfr) that resolved this
+// scan, one per (root_domain, label), for the registry write-back. label = name minus ".<root_domain>";
+// apex and non-subdomain names are skipped. Timestamps are left zero for the caller to stamp.
+func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model.HostnameRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT root_domain, name, discovery
+		FROM scan_records
+		WHERE scan_id = ? AND discovery IN ('ct','axfr') AND record_type IN ('A','AAAA','CNAME')`, scanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	var out []model.HostnameRow
+	for rows.Next() {
+		var rd, name, disc string
+		if err := rows.Scan(&rd, &name, &disc); err != nil {
+			return nil, err
+		}
+		suffix := "." + rd
+		if name == rd || !strings.HasSuffix(name, suffix) {
+			continue // apex or not a subdomain of rd
+		}
+		label := strings.ToLower(strings.TrimSuffix(name, suffix))
+		if label == "" {
+			continue
+		}
+		key := rd + "\x00" + label
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, model.HostnameRow{RootDomain: rd, Label: label, DiscoverySource: disc})
+	}
+	return out, rows.Err()
+}
+
 // Close closes the DB.
 func (s *Store) Close() error { return s.db.Close() }
 

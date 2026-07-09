@@ -169,6 +169,11 @@ func runFlushPhase(ctx context.Context, state cycleState, dbPath string, loadBat
 		return err
 	}
 	log.Printf("cycle %s: final flush loaded %d records to ClickHouse", state.CycleID, n)
+	if hn, herr := regWriteBack(ctx, st, state.CycleID); herr != nil {
+		log.Printf("cycle %s: hostname registry write-back error: %v", state.CycleID, herr)
+	} else if hn > 0 {
+		log.Printf("cycle %s: registered %d discovered hostnames", state.CycleID, hn)
+	}
 	return nil
 }
 
@@ -181,6 +186,17 @@ func incLoad(ctx context.Context, st *store.Store, scanID string, loadBatch int)
 	}
 	defer conn.Close()
 	return load.Incremental(ctx, conn, st, scanID, loadBatch)
+}
+
+// regWriteBack opens a fresh ClickHouse connection and upserts the cycle's discovered hostnames into
+// the durable registry.
+func regWriteBack(ctx context.Context, st *store.Store, scanID string) (int, error) {
+	conn, err := chConn()
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	return load.WriteHostnameRegistry(ctx, conn, st, scanID, time.Now())
 }
 
 // pruneOldDBs keeps the newest keep+1 cycle DBs (current + keep previous) and deletes older ones

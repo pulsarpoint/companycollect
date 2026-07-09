@@ -322,6 +322,41 @@ func TestCommitBatchPersistsDiscovery(t *testing.T) {
 	}
 }
 
+func TestDiscoveredHostnames(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if _, err := st.Seed(ctx, "s1", []string{"example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	res := model.DomainResult{
+		ScanID: "s1", RootDomain: "example.com", Status: "done", ResolvedAt: time.Now().UTC(),
+		Records: []model.DNSRecord{
+			{Name: "example.com", RecordType: "A", Value: "1.1.1.1", Rcode: "NOERROR", Source: "query", Discovery: "static"},             // apex — excluded
+			{Name: "www.example.com", RecordType: "A", Value: "1.2.3.4", Rcode: "NOERROR", Source: "query", Discovery: "static"},         // static — excluded
+			{Name: "jenkins.example.com", RecordType: "A", Value: "10.0.0.5", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"},       // captured
+			{Name: "vpn.example.com", RecordType: "CNAME", Value: "gw.example.net", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"}, // captured
+		},
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{res}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.DiscoveredHostnames(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r.Label] = r.DiscoverySource
+	}
+	if len(got) != 2 || got["jenkins"] != "axfr" || got["vpn"] != "axfr" {
+		t.Fatalf("want {jenkins:axfr, vpn:axfr}, got %+v", got)
+	}
+}
+
 func TestSummaryPersistsAXFRFlags(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {

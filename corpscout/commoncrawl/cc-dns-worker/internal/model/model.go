@@ -59,6 +59,18 @@ type RecordRow struct {
 	Discovery  string    `ch:"discovery"`
 }
 
+// HostnameRow mirrors corpscout.commoncrawl_domain_hostnames (AggregatingMergeTree registry). One
+// blind-inserted row per hostname discovered in a cycle; the merge folds first_seen=min, last_seen=max,
+// last_resolved=max, discovery_source=min. Insert a plain string into the SimpleAggregateFunction cols.
+type HostnameRow struct {
+	RootDomain      string    `ch:"root_domain"`
+	Label           string    `ch:"label"`
+	DiscoverySource string    `ch:"discovery_source"`
+	FirstSeen       time.Time `ch:"first_seen"`
+	LastSeen        time.Time `ch:"last_seen"`
+	LastResolved    time.Time `ch:"last_resolved"`
+}
+
 // ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
 // successful scans are loaded, so a failed re-scan never clobbers a domain's last-good summary.
 type ScanRow struct {

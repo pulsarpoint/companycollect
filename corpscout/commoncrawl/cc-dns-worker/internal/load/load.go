@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"cc-dns-worker/internal/store"
 
@@ -14,8 +15,9 @@ import (
 )
 
 const (
-	recordsTable = "corpscout.commoncrawl_domain_dns_records"
-	scanTable    = "corpscout.commoncrawl_domain_dns_scan"
+	recordsTable   = "corpscout.commoncrawl_domain_dns_records"
+	scanTable      = "corpscout.commoncrawl_domain_dns_scan"
+	hostnamesTable = "corpscout.commoncrawl_domain_hostnames"
 )
 
 // chColumns returns the ch tag of each field of T in declaration order.
@@ -113,4 +115,22 @@ func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID 
 			return total, nil
 		}
 	}
+}
+
+// WriteHostnameRegistry upserts this cycle's non-static discovered hosts into the durable hostname
+// registry. Blind INSERT — the AggregatingMergeTree folds first_seen=min, last_seen=max,
+// last_resolved=max, discovery_source=min — so it is idempotent and needs no read-before-write.
+func WriteHostnameRegistry(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, now time.Time) (int, error) {
+	rows, err := st.DiscoveredHostnames(ctx, scanID)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	now = now.UTC()
+	for i := range rows {
+		rows[i].FirstSeen, rows[i].LastSeen, rows[i].LastResolved = now, now, now
+	}
+	return insert(ctx, conn, hostnamesTable, rows)
 }
