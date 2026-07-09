@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"net"
+	"sync"
 	"testing"
 
 	"github.com/miekg/dns"
@@ -95,6 +96,36 @@ func startAXFRServerAbrupt(t *testing.T, rrs []dns.RR) (string, func()) {
 			m.Answer = rrs // SOA first, some records, NO closing SOA
 			_ = w.WriteMsg(m)
 			_ = w.Close() // drop the conn mid-transfer -> client read error
+			return
+		}
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	srv := &dns.Server{Listener: l, Handler: mux}
+	go func() { _ = srv.ActivateAndServe() }()
+	return l.Addr().String(), func() { _ = srv.Shutdown() }
+}
+
+// startCountingRefuser is startAXFRServer(refuse=true) that also counts how many AXFR queries it saw,
+// so a test can assert the NS-set dedup suppressed a repeat probe.
+func startCountingRefuser(t *testing.T, count *int) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	var mu sync.Mutex
+	mux := dns.NewServeMux()
+	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		if r.Question[0].Qtype == dns.TypeAXFR {
+			mu.Lock()
+			*count++
+			mu.Unlock()
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Rcode = dns.RcodeRefused
+			_ = w.WriteMsg(m)
 			return
 		}
 		m := new(dns.Msg)

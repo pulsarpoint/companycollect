@@ -2,11 +2,14 @@ package resolve
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cc-dns-worker/internal/model"
+	"cc-dns-worker/internal/scheduler"
 
 	"github.com/miekg/dns"
 )
@@ -131,4 +134,75 @@ func axfrRecord(rr dns.RR) (model.DNSRecord, bool) {
 		return rec, false
 	}
 	return rec, true
+}
+
+// AXFRProber applies probe policy over the low-level transfer: it skips NS sets that are entirely
+// hyperscaler (they never allow AXFR), remembers per-NS-set REFUSED verdicts so a chronic refuser is
+// probed at most once (a refusal is not a transport error, so the scheduler's breaker never trips on
+// it — this dedup is what caps the volume), paces every dial through the AXFR scheduler lane, and
+// bounds total concurrent transfers with an aggregate semaphore.
+type AXFRProber struct {
+	sched *scheduler.Scheduler
+	caps  AXFRCaps
+	sem   chan struct{}
+
+	refused sync.Map // nsSetKey -> struct{}: NS sets known to refuse; skip re-probing
+}
+
+// NewAXFRProber builds a prober over the AXFR scheduler lane. maxInflight bounds total concurrent
+// transfers across all domains (aggregate held-open TCP connections); <=0 defaults to 50.
+func NewAXFRProber(sched *scheduler.Scheduler, caps AXFRCaps, maxInflight int) *AXFRProber {
+	if maxInflight <= 0 {
+		maxInflight = 50
+	}
+	return &AXFRProber{sched: sched, caps: caps, sem: make(chan struct{}, maxInflight)}
+}
+
+// Probe transfers zone from the first NS IP that yields data. It skips an all-hyperscaler NS set and
+// short-circuits an NS set already known to refuse. A zero-value result (Open=false, Server="") means
+// skipped or nothing answered.
+func (p *AXFRProber) Probe(ctx context.Context, zone string, nsIPs []string) AXFRResult {
+	targets := make([]string, 0, len(nsIPs))
+	for _, ip := range nsIPs {
+		if !scheduler.IsHyperscaler(ip) {
+			targets = append(targets, ip)
+		}
+	}
+	if len(targets) == 0 {
+		return AXFRResult{} // all-hyperscaler (or empty): skip
+	}
+	key := nsSetKey(nsIPs)
+	if _, refused := p.refused.Load(key); refused {
+		return AXFRResult{}
+	}
+
+	select {
+	case p.sem <- struct{}{}:
+	case <-ctx.Done():
+		return AXFRResult{}
+	}
+	defer func() { <-p.sem }()
+
+	for _, ip := range targets {
+		var res AXFRResult
+		err := p.sched.Do(ctx, ip, func() error {
+			r, e := transferAXFR(ctx, zone, ip, p.caps)
+			res = r
+			return e
+		})
+		if err == nil && res.Open {
+			return res
+		}
+	}
+	// Nothing answered across the whole NS set — remember it as a refuser so peers skip it.
+	p.refused.Store(key, struct{}{})
+	return AXFRResult{Server: targets[len(targets)-1]}
+}
+
+// nsSetKey is the order-independent identity of an NS IP set (dedup is a property of the server set,
+// not the domain).
+func nsSetKey(nsIPs []string) string {
+	c := append([]string(nil), nsIPs...)
+	sort.Strings(c)
+	return strings.Join(c, ",")
 }

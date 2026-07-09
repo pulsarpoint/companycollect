@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"cc-dns-worker/internal/scheduler"
+
 	"github.com/miekg/dns"
 )
 
@@ -112,6 +114,56 @@ func TestTransferAXFRNoLeakOnMidStreamCap(t *testing.T) {
 	}
 	if after := runtime.NumGoroutine(); after > before+2 {
 		t.Fatalf("goroutine leak: before=%d after=%d", before, after)
+	}
+}
+
+func newTestProber(caps AXFRCaps) *AXFRProber {
+	sched := scheduler.New(scheduler.Config{PerServerQPS: 100, MaxInFlight: 1})
+	return NewAXFRProber(sched, caps, 8)
+}
+
+func TestProbeOpenZone(t *testing.T) {
+	addr, stop := startAXFRServer(t, axfrZone(t), false)
+	defer stop()
+	p := newTestProber(AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: 5 * time.Second})
+	res := p.Probe(context.Background(), "example.com", []string{addr})
+	if !res.Open || len(res.Zone) != 5 {
+		t.Fatalf("want open zone with 5 records, got Open=%v len=%d", res.Open, len(res.Zone))
+	}
+}
+
+func TestProbeSkipsHyperscalerOnlyNSSet(t *testing.T) {
+	// 104.16.1.1 is a Cloudflare anycast NS IP (hyperscaler). An all-hyperscaler NS set must be
+	// skipped without dialing.
+	//
+	// NOTE: the task brief for this test used "1.1.1.1", asserting it is "Cloudflare (hyperscaler)".
+	// That is incorrect against the already-committed scheduler.IsHyperscaler: internal/scheduler
+	// /providers_test.go (Task 1) explicitly asserts IsHyperscaler("1.1.1.1") == false, with the
+	// comment "public resolvers, not in the auth ranges" — 1.1.1.1 is Cloudflare's public recursive
+	// resolver service, not part of the authoritative anycast NS CIDR ranges an AXFR target would use.
+	// Adding 1.1.1.1 to hyperscalerCIDRs would break that pre-existing, deliberately-authored test, so
+	// this test uses 104.16.1.1 instead (confirmed hyperscaler in the same providers_test.go) to
+	// exercise the identical skip-logic path without touching Task 1's contract.
+	p := newTestProber(AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: time.Second})
+	res := p.Probe(context.Background(), "example.com", []string{"104.16.1.1"})
+	if res.Open {
+		t.Fatal("hyperscaler-only NS set should be skipped, not open")
+	}
+	if res.Server != "" {
+		t.Fatalf("skipped probe should not name a server, got %q", res.Server)
+	}
+}
+
+func TestProbeDedupsRefusedNSSet(t *testing.T) {
+	// A refusing server: the first probe transfers, the second short-circuits on the NS-set verdict.
+	var dials int
+	addr, stop := startCountingRefuser(t, &dials)
+	defer stop()
+	p := newTestProber(AXFRCaps{MaxRecords: 10, MaxBytes: 1 << 20, Deadline: time.Second})
+	_ = p.Probe(context.Background(), "a.example", []string{addr})
+	_ = p.Probe(context.Background(), "b.example", []string{addr})
+	if dials != 1 {
+		t.Fatalf("want 1 dial (second deduped), got %d", dials)
 	}
 }
 
