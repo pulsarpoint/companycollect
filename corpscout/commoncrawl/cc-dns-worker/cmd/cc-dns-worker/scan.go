@@ -326,6 +326,7 @@ func mergeAXFR(res *model.DomainResult, a resolve.AXFRResult) {
 	res.AXFROpen = a.Open
 	res.AXFRRecords = a.Records
 	res.AXFRTruncated = a.Truncated
+	res.AXFRServer = a.Server
 	res.Records = append(res.Records, a.Zone...)
 }
 

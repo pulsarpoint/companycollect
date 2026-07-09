@@ -318,6 +318,32 @@ func TestSummaryPersistsAXFRFlags(t *testing.T) {
 	}
 }
 
+func TestSummaryPersistsAXFRServer(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if _, err := st.Seed(ctx, "s1", []string{"example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	res := model.DomainResult{
+		ScanID: "s1", RootDomain: "example.com", Status: "done", ResolvedAt: time.Now().UTC(),
+		AXFROpen: true, AXFRServer: "203.0.113.9",
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{res}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.StagedDomains(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].AXFRServer != "203.0.113.9" {
+		t.Fatalf("axfr_server not round-tripped: %+v", rows)
+	}
+}
+
 func TestPendingBatchCursor(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)

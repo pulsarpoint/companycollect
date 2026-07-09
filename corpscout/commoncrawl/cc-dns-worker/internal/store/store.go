@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS scan_domains (
   axfr_open     INTEGER DEFAULT 0,
   axfr_records  INTEGER DEFAULT 0,
   axfr_truncated INTEGER DEFAULT 0,
+  axfr_server    TEXT DEFAULT '',
   error         TEXT DEFAULT '',
   source_run_id TEXT DEFAULT '',
   resolved_at   TEXT DEFAULT '',
@@ -92,6 +93,7 @@ func migrate(db *sql.DB) {
 		`ALTER TABLE scan_domains ADD COLUMN axfr_open INTEGER DEFAULT 0`,
 		`ALTER TABLE scan_domains ADD COLUMN axfr_records INTEGER DEFAULT 0`,
 		`ALTER TABLE scan_domains ADD COLUMN axfr_truncated INTEGER DEFAULT 0`,
+		`ALTER TABLE scan_domains ADD COLUMN axfr_server TEXT DEFAULT ''`,
 	} {
 		_, _ = db.ExecContext(context.Background(), stmt)
 	}
@@ -213,7 +215,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 	defer insR.Close()
 	upD, err := tx.PrepareContext(ctx, `UPDATE scan_domains SET
 		status=?, etld=?, nameservers=?, ns_ips=?, dnssec_signed=?, ds_present=?,
-		queries_total=?, queries_ok=?, axfr_open=?, axfr_records=?, axfr_truncated=?, error=?, source_run_id=?, resolved_at=?
+		queries_total=?, queries_ok=?, axfr_open=?, axfr_records=?, axfr_truncated=?, axfr_server=?, error=?, source_run_id=?, resolved_at=?
 		WHERE scan_id=? AND root_domain=?`)
 	if err != nil {
 		return err
@@ -235,7 +237,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		nsips, _ := json.Marshal(res.NSIPs)
 		res2, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips),
 			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.QueriesTotal, res.QueriesOK,
-			b2i(res.AXFROpen), res.AXFRRecords, b2i(res.AXFRTruncated),
+			b2i(res.AXFROpen), res.AXFRRecords, b2i(res.AXFRTruncated), res.AXFRServer,
 			res.Error, res.SourceRunID, ts, res.ScanID, res.RootDomain)
 		if err != nil {
 			return err
@@ -279,7 +281,7 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 // that never resolves has no DNS state to record.
 func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
-		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated,
+		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated, axfr_server,
 		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done'`, scanID)
 	if err != nil {
@@ -293,7 +295,7 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 		var dnssec, ds, axfrOpen, axfrTrunc int
 		var axfrRecs uint32
 		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
-			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.LastRunID, &ts); err != nil {
+			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.AXFRServer, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
@@ -393,7 +395,7 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 		args = append(args, d)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
-		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated,
+		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated, axfr_server,
 		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done' AND root_domain IN (`+ph+`)`, args...)
 	if err != nil {
@@ -407,7 +409,7 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 		var dnssec, ds, axfrOpen, axfrTrunc int
 		var axfrRecs uint32
 		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
-			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.LastRunID, &ts); err != nil {
+			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.AXFRServer, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)

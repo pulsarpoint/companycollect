@@ -33,6 +33,7 @@ type DomainResult struct {
 	AXFROpen      bool
 	AXFRRecords   int
 	AXFRTruncated bool
+	AXFRServer    string
 	SourceRunID   string
 	ResolvedAt    time.Time
 }
@@ -73,4 +74,5 @@ type ScanRow struct {
 	AXFROpen      uint8     `ch:"axfr_open"`
 	AXFRRecords   uint32    `ch:"axfr_records"`
 	AXFRTruncated uint8     `ch:"axfr_truncated"`
+	AXFRServer    string    `ch:"axfr_server"`
 }
