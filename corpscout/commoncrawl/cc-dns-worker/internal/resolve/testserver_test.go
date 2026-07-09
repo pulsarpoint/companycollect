@@ -77,3 +77,35 @@ func startAXFRServer(t *testing.T, rrs []dns.RR, refuse bool) (string, func()) {
 	go func() { _ = srv.ActivateAndServe() }()
 	return l.Addr().String(), func() { _ = srv.Shutdown() }
 }
+
+// startAXFRServerMulti is startAXFRServer (never refusing) but streams EACH rr as its own envelope, so
+// a low cap fires on a non-final envelope — exercising the mid-stream early-exit/drain path. rrs MUST
+// start and end with the zone SOA for a well-formed transfer.
+func startAXFRServerMulti(t *testing.T, rrs []dns.RR) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	mux := dns.NewServeMux()
+	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		if r.Question[0].Qtype == dns.TypeAXFR {
+			ch := make(chan *dns.Envelope)
+			tr := new(dns.Transfer)
+			go func() {
+				for _, rr := range rrs {
+					ch <- &dns.Envelope{RR: []dns.RR{rr}}
+				}
+				close(ch)
+			}()
+			_ = tr.Out(w, r, ch)
+			return
+		}
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	srv := &dns.Server{Listener: l, Handler: mux}
+	go func() { _ = srv.ActivateAndServe() }()
+	return l.Addr().String(), func() { _ = srv.Shutdown() }
+}

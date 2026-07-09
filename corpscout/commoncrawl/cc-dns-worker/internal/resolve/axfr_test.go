@@ -2,6 +2,8 @@ package resolve
 
 import (
 	"context"
+	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -52,6 +54,43 @@ func TestTransferAXFRRefused(t *testing.T) {
 	}
 	if len(res.Zone) != 0 {
 		t.Fatalf("want empty zone, got %d", len(res.Zone))
+	}
+}
+
+func TestTransferAXFRNoLeakOnMidStreamCap(t *testing.T) {
+	rrs := []dns.RR{
+		mustRR(t, "example.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 1 7200 3600 1209600 3600"),
+	}
+	for i := 0; i < 18; i++ {
+		rrs = append(rrs, mustRR(t, "host"+strconv.Itoa(i)+".example.com. 3600 IN A 10.0.0."+strconv.Itoa(i+1)))
+	}
+	rrs = append(rrs, mustRR(t, "example.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 1 7200 3600 1209600 3600"))
+
+	addr, stop := startAXFRServerMulti(t, rrs)
+	defer stop()
+
+	before := runtime.NumGoroutine()
+	caps := AXFRCaps{MaxRecords: 5, MaxBytes: 1 << 30, Deadline: 5 * time.Second}
+	res, err := transferAXFR(context.Background(), "example.com", addr, caps)
+	if err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("want Truncated=true (cap fired mid-stream)")
+	}
+	if res.Records != 5 {
+		t.Fatalf("want capped at 5 records, got %d", res.Records)
+	}
+
+	// Poll for the producer goroutine (and its socket) to be reclaimed rather than parked forever.
+	for i := 0; i < 200; i++ {
+		if runtime.NumGoroutine() <= before {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if after := runtime.NumGoroutine(); after > before+2 {
+		t.Fatalf("goroutine leak: before=%d after=%d", before, after)
 	}
 }
 

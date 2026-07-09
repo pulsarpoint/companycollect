@@ -32,6 +32,12 @@ type AXFRResult struct {
 // transferAXFR runs one TCP AXFR against nsIP for zone, draining up to the caps. A REFUSED/NOTAUTH
 // response or any transport error yields Open=false with an empty Zone. err is non-nil only on a
 // transport/setup failure (so the caller can rotate servers); a clean REFUSED returns (Open:false, nil).
+//
+// Resource safety: miekg's transfer goroutine sends on an unbuffered channel, so abandoning the channel
+// on an early exit (cap hit, ctx cancel) would block that goroutine forever and leak its TCP socket. A
+// watchdog closes the connection when ctx fires (whole-transfer deadline, caller cancel, or our own
+// cancel on the way out), and a deferred drain reads the channel to completion so the producer always
+// terminates. Together they make Deadline a real whole-transfer ceiling and guarantee no leak on any path.
 func transferAXFR(ctx context.Context, zone, nsIP string, caps AXFRCaps) (AXFRResult, error) {
 	res := AXFRResult{Server: nsIP}
 	deadline := caps.Deadline
@@ -39,30 +45,43 @@ func transferAXFR(ctx context.Context, zone, nsIP string, caps AXFRCaps) (AXFRRe
 		deadline = 20 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, deadline)
-	defer cancel()
 
 	m := new(dns.Msg)
 	m.SetAxfr(dns.Fqdn(zone))
 	tr := &dns.Transfer{DialTimeout: deadline, ReadTimeout: deadline}
 	ch, err := tr.In(m, withPort(nsIP))
 	if err != nil {
+		cancel()
 		return res, err // transport/dial failure — caller rotates
 	}
+	// Watchdog: when ctx is done, close the conn so the producer's blocked ReadMsg/send errors out,
+	// letting its goroutine return and close ch.
+	go func() {
+		<-ctx.Done()
+		if tr.Conn != nil {
+			_ = tr.Conn.Close()
+		}
+	}()
+	// Always drain to completion on the way out: cancel() trips the watchdog (fast stop even mid-zone),
+	// then draining unblocks the producer's pending send so it can finish and close ch. On normal
+	// completion ch is already closed, so this is a no-op.
+	defer func() {
+		cancel()
+		for range ch {
+		}
+	}()
 
 	bytes := 0
 	for env := range ch {
 		if env.Error != nil {
-			// REFUSED / NOTAUTH / malformed: a refusal is not a transport error to propagate.
-			return res, nil
+			// REFUSED / NOTAUTH / malformed: producer is already returning; not a transport error.
+			return finalize(res), nil
 		}
 		for _, rr := range env.RR {
-			if caps.MaxRecords > 0 && res.Records >= caps.MaxRecords {
+			if (caps.MaxRecords > 0 && res.Records >= caps.MaxRecords) ||
+				(caps.MaxBytes > 0 && bytes >= caps.MaxBytes) {
 				res.Truncated = true
-				return finalize(ctx, res), nil
-			}
-			if caps.MaxBytes > 0 && bytes >= caps.MaxBytes {
-				res.Truncated = true
-				return finalize(ctx, res), nil
+				return finalize(res), nil
 			}
 			bytes += dns.Len(rr)
 			if rec, ok := axfrRecord(rr); ok {
@@ -71,13 +90,12 @@ func transferAXFR(ctx context.Context, zone, nsIP string, caps AXFRCaps) (AXFRRe
 			res.Records++
 		}
 	}
-	return finalize(ctx, res), nil
+	return finalize(res), nil
 }
 
-// finalize marks a transfer open iff it yielded at least one RR (a well-formed AXFR always includes
-// the SOA), and drains any straggler envelopes' cancellation via ctx (already timed out/cancelled by
-// the caller's defer).
-func finalize(_ context.Context, res AXFRResult) AXFRResult {
+// finalize marks a transfer open iff it collected at least one RR (a well-formed AXFR always includes
+// the SOA).
+func finalize(res AXFRResult) AXFRResult {
 	res.Open = res.Records > 0
 	return res
 }
