@@ -1,30 +1,46 @@
 # AXFR (DNS Zone Transfer) Probe — Design Spec
 
-Status: **spec only, not implemented.** Decisions recorded 2026-07-07.
+Status: **spec only, not implemented.** Original decisions 2026-07-07. **Revised
+2026-07-09** — storage reversed from *infer-and-discard* to *retain-with-provenance*
+(§5, §8), after the primary purpose was fixed as **technology detection** over
+third-party (CommonCrawl-wide) domains rather than authorized per-target scanning.
 
 Add an opportunistic AXFR (full DNS zone transfer) probe to `cc-dns-worker`. Most
-servers refuse; the minority that allow it leak the full zone, which yields both a
-security-posture finding (open zone transfer = misconfiguration) and enrichment data
-(internal hostnames → technologies, infra layout).
+servers refuse; the minority that allow it leak the full zone. An open zone yields two
+things almost for free:
+
+1. **Enrichment** — every leaked hostname is another DNS record, and many names are
+   direct technology tells (`cpanel.example.com`, `asa-fw.example.com`,
+   `portal.example.com` → CNAME to a PaaS). These flow into the *same* record table the
+   worker already loads, so downstream technology inference gets them at no extra cost.
+2. **Security posture** — an open zone transfer is itself a misconfiguration finding,
+   surfaced as a per-domain flag.
 
 ## Decisions
 
-- **Storage (revised 2026-07-07):** **infer-and-discard.** Process the transferred
-  zone transiently in memory to derive technology signals, persist and expose only
-  the **inferences** (+ the misconfiguration finding). Do **not** retain the raw zone
-  (internal hostnames / IPs) in the product store — it's a security risk to the target
-  and adds little unique value (see [Risk](#risk--retention)). This supersedes the
-  earlier "full zone by default" choice.
+- **Storage (revised 2026-07-09): retain-with-provenance.** AXFR-discovered resource
+  records are persisted into the **existing** `commoncrawl_domain_dns_records` table as
+  ordinary rows, tagged with a new `source` discriminator (`query` | `axfr`). Technology
+  inference is **not** done in the worker; it runs downstream as SQL/analytical queries
+  over ClickHouse after records land. This supersedes the earlier *infer-and-discard*
+  decision — see [Storage](#5-storage--retain-with-provenance) and
+  [Risk & retention](#risk--retention) for the reasoning and the legal hedge.
+- **Inference is downstream, not inline.** The worker's only job is to discover and load
+  as many records as possible. Deriving "domain X uses technology Y" is a query-time
+  concern over the loaded records, decoupled from the scan. Keeps the worker a dumb,
+  fast record producer.
 - **Scope:** the probe runs in its **own scheduler lane** (separate `Scheduler`
   instance), never sharing the UDP resolution budget.
-- **Rollout:** ship behind `--axfr=false`; enable on a bounded sample to measure
-  real hit-rate and transfer-latency tail before wiring into the steady-state loop.
+- **Rollout:** ship behind `--axfr=false`; enable on a bounded sample to measure real
+  hit-rate and transfer-latency tail before wiring into the steady-state loop.
 
 ## Why it fits cleanly
 
 `resolveDomain` (`cmd/cc-dns-worker/scan.go`) already produces a fully-populated
-`Delegation` (`NS` + `NSIPs`) for every domain before returning — exactly the input
-AXFR needs. No new discovery work.
+`Delegation` (`NS` + `NSIPs`) for every domain before returning — exactly the input AXFR
+needs. No new discovery work. And because the worker already loads distinct DNS records
+to ClickHouse via a fixed `DNSRecord` → `RecordRow` path, AXFR records need no new sink:
+they are just more rows in the table that already exists.
 
 ## 1. Probe — `internal/resolve/axfr.go` (new)
 
@@ -37,7 +53,7 @@ type AXFRResult struct {
     Server    string   // the NS IP that answered
     Records   int      // RRs seen (up to the cap)
     Truncated bool     // hit a byte/record/time cap before the SOA close
-    Zone      []model.DNSRecord // transferred zone, in-memory only — NOT persisted (see §5)
+    Zone      []model.DNSRecord // transferred zone, held in memory then persisted (see §5)
 }
 
 func ProbeAXFR(ctx context.Context, sched *scheduler.Scheduler, zone string,
@@ -45,11 +61,11 @@ func ProbeAXFR(ctx context.Context, sched *scheduler.Scheduler, zone string,
 ```
 
 - Build `dns.Msg{}.SetAxfr(zone)`, run `(&dns.Transfer{}).In(msg, addr)`, drain the
-  envelope channel into `Zone`. `Zone` is consumed by the inference pass (§5) and then
-  dropped — it is never written to the product store.
+  envelope channel into `Zone`, converting each RR through the existing `collect`-style
+  mapping so AXFR records share the shape of actively-queried ones.
 - Rotate across `nsIPs`: first server that yields data wins; all-REFUSED → `Open:false`.
-- Every send goes through `sched.Do(ctx, nsIP, fn)` — paced + breaker-protected — but
-  on the dedicated AXFR scheduler, not `authSched`.
+- Every send goes through `sched.Do(ctx, nsIP, fn)` — paced + breaker-protected — but on
+  the dedicated AXFR scheduler, not `authSched`.
 
 ## 2. Caps — bound the fat tail (critical)
 
@@ -61,10 +77,9 @@ type AXFRCaps struct {
 }
 ```
 
-Even though the zone is only held transiently for inference (not persisted), the caps
-are essential: an unbounded or hostile zone can be hundreds of MB and would otherwise
-stall a worker and blow memory while it's being drained. `Truncated:true` records that a
-zone hit a cap, so the inference pass saw only a prefix.
+Caps are essential **regardless of the storage decision**: an unbounded or hostile zone
+can be hundreds of MB and would stall a worker and blow memory while it is drained.
+`Truncated:true` records that a zone hit a cap, so consumers know they saw only a prefix.
 
 ## 3. Separate lane
 
@@ -80,92 +95,77 @@ axfrSched := scheduler.New(scheduler.Config{
 ```
 
 Its own `Scheduler` instance (not a lane inside `authSched`) because AXFR is TCP and
-long-lived, while `authSched` is tuned for thousands of tiny UDP round-trips; sharing
-the per-server in-flight semaphore would let a multi-second transfer starve record
-queries. Additionally gate *aggregate* concurrent transfers with a counting semaphore
-(`--axfr-inflight`, e.g. 50) so total held-open TCP connections stay bounded.
+long-lived, while `authSched` is tuned for thousands of tiny UDP round-trips; sharing the
+per-server in-flight semaphore would let a multi-second transfer starve record queries.
+Additionally gate *aggregate* concurrent transfers with a counting semaphore
+(`--axfr-inflight`, e.g. 50) so total held-open TCP connections stay bounded (mind the
+box's FD / conntrack limits — see the OS-tuning notes).
 
 ## 4. Skip hyperscalers + dedup by NS set
 
-- **Skip hyperscalers.** `providers.go` already has `isHyperscaler(ip)`. If all of a
-  domain's `NSIPs` are hyperscaler, skip — they never allow AXFR and are a large share
-  of volume.
-- **Dedup by NS set for the *finding*.** Server-openness is a property of the (server)
-  and repeats across every zone it hosts. Keep a process-level `sync.Map` keyed by the
-  sorted-NS-IP tuple; the first domain on a given NS set establishes the server-open
-  verdict. Note: with full-zone retention the *zone contents* are still per-domain, so
-  a transfer runs per open zone — but we skip re-probing servers already known to
-  refuse, which is where the volume savings are.
+- **Skip hyperscalers.** `providers.go` already has `isHyperscaler(ip)` — currently
+  **unexported and in `package scheduler`**, so it must be exported (or a small shared
+  helper added) to be callable from `internal/resolve`. If all of a domain's `NSIPs` are
+  hyperscaler, skip — they never allow AXFR and are a large share of volume.
+- **Dedup by NS set — this is the primary volume saver.** Server-openness is a property
+  of the server and repeats across every zone it hosts. Keep a process-level `sync.Map`
+  keyed by the sorted-NS-IP tuple; the first domain on a given NS set establishes the
+  server verdict. A REFUSED transfer returns *no error* to `fn`, so the circuit breaker
+  never trips on refusals — NS-set dedup is the only thing that stops chronic refusers
+  from being re-probed, which is where the savings are. (The hyperscaler CIDR list is
+  deliberately partial; many managed-DNS providers aren't in it and will be probed once
+  per NS set, then remembered as refusing — safe, just one wasted TCP round-trip.)
+- **Zone contents are still per-domain.** Dedup suppresses re-probing servers, not the
+  transfer of distinct open zones — each open zone runs once.
 
-## 5. Storage — infer-and-discard
+## 5. Storage — retain-with-provenance
 
-The raw zone is processed in memory to derive technology signals; only the derived
-inferences and the misconfiguration finding are persisted.
+The raw zone is persisted, not discarded. This reverses the original *infer-and-discard*
+decision because the primary purpose is technology detection, which is served by the
+records themselves, and the near-free enrichment value justifies retention (see
+[Risk](#risk--retention) for the legal reasoning and the exposure hedge).
 
-- `model.DomainResult` gains an `AXFR AXFRResult` field, but its `Zone` slice is
-  **consumed then dropped** — never written to any table.
-- **Finding:** emit `PP_DNS_ZONE_TRANSFER_OPEN` (issue-template model) — evidence =
-  server IP, zone, record count, `Truncated`. (No leaked hostnames in the finding.)
-- **Inferences:** run a DNS→technology inference pass over the zone and persist the
-  *results* (vendor/technology + confidence) to the tech-signal store, alongside the
-  inferences already derivable from the public Tier-2 records.
+- **Records → existing table.** Each AXFR RR becomes a `model.DNSRecord` and is loaded
+  into `corpscout.commoncrawl_domain_dns_records` through the existing distinct-record
+  path (AggregatingMergeTree dedup applies as normal). No new records table.
+- **New `source` column.** Add `source` (`query` | `axfr`) to `DNSRecord` / `RecordRow`
+  and the CH DDL. This is the cheap lever that makes the retention decision reversible: it
+  lets downstream weight AXFR-derived signals and, critically, **filter the AXFR-only
+  slice** without a re-scan.
+- **New "publicly corroborated" marker.** Tag whether an AXFR name is also independently
+  discoverable (present in Certificate Transparency / passive DNS / actively resolvable).
+  Corroborated names carry near-zero incremental exposure; internal-only names are the
+  single contestable slice. This can be computed at load or downstream, but the marker is
+  what gates client exposure (see §8).
+- **Scan-summary flags.** Add `axfr_open UInt8`, `axfr_records`, `axfr_truncated` to
+  `ScanRow` / `corpscout.commoncrawl_domain_dns_scan`. `axfr_open` is the security-posture
+  signal and is the always-safe, always-exposable part.
+- **Plumbing touched** (so the estimate is honest): `model.go` (`DNSRecord.Source`,
+  `ScanRow` axfr fields), `store.go` (SQLite stage schema + `StagedDomains` /
+  `SummariesFor` / staged-records queries), `load.go` / CH DDL, and `DomainResult` gains
+  an `AXFR AXFRResult` field consumed by the committer.
 
-### DNS→technology inference (mostly needs no AXFR)
+### Downstream technology inference (separate work, not in this worker)
 
-Most tech signal comes from records **already collected** on every domain (the scan
-already queries SPF/DMARC/DKIM/CAA/SRV/MTA-STS/BIMI slots — see `records.Plan`):
+Technology inference runs as queries over the loaded records — **no inline pass**. Most
+tech signal already comes from records collected on every domain (SPF/DMARC/DKIM/CAA/SRV/
+MX/NS/CNAME/TXT-verification/MTA-STS/BIMI/DNSKEY — see `records.Plan`); AXFR adds
+internal-hostname tells on top for the open-zone minority. That inference layer is its own
+component (the natural home for the deferred techdetect→Wappalyzer work, extended from
+web-only to DNS/TLS/port signals) and is out of scope for the probe itself. AXFR's job
+here is only to *maximize the record set* that layer consumes.
 
 | Record | Signal |
 | --- | --- |
 | MX | mail platform (Google Workspace, M365, Proofpoint, Mimecast, Zoho) |
 | NS | managed DNS (Cloudflare, Route53, NS1, Azure DNS, Akamai) |
-| CNAME target | SaaS/CDN (CloudFront, Fastly, Zendesk, HubSpot, Shopify, Netlify, Salesforce) |
-| SPF include chain (root TXT) | named vendors: `_spf.google.com`, `spf.protection.outlook.com`, `sendgrid.net`, `mailgun.org`, `_spf.salesforce.com`, `servers.mcsv.net` |
-| DMARC `rua=` | DMARC reporting vendor (Valimail, dmarcian, Agari, Proofpoint) |
+| CNAME target | SaaS/CDN/PaaS (CloudFront, Fastly, Zendesk, HubSpot, Shopify, Netlify, Salesforce, Heroku, Vercel) |
+| SPF include chain | named vendors (`_spf.google.com`, `spf.protection.outlook.com`, `sendgrid.net`, `mailgun.org`) |
 | DKIM selector | mail platform (`google._domainkey`, `selector1._domainkey` M365, `k1._domainkey` Mailchimp) |
 | CAA | standardized CA (Let's Encrypt, DigiCert, Sectigo, Google Trust) |
 | SRV / autodiscover | `autodiscover`⇒Exchange/M365, `_sip`/`_sipfederationtls`⇒Teams, `_xmpp`⇒chat |
-| MTA-STS / TLS-RPT / BIMI | security-posture maturity + reporting vendor |
-| DNSKEY / DS | DNSSEC adoption (maturity signal) |
-| TXT verification | adopted SaaS (`google-site-verification`, `MS=`, `atlassian-domain-verification`, `stripe-verification`, `docusign=`) |
-| A/AAAA range | hosting/cloud by ASN (AWS, GCP, Azure, DigitalOcean, OVH) |
-
-AXFR's *unique* contribution is **internal-hostname hints** (`jenkins.`, `gitlab.`,
-`jira.`, `sap.`, `vcenter.`, `citrix.`, `vpn-*.`) that never appear publicly. Build the
-inference layer on the existing public-record data first (it stands alone and ties into
-the existing techdetect/Wappalyzer work); AXFR then feeds extra internal-hostname
-signals into the same pass for the open-zone minority.
-
-**Non-contestable subdomain source:** Certificate Transparency logs / cert SAN lists
-yield much of the same subdomain enumeration AXFR would, from a fully public channel.
-For host discovery, CT is the safe workhorse; AXFR only adds never-certificated
-internal names on top. A comprehensive inference layer should consume CT/SAN regardless
-of whether AXFR is enabled.
-
-### Beyond DNS — this wants to be a cross-source inference component
-
-"Leave no signal out" spans sources, so the inference layer should be a **dedicated
-component that aggregates per-company signals from all producers**, not a DNS-only
-feature:
-- **Web (CommonCrawl, already ingested):** response headers (`Server`, `X-Powered-By`,
-  cookie names like `JSESSIONID`/`ASP.NET_SessionId`, WAF cookies `__cf_bm`), `<meta
-  generator>`, script/link hosts (GTM, HubSpot, Segment, Intercom), framework and
-  analytics/marketing-tag fingerprints, favicon hash.
-- **TLS/CT:** issuer (CA vendor, corroborates CAA), SAN/CT (subdomains).
-- **Ports/services (nmap in runner2):** banners → server software + versions (ground truth).
-
-Each scanner stays a signal *producer*; the inference layer is the *consumer*, emitting
-one fingerprint per company with per-signal confidence + provenance. This is the natural
-home for the existing techdetect→Wappalyzer work, extended from web-only to DNS/TLS/port
-signal types.
-
-### Guardrails
-
-- **No raw through the back door.** Do not store the evidence hostname/IP that triggered
-  an inference in the product-facing record (that re-exposes the data we chose to drop).
-  Keep triggering evidence internal/audit-only, or discard it.
-- **Confidence tagging.** Internal-hostname inferences are strong-but-not-certain
-  (naming conventions lie); tag them lower-confidence than record-based signals (MX/NS/TXT).
+| TXT verification | adopted SaaS (`google-site-verification`, `MS=`, `atlassian-domain-verification`, `stripe-verification`) |
+| **AXFR-only hostnames** | **internal tooling / appliances (`cpanel.`, `jenkins.`, `gitlab.`, `jira.`, `vcenter.`, `citrix.`, `asa-fw.`, `vpn-*.`) — the unique AXFR contribution** |
 
 ## 6. Flags (all default-off so it ships dark)
 
@@ -182,40 +182,66 @@ Add matching fields to `scanConfig` and `scanFlags` in `scan.go`.
 
 ## 7. Rollout
 
-1. Land `ProbeAXFR` + tests behind `--axfr=false`. Extend the existing test DNS server
-   harness (`internal/resolve/testserver_test.go`) to serve a canned zone, covering
-   both the REFUSED path and a capped successful transfer, TDD-style.
-2. Enable on a bounded `--limit` sample on the box; read real hit-rate and p99
-   transfer time from stats.
+1. Land `ProbeAXFR` + tests behind `--axfr=false`. Extend the DNS test harness
+   (`internal/resolve/testserver_test.go`) to serve AXFR over TCP — a canned zone covering
+   both the REFUSED path and a capped successful transfer, TDD-style. (This is TCP-server
+   work, more than adding another canned UDP response.)
+2. Enable on a bounded `--limit` sample on the box; read real hit-rate and p99 transfer
+   time from stats.
 3. Wire into the steady-state scan loop with tuned caps.
 
 ## Cost
 
-- Refused case: 1 extra TCP round-trip per NS set (deduped) ≈ low-single-digit % over
+- Refused case: 1 extra TCP round-trip per **NS set** (deduped) ≈ low-single-digit % over
   the current ~68 queries/domain.
-- Open case: bounded by §2 caps, isolated by §3 lane — a handful of transfers, none
-  able to stall the UDP workers.
+- Open case: bounded by §2 caps, isolated by §3 lane — a handful of transfers, none able
+  to stall the UDP workers.
 
 ## Risk — retention
 
-Requesting AXFR is a standard, unauthenticated DNS query; if a server answers it chose
-to serve the requester, and open-AXFR checks are standard in DNS posture tooling
-(zonemaster — already integrated here — dnsrecon, nmap). The **request** is low-risk,
-and the **misconfiguration finding** carries no exposure — it's pure defensive value.
+**Purpose:** third-party (CommonCrawl-wide) technology detection — *not* authorized
+per-target scanning. This is the same posture as the platform's existing public-web
+CommonCrawl enrichment, and it is the established business model of SecurityTrails,
+Shodan, Censys, and BuiltWith (third-party DNS/subdomain/technology data without
+per-target authorization, operating in both the EU and US). AXFR-as-source is the one
+step those services mostly don't take, which is what makes the *internal-only* slice the
+contestable part.
 
-The exposure lived in *retaining and productizing the raw zone* (internal hostnames,
-dev/staging/VPN subdomains, internal IPs) — data the operator did not intend to publish.
-Two axes: **authorization** (an open AXFR is a misconfiguration, not an intended public
-channel — unlike a public web page — so the *access* is more contestable than
-CommonCrawl/registry data regardless of jurisdiction), and **data protection** (GDPR
-applies where names embed personal data, as it also does to public-web scraping). Note
-much of the zone is independently discoverable (Certificate Transparency, passive DNS,
-the company's own crawled pages) — which lowers the privacy delta *and* the unique
-enrichment value, leaving the internal-only records as the small contestable slice.
+Three tiers, three risk levels:
 
-**Resolution (this spec):** infer-and-discard (§5). The raw zone is never persisted to
-the product store; only derived technology inferences and the finding are kept. This is
-data minimization — it removes the retention exposure while keeping the useful signal,
-which for the public-record inputs doesn't even require AXFR. Still recommended: an
-allowlist/skip for domains outside authorized scope, and treating any internal-only
-audit copy of triggering evidence (if kept at all) as restricted, not product data.
+1. **The AXFR request** — low risk, standard. Unauthenticated DNS; if a server answers it
+   chose to serve any requester. zonemaster (already integrated), dnsrecon, and nmap all
+   do this.
+2. **The open-zone-transfer finding (`axfr_open`)** — no exposure, pure defensive value.
+   Always safe to compute and expose.
+3. **Retaining and productizing the raw zone** — the contestable tier, on two axes:
+   - **Access authorization.** An open AXFR is a *misconfiguration*, not an intended
+     public channel — so the access is more contestable than a public web page, and in
+     some jurisdictions accessing data via a known misconfiguration can be argued to
+     exceed authorization (CFAA-type theories US; Computer Misuse Act UK; §202a StGB DE).
+     The counter — an unauthenticated protocol operation the server volunteered, no access
+     control bypassed — is strong but not settled.
+   - **Data protection (GDPR).** Internal hostnames can embed personal data, so retention
+     is *processing* even when internal-only. Manageable under a documented
+     legitimate-interest basis with data minimization and a retention window, but not
+     obligation-free.
+
+**Corroboration lowers the delta.** Much of a zone is independently discoverable via
+Certificate Transparency, passive DNS, and the company's own crawled pages. For any name
+also in those channels, the incremental risk of retaining it is near zero. The genuinely
+contestable slice is the **internal-only names that appear nowhere public** — which is
+also the highest-value tech-detection slice.
+
+**Resolution (this spec): retain with a filterable hedge.**
+
+- Persist all AXFR records with `source='axfr'` and the public-corroboration marker (§5).
+- **Freely exposable to clients:** derived technology facts ("uses tech Y"),
+  publicly-corroborated records, and the `axfr_open` flag. Deriving and publishing an
+  abstracted technology fact is the low-risk, industry-standard output.
+- **Gated behind DPO/counsel sign-off:** client-facing display of the *raw internal-only*
+  AXFR names (the slice not corroborated by CT/passive DNS). The `source` +
+  corroboration markers let this be filtered downstream — retention now, exposure decided
+  later, no re-scan.
+- **Required before productionizing retention:** a written legitimate-interest basis and
+  a retention window for holding raw third-party zones (a one-page DPO memo, not a
+  blocker). Recommended: an allowlist/skip for out-of-scope domains.
