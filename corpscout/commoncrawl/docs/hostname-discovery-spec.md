@@ -142,8 +142,11 @@ implementation time; the ledger notes a prior `000101` collision from concurrent
 renumber to whatever's free), each with a matching `.down.sql`:
 
 1. **records `source` + re-key** — `ADD COLUMN source LowCardinality(String) DEFAULT 'query'`
-   and `MODIFY ORDER BY (root_domain, scan_id, record_type, name, value, source)`. *Retrofits
-   the already-merged AXFR code, which cannot load without it.*
+   and `MODIFY ORDER BY (root_domain, record_type, slot, name, value, source)` (the live 000105
+   distinct-model key is `(root_domain, record_type, slot, name, value)` — no `scan_id`; the
+   stale scan_id-based key in the merged README is wrong). *Retrofits the already-merged AXFR
+   code, which cannot load without it.* Also update `EXPECTED_MIGRATIONS` in
+   `dagster_v3/tests/test_clickhouse_migrations.py`.
 2. **records `discovery`** — `ADD COLUMN discovery LowCardinality(String) DEFAULT 'static'`.
 3. **scan summary AXFR columns** — `ADD COLUMN axfr_open UInt8, axfr_records UInt32,
    axfr_truncated UInt8, axfr_server String` (all `DEFAULT`), the last being the NS IP that
