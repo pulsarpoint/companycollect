@@ -30,8 +30,8 @@ type AXFRResult struct {
 }
 
 // transferAXFR runs one TCP AXFR against nsIP for zone, draining up to the caps. A REFUSED/NOTAUTH
-// response or any transport error yields Open=false with an empty Zone. err is non-nil only on a
-// transport/setup failure (so the caller can rotate servers); a clean REFUSED returns (Open:false, nil).
+// response or any mid-stream error yields Open=false. err is non-nil only on a transport/setup
+// failure (so the caller can rotate servers); a clean REFUSED returns (Open:false, nil).
 //
 // Resource safety: miekg's transfer goroutine sends on an unbuffered channel, so abandoning the channel
 // on an early exit (cap hit, ctx cancel) would block that goroutine forever and leak its TCP socket. A
@@ -74,8 +74,8 @@ func transferAXFR(ctx context.Context, zone, nsIP string, caps AXFRCaps) (AXFRRe
 	bytes := 0
 	for env := range ch {
 		if env.Error != nil {
-			// REFUSED / NOTAUTH / malformed: producer is already returning; not a transport error.
-			return finalize(res), nil
+			// REFUSED / NOTAUTH / mid-stream read error / watchdog-forced close: not an open zone.
+			return res, nil
 		}
 		for _, rr := range env.RR {
 			if (caps.MaxRecords > 0 && res.Records >= caps.MaxRecords) ||

@@ -78,6 +78,34 @@ func startAXFRServer(t *testing.T, rrs []dns.RR, refuse bool) (string, func()) {
 	return l.Addr().String(), func() { _ = srv.Shutdown() }
 }
 
+// startAXFRServerAbrupt writes rrs as a single AXFR answer message (SOA first, NO closing SOA) then
+// drops the connection, so the client collects those records and then hits a read error mid-transfer.
+// It exercises the "error after ≥1 RR" path that must still report Open=false.
+func startAXFRServerAbrupt(t *testing.T, rrs []dns.RR) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	mux := dns.NewServeMux()
+	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		if r.Question[0].Qtype == dns.TypeAXFR {
+			m := new(dns.Msg)
+			m.SetReply(r)
+			m.Answer = rrs // SOA first, some records, NO closing SOA
+			_ = w.WriteMsg(m)
+			_ = w.Close() // drop the conn mid-transfer -> client read error
+			return
+		}
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	srv := &dns.Server{Listener: l, Handler: mux}
+	go func() { _ = srv.ActivateAndServe() }()
+	return l.Addr().String(), func() { _ = srv.Shutdown() }
+}
+
 // startAXFRServerMulti is startAXFRServer (never refusing) but streams EACH rr as its own envelope, so
 // a low cap fires on a non-final envelope — exercising the mid-stream early-exit/drain path. rrs MUST
 // start and end with the zone SOA for a well-formed transfer.

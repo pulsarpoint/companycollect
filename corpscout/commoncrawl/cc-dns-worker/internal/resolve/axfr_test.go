@@ -57,6 +57,27 @@ func TestTransferAXFRRefused(t *testing.T) {
 	}
 }
 
+func TestTransferAXFRMidStreamErrorNotOpen(t *testing.T) {
+	// SOA-first + two A records, but NO closing SOA: the client collects these RRs and then hits a
+	// read error when the server drops the connection. Even with Records>0, a mid-stream error must
+	// NOT be reported as an open zone.
+	rrs := []dns.RR{
+		mustRR(t, "example.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 1 7200 3600 1209600 3600"),
+		mustRR(t, "www.example.com. 3600 IN A 1.2.3.4"),
+		mustRR(t, "mail.example.com. 3600 IN A 5.6.7.8"),
+	}
+	addr, stop := startAXFRServerAbrupt(t, rrs)
+	defer stop()
+	caps := AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: 5 * time.Second}
+	res, err := transferAXFR(context.Background(), "example.com", addr, caps)
+	if err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	if res.Open {
+		t.Fatalf("want Open=false on mid-stream error, got Open=true (Records=%d)", res.Records)
+	}
+}
+
 func TestTransferAXFRNoLeakOnMidStreamCap(t *testing.T) {
 	rrs := []dns.RR{
 		mustRR(t, "example.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 1 7200 3600 1209600 3600"),
