@@ -458,7 +458,7 @@ a record = no row, not a null):
 | `rcode` | `LowCardinality(String)` | rcode of the query that produced this record |
 | `source` | `LowCardinality(String)` | `query` or `axfr`; how the record was discovered (default `query`) |
 | `source_run_id` | `String` | |
-| `resolved_at` | `DateTime64(3, 'UTC')` | ReplacingMergeTree version column |
+| `resolved_at` | `DateTime64(3, 'UTC')` | record last-seen timestamp (used in AggregatingMergeTree merge) |
 
 `ORDER BY (root_domain, scan_id, record_type, name, value, source)`.
 
@@ -489,11 +489,7 @@ The `load` column list is derived from each Go struct's `ch` tag (`internal/mode
 
 ### Schema migrations for AXFR support
 
-**An AXFR-enabled build (`--axfr`) requires these columns to exist in ClickHouse first.** Running the
-worker with `--axfr` before the DDL is applied will fail on insert — the load path derives its column
-list from the struct tags and expects all columns to be present in the target tables.
-
-Apply this DDL to your ClickHouse instance before running an AXFR-enabled worker:
+**This build requires the `source` and `axfr_*` columns to exist in ClickHouse before _any_ run — with or without `--axfr`.** The load path derives its INSERT column list from the struct tags (`internal/load` `chColumns` reflection), which now always include `source` (records) and `axfr_open`/`axfr_records`/`axfr_truncated` (scan). A load against a table missing these columns fails at `PrepareBatch` regardless of the `--axfr` flag. Apply the DDL below **before deploying this binary.**
 
 ```sql
 -- records: add source provenance and keep query-vs-axfr rows distinct through the AggregatingMergeTree merge

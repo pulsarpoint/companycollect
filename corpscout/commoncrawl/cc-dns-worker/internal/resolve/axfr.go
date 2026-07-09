@@ -27,7 +27,7 @@ type AXFRCaps struct {
 type AXFRResult struct {
 	Open      bool
 	Server    string
-	Records   int
+	Records   int // count of every RR seen (including SOA and unsupported types); axfr_records in the summary may exceed persisted rows (only supported types land in Zone)
 	Truncated bool
 	Zone      []model.DNSRecord
 }
@@ -146,7 +146,7 @@ type AXFRProber struct {
 	caps  AXFRCaps
 	sem   chan struct{}
 
-	refused sync.Map // nsSetKey -> struct{}: NS sets known to refuse; skip re-probing
+	refused sync.Map // nsSetKey -> struct{}: NS sets that returned no open zone (refusal OR transport error / exhausted retries) — skip re-probing. NOTE: a transient failure permanently suppresses that NS set for the life of the process.
 }
 
 // NewAXFRProber builds a prober over the AXFR scheduler lane. maxInflight bounds total concurrent
