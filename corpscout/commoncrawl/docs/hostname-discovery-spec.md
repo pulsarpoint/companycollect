@@ -30,16 +30,20 @@ discovered for a domain. This is the mechanism that makes discovery survive AXFR
 
 | Column | Type | Meaning |
 | --- | --- | --- |
-| `root_domain` | `String` | registered domain (join key) |
-| `label` | `String` | hostname minus `.<root_domain>`, lowercased (`jenkins`, `api.eu`) |
-| `discovery_source` | `LowCardinality(String)` | how **first** discovered: `ct` \| `axfr` \| `static` |
-| `first_seen` | `DateTime64(3,'UTC')` | when we first discovered this label |
-| `last_seen` | `DateTime64(3,'UTC')` | most recent cycle that re-discovered it (CT re-issue, AXFR, etc.) |
-| `last_resolved` | `DateTime64(3,'UTC')` | most recent cycle its A/AAAA actually resolved (`0` if never) — powers a future decay policy |
+| `root_domain` | `String` | registered domain (join key, sort key) |
+| `label` | `String` | hostname minus `.<root_domain>`, lowercased (`jenkins`, `api.eu`); sort key |
+| `discovery_source` | `SimpleAggregateFunction(min, LowCardinality(String))` | how discovered: `axfr` \| `ct` \| `static` — `min` gives axfr precedence (`axfr` < `ct` < `static`) |
+| `first_seen` | `SimpleAggregateFunction(min, DateTime64(3,'UTC'))` | when we first discovered this label |
+| `last_seen` | `SimpleAggregateFunction(max, DateTime64(3,'UTC'))` | most recent cycle that re-discovered it (CT re-issue, AXFR, etc.) |
+| `last_resolved` | `SimpleAggregateFunction(max, DateTime64(3,'UTC'))` | most recent cycle its A/AAAA actually resolved (`0` if never) — powers a future decay policy |
 
-Engine: `ReplacingMergeTree(last_seen)` keyed `ORDER BY (root_domain, label)` — re-discovery
-updates the row; `discovery_source`/`first_seen` are preserved on the winning (earliest)
-row via the write-back's `argMin` (see §4). One row per `(root_domain, label)`.
+Engine: `AggregatingMergeTree()` keyed `ORDER BY (root_domain, label)`. AggregatingMergeTree (not
+ReplacingMergeTree) so the write-back can blind-`INSERT` `(root_domain, label, discovery, now, now,
+resolved?now:0)` and the merge folds it into the durable row — `first_seen=min`, `last_seen=max`,
+`last_resolved=max`, `discovery_source=min` — with **no read-before-write** at 33.6 M-domain scale.
+Read with `GROUP BY`/`FINAL` to collapse. One logical row per `(root_domain, label)`. (Same lesson as
+migration 000107: non-key data on a MergeTree wants SimpleAggregateFunction, and the sort key is the
+plain `(root_domain, label)` columns present at `CREATE` — no defaulted key column.)
 
 **Monotonic + capped, never decayed (this spec):** a host is never deleted. The registry's
 *contribution to a scan* is capped at 100/domain by `last_seen` (see §3), which bounds query
@@ -133,7 +137,9 @@ CREATE TABLE IF NOT EXISTS scan_hostnames (
   - **AXFR-discovered hostnames** (distinct labels from this cycle's `source=axfr` records) →
     insert with `discovery_source=axfr`. **This is what makes them durable** — next cycle they
     come back from the registry and are re-resolved by normal query even if the zone closed.
-  - `first_seen`/`discovery_source` preserved via `argMin(…, first_seen)` on merge.
+  - Blind `INSERT` per discovered label: `(root_domain, label, discovery, now, now, resolved?now:0)`.
+    The `AggregatingMergeTree` folds duplicates — `first_seen=min`, `last_seen=max`, `last_resolved=max`,
+    `discovery_source=min` (axfr precedence) — so no read-before-write and re-discovery is idempotent.
 
 ## 5. Migrations (`000107+`, replacing the README DDL)
 
