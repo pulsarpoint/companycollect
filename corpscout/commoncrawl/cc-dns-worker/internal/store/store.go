@@ -450,8 +450,8 @@ func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model
 			continue // apex or not a subdomain of rd
 		}
 		label := strings.ToLower(strings.TrimSuffix(name, suffix))
-		if label == "" {
-			continue
+		if label == "" || strings.Contains(label, "*") {
+			continue // empty or wildcard (e.g. "*.example.com") — not a durable host
 		}
 		key := rd + "\x00" + label
 		if seen[key] {

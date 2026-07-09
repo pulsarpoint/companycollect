@@ -103,8 +103,9 @@ func finalize(res AXFRResult) AXFRResult {
 	return res
 }
 
-// axfrRecord converts one transferred RR into a model.DNSRecord tagged Source="axfr". The slot is
-// empty (AXFR names are not tied to the query-plan slots); the name is the record owner, no trailing
+// axfrRecord converts one transferred RR into a model.DNSRecord tagged Source="axfr" and
+// Discovery="axfr" (the host was learned from the zone transfer, not the static query plan). The slot
+// is empty (AXFR names are not tied to the query-plan slots); the name is the record owner, no trailing
 // dot. Unsupported RR types are skipped (ok=false).
 func axfrRecord(rr dns.RR) (model.DNSRecord, bool) {
 	name := strings.TrimSuffix(strings.ToLower(rr.Header().Name), ".")

@@ -339,6 +339,8 @@ func TestDiscoveredHostnames(t *testing.T) {
 			{Name: "www.example.com", RecordType: "A", Value: "1.2.3.4", Rcode: "NOERROR", Source: "query", Discovery: "static"},         // static — excluded
 			{Name: "jenkins.example.com", RecordType: "A", Value: "10.0.0.5", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"},       // captured
 			{Name: "vpn.example.com", RecordType: "CNAME", Value: "gw.example.net", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"}, // captured
+			{Name: "a.b.example.com", RecordType: "A", Value: "10.0.0.6", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"},           // deep — captured as label "a.b"
+			{Name: "*.example.com", RecordType: "A", Value: "10.0.0.7", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"},             // wildcard — excluded
 		},
 	}
 	if err := st.CommitBatch(ctx, []model.DomainResult{res}); err != nil {
@@ -352,8 +354,11 @@ func TestDiscoveredHostnames(t *testing.T) {
 	for _, r := range rows {
 		got[r.Label] = r.DiscoverySource
 	}
-	if len(got) != 2 || got["jenkins"] != "axfr" || got["vpn"] != "axfr" {
-		t.Fatalf("want {jenkins:axfr, vpn:axfr}, got %+v", got)
+	if _, ok := got["*"]; ok {
+		t.Fatalf("wildcard label '*' must be excluded, got %+v", got)
+	}
+	if len(got) != 3 || got["jenkins"] != "axfr" || got["vpn"] != "axfr" || got["a.b"] != "axfr" {
+		t.Fatalf("want {jenkins:axfr, vpn:axfr, a.b:axfr}, got %+v", got)
 	}
 }
 

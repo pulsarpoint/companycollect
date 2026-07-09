@@ -5,9 +5,9 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- write-back blind-INSERTs one row per discovered label -- AggregatingMergeTree folds duplicates with
 -- first_seen=min, last_seen=max, last_resolved=max, discovery_source=min (axfr precedence), so no
 -- read-before-write. The sort key is the plain (root_domain, label) columns present at CREATE.
-DROP TABLE IF EXISTS corpscout.commoncrawl_domain_hostnames;
-
-CREATE TABLE corpscout.commoncrawl_domain_hostnames
+-- Non-destructive (CREATE TABLE IF NOT EXISTS): re-running this migration is safe and never wipes the
+-- accumulated registry.
+CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_hostnames
 (
     root_domain      String,
     label            String,
