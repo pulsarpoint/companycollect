@@ -456,10 +456,11 @@ a record = no row, not a null):
 | `ttl` | `UInt32` | |
 | `priority` | `UInt16` | MX preference (also embedded in `value`); `0` otherwise |
 | `rcode` | `LowCardinality(String)` | rcode of the query that produced this record |
+| `source` | `LowCardinality(String)` | `query` or `axfr`; how the record was discovered (default `query`) |
 | `source_run_id` | `String` | |
 | `resolved_at` | `DateTime64(3, 'UTC')` | ReplacingMergeTree version column |
 
-`ORDER BY (root_domain, scan_id, record_type, name, value)`.
+`ORDER BY (root_domain, scan_id, record_type, name, value, source)`.
 
 **`commoncrawl_domain_dns_scan`** — one row per (domain, scan): zone-level summary + outcome:
 
@@ -475,6 +476,9 @@ a record = no row, not a null):
 | `status` | `LowCardinality(String)` | `done` \| `error` |
 | `error` | `String` | discovery/scan error text; empty on success |
 | `queries_total` / `queries_ok` | `UInt16` | Tier-2 query attempt/success counters |
+| `axfr_open` | `UInt8` | 1 if the domain's nameservers allowed a zone transfer (open-AXFR misconfiguration flag) |
+| `axfr_records` | `UInt32` | count of records seen in the transferred zone (0 if not open) |
+| `axfr_truncated` | `UInt8` | 1 if the transfer hit a cap (records/bytes/deadline) before completing |
 | `source_run_id` | `String` | |
 | `resolved_at` | `DateTime64(3, 'UTC')` | ReplacingMergeTree version column |
 
@@ -482,6 +486,30 @@ a record = no row, not a null):
 
 The `load` column list is derived from each Go struct's `ch` tag (`internal/model`, `internal/load`
 `chColumns[T]`), so a table may carry extra defaulted columns the worker doesn't populate.
+
+### Schema migrations for AXFR support
+
+**An AXFR-enabled build (`--axfr`) requires these columns to exist in ClickHouse first.** Running the
+worker with `--axfr` before the DDL is applied will fail on insert — the load path derives its column
+list from the struct tags and expects all columns to be present in the target tables.
+
+Apply this DDL to your ClickHouse instance before running an AXFR-enabled worker:
+
+```sql
+-- records: add source provenance and keep query-vs-axfr rows distinct through the AggregatingMergeTree merge
+ALTER TABLE corpscout.commoncrawl_domain_dns_records
+  ADD COLUMN IF NOT EXISTS source LowCardinality(String) DEFAULT 'query';
+ALTER TABLE corpscout.commoncrawl_domain_dns_records
+  MODIFY ORDER BY (root_domain, scan_id, record_type, name, value, source);
+-- ^ MODIFY ORDER BY may only APPEND a new column that has a default; if the engine/version rejects it,
+--   keep `source` as a non-key column (query+axfr rows for an identical record then merge into one).
+
+-- scan summary: add the AXFR flags (plain data columns, not in the sort key)
+ALTER TABLE corpscout.commoncrawl_domain_dns_scan
+  ADD COLUMN IF NOT EXISTS axfr_open UInt8 DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS axfr_records UInt32 DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS axfr_truncated UInt8 DEFAULT 0;
+```
 
 ## Environment variables
 
