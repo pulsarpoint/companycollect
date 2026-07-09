@@ -141,13 +141,15 @@ Proper golang-migrate files under `corpscout/clickhouse/migrations/` (next-free 
 implementation time; the ledger notes a prior `000101` collision from concurrent work, so
 renumber to whatever's free), each with a matching `.down.sql`:
 
-1. **records `source` + re-key** — `ADD COLUMN source LowCardinality(String) DEFAULT 'query'`
-   and `MODIFY ORDER BY (root_domain, record_type, slot, name, value, source)` (the live 000105
-   distinct-model key is `(root_domain, record_type, slot, name, value)` — no `scan_id`; the
-   stale scan_id-based key in the merged README is wrong). *Retrofits the already-merged AXFR
-   code, which cannot load without it.* Also update `EXPECTED_MIGRATIONS` in
-   `dagster_v3/tests/test_clickhouse_migrations.py`.
-2. **records `discovery`** — `ADD COLUMN discovery LowCardinality(String) DEFAULT 'static'`.
+1. **records `source`** — `ADD COLUMN source SimpleAggregateFunction(anyLast, LowCardinality(String))`.
+   NOT in the sort key: ClickHouse forbids a defaulted column in `ORDER BY` (and a new key column on
+   a table with data must be defaulted), so `source` is a non-key aggregate like `ttl`/`rcode`/
+   `last_run_id` — the `AggregatingMergeTree` merges it deterministically via `anyLast`. (An earlier
+   attempt used `ADD COLUMN … DEFAULT 'query'` + `MODIFY ORDER BY … source`, which ClickHouse rejects
+   with error 36; verified.) *Retrofits the already-merged AXFR code, which cannot load without it.*
+   Also update `EXPECTED_MIGRATIONS` in `dagster_v3/tests/test_clickhouse_migrations.py`.
+2. **records `discovery`** — `ADD COLUMN discovery SimpleAggregateFunction(anyLast, LowCardinality(String))`
+   (same constraint as `source` — a non-key aggregate column, NOT added to the sort key).
 3. **scan summary AXFR columns** — `ADD COLUMN axfr_open UInt8, axfr_records UInt32,
    axfr_truncated UInt8, axfr_server String` (all `DEFAULT`), the last being the NS IP that
    answered the transfer (`''` when closed). *Retrofits AXFR + adds the answering-IP info.*

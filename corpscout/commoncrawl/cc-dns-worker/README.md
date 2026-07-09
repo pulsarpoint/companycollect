@@ -459,9 +459,9 @@ a record = no row, not a null):
 | `first_seen` | `DateTime64(3, 'UTC')` | earliest observation time (min aggregate) |
 | `last_seen` | `DateTime64(3, 'UTC')` | latest observation time (max aggregate) |
 | `scans` | `UInt64` | count of scans that observed this record (sum aggregate) |
-| `source` | `LowCardinality(String)` | `query` or `axfr`; how the record was discovered (default `query`) |
+| `source` | `SimpleAggregateFunction(anyLast, LowCardinality(String))` | `query` or `axfr`; how the record was obtained (non-key aggregate — ClickHouse forbids a defaulted column in the sort key) |
 
-`ORDER BY (root_domain, record_type, slot, name, value, source)`.
+`ORDER BY (root_domain, record_type, slot, name, value)` (`source` is a non-key aggregate column, not part of the sort key).
 
 **`commoncrawl_domain_dns_scan`** — one row per domain: latest-good-state summary per domain:
 
@@ -490,7 +490,7 @@ The `load` column list is derived from each Go struct's `ch` tag (`internal/mode
 
 ### Schema migrations for AXFR support
 
-The AXFR ClickHouse schema changes are checked-in migrations, not a manual runbook: `../../clickhouse/migrations/000107_corpscout_commoncrawl_domain_dns_records_source.*` (adds `source` + re-keys the records table to `(root_domain, record_type, slot, name, value, source)`) and `000108_corpscout_commoncrawl_domain_dns_scan_axfr.*` (adds `axfr_open`, `axfr_records`, `axfr_truncated`, `axfr_server`). Apply them with the project's ClickHouse migration tooling **before deploying a build of this worker** — the load path derives its INSERT column list from the struct tags, so a load against a table missing these columns fails at `PrepareBatch` regardless of the `--axfr` flag.
+The AXFR ClickHouse schema changes are checked-in migrations, not a manual runbook: `../../clickhouse/migrations/000107_corpscout_commoncrawl_domain_dns_records_source.*` (adds `source` as a non-key `SimpleAggregateFunction` column) and `000108_corpscout_commoncrawl_domain_dns_scan_axfr.*` (adds `axfr_open`, `axfr_records`, `axfr_truncated`, `axfr_server`). Apply them with the project's ClickHouse migration tooling **before deploying a build of this worker** — the load path derives its INSERT column list from the struct tags, so a load against a table missing these columns fails at `PrepareBatch` regardless of the `--axfr` flag.
 
 ## Environment variables
 
