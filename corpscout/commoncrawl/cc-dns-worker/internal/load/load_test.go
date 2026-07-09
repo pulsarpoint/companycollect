@@ -9,7 +9,7 @@ import (
 
 func TestColumnLists(t *testing.T) {
 	rc := chColumns[model.RecordRow]()
-	if !strings.Contains(strings.Join(rc, ","), "first_seen") || len(rc) != 13 {
+	if !strings.Contains(strings.Join(rc, ","), "first_seen") || len(rc) != 14 {
 		t.Errorf("RecordRow columns wrong: %v", rc)
 	}
 	sc := chColumns[model.ScanRow]()

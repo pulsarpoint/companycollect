@@ -29,7 +29,7 @@ func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, de
 		SourceRunID: runID, ResolvedAt: now,
 	}
 	for _, ds := range del.DS {
-		res.Records = append(res.Records, model.DNSRecord{Name: domain, RecordType: "DS", Slot: "", Value: ds, Rcode: "NOERROR", Source: "query"})
+		res.Records = append(res.Records, model.DNSRecord{Name: domain, RecordType: "DS", Slot: "", Value: ds, Rcode: "NOERROR", Source: "query", Discovery: "static"})
 	}
 
 	// Fire the plan's queries CONCURRENTLY instead of one-at-a-time. Each still passes through the
@@ -97,7 +97,7 @@ func collect(q records.Query, resp *dns.Msg, rcode string) []model.DNSRecord {
 	name := strings.TrimSuffix(q.Name, ".")
 	var out []model.DNSRecord
 	for _, rr := range resp.Answer {
-		rec := model.DNSRecord{Name: name, Slot: q.Slot, Rcode: rcode, TTL: rr.Header().Ttl, Source: "query"}
+		rec := model.DNSRecord{Name: name, Slot: q.Slot, Rcode: rcode, TTL: rr.Header().Ttl, Source: "query", Discovery: "static"}
 		switch v := rr.(type) {
 		case *dns.A:
 			rec.RecordType, rec.Value = "A", v.A.String()

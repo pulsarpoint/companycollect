@@ -289,6 +289,39 @@ func TestCommitBatchPersistsSource(t *testing.T) {
 	}
 }
 
+func TestCommitBatchPersistsDiscovery(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if _, err := st.Seed(ctx, "s1", []string{"example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	res := model.DomainResult{
+		ScanID: "s1", RootDomain: "example.com", Status: "done", ResolvedAt: time.Now().UTC(),
+		Records: []model.DNSRecord{
+			{Name: "www.example.com", RecordType: "A", Value: "1.2.3.4", Rcode: "NOERROR", Source: "query", Discovery: "static"},
+			{Name: "jenkins.example.com", RecordType: "A", Value: "10.0.0.5", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"},
+		},
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{res}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.StagedRecords(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r.Name] = r.Discovery
+	}
+	if got["www.example.com"] != "static" || got["jenkins.example.com"] != "axfr" {
+		t.Fatalf("discovery not round-tripped: %+v", got)
+	}
+}
+
 func TestSummaryPersistsAXFRFlags(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {

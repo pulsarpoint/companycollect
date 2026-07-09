@@ -108,7 +108,7 @@ func finalize(res AXFRResult) AXFRResult {
 // dot. Unsupported RR types are skipped (ok=false).
 func axfrRecord(rr dns.RR) (model.DNSRecord, bool) {
 	name := strings.TrimSuffix(strings.ToLower(rr.Header().Name), ".")
-	rec := model.DNSRecord{Name: name, Slot: "", Rcode: "NOERROR", TTL: rr.Header().Ttl, Source: "axfr"}
+	rec := model.DNSRecord{Name: name, Slot: "", Rcode: "NOERROR", TTL: rr.Header().Ttl, Source: "axfr", Discovery: "axfr"}
 	switch v := rr.(type) {
 	case *dns.A:
 		rec.RecordType, rec.Value = "A", v.A.String()

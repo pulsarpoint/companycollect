@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS scan_records (
   ttl          INTEGER DEFAULT 0,
   priority     INTEGER DEFAULT 0,
   source       TEXT DEFAULT 'query',
+  discovery    TEXT DEFAULT 'static',
   rcode        TEXT DEFAULT '',
   source_run_id TEXT DEFAULT '',
   resolved_at  TEXT DEFAULT ''
@@ -90,6 +91,7 @@ func Open(path string) (*Store, error) {
 func migrate(db *sql.DB) {
 	for _, stmt := range []string{
 		`ALTER TABLE scan_records ADD COLUMN source TEXT DEFAULT 'query'`,
+		`ALTER TABLE scan_records ADD COLUMN discovery TEXT DEFAULT 'static'`,
 		`ALTER TABLE scan_domains ADD COLUMN axfr_open INTEGER DEFAULT 0`,
 		`ALTER TABLE scan_domains ADD COLUMN axfr_records INTEGER DEFAULT 0`,
 		`ALTER TABLE scan_domains ADD COLUMN axfr_truncated INTEGER DEFAULT 0`,
@@ -207,8 +209,8 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 	}
 	defer del.Close()
 	insR, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
-		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, source_run_id, resolved_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, discovery, source_run_id, resolved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -229,7 +231,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		ts := res.ResolvedAt.UTC().Format(time.RFC3339Nano)
 		for _, rec := range res.Records {
 			if _, err := insR.ExecContext(ctx, res.ScanID, res.RootDomain, rec.Name, rec.RecordType,
-				rec.Slot, rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, res.SourceRunID, ts); err != nil {
+				rec.Slot, rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, rec.Discovery, res.SourceRunID, ts); err != nil {
 				return err
 			}
 		}
@@ -256,7 +258,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 // them into the record's lifespan on merge.
 func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.RecordRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, name, record_type, slot, value,
-		ttl, priority, rcode, source, source_run_id, resolved_at FROM scan_records WHERE scan_id = ?`, scanID)
+		ttl, priority, rcode, source, discovery, source_run_id, resolved_at FROM scan_records WHERE scan_id = ?`, scanID)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +268,7 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 		var r model.RecordRow
 		var ts string
 		if err := rows.Scan(&r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
-			&r.TTL, &r.Priority, &r.Rcode, &r.Source, &r.LastRunID, &ts); err != nil {
+			&r.TTL, &r.Priority, &r.Rcode, &r.Source, &r.Discovery, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		t := parseTS(ts)
@@ -342,7 +344,7 @@ func (s *Store) SetLoadedRowid(ctx context.Context, scanID string, rowid int64) 
 // The unary + on scan_id stops the planner from picking idx_records_domain (which would re-sort
 // the scan's entire record set per batch); the query must walk the rowid primary key instead.
 const recordsAfterQuery = `SELECT rowid, root_domain, name, record_type, slot, value,
-	ttl, priority, rcode, source, source_run_id, resolved_at FROM scan_records
+	ttl, priority, rcode, source, discovery, source_run_id, resolved_at FROM scan_records
 	WHERE +scan_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`
 
 // RecordsAfter returns up to limit records for scanID with rowid > afterRowid, ordered by rowid (i.e.
@@ -364,7 +366,7 @@ func (s *Store) RecordsAfter(ctx context.Context, scanID string, afterRowid int6
 		var rid int64
 		var ts string
 		if err := rows.Scan(&rid, &r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
-			&r.TTL, &r.Priority, &r.Rcode, &r.Source, &r.LastRunID, &ts); err != nil {
+			&r.TTL, &r.Priority, &r.Rcode, &r.Source, &r.Discovery, &r.LastRunID, &ts); err != nil {
 			return nil, afterRowid, nil, err
 		}
 		t := parseTS(ts)
