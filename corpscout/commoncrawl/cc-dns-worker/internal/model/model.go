@@ -13,6 +13,7 @@ type DNSRecord struct {
 	Rcode      string // query rcode for the query that produced this record
 	TTL        uint32
 	Priority   uint16 // MX preference; 0 otherwise
+	Source     string // "query" (actively queried) | "axfr" (from a zone transfer)
 }
 
 // DomainResult is everything learned for one domain in one scan.
@@ -49,6 +50,7 @@ type RecordRow struct {
 	FirstSeen  time.Time `ch:"first_seen"`
 	LastSeen   time.Time `ch:"last_seen"`
 	Scans      uint64    `ch:"scans"`
+	Source     string    `ch:"source"`
 }
 
 // ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
