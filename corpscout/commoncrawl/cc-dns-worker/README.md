@@ -460,7 +460,7 @@ a record = no row, not a null):
 | `source_run_id` | `String` | |
 | `resolved_at` | `DateTime64(3, 'UTC')` | record last-seen timestamp (used in AggregatingMergeTree merge) |
 
-`ORDER BY (root_domain, scan_id, record_type, name, value, source)`.
+`ORDER BY (root_domain, record_type, slot, name, value, source)`.
 
 **`commoncrawl_domain_dns_scan`** — one row per (domain, scan): zone-level summary + outcome:
 
@@ -479,6 +479,7 @@ a record = no row, not a null):
 | `axfr_open` | `UInt8` | 1 if the domain's nameservers allowed a zone transfer (open-AXFR misconfiguration flag) |
 | `axfr_records` | `UInt32` | count of records seen in the transferred zone (0 if not open) |
 | `axfr_truncated` | `UInt8` | 1 if the transfer hit a cap (records/bytes/deadline) before completing |
+| `axfr_server` | `String` | the NS IP that answered the zone transfer (`''` when the zone is closed) |
 | `source_run_id` | `String` | |
 | `resolved_at` | `DateTime64(3, 'UTC')` | ReplacingMergeTree version column |
 
@@ -489,23 +490,7 @@ The `load` column list is derived from each Go struct's `ch` tag (`internal/mode
 
 ### Schema migrations for AXFR support
 
-**This build requires the `source` and `axfr_*` columns to exist in ClickHouse before _any_ run — with or without `--axfr`.** The load path derives its INSERT column list from the struct tags (`internal/load` `chColumns` reflection), which now always include `source` (records) and `axfr_open`/`axfr_records`/`axfr_truncated` (scan). A load against a table missing these columns fails at `PrepareBatch` regardless of the `--axfr` flag. Apply the DDL below **before deploying this binary.**
-
-```sql
--- records: add source provenance and keep query-vs-axfr rows distinct through the AggregatingMergeTree merge
-ALTER TABLE corpscout.commoncrawl_domain_dns_records
-  ADD COLUMN IF NOT EXISTS source LowCardinality(String) DEFAULT 'query';
-ALTER TABLE corpscout.commoncrawl_domain_dns_records
-  MODIFY ORDER BY (root_domain, scan_id, record_type, name, value, source);
--- ^ MODIFY ORDER BY may only APPEND a new column that has a default; if the engine/version rejects it,
---   keep `source` as a non-key column (query+axfr rows for an identical record then merge into one).
-
--- scan summary: add the AXFR flags (plain data columns, not in the sort key)
-ALTER TABLE corpscout.commoncrawl_domain_dns_scan
-  ADD COLUMN IF NOT EXISTS axfr_open UInt8 DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS axfr_records UInt32 DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS axfr_truncated UInt8 DEFAULT 0;
-```
+The AXFR ClickHouse schema changes are checked-in migrations, not a manual runbook: `../../clickhouse/migrations/000107_corpscout_commoncrawl_domain_dns_records_source.*` (adds `source` + re-keys the records table to `(root_domain, record_type, slot, name, value, source)`) and `000108_corpscout_commoncrawl_domain_dns_scan_axfr.*` (adds `axfr_open`, `axfr_records`, `axfr_truncated`, `axfr_server`). Apply them with the project's ClickHouse migration tooling **before deploying a build of this worker** — the load path derives its INSERT column list from the struct tags, so a load against a table missing these columns fails at `PrepareBatch` regardless of the `--axfr` flag.
 
 ## Environment variables
 
