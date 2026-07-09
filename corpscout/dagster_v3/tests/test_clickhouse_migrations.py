@@ -119,6 +119,10 @@ EXPECTED_MIGRATIONS = (
     "000102_corpscout_commoncrawl_domain_dns_scan",
     "000103_corpscout_br_pgfn_company_debts",
     "000104_corpscout_br_cgu_sanctions",
+    "000105_corpscout_commoncrawl_domain_dns_records_distinct",
+    "000106_corpscout_commoncrawl_domain_dns_scan_latest",
+    "000107_corpscout_commoncrawl_domain_dns_records_source",
+    "000108_corpscout_commoncrawl_domain_dns_scan_axfr",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -458,7 +462,10 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             or "DROP VIEW IF EXISTS" in sql
             or "INSERT INTO" in sql  # data migration (e.g. backfill into a new table)
         )
-        assert "TRUNCATE" not in sql.upper()  # never truncate in an up migration
+        # Never TRUNCATE TABLE in an up migration. Match the full statement, not the bare
+        # substring: legitimate column names like axfr_truncated contain "TRUNCATE" but are
+        # not the dangerous data-wiping statement, which is always "TRUNCATE TABLE".
+        assert "TRUNCATE TABLE" not in sql.upper()
 
 
 def test_clickhouse_migration_line_comments_do_not_contain_semicolons() -> None:
