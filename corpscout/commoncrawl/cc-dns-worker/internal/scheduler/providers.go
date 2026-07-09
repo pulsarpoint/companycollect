@@ -33,9 +33,9 @@ func parseCIDRs(cidrs []string) []*net.IPNet {
 	return out
 }
 
-// isHyperscaler reports whether ip (a bare address, no port) falls in a known large anycast DNS
+// IsHyperscaler reports whether ip (a bare address, no port) falls in a known large anycast DNS
 // provider range. A non-IP string returns false.
-func isHyperscaler(ip string) bool {
+func IsHyperscaler(ip string) bool {
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
 		return false

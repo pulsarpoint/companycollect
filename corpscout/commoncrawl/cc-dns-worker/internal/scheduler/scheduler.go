@@ -78,7 +78,7 @@ func (s *Scheduler) forServer(ip string) *server {
 		return sv
 	}
 	qps, burst, inflight := s.cfg.PerServerQPS, s.cfg.Burst, s.cfg.MaxInFlight
-	if s.cfg.HyperscalerQPS > 0 && isHyperscaler(ip) {
+	if s.cfg.HyperscalerQPS > 0 && IsHyperscaler(ip) {
 		qps = s.cfg.HyperscalerQPS
 		if s.cfg.HyperscalerInFlight > 0 {
 			inflight = s.cfg.HyperscalerInFlight
