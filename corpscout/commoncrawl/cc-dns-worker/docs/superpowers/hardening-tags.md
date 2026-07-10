@@ -20,7 +20,7 @@ Each task is implemented, reviewed, committed, and tagged so the fix can be chec
 | `harden-task-08` | 8 | Split record/summary watermarks; zero-record domains load; retry-stable registry ts | `go test ./internal/store ./internal/load` |
 | `harden-task-09` | 9 | Explicit done/partial/error; DS/DNSKEY outcome≠value; private-addr finding (mig 000116) | `go test ./internal/resolve ./internal/store` |
 | `harden-task-10` | 10 | Circuit breaker contract (admit after slot/token; single half-open probe) | `go test ./internal/scheduler` |
-| _pending_ | 11 | Scope + stream CT/registry enrichment | `go test ./internal/hostsource` |
+| `harden-task-11` | 11 | Scope enrichment to scan membership + stream (000117, no whole-shard maps) | `go test ./internal/hostsource ./internal/store` |
 | _pending_ | 12 | Cancellation, state validation, safe pruning | `go test ./cmd/cc-dns-worker` |
 | _pending_ | 13 | Explicit SQLite schema/decoding failures | `go test ./internal/store` |
 | _pending_ | 14 | Config validation, slog, cockroachdb/errors, deps | `go test ./... && go vet ./...` |
