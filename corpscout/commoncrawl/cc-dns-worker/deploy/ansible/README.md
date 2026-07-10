@@ -3,6 +3,19 @@
 Deploys `cc-dns-worker` to `hetzner01`: OS tuning (`os_tuning`), a local recursive
 resolver (`unbound`), and the worker service itself (`cc_dns_worker`).
 
+## Feature containment (temporary)
+
+`--axfr` and `--host-enrich` are **disabled** in the production flag set
+(`group_vars/cc_dns/vars.yml`) until their release gates in
+[`../../docs/superpowers/plans/2026-07-10-cc-dns-worker-correctness-hardening.md`](../../docs/superpowers/plans/2026-07-10-cc-dns-worker-correctness-hardening.md)
+pass — AXFR needs Tasks 2–6, host enrichment needs Task 11. This is temporary
+containment, not feature removal: re-enable by appending `--axfr --host-enrich`
+to `cc_dns_run_flags`. Rollback of the containment is that single variable change.
+
+Note: the **base resolver** still requires Task 1 (public-target dial filtering)
+before it is production-safe, because authoritative DNS queries dial untrusted NS
+addresses too — not only AXFR.
+
 ## Prerequisites
 
 - The target host (`hetzner01`) is reachable over Tailscale/ssh from the control
@@ -58,6 +71,32 @@ ansible-vault view group_vars/cc_dns/vault.yml
 ```
 
 ## Running
+
+### One-time raw-observation cutover
+
+The first deployment containing the retry-safe raw DNS observation writer must start a new scan ID.
+The role refuses to restart an existing cycle until an operator makes that boundary explicit.
+
+To stop the worker, preserve its current state file as a pre-cutover backup, and deliberately abandon
+that cycle before the new binary starts:
+
+```bash
+ansible-playbook site.yml -e cc_dns_observation_cutover_mode=abandon_active_cycle
+```
+
+The SQLite scan DB is left untouched (and remains subject to the normal `--keep-dbs` pruning policy),
+but its state file is retired so the new writer mints a fresh cycle. If the cutover was completed
+independently before this guard was deployed, verify that no scan ID contributed to both the legacy
+aggregate and raw observations, then record that fact with:
+
+```bash
+ansible-playbook site.yml -e cc_dns_observation_cutover_mode=already_complete
+```
+
+Both modes create `.dns-record-observation-cutover-complete` on the target. Later deployments require no
+extra variable and cannot accidentally repeat the one-time abandonment.
+
+### Normal deployment
 
 ```bash
 cd deploy/ansible

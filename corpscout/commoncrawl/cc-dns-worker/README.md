@@ -356,7 +356,11 @@ cc-dns-worker/
 
 ### `scan`
 
-Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending domain.
+Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending domain. When `--axfr`
+is set, it then runs the same shared AXFR step `run` uses (`axfrCycle`): stage+probe every resolved
+domain's non-hyperscaler nameservers for open zone transfers, then the AXFR ClickHouse load pass. With
+`--axfr=false` (the default) no AXFR work happens at all — no queue seeding, no prober, no ClickHouse
+connection for it.
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
@@ -392,7 +396,10 @@ retries, and `q`/`dom` are the query- and domain-level error rates.
 ### `load`
 
 Bulk-copies one scan's SQLite stage into ClickHouse. Safe to re-run (target tables are
-`ReplacingMergeTree`; read them with `FINAL`).
+`ReplacingMergeTree`; read them with `FINAL`). If the stage has any staged AXFR probes for `--scan-id`
+(i.e. that scan ran with `--axfr` at some point), `load` also runs the AXFR load pass
+(`dns_axfr_latest`/`dns_axfr_state_changes`); it is a complete no-op — no extra ClickHouse round trip —
+when the scan never staged AXFR work.
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
@@ -432,12 +439,15 @@ Two tables (migrations `../../clickhouse/migrations/000105_…_records_distinct`
 
 - **`commoncrawl_domain_dns_records`** — `AggregatingMergeTree`, one row per distinct
   `(root_domain, record_type, slot, name, value)` with `first_seen = min`, `last_seen = max`,
-  `scans = sum`, and `anyLast` for ttl/priority/rcode/last_run_id. Re-scans dedup: storage grows only
-  for genuinely new records, a value change appears as a new row with sequential spans, and a missed
-  scan just fails to advance `last_seen` (no false "removed"). Read with `FINAL` or a `GROUP BY`.
+  `scans = sum`, and `anyLast` for ttl/priority/rcode/last_run_id. **As of Task 7 (correctness
+  hardening) this table is a FROZEN, read-only legacy baseline — `load` no longer writes to it.**
+  `scans = sum` per inserted row cannot tell a genuine re-observation from a retried load of the same
+  scan apart, so a retry after a crash/timeout silently double-counted forever; see
+  [Task 7](#task-7-retry-safe-raw-dns-record-observations) below for its replacement. Read with
+  `FINAL` or a `GROUP BY`.
 - **`commoncrawl_domain_dns_scan`** — `ReplacingMergeTree(resolved_at)` keyed on `root_domain`
   (latest good state per domain). The loader stages only `status='done'` domains, so a failed re-scan
-  never clobbers a domain's last-good nameservers/DNSSEC data.
+  never clobbers a domain's last-good nameservers/DNSSEC data. Unaffected by Task 7.
 
 Both are idempotent under re-load — which is exactly what makes `run`'s incremental + retry-on-crash
 loading safe.
@@ -478,15 +488,65 @@ a record = no row, not a null):
 | `queries_ok` | `UInt16` | Tier-2 query successes |
 | `last_run_id` | `String` | ID of the scan that produced this row |
 | `resolved_at` | `DateTime64(3, 'UTC')` | ReplacingMergeTree version column |
-| `axfr_open` | `UInt8` | 1 if the domain's nameservers allowed a zone transfer (open-AXFR misconfiguration flag) |
-| `axfr_records` | `UInt32` | count of records seen in the transferred zone (0 if not open) |
-| `axfr_truncated` | `UInt8` | 1 if the transfer hit a cap (records/bytes/deadline) before completing |
-| `axfr_server` | `String` | the NS IP that answered the zone transfer (`''` when the zone is closed) |
+
+**Deprecated columns still present on this table but no longer written by the worker:** `axfr_open`
+(`UInt8`), `axfr_records` (`UInt32`), `axfr_truncated` (`UInt8`), `axfr_server` (`String`). AXFR moved off
+`resolveDomain` into its own post-scan phase, so this per-scan summary can no longer say anything true
+about a domain's AXFR state on its own — a domain can have several nameservers with different AXFR
+outcomes, sampled at a different time than `resolved_at`. Per-endpoint AXFR state now lives in
+`dns_axfr_latest`/`dns_axfr_state_changes` (see below), the only source of truth; `model.ScanRow` has no
+fields for these four columns, so `load` leaves them at their column default on every insert rather than
+writing stale/false values. The columns are kept in place (not dropped) for backward compatibility with
+existing readers — a future audited cleanup can drop them.
 
 `ORDER BY (root_domain)`.
 
 The `load` column list is derived from each Go struct's `ch` tag (`internal/model`, `internal/load`
 `chColumns[T]`), so a table may carry extra defaulted columns the worker doesn't populate.
+
+### Task 7: retry-safe raw DNS record observations
+
+Migrations `000113_corpscout_commoncrawl_domain_dns_record_observations` and
+`000114_corpscout_commoncrawl_domain_dns_record_summary`. `internal/load/load.go` has the full doc
+comment; summary here.
+
+- **`commoncrawl_domain_dns_record_observations`** — `ReplacingMergeTree(loaded_at)`, one IMMUTABLE row
+  per **observation**: `(root_domain, name, record_type, slot, value, source, discovery, scan_id)` is
+  the full sorting key, so replaying the identical rows for the same `scan_id` (a retry) always produces
+  byte-identical rows that collapse to one on merge/`FINAL`, however many times the load is retried.
+  `PARTITION BY cityHash64(root_domain) % 16` — never by `loaded_at`/`scan_id`, which would scatter a
+  retry into a different partition than its original attempt and stop background merges from ever
+  physically collapsing it (ClickHouse only merges parts within one partition). `FromStore`/
+  `Incremental` write here now, with `loaded_at = time.Now()` — safe to set fresh on every retry
+  specifically *because* the sorting key already carries the full identity, so a retry's row payload is
+  identical regardless of which `loaded_at` "wins" the ReplacingMergeTree version.
+- **`commoncrawl_domain_dns_record_summary`** — plain `MergeTree`, same shape/identity as the legacy
+  table, but populated wholesale by a **refreshable materialized view**
+  (`commoncrawl_domain_dns_record_summary_mv`, `REFRESH EVERY 10 MINUTE`) rather than incrementally —
+  the deployed ClickHouse (26.5+) fully supports refreshable views, so the scheduled-atomic-rebuild
+  fallback wasn't needed. An incremental (non-refreshable) view was rejected here specifically: it fires
+  on every `INSERT` into the observations table, so a retried insert of the same observation would
+  double-count it before the underlying `ReplacingMergeTree` gets a chance to merge the duplicate away —
+  exactly the bug this task fixes. The refreshable view instead always reads the observations table
+  `FINAL`, so a not-yet-merged retry is invisible to it regardless of timing. It computes
+  `scans = legacy_scans + uniqExact(new.scan_id)`, `first_seen`/`last_seen` by event time (`observed_at`,
+  including the legacy row's own `first_seen`/`last_seen`), `ttl`/`priority`/`rcode`/`last_run_id` via
+  `argMax` over `(event_time, loaded_at)`, and `sources`/`discoveries` as `groupUniqArray` sets (plus
+  `last_source`/`last_discovery` `argMax` compat fields) — so a record observed via both `source=query`
+  and `source=axfr` in the same scan keeps both, while still counting that scan exactly once.
+
+**Cutover boundary** (operational, not just a code deploy): pause the writer → let the in-flight scan
+cycle finish or deliberately abandon it → the legacy table's state at that moment becomes the permanent,
+never-written-again baseline → resume the writer so it only loads records under **new** `scan_id`s into
+the observations table. The one invariant that must never break: a single `scan_id` must never
+contribute to both the legacy aggregate and the observations table, or the summary would count that
+scan's records twice. Historical `scans` values already in the legacy table as of cutover may already
+include retry inflation from before this fix existed — not reconstructable (the retried `scan_id`s that
+caused it were never recorded) — so it is preserved as a legacy fact, not silently "corrected."
+
+The legacy `commoncrawl_domain_dns_records` table remains as the frozen baseline, but production code
+contains no writer for it. A rollback must deploy a pre-cutover binary deliberately; keeping a dormant
+write function in the current worker would make an accidental post-cutover legacy write too easy.
 
 ### Schema migrations for AXFR support
 

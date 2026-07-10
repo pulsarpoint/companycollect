@@ -226,3 +226,157 @@ func TestBreakerConcurrentNoRace(t *testing.T) {
 		t.Errorf("fn ran %d times; an open circuit should have prevented most (want < 200)", ran)
 	}
 }
+
+// TestBreakerRejectsAlreadyQueuedCallsOnceOpen proves the decisive admission check sits AFTER
+// in-flight slot acquisition: with MaxInFlight: 1, every call beyond the first `threshold` is
+// serialized behind the single slot, so it is provably "already queued" (past the cheap early
+// check, waiting on the slot channel) by the time the breaker actually opens. None of those queued
+// calls may reach fn once the circuit is open — the count of real executions must stop exactly at
+// threshold, never drift up toward the number of goroutines dispatched.
+func TestBreakerRejectsAlreadyQueuedCallsOnceOpen(t *testing.T) {
+	s := New(Config{PerServerQPS: 100000, Burst: 100000, MaxInFlight: 1, BreakerThreshold: 3, BreakerCooldown: time.Hour})
+	clk := time.Unix(0, 0).UTC()
+	frozen(s, &clk)
+	ctx := context.Background()
+
+	var ran int64
+	fail := func() error {
+		atomic.AddInt64(&ran, 1)
+		return errors.New("dead")
+	}
+
+	const n = 50
+	var wg sync.WaitGroup
+	var rejected int64
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.Do(ctx, "6.6.6.6", fail); errors.Is(err, ErrCircuitOpen) {
+				atomic.AddInt64(&rejected, 1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt64(&ran); got != 3 {
+		t.Errorf("fn ran %d times, want exactly 3 (threshold); queued calls must not run once the breaker opens", got)
+	}
+	if got := atomic.LoadInt64(&rejected); got != n-3 {
+		t.Errorf("rejected = %d, want %d", got, n-3)
+	}
+}
+
+// TestBreakerSingleHalfOpenProbeUnderConcurrency stampedes many concurrent callers at a circuit the
+// instant its cooldown elapses. The winning caller's fn blocks on `release` so every other caller's
+// admit() decision races against a still-outstanding probe (never against the probe's own record()
+// call) — proving the single-probe guarantee under real contention, not by accident of ordering.
+func TestBreakerSingleHalfOpenProbeUnderConcurrency(t *testing.T) {
+	s := New(Config{PerServerQPS: 100000, Burst: 100000, MaxInFlight: 100, BreakerThreshold: 1, BreakerCooldown: time.Minute})
+	base := time.Unix(0, 0).UTC()
+	clk := base
+	frozen(s, &clk)
+	ctx := context.Background()
+
+	// Trip the breaker with one failure, then let the cooldown elapse.
+	_ = s.Do(ctx, "7.7.7.7", func() error { return errors.New("x") })
+	clk = base.Add(time.Minute + time.Second)
+
+	var ran, rejected int64
+	release := make(chan struct{})
+	fn := func() error {
+		atomic.AddInt64(&ran, 1)
+		<-release // hold the probe "in flight" so every other caller races admit(), not record()
+		return nil
+	}
+
+	const n = 50
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.Do(ctx, "7.7.7.7", fn); errors.Is(err, ErrCircuitOpen) {
+				atomic.AddInt64(&rejected, 1)
+			}
+		}()
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt64(&rejected) < n-1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	gotRan := atomic.LoadInt64(&ran)
+	gotRejected := atomic.LoadInt64(&rejected)
+	close(release) // let the probe finish so its goroutine (and Do) can return
+	wg.Wait()
+
+	if gotRan != 1 {
+		t.Errorf("fn ran %d times during the half-open window, want exactly 1", gotRan)
+	}
+	if gotRejected != n-1 {
+		t.Errorf("rejected = %d, want %d (every caller but the probe)", gotRejected, n-1)
+	}
+}
+
+// TestBreakerHalfOpenProbeOutcomeControlsNextState covers both probe outcomes: a successful probe
+// must close the circuit (subsequent calls run normally); a failed probe must reopen it and restart
+// the cooldown (subsequent calls fast-fail until the next cooldown elapses, at which point another
+// single probe is admitted).
+func TestBreakerHalfOpenProbeOutcomeControlsNextState(t *testing.T) {
+	tests := []struct {
+		name     string
+		probeErr error
+	}{
+		{name: "success closes circuit", probeErr: nil},
+		{name: "failure reopens circuit", probeErr: errors.New("still dead")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New(Config{PerServerQPS: 1000, Burst: 1000, MaxInFlight: 10, BreakerThreshold: 1, BreakerCooldown: 10 * time.Second})
+			base := time.Unix(0, 0).UTC()
+			clk := base
+			frozen(s, &clk)
+			ctx := context.Background()
+
+			_ = s.Do(ctx, "8.8.8.8", func() error { return errors.New("x") }) // opens the circuit
+
+			clk = base.Add(10*time.Second + time.Millisecond) // cooldown elapsed -> half-open
+
+			ranProbe := false
+			probeErr := tt.probeErr
+			err := s.Do(ctx, "8.8.8.8", func() error { ranProbe = true; return probeErr })
+			if !ranProbe {
+				t.Fatal("half-open probe should run fn")
+			}
+			if !errors.Is(err, probeErr) {
+				t.Fatalf("probe: Do returned %v, want %v", err, probeErr)
+			}
+
+			ranNext := false
+			nextErr := s.Do(ctx, "8.8.8.8", func() error { ranNext = true; return nil })
+
+			if tt.probeErr == nil {
+				if !ranNext || nextErr != nil {
+					t.Fatalf("after successful probe want closed circuit (fn runs, err nil); ran=%v err=%v", ranNext, nextErr)
+				}
+				return
+			}
+
+			if ranNext || !errors.Is(nextErr, ErrCircuitOpen) {
+				t.Fatalf("after failed probe want reopened circuit (fast-fail); ran=%v err=%v", ranNext, nextErr)
+			}
+
+			// Advance past the restarted cooldown: a single probe is admitted again.
+			clk = clk.Add(10*time.Second + time.Millisecond)
+			ranAgain := false
+			if err := s.Do(ctx, "8.8.8.8", func() error { ranAgain = true; return nil }); err != nil {
+				t.Fatalf("after cooldown restart want half-open probe to run, got %v", err)
+			}
+			if !ranAgain {
+				t.Fatal("after cooldown restart want half-open probe to run fn")
+			}
+		})
+	}
+}

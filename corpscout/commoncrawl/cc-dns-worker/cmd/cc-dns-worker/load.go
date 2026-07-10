@@ -35,10 +35,28 @@ func runLoad(args []string) error {
 	}
 	fmt.Printf("loaded %d records and %d domain summaries for scan_id=%s\n", nr, nd, *scanID)
 
-	nh, err := load.WriteHostnameRegistry(ctx, conn, st, *scanID, time.Now())
+	// A registry write-back failure is returned (not swallowed) for the same reason runFlushPhase treats
+	// it as retryable: callers of `load` must not treat a scan_id as fully flushed until the registry
+	// write-back also succeeds.
+	nh, err := load.WriteHostnameRegistry(ctx, conn, st, *scanID)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("registered %d discovered hostnames for scan_id=%s\n", nh, *scanID)
+
+	// The staged AXFR load pass is a no-op — no ClickHouse round trip at all — unless this scan-id ever
+	// staged AXFR work (SeedAXFRDomains added at least one axfr_domains row, i.e. `scan --axfr` or `run`
+	// ran with --axfr on for this scan-id). load.LoadAXFR is the SAME function axfrCycle (axfr.go) uses.
+	hasAXFR, err := st.HasAXFRWork(ctx, *scanID)
+	if err != nil {
+		return err
+	}
+	if !hasAXFR {
+		return nil
+	}
+	if err := load.LoadAXFR(ctx, conn, st, *scanID, time.Now()); err != nil {
+		return err
+	}
+	fmt.Printf("loaded AXFR results for scan_id=%s\n", *scanID)
 	return nil
 }

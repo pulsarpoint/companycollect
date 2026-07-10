@@ -82,6 +82,16 @@ func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dn
 			}
 			return err
 		}
+		// A SERVFAIL reply is not a Go transport error — miekg/dns returns err == nil for any
+		// well-formed message regardless of rcode — but every caller (queryAuth, Discoverer.query)
+		// treats it exactly like one: retryable, and it rotates to another attempt. Count it here too,
+		// paired 1:1 with the Queries increment above, so an exhausted SERVFAIL sequence is never
+		// silently invisible to QueryErrors the way a pure transport-error check would leave it.
+		if r.Rcode == dns.RcodeServerFailure {
+			if c.stats != nil {
+				c.stats.QueryErrors.Add(1)
+			}
+		}
 		resp = r
 		return nil
 	})

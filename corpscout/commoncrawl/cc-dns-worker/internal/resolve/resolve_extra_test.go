@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -168,11 +169,13 @@ func TestDiscoverNSRotatesOnServfail(t *testing.T) {
 }
 
 // TestDiscoverNSAAAA covers the *dns.AAAA branch in discover.go's NS-IP resolution loop: an NS
-// hostname with only an AAAA record must still contribute its IPv6 address to Delegation.NSIPs.
+// hostname with only an AAAA record must still contribute its IPv6 address to Delegation.NSIPs. Uses a
+// public IPv6 address (Cloudflare's 2606:4700:4700::1111) rather than a documentation-range one so this
+// test only exercises AAAA plumbing, not the target-classification path covered in target_test.go.
 func TestDiscoverNSAAAA(t *testing.T) {
 	addr, stop := startAuth(t, zone{
 		"example.com./NS":       {mustRR(t, "example.com. 300 IN NS ns1.example.com.")},
-		"ns1.example.com./AAAA": {mustRR(t, "ns1.example.com. 300 IN AAAA 2001:db8::1")},
+		"ns1.example.com./AAAA": {mustRR(t, "ns1.example.com. 300 IN AAAA 2606:4700:4700::1111")},
 	})
 	defer stop()
 
@@ -189,7 +192,90 @@ func TestDiscoverNSAAAA(t *testing.T) {
 		}
 		return false
 	}
-	if !hasIP("2001:db8::1") {
-		t.Errorf("NSIPs = %v, want to include 2001:db8::1", del.NSIPs)
+	if !hasIP("2606:4700:4700::1111") {
+		t.Errorf("NSIPs = %v, want to include 2606:4700:4700::1111", del.NSIPs)
+	}
+}
+
+// TestDiscoverNSMixedScopesPreservesEvidence is the core-invariant test: a delegation whose NS set
+// resolves to a mix of public and non-public addresses (loopback, RFC1918, link-local, CGNAT) must keep
+// EVERY address in NSIPs (evidence is never discarded for being non-public) while DialableNSIPs holds
+// only the public subset.
+func TestDiscoverNSMixedScopesPreservesEvidence(t *testing.T) {
+	addr, stop := startAuth(t, zone{
+		"example.com./NS": {
+			mustRR(t, "example.com. 300 IN NS ns1.example.com."),
+			mustRR(t, "example.com. 300 IN NS ns2.example.com."),
+			mustRR(t, "example.com. 300 IN NS ns3.example.com."),
+			mustRR(t, "example.com. 300 IN NS ns4.example.com."),
+			mustRR(t, "example.com. 300 IN NS ns5.example.com."),
+		},
+		"ns1.example.com./A": {mustRR(t, "ns1.example.com. 300 IN A 8.8.8.8")},     // public
+		"ns2.example.com./A": {mustRR(t, "ns2.example.com. 300 IN A 127.0.0.1")},   // loopback
+		"ns3.example.com./A": {mustRR(t, "ns3.example.com. 300 IN A 10.0.0.1")},    // private
+		"ns4.example.com./A": {mustRR(t, "ns4.example.com. 300 IN A 169.254.1.1")}, // link-local
+		"ns5.example.com./A": {mustRR(t, "ns5.example.com. 300 IN A 100.64.0.1")},  // cgnat
+	})
+	defer stop()
+
+	d := NewDiscoverer(newTestExchanger(), []string{addr})
+	del, err := d.DiscoverNS(context.Background(), "example.com")
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+
+	wantAll := []string{"8.8.8.8", "127.0.0.1", "10.0.0.1", "169.254.1.1", "100.64.0.1"}
+	if len(del.NSIPs) != len(wantAll) {
+		t.Fatalf("NSIPs = %v, want all %d addresses (full evidence): %v", del.NSIPs, len(wantAll), wantAll)
+	}
+	for _, ip := range wantAll {
+		found := false
+		for _, x := range del.NSIPs {
+			if x == ip {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("NSIPs = %v, missing evidence for %s", del.NSIPs, ip)
+		}
+	}
+
+	if len(del.DialableNSIPs) != 1 || del.DialableNSIPs[0] != "8.8.8.8" {
+		t.Errorf("DialableNSIPs = %v, want only the public address [8.8.8.8]", del.DialableNSIPs)
+	}
+}
+
+// TestDiscoverNSAllPrivateReturnsErrNoPublicNSEndpoints covers a fully-private delegation: NS resolution
+// succeeds and NSIPs is non-empty (evidence preserved), but every address is non-public, so DiscoverNS
+// must return the distinguishable ErrNoPublicNSEndpoints sentinel rather than the generic "no NS IPs
+// resolved" transport-failure error.
+func TestDiscoverNSAllPrivateReturnsErrNoPublicNSEndpoints(t *testing.T) {
+	addr, stop := startAuth(t, zone{
+		"example.com./NS": {
+			mustRR(t, "example.com. 300 IN NS ns1.example.com."),
+			mustRR(t, "example.com. 300 IN NS ns2.example.com."),
+		},
+		"ns1.example.com./A": {mustRR(t, "ns1.example.com. 300 IN A 10.0.0.1")},
+		"ns2.example.com./A": {mustRR(t, "ns2.example.com. 300 IN A 192.168.1.1")},
+	})
+	defer stop()
+
+	d := NewDiscoverer(newTestExchanger(), []string{addr})
+	del, err := d.DiscoverNS(context.Background(), "example.com")
+
+	if !errors.Is(err, ErrNoPublicNSEndpoints) {
+		t.Fatalf("err = %v, want ErrNoPublicNSEndpoints", err)
+	}
+	if len(del.NSIPs) != 2 {
+		t.Errorf("NSIPs = %v, want both private addresses preserved as evidence", del.NSIPs)
+	}
+	if len(del.DialableNSIPs) != 0 {
+		t.Errorf("DialableNSIPs = %v, want empty", del.DialableNSIPs)
+	}
+
+	// Distinguishable from the "no NS IPs resolved" transport-failure case (TestDiscoverNSNoNSIPs):
+	// that one carries a different message and leaves NSIPs empty, whereas this one preserves evidence.
+	if err.Error() == "no NS IPs resolved" {
+		t.Errorf("ErrNoPublicNSEndpoints must not read as the generic no-NS-IPs-resolved error")
 	}
 }

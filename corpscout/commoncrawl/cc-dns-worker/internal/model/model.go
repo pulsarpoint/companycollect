@@ -15,16 +15,68 @@ type DNSRecord struct {
 	Priority   uint16 // MX preference; 0 otherwise
 	Source     string // "query" (actively queried) | "axfr" (from a zone transfer)
 	Discovery  string // "static" | "ct" | "axfr" — how the hostname was discovered
+
+	// Finding is a derived classification for this record, currently only ever
+	// "public_dns_private_address" (Task 9): an A/AAAA Value that resolve.ClassifyString classifies as
+	// non-public (private/loopback/link-local/CGNAT/ULA/documentation/reserved/etc), returned by a
+	// server that Tier-2 (query.go's queryAuth) or AXFR (axfr.go) only ever dials when it is itself
+	// public (see resolve.Dialable) — i.e. a public authoritative server answering with a bogus/internal
+	// address, which is worth flagging even though the record is still stored verbatim like any other.
+	// Empty for every other record. This is never used to pick a dial target (see resolve.Dialable's own
+	// doc comment on why observation and dialing are kept strictly separate).
+	Finding string
 }
 
-// AXFRObservation is one AXFR state-change row for ClickHouse's dns_axfr_observations log: at
-// observed_at the zone transfer on name_server (an NS IP) for root_domain flipped to axfr_open. The
-// AXFR phase emits one only when the state differs from the last known state (implicit-closed base).
-type AXFRObservation struct {
-	RootDomain string    `ch:"root_domain"`
-	NameServer string    `ch:"name_server"`
-	AXFROpen   bool      `ch:"axfr_open"`
-	ObservedAt time.Time `ch:"observed_at"`
+// NameserverEndpoint pairs one authoritative NS hostname with one of its resolved IP addresses, so
+// discovery's hostname<->IP identity survives storage instead of collapsing into a flat IP list — a
+// flat list can't say which NS name an address came from, and (worse) has no way to note "this address
+// exists but is not safe to dial" other than dropping it, which discards evidence. Scope and Dialable
+// are therefore carried explicitly rather than inferred from an empty/missing IP: an empty IP must
+// never be overloaded to mean "blocked". Scope mirrors resolve.AddrScope's string value (e.g.
+// "public", "private", "loopback"); this package does not import package resolve (which already
+// imports model) to avoid a cycle.
+type NameserverEndpoint struct {
+	Name     string // NS hostname, lowercased, no trailing dot
+	IP       string // resolved address, canonical form (net/netip's Addr.String())
+	Scope    string // resolve.AddrScope value for IP, e.g. "public", "private", "loopback"
+	Dialable bool   // true only when Scope is publicly dialable (resolve.Dialable(scope))
+}
+
+// AXFRLatestRow mirrors corpscout.dns_axfr_latest: one row per AXFR-probed endpoint (root_domain,
+// name_server, name_server_ip) carrying its most recent probe and its most recent DEFINITIVE state,
+// tracked separately because an unknown probe must update the former without ever touching the latter.
+// HasDefinitiveState/AXFROpen/DefinitiveAt/DefinitiveScanID describe the last probe that reached open
+// or closed; LastProbeVerdict/LastProbeReason/LastProbedAt describe the most recent probe of any kind
+// (including unknown). DelegationActive is whether this (host, ip) is still part of the domain's
+// current NS delegation as of this scan; DelegationSeenAt is when it was last seen active. Field order
+// matches the CREATE TABLE column order (the ch tags drive `insert`'s column list from struct order).
+type AXFRLatestRow struct {
+	RootDomain         string    `ch:"root_domain"`
+	NameServer         string    `ch:"name_server"`
+	NameServerIP       string    `ch:"name_server_ip"`
+	UpdatedAt          time.Time `ch:"updated_at"`
+	DelegationActive   uint8     `ch:"delegation_active"`
+	DelegationSeenAt   time.Time `ch:"delegation_seen_at"`
+	LastProbeVerdict   string    `ch:"last_probe_verdict"`
+	LastProbeReason    string    `ch:"last_probe_reason"`
+	LastProbedAt       time.Time `ch:"last_probed_at"`
+	HasDefinitiveState uint8     `ch:"has_definitive_state"`
+	AXFROpen           uint8     `ch:"axfr_open"`
+	DefinitiveAt       time.Time `ch:"definitive_at"`
+	DefinitiveScanID   string    `ch:"definitive_scan_id"`
+}
+
+// AXFRStateChangeRow mirrors corpscout.dns_axfr_state_changes: one row per DEFINITIVE AXFR state
+// transition for one endpoint. ScanID is part of the table's ORDER BY key, so re-loading the same
+// scan's staged changes (a retry) is idempotent, while two distinct open periods from different scans
+// never collapse into one even if their ChangedAt values coincide.
+type AXFRStateChangeRow struct {
+	RootDomain   string    `ch:"root_domain"`
+	NameServer   string    `ch:"name_server"`
+	NameServerIP string    `ch:"name_server_ip"`
+	AXFROpen     uint8     `ch:"axfr_open"`
+	ScanID       string    `ch:"scan_id"`
+	ChangedAt    time.Time `ch:"changed_at"`
 }
 
 // HostLabel is one discovered subdomain label to scan for a domain (from CT, the registry, or a
@@ -36,31 +88,92 @@ type HostLabel struct {
 	LiveCert        bool
 }
 
-// DomainResult is everything learned for one domain in one scan.
-type DomainResult struct {
-	ScanID        string
-	RootDomain    string
-	ETLD          string
-	Nameservers   []string
-	NSIPs         []string
-	DNSSECSigned  bool
-	DSPresent     bool
-	Status        string // "done" | "error"
-	Error         string
-	QueriesTotal  int
-	QueriesOK     int
-	Records       []DNSRecord
-	AXFROpen      bool
-	AXFRRecords   int
-	AXFRTruncated bool
-	AXFRServer    string
-	SourceRunID   string
-	ResolvedAt    time.Time
+// ScanHostnameRow is one row destined for the local scan_hostnames stage: a HostLabel plus the
+// root_domain it belongs to. This is the streaming unit hostsource.ShardStream's ranked+capped shard
+// query result is delivered in (Task 11), and what store.InsertHostnameRows accepts — replacing the
+// removed store.InsertHostnamesMap, whose whole-shard map[string][]HostLabel this type lets callers
+// avoid ever building.
+type ScanHostnameRow struct {
+	RootDomain string
+	HostLabel
 }
 
-// RecordRow mirrors corpscout.commoncrawl_domain_dns_records (distinct model). Each scan inserts one
-// row per record with FirstSeen = LastSeen = scan time and Scans = 1; the AggregatingMergeTree merges
-// duplicates to min(first_seen) / max(last_seen) / sum(scans).
+// ScanSeedDomainRow mirrors corpscout.dns_scan_seed_domains (migration 000117): one row per domain
+// actually seeded into a scan's local queue, so cc-dns-worker's CT/registry hostname-enrichment shard
+// queries can scope themselves to exactly this scan's domains rather than the whole
+// commoncrawl_domains corpus (Task 11). Written by internal/load.MirrorSeedDomains, which streams
+// store.AllDomainsAfter in bounded batches — never a whole scan's domain list in one slice.
+type ScanSeedDomainRow struct {
+	ScanID     string    `ch:"scan_id"`
+	RootDomain string    `ch:"root_domain"`
+	SeededAt   time.Time `ch:"seeded_at"`
+}
+
+const (
+	DomainStatusDone                = "done"
+	DomainStatusPartial             = "partial"
+	DomainStatusError               = "error"
+	DomainStatusNoPublicNSEndpoints = "no_public_ns_endpoints"
+)
+
+// DomainResult is everything learned for one domain in one scan. AXFR is NOT part of this shape — it
+// runs as its own post-scan phase (see cmd/cc-dns-worker/axfr.go) and is staged/loaded through the
+// dns_axfr_latest/dns_axfr_state_changes tables (AXFRLatestRow/AXFRStateChangeRow), never through a
+// per-domain summary field here.
+type DomainResult struct {
+	ScanID       string
+	RootDomain   string
+	ETLD         string
+	Nameservers  []string
+	NSIPs        []string
+	Endpoints    []NameserverEndpoint // hostname<->IP identity behind Nameservers/NSIPs (see NameserverEndpoint)
+	DNSSECSigned bool
+	DSPresent    bool
+
+	// DSOutcome/DNSKEYOutcome (Task 9) are the tri-state OUTCOME of the query that produced DSPresent/
+	// DNSSECSigned: "present" | "absent" | "unknown". DSPresent/DNSSECSigned alone cannot distinguish a
+	// genuine negative (the parent has no DS / the zone has no DNSKEY — a definitive NOERROR/NODATA or
+	// NXDOMAIN) from "the query failed and we simply don't know" (timeout/SERVFAIL/exhausted retries) —
+	// both looked identical as plain false. "unknown" is set whenever the underlying query (DS: Tier-1
+	// discovery, see resolve.Discoverer.DiscoverNS; DNSKEY: Tier-2, see resolve.Resolver.Resolve) never
+	// got a definitive authoritative answer, and in that case DSPresent/DNSSECSigned stay false for
+	// THIS scan's DomainResult but must never be used to overwrite a prior known-good value — see
+	// Status and store.CommitBatch's done-only summary-write policy, which is what actually enforces
+	// that. Empty string only appears on a DomainResult/Delegation never produced by the real discovery
+	// path (e.g. a hand-built test fixture); it is treated the same as "not applicable", not "unknown".
+	DSOutcome     string
+	DNSKEYOutcome string
+
+	// Status is one of the DomainStatus* constants:
+	//   - "error": discovery failed outright
+	//     (set by the caller before Resolve is ever invoked — Resolve itself never returns "error").
+	//   - "no_public_ns_endpoints": NS discovery succeeded and its full private/special-use delegation
+	//     is authoritative security evidence, but Tier-2 queries were intentionally not sent. This is a
+	//     terminal, summary-worthy result distinct from a discovery/transport failure.
+	//   - "done": the minimum authoritative-success bar was met — see resolve.Resolver.Resolve's doc
+	//     comment for the exact bar (apex A/AAAA + DNSKEY + DS all definitive). Only a "done" result may
+	//     ever replace a domain's persisted last-good summary (see model.ScanRow, store.CommitBatch).
+	//   - "partial": authoritative contact succeeded and some records were observed (Records is fully
+	//     populated regardless of Status), but at least one query the bar above depends on never got a
+	//     definitive answer. A partial result's records still flow through the normal record-load
+	//     stream; its summary is simply never written, so it can never clobber a prior "done" summary.
+	Status       string
+	Error        string
+	QueriesTotal int
+	QueriesOK    int
+	Records      []DNSRecord
+	SourceRunID  string
+	ResolvedAt   time.Time
+}
+
+// RecordRow mirrors corpscout.commoncrawl_domain_dns_records. As of Task 7 this table is a frozen,
+// READ-ONLY legacy baseline (see internal/load/load.go's cutover doc comment): its AggregatingMergeTree
+// Scans=1-per-row insert has no way to tell a genuine re-observation from a retried load of the same
+// scan apart, so a retry silently double-counts. It is no longer written by the live loader — new scans
+// go to RecordObservationRow instead — but its accumulated first_seen/scans data is preserved and
+// folded into corpscout.commoncrawl_domain_dns_record_summary as the pre-cutover history. This type
+// remains the SQLite read shape, but production deliberately has no function that can write the frozen
+// legacy table again.
 type RecordRow struct {
 	RootDomain string    `ch:"root_domain"`
 	RecordType string    `ch:"record_type"`
@@ -76,6 +189,37 @@ type RecordRow struct {
 	Scans      uint64    `ch:"scans"`
 	Source     string    `ch:"source"`
 	Discovery  string    `ch:"discovery"`
+
+	// Finding carries DNSRecord.Finding (Task 9) through the SQLite stage only — like ScanRow.Endpoints,
+	// it has NO ch tag, so chColumns/insert skip it: it is not yet part of the ClickHouse record
+	// (observation/legacy) schema, only of the local SQLite scan_records stage.
+	Finding string
+}
+
+// RecordObservationRow mirrors corpscout.commoncrawl_domain_dns_record_observations (Task 7's
+// retry-safe replacement record-load path). Unlike RecordRow, this is not a pre-aggregated fact —
+// it is one IMMUTABLE row per (identity, source, discovery, scan_id) observation, so replaying a
+// scan's load (the same rows, same ScanID) always produces byte-identical rows that
+// ReplacingMergeTree(loaded_at) collapses to one on merge/FINAL, however many times it is retried.
+// Field order matches the CREATE TABLE column order (see migration 000113); ORDER BY is
+// (root_domain, name, record_type, slot, value, source, discovery, scan_id) — the FULL logical
+// observation identity, so LoadedAt only decides which physical copy of an identical row survives a
+// retry, never whether two truly distinct observations collapse into one. See internal/load/load.go
+// for why LoadedAt is safe to set to time.Now() on every call (rather than pinned per scan_id).
+type RecordObservationRow struct {
+	RootDomain string    `ch:"root_domain"`
+	Name       string    `ch:"name"`
+	RecordType string    `ch:"record_type"`
+	Slot       string    `ch:"slot"`
+	Value      string    `ch:"value"`
+	Source     string    `ch:"source"`
+	Discovery  string    `ch:"discovery"`
+	ScanID     string    `ch:"scan_id"`
+	TTL        uint32    `ch:"ttl"`
+	Priority   uint16    `ch:"priority"`
+	Rcode      string    `ch:"rcode"`
+	ObservedAt time.Time `ch:"observed_at"` // event time: when this record was actually resolved
+	LoadedAt   time.Time `ch:"loaded_at"`   // ReplacingMergeTree version: when this row was inserted
 }
 
 // HostnameRow mirrors corpscout.commoncrawl_domain_hostnames (AggregatingMergeTree registry). One
@@ -90,22 +234,44 @@ type HostnameRow struct {
 	LastResolved    time.Time `ch:"last_resolved"`
 }
 
-// ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
-// successful scans are loaded, so a failed re-scan never clobbers a domain's last-good summary.
+// ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest trustworthy state per domain). A
+// definitive private-only delegation is loaded with Status == DomainStatusNoPublicNSEndpoints because
+// it is security evidence, while failed/partial scans remain excluded. A partial scan's observed records
+// still reach ClickHouse through the independent record-observation stream — only this summary is gated.
+//
+// NOTE (deprecated columns, NOT a deprecated type): the table's axfr_open/axfr_records/
+// axfr_truncated/axfr_server columns are deprecated — per-endpoint AXFR state now lives in
+// dns_axfr_latest/dns_axfr_state_changes (AXFRLatestRow/AXFRStateChangeRow), the only source of truth
+// since AXFR moved off resolveDomain into its own post-scan phase. This struct intentionally has NO
+// fields for them so the loader never again writes default/false values into those columns every
+// cycle. The ClickHouse columns are left in place (defaulted) for backward compatibility; a future
+// audited cleanup can drop them. (ScanRow itself is fully current — do not treat it as deprecated;
+// the leading "NOTE" avoids the godoc "Deprecated:" marker that would flag every use of this type.)
 type ScanRow struct {
-	RootDomain    string    `ch:"root_domain"`
-	ETLD          string    `ch:"etld"`
-	Nameservers   []string  `ch:"nameservers"`
-	NSIPs         []string  `ch:"ns_ips"`
-	DNSSECSigned  uint8     `ch:"dnssec_signed"`
-	DSPresent     uint8     `ch:"ds_present"`
+	RootDomain  string   `ch:"root_domain"`
+	ETLD        string   `ch:"etld"`
+	Nameservers []string `ch:"nameservers"`
+	NSIPs       []string `ch:"ns_ips"`
+	// Endpoints is the convenient SQLite/in-memory shape. The four parallel ch-tagged arrays persist
+	// the same identity in ClickHouse without depending on driver-specific nested-struct encoding.
+	Endpoints          []NameserverEndpoint
+	NSEndpointNames    []string `ch:"ns_endpoint_names"`
+	NSEndpointIPs      []string `ch:"ns_endpoint_ips"`
+	NSEndpointScopes   []string `ch:"ns_endpoint_scopes"`
+	NSEndpointDialable []uint8  `ch:"ns_endpoint_dialable"`
+	DNSSECSigned       uint8    `ch:"dnssec_signed"`
+	DSPresent          uint8    `ch:"ds_present"`
+	// DSOutcome/DNSKEYOutcome (Task 9, migration 000116) are the tri-state "present"|"absent"|"unknown"
+	// query outcome behind DSPresent/DNSSECSigned — see model.DomainResult's doc comment on the same
+	// two fields for why the plain booleans alone cannot distinguish a genuine negative from a failed
+	// query. A normal "done" row carries "present" or "absent". A definitive private-only delegation can
+	// carry "unknown" when its independent parent DS query failed, without being confused with a partial
+	// authoritative record scan because Status remains explicit.
+	DSOutcome     string    `ch:"ds_outcome"`
+	DNSKEYOutcome string    `ch:"dnskey_outcome"`
 	Status        string    `ch:"status"`
 	QueriesTotal  uint16    `ch:"queries_total"`
 	QueriesOK     uint16    `ch:"queries_ok"`
 	LastRunID     string    `ch:"last_run_id"`
 	ResolvedAt    time.Time `ch:"resolved_at"`
-	AXFROpen      uint8     `ch:"axfr_open"`
-	AXFRRecords   uint32    `ch:"axfr_records"`
-	AXFRTruncated uint8     `ch:"axfr_truncated"`
-	AXFRServer    string    `ch:"axfr_server"`
 }

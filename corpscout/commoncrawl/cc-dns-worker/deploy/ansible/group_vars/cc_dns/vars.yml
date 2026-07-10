@@ -3,15 +3,26 @@ deploy_root: /opt/companycollect
 deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-worker"
 service_name: cc-dns-scan
 
-# --- worker run flags (new-version defaults: AXFR + CT/registry enrichment ON) ---
-# --axfr / --host-enrich are the new version's features; drop them to fall back to prod parity.
+# One-time Task 7 boundary. Leave empty after the marker exists on the server. On the first deployment
+# of the raw-observation writer, pass one explicit mode with -e:
+#   abandon_active_cycle  stop the worker and preserve/retire its state file so a fresh scan_id starts
+#   already_complete      create the marker only after independently verifying the cutover already ran
+cc_dns_observation_cutover_mode: ""
+
+# --- worker run flags ---
+# CONTAINMENT (Task 0 of the correctness-hardening plan): --axfr and --host-enrich are DISABLED in
+# production until their release gates pass (AXFR: Tasks 2-6; host enrichment: Task 11). This is
+# temporary containment, NOT feature removal. To re-enable after the gates in
+# docs/superpowers/plans/2026-07-10-cc-dns-worker-correctness-hardening.md are met, append
+# `--axfr --host-enrich` to the flags below.
+# NOTE: the base resolver still requires Task 1 (public-target dial filtering), because authoritative
+# DNS queries also dial untrusted NS addresses — not just AXFR.
 cc_dns_run_flags: >-
   run --dir {{ deploy_dir }}
   --resolvers 127.0.0.1:53
   --discovery-qps 3000 --workers 2000 --query-timeout 2s
   --per-server-qps 30 --per-server-inflight 20 --hyperscaler-qps 500
   --discovery-inflight 3000 --load-interval 30m
-  --axfr --host-enrich
 worker_limit_nofile: 1048576
 
 # --- unbound tuning (num-threads scales to the target's CPUs) ---

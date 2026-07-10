@@ -1,4 +1,64 @@
 ---
+- name: Create deploy dir + bin/
+  ansible.builtin.file:
+    path: "{{ deploy_dir }}/bin"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check raw-observation cutover marker
+  ansible.builtin.stat:
+    path: "{{ deploy_dir }}/.dns-record-observation-cutover-complete"
+  register: observation_cutover_marker
+
+- name: Require an explicit one-time raw-observation cutover decision
+  ansible.builtin.assert:
+    that:
+      - cc_dns_observation_cutover_mode in ['abandon_active_cycle', 'already_complete']
+    fail_msg: >-
+      The raw DNS observation writer must not resume an active legacy scan. Re-run with
+      -e cc_dns_observation_cutover_mode=abandon_active_cycle, or use already_complete only after
+      independently verifying that the production cutover already finished.
+  when: not observation_cutover_marker.stat.exists
+
+- name: Stop the worker before abandoning the active legacy cycle
+  ansible.builtin.systemd_service:
+    name: "{{ service_name }}"
+    state: stopped
+  failed_when: false
+  when:
+    - not observation_cutover_marker.stat.exists
+    - cc_dns_observation_cutover_mode == 'abandon_active_cycle'
+
+- name: Check for active orchestrator state
+  ansible.builtin.stat:
+    path: "{{ deploy_dir }}/orchestrator-state.json"
+  register: active_orchestrator_state
+  when:
+    - not observation_cutover_marker.stat.exists
+    - cc_dns_observation_cutover_mode == 'abandon_active_cycle'
+
+- name: Preserve and retire the active legacy cycle state
+  ansible.builtin.command:
+    argv:
+      - mv
+      - "{{ deploy_dir }}/orchestrator-state.json"
+      - "{{ deploy_dir }}/orchestrator-state.pre-observation-cutover-{{ ansible_date_time.epoch }}.json"
+  when:
+    - not observation_cutover_marker.stat.exists
+    - cc_dns_observation_cutover_mode == 'abandon_active_cycle'
+    - active_orchestrator_state.stat.exists
+
+- name: Record completion of the one-time observation cutover
+  ansible.builtin.copy:
+    content: "raw observation cutover complete\n"
+    dest: "{{ deploy_dir }}/.dns-record-observation-cutover-complete"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not observation_cutover_marker.stat.exists
+
 - name: Build the worker binary (CGO-free, linux/amd64) on the control machine
   ansible.builtin.command:
     cmd: go build -o bin/cc-dns-worker ./cmd/cc-dns-worker
@@ -10,14 +70,6 @@
   delegate_to: localhost
   become: false
   changed_when: false
-
-- name: Create deploy dir + bin/
-  ansible.builtin.file:
-    path: "{{ deploy_dir }}/bin"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
 
 - name: Copy the worker binary
   ansible.builtin.copy:

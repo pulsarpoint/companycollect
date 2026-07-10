@@ -2,10 +2,10 @@ package resolve
 
 import (
 	"context"
-	"sort"
+	"errors"
+	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"cc-dns-worker/internal/model"
@@ -19,34 +19,161 @@ import (
 type AXFRCaps struct {
 	MaxRecords int           // stop appending past this many RRs
 	MaxBytes   int           // stop once the running sum of RR sizes reaches this
-	Deadline   time.Duration // whole-transfer timeout
+	Deadline   time.Duration // per-connection timeout (the preflight and, if open, the collection each get one)
 }
 
-// AXFRResult is the outcome of probing one zone. Zone holds the transferred records (tagged
-// Source="axfr"); it is retained and folded into the domain's record set by the caller.
-type AXFRResult struct {
-	Open      bool
-	Server    string
-	Records   int // count of every RR seen (including SOA and unsupported types); axfr_records in the summary may exceed persisted rows (only supported types land in Zone)
+// AXFRVerdict is the definitive classification of one AXFR probe against one nameserver. Only Open and
+// Closed are definitive; Unknown means the probe never reached a real answer (timeout, transport
+// failure, SERVFAIL, malformed reply, circuit breaker, cancellation, or a skipped target) and must never
+// be treated as either Open or Closed, and must never overwrite a previously observed Open/Closed state.
+type AXFRVerdict string
+
+const (
+	// VerdictOpen means a valid AXFR leading SOA was observed. The zone stays Open even if the
+	// subsequent record collection is capped, partial, or fails outright — Truncated carries that.
+	VerdictOpen AXFRVerdict = "open"
+	// VerdictClosed means the server gave a definitive "no zone transfer here" (REFUSED/NOTAUTH).
+	VerdictClosed AXFRVerdict = "closed"
+	// VerdictUnknown means no definitive answer was reached.
+	VerdictUnknown AXFRVerdict = "unknown"
+)
+
+// AXFRReason narrows why an AXFROutcome's Verdict landed where it did.
+type AXFRReason string
+
+const (
+	ReasonTransferred    AXFRReason = "transferred"     // preflight saw RCODE NOERROR with a leading SOA: the server opened the zone
+	ReasonRefused        AXFRReason = "refused"         // preflight RCODE REFUSED
+	ReasonNotAuth        AXFRReason = "notauth"         // preflight RCODE NOTAUTH
+	ReasonServfail       AXFRReason = "servfail"        // preflight RCODE SERVFAIL
+	ReasonTimeout        AXFRReason = "timeout"         // a dial/read/write deadline (ours or derived from ctx) elapsed
+	ReasonTransportError AXFRReason = "transport_error" // dial/read/write failed for any other reason
+	ReasonCircuitOpen    AXFRReason = "circuit_open"    // the scheduler's per-server breaker is open
+	ReasonCancelled      AXFRReason = "cancelled"       // the caller's context was cancelled (not a deadline)
+	ReasonMalformed      AXFRReason = "malformed"       // RCODE NOERROR but the first RR was not a SOA, or an unhandled non-NOERROR rcode
+	ReasonSkipped        AXFRReason = "skipped"         // the target was never dialed (a caller-side skip, e.g. hyperscaler/non-dialable)
+)
+
+// AXFROutcome is the typed, definitive-vs-unknown result of probing one authoritative nameserver for
+// zone. Zone holds the transferred records (tagged Source="axfr"); it is retained and folded into the
+// domain's record set by the caller.
+//
+// Verdict/Reason answer "did this NS allow a zone transfer", independent of whether the full zone was
+// captured: Truncated (a capped or mid-stream-dropped collection) can be true alongside Verdict==Open
+// without changing the verdict — an open zone stays open even when only part of it was collected.
+type AXFROutcome struct {
+	Verdict AXFRVerdict
+	Reason  AXFRReason
+
+	NSHost string // authoritative NS hostname, if known to the caller (may be empty)
+	NSIP   string // the IP actually dialed
+
+	Records   int // count of every RR collected (including SOA and unsupported types); may exceed len(Zone), since only supported types land there
+	Bytes     int // running sum of collected RR wire sizes, bounded by AXFRCaps.MaxBytes
 	Truncated bool
 	Zone      []model.DNSRecord
+
+	ObservedAt time.Time
 }
 
-// transferAXFR runs one TCP AXFR against nsIP for zone, draining up to the caps. A REFUSED/NOTAUTH
-// response or any mid-stream error yields Open=false. err is non-nil only on a transport/setup
-// failure (so the caller can rotate servers); a clean REFUSED returns (Open:false, nil).
-//
-// Resource safety: miekg's transfer goroutine sends on an unbuffered channel, so abandoning the channel
-// on an early exit (cap hit, ctx cancel) would block that goroutine forever and leak its TCP socket. A
-// watchdog closes the connection when ctx fires (whole-transfer deadline, caller cancel, or our own
-// cancel on the way out), and a deferred drain reads the channel to completion so the producer always
-// terminates. Together they make Deadline a real whole-transfer ceiling and guarantee no leak on any path.
-func transferAXFR(ctx context.Context, zone, nsIP string, caps AXFRCaps) (AXFRResult, error) {
-	res := AXFRResult{Server: nsIP}
+// IsOpen reports whether the probe proved the zone transfers.
+func (o AXFROutcome) IsOpen() bool { return o.Verdict == VerdictOpen }
+
+// IsClosed reports whether the probe proved the server refuses a transfer.
+func (o AXFROutcome) IsClosed() bool { return o.Verdict == VerdictClosed }
+
+// IsDefinitive reports whether the probe reached a definitive answer (Open or Closed) rather than
+// Unknown. Callers must gate any axfr_open state-change recording on this: an Unknown outcome must
+// never flip, or be compared against, a previously observed state.
+func (o AXFROutcome) IsDefinitive() bool {
+	return o.Verdict == VerdictOpen || o.Verdict == VerdictClosed
+}
+
+// transferAXFR probes nsIP for zone. A definitive TCP preflight (preflightAXFR) decides Open/Closed/
+// Unknown from the first DNS message's RCODE alone — it never depends on miekg/dns's unexported "bad
+// xfr rcode" error text. Only when the preflight proves Open does it dial a second connection
+// (collectZone) to stream the zone up to caps; open servers are rare, so the extra round trip is cheap
+// in aggregate. Any trouble during collection (dial failure, mid-stream drop, or a cap) never changes
+// Verdict away from Open — it only sets Truncated.
+func transferAXFR(ctx context.Context, zone, nsIP string, caps AXFRCaps) AXFROutcome {
 	deadline := caps.Deadline
 	if deadline <= 0 {
 		deadline = 20 * time.Second
 	}
+
+	out := AXFROutcome{NSIP: nsIP}
+	out.Verdict, out.Reason = preflightAXFR(ctx, zone, nsIP, deadline)
+	out.ObservedAt = time.Now().UTC()
+	if out.Verdict != VerdictOpen {
+		return out
+	}
+	collectZone(ctx, zone, nsIP, deadline, caps, &out)
+	return out
+}
+
+// preflightAXFR sends one AXFR query over its own TCP connection and reads ONLY the first framed DNS
+// message: dns.Client.ExchangeContext dials, writes, reads exactly once, and closes the connection — it
+// never loops the way dns.Transfer.In's multi-envelope reader does. The verdict therefore comes straight
+// from that message's RCODE (and, for NOERROR, its first RR), never from parsing an internal error
+// string.
+func preflightAXFR(ctx context.Context, zone, nsIP string, deadline time.Duration) (AXFRVerdict, AXFRReason) {
+	m := new(dns.Msg)
+	m.SetAxfr(dns.Fqdn(zone))
+	pctx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
+
+	c := &dns.Client{Net: "tcp", Timeout: deadline}
+	r, _, err := c.ExchangeContext(pctx, m, withPort(nsIP))
+	if err != nil {
+		return VerdictUnknown, classifyErr(pctx, err)
+	}
+
+	switch r.Rcode {
+	case dns.RcodeSuccess:
+		if len(r.Answer) > 0 {
+			if _, ok := r.Answer[0].(*dns.SOA); ok {
+				return VerdictOpen, ReasonTransferred
+			}
+		}
+		return VerdictUnknown, ReasonMalformed // NOERROR but no leading SOA: not a well-formed AXFR answer
+	case dns.RcodeRefused:
+		return VerdictClosed, ReasonRefused
+	case dns.RcodeNotAuth:
+		return VerdictClosed, ReasonNotAuth
+	case dns.RcodeServerFailure:
+		return VerdictUnknown, ReasonServfail
+	default:
+		return VerdictUnknown, ReasonMalformed
+	}
+}
+
+// classifyErr narrows a preflight dial/exchange error into the reason that best explains it: our own
+// context cancellation, a deadline firing (ours or the server's), or a genuine dial/read/write failure.
+func classifyErr(ctx context.Context, err error) AXFRReason {
+	if errors.Is(err, context.Canceled) || ctx.Err() == context.Canceled {
+		return ReasonCancelled
+	}
+	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
+		return ReasonTimeout
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return ReasonTimeout
+	}
+	return ReasonTransportError
+}
+
+// collectZone dials a second TCP connection to nsIP and streams the zone up to caps, folding
+// Records/Bytes/Truncated/Zone into out. It never touches out.Verdict/out.Reason: the preflight already
+// proved this NS opens the zone, so any trouble here (dial failure, mid-stream drop, or a cap) is a
+// partial pull of an open zone, not a different verdict.
+//
+// Resource safety: miekg's transfer goroutine sends on an unbuffered channel, so abandoning the channel
+// on an early exit (cap hit, ctx cancel) would block that goroutine forever and leak its TCP socket. A
+// watchdog closes the connection when ctx fires (whole-collection deadline or caller cancel), and a
+// deferred drain reads the channel to completion so the producer always terminates. Together they make
+// deadline a real ceiling on this connection and guarantee no leak on any path.
+func collectZone(ctx context.Context, zone, nsIP string, deadline time.Duration, caps AXFRCaps, out *AXFROutcome) {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 
 	m := new(dns.Msg)
@@ -55,7 +182,8 @@ func transferAXFR(ctx context.Context, zone, nsIP string, caps AXFRCaps) (AXFRRe
 	ch, err := tr.In(m, withPort(nsIP))
 	if err != nil {
 		cancel()
-		return res, err // transport/dial failure — caller rotates
+		out.Truncated = true // couldn't even open the second connection — partial pull of a known-open zone
+		return
 	}
 	// Watchdog: when ctx is done, close the conn so the producer's blocked ReadMsg/send errors out,
 	// letting its goroutine return and close ch.
@@ -74,47 +202,44 @@ func transferAXFR(ctx context.Context, zone, nsIP string, caps AXFRCaps) (AXFRRe
 		}
 	}()
 
-	bytes := 0
 	for env := range ch {
 		if env.Error != nil {
-			// REFUSED / NOTAUTH / mid-stream read error / watchdog-forced close: not an open zone.
-			return res, nil
+			out.Truncated = true // mid-stream read error (or the watchdog forcing a close): partial pull
+			return
 		}
 		for _, rr := range env.RR {
-			if (caps.MaxRecords > 0 && res.Records >= caps.MaxRecords) ||
-				(caps.MaxBytes > 0 && bytes >= caps.MaxBytes) {
-				res.Truncated = true
-				return finalize(res), nil
+			if (caps.MaxRecords > 0 && out.Records >= caps.MaxRecords) ||
+				(caps.MaxBytes > 0 && out.Bytes >= caps.MaxBytes) {
+				out.Truncated = true
+				return
 			}
-			bytes += dns.Len(rr)
+			out.Bytes += dns.Len(rr)
 			if rec, ok := axfrRecord(rr); ok {
-				res.Zone = append(res.Zone, rec)
+				out.Zone = append(out.Zone, rec)
 			}
-			res.Records++
+			out.Records++
 		}
 	}
-	return finalize(res), nil
-}
-
-// finalize marks a transfer open iff it collected at least one RR (a well-formed AXFR always includes
-// the SOA).
-func finalize(res AXFRResult) AXFRResult {
-	res.Open = res.Records > 0
-	return res
 }
 
 // axfrRecord converts one transferred RR into a model.DNSRecord tagged Source="axfr" and
 // Discovery="axfr" (the host was learned from the zone transfer, not the static query plan). The slot
 // is empty (AXFR names are not tied to the query-plan slots); the name is the record owner, no trailing
-// dot. Unsupported RR types are skipped (ok=false).
+// dot. An A/AAAA value gets the same addressFinding classification query.go's collect() applies (Task
+// 9) — AXFR, like Tier-2 queries, only ever transfers from a Dialable (public) endpoint (see
+// cmd/cc-dns-worker/axfr.go's own Dialable check before dialing), so a non-public value here likewise
+// means a public authoritative server answered with a bogus/internal address. Unsupported RR types are
+// skipped (ok=false).
 func axfrRecord(rr dns.RR) (model.DNSRecord, bool) {
 	name := strings.TrimSuffix(strings.ToLower(rr.Header().Name), ".")
 	rec := model.DNSRecord{Name: name, Slot: "", Rcode: "NOERROR", TTL: rr.Header().Ttl, Source: "axfr", Discovery: "axfr"}
 	switch v := rr.(type) {
 	case *dns.A:
 		rec.RecordType, rec.Value = "A", v.A.String()
+		rec.Finding = addressFinding(rec.Value)
 	case *dns.AAAA:
 		rec.RecordType, rec.Value = "AAAA", v.AAAA.String()
+		rec.Finding = addressFinding(rec.Value)
 	case *dns.CNAME:
 		rec.RecordType, rec.Value = "CNAME", strings.TrimSuffix(strings.ToLower(v.Target), ".")
 	case *dns.MX:
@@ -137,17 +262,16 @@ func axfrRecord(rr dns.RR) (model.DNSRecord, bool) {
 	return rec, true
 }
 
-// AXFRProber applies probe policy over the low-level transfer: it skips NS sets that are entirely
-// hyperscaler (they never allow AXFR), remembers per-NS-set REFUSED verdicts so a chronic refuser is
-// probed at most once (a refusal is not a transport error, so the scheduler's breaker never trips on
-// it — this dedup is what caps the volume), paces every dial through the AXFR scheduler lane, and
-// bounds total concurrent transfers with an aggregate semaphore.
+// AXFRProber applies probe policy over the low-level transfer: it paces every dial through the AXFR
+// scheduler lane and bounds total concurrent transfers with an aggregate semaphore. It does not cache
+// verdicts across calls — a REFUSED or a transient failure on one call says nothing definitive about
+// the next (it may be a different zone serial, a transient network blip, or a server that just came
+// back), so every call re-probes; only a genuine, sustained transport failure trips the scheduler's own
+// per-server circuit breaker.
 type AXFRProber struct {
 	sched *scheduler.Scheduler
 	caps  AXFRCaps
 	sem   chan struct{}
-
-	refused sync.Map // nsSetKey -> struct{}: NS sets that returned no open zone (refusal OR transport error / exhausted retries) — skip re-probing. NOTE: a transient failure permanently suppresses that NS set for the life of the process.
 }
 
 // NewAXFRProber builds a prober over the AXFR scheduler lane. maxInflight bounds total concurrent
@@ -159,72 +283,55 @@ func NewAXFRProber(sched *scheduler.Scheduler, caps AXFRCaps, maxInflight int) *
 	return &AXFRProber{sched: sched, caps: caps, sem: make(chan struct{}, maxInflight)}
 }
 
-// Probe transfers zone from the first NS IP that yields data. It skips an all-hyperscaler NS set and
-// short-circuits an NS set already known to refuse. A zero-value result (Open=false, Server="") means
-// skipped or nothing answered.
-func (p *AXFRProber) Probe(ctx context.Context, zone string, nsIPs []string) AXFRResult {
-	targets := make([]string, 0, len(nsIPs))
-	for _, ip := range nsIPs {
-		if !scheduler.IsHyperscaler(ip) {
-			targets = append(targets, ip)
-		}
-	}
-	if len(targets) == 0 {
-		return AXFRResult{} // all-hyperscaler (or empty): skip
-	}
-	key := nsSetKey(nsIPs)
-	if _, refused := p.refused.Load(key); refused {
-		return AXFRResult{}
-	}
-
-	select {
-	case p.sem <- struct{}{}:
-	case <-ctx.Done():
-		return AXFRResult{}
-	}
-	defer func() { <-p.sem }()
-
-	for _, ip := range targets {
-		var res AXFRResult
-		err := p.sched.Do(ctx, ip, func() error {
-			r, e := transferAXFR(ctx, zone, ip, p.caps)
-			res = r
-			return e
-		})
-		if err == nil && res.Open {
-			return res
-		}
-	}
-	// Nothing answered across the whole NS set — remember it as a refuser so peers skip it.
-	p.refused.Store(key, struct{}{})
-	return AXFRResult{Server: targets[len(targets)-1]}
-}
-
 // ProbeServer transfers zone from a single NS IP — the per-NS entry point for the standalone AXFR
-// pipeline, which records an outcome per nameserver. The caller skips hyperscaler IPs; this paces the
-// dial through the AXFR scheduler lane and bounds concurrency with the aggregate semaphore. Server is
-// always set to nsIP so the caller can key its dns_axfr row.
-func (p *AXFRProber) ProbeServer(ctx context.Context, zone, nsIP string) AXFRResult {
+// pipeline, which records an outcome per nameserver. It reclassifies the target here, at the last public
+// method before the socket opens, so stale persisted Dialable metadata or a future caller cannot bypass
+// the public-only policy. NSHost/NSIP are always set on the returned outcome so the caller can key its
+// dns_axfr row even when the target is skipped or the scheduler rejects it.
+func (p *AXFRProber) ProbeServer(ctx context.Context, zone, nsHost, nsIP string) AXFROutcome {
+	fill := func(o AXFROutcome) AXFROutcome {
+		o.NSHost, o.NSIP = nsHost, nsIP
+		if o.ObservedAt.IsZero() {
+			o.ObservedAt = time.Now().UTC()
+		}
+		return o
+	}
+	target := hostOnly(nsIP)
+	if scope, ok := ClassifyString(target); !ok || !Dialable(scope) {
+		return fill(AXFROutcome{Verdict: VerdictUnknown, Reason: ReasonSkipped})
+	}
+
 	select {
 	case p.sem <- struct{}{}:
 	case <-ctx.Done():
-		return AXFRResult{Server: nsIP}
+		return fill(AXFROutcome{Verdict: VerdictUnknown, Reason: classifyErr(ctx, ctx.Err())})
 	}
 	defer func() { <-p.sem }()
-	var res AXFRResult
-	_ = p.sched.Do(ctx, nsIP, func() error {
-		r, e := transferAXFR(ctx, zone, nsIP, p.caps)
-		res = r
-		return e
+
+	var out AXFROutcome
+	err := p.sched.Do(ctx, nsIP, func() error {
+		out = transferAXFR(ctx, zone, nsIP, p.caps)
+		return breakerErr(out)
 	})
-	res.Server = nsIP
-	return res
+	if err != nil && out.Verdict == "" {
+		// sched.Do returned before fn ran at all: the breaker was open, or ctx died while waiting on
+		// the rate limiter/in-flight slot.
+		reason := classifyErr(ctx, err)
+		if errors.Is(err, scheduler.ErrCircuitOpen) {
+			reason = ReasonCircuitOpen
+		}
+		out = AXFROutcome{Verdict: VerdictUnknown, Reason: reason}
+	}
+	return fill(out)
 }
 
-// nsSetKey is the order-independent identity of an NS IP set (dedup is a property of the server set,
-// not the domain).
-func nsSetKey(nsIPs []string) string {
-	c := append([]string(nil), nsIPs...)
-	sort.Strings(c)
-	return strings.Join(c, ",")
+// breakerErr reports whether outcome represents a transport failure that should count against the
+// scheduler's per-server circuit breaker — dial/read/write trouble or an unresponsive server. A
+// well-formed DNS answer (refused/notauth/servfail/malformed) is not a transport failure, and our own
+// context cancellation is not the server's fault, so neither trips the breaker.
+func breakerErr(o AXFROutcome) error {
+	if o.Verdict == VerdictUnknown && (o.Reason == ReasonTimeout || o.Reason == ReasonTransportError) {
+		return errors.New("axfr: " + string(o.Reason))
+	}
+	return nil
 }

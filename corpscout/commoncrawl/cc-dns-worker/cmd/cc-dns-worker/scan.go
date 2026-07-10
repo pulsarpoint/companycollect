@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -12,12 +13,15 @@ import (
 
 	"cc-dns-worker/internal/hostsource"
 	"cc-dns-worker/internal/input"
+	"cc-dns-worker/internal/load"
 	"cc-dns-worker/internal/metrics"
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/records"
 	"cc-dns-worker/internal/resolve"
 	"cc-dns-worker/internal/scheduler"
 	"cc-dns-worker/internal/store"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // scanConfig holds every knob a scan cycle needs. runScan fills it from flags; the orchestrator
@@ -121,7 +125,17 @@ func runScan(args []string) error {
 		return err
 	}
 	defer st.Close()
-	return scanCycle(context.Background(), st, cfg)
+	ctx := context.Background()
+	if err := scanCycle(ctx, st, cfg); err != nil {
+		return err
+	}
+	if !cfg.axfr {
+		return nil // no AXFR work at all: no queue seeding, no prober, no ClickHouse connection
+	}
+	// The SAME shared AXFR step the orchestrator's phaseAXFR uses (axfr.go's axfrCycle): stage+probe
+	// (runAXFRPipeline) then the AXFR ClickHouse load pass (axfrLoad) — one code path for both entry
+	// points.
+	return axfrCycle(ctx, st, cfg, axfrLoad)
 }
 
 // applyScanDefaults fills zero/negative tunables with safe defaults so each phase run is self-contained.
@@ -144,9 +158,11 @@ func applyScanDefaults(cfg scanConfig) scanConfig {
 	return cfg
 }
 
-// scanCycle seeds then resolves — the single-shot path used by the standalone `scan` subcommand. The
-// orchestrator (run.go) instead runs seedCycle and scanResolve as separate crash-safe phases so status
-// reflects the long seeding/host-load window distinctly from actual resolution. Does NOT open/close st.
+// scanCycle seeds then resolves — the base-resolution single-shot path used by the standalone `scan`
+// subcommand (runScan runs this first, then — only when --axfr is set — the separate shared AXFR step,
+// axfrCycle). The orchestrator (run.go) instead runs seedCycle and scanResolve as separate crash-safe
+// phases so status reflects the long seeding/host-load window distinctly from actual resolution. Does
+// NOT open/close st.
 func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	if err := seedCycle(ctx, st, cfg); err != nil {
 		return err
@@ -193,10 +209,25 @@ func seedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 		log.Printf("scan_id=%s: seeded %d domains from CH (%d new)", cfg.scanID, total, added)
 	}
 
-	// 1b) Host-load phase: union CT + registry discovered hostnames into scan_hostnames (resumable,
-	// skipped on resume or when disabled). Runs before dispatch so the plan can consume it.
+	// 1b) Host-load phase: mirror this scan's exact domain membership to ClickHouse (so the CT/registry
+	// shard queries can scope themselves to it — Task 11), then union CT + registry discovered
+	// hostnames into scan_hostnames (resumable, skipped on resume or when disabled). Runs before
+	// dispatch so the plan can consume it. Both steps are CH-only — no scheduler/dial concerns — and
+	// share one connection.
 	if cfg.hostEnrich {
-		if err := hostLoadPhase(ctx, st, cfg); err != nil {
+		conn, err := chConn()
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		n, err := load.MirrorSeedDomains(ctx, conn, st, cfg.scanID, cfg.seedChunk)
+		if err != nil {
+			return fmt.Errorf("mirror seed domains: %w", err)
+		}
+		if n > 0 {
+			log.Printf("scan_id=%s: mirrored %d domains to dns_scan_seed_domains", cfg.scanID, n)
+		}
+		if err := hostLoadPhase(ctx, conn, st, cfg); err != nil {
 			return err
 		}
 	}
@@ -216,7 +247,7 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	discSched := scheduler.New(scheduler.Config{PerServerQPS: cfg.discoveryQPS, Burst: max(1, int(cfg.discoveryQPS)), MaxInFlight: cfg.discoveryInflight, BreakerThreshold: 0, BreakerCooldown: cfg.breakerCooldown})
 	authSched := scheduler.New(scheduler.Config{PerServerQPS: cfg.qps, Burst: max(1, int(cfg.qps)), MaxInFlight: cfg.inflight, HyperscalerQPS: cfg.hyperscalerQPS, HyperscalerInFlight: max(cfg.inflight, 40), BreakerThreshold: cfg.breakerThreshold, BreakerCooldown: cfg.breakerCooldown})
 	disc := resolve.NewDiscoverer(resolve.NewExchangerWithStats(discSched, cfg.timeout, stats), cfg.resolvers)
-	rec := resolve.NewResolver(resolve.NewExchangerWithStats(authSched, cfg.timeout, stats))
+	rec := resolve.NewResolverWithStats(resolve.NewExchangerWithStats(authSched, cfg.timeout, stats), stats)
 	rcfg := records.DefaultConfig()
 
 	runStart := time.Now()
@@ -308,7 +339,7 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	}
 	for r := range results {
 		stats.Domains.Add(1)
-		if r.Status == "error" {
+		if r.Status == model.DomainStatusError {
 			stats.DomainErrors.Add(1)
 		}
 		buf = append(buf, r)
@@ -333,15 +364,25 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	return nil
 }
 
+// hostInsertBatch bounds how many hostsource.ShardStream rows accumulate before InsertHostnameRows
+// flushes them to SQLite — the streaming replacement for the old whole-shard
+// map[string][]HostLabel (Task 11): a shard's ranked+capped result is never held in memory beyond one
+// batch of this size.
+const hostInsertBatch = 5000
+
 // hostLoadPhase populates scan_hostnames for cfg.scanID from CT (ctlogs.hostnames) and the registry
-// (commoncrawl_domain_hostnames), capped at cfg.hostCap per domain. Rather than thousands of per-batch
-// IN() lookups, it splits the domain space into hostsource.CTPartitions hash shards aligned to the
-// ctlogs physical partitioning — each shard's query prunes to one partition and semi-joins our seed
-// set server-side — and runs up to cfg.hostConcurrency shards at once. Resumable per shard via
-// host_load_shards; idempotent (INSERT OR IGNORE). host_load_state is marked complete once every shard
-// finished, so a restart re-runs only the shards not yet done and the scanning phase never starts on a
-// partial enrichment.
-func hostLoadPhase(ctx context.Context, st *store.Store, cfg scanConfig) error {
+// (commoncrawl_domain_hostnames), capped at cfg.hostCap per domain, scoped to exactly the domains this
+// scan seeded (corpscout.dns_scan_seed_domains — mirrored by load.MirrorSeedDomains before this runs;
+// Task 11). It splits the domain space into hostsource.CTPartitions hash shards aligned to the ctlogs
+// physical partitioning — each shard's query prunes to one partition — and runs up to
+// cfg.hostConcurrency shards at once; each shard's union+rank+cap happens entirely in ClickHouse
+// (hostsource.shardQuery) and is STREAMED row-by-row into scan_hostnames in bounded batches
+// (hostsource.ShardStream + store.InsertHostnameRows), never materialized as a whole-shard map.
+// Resumable per shard via host_load_shards; idempotent (INSERT OR IGNORE). host_load_state is marked
+// complete once every shard finished, so a restart re-runs only the shards not yet done and the scanning
+// phase never starts on a partial enrichment. conn is opened by the caller (seedCycle), which also runs
+// MirrorSeedDomains on it first — this function is CH-only, no scheduler/dial concerns.
+func hostLoadPhase(ctx context.Context, conn driver.Conn, st *store.Store, cfg scanConfig) error {
 	if cfg.hostCap <= 0 {
 		cfg.hostCap = 100
 	}
@@ -356,11 +397,6 @@ func hostLoadPhase(ctx context.Context, st *store.Store, cfg scanConfig) error {
 		log.Printf("scan_id=%s: host-load already complete — skipping", cfg.scanID)
 		return nil
 	}
-	conn, err := chConn()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
 
 	// Cancel in-flight shard queries as soon as any shard fails, so we don't keep hammering CH.
 	ctx, cancel := context.WithCancel(ctx)
@@ -403,29 +439,28 @@ func hostLoadPhase(ctx context.Context, st *store.Store, cfg scanConfig) error {
 				return
 			}
 			sStart := time.Now()
-			ct, err := hostsource.CTShard(ctx, conn, shard, numShards, cfg.hostCap)
+			var shardAdded int64
+			err := hostsource.ShardStream(ctx, conn, cfg.scanID, shard, numShards, cfg.hostCap, hostInsertBatch,
+				func(batch []model.ScanHostnameRow) error {
+					n, ierr := st.InsertHostnameRows(ctx, cfg.scanID, batch)
+					if ierr != nil {
+						return ierr
+					}
+					atomic.AddInt64(&shardAdded, int64(n))
+					return nil
+				})
 			if err != nil {
-				setErr(fmt.Errorf("CT shard %d: %w", shard, err))
-				return
-			}
-			reg, err := hostsource.RegistryShard(ctx, conn, shard, numShards, cfg.hostCap)
-			if err != nil {
-				setErr(fmt.Errorf("registry shard %d: %w", shard, err))
-				return
-			}
-			n, err := st.InsertHostnamesMap(ctx, cfg.scanID, hostsource.Merge(ct, reg, cfg.hostCap))
-			if err != nil {
-				setErr(fmt.Errorf("insert shard %d: %w", shard, err))
+				setErr(fmt.Errorf("host-load shard %d: %w", shard, err))
 				return
 			}
 			if err := st.MarkHostLoadShardComplete(ctx, cfg.scanID, shard); err != nil {
 				setErr(fmt.Errorf("mark shard %d: %w", shard, err))
 				return
 			}
-			atomic.AddInt64(&totalRows, int64(n))
+			atomic.AddInt64(&totalRows, shardAdded)
 			d := atomic.AddInt64(&doneShards, 1)
 			log.Printf("scan_id=%s: host-load shard %d done (%d hostnames, %s) — %d/%d shards complete",
-				cfg.scanID, shard, n, time.Since(sStart).Round(time.Second), d, numShards)
+				cfg.scanID, shard, shardAdded, time.Since(sStart).Round(time.Second), d, numShards)
 		}(shard)
 	}
 	wg.Wait()
@@ -451,10 +486,15 @@ func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.R
 		if derr != nil {
 			msg = derr.Error()
 		}
+		status := model.DomainStatusError
+		if errors.Is(derr, resolve.ErrNoPublicNSEndpoints) {
+			status = model.DomainStatusNoPublicNSEndpoints
+		}
 		return model.DomainResult{
 			ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
-			Nameservers: del.NS, DSPresent: len(del.DS) > 0,
-			Status: "error", Error: msg, SourceRunID: runID, ResolvedAt: now,
+			Nameservers: del.NS, NSIPs: del.NSIPs, Endpoints: del.Endpoints,
+			DSPresent: del.DSOutcome == resolve.OutcomePresent, DSOutcome: del.DSOutcome,
+			Status: status, Error: msg, SourceRunID: runID, ResolvedAt: now,
 		}
 	}
 	return rec.Resolve(ctx, domain, scanID, runID, del, cfg, now, extra)

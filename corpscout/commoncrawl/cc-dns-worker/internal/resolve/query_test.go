@@ -2,9 +2,11 @@ package resolve
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"cc-dns-worker/internal/metrics"
 	"cc-dns-worker/internal/records"
 
 	"github.com/miekg/dns"
@@ -29,7 +31,7 @@ func TestResolveProducesRecords(t *testing.T) {
 		"google._domainkey.example.com./TXT": {mustRR(t, `google._domainkey.example.com. 300 IN TXT "v=DKIM1; k=rsa; p=MII"`)},
 	}
 	r := &Resolver{Ex: stubEx{z: z}}
-	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
+	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}, DialableNSIPs: []string{"9.9.9.9"}}
 
 	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del, records.DefaultConfig(), time.Unix(0, 0).UTC(), nil)
 
@@ -81,7 +83,7 @@ func TestCollectCapturesCNAME(t *testing.T) {
 		"www.example.com./A": {mustRR(t, "www.example.com. 300 IN CNAME foo.cdn.net.")},
 	}
 	r := &Resolver{Ex: stubEx{z: z}}
-	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
+	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}, DialableNSIPs: []string{"9.9.9.9"}}
 
 	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del, records.DefaultConfig(), time.Unix(0, 0).UTC(), nil)
 
@@ -104,7 +106,7 @@ func TestCollectCapturesSRVAndHTTPS(t *testing.T) {
 		"example.com./HTTPS":                  {mustRR(t, `example.com. 300 IN HTTPS 1 . alpn="h2,h3"`)},
 	}
 	r := &Resolver{Ex: stubEx{z: z}}
-	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
+	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}, DialableNSIPs: []string{"9.9.9.9"}}
 	res := r.Resolve(context.Background(), "example.com", "sc", "run", del, records.DefaultConfig(), time.Unix(0, 0).UTC(), nil)
 
 	var srv, https bool
@@ -124,5 +126,56 @@ func TestCollectCapturesSRVAndHTTPS(t *testing.T) {
 	}
 	if !https {
 		t.Errorf("missing HTTPS record; records=%+v", res.Records)
+	}
+}
+
+// recordingEx wraps stubEx's zone-answer behavior but also records every server address it was asked
+// to Exchange with, so a test can assert on what was actually dialed (not just what came back). Safe
+// for concurrent use since Resolve fires the plan's queries concurrently.
+type recordingEx struct {
+	mu     sync.Mutex
+	z      map[string][]dns.RR
+	dialed []string
+}
+
+func (r *recordingEx) Exchange(_ context.Context, m *dns.Msg, server string) (*dns.Msg, error) {
+	r.mu.Lock()
+	r.dialed = append(r.dialed, server)
+	r.mu.Unlock()
+	resp := new(dns.Msg)
+	resp.SetReply(m)
+	q := m.Question[0]
+	resp.Answer = append(resp.Answer, r.z[q.Name+"/"+dns.TypeToString[q.Qtype]]...)
+	return resp, nil
+}
+
+// TestQueryAuthNeverDialsNonPublicServer is the query.go defense-in-depth test: even when queryAuth is
+// handed a server list containing a non-public address directly (bypassing DiscoverNS's own filtering —
+// simulating a future caller that forgets to pass DialableNSIPs), it must never call Exchange with that
+// address, and must count it via Stats.BlockedTargets instead.
+func TestQueryAuthNeverDialsNonPublicServer(t *testing.T) {
+	z := map[string][]dns.RR{
+		"example.com./A": {mustRR(t, "example.com. 300 IN A 93.184.216.34")},
+	}
+	rec := &recordingEx{z: z}
+	var stats metrics.Stats
+	r := NewResolverWithStats(rec, &stats)
+	del := Delegation{
+		ETLD: "com", NS: []string{"ns1.example.com."},
+		NSIPs:         []string{"9.9.9.9", "10.0.0.1"}, // full evidence includes the private address
+		DialableNSIPs: []string{"9.9.9.9", "10.0.0.1"}, // simulates a caller that skipped the scope filter
+	}
+	r.Resolve(context.Background(), "example.com", "sc", "run", del, records.DefaultConfig(), time.Unix(0, 0).UTC(), nil)
+
+	rec.mu.Lock()
+	dialed := append([]string(nil), rec.dialed...)
+	rec.mu.Unlock()
+	for _, d := range dialed {
+		if d == "10.0.0.1" {
+			t.Fatalf("dialed non-public server 10.0.0.1 directly; dialed=%v", dialed)
+		}
+	}
+	if stats.BlockedTargets.Load() == 0 {
+		t.Errorf("expected Stats.BlockedTargets to be incremented for the blocked private target")
 	}
 }
