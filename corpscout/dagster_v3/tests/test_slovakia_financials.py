@@ -182,6 +182,26 @@ def test_cursor_roundtrip(tmp_path):
         assert incremental.read_cursor(con) == 99999
 
 
+def test_clickhouse_export_refuses_empty_table(tmp_path):
+    import pytest
+
+    from dagster_v3.defs.slovakia_financials.clickhouse import (
+        export_slovakia_financials_clickhouse_metrics,
+    )
+
+    db = tmp_path / "skfin.duckdb"
+    with duckdb.connect(str(db)) as con:
+        metrics._ensure_metrics_tables(con)  # empty table exists
+        with pytest.raises(ValueError, match="0 rows"):
+            export_slovakia_financials_clickhouse_metrics(
+                duckdb_connection=con, clickhouse=None
+            )
+
+
+def test_source_batch_key_not_exported():
+    assert "source_batch_key" not in tables.SK_FINANCIAL_METRICS_COLUMNS
+
+
 def test_metrics_export_columns_match_migration():
     assert f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_METRICS_TABLE}" in METRICS_MIGRATION
     for column in tables.SK_FINANCIAL_METRICS_COLUMNS:
