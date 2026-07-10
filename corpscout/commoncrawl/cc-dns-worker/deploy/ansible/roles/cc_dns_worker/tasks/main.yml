@@ -9,7 +9,7 @@
     GOARCH: amd64
   delegate_to: localhost
   become: false
-  changed_when: true
+  changed_when: false
 
 - name: Create deploy dir + bin/
   ansible.builtin.file:
