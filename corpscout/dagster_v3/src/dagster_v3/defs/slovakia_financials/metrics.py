@@ -1,11 +1,9 @@
-import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
 import duckdb
 
-from dagster_v3.defs.slovakia_financials import tables
-from dagster_v3.defs.slovakia_financials.client import RuzClient
+from dagster_v3.defs.slovakia_financials import raw_store, tables
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 METRICS_TABLE = tables.METRICS_TABLE
@@ -127,74 +125,6 @@ def _period_dates(statement: dict[str, Any]) -> tuple[str | None, str | None, in
     return period_start, period_end, fiscal_year
 
 
-def process_statement(
-    client: RuzClient,
-    statement_id: int,
-    *,
-    entity_cache: dict[int, dict[str, Any]],
-    template_cache: dict[int, dict[str, Any]],
-) -> dict[str, Any] | None:
-    """Fetch a statement + its reports, resolve entity, extract merged metrics.
-
-    Returns a flat row dict, or None to skip (deleted / no usable financial data).
-    """
-    statement = client.statement(statement_id)
-    if statement.get("stav") == "ZMAZANÉ":
-        return None
-    entity_id = statement.get("idUJ")
-    ico = ""
-    if entity_id is not None:
-        entity = entity_cache.get(entity_id)
-        if entity is None:
-            entity = client.entity(entity_id)
-            entity_cache[entity_id] = entity
-        ico = str(entity.get("ico") or "")
-
-    merged: dict[str, float | None] = {metric: None for metric in METRIC_NAMES}
-    template_name = ""
-    mapped = False
-    for report_id in statement.get("idUctovnychVykazov") or []:
-        report = client.report(report_id)
-        if report.get("pristupnostDat") != "Verejné":
-            continue
-        obsah = report.get("obsah") or {}
-        if "tabulky" not in obsah:
-            continue
-        template_id = report.get("idSablony")
-        if template_id is None:
-            continue
-        template = template_cache.get(template_id)
-        if template is None:
-            template = client.template(template_id)
-            template_cache[template_id] = template
-        metrics, family = extract_report_metrics(obsah, template)
-        if metrics is None:
-            continue
-        mapped = True
-        template_name = str(template.get("nazov") or family or "")
-        for metric, value in metrics.items():
-            if merged[metric] is None and value is not None:
-                merged[metric] = value
-
-    period_start, period_end, fiscal_year = _period_dates(statement)
-    return {
-        "statement_id": statement_id,
-        "ruz_entity_id": str(entity_id) if entity_id is not None else "",
-        "ico": ico,
-        "template_name": template_name,
-        "statement_type": str(statement.get("typ") or ""),
-        "fiscal_year": fiscal_year,
-        "period_start": period_start,
-        "period_end": period_end,
-        "filed_date": statement.get("datumPodania"),
-        "approved_date": statement.get("datumSchvalenia"),
-        "currency": "EUR",
-        "metrics": merged,
-        "mapped_metric_count": sum(1 for v in merged.values() if v is not None),
-        "template_mapped": 1 if mapped else 0,
-    }
-
-
 def decode_statement_bundle(
     bundle: dict[str, Any],
     template_lookup: Callable[[int], dict[str, Any]],
@@ -254,60 +184,105 @@ def decode_statement_bundle(
     }
 
 
-def build_slovakia_financials(
+PROCESSED_BATCHES_TABLE = f"{DLT_DATASET_NAME}.processed_batches"
+
+
+def _ensure_metrics_tables(connection: duckdb.DuckDBPyConnection) -> None:
+    amount_cols = ", ".join(
+        f"{metric}_amount_original decimal(38, 2), {metric}_amount_usd decimal(38, 2)"
+        for metric in METRIC_NAMES
+    )
+    connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    connection.execute(
+        f"create table if not exists {DLT_DATASET_NAME}.{METRICS_TABLE} ("
+        f"country_iso2 varchar, source_slug varchar, source_run_id varchar, "
+        f"source_record_id varchar, ico varchar, ruz_entity_id varchar, "
+        f"statement_id varchar, template_name varchar, statement_type varchar, "
+        f"fiscal_year integer, period_start_date date, period_end_date date, "
+        f"filed_date date, approved_date date, currency_original varchar, "
+        f"{amount_cols}, mapped_metric_count integer, template_mapped integer, "
+        f"mapping_version varchar, fx_rate_to_usd decimal(38, 12), "
+        f"fx_rate_date date, fx_converted_at timestamp, source_url varchar, "
+        f"resolved_at timestamp, source_batch_key varchar)"
+    )
+    # Pre-split deployments created the table without the batch column.
+    connection.execute(
+        f"alter table {DLT_DATASET_NAME}.{METRICS_TABLE} "
+        "add column if not exists source_batch_key varchar"
+    )
+    connection.execute(
+        f"create table if not exists {PROCESSED_BATCHES_TABLE} ("
+        "batch_key varchar primary key, source_run_id varchar, "
+        "statements integer, processed_at timestamp)"
+    )
+
+
+def build_metrics_from_batches(
     *,
     connection: duckdb.DuckDBPyConnection,
+    object_store: Any,
     source_run_id: str,
-    after_id: int,
-    max_statements: int,
-    changed_since: str = tables.RUZ_CHANGED_SINCE,
-    client: RuzClient | None = None,
-    request_delay_seconds: float = 0.05,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Sweep up to `max_statements` statements after `after_id`, build metric rows."""
-    ruz = client or RuzClient()
-    statement_ids, _ = ruz.statement_ids(
-        changed_since=changed_since, after_id=after_id, max_records=max_statements
-    )
-    entity_cache: dict[int, dict[str, Any]] = {}
-    template_cache: dict[int, dict[str, Any]] = {}
-    rows: list[dict[str, Any]] = []
-    fetch_failed = 0
-    skipped = 0
-    last_id = after_id
-    for index, statement_id in enumerate(statement_ids):
-        if index and request_delay_seconds:
-            time.sleep(request_delay_seconds)
-        try:
-            row = process_statement(
-                ruz, statement_id, entity_cache=entity_cache, template_cache=template_cache
-            )
-        except Exception as exc:  # noqa: BLE001 - count, don't hide
-            fetch_failed += 1
-            if log is not None:
-                log("RÚZ statement %s failed: %s", statement_id, exc)
-            continue
-        last_id = statement_id
-        if row is None:
-            skipped += 1
-            continue
-        rows.append(row)
+    """Decode every not-yet-processed S3 raw batch into the metrics table.
 
-    counts = _write_metrics_table(connection, rows, source_run_id, log=log)
-    counts.update(
-        {
-            "fetched_ids": len(statement_ids),
-            "fetch_failed": fetch_failed,
-            "skipped": skipped,
-            "last_id": last_id,
-        }
+    Appends per batch with delete-then-insert on source_batch_key, so
+    reprocessing a batch (or wiping processed_batches to force a full
+    re-decode) is idempotent.
+    """
+    _ensure_metrics_tables(connection)
+    all_keys = raw_store.list_statement_batch_keys(object_store)
+    processed = {
+        row[0]
+        for row in connection.execute(
+            f"select batch_key from {PROCESSED_BATCHES_TABLE}"
+        ).fetchall()
+    }
+    pending = [key for key in all_keys if key not in processed]
+
+    template_cache: dict[int, dict[str, Any]] = {}
+
+    def template_lookup(template_id: int) -> dict[str, Any]:
+        template = template_cache.get(template_id)
+        if template is None:
+            template = raw_store.read_template(object_store, template_id)
+            template_cache[template_id] = template
+        return template
+
+    statements = 0
+    skipped = 0
+    for batch_key in pending:
+        rows: list[dict[str, Any]] = []
+        for bundle in raw_store.read_statement_batch(object_store, batch_key):
+            row = decode_statement_bundle(bundle, template_lookup)
+            if row is None:
+                skipped += 1
+                continue
+            rows.append(row)
+        _append_metrics_batch(connection, rows, source_run_id, batch_key)
+        statements += len(rows)
+
+    qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
+    table_statements = int(
+        connection.execute(f"select count(*) from {qualified}").fetchone()[0]
     )
+    table_mapped = int(
+        connection.execute(
+            f"select count(*) from {qualified} where template_mapped = 1"
+        ).fetchone()[0]
+    )
+    counts = {
+        "batches_processed": len(pending),
+        "statements": statements,
+        "skipped": skipped,
+        "table_statements": table_statements,
+        "table_mapped": table_mapped,
+    }
     if log is not None:
         log(
-            "Built Slovak RÚZ metrics: ids=%s rows=%s mapped=%s skipped=%s failed=%s last_id=%s",
-            len(statement_ids), counts.get("statements", 0), counts.get("mapped_statements", 0),
-            skipped, fetch_failed, last_id,
+            "Built Slovak RÚZ metrics from raw batches: batches=%s rows=%s skipped=%s "
+            "table_rows=%s table_mapped=%s",
+            len(pending), statements, skipped, table_statements, table_mapped,
         )
     return counts
 
@@ -349,13 +324,12 @@ def _stage_row(row: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def _write_metrics_table(
+def _append_metrics_batch(
     connection: duckdb.DuckDBPyConnection,
     rows: list[dict[str, Any]],
     source_run_id: str,
-    *,
-    log: Callable[..., object] | None = None,
-) -> dict[str, int]:
+    batch_key: str,
+) -> None:
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
     amount_cols = ", ".join(f"{m}_amount_original decimal(38, 2)" for m in METRIC_NAMES)
     placeholders = ", ".join(["?"] * len(_STAGE_COLUMNS))
@@ -363,7 +337,6 @@ def _write_metrics_table(
         f"{m}_amount_original, cast(null as decimal(38, 2)) as {m}_amount_usd"
         for m in METRIC_NAMES
     )
-    connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
     connection.execute(
         f"create or replace temp table _sk_stage ("
         f"statement_id varchar, ruz_entity_id varchar, ico varchar, "
@@ -377,44 +350,53 @@ def _write_metrics_table(
             f"insert into _sk_stage values ({placeholders})",
             [_stage_row(row) for row in rows],
         )
-    connection.execute(
-        f"""
-        create or replace table {qualified} as
-        select
-            'SK' as country_iso2,
-            '{tables.SOURCE_SLUG}' as source_slug,
-            '{source_run_id}' as source_run_id,
-            statement_id as source_record_id,
-            ico,
-            ruz_entity_id,
-            statement_id,
-            template_name,
-            statement_type,
-            fiscal_year,
-            period_start as period_start_date,
-            period_end as period_end_date,
-            filed_date,
-            approved_date,
-            currency_original,
-            {metric_cols_select},
-            mapped_metric_count,
-            template_mapped,
-            '{tables.MAPPING_VERSION}' as mapping_version,
-            cast(null as decimal(38, 12)) as fx_rate_to_usd,
-            cast(null as date) as fx_rate_date,
-            cast(null as timestamp) as fx_converted_at,
-            '{tables.RUZ_BASE_URL}' as source_url,
-            now() as resolved_at
-        from _sk_stage
-        """
-    )
-    statements = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-    mapped = int(
+    connection.execute("begin transaction")
+    try:
+        connection.execute(f"delete from {qualified} where source_batch_key = ?", [batch_key])
         connection.execute(
-            f"select count(*) from {qualified} where template_mapped = 1"
-        ).fetchone()[0]
-    )
-    return {"statements": statements, "mapped_statements": mapped}
+            f"""
+            insert into {qualified} by name
+            select
+                'SK' as country_iso2,
+                '{tables.SOURCE_SLUG}' as source_slug,
+                '{source_run_id}' as source_run_id,
+                statement_id as source_record_id,
+                ico,
+                ruz_entity_id,
+                statement_id,
+                template_name,
+                statement_type,
+                fiscal_year,
+                period_start as period_start_date,
+                period_end as period_end_date,
+                filed_date,
+                approved_date,
+                currency_original,
+                {metric_cols_select},
+                mapped_metric_count,
+                template_mapped,
+                '{tables.MAPPING_VERSION}' as mapping_version,
+                cast(null as decimal(38, 12)) as fx_rate_to_usd,
+                cast(null as date) as fx_rate_date,
+                cast(null as timestamp) as fx_converted_at,
+                '{tables.RUZ_BASE_URL}' as source_url,
+                now() as resolved_at,
+                ? as source_batch_key
+            from _sk_stage
+            """,
+            [batch_key],
+        )
+        connection.execute(
+            f"delete from {PROCESSED_BATCHES_TABLE} where batch_key = ?", [batch_key]
+        )
+        connection.execute(
+            f"insert into {PROCESSED_BATCHES_TABLE} values (?, ?, ?, now())",
+            [batch_key, source_run_id, len(rows)],
+        )
+        connection.execute("commit")
+    except Exception:
+        connection.execute("rollback")
+        raise
 
 
 def _load_rates(exchange_rates: ExchangeRates, requests: list[Any]) -> dict[tuple[str, str], Any]:
@@ -439,6 +421,7 @@ def apply_slovakia_usd_conversion(
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Fill *_usd + fx_* columns by EUR→USD at each statement's period_end."""
+    _ensure_metrics_tables(connection)
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
     pairs = connection.execute(
         f"""

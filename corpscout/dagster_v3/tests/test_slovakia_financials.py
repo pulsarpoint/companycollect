@@ -93,63 +93,76 @@ def test_extract_report_metrics_unmapped_family():
     assert out is None and family is None
 
 
-def test_process_statement_skips_deleted():
-    client = FakeRuzClient()
-    assert metrics.process_statement(client, 5002, entity_cache={}, template_cache={}) is None
+def _seed_raw_batch(store) -> str:
+    raw_store.write_template(store, 699, POD_TEMPLATE)
+    deleted = {"statement_id": 5002, "statement": {"id": 5002, "stav": "ZMAZANÉ"},
+               "entity": None, "reports": []}
+    return raw_store.write_statement_batch(
+        store, after_id=5000, last_id=5002, bundles=[_pod_bundle(), deleted],
+        manifest={"source_run_id": "r0", "statement_count": 2},
+    )
 
 
-def test_process_statement_resolves_entity_and_metrics():
-    client = FakeRuzClient()
-    row = metrics.process_statement(client, 5001, entity_cache={}, template_cache={})
-    assert row["ico"] == "36355232" and row["ruz_entity_id"] == "9001"
-    assert row["template_name"] == "Úč POD" and row["template_mapped"] == 1
-    assert row["fiscal_year"] == 2023 and row["period_end"] == "2023-12-31"
-    assert row["metrics"]["net_result"] == 120.0 and row["mapped_metric_count"] == 6
-
-
-def test_build_writes_metrics_table(tmp_path):
+def test_build_metrics_from_batches_writes_rows(tmp_path):
+    store = FakeObjectStore()
+    _seed_raw_batch(store)
     db = tmp_path / "skfin.duckdb"
     with duckdb.connect(str(db)) as con:
-        counts = metrics.build_slovakia_financials(
-            connection=con,
-            source_run_id="r1",
-            after_id=5000,
-            max_statements=10,
-            client=FakeRuzClient(),
-            request_delay_seconds=0,
+        counts = metrics.build_metrics_from_batches(
+            connection=con, object_store=store, source_run_id="r1"
         )
-    assert counts["statements"] == 1 and counts["mapped_statements"] == 1
-    assert counts["skipped"] == 1 and counts["last_id"] == 5002
+    assert counts["batches_processed"] == 1 and counts["statements"] == 1
+    assert counts["skipped"] == 1 and counts["table_statements"] == 1
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
             f"describe {tables.DLT_DATASET_NAME}.{tables.METRICS_TABLE}"
         ).fetchall()]
-        assert cols == list(tables.SK_FINANCIAL_METRICS_COLUMNS)
+        assert cols == [*tables.SK_FINANCIAL_METRICS_COLUMNS, "source_batch_key"]
         row = con.execute(
-            f"select ico, statement_id, fiscal_year, period_end_date, total_assets_amount_original, "
-            f"total_assets_amount_usd, net_result_amount_original, currency_original "
+            f"select ico, statement_id, fiscal_year, period_end_date, "
+            f"total_assets_amount_original, total_assets_amount_usd, "
+            f"net_result_amount_original, currency_original, source_batch_key "
             f"from {tables.DLT_DATASET_NAME}.{tables.METRICS_TABLE}"
         ).fetchone()
     assert row[0] == "36355232" and row[1] == "5001" and row[2] == 2023
     assert row[3] == dt.date(2023, 12, 31)
     assert float(row[4]) == 880.0 and row[5] is None  # usd not yet filled
     assert float(row[6]) == 120.0 and row[7] == "EUR"
+    assert row[8] == raw_store.statement_batch_key(5000, 5002)
+
+
+def test_build_metrics_from_batches_is_incremental_and_idempotent(tmp_path):
+    store = FakeObjectStore()
+    _seed_raw_batch(store)
+    db = tmp_path / "skfin.duckdb"
+    with duckdb.connect(str(db)) as con:
+        metrics.build_metrics_from_batches(connection=con, object_store=store, source_run_id="r1")
+        # second run: batch already recorded as processed → no-op
+        counts = metrics.build_metrics_from_batches(
+            connection=con, object_store=store, source_run_id="r2"
+        )
+        assert counts["batches_processed"] == 0 and counts["table_statements"] == 1
+        # a second batch appends without touching the first
+        bundle = _pod_bundle()
+        bundle["statement_id"] = 5003
+        bundle["statement"]["id"] = 5003
+        raw_store.write_statement_batch(
+            store, after_id=5002, last_id=5003, bundles=[bundle],
+            manifest={"source_run_id": "r3", "statement_count": 1},
+        )
+        counts = metrics.build_metrics_from_batches(
+            connection=con, object_store=store, source_run_id="r3"
+        )
+        assert counts["batches_processed"] == 1 and counts["table_statements"] == 2
 
 
 def test_usd_conversion_fills_amounts(tmp_path):
+    store = FakeObjectStore()
+    _seed_raw_batch(store)
     db = tmp_path / "skfin.duckdb"
     with duckdb.connect(str(db)) as con:
-        metrics.build_slovakia_financials(
-            connection=con,
-            source_run_id="r1",
-            after_id=5000,
-            max_statements=10,
-            client=FakeRuzClient(),
-            request_delay_seconds=0,
-        )
-        counts = metrics.apply_slovakia_usd_conversion(
-            connection=con, exchange_rates=FakeRates()
-        )
+        metrics.build_metrics_from_batches(connection=con, object_store=store, source_run_id="r1")
+        counts = metrics.apply_slovakia_usd_conversion(connection=con, exchange_rates=FakeRates())
     assert counts["rows_converted"] == 1
     with duckdb.connect(str(db), read_only=True) as con:
         usd, fx = con.execute(
