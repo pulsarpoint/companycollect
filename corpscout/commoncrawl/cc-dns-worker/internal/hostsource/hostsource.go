@@ -29,35 +29,33 @@ func NormalizeLabel(rootDomain, fqdn string) (string, bool) {
 	return label, true
 }
 
-func inClause(n int) string {
-	if n == 0 {
-		return ""
-	}
-	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
-}
+// CTPartitions is the number of hash shards the seed-time host-load splits domains into. It MUST equal
+// the ctlogs.hostnames physical partitioning (PARTITION BY cityHash64(registered_domain) % 16) so each
+// shard's `cityHash64(registered_domain) % 16 = N` filter prunes to exactly one physical partition —
+// the whole point of the sharding. Changing it without repartitioning ctlogs defeats partition pruning.
+const CTPartitions = 16
 
-func toArgs(domains []string) []any {
-	a := make([]any, len(domains))
-	for i, d := range domains {
-		a[i] = d
-	}
-	return a
-}
-
-// CTHostnames returns up to capN live-cert-first, recency-ranked non-wildcard labels per domain from
-// Certificate Transparency, scoped to domains (index-pruned on the ctlogs sort key).
-func CTHostnames(ctx context.Context, conn driver.Conn, domains []string, capN int) (map[string][]model.HostLabel, error) {
-	if len(domains) == 0 {
-		return map[string][]model.HostLabel{}, nil
-	}
+// CTShard returns up to capN live-cert-first, recency-ranked non-wildcard labels per domain from
+// Certificate Transparency for hash-shard `shard` of `numShards` — the domains where
+// cityHash64(registered_domain) % numShards == shard. The shard filter prunes ctlogs.hostnames to one
+// physical partition, and the semi-join to our seed set (corpscout.commoncrawl_domains) runs entirely
+// server-side, so no domain list crosses the wire. One such query replaces thousands of per-batch
+// IN() lookups; the caller runs the shards concurrently.
+func CTShard(ctx context.Context, conn driver.Conn, shard, numShards, capN int) (map[string][]model.HostLabel, error) {
+	ns, sh, cp := strconv.Itoa(numShards), strconv.Itoa(shard), strconv.Itoa(capN)
 	q := `SELECT registered_domain, fqdn, (lna >= now()) AS live FROM (
 	    SELECT registered_domain, fqdn, max(is_wildcard) is_wc, max(last_seen) ls, max(last_not_after) lna
-	    FROM ctlogs.hostnames WHERE registered_domain IN (` + inClause(len(domains)) + `)
+	    FROM ctlogs.hostnames
+	    WHERE cityHash64(registered_domain) % ` + ns + ` = ` + sh + `
+	      AND registered_domain IN (
+	        SELECT root_domain FROM corpscout.commoncrawl_domains
+	        WHERE cityHash64(root_domain) % ` + ns + ` = ` + sh + `
+	      )
 	    GROUP BY registered_domain, fqdn
 	) WHERE is_wc = 0 AND fqdn != registered_domain
-	ORDER BY registered_domain, (lna >= now()) DESC, ls DESC
-	LIMIT ` + strconv.Itoa(capN) + ` BY registered_domain`
-	rows, err := conn.Query(ctx, q, toArgs(domains)...)
+	ORDER BY registered_domain, live DESC, ls DESC
+	LIMIT ` + cp + ` BY registered_domain`
+	rows, err := conn.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -76,18 +74,17 @@ func CTHostnames(ctx context.Context, conn driver.Conn, domains []string, capN i
 	return out, rows.Err()
 }
 
-// RegistryHostnames returns up to capN recency-ranked labels per domain from the durable registry,
-// carrying each label's stored discovery_source (axfr precedence via min).
-func RegistryHostnames(ctx context.Context, conn driver.Conn, domains []string, capN int) (map[string][]model.HostLabel, error) {
-	if len(domains) == 0 {
-		return map[string][]model.HostLabel{}, nil
-	}
+// RegistryShard returns up to capN recency-ranked labels per domain from the durable registry for
+// hash-shard `shard` of `numShards`, carrying each label's stored discovery_source (axfr precedence
+// via min). The registry holds only domains we've already discovered, so no seed semi-join is needed.
+func RegistryShard(ctx context.Context, conn driver.Conn, shard, numShards, capN int) (map[string][]model.HostLabel, error) {
+	ns, sh, cp := strconv.Itoa(numShards), strconv.Itoa(shard), strconv.Itoa(capN)
 	q := `SELECT root_domain, label, min(discovery_source) AS ds FROM corpscout.commoncrawl_domain_hostnames
-	    WHERE root_domain IN (` + inClause(len(domains)) + `)
+	    WHERE cityHash64(root_domain) % ` + ns + ` = ` + sh + `
 	    GROUP BY root_domain, label
 	    ORDER BY root_domain, max(last_seen) DESC
-	    LIMIT ` + strconv.Itoa(capN) + ` BY root_domain`
-	rows, err := conn.Query(ctx, q, toArgs(domains)...)
+	    LIMIT ` + cp + ` BY root_domain`
+	rows, err := conn.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}

@@ -24,5 +24,9 @@ func chConn() (driver.Conn, error) {
 			Username: envOr("CLICKHOUSE_USER", "default"),
 			Password: envOr("CLICKHOUSE_PASSWORD", ""),
 		},
+		// The seed-time host-load runs several partition-shard queries concurrently on one conn; size
+		// the pool so they don't queue behind the default (~10). Cheap when idle.
+		MaxOpenConns: 24,
+		MaxIdleConns: 24,
 	})
 }

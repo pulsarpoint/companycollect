@@ -458,10 +458,10 @@ func TestHostnamesRoundTrip(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	if err := st.InsertHostnames(ctx, "s1", "example.com", []model.HostLabel{
+	if _, err := st.InsertHostnamesMap(ctx, "s1", map[string][]model.HostLabel{"example.com": {
 		{Label: "jenkins", DiscoverySource: "axfr", LiveCert: false},
 		{Label: "api", DiscoverySource: "ct", LiveCert: true},
-	}); err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	m, err := st.HostnamesForBatch(ctx, "s1", []string{"example.com", "other.com"})
@@ -477,6 +477,45 @@ func TestHostnamesRoundTrip(t *testing.T) {
 	}
 	if got["jenkins"] != "axfr" || got["api"] != "ct" {
 		t.Fatalf("labels not round-tripped: %+v", got)
+	}
+}
+
+// Host-load is sharded: each shard is tracked complete independently (a restart re-runs only the
+// unfinished shards) and re-inserting a shard's rows is idempotent (INSERT OR IGNORE dedups).
+func TestHostLoadShardStateAndIdempotency(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	// A shard is not complete until marked; marking is observable and per-shard.
+	if done, _ := st.HostLoadShardComplete(ctx, "s1", 3); done {
+		t.Fatal("shard 3 should start incomplete")
+	}
+	if err := st.MarkHostLoadShardComplete(ctx, "s1", 3); err != nil {
+		t.Fatal(err)
+	}
+	if done, _ := st.HostLoadShardComplete(ctx, "s1", 3); !done {
+		t.Fatal("shard 3 should be complete after marking")
+	}
+	if done, _ := st.HostLoadShardComplete(ctx, "s1", 4); done {
+		t.Fatal("shard 4 must remain incomplete (per-shard, not global)")
+	}
+
+	// First insert adds all rows; re-inserting the same map adds nothing (idempotent resume).
+	m := map[string][]model.HostLabel{
+		"a.com": {{Label: "www", DiscoverySource: "ct", LiveCert: true}, {Label: "api", DiscoverySource: "ct"}},
+		"b.com": {{Label: "vpn", DiscoverySource: "axfr"}},
+	}
+	n1, err := st.InsertHostnamesMap(ctx, "s1", m)
+	if err != nil || n1 != 3 {
+		t.Fatalf("first insert added %d (want 3), err=%v", n1, err)
+	}
+	n2, err := st.InsertHostnamesMap(ctx, "s1", m)
+	if err != nil || n2 != 0 {
+		t.Fatalf("re-insert added %d (want 0 — idempotent), err=%v", n2, err)
 	}
 }
 

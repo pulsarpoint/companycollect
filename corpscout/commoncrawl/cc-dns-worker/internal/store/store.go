@@ -79,6 +79,12 @@ CREATE TABLE IF NOT EXISTS host_load_state (
   cursor   TEXT NOT NULL DEFAULT '',
   complete INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS host_load_shards (
+  scan_id  TEXT NOT NULL,
+  shard    INTEGER NOT NULL,
+  complete INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (scan_id, shard)
+);
 `
 
 // Open opens (creating if needed) the SQLite stage in WAL mode and ensures the schema.
@@ -476,53 +482,6 @@ func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model
 	return out, rows.Err()
 }
 
-// SeededDomainsAfter returns up to limit seeded root_domains for scanID greater than afterRootDomain,
-// ordered — the cursor iterator the host-load phase walks (mirrors PendingBatch, but over ALL seeded
-// domains regardless of status).
-func (s *Store) SeededDomainsAfter(ctx context.Context, scanID, afterRootDomain string, limit int) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT root_domain FROM scan_domains WHERE scan_id = ? AND root_domain > ? ORDER BY root_domain LIMIT ?`,
-		scanID, afterRootDomain, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var d string
-		if err := rows.Scan(&d); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
-}
-
-// InsertHostnames writes a domain's discovered labels for scanID (idempotent — INSERT OR IGNORE on the
-// (scan_id, root_domain, label) primary key).
-func (s *Store) InsertHostnames(ctx context.Context, scanID, rootDomain string, hosts []model.HostLabel) error {
-	if len(hosts) == 0 {
-		return nil
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO scan_hostnames
-		(scan_id, root_domain, label, discovery_source, live_cert) VALUES (?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	for _, h := range hosts {
-		if _, err := stmt.ExecContext(ctx, scanID, rootDomain, h.Label, h.DiscoverySource, b2i(h.LiveCert)); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
 // HostnamesForBatch bulk-loads the labels for a set of domains in one query (the feeder calls it once
 // per dispatch batch, not per worker) → map[root_domain][]HostLabel.
 func (s *Store) HostnamesForBatch(ctx context.Context, scanID string, domains []string) (map[string][]model.HostLabel, error) {
@@ -574,22 +533,57 @@ func (s *Store) MarkHostLoadComplete(ctx context.Context, scanID string) error {
 	return err
 }
 
-// HostLoadCursor returns the last root_domain the host-load phase processed for scanID ("" if none).
-func (s *Store) HostLoadCursor(ctx context.Context, scanID string) (string, error) {
-	var c string
-	err := s.db.QueryRowContext(ctx, `SELECT cursor FROM host_load_state WHERE scan_id = ?`, scanID).Scan(&c)
+// HostLoadShardComplete reports whether host-load shard finished for scanID (a restart re-runs only
+// the shards not yet marked complete; re-running a shard is idempotent via INSERT OR IGNORE).
+func (s *Store) HostLoadShardComplete(ctx context.Context, scanID string, shard int) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT complete FROM host_load_shards WHERE scan_id = ? AND shard = ?`, scanID, shard).Scan(&n)
 	if err == sql.ErrNoRows {
-		return "", nil
+		return false, nil
 	}
-	return c, err
+	return n == 1, err
 }
 
-// SetHostLoadCursor advances the host-load cursor for scanID.
-func (s *Store) SetHostLoadCursor(ctx context.Context, scanID, cursor string) error {
+// MarkHostLoadShardComplete records that host-load shard finished for scanID.
+func (s *Store) MarkHostLoadShardComplete(ctx context.Context, scanID string, shard int) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO host_load_state (scan_id, cursor) VALUES (?, ?)
-		 ON CONFLICT(scan_id) DO UPDATE SET cursor = excluded.cursor`, scanID, cursor)
+		`INSERT INTO host_load_shards (scan_id, shard, complete) VALUES (?, ?, 1)
+		 ON CONFLICT(scan_id, shard) DO UPDATE SET complete = 1`, scanID, shard)
 	return err
+}
+
+// InsertHostnamesMap bulk-inserts a merged domain→labels map for scanID in one transaction (idempotent
+// — INSERT OR IGNORE on the (scan_id, root_domain, label) primary key). Returns rows newly inserted.
+// Callers flush per shard, so each shard's ~millions of rows land in a single commit.
+func (s *Store) InsertHostnamesMap(ctx context.Context, scanID string, m map[string][]model.HostLabel) (int, error) {
+	if len(m) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO scan_hostnames
+		(scan_id, root_domain, label, discovery_source, live_cert) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+	added := 0
+	for rd, hosts := range m {
+		for _, h := range hosts {
+			r, err := stmt.ExecContext(ctx, scanID, rd, h.Label, h.DiscoverySource, b2i(h.LiveCert))
+			if err != nil {
+				return 0, err
+			}
+			if n, _ := r.RowsAffected(); n > 0 {
+				added++
+			}
+		}
+	}
+	return added, tx.Commit()
 }
 
 // Close closes the DB.
