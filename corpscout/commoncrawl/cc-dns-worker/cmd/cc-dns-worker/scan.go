@@ -394,7 +394,7 @@ func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.R
 			Status: "error", Error: msg, SourceRunID: runID, ResolvedAt: now,
 		}
 	}
-	res := rec.Resolve(ctx, domain, scanID, runID, del, cfg, now)
+	res := rec.Resolve(ctx, domain, scanID, runID, del, cfg, now, nil) // Task 5 wires real discovered-host labels
 	if prober != nil {
 		mergeAXFR(&res, prober.Probe(ctx, domain, del.NSIPs))
 	}

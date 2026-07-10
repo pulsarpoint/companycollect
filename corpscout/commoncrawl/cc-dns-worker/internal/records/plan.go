@@ -2,7 +2,13 @@
 // authoritative nameservers). NS discovery (Tier 1) lives in package resolve.
 package records
 
-import "github.com/miekg/dns"
+import (
+	"strings"
+
+	"cc-dns-worker/internal/model"
+
+	"github.com/miekg/dns"
+)
 
 // Config controls A/AAAA hostnames, brute-forced DKIM selectors, and brute-forced SRV services.
 type Config struct {
@@ -18,15 +24,15 @@ func DefaultConfig() Config {
 		DKIMSelectors: []string{"default", "google", "selector1", "selector2", "k1", "dkim", "s1", "s2", "mail", "mandrill"},
 		SRVServices: []string{
 			"_sip._tcp", "_sip._udp", "_sips._tcp",
-			"_sipfederationtls._tcp",                                        // Teams / Skype for Business
-			"_autodiscover._tcp",                                            // Exchange / Microsoft 365 mail
-			"_xmpp-server._tcp", "_xmpp-client._tcp",                        // XMPP / Jabber
+			"_sipfederationtls._tcp",                 // Teams / Skype for Business
+			"_autodiscover._tcp",                     // Exchange / Microsoft 365 mail
+			"_xmpp-server._tcp", "_xmpp-client._tcp", // XMPP / Jabber
 			"_ldap._tcp", "_kerberos._tcp", "_kerberos._udp", "_gc._tcp", "_kpasswd._tcp", // Active Directory
-			"_vlmcs._tcp",                                                    // Windows KMS activation
+			"_vlmcs._tcp",                                                      // Windows KMS activation
 			"_caldav._tcp", "_caldavs._tcp", "_carddav._tcp", "_carddavs._tcp", // calendar / contacts
 			"_imap._tcp", "_imaps._tcp", "_pop3._tcp", "_pop3s._tcp", "_submission._tcp", // mail discovery
-			"_matrix._tcp",              // Matrix
-			"_stun._udp", "_turn._udp",  // WebRTC
+			"_matrix._tcp",             // Matrix
+			"_stun._udp", "_turn._udp", // WebRTC
 			"_minecraft._tcp", "_ts3._udp", // game servers
 		},
 	}
@@ -34,13 +40,17 @@ func DefaultConfig() Config {
 
 // Query is one DNS question plus the semantic slot its answers are tagged with.
 type Query struct {
-	Name string // FQDN with trailing dot
-	Type uint16
-	Slot string // "@" apex host; hostname; DKIM selector; SRV service; "dmarc"/"mta_sts"/"tls_rpt"/"bimi"; "" infra
+	Name      string // FQDN with trailing dot
+	Type      uint16
+	Slot      string // "@" apex host; hostname; DKIM selector; SRV service; "dmarc"/"mta_sts"/"tls_rpt"/"bimi"; "" infra
+	Discovery string // "static" | "ct" | "axfr" — how the queried hostname was discovered
 }
 
-// Plan returns every Tier-2 query for a domain (no trailing dot on input).
-func Plan(domain string, cfg Config) []Query {
+// Plan returns every Tier-2 query for a domain (no trailing dot on input), unioning the static
+// hostname/DKIM/SRV lists in cfg with any extra discovered hostnames (from CT/registry/axfr). An
+// extra hostname already covered by the static set is skipped so it's never double-queried; the
+// static set wins the overlap, so its Discovery stays "static".
+func Plan(domain string, cfg Config, extra []model.HostLabel) []Query {
 	fqdn := dns.Fqdn(domain)
 	qs := []Query{
 		{Name: fqdn, Type: dns.TypeA, Slot: "@"},
@@ -67,6 +77,27 @@ func Plan(domain string, cfg Config) []Query {
 	}
 	for _, s := range cfg.SRVServices {
 		qs = append(qs, Query{Name: dns.Fqdn(s + "." + domain), Type: dns.TypeSRV, Slot: s})
+	}
+	for i := range qs {
+		qs[i].Discovery = "static"
+	}
+
+	// Union discovered hosts (CT/registry/axfr), skipping any label already covered by the static set,
+	// so we never double-query. Each gets A+AAAA tagged with its discovery source.
+	staticLabels := map[string]bool{}
+	for _, h := range cfg.Hostnames {
+		staticLabels[strings.ToLower(h)] = true
+	}
+	for _, e := range extra {
+		l := strings.ToLower(e.Label)
+		if l == "" || staticLabels[l] {
+			continue
+		}
+		staticLabels[l] = true // also dedupe extras against each other
+		hn := dns.Fqdn(l + "." + domain)
+		qs = append(qs,
+			Query{Name: hn, Type: dns.TypeA, Slot: l, Discovery: e.DiscoverySource},
+			Query{Name: hn, Type: dns.TypeAAAA, Slot: l, Discovery: e.DiscoverySource})
 	}
 	return qs
 }

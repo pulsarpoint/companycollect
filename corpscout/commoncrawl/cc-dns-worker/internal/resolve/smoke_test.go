@@ -32,7 +32,7 @@ func TestSmokeRealDomains(t *testing.T) {
 	if len(del.NS) == 0 || len(del.NSIPs) == 0 {
 		t.Fatalf("no NS learned: %+v", del)
 	}
-	res := r.Resolve(ctx, "cloudflare.com", "smoke", "smoke", del, records.DefaultConfig(), time.Now().UTC())
+	res := r.Resolve(ctx, "cloudflare.com", "smoke", "smoke", del, records.DefaultConfig(), time.Now().UTC(), nil)
 	var haveMX, haveA bool
 	for _, rec := range res.Records {
 		if rec.RecordType == "MX" {

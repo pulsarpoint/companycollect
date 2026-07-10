@@ -20,8 +20,10 @@ type Resolver struct{ Ex Exchanger }
 func NewResolver(ex Exchanger) *Resolver { return &Resolver{Ex: ex} }
 
 // Resolve runs every Tier-2 query for a domain directly against its authoritative NS IPs, rotating
-// across them with retry, and assembles a DomainResult. Delegation must already be discovered.
-func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, del Delegation, cfg records.Config, now time.Time) model.DomainResult {
+// across them with retry, and assembles a DomainResult. Delegation must already be discovered. extra
+// is the domain's discovered hostnames (CT/registry/axfr), unioned into the plan alongside cfg's
+// static hostname list.
+func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, del Delegation, cfg records.Config, now time.Time, extra []model.HostLabel) model.DomainResult {
 	res := model.DomainResult{
 		ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
 		Nameservers: del.NS, NSIPs: del.NSIPs,
@@ -40,7 +42,7 @@ func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, de
 	// domain complete as its own queries drain, so throughput is steady instead of stalled. Results
 	// are assembled after the barrier, so no shared state is mutated concurrently.
 	servers := del.NSIPs
-	plan := records.Plan(domain, cfg)
+	plan := records.Plan(domain, cfg, extra)
 	type qResult struct {
 		q    records.Query
 		resp *dns.Msg
@@ -97,7 +99,7 @@ func collect(q records.Query, resp *dns.Msg, rcode string) []model.DNSRecord {
 	name := strings.TrimSuffix(q.Name, ".")
 	var out []model.DNSRecord
 	for _, rr := range resp.Answer {
-		rec := model.DNSRecord{Name: name, Slot: q.Slot, Rcode: rcode, TTL: rr.Header().Ttl, Source: "query", Discovery: "static"}
+		rec := model.DNSRecord{Name: name, Slot: q.Slot, Rcode: rcode, TTL: rr.Header().Ttl, Source: "query", Discovery: q.Discovery}
 		switch v := rr.(type) {
 		case *dns.A:
 			rec.RecordType, rec.Value = "A", v.A.String()

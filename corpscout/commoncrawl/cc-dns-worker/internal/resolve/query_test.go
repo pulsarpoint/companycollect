@@ -31,7 +31,7 @@ func TestResolveProducesRecords(t *testing.T) {
 	r := &Resolver{Ex: stubEx{z: z}}
 	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
 
-	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del, records.DefaultConfig(), time.Unix(0, 0).UTC())
+	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del, records.DefaultConfig(), time.Unix(0, 0).UTC(), nil)
 
 	if res.RootDomain != "example.com" || res.ScanID != "2026-07-05" || res.Status != "done" {
 		t.Fatalf("identity/status wrong: %+v", res)
@@ -83,7 +83,7 @@ func TestCollectCapturesCNAME(t *testing.T) {
 	r := &Resolver{Ex: stubEx{z: z}}
 	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
 
-	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del, records.DefaultConfig(), time.Unix(0, 0).UTC())
+	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del, records.DefaultConfig(), time.Unix(0, 0).UTC(), nil)
 
 	found := false
 	for _, rec := range res.Records {
@@ -105,7 +105,7 @@ func TestCollectCapturesSRVAndHTTPS(t *testing.T) {
 	}
 	r := &Resolver{Ex: stubEx{z: z}}
 	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}}
-	res := r.Resolve(context.Background(), "example.com", "sc", "run", del, records.DefaultConfig(), time.Unix(0, 0).UTC())
+	res := r.Resolve(context.Background(), "example.com", "sc", "run", del, records.DefaultConfig(), time.Unix(0, 0).UTC(), nil)
 
 	var srv, https bool
 	for _, rec := range res.Records {

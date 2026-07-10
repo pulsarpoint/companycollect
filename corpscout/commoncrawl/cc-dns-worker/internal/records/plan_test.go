@@ -3,11 +3,13 @@ package records
 import (
 	"testing"
 
+	"cc-dns-worker/internal/model"
+
 	"github.com/miekg/dns"
 )
 
 func TestPlanCoversAllRecordFamilies(t *testing.T) {
-	qs := Plan("example.com", DefaultConfig())
+	qs := Plan("example.com", DefaultConfig(), nil)
 	got := map[string]bool{}
 	for _, q := range qs {
 		got[q.Name+"/"+dns.TypeToString[q.Type]] = true
@@ -35,7 +37,7 @@ func TestPlanCoversAllRecordFamilies(t *testing.T) {
 }
 
 func TestPlanApexSlotIsAt(t *testing.T) {
-	for _, q := range Plan("example.com", DefaultConfig()) {
+	for _, q := range Plan("example.com", DefaultConfig(), nil) {
 		if q.Name == "example.com." && q.Type == dns.TypeA && q.Slot != "@" {
 			t.Errorf("apex A slot = %q, want @", q.Slot)
 		}
@@ -44,7 +46,7 @@ func TestPlanApexSlotIsAt(t *testing.T) {
 
 func TestPlanSlots(t *testing.T) {
 	cfg := DefaultConfig()
-	qs := Plan("example.com", cfg)
+	qs := Plan("example.com", cfg, nil)
 
 	// Build lookup from "name/type" to slot for quick verification
 	lookup := make(map[string]string)
@@ -122,5 +124,35 @@ func TestPlanSlots(t *testing.T) {
 		if got := lookup[q]; got != s {
 			t.Errorf("%s slot = %q, want %q", q, got, s)
 		}
+	}
+}
+
+func TestPlanUnionsExtraHosts(t *testing.T) {
+	cfg := DefaultConfig()
+	extra := []model.HostLabel{
+		{Label: "jenkins", DiscoverySource: "axfr"},
+		{Label: "www", DiscoverySource: "ct"}, // dup of a static hostname — must NOT double-query
+	}
+	qs := Plan("example.com", cfg, extra)
+	var jenkinsA, wwwStatic int
+	for _, q := range qs {
+		if q.Name == "jenkins.example.com." && q.Type == dns.TypeA {
+			jenkinsA++
+			if q.Discovery != "axfr" {
+				t.Errorf("jenkins A discovery = %q, want axfr", q.Discovery)
+			}
+		}
+		if q.Name == "www.example.com." && q.Type == dns.TypeA {
+			wwwStatic++
+			if q.Discovery != "static" {
+				t.Errorf("www A discovery = %q, want static (static wins the overlap)", q.Discovery)
+			}
+		}
+	}
+	if jenkinsA != 1 {
+		t.Errorf("want exactly 1 jenkins A query, got %d", jenkinsA)
+	}
+	if wwwStatic != 1 {
+		t.Errorf("want exactly 1 www A query (deduped), got %d", wwwStatic)
 	}
 }
