@@ -1,0 +1,4 @@
+---
+- name: "cc_dns_worker role (stub — filled in a later task)"
+  ansible.builtin.debug:
+    msg: "cc_dns_worker not yet implemented"

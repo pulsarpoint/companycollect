@@ -1,0 +1,4 @@
+---
+- name: "unbound role (stub — filled in a later task)"
+  ansible.builtin.debug:
+    msg: "unbound not yet implemented"

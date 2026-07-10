@@ -1,0 +1,39 @@
+# --- deploy layout (matches the source host) ---
+deploy_root: /opt/companycollect
+deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-worker"
+service_name: cc-dns-scan
+
+# --- worker run flags (new-version defaults: AXFR + CT/registry enrichment ON) ---
+# --axfr / --host-enrich are the new version's features; drop them to fall back to prod parity.
+cc_dns_run_flags: >-
+  run --dir {{ deploy_dir }}
+  --resolvers 127.0.0.1:53
+  --discovery-qps 3000 --workers 2000 --query-timeout 2s
+  --per-server-qps 30 --per-server-inflight 20 --hyperscaler-qps 500
+  --discovery-inflight 3000 --load-interval 30m
+  --axfr --host-enrich
+worker_limit_nofile: 1048576
+
+# --- unbound tuning (num-threads scales to the target's CPUs) ---
+unbound_num_threads: "{{ ansible_processor_vcpus }}"
+unbound_msg_cache_size: 4g
+unbound_rrset_cache_size: 8g
+unbound_outgoing_range: 4096
+unbound_so_rcvbuf: 8m
+unbound_so_sndbuf: 8m
+unbound_limit_nofile: 131072
+
+# --- OS tuning ---
+nf_conntrack_max: 1048576
+# rmem/wmem raised so unbound's so-rcvbuf/sndbuf (8m) are not clamped (source bug)
+net_core_rmem_max: 16777216
+net_core_wmem_max: 16777216
+sys_nofile: 1048576
+
+# --- ClickHouse connection (non-secret; password from vault) ---
+clickhouse_host: companycollect
+clickhouse_native_port: 9002
+clickhouse_user: default
+clickhouse_database: corpscout
+clickhouse_secure: "false"
+clickhouse_password: "{{ vault_clickhouse_password }}"

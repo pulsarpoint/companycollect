@@ -1,0 +1,4 @@
+---
+- name: "os_tuning role (stub — filled in a later task)"
+  ansible.builtin.debug:
+    msg: "os_tuning not yet implemented"
