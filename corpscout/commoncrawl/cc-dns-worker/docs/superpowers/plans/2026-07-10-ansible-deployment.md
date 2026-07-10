@@ -69,6 +69,8 @@ inventory = inventory.ini
 host_key_checking = False
 retry_files_enabled = False
 stdout_callback = yaml
+# Vault password read from a file (generated in Step 4) so runs are non-interactive.
+vault_password_file = ~/.config/ansible/cc-dns-scan
 [ssh_connection]
 pipelining = True
 ```
@@ -125,17 +127,24 @@ clickhouse_secure: "false"
 clickhouse_password: "{{ vault_clickhouse_password }}"
 ```
 
-- [ ] **Step 4: `group_vars/cc_dns/vault.yml` (encrypted)**
+- [ ] **Step 4: Generate the vault password file, then encrypt the CH secret**
 
-Create it encrypted (the plaintext content is a single var):
+The ansible-vault password is generated **once** and stored (mode `0600`, outside the repo) at
+`~/.config/ansible/cc-dns-scan`; `ansible.cfg`'s `vault_password_file` reads it automatically, so no
+run ever needs `--ask-vault-pass`:
 
 ```bash
+mkdir -p ~/.config/ansible
+openssl rand -base64 48 > ~/.config/ansible/cc-dns-scan   # generate the vault password
+chmod 600 ~/.config/ansible/cc-dns-scan
+
 cd deploy/ansible
 printf 'vault_clickhouse_password: "REPLACE_WITH_REAL_CH_PASSWORD"\n' > group_vars/cc_dns/vault.yml
-ansible-vault encrypt group_vars/cc_dns/vault.yml
+ansible-vault encrypt group_vars/cc_dns/vault.yml         # uses vault_password_file from ansible.cfg
 ```
 
-(Runs use `--ask-vault-pass` or `--vault-password-file`.)
+The encrypted `vault.yml` is safe to commit; the password file lives in `~/.config/ansible/` (never in
+the repo). To rotate: re-`openssl rand` into the file and `ansible-vault rekey group_vars/cc_dns/vault.yml`.
 
 - [ ] **Step 5: `site.yml`**
 
@@ -153,8 +162,8 @@ ansible-vault encrypt group_vars/cc_dns/vault.yml
 
 - [ ] **Step 6: `README.md`**
 
-Document: prereqs (target on Tailscale reaching `companycollect`; CH migrations applied; control machine has Ansible + Go + this repo), how to set the vault password, and the run command:
-`ansible-playbook site.yml --ask-vault-pass` (add `--check --diff` for a dry run).
+Document: prereqs (target on Tailscale reaching `companycollect`; CH migrations applied; control machine has Ansible + Go + this repo), the one-time vault setup (Step 4 — generate `~/.config/ansible/cc-dns-scan`, encrypt the CH password into `vault.yml`), and the run command:
+`ansible-playbook site.yml` (non-interactive — the vault password is read from `~/.config/ansible/cc-dns-scan` via `ansible.cfg`; add `--check --diff` for a dry run).
 
 - [ ] **Step 7: Commit**
 
@@ -258,7 +267,7 @@ Handlers (`roles/os_tuning/handlers/main.yml`):
 
 - [ ] **Step 4: Apply + verify**
 
-Run: `ansible-playbook site.yml --ask-vault-pass --tags os_tuning` (add `--tags` via `tags: os_tuning` on the role in site.yml, or run the whole play). Then verify on the target:
+Run: `ansible-playbook site.yml --tags os_tuning` (add `--tags` via `tags: os_tuning` on the role in site.yml, or run the whole play). Then verify on the target:
 
 ```bash
 ssh root@hetzner01 'sysctl net.core.rmem_max net.netfilter.nf_conntrack_max fs.file-max; iptables -t raw -S | grep NOTRACK; grep -c nofile /etc/security/limits.d/99-cc-dns.conf'
@@ -523,12 +532,12 @@ git commit -m "feat(deploy): cc_dns_worker role — binary, .env, systemd orches
 
 - [ ] **Step 1: Full converge from clean**
 
-Run: `ansible-playbook site.yml --ask-vault-pass`
+Run: `ansible-playbook site.yml`
 Expected: completes with changed tasks; no failures.
 
 - [ ] **Step 2: Idempotency (the acceptance gate)**
 
-Run it again: `ansible-playbook site.yml --ask-vault-pass`
+Run it again: `ansible-playbook site.yml`
 Expected: `changed=0` for every host (a converged host is a no-op; handlers don't fire).
 
 - [ ] **Step 3: End-to-end health**
