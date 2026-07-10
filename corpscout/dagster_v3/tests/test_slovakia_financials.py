@@ -376,4 +376,9 @@ def test_incremental_job_and_schedule():
         k.path[-1]
         for k in repo.get_job("slovakia_financials_incremental_job").asset_layer.executable_asset_keys
     }
-    assert keys == {"slovakia_financials_incremental"}
+    assert keys == {
+        "slovakia_financials_raw_statements_s3",
+        "slovakia_financials_metrics_duckdb",
+        "slovakia_financials_usd_duckdb",
+        "slovakia_financials_metrics_clickhouse",
+    }
