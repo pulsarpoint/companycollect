@@ -11,6 +11,7 @@ import duckdb
 import requests
 from dlt.sources.helpers import requests as dlt_requests
 
+from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.uk_companies_house import tables
 
 LOGGER = logging.getLogger(__name__)
@@ -129,30 +130,20 @@ def _extract_single_csv(zip_path: Path, dest_dir: Path) -> Path:
         return dest_dir / members[0]
 
 
-def load_uk_companies_house_raw(
+def load_uk_companies_house_raw_archive(
     *,
     connection: duckdb.DuckDBPyConnection,
-    download_url: str,
-    session: HttpSession | None = None,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    archive_path: str | Path,
     log: Callable[..., object] | None = None,
 ) -> int:
-    """Download the basic company data zip and load the CSV into a DuckDB raw table.
+    """Load a stored basic-company-data ZIP into the DuckDB raw table.
 
     normalize_names=true tidies the leading-space/dotted headers
     (` CompanyNumber`, `RegAddress.PostTown`, `SICCode.SicText_1`).
     """
     with tempfile.TemporaryDirectory(prefix="uk_companies_house_") as tmpdir:
         tmp = Path(tmpdir)
-        zip_path = tmp / "basic_company_data.zip"
-        _download_to_path(
-            url=download_url,
-            dest=zip_path,
-            timeout_seconds=timeout_seconds,
-            session=session,
-            log=log if callable(log) else None,
-        )
-        csv_path = _extract_single_csv(zip_path, tmp)
+        csv_path = _extract_single_csv(Path(archive_path), tmp)
         connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
         connection.execute(
             f"create or replace table {DLT_DATASET_NAME}.{COMPANIES_RAW_TABLE} as "
@@ -172,6 +163,41 @@ def load_uk_companies_house_raw(
     if log is not None:
         log("Loaded UK Companies House raw: rows=%s", count)
     return count
+
+
+def load_uk_companies_house_raw_from_object_store(
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    object_store: ObjectStoreResource,
+    log: Callable[..., object] | None = None,
+) -> dict[str, int | str]:
+    """Load the latest persisted register archive from object storage into DuckDB."""
+    from dagster_v3.defs.uk_companies_house import raw_archives
+
+    archive = raw_archives.latest_stored_archive(
+        object_store,
+        kind=raw_archives.REGISTER_KIND,
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="uk_companies_house_register_raw_"
+    ) as tmpdir:
+        archive_path = Path(tmpdir) / archive.filename
+        object_store.download_file(
+            archive.object_key,
+            archive_path,
+            bucket=raw_archives.UK_COMPANIES_HOUSE_RAW_BUCKET,
+        )
+        rows = load_uk_companies_house_raw_archive(
+            connection=connection,
+            archive_path=archive_path,
+            log=log,
+        )
+    return {
+        "rows": rows,
+        "source_url": archive.source_url,
+        "source_object_key": archive.object_key,
+        "source_sha256": archive.sha256,
+    }
 
 
 def _sql_literal(value: str) -> str:

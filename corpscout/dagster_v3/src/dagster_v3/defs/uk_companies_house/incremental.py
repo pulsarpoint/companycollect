@@ -9,7 +9,6 @@ date; each run appends the archives published since then (bounded per run). Cove
 builds over time. A separate backfill can seed the prior 12 months later.
 """
 
-import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -17,33 +16,12 @@ from typing import Any
 
 import duckdb
 
-from dagster_v3.defs.uk_companies_house import financials, resources, tables
+from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.uk_companies_house import financials, raw_archives, tables
 
 CURSOR_TABLE = f"{tables.DLT_DATASET_NAME}.ingest_cursor"
 CURSOR_NAME = "accounts_archive"
 ARCHIVE_SOURCE_SLUG = "uk_companies_house_accounts_archive"
-_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
-
-
-def list_accounts_archives(
-    *,
-    session: resources.HttpSession | None = None,
-    index_url: str = tables.ACCOUNTS_INDEX_URL,
-    base_url: str = tables.DOWNLOAD_BASE_URL,
-    timeout_seconds: int = 60,
-) -> list[tuple[str, str]]:
-    """All published daily archives as sorted (date, url) pairs (oldest first)."""
-    from dlt.sources.helpers import requests as dlt_requests
-
-    http_session = session or dlt_requests.Session()
-    response = http_session.get(index_url, timeout=timeout_seconds)
-    response.raise_for_status()
-    pairs: dict[str, str] = {}
-    for name in re.findall(tables.ACCOUNTS_FILENAME_RE, response.text):
-        match = _DATE_RE.search(name)
-        if match:
-            pairs[match.group(1)] = base_url + name
-    return sorted(pairs.items())
 
 
 def _ensure_cursor_table(connection: duckdb.DuckDBPyConnection) -> None:
@@ -89,10 +67,9 @@ def select_new_archives(
 def build_incremental_metrics(
     *,
     connection: duckdb.DuckDBPyConnection,
+    object_store: ObjectStoreResource,
     source_run_id: str,
-    session: resources.HttpSession | None = None,
     max_archives: int = 10,
-    timeout_seconds: int = resources.DEFAULT_TIMEOUT_SECONDS,
     log: Callable[..., object] | None = None,
 ) -> dict[str, Any]:
     """Parse the new archives since the cursor into the native-GBP metrics table.
@@ -100,27 +77,37 @@ def build_incremental_metrics(
     Does NOT advance the cursor — the asset advances it only after a successful
     ClickHouse append, so a failure re-processes the same archives next run.
     """
-    archives = list_accounts_archives(session=session)
+    stored_archives = raw_archives.preferred_stored_archives(
+        object_store,
+        kind=raw_archives.ACCOUNTS_KIND,
+    )
+    archives = [
+        (archive.published_date, archive.object_key) for archive in stored_archives
+    ]
+    archives_by_key = {archive.object_key: archive for archive in stored_archives}
     cursor = read_cursor(connection)
     selected = select_new_archives(archives, cursor, max_archives)
 
     rows: list[tuple[Any, ...]] = []
     parsed = 0
-    for archive_date, url in selected:
+    for archive_date, object_key in selected:
+        archive = archives_by_key[object_key]
         with tempfile.TemporaryDirectory(prefix="uk_accounts_inc_") as tmpdir:
-            archive_path = Path(tmpdir) / "accounts.zip"
-            resources._download_to_path(
-                url=url,
-                dest=archive_path,
-                timeout_seconds=timeout_seconds,
-                session=session,
-                log=log if callable(log) else None,
+            archive_path = Path(tmpdir) / archive.filename
+            object_store.download_file(
+                object_key,
+                archive_path,
+                bucket=raw_archives.UK_COMPANIES_HOUSE_RAW_BUCKET,
             )
             archive_rows, archive_parsed = financials.parse_archive_rows(archive_path)
         rows.extend(archive_rows)
         parsed += archive_parsed
         if log is not None:
-            log("Parsed UK accounts archive %s: filings=%s", archive_date, archive_parsed)
+            log(
+                "Parsed UK accounts archive %s: filings=%s",
+                archive_date,
+                archive_parsed,
+            )
 
     counts = financials.write_metrics_table(
         connection=connection,
@@ -132,6 +119,7 @@ def build_incremental_metrics(
     counts.update(
         {
             "processed_archives": [d for d, _ in selected],
+            "source_object_keys": [key for _, key in selected],
             "filings_parsed": parsed,
             "cursor_before": cursor or "",
         }

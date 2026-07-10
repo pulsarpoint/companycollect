@@ -15,8 +15,18 @@ mirroring `france_sirene`.
 - Single cumulative monthly snapshot → non-partitioned full refresh. One DuckDB file
   (`uk_companies_house_source.duckdb`, stem ≠ dataset `uk_companies_house`), pool
   `uk_companies_house_duckdb` on every writer.
+- The raw ZIP is a durable asset in RustFS/S3, not a temporary implementation detail:
+  `uk_companies_house_register_archive_s3` → `uk_companies_house_raw_duckdb`.
+- Register objects live in bucket `source-uk-companies-house` under immutable,
+  content-addressed keys:
+  `raw/register/published_date=YYYY-MM-01/sha256=<digest>/<source-filename>.zip`.
+  Each object has an immutable sibling `metadata.json` with source URL, publish date,
+  size, SHA-256, object key, and sync timestamp. There is no mutable `latest` pointer.
 
 ## 3. Loading
+- The S3 asset resolves and downloads the live Companies House URL with whole-stream retry,
+  then uploads the verified ZIP. The DuckDB asset performs no Companies House HTTP request;
+  it selects the latest stored register archive and downloads a temporary local copy from S3.
 - **DuckDB-native `read_csv` with `normalize_names=true`** — the header has leading spaces +
   dots (` CompanyNumber`, `RegAddress.PostTown`, `SICCode.SicText_1`); normalize_names yields clean
   `companynumber`, `regaddressposttown`, `siccodesictext_1`. Multithreaded, never row-by-row.
@@ -50,8 +60,9 @@ mirroring `france_sirene`.
 ## 7. Currency — N/A (no monetary values in basic data).
 
 ## 8. Scheduling
-- `uk_companies_house_register_job` (companies + industries) from the ONE monthly download (raw →
-  both via `.upstream()`) → **monthly**, staggered cron; default STOPPED.
+- `uk_companies_house_register_job` materializes the complete register chain
+  (`register_archive_s3` → raw DuckDB → companies/industries → ClickHouse) via `.upstream()` →
+  **monthly**, staggered cron; default STOPPED.
 
 ## 9. Financials — XBRL accounts (Phase 1: latest archive)
 - Source: Companies House **Accounts Data Product** — daily iXBRL archives
@@ -63,11 +74,19 @@ mirroring `france_sirene`.
 - **Coverage caveat**: balance-sheet items (net assets, fixed/current assets, cash) are broadly
   tagged even by micro-entities; **turnover/profit only by companies that file a P&L** (medium+),
   so those are frequently NULL. **PDF-only filings carry no XBRL** → no metrics.
-- **Three write paths, all → `gb_financial_metrics` (ReplacingMergeTree, no truncate — append +
+- Daily accounts archives use their own independent raw boundary:
+  `uk_companies_house_accounts_archives_s3` → accounts consumers. They never depend on the
+  monthly register DuckDB asset. Objects use
+  `raw/accounts/published_date=YYYY-MM-DD/sha256=<digest>/<source-filename>.zip` in the same
+  source bucket, with the same immutable metadata contract.
+- **Four write paths, all → `gb_financial_metrics` (ReplacingMergeTree, no truncate — append +
   dedup by company):**
-  1. **Latest archive** (`uk_companies_house_financials_job`) — ingest the newest archive (proof / manual).
+  1. **Latest archive** (`uk_companies_house_financials_job`) — parse the newest archive already
+     persisted by `uk_companies_house_accounts_archives_s3` (proof / manual).
   2. **Forward-only incremental** (`uk_companies_house_accounts_incremental`, daily) — a cursor (in the
-     source DuckDB) tracks the last processed archive; each run appends the archives published since.
+     source DuckDB) tracks the last successfully exported archive; each run parses stored S3 archives
+     published since the cursor and appends them. The cursor advances only after ClickHouse succeeds,
+     so a failed run reuses the same stored ZIPs on retry.
      Companies file annually, so over ~12 months this converges on the **latest annual report for every
      iXBRL filer** — free bulk, no API limits. `max_archives` bounds per-run runtime.
   3. **On-demand API** (`uk_companies_house_api_financial_metrics`, config `company_numbers`) — fetch a
@@ -84,6 +103,16 @@ mirroring `france_sirene`.
 ## 10. Deferred
 - **12-month backfill** to seed prior filings immediately (the incremental otherwise accrues forward).
 - **Contacts** — not in open data. **Officers/PSC** — separate datasets.
+- **Raw retention policy** — no raw register or accounts ZIP is deleted in the initial rollout.
+  Add a separate downstream retention asset only after replay requirements and storage costs are measured.
+
+## 10b. Replay / recovery
+- If the local source DuckDB is lost, rematerialize the relevant DuckDB asset and its downstream
+  chain from the persisted S3 archive; no source redownload is required.
+- To retry accounts processing after a failed ClickHouse append, rerun the incremental job. Because
+  the cursor was not advanced, it selects the same stored archive dates.
+- The register and accounts streams intentionally share the source DuckDB resource and concurrency
+  pool but have no data-lineage dependency on each other.
 
 ## 11. Verification
 - `uv run pytest tests/test_uk_companies_house.py tests/test_clickhouse_migrations.py -q` +

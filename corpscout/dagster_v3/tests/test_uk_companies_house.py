@@ -293,6 +293,17 @@ def test_incremental_schedule_registered():
     sch = repo.get_schedule_def("uk_companies_house_accounts_incremental_schedule")
     assert sch.cron_schedule == "0 9 * * *"
     assert sch.job.name == "uk_companies_house_accounts_incremental_job"
+    keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "uk_companies_house_accounts_incremental_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert keys == {
+        "uk_companies_house_accounts_archives_s3",
+        "uk_companies_house_accounts_incremental",
+    }
+    assert "uk_companies_house_raw_duckdb" not in keys
 
 
 def test_pdf_extract_parsing_and_scale():
@@ -360,6 +371,7 @@ def test_register_job_and_schedule():
         for k in repo.get_job("uk_companies_house_register_job").asset_layer.executable_asset_keys
     }
     assert keys == {
+        "uk_companies_house_register_archive_s3",
         "uk_companies_house_raw_duckdb",
         "uk_companies_house_companies_duckdb",
         "uk_companies_house_clickhouse_companies",

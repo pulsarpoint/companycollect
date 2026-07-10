@@ -6,7 +6,8 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
-from dagster_v3.defs.uk_companies_house import resources, tables
+from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.uk_companies_house import raw_archives, resources, tables
 from dagster_v3.defs.uk_companies_house.clickhouse import (
     export_uk_companies_house_clickhouse_companies,
     export_uk_companies_house_clickhouse_financial_metrics,
@@ -35,38 +36,58 @@ UK_DUCKDB_POOL = "uk_companies_house_duckdb"
 UK_DUCKDB_PATH = Path("data/uk_companies_house_source.duckdb")
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 RAW_ASSET_KEY = "uk_companies_house_raw_duckdb"
+REGISTER_ARCHIVE_ASSET_KEY = "uk_companies_house_register_archive_s3"
+ACCOUNTS_ARCHIVES_ASSET_KEY = "uk_companies_house_accounts_archives_s3"
+
+
+class CompaniesHouseAccountsConfig(dg.Config):
+    max_archives: int = 10
+
+
+@dg.asset(
+    name=REGISTER_ARCHIVE_ASSET_KEY,
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "zip"},
+    description=(
+        "UK Companies House monthly BasicCompanyData ZIP persisted immutably "
+        "in RustFS/S3 before DuckDB processing."
+    ),
+)
+def uk_companies_house_register_archive_s3(
+    context: AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    result = raw_archives.sync_register_archive(
+        object_store=object_store,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=result.metadata())
 
 
 @dg.asset(
     name=RAW_ASSET_KEY,
+    deps=[dg.AssetKey(REGISTER_ARCHIVE_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     pool=UK_DUCKDB_POOL,
     description=(
-        "UK Companies House BasicCompanyData loaded raw into DuckDB via the "
-        "multithreaded read_csv (URL resolved live from the download index)."
+        "UK Companies House BasicCompanyData loaded from RustFS/S3 into DuckDB "
+        "via the multithreaded read_csv."
     ),
 )
 def uk_companies_house_raw_duckdb(
     context: AssetExecutionContext,
+    object_store: ObjectStoreResource,
     uk_companies_house_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    download_url = resources.resolve_basic_company_data_url()
-    context.log.info(
-        "Loading UK Companies House: url=%s, duckdb_path=%s, table=%s.%s",
-        download_url,
-        UK_DUCKDB_PATH,
-        DLT_DATASET_NAME,
-        tables.COMPANIES_RAW_TABLE,
-    )
     UK_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with uk_companies_house_duckdb.get_connection() as connection:
-        rows = resources.load_uk_companies_house_raw(
+        result = resources.load_uk_companies_house_raw_from_object_store(
             connection=connection,
-            download_url=download_url,
+            object_store=object_store,
             log=context.log.info,
         )
-    return dg.MaterializeResult(metadata={"rows": rows, "source_url": download_url})
+    return dg.MaterializeResult(metadata=result)
 
 
 @dg.asset(
@@ -79,14 +100,18 @@ def uk_companies_house_raw_duckdb(
 )
 def uk_companies_house_companies_duckdb(
     context: AssetExecutionContext,
+    object_store: ObjectStoreResource,
     uk_companies_house_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    source_url = resources.resolve_basic_company_data_url()
+    archive = raw_archives.latest_stored_archive(
+        object_store,
+        kind=raw_archives.REGISTER_KIND,
+    )
     with uk_companies_house_duckdb.get_connection() as connection:
         counts = resources.build_uk_companies_house_companies(
             connection=connection,
             source_run_id=context.run_id,
-            source_url=source_url,
+            source_url=archive.source_url,
             log=context.log.info,
         )
     return dg.MaterializeResult(metadata=counts)
@@ -172,7 +197,30 @@ def uk_companies_house_clickhouse_industries(
 # iXBRL archives). Phase 1 ingests the latest archive (full-refresh); broader
 # coverage accumulates by ingesting more archives (incremental = future).
 @dg.asset(
+    name=ACCOUNTS_ARCHIVES_ASSET_KEY,
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "zip"},
+    description=(
+        "UK Companies House daily Accounts Data Product ZIPs persisted immutably "
+        "in RustFS/S3 before parsing."
+    ),
+)
+def uk_companies_house_accounts_archives_s3(
+    context: AssetExecutionContext,
+    config: CompaniesHouseAccountsConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    result = raw_archives.sync_accounts_archives(
+        object_store=object_store,
+        max_archives=config.max_archives,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=result.metadata())
+
+
+@dg.asset(
     name="uk_companies_house_financial_metrics_duckdb",
+    deps=[dg.AssetKey(ACCOUNTS_ARCHIVES_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     pool=UK_DUCKDB_POOL,
@@ -183,12 +231,14 @@ def uk_companies_house_clickhouse_industries(
 )
 def uk_companies_house_financial_metrics_duckdb(
     context: AssetExecutionContext,
+    object_store: ObjectStoreResource,
     uk_companies_house_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     UK_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with uk_companies_house_duckdb.get_connection() as connection:
         counts = build_uk_companies_house_financials(
             connection=connection,
+            object_store=object_store,
             source_run_id=context.run_id,
             log=context.log.info,
         )
@@ -330,13 +380,9 @@ def uk_companies_house_pdf_financial_metrics(
 
 
 # --- Forward-only incremental: latest annual report for all filers -----------
-class CompaniesHouseIncrementalConfig(dg.Config):
-    # Max archives to process per run (bounds runtime; catch-up over many runs).
-    max_archives: int = 10
-
-
 @dg.asset(
     name="uk_companies_house_accounts_incremental",
+    deps=[dg.AssetKey(ACCOUNTS_ARCHIVES_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=UK_DUCKDB_POOL,
@@ -349,7 +395,8 @@ class CompaniesHouseIncrementalConfig(dg.Config):
 )
 def uk_companies_house_accounts_incremental(
     context: AssetExecutionContext,
-    config: CompaniesHouseIncrementalConfig,
+    config: CompaniesHouseAccountsConfig,
+    object_store: ObjectStoreResource,
     uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
@@ -359,6 +406,7 @@ def uk_companies_house_accounts_incremental(
     with uk_companies_house_duckdb.get_connection() as connection:
         counts = build_incremental_metrics(
             connection=connection,
+            object_store=object_store,
             source_run_id=context.run_id,
             max_archives=config.max_archives,
             log=context.log.info,
@@ -482,7 +530,9 @@ uk_companies_house_pdf_financials_job = dg.define_asset_job(
 # Forward-only incremental: the daily archives publish daily → daily schedule.
 uk_companies_house_accounts_incremental_job = dg.define_asset_job(
     "uk_companies_house_accounts_incremental_job",
-    selection=dg.AssetSelection.assets("uk_companies_house_accounts_incremental"),
+    selection=dg.AssetSelection.assets(
+        "uk_companies_house_accounts_incremental"
+    ).upstream(),
 )
 uk_companies_house_accounts_incremental_schedule = dg.ScheduleDefinition(
     name="uk_companies_house_accounts_incremental_schedule",
@@ -499,11 +549,13 @@ uk_companies_house_full_refresh_job = dg.define_asset_job(
 
 defs = dg.Definitions(
     assets=[
+        uk_companies_house_register_archive_s3,
         uk_companies_house_raw_duckdb,
         uk_companies_house_companies_duckdb,
         uk_companies_house_clickhouse_companies,
         uk_companies_house_industries_duckdb,
         uk_companies_house_clickhouse_industries,
+        uk_companies_house_accounts_archives_s3,
         uk_companies_house_financial_metrics_duckdb,
         uk_companies_house_financial_metrics_usd_duckdb,
         uk_companies_house_clickhouse_financial_metrics,

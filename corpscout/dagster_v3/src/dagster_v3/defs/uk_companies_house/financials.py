@@ -7,7 +7,8 @@ from typing import Any, Protocol
 
 import duckdb
 
-from dagster_v3.defs.uk_companies_house import resources, tables
+from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.uk_companies_house import raw_archives, resources, tables
 from dagster_v3.defs.xbrl_common.parser import parse_ixbrl
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
@@ -191,28 +192,27 @@ def write_metrics_table(*, connection: duckdb.DuckDBPyConnection,
 def build_uk_companies_house_financials(
     *,
     connection: duckdb.DuckDBPyConnection,
+    object_store: ObjectStoreResource,
     source_run_id: str,
-    download_url: str | None = None,
-    session: resources.HttpSession | None = None,
-    timeout_seconds: int = resources.DEFAULT_TIMEOUT_SECONDS,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Download the latest accounts archive and build native-GBP metrics."""
-    url = download_url or resolve_latest_accounts_archive_url(session=session)
+    """Build native-GBP metrics from the latest accounts archive in object storage."""
+    archive = raw_archives.latest_stored_archive(
+        object_store,
+        kind=raw_archives.ACCOUNTS_KIND,
+    )
     with tempfile.TemporaryDirectory(prefix="uk_accounts_") as tmpdir:
-        archive_path = Path(tmpdir) / "accounts.zip"
-        resources._download_to_path(
-            url=url,
-            dest=archive_path,
-            timeout_seconds=timeout_seconds,
-            session=session,
-            log=log if callable(log) else None,
+        archive_path = Path(tmpdir) / archive.filename
+        object_store.download_file(
+            archive.object_key,
+            archive_path,
+            bucket=raw_archives.UK_COMPANIES_HOUSE_RAW_BUCKET,
         )
         return build_uk_financials_from_archive(
             connection=connection,
             archive_path=archive_path,
             source_run_id=source_run_id,
-            source_url=url,
+            source_url=archive.source_url,
             log=log,
         )
 
