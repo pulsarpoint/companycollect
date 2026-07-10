@@ -46,6 +46,7 @@ class FakeRuzClient:
             7001: {"id": 7001, "idSablony": 699, "pristupnostDat": "Verejné", "obsah": POD_OBSAH}
         }
         self.templates = {699: POD_TEMPLATE}
+        self.template_calls = 0
 
     def statement_ids(self, *, changed_since, after_id, max_records):
         ids = [i for i in sorted(self.statements) if i > after_id][:max_records]
@@ -54,7 +55,10 @@ class FakeRuzClient:
     def statement(self, sid): return self.statements[sid]
     def entity(self, eid): return self.entities[eid]
     def report(self, rid): return self.reports[rid]
-    def template(self, tid): return self.templates[tid]
+
+    def template(self, tid):
+        self.template_calls += 1
+        return self.templates[tid]
 
 
 class FakeRates:
@@ -235,6 +239,60 @@ def test_template_store_roundtrip():
     raw_store.write_template(store, 699, {"nazov": "Úč POD"})
     assert raw_store.template_exists(store, 699) is True
     assert raw_store.read_template(store, 699) == {"nazov": "Úč POD"}
+
+
+def test_sweep_statements_to_s3_stores_raw_batch_and_templates():
+    from dagster_v3.defs.slovakia_financials import download
+
+    store = FakeObjectStore()
+    client = FakeRuzClient()
+    counts = download.sweep_statements_to_s3(
+        object_store=store, source_run_id="r1", after_id=5000,
+        max_statements=10, client=client, request_delay_seconds=0,
+    )
+    assert counts["fetched_ids"] == 2 and counts["stored_statements"] == 2
+    assert counts["fetch_failed"] == 0 and counts["last_id"] == 5002
+    assert counts["batch_key"] == raw_store.statement_batch_key(5000, 5002)
+
+    bundles = raw_store.read_statement_batch(store, counts["batch_key"])
+    assert [b["statement_id"] for b in bundles] == [5001, 5002]
+    assert bundles[0]["entity"]["ico"] == "36355232"
+    assert bundles[0]["reports"][0]["obsah"] == POD_OBSAH
+    assert bundles[1]["statement"]["stav"] == "ZMAZANÉ"  # deleted stored raw, decoded later
+
+    assert raw_store.read_template(store, 699) == POD_TEMPLATE
+    assert counts["templates_stored"] == 1
+    manifest = json.loads(
+        store.read_bytes(
+            raw_store.manifest_key_for(counts["batch_key"]), bucket=raw_store.RAW_BUCKET
+        )
+    )
+    assert manifest["source_run_id"] == "r1" and manifest["statement_count"] == 2
+
+
+def test_sweep_statements_to_s3_skips_existing_templates():
+    from dagster_v3.defs.slovakia_financials import download
+
+    store = FakeObjectStore()
+    raw_store.write_template(store, 699, POD_TEMPLATE)
+    client = FakeRuzClient()
+    counts = download.sweep_statements_to_s3(
+        object_store=store, source_run_id="r1", after_id=5000,
+        max_statements=10, client=client, request_delay_seconds=0,
+    )
+    assert client.template_calls == 0 and counts["templates_stored"] == 0
+
+
+def test_sweep_statements_to_s3_empty_sweep_writes_nothing():
+    from dagster_v3.defs.slovakia_financials import download
+
+    store = FakeObjectStore()
+    counts = download.sweep_statements_to_s3(
+        object_store=store, source_run_id="r1", after_id=6000,
+        max_statements=10, client=FakeRuzClient(), request_delay_seconds=0,
+    )
+    assert counts["batch_key"] is None and counts["last_id"] == 6000
+    assert store.objects == {}
 
 
 def _pod_bundle() -> dict:
