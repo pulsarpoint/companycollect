@@ -7,18 +7,34 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cc-dns-worker/internal/load"
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/resolve"
 	"cc-dns-worker/internal/scheduler"
 	"cc-dns-worker/internal/store"
 )
 
+// axfrCollector accumulates AXFR state-change rows from the worker pool (opens + closes only), flushed
+// to ClickHouse's dns_axfr_observations log once the phase finishes.
+type axfrCollector struct {
+	mu      sync.Mutex
+	changes []model.AXFRObservation
+}
+
+func (c *axfrCollector) add(o model.AXFRObservation) {
+	c.mu.Lock()
+	c.changes = append(c.changes, o)
+	c.mu.Unlock()
+}
+
 // runAXFRPipeline runs the standalone AXFR phase: a bounded worker pool that walks the resolved-domain
 // cursor (AXFRTargetsAfter — reusing the ns_ips resolution already stored, so no NS re-discovery) and,
-// for each domain, probes every NON-hyperscaler NS IP. It records a per-NS row in dns_axfr and appends
-// any open zone's transferred records to scan_records (source='axfr'). This lives entirely off the
-// resolution path — its own pool, run as a phase after scanning — so it can never throttle resolving.
-// Resumable via axfr_state; idempotent (dns_axfr upsert; records appended after the domain committed).
+// for each domain, probes every NON-hyperscaler NS IP. It loads the last known open/closed state per
+// (domain, ns) from ClickHouse at the start, and emits a dns_axfr_observations row ONLY when the
+// probed state differs from that (implicit-closed base: absent == closed) — so always-closed
+// nameservers never produce a row and the log is already the collapsed open->close->open timeline.
+// Open zones' records still flow to scan_records (source='axfr'). Entirely off the resolution path —
+// its own pool, run as a phase after scanning. Resumable via axfr_state.
 func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	done, err := st.AXFRComplete(ctx, cfg.scanID)
 	if err != nil {
@@ -44,17 +60,31 @@ func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error
 	prober := resolve.NewAXFRProber(axfrSched, resolve.AXFRCaps{
 		MaxRecords: cfg.axfrMaxRecords, MaxBytes: cfg.axfrMaxBytes, Deadline: cfg.axfrTimeout,
 	}, cfg.axfrInflight)
-	log.Printf("scan_id=%s: AXFR phase START (workers=%d qps=%.1f inflight=%d timeout=%s)",
-		cfg.scanID, workers, cfg.axfrQPS, cfg.axfrInflight, cfg.axfrTimeout)
 
+	// CH connection: load the previous per-NS state, then write the changes at the end.
+	conn, err := chConn()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	prev, err := load.LoadAXFRPrev(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if err := st.ReplaceAXFRPrev(ctx, prev); err != nil { // mirror to SQLite for durability/inspection
+		return err
+	}
+	log.Printf("scan_id=%s: AXFR phase START (workers=%d inflight=%d timeout=%s, %d known open-state NS)",
+		cfg.scanID, workers, cfg.axfrInflight, cfg.axfrTimeout, len(prev))
+
+	coll := &axfrCollector{}
 	jobs := make(chan store.AXFRTarget, workers*2)
-	// Running counters, read by the stats goroutine (atomics, not a lock, since they're monotonic).
 	var nsProbed, nsOpen, domainsProbed atomic.Int64
 	var pool sync.WaitGroup
 	for range workers {
 		pool.Go(func() {
 			for t := range jobs {
-				probed, opened := processAXFRTarget(ctx, st, prober, cfg, t)
+				probed, opened := processAXFRTarget(ctx, st, prober, cfg, t, prev, coll)
 				nsProbed.Add(int64(probed))
 				nsOpen.Add(int64(opened))
 				domainsProbed.Add(1)
@@ -130,38 +160,48 @@ func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error
 	if feedErr != nil {
 		return feedErr
 	}
+	// Flush the state changes to the ClickHouse observation log.
+	if n, err := load.WriteAXFRObservations(ctx, conn, coll.changes); err != nil {
+		return err
+	} else if n > 0 {
+		log.Printf("scan_id=%s: wrote %d AXFR state changes to %s", cfg.scanID, n, "dns_axfr_observations")
+	}
 	if err := st.MarkAXFRComplete(ctx, cfg.scanID); err != nil {
 		return err
 	}
-	log.Printf("scan_id=%s: AXFR phase complete (%d domains, %d NS probed, %d open zones)",
-		cfg.scanID, domainsProbed.Load(), nsProbed.Load(), nsOpen.Load())
+	log.Printf("scan_id=%s: AXFR phase complete (%d domains, %d NS probed, %d open, %d state changes)",
+		cfg.scanID, domainsProbed.Load(), nsProbed.Load(), nsOpen.Load(), len(coll.changes))
 	return nil
 }
 
-// processAXFRTarget probes each non-hyperscaler NS IP of one domain and records the per-NS outcomes
-// plus any open zone's records. Returns (#NS probed, #NS that opened).
-func processAXFRTarget(ctx context.Context, st *store.Store, prober *resolve.AXFRProber, cfg scanConfig, t store.AXFRTarget) (int, int) {
-	var probes []model.AXFRProbe
+// processAXFRTarget probes each non-hyperscaler NS IP of one domain, emits a state-change row when the
+// probed open/closed value differs from prev (absent == closed), and appends any open zone's records
+// to scan_records. Returns (#NS probed, #NS that opened). prev is read-only (built before the pool).
+func processAXFRTarget(ctx context.Context, st *store.Store, prober *resolve.AXFRProber, cfg scanConfig, t store.AXFRTarget, prev map[[2]string]bool, coll *axfrCollector) (int, int) {
 	var zone []model.DNSRecord
-	opened := 0
+	probed, opened := 0, 0
+	now := time.Now().UTC()
 	for _, ip := range t.NSIPs {
 		if scheduler.IsHyperscaler(ip) {
 			continue // skip this NS — hyperscalers never allow AXFR
 		}
 		res := prober.ProbeServer(ctx, t.RootDomain, ip)
-		probes = append(probes, model.AXFRProbe{Server: ip, Open: res.Open})
+		probed++
 		if res.Open {
 			opened++
 			if zone == nil {
 				zone = res.Zone // capture the transferred zone once per domain
 			}
 		}
+		// Emit only when the state changed vs the last known state (implicit-closed base).
+		if res.Open != prev[[2]string{t.RootDomain, ip}] {
+			coll.add(model.AXFRObservation{RootDomain: t.RootDomain, NameServer: ip, AXFROpen: res.Open, ObservedAt: now})
+		}
 	}
-	if len(probes) == 0 {
-		return 0, 0 // every NS was a hyperscaler — nothing probed
+	if zone != nil {
+		if err := st.RecordAXFRZone(ctx, cfg.scanID, t.RootDomain, zone, cfg.runID, now); err != nil {
+			log.Printf("scan_id=%s: AXFR zone %s: %v", cfg.scanID, t.RootDomain, err)
+		}
 	}
-	if err := st.RecordAXFR(ctx, cfg.scanID, t.RootDomain, probes, zone, cfg.runID, time.Now().UTC()); err != nil {
-		log.Printf("scan_id=%s: AXFR record %s: %v", cfg.scanID, t.RootDomain, err)
-	}
-	return len(probes), opened
+	return probed, opened
 }

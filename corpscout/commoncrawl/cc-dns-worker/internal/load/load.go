@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/store"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -18,7 +19,35 @@ const (
 	recordsTable   = "corpscout.commoncrawl_domain_dns_records"
 	scanTable      = "corpscout.commoncrawl_domain_dns_scan"
 	hostnamesTable = "corpscout.commoncrawl_domain_hostnames"
+	axfrObsTable   = "corpscout.dns_axfr_observations"
 )
+
+// LoadAXFRPrev reads the last known AXFR state per (root_domain, name_server) from the observation
+// log — argMax over observed_at — so the AXFR phase knows the previous state and can emit only
+// changes. Only ever-observed (ever-open) nameservers are present, so the result stays small.
+func LoadAXFRPrev(ctx context.Context, conn driver.Conn) (map[[2]string]bool, error) {
+	rows, err := conn.Query(ctx, `SELECT root_domain, name_server, argMax(axfr_open, observed_at) AS last_open
+		FROM `+axfrObsTable+` GROUP BY root_domain, name_server`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	prev := map[[2]string]bool{}
+	for rows.Next() {
+		var rd, ns string
+		var open bool
+		if err := rows.Scan(&rd, &ns, &open); err != nil {
+			return nil, err
+		}
+		prev[[2]string{rd, ns}] = open
+	}
+	return prev, rows.Err()
+}
+
+// WriteAXFRObservations appends AXFR state-change rows to the observation log.
+func WriteAXFRObservations(ctx context.Context, conn driver.Conn, obs []model.AXFRObservation) (int, error) {
+	return insert(ctx, conn, axfrObsTable, obs)
+}
 
 // chColumns returns the ch tag of each field of T in declaration order.
 func chColumns[T any]() []string {

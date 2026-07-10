@@ -17,11 +17,14 @@ type DNSRecord struct {
 	Discovery  string // "static" | "ct" | "axfr" — how the hostname was discovered
 }
 
-// AXFRProbe is the per-nameserver outcome of the standalone AXFR pipeline: was zone transfer open on
-// this NS IP. Stored one row per (root_domain, server) in the dns_axfr table.
-type AXFRProbe struct {
-	Server string // the NS IP probed
-	Open   bool   // true if the NS answered a zone transfer
+// AXFRObservation is one AXFR state-change row for ClickHouse's dns_axfr_observations log: at
+// observed_at the zone transfer on name_server (an NS IP) for root_domain flipped to axfr_open. The
+// AXFR phase emits one only when the state differs from the last known state (implicit-closed base).
+type AXFRObservation struct {
+	RootDomain string    `ch:"root_domain"`
+	NameServer string    `ch:"name_server"`
+	AXFROpen   bool      `ch:"axfr_open"`
+	ObservedAt time.Time `ch:"observed_at"`
 }
 
 // HostLabel is one discovered subdomain label to scan for a domain (from CT, the registry, or a
