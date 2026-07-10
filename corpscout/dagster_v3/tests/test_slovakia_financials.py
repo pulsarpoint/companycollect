@@ -1,10 +1,11 @@
 import datetime as dt
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import duckdb
 
-from dagster_v3.defs.slovakia_financials import incremental, metrics, tables
+from dagster_v3.defs.slovakia_financials import incremental, metrics, raw_store, tables
 
 MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
 METRICS_MIGRATION = (MIG_DIR / "000043_corpscout_sk_financial_metrics.up.sql").read_text()
@@ -170,6 +171,70 @@ def test_metrics_export_columns_match_migration():
         assert f"    {column} " in METRICS_MIGRATION, f"missing {column} in 000043"
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in METRICS_MIGRATION
     assert "ORDER BY (ico, statement_id)" in METRICS_MIGRATION
+
+
+class FakeObjectStore:
+    """In-memory stand-in for ObjectStoreResource (mirrors the Sweden test fake)."""
+
+    def __init__(self) -> None:
+        self.objects: dict[tuple[str, str], bytes] = {}
+
+    def ensure_bucket(self, bucket: str | None = None) -> None:
+        pass
+
+    def write_bytes(self, key: str, body: bytes, bucket: str | None = None) -> None:
+        assert bucket is not None
+        self.objects[(bucket, key)] = body
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        assert bucket is not None
+        return self.objects[(bucket, key)]
+
+    def exists(self, key: str, bucket: str | None = None) -> bool:
+        assert bucket is not None
+        return (bucket, key) in self.objects
+
+    def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        assert bucket is not None
+        return [k for (b, k) in self.objects if b == bucket and k.startswith(prefix)]
+
+
+def test_batch_key_roundtrip():
+    key = raw_store.statement_batch_key(0, 5002)
+    assert key == (
+        "slovakia_financials/raw_statements/batch-000000000000-000000005002/statements.ndjson"
+    )
+    assert raw_store.parse_batch_id_range(key) == (0, 5002)
+    assert raw_store.parse_batch_id_range("slovakia_financials/raw_statements/junk") is None
+    assert raw_store.manifest_key_for(key) == (
+        "slovakia_financials/raw_statements/batch-000000000000-000000005002/manifest.json"
+    )
+
+
+def test_write_and_read_statement_batch():
+    store = FakeObjectStore()
+    bundles = [
+        {"statement_id": 5001, "statement": {"id": 5001}, "entity": {"ico": "1"}, "reports": []},
+        {"statement_id": 5002, "statement": {"stav": "ZMAZANÉ"}, "entity": None, "reports": []},
+    ]
+    key = raw_store.write_statement_batch(
+        store, after_id=5000, last_id=5002, bundles=bundles,
+        manifest={"source_run_id": "r1", "statement_count": 2},
+    )
+    assert raw_store.list_statement_batch_keys(store) == [key]
+    assert raw_store.read_statement_batch(store, key) == bundles
+    manifest = json.loads(
+        store.read_bytes(raw_store.manifest_key_for(key), bucket=raw_store.RAW_BUCKET)
+    )
+    assert manifest["statement_count"] == 2
+
+
+def test_template_store_roundtrip():
+    store = FakeObjectStore()
+    assert raw_store.template_exists(store, 699) is False
+    raw_store.write_template(store, 699, {"nazov": "Úč POD"})
+    assert raw_store.template_exists(store, 699) is True
+    assert raw_store.read_template(store, 699) == {"nazov": "Úč POD"}
 
 
 def test_incremental_job_and_schedule():
