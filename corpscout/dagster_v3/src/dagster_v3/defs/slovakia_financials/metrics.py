@@ -131,9 +131,9 @@ def decode_statement_bundle(
 ) -> dict[str, Any] | None:
     """Decode one raw S3 statement bundle into a flat metrics row.
 
-    Pure counterpart of `process_statement`: same output shape, but reads the
-    already-fetched raw JSON (statement + entity + reports) instead of calling
-    the API. Returns None for deleted statements.
+    Pure: reads the already-fetched raw JSON (statement + entity + reports)
+    and resolves templates via `template_lookup` — no API calls. Returns None
+    for deleted statements.
     """
     statement = bundle.get("statement") or {}
     if statement.get("stav") == "ZMAZANÉ":
