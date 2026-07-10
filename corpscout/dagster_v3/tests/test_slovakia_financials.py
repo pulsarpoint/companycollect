@@ -237,6 +237,43 @@ def test_template_store_roundtrip():
     assert raw_store.read_template(store, 699) == {"nazov": "Úč POD"}
 
 
+def _pod_bundle() -> dict:
+    return {
+        "statement_id": 5001,
+        "statement": {
+            "id": 5001, "idUJ": 9001, "idUctovnychVykazov": [7001],
+            "obdobieOd": "2023-01", "obdobieDo": "2023-12",
+            "datumZostaveniaK": "2023-12-31", "typ": "Riadna",
+            "datumPodania": "2024-03-15", "datumSchvalenia": "2024-04-01",
+        },
+        "entity": {"id": 9001, "ico": "36355232"},
+        "reports": [
+            {"id": 7001, "idSablony": 699, "pristupnostDat": "Verejné", "obsah": POD_OBSAH}
+        ],
+    }
+
+
+def test_decode_statement_bundle_resolves_entity_and_metrics():
+    row = metrics.decode_statement_bundle(_pod_bundle(), lambda tid: {699: POD_TEMPLATE}[tid])
+    assert row["ico"] == "36355232" and row["ruz_entity_id"] == "9001"
+    assert row["template_name"] == "Úč POD" and row["template_mapped"] == 1
+    assert row["fiscal_year"] == 2023 and row["period_end"] == "2023-12-31"
+    assert row["metrics"]["net_result"] == 120.0 and row["mapped_metric_count"] == 6
+
+
+def test_decode_statement_bundle_skips_deleted():
+    bundle = {"statement_id": 5002, "statement": {"stav": "ZMAZANÉ"}, "entity": None, "reports": []}
+    assert metrics.decode_statement_bundle(bundle, lambda tid: {}) is None
+
+
+def test_decode_statement_bundle_ignores_non_public_reports():
+    bundle = _pod_bundle()
+    bundle["reports"][0]["pristupnostDat"] = "Neverejné"
+    row = metrics.decode_statement_bundle(bundle, lambda tid: {699: POD_TEMPLATE}[tid])
+    assert row["template_mapped"] == 0 and row["mapped_metric_count"] == 0
+    assert row["metrics"]["net_result"] is None
+
+
 def test_incremental_job_and_schedule():
     from dagster_v3.definitions import defs as load_defs
 

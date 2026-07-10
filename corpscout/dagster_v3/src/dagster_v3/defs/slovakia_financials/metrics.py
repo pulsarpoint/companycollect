@@ -195,6 +195,65 @@ def process_statement(
     }
 
 
+def decode_statement_bundle(
+    bundle: dict[str, Any],
+    template_lookup: Callable[[int], dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Decode one raw S3 statement bundle into a flat metrics row.
+
+    Pure counterpart of `process_statement`: same output shape, but reads the
+    already-fetched raw JSON (statement + entity + reports) instead of calling
+    the API. Returns None for deleted statements.
+    """
+    statement = bundle.get("statement") or {}
+    if statement.get("stav") == "ZMAZANÉ":
+        return None
+    statement_id = int(bundle["statement_id"])
+    entity = bundle.get("entity") or {}
+    entity_id = statement.get("idUJ")
+    ico = str(entity.get("ico") or "")
+
+    merged: dict[str, float | None] = {metric: None for metric in METRIC_NAMES}
+    template_name = ""
+    mapped = False
+    for report in bundle.get("reports") or []:
+        if report.get("pristupnostDat") != "Verejné":
+            continue
+        obsah = report.get("obsah") or {}
+        if "tabulky" not in obsah:
+            continue
+        template_id = report.get("idSablony")
+        if template_id is None:
+            continue
+        template = template_lookup(int(template_id))
+        extracted, family = extract_report_metrics(obsah, template)
+        if extracted is None:
+            continue
+        mapped = True
+        template_name = str(template.get("nazov") or family or "")
+        for metric, value in extracted.items():
+            if merged[metric] is None and value is not None:
+                merged[metric] = value
+
+    period_start, period_end, fiscal_year = _period_dates(statement)
+    return {
+        "statement_id": statement_id,
+        "ruz_entity_id": str(entity_id) if entity_id is not None else "",
+        "ico": ico,
+        "template_name": template_name,
+        "statement_type": str(statement.get("typ") or ""),
+        "fiscal_year": fiscal_year,
+        "period_start": period_start,
+        "period_end": period_end,
+        "filed_date": statement.get("datumPodania"),
+        "approved_date": statement.get("datumSchvalenia"),
+        "currency": "EUR",
+        "metrics": merged,
+        "mapped_metric_count": sum(1 for v in merged.values() if v is not None),
+        "template_mapped": 1 if mapped else 0,
+    }
+
+
 def build_slovakia_financials(
     *,
     connection: duckdb.DuckDBPyConnection,
