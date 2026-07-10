@@ -28,18 +28,26 @@
     state: present
     update_cache: true
 
-- name: DNS NOTRACK — do not conntrack DNS (both directions)
+- name: DNS NOTRACK — replies (PREROUTING, source port 53)
   ansible.builtin.iptables:
     table: raw
-    chain: "{{ item.chain }}"
-    protocol: "{{ item.proto }}"
-    "{{ item.dir }}_port": "53"
+    chain: PREROUTING
+    protocol: "{{ item }}"
+    source_port: "53"
     jump: NOTRACK
-    comment: "cc-dns NOTRACK"
+    comment: "cc-dns NOTRACK reply {{ item }}"
     state: present
-  loop:
-    - { chain: PREROUTING, proto: udp, dir: source }
-    - { chain: PREROUTING, proto: tcp, dir: source }
-    - { chain: OUTPUT,     proto: udp, dir: destination }
-    - { chain: OUTPUT,     proto: tcp, dir: destination }
+  loop: [udp, tcp]
+  notify: Persist iptables
+
+- name: DNS NOTRACK — queries (OUTPUT, destination port 53)
+  ansible.builtin.iptables:
+    table: raw
+    chain: OUTPUT
+    protocol: "{{ item }}"
+    destination_port: "53"
+    jump: NOTRACK
+    comment: "cc-dns NOTRACK query {{ item }}"
+    state: present
+  loop: [udp, tcp]
   notify: Persist iptables
