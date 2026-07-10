@@ -18,6 +18,54 @@ func TestColumnLists(t *testing.T) {
 	if !strings.Contains(strings.Join(sc, ","), "nameservers") || len(sc) != 11 {
 		t.Errorf("ScanRow columns wrong: %v", sc)
 	}
+	oc := chColumns[model.RecordObservationRow]()
+	if !strings.Contains(strings.Join(oc, ","), "scan_id") || len(oc) != 13 {
+		t.Errorf("RecordObservationRow columns wrong: %v", oc)
+	}
+}
+
+// TestToObservationRowsIdentity proves the observation row's sorting-key identity (root_domain, name,
+// record_type, slot, value, source, discovery, scan_id — see migration 000113) is exactly what makes a
+// retried load safe: two calls to toObservationRows for the SAME staged RecordRow and the SAME scanID
+// produce byte-identical rows except for LoadedAt, which is why ReplacingMergeTree(loaded_at) can
+// collapse them on merge/FINAL regardless of which LoadedAt value "wins" the version — the payload is
+// identical either way. This is a logic-only check; the actual merge/dedup is proven against real
+// ClickHouse in TestObservationRetryDedup (integration_test.go, //go:build integration).
+func TestToObservationRowsIdentity(t *testing.T) {
+	rec := model.RecordRow{
+		RootDomain: "example.test", RecordType: "A", Slot: "@", Name: "example.test", Value: "10.0.0.1",
+		TTL: 300, Priority: 0, Rcode: "NOERROR", Source: "query", Discovery: "static",
+		FirstSeen: time.Unix(100, 0).UTC(), LastSeen: time.Unix(100, 0).UTC(), Scans: 1,
+	}
+
+	first := toObservationRows([]model.RecordRow{rec}, "scan-1", time.Unix(200, 0).UTC())
+	retry := toObservationRows([]model.RecordRow{rec}, "scan-1", time.Unix(300, 0).UTC())
+	if len(first) != 1 || len(retry) != 1 {
+		t.Fatalf("expected 1 row each, got %d and %d", len(first), len(retry))
+	}
+
+	a, b := first[0], retry[0]
+	a.LoadedAt, b.LoadedAt = time.Time{}, time.Time{} // the only field a retry is allowed to differ on
+	if a != b {
+		t.Errorf("retried observation must be identical except LoadedAt: %+v vs %+v", first[0], retry[0])
+	}
+	if first[0].LoadedAt.Equal(retry[0].LoadedAt) {
+		t.Errorf("test setup: retry's LoadedAt should differ from the first call's to exercise the dedup path")
+	}
+	if first[0].ScanID != "scan-1" || first[0].ObservedAt != rec.LastSeen {
+		t.Errorf("identity fields must come from scanID param / RecordRow.LastSeen: %+v", first[0])
+	}
+}
+
+// TestToObservationRowsScanIDNotLastRunID proves ScanID is taken from the scanID PARAMETER, not
+// RecordRow.LastRunID (source_run_id) — they happen to be equal in production today, but the
+// observation's identity must not silently depend on that always being true.
+func TestToObservationRowsScanIDNotLastRunID(t *testing.T) {
+	rec := model.RecordRow{RootDomain: "d.test", RecordType: "A", Name: "d.test", Value: "1.1.1.1", LastRunID: "different-run-id"}
+	rows := toObservationRows([]model.RecordRow{rec}, "the-scan-id", time.Now())
+	if rows[0].ScanID != "the-scan-id" {
+		t.Errorf("ScanID = %q, want the scanID parameter (%q), not LastRunID (%q)", rows[0].ScanID, "the-scan-id", rec.LastRunID)
+	}
 }
 
 // TestBuildAXFRLatestRowsPreservesDefinitiveOnUnknown proves an unknown probe (e.g. a timeout) updates

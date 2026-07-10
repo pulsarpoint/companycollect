@@ -1,5 +1,38 @@
 // Package load bulk-copies the SQLite stage into the two corpscout ClickHouse tables over the
 // native protocol.
+//
+// # Task 7 cutover: legacy aggregate -> retry-safe observations
+//
+// commoncrawl_domain_dns_records (recordsTable) is an AggregatingMergeTree that folds Scans=1-per-row
+// inserts via sum(): a retried load of the SAME scan re-inserts the same rows and double-counts them
+// forever, because the table has no way to tell "this scan again" from "a genuine re-observation".
+// FromStore/Incremental therefore no longer write to it. They write to
+// commoncrawl_domain_dns_record_observations instead (see model.RecordObservationRow): one IMMUTABLE
+// row per (identity, source, discovery, scan_id), deduplicated on retry by ReplacingMergeTree(loaded_at)
+// keyed on that full identity, so replaying the same scan's load is always safe regardless of how many
+// times it is retried. corpscout.commoncrawl_domain_dns_record_summary (populated by a REFRESHABLE
+// materialized view — see migration 000114) recomputes the AggregatingMergeTree-shaped summary from
+// this table's FINAL, deduplicated rows unioned with recordsTable's frozen pre-cutover totals.
+//
+// The cutover from one to the other is NOT a code deploy alone — it is an operational boundary:
+//  1. Pause the writer (stop the orchestrator, or at minimum stop new `load` invocations).
+//  2. Let the currently-active scan cycle finish (or deliberately abandon it) so no in-flight scan_id
+//     straddles the cutover.
+//  3. The legacy table's accumulated state as of that moment becomes the permanent baseline —
+//     recordsTable is never written to again, and is never dropped or re-engined (see its ch tag doc
+//     comment on model.RecordRow).
+//  4. Resume the writer so it only ever loads records under NEW scan_ids into the observations table.
+//
+// The one invariant that must never break: a single scan_id must never contribute to BOTH the legacy
+// aggregate (recordsTable) AND the raw observations table — that would let the same scan's records be
+// counted in `scans` twice, once via the frozen legacy baseline and once via uniqExact(scan_id) in the
+// summary view. Because recordsTable is frozen at cutover and never written again, this holds as long
+// as the cutover steps above are followed in order.
+//
+// Historical `scans` values already in recordsTable as of cutover may already include retry inflation
+// from before this fix existed. That inflation is not reconstructable — the original retried scan_ids
+// that caused it were never recorded — so it is preserved as a legacy fact in the summary rather than
+// silently "corrected" to some guessed value.
 package load
 
 import (
@@ -17,12 +50,15 @@ import (
 )
 
 const (
-	recordsTable     = "corpscout.commoncrawl_domain_dns_records"
-	scanTable        = "corpscout.commoncrawl_domain_dns_scan"
-	hostnamesTable   = "corpscout.commoncrawl_domain_hostnames"
-	axfrObsTable     = "corpscout.dns_axfr_observations" // legacy log, Task 4 and earlier; kept for BackfillAXFRFromObservations
-	axfrLatestTable  = "corpscout.dns_axfr_latest"
-	axfrChangesTable = "corpscout.dns_axfr_state_changes"
+	recordsTable       = "corpscout.commoncrawl_domain_dns_records" // legacy baseline, Task 7 and earlier; frozen at cutover, kept for loadRecordsLegacy only
+	recordObsTable     = "corpscout.commoncrawl_domain_dns_record_observations"
+	recordSummaryTable = "corpscout.commoncrawl_domain_dns_record_summary"    // populated only by recordSummaryMV, never written directly
+	recordSummaryMV    = "corpscout.commoncrawl_domain_dns_record_summary_mv" // migration 000114, REFRESH EVERY 10 MINUTE
+	scanTable          = "corpscout.commoncrawl_domain_dns_scan"
+	hostnamesTable     = "corpscout.commoncrawl_domain_hostnames"
+	axfrObsTable       = "corpscout.dns_axfr_observations" // legacy log, Task 4 and earlier; kept for BackfillAXFRFromObservations
+	axfrLatestTable    = "corpscout.dns_axfr_latest"
+	axfrChangesTable   = "corpscout.dns_axfr_state_changes"
 )
 
 // legacyBackfillScanID tags every row BackfillAXFRFromObservations writes, so its output is
@@ -63,14 +99,58 @@ func insert[T any](ctx context.Context, conn driver.Conn, table string, rows []T
 	return len(rows), nil
 }
 
+// toObservationRows converts staged RecordRows (already carrying the record identity, source, and
+// discovery fields RecordObservationRow needs) into observation rows for scanID, an event-time
+// (ObservedAt) taken from each RecordRow's LastSeen (the scan's resolution time), and a shared
+// loadedAt version. ScanID comes from the scanID PARAMETER already threaded through FromStore/
+// Incremental — the same value store.CommitBatch wrote into scan_records.scan_id — not from
+// RecordRow.LastRunID (a separate field, source_run_id, that happens to equal it in this codebase
+// today but is not guaranteed to), so the observation's identity is correct even if that assumption
+// ever changes.
+func toObservationRows(recs []model.RecordRow, scanID string, loadedAt time.Time) []model.RecordObservationRow {
+	if len(recs) == 0 {
+		return nil
+	}
+	loadedAt = loadedAt.UTC()
+	out := make([]model.RecordObservationRow, len(recs))
+	for i, r := range recs {
+		out[i] = model.RecordObservationRow{
+			RootDomain: r.RootDomain,
+			Name:       r.Name,
+			RecordType: r.RecordType,
+			Slot:       r.Slot,
+			Value:      r.Value,
+			Source:     r.Source,
+			Discovery:  r.Discovery,
+			ScanID:     scanID,
+			TTL:        r.TTL,
+			Priority:   r.Priority,
+			Rcode:      r.Rcode,
+			ObservedAt: r.LastSeen,
+			LoadedAt:   loadedAt,
+		}
+	}
+	return out
+}
+
+// loadRecordsLegacy is the pre-Task-7 record-load path: it wrote RecordRows straight into the legacy
+// AggregatingMergeTree recordsTable, whose Scans=1-per-row insert double-counts on a retried load (the
+// bug this task fixes). FromStore/Incremental no longer call it — kept only so the cutover documented
+// in this package's doc comment is reversible without resurrecting deleted code.
+func loadRecordsLegacy(ctx context.Context, conn driver.Conn, recs []model.RecordRow) (int, error) {
+	return insert(ctx, conn, recordsTable, recs)
+}
+
 // FromStore reads the whole stage for scanID and inserts records + domain summaries into ClickHouse.
-// Idempotent (the CH tables dedup on merge), so it is safe to re-run.
+// Records go to the retry-safe observations table (see this package's doc comment on the Task 7
+// cutover), not the legacy aggregate. Idempotent (the CH tables dedup on merge/FINAL), so it is safe
+// to re-run.
 func FromStore(ctx context.Context, conn driver.Conn, st *store.Store, scanID string) (int, int, error) {
 	recs, err := st.StagedRecords(ctx, scanID)
 	if err != nil {
 		return 0, 0, err
 	}
-	nr, err := insert(ctx, conn, recordsTable, recs)
+	nr, err := insert(ctx, conn, recordObsTable, toObservationRows(recs, scanID, time.Now()))
 	if err != nil {
 		return 0, 0, err
 	}
@@ -83,10 +163,12 @@ func FromStore(ctx context.Context, conn driver.Conn, st *store.Store, scanID st
 }
 
 // Incremental loads every scan_records row committed since the persisted rowid watermark for scanID,
-// in batches, advancing the watermark after each batch. It also loads the done-summaries for the
-// domains in each batch. Because it walks scan_records by rowid (commit order), it never misses a
-// late-finishing domain, and re-runs are safe (CH dedups). It returns the number of record rows
-// loaded. Call it periodically during a scan and once more after the scan finishes.
+// in batches, advancing the watermark after each batch. Records go to the retry-safe observations
+// table (see this package's doc comment on the Task 7 cutover), not the legacy aggregate. It also
+// loads the done-summaries for the domains in each batch. Because it walks scan_records by rowid
+// (commit order), it never misses a late-finishing domain, and re-runs are safe (CH dedups on
+// merge/FINAL). It returns the number of record rows loaded. Call it periodically during a scan and
+// once more after the scan finishes.
 func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batch int) (int, error) {
 	if batch <= 0 {
 		batch = 20000
@@ -104,7 +186,7 @@ func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID 
 		if len(recs) == 0 {
 			return total, nil
 		}
-		if _, err := insert(ctx, conn, recordsTable, recs); err != nil {
+		if _, err := insert(ctx, conn, recordObsTable, toObservationRows(recs, scanID, time.Now())); err != nil {
 			return total, err
 		}
 		sums, err := st.SummariesFor(ctx, scanID, domains)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -37,7 +38,10 @@ func testConn(t *testing.T) driver.Conn {
 }
 
 // Stages one domain + records in a temp scan.db, loads to CH, reads back. Requires the migrations
-// applied to a reachable ClickHouse.
+// applied to a reachable ClickHouse. As of Task 7, FromStore loads records into the retry-safe
+// commoncrawl_domain_dns_record_observations table, not the legacy commoncrawl_domain_dns_records
+// aggregate (see this package's doc comment) — this test reads back from the observations table
+// accordingly. See integration_test.go's TestObservation* tests for the retry/summary behavior.
 func TestLoadFromStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
@@ -62,7 +66,7 @@ func TestLoadFromStoreRoundTrip(t *testing.T) {
 	// Register cleanup up front so the itest rows are removed from shared ClickHouse even if an
 	// assertion below fails via t.Fatalf (which would skip trailing statements). Close last.
 	t.Cleanup(func() {
-		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_records WHERE root_domain='example.test'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_observations WHERE root_domain='example.test'")
 		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='example.test'")
 		_ = conn.Close()
 	})
@@ -74,20 +78,16 @@ func TestLoadFromStoreRoundTrip(t *testing.T) {
 		t.Fatalf("loaded records=%d domains=%d, want 1/1", nr, nd)
 	}
 
-	var rt, runID string
-	var scans uint64
+	var rt, scanID string
 	if err := conn.QueryRow(ctx,
-		"SELECT record_type, last_run_id, scans FROM corpscout.commoncrawl_domain_dns_records FINAL WHERE root_domain='example.test' LIMIT 1").Scan(&rt, &runID, &scans); err != nil {
+		"SELECT record_type, scan_id FROM corpscout.commoncrawl_domain_dns_record_observations FINAL WHERE root_domain='example.test' LIMIT 1").Scan(&rt, &scanID); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if rt != "MX" {
 		t.Errorf("record_type = %q, want MX", rt)
 	}
-	if runID != "itest" {
-		t.Errorf("last_run_id = %q, want itest", runID)
-	}
-	if scans != 1 {
-		t.Errorf("scans = %d, want 1 (single insert)", scans)
+	if scanID != "itest" {
+		t.Errorf("scan_id = %q, want itest", scanID)
 	}
 }
 
@@ -199,5 +199,256 @@ func TestLoadAXFRRoundTrip(t *testing.T) {
 	}
 	if ns2Active != 1 {
 		t.Errorf("new endpoint (current delegation) delegation_active = %d, want 1", ns2Active)
+	}
+}
+
+// refreshSummaryAndWait forces an immediate refresh of the Task 7 summary view (migration 000114)
+// rather than waiting out its real REFRESH EVERY 10 MINUTE schedule, then blocks until it completes so
+// the summary table reflects whatever was just inserted. It recomputes the WHOLE table (every
+// root_domain, not just the one a test cares about) — exactly what happens on the real schedule.
+func refreshSummaryAndWait(t *testing.T, ctx context.Context, conn driver.Conn) {
+	t.Helper()
+	if err := conn.Exec(ctx, "SYSTEM REFRESH VIEW "+recordSummaryMV); err != nil {
+		t.Fatalf("refresh %s: %v", recordSummaryMV, err)
+	}
+	if err := conn.Exec(ctx, "SYSTEM WAIT VIEW "+recordSummaryMV); err != nil {
+		t.Fatalf("wait %s: %v", recordSummaryMV, err)
+	}
+}
+
+// TestObservationRetryDedupAndSummaryScans proves the core Task 7 fix end to end through the public
+// FromStore path: loading the SAME staged scan twice (simulating a retry after a crash/timeout between
+// ClickHouse accepting the insert and the caller learning about it) must not duplicate observations —
+// ReplacingMergeTree(loaded_at) on the full (identity, scan_id) sorting key collapses the retry to one
+// row on FINAL — and the refreshed summary's scans for that record must read 1, not 2.
+func TestObservationRetryDedupAndSummaryScans(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	domain := "obs-retry.test"
+	scanID := "obs-scan-retry"
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", SourceRunID: scanID, ResolvedAt: time.Now().UTC(),
+		Records: []model.DNSRecord{{Name: domain, RecordType: "A", Slot: "@", Value: "10.0.1.1",
+			Rcode: "NOERROR", TTL: 300, Source: "query", Discovery: "static"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := testConn(t)
+	t.Cleanup(func() {
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_observations WHERE root_domain='"+domain+"'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_summary WHERE root_domain='"+domain+"'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='"+domain+"'")
+		_ = conn.Close()
+	})
+
+	if _, _, err := FromStore(ctx, conn, st, scanID); err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	if _, _, err := FromStore(ctx, conn, st, scanID); err != nil {
+		t.Fatalf("retried load: %v", err)
+	}
+
+	var n uint64
+	if err := conn.QueryRow(ctx, "SELECT count() FROM corpscout.commoncrawl_domain_dns_record_observations FINAL WHERE root_domain=?", domain).Scan(&n); err != nil {
+		t.Fatalf("count observations: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("observations FINAL count after a retried load = %d, want 1", n)
+	}
+
+	refreshSummaryAndWait(t, ctx, conn)
+	var scans uint64
+	if err := conn.QueryRow(ctx, "SELECT scans FROM corpscout.commoncrawl_domain_dns_record_summary WHERE root_domain=?", domain).Scan(&scans); err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if scans != 1 {
+		t.Errorf("summary scans after a retried load = %d, want 1 (one scan_id, however many times its load was retried)", scans)
+	}
+}
+
+// TestObservationDualProvenanceRetainsBothSources proves that when the SAME scan observes the SAME
+// record identity through two different sources (a direct query and an AXFR zone transfer), the
+// summary keeps BOTH provenance values (groupUniqArray) rather than collapsing to whichever anyLast
+// picked, and still counts the scan exactly once (uniqExactIf(scan_id, ...) — not once per source row).
+func TestObservationDualProvenanceRetainsBothSources(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	domain := "obs-dual.test"
+	scanID := "obs-scan-dual"
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", SourceRunID: scanID, ResolvedAt: time.Now().UTC(),
+		Records: []model.DNSRecord{
+			{Name: domain, RecordType: "A", Slot: "@", Value: "10.0.2.1", Rcode: "NOERROR", TTL: 300, Source: "query", Discovery: "static"},
+			{Name: domain, RecordType: "A", Slot: "@", Value: "10.0.2.1", Rcode: "NOERROR", TTL: 300, Source: "axfr", Discovery: "axfr"},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := testConn(t)
+	t.Cleanup(func() {
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_observations WHERE root_domain='"+domain+"'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_summary WHERE root_domain='"+domain+"'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='"+domain+"'")
+		_ = conn.Close()
+	})
+
+	if _, _, err := FromStore(ctx, conn, st, scanID); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	refreshSummaryAndWait(t, ctx, conn)
+
+	var scans uint64
+	var sources []string
+	if err := conn.QueryRow(ctx, "SELECT scans, sources FROM corpscout.commoncrawl_domain_dns_record_summary WHERE root_domain=?", domain).
+		Scan(&scans, &sources); err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if scans != 1 {
+		t.Errorf("scans = %d, want 1 (one scan_id, observed via two sources)", scans)
+	}
+	sort.Strings(sources)
+	if len(sources) != 2 || sources[0] != "axfr" || sources[1] != "query" {
+		t.Errorf("sources = %v, want [axfr query] (both provenance values retained)", sources)
+	}
+}
+
+// TestObservationOutOfOrderLoadEventTimeWins proves that when an OLDER observation is loaded (its
+// loaded_at is inserted) AFTER a NEWER one already landed, the summary's argMax(ttl/rcode/last_run_id,
+// (event_time, version_time)) still reflects whichever observation has the LATER observed_at (event
+// time) — not whichever was loaded most recently. Inserted directly at the ClickHouse layer (bypassing
+// the SQLite stage) since the scenario is about ClickHouse-side load order, not the scanner.
+func TestObservationOutOfOrderLoadEventTimeWins(t *testing.T) {
+	ctx := context.Background()
+	conn := testConn(t)
+	domain := "obs-ooo.test"
+	t.Cleanup(func() {
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_observations WHERE root_domain='"+domain+"'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_summary WHERE root_domain='"+domain+"'")
+		_ = conn.Close()
+	})
+
+	base := time.Now().UTC().Truncate(time.Millisecond)
+	newer := model.RecordObservationRow{
+		RootDomain: domain, Name: domain, RecordType: "A", Slot: "@", Value: "10.0.3.1",
+		Source: "query", Discovery: "static", ScanID: "obs-scan-newer",
+		TTL: 111, Rcode: "NOERROR",
+		ObservedAt: base,
+		LoadedAt:   base, // loaded FIRST, chronologically
+	}
+	older := model.RecordObservationRow{
+		RootDomain: domain, Name: domain, RecordType: "A", Slot: "@", Value: "10.0.3.1",
+		Source: "query", Discovery: "static", ScanID: "obs-scan-older",
+		TTL: 222, Rcode: "SERVFAIL",
+		ObservedAt: base.Add(-6 * time.Hour), // an OLDER event...
+		LoadedAt:   base.Add(1 * time.Hour),  // ...loaded AFTER the newer one
+	}
+	if _, err := insert(ctx, conn, recordObsTable, []model.RecordObservationRow{newer}); err != nil {
+		t.Fatalf("insert newer observation: %v", err)
+	}
+	if _, err := insert(ctx, conn, recordObsTable, []model.RecordObservationRow{older}); err != nil {
+		t.Fatalf("insert older observation out of order: %v", err)
+	}
+
+	refreshSummaryAndWait(t, ctx, conn)
+
+	var ttl uint32
+	var rcode, lastRunID string
+	var scans uint64
+	if err := conn.QueryRow(ctx, "SELECT ttl, rcode, last_run_id, scans FROM corpscout.commoncrawl_domain_dns_record_summary WHERE root_domain=?", domain).
+		Scan(&ttl, &rcode, &lastRunID, &scans); err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if ttl != 111 || rcode != "NOERROR" || lastRunID != "obs-scan-newer" {
+		t.Errorf("event-time metadata must win despite being loaded first: ttl=%d rcode=%s last_run_id=%s, want ttl=111 rcode=NOERROR last_run_id=obs-scan-newer",
+			ttl, rcode, lastRunID)
+	}
+	if scans != 2 {
+		t.Errorf("scans = %d, want 2 (two distinct scan_ids)", scans)
+	}
+}
+
+// TestObservationSummaryPreservesLegacyBaseline proves the cutover-boundary invariant: a record's
+// pre-cutover legacy scans/first_seen (written through loadRecordsLegacy, the kept-but-unused legacy
+// path — see this package's doc comment) survive into the summary, and a NEW scan against the SAME
+// record identity, loaded through the observations path post-cutover, ADDS to the legacy count rather
+// than replacing it.
+func TestObservationSummaryPreservesLegacyBaseline(t *testing.T) {
+	ctx := context.Background()
+	conn := testConn(t)
+	domain := "obs-legacy.test"
+	t.Cleanup(func() {
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_records WHERE root_domain='"+domain+"'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_observations WHERE root_domain='"+domain+"'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_summary WHERE root_domain='"+domain+"'")
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='"+domain+"'")
+		_ = conn.Close()
+	})
+
+	legacyFirstSeen := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Millisecond)
+	legacyLastSeen := time.Now().Add(-25 * 24 * time.Hour).UTC().Truncate(time.Millisecond)
+	legacyRow := model.RecordRow{
+		RootDomain: domain, RecordType: "A", Slot: "@", Name: domain, Value: "10.0.4.1",
+		TTL: 300, Rcode: "NOERROR", LastRunID: "legacy-run",
+		FirstSeen: legacyFirstSeen, LastSeen: legacyLastSeen, Scans: 5,
+		Source: "query", Discovery: "static",
+	}
+	// Simulate pre-cutover history written by the legacy loader path (kept available, unused by
+	// FromStore/Incremental, precisely so this cutover boundary can be reproduced in a test).
+	if _, err := loadRecordsLegacy(ctx, conn, []model.RecordRow{legacyRow}); err != nil {
+		t.Fatalf("seed legacy baseline: %v", err)
+	}
+
+	// A brand-new, post-cutover scan resolves the SAME record identity through the observations path.
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	scanID := "obs-scan-post-cutover"
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", SourceRunID: scanID, ResolvedAt: time.Now().UTC(),
+		Records: []model.DNSRecord{{Name: domain, RecordType: "A", Slot: "@", Value: "10.0.4.1",
+			Rcode: "NOERROR", TTL: 300, Source: "query", Discovery: "static"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := FromStore(ctx, conn, st, scanID); err != nil {
+		t.Fatalf("load post-cutover scan: %v", err)
+	}
+
+	refreshSummaryAndWait(t, ctx, conn)
+
+	var scans uint64
+	var firstSeen time.Time
+	if err := conn.QueryRow(ctx, "SELECT scans, first_seen FROM corpscout.commoncrawl_domain_dns_record_summary WHERE root_domain=?", domain).
+		Scan(&scans, &firstSeen); err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if scans != 6 {
+		t.Errorf("scans = %d, want 6 (5 legacy + 1 new scan_id)", scans)
+	}
+	if !firstSeen.Equal(legacyFirstSeen) {
+		t.Errorf("first_seen = %v, want the legacy baseline's first_seen (%v) preserved", firstSeen, legacyFirstSeen)
 	}
 }

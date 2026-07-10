@@ -33,3 +33,15 @@ func TestScanRowColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordObservationRowColumns(t *testing.T) {
+	cols := chCols(RecordObservationRow{})
+	for _, c := range []string{
+		"root_domain", "name", "record_type", "slot", "value", "source", "discovery", "scan_id",
+		"ttl", "priority", "rcode", "observed_at", "loaded_at",
+	} {
+		if !cols[c] {
+			t.Errorf("RecordObservationRow missing ch column %q", c)
+		}
+	}
+}

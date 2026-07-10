@@ -100,9 +100,13 @@ type DomainResult struct {
 	ResolvedAt   time.Time
 }
 
-// RecordRow mirrors corpscout.commoncrawl_domain_dns_records (distinct model). Each scan inserts one
-// row per record with FirstSeen = LastSeen = scan time and Scans = 1; the AggregatingMergeTree merges
-// duplicates to min(first_seen) / max(last_seen) / sum(scans).
+// RecordRow mirrors corpscout.commoncrawl_domain_dns_records. As of Task 7 this table is a frozen,
+// READ-ONLY legacy baseline (see internal/load/load.go's cutover doc comment): its AggregatingMergeTree
+// Scans=1-per-row insert has no way to tell a genuine re-observation from a retried load of the same
+// scan apart, so a retry silently double-counts. It is no longer written by the live loader — new scans
+// go to RecordObservationRow instead — but its accumulated first_seen/scans data is preserved and
+// folded into corpscout.commoncrawl_domain_dns_record_summary as the pre-cutover history. This type
+// (and the legacy insert path in load.go) is kept, unused by default, so the cutover is reversible.
 type RecordRow struct {
 	RootDomain string    `ch:"root_domain"`
 	RecordType string    `ch:"record_type"`
@@ -118,6 +122,32 @@ type RecordRow struct {
 	Scans      uint64    `ch:"scans"`
 	Source     string    `ch:"source"`
 	Discovery  string    `ch:"discovery"`
+}
+
+// RecordObservationRow mirrors corpscout.commoncrawl_domain_dns_record_observations (Task 7's
+// retry-safe replacement record-load path). Unlike RecordRow, this is not a pre-aggregated fact —
+// it is one IMMUTABLE row per (identity, source, discovery, scan_id) observation, so replaying a
+// scan's load (the same rows, same ScanID) always produces byte-identical rows that
+// ReplacingMergeTree(loaded_at) collapses to one on merge/FINAL, however many times it is retried.
+// Field order matches the CREATE TABLE column order (see migration 000113); ORDER BY is
+// (root_domain, name, record_type, slot, value, source, discovery, scan_id) — the FULL logical
+// observation identity, so LoadedAt only decides which physical copy of an identical row survives a
+// retry, never whether two truly distinct observations collapse into one. See internal/load/load.go
+// for why LoadedAt is safe to set to time.Now() on every call (rather than pinned per scan_id).
+type RecordObservationRow struct {
+	RootDomain string    `ch:"root_domain"`
+	Name       string    `ch:"name"`
+	RecordType string    `ch:"record_type"`
+	Slot       string    `ch:"slot"`
+	Value      string    `ch:"value"`
+	Source     string    `ch:"source"`
+	Discovery  string    `ch:"discovery"`
+	ScanID     string    `ch:"scan_id"`
+	TTL        uint32    `ch:"ttl"`
+	Priority   uint16    `ch:"priority"`
+	Rcode      string    `ch:"rcode"`
+	ObservedAt time.Time `ch:"observed_at"` // event time: when this record was actually resolved
+	LoadedAt   time.Time `ch:"loaded_at"`   // ReplacingMergeTree version: when this row was inserted
 }
 
 // HostnameRow mirrors corpscout.commoncrawl_domain_hostnames (AggregatingMergeTree registry). One
