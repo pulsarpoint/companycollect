@@ -121,7 +121,17 @@ func runScan(args []string) error {
 		return err
 	}
 	defer st.Close()
-	return scanCycle(context.Background(), st, cfg)
+	ctx := context.Background()
+	if err := scanCycle(ctx, st, cfg); err != nil {
+		return err
+	}
+	if !cfg.axfr {
+		return nil // no AXFR work at all: no queue seeding, no prober, no ClickHouse connection
+	}
+	// The SAME shared AXFR step the orchestrator's phaseAXFR uses (axfr.go's axfrCycle): stage+probe
+	// (runAXFRPipeline) then the AXFR ClickHouse load pass (axfrLoad) — one code path for both entry
+	// points.
+	return axfrCycle(ctx, st, cfg, axfrLoad)
 }
 
 // applyScanDefaults fills zero/negative tunables with safe defaults so each phase run is self-contained.
@@ -144,9 +154,11 @@ func applyScanDefaults(cfg scanConfig) scanConfig {
 	return cfg
 }
 
-// scanCycle seeds then resolves — the single-shot path used by the standalone `scan` subcommand. The
-// orchestrator (run.go) instead runs seedCycle and scanResolve as separate crash-safe phases so status
-// reflects the long seeding/host-load window distinctly from actual resolution. Does NOT open/close st.
+// scanCycle seeds then resolves — the base-resolution single-shot path used by the standalone `scan`
+// subcommand (runScan runs this first, then — only when --axfr is set — the separate shared AXFR step,
+// axfrCycle). The orchestrator (run.go) instead runs seedCycle and scanResolve as separate crash-safe
+// phases so status reflects the long seeding/host-load window distinctly from actual resolution. Does
+// NOT open/close st.
 func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	if err := seedCycle(ctx, st, cfg); err != nil {
 		return err

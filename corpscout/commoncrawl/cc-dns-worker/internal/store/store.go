@@ -35,10 +35,6 @@ CREATE TABLE IF NOT EXISTS scan_domains (
   ds_present    INTEGER DEFAULT 0,
   queries_total INTEGER DEFAULT 0,
   queries_ok    INTEGER DEFAULT 0,
-  axfr_open     INTEGER DEFAULT 0,
-  axfr_records  INTEGER DEFAULT 0,
-  axfr_truncated INTEGER DEFAULT 0,
-  axfr_server    TEXT DEFAULT '',
   error         TEXT DEFAULT '',
   source_run_id TEXT DEFAULT '',
   resolved_at   TEXT DEFAULT '',
@@ -147,6 +143,13 @@ func Open(path string) (*Store, error) {
 
 // migrate applies additive column changes to stage DBs created before those columns existed.
 // SQLite has no ADD COLUMN IF NOT EXISTS, so a duplicate-column error is expected and ignored.
+//
+// The four axfr_* ADD COLUMNs are kept — and so still apply to a brand-new DB too, since schema/migrate
+// always run back to back in Open — purely to preserve the physical scan_domains.axfr_* columns for
+// anything still reading them at the SQLite layer. No Go code in this package reads or writes them
+// anymore: they are DEPRECATED in favor of the durable axfr_domains/axfr_probes queue and the
+// dns_axfr_latest/dns_axfr_state_changes ClickHouse tables (see store.SeedAXFRDomains and
+// internal/load.LoadAXFR).
 func migrate(db *sql.DB) {
 	for _, stmt := range []string{
 		`ALTER TABLE scan_records ADD COLUMN source TEXT DEFAULT 'query'`,
@@ -277,7 +280,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 	defer insR.Close()
 	upD, err := tx.PrepareContext(ctx, `UPDATE scan_domains SET
 		status=?, etld=?, nameservers=?, ns_ips=?, ns_endpoints=?, dnssec_signed=?, ds_present=?,
-		queries_total=?, queries_ok=?, axfr_open=?, axfr_records=?, axfr_truncated=?, axfr_server=?, error=?, source_run_id=?, resolved_at=?
+		queries_total=?, queries_ok=?, error=?, source_run_id=?, resolved_at=?
 		WHERE scan_id=? AND root_domain=?`)
 	if err != nil {
 		return err
@@ -300,7 +303,6 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		nsEndpoints, _ := json.Marshal(res.Endpoints)
 		res2, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips), string(nsEndpoints),
 			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.QueriesTotal, res.QueriesOK,
-			b2i(res.AXFROpen), res.AXFRRecords, b2i(res.AXFRTruncated), res.AXFRServer,
 			res.Error, res.SourceRunID, ts, res.ScanID, res.RootDomain)
 		if err != nil {
 			return err
@@ -344,7 +346,7 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 // that never resolves has no DNS state to record.
 func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips, ns_endpoints,
-		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated, axfr_server,
+		dnssec_signed, ds_present, status, queries_total, queries_ok,
 		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done'`, scanID)
 	if err != nil {
@@ -355,10 +357,9 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 	for rows.Next() {
 		var r model.ScanRow
 		var ns, nsips, nsEndpoints, ts string
-		var dnssec, ds, axfrOpen, axfrTrunc int
-		var axfrRecs uint32
+		var dnssec, ds int
 		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &nsEndpoints, &dnssec, &ds,
-			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.AXFRServer, &r.LastRunID, &ts); err != nil {
+			&r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
@@ -366,9 +367,6 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 		_ = json.Unmarshal([]byte(nsEndpoints), &r.Endpoints)
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
-		r.AXFROpen = uint8(axfrOpen)
-		r.AXFRRecords = axfrRecs
-		r.AXFRTruncated = uint8(axfrTrunc)
 		r.ResolvedAt = parseTS(ts)
 		out = append(out, r)
 	}
@@ -459,7 +457,7 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 		args = append(args, d)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips, ns_endpoints,
-		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated, axfr_server,
+		dnssec_signed, ds_present, status, queries_total, queries_ok,
 		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done' AND root_domain IN (`+ph+`)`, args...)
 	if err != nil {
@@ -470,10 +468,9 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 	for rows.Next() {
 		var r model.ScanRow
 		var ns, nsips, nsEndpoints, ts string
-		var dnssec, ds, axfrOpen, axfrTrunc int
-		var axfrRecs uint32
+		var dnssec, ds int
 		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &nsEndpoints, &dnssec, &ds,
-			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.AXFRServer, &r.LastRunID, &ts); err != nil {
+			&r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
@@ -481,9 +478,6 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 		_ = json.Unmarshal([]byte(nsEndpoints), &r.Endpoints)
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
-		r.AXFROpen = uint8(axfrOpen)
-		r.AXFRRecords = axfrRecs
-		r.AXFRTruncated = uint8(axfrTrunc)
 		r.ResolvedAt = parseTS(ts)
 		out = append(out, r)
 	}
@@ -808,6 +802,22 @@ func (s *Store) AXFRQueueComplete(ctx context.Context, scanID string) (bool, err
 	err := s.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM axfr_domains WHERE scan_id = ? AND status = 'pending'`, scanID).Scan(&n)
 	return n == 0, err
+}
+
+// HasAXFRWork reports whether scanID has ANY axfr_domains rows at all — i.e., whether SeedAXFRDomains
+// ever staged the AXFR phase for this scan (--axfr was enabled and at least one resolved domain had a
+// non-empty stored NS endpoint/IP set). Callers use this to skip the AXFR ClickHouse load pass
+// (load.LoadAXFR) entirely — no ClickHouse round trip at all — when AXFR was disabled or never reached
+// this scan-id, rather than relying on LoadAXFR's own internal early-out (which still reads
+// dns_axfr_latest from ClickHouse before finding there is nothing staged to load).
+func (s *Store) HasAXFRWork(ctx context.Context, scanID string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM axfr_domains WHERE scan_id = ?)`, scanID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists != 0, nil
 }
 
 // AXFREndpointKey identifies one AXFR-probed endpoint — an authoritative nameserver hostname/IP pair

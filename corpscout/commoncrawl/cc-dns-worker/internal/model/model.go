@@ -78,27 +78,26 @@ type HostLabel struct {
 	LiveCert        bool
 }
 
-// DomainResult is everything learned for one domain in one scan.
+// DomainResult is everything learned for one domain in one scan. AXFR is NOT part of this shape — it
+// runs as its own post-scan phase (see cmd/cc-dns-worker/axfr.go) and is staged/loaded through the
+// dns_axfr_latest/dns_axfr_state_changes tables (AXFRLatestRow/AXFRStateChangeRow), never through a
+// per-domain summary field here.
 type DomainResult struct {
-	ScanID        string
-	RootDomain    string
-	ETLD          string
-	Nameservers   []string
-	NSIPs         []string
-	Endpoints     []NameserverEndpoint // hostname<->IP identity behind Nameservers/NSIPs (see NameserverEndpoint)
-	DNSSECSigned  bool
-	DSPresent     bool
-	Status        string // "done" | "error"
-	Error         string
-	QueriesTotal  int
-	QueriesOK     int
-	Records       []DNSRecord
-	AXFROpen      bool
-	AXFRRecords   int
-	AXFRTruncated bool
-	AXFRServer    string
-	SourceRunID   string
-	ResolvedAt    time.Time
+	ScanID       string
+	RootDomain   string
+	ETLD         string
+	Nameservers  []string
+	NSIPs        []string
+	Endpoints    []NameserverEndpoint // hostname<->IP identity behind Nameservers/NSIPs (see NameserverEndpoint)
+	DNSSECSigned bool
+	DSPresent    bool
+	Status       string // "done" | "error"
+	Error        string
+	QueriesTotal int
+	QueriesOK    int
+	Records      []DNSRecord
+	SourceRunID  string
+	ResolvedAt   time.Time
 }
 
 // RecordRow mirrors corpscout.commoncrawl_domain_dns_records (distinct model). Each scan inserts one
@@ -135,6 +134,14 @@ type HostnameRow struct {
 
 // ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
 // successful scans are loaded, so a failed re-scan never clobbers a domain's last-good summary.
+//
+// Deprecated: the table's axfr_open/axfr_records/axfr_truncated/axfr_server columns are DEPRECATED —
+// per-endpoint AXFR state now lives in dns_axfr_latest/dns_axfr_state_changes (AXFRLatestRow/
+// AXFRStateChangeRow), the only source of truth since AXFR moved off resolveDomain into its own
+// post-scan phase. This struct intentionally has no fields for them: the loader must never again write
+// default/false values into those columns every cycle. The ClickHouse columns themselves are left in
+// place (defaulted) for backward compatibility with existing readers; a future audited cleanup can drop
+// them.
 type ScanRow struct {
 	RootDomain  string   `ch:"root_domain"`
 	ETLD        string   `ch:"etld"`
@@ -142,16 +149,12 @@ type ScanRow struct {
 	NSIPs       []string `ch:"ns_ips"`
 	// Endpoints carries the hostname<->IP identity behind Nameservers/NSIPs. It is SQLite-local only
 	// (no ch tag, so chColumns/insert skip it) — not yet part of the ClickHouse scan-summary schema.
-	Endpoints     []NameserverEndpoint
-	DNSSECSigned  uint8     `ch:"dnssec_signed"`
-	DSPresent     uint8     `ch:"ds_present"`
-	Status        string    `ch:"status"`
-	QueriesTotal  uint16    `ch:"queries_total"`
-	QueriesOK     uint16    `ch:"queries_ok"`
-	LastRunID     string    `ch:"last_run_id"`
-	ResolvedAt    time.Time `ch:"resolved_at"`
-	AXFROpen      uint8     `ch:"axfr_open"`
-	AXFRRecords   uint32    `ch:"axfr_records"`
-	AXFRTruncated uint8     `ch:"axfr_truncated"`
-	AXFRServer    string    `ch:"axfr_server"`
+	Endpoints    []NameserverEndpoint
+	DNSSECSigned uint8     `ch:"dnssec_signed"`
+	DSPresent    uint8     `ch:"ds_present"`
+	Status       string    `ch:"status"`
+	QueriesTotal uint16    `ch:"queries_total"`
+	QueriesOK    uint16    `ch:"queries_ok"`
+	LastRunID    string    `ch:"last_run_id"`
+	ResolvedAt   time.Time `ch:"resolved_at"`
 }

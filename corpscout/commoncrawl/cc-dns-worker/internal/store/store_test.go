@@ -363,61 +363,6 @@ func TestDiscoveredHostnames(t *testing.T) {
 	}
 }
 
-func TestSummaryPersistsAXFRFlags(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	ctx := context.Background()
-	if _, err := st.Seed(ctx, "s1", []string{"example.com"}); err != nil {
-		t.Fatal(err)
-	}
-	res := model.DomainResult{
-		ScanID: "s1", RootDomain: "example.com", Status: "done", ResolvedAt: time.Now().UTC(),
-		AXFROpen: true, AXFRRecords: 42, AXFRTruncated: true,
-	}
-	if err := st.CommitBatch(ctx, []model.DomainResult{res}); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := st.StagedDomains(ctx, "s1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("want 1 summary, got %d", len(rows))
-	}
-	if rows[0].AXFROpen != 1 || rows[0].AXFRRecords != 42 || rows[0].AXFRTruncated != 1 {
-		t.Fatalf("axfr flags not round-tripped: %+v", rows[0])
-	}
-}
-
-func TestSummaryPersistsAXFRServer(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	ctx := context.Background()
-	if _, err := st.Seed(ctx, "s1", []string{"example.com"}); err != nil {
-		t.Fatal(err)
-	}
-	res := model.DomainResult{
-		ScanID: "s1", RootDomain: "example.com", Status: "done", ResolvedAt: time.Now().UTC(),
-		AXFROpen: true, AXFRServer: "203.0.113.9",
-	}
-	if err := st.CommitBatch(ctx, []model.DomainResult{res}); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := st.StagedDomains(ctx, "s1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].AXFRServer != "203.0.113.9" {
-		t.Fatalf("axfr_server not round-tripped: %+v", rows)
-	}
-}
-
 func TestPendingBatchCursor(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -103,7 +102,7 @@ func runOrchestrator(args []string) error {
 		}
 
 		if state.Phase == phaseFlushing {
-			if err := runFlushPhase(ctx, state, dbPath, *loadBatch, cfg.axfr); err != nil {
+			if err := runFlushPhase(ctx, state, dbPath, *loadBatch); err != nil {
 				log.Printf("cycle %s: flush phase error: %v — retrying in 30s", state.CycleID, err)
 				time.Sleep(30 * time.Second)
 				continue
@@ -166,9 +165,11 @@ func runSeedPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 	return seedCycle(ctx, st, cfg)
 }
 
-// runAXFRPhase runs the AXFR phase after scanning: a standalone worker pool probes each resolved
-// domain's non-hyperscaler nameservers for open zone transfers (reusing the ns_ips resolution stored).
-// Separate from resolution entirely; runs only when --axfr is set.
+// runAXFRPhase runs the AXFR phase after scanning: stage+probe every resolved domain's non-hyperscaler
+// nameservers for open zone transfers (reusing the ns_endpoints/ns_ips resolution already stored), then
+// the AXFR ClickHouse load pass — both via the shared axfrCycle (axfr.go), the SAME function `scan
+// --axfr` calls. Separate from resolution entirely; runs only when --axfr is set (runOrchestrator only
+// enters this phase when cfg.axfr is true).
 func runAXFRPhase(ctx context.Context, state cycleState, dbPath string, cfg scanConfig) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -177,7 +178,7 @@ func runAXFRPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 	defer st.Close()
 	cfg.scanID = state.CycleID
 	cfg.runID = state.CycleID
-	return runAXFRPipeline(ctx, st, cfg)
+	return axfrCycle(ctx, st, cfg, axfrLoad)
 }
 
 // runScanPhase scans the cycle while a background goroutine incrementally loads new records to CH.
@@ -219,10 +220,10 @@ func runScanPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 }
 
 // runFlushPhase does the final incremental load after the scan finished (watermark → end), then the
-// hostname registry write-back, then — only when the cycle ran the AXFR phase — the AXFR load pass
-// (staged axfr_probes/axfr_changes → dns_axfr_latest/dns_axfr_state_changes). Skipping the AXFR load
-// when --axfr was never on avoids a ClickHouse round trip every cycle for a phase that staged nothing.
-func runFlushPhase(ctx context.Context, state cycleState, dbPath string, loadBatch int, axfrEnabled bool) error {
+// hostname registry write-back. The AXFR ClickHouse load pass no longer happens here — it now runs as
+// part of the AXFR phase itself (runAXFRPhase, via the shared axfrCycle), so a cycle with --axfr on has
+// already loaded its AXFR results by the time it reaches this phase.
+func runFlushPhase(ctx context.Context, state cycleState, dbPath string, loadBatch int) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return err
@@ -238,24 +239,7 @@ func runFlushPhase(ctx context.Context, state cycleState, dbPath string, loadBat
 	} else if hn > 0 {
 		log.Printf("cycle %s: registered %d discovered hostnames", state.CycleID, hn)
 	}
-	if axfrEnabled {
-		if err := axfrLoad(ctx, st, state.CycleID); err != nil {
-			return fmt.Errorf("axfr load: %w", err)
-		}
-		log.Printf("cycle %s: AXFR results loaded to ClickHouse", state.CycleID)
-	}
 	return nil
-}
-
-// axfrLoad opens a fresh ClickHouse connection and runs one AXFR load pass (staged axfr_probes/
-// axfr_changes → dns_axfr_latest/dns_axfr_state_changes) for scanID.
-func axfrLoad(ctx context.Context, st *store.Store, scanID string) error {
-	conn, err := chConn()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	return load.LoadAXFR(ctx, conn, st, scanID, time.Now())
 }
 
 // incLoad opens a fresh ClickHouse connection and runs one incremental load pass (records committed

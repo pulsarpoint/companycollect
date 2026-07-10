@@ -356,7 +356,11 @@ cc-dns-worker/
 
 ### `scan`
 
-Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending domain.
+Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending domain. When `--axfr`
+is set, it then runs the same shared AXFR step `run` uses (`axfrCycle`): stage+probe every resolved
+domain's non-hyperscaler nameservers for open zone transfers, then the AXFR ClickHouse load pass. With
+`--axfr=false` (the default) no AXFR work happens at all — no queue seeding, no prober, no ClickHouse
+connection for it.
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
@@ -392,7 +396,10 @@ retries, and `q`/`dom` are the query- and domain-level error rates.
 ### `load`
 
 Bulk-copies one scan's SQLite stage into ClickHouse. Safe to re-run (target tables are
-`ReplacingMergeTree`; read them with `FINAL`).
+`ReplacingMergeTree`; read them with `FINAL`). If the stage has any staged AXFR probes for `--scan-id`
+(i.e. that scan ran with `--axfr` at some point), `load` also runs the AXFR load pass
+(`dns_axfr_latest`/`dns_axfr_state_changes`); it is a complete no-op — no extra ClickHouse round trip —
+when the scan never staged AXFR work.
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
@@ -478,10 +485,16 @@ a record = no row, not a null):
 | `queries_ok` | `UInt16` | Tier-2 query successes |
 | `last_run_id` | `String` | ID of the scan that produced this row |
 | `resolved_at` | `DateTime64(3, 'UTC')` | ReplacingMergeTree version column |
-| `axfr_open` | `UInt8` | 1 if the domain's nameservers allowed a zone transfer (open-AXFR misconfiguration flag) |
-| `axfr_records` | `UInt32` | count of records seen in the transferred zone (0 if not open) |
-| `axfr_truncated` | `UInt8` | 1 if the transfer hit a cap (records/bytes/deadline) before completing |
-| `axfr_server` | `String` | the NS IP that answered the zone transfer (`''` when the zone is closed) |
+
+**Deprecated columns still present on this table but no longer written by the worker:** `axfr_open`
+(`UInt8`), `axfr_records` (`UInt32`), `axfr_truncated` (`UInt8`), `axfr_server` (`String`). AXFR moved off
+`resolveDomain` into its own post-scan phase, so this per-scan summary can no longer say anything true
+about a domain's AXFR state on its own — a domain can have several nameservers with different AXFR
+outcomes, sampled at a different time than `resolved_at`. Per-endpoint AXFR state now lives in
+`dns_axfr_latest`/`dns_axfr_state_changes` (see below), the only source of truth; `model.ScanRow` has no
+fields for these four columns, so `load` leaves them at their column default on every insert rather than
+writing stale/false values. The columns are kept in place (not dropped) for backward compatibility with
+existing readers — a future audited cleanup can drop them.
 
 `ORDER BY (root_domain)`.
 

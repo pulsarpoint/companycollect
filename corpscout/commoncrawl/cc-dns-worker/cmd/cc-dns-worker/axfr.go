@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cc-dns-worker/internal/load"
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/resolve"
 	"cc-dns-worker/internal/scheduler"
@@ -44,6 +45,38 @@ type axfrDomainResult struct {
 	observedAt time.Time
 }
 
+// axfrLoadFunc runs the AXFR ClickHouse load pass for scanID — axfrLoad (a real ClickHouse connection)
+// in production, a fake in tests that proves ordering/gating without a network dependency. See
+// axfrCycle.
+type axfrLoadFunc func(ctx context.Context, st *store.Store, scanID string) error
+
+// axfrCycle runs the COMPLETE AXFR step for one scan-id: stage+probe every resolved domain
+// (runAXFRPipeline, SQLite-only) and then the AXFR ClickHouse load pass (loadFn) that turns the staged
+// probes into dns_axfr_latest/dns_axfr_state_changes rows. This is the ONE function both the
+// orchestrator's AXFR phase (run.go's runAXFRPhase) and the standalone `scan --axfr` step (scan.go's
+// runScan) call — there is no second AXFR code path, so the two entry points can never drift apart.
+// Production always passes axfrLoad as loadFn; callers are expected to gate calling axfrCycle at all
+// behind cfg.axfr themselves (mirroring runAXFRPipeline's own contract) so --axfr=false does zero AXFR
+// work — no queue seeding, no prober, no ClickHouse connection.
+func axfrCycle(ctx context.Context, st *store.Store, cfg scanConfig, loadFn axfrLoadFunc) error {
+	if err := runAXFRPipeline(ctx, st, cfg); err != nil {
+		return err
+	}
+	return loadFn(ctx, st, cfg.scanID)
+}
+
+// axfrLoad opens a fresh ClickHouse connection and runs one AXFR load pass (staged axfr_probes/
+// axfr_changes → dns_axfr_latest/dns_axfr_state_changes) for scanID. This is axfrCycle's production
+// loadFn.
+func axfrLoad(ctx context.Context, st *store.Store, scanID string) error {
+	conn, err := chConn()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return load.LoadAXFR(ctx, conn, st, scanID, time.Now())
+}
+
 // runAXFRPipeline runs the standalone AXFR phase against the durable SQLite work queue (axfr_domains):
 // SeedAXFRDomains (idempotent) stages every resolved domain that has a dialable NS endpoint set, then —
 // unless the queue is already fully drained — a feeder streams PENDING rows to a bounded worker pool
@@ -52,8 +85,8 @@ type axfrDomainResult struct {
 // result — probes, zone records, and the domain's done-status — in ONE transaction
 // (store.CommitAXFRDomain). Staged first, checkpointed second: a crash between dispatch and commit
 // leaves the domain 'pending' (the next run's PendingAXFRDomains returns it again), so a killed process
-// can only REPEAT unfinished work, never SKIP it. Task 4 stages to SQLite only — no ClickHouse I/O here;
-// Task 5 adds the load pass over axfr_probes/axfr_changes.
+// can only REPEAT unfinished work, never SKIP it. This function itself stages to SQLite only — no
+// ClickHouse I/O here; axfrCycle (above) is what pairs it with the ClickHouse load pass.
 func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	if _, err := st.SeedAXFRDomains(ctx, cfg.scanID); err != nil {
 		return fmt.Errorf("seed axfr queue: %w", err)
