@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -102,7 +103,7 @@ func runOrchestrator(args []string) error {
 		}
 
 		if state.Phase == phaseFlushing {
-			if err := runFlushPhase(ctx, state, dbPath, *loadBatch); err != nil {
+			if err := runFlushPhase(ctx, state, dbPath, *loadBatch, cfg.axfr); err != nil {
 				log.Printf("cycle %s: flush phase error: %v — retrying in 30s", state.CycleID, err)
 				time.Sleep(30 * time.Second)
 				continue
@@ -217,8 +218,11 @@ func runScanPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 	return scanErr
 }
 
-// runFlushPhase does the final incremental load after the scan finished (watermark → end).
-func runFlushPhase(ctx context.Context, state cycleState, dbPath string, loadBatch int) error {
+// runFlushPhase does the final incremental load after the scan finished (watermark → end), then the
+// hostname registry write-back, then — only when the cycle ran the AXFR phase — the AXFR load pass
+// (staged axfr_probes/axfr_changes → dns_axfr_latest/dns_axfr_state_changes). Skipping the AXFR load
+// when --axfr was never on avoids a ClickHouse round trip every cycle for a phase that staged nothing.
+func runFlushPhase(ctx context.Context, state cycleState, dbPath string, loadBatch int, axfrEnabled bool) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return err
@@ -234,7 +238,24 @@ func runFlushPhase(ctx context.Context, state cycleState, dbPath string, loadBat
 	} else if hn > 0 {
 		log.Printf("cycle %s: registered %d discovered hostnames", state.CycleID, hn)
 	}
+	if axfrEnabled {
+		if err := axfrLoad(ctx, st, state.CycleID); err != nil {
+			return fmt.Errorf("axfr load: %w", err)
+		}
+		log.Printf("cycle %s: AXFR results loaded to ClickHouse", state.CycleID)
+	}
 	return nil
+}
+
+// axfrLoad opens a fresh ClickHouse connection and runs one AXFR load pass (staged axfr_probes/
+// axfr_changes → dns_axfr_latest/dns_axfr_state_changes) for scanID.
+func axfrLoad(ctx context.Context, st *store.Store, scanID string) error {
+	conn, err := chConn()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return load.LoadAXFR(ctx, conn, st, scanID, time.Now())
 }
 
 // incLoad opens a fresh ClickHouse connection and runs one incremental load pass (records committed

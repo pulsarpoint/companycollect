@@ -810,6 +810,257 @@ func (s *Store) AXFRQueueComplete(ctx context.Context, scanID string) (bool, err
 	return n == 0, err
 }
 
+// AXFREndpointKey identifies one AXFR-probed endpoint — an authoritative nameserver hostname/IP pair
+// under one root domain — the join key shared across axfr_probes, dns_axfr_latest, and
+// dns_axfr_state_changes.
+type AXFREndpointKey struct {
+	RootDomain   string
+	NameServer   string
+	NameServerIP string
+}
+
+// AXFRPriorState is one endpoint's state as last recorded in ClickHouse's dns_axfr_latest (loaded via
+// load.LoadAXFRPrior before this scan's changes are staged). The zero value correctly represents an
+// endpoint never seen before: HasDefinitive/DelegationActive false, every timestamp zero.
+type AXFRPriorState struct {
+	HasDefinitive    bool // true once any past probe reached a definitive (open/closed) verdict
+	AXFROpen         bool // meaningful only when HasDefinitive is true
+	DefinitiveAt     time.Time
+	DefinitiveScanID string
+	LastProbeVerdict string // most recent probe of ANY kind, including unknown
+	LastProbeReason  string
+	LastProbedAt     time.Time
+	DelegationActive bool // whether the endpoint was active as of the last latest-row write
+	DelegationSeenAt time.Time
+}
+
+// AXFRProbedEndpoint is one endpoint the AXFR load pass considers for scanID's dns_axfr_latest rows.
+// Verdict is non-empty only when a fresh probe landed this scan (Reason/ObservedAt then describe it);
+// an empty Verdict means either the endpoint is still delegated but wasn't dialed this scan (e.g. it
+// became non-dialable) or it dropped out of the domain's delegation entirely — DelegationActive tells
+// these two apart. In both empty-Verdict cases the loader carries the endpoint's AXFRPriorState forward
+// untouched except for DelegationActive/DelegationSeenAt.
+type AXFRProbedEndpoint struct {
+	AXFREndpointKey
+	Verdict          string
+	Reason           string
+	ObservedAt       time.Time
+	Definitive       bool
+	DelegationActive bool
+}
+
+// StageAXFRChanges computes this scan's DEFINITIVE AXFR state changes against prior (the last known
+// definitive state per endpoint — see AXFRPriorState, loaded from ClickHouse by load.LoadAXFRPrior) and
+// inserts them into the durable axfr_changes stage. An unknown probe never produces a change and is
+// never compared against prior. A previously-unseen endpoint (no prior definitive state) writes an
+// initial change only when this probe is definitively OPEN — closed is the assumed baseline for an
+// endpoint the pipeline has never proven open, so a first-ever closed observation is not a change.
+// Every later definitive flip (open->closed or closed->open, including back to a domain's own baseline)
+// IS recorded. INSERT OR IGNORE on axfr_changes' full-row primary key (which includes changed_at, the
+// probe's own observed_at) makes re-staging the same scan's probes a no-op.
+func (s *Store) StageAXFRChanges(ctx context.Context, scanID string, prior map[AXFREndpointKey]AXFRPriorState) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, name_server, name_server_ip, verdict, observed_at
+		FROM axfr_probes WHERE scan_id = ?`, scanID)
+	if err != nil {
+		return 0, err
+	}
+	type staged struct {
+		key       AXFREndpointKey
+		axfrOpen  bool
+		changedAt string
+	}
+	var changes []staged
+	for rows.Next() {
+		var rd, ns, ip, verdict, ts string
+		if err := rows.Scan(&rd, &ns, &ip, &verdict, &ts); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if verdict != string(resolve.VerdictOpen) && verdict != string(resolve.VerdictClosed) {
+			continue // unknown: never a change, never compared against prior
+		}
+		open := verdict == string(resolve.VerdictOpen)
+		key := AXFREndpointKey{RootDomain: rd, NameServer: ns, NameServerIP: ip}
+		if p := prior[key]; p.HasDefinitive {
+			if p.AXFROpen == open {
+				continue // no flip from the prior definitive state
+			}
+		} else if !open {
+			continue // no prior definitive state: a first-ever closed observation is the baseline
+		}
+		changes = append(changes, staged{key, open, ts})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	if len(changes) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO axfr_changes
+		(scan_id, root_domain, name_server, name_server_ip, axfr_open, changed_at) VALUES (?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+	added := 0
+	for _, c := range changes {
+		r, err := stmt.ExecContext(ctx, scanID, c.key.RootDomain, c.key.NameServer, c.key.NameServerIP, b2i(c.axfrOpen), c.changedAt)
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := r.RowsAffected(); n > 0 {
+			added++
+		}
+	}
+	return added, tx.Commit()
+}
+
+// StagedAXFRChanges reads scanID's staged axfr_changes rows into the ClickHouse row shape, for
+// load.WriteAXFRStateChanges to insert into dns_axfr_state_changes.
+func (s *Store) StagedAXFRChanges(ctx context.Context, scanID string) ([]model.AXFRStateChangeRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, name_server, name_server_ip, axfr_open, changed_at
+		FROM axfr_changes WHERE scan_id = ?`, scanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.AXFRStateChangeRow
+	for rows.Next() {
+		var rd, ns, ip, ts string
+		var open int
+		if err := rows.Scan(&rd, &ns, &ip, &open, &ts); err != nil {
+			return nil, err
+		}
+		out = append(out, model.AXFRStateChangeRow{
+			RootDomain: rd, NameServer: ns, NameServerIP: ip,
+			AXFROpen: uint8(open), ScanID: scanID, ChangedAt: parseTS(ts),
+		})
+	}
+	return out, rows.Err()
+}
+
+// AXFRLoadRows returns, for every domain the AXFR phase finished (axfr_domains.status='done') in
+// scanID, one AXFRProbedEndpoint per endpoint worth a dns_axfr_latest update:
+//   - every endpoint actually probed this scan (from axfr_probes) — Verdict set, DelegationActive true;
+//   - every OTHER endpoint still in the domain's current delegation (scan_domains.ns_endpoints) that has
+//     prior state worth carrying forward (e.g. it became non-dialable and so wasn't dialed this scan) —
+//     Verdict empty, DelegationActive true;
+//   - every endpoint in prior whose root_domain was processed this scan but that no longer appears in
+//     the current delegation at all — Verdict empty, DelegationActive false (a removal).
+//
+// prior (as loaded by load.LoadAXFRPrior) is read here only to know which past endpoints existed; it is
+// never mutated. Endpoints with neither a probe this scan nor any prior state are omitted entirely —
+// there is nothing yet worth recording for them.
+func (s *Store) AXFRLoadRows(ctx context.Context, scanID string, prior map[AXFREndpointKey]AXFRPriorState) ([]AXFRProbedEndpoint, error) {
+	domainRows, err := s.db.QueryContext(ctx, `SELECT ad.root_domain, sd.ns_endpoints
+		FROM axfr_domains ad JOIN scan_domains sd ON sd.scan_id = ad.scan_id AND sd.root_domain = ad.root_domain
+		WHERE ad.scan_id = ? AND ad.status = 'done'`, scanID)
+	if err != nil {
+		return nil, err
+	}
+	touched := map[string]bool{}
+	delegation := map[string]map[[2]string]bool{} // root_domain -> {(name_server, ip): true}
+	for domainRows.Next() {
+		var rd, epJSON string
+		if err := domainRows.Scan(&rd, &epJSON); err != nil {
+			domainRows.Close()
+			return nil, err
+		}
+		touched[rd] = true
+		var eps []model.NameserverEndpoint
+		_ = json.Unmarshal([]byte(epJSON), &eps)
+		set := make(map[[2]string]bool, len(eps))
+		for _, ep := range eps {
+			set[[2]string{ep.Name, ep.IP}] = true
+		}
+		delegation[rd] = set
+	}
+	if err := domainRows.Err(); err != nil {
+		domainRows.Close()
+		return nil, err
+	}
+	domainRows.Close()
+
+	probeRows, err := s.db.QueryContext(ctx, `SELECT root_domain, name_server, name_server_ip, verdict, reason, observed_at
+		FROM axfr_probes WHERE scan_id = ?`, scanID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[AXFREndpointKey]bool{}
+	var out []AXFRProbedEndpoint
+	for probeRows.Next() {
+		var rd, ns, ip, verdict, reason, ts string
+		if err := probeRows.Scan(&rd, &ns, &ip, &verdict, &reason, &ts); err != nil {
+			probeRows.Close()
+			return nil, err
+		}
+		key := AXFREndpointKey{RootDomain: rd, NameServer: ns, NameServerIP: ip}
+		seen[key] = true
+		out = append(out, AXFRProbedEndpoint{
+			AXFREndpointKey: key, Verdict: verdict, Reason: reason, ObservedAt: parseTS(ts),
+			Definitive:       verdict == string(resolve.VerdictOpen) || verdict == string(resolve.VerdictClosed),
+			DelegationActive: true,
+		})
+	}
+	if err := probeRows.Err(); err != nil {
+		probeRows.Close()
+		return nil, err
+	}
+	probeRows.Close()
+
+	// Delegated but not probed this scan (e.g. non-dialable/hyperscaler) — only worth a row if there is
+	// prior state to carry forward.
+	for rd, set := range delegation {
+		for nsip := range set {
+			key := AXFREndpointKey{RootDomain: rd, NameServer: nsip[0], NameServerIP: nsip[1]}
+			if seen[key] {
+				continue
+			}
+			if _, ok := prior[key]; !ok {
+				continue
+			}
+			seen[key] = true
+			out = append(out, AXFRProbedEndpoint{AXFREndpointKey: key, DelegationActive: true})
+		}
+	}
+
+	// Previously active for a domain touched this scan, but no longer in its current delegation at all.
+	for key := range prior {
+		if seen[key] || !touched[key.RootDomain] {
+			continue
+		}
+		out = append(out, AXFRProbedEndpoint{AXFREndpointKey: key, DelegationActive: false})
+	}
+	return out, nil
+}
+
+// AXFRLoadComplete reports whether the AXFR ClickHouse load pass finished for scanID (a restart skips
+// re-running it).
+func (s *Store) AXFRLoadComplete(ctx context.Context, scanID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT complete FROM axfr_load_state WHERE scan_id = ?`, scanID).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return n == 1, err
+}
+
+// MarkAXFRLoadComplete records that the AXFR ClickHouse load pass finished for scanID.
+func (s *Store) MarkAXFRLoadComplete(ctx context.Context, scanID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO axfr_load_state (scan_id, complete) VALUES (?, 1)
+		 ON CONFLICT(scan_id) DO UPDATE SET complete = 1`, scanID)
+	return err
+}
+
 // Close closes the DB.
 func (s *Store) Close() error { return s.db.Close() }
 

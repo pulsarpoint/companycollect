@@ -1108,3 +1108,187 @@ func TestPendingAXFRDomainsFallsBackToLegacyNSIPs(t *testing.T) {
 		t.Errorf("legacy private IP endpoint = %+v, want Dialable=false Scope=private (never default to dialable)", priv)
 	}
 }
+
+// TestStageAXFRChangesUnseenClosedNoChangeButLatestRow proves an endpoint the pipeline has NEVER seen
+// before (prior is nil/empty) whose first-ever probe is definitively closed produces NO axfr_changes
+// row — closed is the assumed baseline for an unseen endpoint, not a change — while AXFRLoadRows still
+// surfaces it (definitive, delegation-active) so the load pass writes a latest row for it.
+func TestStageAXFRChangesUnseenClosedNoChangeButLatestRow(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	seedResolvedAXFRDomain(t, st, "sc", "closed.com", "9.9.9.9")
+
+	probes := []resolve.AXFROutcome{{Verdict: resolve.VerdictClosed, Reason: resolve.ReasonRefused,
+		NSHost: "ns1.closed.com", NSIP: "9.9.9.9", ObservedAt: time.Unix(100, 0).UTC()}}
+	if err := st.CommitAXFRDomain(ctx, "sc", "closed.com", probes, nil, "run1", time.Unix(100, 0).UTC(), ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	n, err := st.StageAXFRChanges(ctx, "sc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("StageAXFRChanges added = %d, want 0 (a first-ever closed observation is the baseline, not a change)", n)
+	}
+	var changeN int
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM axfr_changes WHERE scan_id='sc'`).Scan(&changeN); err != nil {
+		t.Fatal(err)
+	}
+	if changeN != 0 {
+		t.Fatalf("axfr_changes rows = %d, want 0", changeN)
+	}
+
+	eps, err := st.AXFRLoadRows(ctx, "sc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) != 1 {
+		t.Fatalf("AXFRLoadRows = %+v, want 1 endpoint (no change does not mean no latest row)", eps)
+	}
+	if eps[0].Verdict != string(resolve.VerdictClosed) || !eps[0].Definitive || !eps[0].DelegationActive {
+		t.Errorf("endpoint = %+v, want verdict=closed, definitive=true, delegation-active=true", eps[0])
+	}
+}
+
+// TestStageAXFRChangesOpenRefusedOpenThreeChanges walks one endpoint through open -> closed -> open
+// across three separate scans, feeding StageAXFRChanges the prior definitive state a real load pass
+// would have loaded from ClickHouse after each step, and proves every one of the three transitions
+// (including the very first, unseen -> open) lands its own axfr_changes row.
+func TestStageAXFRChangesOpenRefusedOpenThreeChanges(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	domain, ip, nsHost := "flap.com", "9.9.9.9", "ns1.flap.com"
+	key := AXFREndpointKey{RootDomain: domain, NameServer: nsHost, NameServerIP: ip}
+
+	stageScan := func(scanID string, verdict resolve.AXFRVerdict, reason resolve.AXFRReason, prior map[AXFREndpointKey]AXFRPriorState) int {
+		t.Helper()
+		if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		eps := []model.NameserverEndpoint{{Name: nsHost, IP: ip, Scope: "public", Dialable: true}}
+		if err := st.CommitBatch(ctx, []model.DomainResult{{
+			ScanID: scanID, RootDomain: domain, Status: "done", ResolvedAt: time.Unix(0, 0).UTC(),
+			NSIPs: []string{ip}, Endpoints: eps,
+		}}); err != nil {
+			t.Fatalf("commit domain: %v", err)
+		}
+		if _, err := st.SeedAXFRDomains(ctx, scanID); err != nil {
+			t.Fatalf("seed axfr domains: %v", err)
+		}
+		probes := []resolve.AXFROutcome{{Verdict: verdict, Reason: reason, NSHost: nsHost, NSIP: ip, ObservedAt: time.Unix(0, 0).UTC()}}
+		if err := st.CommitAXFRDomain(ctx, scanID, domain, probes, nil, "run", time.Unix(0, 0).UTC(), ""); err != nil {
+			t.Fatalf("commit axfr: %v", err)
+		}
+		n, err := st.StageAXFRChanges(ctx, scanID, prior)
+		if err != nil {
+			t.Fatalf("stage: %v", err)
+		}
+		return n
+	}
+
+	if n := stageScan("sc1", resolve.VerdictOpen, resolve.ReasonTransferred, nil); n != 1 {
+		t.Fatalf("scan1 (unseen -> open) added %d, want 1", n)
+	}
+	prior2 := map[AXFREndpointKey]AXFRPriorState{key: {HasDefinitive: true, AXFROpen: true}}
+	if n := stageScan("sc2", resolve.VerdictClosed, resolve.ReasonRefused, prior2); n != 1 {
+		t.Fatalf("scan2 (open -> closed) added %d, want 1", n)
+	}
+	prior3 := map[AXFREndpointKey]AXFRPriorState{key: {HasDefinitive: true, AXFROpen: false}}
+	if n := stageScan("sc3", resolve.VerdictOpen, resolve.ReasonTransferred, prior3); n != 1 {
+		t.Fatalf("scan3 (closed -> open) added %d, want 1", n)
+	}
+
+	var total int
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM axfr_changes WHERE root_domain = ?`, domain).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 {
+		t.Fatalf("total axfr_changes rows = %d, want 3 (open, closed, open — including the initial open)", total)
+	}
+}
+
+// TestStageAXFRChangesIdempotentRepeat proves re-staging the SAME scan's probes against the SAME prior
+// adds nothing new: the axfr_changes row it would produce has an identical primary key (same scan_id,
+// same changed_at, sourced from the same unchanged axfr_probes.observed_at), so INSERT OR IGNORE dedups.
+func TestStageAXFRChangesIdempotentRepeat(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	seedResolvedAXFRDomain(t, st, "sc", "idem.com", "9.9.9.9")
+	probes := []resolve.AXFROutcome{{Verdict: resolve.VerdictOpen, Reason: resolve.ReasonTransferred,
+		NSHost: "ns1.idem.com", NSIP: "9.9.9.9", ObservedAt: time.Unix(50, 0).UTC()}}
+	if err := st.CommitAXFRDomain(ctx, "sc", "idem.com", probes, nil, "run1", time.Unix(50, 0).UTC(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	n1, err := st.StageAXFRChanges(ctx, "sc", nil)
+	if err != nil || n1 != 1 {
+		t.Fatalf("first stage: n=%d err=%v, want n=1", n1, err)
+	}
+	n2, err := st.StageAXFRChanges(ctx, "sc", nil)
+	if err != nil || n2 != 0 {
+		t.Fatalf("second stage (repeat, same scan/prior): n=%d err=%v, want n=0", n2, err)
+	}
+	var total int
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM axfr_changes WHERE scan_id='sc' AND root_domain='idem.com'`).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("axfr_changes rows after repeat = %d, want 1 (no duplicate)", total)
+	}
+}
+
+// TestAXFRLoadRowsRemovedFromDelegation proves an endpoint that prior (ClickHouse) state says was last
+// seen active, but whose root domain resolved THIS scan to a different NS delegation that no longer
+// includes it, is surfaced by AXFRLoadRows as delegation_active=false with no fresh probe (Verdict=""),
+// and that StageAXFRChanges never turns a delegation removal into an axfr_changes row (it only ever
+// looks at axfr_probes, and the removed endpoint has none this scan).
+func TestAXFRLoadRowsRemovedFromDelegation(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	domain := "moved.com"
+	staleKey := AXFREndpointKey{RootDomain: domain, NameServer: "ns-old." + domain, NameServerIP: "1.1.1.1"}
+	prior := map[AXFREndpointKey]AXFRPriorState{
+		staleKey: {HasDefinitive: true, AXFROpen: true, DelegationActive: true},
+	}
+
+	// This scan resolves the domain to a brand-new (non-dialable) NS — ns-old is gone entirely — and
+	// nothing gets probed.
+	if _, err := st.Seed(ctx, "sc", []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: domain, Status: "done", ResolvedAt: time.Unix(0, 0).UTC(),
+		NSIPs: []string{"10.0.0.1"},
+		Endpoints: []model.NameserverEndpoint{
+			{Name: "ns-new." + domain, IP: "10.0.0.1", Scope: "private", Dialable: false},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SeedAXFRDomains(ctx, "sc"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitAXFRDomain(ctx, "sc", domain, nil, nil, "run1", time.Unix(0, 0).UTC(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.StageAXFRChanges(ctx, "sc", prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("StageAXFRChanges added = %d, want 0 (a delegation removal is never a change)", n)
+	}
+
+	eps, err := st.AXFRLoadRows(ctx, "sc", prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) != 1 {
+		t.Fatalf("AXFRLoadRows = %+v, want exactly the one removed endpoint", eps)
+	}
+	if eps[0].AXFREndpointKey != staleKey || eps[0].DelegationActive || eps[0].Verdict != "" {
+		t.Errorf("removed endpoint = %+v, want key=%+v delegation_active=false verdict=\"\"", eps[0], staleKey)
+	}
+}

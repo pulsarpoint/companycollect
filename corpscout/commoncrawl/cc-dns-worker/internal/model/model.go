@@ -32,14 +32,41 @@ type NameserverEndpoint struct {
 	Dialable bool   // true only when Scope is publicly dialable (resolve.Dialable(scope))
 }
 
-// AXFRObservation is one AXFR state-change row for ClickHouse's dns_axfr_observations log: at
-// observed_at the zone transfer on name_server (an NS IP) for root_domain flipped to axfr_open. The
-// AXFR phase emits one only when the state differs from the last known state (implicit-closed base).
-type AXFRObservation struct {
-	RootDomain string    `ch:"root_domain"`
-	NameServer string    `ch:"name_server"`
-	AXFROpen   bool      `ch:"axfr_open"`
-	ObservedAt time.Time `ch:"observed_at"`
+// AXFRLatestRow mirrors corpscout.dns_axfr_latest: one row per AXFR-probed endpoint (root_domain,
+// name_server, name_server_ip) carrying its most recent probe and its most recent DEFINITIVE state,
+// tracked separately because an unknown probe must update the former without ever touching the latter.
+// HasDefinitiveState/AXFROpen/DefinitiveAt/DefinitiveScanID describe the last probe that reached open
+// or closed; LastProbeVerdict/LastProbeReason/LastProbedAt describe the most recent probe of any kind
+// (including unknown). DelegationActive is whether this (host, ip) is still part of the domain's
+// current NS delegation as of this scan; DelegationSeenAt is when it was last seen active. Field order
+// matches the CREATE TABLE column order (the ch tags drive `insert`'s column list from struct order).
+type AXFRLatestRow struct {
+	RootDomain         string    `ch:"root_domain"`
+	NameServer         string    `ch:"name_server"`
+	NameServerIP       string    `ch:"name_server_ip"`
+	UpdatedAt          time.Time `ch:"updated_at"`
+	DelegationActive   uint8     `ch:"delegation_active"`
+	DelegationSeenAt   time.Time `ch:"delegation_seen_at"`
+	LastProbeVerdict   string    `ch:"last_probe_verdict"`
+	LastProbeReason    string    `ch:"last_probe_reason"`
+	LastProbedAt       time.Time `ch:"last_probed_at"`
+	HasDefinitiveState uint8     `ch:"has_definitive_state"`
+	AXFROpen           uint8     `ch:"axfr_open"`
+	DefinitiveAt       time.Time `ch:"definitive_at"`
+	DefinitiveScanID   string    `ch:"definitive_scan_id"`
+}
+
+// AXFRStateChangeRow mirrors corpscout.dns_axfr_state_changes: one row per DEFINITIVE AXFR state
+// transition for one endpoint. ScanID is part of the table's ORDER BY key, so re-loading the same
+// scan's staged changes (a retry) is idempotent, while two distinct open periods from different scans
+// never collapse into one even if their ChangedAt values coincide.
+type AXFRStateChangeRow struct {
+	RootDomain   string    `ch:"root_domain"`
+	NameServer   string    `ch:"name_server"`
+	NameServerIP string    `ch:"name_server_ip"`
+	AXFROpen     uint8     `ch:"axfr_open"`
+	ScanID       string    `ch:"scan_id"`
+	ChangedAt    time.Time `ch:"changed_at"`
 }
 
 // HostLabel is one discovered subdomain label to scan for a domain (from CT, the registry, or a

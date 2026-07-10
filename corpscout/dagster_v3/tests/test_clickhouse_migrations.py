@@ -125,6 +125,8 @@ EXPECTED_MIGRATIONS = (
     "000108_corpscout_commoncrawl_domain_dns_scan_axfr",
     "000109_corpscout_commoncrawl_domain_dns_records_discovery",
     "000110_corpscout_commoncrawl_domain_hostnames",
+    "000111_corpscout_dns_axfr_observations",
+    "000112_corpscout_dns_axfr_latest_changes",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
