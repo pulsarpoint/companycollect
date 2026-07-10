@@ -3,6 +3,19 @@
 Deploys `cc-dns-worker` to `hetzner01`: OS tuning (`os_tuning`), a local recursive
 resolver (`unbound`), and the worker service itself (`cc_dns_worker`).
 
+## Feature containment (temporary)
+
+`--axfr` and `--host-enrich` are **disabled** in the production flag set
+(`group_vars/cc_dns/vars.yml`) until their release gates in
+[`../../docs/superpowers/plans/2026-07-10-cc-dns-worker-correctness-hardening.md`](../../docs/superpowers/plans/2026-07-10-cc-dns-worker-correctness-hardening.md)
+pass — AXFR needs Tasks 2–6, host enrichment needs Task 11. This is temporary
+containment, not feature removal: re-enable by appending `--axfr --host-enrich`
+to `cc_dns_run_flags`. Rollback of the containment is that single variable change.
+
+Note: the **base resolver** still requires Task 1 (public-target dial filtering)
+before it is production-safe, because authoritative DNS queries dial untrusted NS
+addresses too — not only AXFR.
+
 ## Prerequisites
 
 - The target host (`hetzner01`) is reachable over Tailscale/ssh from the control
