@@ -28,9 +28,9 @@ func (c *axfrCollector) add(o model.AXFRObservation) {
 }
 
 // runAXFRPipeline runs the standalone AXFR phase: a bounded worker pool that walks the resolved-domain
-// cursor (AXFRTargetsAfter — reusing the ns_ips resolution already stored, so no NS re-discovery) and,
-// for each domain, probes every NON-hyperscaler NS IP. It loads the last known open/closed state per
-// (domain, ns) from ClickHouse at the start, and emits a dns_axfr_observations row ONLY when the
+// cursor (AXFRTargetsAfter — reusing the NS endpoints already stored, so no NS re-discovery) and, for
+// each domain, probes every dialable, NON-hyperscaler NS endpoint. It loads the last known open/closed
+// state per (domain, ns) from ClickHouse at the start, and emits a dns_axfr_observations row ONLY when the
 // probed state differs from that (implicit-closed base: absent == closed) — so always-closed
 // nameservers never produce a row and the log is already the collapsed open->close->open timeline.
 // Open zones' records still flow to scan_records (source='axfr'). Entirely off the resolution path —
@@ -174,18 +174,27 @@ func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error
 	return nil
 }
 
-// processAXFRTarget probes each non-hyperscaler NS IP of one domain, emits a state-change row when the
-// probed open/closed value differs from prev (absent == closed), and appends any open zone's records
-// to scan_records. Returns (#NS probed, #NS that opened). prev is read-only (built before the pool).
+// processAXFRTarget probes each dialable, non-hyperscaler NS endpoint of one domain, emits a
+// state-change row when the probed open/closed value differs from prev (absent == closed), and appends
+// any open zone's records to scan_records. Returns (#NS probed, #NS that opened). prev is read-only
+// (built before the pool).
 func processAXFRTarget(ctx context.Context, st *store.Store, prober *resolve.AXFRProber, cfg scanConfig, t store.AXFRTarget, prev map[[2]string]bool, coll *axfrCollector) (int, int) {
 	var zone []model.DNSRecord
 	probed, opened := 0, 0
 	now := time.Now().UTC()
-	for _, ip := range t.NSIPs {
-		if scheduler.IsHyperscaler(ip) {
+	seenIP := map[string]bool{} // one IP can back several NS names (shared/anycast) — probe it once
+	for _, ep := range t.Endpoints {
+		if !ep.Dialable {
+			continue // never dial a non-public endpoint (loopback/private/link-local/etc. — evidence only)
+		}
+		if scheduler.IsHyperscaler(ep.IP) {
 			continue // skip this NS — hyperscalers never allow AXFR
 		}
-		res := prober.ProbeServer(ctx, t.RootDomain, ip)
+		if seenIP[ep.IP] {
+			continue
+		}
+		seenIP[ep.IP] = true
+		res := prober.ProbeServer(ctx, t.RootDomain, ep.IP)
 		probed++
 		if res.Open {
 			opened++
@@ -194,8 +203,8 @@ func processAXFRTarget(ctx context.Context, st *store.Store, prober *resolve.AXF
 			}
 		}
 		// Emit only when the state changed vs the last known state (implicit-closed base).
-		if res.Open != prev[[2]string{t.RootDomain, ip}] {
-			coll.add(model.AXFRObservation{RootDomain: t.RootDomain, NameServer: ip, AXFROpen: res.Open, ObservedAt: now})
+		if res.Open != prev[[2]string{t.RootDomain, ep.IP}] {
+			coll.add(model.AXFRObservation{RootDomain: t.RootDomain, NameServer: ep.IP, AXFROpen: res.Open, ObservedAt: now})
 		}
 	}
 	if zone != nil {

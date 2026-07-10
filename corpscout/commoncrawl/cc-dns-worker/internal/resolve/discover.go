@@ -3,7 +3,10 @@ package resolve
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
+
+	"cc-dns-worker/internal/model"
 
 	"github.com/miekg/dns"
 	"golang.org/x/net/publicsuffix"
@@ -11,14 +14,27 @@ import (
 
 // Delegation is what discovery learned for a domain.
 type Delegation struct {
-	ETLD  string
-	NS    []string
-	NSIPs []string // every discovered NS IP, in discovery order, deduped — full evidence, never filtered
-	DS    []string
+	ETLD string
+	DS   []string
 
-	// DialableNSIPs is the subset of NSIPs classified ScopePublic (see target.go), in the same order,
-	// deduped. Tier-2 record queries and AXFR must dial only from this list — NSIPs itself is kept
-	// intact as evidence even when some (or all) of it is not safe to dial.
+	// NS holds every authoritative NS hostname discovered in the NS RRset, lowercased/no trailing dot,
+	// deduped in discovery order — kept even for a hostname that resolves to no A/AAAA at all, since
+	// that absence is itself evidence (an NS name that glue can't reach). It is therefore populated
+	// straight from the wire rather than being restricted to the hostnames that made it into Endpoints.
+	NS []string
+
+	// Endpoints is the (ns-hostname, ip) pairing discovery observed: one entry per distinct pair, in
+	// discovery order, IP in canonical string form (see model.NameserverEndpoint). It is the source of
+	// truth for hostname<->IP identity — NSIPs and DialableNSIPs below are both pure views derived from
+	// it, so they can never disagree with Endpoints about which addresses exist or are dialable.
+	Endpoints []model.NameserverEndpoint
+
+	// NSIPs is every distinct Endpoints IP, in discovery order — full evidence, never filtered.
+	NSIPs []string
+
+	// DialableNSIPs is the NSIPs subset classified ScopePublic (see target.go), in the same order.
+	// Tier-2 record queries and AXFR must dial only from this list — NSIPs itself is kept intact as
+	// evidence even when some (or all) of it is not safe to dial.
 	DialableNSIPs []string
 }
 
@@ -55,9 +71,14 @@ func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation,
 	if err != nil {
 		return del, err
 	}
+	seenNS := map[string]bool{}
 	for _, rr := range nsResp.Answer {
 		if ns, ok := rr.(*dns.NS); ok {
-			del.NS = append(del.NS, strings.ToLower(ns.Ns))
+			name := strings.ToLower(strings.TrimSuffix(ns.Ns, "."))
+			if !seenNS[name] {
+				seenNS[name] = true
+				del.NS = append(del.NS, name)
+			}
 		}
 	}
 	if len(del.NS) == 0 {
@@ -72,15 +93,25 @@ func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation,
 		}
 	}
 
-	seen := map[string]bool{}
-	add := func(ip string) {
-		if ip != "" && !seen[ip] {
-			seen[ip] = true
-			del.NSIPs = append(del.NSIPs, ip) // full evidence: keep every scope
-			if scope, ok := ClassifyString(ip); ok && Dialable(scope) {
-				del.DialableNSIPs = append(del.DialableNSIPs, ip)
-			}
+	// Record WHICH address belongs to WHICH NS hostname: one Endpoint per distinct (ns-hostname, ip)
+	// pair, so one NS name with several IPs yields several endpoints, and several NS names sharing one
+	// IP (e.g. anycast) yield several endpoints too — never collapsed into a single flat address.
+	seenEndpoint := map[string]bool{} // "name\x00canonical-ip"
+	addEndpoint := func(ns, rawIP string) {
+		addr, perr := netip.ParseAddr(rawIP)
+		if perr != nil {
+			return // A/AAAA rdata should always parse; never propagate a malformed address as evidence
 		}
+		ip := addr.String() // canonical textual form: lowercase hex, standard zero-run compression, etc.
+		key := ns + "\x00" + ip
+		if seenEndpoint[key] {
+			return
+		}
+		seenEndpoint[key] = true
+		scope := ClassifyAddr(addr)
+		del.Endpoints = append(del.Endpoints, model.NameserverEndpoint{
+			Name: ns, IP: ip, Scope: string(scope), Dialable: Dialable(scope),
+		})
 	}
 	for _, ns := range del.NS {
 		for _, qt := range []uint16{dns.TypeA, dns.TypeAAAA} {
@@ -91,11 +122,26 @@ func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation,
 			for _, rr := range resp.Answer {
 				switch a := rr.(type) {
 				case *dns.A:
-					add(a.A.String())
+					addEndpoint(ns, a.A.String())
 				case *dns.AAAA:
-					add(a.AAAA.String())
+					addEndpoint(ns, a.AAAA.String())
 				}
 			}
+		}
+	}
+
+	// NSIPs/DialableNSIPs are pure views over Endpoints, deduped by IP alone (an IP shared by multiple
+	// NS names still counts once), in first-seen order — so they can never drift from what Endpoints
+	// actually recorded.
+	seenIP := map[string]bool{}
+	for _, ep := range del.Endpoints {
+		if seenIP[ep.IP] {
+			continue
+		}
+		seenIP[ep.IP] = true
+		del.NSIPs = append(del.NSIPs, ep.IP) // full evidence: keep every scope
+		if ep.Dialable {
+			del.DialableNSIPs = append(del.DialableNSIPs, ep.IP)
 		}
 	}
 	if len(del.NSIPs) == 0 {

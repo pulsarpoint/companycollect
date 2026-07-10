@@ -17,6 +17,21 @@ type DNSRecord struct {
 	Discovery  string // "static" | "ct" | "axfr" — how the hostname was discovered
 }
 
+// NameserverEndpoint pairs one authoritative NS hostname with one of its resolved IP addresses, so
+// discovery's hostname<->IP identity survives storage instead of collapsing into a flat IP list — a
+// flat list can't say which NS name an address came from, and (worse) has no way to note "this address
+// exists but is not safe to dial" other than dropping it, which discards evidence. Scope and Dialable
+// are therefore carried explicitly rather than inferred from an empty/missing IP: an empty IP must
+// never be overloaded to mean "blocked". Scope mirrors resolve.AddrScope's string value (e.g.
+// "public", "private", "loopback"); this package does not import package resolve (which already
+// imports model) to avoid a cycle.
+type NameserverEndpoint struct {
+	Name     string // NS hostname, lowercased, no trailing dot
+	IP       string // resolved address, canonical form (net/netip's Addr.String())
+	Scope    string // resolve.AddrScope value for IP, e.g. "public", "private", "loopback"
+	Dialable bool   // true only when Scope is publicly dialable (resolve.Dialable(scope))
+}
+
 // AXFRObservation is one AXFR state-change row for ClickHouse's dns_axfr_observations log: at
 // observed_at the zone transfer on name_server (an NS IP) for root_domain flipped to axfr_open. The
 // AXFR phase emits one only when the state differs from the last known state (implicit-closed base).
@@ -43,6 +58,7 @@ type DomainResult struct {
 	ETLD          string
 	Nameservers   []string
 	NSIPs         []string
+	Endpoints     []NameserverEndpoint // hostname<->IP identity behind Nameservers/NSIPs (see NameserverEndpoint)
 	DNSSECSigned  bool
 	DSPresent     bool
 	Status        string // "done" | "error"
@@ -93,10 +109,13 @@ type HostnameRow struct {
 // ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
 // successful scans are loaded, so a failed re-scan never clobbers a domain's last-good summary.
 type ScanRow struct {
-	RootDomain    string    `ch:"root_domain"`
-	ETLD          string    `ch:"etld"`
-	Nameservers   []string  `ch:"nameservers"`
-	NSIPs         []string  `ch:"ns_ips"`
+	RootDomain  string   `ch:"root_domain"`
+	ETLD        string   `ch:"etld"`
+	Nameservers []string `ch:"nameservers"`
+	NSIPs       []string `ch:"ns_ips"`
+	// Endpoints carries the hostname<->IP identity behind Nameservers/NSIPs. It is SQLite-local only
+	// (no ch tag, so chColumns/insert skip it) — not yet part of the ClickHouse scan-summary schema.
+	Endpoints     []NameserverEndpoint
 	DNSSECSigned  uint8     `ch:"dnssec_signed"`
 	DSPresent     uint8     `ch:"ds_present"`
 	Status        string    `ch:"status"`

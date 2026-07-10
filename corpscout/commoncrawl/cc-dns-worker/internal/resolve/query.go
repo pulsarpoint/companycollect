@@ -41,7 +41,7 @@ func NewResolverWithStats(ex Exchanger, stats *metrics.Stats) *Resolver {
 func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, del Delegation, cfg records.Config, now time.Time, extra []model.HostLabel) model.DomainResult {
 	res := model.DomainResult{
 		ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
-		Nameservers: del.NS, NSIPs: del.NSIPs,
+		Nameservers: del.NS, NSIPs: del.NSIPs, Endpoints: del.Endpoints,
 		DSPresent: len(del.DS) > 0, Status: "done",
 		SourceRunID: runID, ResolvedAt: now,
 	}

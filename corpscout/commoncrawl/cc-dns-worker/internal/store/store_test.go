@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cc-dns-worker/internal/model"
+	"cc-dns-worker/internal/resolve"
 )
 
 func openTemp(t *testing.T) *Store {
@@ -593,5 +594,204 @@ func TestRecordsAfterUsesRowidScan(t *testing.T) {
 	}
 	if strings.Contains(joined, "TEMP B-TREE") {
 		t.Errorf("plan sorts with a temp B-tree instead of reading in rowid order: %s", joined)
+	}
+}
+
+// TestNameserverEndpointsRoundTrip proves the ns_endpoints JSON column round-trips a mix of IPv4 and
+// IPv6 endpoints intact: Name, canonical IP, Scope, and Dialable must all survive a commit + reopen.
+func TestNameserverEndpointsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scan.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Seed(context.Background(), "sc", []string{"a.com"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	want := []model.NameserverEndpoint{
+		{Name: "ns1.a.com", IP: "1.1.1.1", Scope: "public", Dialable: true},
+		{Name: "ns1.a.com", IP: "10.0.0.1", Scope: "private", Dialable: false},
+		{Name: "ns2.a.com", IP: "2606:4700:4700::1111", Scope: "public", Dialable: true},
+	}
+	res := model.DomainResult{
+		ScanID: "sc", RootDomain: "a.com", Status: "done", ResolvedAt: time.Unix(0, 0).UTC(),
+		Nameservers: []string{"ns1.a.com", "ns2.a.com"},
+		NSIPs:       []string{"1.1.1.1", "10.0.0.1", "2606:4700:4700::1111"},
+		Endpoints:   want,
+	}
+	if err := s.CommitBatch(ctx, []model.DomainResult{res}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen — the round trip must survive a fresh connection, not just an in-memory read-back.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	rows, err := s2.StagedDomains(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("staged domains = %d, want 1", len(rows))
+	}
+	got := rows[0].Endpoints
+	if len(got) != len(want) {
+		t.Fatalf("Endpoints = %+v, want %+v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("Endpoints[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+// TestNameserverEndpointsChangeOnRecommit proves that re-committing a domain whose delegation changed
+// (an endpoint removed, another added) is distinguishable in storage: CommitBatch replaces the whole
+// scan_domains row, so the stored ns_endpoints must reflect only the NEW delegation, not a union of old
+// and new.
+func TestNameserverEndpointsChangeOnRecommit(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	first := []model.NameserverEndpoint{
+		{Name: "ns1.a.com", IP: "1.1.1.1", Scope: "public", Dialable: true},
+		{Name: "ns2.a.com", IP: "2.2.2.2", Scope: "public", Dialable: true},
+	}
+	if err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "a.com", Status: "done", ResolvedAt: now,
+		NSIPs: []string{"1.1.1.1", "2.2.2.2"}, Endpoints: first,
+	}}); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+
+	rows, err := s.StagedDomains(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || len(rows[0].Endpoints) != 2 {
+		t.Fatalf("after first commit: %+v", rows)
+	}
+
+	// Re-resolve: ns2.a.com's address changed and a third NS/IP was added — a re-delegation, not a
+	// superset.
+	second := []model.NameserverEndpoint{
+		{Name: "ns1.a.com", IP: "1.1.1.1", Scope: "public", Dialable: true},
+		{Name: "ns2.a.com", IP: "3.3.3.3", Scope: "public", Dialable: true},
+		{Name: "ns3.a.com", IP: "4.4.4.4", Scope: "public", Dialable: true},
+	}
+	if err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "a.com", Status: "done", ResolvedAt: now,
+		NSIPs: []string{"1.1.1.1", "3.3.3.3", "4.4.4.4"}, Endpoints: second,
+	}}); err != nil {
+		t.Fatalf("second commit: %v", err)
+	}
+
+	rows2, err := s.StagedDomains(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows2) != 1 {
+		t.Fatalf("after second commit: %d rows, want 1", len(rows2))
+	}
+	got := rows2[0].Endpoints
+	if len(got) != len(second) {
+		t.Fatalf("Endpoints after re-commit = %+v, want the new delegation %+v (not a union with the old one)", got, second)
+	}
+	for i, w := range second {
+		if got[i] != w {
+			t.Errorf("Endpoints[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+	for _, ep := range got {
+		if ep.IP == "2.2.2.2" {
+			t.Errorf("stale endpoint %+v from the old delegation survived the re-commit", ep)
+		}
+	}
+}
+
+// TestAXFRTargetsAfterUsesEndpoints proves the AXFR feeder reads back the same per-(NS,IP) identity
+// that was committed, endpoints intact (not just a flattened IP list).
+func TestAXFRTargetsAfterUsesEndpoints(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com"}); err != nil {
+		t.Fatal(err)
+	}
+	eps := []model.NameserverEndpoint{
+		{Name: "ns1.a.com", IP: "9.9.9.9", Scope: "public", Dialable: true},
+		{Name: "ns2.a.com", IP: "10.0.0.1", Scope: "private", Dialable: false},
+	}
+	if err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "a.com", Status: "done", ResolvedAt: time.Unix(0, 0).UTC(),
+		NSIPs: []string{"9.9.9.9", "10.0.0.1"}, Endpoints: eps,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	targets, err := s.AXFRTargetsAfter(ctx, "sc", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].RootDomain != "a.com" {
+		t.Fatalf("targets = %+v, want one target for a.com", targets)
+	}
+	if len(targets[0].Endpoints) != len(eps) {
+		t.Fatalf("target Endpoints = %+v, want %+v", targets[0].Endpoints, eps)
+	}
+	for i, w := range eps {
+		if targets[0].Endpoints[i] != w {
+			t.Errorf("target Endpoints[%d] = %+v, want %+v", i, targets[0].Endpoints[i], w)
+		}
+	}
+}
+
+// TestAXFRTargetsAfterFallsBackToLegacyNSIPs proves a domain committed before ns_endpoints existed
+// (so the column reads back as its '[]' default) still yields an AXFR target, synthesized from ns_ips
+// and reclassified via resolve.ClassifyString — a private/loopback/etc. legacy address must come back
+// non-dialable, never defaulted to true, so the AXFR phase's !Dialable skip still holds for old rows.
+func TestAXFRTargetsAfterFallsBackToLegacyNSIPs(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"legacy.com"}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pre-task-2 commit: NSIPs populated (full evidence, as query.go always wrote), but no
+	// Endpoints — CommitBatch marshals a nil slice to JSON "null", exactly the shape ns_endpoints takes
+	// on a real pre-existing row.
+	if err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "legacy.com", Status: "done", ResolvedAt: time.Unix(0, 0).UTC(),
+		NSIPs: []string{"8.8.8.8", "192.168.1.1"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	targets, err := s.AXFRTargetsAfter(ctx, "sc", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("targets = %+v, want one target synthesized from legacy ns_ips", targets)
+	}
+	got := map[string]model.NameserverEndpoint{}
+	for _, ep := range targets[0].Endpoints {
+		got[ep.IP] = ep
+	}
+	pub, ok := got["8.8.8.8"]
+	if !ok || !pub.Dialable || pub.Scope != string(resolve.ScopePublic) {
+		t.Errorf("legacy public IP endpoint = %+v, want Dialable=true Scope=public", pub)
+	}
+	priv, ok := got["192.168.1.1"]
+	if !ok || priv.Dialable || priv.Scope != string(resolve.ScopePrivate) {
+		t.Errorf("legacy private IP endpoint = %+v, want Dialable=false Scope=private (never default to dialable)", priv)
 	}
 }

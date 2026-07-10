@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"cc-dns-worker/internal/model"
+	"cc-dns-worker/internal/resolve"
 
 	_ "modernc.org/sqlite"
 )
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS scan_domains (
   etld          TEXT DEFAULT '',
   nameservers   TEXT DEFAULT '[]',
   ns_ips        TEXT DEFAULT '[]',
+  ns_endpoints  TEXT DEFAULT '[]',
   dnssec_signed INTEGER DEFAULT 0,
   ds_present    INTEGER DEFAULT 0,
   queries_total INTEGER DEFAULT 0,
@@ -127,6 +129,7 @@ func migrate(db *sql.DB) {
 		`ALTER TABLE scan_domains ADD COLUMN axfr_records INTEGER DEFAULT 0`,
 		`ALTER TABLE scan_domains ADD COLUMN axfr_truncated INTEGER DEFAULT 0`,
 		`ALTER TABLE scan_domains ADD COLUMN axfr_server TEXT DEFAULT ''`,
+		`ALTER TABLE scan_domains ADD COLUMN ns_endpoints TEXT DEFAULT '[]'`,
 	} {
 		_, _ = db.ExecContext(context.Background(), stmt)
 	}
@@ -247,7 +250,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 	}
 	defer insR.Close()
 	upD, err := tx.PrepareContext(ctx, `UPDATE scan_domains SET
-		status=?, etld=?, nameservers=?, ns_ips=?, dnssec_signed=?, ds_present=?,
+		status=?, etld=?, nameservers=?, ns_ips=?, ns_endpoints=?, dnssec_signed=?, ds_present=?,
 		queries_total=?, queries_ok=?, axfr_open=?, axfr_records=?, axfr_truncated=?, axfr_server=?, error=?, source_run_id=?, resolved_at=?
 		WHERE scan_id=? AND root_domain=?`)
 	if err != nil {
@@ -268,7 +271,8 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		}
 		ns, _ := json.Marshal(res.Nameservers)
 		nsips, _ := json.Marshal(res.NSIPs)
-		res2, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips),
+		nsEndpoints, _ := json.Marshal(res.Endpoints)
+		res2, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips), string(nsEndpoints),
 			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.QueriesTotal, res.QueriesOK,
 			b2i(res.AXFROpen), res.AXFRRecords, b2i(res.AXFRTruncated), res.AXFRServer,
 			res.Error, res.SourceRunID, ts, res.ScanID, res.RootDomain)
@@ -313,7 +317,7 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 // domains are returned: a failed re-scan must not clobber a domain's last-good summary, and a domain
 // that never resolves has no DNS state to record.
 func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips, ns_endpoints,
 		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated, axfr_server,
 		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done'`, scanID)
@@ -324,15 +328,16 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 	var out []model.ScanRow
 	for rows.Next() {
 		var r model.ScanRow
-		var ns, nsips, ts string
+		var ns, nsips, nsEndpoints, ts string
 		var dnssec, ds, axfrOpen, axfrTrunc int
 		var axfrRecs uint32
-		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
+		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &nsEndpoints, &dnssec, &ds,
 			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.AXFRServer, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
 		_ = json.Unmarshal([]byte(nsips), &r.NSIPs)
+		_ = json.Unmarshal([]byte(nsEndpoints), &r.Endpoints)
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
 		r.AXFROpen = uint8(axfrOpen)
@@ -427,7 +432,7 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 	for _, d := range domains {
 		args = append(args, d)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips,
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips, ns_endpoints,
 		dnssec_signed, ds_present, status, queries_total, queries_ok, axfr_open, axfr_records, axfr_truncated, axfr_server,
 		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done' AND root_domain IN (`+ph+`)`, args...)
@@ -438,15 +443,16 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 	var out []model.ScanRow
 	for rows.Next() {
 		var r model.ScanRow
-		var ns, nsips, ts string
+		var ns, nsips, nsEndpoints, ts string
 		var dnssec, ds, axfrOpen, axfrTrunc int
 		var axfrRecs uint32
-		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &dnssec, &ds,
+		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &nsEndpoints, &dnssec, &ds,
 			&r.Status, &r.QueriesTotal, &r.QueriesOK, &axfrOpen, &axfrRecs, &axfrTrunc, &r.AXFRServer, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
 		_ = json.Unmarshal([]byte(nsips), &r.NSIPs)
+		_ = json.Unmarshal([]byte(nsEndpoints), &r.Endpoints)
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
 		r.AXFROpen = uint8(axfrOpen)
@@ -609,19 +615,25 @@ func (s *Store) InsertHostnamesMap(ctx context.Context, scanID string, m map[str
 	return added, tx.Commit()
 }
 
-// AXFRTarget is one domain the AXFR pipeline will probe: its root and the NS IPs resolution already
-// discovered and stored (so the pipeline needs no NS re-discovery).
+// AXFRTarget is one domain the AXFR pipeline will probe: its root and the NS endpoints resolution
+// already discovered and stored (so the pipeline needs no NS re-discovery). Endpoints preserves which
+// NS hostname each IP belongs to and each IP's dialability, so the AXFR phase can skip a non-dialable
+// address exactly like Tier-2 record queries do (resolve.Resolver.queryAuth's defense-in-depth check).
 type AXFRTarget struct {
 	RootDomain string
-	NSIPs      []string
+	Endpoints  []model.NameserverEndpoint
 }
 
-// AXFRTargetsAfter returns up to limit resolved domains (status='done') with a non-empty stored ns_ips,
-// ordered by root_domain and greater than afterRootDomain — the resumable cursor the AXFR phase walks.
+// AXFRTargetsAfter returns up to limit resolved domains (status='done') with a non-empty stored
+// ns_endpoints or ns_ips, ordered by root_domain and greater than afterRootDomain — the resumable
+// cursor the AXFR phase walks. Rows committed before ns_endpoints existed (or that never repopulated
+// it) fall back to ns_ips, reclassified via resolve.ClassifyString so dialability is still correct —
+// ns_ips is full evidence (every scope, not just public), so it must never be trusted as-is.
 func (s *Store) AXFRTargetsAfter(ctx context.Context, scanID, afterRootDomain string, limit int) ([]AXFRTarget, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT root_domain, ns_ips FROM scan_domains
-		 WHERE scan_id = ? AND status = 'done' AND ns_ips NOT IN ('', 'null', '[]') AND root_domain > ?
+		`SELECT root_domain, ns_endpoints, ns_ips FROM scan_domains
+		 WHERE scan_id = ? AND status = 'done' AND root_domain > ?
+		 AND (ns_endpoints NOT IN ('', 'null', '[]') OR ns_ips NOT IN ('', 'null', '[]'))
 		 ORDER BY root_domain LIMIT ?`, scanID, afterRootDomain, limit)
 	if err != nil {
 		return nil, err
@@ -629,17 +641,41 @@ func (s *Store) AXFRTargetsAfter(ctx context.Context, scanID, afterRootDomain st
 	defer rows.Close()
 	var out []AXFRTarget
 	for rows.Next() {
-		var rd, ipsJSON string
-		if err := rows.Scan(&rd, &ipsJSON); err != nil {
+		var rd, epJSON, ipsJSON string
+		if err := rows.Scan(&rd, &epJSON, &ipsJSON); err != nil {
 			return nil, err
 		}
-		var ips []string
-		if err := json.Unmarshal([]byte(ipsJSON), &ips); err != nil || len(ips) == 0 {
+		var eps []model.NameserverEndpoint
+		_ = json.Unmarshal([]byte(epJSON), &eps)
+		if len(eps) == 0 {
+			eps = endpointsFromLegacyIPs(ipsJSON)
+		}
+		if len(eps) == 0 {
 			continue
 		}
-		out = append(out, AXFRTarget{RootDomain: rd, NSIPs: ips})
+		out = append(out, AXFRTarget{RootDomain: rd, Endpoints: eps})
 	}
 	return out, rows.Err()
+}
+
+// endpointsFromLegacyIPs synthesizes endpoints from a pre-ns_endpoints ns_ips column: the NS hostname
+// each IP belonged to was never recorded (Name is left blank), but Scope/Dialable are reclassified from
+// the IP itself so an old row can never look more dialable than it really is.
+func endpointsFromLegacyIPs(ipsJSON string) []model.NameserverEndpoint {
+	var ips []string
+	if err := json.Unmarshal([]byte(ipsJSON), &ips); err != nil || len(ips) == 0 {
+		return nil
+	}
+	out := make([]model.NameserverEndpoint, 0, len(ips))
+	for _, ip := range ips {
+		ep := model.NameserverEndpoint{IP: ip}
+		if scope, ok := resolve.ClassifyString(ip); ok {
+			ep.Scope = string(scope)
+			ep.Dialable = resolve.Dialable(scope)
+		}
+		out = append(out, ep)
+	}
+	return out
 }
 
 // RecordAXFRZone appends an open zone's transferred records to scan_records (source='axfr'), one
