@@ -28,7 +28,7 @@
 - **Secrets:** `CLICKHOUSE_PASSWORD` lives only in `group_vars/cc_dns/vault.yml` (ansible-vault). Never commit a plaintext password. The `.env` is templated `0600 root:root`.
 - **Runtime state stays on the box:** the multi-GB SQLite cycle DBs, `orchestrator-state.json`, and logs are created by the worker at runtime — Ansible creates the directory but never ships or deletes state.
 - **Binary is built CGO-free** (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64`) on the control machine (modernc sqlite + clickhouse-go are pure Go) and copied — matches the source (no Go toolchain on the target).
-- **New-feature flags default OFF** for parity with current prod: the ExecStart flag string is a var (`cc_dns_run_flags`) equal to the source flags; enabling `--axfr`/`--host-enrich` is a one-line var change made deliberately after a first clean run.
+- **New-feature flags ON by default** (`--axfr --host-enrich`) — these are the new version's defaults. The ExecStart flags are the var `cc_dns_run_flags`; dropping those two words falls back to prod parity if the enrichment load ever needs backing out.
 - Files/paths live under `corpscout/commoncrawl/cc-dns-worker/deploy/ansible/`. Git root is `/Users/graovic/pulsarpoint/ppoint/companycollect`.
 - Prereq (out of Ansible scope, already true): target on Tailscale with `companycollect` reachable; ClickHouse migrations `000105–000110` already applied.
 
@@ -92,14 +92,15 @@ deploy_root: /opt/companycollect
 deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-worker"
 service_name: cc-dns-scan
 
-# --- worker run flags (parity with current prod; new features OFF) ---
-# To enable the new-version features, append: --axfr --host-enrich
+# --- worker run flags (new-version defaults: AXFR + CT/registry enrichment ON) ---
+# --axfr / --host-enrich are the new version's features; drop them to fall back to prod parity.
 cc_dns_run_flags: >-
   run --dir {{ deploy_dir }}
   --resolvers 127.0.0.1:53
   --discovery-qps 3000 --workers 2000 --query-timeout 2s
   --per-server-qps 30 --per-server-inflight 20 --hyperscaler-qps 500
   --discovery-inflight 3000 --load-interval 30m
+  --axfr --host-enrich
 worker_limit_nofile: 1048576
 
 # --- unbound tuning (num-threads scales to the target's CPUs) ---
@@ -553,9 +554,14 @@ ssh root@hetzner01 'set -e
 ```
 Expected: both services active, unbound resolves, 4 NOTRACK rules, raised rmem, a `scan-<cycle>.db` being created, the orchestrator logging progress.
 
-- [ ] **Step 4: Record the go-live decision for the new features**
+- [ ] **Step 4: Confirm the new features are active + watch first-cycle load**
 
-The service runs with parity flags (no `--axfr`/`--host-enrich`). Once a clean cycle is confirmed, enabling the new-version features is: set `cc_dns_run_flags` to append `--axfr --host-enrich` in `group_vars/cc_dns/vars.yml`, re-run `ansible-playbook site.yml` (the unit template change fires a restart). Do this deliberately, not in the first bring-up. No commit here — operational note.
+The service runs with `--axfr --host-enrich` (the new defaults). On the first cycle, watch that the host-load phase runs and the enrichment load is sane:
+
+```bash
+ssh root@hetzner01 'journalctl -u cc-dns-scan --no-pager | grep -iE "AXFR probing ENABLED|host-load|registered .* hostnames" | tail'
+```
+Expected: an `AXFR probing ENABLED` line and, after the seed, a `host-load complete (N discovered hostnames)` line. If the added query/CH-lookup load is ever a problem, dropping `--axfr --host-enrich` from `cc_dns_run_flags` and re-running the play backs out to prod parity. No commit here — operational note.
 
 ---
 
