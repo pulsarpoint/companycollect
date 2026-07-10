@@ -19,7 +19,7 @@ Each task is implemented, reviewed, committed, and tagged so the fix can be chec
 | `harden-task-07` | 7 | Retry-safe DNS record observations (000113/000114, refreshable MV summary) | `go test ./internal/load` + Docker-CH integration |
 | `harden-task-08` | 8 | Split record/summary watermarks; zero-record domains load; retry-stable registry ts | `go test ./internal/store ./internal/load` |
 | `harden-task-09` | 9 | Explicit done/partial/error; DS/DNSKEY outcome≠value; private-addr finding (mig 000116) | `go test ./internal/resolve ./internal/store` |
-| _pending_ | 10 | Circuit breaker enforces its contract | `go test ./internal/scheduler` |
+| `harden-task-10` | 10 | Circuit breaker contract (admit after slot/token; single half-open probe) | `go test ./internal/scheduler` |
 | _pending_ | 11 | Scope + stream CT/registry enrichment | `go test ./internal/hostsource` |
 | _pending_ | 12 | Cancellation, state validation, safe pruning | `go test ./cmd/cc-dns-worker` |
 | _pending_ | 13 | Explicit SQLite schema/decoding failures | `go test ./internal/store` |
