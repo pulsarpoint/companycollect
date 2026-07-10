@@ -13,7 +13,7 @@ Each task is implemented, reviewed, committed, and tagged so the fix can be chec
 | `harden-task-01` | 1 | Classify authoritative targets; block non-public dials (target.go, DialableNSIPs, defense-in-depth) | `go test ./internal/resolve/ -run 'Target|Dial|Scope|Public'` |
 | `harden-task-02` | 2 | Preserve NS hostname↔IP endpoint identity (NameserverEndpoint, ns_endpoints, AXFR dial-safe) | `go test ./internal/resolve ./internal/store` |
 | `harden-task-03` | 3 | Typed AXFR outcomes + definitive TCP preflight (unknown never closes) | `go test ./internal/resolve -run AXFR` |
-| _pending_ | 4 | Durable SQLite AXFR work queue (stage-then-checkpoint) | `go test ./internal/store ./cmd/cc-dns-worker -run AXFR` |
+| `harden-task-04` | 4 | Durable SQLite AXFR work queue (axfr_domains, atomic committer, resumable) | `go test ./internal/store ./cmd/cc-dns-worker -run AXFR` |
 | _pending_ | 5 | Retry-safe `dns_axfr_latest` / `dns_axfr_state_changes` | `go test ./internal/load` + migration test |
 | _pending_ | 6 | Coherent `scan --axfr` / `run` / `load` AXFR behavior | `go test ./cmd/cc-dns-worker` |
 | _pending_ | 7 | Retry-safe raw DNS record observations | `go test ./internal/load` + migration test |
