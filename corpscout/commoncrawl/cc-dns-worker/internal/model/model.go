@@ -15,6 +15,16 @@ type DNSRecord struct {
 	Priority   uint16 // MX preference; 0 otherwise
 	Source     string // "query" (actively queried) | "axfr" (from a zone transfer)
 	Discovery  string // "static" | "ct" | "axfr" — how the hostname was discovered
+
+	// Finding is a derived classification for this record, currently only ever
+	// "public_dns_private_address" (Task 9): an A/AAAA Value that resolve.ClassifyString classifies as
+	// non-public (private/loopback/link-local/CGNAT/ULA/documentation/reserved/etc), returned by a
+	// server that Tier-2 (query.go's queryAuth) or AXFR (axfr.go) only ever dials when it is itself
+	// public (see resolve.Dialable) — i.e. a public authoritative server answering with a bogus/internal
+	// address, which is worth flagging even though the record is still stored verbatim like any other.
+	// Empty for every other record. This is never used to pick a dial target (see resolve.Dialable's own
+	// doc comment on why observation and dialing are kept strictly separate).
+	Finding string
 }
 
 // NameserverEndpoint pairs one authoritative NS hostname with one of its resolved IP addresses, so
@@ -91,7 +101,33 @@ type DomainResult struct {
 	Endpoints    []NameserverEndpoint // hostname<->IP identity behind Nameservers/NSIPs (see NameserverEndpoint)
 	DNSSECSigned bool
 	DSPresent    bool
-	Status       string // "done" | "error"
+
+	// DSOutcome/DNSKEYOutcome (Task 9) are the tri-state OUTCOME of the query that produced DSPresent/
+	// DNSSECSigned: "present" | "absent" | "unknown". DSPresent/DNSSECSigned alone cannot distinguish a
+	// genuine negative (the parent has no DS / the zone has no DNSKEY — a definitive NOERROR/NODATA or
+	// NXDOMAIN) from "the query failed and we simply don't know" (timeout/SERVFAIL/exhausted retries) —
+	// both looked identical as plain false. "unknown" is set whenever the underlying query (DS: Tier-1
+	// discovery, see resolve.Discoverer.DiscoverNS; DNSKEY: Tier-2, see resolve.Resolver.Resolve) never
+	// got a definitive authoritative answer, and in that case DSPresent/DNSSECSigned stay false for
+	// THIS scan's DomainResult but must never be used to overwrite a prior known-good value — see
+	// Status and store.CommitBatch's done-only summary-write policy, which is what actually enforces
+	// that. Empty string only appears on a DomainResult/Delegation never produced by the real discovery
+	// path (e.g. a hand-built test fixture); it is treated the same as "not applicable", not "unknown".
+	DSOutcome     string
+	DNSKEYOutcome string
+
+	// Status is "done" | "partial" | "error" (Task 9):
+	//   - "error": discovery failed outright, or resolved to no publicly dialable NS endpoint at all
+	//     (set by the caller, e.g. cmd/cc-dns-worker's resolveDomain, before Resolve is ever invoked —
+	//     Resolve itself never returns "error").
+	//   - "done": the minimum authoritative-success bar was met — see resolve.Resolver.Resolve's doc
+	//     comment for the exact bar (apex A/AAAA + DNSKEY + DS all definitive). Only a "done" result may
+	//     ever replace a domain's persisted last-good summary (see model.ScanRow, store.CommitBatch).
+	//   - "partial": authoritative contact succeeded and some records were observed (Records is fully
+	//     populated regardless of Status), but at least one query the bar above depends on never got a
+	//     definitive answer. A partial result's records still flow through the normal record-load
+	//     stream; its summary is simply never written, so it can never clobber a prior "done" summary.
+	Status       string
 	Error        string
 	QueriesTotal int
 	QueriesOK    int
@@ -122,6 +158,11 @@ type RecordRow struct {
 	Scans      uint64    `ch:"scans"`
 	Source     string    `ch:"source"`
 	Discovery  string    `ch:"discovery"`
+
+	// Finding carries DNSRecord.Finding (Task 9) through the SQLite stage only — like ScanRow.Endpoints,
+	// it has NO ch tag, so chColumns/insert skip it: it is not yet part of the ClickHouse record
+	// (observation/legacy) schema, only of the local SQLite scan_records stage.
+	Finding string
 }
 
 // RecordObservationRow mirrors corpscout.commoncrawl_domain_dns_record_observations (Task 7's
@@ -162,8 +203,13 @@ type HostnameRow struct {
 	LastResolved    time.Time `ch:"last_resolved"`
 }
 
-// ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
-// successful scans are loaded, so a failed re-scan never clobbers a domain's last-good summary.
+// ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only rows
+// whose Status == "done" are ever loaded (see store.StagedDomains/SummariesFor/CompletedDomainsAfter,
+// all filtered on status = 'done') — neither a failed re-scan (Status == "error") nor a partial one
+// (Status == "partial", Task 9: authoritative contact succeeded but the done-bar wasn't met) is ever
+// written here, so neither can clobber a domain's last-good summary. A partial scan's observed
+// records still reach ClickHouse through the independent record-observation stream (store.RecordsAfter/
+// load.loadRecordsIncremental), which is not status-gated at all — only the SUMMARY (this table) is.
 //
 // NOTE (deprecated columns, NOT a deprecated type): the table's axfr_open/axfr_records/
 // axfr_truncated/axfr_server columns are deprecated — per-endpoint AXFR state now lives in
@@ -181,11 +227,19 @@ type ScanRow struct {
 	// Endpoints carries the hostname<->IP identity behind Nameservers/NSIPs. It is SQLite-local only
 	// (no ch tag, so chColumns/insert skip it) — not yet part of the ClickHouse scan-summary schema.
 	Endpoints    []NameserverEndpoint
-	DNSSECSigned uint8     `ch:"dnssec_signed"`
-	DSPresent    uint8     `ch:"ds_present"`
-	Status       string    `ch:"status"`
-	QueriesTotal uint16    `ch:"queries_total"`
-	QueriesOK    uint16    `ch:"queries_ok"`
-	LastRunID    string    `ch:"last_run_id"`
-	ResolvedAt   time.Time `ch:"resolved_at"`
+	DNSSECSigned uint8 `ch:"dnssec_signed"`
+	DSPresent    uint8 `ch:"ds_present"`
+	// DSOutcome/DNSKEYOutcome (Task 9, migration 000116) are the tri-state "present"|"absent"|"unknown"
+	// query outcome behind DSPresent/DNSSECSigned — see model.DomainResult's doc comment on the same
+	// two fields for why the plain booleans alone cannot distinguish a genuine negative from a failed
+	// query. Since ScanRow is only ever written for Status == "done" rows, these are always "present" or
+	// "absent" here in practice — never "unknown" — but the column exists so a future relaxation of the
+	// done-bar (or a direct query against the stage) can still tell the two apart.
+	DSOutcome     string    `ch:"ds_outcome"`
+	DNSKEYOutcome string    `ch:"dnskey_outcome"`
+	Status        string    `ch:"status"`
+	QueriesTotal  uint16    `ch:"queries_total"`
+	QueriesOK     uint16    `ch:"queries_ok"`
+	LastRunID     string    `ch:"last_run_id"`
+	ResolvedAt    time.Time `ch:"resolved_at"`
 }

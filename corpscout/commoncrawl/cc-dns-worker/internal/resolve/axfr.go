@@ -225,15 +225,21 @@ func collectZone(ctx context.Context, zone, nsIP string, deadline time.Duration,
 // axfrRecord converts one transferred RR into a model.DNSRecord tagged Source="axfr" and
 // Discovery="axfr" (the host was learned from the zone transfer, not the static query plan). The slot
 // is empty (AXFR names are not tied to the query-plan slots); the name is the record owner, no trailing
-// dot. Unsupported RR types are skipped (ok=false).
+// dot. An A/AAAA value gets the same addressFinding classification query.go's collect() applies (Task
+// 9) — AXFR, like Tier-2 queries, only ever transfers from a Dialable (public) endpoint (see
+// cmd/cc-dns-worker/axfr.go's own Dialable check before dialing), so a non-public value here likewise
+// means a public authoritative server answered with a bogus/internal address. Unsupported RR types are
+// skipped (ok=false).
 func axfrRecord(rr dns.RR) (model.DNSRecord, bool) {
 	name := strings.TrimSuffix(strings.ToLower(rr.Header().Name), ".")
 	rec := model.DNSRecord{Name: name, Slot: "", Rcode: "NOERROR", TTL: rr.Header().Ttl, Source: "axfr", Discovery: "axfr"}
 	switch v := rr.(type) {
 	case *dns.A:
 		rec.RecordType, rec.Value = "A", v.A.String()
+		rec.Finding = addressFinding(rec.Value)
 	case *dns.AAAA:
 		rec.RecordType, rec.Value = "AAAA", v.AAAA.String()
+		rec.Finding = addressFinding(rec.Value)
 	case *dns.CNAME:
 		rec.RecordType, rec.Value = "CNAME", strings.TrimSuffix(strings.ToLower(v.Target), ".")
 	case *dns.MX:

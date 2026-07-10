@@ -1303,6 +1303,150 @@ func TestCompletedDomainsExcludesErrorStatus(t *testing.T) {
 	}
 }
 
+// TestCompletedDomainsExcludesPartialStatus is TestCompletedDomainsExcludesErrorStatus's Task 9
+// sibling: a domain committed Status="partial" (authoritative contact succeeded, but the done-bar
+// wasn't met — see model.DomainResult's Status doc comment) must ALSO be excluded from
+// completed_domains/StagedDomains/SummariesFor, exactly like "error". Only "done" may ever reach the
+// last-good summary tables — this is what "don't write a summary row at all for non-done" means in
+// practice, and it is what keeps a partial result from clobbering a prior done scan's summary.
+func TestCompletedDomainsExcludesPartialStatus(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com", "b.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	if err := s.CommitBatch(ctx, []model.DomainResult{
+		{ScanID: "sc", RootDomain: "a.com", Status: "partial", ResolvedAt: now,
+			Records: []model.DNSRecord{{Name: "a.com", RecordType: "A", Value: "1.2.3.4", Rcode: "NOERROR"}}},
+		{ScanID: "sc", RootDomain: "b.com", Status: "done", ResolvedAt: now},
+	}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	sums, _, scanned, err := s.CompletedDomainsAfter(ctx, "sc", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned != 1 || len(sums) != 1 || sums[0].RootDomain != "b.com" {
+		t.Fatalf("CompletedDomainsAfter = sums=%+v scanned=%d, want only b.com (a.com is partial)", sums, scanned)
+	}
+
+	staged, err := s.StagedDomains(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(staged) != 1 || staged[0].RootDomain != "b.com" {
+		t.Fatalf("StagedDomains = %+v, want only b.com", staged)
+	}
+
+	sumsFor, err := s.SummariesFor(ctx, "sc", []string{"a.com", "b.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sumsFor) != 1 || sumsFor[0].RootDomain != "b.com" {
+		t.Fatalf("SummariesFor = %+v, want only b.com", sumsFor)
+	}
+}
+
+// TestPartialStatusPreservesObservedRecords proves the other half of the Task 9 last-good policy: even
+// though a partial domain's SUMMARY is never staged (TestCompletedDomainsExcludesPartialStatus), its
+// actually-observed Records still flow through the normal record stage — a partial result must not lose
+// what it did manage to see.
+func TestPartialStatusPreservesObservedRecords(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	if err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "a.com", Status: "partial", ResolvedAt: now,
+		Records: []model.DNSRecord{
+			{Name: "a.com", RecordType: "A", Slot: "@", Value: "1.2.3.4", Rcode: "NOERROR"},
+			{Name: "a.com", RecordType: "MX", Value: "10 mail.a.com", Rcode: "NOERROR"},
+		},
+	}}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	recs, err := s.StagedRecords(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("staged records = %+v, want 2 (a partial result must still preserve observed records)", recs)
+	}
+}
+
+// TestCommitBatchPersistsFinding proves DNSRecord.Finding (Task 9's public_dns_private_address
+// classification) round-trips through the SQLite stage.
+func TestCommitBatchPersistsFinding(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	if err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "a.com", Status: "done", ResolvedAt: now,
+		Records: []model.DNSRecord{
+			{Name: "a.com", RecordType: "A", Slot: "@", Value: "10.20.30.40", Rcode: "NOERROR", Finding: "public_dns_private_address"},
+			{Name: "a.com", RecordType: "A", Slot: "www", Value: "93.184.216.34", Rcode: "NOERROR"},
+		},
+	}}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	recs, err := s.StagedRecords(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, r := range recs {
+		got[r.Value] = r.Finding
+	}
+	if got["10.20.30.40"] != "public_dns_private_address" {
+		t.Errorf("finding for private address = %q, want %q", got["10.20.30.40"], "public_dns_private_address")
+	}
+	if got["93.184.216.34"] != "" {
+		t.Errorf("finding for public address = %q, want empty", got["93.184.216.34"])
+	}
+}
+
+// TestCommitBatchPersistsOutcomeFields proves DSOutcome/DNSKEYOutcome (Task 9) round-trip through the
+// SQLite stage and out through StagedDomains, alongside the existing DSPresent/DNSSECSigned booleans.
+func TestCommitBatchPersistsOutcomeFields(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	if err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "a.com", Status: "done", ResolvedAt: now,
+		DSPresent: true, DSOutcome: "present",
+		DNSSECSigned: true, DNSKEYOutcome: "present",
+	}}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	rows, err := s.StagedDomains(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("staged domains = %+v, want 1", rows)
+	}
+	r := rows[0]
+	if r.DSOutcome != "present" || r.DNSKEYOutcome != "present" {
+		t.Errorf("outcome fields = %+v, want both present", r)
+	}
+	if r.DSPresent != 1 || r.DNSSECSigned != 1 {
+		t.Errorf("boolean fields = %+v, want both 1", r)
+	}
+}
+
 // TestCompletedDomainsAfterResumeBySeq proves the domain-summary stream pages by seq exactly like
 // RecordsAfter pages by rowid: a caller that persists the returned maxSeq and resumes from it sees only
 // domains completed after that point, and a late-finishing domain (committed after the first page was

@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS scan_domains (
   ns_endpoints  TEXT DEFAULT '[]',
   dnssec_signed INTEGER DEFAULT 0,
   ds_present    INTEGER DEFAULT 0,
+  ds_outcome     TEXT DEFAULT '',
+  dnskey_outcome TEXT DEFAULT '',
   queries_total INTEGER DEFAULT 0,
   queries_ok    INTEGER DEFAULT 0,
   error         TEXT DEFAULT '',
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS scan_records (
   source       TEXT DEFAULT 'query',
   discovery    TEXT DEFAULT 'static',
   rcode        TEXT DEFAULT '',
+  finding      TEXT DEFAULT '',
   source_run_id TEXT DEFAULT '',
   resolved_at  TEXT DEFAULT ''
 );
@@ -176,6 +179,11 @@ func migrate(db *sql.DB) {
 		`ALTER TABLE scan_domains ADD COLUMN axfr_server TEXT DEFAULT ''`,
 		`ALTER TABLE scan_domains ADD COLUMN ns_endpoints TEXT DEFAULT '[]'`,
 		`ALTER TABLE load_state ADD COLUMN domains_seq INTEGER NOT NULL DEFAULT 0`,
+		// Task 9: DS/DNSKEY outcome tri-state ("present"|"absent"|"unknown") and the per-record
+		// public_dns_private_address classification.
+		`ALTER TABLE scan_domains ADD COLUMN ds_outcome TEXT DEFAULT ''`,
+		`ALTER TABLE scan_domains ADD COLUMN dnskey_outcome TEXT DEFAULT ''`,
+		`ALTER TABLE scan_records ADD COLUMN finding TEXT DEFAULT ''`,
 	} {
 		_, _ = db.ExecContext(context.Background(), stmt)
 	}
@@ -275,9 +283,13 @@ func (s *Store) PendingBatch(ctx context.Context, scanID, afterRootDomain string
 }
 
 // CommitBatch writes a batch of results in one transaction, replacing each domain's records so a
-// re-commit is idempotent. Every domain committed with Status=="done" also gets a completed_domains row
-// (INSERT OR IGNORE, so a retried commit of the same domain is a no-op there too) — including a domain
-// with zero Records, which is exactly the case the record-observation stream can never see (Task 8).
+// re-commit is idempotent. Records are written unconditionally (a "partial" domain's observed records
+// are preserved exactly like a "done" one's — see model.DomainResult's Status doc comment, Task 9).
+// Only a domain committed with Status=="done" also gets a completed_domains row (INSERT OR IGNORE, so
+// a retried commit of the same domain is a no-op there too) — including a domain with zero Records,
+// which is exactly the case the record-observation stream can never see (Task 8) — so neither an
+// "error" nor a "partial" result can ever reach the last-good summary tables (StagedDomains/
+// SummariesFor/CompletedDomainsAfter are all filtered to status='done').
 func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -291,15 +303,15 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 	}
 	defer del.Close()
 	insR, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
-		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, discovery, source_run_id, resolved_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, discovery, finding, source_run_id, resolved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer insR.Close()
 	upD, err := tx.PrepareContext(ctx, `UPDATE scan_domains SET
 		status=?, etld=?, nameservers=?, ns_ips=?, ns_endpoints=?, dnssec_signed=?, ds_present=?,
-		queries_total=?, queries_ok=?, error=?, source_run_id=?, resolved_at=?
+		ds_outcome=?, dnskey_outcome=?, queries_total=?, queries_ok=?, error=?, source_run_id=?, resolved_at=?
 		WHERE scan_id=? AND root_domain=?`)
 	if err != nil {
 		return err
@@ -318,7 +330,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		ts := res.ResolvedAt.UTC().Format(time.RFC3339Nano)
 		for _, rec := range res.Records {
 			if _, err := insR.ExecContext(ctx, res.ScanID, res.RootDomain, rec.Name, rec.RecordType,
-				rec.Slot, rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, rec.Discovery, res.SourceRunID, ts); err != nil {
+				rec.Slot, rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, rec.Discovery, rec.Finding, res.SourceRunID, ts); err != nil {
 				return err
 			}
 		}
@@ -326,7 +338,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		nsips, _ := json.Marshal(res.NSIPs)
 		nsEndpoints, _ := json.Marshal(res.Endpoints)
 		res2, err := upD.ExecContext(ctx, res.Status, res.ETLD, string(ns), string(nsips), string(nsEndpoints),
-			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.QueriesTotal, res.QueriesOK,
+			b2i(res.DNSSECSigned), b2i(res.DSPresent), res.DSOutcome, res.DNSKEYOutcome, res.QueriesTotal, res.QueriesOK,
 			res.Error, res.SourceRunID, ts, res.ScanID, res.RootDomain)
 		if err != nil {
 			return err
@@ -350,7 +362,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 // them into the record's lifespan on merge.
 func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.RecordRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, name, record_type, slot, value,
-		ttl, priority, rcode, source, discovery, source_run_id, resolved_at FROM scan_records WHERE scan_id = ?`, scanID)
+		ttl, priority, rcode, source, discovery, finding, source_run_id, resolved_at FROM scan_records WHERE scan_id = ?`, scanID)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +372,7 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 		var r model.RecordRow
 		var ts string
 		if err := rows.Scan(&r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
-			&r.TTL, &r.Priority, &r.Rcode, &r.Source, &r.Discovery, &r.LastRunID, &ts); err != nil {
+			&r.TTL, &r.Priority, &r.Rcode, &r.Source, &r.Discovery, &r.Finding, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		t := parseTS(ts)
@@ -371,11 +383,11 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 }
 
 // StagedDomains reads the per-domain summaries for a scan into ScanRow shape. Only status='done'
-// domains are returned: a failed re-scan must not clobber a domain's last-good summary, and a domain
-// that never resolves has no DNS state to record.
+// domains are returned (Task 9: neither a failed "error" re-scan nor a "partial" one may clobber a
+// domain's last-good summary), and a domain that never resolves has no DNS state to record.
 func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips, ns_endpoints,
-		dnssec_signed, ds_present, status, queries_total, queries_ok,
+		dnssec_signed, ds_present, ds_outcome, dnskey_outcome, status, queries_total, queries_ok,
 		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done'`, scanID)
 	if err != nil {
@@ -388,7 +400,7 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 		var ns, nsips, nsEndpoints, ts string
 		var dnssec, ds int
 		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &nsEndpoints, &dnssec, &ds,
-			&r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
+			&r.DSOutcome, &r.DNSKEYOutcome, &r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
@@ -458,7 +470,7 @@ func (s *Store) SetLoadedDomainsSeq(ctx context.Context, scanID string, seq int6
 // The unary + on scan_id stops the planner from picking idx_records_domain (which would re-sort
 // the scan's entire record set per batch); the query must walk the rowid primary key instead.
 const recordsAfterQuery = `SELECT rowid, root_domain, name, record_type, slot, value,
-	ttl, priority, rcode, source, discovery, source_run_id, resolved_at FROM scan_records
+	ttl, priority, rcode, source, discovery, finding, source_run_id, resolved_at FROM scan_records
 	WHERE +scan_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`
 
 // RecordsAfter returns up to limit records for scanID with rowid > afterRowid, ordered by rowid (i.e.
@@ -480,7 +492,7 @@ func (s *Store) RecordsAfter(ctx context.Context, scanID string, afterRowid int6
 		var rid int64
 		var ts string
 		if err := rows.Scan(&rid, &r.RootDomain, &r.Name, &r.RecordType, &r.Slot, &r.Value,
-			&r.TTL, &r.Priority, &r.Rcode, &r.Source, &r.Discovery, &r.LastRunID, &ts); err != nil {
+			&r.TTL, &r.Priority, &r.Rcode, &r.Source, &r.Discovery, &r.Finding, &r.LastRunID, &ts); err != nil {
 			return nil, afterRowid, nil, err
 		}
 		t := parseTS(ts)
@@ -511,7 +523,7 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 		args = append(args, d)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips, ns_endpoints,
-		dnssec_signed, ds_present, status, queries_total, queries_ok,
+		dnssec_signed, ds_present, ds_outcome, dnskey_outcome, status, queries_total, queries_ok,
 		source_run_id, resolved_at
 		FROM scan_domains WHERE scan_id = ? AND status = 'done' AND root_domain IN (`+ph+`)`, args...)
 	if err != nil {
@@ -524,7 +536,7 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 		var ns, nsips, nsEndpoints, ts string
 		var dnssec, ds int
 		if err := rows.Scan(&r.RootDomain, &r.ETLD, &ns, &nsips, &nsEndpoints, &dnssec, &ds,
-			&r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
+			&r.DSOutcome, &r.DNSKEYOutcome, &r.Status, &r.QueriesTotal, &r.QueriesOK, &r.LastRunID, &ts); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)

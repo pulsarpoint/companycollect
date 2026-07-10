@@ -12,10 +12,31 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
+// Outcome values (Task 9) describe whether a query that backs a stored boolean (DSPresent/
+// DNSSECSigned) reached a DEFINITIVE answer, distinguishing a genuine negative from "we don't know":
+//   - OutcomePresent: the record(s) were returned.
+//   - OutcomeAbsent: a definitive NOERROR/NODATA or NXDOMAIN with no matching records — the
+//     authoritative side answered, it just has nothing.
+//   - OutcomeUnknown: the query itself never got a definitive answer (timeout, transport error,
+//     SERVFAIL, or every retry attempt exhausted). The corresponding boolean must NOT be treated as a
+//     confirmed false in this case — see model.DomainResult's DSOutcome/DNSKEYOutcome doc comment.
+const (
+	OutcomePresent = "present"
+	OutcomeAbsent  = "absent"
+	OutcomeUnknown = "unknown"
+)
+
 // Delegation is what discovery learned for a domain.
 type Delegation struct {
 	ETLD string
 	DS   []string
+
+	// DSOutcome is the tri-state outcome of the parent DS query above: OutcomePresent when DS holds at
+	// least one record, OutcomeAbsent for a definitive NOERROR/NODATA or NXDOMAIN with no DS records, or
+	// OutcomeUnknown when the DS query itself failed (see the Outcome* doc comment). DiscoverNS always
+	// sets this to one of the three; it is empty only on a Delegation built by hand (e.g. a test
+	// fixture) rather than through DiscoverNS.
+	DSOutcome string
 
 	// NS holds every authoritative NS hostname discovered in the NS RRset, lowercased/no trailing dot,
 	// deduped in discovery order — kept even for a hostname that resolves to no A/AAAA at all, since
@@ -85,12 +106,22 @@ func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation,
 		return del, errors.New("no NS records")
 	}
 
-	if dsResp, err := d.query(ctx, fqdn, dns.TypeDS); err == nil && dsResp != nil {
+	if dsResp, dsErr := d.query(ctx, fqdn, dns.TypeDS); dsErr == nil && dsResp != nil {
 		for _, rr := range dsResp.Answer {
 			if ds, ok := rr.(*dns.DS); ok {
 				del.DS = append(del.DS, strings.TrimSpace(ds.String()[len(ds.Hdr.String()):]))
 			}
 		}
+		// The query itself got a definitive answer either way — NOERROR/NODATA and NXDOMAIN both mean
+		// "asked and there is no DS", distinguishable from OutcomeUnknown below (the query failed, so we
+		// never actually learned whether DS exists).
+		if len(del.DS) > 0 {
+			del.DSOutcome = OutcomePresent
+		} else {
+			del.DSOutcome = OutcomeAbsent
+		}
+	} else {
+		del.DSOutcome = OutcomeUnknown
 	}
 
 	// Record WHICH address belongs to WHICH NS hostname: one Endpoint per distinct (ns-hostname, ip)

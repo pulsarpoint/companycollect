@@ -465,7 +465,8 @@ func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.R
 		}
 		return model.DomainResult{
 			ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
-			Nameservers: del.NS, NSIPs: del.NSIPs, Endpoints: del.Endpoints, DSPresent: len(del.DS) > 0,
+			Nameservers: del.NS, NSIPs: del.NSIPs, Endpoints: del.Endpoints,
+			DSPresent: del.DSOutcome == resolve.OutcomePresent, DSOutcome: del.DSOutcome,
 			Status: "error", Error: msg, SourceRunID: runID, ResolvedAt: now,
 		}
 	}
