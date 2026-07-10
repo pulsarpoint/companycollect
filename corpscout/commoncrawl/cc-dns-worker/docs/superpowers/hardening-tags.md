@@ -14,7 +14,7 @@ Each task is implemented, reviewed, committed, and tagged so the fix can be chec
 | `harden-task-02` | 2 | Preserve NS hostname↔IP endpoint identity (NameserverEndpoint, ns_endpoints, AXFR dial-safe) | `go test ./internal/resolve ./internal/store` |
 | `harden-task-03` | 3 | Typed AXFR outcomes + definitive TCP preflight (unknown never closes) | `go test ./internal/resolve -run AXFR` |
 | `harden-task-04` | 4 | Durable SQLite AXFR work queue (axfr_domains, atomic committer, resumable) | `go test ./internal/store ./cmd/cc-dns-worker -run AXFR` |
-| _pending_ | 5 | Retry-safe `dns_axfr_latest` / `dns_axfr_state_changes` | `go test ./internal/load` + migration test |
+| `harden-task-05` | 5 | Retry-safe dns_axfr_latest/state_changes (migration 000112, unknown≠close, backfill) | `go test ./internal/load ./internal/store` |
 | _pending_ | 6 | Coherent `scan --axfr` / `run` / `load` AXFR behavior | `go test ./cmd/cc-dns-worker` |
 | _pending_ | 7 | Retry-safe raw DNS record observations | `go test ./internal/load` + migration test |
 | _pending_ | 8 | Split record vs domain-summary load progress | `go test ./internal/store ./internal/load` |
