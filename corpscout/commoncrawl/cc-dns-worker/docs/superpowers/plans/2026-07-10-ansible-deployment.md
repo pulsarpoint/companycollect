@@ -68,7 +68,8 @@ README.md
 inventory = inventory.ini
 host_key_checking = False
 retry_files_enabled = False
-stdout_callback = yaml
+stdout_callback = default
+result_format = yaml
 # Vault password read from a file (generated in Step 4) so runs are non-interactive.
 vault_password_file = ~/.config/ansible/cc-dns-scan
 [ssh_connection]
@@ -236,22 +237,34 @@ root  hard nofile {{ sys_nofile }}
     state: present
     update_cache: true
 
-- name: DNS NOTRACK — do not conntrack DNS (both directions)
+# NOTE: split into two tasks — Ansible cannot template a module PARAMETER NAME
+# (a single loop with "{{ item.dir }}_port" fails), so source_port / destination_port are fixed.
+- name: DNS NOTRACK — replies (PREROUTING, source port 53)
   ansible.builtin.iptables:
     table: raw
-    chain: "{{ item.chain }}"
-    protocol: "{{ item.proto }}"
-    "{{ item.dir }}_port": "53"
+    chain: PREROUTING
+    protocol: "{{ item }}"
+    source_port: "53"
     jump: NOTRACK
-    comment: "cc-dns NOTRACK"
+    comment: "cc-dns NOTRACK reply {{ item }}"
     state: present
-  loop:
-    - { chain: PREROUTING, proto: udp, dir: source }
-    - { chain: PREROUTING, proto: tcp, dir: source }
-    - { chain: OUTPUT,     proto: udp, dir: destination }
-    - { chain: OUTPUT,     proto: tcp, dir: destination }
+  loop: [udp, tcp]
+  notify: Persist iptables
+
+- name: DNS NOTRACK — queries (OUTPUT, destination port 53)
+  ansible.builtin.iptables:
+    table: raw
+    chain: OUTPUT
+    protocol: "{{ item }}"
+    destination_port: "53"
+    jump: NOTRACK
+    comment: "cc-dns NOTRACK query {{ item }}"
+    state: present
+  loop: [udp, tcp]
   notify: Persist iptables
 ```
+
+Note (Ubuntu 26.04): installing `iptables-persistent` removes `ufw` (packaging conflict on 26.04). This is safe when `ufw status` is `inactive` (the box's firewall is Tailscale + the cloud provider's) — confirm `ufw` is inactive before applying; if it's actively enforcing rules, persist the NOTRACK ruleset via native nftables (`/etc/nftables.conf`) instead of installing iptables-persistent.
 
 Handlers (`roles/os_tuning/handlers/main.yml`):
 
