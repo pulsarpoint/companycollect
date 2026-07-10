@@ -230,7 +230,11 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	}
 
 	// 3) Streaming dispatch — feeder → workers → single committer, no commit barrier.
-	work := make(chan string, cfg.workers)
+	type domainWork struct {
+		domain string
+		hosts  []model.HostLabel
+	}
+	work := make(chan domainWork, cfg.workers)
 	results := make(chan model.DomainResult, cfg.commitBatch*2)
 	var feedErr error
 	go func() {
@@ -245,9 +249,14 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 			if len(batch) == 0 {
 				return
 			}
+			hostsByDomain, herr := st.HostnamesForBatch(ctx, cfg.scanID, batch)
+			if herr != nil {
+				feedErr = herr
+				return
+			}
 			for _, d := range batch {
 				select {
-				case work <- d:
+				case work <- domainWork{domain: d, hosts: hostsByDomain[d]}:
 				case <-ctx.Done():
 					return
 				}
@@ -260,8 +269,8 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 		workerWG.Add(1)
 		go func() {
 			defer workerWG.Done()
-			for d := range work {
-				results <- resolveDomain(ctx, disc, rec, rcfg, d, cfg.scanID, cfg.runID, prober)
+			for w := range work {
+				results <- resolveDomain(ctx, disc, rec, rcfg, w.domain, cfg.scanID, cfg.runID, prober, w.hosts)
 			}
 		}()
 	}
@@ -380,7 +389,7 @@ func hostLoadPhase(ctx context.Context, st *store.Store, cfg scanConfig) error {
 // DomainResult; on discovery failure or no NS IPs it returns a status="error" result. When prober is
 // non-nil, a successful Tier-2 resolve is followed by an AXFR probe against the discovered NS IPs,
 // folded into the result via mergeAXFR. A nil prober (the default, --axfr=false) runs no AXFR code.
-func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, domain, scanID, runID string, prober *resolve.AXFRProber) model.DomainResult {
+func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, domain, scanID, runID string, prober *resolve.AXFRProber, extra []model.HostLabel) model.DomainResult {
 	now := time.Now().UTC()
 	del, derr := disc.DiscoverNS(ctx, domain)
 	if derr != nil || len(del.NSIPs) == 0 {
@@ -394,7 +403,7 @@ func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.R
 			Status: "error", Error: msg, SourceRunID: runID, ResolvedAt: now,
 		}
 	}
-	res := rec.Resolve(ctx, domain, scanID, runID, del, cfg, now, nil) // Task 5 wires real discovered-host labels
+	res := rec.Resolve(ctx, domain, scanID, runID, del, cfg, now, extra)
 	if prober != nil {
 		mergeAXFR(&res, prober.Probe(ctx, domain, del.NSIPs))
 	}

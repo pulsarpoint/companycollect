@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/resolve"
+	"cc-dns-worker/internal/store"
 )
 
 func TestCleanResolvers(t *testing.T) {
@@ -73,5 +75,24 @@ func TestMergeAXFR(t *testing.T) {
 	}
 	if len(res.Records) != 3 {
 		t.Fatalf("want 3 records after merge, got %d", len(res.Records))
+	}
+}
+
+// TestHostnamesForBatchEmpty proves that on a scan with no host-enrich data (the default,
+// --host-enrich=false), HostnamesForBatch returns an empty map rather than erroring or panicking —
+// so the feeder's per-batch bulk-load is a no-op and resolveDomain's extra stays nil, preserving
+// pre-Phase-2 behaviour.
+func TestHostnamesForBatchEmpty(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m, err := st.HostnamesForBatch(context.Background(), "s1", []string{"example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m) != 0 {
+		t.Fatalf("want empty map, got %+v", m)
 	}
 }
