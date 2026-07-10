@@ -1,4 +1,55 @@
 ---
-- name: "cc_dns_worker role (stub — filled in a later task)"
-  ansible.builtin.debug:
-    msg: "cc_dns_worker not yet implemented"
+- name: Build the worker binary (CGO-free, linux/amd64) on the control machine
+  ansible.builtin.command:
+    cmd: go build -o bin/cc-dns-worker ./cmd/cc-dns-worker
+    chdir: "{{ playbook_dir }}/../.."   # -> corpscout/commoncrawl/cc-dns-worker
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: amd64
+  delegate_to: localhost
+  become: false
+  changed_when: true
+
+- name: Create deploy dir + bin/
+  ansible.builtin.file:
+    path: "{{ deploy_dir }}/bin"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copy the worker binary
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../bin/cc-dns-worker"
+    dest: "{{ deploy_dir }}/bin/cc-dns-worker"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart cc-dns-scan
+
+- name: Template the .env (secret)
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ deploy_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart cc-dns-scan
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: cc-dns-scan.service.j2
+    dest: "/etc/systemd/system/{{ service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart cc-dns-scan
+
+- name: Enable + start the orchestrator
+  ansible.builtin.systemd_service:
+    name: "{{ service_name }}"
+    enabled: true
+    state: started

@@ -1,0 +1,16 @@
+[Unit]
+Description=cc-dns-worker continuous orchestrator (scan -> load -> repeat)
+After=network-online.target unbound.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ deploy_dir }}
+ExecStart={{ deploy_dir }}/bin/cc-dns-worker {{ cc_dns_run_flags }}
+EnvironmentFile={{ deploy_dir }}/.env
+LimitNOFILE={{ worker_limit_nofile }}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

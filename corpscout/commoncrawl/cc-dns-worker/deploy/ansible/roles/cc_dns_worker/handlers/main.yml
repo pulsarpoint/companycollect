@@ -1,1 +1,9 @@
 ---
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart cc-dns-scan
+  ansible.builtin.systemd_service:
+    name: "{{ service_name }}"
+    state: restarted
