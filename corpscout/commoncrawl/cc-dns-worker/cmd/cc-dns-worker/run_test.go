@@ -42,25 +42,34 @@ func TestPruneOldDBs(t *testing.T) {
 func TestCycleStateResumeVsNew(t *testing.T) {
 	sp := filepath.Join(t.TempDir(), "state.json")
 
-	// No state -> mint a fresh cycle in the scanning phase.
+	// No state -> mint a fresh cycle in the SEEDING phase (seed + host-load run before scanning).
 	s1, err := loadOrStartCycle(sp)
-	if err != nil || s1.Phase != phaseScanning || s1.CycleID == "" {
+	if err != nil || s1.Phase != phaseSeeding || s1.CycleID == "" {
 		t.Fatalf("new cycle = %+v, err=%v", s1, err)
 	}
 
-	// A persisted, not-done cycle -> resume the SAME cycle (never start a new scan).
+	// A persisted, not-done cycle -> resume the SAME cycle in its SAME phase (never restart seeding).
 	s2, _ := loadOrStartCycle(sp)
-	if s2.CycleID != s1.CycleID || s2.Phase != phaseScanning {
+	if s2.CycleID != s1.CycleID || s2.Phase != phaseSeeding {
 		t.Errorf("resume = %+v, want same cycle as %+v", s2, s1)
 	}
 
-	// Persist as done -> next call mints a NEW cycle (phase resets to scanning).
+	// Advanced to scanning -> a resume preserves the scanning phase (does not fall back to seeding).
+	s2.Phase = phaseScanning
+	if err := saveState(sp, s2); err != nil {
+		t.Fatal(err)
+	}
+	if s4, _ := loadOrStartCycle(sp); s4.CycleID != s1.CycleID || s4.Phase != phaseScanning {
+		t.Errorf("resume of scanning phase = %+v, want same cycle in scanning", s4)
+	}
+
+	// Persist as done -> next call mints a NEW cycle that starts back at seeding.
 	s1.Phase = phaseDone
 	if err := saveState(sp, s1); err != nil {
 		t.Fatal(err)
 	}
 	s3, _ := loadOrStartCycle(sp)
-	if s3.Phase != phaseScanning {
-		t.Errorf("after done, expected a fresh scanning cycle, got %+v", s3)
+	if s3.Phase != phaseSeeding {
+		t.Errorf("after done, expected a fresh seeding cycle, got %+v", s3)
 	}
 }

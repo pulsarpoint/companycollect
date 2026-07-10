@@ -121,9 +121,8 @@ func runScan(args []string) error {
 	return scanCycle(context.Background(), st, cfg)
 }
 
-// scanCycle seeds (if needed) and resolves the pending queue for cfg.scanID into st. It does NOT open
-// or close st, so the orchestrator can share the same store with a concurrent incremental loader.
-func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
+// applyScanDefaults fills zero/negative tunables with safe defaults so each phase run is self-contained.
+func applyScanDefaults(cfg scanConfig) scanConfig {
 	if cfg.seedChunk <= 0 {
 		cfg.seedChunk = 5000
 	}
@@ -139,6 +138,25 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	if cfg.discoveryInflight <= 0 {
 		cfg.discoveryInflight = 500
 	}
+	return cfg
+}
+
+// scanCycle seeds then resolves — the single-shot path used by the standalone `scan` subcommand. The
+// orchestrator (run.go) instead runs seedCycle and scanResolve as separate crash-safe phases so status
+// reflects the long seeding/host-load window distinctly from actual resolution. Does NOT open/close st.
+func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
+	if err := seedCycle(ctx, st, cfg); err != nil {
+		return err
+	}
+	return scanResolve(ctx, st, cfg)
+}
+
+// seedCycle runs the SEEDING phase: stream domains from ClickHouse into the SQLite queue (unless a
+// prior seed for this scan-id finished) and, when --host-enrich is set, the CT+registry host-load
+// (the long part — enrichment for tens of millions of domains). Resumable + idempotent; populates the
+// queue that scanResolve consumes. No records are produced yet, so no incremental CH load runs here.
+func seedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
+	cfg = applyScanDefaults(cfg)
 
 	// 1) Seed the queue from ClickHouse, unless a prior seed for this scan-id already finished.
 	seeded, err := st.SeedComplete(ctx, cfg.scanID)
@@ -179,6 +197,14 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// scanResolve runs the SCANNING phase: resolve the pending queue into the SQLite stage. Assumes the
+// seeding phase (seedCycle) already populated the queue (and scan_hostnames when --host-enrich). Does
+// NOT open/close st, so the orchestrator can share the store with a concurrent incremental loader.
+func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
+	cfg = applyScanDefaults(cfg)
 
 	stats := &metrics.Stats{}
 

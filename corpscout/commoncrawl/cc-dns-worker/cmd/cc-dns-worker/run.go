@@ -20,10 +20,11 @@ import (
 // The db path is NOT stored — it's always derived from CycleID (dbName) so there's one source of truth.
 type cycleState struct {
 	CycleID string `json:"cycle_id"`
-	Phase   string `json:"phase"` // scanning | flushing | done
+	Phase   string `json:"phase"` // seeding | scanning | flushing | done
 }
 
 const (
+	phaseSeeding  = "seeding"
 	phaseScanning = "scanning"
 	phaseFlushing = "flushing"
 	phaseDone     = "done"
@@ -32,10 +33,11 @@ const (
 // dbName derives the SQLite stage filename for a cycle from its id.
 func dbName(cycleID string) string { return "scan-" + cycleID + ".db" }
 
-// runOrchestrator loops forever: mint-or-resume a cycle, scan it (incrementally loading to CH as it
-// goes), final-flush the load, prune old DBs, then start the next cycle. Designed as the systemd
-// ExecStart (Restart=always as a backstop). Every phase is crash-safe: scan resumes from the pending
-// queue, load resumes from a rowid watermark and dedups in CH.
+// runOrchestrator loops forever: mint-or-resume a cycle, seed it (CH stream + host-load), scan it
+// (incrementally loading to CH as it goes), final-flush the load, prune old DBs, then start the next
+// cycle. Designed as the systemd ExecStart (Restart=always as a backstop). Every phase is crash-safe:
+// seed resumes from its completion markers, scan resumes from the pending queue, load resumes from a
+// rowid watermark and dedups in CH.
 func runOrchestrator(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	dir := fs.String("dir", ".", "working directory for cycle DBs and the state file")
@@ -57,6 +59,18 @@ func runOrchestrator(args []string) error {
 			return err
 		}
 		dbPath := filepath.Join(*dir, dbName(state.CycleID))
+
+		if state.Phase == phaseSeeding {
+			if err := runSeedPhase(ctx, state, dbPath, cfg); err != nil {
+				log.Printf("cycle %s: seed phase error: %v — retrying in 30s (resumes, no new cycle)", state.CycleID, err)
+				time.Sleep(30 * time.Second)
+				continue
+			}
+			state.Phase = phaseScanning
+			if err := saveState(statePath, state); err != nil {
+				return err
+			}
+		}
 
 		if state.Phase == phaseScanning {
 			if err := runScanPhase(ctx, state, dbPath, cfg, *loadInterval, *loadBatch); err != nil {
@@ -99,7 +113,7 @@ func loadOrStartCycle(statePath string) (cycleState, error) {
 			return s, nil
 		}
 	}
-	s := cycleState{CycleID: time.Now().UTC().Format("20060102T150405Z"), Phase: phaseScanning}
+	s := cycleState{CycleID: time.Now().UTC().Format("20060102T150405Z"), Phase: phaseSeeding}
 	if err := saveState(statePath, s); err != nil {
 		return cycleState{}, err
 	}
@@ -120,8 +134,23 @@ func saveState(path string, s cycleState) error {
 	return os.Rename(tmp, path)
 }
 
+// runSeedPhase runs the SEEDING phase: stream domains from CH into the queue and (when --host-enrich)
+// the CT+registry host-load. No records exist yet, so no incremental loader runs — this is a distinct
+// phase so status reflects the long seed/host-load window rather than reading "scanning" throughout.
+func runSeedPhase(ctx context.Context, state cycleState, dbPath string, cfg scanConfig) error {
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	cfg.scanID = state.CycleID
+	cfg.runID = state.CycleID
+	return seedCycle(ctx, st, cfg)
+}
+
 // runScanPhase scans the cycle while a background goroutine incrementally loads new records to CH.
 // The loader shares the store (SQLite serializes the few DB ops; the slow CH insert holds no lock).
+// Seeding + host-load already completed in runSeedPhase, so this resolves the pending queue only.
 func runScanPhase(ctx context.Context, state cycleState, dbPath string, cfg scanConfig, loadInterval time.Duration, loadBatch int) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -151,7 +180,7 @@ func runScanPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 		}
 	}()
 
-	scanErr := scanCycle(ctx, st, cfg)
+	scanErr := scanResolve(ctx, st, cfg)
 	close(stopLoader)
 	<-loaderDone
 	return scanErr
