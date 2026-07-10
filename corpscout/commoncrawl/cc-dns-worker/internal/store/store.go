@@ -88,15 +88,41 @@ CREATE TABLE IF NOT EXISTS host_load_shards (
   complete INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (scan_id, shard)
 );
-CREATE TABLE IF NOT EXISTS axfr_prev (
+CREATE TABLE IF NOT EXISTS axfr_domains (
+  scan_id     TEXT NOT NULL,
   root_domain TEXT NOT NULL,
-  name_server TEXT NOT NULL,
-  last_open   INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (root_domain, name_server)
+  status      TEXT NOT NULL DEFAULT 'pending',
+  error       TEXT DEFAULT '',
+  observed_at TEXT DEFAULT '',
+  PRIMARY KEY (scan_id, root_domain)
 );
-CREATE TABLE IF NOT EXISTS axfr_state (
+CREATE INDEX IF NOT EXISTS idx_axfr_domains_pending ON axfr_domains (scan_id, status, root_domain);
+CREATE TABLE IF NOT EXISTS axfr_probes (
+  scan_id        TEXT NOT NULL,
+  root_domain    TEXT NOT NULL,
+  name_server    TEXT NOT NULL,
+  name_server_ip TEXT NOT NULL,
+  verdict        TEXT NOT NULL DEFAULT '',
+  reason         TEXT NOT NULL DEFAULT '',
+  records        INTEGER DEFAULT 0,
+  bytes          INTEGER DEFAULT 0,
+  truncated      INTEGER DEFAULT 0,
+  observed_at    TEXT DEFAULT '',
+  PRIMARY KEY (scan_id, root_domain, name_server, name_server_ip)
+);
+CREATE TABLE IF NOT EXISTS axfr_changes (
+  scan_id        TEXT NOT NULL,
+  root_domain    TEXT NOT NULL,
+  name_server    TEXT NOT NULL,
+  name_server_ip TEXT NOT NULL,
+  axfr_open      INTEGER NOT NULL DEFAULT 0,
+  changed_at     TEXT NOT NULL,
+  PRIMARY KEY (scan_id, root_domain, name_server, name_server_ip, changed_at)
+);
+-- axfr_load_state will carry the ClickHouse-load watermark/marker for axfr_probes/axfr_changes (Task 5);
+-- created now so its ownership lives with the rest of the AXFR schema. Empty/unused by Task 4.
+CREATE TABLE IF NOT EXISTS axfr_load_state (
   scan_id  TEXT PRIMARY KEY,
-  cursor   TEXT NOT NULL DEFAULT '',
   complete INTEGER NOT NULL DEFAULT 0
 );
 `
@@ -624,17 +650,38 @@ type AXFRTarget struct {
 	Endpoints  []model.NameserverEndpoint
 }
 
-// AXFRTargetsAfter returns up to limit resolved domains (status='done') with a non-empty stored
-// ns_endpoints or ns_ips, ordered by root_domain and greater than afterRootDomain — the resumable
-// cursor the AXFR phase walks. Rows committed before ns_endpoints existed (or that never repopulated
-// it) fall back to ns_ips, reclassified via resolve.ClassifyString so dialability is still correct —
-// ns_ips is full evidence (every scope, not just public), so it must never be trusted as-is.
-func (s *Store) AXFRTargetsAfter(ctx context.Context, scanID, afterRootDomain string, limit int) ([]AXFRTarget, error) {
+// SeedAXFRDomains idempotently stages every resolved domain (scan_domains.status='done') with a
+// non-empty stored ns_endpoints or ns_ips into the durable axfr_domains work queue, status='pending'.
+// INSERT OR IGNORE means an already-present row — pending OR done — is never touched, so re-running the
+// seed mid-scan (or after a crash) only ever adds newly-resolved domains and can never reset a finished
+// one back to pending. This queue, not a positional cursor, is what makes the AXFR phase resumable: the
+// durable position is which rows are 'done', not where a feeder happened to be when the process died.
+func (s *Store) SeedAXFRDomains(ctx context.Context, scanID string) (int, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO axfr_domains (scan_id, root_domain, status)
+		SELECT scan_id, root_domain, 'pending' FROM scan_domains
+		WHERE scan_id = ? AND status = 'done'
+		AND (ns_endpoints NOT IN ('', 'null', '[]') OR ns_ips NOT IN ('', 'null', '[]'))`, scanID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// PendingAXFRDomains returns up to limit axfr_domains rows for scanID still status='pending', with
+// root_domain greater than afterRootDomain, joined to scan_domains for the stored NS endpoints.
+// afterRootDomain paginates a SINGLE run's feeder loop forward (mirrors PendingBatch) purely so it
+// doesn't re-scan the growing done-prefix on every fetch — it is held in memory only, by the caller, and
+// is NEVER persisted. Resume therefore never depends on it: a crash loses only this in-memory position,
+// and the next call with afterRootDomain="" reads every row still 'pending', including ones a killed run
+// dispatched to a worker but never committed. Rows fall back to ns_ips (reclassified via
+// resolve.ClassifyString, so dialability is still correct) when ns_endpoints was never populated.
+func (s *Store) PendingAXFRDomains(ctx context.Context, scanID, afterRootDomain string, limit int) ([]AXFRTarget, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT root_domain, ns_endpoints, ns_ips FROM scan_domains
-		 WHERE scan_id = ? AND status = 'done' AND root_domain > ?
-		 AND (ns_endpoints NOT IN ('', 'null', '[]') OR ns_ips NOT IN ('', 'null', '[]'))
-		 ORDER BY root_domain LIMIT ?`, scanID, afterRootDomain, limit)
+		`SELECT ad.root_domain, sd.ns_endpoints, sd.ns_ips FROM axfr_domains ad
+		 JOIN scan_domains sd ON sd.scan_id = ad.scan_id AND sd.root_domain = ad.root_domain
+		 WHERE ad.scan_id = ? AND ad.status = 'pending' AND ad.root_domain > ?
+		 ORDER BY ad.root_domain LIMIT ?`, scanID, afterRootDomain, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -678,93 +725,89 @@ func endpointsFromLegacyIPs(ipsJSON string) []model.NameserverEndpoint {
 	return out
 }
 
-// RecordAXFRZone appends an open zone's transferred records to scan_records (source='axfr'), one
-// transaction per domain. The AXFR phase runs after resolution committed the domain, so no CommitBatch
-// DELETE can wipe them. Per-NS open/closed state is not stored here — it goes to ClickHouse's
-// dns_axfr_observations change-log (see load.WriteAXFRObservations).
-func (s *Store) RecordAXFRZone(ctx context.Context, scanID, domain string, zone []model.DNSRecord, runID string, resolvedAt time.Time) error {
-	if len(zone) == 0 {
-		return nil
-	}
+// CommitAXFRDomain durably records ALL of one domain's probed endpoint outcomes plus its selected open
+// zone's records, and marks the domain done — all in ONE transaction. Staged first, checkpointed second:
+// a crash any time before this call leaves the domain 'pending' (PendingAXFRDomains returns it again on
+// resume, so the next run re-probes it — REPEATS work, never SKIPS it), and a failure partway through
+// this call rolls back everything it touched, so a partial probe pass never leaves stray axfr_probes or
+// scan_records rows behind for a domain that's still 'pending'. Re-running a domain (resume, or a
+// deliberate re-probe) is idempotent: this domain's prior axfr_probes rows and its axfr-sourced
+// scan_records rows are replaced wholesale, never unioned with a past attempt — the same replace
+// semantics CommitBatch and the removed RecordAXFRZone used. errMsg is a free-form note the caller may
+// attach (empty on the normal path); it never gates whether the domain is marked done — axfr_domains has
+// no separate error/retry state, only pending|done.
+func (s *Store) CommitAXFRDomain(ctx context.Context, scanID, domain string, probes []resolve.AXFROutcome, zone []model.DNSRecord, runID string, observedAt time.Time, errMsg string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	ts := resolvedAt.UTC().Format(time.RFC3339Nano)
-	ins, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
-		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, discovery, source_run_id, resolved_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM axfr_probes WHERE scan_id = ? AND root_domain = ?`, scanID, domain); err != nil {
+		return err
+	}
+	if len(probes) > 0 {
+		insP, err := tx.PrepareContext(ctx, `INSERT INTO axfr_probes
+			(scan_id, root_domain, name_server, name_server_ip, verdict, reason, records, bytes, truncated, observed_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer insP.Close()
+		for _, p := range probes {
+			pts := observedAt
+			if !p.ObservedAt.IsZero() {
+				pts = p.ObservedAt
+			}
+			if _, err := insP.ExecContext(ctx, scanID, domain, p.NSHost, p.NSIP, string(p.Verdict), string(p.Reason),
+				p.Records, p.Bytes, b2i(p.Truncated), pts.UTC().Format(time.RFC3339Nano)); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM scan_records WHERE scan_id = ? AND root_domain = ? AND source = 'axfr'`, scanID, domain); err != nil {
+		return err
+	}
+	if len(zone) > 0 {
+		insR, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
+			(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, discovery, source_run_id, resolved_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer insR.Close()
+		ts := observedAt.UTC().Format(time.RFC3339Nano)
+		for _, rec := range zone {
+			if _, err := insR.ExecContext(ctx, scanID, domain, rec.Name, rec.RecordType, rec.Slot,
+				rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, rec.Discovery, runID, ts); err != nil {
+				return err
+			}
+		}
+	}
+
+	res, err := tx.ExecContext(ctx, `UPDATE axfr_domains SET status = 'done', error = ?, observed_at = ?
+		WHERE scan_id = ? AND root_domain = ?`, errMsg, observedAt.UTC().Format(time.RFC3339Nano), scanID, domain)
 	if err != nil {
 		return err
 	}
-	defer ins.Close()
-	for _, rec := range zone {
-		if _, err := ins.ExecContext(ctx, scanID, domain, rec.Name, rec.RecordType, rec.Slot,
-			rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, rec.Discovery, runID, ts); err != nil {
-			return err
-		}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return fmt.Errorf("commit axfr domain %q: %d rows updated (not in axfr_domains queue?)", domain, n)
 	}
 	return tx.Commit()
 }
 
-// ReplaceAXFRPrev refreshes the axfr_prev cache (the last known open/closed state per (root_domain,
-// name_server), loaded from ClickHouse at the start of an AXFR run so the phase can emit only state
-// changes). Only ever-observed (i.e. ever-open) nameservers appear, so this stays small.
-func (s *Store) ReplaceAXFRPrev(ctx context.Context, prev map[[2]string]bool) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM axfr_prev`); err != nil {
-		return err
-	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO axfr_prev (root_domain, name_server, last_open) VALUES (?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	for k, open := range prev {
-		if _, err := stmt.ExecContext(ctx, k[0], k[1], b2i(open)); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-// AXFRCursor / SetAXFRCursor / AXFRComplete / MarkAXFRComplete track the AXFR phase's resumable
-// progress over the resolved-domain cursor (mirrors the host-load markers).
-func (s *Store) AXFRCursor(ctx context.Context, scanID string) (string, error) {
-	var c string
-	err := s.db.QueryRowContext(ctx, `SELECT cursor FROM axfr_state WHERE scan_id = ?`, scanID).Scan(&c)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return c, err
-}
-
-func (s *Store) SetAXFRCursor(ctx context.Context, scanID, cursor string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO axfr_state (scan_id, cursor) VALUES (?, ?)
-		 ON CONFLICT(scan_id) DO UPDATE SET cursor = excluded.cursor`, scanID, cursor)
-	return err
-}
-
-func (s *Store) AXFRComplete(ctx context.Context, scanID string) (bool, error) {
+// AXFRQueueComplete reports whether every axfr_domains row for scanID has reached status='done'. This
+// IS the AXFR phase's completion signal — no separate marker exists to fall out of sync with the queue.
+// A scan-id that was never seeded (zero rows) also reads as complete, so an --axfr run with no eligible
+// domains is a legitimate no-op rather than an error.
+func (s *Store) AXFRQueueComplete(ctx context.Context, scanID string) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT complete FROM axfr_state WHERE scan_id = ?`, scanID).Scan(&n)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	return n == 1, err
-}
-
-func (s *Store) MarkAXFRComplete(ctx context.Context, scanID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO axfr_state (scan_id, complete) VALUES (?, 1)
-		 ON CONFLICT(scan_id) DO UPDATE SET complete = 1`, scanID)
-	return err
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM axfr_domains WHERE scan_id = ? AND status = 'pending'`, scanID).Scan(&n)
+	return n == 0, err
 }
 
 // Close closes the DB.

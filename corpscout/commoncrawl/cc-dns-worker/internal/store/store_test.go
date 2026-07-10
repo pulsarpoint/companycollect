@@ -520,48 +520,354 @@ func TestHostLoadShardStateAndIdempotency(t *testing.T) {
 	}
 }
 
-// RecordAXFRZone appends an open zone's transferred records to scan_records tagged source='axfr';
-// ReplaceAXFRPrev refreshes the last-known-state cache used for change detection.
-func TestRecordAXFRZoneAndPrev(t *testing.T) {
+// axfrDone(t)(scanID, domain) is a tiny helper: seeds a resolved scan_domains row with one dialable
+// endpoint and stages it into the axfr_domains queue, returning nothing — callers commit or inspect it.
+func seedResolvedAXFRDomain(t *testing.T, st *Store, scanID, domain, ip string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatalf("seed %s: %v", domain, err)
+	}
+	eps := []model.NameserverEndpoint{{Name: "ns1." + domain, IP: ip, Scope: "public", Dialable: true}}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", ResolvedAt: time.Unix(0, 0).UTC(),
+		NSIPs: []string{ip}, Endpoints: eps,
+	}}); err != nil {
+		t.Fatalf("commit %s: %v", domain, err)
+	}
+	if _, err := st.SeedAXFRDomains(ctx, scanID); err != nil {
+		t.Fatalf("SeedAXFRDomains: %v", err)
+	}
+}
+
+// TestSeedAXFRDomainsIdempotent proves SeedAXFRDomains only stages resolved (status='done') domains,
+// re-seeding adds nothing new, and — critically — an already-'done' axfr_domains row is never reset back
+// to 'pending' by a later re-seed (e.g. after the scan re-resolves the same domain in a later cycle).
+func TestSeedAXFRDomainsIdempotent(t *testing.T) {
+	ctx := context.Background()
 	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	ctx := context.Background()
-	if _, err := st.Seed(ctx, "s1", []string{"open.com"}); err != nil {
+
+	seedResolvedAXFRDomain(t, st, "sc", "a.com", "9.9.9.9")
+	seedResolvedAXFRDomain(t, st, "sc", "b.com", "9.9.9.9")
+
+	// Re-seeding is idempotent: no new rows, same pending set.
+	n, err := st.SeedAXFRDomains(ctx, "sc")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CommitBatch(ctx, []model.DomainResult{{ScanID: "s1", RootDomain: "open.com", Status: "done", NSIPs: []string{"9.9.9.9"}}}); err != nil {
+	if n != 0 {
+		t.Fatalf("re-seed added %d rows, want 0 (idempotent)", n)
+	}
+	targets, err := st.PendingAXFRDomains(ctx, "sc", "", 100)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("pending after seed = %d, want 2", len(targets))
 	}
 
-	zone := []model.DNSRecord{{Name: "vpn.open.com", RecordType: "A", Value: "10.0.0.1", Source: "axfr", Discovery: "axfr"}}
-	if err := st.RecordAXFRZone(ctx, "s1", "open.com", zone, "run1", time.Now()); err != nil {
+	// Mark a.com done, then re-seed: the done row must NOT be reset to pending.
+	if err := st.CommitAXFRDomain(ctx, "sc", "a.com", nil, nil, "run1", time.Unix(0, 0).UTC(), ""); err != nil {
+		t.Fatalf("CommitAXFRDomain: %v", err)
+	}
+	if _, err := st.SeedAXFRDomains(ctx, "sc"); err != nil {
 		t.Fatal(err)
+	}
+	after, err := st.PendingAXFRDomains(ctx, "sc", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 || after[0].RootDomain != "b.com" {
+		t.Fatalf("pending after marking a.com done and re-seeding = %+v, want only b.com (done rows must not reset to pending)", after)
+	}
+}
+
+// TestPendingAXFRDomainsResume proves PendingAXFRDomains returns only the not-yet-'done' rows: marking
+// some domains done via CommitAXFRDomain removes them from the pending set, exactly what lets a resumed
+// run pick up only the unfinished work.
+func TestPendingAXFRDomainsResume(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	for _, d := range []string{"a.com", "b.com", "c.com"} {
+		seedResolvedAXFRDomain(t, st, "sc", d, "9.9.9.9")
+	}
+	if err := st.CommitAXFRDomain(ctx, "sc", "b.com", nil, nil, "run1", time.Unix(0, 0).UTC(), ""); err != nil {
+		t.Fatalf("CommitAXFRDomain: %v", err)
+	}
+
+	pend, err := st.PendingAXFRDomains(ctx, "sc", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, target := range pend {
+		got[target.RootDomain] = true
+	}
+	if len(got) != 2 || !got["a.com"] || !got["c.com"] || got["b.com"] {
+		t.Fatalf("pending = %+v, want {a.com, c.com} (b.com is done, excluded)", got)
+	}
+}
+
+// TestCommitAXFRDomainAtomicity proves a commit failure rolls back EVERYTHING it touched in that one
+// transaction — including the axfr_probes rows and zone scan_records the failing call itself inserted —
+// not just the final status flip. Domain "unseeded.com" was never staged into axfr_domains (SeedAXFRDomains
+// never ran for it), so the terminal UPDATE affects zero rows and CommitAXFRDomain must fail; the earlier
+// INSERTs in that same transaction must not survive.
+func TestCommitAXFRDomainAtomicity(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	probes := []resolve.AXFROutcome{{Verdict: resolve.VerdictOpen, Reason: resolve.ReasonTransferred, NSHost: "ns1.unseeded.com", NSIP: "9.9.9.9", Records: 3}}
+	zone := []model.DNSRecord{{Name: "vpn.unseeded.com", RecordType: "A", Value: "10.0.0.1", Source: "axfr", Discovery: "axfr"}}
+	err = st.CommitAXFRDomain(ctx, "sc", "unseeded.com", probes, zone, "run1", time.Unix(0, 0).UTC(), "")
+	if err == nil {
+		t.Fatal("CommitAXFRDomain on a domain never staged into axfr_domains: want error, got nil")
+	}
+
+	var probeN, recN int
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM axfr_probes WHERE scan_id='sc' AND root_domain='unseeded.com'`).Scan(&probeN); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM scan_records WHERE scan_id='sc' AND root_domain='unseeded.com'`).Scan(&recN); err != nil {
+		t.Fatal(err)
+	}
+	if probeN != 0 || recN != 0 {
+		t.Fatalf("rollback left rows behind: axfr_probes=%d scan_records=%d, want 0 each", probeN, recN)
+	}
+}
+
+// TestCommitAXFRDomainAtomicityCanceledContext is a second, independent atomicity check: a context
+// that's already canceled fails CommitAXFRDomain at BeginTx (before any write), so a domain otherwise
+// eligible to commit is left untouched and still 'pending'.
+func TestCommitAXFRDomainAtomicityCanceledContext(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedResolvedAXFRDomain(t, st, "sc", "a.com", "9.9.9.9")
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	probes := []resolve.AXFROutcome{{Verdict: resolve.VerdictClosed, Reason: resolve.ReasonRefused, NSHost: "ns1.a.com", NSIP: "9.9.9.9"}}
+	if err := st.CommitAXFRDomain(canceled, "sc", "a.com", probes, nil, "run1", time.Unix(0, 0).UTC(), ""); err == nil {
+		t.Fatal("CommitAXFRDomain with a canceled context: want error, got nil")
+	}
+
+	pend, err := st.PendingAXFRDomains(ctx, "sc", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 1 || pend[0].RootDomain != "a.com" {
+		t.Fatalf("a.com must still be pending after the failed commit, got %+v", pend)
 	}
 	var n int
-	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM scan_records WHERE scan_id='s1' AND root_domain='open.com' AND source='axfr'`).Scan(&n); err != nil {
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM axfr_probes WHERE scan_id='sc' AND root_domain='a.com'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("want 1 axfr record, got %d", n)
+	if n != 0 {
+		t.Fatalf("axfr_probes rows leaked from the failed commit: %d, want 0", n)
+	}
+}
+
+// TestAXFRQueueKillAfterDispatchBeforeCommit simulates a crash between a domain being dispatched to a
+// worker and its result being committed: after SeedAXFRDomains, with NO CommitAXFRDomain call at all,
+// every seeded domain must still show up as pending on the next read — the queue itself (not an
+// in-memory dispatch position) is the durable resume state, so nothing is silently skipped.
+func TestAXFRQueueKillAfterDispatchBeforeCommit(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	for _, d := range []string{"a.com", "b.com"} {
+		seedResolvedAXFRDomain(t, st, "sc", d, "9.9.9.9")
+	}
+	// Simulate dispatch by just reading a page (a real feeder would send these to workers); no commit
+	// follows, mirroring a process killed mid-probe.
+	if _, err := st.PendingAXFRDomains(ctx, "sc", "", 100); err != nil {
+		t.Fatal(err)
 	}
 
-	// ReplaceAXFRPrev swaps the whole cache each call (it's reloaded from CH per run).
-	if err := st.ReplaceAXFRPrev(ctx, map[[2]string]bool{{"open.com", "9.9.9.9"}: true}); err != nil {
+	pend, err := st.PendingAXFRDomains(ctx, "sc", "", 100)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.ReplaceAXFRPrev(ctx, map[[2]string]bool{{"other.com", "1.1.1.1"}: true}); err != nil {
+	if len(pend) != 2 {
+		t.Fatalf("pending after dispatch-without-commit = %d, want 2 (both still pending, none skipped)", len(pend))
+	}
+	if done, _ := st.AXFRQueueComplete(ctx, "sc"); done {
+		t.Fatal("AXFRQueueComplete = true, want false (nothing has been committed yet)")
+	}
+}
+
+// TestAXFRQueueCompleteAfterAllDone proves that once every seeded domain is committed, the queue is
+// reported complete and re-running finds zero pending work — the state a re-run of an already-finished
+// phase must observe to make no further network requests.
+func TestAXFRQueueCompleteAfterAllDone(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	var rd, ns string
-	var open int
-	if err := st.db.QueryRowContext(ctx, `SELECT root_domain, name_server, last_open FROM axfr_prev`).Scan(&rd, &ns, &open); err != nil {
+	defer st.Close()
+
+	for _, d := range []string{"a.com", "b.com"} {
+		seedResolvedAXFRDomain(t, st, "sc", d, "9.9.9.9")
+	}
+	if done, _ := st.AXFRQueueComplete(ctx, "sc"); done {
+		t.Fatal("AXFRQueueComplete = true before anything committed, want false")
+	}
+	for _, d := range []string{"a.com", "b.com"} {
+		if err := st.CommitAXFRDomain(ctx, "sc", d, nil, nil, "run1", time.Unix(0, 0).UTC(), ""); err != nil {
+			t.Fatalf("commit %s: %v", d, err)
+		}
+	}
+
+	done, err := st.AXFRQueueComplete(ctx, "sc")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if rd != "other.com" || ns != "1.1.1.1" || open != 1 {
-		t.Fatalf("axfr_prev not replaced: %s %s %d", rd, ns, open)
+	if !done {
+		t.Fatal("AXFRQueueComplete = false after all domains committed, want true")
+	}
+	pend, err := st.PendingAXFRDomains(ctx, "sc", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pend) != 0 {
+		t.Fatalf("pending after full completion = %+v, want none", pend)
+	}
+
+	// A brand-new scan-id that was never seeded also reads as complete (a legitimate no-op).
+	if done, _ := st.AXFRQueueComplete(ctx, "never-seeded"); !done {
+		t.Error("AXFRQueueComplete for an unseeded scan-id = false, want true (zero rows == complete)")
+	}
+}
+
+// TestCommitAXFRDomainWritesProbesAndZone proves a successful commit lands both the per-endpoint probe
+// rows (verdict/reason/records/bytes/truncated round-tripped) and the selected zone's records tagged
+// source='axfr', and flips the domain to 'done'.
+func TestCommitAXFRDomainWritesProbesAndZone(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedResolvedAXFRDomain(t, st, "sc", "open.com", "9.9.9.9")
+
+	probes := []resolve.AXFROutcome{
+		{Verdict: resolve.VerdictOpen, Reason: resolve.ReasonTransferred, NSHost: "ns1.open.com", NSIP: "9.9.9.9", Records: 5, Bytes: 512, ObservedAt: time.Unix(100, 0).UTC()},
+		{Verdict: resolve.VerdictClosed, Reason: resolve.ReasonRefused, NSHost: "ns2.open.com", NSIP: "8.8.8.8", ObservedAt: time.Unix(100, 0).UTC()},
+	}
+	zone := []model.DNSRecord{{Name: "vpn.open.com", RecordType: "A", Value: "10.0.0.1", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"}}
+	if err := st.CommitAXFRDomain(ctx, "sc", "open.com", probes, zone, "run1", time.Unix(200, 0).UTC(), ""); err != nil {
+		t.Fatalf("CommitAXFRDomain: %v", err)
+	}
+
+	rows, err := st.db.QueryContext(ctx, `SELECT name_server, name_server_ip, verdict, reason, records, bytes
+		FROM axfr_probes WHERE scan_id='sc' AND root_domain='open.com' ORDER BY name_server_ip`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string][2]string{}
+	n := 0
+	for rows.Next() {
+		var ns, ip, verdict, reason string
+		var recs, bytesN int
+		if err := rows.Scan(&ns, &ip, &verdict, &reason, &recs, &bytesN); err != nil {
+			t.Fatal(err)
+		}
+		got[ip] = [2]string{verdict, reason}
+		n++
+	}
+	if n != 2 {
+		t.Fatalf("axfr_probes rows = %d, want 2", n)
+	}
+	if got["9.9.9.9"] != [2]string{"open", "transferred"} {
+		t.Errorf("probe for 9.9.9.9 = %+v, want open/transferred", got["9.9.9.9"])
+	}
+	if got["8.8.8.8"] != [2]string{"closed", "refused"} {
+		t.Errorf("probe for 8.8.8.8 = %+v, want closed/refused", got["8.8.8.8"])
+	}
+
+	var recN int
+	var source, runID string
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*), source, source_run_id FROM scan_records
+		WHERE scan_id='sc' AND root_domain='open.com' AND name='vpn.open.com'`).Scan(&recN, &source, &runID); err != nil {
+		t.Fatal(err)
+	}
+	if recN != 1 || source != "axfr" || runID != "run1" {
+		t.Fatalf("zone record = count=%d source=%q run=%q, want 1/axfr/run1", recN, source, runID)
+	}
+
+	var status string
+	if err := st.db.QueryRowContext(ctx, `SELECT status FROM axfr_domains WHERE scan_id='sc' AND root_domain='open.com'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "done" {
+		t.Fatalf("axfr_domains.status = %q, want done", status)
+	}
+}
+
+// TestCommitAXFRDomainReplacesOnRecommit proves re-committing a domain (resume, or a deliberate re-probe)
+// replaces its probes/zone records wholesale rather than accumulating duplicates.
+func TestCommitAXFRDomainReplacesOnRecommit(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedResolvedAXFRDomain(t, st, "sc", "open.com", "9.9.9.9")
+
+	first := []resolve.AXFROutcome{{Verdict: resolve.VerdictOpen, Reason: resolve.ReasonTransferred, NSHost: "ns1.open.com", NSIP: "9.9.9.9"}}
+	firstZone := []model.DNSRecord{{Name: "old.open.com", RecordType: "A", Value: "10.0.0.1", Source: "axfr", Discovery: "axfr"}}
+	if err := st.CommitAXFRDomain(ctx, "sc", "open.com", first, firstZone, "run1", time.Unix(0, 0).UTC(), ""); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+
+	second := []resolve.AXFROutcome{{Verdict: resolve.VerdictClosed, Reason: resolve.ReasonRefused, NSHost: "ns1.open.com", NSIP: "9.9.9.9"}}
+	if err := st.CommitAXFRDomain(ctx, "sc", "open.com", second, nil, "run2", time.Unix(0, 0).UTC(), ""); err != nil {
+		t.Fatalf("second commit: %v", err)
+	}
+
+	var probeN int
+	var verdict string
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM axfr_probes WHERE scan_id='sc' AND root_domain='open.com'`).Scan(&probeN); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT verdict FROM axfr_probes WHERE scan_id='sc' AND root_domain='open.com' AND name_server_ip='9.9.9.9'`).Scan(&verdict); err != nil {
+		t.Fatal(err)
+	}
+	if probeN != 1 || verdict != "closed" {
+		t.Fatalf("after re-commit: %d probe rows, verdict=%q, want 1 row verdict=closed (replaced, not accumulated)", probeN, verdict)
+	}
+
+	var recN int
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM scan_records WHERE scan_id='sc' AND root_domain='open.com' AND source='axfr'`).Scan(&recN); err != nil {
+		t.Fatal(err)
+	}
+	if recN != 0 {
+		t.Fatalf("stale zone record from the first commit survived the second (zone=nil) commit: %d rows, want 0", recN)
 	}
 }
 
@@ -719,9 +1025,10 @@ func TestNameserverEndpointsChangeOnRecommit(t *testing.T) {
 	}
 }
 
-// TestAXFRTargetsAfterUsesEndpoints proves the AXFR feeder reads back the same per-(NS,IP) identity
-// that was committed, endpoints intact (not just a flattened IP list).
-func TestAXFRTargetsAfterUsesEndpoints(t *testing.T) {
+// TestPendingAXFRDomainsUsesEndpoints proves the AXFR feeder reads back the same per-(NS,IP) identity
+// that was committed to scan_domains, endpoints intact (not just a flattened IP list), once the domain
+// has been staged into the axfr_domains queue via SeedAXFRDomains.
+func TestPendingAXFRDomainsUsesEndpoints(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)
 	if _, err := s.Seed(ctx, "sc", []string{"a.com"}); err != nil {
@@ -737,8 +1044,11 @@ func TestAXFRTargetsAfterUsesEndpoints(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.SeedAXFRDomains(ctx, "sc"); err != nil {
+		t.Fatal(err)
+	}
 
-	targets, err := s.AXFRTargetsAfter(ctx, "sc", "", 100)
+	targets, err := s.PendingAXFRDomains(ctx, "sc", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -755,11 +1065,11 @@ func TestAXFRTargetsAfterUsesEndpoints(t *testing.T) {
 	}
 }
 
-// TestAXFRTargetsAfterFallsBackToLegacyNSIPs proves a domain committed before ns_endpoints existed
+// TestPendingAXFRDomainsFallsBackToLegacyNSIPs proves a domain committed before ns_endpoints existed
 // (so the column reads back as its '[]' default) still yields an AXFR target, synthesized from ns_ips
 // and reclassified via resolve.ClassifyString — a private/loopback/etc. legacy address must come back
 // non-dialable, never defaulted to true, so the AXFR phase's !Dialable skip still holds for old rows.
-func TestAXFRTargetsAfterFallsBackToLegacyNSIPs(t *testing.T) {
+func TestPendingAXFRDomainsFallsBackToLegacyNSIPs(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)
 	if _, err := s.Seed(ctx, "sc", []string{"legacy.com"}); err != nil {
@@ -774,8 +1084,11 @@ func TestAXFRTargetsAfterFallsBackToLegacyNSIPs(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.SeedAXFRDomains(ctx, "sc"); err != nil {
+		t.Fatal(err)
+	}
 
-	targets, err := s.AXFRTargetsAfter(ctx, "sc", "", 100)
+	targets, err := s.PendingAXFRDomains(ctx, "sc", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}

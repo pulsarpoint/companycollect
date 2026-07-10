@@ -2,48 +2,71 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"cc-dns-worker/internal/load"
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/resolve"
 	"cc-dns-worker/internal/scheduler"
 	"cc-dns-worker/internal/store"
 )
 
-// axfrCollector accumulates AXFR state-change rows from the worker pool (opens + closes only), flushed
-// to ClickHouse's dns_axfr_observations log once the phase finishes.
-type axfrCollector struct {
-	mu      sync.Mutex
-	changes []model.AXFRObservation
+// axfrDispatchBatch bounds how many pending domains the AXFR feeder pulls from the SQLite queue per
+// fetch (mirrors scanResolve's dispatchBatch, but sized for the AXFR phase's much lighter per-domain
+// payload — no record-plan work, just a handful of NS endpoints).
+const axfrDispatchBatch = 5000
+
+// axfrProber is the subset of *resolve.AXFRProber the pipeline calls, narrowed to an interface so tests
+// can inject a fake (no real network) to exercise the feeder/worker/committer shutdown paths.
+type axfrProber interface {
+	ProbeServer(ctx context.Context, zone, nsHost, nsIP string) resolve.AXFROutcome
 }
 
-func (c *axfrCollector) add(o model.AXFRObservation) {
-	c.mu.Lock()
-	c.changes = append(c.changes, o)
-	c.mu.Unlock()
+// axfrPendingFunc streams one page of pending domains — the store's PendingAXFRDomains in production,
+// a fixed fake in tests. See runAXFRQueue.
+type axfrPendingFunc func(ctx context.Context, scanID, afterRootDomain string, limit int) ([]store.AXFRTarget, error)
+
+// axfrCommitFunc persists one domain's probe outcomes + selected zone and marks it done — the store's
+// CommitAXFRDomain in production. Narrowed to a function value (rather than calling the store directly)
+// so a test can inject a failing committer and prove the cancel-and-join shutdown path leaks no
+// goroutines under -race.
+type axfrCommitFunc func(ctx context.Context, scanID, domain string, probes []resolve.AXFROutcome, zone []model.DNSRecord, runID string, observedAt time.Time, errMsg string) error
+
+// axfrDomainResult is one domain's complete probe pass, handed from a worker to the committer. zone is
+// nil unless some endpoint opened.
+type axfrDomainResult struct {
+	domain     string
+	probes     []resolve.AXFROutcome
+	zone       []model.DNSRecord
+	observedAt time.Time
 }
 
-// runAXFRPipeline runs the standalone AXFR phase: a bounded worker pool that walks the resolved-domain
-// cursor (AXFRTargetsAfter — reusing the NS endpoints already stored, so no NS re-discovery) and, for
-// each domain, probes every dialable, NON-hyperscaler NS endpoint. It loads the last known open/closed
-// state per (domain, ns) from ClickHouse at the start, and emits a dns_axfr_observations row ONLY when the
-// probed state differs from that (implicit-closed base: absent == closed) — so always-closed
-// nameservers never produce a row and the log is already the collapsed open->close->open timeline.
-// Open zones' records still flow to scan_records (source='axfr'). Entirely off the resolution path —
-// its own pool, run as a phase after scanning. Resumable via axfr_state.
+// runAXFRPipeline runs the standalone AXFR phase against the durable SQLite work queue (axfr_domains):
+// SeedAXFRDomains (idempotent) stages every resolved domain that has a dialable NS endpoint set, then —
+// unless the queue is already fully drained — a feeder streams PENDING rows to a bounded worker pool
+// that probes each dialable, non-hyperscaler NS endpoint (ProbeServer) and returns one result per
+// DOMAIN (every endpoint's outcome plus the first open zone found), and a single committer persists each
+// result — probes, zone records, and the domain's done-status — in ONE transaction
+// (store.CommitAXFRDomain). Staged first, checkpointed second: a crash between dispatch and commit
+// leaves the domain 'pending' (the next run's PendingAXFRDomains returns it again), so a killed process
+// can only REPEAT unfinished work, never SKIP it. Task 4 stages to SQLite only — no ClickHouse I/O here;
+// Task 5 adds the load pass over axfr_probes/axfr_changes.
 func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error {
-	done, err := st.AXFRComplete(ctx, cfg.scanID)
+	if _, err := st.SeedAXFRDomains(ctx, cfg.scanID); err != nil {
+		return fmt.Errorf("seed axfr queue: %w", err)
+	}
+	done, err := st.AXFRQueueComplete(ctx, cfg.scanID)
 	if err != nil {
 		return err
 	}
 	if done {
-		log.Printf("scan_id=%s: AXFR phase already complete — skipping", cfg.scanID)
+		log.Printf("scan_id=%s: AXFR queue already complete — skipping (no network requests)", cfg.scanID)
 		return nil
 	}
+
 	workers := cfg.axfrWorkers
 	if workers <= 0 {
 		workers = 50
@@ -60,45 +83,63 @@ func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error
 	prober := resolve.NewAXFRProber(axfrSched, resolve.AXFRCaps{
 		MaxRecords: cfg.axfrMaxRecords, MaxBytes: cfg.axfrMaxBytes, Deadline: cfg.axfrTimeout,
 	}, cfg.axfrInflight)
+	log.Printf("scan_id=%s: AXFR phase START (workers=%d inflight=%d timeout=%s)",
+		cfg.scanID, workers, cfg.axfrInflight, cfg.axfrTimeout)
 
-	// CH connection: load the previous per-NS state, then write the changes at the end.
-	conn, err := chConn()
-	if err != nil {
+	if err := runAXFRQueue(ctx, axfrQueueDeps{
+		scanID:        cfg.scanID,
+		runID:         cfg.runID,
+		workers:       workers,
+		statsInterval: cfg.statsInterval,
+		pending:       st.PendingAXFRDomains,
+		prober:        prober,
+		commit:        st.CommitAXFRDomain,
+	}); err != nil {
 		return err
 	}
-	defer conn.Close()
-	prev, err := load.LoadAXFRPrev(ctx, conn)
-	if err != nil {
-		return err
-	}
-	if err := st.ReplaceAXFRPrev(ctx, prev); err != nil { // mirror to SQLite for durability/inspection
-		return err
-	}
-	log.Printf("scan_id=%s: AXFR phase START (workers=%d inflight=%d timeout=%s, %d known open-state NS)",
-		cfg.scanID, workers, cfg.axfrInflight, cfg.axfrTimeout, len(prev))
+	log.Printf("scan_id=%s: AXFR phase complete", cfg.scanID)
+	return nil
+}
 
-	coll := &axfrCollector{}
-	jobs := make(chan store.AXFRTarget, workers*2)
-	var nsProbed, nsOpen, domainsProbed atomic.Int64
-	var pool sync.WaitGroup
-	for range workers {
-		pool.Go(func() {
-			for t := range jobs {
-				probed, opened := processAXFRTarget(ctx, st, prober, cfg, t, prev, coll)
-				nsProbed.Add(int64(probed))
-				nsOpen.Add(int64(opened))
-				domainsProbed.Add(1)
-			}
-		})
+// axfrQueueDeps is runAXFRQueue's injectable seam: production wiring comes from runAXFRPipeline (a real
+// *resolve.AXFRProber and store.Store methods); tests substitute a fake prober and/or a failing commit
+// function to exercise the shutdown path without a network or a forced-failure store fixture.
+type axfrQueueDeps struct {
+	scanID, runID string
+	workers       int
+	statsInterval time.Duration
+	pending       axfrPendingFunc
+	prober        axfrProber
+	commit        axfrCommitFunc
+}
+
+// runAXFRQueue is the feeder → worker pool → committer pipeline over the axfr_domains queue. Shutdown
+// contract: on ANY commit error, the committer cancels ctx and keeps draining results (never blocking a
+// worker mid-send) until the worker pool finishes and closes the channel; the feeder and workers both
+// select on ctx.Done() so a cancel unblocks them promptly instead of running to natural completion. Every
+// goroutine this function starts (feeder, workers, committer, stats reporter) is Wait()'d/joined before
+// it returns, on every exit path — no leaks whether it returns cleanly, on a feed error, or on a commit
+// error.
+func runAXFRQueue(ctx context.Context, deps axfrQueueDeps) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	workers := deps.workers
+	if workers <= 0 {
+		workers = 50
 	}
 
-	// Periodic AXFR stats: processing speed + open-vs-tested running ratio.
 	start := time.Now()
+	var domainsProbed, domainsCommitted, nsProbed, nsOpen atomic.Int64
+
+	// Periodic AXFR stats: processing speed + open-vs-tested running ratio. Stopped and joined on every
+	// exit path via the deferred close(stopStats)/<-statsDone below.
 	stopStats := make(chan struct{})
-	var statsWG sync.WaitGroup
-	if cfg.statsInterval > 0 {
-		statsWG.Go(func() {
-			ticker := time.NewTicker(cfg.statsInterval)
+	statsDone := make(chan struct{})
+	if deps.statsInterval > 0 {
+		go func() {
+			defer close(statsDone)
+			ticker := time.NewTicker(deps.statsInterval)
 			defer ticker.Stop()
 			lastDomains, lastTick := int64(0), start
 			for {
@@ -120,70 +161,119 @@ func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error
 						now.Sub(start).Round(time.Second), domains, perSec, avgPerSec, probed, opened, openPct)
 				}
 			}
+		}()
+	} else {
+		close(statsDone)
+	}
+	defer func() {
+		close(stopStats)
+		<-statsDone
+	}()
+
+	work := make(chan store.AXFRTarget, workers*2)
+	results := make(chan axfrDomainResult, workers*2)
+
+	// Feeder: owns work's close. Streams PENDING domains in root_domain order; the cursor lives only in
+	// this local variable — never persisted — so durable resume comes solely from axfr_domains.status.
+	feederDone := make(chan struct{})
+	var feedErr error
+	go func() {
+		defer close(feederDone)
+		defer close(work)
+		cursor := ""
+		for {
+			targets, err := deps.pending(ctx, deps.scanID, cursor, axfrDispatchBatch)
+			if err != nil {
+				feedErr = err
+				cancel() // fatal: stop workers/committer promptly instead of draining to natural completion
+				return
+			}
+			if len(targets) == 0 {
+				return
+			}
+			for _, t := range targets {
+				select {
+				case work <- t:
+				case <-ctx.Done():
+					return
+				}
+			}
+			cursor = targets[len(targets)-1].RootDomain
+		}
+	}()
+
+	// Workers: probe every dialable, non-hyperscaler endpoint of each dispatched domain, then hand the
+	// whole domain's outcome to the committer. The select-send lets a worker abandon a result the instant
+	// ctx is cancelled instead of blocking forever on a channel nobody drains anymore.
+	var workerWG sync.WaitGroup
+	for range workers {
+		workerWG.Go(func() {
+			for t := range work {
+				r := processAXFRTarget(ctx, deps.prober, t)
+				probed, opened := 0, 0
+				for _, p := range r.probes {
+					probed++
+					if p.IsOpen() {
+						opened++
+					}
+				}
+				nsProbed.Add(int64(probed))
+				nsOpen.Add(int64(opened))
+				domainsProbed.Add(1)
+				select {
+				case results <- r:
+				case <-ctx.Done():
+					return
+				}
+			}
 		})
 	}
 
-	// Feeder: walk the resolved-domain cursor, dispatch to the pool, advance the cursor per batch.
-	const batch = 5000
-	cursor, cerr := st.AXFRCursor(ctx, cfg.scanID)
-	var feedErr error
-	if cerr != nil {
-		feedErr = cerr
-	} else {
-		feedErr = func() error {
-			for {
-				targets, err := st.AXFRTargetsAfter(ctx, cfg.scanID, cursor, batch)
-				if err != nil {
-					return err
-				}
-				if len(targets) == 0 {
-					return nil
-				}
-				for _, t := range targets {
-					select {
-					case jobs <- t:
-					case <-ctx.Done():
-						return ctx.Err()
-					}
-				}
-				cursor = targets[len(targets)-1].RootDomain
-				if err := st.SetAXFRCursor(ctx, cfg.scanID, cursor); err != nil {
-					return err
-				}
+	// Committer: the ONE goroutine that writes to SQLite. On its first commit error it records the error
+	// and cancels ctx (unblocking the feeder's and workers' ctx.Done() selects), then keeps ranging over
+	// results — draining, not committing — so no worker is ever left blocked mid-send; draining ends the
+	// instant close(results) fires below, which happens once every worker has exited.
+	committerDone := make(chan struct{})
+	var commitErr error
+	go func() {
+		defer close(committerDone)
+		for r := range results {
+			if commitErr != nil {
+				continue // already failed: drain only, never call the committer again
 			}
-		}()
-	}
-	close(jobs)
-	pool.Wait()
-	close(stopStats)
-	statsWG.Wait()
+			if err := deps.commit(ctx, deps.scanID, r.domain, r.probes, r.zone, deps.runID, r.observedAt, ""); err != nil {
+				commitErr = fmt.Errorf("commit axfr domain %q: %w", r.domain, err)
+				cancel()
+				continue
+			}
+			domainsCommitted.Add(1)
+		}
+	}()
+
+	<-feederDone
+	workerWG.Wait()
+	close(results)
+	<-committerDone
+
 	if feedErr != nil {
 		return feedErr
 	}
-	// Flush the state changes to the ClickHouse observation log.
-	if n, err := load.WriteAXFRObservations(ctx, conn, coll.changes); err != nil {
-		return err
-	} else if n > 0 {
-		log.Printf("scan_id=%s: wrote %d AXFR state changes to %s", cfg.scanID, n, "dns_axfr_observations")
+	if commitErr != nil {
+		return commitErr
 	}
-	if err := st.MarkAXFRComplete(ctx, cfg.scanID); err != nil {
-		return err
-	}
-	log.Printf("scan_id=%s: AXFR phase complete (%d domains, %d NS probed, %d open, %d state changes)",
-		cfg.scanID, domainsProbed.Load(), nsProbed.Load(), nsOpen.Load(), len(coll.changes))
+	log.Printf("axfr queue drained: %d domains probed, %d committed, %d ns probed, %d open",
+		domainsProbed.Load(), domainsCommitted.Load(), nsProbed.Load(), nsOpen.Load())
 	return nil
 }
 
-// processAXFRTarget probes each dialable, non-hyperscaler NS endpoint of one domain, emits a
-// state-change row when a DEFINITIVE (open or closed) verdict differs from prev (absent == closed), and
-// appends any open zone's records to scan_records. An Unknown verdict (timeout, transport error,
-// SERVFAIL, malformed reply, breaker, or cancellation) is never definitive: it is not compared against
-// prev and never produces a row, so a transient probe failure can never masquerade as a close. Returns
-// (#NS probed, #NS that opened). prev is read-only (built before the pool).
-func processAXFRTarget(ctx context.Context, st *store.Store, prober *resolve.AXFRProber, cfg scanConfig, t store.AXFRTarget, prev map[[2]string]bool, coll *axfrCollector) (int, int) {
-	var zone []model.DNSRecord
-	probed, opened := 0, 0
+// processAXFRTarget probes every dialable, non-hyperscaler NS endpoint of one domain and returns every
+// endpoint's outcome plus the first zone that opened (nil if none did). It never touches storage — the
+// committer persists the result — so it has no error return: an unreachable or refusing server is a
+// normal, fully-formed AXFROutcome (Unknown/Closed verdict), not a Go error.
+func processAXFRTarget(ctx context.Context, prober axfrProber, t store.AXFRTarget) axfrDomainResult {
 	now := time.Now().UTC()
+	var zone []model.DNSRecord
+	var probes []resolve.AXFROutcome
 	seenIP := map[string]bool{} // one IP can back several NS names (shared/anycast) — probe it once
 	for _, ep := range t.Endpoints {
 		if !ep.Dialable {
@@ -197,26 +287,10 @@ func processAXFRTarget(ctx context.Context, st *store.Store, prober *resolve.AXF
 		}
 		seenIP[ep.IP] = true
 		res := prober.ProbeServer(ctx, t.RootDomain, ep.Name, ep.IP)
-		probed++
-		if res.IsOpen() {
-			opened++
-			if zone == nil {
-				zone = res.Zone // capture the transferred zone once per domain
-			}
-		}
-		// Unknown (timeout/transport error/SERVFAIL/breaker/cancellation/malformed) is never definitive:
-		// it must not be compared against prev, must not emit a change, and must never be treated as a
-		// close. Only a definitive Open/Closed verdict is eligible to flip the recorded state.
-		if res.IsDefinitive() {
-			if res.IsOpen() != prev[[2]string{t.RootDomain, ep.IP}] {
-				coll.add(model.AXFRObservation{RootDomain: t.RootDomain, NameServer: ep.IP, AXFROpen: res.IsOpen(), ObservedAt: now})
-			}
+		probes = append(probes, res)
+		if res.IsOpen() && zone == nil {
+			zone = res.Zone // capture the transferred zone once per domain
 		}
 	}
-	if zone != nil {
-		if err := st.RecordAXFRZone(ctx, cfg.scanID, t.RootDomain, zone, cfg.runID, now); err != nil {
-			log.Printf("scan_id=%s: AXFR zone %s: %v", cfg.scanID, t.RootDomain, err)
-		}
-	}
-	return probed, opened
+	return axfrDomainResult{domain: t.RootDomain, probes: probes, zone: zone, observedAt: now}
 }
