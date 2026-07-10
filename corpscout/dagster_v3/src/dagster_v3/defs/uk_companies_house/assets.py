@@ -15,7 +15,8 @@ from dagster_v3.defs.uk_companies_house.clickhouse import (
 )
 from dagster_v3.defs.uk_companies_house.documents_api import (
     CompaniesHouseClient,
-    build_financials_for_company_numbers,
+    load_api_financial_metrics_from_object_store,
+    sync_api_accounts_documents,
 )
 from dagster_v3.defs.uk_companies_house.financials import (
     apply_uk_usd_conversion,
@@ -437,44 +438,108 @@ def uk_companies_house_accounts_incremental(
 
 # --- On-demand: latest accounts per company via the CH API -------------------
 class CompaniesHouseApiConfig(dg.Config):
-    # Provided list of company numbers to fetch the latest accounts for.
-    company_numbers: list[str] = []
+    company_numbers: list[str]
+    request_delay_seconds: float = 0.5
+
+
+API_ACCOUNTS_DOCUMENTS_ASSET_KEY = "uk_companies_house_api_accounts_documents_s3"
+API_FINANCIAL_METRICS_DUCKDB_ASSET_KEY = "uk_companies_house_api_financial_metrics_duckdb"
+API_FINANCIAL_METRICS_USD_DUCKDB_ASSET_KEY = "uk_companies_house_api_financial_metrics_usd_duckdb"
+
+
+@dg.asset(
+    name=API_ACCOUNTS_DOCUMENTS_ASSET_KEY,
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "ixbrl"},
+    description=(
+        "On-demand Companies House latest-accounts iXBRL documents persisted "
+        "immutably in RustFS/S3 for configured company numbers."
+    ),
+)
+def uk_companies_house_api_accounts_documents_s3(
+    context: AssetExecutionContext,
+    config: CompaniesHouseApiConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    result = sync_api_accounts_documents(
+        object_store=object_store,
+        company_numbers=config.company_numbers,
+        run_id=context.run_id,
+        client=CompaniesHouseClient.from_env(),
+        request_delay_seconds=config.request_delay_seconds,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=result.metadata())
+
+
+@dg.asset(
+    name=API_FINANCIAL_METRICS_DUCKDB_ASSET_KEY,
+    deps=[dg.AssetKey(API_ACCOUNTS_DOCUMENTS_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "ixbrl"},
+    pool=UK_DUCKDB_POOL,
+    description=(
+        "Parse the current run's persisted API iXBRL documents into native-currency "
+        "financial metrics in DuckDB."
+    ),
+)
+def uk_companies_house_api_financial_metrics_duckdb(
+    context: AssetExecutionContext,
+    object_store: ObjectStoreResource,
+    uk_companies_house_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    UK_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with uk_companies_house_duckdb.get_connection() as connection:
+        counts = load_api_financial_metrics_from_object_store(
+            connection=connection,
+            object_store=object_store,
+            run_id=context.run_id,
+            source_run_id=context.run_id,
+        )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    name=API_FINANCIAL_METRICS_USD_DUCKDB_ASSET_KEY,
+    deps=[dg.AssetKey(API_FINANCIAL_METRICS_DUCKDB_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=UK_DUCKDB_POOL,
+    description="Fill API-derived financial USD and FX columns in a separate DuckDB step.",
+)
+def uk_companies_house_api_financial_metrics_usd_duckdb(
+    context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    with uk_companies_house_duckdb.get_connection() as connection:
+        counts = apply_uk_usd_conversion(
+            connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata=counts)
 
 
 @dg.asset(
     name="uk_companies_house_api_financial_metrics",
+    deps=[dg.AssetKey(API_FINANCIAL_METRICS_USD_DUCKDB_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=UK_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_FINANCIAL_METRICS_TABLE},
     description=(
-        "On-demand: fetch each provided company's latest accounts iXBRL via the "
-        "Companies House API, parse to metrics (GBP+USD), and APPEND to "
+        "On-demand: append persisted and parsed Companies House API metrics to "
         "corpscout.gb_financial_metrics (ReplacingMergeTree dedups by company)."
     ),
 )
 def uk_companies_house_api_financial_metrics(
     context: AssetExecutionContext,
-    config: CompaniesHouseApiConfig,
     uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    from exchange_rates import ExchangeRateClient
-
-    client = CompaniesHouseClient.from_env()
     with uk_companies_house_duckdb.get_connection() as connection:
-        counts = build_financials_for_company_numbers(
-            connection=connection,
-            company_numbers=config.company_numbers,
-            source_run_id=context.run_id,
-            client=client,
-            log=context.log.info,
-        )
-        apply_uk_usd_conversion(
-            connection=connection,
-            exchange_rates=ExchangeRateClient.from_env(),
-            log=context.log.info,
-        )
         rows = export_uk_companies_house_clickhouse_financial_metrics(
             duckdb_connection=connection,
             clickhouse=clickhouse,
@@ -482,7 +547,7 @@ def uk_companies_house_api_financial_metrics(
             log=context.log.info,
         )
     context.log.info("Appended UK API financial metrics to ClickHouse: rows=%s", rows)
-    return dg.MaterializeResult(metadata={**counts, "exported_rows": rows})
+    return dg.MaterializeResult(metadata={"exported_rows": rows})
 
 
 # --- Jobs & schedules --------------------------------------------------------
@@ -518,7 +583,9 @@ uk_companies_house_financials_schedule = dg.ScheduleDefinition(
 # On-demand job: launch with config {company_numbers: [...]}; not scheduled.
 uk_companies_house_api_financials_job = dg.define_asset_job(
     "uk_companies_house_api_financials_job",
-    selection=dg.AssetSelection.assets("uk_companies_house_api_financial_metrics"),
+    selection=dg.AssetSelection.assets(
+        "uk_companies_house_api_financial_metrics"
+    ).upstream(),
 )
 
 # On-demand PDF-only (OCR+LLM) job; launch with config {company_numbers: [...]}.
@@ -561,6 +628,9 @@ defs = dg.Definitions(
         uk_companies_house_clickhouse_financial_metrics,
         uk_companies_house_pdf_financial_metrics,
         uk_companies_house_accounts_incremental,
+        uk_companies_house_api_accounts_documents_s3,
+        uk_companies_house_api_financial_metrics_duckdb,
+        uk_companies_house_api_financial_metrics_usd_duckdb,
         uk_companies_house_api_financial_metrics,
     ],
     jobs=[

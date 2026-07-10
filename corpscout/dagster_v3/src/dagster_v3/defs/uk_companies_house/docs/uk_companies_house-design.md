@@ -89,9 +89,18 @@ mirroring `france_sirene`.
      so a failed run reuses the same stored ZIPs on retry.
      Companies file annually, so over ~12 months this converges on the **latest annual report for every
      iXBRL filer** — free bulk, no API limits. `max_archives` bounds per-run runtime.
-  3. **On-demand API** (`uk_companies_house_api_financial_metrics`, config `company_numbers`) — fetch a
-     specific company's latest accounts via the CH Filing History + Document API (needs the free
-     `COMPANY_HOUSE` key; reads document metadata and skips PDF-only filings).
+  3. **On-demand API** (`uk_companies_house_api_financials_job`, config `company_numbers`) — a
+     four-asset chain for a specific company's latest accounts via the CH Filing History + Document
+     API (needs the free `COMPANY_HOUSE` key; reads document metadata and skips PDF-only filings):
+     `uk_companies_house_api_accounts_documents_s3` →
+     `uk_companies_house_api_financial_metrics_duckdb` →
+     `uk_companies_house_api_financial_metrics_usd_duckdb` →
+     `uk_companies_house_api_financial_metrics` (ClickHouse append).
+     The raw asset stores each iXBRL document at
+     `raw/api_accounts/company_number=<number>/filing_date=YYYY-MM-DD/sha256=<digest>/accounts.xhtml`
+     and writes an immutable `raw/api_accounts/batches/run_id=<run-id>/catalog.json`. The catalog is
+     the downstream contract and records requested, stored, and missing companies plus source URLs,
+     content type, hash, size, and object key. Parsing and FX assets never call Companies House.
   4. **PDF-only PoC** (`uk_companies_house_pdf_financial_metrics`, config `company_numbers`) — for
      companies whose latest accounts are **PDF-only** (often scanned images), OCR the PDF
      (`pdftoppm` + `tesseract`) and extract metrics with the platform LLM (`pdf_extract.py`, the
@@ -111,6 +120,9 @@ mirroring `france_sirene`.
   chain from the persisted S3 archive; no source redownload is required.
 - To retry accounts processing after a failed ClickHouse append, rerun the incremental job. Because
   the cursor was not advanced, it selects the same stored archive dates.
+- Failed downstream steps in an on-demand API run reuse that run's immutable catalog and
+  content-addressed iXBRL objects. A normal new API job run intentionally creates a new catalog
+  after checking Companies House for each configured company's latest filing.
 - The register and accounts streams intentionally share the source DuckDB resource and concurrency
   pool but have no data-lineage dependency on each other.
 

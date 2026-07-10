@@ -39,6 +39,9 @@ class FakeObjectStore:
     def write_json(self, key: str, body: str, *, bucket: str) -> None:
         self.objects[(bucket, key)] = body.encode("utf-8")
 
+    def write_bytes(self, key: str, body: bytes, *, bucket: str) -> None:
+        self.objects[(bucket, key)] = body
+
     def read_bytes(self, key: str, *, bucket: str) -> bytes:
         return self.objects[(bucket, key)]
 
@@ -260,3 +263,190 @@ def test_accounts_sync_bootstraps_only_the_latest_published_archive() -> None:
     assert [item.archive.published_date for item in result.archives] == ["2026-07-09"]
     assert latest_url in session.calls
     assert old_url not in session.calls
+
+
+def test_api_accounts_documents_are_persisted_with_provenance() -> None:
+    from dagster_v3.defs.uk_companies_house import documents_api
+    from tests.test_xbrl_common import SAMPLE
+
+    class ApiResponse:
+        def __init__(self, *, payload: dict | None = None, content: bytes = b"") -> None:
+            self.payload = payload
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict | None:
+            return self.payload
+
+    class ApiSession:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def get(
+            self,
+            url: str,
+            *,
+            auth: tuple[str, str] | None = None,
+            timeout: int | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> ApiResponse:
+            self.calls.append(url)
+            if "filing-history" in url:
+                return ApiResponse(
+                    payload={
+                        "items": [
+                            {
+                                "date": "2024-12-31",
+                                "links": {
+                                    "document_metadata": "https://doc-api/document/OLD"
+                                },
+                            },
+                            {
+                                "date": "2025-12-31",
+                                "links": {
+                                    "document_metadata": "https://doc-api/document/NEW"
+                                },
+                            },
+                        ]
+                    }
+                )
+            if url.endswith("/content"):
+                return ApiResponse(content=SAMPLE.encode("utf-8"))
+            return ApiResponse(
+                payload={
+                    "resources": {"application/xhtml+xml": {}},
+                    "links": {"document": url + "/content"},
+                }
+            )
+
+    object_store = FakeObjectStore()
+    session = ApiSession()
+    result = documents_api.sync_api_accounts_documents(
+        object_store=object_store,
+        company_numbers=["01234567"],
+        run_id="run-1",
+        client=documents_api.CompaniesHouseClient("KEY", session=session),
+        request_delay_seconds=0,
+        retrieved_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+    )
+    catalog = documents_api.read_api_accounts_batch_catalog(
+        object_store=object_store,
+        run_id="run-1",
+    )
+    second = documents_api.sync_api_accounts_documents(
+        object_store=object_store,
+        company_numbers=["01234567"],
+        run_id="run-2",
+        client=documents_api.CompaniesHouseClient("KEY", session=session),
+        request_delay_seconds=0,
+        retrieved_at=datetime(2026, 7, 10, 9, 0, tzinfo=UTC),
+    )
+    second_catalog = documents_api.read_api_accounts_batch_catalog(
+        object_store=object_store,
+        run_id="run-2",
+    )
+
+    assert result.requested == 1
+    assert result.stored == 1
+    assert result.missing == 0
+    assert len(catalog.documents) == 1
+    document = catalog.documents[0]
+    assert document.company_number == "01234567"
+    assert document.filing_date == "2025-12-31"
+    assert document.metadata_url == "https://doc-api/document/NEW"
+    assert document.document_url == "https://doc-api/document/NEW/content"
+    assert "/company_number=01234567/filing_date=2025-12-31/sha256=" in document.object_key
+    assert object_store.read_bytes(
+        document.object_key,
+        bucket=raw_archives.UK_COMPANIES_HOUSE_RAW_BUCKET,
+    ) == SAMPLE.encode("utf-8")
+    assert second.reused == 1
+    assert second_catalog.documents[0].object_key == document.object_key
+    assert any(url.endswith("/document/NEW/content") for url in session.calls)
+    assert not any(url.endswith("/document/OLD/content") for url in session.calls)
+
+
+def test_api_financial_metrics_are_built_from_the_s3_batch_catalog(
+    tmp_path: Path,
+) -> None:
+    from dagster_v3.defs.uk_companies_house import documents_api
+    from tests.test_xbrl_common import SAMPLE
+
+    object_store = FakeObjectStore()
+    document = documents_api.StoredApiAccountsDocument.from_content(
+        company_number="01234567",
+        filing_date="2025-12-31",
+        metadata_url="https://doc-api/document/NEW",
+        document_url="https://doc-api/document/NEW/content",
+        content_type="application/xhtml+xml",
+        content=SAMPLE.encode("utf-8"),
+        retrieved_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+    )
+    documents_api.write_api_accounts_batch_catalog(
+        object_store=object_store,
+        run_id="run-1",
+        requested_company_numbers=("01234567",),
+        documents=(document,),
+        missing_company_numbers=(),
+        created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+    )
+    object_store.write_bytes(
+        document.object_key,
+        SAMPLE.encode("utf-8"),
+        bucket=raw_archives.UK_COMPANIES_HOUSE_RAW_BUCKET,
+    )
+
+    with duckdb.connect(str(tmp_path / "api.duckdb")) as connection:
+        counts = documents_api.load_api_financial_metrics_from_object_store(
+            connection=connection,
+            object_store=object_store,
+            run_id="run-1",
+            source_run_id="run-1",
+        )
+        row = connection.execute(
+            f"select company_number, source_slug, revenue_amount_original "
+            f"from {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
+        ).fetchone()
+
+    assert counts == {
+        "companies": 1,
+        "with_revenue": 1,
+        "requested": 1,
+        "stored_documents": 1,
+        "parsed_documents": 1,
+        "missing": 0,
+        "parse_failed": 0,
+    }
+    assert row == ("01234567", "uk_companies_house_accounts_api", 1234000)
+
+
+def test_api_accounts_catalog_records_missing_ixbrl_documents() -> None:
+    from dagster_v3.defs.uk_companies_house import documents_api
+
+    class MissingClient:
+        def latest_accounts_ixbrl_document(
+            self,
+            company_number: str,
+        ) -> None:
+            return None
+
+    object_store = FakeObjectStore()
+    result = documents_api.sync_api_accounts_documents(
+        object_store=object_store,
+        company_numbers=["99999999"],
+        run_id="run-missing",
+        client=MissingClient(),
+        request_delay_seconds=0,
+        retrieved_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+    )
+    catalog = documents_api.read_api_accounts_batch_catalog(
+        object_store=object_store,
+        run_id="run-missing",
+    )
+
+    assert result.stored == 0
+    assert result.missing == 1
+    assert catalog.documents == ()
+    assert catalog.missing_company_numbers == ("99999999",)

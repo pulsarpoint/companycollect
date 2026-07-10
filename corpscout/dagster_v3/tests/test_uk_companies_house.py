@@ -178,89 +178,6 @@ def test_financials_export_columns_match_migration():
         assert f"{metric}_amount_usd" in tables.GB_FINANCIAL_METRICS_EXPORT_COLUMNS
 
 
-def test_api_latest_accounts_fetch_and_build(tmp_path):
-    from dagster_v3.defs.uk_companies_house import documents_api
-    from tests.test_xbrl_common import SAMPLE  # synthetic iXBRL with revenue/profit
-
-    class _Resp:
-        def __init__(self, *, payload=None, content=None):
-            self._payload = payload
-            self.content = content
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return self._payload
-
-    class _Session:
-        def __init__(self):
-            self.calls = []
-
-        def get(self, url, *, auth=None, timeout=None, headers=None):
-            self.calls.append(url)
-            if "filing-history" in url:
-                return _Resp(payload={"items": [
-                    {"date": "2024-12-31", "category": "accounts",
-                     "links": {"document_metadata": "https://doc-api/document/OLD"}},
-                    {"date": "2025-12-31", "category": "accounts",
-                     "links": {"document_metadata": "https://doc-api/document/NEW"}},
-                ]})
-            if url.endswith("/content"):
-                return _Resp(content=SAMPLE.encode("utf-8"))
-            if "/document/" in url:  # document metadata: offers iXBRL
-                return _Resp(payload={
-                    "resources": {"application/xhtml+xml": {}},
-                    "links": {"document": url + "/content"},
-                })
-            return _Resp(payload={})
-
-    session = _Session()
-    client = documents_api.CompaniesHouseClient("KEY", session=session)
-    db = tmp_path / "api.duckdb"
-    with duckdb.connect(str(db)) as con:
-        counts = documents_api.build_financials_for_company_numbers(
-            connection=con, company_numbers=["01234567"], source_run_id="r1",
-            client=client, request_delay_seconds=0,
-        )
-    assert counts["requested"] == 1 and counts["fetched"] == 1 and counts["companies"] == 1
-    # newest filing's document fetched first (sorted by date desc).
-    assert any(u.endswith("/document/NEW/content") for u in session.calls)
-    with duckdb.connect(str(db), read_only=True) as con:
-        row = con.execute(
-            f"select company_number, source_slug, revenue_amount_original "
-            f"from {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
-        ).fetchone()
-    assert row[0] == "01234567"
-    assert row[1] == "uk_companies_house_accounts_api"
-    assert row[2] == 1234000
-
-
-def test_api_missing_company_yields_empty(tmp_path):
-    from dagster_v3.defs.uk_companies_house import documents_api
-
-    class _Resp:
-        content = None
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"items": []}
-
-    class _Session:
-        def get(self, url, *, auth=None, timeout=None, headers=None):
-            return _Resp()
-
-    client = documents_api.CompaniesHouseClient("KEY", session=_Session())
-    with duckdb.connect(str(tmp_path / "e.duckdb")) as con:
-        counts = documents_api.build_financials_for_company_numbers(
-            connection=con, company_numbers=["99999999"],
-            source_run_id="r1", client=client, request_delay_seconds=0,
-        )
-    assert counts == {"companies": 0, "with_revenue": 0, "requested": 1, "fetched": 0, "missing": 1}
-
-
 def test_incremental_cursor_and_selection(tmp_path):
     from dagster_v3.defs.uk_companies_house import incremental
 
@@ -304,6 +221,24 @@ def test_incremental_schedule_registered():
         "uk_companies_house_accounts_incremental",
     }
     assert "uk_companies_house_raw_duckdb" not in keys
+
+
+def test_api_financials_job_asset_graph():
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "uk_companies_house_api_financials_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert keys == {
+        "uk_companies_house_api_accounts_documents_s3",
+        "uk_companies_house_api_financial_metrics_duckdb",
+        "uk_companies_house_api_financial_metrics_usd_duckdb",
+        "uk_companies_house_api_financial_metrics",
+    }
 
 
 def test_pdf_extract_parsing_and_scale():
