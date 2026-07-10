@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"cc-dns-worker/internal/hostsource"
 	"cc-dns-worker/internal/input"
 	"cc-dns-worker/internal/metrics"
 	"cc-dns-worker/internal/model"
@@ -44,6 +45,9 @@ type scanConfig struct {
 	axfrMaxRecords    int
 	axfrMaxBytes      int
 	axfrTimeout       time.Duration
+	hostEnrich        bool
+	hostCap           int
+	hostBatch         int
 }
 
 // scanFlags defines the shared scan tunables on fs (used by both `scan` and `run`) and returns a
@@ -71,6 +75,9 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 	axfrMaxRecords := fs.Int("axfr-max-records", 50000, "stop draining a zone past this many records")
 	axfrMaxBytes := fs.Int("axfr-max-bytes", 67108864, "stop draining a zone past this running byte sum")
 	axfrTimeout := fs.Duration("axfr-timeout", 20*time.Second, "whole-transfer timeout per AXFR")
+	hostEnrich := fs.Bool("host-enrich", false, "enable CT + registry hostname enrichment (seed-time) — master switch, default off")
+	hostCap := fs.Int("host-cap", 100, "max discovered hosts per domain unioned into the scan")
+	hostBatch := fs.Int("host-batch", 5000, "domains per ClickHouse hostname lookup batch")
 	return func() (scanConfig, error) {
 		resolverList := cleanResolvers(strings.Split(*resolvers, ","))
 		if len(resolverList) == 0 {
@@ -85,6 +92,7 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 			statsInterval: *statsInterval,
 			axfr:          *axfr, axfrQPS: *axfrQPS, axfrInflight: *axfrInflight,
 			axfrMaxRecords: *axfrMaxRecords, axfrMaxBytes: *axfrMaxBytes, axfrTimeout: *axfrTimeout,
+			hostEnrich: *hostEnrich, hostCap: *hostCap, hostBatch: *hostBatch,
 		}, nil
 	}
 }
@@ -162,6 +170,14 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 			return err
 		}
 		log.Printf("scan_id=%s: seeded %d domains from CH (%d new)", cfg.scanID, total, added)
+	}
+
+	// 1b) Host-load phase: union CT + registry discovered hostnames into scan_hostnames (resumable,
+	// skipped on resume or when disabled). Runs before dispatch so the plan can consume it.
+	if cfg.hostEnrich {
+		if err := hostLoadPhase(ctx, st, cfg); err != nil {
+			return err
+		}
 	}
 
 	stats := &metrics.Stats{}
@@ -292,6 +308,71 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 		fmt.Println(metrics.Line(metrics.Snapshot{At: runStart}, stats.Snapshot(time.Now()), runStart))
 	}
 	log.Printf("scan_id=%s: done (%d domains resolved this run)", cfg.scanID, resolved)
+	return nil
+}
+
+// hostLoadPhase populates scan_hostnames for cfg.scanID from CT (ctlogs.hostnames) and the registry
+// (commoncrawl_domain_hostnames), in cursor batches of cfg.hostBatch, capped at cfg.hostCap per domain.
+// Resumable via host_load_state; idempotent (InsertHostnames uses INSERT OR IGNORE).
+func hostLoadPhase(ctx context.Context, st *store.Store, cfg scanConfig) error {
+	if cfg.hostCap <= 0 {
+		cfg.hostCap = 100
+	}
+	if cfg.hostBatch <= 0 {
+		cfg.hostBatch = 5000
+	}
+	done, err := st.HostLoadComplete(ctx, cfg.scanID)
+	if err != nil {
+		return err
+	}
+	if done {
+		log.Printf("scan_id=%s: host-load already complete — skipping", cfg.scanID)
+		return nil
+	}
+	cursor, err := st.HostLoadCursor(ctx, cfg.scanID)
+	if err != nil {
+		return err
+	}
+	conn, err := chConn()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	total := 0
+	for {
+		domains, err := st.SeededDomainsAfter(ctx, cfg.scanID, cursor, cfg.hostBatch)
+		if err != nil {
+			return err
+		}
+		if len(domains) == 0 {
+			break
+		}
+		ct, err := hostsource.CTHostnames(ctx, conn, domains, cfg.hostCap)
+		if err != nil {
+			return fmt.Errorf("CT hostnames: %w", err)
+		}
+		reg, err := hostsource.RegistryHostnames(ctx, conn, domains, cfg.hostCap)
+		if err != nil {
+			return fmt.Errorf("registry hostnames: %w", err)
+		}
+		merged := hostsource.Merge(ct, reg, cfg.hostCap)
+		for _, d := range domains {
+			if hosts := merged[d]; len(hosts) > 0 {
+				if err := st.InsertHostnames(ctx, cfg.scanID, d, hosts); err != nil {
+					return err
+				}
+				total += len(hosts)
+			}
+		}
+		cursor = domains[len(domains)-1]
+		if err := st.SetHostLoadCursor(ctx, cfg.scanID, cursor); err != nil {
+			return err
+		}
+	}
+	if err := st.MarkHostLoadComplete(ctx, cfg.scanID); err != nil {
+		return err
+	}
+	log.Printf("scan_id=%s: host-load complete (%d discovered hostnames)", cfg.scanID, total)
 	return nil
 }
 
