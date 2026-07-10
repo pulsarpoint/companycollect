@@ -1237,3 +1237,224 @@ func TestAXFRLoadRowsRemovedFromDelegation(t *testing.T) {
 		t.Errorf("removed endpoint = %+v, want key=%+v delegation_active=false verdict=\"\"", eps[0], staleKey)
 	}
 }
+
+// TestCompletedDomainsZeroRecordDone proves the Task 8 fix at its core: a domain that resolves
+// successfully but produces ZERO scan_records rows still gets a completed_domains row (and so still
+// surfaces from CompletedDomainsAfter) — the exact case the old record-batch-piggybacked summary load
+// could never see, because such a domain never appears in scan_records at all.
+func TestCompletedDomainsZeroRecordDone(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"empty.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	if err := s.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "empty.com", Status: "done", ResolvedAt: now,
+		// Records intentionally empty: a domain can resolve successfully (NXDOMAIN-free, NS found) yet
+		// have nothing worth recording, e.g. every query returned NODATA.
+	}}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// It never appears in scan_records...
+	recs, err := s.StagedRecords(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("staged records = %+v, want none (this domain has zero records by construction)", recs)
+	}
+	// ...but it DOES get a completed_domains row, and CompletedDomainsAfter surfaces its summary.
+	sums, maxSeq, scanned, err := s.CompletedDomainsAfter(ctx, "sc", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned != 1 || maxSeq == 0 {
+		t.Fatalf("CompletedDomainsAfter scanned=%d maxSeq=%d, want scanned=1 maxSeq>0", scanned, maxSeq)
+	}
+	if len(sums) != 1 || sums[0].RootDomain != "empty.com" {
+		t.Fatalf("CompletedDomainsAfter sums = %+v, want one row for empty.com", sums)
+	}
+}
+
+// TestCompletedDomainsExcludesErrorStatus mirrors TestPendingExcludesErrorStatus for the completed_domains
+// stream: a domain committed with Status="error" must not produce a completed_domains row, since it never
+// gets a scan-summary (StagedDomains/SummariesFor are done-only for the same reason).
+func TestCompletedDomainsExcludesErrorStatus(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com", "b.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	if err := s.CommitBatch(ctx, []model.DomainResult{
+		{ScanID: "sc", RootDomain: "a.com", Status: "error", Error: "timeout", ResolvedAt: now},
+		{ScanID: "sc", RootDomain: "b.com", Status: "done", ResolvedAt: now},
+	}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	sums, _, scanned, err := s.CompletedDomainsAfter(ctx, "sc", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned != 1 || len(sums) != 1 || sums[0].RootDomain != "b.com" {
+		t.Fatalf("CompletedDomainsAfter = sums=%+v scanned=%d, want only b.com (a.com errored)", sums, scanned)
+	}
+}
+
+// TestCompletedDomainsAfterResumeBySeq proves the domain-summary stream pages by seq exactly like
+// RecordsAfter pages by rowid: a caller that persists the returned maxSeq and resumes from it sees only
+// domains completed after that point, and a late-finishing domain (committed after the first page was
+// read) is picked up on the next call rather than being missed.
+func TestCompletedDomainsAfterResumeBySeq(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.Seed(ctx, "sc", []string{"a.com", "b.com", "c.com"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	commit := func(d string) {
+		if err := s.CommitBatch(ctx, []model.DomainResult{{ScanID: "sc", RootDomain: d, Status: "done", ResolvedAt: now}}); err != nil {
+			t.Fatalf("commit %s: %v", d, err)
+		}
+	}
+	commit("a.com")
+	commit("b.com")
+
+	sums1, maxSeq1, scanned1, err := s.CompletedDomainsAfter(ctx, "sc", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned1 != 2 || len(sums1) != 2 {
+		t.Fatalf("first page: sums=%+v scanned=%d, want 2/2", sums1, scanned1)
+	}
+
+	// Nothing new past the watermark yet.
+	if sums2, _, scanned2, _ := s.CompletedDomainsAfter(ctx, "sc", maxSeq1, 100); scanned2 != 0 || len(sums2) != 0 {
+		t.Fatalf("CompletedDomainsAfter(watermark) = sums=%+v scanned=%d, want none", sums2, scanned2)
+	}
+
+	// A late-completing domain shows up next — the watermark walks completion order, never misses it.
+	commit("c.com")
+	sums3, maxSeq3, scanned3, err := s.CompletedDomainsAfter(ctx, "sc", maxSeq1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned3 != 1 || len(sums3) != 1 || sums3[0].RootDomain != "c.com" || maxSeq3 <= maxSeq1 {
+		t.Fatalf("resume after watermark: sums=%+v scanned=%d maxSeq=%d", sums3, scanned3, maxSeq3)
+	}
+}
+
+// TestLoadWatermarksAreIndependent proves records_rowid and domains_seq (Task 8's two independent
+// watermarks) never clobber each other: advancing one via its setter leaves the other's getter reading
+// exactly what it read before, in both directions.
+func TestLoadWatermarksAreIndependent(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+
+	if w, err := s.LoadedRowid(ctx, "sc"); err != nil || w != 0 {
+		t.Fatalf("initial LoadedRowid = %d, err=%v, want 0", w, err)
+	}
+	if w, err := s.LoadedDomainsSeq(ctx, "sc"); err != nil || w != 0 {
+		t.Fatalf("initial LoadedDomainsSeq = %d, err=%v, want 0", w, err)
+	}
+
+	if err := s.SetLoadedRowid(ctx, "sc", 42); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := s.LoadedDomainsSeq(ctx, "sc"); w != 0 {
+		t.Fatalf("LoadedDomainsSeq after SetLoadedRowid = %d, want 0 (unaffected)", w)
+	}
+
+	if err := s.SetLoadedDomainsSeq(ctx, "sc", 7); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := s.LoadedRowid(ctx, "sc"); w != 42 {
+		t.Fatalf("LoadedRowid after SetLoadedDomainsSeq = %d, want 42 (unaffected)", w)
+	}
+	if w, _ := s.LoadedDomainsSeq(ctx, "sc"); w != 7 {
+		t.Fatalf("LoadedDomainsSeq = %d, want 7", w)
+	}
+
+	// Advancing loaded_rowid again must still leave domains_seq untouched, and vice versa.
+	if err := s.SetLoadedRowid(ctx, "sc", 100); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := s.LoadedDomainsSeq(ctx, "sc"); w != 7 {
+		t.Fatalf("LoadedDomainsSeq after a second SetLoadedRowid = %d, want 7 (still unaffected)", w)
+	}
+}
+
+// TestCompletedDomainsAfterUsesSeqIndex proves the domains-summary watermark query walks the
+// (scan_id, seq) index directly rather than falling back to a temp B-tree sort, mirroring
+// TestRecordsAfterUsesRowidScan's concern for scan_records — the same throughput cliff would hit a
+// multi-million-domain scan otherwise.
+func TestCompletedDomainsAfterUsesSeqIndex(t *testing.T) {
+	s := openTemp(t)
+	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+completedDomainsAfterQuery, "sc", 0, 10)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	joined := strings.Join(plan, "; ")
+	if strings.Contains(joined, "TEMP B-TREE") {
+		t.Errorf("plan sorts with a temp B-tree instead of using the seq index: %s", joined)
+	}
+}
+
+// TestDiscoveredHostnamesTimestampsFromResolvedAt proves each returned row's timestamps come from the
+// domain's own persisted resolved_at (stamped by CommitBatch), not from the caller's wall-clock time —
+// so two calls to DiscoveredHostnames (simulating a retried registry write-back) return byte-identical
+// timestamps, and those timestamps match the scan's actual resolution time rather than "now".
+func TestDiscoveredHostnamesTimestampsFromResolvedAt(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	if _, err := st.Seed(ctx, "s1", []string{"example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	resolvedAt := time.Date(2020, 3, 4, 5, 6, 7, 0, time.UTC)
+	res := model.DomainResult{
+		ScanID: "s1", RootDomain: "example.com", Status: "done", ResolvedAt: resolvedAt,
+		Records: []model.DNSRecord{
+			{Name: "jenkins.example.com", RecordType: "A", Value: "10.0.0.5", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"},
+		},
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{res}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := st.DiscoveredHostnames(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("DiscoveredHostnames = %+v, want 1 row", first)
+	}
+	if !first[0].FirstSeen.Equal(resolvedAt) || !first[0].LastSeen.Equal(resolvedAt) || !first[0].LastResolved.Equal(resolvedAt) {
+		t.Errorf("timestamps = %+v, want first_seen=last_seen=last_resolved=%v (the scan's resolved_at)", first[0], resolvedAt)
+	}
+
+	// A second call (simulating a retried write-back, potentially much later in wall-clock time) must
+	// return byte-identical timestamps — they come from the stored resolved_at, not time.Now().
+	time.Sleep(2 * time.Millisecond)
+	retry, err := st.DiscoveredHostnames(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retry) != 1 || !retry[0].FirstSeen.Equal(first[0].FirstSeen) || !retry[0].LastSeen.Equal(first[0].LastSeen) || !retry[0].LastResolved.Equal(first[0].LastResolved) {
+		t.Errorf("retry timestamps = %+v, want identical to first call's %+v", retry, first[0])
+	}
+}

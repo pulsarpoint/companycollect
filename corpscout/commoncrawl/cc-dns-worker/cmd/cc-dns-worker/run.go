@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -204,10 +205,11 @@ func runScanPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 			case <-stopLoader:
 				return
 			case <-ticker.C:
-				if n, err := incLoad(ctx, st, state.CycleID, loadBatch); err != nil {
+				nr, nd, err := incLoad(ctx, st, state.CycleID, loadBatch)
+				if err != nil {
 					log.Printf("cycle %s: incremental load error: %v", state.CycleID, err)
-				} else if n > 0 {
-					log.Printf("cycle %s: incrementally loaded %d records to ClickHouse", state.CycleID, n)
+				} else if nr > 0 || nd > 0 {
+					log.Printf("cycle %s: incrementally loaded %d records and %d domain summaries to ClickHouse", state.CycleID, nr, nd)
 				}
 			}
 		}
@@ -219,35 +221,46 @@ func runScanPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 	return scanErr
 }
 
-// runFlushPhase does the final incremental load after the scan finished (watermark → end), then the
-// hostname registry write-back. The AXFR ClickHouse load pass no longer happens here — it now runs as
-// part of the AXFR phase itself (runAXFRPhase, via the shared axfrCycle), so a cycle with --axfr on has
-// already loaded its AXFR results by the time it reaches this phase.
+// runFlushPhase does the final incremental load after the scan finished (both watermarks → end), then
+// the hostname registry write-back. The AXFR ClickHouse load pass no longer happens here — it now runs
+// as part of the AXFR phase itself (runAXFRPhase, via the shared axfrCycle), so a cycle with --axfr on
+// has already loaded its AXFR results by the time it reaches this phase.
+//
+// A hostname-registry write-back failure is treated as a RETRYABLE flush failure, exactly like a load
+// failure: it is returned, not merely logged, so runOrchestrator's phaseFlushing branch neither advances
+// the cycle to phaseDone nor reaches pruneOldDBs (both live in the caller's loop, after this function
+// returns nil) — the cycle instead retries the whole flush phase (idempotent: both loads resume from
+// their watermarks, and the registry write-back recomputes identical rows from stable staged data). Only
+// once records, domain summaries, AND the registry all succeed does the cycle get marked done and old
+// DBs get pruned.
 func runFlushPhase(ctx context.Context, state cycleState, dbPath string, loadBatch int) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	n, err := incLoad(ctx, st, state.CycleID, loadBatch)
+	nr, nd, err := incLoad(ctx, st, state.CycleID, loadBatch)
 	if err != nil {
-		return err
+		return fmt.Errorf("incremental load: %w", err)
 	}
-	log.Printf("cycle %s: final flush loaded %d records to ClickHouse", state.CycleID, n)
-	if hn, herr := regWriteBack(ctx, st, state.CycleID); herr != nil {
-		log.Printf("cycle %s: hostname registry write-back error: %v", state.CycleID, herr)
-	} else if hn > 0 {
+	log.Printf("cycle %s: final flush loaded %d records and %d domain summaries to ClickHouse", state.CycleID, nr, nd)
+	hn, err := regWriteBack(ctx, st, state.CycleID)
+	if err != nil {
+		return fmt.Errorf("hostname registry write-back: %w", err)
+	}
+	if hn > 0 {
 		log.Printf("cycle %s: registered %d discovered hostnames", state.CycleID, hn)
 	}
 	return nil
 }
 
-// incLoad opens a fresh ClickHouse connection and runs one incremental load pass (records committed
-// since the watermark). A fresh conn per pass reconnects cleanly if CH was briefly down.
-func incLoad(ctx context.Context, st *store.Store, scanID string, loadBatch int) (int, error) {
+// incLoad opens a fresh ClickHouse connection and runs one incremental load pass (records + domain
+// summaries committed since their respective watermarks). A fresh conn per pass reconnects cleanly if CH
+// was briefly down.
+func incLoad(ctx context.Context, st *store.Store, scanID string, loadBatch int) (int, int, error) {
 	conn, err := chConn()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer conn.Close()
 	return load.Incremental(ctx, conn, st, scanID, loadBatch)
@@ -261,7 +274,7 @@ func regWriteBack(ctx context.Context, st *store.Store, scanID string) (int, err
 		return 0, err
 	}
 	defer conn.Close()
-	return load.WriteHostnameRegistry(ctx, conn, st, scanID, time.Now())
+	return load.WriteHostnameRegistry(ctx, conn, st, scanID)
 }
 
 // pruneOldDBs keeps the newest keep+1 cycle DBs (current + keep previous) and deletes older ones

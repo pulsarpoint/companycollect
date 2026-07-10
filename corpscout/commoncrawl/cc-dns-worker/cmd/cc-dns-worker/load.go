@@ -35,7 +35,10 @@ func runLoad(args []string) error {
 	}
 	fmt.Printf("loaded %d records and %d domain summaries for scan_id=%s\n", nr, nd, *scanID)
 
-	nh, err := load.WriteHostnameRegistry(ctx, conn, st, *scanID, time.Now())
+	// A registry write-back failure is returned (not swallowed) for the same reason runFlushPhase treats
+	// it as retryable: callers of `load` must not treat a scan_id as fully flushed until the registry
+	// write-back also succeeds.
+	nh, err := load.WriteHostnameRegistry(ctx, conn, st, *scanID)
 	if err != nil {
 		return err
 	}

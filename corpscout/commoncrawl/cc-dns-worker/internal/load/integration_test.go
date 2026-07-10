@@ -4,9 +4,11 @@ package load
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -450,5 +452,341 @@ func TestObservationSummaryPreservesLegacyBaseline(t *testing.T) {
 	}
 	if !firstSeen.Equal(legacyFirstSeen) {
 		t.Errorf("first_seen = %v, want the legacy baseline's first_seen (%v) preserved", firstSeen, legacyFirstSeen)
+	}
+}
+
+// failingConn wraps a real driver.Conn and forces PrepareBatch to fail whenever the query targets
+// failTable, letting a test exercise Incremental's independent-watermark behavior (Task 8) against a
+// REAL ClickHouse connection — everything else about the connection is untouched — without corrupting
+// any actual data or needing a full hand-written fake of the driver.Conn interface (embedding + one
+// method override is enough).
+type failingConn struct {
+	driver.Conn
+	failTable string
+}
+
+func (f *failingConn) PrepareBatch(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error) {
+	if f.failTable != "" && strings.Contains(query, f.failTable) {
+		return nil, fmt.Errorf("forced failure for %s (test double)", f.failTable)
+	}
+	return f.Conn.PrepareBatch(ctx, query, opts...)
+}
+
+// boundedBatch wraps a real driver.Batch and fails the test the moment more than maxRows are appended to
+// a single batch — i.e. the moment a caller tries to send ClickHouse one INSERT bigger than the loader's
+// configured batch size, which is exactly what a full in-memory slurp (the pre-Task-8 FromStore) would
+// produce.
+type boundedBatch struct {
+	driver.Batch
+	t       *testing.T
+	maxRows int
+	n       int
+}
+
+func (b *boundedBatch) AppendStruct(v any) error {
+	b.n++
+	if b.n > b.maxRows {
+		b.t.Errorf("a single batch grew to more than %d rows — the loader slurped more than one batch's worth into memory at once", b.maxRows)
+	}
+	return b.Batch.AppendStruct(v)
+}
+
+// boundedConn wraps a real driver.Conn so every PrepareBatch call returns a boundedBatch, enforcing
+// maxRows across the whole test regardless of which table is being inserted into.
+type boundedConn struct {
+	driver.Conn
+	t       *testing.T
+	maxRows int
+}
+
+func (c *boundedConn) PrepareBatch(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error) {
+	real, err := c.Conn.PrepareBatch(ctx, query, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &boundedBatch{Batch: real, t: c.t, maxRows: c.maxRows}, nil
+}
+
+// TestZeroRecordDomainSummaryLoads proves the core Task 8 fix through the public Incremental path: a
+// domain committed status='done' with ZERO DNS records — which never appears in scan_records, and so
+// never triggers the old record-batch-piggybacked summary load — still gets its row in
+// commoncrawl_domain_dns_scan, because the domain-summary stream is now driven independently off
+// completed_domains (store.CompletedDomainsAfter), not off which domains happened to show up in a batch
+// of records.
+func TestZeroRecordDomainSummaryLoads(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	domain := "zero-record.test"
+	scanID := "itest-zero-record"
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", SourceRunID: scanID, ResolvedAt: time.Now().UTC(),
+		ETLD: "test", Nameservers: []string{"ns1." + domain}, QueriesTotal: 3, QueriesOK: 3,
+		// Records intentionally empty.
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := testConn(t)
+	t.Cleanup(func() {
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='"+domain+"'")
+		_ = conn.Close()
+	})
+
+	nr, nd, err := Incremental(ctx, conn, st, scanID, 1000)
+	if err != nil {
+		t.Fatalf("Incremental: %v", err)
+	}
+	if nr != 0 {
+		t.Errorf("records loaded = %d, want 0 (this domain has none)", nr)
+	}
+	if nd != 1 {
+		t.Fatalf("domain summaries loaded = %d, want 1 (the zero-record domain itself)", nd)
+	}
+
+	var status string
+	if err := conn.QueryRow(ctx, `SELECT status FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain=?`,
+		domain).Scan(&status); err != nil {
+		t.Fatalf("read back: %v (the zero-record domain's summary never landed in ClickHouse)", err)
+	}
+	if status != "done" {
+		t.Errorf("status = %q, want done", status)
+	}
+}
+
+// TestRecordLoadFailureDoesNotAdvanceDomainsSeq proves the record and domain-summary watermarks are
+// independent in the direction that matters most for correctness: when the record stream's ClickHouse
+// insert fails, the domain-summary stream must never even attempt to run (Incremental returns before
+// calling it), so domains_seq stays put — and a subsequent, successful call loads everything cleanly,
+// proving the failure was retryable rather than poisoning the scan_id.
+func TestRecordLoadFailureDoesNotAdvanceDomainsSeq(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	domain := "rec-fail.test"
+	scanID := "itest-rec-fail"
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", SourceRunID: scanID, ResolvedAt: time.Now().UTC(),
+		Records: []model.DNSRecord{{Name: domain, RecordType: "A", Value: "10.5.5.1", Rcode: "NOERROR", Source: "query", Discovery: "static"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	real := testConn(t)
+	t.Cleanup(func() {
+		_ = real.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_observations WHERE root_domain='"+domain+"'")
+		_ = real.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='"+domain+"'")
+		_ = real.Close()
+	})
+
+	failing := &failingConn{Conn: real, failTable: recordObsTable}
+	if _, _, err := Incremental(ctx, failing, st, scanID, 1000); err == nil {
+		t.Fatal("Incremental with a forced record-insert failure: want error, got nil")
+	}
+
+	if w, err := st.LoadedRowid(ctx, scanID); err != nil || w != 0 {
+		t.Fatalf("records_rowid after the forced failure = %d, err=%v, want 0 (unadvanced)", w, err)
+	}
+	if w, err := st.LoadedDomainsSeq(ctx, scanID); err != nil || w != 0 {
+		t.Fatalf("domains_seq after a RECORD-load failure = %d, err=%v, want 0 (the summary stream must never have run)", w, err)
+	}
+
+	// Retry cleanly with a real connection: both streams now succeed.
+	nr, nd, err := Incremental(ctx, real, st, scanID, 1000)
+	if err != nil {
+		t.Fatalf("retry after the forced failure: %v", err)
+	}
+	if nr != 1 || nd != 1 {
+		t.Fatalf("retry loaded records=%d domains=%d, want 1/1", nr, nd)
+	}
+	if w, _ := st.LoadedDomainsSeq(ctx, scanID); w == 0 {
+		t.Error("domains_seq after a successful retry = 0, want advanced")
+	}
+}
+
+// TestSummaryLoadFailureDoesNotAdvanceRecordsRowid is TestRecordLoadFailureDoesNotAdvanceDomainsSeq's
+// mirror image: the record stream succeeds and advances records_rowid on its own, entirely unaffected by
+// a subsequent failure in the (separate) domain-summary stream — proving records_rowid's advance is truly
+// local to loadRecordsIncremental, not contingent on the rest of Incremental succeeding.
+func TestSummaryLoadFailureDoesNotAdvanceRecordsRowid(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	domain := "sum-fail.test"
+	scanID := "itest-sum-fail"
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", SourceRunID: scanID, ResolvedAt: time.Now().UTC(),
+		Records: []model.DNSRecord{{Name: domain, RecordType: "A", Value: "10.5.5.2", Rcode: "NOERROR", Source: "query", Discovery: "static"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	real := testConn(t)
+	t.Cleanup(func() {
+		_ = real.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_observations WHERE root_domain='"+domain+"'")
+		_ = real.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='"+domain+"'")
+		_ = real.Close()
+	})
+
+	failing := &failingConn{Conn: real, failTable: scanTable}
+	if _, _, err := Incremental(ctx, failing, st, scanID, 1000); err == nil {
+		t.Fatal("Incremental with a forced domain-summary-insert failure: want error, got nil")
+	}
+
+	if w, err := st.LoadedRowid(ctx, scanID); err != nil || w == 0 {
+		t.Fatalf("records_rowid after a SUMMARY-load failure = %d, err=%v, want advanced (the record stream already succeeded before the failure)", w, err)
+	}
+	if w, err := st.LoadedDomainsSeq(ctx, scanID); err != nil || w != 0 {
+		t.Fatalf("domains_seq after the forced failure = %d, err=%v, want 0 (unadvanced)", w, err)
+	}
+
+	// Retry cleanly: records are already loaded (0 new), the summary now lands.
+	nr, nd, err := Incremental(ctx, real, st, scanID, 1000)
+	if err != nil {
+		t.Fatalf("retry after the forced failure: %v", err)
+	}
+	if nr != 0 {
+		t.Errorf("retry re-loaded %d records, want 0 (already loaded before the failure)", nr)
+	}
+	if nd != 1 {
+		t.Fatalf("retry loaded %d domain summaries, want 1", nd)
+	}
+
+	var recCount uint64
+	if err := real.QueryRow(ctx, "SELECT count() FROM corpscout.commoncrawl_domain_dns_record_observations FINAL WHERE root_domain=?", domain).Scan(&recCount); err != nil {
+		t.Fatalf("count observations: %v", err)
+	}
+	if recCount != 1 {
+		t.Errorf("observation rows after the failed-then-retried load = %d, want 1 (no double count)", recCount)
+	}
+}
+
+// TestHostnameRegistryRetryTimestampsStable proves retrying WriteHostnameRegistry (e.g. after a crash
+// between ClickHouse accepting the insert and the caller learning about it) never skews the registry's
+// first_seen/last_seen/last_resolved: both calls stamp the row from the scan's own persisted resolved_at,
+// not the wall-clock time each call happened to run at, so the AggregatingMergeTree's min/max folding
+// converges on that single value regardless of how long apart (or how many times) the write-back retries.
+func TestHostnameRegistryRetryTimestampsStable(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	domain := "reg-retry.test"
+	scanID := "itest-reg-retry"
+	resolvedAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Millisecond)
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", ResolvedAt: resolvedAt,
+		Records: []model.DNSRecord{{Name: "vpn." + domain, RecordType: "A", Value: "10.9.9.9", Rcode: "NOERROR", Source: "axfr", Discovery: "axfr"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := testConn(t)
+	t.Cleanup(func() {
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_hostnames WHERE root_domain='"+domain+"'")
+		_ = conn.Close()
+	})
+
+	if _, err := WriteHostnameRegistry(ctx, conn, st, scanID); err != nil {
+		t.Fatalf("first write-back: %v", err)
+	}
+	// Simulate a retry happening well after the first attempt, in wall-clock terms.
+	time.Sleep(10 * time.Millisecond)
+	if _, err := WriteHostnameRegistry(ctx, conn, st, scanID); err != nil {
+		t.Fatalf("retried write-back: %v", err)
+	}
+
+	var firstSeen, lastSeen, lastResolved time.Time
+	if err := conn.QueryRow(ctx, `SELECT first_seen, last_seen, last_resolved FROM corpscout.commoncrawl_domain_hostnames FINAL
+		WHERE root_domain=? AND label='vpn'`, domain).Scan(&firstSeen, &lastSeen, &lastResolved); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !firstSeen.Equal(resolvedAt) || !lastSeen.Equal(resolvedAt) || !lastResolved.Equal(resolvedAt) {
+		t.Errorf("timestamps = first=%v last=%v last_resolved=%v, want all == the scan's resolved_at (%v) — a retry must not skew them to wall-clock time",
+			firstSeen, lastSeen, lastResolved, resolvedAt)
+	}
+}
+
+// TestIncrementalBoundedMemory proves Incremental never materializes a whole scan's worth of records in
+// Go memory before writing them out: it loads a synthetic store with far more rows than one batch, using
+// a small batch size, wrapped in a connection (boundedConn) that fails the test the instant ClickHouse
+// receives a single INSERT bigger than that batch size — exactly what a full in-memory slurp (the
+// pre-Task-8 FromStore, which called StagedRecords/StagedDomains to read the ENTIRE stage at once) would
+// produce.
+func TestIncrementalBoundedMemory(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	const totalRecords = 25000
+	const batchSize = 500
+	domain := "bounded-mem.test"
+	scanID := "itest-bounded-mem"
+	if _, err := st.Seed(ctx, scanID, []string{domain}); err != nil {
+		t.Fatal(err)
+	}
+	recs := make([]model.DNSRecord, totalRecords)
+	for i := range recs {
+		recs[i] = model.DNSRecord{
+			Name:       fmt.Sprintf("h%d.%s", i, domain),
+			RecordType: "A",
+			Value:      fmt.Sprintf("10.%d.%d.%d", (i>>16)&0xff, (i>>8)&0xff, i&0xff),
+			Rcode:      "NOERROR", Source: "query", Discovery: "static",
+		}
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: scanID, RootDomain: domain, Status: "done", SourceRunID: scanID, ResolvedAt: time.Now().UTC(),
+		Records: recs,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	real := testConn(t)
+	t.Cleanup(func() {
+		_ = real.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_record_observations WHERE root_domain='"+domain+"'")
+		_ = real.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_dns_scan WHERE root_domain='"+domain+"'")
+		_ = real.Close()
+	})
+	conn := &boundedConn{Conn: real, t: t, maxRows: batchSize}
+
+	nr, nd, err := Incremental(ctx, conn, st, scanID, batchSize)
+	if err != nil {
+		t.Fatalf("Incremental: %v", err)
+	}
+	if nr != totalRecords {
+		t.Errorf("records loaded = %d, want %d", nr, totalRecords)
+	}
+	if nd != 1 {
+		t.Errorf("domain summaries loaded = %d, want 1", nd)
 	}
 }

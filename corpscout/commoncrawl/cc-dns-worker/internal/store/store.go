@@ -63,8 +63,24 @@ CREATE TABLE IF NOT EXISTS scan_meta (
 );
 CREATE TABLE IF NOT EXISTS load_state (
   scan_id      TEXT PRIMARY KEY,
-  loaded_rowid INTEGER NOT NULL DEFAULT 0
+  loaded_rowid INTEGER NOT NULL DEFAULT 0,
+  domains_seq  INTEGER NOT NULL DEFAULT 0
 );
+-- completed_domains records, once per (scan_id, root_domain), the moment a domain's CommitBatch landed
+-- with status='done' — including a domain that produced ZERO scan_records rows. seq is a global,
+-- AUTOINCREMENT, monotonic-only-growing sequence (never reused, even across scan-ids), so the
+-- domain-summary loader (CompletedDomainsAfter) can page through it exactly like scan_records.rowid,
+-- independently of whether the domain ever produced a record. See internal/load.Incremental's Task 8
+-- doc comment for why this exists: piggybacking summaries on the record-observation stream (the
+-- pre-Task-8 design) silently never loaded a zero-record domain's summary, because such a domain never
+-- appears in scan_records at all.
+CREATE TABLE IF NOT EXISTS completed_domains (
+  scan_id     TEXT NOT NULL,
+  root_domain TEXT NOT NULL,
+  seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+  UNIQUE (scan_id, root_domain)
+);
+CREATE INDEX IF NOT EXISTS idx_completed_domains_scan_seq ON completed_domains (scan_id, seq);
 CREATE TABLE IF NOT EXISTS scan_hostnames (
   scan_id          TEXT NOT NULL,
   root_domain      TEXT NOT NULL,
@@ -159,6 +175,7 @@ func migrate(db *sql.DB) {
 		`ALTER TABLE scan_domains ADD COLUMN axfr_truncated INTEGER DEFAULT 0`,
 		`ALTER TABLE scan_domains ADD COLUMN axfr_server TEXT DEFAULT ''`,
 		`ALTER TABLE scan_domains ADD COLUMN ns_endpoints TEXT DEFAULT '[]'`,
+		`ALTER TABLE load_state ADD COLUMN domains_seq INTEGER NOT NULL DEFAULT 0`,
 	} {
 		_, _ = db.ExecContext(context.Background(), stmt)
 	}
@@ -258,7 +275,9 @@ func (s *Store) PendingBatch(ctx context.Context, scanID, afterRootDomain string
 }
 
 // CommitBatch writes a batch of results in one transaction, replacing each domain's records so a
-// re-commit is idempotent.
+// re-commit is idempotent. Every domain committed with Status=="done" also gets a completed_domains row
+// (INSERT OR IGNORE, so a retried commit of the same domain is a no-op there too) — including a domain
+// with zero Records, which is exactly the case the record-observation stream can never see (Task 8).
 func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -286,6 +305,11 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		return err
 	}
 	defer upD.Close()
+	insCD, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO completed_domains (scan_id, root_domain) VALUES (?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insCD.Close()
 
 	for _, res := range results {
 		if _, err := del.ExecContext(ctx, res.ScanID, res.RootDomain); err != nil {
@@ -311,6 +335,11 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 			return err
 		} else if n != 1 {
 			return fmt.Errorf("commit domain %q: %d rows updated (not seeded?)", res.RootDomain, n)
+		}
+		if res.Status == "done" {
+			if _, err := insCD.ExecContext(ctx, res.ScanID, res.RootDomain); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()
@@ -393,11 +422,36 @@ func (s *Store) LoadedRowid(ctx context.Context, scanID string) (int64, error) {
 	return rid, err
 }
 
-// SetLoadedRowid advances the loaded-up-to watermark for scanID.
+// SetLoadedRowid advances the loaded-up-to watermark for scanID. It touches only loaded_rowid — the
+// upsert's ON CONFLICT clause never mentions domains_seq — so the record and domain-summary streams'
+// watermarks always advance independently of one another (Task 8).
 func (s *Store) SetLoadedRowid(ctx context.Context, scanID string, rowid int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO load_state (scan_id, loaded_rowid) VALUES (?, ?)
 		 ON CONFLICT(scan_id) DO UPDATE SET loaded_rowid = excluded.loaded_rowid`, scanID, rowid)
+	return err
+}
+
+// LoadedDomainsSeq returns the highest completed_domains seq already loaded to ClickHouse for scanID (0
+// if none). Independent of LoadedRowid/SetLoadedRowid: the domain-summary stream (CompletedDomainsAfter)
+// advances on its own watermark, so a zero-record done domain — which never appears in scan_records, and
+// so never advances loaded_rowid — still gets its summary loaded and its own watermark advanced (Task 8).
+func (s *Store) LoadedDomainsSeq(ctx context.Context, scanID string) (int64, error) {
+	var seq int64
+	err := s.db.QueryRowContext(ctx, `SELECT domains_seq FROM load_state WHERE scan_id = ?`, scanID).Scan(&seq)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return seq, err
+}
+
+// SetLoadedDomainsSeq advances the loaded-up-to completed_domains watermark for scanID. Like
+// SetLoadedRowid, its upsert touches only domains_seq, so the two watermarks never clobber one another
+// regardless of the order or interleaving in which the record and domain-summary loaders call them.
+func (s *Store) SetLoadedDomainsSeq(ctx context.Context, scanID string, seq int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO load_state (scan_id, domains_seq) VALUES (?, ?)
+		 ON CONFLICT(scan_id) DO UPDATE SET domains_seq = excluded.domains_seq`, scanID, seq)
 	return err
 }
 
@@ -484,11 +538,67 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 	return out, rows.Err()
 }
 
+// completedDomainsAfterQuery pages completed_domains by its own seq, exactly mirroring recordsAfterQuery's
+// walk of scan_records by rowid. idx_completed_domains_scan_seq (scan_id, seq) already covers this
+// access pattern directly (unlike scan_records, there is no competing (scan_id, root_domain) index that
+// would tempt the planner into a re-sort), so no query-hint is needed here.
+const completedDomainsAfterQuery = `SELECT seq, root_domain FROM completed_domains
+	WHERE scan_id = ? AND seq > ? ORDER BY seq LIMIT ?`
+
+// CompletedDomainsAfter returns the done-summary ScanRows for scanID whose completed_domains seq is >
+// afterSeq, in completion order, the new max seq (the watermark to persist), and scanned — the number of
+// completed_domains rows read in this page (which may exceed len(sums): see below). Unlike
+// RecordsAfter+SummariesFor (which can only ever see a domain that produced at least one scan_records
+// row), this is driven off completed_domains — populated by CommitBatch for EVERY domain committed
+// status='done', including one with zero records — so a zero-record done domain's summary is never
+// silently skipped (Task 8).
+//
+// scanned, not len(sums), is what the caller must compare against limit to know whether this page was
+// full (there may be more) or short (caught up): a completed_domains row whose domain no longer joins to
+// a 'done' scan_domains row (e.g. it was later re-committed to 'error' before this page loaded)
+// contributes to scanned but not to sums, and the watermark still advances past it either way, since
+// there is nothing further to ever load for it.
+func (s *Store) CompletedDomainsAfter(ctx context.Context, scanID string, afterSeq int64, limit int) (sums []model.ScanRow, maxSeq int64, scanned int, err error) {
+	rows, err := s.db.QueryContext(ctx, completedDomainsAfterQuery, scanID, afterSeq, limit)
+	if err != nil {
+		return nil, afterSeq, 0, err
+	}
+	var domains []string
+	maxSeq = afterSeq
+	for rows.Next() {
+		var seq int64
+		var d string
+		if err := rows.Scan(&seq, &d); err != nil {
+			rows.Close()
+			return nil, afterSeq, 0, err
+		}
+		domains = append(domains, d)
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, afterSeq, 0, err
+	}
+	rows.Close()
+	if len(domains) == 0 {
+		return nil, maxSeq, 0, nil
+	}
+	sums, err = s.SummariesFor(ctx, scanID, domains)
+	return sums, maxSeq, len(domains), err
+}
+
 // DiscoveredHostnames returns the distinct non-static hosts (discovery in ct/axfr) that resolved this
 // scan, one per (root_domain, label), for the registry write-back. label = name minus ".<root_domain>";
-// apex and non-subdomain names are skipped. Timestamps are left zero for the caller to stamp.
+// apex and non-subdomain names are skipped. Each row's timestamps are stamped from resolved_at — the
+// SCAN's own persisted resolution time for that domain (the same value CommitBatch wrote into
+// scan_records.resolved_at/scan_domains.resolved_at) — not the caller's wall-clock time, so calling this
+// twice (e.g. a retried registry write-back) always returns byte-identical timestamps for the same
+// scan_id (Task 8). All of a domain's scan_records rows share one resolved_at (CommitBatch always
+// deletes and re-inserts a domain's records together), so picking any one of them is correct.
 func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model.HostnameRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT root_domain, name, discovery
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT root_domain, name, discovery, resolved_at
 		FROM scan_records
 		WHERE scan_id = ? AND discovery IN ('ct','axfr') AND record_type IN ('A','AAAA','CNAME')`, scanID)
 	if err != nil {
@@ -498,8 +608,8 @@ func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model
 	seen := map[string]bool{}
 	var out []model.HostnameRow
 	for rows.Next() {
-		var rd, name, disc string
-		if err := rows.Scan(&rd, &name, &disc); err != nil {
+		var rd, name, disc, ts string
+		if err := rows.Scan(&rd, &name, &disc, &ts); err != nil {
 			return nil, err
 		}
 		suffix := "." + rd
@@ -515,7 +625,11 @@ func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model
 			continue
 		}
 		seen[key] = true
-		out = append(out, model.HostnameRow{RootDomain: rd, Label: label, DiscoverySource: disc})
+		observedAt := parseTS(ts)
+		out = append(out, model.HostnameRow{
+			RootDomain: rd, Label: label, DiscoverySource: disc,
+			FirstSeen: observedAt, LastSeen: observedAt, LastResolved: observedAt,
+		})
 	}
 	return out, rows.Err()
 }

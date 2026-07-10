@@ -141,45 +141,20 @@ func loadRecordsLegacy(ctx context.Context, conn driver.Conn, recs []model.Recor
 	return insert(ctx, conn, recordsTable, recs)
 }
 
-// FromStore reads the whole stage for scanID and inserts records + domain summaries into ClickHouse.
-// Records go to the retry-safe observations table (see this package's doc comment on the Task 7
-// cutover), not the legacy aggregate. Idempotent (the CH tables dedup on merge/FINAL), so it is safe
-// to re-run.
-func FromStore(ctx context.Context, conn driver.Conn, st *store.Store, scanID string) (int, int, error) {
-	recs, err := st.StagedRecords(ctx, scanID)
-	if err != nil {
-		return 0, 0, err
-	}
-	nr, err := insert(ctx, conn, recordObsTable, toObservationRows(recs, scanID, time.Now()))
-	if err != nil {
-		return 0, 0, err
-	}
-	doms, err := st.StagedDomains(ctx, scanID)
-	if err != nil {
-		return nr, 0, err
-	}
-	nd, err := insert(ctx, conn, scanTable, doms)
-	return nr, nd, err
-}
-
-// Incremental loads every scan_records row committed since the persisted rowid watermark for scanID,
-// in batches, advancing the watermark after each batch. Records go to the retry-safe observations
-// table (see this package's doc comment on the Task 7 cutover), not the legacy aggregate. It also
-// loads the done-summaries for the domains in each batch. Because it walks scan_records by rowid
-// (commit order), it never misses a late-finishing domain, and re-runs are safe (CH dedups on
-// merge/FINAL). It returns the number of record rows loaded. Call it periodically during a scan and
-// once more after the scan finishes.
-func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batch int) (int, error) {
-	if batch <= 0 {
-		batch = 20000
-	}
+// loadRecordsIncremental loads every scan_records row committed since the persisted records_rowid
+// watermark for scanID, in batches, advancing that watermark after each batch it inserts. It never loads
+// domain summaries — see loadSummariesIncremental, the independent Task 8 stream — and never advances
+// domains_seq. Because it walks scan_records by rowid (commit order), it never misses a late-finishing
+// domain, and re-runs are safe (CH dedups on merge/FINAL): a crash between CH accepting a batch and the
+// watermark being persisted just re-loads that batch next time.
+func loadRecordsIncremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batch int) (int, error) {
 	w, err := st.LoadedRowid(ctx, scanID)
 	if err != nil {
 		return 0, err
 	}
 	total := 0
 	for {
-		recs, maxRowid, domains, err := st.RecordsAfter(ctx, scanID, w, batch)
+		recs, maxRowid, _, err := st.RecordsAfter(ctx, scanID, w, batch)
 		if err != nil {
 			return total, err
 		}
@@ -189,15 +164,9 @@ func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID 
 		if _, err := insert(ctx, conn, recordObsTable, toObservationRows(recs, scanID, time.Now())); err != nil {
 			return total, err
 		}
-		sums, err := st.SummariesFor(ctx, scanID, domains)
-		if err != nil {
-			return total, err
-		}
-		if _, err := insert(ctx, conn, scanTable, sums); err != nil {
-			return total, err
-		}
 		// Advance the watermark only after CH accepted the batch — a crash before this just re-loads
-		// the batch next time (idempotent).
+		// the batch next time (idempotent). A failure here never touches domains_seq (loadSummariesIncremental
+		// is a separate call, not reached until this one returns).
 		if err := st.SetLoadedRowid(ctx, scanID, maxRowid); err != nil {
 			return total, err
 		}
@@ -209,20 +178,91 @@ func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID 
 	}
 }
 
+// loadSummariesIncremental loads every domain marked done since the persisted domains_seq watermark for
+// scanID, in batches, advancing that watermark after each batch it inserts. This is the ONLY path that
+// loads a domain's scan-summary (Task 8): driven off store.CompletedDomainsAfter/completed_domains, not
+// off which domains happened to appear in a batch of records, so a domain that resolved successfully but
+// produced ZERO DNS records still gets its summary loaded — the bug loadRecordsIncremental's old
+// piggybacked version could never fix, because such a domain never appears in scan_records at all.
+// Independent of records_rowid: a failure here never touches it (that watermark, if it needed to move,
+// already did — in loadRecordsIncremental, which always runs and returns before this is called).
+func loadSummariesIncremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batch int) (int, error) {
+	w, err := st.LoadedDomainsSeq(ctx, scanID)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for {
+		sums, maxSeq, scanned, err := st.CompletedDomainsAfter(ctx, scanID, w, batch)
+		if err != nil {
+			return total, err
+		}
+		if scanned == 0 {
+			return total, nil
+		}
+		if len(sums) > 0 {
+			if _, err := insert(ctx, conn, scanTable, sums); err != nil {
+				return total, err
+			}
+		}
+		if err := st.SetLoadedDomainsSeq(ctx, scanID, maxSeq); err != nil {
+			return total, err
+		}
+		w = maxSeq
+		total += len(sums)
+		// Compare scanned (completed_domains rows read), not len(sums), against batch: a row whose
+		// domain no longer joins to 'done' contributes to scanned but not sums, and must not be
+		// mistaken for "caught up" when there may still be more completed_domains rows beyond it.
+		if scanned < batch {
+			return total, nil
+		}
+	}
+}
+
+// FromStore loads every record and domain-summary for scanID via the SAME bounded, watermark-advancing
+// loop Incremental uses (see loadRecordsIncremental/loadSummariesIncremental) — it never materializes a
+// whole scan's records or summaries in Go memory, no matter how large the SQLite stage has grown.
+// Idempotent for the same reason Incremental is: progress is the persisted load_state watermark, so
+// re-running FromStore after a crash (or interleaved with the orchestrator's own periodic Incremental
+// calls for the same scan_id, which share that watermark) resumes exactly where it left off instead of
+// re-inserting everything.
+func FromStore(ctx context.Context, conn driver.Conn, st *store.Store, scanID string) (int, int, error) {
+	return Incremental(ctx, conn, st, scanID, 0)
+}
+
+// Incremental runs the record-observation stream and the domain-summary stream as two INDEPENDENT
+// bounded loops (loadRecordsIncremental, loadSummariesIncremental — Task 8): each pages its own store
+// query by its own watermark (records_rowid / domains_seq) and advances that watermark only after
+// ClickHouse accepts its own batch, so a failure in one stream never advances the other's watermark and
+// never blocks the other from retrying cleanly on the next call. Call it periodically during a scan and
+// once more after the scan finishes. Returns (records loaded, domain summaries loaded, error).
+func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batch int) (int, int, error) {
+	if batch <= 0 {
+		batch = 20000
+	}
+	nr, err := loadRecordsIncremental(ctx, conn, st, scanID, batch)
+	if err != nil {
+		return nr, 0, err
+	}
+	nd, err := loadSummariesIncremental(ctx, conn, st, scanID, batch)
+	return nr, nd, err
+}
+
 // WriteHostnameRegistry upserts this cycle's non-static discovered hosts into the durable hostname
 // registry. Blind INSERT — the AggregatingMergeTree folds first_seen=min, last_seen=max,
-// last_resolved=max, discovery_source=min — so it is idempotent and needs no read-before-write.
-func WriteHostnameRegistry(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, now time.Time) (int, error) {
+// last_resolved=max, discovery_source=min — so it is idempotent and needs no read-before-write. Row
+// timestamps come from store.DiscoveredHostnames, which stamps each one from the SCAN's own persisted
+// resolved_at, NOT from the caller's wall-clock time (Task 8) — so retrying this write-back (e.g. after a
+// crash between ClickHouse accepting the insert and the caller learning about it) reproduces
+// byte-identical rows every time, and first/last-seen in the registry are never skewed by how late a
+// retry happened to run.
+func WriteHostnameRegistry(ctx context.Context, conn driver.Conn, st *store.Store, scanID string) (int, error) {
 	rows, err := st.DiscoveredHostnames(ctx, scanID)
 	if err != nil {
 		return 0, err
 	}
 	if len(rows) == 0 {
 		return 0, nil
-	}
-	now = now.UTC()
-	for i := range rows {
-		rows[i].FirstSeen, rows[i].LastSeen, rows[i].LastResolved = now, now, now
 	}
 	return insert(ctx, conn, hostnamesTable, rows)
 }
