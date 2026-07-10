@@ -105,7 +105,7 @@ cc_dns_run_flags: >-
 worker_limit_nofile: 1048576
 
 # --- unbound tuning (num-threads scales to the target's CPUs) ---
-unbound_num_threads: "{{ ansible_processor_vcpus }}"
+unbound_num_threads: "{{ ansible_facts.processor_vcpus }}"
 unbound_msg_cache_size: 4g
 unbound_rrset_cache_size: 8g
 unbound_outgoing_range: 4096
@@ -355,8 +355,13 @@ LimitNOFILE={{ unbound_limit_nofile }}
     owner: root
     group: root
     mode: "0644"
-    validate: "unbound-checkconf %s"
   notify: Restart unbound
+
+# Validate the ASSEMBLED config (the include chain), not the fragment: unbound-checkconf on the
+# scanner.conf fragment alone trips the remote-control key check (no control-interface set in it).
+- name: Validate the assembled unbound config
+  ansible.builtin.command: unbound-checkconf
+  changed_when: false
 
 - name: Systemd drop-in — raise unbound LimitNOFILE
   ansible.builtin.template:
