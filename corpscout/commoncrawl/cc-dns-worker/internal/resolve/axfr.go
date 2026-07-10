@@ -200,6 +200,27 @@ func (p *AXFRProber) Probe(ctx context.Context, zone string, nsIPs []string) AXF
 	return AXFRResult{Server: targets[len(targets)-1]}
 }
 
+// ProbeServer transfers zone from a single NS IP — the per-NS entry point for the standalone AXFR
+// pipeline, which records an outcome per nameserver. The caller skips hyperscaler IPs; this paces the
+// dial through the AXFR scheduler lane and bounds concurrency with the aggregate semaphore. Server is
+// always set to nsIP so the caller can key its dns_axfr row.
+func (p *AXFRProber) ProbeServer(ctx context.Context, zone, nsIP string) AXFRResult {
+	select {
+	case p.sem <- struct{}{}:
+	case <-ctx.Done():
+		return AXFRResult{Server: nsIP}
+	}
+	defer func() { <-p.sem }()
+	var res AXFRResult
+	_ = p.sched.Do(ctx, nsIP, func() error {
+		r, e := transferAXFR(ctx, zone, nsIP, p.caps)
+		res = r
+		return e
+	})
+	res.Server = nsIP
+	return res
+}
+
 // nsSetKey is the order-independent identity of an NS IP set (dedup is a property of the server set,
 // not the domain).
 func nsSetKey(nsIPs []string) string {

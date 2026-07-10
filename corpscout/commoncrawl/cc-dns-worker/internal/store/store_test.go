@@ -519,6 +519,60 @@ func TestHostLoadShardStateAndIdempotency(t *testing.T) {
 	}
 }
 
+// RecordAXFR writes one dns_axfr row per probed nameserver and appends an open zone's records to
+// scan_records tagged source='axfr' — in one transaction, per domain.
+func TestRecordAXFR(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	// Seed + commit the domain first so scan_records has a home and the summary row exists.
+	if _, err := st.Seed(ctx, "s1", []string{"open.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{ScanID: "s1", RootDomain: "open.com", Status: "done", NSIPs: []string{"9.9.9.9", "8.8.8.8"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	probes := []model.AXFRProbe{{Server: "9.9.9.9", Open: true}, {Server: "8.8.8.8", Open: false}}
+	zone := []model.DNSRecord{{Name: "vpn.open.com", RecordType: "A", Value: "10.0.0.1", Source: "axfr", Discovery: "axfr"}}
+	if err := st.RecordAXFR(ctx, "s1", "open.com", probes, zone, "run1", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// dns_axfr: one row per NS, axfr_open reflecting each probe.
+	rows, err := st.db.QueryContext(ctx, `SELECT ns_server, axfr_open FROM dns_axfr WHERE scan_id='s1' AND root_domain='open.com' ORDER BY ns_server`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]int{}
+	for rows.Next() {
+		var ns string
+		var open int
+		if err := rows.Scan(&ns, &open); err != nil {
+			t.Fatal(err)
+		}
+		got[ns] = open
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got["9.9.9.9"] != 1 || got["8.8.8.8"] != 0 {
+		t.Fatalf("dns_axfr rows wrong: %+v", got)
+	}
+	// The open zone's record is in scan_records with source='axfr'.
+	var n int
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM scan_records WHERE scan_id='s1' AND root_domain='open.com' AND source='axfr'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("want 1 axfr record, got %d", n)
+	}
+}
+
 // RecordsAfter must page by walking the rowid primary key up from the watermark. If the query
 // planner instead picks the (scan_id, root_domain) covering index, every batch re-reads and
 // re-sorts the scan's entire record set (temp B-tree), which collapses incremental-load

@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"cc-dns-worker/internal/model"
-	"cc-dns-worker/internal/resolve"
 	"cc-dns-worker/internal/store"
 )
 
@@ -54,27 +52,6 @@ func TestRunScanRequiresResolversByDefault(t *testing.T) {
 	err := runScan([]string{"-db", dbPath}) // no -resolvers at all
 	if err == nil || !strings.Contains(err.Error(), "--resolvers is required") {
 		t.Fatalf("runScan without --resolvers: want '--resolvers is required' error, got %v", err)
-	}
-}
-
-// TestMergeAXFR proves mergeAXFR folds an AXFR probe outcome into a domain result: the open/records/
-// truncated flags land on the summary, and the transferred zone records (already tagged
-// Source="axfr" by the prober) are appended to the existing record set.
-func TestMergeAXFR(t *testing.T) {
-	res := model.DomainResult{Records: []model.DNSRecord{{Name: "example.com", RecordType: "A", Source: "query"}}}
-	a := resolve.AXFRResult{
-		Open: true, Records: 2, Truncated: true,
-		Zone: []model.DNSRecord{
-			{Name: "cpanel.example.com", RecordType: "A", Source: "axfr"},
-			{Name: "asa-fw.example.com", RecordType: "A", Source: "axfr"},
-		},
-	}
-	mergeAXFR(&res, a)
-	if !res.AXFROpen || res.AXFRRecords != 2 || !res.AXFRTruncated {
-		t.Fatalf("flags not merged: %+v", res)
-	}
-	if len(res.Records) != 3 {
-		t.Fatalf("want 3 records after merge, got %d", len(res.Records))
 	}
 }
 
