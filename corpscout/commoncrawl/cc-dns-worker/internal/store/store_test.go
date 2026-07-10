@@ -404,10 +404,10 @@ func TestHostnamesRoundTrip(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	if _, err := st.InsertHostnamesMap(ctx, "s1", map[string][]model.HostLabel{"example.com": {
-		{Label: "jenkins", DiscoverySource: "axfr", LiveCert: false},
-		{Label: "api", DiscoverySource: "ct", LiveCert: true},
-	}}); err != nil {
+	if _, err := st.InsertHostnameRows(ctx, "s1", []model.ScanHostnameRow{
+		{RootDomain: "example.com", HostLabel: model.HostLabel{Label: "jenkins", DiscoverySource: "axfr", LiveCert: false}},
+		{RootDomain: "example.com", HostLabel: model.HostLabel{Label: "api", DiscoverySource: "ct", LiveCert: true}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	m, err := st.HostnamesForBatch(ctx, "s1", []string{"example.com", "other.com"})
@@ -450,18 +450,144 @@ func TestHostLoadShardStateAndIdempotency(t *testing.T) {
 		t.Fatal("shard 4 must remain incomplete (per-shard, not global)")
 	}
 
-	// First insert adds all rows; re-inserting the same map adds nothing (idempotent resume).
-	m := map[string][]model.HostLabel{
-		"a.com": {{Label: "www", DiscoverySource: "ct", LiveCert: true}, {Label: "api", DiscoverySource: "ct"}},
-		"b.com": {{Label: "vpn", DiscoverySource: "axfr"}},
+	// First insert adds all rows; re-inserting the same rows adds nothing (idempotent resume).
+	rows := []model.ScanHostnameRow{
+		{RootDomain: "a.com", HostLabel: model.HostLabel{Label: "www", DiscoverySource: "ct", LiveCert: true}},
+		{RootDomain: "a.com", HostLabel: model.HostLabel{Label: "api", DiscoverySource: "ct"}},
+		{RootDomain: "b.com", HostLabel: model.HostLabel{Label: "vpn", DiscoverySource: "axfr"}},
 	}
-	n1, err := st.InsertHostnamesMap(ctx, "s1", m)
+	n1, err := st.InsertHostnameRows(ctx, "s1", rows)
 	if err != nil || n1 != 3 {
 		t.Fatalf("first insert added %d (want 3), err=%v", n1, err)
 	}
-	n2, err := st.InsertHostnamesMap(ctx, "s1", m)
+	n2, err := st.InsertHostnameRows(ctx, "s1", rows)
 	if err != nil || n2 != 0 {
 		t.Fatalf("re-insert added %d (want 0 — idempotent), err=%v", n2, err)
+	}
+}
+
+// TestInsertHostnameRowsStreamedBatches proves InsertHostnameRows is meant to be called repeatedly with
+// bounded batches (as hostsource.ShardStream drives it) rather than one whole-shard slice: multiple
+// small calls for the SAME scan accumulate correctly and remain idempotent per row.
+func TestInsertHostnameRowsStreamedBatches(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+
+	batches := [][]model.ScanHostnameRow{
+		{{RootDomain: "c1.com", HostLabel: model.HostLabel{Label: "www", DiscoverySource: "axfr"}}},
+		{{RootDomain: "c2.com", HostLabel: model.HostLabel{Label: "api", DiscoverySource: "ct"}}},
+		{{RootDomain: "c1.com", HostLabel: model.HostLabel{Label: "vpn", DiscoverySource: "ct"}}},
+	}
+	total := 0
+	for _, b := range batches {
+		n, err := st.InsertHostnameRows(ctx, "stream1", b)
+		if err != nil {
+			t.Fatalf("insert batch: %v", err)
+		}
+		total += n
+	}
+	if total != 3 {
+		t.Fatalf("total added across streamed batches = %d, want 3", total)
+	}
+	m, err := st.HostnamesForBatch(ctx, "stream1", []string{"c1.com", "c2.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m["c1.com"]) != 2 || len(m["c2.com"]) != 1 {
+		t.Fatalf("hostnames not correctly accumulated across batches: %+v", m)
+	}
+}
+
+// TestAllDomainsAfterIncludesAllStatuses proves AllDomainsAfter returns every seeded domain for a
+// scan_id regardless of status (unlike PendingBatch, which excludes done/error) — the property
+// load.MirrorSeedDomains depends on to mirror a scan's FULL membership, not just its still-pending
+// subset.
+func TestAllDomainsAfterIncludesAllStatuses(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	if _, err := st.Seed(ctx, "s1", []string{"a.com", "b.com", "c.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{
+		{ScanID: "s1", RootDomain: "a.com", Status: "done", ResolvedAt: time.Unix(0, 0).UTC()},
+		{ScanID: "s1", RootDomain: "b.com", Status: "error", ResolvedAt: time.Unix(0, 0).UTC()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// c.com stays 'pending' (never committed).
+
+	got, err := st.AllDomainsAfter(ctx, "s1", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a.com", "b.com", "c.com"}
+	if len(got) != len(want) {
+		t.Fatalf("AllDomainsAfter = %v, want %v (done + error + pending all included)", got, want)
+	}
+	for i, d := range want {
+		if got[i] != d {
+			t.Errorf("AllDomainsAfter[%d] = %q, want %q", i, got[i], d)
+		}
+	}
+
+	// Cursor pagination excludes anything at or before the cursor.
+	page, err := st.AllDomainsAfter(ctx, "s1", "a.com", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 2 || page[0] != "b.com" || page[1] != "c.com" {
+		t.Fatalf("AllDomainsAfter after cursor a.com = %v, want [b.com c.com]", page)
+	}
+
+	// A different scan_id's domains never leak in.
+	if _, err := st.Seed(ctx, "s2", []string{"z.com"}); err != nil {
+		t.Fatal(err)
+	}
+	only1, err := st.AllDomainsAfter(ctx, "s1", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range only1 {
+		if d == "z.com" {
+			t.Fatalf("AllDomainsAfter(s1) leaked a domain from a different scan_id: %v", only1)
+		}
+	}
+}
+
+// TestSeedMembershipCompleteMarker proves the seed_membership_state marker starts false (including for
+// a scan_id never touched) and becomes true only after MarkSeedMembershipComplete — mirroring
+// SeedComplete/HostLoadComplete's own resumability pattern, which load.MirrorSeedDomains relies on to
+// skip re-mirroring an already-complete scan and to detect (and rebuild) an old/incomplete one.
+func TestSeedMembershipCompleteMarker(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+
+	done, err := st.SeedMembershipComplete(ctx, "never-touched")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done {
+		t.Fatal("a scan_id never mirrored must read as incomplete")
+	}
+
+	if err := st.MarkSeedMembershipComplete(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	done, err = st.SeedMembershipComplete(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done {
+		t.Fatal("s1 should read as complete after marking")
+	}
+
+	// A different scan_id remains unaffected.
+	done, err = st.SeedMembershipComplete(ctx, "s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done {
+		t.Fatal("marking s1 complete must not affect s2's marker")
 	}
 }
 

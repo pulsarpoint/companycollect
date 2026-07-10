@@ -88,6 +88,27 @@ type HostLabel struct {
 	LiveCert        bool
 }
 
+// ScanHostnameRow is one row destined for the local scan_hostnames stage: a HostLabel plus the
+// root_domain it belongs to. This is the streaming unit hostsource.ShardStream's ranked+capped shard
+// query result is delivered in (Task 11), and what store.InsertHostnameRows accepts — replacing the
+// removed store.InsertHostnamesMap, whose whole-shard map[string][]HostLabel this type lets callers
+// avoid ever building.
+type ScanHostnameRow struct {
+	RootDomain string
+	HostLabel
+}
+
+// ScanSeedDomainRow mirrors corpscout.dns_scan_seed_domains (migration 000117): one row per domain
+// actually seeded into a scan's local queue, so cc-dns-worker's CT/registry hostname-enrichment shard
+// queries can scope themselves to exactly this scan's domains rather than the whole
+// commoncrawl_domains corpus (Task 11). Written by internal/load.MirrorSeedDomains, which streams
+// store.AllDomainsAfter in bounded batches — never a whole scan's domain list in one slice.
+type ScanSeedDomainRow struct {
+	ScanID     string    `ch:"scan_id"`
+	RootDomain string    `ch:"root_domain"`
+	SeededAt   time.Time `ch:"seeded_at"`
+}
+
 // DomainResult is everything learned for one domain in one scan. AXFR is NOT part of this shape — it
 // runs as its own post-scan phase (see cmd/cc-dns-worker/axfr.go) and is staged/loaded through the
 // dns_axfr_latest/dns_axfr_state_changes tables (AXFRLatestRow/AXFRStateChangeRow), never through a

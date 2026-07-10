@@ -56,6 +56,7 @@ const (
 	recordSummaryMV    = "corpscout.commoncrawl_domain_dns_record_summary_mv" // migration 000114, REFRESH EVERY 10 MINUTE
 	scanTable          = "corpscout.commoncrawl_domain_dns_scan"
 	hostnamesTable     = "corpscout.commoncrawl_domain_hostnames"
+	seedDomainsTable   = "corpscout.dns_scan_seed_domains" // migration 000117, Task 11
 	axfrObsTable       = "corpscout.dns_axfr_observations" // legacy log, Task 4 and earlier; kept for BackfillAXFRFromObservations
 	axfrLatestTable    = "corpscout.dns_axfr_latest"
 	axfrChangesTable   = "corpscout.dns_axfr_state_changes"
@@ -246,6 +247,54 @@ func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID 
 	}
 	nd, err := loadSummariesIncremental(ctx, conn, st, scanID, batch)
 	return nr, nd, err
+}
+
+// MirrorSeedDomains ensures corpscout.dns_scan_seed_domains holds scanID's full domain membership
+// before the hostsource shard queries run (Task 11): CT/registry enrichment joins to this table to
+// scope itself to only the domains actually in THIS scan, never the whole commoncrawl_domains corpus.
+// Idempotent and resumable via store.SeedMembershipComplete/MarkSeedMembershipComplete — a completed
+// mirror is skipped, and an interrupted one (or an OLD stage DB whose seed finished before this table
+// existed, so the ClickHouse side was never populated at all) is rebuilt by STREAMING
+// st.AllDomainsAfter in bounded batches. This scan's domains are read from the LOCAL SQLite stage, never
+// re-read from ClickHouse's commoncrawl_domains, so the rebuild path works identically whether the scan
+// is brand-new or resuming a run from before this table existed. Returns the number of domains mirrored
+// (0 if the mirror was already complete).
+func MirrorSeedDomains(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batchSize int) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 5000
+	}
+	done, err := st.SeedMembershipComplete(ctx, scanID)
+	if err != nil {
+		return 0, err
+	}
+	if done {
+		return 0, nil
+	}
+	total := 0
+	cursor := ""
+	now := time.Now().UTC()
+	for {
+		domains, err := st.AllDomainsAfter(ctx, scanID, cursor, batchSize)
+		if err != nil {
+			return total, err
+		}
+		if len(domains) == 0 {
+			break
+		}
+		rows := make([]model.ScanSeedDomainRow, len(domains))
+		for i, d := range domains {
+			rows[i] = model.ScanSeedDomainRow{ScanID: scanID, RootDomain: d, SeededAt: now}
+		}
+		if _, err := insert(ctx, conn, seedDomainsTable, rows); err != nil {
+			return total, fmt.Errorf("mirror seed domains: %w", err)
+		}
+		total += len(domains)
+		cursor = domains[len(domains)-1]
+		if len(domains) < batchSize {
+			break
+		}
+	}
+	return total, st.MarkSeedMembershipComplete(ctx, scanID)
 }
 
 // WriteHostnameRegistry upserts this cycle's non-static discovered hosts into the durable hostname

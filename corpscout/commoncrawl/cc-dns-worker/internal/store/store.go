@@ -103,6 +103,15 @@ CREATE TABLE IF NOT EXISTS host_load_shards (
   complete INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (scan_id, shard)
 );
+-- seed_membership_state tracks whether scanID's full domain membership has been mirrored to
+-- corpscout.dns_scan_seed_domains (Task 11), so the CT/registry shard queries can scope themselves to
+-- exactly this scan's domains. A scan_id with no row here (including one seeded before this table
+-- existed) reads as incomplete, which is exactly what must trigger load.MirrorSeedDomains to (re)build
+-- the ClickHouse side by streaming this scan's local scan_domains rows in bounded batches.
+CREATE TABLE IF NOT EXISTS seed_membership_state (
+  scan_id  TEXT PRIMARY KEY,
+  complete INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS axfr_domains (
   scan_id     TEXT NOT NULL,
   root_domain TEXT NOT NULL,
@@ -717,21 +726,28 @@ func (s *Store) MarkHostLoadShardComplete(ctx context.Context, scanID string, sh
 	return err
 }
 
-// InsertHostnamesMap bulk-inserts a merged domain→labels map for scanID in one transaction (idempotent
-// — INSERT OR IGNORE on the (scan_id, root_domain, label) primary key). Returns rows newly inserted.
-// Callers flush per shard, so each shard's ~millions of rows land in a single commit.
-func (s *Store) InsertHostnamesMap(ctx context.Context, scanID string, m map[string][]model.HostLabel) (int, error) {
-	if len(m) == 0 {
+// InsertHostnameRows bulk-inserts a bounded batch of scan_hostnames rows for scanID in one transaction
+// (idempotent — INSERT OR IGNORE on the (scan_id, root_domain, label) primary key). Returns rows newly
+// inserted. This replaces InsertHostnamesMap (Task 11): hostsource.ShardStream streams a shard query's
+// ranked+capped result through this in bounded chunks (see cmd/cc-dns-worker's hostLoadPhase) instead of
+// a whole shard first being materialized as a map[string][]HostLabel in Go memory.
+func (s *Store) InsertHostnameRows(ctx context.Context, scanID string, rows []model.ScanHostnameRow) (int, error) {
+	if len(rows) == 0 {
 		return 0, nil
 	}
 	// Insert in (root_domain, label) key order so the scan_hostnames primary-key B-tree grows by
-	// mostly-sequential appends instead of thrashing random pages — the dominant cost when a shard
-	// commits millions of rows on the pure-Go SQLite driver, and it worsens as the index grows.
-	domains := make([]string, 0, len(m))
-	for rd := range m {
-		domains = append(domains, rd)
-	}
-	sort.Strings(domains)
+	// mostly-sequential appends instead of thrashing random pages — the dominant cost when millions of
+	// rows land on the pure-Go SQLite driver across many bounded batches, and it worsens as the index
+	// grows. Sorting each (small, bounded) batch is cheap; the batches themselves already arrive in
+	// root_domain order from the shard query's own ORDER BY, so this is usually a no-op pass.
+	sorted := make([]model.ScanHostnameRow, len(rows))
+	copy(sorted, rows)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].RootDomain != sorted[j].RootDomain {
+			return sorted[i].RootDomain < sorted[j].RootDomain
+		}
+		return sorted[i].Label < sorted[j].Label
+	})
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -745,20 +761,65 @@ func (s *Store) InsertHostnamesMap(ctx context.Context, scanID string, m map[str
 	}
 	defer stmt.Close()
 	added := 0
-	for _, rd := range domains {
-		hosts := m[rd]
-		sort.Slice(hosts, func(i, j int) bool { return hosts[i].Label < hosts[j].Label })
-		for _, h := range hosts {
-			r, err := stmt.ExecContext(ctx, scanID, rd, h.Label, h.DiscoverySource, b2i(h.LiveCert))
-			if err != nil {
-				return 0, err
-			}
-			if n, _ := r.RowsAffected(); n > 0 {
-				added++
-			}
+	for _, r := range sorted {
+		res, err := stmt.ExecContext(ctx, scanID, r.RootDomain, r.Label, r.DiscoverySource, b2i(r.LiveCert))
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			added++
 		}
 	}
 	return added, tx.Commit()
+}
+
+// AllDomainsAfter returns up to limit root_domains for scanID with root_domain > afterRootDomain,
+// ordered by root_domain — EVERY domain ever seeded for scanID regardless of status (unlike
+// PendingBatch, which excludes done/error). Used to stream this scan's full membership into
+// corpscout.dns_scan_seed_domains in bounded batches (load.MirrorSeedDomains, Task 11), never
+// materializing the whole domain list in Go memory however large the scan.
+func (s *Store) AllDomainsAfter(ctx context.Context, scanID, afterRootDomain string, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT root_domain FROM scan_domains WHERE scan_id = ? AND root_domain > ? ORDER BY root_domain LIMIT ?`,
+		scanID, afterRootDomain, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// SeedMembershipComplete reports whether scanID's full domain membership has already been mirrored to
+// corpscout.dns_scan_seed_domains (Task 11), so a resumed run can skip re-mirroring. Returns false for a
+// scan_id never mirrored — including an OLD stage DB whose seed finished before this table existed —
+// which is exactly the case load.MirrorSeedDomains must detect and rebuild from the local stage.
+func (s *Store) SeedMembershipComplete(ctx context.Context, scanID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT complete FROM seed_membership_state WHERE scan_id = ?`, scanID).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// MarkSeedMembershipComplete records that scanID's domain membership has been fully mirrored to
+// corpscout.dns_scan_seed_domains.
+func (s *Store) MarkSeedMembershipComplete(ctx context.Context, scanID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO seed_membership_state (scan_id, complete) VALUES (?, 1)
+		 ON CONFLICT(scan_id) DO UPDATE SET complete = 1`, scanID)
+	return err
 }
 
 // AXFRTarget is one domain the AXFR pipeline will probe: its root and the NS endpoints resolution

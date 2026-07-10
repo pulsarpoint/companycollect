@@ -204,6 +204,102 @@ func TestLoadAXFRRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMirrorSeedDomainsStreamsAndResumes proves load.MirrorSeedDomains (Task 11) mirrors EVERY domain
+// seeded into a scan's local queue — regardless of status (done/error/pending) — into
+// corpscout.dns_scan_seed_domains, that a second call is a no-op once complete, and that an "old" stage
+// DB (one whose seed_membership_state row was never set, simulating a DB seeded before this feature
+// existed) is rebuilt correctly by streaming straight from the local scan_domains rows rather than
+// re-reading ClickHouse's commoncrawl_domains.
+func TestMirrorSeedDomainsStreamsAndResumes(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "scan.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	scanID := "itest-mirror-" + time.Now().UTC().Format("150405.000000000")
+	domains := []string{"mirror-a.test", "mirror-b.test", "mirror-c.test"}
+	if _, err := st.Seed(ctx, scanID, domains); err != nil {
+		t.Fatal(err)
+	}
+	// One domain reaches 'done', one 'error' — MirrorSeedDomains must include both plus the still-
+	// 'pending' third, since it is membership, not queue state.
+	if err := st.CommitBatch(ctx, []model.DomainResult{
+		{ScanID: scanID, RootDomain: "mirror-a.test", Status: "done", ResolvedAt: time.Now().UTC()},
+		{ScanID: scanID, RootDomain: "mirror-b.test", Status: "error", ResolvedAt: time.Now().UTC()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := testConn(t)
+	t.Cleanup(func() {
+		_ = conn.Exec(ctx, "DELETE FROM corpscout.dns_scan_seed_domains WHERE scan_id='"+scanID+"'")
+		_ = conn.Close()
+	})
+
+	n, err := MirrorSeedDomains(ctx, conn, st, scanID, 2 /* small batch to force multiple bounded rounds */)
+	if err != nil {
+		t.Fatalf("MirrorSeedDomains: %v", err)
+	}
+	if n != len(domains) {
+		t.Fatalf("mirrored %d domains, want %d (all statuses included)", n, len(domains))
+	}
+
+	var got []string
+	rows, err := conn.Query(ctx, "SELECT root_domain FROM corpscout.dns_scan_seed_domains FINAL WHERE scan_id=? ORDER BY root_domain", scanID)
+	if err != nil {
+		t.Fatalf("query back: %v", err)
+	}
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, d)
+	}
+	rows.Close()
+	sort.Strings(got)
+	wantSorted := append([]string{}, domains...)
+	sort.Strings(wantSorted)
+	if fmt.Sprint(got) != fmt.Sprint(wantSorted) {
+		t.Fatalf("dns_scan_seed_domains for %s = %v, want %v", scanID, got, wantSorted)
+	}
+
+	// A second call is a no-op: the marker is set, so nothing is re-mirrored.
+	n2, err := MirrorSeedDomains(ctx, conn, st, scanID, 2)
+	if err != nil {
+		t.Fatalf("second MirrorSeedDomains call: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second call mirrored %d domains, want 0 (already complete)", n2)
+	}
+
+	// Simulate an OLD stage DB: same local scan_domains, but seed_membership_state was never set (as
+	// if this scan finished seeding before that table/feature existed) AND the ClickHouse side is
+	// missing/incomplete. A fresh scanID2 sharing the same store reproduces this without needing to
+	// hand-edit seed_membership_state.
+	scanID2 := scanID + "-old"
+	if _, err := st.Seed(ctx, scanID2, domains); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Exec(ctx, "DELETE FROM corpscout.dns_scan_seed_domains WHERE scan_id='"+scanID2+"'") })
+	done, err := st.SeedMembershipComplete(ctx, scanID2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done {
+		t.Fatal("a brand-new scan_id must start with an incomplete membership marker")
+	}
+	n3, err := MirrorSeedDomains(ctx, conn, st, scanID2, 2)
+	if err != nil {
+		t.Fatalf("resume-rebuild MirrorSeedDomains: %v", err)
+	}
+	if n3 != len(domains) {
+		t.Fatalf("resume-rebuild mirrored %d domains, want %d (rebuilt from local scan_domains, not ClickHouse)", n3, len(domains))
+	}
+}
+
 // refreshSummaryAndWait forces an immediate refresh of the Task 7 summary view (migration 000114)
 // rather than waiting out its real REFRESH EVERY 10 MINUTE schedule, then blocks until it completes so
 // the summary table reflects whatever was just inserted. It recomputes the WHOLE table (every
