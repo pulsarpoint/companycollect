@@ -10,7 +10,7 @@ Each task is implemented, reviewed, committed, and tagged so the fix can be chec
 | Tag | Task | Fix | Verify with |
 |---|---|---|---|
 | `harden-task-00` | 0 | Containment: drop `--axfr`/`--host-enrich` from prod flags | ansible flag set has both off |
-| _pending_ | 1 | Classify authoritative targets; block non-public dials | `go test ./internal/resolve/ -run Target` |
+| `harden-task-01` | 1 | Classify authoritative targets; block non-public dials (target.go, DialableNSIPs, defense-in-depth) | `go test ./internal/resolve/ -run 'Target|Dial|Scope|Public'` |
 | _pending_ | 2 | Preserve NS hostname↔IP endpoint identity | `go test ./internal/resolve ./internal/store` |
 | _pending_ | 3 | Typed AXFR outcomes + definitive TCP preflight | `go test ./internal/resolve -run AXFR` |
 | _pending_ | 4 | Durable SQLite AXFR work queue (stage-then-checkpoint) | `go test ./internal/store ./cmd/cc-dns-worker -run AXFR` |
