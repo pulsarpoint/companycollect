@@ -45,7 +45,7 @@
     group: root
     mode: "0644"
   notify:
-    - Reload systemd
+    - Reload systemd (worker)
     - Restart cc-dns-scan
 
 - name: Enable + start the orchestrator

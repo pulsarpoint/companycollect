@@ -35,5 +35,7 @@ clickhouse_host: companycollect
 clickhouse_native_port: 9002
 clickhouse_user: default
 clickhouse_database: corpscout
+# Native-protocol traffic (including this password) is unencrypted on the wire;
+# this relies entirely on the Tailscale tunnel between hosts. Do not expose off-Tailscale.
 clickhouse_secure: "false"
 clickhouse_password: "{{ vault_clickhouse_password }}"

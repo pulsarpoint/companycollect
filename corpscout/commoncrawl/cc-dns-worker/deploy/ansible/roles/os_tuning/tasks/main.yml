@@ -22,6 +22,17 @@
     group: root
     mode: "0644"
 
+- name: Check ufw is not actively enforcing (installing iptables-persistent removes ufw)
+  ansible.builtin.command: ufw status
+  register: ufw_status
+  changed_when: false
+  failed_when: false
+
+- name: Refuse to proceed if ufw is active
+  ansible.builtin.assert:
+    that: "'Status: active' not in ufw_status.stdout"
+    fail_msg: "ufw is ACTIVE — installing iptables-persistent would remove it and could expose the host. Resolve manually first."
+
 - name: Install iptables-persistent (persists the raw NOTRACK rules)
   ansible.builtin.apt:
     name: [iptables-persistent, netfilter-persistent]

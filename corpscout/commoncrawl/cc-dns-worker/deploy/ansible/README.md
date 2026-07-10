@@ -15,6 +15,12 @@ resolver (`unbound`), and the worker service itself (`cc_dns_worker`).
   - Go installed (used to build `cc-dns-worker` before it's shipped to the
     target, per the `cc_dns_worker` role).
   - This repository checked out.
+  - Required Ansible collections installed:
+
+    ```bash
+    cd deploy/ansible
+    ansible-galaxy collection install -r requirements.yml
+    ```
 
 ## One-time vault setup
 
