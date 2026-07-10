@@ -451,6 +451,35 @@ func TestPendingBatchCursor(t *testing.T) {
 	}
 }
 
+func TestHostnamesRoundTrip(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.InsertHostnames(ctx, "s1", "example.com", []model.HostLabel{
+		{Label: "jenkins", DiscoverySource: "axfr", LiveCert: false},
+		{Label: "api", DiscoverySource: "ct", LiveCert: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.HostnamesForBatch(ctx, "s1", []string{"example.com", "other.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m["example.com"]) != 2 {
+		t.Fatalf("want 2 labels for example.com, got %d", len(m["example.com"]))
+	}
+	got := map[string]string{}
+	for _, h := range m["example.com"] {
+		got[h.Label] = h.DiscoverySource
+	}
+	if got["jenkins"] != "axfr" || got["api"] != "ct" {
+		t.Fatalf("labels not round-tripped: %+v", got)
+	}
+}
+
 // RecordsAfter must page by walking the rowid primary key up from the watermark. If the query
 // planner instead picks the (scan_id, root_domain) covering index, every batch re-reads and
 // re-sorts the scan's entire record set (temp B-tree), which collapses incremental-load

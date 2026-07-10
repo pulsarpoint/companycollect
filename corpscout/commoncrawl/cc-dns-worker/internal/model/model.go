@@ -17,6 +17,15 @@ type DNSRecord struct {
 	Discovery  string // "static" | "ct" | "axfr" — how the hostname was discovered
 }
 
+// HostLabel is one discovered subdomain label to scan for a domain (from CT, the registry, or a
+// zone transfer). Label is the name minus ".<root_domain>", lowercased. DiscoverySource is how it
+// was found (ct|axfr|static); LiveCert is true when a CT source had a still-valid certificate.
+type HostLabel struct {
+	Label           string
+	DiscoverySource string
+	LiveCert        bool
+}
+
 // DomainResult is everything learned for one domain in one scan.
 type DomainResult struct {
 	ScanID        string

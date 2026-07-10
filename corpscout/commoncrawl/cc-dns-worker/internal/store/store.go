@@ -66,6 +66,19 @@ CREATE TABLE IF NOT EXISTS load_state (
   scan_id      TEXT PRIMARY KEY,
   loaded_rowid INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS scan_hostnames (
+  scan_id          TEXT NOT NULL,
+  root_domain      TEXT NOT NULL,
+  label            TEXT NOT NULL,
+  discovery_source TEXT NOT NULL DEFAULT 'ct',
+  live_cert        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (scan_id, root_domain, label)
+);
+CREATE TABLE IF NOT EXISTS host_load_state (
+  scan_id  TEXT PRIMARY KEY,
+  cursor   TEXT NOT NULL DEFAULT '',
+  complete INTEGER NOT NULL DEFAULT 0
+);
 `
 
 // Open opens (creating if needed) the SQLite stage in WAL mode and ensures the schema.
@@ -461,6 +474,122 @@ func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model
 		out = append(out, model.HostnameRow{RootDomain: rd, Label: label, DiscoverySource: disc})
 	}
 	return out, rows.Err()
+}
+
+// SeededDomainsAfter returns up to limit seeded root_domains for scanID greater than afterRootDomain,
+// ordered — the cursor iterator the host-load phase walks (mirrors PendingBatch, but over ALL seeded
+// domains regardless of status).
+func (s *Store) SeededDomainsAfter(ctx context.Context, scanID, afterRootDomain string, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT root_domain FROM scan_domains WHERE scan_id = ? AND root_domain > ? ORDER BY root_domain LIMIT ?`,
+		scanID, afterRootDomain, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// InsertHostnames writes a domain's discovered labels for scanID (idempotent — INSERT OR IGNORE on the
+// (scan_id, root_domain, label) primary key).
+func (s *Store) InsertHostnames(ctx context.Context, scanID, rootDomain string, hosts []model.HostLabel) error {
+	if len(hosts) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO scan_hostnames
+		(scan_id, root_domain, label, discovery_source, live_cert) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, h := range hosts {
+		if _, err := stmt.ExecContext(ctx, scanID, rootDomain, h.Label, h.DiscoverySource, b2i(h.LiveCert)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// HostnamesForBatch bulk-loads the labels for a set of domains in one query (the feeder calls it once
+// per dispatch batch, not per worker) → map[root_domain][]HostLabel.
+func (s *Store) HostnamesForBatch(ctx context.Context, scanID string, domains []string) (map[string][]model.HostLabel, error) {
+	if len(domains) == 0 {
+		return nil, nil
+	}
+	ph := strings.Repeat("?,", len(domains))
+	ph = ph[:len(ph)-1]
+	args := make([]any, 0, len(domains)+1)
+	args = append(args, scanID)
+	for _, d := range domains {
+		args = append(args, d)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, label, discovery_source, live_cert
+		FROM scan_hostnames WHERE scan_id = ? AND root_domain IN (`+ph+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]model.HostLabel{}
+	for rows.Next() {
+		var rd string
+		var h model.HostLabel
+		var lc int
+		if err := rows.Scan(&rd, &h.Label, &h.DiscoverySource, &lc); err != nil {
+			return nil, err
+		}
+		h.LiveCert = lc != 0
+		out[rd] = append(out[rd], h)
+	}
+	return out, rows.Err()
+}
+
+// HostLoadComplete reports whether the host-load phase finished for scanID (resume skips it).
+func (s *Store) HostLoadComplete(ctx context.Context, scanID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT complete FROM host_load_state WHERE scan_id = ?`, scanID).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return n == 1, err
+}
+
+// MarkHostLoadComplete records that the host-load phase finished for scanID.
+func (s *Store) MarkHostLoadComplete(ctx context.Context, scanID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO host_load_state (scan_id, complete) VALUES (?, 1)
+		 ON CONFLICT(scan_id) DO UPDATE SET complete = 1`, scanID)
+	return err
+}
+
+// HostLoadCursor returns the last root_domain the host-load phase processed for scanID ("" if none).
+func (s *Store) HostLoadCursor(ctx context.Context, scanID string) (string, error) {
+	var c string
+	err := s.db.QueryRowContext(ctx, `SELECT cursor FROM host_load_state WHERE scan_id = ?`, scanID).Scan(&c)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return c, err
+}
+
+// SetHostLoadCursor advances the host-load cursor for scanID.
+func (s *Store) SetHostLoadCursor(ctx context.Context, scanID, cursor string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO host_load_state (scan_id, cursor) VALUES (?, ?)
+		 ON CONFLICT(scan_id) DO UPDATE SET cursor = excluded.cursor`, scanID, cursor)
+	return err
 }
 
 // Close closes the DB.
