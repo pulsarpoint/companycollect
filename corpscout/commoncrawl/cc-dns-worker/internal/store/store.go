@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -560,6 +561,15 @@ func (s *Store) InsertHostnamesMap(ctx context.Context, scanID string, m map[str
 	if len(m) == 0 {
 		return 0, nil
 	}
+	// Insert in (root_domain, label) key order so the scan_hostnames primary-key B-tree grows by
+	// mostly-sequential appends instead of thrashing random pages — the dominant cost when a shard
+	// commits millions of rows on the pure-Go SQLite driver, and it worsens as the index grows.
+	domains := make([]string, 0, len(m))
+	for rd := range m {
+		domains = append(domains, rd)
+	}
+	sort.Strings(domains)
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -572,7 +582,9 @@ func (s *Store) InsertHostnamesMap(ctx context.Context, scanID string, m map[str
 	}
 	defer stmt.Close()
 	added := 0
-	for rd, hosts := range m {
+	for _, rd := range domains {
+		hosts := m[rd]
+		sort.Slice(hosts, func(i, j int) bool { return hosts[i].Label < hosts[j].Label })
 		for _, h := range hosts {
 			r, err := stmt.ExecContext(ctx, scanID, rd, h.Label, h.DiscoverySource, b2i(h.LiveCert))
 			if err != nil {
