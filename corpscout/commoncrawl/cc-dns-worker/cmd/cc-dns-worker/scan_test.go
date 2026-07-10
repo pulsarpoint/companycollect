@@ -5,8 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"cc-dns-worker/internal/model"
+	"cc-dns-worker/internal/records"
+	"cc-dns-worker/internal/resolve"
 	"cc-dns-worker/internal/store"
+
+	"github.com/miekg/dns"
 )
 
 func TestCleanResolvers(t *testing.T) {
@@ -71,5 +77,44 @@ func TestHostnamesForBatchEmpty(t *testing.T) {
 	}
 	if len(m) != 0 {
 		t.Fatalf("want empty map, got %+v", m)
+	}
+}
+
+type privateDelegationExchanger struct{}
+
+func (privateDelegationExchanger) Exchange(_ context.Context, request *dns.Msg, _ string) (*dns.Msg, error) {
+	response := new(dns.Msg)
+	response.SetReply(request)
+	question := request.Question[0]
+	switch question.Qtype {
+	case dns.TypeNS:
+		response.Answer = []dns.RR{&dns.NS{
+			Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
+			Ns:  "ns1.example.com.",
+		}}
+	case dns.TypeA:
+		response.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   []byte{10, 0, 0, 53},
+		}}
+	}
+	return response, nil
+}
+
+func TestResolveDomainPersistsPrivateOnlyDelegationAsDistinctTerminalStatus(t *testing.T) {
+	discoverer := resolve.NewDiscoverer(privateDelegationExchanger{}, []string{"operator-resolver"})
+	result := resolveDomain(
+		context.Background(), discoverer, nil, records.DefaultConfig(),
+		"example.com", "scan-1", "run-1", nil,
+	)
+
+	if result.Status != model.DomainStatusNoPublicNSEndpoints {
+		t.Fatalf("status = %q, want %q", result.Status, model.DomainStatusNoPublicNSEndpoints)
+	}
+	if len(result.Endpoints) != 1 || result.Endpoints[0].IP != "10.0.0.53" || result.Endpoints[0].Dialable {
+		t.Fatalf("private delegation evidence was not preserved: %+v", result.Endpoints)
+	}
+	if result.ResolvedAt.IsZero() || time.Since(result.ResolvedAt) > time.Minute {
+		t.Fatalf("unexpected resolution timestamp: %v", result.ResolvedAt)
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -338,7 +339,7 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	}
 	for r := range results {
 		stats.Domains.Add(1)
-		if r.Status == "error" {
+		if r.Status == model.DomainStatusError {
 			stats.DomainErrors.Add(1)
 		}
 		buf = append(buf, r)
@@ -485,11 +486,15 @@ func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.R
 		if derr != nil {
 			msg = derr.Error()
 		}
+		status := model.DomainStatusError
+		if errors.Is(derr, resolve.ErrNoPublicNSEndpoints) {
+			status = model.DomainStatusNoPublicNSEndpoints
+		}
 		return model.DomainResult{
 			ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
 			Nameservers: del.NS, NSIPs: del.NSIPs, Endpoints: del.Endpoints,
 			DSPresent: del.DSOutcome == resolve.OutcomePresent, DSOutcome: del.DSOutcome,
-			Status: "error", Error: msg, SourceRunID: runID, ResolvedAt: now,
+			Status: status, Error: msg, SourceRunID: runID, ResolvedAt: now,
 		}
 	}
 	return rec.Resolve(ctx, domain, scanID, runID, del, cfg, now, extra)

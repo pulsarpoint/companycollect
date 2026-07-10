@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS load_state (
   loaded_rowid INTEGER NOT NULL DEFAULT 0,
   domains_seq  INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS local_backfills (
+  name TEXT PRIMARY KEY
+);
 -- completed_domains records, once per (scan_id, root_domain), the moment a domain's CommitBatch landed
 -- with status='done' — including a domain that produced ZERO scan_records rows. seq is a global,
 -- AUTOINCREMENT, monotonic-only-growing sequence (never reused, even across scan-ids), so the
@@ -166,6 +169,10 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
 	migrate(db)
+	if err := backfillCompletedDomains(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("backfill completed domains: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -196,6 +203,40 @@ func migrate(db *sql.DB) {
 	} {
 		_, _ = db.ExecContext(context.Background(), stmt)
 	}
+}
+
+// backfillCompletedDomains upgrades active stage DBs created before the independent summary queue.
+// Replaying an already-loaded summary is safe because the ClickHouse table is replacing/idempotent;
+// omitting a not-yet-loaded summary is not. The status update recognizes the exact sentinel persisted by
+// the pre-fix resolver so an interrupted private-only scan also becomes durable security evidence.
+func backfillCompletedDomains(db *sql.DB) error {
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var done int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM local_backfills WHERE name = 'completed_domains_v1')`).Scan(&done); err != nil {
+		return err
+	}
+	if done != 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE scan_domains SET status = ?
+		WHERE status = ? AND error = ? AND ns_ips NOT IN ('', 'null', '[]')`,
+		model.DomainStatusNoPublicNSEndpoints, model.DomainStatusError, resolve.ErrNoPublicNSEndpoints.Error()); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO completed_domains (scan_id, root_domain)
+		SELECT scan_id, root_domain FROM scan_domains
+		WHERE status IN (?, ?) ORDER BY rowid`, model.DomainStatusDone, model.DomainStatusNoPublicNSEndpoints); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO local_backfills (name) VALUES ('completed_domains_v1')`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Seed inserts pending rows for domains, ignoring any already present. Returns rows newly added.
@@ -248,10 +289,10 @@ func (s *Store) MarkSeedComplete(ctx context.Context, scanID string) error {
 	return err
 }
 
-// Pending returns domains for scanID whose status is neither 'done' nor 'error'.
+// Pending returns the domains that have not reached any terminal status.
 func (s *Store) Pending(ctx context.Context, scanID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT root_domain FROM scan_domains WHERE scan_id = ? AND status NOT IN ('done','error') ORDER BY root_domain`, scanID)
+		`SELECT root_domain FROM scan_domains WHERE scan_id = ? AND status = 'pending' ORDER BY root_domain`, scanID)
 	if err != nil {
 		return nil, err
 	}
@@ -267,14 +308,14 @@ func (s *Store) Pending(ctx context.Context, scanID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// PendingBatch returns up to limit not-yet-terminal domains for scanID whose root_domain is greater
+// PendingBatch returns up to limit still-pending domains for scanID whose root_domain is greater
 // than afterRootDomain, ordered by root_domain. afterRootDomain="" starts at the beginning.
 // Cursor-paginating on the (scan_id, root_domain) primary key keeps streaming dispatch ~O(n) instead
 // of re-walking the growing done/error prefix on every call.
 func (s *Store) PendingBatch(ctx context.Context, scanID, afterRootDomain string, limit int) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT root_domain FROM scan_domains
-		 WHERE scan_id = ? AND root_domain > ? AND status NOT IN ('done','error')
+		 WHERE scan_id = ? AND root_domain > ? AND status = 'pending'
 		 ORDER BY root_domain LIMIT ?`, scanID, afterRootDomain, limit)
 	if err != nil {
 		return nil, err
@@ -294,11 +335,9 @@ func (s *Store) PendingBatch(ctx context.Context, scanID, afterRootDomain string
 // CommitBatch writes a batch of results in one transaction, replacing each domain's records so a
 // re-commit is idempotent. Records are written unconditionally (a "partial" domain's observed records
 // are preserved exactly like a "done" one's — see model.DomainResult's Status doc comment, Task 9).
-// Only a domain committed with Status=="done" also gets a completed_domains row (INSERT OR IGNORE, so
-// a retried commit of the same domain is a no-op there too) — including a domain with zero Records,
-// which is exactly the case the record-observation stream can never see (Task 8) — so neither an
-// "error" nor a "partial" result can ever reach the last-good summary tables (StagedDomains/
-// SummariesFor/CompletedDomainsAfter are all filtered to status='done').
+// A trustworthy summary status (done or no_public_ns_endpoints) also gets a completed_domains row
+// (INSERT OR IGNORE, so a retried commit is a no-op there too). Error and partial results never reach the
+// latest summary tables, while their actually observed records remain available through scan_records.
 func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -357,7 +396,7 @@ func (s *Store) CommitBatch(ctx context.Context, results []model.DomainResult) e
 		} else if n != 1 {
 			return fmt.Errorf("commit domain %q: %d rows updated (not seeded?)", res.RootDomain, n)
 		}
-		if res.Status == "done" {
+		if res.Status == model.DomainStatusDone || res.Status == model.DomainStatusNoPublicNSEndpoints {
 			if _, err := insCD.ExecContext(ctx, res.ScanID, res.RootDomain); err != nil {
 				return err
 			}
@@ -391,14 +430,14 @@ func (s *Store) StagedRecords(ctx context.Context, scanID string) ([]model.Recor
 	return out, rows.Err()
 }
 
-// StagedDomains reads the per-domain summaries for a scan into ScanRow shape. Only status='done'
-// domains are returned (Task 9: neither a failed "error" re-scan nor a "partial" one may clobber a
-// domain's last-good summary), and a domain that never resolves has no DNS state to record.
+// StagedDomains reads trustworthy terminal summaries: fully resolved domains and definitive
+// private-only delegations. Failed or partial scans cannot clobber that state.
 func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips, ns_endpoints,
 		dnssec_signed, ds_present, ds_outcome, dnskey_outcome, status, queries_total, queries_ok,
 		source_run_id, resolved_at
-		FROM scan_domains WHERE scan_id = ? AND status = 'done'`, scanID)
+		FROM scan_domains WHERE scan_id = ? AND status IN (?, ?)`,
+		scanID, model.DomainStatusDone, model.DomainStatusNoPublicNSEndpoints)
 	if err != nil {
 		return nil, err
 	}
@@ -415,6 +454,7 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
 		_ = json.Unmarshal([]byte(nsips), &r.NSIPs)
 		_ = json.Unmarshal([]byte(nsEndpoints), &r.Endpoints)
+		setScanRowEndpoints(&r)
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
 		r.ResolvedAt = parseTS(ts)
@@ -428,7 +468,7 @@ func (s *Store) StagedDomains(ctx context.Context, scanID string) ([]model.ScanR
 func (s *Store) PendingCount(ctx context.Context, scanID string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM scan_domains WHERE scan_id = ? AND status NOT IN ('done','error')`, scanID).Scan(&n)
+		`SELECT count(*) FROM scan_domains WHERE scan_id = ? AND status = 'pending'`, scanID).Scan(&n)
 	return n, err
 }
 
@@ -518,23 +558,22 @@ func (s *Store) RecordsAfter(ctx context.Context, scanID string, afterRowid int6
 	return out, maxRowid, domains, rows.Err()
 }
 
-// SummariesFor returns the done-summary rows for the given domains (skips non-'done'). Used by the
-// incremental loader to load summaries alongside a batch of records.
+// SummariesFor returns trustworthy terminal summaries for the given domains.
 func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []string) ([]model.ScanRow, error) {
 	if len(domains) == 0 {
 		return nil, nil
 	}
 	ph := strings.Repeat("?,", len(domains))
 	ph = ph[:len(ph)-1]
-	args := make([]any, 0, len(domains)+1)
-	args = append(args, scanID)
+	args := make([]any, 0, len(domains)+3)
+	args = append(args, scanID, model.DomainStatusDone, model.DomainStatusNoPublicNSEndpoints)
 	for _, d := range domains {
 		args = append(args, d)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, etld, nameservers, ns_ips, ns_endpoints,
 		dnssec_signed, ds_present, ds_outcome, dnskey_outcome, status, queries_total, queries_ok,
 		source_run_id, resolved_at
-		FROM scan_domains WHERE scan_id = ? AND status = 'done' AND root_domain IN (`+ph+`)`, args...)
+		FROM scan_domains WHERE scan_id = ? AND status IN (?, ?) AND root_domain IN (`+ph+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -551,12 +590,22 @@ func (s *Store) SummariesFor(ctx context.Context, scanID string, domains []strin
 		_ = json.Unmarshal([]byte(ns), &r.Nameservers)
 		_ = json.Unmarshal([]byte(nsips), &r.NSIPs)
 		_ = json.Unmarshal([]byte(nsEndpoints), &r.Endpoints)
+		setScanRowEndpoints(&r)
 		r.DNSSECSigned = uint8(dnssec)
 		r.DSPresent = uint8(ds)
 		r.ResolvedAt = parseTS(ts)
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func setScanRowEndpoints(row *model.ScanRow) {
+	for _, endpoint := range row.Endpoints {
+		row.NSEndpointNames = append(row.NSEndpointNames, endpoint.Name)
+		row.NSEndpointIPs = append(row.NSEndpointIPs, endpoint.IP)
+		row.NSEndpointScopes = append(row.NSEndpointScopes, endpoint.Scope)
+		row.NSEndpointDialable = append(row.NSEndpointDialable, uint8(b2i(endpoint.Dialable)))
+	}
 }
 
 // completedDomainsAfterQuery pages completed_domains by its own seq, exactly mirroring recordsAfterQuery's
@@ -571,8 +620,8 @@ const completedDomainsAfterQuery = `SELECT seq, root_domain FROM completed_domai
 // completed_domains rows read in this page (which may exceed len(sums): see below). Unlike
 // RecordsAfter+SummariesFor (which can only ever see a domain that produced at least one scan_records
 // row), this is driven off completed_domains — populated by CommitBatch for EVERY domain committed
-// status='done', including one with zero records — so a zero-record done domain's summary is never
-// silently skipped (Task 8).
+// a trustworthy terminal status, including one with zero records — so a zero-record domain's summary
+// is never silently skipped (Task 8).
 //
 // scanned, not len(sums), is what the caller must compare against limit to know whether this page was
 // full (there may be more) or short (caught up): a completed_domains row whose domain no longer joins to
@@ -610,27 +659,25 @@ func (s *Store) CompletedDomainsAfter(ctx context.Context, scanID string, afterS
 	return sums, maxSeq, len(domains), err
 }
 
-// DiscoveredHostnames returns the distinct non-static hosts (discovery in ct/axfr) that resolved this
-// scan, one per (root_domain, label), for the registry write-back. label = name minus ".<root_domain>";
-// apex and non-subdomain names are skipped. Each row's timestamps are stamped from resolved_at — the
-// SCAN's own persisted resolution time for that domain (the same value CommitBatch wrote into
-// scan_records.resolved_at/scan_domains.resolved_at) — not the caller's wall-clock time, so calling this
-// twice (e.g. a retried registry write-back) always returns byte-identical timestamps for the same
-// scan_id (Task 8). All of a domain's scan_records rows share one resolved_at (CommitBatch always
-// deletes and re-inserts a domain's records together), so picking any one of them is correct.
+// DiscoveredHostnames returns one deterministic row per (root_domain, hostname) for registry write-back.
+// A hostname may be observed through both CT queries and a later AXFR in the same scan, so SQL performs
+// the actual aggregation: discovery=min gives AXFR precedence, first_seen=min(resolved_at), and
+// last_seen/last_resolved=max(resolved_at). Retrying therefore reproduces the same row instead of relying
+// on SQLite's unspecified DISTINCT row order.
 func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model.HostnameRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT root_domain, name, discovery, resolved_at
+	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, lower(name), min(discovery), min(resolved_at), max(resolved_at)
 		FROM scan_records
-		WHERE scan_id = ? AND discovery IN ('ct','axfr') AND record_type IN ('A','AAAA','CNAME')`, scanID)
+		WHERE scan_id = ? AND discovery IN ('ct','axfr') AND record_type IN ('A','AAAA','CNAME')
+		GROUP BY root_domain, lower(name)
+		ORDER BY root_domain, lower(name)`, scanID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	seen := map[string]bool{}
 	var out []model.HostnameRow
 	for rows.Next() {
-		var rd, name, disc, ts string
-		if err := rows.Scan(&rd, &name, &disc, &ts); err != nil {
+		var rd, name, disc, firstTS, lastTS string
+		if err := rows.Scan(&rd, &name, &disc, &firstTS, &lastTS); err != nil {
 			return nil, err
 		}
 		suffix := "." + rd
@@ -641,15 +688,11 @@ func (s *Store) DiscoveredHostnames(ctx context.Context, scanID string) ([]model
 		if label == "" || strings.Contains(label, "*") {
 			continue // empty or wildcard (e.g. "*.example.com") — not a durable host
 		}
-		key := rd + "\x00" + label
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		observedAt := parseTS(ts)
+		firstSeen := parseTS(firstTS)
+		lastSeen := parseTS(lastTS)
 		out = append(out, model.HostnameRow{
 			RootDomain: rd, Label: label, DiscoverySource: disc,
-			FirstSeen: observedAt, LastSeen: observedAt, LastResolved: observedAt,
+			FirstSeen: firstSeen, LastSeen: lastSeen, LastResolved: lastSeen,
 		})
 	}
 	return out, rows.Err()

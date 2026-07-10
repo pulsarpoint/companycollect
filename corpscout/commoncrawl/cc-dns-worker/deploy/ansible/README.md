@@ -72,6 +72,32 @@ ansible-vault view group_vars/cc_dns/vault.yml
 
 ## Running
 
+### One-time raw-observation cutover
+
+The first deployment containing the retry-safe raw DNS observation writer must start a new scan ID.
+The role refuses to restart an existing cycle until an operator makes that boundary explicit.
+
+To stop the worker, preserve its current state file as a pre-cutover backup, and deliberately abandon
+that cycle before the new binary starts:
+
+```bash
+ansible-playbook site.yml -e cc_dns_observation_cutover_mode=abandon_active_cycle
+```
+
+The SQLite scan DB is left untouched (and remains subject to the normal `--keep-dbs` pruning policy),
+but its state file is retired so the new writer mints a fresh cycle. If the cutover was completed
+independently before this guard was deployed, verify that no scan ID contributed to both the legacy
+aggregate and raw observations, then record that fact with:
+
+```bash
+ansible-playbook site.yml -e cc_dns_observation_cutover_mode=already_complete
+```
+
+Both modes create `.dns-record-observation-cutover-complete` on the target. Later deployments require no
+extra variable and cannot accidentally repeat the one-time abandonment.
+
+### Normal deployment
+
 ```bash
 cd deploy/ansible
 ansible-playbook site.yml

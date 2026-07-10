@@ -20,6 +20,12 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
+const legacyRecordsTableForTest = "corpscout.commoncrawl_domain_dns_records"
+
+func loadRecordsLegacy(ctx context.Context, conn driver.Conn, recs []model.RecordRow) (int, error) {
+	return insert(ctx, conn, legacyRecordsTableForTest, recs)
+}
+
 func envOr(k, d string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
@@ -484,8 +490,8 @@ func TestObservationOutOfOrderLoadEventTimeWins(t *testing.T) {
 }
 
 // TestObservationSummaryPreservesLegacyBaseline proves the cutover-boundary invariant: a record's
-// pre-cutover legacy scans/first_seen (written through loadRecordsLegacy, the kept-but-unused legacy
-// path — see this package's doc comment) survive into the summary, and a NEW scan against the SAME
+// pre-cutover legacy scans/first_seen (written through this integration test's legacy-table helper)
+// survive into the summary, and a NEW scan against the SAME
 // record identity, loaded through the observations path post-cutover, ADDS to the legacy count rather
 // than replacing it.
 func TestObservationSummaryPreservesLegacyBaseline(t *testing.T) {

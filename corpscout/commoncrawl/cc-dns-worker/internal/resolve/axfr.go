@@ -284,11 +284,10 @@ func NewAXFRProber(sched *scheduler.Scheduler, caps AXFRCaps, maxInflight int) *
 }
 
 // ProbeServer transfers zone from a single NS IP — the per-NS entry point for the standalone AXFR
-// pipeline, which records an outcome per nameserver. The caller is responsible for skipping
-// hyperscaler/non-dialable endpoints before calling; this only paces the dial through the AXFR
-// scheduler lane and bounds concurrency with the aggregate semaphore. NSHost/NSIP are always set on the
-// returned outcome (even when the probe never got past the scheduler's breaker or the semaphore) so the
-// caller can key its dns_axfr row.
+// pipeline, which records an outcome per nameserver. It reclassifies the target here, at the last public
+// method before the socket opens, so stale persisted Dialable metadata or a future caller cannot bypass
+// the public-only policy. NSHost/NSIP are always set on the returned outcome so the caller can key its
+// dns_axfr row even when the target is skipped or the scheduler rejects it.
 func (p *AXFRProber) ProbeServer(ctx context.Context, zone, nsHost, nsIP string) AXFROutcome {
 	fill := func(o AXFROutcome) AXFROutcome {
 		o.NSHost, o.NSIP = nsHost, nsIP
@@ -296,6 +295,10 @@ func (p *AXFRProber) ProbeServer(ctx context.Context, zone, nsHost, nsIP string)
 			o.ObservedAt = time.Now().UTC()
 		}
 		return o
+	}
+	target := hostOnly(nsIP)
+	if scope, ok := ClassifyString(target); !ok || !Dialable(scope) {
+		return fill(AXFROutcome{Verdict: VerdictUnknown, Reason: ReasonSkipped})
 	}
 
 	select {

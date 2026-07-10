@@ -125,9 +125,9 @@ func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, de
 		}
 	}
 
-	res.Status = "done"
+	res.Status = model.DomainStatusDone
 	if !apexAnswered || res.DNSKEYOutcome == OutcomeUnknown || res.DSOutcome == OutcomeUnknown {
-		res.Status = "partial"
+		res.Status = model.DomainStatusPartial
 	}
 	return res
 }

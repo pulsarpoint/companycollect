@@ -307,7 +307,7 @@ func processAXFRTarget(ctx context.Context, prober axfrProber, t store.AXFRTarge
 	now := time.Now().UTC()
 	var zone []model.DNSRecord
 	var probes []resolve.AXFROutcome
-	seenIP := map[string]bool{} // one IP can back several NS names (shared/anycast) — probe it once
+	probesByIP := map[string]resolve.AXFROutcome{} // share the network result, not the endpoint identity
 	for _, ep := range t.Endpoints {
 		if !ep.Dialable {
 			continue // never dial a non-public endpoint (loopback/private/link-local/etc. — evidence only)
@@ -315,11 +315,15 @@ func processAXFRTarget(ctx context.Context, prober axfrProber, t store.AXFRTarge
 		if scheduler.IsHyperscaler(ep.IP) {
 			continue // skip this NS — hyperscalers never allow AXFR
 		}
-		if seenIP[ep.IP] {
-			continue
+		res, ok := probesByIP[ep.IP]
+		if !ok {
+			res = prober.ProbeServer(ctx, t.RootDomain, ep.Name, ep.IP)
+			probesByIP[ep.IP] = res
 		}
-		seenIP[ep.IP] = true
-		res := prober.ProbeServer(ctx, t.RootDomain, ep.Name, ep.IP)
+		// AXFR is a zone/IP operation, so an IP shared by several NS hostnames needs only one socket
+		// probe. Persistence is keyed by (hostname, IP), however, so clone that result for every active
+		// endpoint instead of silently dropping all but the first hostname.
+		res.NSHost, res.NSIP = ep.Name, ep.IP
 		probes = append(probes, res)
 		if res.IsOpen() && zone == nil {
 			zone = res.Zone // capture the transferred zone once per domain

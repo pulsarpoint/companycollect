@@ -45,6 +45,7 @@ func TestClassifyAddr(t *testing.T) {
 		// deny: benchmarking (RFC2544).
 		{"benchmark v4", "198.18.0.1", ScopeBenchmark},
 		{"benchmark v4 upper end", "198.19.255.254", ScopeBenchmark},
+		{"benchmark v6", "2001:2::1", ScopeBenchmark},
 
 		// deny: multicast (includes link-local multicast — it's still multicast, not link_local).
 		{"multicast v4", "224.0.0.1", ScopeMulticast},
@@ -56,6 +57,14 @@ func TestClassifyAddr(t *testing.T) {
 
 		// deny: reserved catch-all (Class E "future use", not covered by any named range above).
 		{"reserved v4 240/4", "240.0.0.1", ScopeReserved},
+		{"this-network v4 nonzero", "0.0.0.1", ScopeReserved},
+		{"IETF protocol assignments v4", "192.0.0.1", ScopeReserved},
+		{"deprecated 6to4 relay v4", "192.88.99.1", ScopeReserved},
+		{"discard-only v6", "100::1", ScopeReserved},
+		{"IETF protocol assignments v6", "2001:10::1", ScopeReserved},
+		{"deprecated 6to4 v6", "2002::1", ScopeReserved},
+		{"documentation v6 second block", "3fff::1", ScopeDocumentation},
+		{"outside allocated global v6", "4000::1", ScopeReserved},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

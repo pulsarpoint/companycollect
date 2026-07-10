@@ -15,7 +15,7 @@ func TestColumnLists(t *testing.T) {
 		t.Errorf("RecordRow columns wrong: %v", rc)
 	}
 	sc := chColumns[model.ScanRow]()
-	if !strings.Contains(strings.Join(sc, ","), "nameservers") || !strings.Contains(strings.Join(sc, ","), "ds_outcome") || len(sc) != 13 {
+	if !strings.Contains(strings.Join(sc, ","), "nameservers") || !strings.Contains(strings.Join(sc, ","), "ds_outcome") || len(sc) != 17 {
 		t.Errorf("ScanRow columns wrong: %v", sc)
 	}
 	oc := chColumns[model.RecordObservationRow]()

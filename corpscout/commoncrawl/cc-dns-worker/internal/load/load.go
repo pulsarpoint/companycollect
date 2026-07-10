@@ -50,7 +50,6 @@ import (
 )
 
 const (
-	recordsTable       = "corpscout.commoncrawl_domain_dns_records" // legacy baseline, Task 7 and earlier; frozen at cutover, kept for loadRecordsLegacy only
 	recordObsTable     = "corpscout.commoncrawl_domain_dns_record_observations"
 	recordSummaryTable = "corpscout.commoncrawl_domain_dns_record_summary"    // populated only by recordSummaryMV, never written directly
 	recordSummaryMV    = "corpscout.commoncrawl_domain_dns_record_summary_mv" // migration 000114, REFRESH EVERY 10 MINUTE
@@ -132,14 +131,6 @@ func toObservationRows(recs []model.RecordRow, scanID string, loadedAt time.Time
 		}
 	}
 	return out
-}
-
-// loadRecordsLegacy is the pre-Task-7 record-load path: it wrote RecordRows straight into the legacy
-// AggregatingMergeTree recordsTable, whose Scans=1-per-row insert double-counts on a retried load (the
-// bug this task fixes). FromStore/Incremental no longer call it — kept only so the cutover documented
-// in this package's doc comment is reversible without resurrecting deleted code.
-func loadRecordsLegacy(ctx context.Context, conn driver.Conn, recs []model.RecordRow) (int, error) {
-	return insert(ctx, conn, recordsTable, recs)
 }
 
 // loadRecordsIncremental loads every scan_records row committed since the persisted records_rowid

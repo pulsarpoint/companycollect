@@ -1728,3 +1728,148 @@ func TestDiscoveredHostnamesTimestampsFromResolvedAt(t *testing.T) {
 		t.Errorf("retry timestamps = %+v, want identical to first call's %+v", retry, first[0])
 	}
 }
+
+func TestNoPublicNSEndpointsIsTerminalAndSummaryWorthy(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	if _, err := st.Seed(ctx, "sc", []string{"private-ns.example"}); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := model.NameserverEndpoint{
+		Name: "ns1.private-ns.example", IP: "10.0.0.53", Scope: string(resolve.ScopePrivate), Dialable: false,
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "private-ns.example", ETLD: "example",
+		Nameservers: []string{endpoint.Name}, NSIPs: []string{endpoint.IP}, Endpoints: []model.NameserverEndpoint{endpoint},
+		Status: model.DomainStatusNoPublicNSEndpoints, Error: resolve.ErrNoPublicNSEndpoints.Error(),
+		ResolvedAt: time.Unix(100, 0).UTC(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if pending, err := st.Pending(ctx, "sc"); err != nil || len(pending) != 0 {
+		t.Fatalf("private-only terminal result remained pending: %v, err=%v", pending, err)
+	}
+	rows, err := st.StagedDomains(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Status != model.DomainStatusNoPublicNSEndpoints {
+		t.Fatalf("staged summaries = %+v, want the private-only delegation", rows)
+	}
+	row := rows[0]
+	if len(row.NSEndpointNames) != 1 || row.NSEndpointNames[0] != endpoint.Name ||
+		len(row.NSEndpointIPs) != 1 || row.NSEndpointIPs[0] != endpoint.IP ||
+		len(row.NSEndpointScopes) != 1 || row.NSEndpointScopes[0] != string(resolve.ScopePrivate) ||
+		len(row.NSEndpointDialable) != 1 || row.NSEndpointDialable[0] != 0 {
+		t.Fatalf("durable endpoint columns do not match the observed delegation: %+v", row)
+	}
+	if completed, _, scanned, err := st.CompletedDomainsAfter(ctx, "sc", 0, 10); err != nil || scanned != 1 || len(completed) != 1 {
+		t.Fatalf("completed summary queue = %+v scanned=%d err=%v, want one row", completed, scanned, err)
+	}
+}
+
+func TestOpenBackfillsLegacyCompletedDomains(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Seed(ctx, "sc", []string{"done.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "done.example", Status: model.DomainStatusDone, ResolvedAt: time.Unix(100, 0).UTC(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx, `DELETE FROM completed_domains WHERE scan_id = 'sc';
+		DELETE FROM local_backfills WHERE name = 'completed_domains_v1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	rows, _, scanned, err := st.CompletedDomainsAfter(ctx, "sc", 0, 10)
+	if err != nil || scanned != 1 || len(rows) != 1 || rows[0].RootDomain != "done.example" {
+		t.Fatalf("backfilled queue = %+v scanned=%d err=%v", rows, scanned, err)
+	}
+}
+
+func TestOpenPromotesLegacyNoPublicEndpointError(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy-private.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Seed(ctx, "sc", []string{"private.example"}); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := model.NameserverEndpoint{Name: "ns.private.example", IP: "10.0.0.53", Scope: "private"}
+	if err := st.CommitBatch(ctx, []model.DomainResult{{
+		ScanID: "sc", RootDomain: "private.example", Nameservers: []string{endpoint.Name},
+		NSIPs: []string{endpoint.IP}, Endpoints: []model.NameserverEndpoint{endpoint},
+		Status: model.DomainStatusError, Error: resolve.ErrNoPublicNSEndpoints.Error(), ResolvedAt: time.Unix(100, 0).UTC(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx, `DELETE FROM local_backfills WHERE name = 'completed_domains_v1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	rows, err := st.StagedDomains(ctx, "sc")
+	if err != nil || len(rows) != 1 || rows[0].Status != model.DomainStatusNoPublicNSEndpoints {
+		t.Fatalf("promoted legacy row = %+v, err=%v", rows, err)
+	}
+}
+
+func TestDiscoveredHostnamesAggregatesQueryAndAXFRTimesDeterministically(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	first := time.Unix(100, 0).UTC().Format(time.RFC3339Nano)
+	last := time.Unix(200, 0).UTC().Format(time.RFC3339Nano)
+	for _, row := range []struct {
+		discovery  string
+		resolvedAt string
+	}{
+		{discovery: "ct", resolvedAt: first},
+		{discovery: "axfr", resolvedAt: last},
+	} {
+		if _, err := st.db.ExecContext(ctx, `INSERT INTO scan_records
+			(scan_id, root_domain, name, record_type, value, discovery, resolved_at)
+			VALUES ('sc', 'example.com', 'VPN.Example.com', 'A', '10.0.0.1', ?, ?)`, row.discovery, row.resolvedAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := st.DiscoveredHostnames(ctx, "sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("hostnames = %+v, want one aggregated row", rows)
+	}
+	row := rows[0]
+	if row.Label != "vpn" || row.DiscoverySource != "axfr" {
+		t.Fatalf("identity/source = %+v, want vpn with AXFR precedence", row)
+	}
+	if !row.FirstSeen.Equal(time.Unix(100, 0).UTC()) || !row.LastSeen.Equal(time.Unix(200, 0).UTC()) || !row.LastResolved.Equal(row.LastSeen) {
+		t.Fatalf("aggregated times = %+v, want first=100 last=200", row)
+	}
+}

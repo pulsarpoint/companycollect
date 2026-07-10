@@ -2,7 +2,6 @@ package resolve
 
 import (
 	"context"
-	"net"
 	"runtime"
 	"strconv"
 	"testing"
@@ -170,31 +169,16 @@ func TestTransferAXFRContextCancelled(t *testing.T) {
 	}
 }
 
-func TestProbeServerCircuitOpen(t *testing.T) {
-	// Bind then immediately close a listener to get a loopback address nothing listens on: dialing it
-	// fails fast with a real transport error (connection refused), which is what should trip the
-	// breaker after BreakerThreshold=1 consecutive failures.
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr := l.Addr().String()
-	_ = l.Close()
-
-	sched := scheduler.New(scheduler.Config{PerServerQPS: 100, MaxInFlight: 1, BreakerThreshold: 1, BreakerCooldown: time.Minute})
-	p := NewAXFRProber(sched, AXFRCaps{Deadline: time.Second}, 4)
-
-	first := p.ProbeServer(context.Background(), "example.com", "ns1.example.com", addr)
-	if first.Verdict != VerdictUnknown || first.Reason != ReasonTransportError {
-		t.Fatalf("want unknown/transport_error priming the breaker, got %v/%v", first.Verdict, first.Reason)
-	}
-
-	second := p.ProbeServer(context.Background(), "example.com", "ns1.example.com", addr)
-	if second.Verdict != VerdictUnknown || second.Reason != ReasonCircuitOpen {
-		t.Fatalf("want unknown/circuit_open, got %v/%v", second.Verdict, second.Reason)
-	}
-	if second.NSHost != "ns1.example.com" || second.NSIP != addr {
-		t.Fatalf("want NSHost/NSIP set even on a breaker short-circuit, got %q/%q", second.NSHost, second.NSIP)
+func TestProbeServerBlocksNonPublicTargetAtSocketBoundary(t *testing.T) {
+	p := newTestProber(AXFRCaps{Deadline: time.Second})
+	for _, target := range []string{"127.0.0.1:53", "10.0.0.1", "0.0.0.1", "100::1"} {
+		res := p.ProbeServer(context.Background(), "example.com", "ns1.example.com", target)
+		if res.Verdict != VerdictUnknown || res.Reason != ReasonSkipped {
+			t.Errorf("ProbeServer(%q) = %v/%v, want unknown/skipped", target, res.Verdict, res.Reason)
+		}
+		if res.NSHost != "ns1.example.com" || res.NSIP != target {
+			t.Errorf("ProbeServer(%q) lost endpoint identity: host=%q ip=%q", target, res.NSHost, res.NSIP)
+		}
 	}
 }
 
@@ -293,18 +277,4 @@ func TestTransferAXFRNoLeakOnMidStreamCap(t *testing.T) {
 func newTestProber(caps AXFRCaps) *AXFRProber {
 	sched := scheduler.New(scheduler.Config{PerServerQPS: 100, MaxInFlight: 1})
 	return NewAXFRProber(sched, caps, 8)
-}
-
-func TestProbeServerOpenZone(t *testing.T) {
-	addr, stop := startAXFRServer(t, axfrZone(t), false)
-	defer stop()
-	p := newTestProber(AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: 5 * time.Second})
-
-	res := p.ProbeServer(context.Background(), "example.com", "ns1.example.com", addr)
-	if !res.IsOpen() || len(res.Zone) != 5 {
-		t.Fatalf("want open zone with 5 records, got Verdict=%v len=%d", res.Verdict, len(res.Zone))
-	}
-	if res.NSHost != "ns1.example.com" || res.NSIP != addr {
-		t.Fatalf("want NSHost/NSIP set, got %q/%q", res.NSHost, res.NSIP)
-	}
 }

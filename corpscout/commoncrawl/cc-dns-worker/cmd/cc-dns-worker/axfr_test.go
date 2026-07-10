@@ -37,13 +37,52 @@ func fakePendingFrom(domains []string) axfrPendingFunc {
 			}
 			out = append(out, store.AXFRTarget{
 				RootDomain: d,
-				Endpoints:  []model.NameserverEndpoint{{Name: "ns1." + d, IP: "203.0.113.9", Scope: "public", Dialable: true}},
+				Endpoints:  []model.NameserverEndpoint{{Name: "ns1." + d, IP: "9.9.9.9", Scope: "public", Dialable: true}},
 			})
 			if len(out) >= limit {
 				break
 			}
 		}
 		return out, nil
+	}
+}
+
+type countingAXFRProber struct {
+	calls int
+}
+
+func (p *countingAXFRProber) ProbeServer(ctx context.Context, zone, nsHost, nsIP string) resolve.AXFROutcome {
+	p.calls++
+	return resolve.AXFROutcome{
+		Verdict: resolve.VerdictClosed, Reason: resolve.ReasonRefused,
+		NSHost: nsHost, NSIP: nsIP, ObservedAt: time.Unix(100, 0).UTC(),
+	}
+}
+
+func TestProcessAXFRTargetSharesProbeButPreservesEveryEndpoint(t *testing.T) {
+	prober := &countingAXFRProber{}
+	target := store.AXFRTarget{
+		RootDomain: "example.com",
+		Endpoints: []model.NameserverEndpoint{
+			{Name: "ns1.example.com", IP: "9.9.9.9", Scope: "public", Dialable: true},
+			{Name: "ns2.example.com", IP: "9.9.9.9", Scope: "public", Dialable: true},
+		},
+	}
+
+	result := processAXFRTarget(context.Background(), prober, target)
+	if prober.calls != 1 {
+		t.Fatalf("network probes = %d, want 1 for the shared IP", prober.calls)
+	}
+	if len(result.probes) != 2 {
+		t.Fatalf("persisted endpoint outcomes = %d, want 2", len(result.probes))
+	}
+	if result.probes[0].NSHost != "ns1.example.com" || result.probes[1].NSHost != "ns2.example.com" {
+		t.Fatalf("endpoint identities were not preserved: %+v", result.probes)
+	}
+	for _, probe := range result.probes {
+		if probe.NSIP != "9.9.9.9" || !probe.IsClosed() {
+			t.Errorf("unexpected cloned outcome: %+v", probe)
+		}
 	}
 }
 

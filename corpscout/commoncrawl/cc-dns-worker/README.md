@@ -544,9 +544,9 @@ scan's records twice. Historical `scans` values already in the legacy table as o
 include retry inflation from before this fix existed — not reconstructable (the retried `scan_id`s that
 caused it were never recorded) — so it is preserved as a legacy fact, not silently "corrected."
 
-The legacy record-load path (`load.loadRecordsLegacy`, straight `INSERT` into
-`commoncrawl_domain_dns_records`) is kept, unused by `FromStore`/`Incremental`, so the cutover is
-reversible without resurrecting deleted code.
+The legacy `commoncrawl_domain_dns_records` table remains as the frozen baseline, but production code
+contains no writer for it. A rollback must deploy a pre-cutover binary deliberately; keeping a dormant
+write function in the current worker would make an accidental post-cutover legacy write too easy.
 
 ### Schema migrations for AXFR support
 
