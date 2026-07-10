@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cc-dns-worker/internal/hostsource"
@@ -47,7 +48,7 @@ type scanConfig struct {
 	axfrTimeout       time.Duration
 	hostEnrich        bool
 	hostCap           int
-	hostBatch         int
+	hostConcurrency   int
 }
 
 // scanFlags defines the shared scan tunables on fs (used by both `scan` and `run`) and returns a
@@ -77,7 +78,7 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 	axfrTimeout := fs.Duration("axfr-timeout", 20*time.Second, "whole-transfer timeout per AXFR")
 	hostEnrich := fs.Bool("host-enrich", false, "enable CT + registry hostname enrichment (seed-time) — master switch, default off")
 	hostCap := fs.Int("host-cap", 100, "max discovered hosts per domain unioned into the scan")
-	hostBatch := fs.Int("host-batch", 5000, "domains per ClickHouse hostname lookup batch")
+	hostConcurrency := fs.Int("host-concurrency", 4, "seed-time host-load: hash shards enriched concurrently (16 partition-aligned shards total; keep modest to spare the shared ctlogs node)")
 	return func() (scanConfig, error) {
 		resolverList := cleanResolvers(strings.Split(*resolvers, ","))
 		if len(resolverList) == 0 {
@@ -92,7 +93,7 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 			statsInterval: *statsInterval,
 			axfr:          *axfr, axfrQPS: *axfrQPS, axfrInflight: *axfrInflight,
 			axfrMaxRecords: *axfrMaxRecords, axfrMaxBytes: *axfrMaxBytes, axfrTimeout: *axfrTimeout,
-			hostEnrich: *hostEnrich, hostCap: *hostCap, hostBatch: *hostBatch,
+			hostEnrich: *hostEnrich, hostCap: *hostCap, hostConcurrency: *hostConcurrency,
 		}, nil
 	}
 }
@@ -121,9 +122,8 @@ func runScan(args []string) error {
 	return scanCycle(context.Background(), st, cfg)
 }
 
-// scanCycle seeds (if needed) and resolves the pending queue for cfg.scanID into st. It does NOT open
-// or close st, so the orchestrator can share the same store with a concurrent incremental loader.
-func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
+// applyScanDefaults fills zero/negative tunables with safe defaults so each phase run is self-contained.
+func applyScanDefaults(cfg scanConfig) scanConfig {
 	if cfg.seedChunk <= 0 {
 		cfg.seedChunk = 5000
 	}
@@ -139,6 +139,25 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	if cfg.discoveryInflight <= 0 {
 		cfg.discoveryInflight = 500
 	}
+	return cfg
+}
+
+// scanCycle seeds then resolves — the single-shot path used by the standalone `scan` subcommand. The
+// orchestrator (run.go) instead runs seedCycle and scanResolve as separate crash-safe phases so status
+// reflects the long seeding/host-load window distinctly from actual resolution. Does NOT open/close st.
+func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
+	if err := seedCycle(ctx, st, cfg); err != nil {
+		return err
+	}
+	return scanResolve(ctx, st, cfg)
+}
+
+// seedCycle runs the SEEDING phase: stream domains from ClickHouse into the SQLite queue (unless a
+// prior seed for this scan-id finished) and, when --host-enrich is set, the CT+registry host-load
+// (the long part — enrichment for tens of millions of domains). Resumable + idempotent; populates the
+// queue that scanResolve consumes. No records are produced yet, so no incremental CH load runs here.
+func seedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
+	cfg = applyScanDefaults(cfg)
 
 	// 1) Seed the queue from ClickHouse, unless a prior seed for this scan-id already finished.
 	seeded, err := st.SeedComplete(ctx, cfg.scanID)
@@ -179,6 +198,14 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// scanResolve runs the SCANNING phase: resolve the pending queue into the SQLite stage. Assumes the
+// seeding phase (seedCycle) already populated the queue (and scan_hostnames when --host-enrich). Does
+// NOT open/close st, so the orchestrator can share the store with a concurrent incremental loader.
+func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
+	cfg = applyScanDefaults(cfg)
 
 	stats := &metrics.Stats{}
 
@@ -321,14 +348,19 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 }
 
 // hostLoadPhase populates scan_hostnames for cfg.scanID from CT (ctlogs.hostnames) and the registry
-// (commoncrawl_domain_hostnames), in cursor batches of cfg.hostBatch, capped at cfg.hostCap per domain.
-// Resumable via host_load_state; idempotent (InsertHostnames uses INSERT OR IGNORE).
+// (commoncrawl_domain_hostnames), capped at cfg.hostCap per domain. Rather than thousands of per-batch
+// IN() lookups, it splits the domain space into hostsource.CTPartitions hash shards aligned to the
+// ctlogs physical partitioning — each shard's query prunes to one partition and semi-joins our seed
+// set server-side — and runs up to cfg.hostConcurrency shards at once. Resumable per shard via
+// host_load_shards; idempotent (INSERT OR IGNORE). host_load_state is marked complete once every shard
+// finished, so a restart re-runs only the shards not yet done and the scanning phase never starts on a
+// partial enrichment.
 func hostLoadPhase(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	if cfg.hostCap <= 0 {
 		cfg.hostCap = 100
 	}
-	if cfg.hostBatch <= 0 {
-		cfg.hostBatch = 5000
+	if cfg.hostConcurrency <= 0 {
+		cfg.hostConcurrency = 4
 	}
 	done, err := st.HostLoadComplete(ctx, cfg.scanID)
 	if err != nil {
@@ -338,50 +370,87 @@ func hostLoadPhase(ctx context.Context, st *store.Store, cfg scanConfig) error {
 		log.Printf("scan_id=%s: host-load already complete — skipping", cfg.scanID)
 		return nil
 	}
-	cursor, err := st.HostLoadCursor(ctx, cfg.scanID)
-	if err != nil {
-		return err
-	}
 	conn, err := chConn()
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	total := 0
-	for {
-		domains, err := st.SeededDomainsAfter(ctx, cfg.scanID, cursor, cfg.hostBatch)
+
+	// Cancel in-flight shard queries as soon as any shard fails, so we don't keep hammering CH.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	numShards := hostsource.CTPartitions
+	sem := make(chan struct{}, cfg.hostConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+	setErr := func(e error) {
+		mu.Lock()
+		if firstErr == nil {
+			firstErr = e
+			cancel()
+		}
+		mu.Unlock()
+	}
+	var totalRows, doneShards int64
+	start := time.Now()
+
+	for shard := 0; shard < numShards; shard++ {
+		complete, err := st.HostLoadShardComplete(ctx, cfg.scanID, shard)
 		if err != nil {
 			return err
 		}
-		if len(domains) == 0 {
-			break
+		if complete {
+			atomic.AddInt64(&doneShards, 1)
+			continue
 		}
-		ct, err := hostsource.CTHostnames(ctx, conn, domains, cfg.hostCap)
-		if err != nil {
-			return fmt.Errorf("CT hostnames: %w", err)
-		}
-		reg, err := hostsource.RegistryHostnames(ctx, conn, domains, cfg.hostCap)
-		if err != nil {
-			return fmt.Errorf("registry hostnames: %w", err)
-		}
-		merged := hostsource.Merge(ct, reg, cfg.hostCap)
-		for _, d := range domains {
-			if hosts := merged[d]; len(hosts) > 0 {
-				if err := st.InsertHostnames(ctx, cfg.scanID, d, hosts); err != nil {
-					return err
-				}
-				total += len(hosts)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(shard int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			mu.Lock()
+			stop := firstErr != nil
+			mu.Unlock()
+			if stop {
+				return
 			}
-		}
-		cursor = domains[len(domains)-1]
-		if err := st.SetHostLoadCursor(ctx, cfg.scanID, cursor); err != nil {
-			return err
-		}
+			sStart := time.Now()
+			ct, err := hostsource.CTShard(ctx, conn, shard, numShards, cfg.hostCap)
+			if err != nil {
+				setErr(fmt.Errorf("CT shard %d: %w", shard, err))
+				return
+			}
+			reg, err := hostsource.RegistryShard(ctx, conn, shard, numShards, cfg.hostCap)
+			if err != nil {
+				setErr(fmt.Errorf("registry shard %d: %w", shard, err))
+				return
+			}
+			n, err := st.InsertHostnamesMap(ctx, cfg.scanID, hostsource.Merge(ct, reg, cfg.hostCap))
+			if err != nil {
+				setErr(fmt.Errorf("insert shard %d: %w", shard, err))
+				return
+			}
+			if err := st.MarkHostLoadShardComplete(ctx, cfg.scanID, shard); err != nil {
+				setErr(fmt.Errorf("mark shard %d: %w", shard, err))
+				return
+			}
+			atomic.AddInt64(&totalRows, int64(n))
+			d := atomic.AddInt64(&doneShards, 1)
+			log.Printf("scan_id=%s: host-load shard %d done (%d hostnames, %s) — %d/%d shards complete",
+				cfg.scanID, shard, n, time.Since(sStart).Round(time.Second), d, numShards)
+		}(shard)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
 	}
 	if err := st.MarkHostLoadComplete(ctx, cfg.scanID); err != nil {
 		return err
 	}
-	log.Printf("scan_id=%s: host-load complete (%d discovered hostnames)", cfg.scanID, total)
+	log.Printf("scan_id=%s: host-load complete (%d hostnames across %d shards, %s)",
+		cfg.scanID, atomic.LoadInt64(&totalRows), numShards, time.Since(start).Round(time.Second))
 	return nil
 }
 
