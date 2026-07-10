@@ -86,12 +86,11 @@ CREATE TABLE IF NOT EXISTS host_load_shards (
   complete INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (scan_id, shard)
 );
-CREATE TABLE IF NOT EXISTS dns_axfr (
-  scan_id     TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS axfr_prev (
   root_domain TEXT NOT NULL,
-  ns_server   TEXT NOT NULL,
-  axfr_open   INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (scan_id, root_domain, ns_server)
+  name_server TEXT NOT NULL,
+  last_open   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (root_domain, name_server)
 );
 CREATE TABLE IF NOT EXISTS axfr_state (
   scan_id  TEXT PRIMARY KEY,
@@ -643,12 +642,12 @@ func (s *Store) AXFRTargetsAfter(ctx context.Context, scanID, afterRootDomain st
 	return out, rows.Err()
 }
 
-// RecordAXFR writes a domain's per-NS probe outcomes to dns_axfr and, when a zone opened, appends its
-// transferred records to scan_records (source='axfr') — one transaction. Idempotent: dns_axfr rows are
-// upserted; records are appended (the AXFR phase runs after resolution committed the domain, so no
-// CommitBatch DELETE can wipe them). zone is inserted once per domain, not per NS.
-func (s *Store) RecordAXFR(ctx context.Context, scanID, domain string, probes []model.AXFRProbe, zone []model.DNSRecord, runID string, resolvedAt time.Time) error {
-	if len(probes) == 0 {
+// RecordAXFRZone appends an open zone's transferred records to scan_records (source='axfr'), one
+// transaction per domain. The AXFR phase runs after resolution committed the domain, so no CommitBatch
+// DELETE can wipe them. Per-NS open/closed state is not stored here — it goes to ClickHouse's
+// dns_axfr_observations change-log (see load.WriteAXFRObservations).
+func (s *Store) RecordAXFRZone(ctx context.Context, scanID, domain string, zone []model.DNSRecord, runID string, resolvedAt time.Time) error {
+	if len(zone) == 0 {
 		return nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -656,31 +655,43 @@ func (s *Store) RecordAXFR(ctx context.Context, scanID, domain string, probes []
 		return err
 	}
 	defer tx.Rollback()
-	up, err := tx.PrepareContext(ctx, `INSERT INTO dns_axfr (scan_id, root_domain, ns_server, axfr_open)
-		VALUES (?, ?, ?, ?) ON CONFLICT(scan_id, root_domain, ns_server) DO UPDATE SET axfr_open = excluded.axfr_open`)
+	ts := resolvedAt.UTC().Format(time.RFC3339Nano)
+	ins, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
+		(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, discovery, source_run_id, resolved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
-	defer up.Close()
-	for _, p := range probes {
-		if _, err := up.ExecContext(ctx, scanID, domain, p.Server, b2i(p.Open)); err != nil {
+	defer ins.Close()
+	for _, rec := range zone {
+		if _, err := ins.ExecContext(ctx, scanID, domain, rec.Name, rec.RecordType, rec.Slot,
+			rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, rec.Discovery, runID, ts); err != nil {
 			return err
 		}
 	}
-	if len(zone) > 0 {
-		ts := resolvedAt.UTC().Format(time.RFC3339Nano)
-		ins, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
-			(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, discovery, source_run_id, resolved_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-		if err != nil {
+	return tx.Commit()
+}
+
+// ReplaceAXFRPrev refreshes the axfr_prev cache (the last known open/closed state per (root_domain,
+// name_server), loaded from ClickHouse at the start of an AXFR run so the phase can emit only state
+// changes). Only ever-observed (i.e. ever-open) nameservers appear, so this stays small.
+func (s *Store) ReplaceAXFRPrev(ctx context.Context, prev map[[2]string]bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM axfr_prev`); err != nil {
+		return err
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO axfr_prev (root_domain, name_server, last_open) VALUES (?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for k, open := range prev {
+		if _, err := stmt.ExecContext(ctx, k[0], k[1], b2i(open)); err != nil {
 			return err
-		}
-		defer ins.Close()
-		for _, rec := range zone {
-			if _, err := ins.ExecContext(ctx, scanID, domain, rec.Name, rec.RecordType, rec.Slot,
-				rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, rec.Discovery, runID, ts); err != nil {
-				return err
-			}
 		}
 	}
 	return tx.Commit()
