@@ -1,4 +1,45 @@
 ---
-- name: "os_tuning role (stub — filled in a later task)"
-  ansible.builtin.debug:
-    msg: "os_tuning not yet implemented"
+- name: Ensure nf_conntrack module is loaded (for the conntrack sysctls)
+  community.general.modprobe:
+    name: nf_conntrack
+    state: present
+    persistent: present
+
+- name: Install DNS sysctl tuning
+  ansible.builtin.template:
+    src: 99-cc-dns.conf.j2
+    dest: /etc/sysctl.d/99-cc-dns.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sysctl
+
+- name: Install nofile limits
+  ansible.builtin.template:
+    src: 99-cc-dns-limits.conf.j2
+    dest: /etc/security/limits.d/99-cc-dns.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install iptables-persistent (persists the raw NOTRACK rules)
+  ansible.builtin.apt:
+    name: [iptables-persistent, netfilter-persistent]
+    state: present
+    update_cache: true
+
+- name: DNS NOTRACK — do not conntrack DNS (both directions)
+  ansible.builtin.iptables:
+    table: raw
+    chain: "{{ item.chain }}"
+    protocol: "{{ item.proto }}"
+    "{{ item.dir }}_port": "53"
+    jump: NOTRACK
+    comment: "cc-dns NOTRACK"
+    state: present
+  loop:
+    - { chain: PREROUTING, proto: udp, dir: source }
+    - { chain: PREROUTING, proto: tcp, dir: source }
+    - { chain: OUTPUT,     proto: udp, dir: destination }
+    - { chain: OUTPUT,     proto: tcp, dir: destination }
+  notify: Persist iptables

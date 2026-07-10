@@ -1,1 +1,8 @@
 ---
+- name: Reload sysctl
+  ansible.builtin.command: sysctl --system
+  changed_when: true
+
+- name: Persist iptables
+  ansible.builtin.command: netfilter-persistent save
+  changed_when: true
