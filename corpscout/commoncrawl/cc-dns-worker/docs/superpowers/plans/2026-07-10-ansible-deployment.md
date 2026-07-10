@@ -466,7 +466,7 @@ WantedBy=multi-user.target
     GOARCH: amd64
   delegate_to: localhost
   become: false
-  changed_when: true
+  changed_when: false   # a local build is not a change to the target; the copy task's checksum decides
 
 - name: Create deploy dir + bin/
   ansible.builtin.file:
