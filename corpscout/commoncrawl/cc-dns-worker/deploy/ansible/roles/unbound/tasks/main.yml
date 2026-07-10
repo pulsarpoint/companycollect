@@ -12,8 +12,11 @@
     owner: root
     group: root
     mode: "0644"
-    validate: "unbound-checkconf %s"
   notify: Restart unbound
+
+- name: Validate the assembled unbound config
+  ansible.builtin.command: unbound-checkconf
+  changed_when: false
 
 - name: Ensure unbound systemd drop-in directory exists
   ansible.builtin.file:
