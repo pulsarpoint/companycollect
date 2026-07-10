@@ -13,9 +13,21 @@ import (
 type Delegation struct {
 	ETLD  string
 	NS    []string
-	NSIPs []string
+	NSIPs []string // every discovered NS IP, in discovery order, deduped — full evidence, never filtered
 	DS    []string
+
+	// DialableNSIPs is the subset of NSIPs classified ScopePublic (see target.go), in the same order,
+	// deduped. Tier-2 record queries and AXFR must dial only from this list — NSIPs itself is kept
+	// intact as evidence even when some (or all) of it is not safe to dial.
+	DialableNSIPs []string
 }
+
+// ErrNoPublicNSEndpoints is returned by DiscoverNS when NS resolution succeeded (NSIPs is non-empty)
+// but none of the discovered addresses are publicly dialable — e.g. a delegation whose glue records
+// only resolve to RFC1918/loopback/link-local addresses. It is distinct from "no NS IPs resolved"
+// (a discovery/transport failure) so callers can tell "we found NS IPs but can't safely reach any of
+// them" apart from "we found nothing at all".
+var ErrNoPublicNSEndpoints = errors.New("no public NS endpoints")
 
 // Discoverer finds a domain's authoritative NS (+ IPs) and parent DS via recursive resolvers. It
 // does NOT walk roots: the recursive resolver's cache absorbs the root/TLD load (polite + fast) and
@@ -64,7 +76,10 @@ func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation,
 	add := func(ip string) {
 		if ip != "" && !seen[ip] {
 			seen[ip] = true
-			del.NSIPs = append(del.NSIPs, ip)
+			del.NSIPs = append(del.NSIPs, ip) // full evidence: keep every scope
+			if scope, ok := ClassifyString(ip); ok && Dialable(scope) {
+				del.DialableNSIPs = append(del.DialableNSIPs, ip)
+			}
 		}
 	}
 	for _, ns := range del.NS {
@@ -85,6 +100,9 @@ func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation,
 	}
 	if len(del.NSIPs) == 0 {
 		return del, errors.New("no NS IPs resolved")
+	}
+	if len(del.DialableNSIPs) == 0 {
+		return del, ErrNoPublicNSEndpoints // evidence (NSIPs) preserved on this path too
 	}
 	return del, nil
 }

@@ -216,7 +216,7 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	discSched := scheduler.New(scheduler.Config{PerServerQPS: cfg.discoveryQPS, Burst: max(1, int(cfg.discoveryQPS)), MaxInFlight: cfg.discoveryInflight, BreakerThreshold: 0, BreakerCooldown: cfg.breakerCooldown})
 	authSched := scheduler.New(scheduler.Config{PerServerQPS: cfg.qps, Burst: max(1, int(cfg.qps)), MaxInFlight: cfg.inflight, HyperscalerQPS: cfg.hyperscalerQPS, HyperscalerInFlight: max(cfg.inflight, 40), BreakerThreshold: cfg.breakerThreshold, BreakerCooldown: cfg.breakerCooldown})
 	disc := resolve.NewDiscoverer(resolve.NewExchangerWithStats(discSched, cfg.timeout, stats), cfg.resolvers)
-	rec := resolve.NewResolver(resolve.NewExchangerWithStats(authSched, cfg.timeout, stats))
+	rec := resolve.NewResolverWithStats(resolve.NewExchangerWithStats(authSched, cfg.timeout, stats), stats)
 	rcfg := records.DefaultConfig()
 
 	runStart := time.Now()
@@ -453,7 +453,7 @@ func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.R
 		}
 		return model.DomainResult{
 			ScanID: scanID, RootDomain: domain, ETLD: del.ETLD,
-			Nameservers: del.NS, DSPresent: len(del.DS) > 0,
+			Nameservers: del.NS, NSIPs: del.NSIPs, DSPresent: len(del.DS) > 0,
 			Status: "error", Error: msg, SourceRunID: runID, ResolvedAt: now,
 		}
 	}
