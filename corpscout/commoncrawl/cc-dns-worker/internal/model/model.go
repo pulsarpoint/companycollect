@@ -135,13 +135,14 @@ type HostnameRow struct {
 // ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest-good-state per domain). Only
 // successful scans are loaded, so a failed re-scan never clobbers a domain's last-good summary.
 //
-// Deprecated: the table's axfr_open/axfr_records/axfr_truncated/axfr_server columns are DEPRECATED —
-// per-endpoint AXFR state now lives in dns_axfr_latest/dns_axfr_state_changes (AXFRLatestRow/
-// AXFRStateChangeRow), the only source of truth since AXFR moved off resolveDomain into its own
-// post-scan phase. This struct intentionally has no fields for them: the loader must never again write
-// default/false values into those columns every cycle. The ClickHouse columns themselves are left in
-// place (defaulted) for backward compatibility with existing readers; a future audited cleanup can drop
-// them.
+// NOTE (deprecated columns, NOT a deprecated type): the table's axfr_open/axfr_records/
+// axfr_truncated/axfr_server columns are deprecated — per-endpoint AXFR state now lives in
+// dns_axfr_latest/dns_axfr_state_changes (AXFRLatestRow/AXFRStateChangeRow), the only source of truth
+// since AXFR moved off resolveDomain into its own post-scan phase. This struct intentionally has NO
+// fields for them so the loader never again writes default/false values into those columns every
+// cycle. The ClickHouse columns are left in place (defaulted) for backward compatibility; a future
+// audited cleanup can drop them. (ScanRow itself is fully current — do not treat it as deprecated;
+// the leading "NOTE" avoids the godoc "Deprecated:" marker that would flag every use of this type.)
 type ScanRow struct {
 	RootDomain  string   `ch:"root_domain"`
 	ETLD        string   `ch:"etld"`
