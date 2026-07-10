@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"context"
+	"net"
 	"runtime"
 	"strconv"
 	"testing"
@@ -22,22 +23,44 @@ func axfrZone(t *testing.T) []dns.RR {
 	}
 }
 
+// assertNoGoroutineLeak polls for runtime.NumGoroutine() to settle back to at most before+slack, so a
+// deferred watchdog/cleanup goroutine that hasn't unwound yet doesn't flake the assertion.
+func assertNoGoroutineLeak(t *testing.T, before int) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if runtime.NumGoroutine() <= before {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if after := runtime.NumGoroutine(); after > before+2 {
+		t.Fatalf("goroutine leak: before=%d after=%d", before, after)
+	}
+}
+
 func TestTransferAXFROpen(t *testing.T) {
 	addr, stop := startAXFRServer(t, axfrZone(t), false)
 	defer stop()
 	caps := AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: 5 * time.Second}
-	res, err := transferAXFR(context.Background(), "example.com", addr, caps)
-	if err != nil {
-		t.Fatalf("transfer: %v", err)
+
+	before := runtime.NumGoroutine()
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	assertNoGoroutineLeak(t, before)
+
+	if res.Verdict != VerdictOpen {
+		t.Fatalf("want Verdict=open, got %v (reason=%v)", res.Verdict, res.Reason)
 	}
-	if !res.Open {
-		t.Fatal("want Open=true")
+	if res.Reason != ReasonTransferred {
+		t.Fatalf("want Reason=transferred, got %v", res.Reason)
 	}
 	if res.Truncated {
 		t.Fatal("want Truncated=false")
 	}
 	if res.Records != 5 || len(res.Zone) != 5 {
 		t.Fatalf("want 5 records, got Records=%d len(Zone)=%d", res.Records, len(res.Zone))
+	}
+	if res.ObservedAt.IsZero() {
+		t.Fatal("want ObservedAt set")
 	}
 	for _, rec := range res.Zone {
 		if rec.Source != "axfr" {
@@ -50,19 +73,136 @@ func TestTransferAXFRRefused(t *testing.T) {
 	addr, stop := startAXFRServer(t, nil, true)
 	defer stop()
 	caps := AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: 5 * time.Second}
-	res, _ := transferAXFR(context.Background(), "example.com", addr, caps)
-	if res.Open {
-		t.Fatal("want Open=false on REFUSED")
+
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	if res.Verdict != VerdictClosed || res.Reason != ReasonRefused {
+		t.Fatalf("want closed/refused, got %v/%v", res.Verdict, res.Reason)
 	}
 	if len(res.Zone) != 0 {
 		t.Fatalf("want empty zone, got %d", len(res.Zone))
 	}
 }
 
-func TestTransferAXFRMidStreamErrorNotOpen(t *testing.T) {
-	// SOA-first + two A records, but NO closing SOA: the client collects these RRs and then hits a
-	// read error when the server drops the connection. Even with Records>0, a mid-stream error must
-	// NOT be reported as an open zone.
+func TestTransferAXFRNotAuth(t *testing.T) {
+	addr, stop := startAXFRServerRcode(t, dns.RcodeNotAuth)
+	defer stop()
+	caps := AXFRCaps{Deadline: 5 * time.Second}
+
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	if res.Verdict != VerdictClosed || res.Reason != ReasonNotAuth {
+		t.Fatalf("want closed/notauth, got %v/%v", res.Verdict, res.Reason)
+	}
+}
+
+func TestTransferAXFRServfail(t *testing.T) {
+	addr, stop := startAXFRServerRcode(t, dns.RcodeServerFailure)
+	defer stop()
+	caps := AXFRCaps{Deadline: 5 * time.Second}
+
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	if res.Verdict != VerdictUnknown || res.Reason != ReasonServfail {
+		t.Fatalf("want unknown/servfail, got %v/%v", res.Verdict, res.Reason)
+	}
+}
+
+func TestTransferAXFRMalformed(t *testing.T) {
+	addr, stop := startAXFRServerMalformed(t)
+	defer stop()
+	caps := AXFRCaps{Deadline: 5 * time.Second}
+
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	if res.Verdict != VerdictUnknown || res.Reason != ReasonMalformed {
+		t.Fatalf("want unknown/malformed, got %v/%v", res.Verdict, res.Reason)
+	}
+}
+
+func TestTransferAXFREarlyDisconnect(t *testing.T) {
+	addr, stop := startAXFRServerEarlyDisconnect(t)
+	defer stop()
+	caps := AXFRCaps{Deadline: 5 * time.Second}
+
+	before := runtime.NumGoroutine()
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	assertNoGoroutineLeak(t, before)
+
+	if res.Verdict != VerdictUnknown || res.Reason != ReasonTransportError {
+		t.Fatalf("want unknown/transport_error, got %v/%v", res.Verdict, res.Reason)
+	}
+}
+
+func TestTransferAXFRTimeout(t *testing.T) {
+	addr, stop := startAXFRServerNoReply(t)
+	caps := AXFRCaps{Deadline: 150 * time.Millisecond}
+
+	before := runtime.NumGoroutine()
+	start := time.Now()
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	elapsed := time.Since(start)
+	stop() // release the held connection before checking for leaks
+	assertNoGoroutineLeak(t, before)
+
+	if res.Verdict != VerdictUnknown || res.Reason != ReasonTimeout {
+		t.Fatalf("want unknown/timeout, got %v/%v", res.Verdict, res.Reason)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("preflight did not respect its deadline: took %s", elapsed)
+	}
+}
+
+func TestTransferAXFRContextCancelled(t *testing.T) {
+	addr, stop := startAXFRServerNoReply(t)
+	caps := AXFRCaps{Deadline: 5 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before the dial ever starts
+
+	before := runtime.NumGoroutine()
+	start := time.Now()
+	res := transferAXFR(ctx, "example.com", addr, caps)
+	elapsed := time.Since(start)
+	stop()
+	assertNoGoroutineLeak(t, before)
+
+	if res.Verdict != VerdictUnknown || res.Reason != ReasonCancelled {
+		t.Fatalf("want unknown/cancelled, got %v/%v", res.Verdict, res.Reason)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("cancellation not honored promptly: took %s", elapsed)
+	}
+}
+
+func TestProbeServerCircuitOpen(t *testing.T) {
+	// Bind then immediately close a listener to get a loopback address nothing listens on: dialing it
+	// fails fast with a real transport error (connection refused), which is what should trip the
+	// breaker after BreakerThreshold=1 consecutive failures.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+
+	sched := scheduler.New(scheduler.Config{PerServerQPS: 100, MaxInFlight: 1, BreakerThreshold: 1, BreakerCooldown: time.Minute})
+	p := NewAXFRProber(sched, AXFRCaps{Deadline: time.Second}, 4)
+
+	first := p.ProbeServer(context.Background(), "example.com", "ns1.example.com", addr)
+	if first.Verdict != VerdictUnknown || first.Reason != ReasonTransportError {
+		t.Fatalf("want unknown/transport_error priming the breaker, got %v/%v", first.Verdict, first.Reason)
+	}
+
+	second := p.ProbeServer(context.Background(), "example.com", "ns1.example.com", addr)
+	if second.Verdict != VerdictUnknown || second.Reason != ReasonCircuitOpen {
+		t.Fatalf("want unknown/circuit_open, got %v/%v", second.Verdict, second.Reason)
+	}
+	if second.NSHost != "ns1.example.com" || second.NSIP != addr {
+		t.Fatalf("want NSHost/NSIP set even on a breaker short-circuit, got %q/%q", second.NSHost, second.NSIP)
+	}
+}
+
+func TestTransferAXFROpenTruncatedByMidStreamDisconnect(t *testing.T) {
+	// SOA-first + two A records, but NO closing SOA: the preflight sees the leading SOA (Open), then
+	// the collection connection collects those RRs and hits a read error when the server drops the
+	// connection. That must report Verdict=open (the preflight already proved the transfer opens) with
+	// Truncated=true — a partial pull of an open zone, not a different verdict.
 	rrs := []dns.RR{
 		mustRR(t, "example.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 1 7200 3600 1209600 3600"),
 		mustRR(t, "www.example.com. 3600 IN A 1.2.3.4"),
@@ -71,12 +211,51 @@ func TestTransferAXFRMidStreamErrorNotOpen(t *testing.T) {
 	addr, stop := startAXFRServerAbrupt(t, rrs)
 	defer stop()
 	caps := AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: 5 * time.Second}
-	res, err := transferAXFR(context.Background(), "example.com", addr, caps)
-	if err != nil {
-		t.Fatalf("transfer: %v", err)
+
+	before := runtime.NumGoroutine()
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	assertNoGoroutineLeak(t, before)
+
+	if res.Verdict != VerdictOpen {
+		t.Fatalf("want Verdict=open despite the mid-stream drop, got %v (reason=%v)", res.Verdict, res.Reason)
 	}
-	if res.Open {
-		t.Fatalf("want Open=false on mid-stream error, got Open=true (Records=%d)", res.Records)
+	if !res.Truncated {
+		t.Fatal("want Truncated=true on a mid-stream drop")
+	}
+	if res.Records == 0 {
+		t.Fatal("want at least the records collected before the drop")
+	}
+}
+
+func TestTransferAXFRTruncatedByRecordCap(t *testing.T) {
+	addr, stop := startAXFRServer(t, axfrZone(t), false)
+	defer stop()
+	caps := AXFRCaps{MaxRecords: 3, MaxBytes: 64 << 20, Deadline: 5 * time.Second}
+
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	if res.Verdict != VerdictOpen || !res.Truncated {
+		t.Fatalf("want Verdict=open Truncated=true, got Verdict=%v Truncated=%v", res.Verdict, res.Truncated)
+	}
+	if res.Records != 3 {
+		t.Fatalf("want capped at 3 records, got %d", res.Records)
+	}
+}
+
+func TestTransferAXFRTruncatedByByteCap(t *testing.T) {
+	addr, stop := startAXFRServer(t, axfrZone(t), false)
+	defer stop()
+	// MaxBytes=1 caps after the first RR's bytes are folded in, regardless of its exact wire size.
+	caps := AXFRCaps{MaxRecords: 50000, MaxBytes: 1, Deadline: 5 * time.Second}
+
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+	if res.Verdict != VerdictOpen || !res.Truncated {
+		t.Fatalf("want Verdict=open Truncated=true, got Verdict=%v Truncated=%v", res.Verdict, res.Truncated)
+	}
+	if res.Records != 1 {
+		t.Fatalf("want capped at 1 record, got %d", res.Records)
+	}
+	if res.Bytes == 0 {
+		t.Fatal("want Bytes to reflect the one collected record")
 	}
 }
 
@@ -94,9 +273,10 @@ func TestTransferAXFRNoLeakOnMidStreamCap(t *testing.T) {
 
 	before := runtime.NumGoroutine()
 	caps := AXFRCaps{MaxRecords: 5, MaxBytes: 1 << 30, Deadline: 5 * time.Second}
-	res, err := transferAXFR(context.Background(), "example.com", addr, caps)
-	if err != nil {
-		t.Fatalf("transfer: %v", err)
+	res := transferAXFR(context.Background(), "example.com", addr, caps)
+
+	if res.Verdict != VerdictOpen {
+		t.Fatalf("want Verdict=open, got %v (reason=%v)", res.Verdict, res.Reason)
 	}
 	if !res.Truncated {
 		t.Fatal("want Truncated=true (cap fired mid-stream)")
@@ -105,16 +285,9 @@ func TestTransferAXFRNoLeakOnMidStreamCap(t *testing.T) {
 		t.Fatalf("want capped at 5 records, got %d", res.Records)
 	}
 
-	// Poll for the producer goroutine (and its socket) to be reclaimed rather than parked forever.
-	for i := 0; i < 200; i++ {
-		if runtime.NumGoroutine() <= before {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if after := runtime.NumGoroutine(); after > before+2 {
-		t.Fatalf("goroutine leak: before=%d after=%d", before, after)
-	}
+	// Poll for the producer goroutines (preflight + collection connections) and their sockets to be
+	// reclaimed rather than parked forever.
+	assertNoGoroutineLeak(t, before)
 }
 
 func newTestProber(caps AXFRCaps) *AXFRProber {
@@ -122,63 +295,16 @@ func newTestProber(caps AXFRCaps) *AXFRProber {
 	return NewAXFRProber(sched, caps, 8)
 }
 
-func TestProbeOpenZone(t *testing.T) {
+func TestProbeServerOpenZone(t *testing.T) {
 	addr, stop := startAXFRServer(t, axfrZone(t), false)
 	defer stop()
 	p := newTestProber(AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: 5 * time.Second})
-	res := p.Probe(context.Background(), "example.com", []string{addr})
-	if !res.Open || len(res.Zone) != 5 {
-		t.Fatalf("want open zone with 5 records, got Open=%v len=%d", res.Open, len(res.Zone))
-	}
-}
 
-func TestProbeSkipsHyperscalerOnlyNSSet(t *testing.T) {
-	// 104.16.1.1 is a Cloudflare anycast NS IP (hyperscaler). An all-hyperscaler NS set must be
-	// skipped without dialing.
-	//
-	// NOTE: the task brief for this test used "1.1.1.1", asserting it is "Cloudflare (hyperscaler)".
-	// That is incorrect against the already-committed scheduler.IsHyperscaler: internal/scheduler
-	// /providers_test.go (Task 1) explicitly asserts IsHyperscaler("1.1.1.1") == false, with the
-	// comment "public resolvers, not in the auth ranges" — 1.1.1.1 is Cloudflare's public recursive
-	// resolver service, not part of the authoritative anycast NS CIDR ranges an AXFR target would use.
-	// Adding 1.1.1.1 to hyperscalerCIDRs would break that pre-existing, deliberately-authored test, so
-	// this test uses 104.16.1.1 instead (confirmed hyperscaler in the same providers_test.go) to
-	// exercise the identical skip-logic path without touching Task 1's contract.
-	p := newTestProber(AXFRCaps{MaxRecords: 50000, MaxBytes: 64 << 20, Deadline: time.Second})
-	res := p.Probe(context.Background(), "example.com", []string{"104.16.1.1"})
-	if res.Open {
-		t.Fatal("hyperscaler-only NS set should be skipped, not open")
+	res := p.ProbeServer(context.Background(), "example.com", "ns1.example.com", addr)
+	if !res.IsOpen() || len(res.Zone) != 5 {
+		t.Fatalf("want open zone with 5 records, got Verdict=%v len=%d", res.Verdict, len(res.Zone))
 	}
-	if res.Server != "" {
-		t.Fatalf("skipped probe should not name a server, got %q", res.Server)
-	}
-}
-
-func TestProbeDedupsRefusedNSSet(t *testing.T) {
-	// A refusing server: the first probe transfers, the second short-circuits on the NS-set verdict.
-	var dials int
-	addr, stop := startCountingRefuser(t, &dials)
-	defer stop()
-	p := newTestProber(AXFRCaps{MaxRecords: 10, MaxBytes: 1 << 20, Deadline: time.Second})
-	_ = p.Probe(context.Background(), "a.example", []string{addr})
-	_ = p.Probe(context.Background(), "b.example", []string{addr})
-	if dials != 1 {
-		t.Fatalf("want 1 dial (second deduped), got %d", dials)
-	}
-}
-
-func TestTransferAXFRTruncatedByRecordCap(t *testing.T) {
-	addr, stop := startAXFRServer(t, axfrZone(t), false)
-	defer stop()
-	caps := AXFRCaps{MaxRecords: 3, MaxBytes: 64 << 20, Deadline: 5 * time.Second}
-	res, err := transferAXFR(context.Background(), "example.com", addr, caps)
-	if err != nil {
-		t.Fatalf("transfer: %v", err)
-	}
-	if !res.Open || !res.Truncated {
-		t.Fatalf("want Open=true Truncated=true, got Open=%v Truncated=%v", res.Open, res.Truncated)
-	}
-	if res.Records != 3 {
-		t.Fatalf("want capped at 3 records, got %d", res.Records)
+	if res.NSHost != "ns1.example.com" || res.NSIP != addr {
+		t.Fatalf("want NSHost/NSIP set, got %q/%q", res.NSHost, res.NSIP)
 	}
 }

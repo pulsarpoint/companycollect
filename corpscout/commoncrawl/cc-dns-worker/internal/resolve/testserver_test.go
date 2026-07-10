@@ -1,8 +1,8 @@
 package resolve
 
 import (
+	"encoding/binary"
 	"net"
-	"sync"
 	"testing"
 
 	"github.com/miekg/dns"
@@ -107,39 +107,16 @@ func startAXFRServerAbrupt(t *testing.T, rrs []dns.RR) (string, func()) {
 	return l.Addr().String(), func() { _ = srv.Shutdown() }
 }
 
-// startCountingRefuser is startAXFRServer(refuse=true) that also counts how many AXFR queries it saw,
-// so a test can assert the NS-set dedup suppressed a repeat probe.
-func startCountingRefuser(t *testing.T, count *int) (string, func()) {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen tcp: %v", err)
-	}
-	var mu sync.Mutex
-	mux := dns.NewServeMux()
-	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
-		if r.Question[0].Qtype == dns.TypeAXFR {
-			mu.Lock()
-			*count++
-			mu.Unlock()
-			m := new(dns.Msg)
-			m.SetReply(r)
-			m.Rcode = dns.RcodeRefused
-			_ = w.WriteMsg(m)
-			return
-		}
-		m := new(dns.Msg)
-		m.SetReply(r)
-		_ = w.WriteMsg(m)
-	})
-	srv := &dns.Server{Listener: l, Handler: mux}
-	go func() { _ = srv.ActivateAndServe() }()
-	return l.Addr().String(), func() { _ = srv.Shutdown() }
-}
-
 // startAXFRServerMulti is startAXFRServer (never refusing) but streams EACH rr as its own envelope, so
 // a low cap fires on a non-final envelope — exercising the mid-stream early-exit/drain path. rrs MUST
 // start and end with the zone SOA for a well-formed transfer.
+//
+// The channel is sized to hold every rr up front, so the producer goroutine never blocks on a send: our
+// definitive-preflight design dials this server twice per probe (a preflight connection that reads only
+// the first envelope, then a second connection to collect), and either connection can stop reading
+// before the producer is done. An unbuffered channel would leave the producer parked forever on the
+// next send once nobody (Out included, after a write error on the now-closed socket) is left to receive
+// it — a leak in the test double, not the code under test.
 func startAXFRServerMulti(t *testing.T, rrs []dns.RR) (string, func()) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -149,7 +126,7 @@ func startAXFRServerMulti(t *testing.T, rrs []dns.RR) (string, func()) {
 	mux := dns.NewServeMux()
 	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
 		if r.Question[0].Qtype == dns.TypeAXFR {
-			ch := make(chan *dns.Envelope)
+			ch := make(chan *dns.Envelope, len(rrs))
 			tr := new(dns.Transfer)
 			go func() {
 				for _, rr := range rrs {
@@ -167,4 +144,103 @@ func startAXFRServerMulti(t *testing.T, rrs []dns.RR) (string, func()) {
 	srv := &dns.Server{Listener: l, Handler: mux}
 	go func() { _ = srv.ActivateAndServe() }()
 	return l.Addr().String(), func() { _ = srv.Shutdown() }
+}
+
+// startAXFRServerRcode answers every AXFR query with rcode and an empty answer section — used to
+// exercise a definitive or indefinite preflight RCODE beyond REFUSED (e.g. NOTAUTH, SERVFAIL).
+func startAXFRServerRcode(t *testing.T, rcode int) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	mux := dns.NewServeMux()
+	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Rcode = rcode
+		_ = w.WriteMsg(m)
+	})
+	srv := &dns.Server{Listener: l, Handler: mux}
+	go func() { _ = srv.ActivateAndServe() }()
+	return l.Addr().String(), func() { _ = srv.Shutdown() }
+}
+
+// startAXFRServerMalformed answers an AXFR query with a complete, well-formed NOERROR message whose
+// Answer section does NOT start with a SOA — exercising the "NOERROR but no leading SOA" malformed
+// branch, as distinct from a raw framing/transport failure (startAXFRServerEarlyDisconnect).
+func startAXFRServerMalformed(t *testing.T) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	mux := dns.NewServeMux()
+	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Answer = []dns.RR{mustRR(t, "www.example.com. 3600 IN A 1.2.3.4")} // NOERROR, non-SOA first RR
+		_ = w.WriteMsg(m)
+	})
+	srv := &dns.Server{Listener: l, Handler: mux}
+	go func() { _ = srv.ActivateAndServe() }()
+	return l.Addr().String(), func() { _ = srv.Shutdown() }
+}
+
+// startAXFRServerNoReply accepts the TCP connection, drains the query, and then holds the connection
+// open without ever answering — the fake-server analogue of an unresponsive/black-holed nameserver, so
+// a probe against it must resolve via its own deadline (a "timeout") rather than hang forever. Call
+// stop() (not just defer it) before asserting on goroutine counts: it releases the held connection so
+// the assertion reflects only the code under test, not this helper's own bookkeeping goroutine.
+func startAXFRServerNoReply(t *testing.T) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 4096)
+				_, _ = c.Read(buf) // drain the query; never respond
+				<-done
+			}(conn)
+		}
+	}()
+	return l.Addr().String(), func() {
+		close(done)
+		_ = l.Close()
+	}
+}
+
+// startAXFRServerEarlyDisconnect accepts one connection, reads the query, writes an incomplete
+// length-prefixed frame (declares more bytes than it actually sends), then hangs up — a raw connection
+// drop that fails at the framing/read layer before any dns.Msg can be parsed, distinct from a
+// well-formed-but-wrong-shape "malformed" reply (startAXFRServerMalformed).
+func startAXFRServerEarlyDisconnect(t *testing.T) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4096)
+		_, _ = conn.Read(buf) // drain the query
+		var hdr [2]byte
+		binary.BigEndian.PutUint16(hdr[:], 100) // claim a 100-byte message
+		_, _ = conn.Write(hdr[:])
+		_, _ = conn.Write([]byte{0, 0, 0, 0}) // then send only 4 of them and hang up
+	}()
+	return l.Addr().String(), func() { _ = l.Close() }
 }

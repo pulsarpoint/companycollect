@@ -175,9 +175,11 @@ func runAXFRPipeline(ctx context.Context, st *store.Store, cfg scanConfig) error
 }
 
 // processAXFRTarget probes each dialable, non-hyperscaler NS endpoint of one domain, emits a
-// state-change row when the probed open/closed value differs from prev (absent == closed), and appends
-// any open zone's records to scan_records. Returns (#NS probed, #NS that opened). prev is read-only
-// (built before the pool).
+// state-change row when a DEFINITIVE (open or closed) verdict differs from prev (absent == closed), and
+// appends any open zone's records to scan_records. An Unknown verdict (timeout, transport error,
+// SERVFAIL, malformed reply, breaker, or cancellation) is never definitive: it is not compared against
+// prev and never produces a row, so a transient probe failure can never masquerade as a close. Returns
+// (#NS probed, #NS that opened). prev is read-only (built before the pool).
 func processAXFRTarget(ctx context.Context, st *store.Store, prober *resolve.AXFRProber, cfg scanConfig, t store.AXFRTarget, prev map[[2]string]bool, coll *axfrCollector) (int, int) {
 	var zone []model.DNSRecord
 	probed, opened := 0, 0
@@ -194,17 +196,21 @@ func processAXFRTarget(ctx context.Context, st *store.Store, prober *resolve.AXF
 			continue
 		}
 		seenIP[ep.IP] = true
-		res := prober.ProbeServer(ctx, t.RootDomain, ep.IP)
+		res := prober.ProbeServer(ctx, t.RootDomain, ep.Name, ep.IP)
 		probed++
-		if res.Open {
+		if res.IsOpen() {
 			opened++
 			if zone == nil {
 				zone = res.Zone // capture the transferred zone once per domain
 			}
 		}
-		// Emit only when the state changed vs the last known state (implicit-closed base).
-		if res.Open != prev[[2]string{t.RootDomain, ep.IP}] {
-			coll.add(model.AXFRObservation{RootDomain: t.RootDomain, NameServer: ep.IP, AXFROpen: res.Open, ObservedAt: now})
+		// Unknown (timeout/transport error/SERVFAIL/breaker/cancellation/malformed) is never definitive:
+		// it must not be compared against prev, must not emit a change, and must never be treated as a
+		// close. Only a definitive Open/Closed verdict is eligible to flip the recorded state.
+		if res.IsDefinitive() {
+			if res.IsOpen() != prev[[2]string{t.RootDomain, ep.IP}] {
+				coll.add(model.AXFRObservation{RootDomain: t.RootDomain, NameServer: ep.IP, AXFROpen: res.IsOpen(), ObservedAt: now})
+			}
 		}
 	}
 	if zone != nil {
