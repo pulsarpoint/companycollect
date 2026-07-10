@@ -198,7 +198,7 @@ via §4 write-back. Add matching `scanConfig`/`scanFlags` fields.
 - **Phase 2 — enrichment:** the seed-time host-load phase, `scan_hostnames`, the `Plan` union,
   behind `--host-enrich=false`. Tests: label normalization (fqdn→label, apex/deep), union+dedup+cap
   in `Plan`, source-precedence merge, store round-trip — against fixtures, not the 1.9 B-row table.
-  Then a bounded `--limit` sample with `--host-enrich` on to read real added-host counts + seed
+  Then a bounded `--max-domains` sample with `--host-enrich` on to read real added-host counts + seed
   duration before corpus-wide enablement.
 
 ## Interaction with AXFR

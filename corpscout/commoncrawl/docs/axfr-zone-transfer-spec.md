@@ -188,7 +188,7 @@ Add matching fields to `scanConfig` and `scanFlags` in `scan.go`.
    (`internal/resolve/testserver_test.go`) to serve AXFR over TCP — a canned zone covering
    both the REFUSED path and a capped successful transfer, TDD-style. (This is TCP-server
    work, more than adding another canned UDP response.)
-2. Enable on a bounded `--limit` sample on the box; read real hit-rate and p99 transfer
+2. Enable on a bounded `--max-domains` sample on the box; read real hit-rate and p99 transfer
    time from stats.
 3. Wire into the steady-state scan loop with tuned caps.
 

@@ -286,7 +286,7 @@ summary are written and its status flipped in **one SQLite transaction** (`Store
 kill mid-domain simply leaves it `pending`, so it's picked up and retried on the next `scan`
 invocation with the same `--scan-id`/`--db` (the cursor resets to `""` and `PendingBatch`'s status
 filter skips everything already `done`/`error`). A domain that already finished is never re-resolved.
-This makes `scan` **idempotent and restartable**: `--limit 0` (full corpus) runs can be killed and
+This makes `scan` **idempotent and restartable**: `--max-domains 0` (full corpus) runs can be killed and
 re-run indefinitely, converging on "0 pending" only when every domain has a terminal status.
 
 Peak memory is **bounded by the pipeline's channel buffers + one feeder chunk**, not the queue size:
@@ -295,11 +295,11 @@ window — a full-corpus run (~33.6M domains) never holds the whole seed list or
 `--dispatch-batch` is now just how many the feeder grabs per fetch to stay ahead of the workers;
 unlike the old barrier design it no longer governs throughput, so there's no reason to inflate it.
 
-> **Note on `--limit` reproducibility:** the default `--query` ends with `ORDER BY root_domain`, so
-> `--limit N` returns the *same* N domains on every run. A re-run of `scan --limit N --scan-id X`
+> **Note on `--max-domains` reproducibility:** the default `--query` ends with `ORDER BY root_domain`, so
+> `--max-domains N` returns the *same* N domains on every run. A re-run of `scan --max-domains N --scan-id X`
 > therefore finds them already done and reports "0 pending" (deterministic resume). If you pass a
-> *custom* `--query` together with `--limit`, add your own `ORDER BY` for the same guarantee — without
-> a stable order ClickHouse may return a different N rows each run (harmless for a full `--limit 0`
+> *custom* `--query` together with `--max-domains`, add your own `ORDER BY` for the same guarantee — without
+> a stable order ClickHouse may return a different N rows each run (harmless for a full `--max-domains 0`
 > run, which seeds every domain regardless of order).
 
 Only one goroutine ever calls `CommitBatch` (`db.SetMaxOpenConns(1)`), so SQLite's single-writer lock
@@ -324,7 +324,7 @@ A minimal scan-then-load round trip (`--resolvers` is required — point it at y
 resolver; see [Local recursive resolver](#local-recursive-resolver-required)):
 ```bash
 export CLICKHOUSE_HOST=<host> CLICKHOUSE_NATIVE_PORT=9002 CLICKHOUSE_USER=default CLICKHOUSE_PASSWORD=*** CLICKHOUSE_DATABASE=corpscout
-./bin/cc-dns-worker scan --resolvers 127.0.0.1:53 --db scan.db --scan-id 2026-07-06   # full corpus (--limit 0 default)
+./bin/cc-dns-worker scan --resolvers 127.0.0.1:53 --db scan.db --scan-id 2026-07-06   # full corpus (--max-domains 0 default)
 ./bin/cc-dns-worker load --db scan.db --scan-id 2026-07-06
 ```
 
@@ -363,8 +363,8 @@ Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending
 | `--scan-id` | string | today, UTC (`2006-01-02`) | scan batch id; ties `scan` and `load` together and becomes the CH `scan_id` column |
 | `--run-id` | string | `= --scan-id` | source run id stamped on rows (`source_run_id`); override to distinguish multiple `scan` invocations that share one `--scan-id` |
 | `--db` | string | `scan.db` | SQLite stage path |
-| `--query` | string | `SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains ORDER BY root_domain` | ClickHouse query returning one `root_domain` column (keep an `ORDER BY` if you customize it and use `--limit` — see the reproducibility note above) |
-| `--limit` | int | `0` (all) | cap on domains pulled from CH this invocation |
+| `--query` | string | `SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains ORDER BY root_domain` | ClickHouse query returning one `root_domain` column (keep an `ORDER BY` if you customize it and use `--max-domains` — see the reproducibility note above) |
+| `--max-domains` | int | `0` (all) | cap on domains pulled from CH this invocation |
 | `--resolvers` | string (CSV) | *(required, no default)* | recursive resolvers for Tier-1 NS discovery — point at a local resolver, e.g. `127.0.0.1:53` (unbound / PowerDNS Recursor); the run errors if unset |
 | `--discovery-qps` | float | `50` | max queries/sec **per** recursive resolver; raise substantially (e.g. `2000`) for a local resolver |
 | `--discovery-inflight` | int | `500` | max concurrent in-flight queries **per** recursive resolver — keep high so a local resolver isn't starved |

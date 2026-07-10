@@ -9,7 +9,7 @@ import (
 )
 
 // DefaultQuery selects every distinct domain known to the commoncrawl pipeline. The ORDER BY makes
-// the result deterministic so a --limit run returns the SAME domains every time; without it
+// the result deterministic so a --max-domains run returns the SAME domains every time; without it
 // ClickHouse may return a different LIMIT-N slice per run, which breaks resume-by-rescan (the second
 // run would seed a different set instead of finding all domains already done). For a full (unlimited)
 // run the order is immaterial — every domain is seeded regardless.

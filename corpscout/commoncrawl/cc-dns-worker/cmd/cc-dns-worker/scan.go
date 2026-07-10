@@ -24,7 +24,7 @@ import (
 type scanConfig struct {
 	scanID, runID     string
 	query             string
-	limit             int
+	maxDomains        int
 	resolvers         []string
 	discoveryQPS      float64
 	discoveryInflight int
@@ -54,7 +54,7 @@ type scanConfig struct {
 // closure that builds a scanConfig from them once fs is parsed.
 func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 	query := fs.String("query", input.DefaultQuery, "ClickHouse query returning root_domain")
-	limit := fs.Int("limit", 0, "cap number of domains (0 = all)")
+	maxDomains := fs.Int("max-domains", 0, "cap number of domains to scan this run (0 = all)")
 	resolvers := fs.String("resolvers", "", "REQUIRED: comma-separated recursive resolvers for NS discovery — point at a local resolver, e.g. 127.0.0.1:53 (unbound / PowerDNS Recursor)")
 	discoveryQPS := fs.Float64("discovery-qps", 50, "max queries/sec per recursive resolver (bump high for a local resolver)")
 	discoveryInflight := fs.Int("discovery-inflight", 500, "max concurrent in-flight queries per recursive resolver")
@@ -84,7 +84,7 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 			return scanConfig{}, fmt.Errorf("--resolvers is required: give a recursive resolver address, e.g. a local unbound/PowerDNS Recursor at 127.0.0.1:53")
 		}
 		return scanConfig{
-			query: *query, limit: *limit, resolvers: resolverList,
+			query: *query, maxDomains: *maxDomains, resolvers: resolverList,
 			discoveryQPS: *discoveryQPS, discoveryInflight: *discoveryInflight,
 			qps: *qps, inflight: *inflight, hyperscalerQPS: *hyperscalerQPS,
 			workers: *workers, commitBatch: *batchN, seedChunk: *seedChunk, dispatchBatch: *dispatchBatch,
@@ -153,7 +153,7 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 			return err
 		}
 		added, total := 0, 0
-		err = input.StreamClickHouse(ctx, conn, cfg.query, cfg.limit, cfg.seedChunk, func(batch []string) error {
+		err = input.StreamClickHouse(ctx, conn, cfg.query, cfg.maxDomains, cfg.seedChunk, func(batch []string) error {
 			n, serr := st.Seed(ctx, cfg.scanID, batch)
 			if serr != nil {
 				return serr

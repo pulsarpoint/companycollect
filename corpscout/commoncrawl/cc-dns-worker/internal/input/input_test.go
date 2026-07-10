@@ -19,11 +19,11 @@ func TestApplyLimit(t *testing.T) {
 	}
 }
 
-// DefaultQuery must be deterministically ordered so a --limit run returns the same domains every
+// DefaultQuery must be deterministically ordered so a --max-domains run returns the same domains every
 // time (resume-by-rescan depends on it). The ORDER BY must precede the appended LIMIT.
 func TestDefaultQueryIsDeterministic(t *testing.T) {
 	if !strings.Contains(DefaultQuery, "ORDER BY") {
-		t.Fatalf("DefaultQuery must be ordered for reproducible --limit runs: %q", DefaultQuery)
+		t.Fatalf("DefaultQuery must be ordered for reproducible --max-domains runs: %q", DefaultQuery)
 	}
 	limited := applyLimit(DefaultQuery, 20)
 	oi := strings.Index(limited, "ORDER BY")
