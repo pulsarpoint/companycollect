@@ -41,6 +41,7 @@ type scanConfig struct {
 	breakerCooldown   time.Duration
 	statsInterval     time.Duration
 	axfr              bool
+	axfrWorkers       int
 	axfrQPS           float64
 	axfrInflight      int
 	axfrMaxRecords    int
@@ -70,7 +71,8 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 	breakerThreshold := fs.Int("breaker-threshold", 5, "consecutive transport failures before a server IP's circuit opens (0 disables)")
 	breakerCooldown := fs.Duration("breaker-cooldown", 30*time.Second, "how long a server IP's circuit stays open before a half-open probe")
 	statsInterval := fs.Duration("stats-interval", 5*time.Second, "how often to print live throughput/traffic stats (0 = off)")
-	axfr := fs.Bool("axfr", false, "enable opportunistic AXFR (zone transfer) probing — master switch, default off")
+	axfr := fs.Bool("axfr", false, "enable the post-scan AXFR phase (a separate worker pool probes resolved domains' non-hyperscaler NS for open zones) — master switch, default off")
+	axfrWorkers := fs.Int("axfr-workers", 50, "AXFR phase: max concurrent domain probers (its own pool, never touches resolution)")
 	axfrQPS := fs.Float64("axfr-qps", 5, "max AXFR transfers/sec per NS IP")
 	axfrInflight := fs.Int("axfr-inflight", 50, "max total concurrent AXFR transfers across all domains")
 	axfrMaxRecords := fs.Int("axfr-max-records", 50000, "stop draining a zone past this many records")
@@ -91,7 +93,7 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 			workers: *workers, commitBatch: *batchN, seedChunk: *seedChunk, dispatchBatch: *dispatchBatch,
 			timeout: *timeout, breakerThreshold: *breakerThreshold, breakerCooldown: *breakerCooldown,
 			statsInterval: *statsInterval,
-			axfr:          *axfr, axfrQPS: *axfrQPS, axfrInflight: *axfrInflight,
+			axfr:          *axfr, axfrWorkers: *axfrWorkers, axfrQPS: *axfrQPS, axfrInflight: *axfrInflight,
 			axfrMaxRecords: *axfrMaxRecords, axfrMaxBytes: *axfrMaxBytes, axfrTimeout: *axfrTimeout,
 			hostEnrich: *hostEnrich, hostCap: *hostCap, hostConcurrency: *hostConcurrency,
 		}, nil
@@ -217,22 +219,6 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	rec := resolve.NewResolver(resolve.NewExchangerWithStats(authSched, cfg.timeout, stats))
 	rcfg := records.DefaultConfig()
 
-	var prober *resolve.AXFRProber
-	if cfg.axfr {
-		axfrSched := scheduler.New(scheduler.Config{
-			PerServerQPS:     cfg.axfrQPS,
-			Burst:            max(1, int(cfg.axfrQPS)),
-			MaxInFlight:      1, // one transfer per server IP at a time
-			BreakerThreshold: cfg.breakerThreshold,
-			BreakerCooldown:  cfg.breakerCooldown,
-		})
-		prober = resolve.NewAXFRProber(axfrSched, resolve.AXFRCaps{
-			MaxRecords: cfg.axfrMaxRecords, MaxBytes: cfg.axfrMaxBytes, Deadline: cfg.axfrTimeout,
-		}, cfg.axfrInflight)
-		log.Printf("scan_id=%s: AXFR probing ENABLED (qps=%.1f inflight=%d max-records=%d timeout=%s)",
-			cfg.scanID, cfg.axfrQPS, cfg.axfrInflight, cfg.axfrMaxRecords, cfg.axfrTimeout)
-	}
-
 	runStart := time.Now()
 	stopReporter := make(chan struct{})
 	var reporterWG sync.WaitGroup
@@ -297,7 +283,7 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 		go func() {
 			defer workerWG.Done()
 			for w := range work {
-				results <- resolveDomain(ctx, disc, rec, rcfg, w.domain, cfg.scanID, cfg.runID, prober, w.hosts)
+				results <- resolveDomain(ctx, disc, rec, rcfg, w.domain, cfg.scanID, cfg.runID, w.hosts)
 			}
 		}()
 	}
@@ -455,10 +441,9 @@ func hostLoadPhase(ctx context.Context, st *store.Store, cfg scanConfig) error {
 }
 
 // resolveDomain discovers a domain's authoritative NS then resolves its Tier-2 records into a
-// DomainResult; on discovery failure or no NS IPs it returns a status="error" result. When prober is
-// non-nil, a successful Tier-2 resolve is followed by an AXFR probe against the discovered NS IPs,
-// folded into the result via mergeAXFR. A nil prober (the default, --axfr=false) runs no AXFR code.
-func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, domain, scanID, runID string, prober *resolve.AXFRProber, extra []model.HostLabel) model.DomainResult {
+// DomainResult; on discovery failure or no NS IPs it returns a status="error" result. AXFR is NOT done
+// here — it runs as a separate post-scan phase (axfr.go) so it can never throttle resolution.
+func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.Resolver, cfg records.Config, domain, scanID, runID string, extra []model.HostLabel) model.DomainResult {
 	now := time.Now().UTC()
 	del, derr := disc.DiscoverNS(ctx, domain)
 	if derr != nil || len(del.NSIPs) == 0 {
@@ -472,21 +457,7 @@ func resolveDomain(ctx context.Context, disc *resolve.Discoverer, rec *resolve.R
 			Status: "error", Error: msg, SourceRunID: runID, ResolvedAt: now,
 		}
 	}
-	res := rec.Resolve(ctx, domain, scanID, runID, del, cfg, now, extra)
-	if prober != nil {
-		mergeAXFR(&res, prober.Probe(ctx, domain, del.NSIPs))
-	}
-	return res
-}
-
-// mergeAXFR folds an AXFR probe outcome into a domain result: the open-zone flag + counts on the
-// summary, and the transferred records (already tagged Source="axfr") into the record set.
-func mergeAXFR(res *model.DomainResult, a resolve.AXFRResult) {
-	res.AXFROpen = a.Open
-	res.AXFRRecords = a.Records
-	res.AXFRTruncated = a.Truncated
-	res.AXFRServer = a.Server
-	res.Records = append(res.Records, a.Zone...)
+	return rec.Resolve(ctx, domain, scanID, runID, del, cfg, now, extra)
 }
 
 // cleanResolvers drops empty/whitespace-only tokens so a malformed --resolvers flag can't silently

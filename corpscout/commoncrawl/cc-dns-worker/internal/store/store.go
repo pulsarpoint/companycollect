@@ -86,6 +86,18 @@ CREATE TABLE IF NOT EXISTS host_load_shards (
   complete INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (scan_id, shard)
 );
+CREATE TABLE IF NOT EXISTS dns_axfr (
+  scan_id     TEXT NOT NULL,
+  root_domain TEXT NOT NULL,
+  ns_server   TEXT NOT NULL,
+  axfr_open   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (scan_id, root_domain, ns_server)
+);
+CREATE TABLE IF NOT EXISTS axfr_state (
+  scan_id  TEXT PRIMARY KEY,
+  cursor   TEXT NOT NULL DEFAULT '',
+  complete INTEGER NOT NULL DEFAULT 0
+);
 `
 
 // Open opens (creating if needed) the SQLite stage in WAL mode and ensures the schema.
@@ -596,6 +608,116 @@ func (s *Store) InsertHostnamesMap(ctx context.Context, scanID string, m map[str
 		}
 	}
 	return added, tx.Commit()
+}
+
+// AXFRTarget is one domain the AXFR pipeline will probe: its root and the NS IPs resolution already
+// discovered and stored (so the pipeline needs no NS re-discovery).
+type AXFRTarget struct {
+	RootDomain string
+	NSIPs      []string
+}
+
+// AXFRTargetsAfter returns up to limit resolved domains (status='done') with a non-empty stored ns_ips,
+// ordered by root_domain and greater than afterRootDomain — the resumable cursor the AXFR phase walks.
+func (s *Store) AXFRTargetsAfter(ctx context.Context, scanID, afterRootDomain string, limit int) ([]AXFRTarget, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT root_domain, ns_ips FROM scan_domains
+		 WHERE scan_id = ? AND status = 'done' AND ns_ips NOT IN ('', 'null', '[]') AND root_domain > ?
+		 ORDER BY root_domain LIMIT ?`, scanID, afterRootDomain, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AXFRTarget
+	for rows.Next() {
+		var rd, ipsJSON string
+		if err := rows.Scan(&rd, &ipsJSON); err != nil {
+			return nil, err
+		}
+		var ips []string
+		if err := json.Unmarshal([]byte(ipsJSON), &ips); err != nil || len(ips) == 0 {
+			continue
+		}
+		out = append(out, AXFRTarget{RootDomain: rd, NSIPs: ips})
+	}
+	return out, rows.Err()
+}
+
+// RecordAXFR writes a domain's per-NS probe outcomes to dns_axfr and, when a zone opened, appends its
+// transferred records to scan_records (source='axfr') — one transaction. Idempotent: dns_axfr rows are
+// upserted; records are appended (the AXFR phase runs after resolution committed the domain, so no
+// CommitBatch DELETE can wipe them). zone is inserted once per domain, not per NS.
+func (s *Store) RecordAXFR(ctx context.Context, scanID, domain string, probes []model.AXFRProbe, zone []model.DNSRecord, runID string, resolvedAt time.Time) error {
+	if len(probes) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	up, err := tx.PrepareContext(ctx, `INSERT INTO dns_axfr (scan_id, root_domain, ns_server, axfr_open)
+		VALUES (?, ?, ?, ?) ON CONFLICT(scan_id, root_domain, ns_server) DO UPDATE SET axfr_open = excluded.axfr_open`)
+	if err != nil {
+		return err
+	}
+	defer up.Close()
+	for _, p := range probes {
+		if _, err := up.ExecContext(ctx, scanID, domain, p.Server, b2i(p.Open)); err != nil {
+			return err
+		}
+	}
+	if len(zone) > 0 {
+		ts := resolvedAt.UTC().Format(time.RFC3339Nano)
+		ins, err := tx.PrepareContext(ctx, `INSERT INTO scan_records
+			(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, source, discovery, source_run_id, resolved_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer ins.Close()
+		for _, rec := range zone {
+			if _, err := ins.ExecContext(ctx, scanID, domain, rec.Name, rec.RecordType, rec.Slot,
+				rec.Value, rec.TTL, rec.Priority, rec.Rcode, rec.Source, rec.Discovery, runID, ts); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// AXFRCursor / SetAXFRCursor / AXFRComplete / MarkAXFRComplete track the AXFR phase's resumable
+// progress over the resolved-domain cursor (mirrors the host-load markers).
+func (s *Store) AXFRCursor(ctx context.Context, scanID string) (string, error) {
+	var c string
+	err := s.db.QueryRowContext(ctx, `SELECT cursor FROM axfr_state WHERE scan_id = ?`, scanID).Scan(&c)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return c, err
+}
+
+func (s *Store) SetAXFRCursor(ctx context.Context, scanID, cursor string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO axfr_state (scan_id, cursor) VALUES (?, ?)
+		 ON CONFLICT(scan_id) DO UPDATE SET cursor = excluded.cursor`, scanID, cursor)
+	return err
+}
+
+func (s *Store) AXFRComplete(ctx context.Context, scanID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT complete FROM axfr_state WHERE scan_id = ?`, scanID).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return n == 1, err
+}
+
+func (s *Store) MarkAXFRComplete(ctx context.Context, scanID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO axfr_state (scan_id, complete) VALUES (?, 1)
+		 ON CONFLICT(scan_id) DO UPDATE SET complete = 1`, scanID)
+	return err
 }
 
 // Close closes the DB.

@@ -26,6 +26,7 @@ type cycleState struct {
 const (
 	phaseSeeding  = "seeding"
 	phaseScanning = "scanning"
+	phaseAXFR     = "axfr"
 	phaseFlushing = "flushing"
 	phaseDone     = "done"
 )
@@ -75,6 +76,22 @@ func runOrchestrator(args []string) error {
 		if state.Phase == phaseScanning {
 			if err := runScanPhase(ctx, state, dbPath, cfg, *loadInterval, *loadBatch); err != nil {
 				log.Printf("cycle %s: scan phase error: %v — retrying in 30s (resumes, no new cycle)", state.CycleID, err)
+				time.Sleep(30 * time.Second)
+				continue
+			}
+			if cfg.axfr {
+				state.Phase = phaseAXFR
+			} else {
+				state.Phase = phaseFlushing
+			}
+			if err := saveState(statePath, state); err != nil {
+				return err
+			}
+		}
+
+		if state.Phase == phaseAXFR {
+			if err := runAXFRPhase(ctx, state, dbPath, cfg); err != nil {
+				log.Printf("cycle %s: axfr phase error: %v — retrying in 30s (resumes, no new cycle)", state.CycleID, err)
 				time.Sleep(30 * time.Second)
 				continue
 			}
@@ -146,6 +163,20 @@ func runSeedPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 	cfg.scanID = state.CycleID
 	cfg.runID = state.CycleID
 	return seedCycle(ctx, st, cfg)
+}
+
+// runAXFRPhase runs the AXFR phase after scanning: a standalone worker pool probes each resolved
+// domain's non-hyperscaler nameservers for open zone transfers (reusing the ns_ips resolution stored).
+// Separate from resolution entirely; runs only when --axfr is set.
+func runAXFRPhase(ctx context.Context, state cycleState, dbPath string, cfg scanConfig) error {
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	cfg.scanID = state.CycleID
+	cfg.runID = state.CycleID
+	return runAXFRPipeline(ctx, st, cfg)
 }
 
 // runScanPhase scans the cycle while a background goroutine incrementally loads new records to CH.

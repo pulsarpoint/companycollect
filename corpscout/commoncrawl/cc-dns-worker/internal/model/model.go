@@ -17,6 +17,13 @@ type DNSRecord struct {
 	Discovery  string // "static" | "ct" | "axfr" — how the hostname was discovered
 }
 
+// AXFRProbe is the per-nameserver outcome of the standalone AXFR pipeline: was zone transfer open on
+// this NS IP. Stored one row per (root_domain, server) in the dns_axfr table.
+type AXFRProbe struct {
+	Server string // the NS IP probed
+	Open   bool   // true if the NS answered a zone transfer
+}
+
 // HostLabel is one discovered subdomain label to scan for a domain (from CT, the registry, or a
 // zone transfer). Label is the name minus ".<root_domain>", lowercased. DiscoverySource is how it
 // was found (ct|axfr|static); LiveCert is true when a CT source had a still-valid certificate.
