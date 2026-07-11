@@ -35,11 +35,12 @@ func TestDownloaderCommitsChunksThenReadyAndResumes(t *testing.T) {
 	if err := parquet.WriteFile(worklistPath, rows); err != nil {
 		t.Fatal(err)
 	}
+	var logOutput bytes.Buffer
 
 	downloader := Downloader{
 		Source: source,
 		Store:  store,
-		Logger: testLogger(),
+		Logger: slog.New(slog.NewJSONHandler(&logOutput, nil)),
 		Config: testDownloaderConfig(worklistPath),
 	}
 	result, err := downloader.Run(ctx)
@@ -48,6 +49,24 @@ func TestDownloaderCommitsChunksThenReadyAndResumes(t *testing.T) {
 	}
 	if result.Skipped || result.ChunkCount != 2 || result.DownloadedRecords != 3 || result.FailedRecords != 0 {
 		t.Fatalf("unexpected result %+v", result)
+	}
+	for _, field := range []string{
+		`"msg":"chunk ready"`,
+		`"chunks_ready":1`,
+		`"chunks_total":2`,
+		`"records_per_second":`,
+		`"source_mib_per_second":`,
+		`"http_attempts":`,
+		`"sdk_retry_attempts":`,
+		`"http_429":`,
+		`"http_503":`,
+	} {
+		if !strings.Contains(logOutput.String(), field) {
+			t.Fatalf("chunk log does not contain %q: %s", field, logOutput.String())
+		}
+	}
+	if strings.Contains(logOutput.String(), `"msg":"download progress"`) || strings.Contains(logOutput.String(), `"msg":"download throttled"`) {
+		t.Fatalf("timer-based progress log remains: %s", logOutput.String())
 	}
 
 	expectedOrder := []string{

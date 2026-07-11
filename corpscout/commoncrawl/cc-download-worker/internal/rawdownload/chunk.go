@@ -28,18 +28,16 @@ func (downloader *Downloader) downloadChunk(
 	ctx context.Context,
 	worklist worklistData,
 	plan chunkPlan,
-	progress *downloadProgress,
 	cooldown *throttleCooldown,
 ) (rawstore.CommittedChunkManifest, error) {
 	startedAt := time.Now().UTC()
-	progress.setPhase("downloading")
 	downloads := make([]recordDownload, len(plan.Records))
 	var group errgroup.Group
 	group.SetLimit(downloader.Config.Concurrency)
 	for index := range plan.Records {
 		index := index
 		group.Go(func() error {
-			downloads[index] = downloader.downloadRecord(ctx, plan.Records[index], progress, cooldown)
+			downloads[index] = downloader.downloadRecord(ctx, plan.Records[index], cooldown)
 			return nil
 		})
 	}
@@ -49,7 +47,6 @@ func (downloader *Downloader) downloadChunk(
 	if err := ctx.Err(); err != nil {
 		return rawstore.CommittedChunkManifest{}, errors.Wrap(err, "download chunk context")
 	}
-	progress.setPhase("building_pack")
 
 	results := summarizeDownloads(downloads)
 	if results.FailedRecords == int64(len(downloads)) {
@@ -130,9 +127,7 @@ func (downloader *Downloader) downloadChunk(
 		return rawstore.CommittedChunkManifest{}, errors.Wrap(err, "encode chunk manifest")
 	}
 	manifestChecksum := rawstore.ChecksumBytes(manifestBody)
-	progress.chunkPrepared(packSize + indexSize + int64(len(manifestBody)))
 
-	progress.setPhase("uploading_rustfs")
 	if err := downloader.Store.PutFile(ctx, keys.Pack, packPath, "application/octet-stream", packChecksum); err != nil {
 		return rawstore.CommittedChunkManifest{}, err
 	}
@@ -148,7 +143,6 @@ func (downloader *Downloader) downloadChunk(
 			return rawstore.CommittedChunkManifest{}, errors.Newf("uploaded object %s failed size/checksum verification", object.Key)
 		}
 	}
-	progress.setPhase("committing_chunk")
 	if err := downloader.Store.PutBytes(ctx, keys.Manifest, "application/json", manifestBody, manifestChecksum); err != nil {
 		return rawstore.CommittedChunkManifest{}, err
 	}
@@ -170,11 +164,8 @@ func (downloader *Downloader) downloadChunk(
 func (downloader *Downloader) downloadRecord(
 	ctx context.Context,
 	record selectedRecord,
-	progress *downloadProgress,
 	cooldown *throttleCooldown,
 ) (result recordDownload) {
-	progress.recordStarted()
-	defer func() { progress.recordFinished(result) }()
 	for attempt := 1; attempt <= downloader.Config.RecordAttempts; attempt++ {
 		if err := cooldown.wait(ctx); err != nil {
 			result.status = rawstore.Failed
@@ -182,7 +173,6 @@ func (downloader *Downloader) downloadRecord(
 			result.attempts = int32(attempt)
 			return result
 		}
-		progress.recordAttempted(attempt)
 		recordContext, cancel := context.WithTimeout(ctx, downloader.Config.RecordTimeout)
 		raw, err := fetch.FetchRawRecord(
 			recordContext,
@@ -203,7 +193,6 @@ func (downloader *Downloader) downloadRecord(
 		}
 		result.status, result.errorCode = classifyDownloadError(err)
 		if result.errorCode == "throttled" {
-			progress.recordThrottled()
 			cooldown.slowDown(attempt)
 		}
 		if result.status == rawstore.NotFound || attempt == downloader.Config.RecordAttempts {

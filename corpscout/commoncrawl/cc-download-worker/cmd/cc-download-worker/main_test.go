@@ -3,7 +3,6 @@ package main
 import (
 	"reflect"
 	"testing"
-	"time"
 )
 
 func TestParseParts(t *testing.T) {
@@ -38,21 +37,11 @@ func TestParseOptionsUsesDownloaderDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.baseDirectory != "/srv/commoncrawl" || options.pagesPerDomain != 25 || options.recordAttempts != 3 || options.progressInterval != 10*time.Second || options.python != "/usr/bin/python3" {
+	if options.baseDirectory != "/srv/commoncrawl" || options.pagesPerDomain != 25 || options.recordAttempts != 3 || options.python != "/usr/bin/python3" {
 		t.Fatalf("unexpected defaults %+v", options)
 	}
 	if options.parts != "0-10" || options.worklistDirectory != "" {
 		t.Fatalf("unexpected range/worklist options %+v", options)
-	}
-}
-
-func TestParseOptionsRejectsNegativeProgressInterval(t *testing.T) {
-	_, err := parseOptions([]string{
-		"--crawl", "CC-MAIN-2026-25", "--parts", "0",
-		"--progress-interval", "-1s",
-	})
-	if err == nil {
-		t.Fatal("negative progress interval unexpectedly succeeded")
 	}
 }
 

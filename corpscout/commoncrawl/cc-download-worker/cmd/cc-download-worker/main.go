@@ -39,7 +39,6 @@ type options struct {
 	maxFailureRate    float64
 	recordAttempts    int
 	recordTimeout     time.Duration
-	progressInterval  time.Duration
 	tempDirectory     string
 	rustfsEndpoint    string
 	rustfsRegion      string
@@ -134,16 +133,10 @@ func run(logger *slog.Logger, args []string) error {
 		"max_pack_bytes", options.maxPackBytes,
 		"max_records", options.maxRecords,
 		"record_attempts", options.recordAttempts,
-		"progress_interval", options.progressInterval,
 		"source_rate_control", sourceRateControl,
 		"run_id", runID,
 	)
 
-	runStartedAt := time.Now()
-	var sourceStatsStart fetch.S3Stats
-	if sourceS3 != nil {
-		sourceStatsStart = sourceS3.Stats()
-	}
 	var runTotals totals
 	for _, part := range parts {
 		worklist, err := worklistbuilder.Ensure(ctx, worklistbuilder.Config{
@@ -171,24 +164,23 @@ func run(logger *slog.Logger, args []string) error {
 			Store:  store,
 			Logger: logger,
 			Config: rawdownload.Config{
-				WorklistPath:     worklist.Path,
-				WorklistKey:      worklistbuilder.Key(options.pagesPerDomain, part),
-				CrawlID:          options.crawlID,
-				Selection:        selection,
-				Part:             part,
-				SourceBucket:     options.sourceBucket,
-				Concurrency:      options.concurrency,
-				MaxPackBytes:     options.maxPackBytes,
-				MaxRecords:       options.maxRecords,
-				MaxFailureRate:   options.maxFailureRate,
-				RecordAttempts:   options.recordAttempts,
-				RecordTimeout:    options.recordTimeout,
-				ProgressInterval: options.progressInterval,
-				TempDir:          options.tempDirectory,
-				RunID:            runID,
-				WorkerHost:       hostname,
-				GitCommit:        buildCommit(),
-				ForceRedownload:  options.forceRedownload,
+				WorklistPath:    worklist.Path,
+				WorklistKey:     worklistbuilder.Key(options.pagesPerDomain, part),
+				CrawlID:         options.crawlID,
+				Selection:       selection,
+				Part:            part,
+				SourceBucket:    options.sourceBucket,
+				Concurrency:     options.concurrency,
+				MaxPackBytes:    options.maxPackBytes,
+				MaxRecords:      options.maxRecords,
+				MaxFailureRate:  options.maxFailureRate,
+				RecordAttempts:  options.recordAttempts,
+				RecordTimeout:   options.recordTimeout,
+				TempDir:         options.tempDirectory,
+				RunID:           runID,
+				WorkerHost:      hostname,
+				GitCommit:       buildCommit(),
+				ForceRedownload: options.forceRedownload,
 			},
 		}
 		result, err := downloader.Run(ctx)
@@ -208,34 +200,6 @@ func run(logger *slog.Logger, args []string) error {
 			"raw_bytes", result.RawBytes,
 			"raw_size", humanize.IBytes(uint64(result.RawBytes)),
 			"run_id", runID,
-		)
-	}
-	if sourceS3 != nil {
-		stats := sourceS3.Stats().Delta(sourceStatsStart)
-		wallSeconds := time.Since(runStartedAt).Seconds()
-		if wallSeconds <= 0 {
-			wallSeconds = 1
-		}
-		sdkRetryAttempts := stats.HTTPAttempts - stats.GetObjectCalls
-		if sdkRetryAttempts < 0 {
-			sdkRetryAttempts = 0
-		}
-		logger.Info("source S3 stats",
-			"get_object_calls", stats.GetObjectCalls,
-			"get_object_avg_ms", averageMilliseconds(stats.GetObjectTime, stats.GetObjectCalls),
-			"http_attempts", stats.HTTPAttempts,
-			"sdk_retry_attempts", sdkRetryAttempts,
-			"http_429", stats.HTTP429s,
-			"http_503", stats.HTTP503s,
-			"adaptive_slowdown_observed", stats.HTTP429s+stats.HTTP503s > 0,
-			"http_header_avg_ms", averageMilliseconds(stats.HTTPHeaderTime, stats.HTTPAttempts),
-			"body_read_attempts", stats.BodyReadAttempts,
-			"body_read_errors", stats.BodyReadErrors,
-			"body_read_retries", stats.BodyReadRetries,
-			"body_bytes", stats.BodyBytes,
-			"body_size", humanize.IBytes(uint64(stats.BodyBytes)),
-			"body_read_avg_ms", averageMilliseconds(stats.BodyReadTime, stats.BodyReadAttempts),
-			"wall_throughput_mib_per_second", float64(stats.BodyBytes)/(1024*1024)/wallSeconds,
 		)
 	}
 	logger.Info("download run complete",
@@ -272,7 +236,6 @@ func parseOptions(args []string) (options, error) {
 	flags.Float64Var(&options.maxFailureRate, "max-failure-rate", 0.01, "maximum terminal record failure ratio allowed per committed chunk")
 	flags.IntVar(&options.recordAttempts, "record-attempts", 3, "logical attempts for transient record failures")
 	flags.DurationVar(&options.recordTimeout, "record-timeout", 30*time.Second, "deadline for each logical record attempt")
-	flags.DurationVar(&options.progressInterval, "progress-interval", 10*time.Second, "periodic download statistics interval (0 disables periodic logs)")
 	flags.StringVar(&options.tempDirectory, "temp-dir", "", "parent directory for temporary pack files (default system temp)")
 	flags.StringVar(&options.rustfsEndpoint, "rustfs-endpoint", os.Getenv("CORPSCOUT_S3_ENDPOINT"), "RustFS S3-compatible endpoint")
 	flags.StringVar(&options.rustfsRegion, "rustfs-region", "us-east-1", "RustFS signing region")
@@ -299,9 +262,6 @@ func parseOptions(args []string) (options, error) {
 	}
 	if options.recordAttempts < 1 || options.recordAttempts > 10 {
 		return options, errors.New("record-attempts must be between 1 and 10")
-	}
-	if options.progressInterval < 0 {
-		return options, errors.New("progress-interval cannot be negative")
 	}
 	if _, err := parseParts(options.parts); err != nil {
 		return options, err
@@ -353,13 +313,6 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func averageMilliseconds(total time.Duration, count int64) float64 {
-	if count == 0 {
-		return 0
-	}
-	return float64(total) / float64(time.Millisecond) / float64(count)
 }
 
 func newRunID() (string, error) {

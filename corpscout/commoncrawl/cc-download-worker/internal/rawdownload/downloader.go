@@ -13,25 +13,26 @@ import (
 	"github.com/dustin/go-humanize"
 )
 
+const bytesPerMiB = 1024 * 1024
+
 type Config struct {
-	WorklistPath     string
-	WorklistKey      string
-	CrawlID          string
-	Selection        string
-	Part             int
-	SourceBucket     string
-	Concurrency      int
-	MaxPackBytes     int64
-	MaxRecords       int
-	MaxFailureRate   float64
-	RecordAttempts   int
-	RecordTimeout    time.Duration
-	ProgressInterval time.Duration
-	TempDir          string
-	RunID            string
-	WorkerHost       string
-	GitCommit        string
-	ForceRedownload  bool
+	WorklistPath    string
+	WorklistKey     string
+	CrawlID         string
+	Selection       string
+	Part            int
+	SourceBucket    string
+	Concurrency     int
+	MaxPackBytes    int64
+	MaxRecords      int
+	MaxFailureRate  float64
+	RecordAttempts  int
+	RecordTimeout   time.Duration
+	TempDir         string
+	RunID           string
+	WorkerHost      string
+	GitCommit       string
+	ForceRedownload bool
 }
 
 type Result struct {
@@ -86,32 +87,27 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 		}
 	}
 	cooldown := &throttleCooldown{}
-	progress := newDownloadProgress(downloader, int64(len(worklist.Records)), len(plans), cooldown)
-	stopProgress := progress.start(ctx)
-	defer stopProgress()
+	sourceS3, _ := downloader.Source.(*fetch.S3Getter)
 
 	committed := make([]rawstore.CommittedChunkManifest, 0, len(plans))
 	readyChunks := make([]rawstore.ReadyChunk, 0, len(plans))
 	var downloadedRecords, failedRecords, rawBytes int64
 	for _, plan := range plans {
-		progress.beginChunk(plan)
 		chunkStartedAt := time.Now()
+		var sourceStatsStart fetch.S3Stats
+		if sourceS3 != nil {
+			sourceStatsStart = sourceS3.Stats()
+		}
 		chunk, valid, err := downloader.loadCommittedChunk(ctx, worklist, plan)
 		if err != nil {
 			return Result{}, err
 		}
 		reused := valid
 		if !reused {
-			chunk, err = downloader.downloadChunk(ctx, worklist, plan, progress, cooldown)
+			chunk, err = downloader.downloadChunk(ctx, worklist, plan, cooldown)
 			if err != nil {
 				return Result{}, errors.Wrapf(err, "download chunk %d", plan.Number)
 			}
-		} else {
-			progress.recordsReused(
-				chunk.Manifest.Results.DownloadedRecords,
-				chunk.Manifest.Results.FailedRecords,
-				chunk.Manifest.Results.SourceBytes,
-			)
 		}
 		manifest := chunk.Manifest
 		committed = append(committed, chunk)
@@ -131,8 +127,15 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 		downloadedRecords += manifest.Results.DownloadedRecords
 		failedRecords += manifest.Results.FailedRecords
 		rawBytes += chunkRawBytes
-		progress.chunkReady(reused, chunkRawBytes)
 		chunkElapsed := time.Since(chunkStartedAt)
+		var sourceStats fetch.S3Stats
+		if sourceS3 != nil {
+			sourceStats = sourceS3.Stats().Delta(sourceStatsStart)
+		}
+		sdkRetryAttempts := sourceStats.HTTPAttempts - sourceStats.GetObjectCalls
+		if sdkRetryAttempts < 0 {
+			sdkRetryAttempts = 0
+		}
 		chunkRecordsPerSecond := float64(0)
 		chunkMiBPerSecond := float64(0)
 		if !reused && chunkElapsed > 0 {
@@ -144,6 +147,8 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 			"selection", downloader.Config.Selection,
 			"part", downloader.Config.Part,
 			"chunk", plan.Number,
+			"chunks_ready", len(readyChunks),
+			"chunks_total", len(plans),
 			"reused", reused,
 			"requested_records", manifest.Results.RequestedRecords,
 			"downloaded_records", manifest.Results.DownloadedRecords,
@@ -157,6 +162,12 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 			"elapsed_seconds", chunkElapsed.Seconds(),
 			"records_per_second", chunkRecordsPerSecond,
 			"source_mib_per_second", chunkMiBPerSecond,
+			"http_attempts", sourceStats.HTTPAttempts,
+			"sdk_retry_attempts", sdkRetryAttempts,
+			"http_429", sourceStats.HTTP429s,
+			"http_503", sourceStats.HTTP503s,
+			"body_read_errors", sourceStats.BodyReadErrors,
+			"body_read_retries", sourceStats.BodyReadRetries,
 		)
 	}
 
@@ -190,7 +201,6 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 		return Result{}, errors.Wrap(err, "encode ready manifest")
 	}
 	readyChecksum := rawstore.ChecksumBytes(readyBody)
-	progress.setPhase("committing_part")
 	if err := downloader.Store.PutBytes(ctx, readyKey, "application/json", readyBody, readyChecksum); err != nil {
 		return Result{}, err
 	}
@@ -207,7 +217,6 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 			return Result{}, err
 		}
 	}
-	progress.setPhase("part_ready")
 	return resultFromReady(ready, false), nil
 }
 
@@ -227,9 +236,6 @@ func (downloader *Downloader) validate() error {
 	}
 	if config.RecordAttempts < 1 || config.RecordAttempts > 10 {
 		return errors.Newf("record attempts must be between 1 and 10, got %d", config.RecordAttempts)
-	}
-	if config.ProgressInterval < 0 {
-		return errors.Newf("progress interval cannot be negative, got %s", config.ProgressInterval)
 	}
 	if config.MaxFailureRate < 0 || config.MaxFailureRate > 1 {
 		return errors.Newf("max failure rate must be between 0 and 1, got %f", config.MaxFailureRate)
