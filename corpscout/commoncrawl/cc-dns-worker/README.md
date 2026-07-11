@@ -67,6 +67,12 @@ Each scanner has its own capacity, workers, QPS limits, retry loop, completion c
 one-second statistics. One scanner can fail and retry while the other continues. Each completed cycle
 database is deleted only after that scanner's own ClickHouse outbox drains.
 
+The DNS health line reports errors per query attempt, not per domain. `err` is cumulative and
+`err10m` is the weighted recent rate for sent attempts that timed out, failed at transport, or returned
+an error RCODE such as SERVFAIL, REFUSED, or NOTAUTH. Valid NOERROR/NODATA and NXDOMAIN responses do
+not count as errors. `timeout` shows the cumulative timeout subset. These counters are checkpointed to
+DNS SQLite once per reporting interval, not once per request.
+
 ## DNS and AXFR behavior
 
 Tier 1 uses the required `--resolvers` recursive resolver list to discover NS, NS addresses, and parent

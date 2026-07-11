@@ -249,6 +249,55 @@ func TestExchangeServfailCountsAsQueryError(t *testing.T) {
 	}
 }
 
+func TestExchangeValidNXDOMAINDoesNotCountAsQueryError(t *testing.T) {
+	addr, stop := startRcode(t, dns.RcodeNameError)
+	defer stop()
+	sched := scheduler.New(scheduler.Config{PerServerQPS: 1000, Burst: 1000, MaxInFlight: 10})
+	var stats metrics.Stats
+	ex := NewExchangerWithStats(sched, time.Second, &stats)
+	m := new(dns.Msg)
+	m.SetQuestion("missing.example.", dns.TypeA)
+	if _, err := ex.Exchange(context.Background(), m, addr); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Queries.Load() != 1 || stats.QueryErrors.Load() != 0 {
+		t.Fatalf("valid NXDOMAIN counters: queries=%d errors=%d", stats.Queries.Load(), stats.QueryErrors.Load())
+	}
+}
+
+func TestExchangeRefusedCountsAsQueryError(t *testing.T) {
+	addr, stop := startRcode(t, dns.RcodeRefused)
+	defer stop()
+	sched := scheduler.New(scheduler.Config{PerServerQPS: 1000, Burst: 1000, MaxInFlight: 10})
+	var stats metrics.Stats
+	ex := NewExchangerWithStats(sched, time.Second, &stats)
+	m := new(dns.Msg)
+	m.SetQuestion("example.com.", dns.TypeA)
+	if _, err := ex.Exchange(context.Background(), m, addr); err != nil {
+		t.Fatal(err)
+	}
+	if stats.QueryErrors.Load() != 1 {
+		t.Fatalf("REFUSED errors=%d, want 1", stats.QueryErrors.Load())
+	}
+}
+
+func TestExchangeTimeoutCountsAsErrorAndTimeout(t *testing.T) {
+	addr, stop := startNoReply(t)
+	defer stop()
+	sched := scheduler.New(scheduler.Config{PerServerQPS: 1000, Burst: 1000, MaxInFlight: 10})
+	var stats metrics.Stats
+	ex := NewExchangerWithStats(sched, 50*time.Millisecond, &stats)
+	m := new(dns.Msg)
+	m.SetQuestion("example.com.", dns.TypeA)
+	if _, err := ex.Exchange(context.Background(), m, addr); err == nil {
+		t.Fatal("expected timeout")
+	}
+	if stats.Queries.Load() != 1 || stats.QueryErrors.Load() != 1 || stats.QueryTimeouts.Load() != 1 {
+		t.Fatalf("timeout counters: queries=%d errors=%d timeouts=%d",
+			stats.Queries.Load(), stats.QueryErrors.Load(), stats.QueryTimeouts.Load())
+	}
+}
+
 // TestDiscoverNSExhaustedServfailCountsQueryErrorsConsistently exercises requirement (5) through a
 // real exhausted retry sequence (Discoverer.query's rotate-and-retry loop, the same shared machinery
 // Resolver.queryAuth uses): every attempt against an always-SERVFAIL resolver must count once in both

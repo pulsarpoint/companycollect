@@ -18,10 +18,12 @@ CREATE TABLE IF NOT EXISTS scan_state (
   source_exhausted INTEGER NOT NULL DEFAULT 0,
   domains_fetched  INTEGER NOT NULL DEFAULT 0,
   domains_processed INTEGER NOT NULL DEFAULT 0,
-  domain_errors    INTEGER NOT NULL DEFAULT 0,
   records_observed INTEGER NOT NULL DEFAULT 0,
   dns_checks       INTEGER NOT NULL DEFAULT 0,
   dns_checks_ok    INTEGER NOT NULL DEFAULT 0,
+  dns_queries      INTEGER NOT NULL DEFAULT 0,
+  dns_query_errors INTEGER NOT NULL DEFAULT 0,
+  dns_query_timeouts INTEGER NOT NULL DEFAULT 0,
   started_at       TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS dns_work (
@@ -82,13 +84,15 @@ type WorkCounts struct {
 	Ready   int
 }
 
-// CumulativeStats are committed with DNS results and survive worker restarts.
+// CumulativeStats combines result counters and periodically checkpointed network counters.
 type CumulativeStats struct {
-	Domains      int64
-	DomainErrors int64
-	Records      int64
-	DNSChecks    int64
-	DNSChecksOK  int64
+	Domains       int64
+	Records       int64
+	DNSChecks     int64
+	DNSChecksOK   int64
+	Queries       int64
+	QueryErrors   int64
+	QueryTimeouts int64
 }
 
 // BeginCycle creates the single durable source cursor for a scan without changing an existing cycle.
@@ -173,11 +177,21 @@ func (s *Store) DNSWorkCounts(ctx context.Context, scanID string) (WorkCounts, e
 
 func (s *Store) CumulativeStats(ctx context.Context, scanID string) (CumulativeStats, error) {
 	var stats CumulativeStats
-	err := s.db.QueryRowContext(ctx, `SELECT domains_processed, domain_errors, records_observed,
-		dns_checks, dns_checks_ok FROM scan_state WHERE scan_id = ?`, scanID).Scan(
-		&stats.Domains, &stats.DomainErrors, &stats.Records, &stats.DNSChecks, &stats.DNSChecksOK,
+	err := s.db.QueryRowContext(ctx, `SELECT domains_processed, records_observed, dns_checks,
+		dns_checks_ok, dns_queries, dns_query_errors, dns_query_timeouts
+		FROM scan_state WHERE scan_id = ?`, scanID).Scan(
+		&stats.Domains, &stats.Records, &stats.DNSChecks, &stats.DNSChecksOK,
+		&stats.Queries, &stats.QueryErrors, &stats.QueryTimeouts,
 	)
 	return stats, err
+}
+
+// SaveQueryStats checkpoints aggregate network counters once per reporting interval. This keeps
+// restartable cumulative rates without serializing every DNS request through SQLite.
+func (s *Store) SaveQueryStats(ctx context.Context, scanID string, queries, queryErrors, queryTimeouts int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE scan_state SET dns_queries = ?, dns_query_errors = ?,
+		dns_query_timeouts = ? WHERE scan_id = ?`, queries, queryErrors, queryTimeouts, scanID)
+	return err
 }
 
 func (s *Store) CheckpointWAL(ctx context.Context) error {
@@ -289,9 +303,9 @@ func (s *Store) CommitDNS(ctx context.Context, result model.DomainResult) error 
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE scan_state SET
 		domains_processed = domains_processed + 1,
-		domain_errors = domain_errors + ?, records_observed = records_observed + ?,
+		records_observed = records_observed + ?,
 		dns_checks = dns_checks + ?, dns_checks_ok = dns_checks_ok + ? WHERE scan_id = ?`,
-		b2i(len(result.Records) == 0), len(result.Records), result.QueriesTotal, result.QueriesOK,
+		len(result.Records), result.QueriesTotal, result.QueriesOK,
 		result.ScanID); err != nil {
 		return err
 	}

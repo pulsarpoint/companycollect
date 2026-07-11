@@ -41,6 +41,10 @@ func startAuthCapture(t *testing.T, z zone, onReq func(*dns.Msg)) (string, func(
 // startServfail starts an in-process server that answers every query with SERVFAIL, regardless of
 // question name/type, to exercise the retryable-error/rotation path in Discoverer.query.
 func startServfail(t *testing.T) (string, func()) {
+	return startRcode(t, dns.RcodeServerFailure)
+}
+
+func startRcode(t *testing.T, rcode int) (string, func()) {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -50,9 +54,22 @@ func startServfail(t *testing.T) (string, func()) {
 	mux.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
 		m := new(dns.Msg)
 		m.SetReply(r)
-		m.Rcode = dns.RcodeServerFailure
+		m.Rcode = rcode
 		_ = w.WriteMsg(m)
 	})
+	srv := &dns.Server{PacketConn: pc, Handler: mux}
+	go func() { _ = srv.ActivateAndServe() }()
+	return pc.LocalAddr().String(), func() { _ = srv.Shutdown() }
+}
+
+func startNoReply(t *testing.T) (string, func()) {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	mux := dns.NewServeMux()
+	mux.HandleFunc(".", func(dns.ResponseWriter, *dns.Msg) {})
 	srv := &dns.Server{PacketConn: pc, Handler: mux}
 	go func() { _ = srv.ActivateAndServe() }()
 	return pc.LocalAddr().String(), func() { _ = srv.Shutdown() }

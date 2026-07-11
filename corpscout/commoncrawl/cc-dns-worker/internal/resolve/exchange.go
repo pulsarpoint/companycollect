@@ -6,6 +6,7 @@ package resolve
 
 import (
 	"context"
+	"errors"
 	"net"
 	"time"
 
@@ -79,15 +80,16 @@ func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dn
 		if err != nil {
 			if c.stats != nil {
 				c.stats.QueryErrors.Add(1)
+				if isTimeout(ctx, err) {
+					c.stats.QueryTimeouts.Add(1)
+				}
 			}
 			return err
 		}
-		// A SERVFAIL reply is not a Go transport error — miekg/dns returns err == nil for any
-		// well-formed message regardless of rcode — but every caller (queryAuth, Discoverer.query)
-		// treats it exactly like one: retryable, and it rotates to another attempt. Count it here too,
-		// paired 1:1 with the Queries increment above, so an exhausted SERVFAIL sequence is never
-		// silently invisible to QueryErrors the way a pure transport-error check would leave it.
-		if r.Rcode == dns.RcodeServerFailure {
+		// NXDOMAIN and NOERROR/NODATA are valid negative DNS outcomes. Every other non-success RCODE
+		// means the sent query reached a server but failed and therefore belongs in the health error
+		// rate alongside transport failures and timeouts.
+		if r.Rcode != dns.RcodeSuccess && r.Rcode != dns.RcodeNameError {
 			if c.stats != nil {
 				c.stats.QueryErrors.Add(1)
 			}
@@ -96,4 +98,12 @@ func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dn
 		return nil
 	})
 	return resp, err
+}
+
+func isTimeout(ctx context.Context, err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return true
+	}
+	var networkError net.Error
+	return errors.As(err, &networkError) && networkError.Timeout()
 }
