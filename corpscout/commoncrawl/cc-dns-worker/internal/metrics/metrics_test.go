@@ -23,7 +23,7 @@ func TestLineComputesRates(t *testing.T) {
 		"dns_err=2.00%",
 		"axfr_try=0",
 		"axfr_ok=0",
-		"dps=120",
+		"speed=120 domains/s",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line missing %q\n  got: %s", want, line)

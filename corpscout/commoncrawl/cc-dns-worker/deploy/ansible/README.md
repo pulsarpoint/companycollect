@@ -74,11 +74,17 @@ cd deploy/ansible
 ansible-playbook site.yml
 ```
 
-The role builds a CGO-free Linux/AMD64 binary on the control machine, copies it
-to the target, and starts the service. If `cc-dns-scan` already exists and is
-running, the role stops it before replacing the deployed files. Deployment does
-not modify or retire worker state; any required state migration or cleanup must
-be performed manually before running the playbook.
+The role builds a CGO-free Linux/AMD64 binary on the control machine and copies
+it to the target. If `cc-dns-scan` already exists and is running, the role stops
+it before replacing the deployed files. Deployment leaves the service stopped
+and disabled. It does not modify or retire worker state; any required state
+migration or cleanup must be performed manually before running the playbook.
+
+Start the deployed worker explicitly only after checking its state:
+
+```bash
+ssh hetzner01 'systemctl start cc-dns-scan'
+```
 
 The deployment is non-interactive — the vault password is read from
 `~/.config/ansible/cc-dns-scan` via `ansible.cfg`.

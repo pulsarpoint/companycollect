@@ -62,9 +62,9 @@
     group: root
     mode: "0644"
 
-- name: Enable + start the orchestrator
+- name: Reload systemd and leave the worker stopped and disabled
   ansible.builtin.systemd_service:
     name: "{{ service_name }}"
-    enabled: true
-    state: started
+    enabled: false
+    state: stopped
     daemon_reload: true

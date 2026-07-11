@@ -62,7 +62,7 @@ func Line(prev, cur Snapshot) string {
 	}
 	dps := float64(cur.Domains-prev.Domains) / dt // domains/sec this interval
 	return fmt.Sprintf(
-		"stats domains=%d records=%d dns_err=%.2f%% axfr_try=%d axfr_ok=%d dps=%.0f",
+		"stats domains=%d records=%d dns_err=%.2f%% axfr_try=%d axfr_ok=%d speed=%.0f domains/s",
 		cur.Domains, cur.Records, pct(cur.QueryErrors, cur.Queries),
 		cur.AXFRPullsTried, cur.AXFRPullsSuccessful,
 		dps,
