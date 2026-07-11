@@ -55,6 +55,7 @@ func TestDownloaderCommitsChunksThenReadyAndResumes(t *testing.T) {
 		`"chunks_ready":1`,
 		`"chunks_total":2`,
 		`"records_per_second":`,
+		`"requests_per_second":`,
 		`"source_mib_per_second":`,
 		`"http_attempts":`,
 		`"sdk_retry_attempts":`,

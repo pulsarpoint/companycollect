@@ -138,9 +138,11 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 		}
 		chunkRecordsPerSecond := float64(0)
 		chunkMiBPerSecond := float64(0)
+		requestsPerSecond := float64(0)
 		if !reused && chunkElapsed > 0 {
 			chunkRecordsPerSecond = float64(manifest.Results.RequestedRecords) / chunkElapsed.Seconds()
 			chunkMiBPerSecond = float64(manifest.Results.SourceBytes) / bytesPerMiB / chunkElapsed.Seconds()
+			requestsPerSecond = float64(sourceStats.HTTPAttempts) / chunkElapsed.Seconds()
 		}
 		downloader.Logger.Info("chunk ready",
 			"crawl", downloader.Config.CrawlID,
@@ -161,6 +163,7 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 			"raw_size", humanize.IBytes(uint64(chunkRawBytes)),
 			"elapsed_seconds", chunkElapsed.Seconds(),
 			"records_per_second", chunkRecordsPerSecond,
+			"requests_per_second", requestsPerSecond,
 			"source_mib_per_second", chunkMiBPerSecond,
 			"http_attempts", sourceStats.HTTPAttempts,
 			"sdk_retry_attempts", sdkRetryAttempts,

@@ -121,6 +121,7 @@ counts, failure reasons, raw bytes, elapsed time, records/s, and MiB/s. The same
 | `chunks_ready`, `chunks_total` | Committed chunks and total planned chunks for the part. |
 | `raw_size` | Combined committed pack, Parquet index, and manifest size for this chunk. |
 | `http_attempts` | Actual S3 HTTP attempts for this chunk. |
+| `requests_per_second` | Actual S3 HTTP attempts divided by the chunk elapsed time, including SDK retries. |
 | `sdk_retry_attempts` | HTTP attempts performed internally by the AWS SDK beyond `GetObject` calls. |
 | `http_429`, `http_503` | Throttling responses observed for this chunk, including recovered retries. |
 | `body_read_errors`, `body_read_retries` | Interrupted response-body reads and their retries. |
