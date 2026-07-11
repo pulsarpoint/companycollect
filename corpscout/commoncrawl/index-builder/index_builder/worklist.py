@@ -62,7 +62,8 @@ def _order_by(mode: str) -> str:
     """
 
 
-def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25) -> str:
+def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25,
+                   has_languages: bool = True) -> str:
     mime = ", ".join(f"'{m}'" for m in _HTML_MIME)
     if mode == "industry":
         rn = "rn = 1"
@@ -70,11 +71,14 @@ def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25) 
         rn = f"rn <= {int(max_pages)}"
     else:
         rn = "true"  # uncapped: every 200/HTML page
+    # crawls before mid-2018 have no content_languages in the columnar index; emit a typed
+    # NULL there so the shard parquet schema is identical across old and new crawls.
+    lang = "content_languages" if has_languages else "CAST(NULL AS VARCHAR) AS content_languages"
     return f"""
         SELECT root_domain, url, warc_filename, warc_record_offset, warc_record_length, content_languages
         FROM (
           SELECT url_host_registered_domain AS root_domain, url, warc_filename,
-                 warc_record_offset, warc_record_length, content_languages,
+                 warc_record_offset, warc_record_length, {lang},
                  row_number() OVER (
                    PARTITION BY url_host_registered_domain
                    ORDER BY {_order_by(mode)}
@@ -87,10 +91,18 @@ def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25) 
     """
 
 
+def _has_column(con, source: str, column: str) -> bool:
+    """Whether the index source exposes `column` (schema-only probe, reads no rows)."""
+    cols = con.execute(f"DESCRIBE SELECT * FROM {source} LIMIT 0").fetchall()
+    return any(c[0] == column for c in cols)
+
+
 def run_worklist(con, source: str, *, crawl: str = "", mode: str = "industry",
                  max_pages: int = 25):
     """Execute the worklist query; returns a DuckDB result (use .fetchall() or .arrow())."""
-    return con.execute(worklist_query(source, mode=mode, max_pages=max_pages))
+    has_languages = _has_column(con, source, "content_languages")
+    return con.execute(worklist_query(source, mode=mode, max_pages=max_pages,
+                                      has_languages=has_languages))
 
 
 def build_worklist(con, source: str, out_path, *, mode: str = "industry",

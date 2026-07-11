@@ -113,6 +113,46 @@ def test_industry_mode_still_one_page_per_domain(tmp_path):
     assert len(rows) == 1 and rows[0][1] == "http://ex.com/"
 
 
+def _write_index_pre2018(path, rows):
+    # crawls before mid-2018 (e.g. CC-MAIN-2016-22) have no content_languages column
+    cols = [c for c in COLS if c != "content_languages"]
+    data = {c: [] for c in cols}
+    for r in rows:
+        for c, v in zip(cols, r):
+            data[c].append(v)
+    pq.write_table(pa.table(data), path)
+
+
+def test_worklist_handles_pre2018_index_without_content_languages(tmp_path):
+    idx = tmp_path / "idx.parquet"
+    _write_index_pre2018(idx, [
+        ("old.com", "old.com", "http://old.com/", "/", 200, "text/html", "w.gz", 0, 5),
+        ("old.com", "old.com", "http://old.com/about", "/about", 200, "text/html", "w.gz", 5, 5),
+    ])
+    con = duckdb.connect()
+    rows = worklist.run_worklist(con, f"read_parquet('{idx}')").fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == "http://old.com/"
+    assert rows[0][5] is None                      # content_languages present but NULL
+
+
+def test_build_worklist_pre2018_keeps_stable_schema(tmp_path):
+    # downstream consumers read shards from old and new crawls interchangeably,
+    # so the shard parquet must always carry a (nullable VARCHAR) content_languages column
+    idx = tmp_path / "idx.parquet"
+    _write_index_pre2018(idx, [
+        ("a.sk", "a.sk", "http://a.sk/", "/", 200, "text/html", "w.gz", 0, 5),
+    ])
+    con = duckdb.connect()
+    out = tmp_path / "wl.parquet"
+    n = worklist.build_worklist(con, f"read_parquet('{idx}')", out)
+    assert n == 1
+    table = pq.read_table(out)
+    assert "content_languages" in table.column_names
+    assert table.schema.field("content_languages").type == pa.string()
+    assert table.to_pylist()[0]["content_languages"] is None
+
+
 def test_build_worklist_writes_parquet_all_domains(tmp_path):
     idx = tmp_path / "idx.parquet"
     _write_index(idx, [
