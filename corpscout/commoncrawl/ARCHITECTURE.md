@@ -30,12 +30,12 @@ NACE matrix.
 
 | Component | Lang | Role | Touches ClickHouse? |
 |---|---|---|---|
-| **`index-builder/`** | Python (duckdb, pyarrow) | Legacy worklist CLI for the current direct-fetch `cc-crawl` path. | no (reads the CC index only) |
+| **`index-builder/`** | Python (duckdb, pyarrow) | Legacy standalone worklist CLI. The downloader embeds this logic; `cc-crawl` does not invoke it. | no (reads the CC index only) |
 | **`reference-builder/`** | Python (numpy, openai, clickhouse) | Builds the **NACE reference matrix** + page-type exemplars (industry only). | **writes** the 2 reference tables |
 | **`cc-download-worker/`** | Go + embedded Python | Builds/reuses its URL-index worklists, downloads selected compressed WARC records, and commits bounded, resumable raw packs to RustFS. | no |
-| **`cc-enrich-worker/`** | Go | The **processor**. Subcommands `industry`/`tech`/`both`/`embed` (produce) + `load`. Fetches WARC pages, runs the workflow → Parquet; the `load` subcommand inserts Parquet → ClickHouse. | **reads** reference (produce), **writes** result tables (load) |
+| **`cc-enrich-worker/`** | Go | The **processor**. Reads ready raw parts from RustFS, runs `industry`/`tech`/`both`/`embed` → local Parquet; `load` inserts Parquet → ClickHouse. | **reads** reference (produce), **writes** result tables (load) |
 | **`cc-raw/`** | Go | Shared WARC fetch/parse and RustFS manifest/state contracts. No binary or orchestration. | no |
-| **`cc-crawl/`** | Go (stdlib only) | The **orchestrator**. Per-part loop: worklist → produce → load → marker, with JSON logging. `os/exec` only — it does **not** import the worker and **never** touches ClickHouse itself. | no |
+| **`cc-crawl/`** | Go | The **orchestrator**. Per-part loop: local marker check → RustFS-backed produce → load → local marker, with JSON logging. `os/exec` only — it does **not** import the worker and **never** touches ClickHouse itself. | no |
 
 **Boundary that matters:** `cc-crawl` orchestrates by shelling out; **all** ClickHouse I/O lives in
 `cc-enrich-worker`. So "where does X get written" is always answered inside the worker, never in `cc-crawl`.
@@ -53,8 +53,8 @@ The single most important thing to understand: the pipeline is **two separable s
 ```
                 STAGE 1: PRODUCE (compute → files)            STAGE 2: LOAD (files → ClickHouse)
                 ─────────────────────────────────            ──────────────────────────────────
-  worklist ──►  cc-enrich-worker <industry|tech|embed>  ──►   cc-enrich-worker load --dir <out>
-  (parquet)     • fetch WARC pages (signed S3)                • read each <kind>.parquet
+  RustFS part ► cc-enrich-worker <industry|tech|embed>  ──►   cc-enrich-worker load --dir <out>
+  ready+packs    • cache verified packs over the LAN           • read each <kind>.parquet
                 • embed (industry/embed) / classify (industry)• INSERT INTO commoncrawl_<table>
                 • detect tech / extract ids (tech)              over the native protocol
                 • WRITE Parquet only  ◄── no CH INSERT here   • the ONLY place rows enter ClickHouse
@@ -88,15 +88,15 @@ load:    load.FromDir -> FromFile["domains"] -> parquet.ReadFile[DomainRow]
 ```
 for each part P in the requested range:
   0. marker check   — if out_<mode>_<P>.loaded exists -> SKIP the whole part
-  1. worklist       — ensure shard_<mode>_<P>.parquet (index-builder builds it on demand, cached)
-  2. produce        — exec: cc-enrich-worker <mode> --worklist shard --out out_<mode>_<P>
+  1. produce        — exec: cc-enrich-worker <mode> --crawl-id C --selection pagesN --part P
+                      (requires the downloader's valid RustFS download/ready.json and raw packs)
                       (clears the out dir first; worker requires an empty --out)
-  3. gate           — require exit 0 AND domains.parquet present, else FAIL (loader skipped)
-  4. load           — exec: cc-enrich-worker load --dir out_<mode>_<P>   [industry/tech only]
-  5. marker         — touch out_<mode>_<P>.loaded
+  2. gate           — require exit 0 AND domains.parquet present, else FAIL (loader skipped)
+  3. load           — exec: cc-enrich-worker load --dir out_<mode>_<P>   [industry/tech only]
+  4. marker         — touch out_<mode>_<P>.loaded
 ```
 
-- **The crawl index is ~300 parts**; one part → one worklist shard → one output dir.
+- **The crawl index is ~300 parts**; one ready RustFS part → one output dir.
 - **Resumable / idempotent:** the empty `.loaded` marker gates the *whole* part (produce + load); re-running
   a done part does nothing. A partial part re-runs cleanly.
 - **Run the two heavy workflows as separate processes** — `tech` pegs the CPU, `industry` feeds the GPU;
@@ -109,11 +109,11 @@ for each part P in the requested range:
 All three share the fetch path; they differ in what they compute, write, and load. (`both` runs industry+tech
 in one fetch pass — discouraged; it throttles the GPU.)
 
-| mode | input worklist | embeds? | classifies NACE? | Parquet written | loaded into ClickHouse |
+| mode | records used from the `pagesN` raw selection | embeds? | classifies NACE? | Parquet written | loaded into ClickHouse |
 |---|---|---|---|---|---|
-| **`industry`** | `shard_industry_*` (1 page/domain) | yes (instructed vector) | yes | `domains`, `industries`, `page_signals` + `embedding/…/embeddings.parquet` | `commoncrawl_domains`, `_industries`, `_page_signals` |
-| **`tech`** | `shard_tech_*` (many pages/domain) | no | no | `domains`, `technologies`, `identifiers`, `metadata`, `contacts` | the matching `commoncrawl_*` tables |
-| **`embed`** | `shard_industry_*` (reused) | yes (vector only) | no | **only** `embedding/…/embeddings.parquet` | **nothing — no load step** |
+| **`industry`** | primary page only | yes (instructed vector) | yes | `domains`, `industries`, `page_signals` + `embedding/…/embeddings.parquet` | `commoncrawl_domains`, `_industries`, `_page_signals` |
+| **`tech`** | all downloaded selected pages | no | no | `domains`, `technologies`, `identifiers`, `metadata`, `contacts` | the matching `commoncrawl_*` tables |
+| **`embed`** | primary page only | yes (vector only) | no | **only** `embedding/…/embeddings.parquet` | **nothing — no load step** |
 
 Key consequences:
 
@@ -127,17 +127,16 @@ Key consequences:
 
 ## 6. The domain universe — where the domain list comes from
 
-There is **no curated company list.** `index-builder` builds the worklist directly from the **CommonCrawl
-URL index**: every crawled URL, grouped by registered domain, keeping the representative page(s):
+There is **no curated company list.** `cc-download-worker` builds the selection directly from the
+**CommonCrawl URL index**: every crawled URL, grouped by registered domain, keeping the representative pages:
 
-- **industry** worklist → the *one* most-representative page per domain (main-site homepage: apex/`www`,
-  shallowest path).
-- **tech** worklist → *many* pages per domain (homepage + legal/contact/about, multilingual ranking, capped
-  at `MAX_PAGES`), because LEI/VAT and the Organization JSON-LD live on `/imprint`, `/legal`, `/contact`.
+- `pages1` contains the *one* most-representative page per domain (main-site homepage: apex/`www`, shallowest path).
+- `pagesN` for `N > 1` contains that primary page plus legal/contact/about pages using the existing
+  multilingual ranking, capped at `N`.
 
 So `commoncrawl_domains` ends up being **every domain in the crawl** (with an HTML page), materialized **shard
-by shard** as parts are processed. The worker **only ever consumes this fixed worklist — it never discovers
-new domains**; a domain absent from the worklist never enters the system. (Link-graph–based discovery of new
+by part** as parts are processed. The worker **only ever consumes this fixed selection — it never discovers
+new domains**; a domain absent from the selection never enters the system. (Link-graph–based discovery of new
 domains would be a separate, future stage; it does not exist today.)
 
 ---

@@ -26,20 +26,19 @@ This is the pipeline-level runbook. Each Go service also has its own README.
 
 | Dir | Lang | Role |
 |---|---|---|
-| `cc-crawl/` | Go | The **orchestrator** (replaces `run_crawl.sh`). Drives the per-part loop: worklist → produce → load, structured JSON logs. Reference §5, design `docs/cc-crawl-design.md`. |
+| `cc-crawl/` | Go | The **orchestrator**. Drives the unchanged per-part loop: local marker check → produce → load → local marker, with structured JSON logs. |
 | `cc-download-worker/` | Go + embedded Python | The independent **raw downloader**. Builds/reuses its own URL-index worklists, downloads selected records, and commits bounded packs to RustFS. |
-| `cc-enrich-worker/` | Go | The **processor**. Subcommand CLI `cc-enrich-worker <industry\|tech\|both>` + `load`; byte-range-fetches WARC pages, runs the chosen workflow → Parquet, and (separately) loads it. Reference §6. |
+| `cc-enrich-worker/` | Go | The **processor**. Reads verified raw parts from local RustFS, runs the chosen workflow → local Parquet, and separately loads it. Reference §6. |
 | `cc-raw/` | Go | Shared WARC fetch/parse and RustFS manifest/state contracts; no binary. |
-| `index-builder/` | Python (duckdb, pyarrow) | Legacy worklist CLI used by the current direct-fetch `cc-crawl` path. The raw downloader no longer requires this separate application. Reference §7. |
+| `index-builder/` | Python (duckdb, pyarrow) | Legacy standalone worklist CLI. Its selection logic is embedded in `cc-download-worker`; `cc-crawl` does not invoke it. |
 | `reference-builder/` | Python (numpy, openai, clickhouse) | Builds the **reference embeddings** (industry only) — NACE categories + page-type seed → `nace_category_embeddings`/`page_type_exemplars`. Reference §8. |
 
 The ClickHouse **schema** lives in `../clickhouse/migrations/` (golang-migrate), not in any package —
 code reads/writes tables whose DDL the migrations own; the worker never issues DDL.
 
-Current migration state: `cc-download-worker` can stage complete worklist parts in RustFS. The current
-`cc-enrich-worker` still supports direct Common Crawl reads; sequential staged-pack input is the next phase.
-The downloader is therefore safe to test independently, but it is not yet wired into `cc-crawl` production
-processing.
+`cc-download-worker` stages complete selected parts in RustFS. `cc-enrich-worker` consumes only those
+ready RustFS parts; direct AWS/Common Crawl reads have been removed from the processor. AWS credentials
+therefore belong only on downloader machines.
 
 ---
 
@@ -66,10 +65,10 @@ CLICKHOUSE_HOST=companycollect
 CLICKHOUSE_NATIVE_PORT=9002
 CLICKHOUSE_USER=...  CLICKHOUSE_PASSWORD=...  CLICKHOUSE_DATABASE=corpscout
 
-# Signed S3 (off-AWS: any IAM user's keys; CommonCrawl is Open Data → reads are free)
+# Signed S3 for cc-download-worker only
 AWS_ACCESS_KEY_ID=AKIA...  AWS_SECRET_ACCESS_KEY=...  AWS_REGION=us-east-1
 
-# Local-network RustFS staging used by cc-download-worker
+# Local-network RustFS: downloader destination and enrichment-worker input
 CORPSCOUT_S3_ENDPOINT=http://rustfs:9000
 CORPSCOUT_S3_ACCESS_KEY=...
 CORPSCOUT_S3_SECRET_KEY=...
@@ -93,26 +92,16 @@ cd commoncrawl && make             # downloader + enrichment worker + orchestrat
 # docker build -f cc-enrich-worker/Dockerfile -t cc-enrich-worker .
 ```
 
-**d. Worklists.** `cc-download-worker` builds and caches its own worklists from `--crawl`,
+**d. Stage raw parts.** `cc-download-worker` builds and caches its own worklists from `--crawl`,
 `--pages-per-domain`, and `--parts`; there is no public raw-downloader `--worklist` flag:
 ```bash
 cc-download-worker/bin/cc-download-worker \
   --base "$OUT_BASE_DIR" --crawl CC-MAIN-2026-25 --pages-per-domain 25 --parts 0-10
 ```
-The current direct-fetch `cc-crawl` and `cc-enrich-worker` path still consumes a *worklist shard*: a
-Parquet file with one row per page to fetch (`root_domain, url, warc_filename, warc_record_offset,
-warc_record_length, content_languages`), built by `index-builder` from the CommonCrawl URL index.
-The crawl's index is ~300 parts; one part → one shard. **`cc-crawl` (§5) builds them automatically
-per part**, so you usually don't touch this. To build one by hand:
-```bash
-cd commoncrawl/index-builder
-uv run python -m index_builder --crawl CC-MAIN-2026-25 --list                                     # how many parts
-uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode industry --part 0   # -> ../data/index/<crawl>/shard_industry_0.parquet
-uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode tech     --part 0   # -> ../data/index/<crawl>/shard_tech_0.parquet
-```
-Shards land under **`commoncrawl/data/`** (gitignored — *never* in the code folders). Then e.g.
-`./bin/cc-enrich-worker industry --worklist ../data/index/CC-MAIN-2026-25/shard_industry_0.parquet --crawl-id CC-MAIN-2026-25` (§5). Full
-index-builder flags in §7.
+The downloader writes `download/ready.json` only after every pack, index, and chunk manifest for a part is
+committed. The processor refuses incomplete parts. The default selection is `pages25`; set
+`--pages-per-domain 1` for primary pages only. `cc-crawl -max-pages N` selects the corresponding `pagesN`
+raw data without exposing a worklist path.
 
 ---
 
@@ -235,24 +224,26 @@ cc-crawl/bin/cc-crawl -mode industry -parts 0-299 -crawl CC-MAIN-2026-25   # wor
 cc-crawl/bin/cc-crawl -mode embed    -parts 0-70  -crawl CC-MAIN-2026-25   # embed-only backfill (§5b)
 ```
 Flags (`flag` package; each defaults from the same-named env var). **Required:** `-mode`
-(`industry|tech|embed`), `-parts` (`lo-hi` or a single `N`), `-crawl` (no default). Optional: `-data`,
-`-builder-dir`, `-worker`, `-max-pages`, `-ind-conc`, `-embed-conc`, `-tech-conc` (**domains** in
+(`industry|tech|embed`), `-parts` (`lo-hi` or a single `N`), `-crawl` (no default). Optional:
+`-base`, `-builder-dir` (deprecated compatibility flag), `-worker`, `-max-pages`, `-ind-conc`,
+`-embed-conc`, `-tech-conc` (**domains** in
 flight, default 32 — each domain fetches up to 8 pages in parallel, so total fetches = tech-conc × 8),
 `-tech-chunk` (pages per worker chunk, default 16384 — chunks count *pages*, ~13/domain; keep it ≫
 `tech-conc × 13` so the domain pool stays full).
 
-For each part it: builds the **per-mode** worklist on demand (`shard_<mode>_<part>.parquet`, cached),
-then runs **two separate worker executions** — (1) the **pass** that produces `out_<mode>_<part>/`,
+For each part it first checks the existing local `out_<mode>_<part>.loaded` file. If absent, it runs
+**two separate worker executions** — (1) the **pass** that verifies and reads the requested ready RustFS
+part and produces `out_<mode>_<part>/`,
 then (2) **`load --dir`** into ClickHouse — and touches a `.loaded` marker. **The loader runs only if
 the pass exited 0 and wrote `domains.parquet`**, so a bad produce is never loaded. Re-running **skips
 completed parts** (idempotent; ReplacingMergeTree dedupes). Run the two workflows as **separate
 processes** so tech pegs the cores while industry feeds the GPU.
 
 **Logging:** structured **JSON** (`log/slog`) to **stdout AND** `data/logs/crawl_<mode>_<lo>-<hi>_<ts>.log`.
-Each command logs its full args + exit code; each part ends with `domains_from_s3` / `rows_to_clickhouse`;
+Each command logs its full args + exit code; each part ends with produced-domain / ClickHouse row counts;
 the run ends with a `done/skipped/failed` summary. Example:
 ```json
-{"level":"INFO","msg":"done","mode":"industry","part":5,"domains_from_s3":102804,"rows_to_clickhouse":408019}
+{"level":"INFO","msg":"done","mode":"industry","part":5,"produced":102804,"rows_to_clickhouse":408019}
 ```
 
 ### 5b. Embed-only backfill (`-mode embed`)
@@ -265,7 +256,7 @@ re-classification + similarity/Qdrant later (see `docs/embeddings-design.md`).
 
 `-mode embed` exists to **fill segments that have no stored vector** — backfilling parts classified before
 vectors were persisted, or finishing parts the industry pass hasn't reached. It:
-- **reuses the industry worklist** `shard_industry_<part>.parquet` (no index rebuild for done parts),
+- **reuses the primary rows in the same ready RustFS `pagesN` part**,
 - runs a **single** embed exec — fetch → embed → write `embeddings.parquet` — with **no NACE classify,
   no ClickHouse, no load step**,
 - writes to `data/embedding/out_industry_<part>/`, and is **idempotent via verify-and-skip** (there is **no
@@ -279,8 +270,8 @@ vectors were persisted, or finishing parts the industry pass hasn't reached. It:
 ```bash
 cc-crawl/bin/cc-crawl -mode embed -parts 0-299 -crawl CC-MAIN-2026-25   # fills only the parts with no vector
 # or one segment straight through the worker:
-cc-enrich-worker embed --worklist data/crawl/shard_industry_43.parquet \
-                       --crawl-id CC-MAIN-2026-25 --out data/embedding/out_industry_43
+cc-enrich-worker embed --crawl-id CC-MAIN-2026-25 --selection pages25 --part 43 \
+                       --out data/CC-MAIN-2026-25/embedding/out_industry_43
 ```
 Each already-done part logs `skip: embeddings already present …`; the gaps show the normal fetch→embed
 progress. Cost is just the re-fetch + re-embed of the gaps (no stored copy exists): ≈16 KB/domain fp32.
@@ -299,9 +290,8 @@ The **`.loaded` marker** (`out_<mode>_<part>.loaded`) is an **empty file** — c
 
 - **Re-running a `.loaded` part does nothing** — it skips produce *and* load (no GPU, no ClickHouse
   writes). The marker exists precisely to avoid paying the fetch+embed twice.
-- **Force a full re-run** (re-fetch + re-embed + reload): `rm data/crawl/out_<mode>_N.loaded`, then run
-  cc-crawl — the produce step `rm -rf`s the dir and regenerates the parquet (also delete
-  `shard_<mode>_N.parquet` for a fresh worklist).
+- **Force a full re-run** (reprocess + reload): remove `out_<mode>_N.loaded`, then run cc-crawl. The
+  produce step clears the old output directory and rereads the same ready RustFS part.
 - **Reload the existing parquet only** (no re-produce): `cc-enrich-worker load --dir
   data/crawl/out_<mode>_N` — it ignores the marker. Idempotent: ReplacingMergeTree dedupes on the sort
   key and the newest `resolved_at` wins, so you never double-count.
@@ -319,14 +309,10 @@ cd commoncrawl/cc-enrich-worker
 make build                                 # or `make` at commoncrawl/ to build both binaries
 set -a; source ../.env; set +a
 
-# 1. build a worklist (or reuse one under ../data/index/) — §2d
-( cd ../index-builder && uv run python -m index_builder --mode tech --part 0 )
-SHARD=../data/index/CC-MAIN-2026-25/shard_tech_0.parquet
-
-# 2. produce, then load (two steps; check the produce before loading)
-./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 --out ../data/crawl/run0
-./bin/cc-enrich-worker load --dir ../data/crawl/run0
-# or one file: ./bin/cc-enrich-worker load --file ../data/crawl/run0/tech.parquet
+# Produce from an already-ready RustFS part, then load locally written Parquet.
+./bin/cc-enrich-worker tech --crawl-id CC-MAIN-2026-25 --selection pages25 --part 0 \
+  --out ../data/CC-MAIN-2026-25/crawl/out_tech_0
+./bin/cc-enrich-worker load --dir ../data/CC-MAIN-2026-25/crawl/out_tech_0
 ```
 **Industry is identical** — same `--out` dir then `load --dir`; it produces `domains.parquet` +
 `industries.parquet` + `page_signals.parquet` (needs the reference built first, §3 A1).
@@ -338,15 +324,15 @@ ReplacingMergeTree dedupes, so re-loading is safe.
 The system is **two separable stages, and every ClickHouse `INSERT` happens in stage 2 (`load`)** — never
 during the fetch/embed compute in stage 1. This is the model to keep in your head:
 
-**The domain list is the crawl itself, not a curated set.** `index-builder` builds the worklist straight
-from the **CommonCrawl URL index** — every crawled URL grouped by registered domain, keeping the
-representative page(s) (`industry` = one homepage/domain, `tech` = many; §7). So `commoncrawl_domains` ends
+**The domain list is the crawl itself, not a curated set.** `cc-download-worker` builds each selection
+straight from the **CommonCrawl URL index** — every crawled URL grouped by registered domain, keeping the
+representative page(s). So `commoncrawl_domains` ends
 up being **every domain in the crawl** (that has an HTML page), materialized **shard by shard** as you
-process parts — not a known-company subset. The worker only ever consumes this fixed worklist; **it never
-discovers new domains** (a domain absent from the worklist never enters the system).
+process parts — not a known-company subset. The worker only consumes this fixed ready selection; **it never
+discovers new domains** (a domain absent from the selection never enters the system).
 
 **Stage 1 — produce** (`cc-enrich-worker industry|tech|embed`) fetches those pages and writes **Parquet
-only**. The *single* ClickHouse touch in this stage is `industry`/`tech` **reading** the NACE reference
+only**. The *single* ClickHouse touch in this stage is `industry` **reading** the NACE reference
 matrix at startup — **no row is ever inserted here.** What each mode produces:
 
 | mode | embeds? | classifies NACE? | Parquet written | →inserted by `load` into |
@@ -384,13 +370,12 @@ fetch→embed stream **without** the NACE classify or ClickHouse — it writes o
 **Common to every command:**
 | flag | default | meaning |
 |---|---|---|
-| `--worklist` | *(required)* | worklist Parquet shard (§2d) |
 | `--crawl-id` | *(required)* | e.g. `CC-MAIN-2026-25`; stamped on every row |
-| `--out` | `../data/crawl/<worklist-name>/` | output **directory** (fixed per-mode filenames); default unique per shard; an explicit dir must be empty |
-| `--concurrency` | `32` | fetch/parse goroutines (push to ~128 to hide off-AWS fetch RTT) |
-| `--chunk` | `1024` | domains per fetch+process chunk (lower = earlier GPU traffic) |
-| `--s3-anonymous` | `false` | fetch via the HTTPS CDN instead of signed S3 — **rate-limits**, avoid for bulk |
-| `--s3-bucket` / `--s3-prefix` | — | optionally upload outputs to S3 (in-AWS path) |
+| `--selection` | `pages25` | RustFS raw selection identity; must match the downloader |
+| `--part` | *(required)* | non-negative part number |
+| `--out` | `<base>/<crawl>/crawl/out_<mode>_<part>` | output **directory** (fixed per-mode filenames); an explicit dir must be empty |
+| `--concurrency` | `32` | industry/embed pages or tech domains processed concurrently |
+| `--chunk` | `1024` | RustFS index rows per tech/both process chunk |
 
 **`industry`, `embed` (and `both`):** `--embed-concurrency` (96; in-flight embed requests), `--embed-batch`
 (16; texts/request — keep small, big batches overflow the engine's token budget). `embed`'s `--out` is the
@@ -401,10 +386,10 @@ reference, no ClickHouse, no `load`.
 unmodified library, every fingerprint, slower reference — both detect the same techs), `--tech-max-bytes` (131072; cap body
 fed to Wappalyzer, 0 = full body).
 
-**Fetch path:** **signed S3** (AWS creds) is the only reliable bulk source — the anonymous S3 API is
-denied, and the `data.commoncrawl.org` HTTPS CDN (`--s3-anonymous`) works but is latency-bound and
-rate-limits. Reads are free (Open Data). The worker streams each page through memory and discards it
-(no on-disk page cache). A pass **only writes Parquet**; loading is the separate **`load` command**
+**Input path:** the worker verifies `download/ready.json`, chunk manifests, indexes, and checksums, then
+streams each complete pack from local RustFS into a temporary local cache. The existing parser receives
+the same complete compressed WARC record bytes; it never rereads AWS. A pass **only writes Parquet**;
+loading is the separate **`load` command**
 over the native driver (no `clickhouse-client`), so produce and load are independently checkable.
 
 **`load`** — `cc-enrich-worker load --dir <shard-dir>` loads every
@@ -418,8 +403,8 @@ must exist (`make clickhouse-migrate-up`).
 
 ## 7. Reference — legacy `index-builder` CLI
 
-This remains for the current direct-fetch `cc-crawl`/`cc-enrich-worker` workflow; the raw downloader has
-the equivalent page-selection builder embedded in its own API. Pure duckdb + pyarrow (no dagster), it
+This remains only as a standalone diagnostic/legacy CLI. The raw downloader has the equivalent
+page-selection builder embedded in its own API, and `cc-crawl` does not invoke this package. Pure duckdb + pyarrow (no dagster), it
 resolves exact index-part URLs from CommonCrawl's HTTPS manifest
 (anonymous S3 LIST is denied, so no globs). One part → one shard, cached at
 the gitignored `commoncrawl/data/index/<crawl>/shard_<mode>_<part>.parquet`, skipped if present.
@@ -549,14 +534,14 @@ cd ../index-builder     && uv run --with pytest --with duckdb --with pyarrow pyt
 cd ../reference-builder && uv run --with pytest --with numpy pytest tests/
 ```
 
-`cc-crawl/` is a tiny standalone module (`main.go`, stdlib only) — the orchestrator; it shells out to
-`cc-enrich-worker` + `index_builder` and does the JSON logging (§5).
+`cc-crawl/` is a small standalone module — the orchestrator; it shells out to `cc-enrich-worker` and
+does the JSON logging (§5).
 
 The Go worker is `cmd/cc-enrich-worker/main.go` (entry point: flags, env, ClickHouse/embedder/getter
 wiring, the chunked process loop) + `internal/` packages: `model` (shared structs), `vec` (math),
-`fetch` (WARC fetch), `embed` (embedding client), `parse` (HTML→text), `tech` (Wappalyzer +
+`stagedinput` (validated RustFS pack cache), `embed` (embedding client), `parse` (HTML→text), `tech` (Wappalyzer +
 Aho-Corasick), `extract` (LEI/VAT/profile), `classify` (NACE reference + classify + confidence +
-startup check), `output` (Parquet rows + S3), `load` (native-driver INSERT for the `load` command),
+startup check), `output` (Parquet rows), `load` (native-driver INSERT for the `load` command),
 `worker` (`ProcessShard` orchestration). `Makefile` builds
 into `bin/`; binaries and `data/` are gitignored — code dirs never hold binary output.
 

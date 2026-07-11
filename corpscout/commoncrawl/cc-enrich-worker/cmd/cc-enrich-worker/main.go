@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -19,23 +18,14 @@ import (
 
 	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/embed"
-	"cc-raw/fetch"
 	"cc-enrich-worker/internal/load"
 	mdl "cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
+	"cc-enrich-worker/internal/stagedinput"
 	"cc-enrich-worker/internal/tech"
 	"cc-enrich-worker/internal/worker"
+	"cc-raw/rawstore"
 )
-
-// WorklistRow is one row of the materialized worklist parquet (index-builder columns).
-// content_languages is present in the file but unused by the worker.
-type WorklistRow struct {
-	RootDomain   string `parquet:"root_domain"`
-	URL          string `parquet:"url"`
-	WarcFilename string `parquet:"warc_filename"`
-	Offset       int64  `parquet:"warc_record_offset"`
-	Length       int64  `parquet:"warc_record_length"`
-}
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -69,20 +59,19 @@ Commands:
 Run "cc-enrich-worker <command> -h" to see that command's flags.
 
 Config is via environment (see ../.env.example): COMMONCRAWL_EMBED_*, CLICKHOUSE_*,
-AWS_* (region defaults to us-east-1 — the CommonCrawl bucket), CC_BASE_URL.
+CORPSCOUT_S3_* (the local RustFS input store).
 `)
 }
 
 // opts holds the parsed flags for a run. Mode-specific fields are only registered (and meaningful)
 // for the relevant command.
 type opts struct {
-	worklist, crawlID, out, base string
-	concurrency, chunk     int
-	anonymous              bool
-	s3Bucket, s3Prefix     string
-	techEngine             string // tech / both
-	techMax                int    // tech / both
-	batch, embedConc       int    // industry / both
+	crawlID, out, base, selection string
+	part                          int
+	concurrency, chunk            int
+	techEngine                    string // tech / both
+	techMax                       int    // tech / both
+	batch, embedConc              int    // industry / both
 }
 
 // parse builds a per-command flag set (so tech flags don't show under industry and vice-versa).
@@ -90,15 +79,13 @@ func parse(mode string, args []string) opts {
 	fs := flag.NewFlagSet("cc-enrich-worker "+mode, flag.ExitOnError)
 	var o opts
 	// common to every command
-	fs.StringVar(&o.worklist, "worklist", "", "worklist parquet shard (required)")
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
-	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/crawl/<worklist-name>/, unique per shard; an explicit dir must be empty)")
+	fs.StringVar(&o.selection, "selection", "pages25", "RustFS raw selection identity")
+	fs.IntVar(&o.part, "part", -1, "RustFS raw part number (required)")
+	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/crawl/out_<mode>_<part>; an explicit dir must be empty)")
 	fs.StringVar(&o.base, "base", os.Getenv("OUT_BASE_DIR"), "output ROOT for the default --out (or env OUT_BASE_DIR); required when --out is not given")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
-	fs.IntVar(&o.chunk, "chunk", 1024, "worklist rows (pages) per fetch+process chunk (tech/both)")
-	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch via the HTTPS CDN data.commoncrawl.org (off-AWS; rate-limited — signed S3 preferred)")
-	fs.StringVar(&o.s3Bucket, "s3-bucket", "", "if set, upload outputs to this bucket (in-AWS path)")
-	fs.StringVar(&o.s3Prefix, "s3-prefix", "", "key prefix for uploaded outputs")
+	fs.IntVar(&o.chunk, "chunk", 1024, "RustFS index rows (pages) per process chunk (tech/both)")
 	if mode == "tech" || mode == "both" {
 		fs.StringVar(&o.techEngine, "tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
 		fs.IntVar(&o.techMax, "tech-max-bytes", 131072, "cap body bytes fed to Wappalyzer (0 = full body; full-body regex ~1.2s/page)")
@@ -108,8 +95,8 @@ func parse(mode string, args []string) opts {
 		fs.IntVar(&o.embedConc, "embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	}
 	_ = fs.Parse(args)
-	if o.worklist == "" || o.crawlID == "" {
-		fmt.Fprintln(os.Stderr, "error: --worklist and --crawl-id are required")
+	if o.crawlID == "" || o.part < 0 {
+		fmt.Fprintln(os.Stderr, "error: --crawl-id and a non-negative --part are required")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -206,26 +193,6 @@ func detectModel(baseURL string) (string, error) {
 	return parsed.Data[0].ID, nil
 }
 
-// readWorklist loads the shard and marks the first row per domain as the primary page (the
-// worklist is ordered shallowest-first, so rn=1 leads each domain group).
-func readWorklist(path string) ([]mdl.WorklistItem, error) {
-	rows, err := parquet.ReadFile[WorklistRow](path)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	items := make([]mdl.WorklistItem, 0, len(rows))
-	for _, r := range rows {
-		primary := !seen[r.RootDomain]
-		seen[r.RootDomain] = true
-		items = append(items, mdl.WorklistItem{
-			RootDomain: r.RootDomain, URL: r.URL, WarcFilename: r.WarcFilename,
-			Offset: r.Offset, Length: r.Length, Primary: primary,
-		})
-	}
-	return items, nil
-}
-
 // parquetRows returns a Parquet file's row count by reading only its footer. It errors if the file is
 // missing or not a valid/complete Parquet (e.g. a write killed mid-flush) — used by embed verify-and-skip.
 func parquetRows(path string) (int64, error) {
@@ -245,30 +212,20 @@ func parquetRows(path string) (int64, error) {
 	return pf.NumRows(), nil
 }
 
-// uniqueDomains counts distinct root domains in a worklist (industry/embed embed one page per domain).
-func uniqueDomains(items []mdl.WorklistItem) int {
-	seen := make(map[string]struct{}, len(items))
-	for _, it := range items {
-		seen[it.RootDomain] = struct{}{}
-	}
-	return len(seen)
-}
-
 func run(mode string, o opts) {
 	ctx := context.Background()
 
 	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so
 	// `load --dir` knows which file → which table. cc-crawl always passes --out; for a standalone run the
 	// default is derived from OUT_BASE_DIR (REQUIRED — no silent fallback that could scatter data) as
-	// <OUT_BASE_DIR>/<crawl>/crawl/<worklist-stem>/, unique per shard so parallel runs never collide. The
+	// <OUT_BASE_DIR>/<crawl>/crawl/out_<mode>_<part>/, unique per part so parallel runs never collide. The
 	// embedding tree is a sibling under <OUT_BASE_DIR>/<crawl>/embedding/ (derived from outDir below).
 	outDir := o.out
 	if outDir == "" {
 		if o.base == "" {
 			log.Fatal("no --out and no -base / OUT_BASE_DIR — refusing to guess an output directory")
 		}
-		stem := strings.TrimSuffix(filepath.Base(o.worklist), filepath.Ext(o.worklist))
-		outDir = filepath.Join(o.base, o.crawlID, "crawl", stem)
+		outDir = filepath.Join(o.base, o.crawlID, "crawl", fmt.Sprintf("out_%s_%d", mode, o.part))
 	}
 	// embed VERIFY-AND-SKIP: a part is DONE if its embed folder already holds a complete vector file under
 	// EITHER name — embeddings.parquet (fp32, fresh from this pass) or embeddings_fp16.parquet (converted
@@ -288,11 +245,7 @@ func run(mode string, o opts) {
 			} else if st, serr := os.Stat(embPath); serr != nil || st.Size() == 0 {
 				continue // missing, or unreadable-and-empty -> not done under this name
 			}
-			dom := 0
-			if items, werr := readWorklist(o.worklist); werr == nil {
-				dom = uniqueDomains(items)
-			}
-			log.Printf("skip: embeddings already present (rows=%d, %d worklist domains) -> %s", rows, dom, embPath)
+			log.Printf("skip: embeddings already present (rows=%d) -> %s", rows, embPath)
 			return
 		}
 	} else if entries, _ := os.ReadDir(outDir); len(entries) > 0 {
@@ -366,29 +319,29 @@ func run(mode string, o opts) {
 		}
 	}
 
-	// Transport sizing = true in-flight fetches: industry/embed run one page per concurrency slot;
-	// tech/both fan each domain slot into worker.PageConcurrency parallel page fetches.
-	fetchConc := o.concurrency
-	if mode == "tech" || mode == "both" {
-		fetchConc *= worker.PageConcurrency
-	}
-	var getter fetch.RangeGetter
-	if o.anonymous {
-		getter = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), fetchConc)
-		log.Printf("fetch: anonymous HTTPS CDN (data.commoncrawl.org)")
-	} else {
-		g, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"), fetchConc)
-		if err != nil {
-			log.Fatalf("s3 init: %v", err)
-		}
-		getter = g
-	}
-
-	items, err := readWorklist(o.worklist)
+	store, err := rawstore.NewStore(ctx, rawstore.StoreConfig{
+		Endpoint:  os.Getenv("CORPSCOUT_S3_ENDPOINT"),
+		Region:    envOr("CORPSCOUT_S3_REGION", "us-east-1"),
+		Bucket:    os.Getenv("CORPSCOUT_S3_BUCKET"),
+		AccessKey: os.Getenv("CORPSCOUT_S3_ACCESS_KEY"),
+		SecretKey: os.Getenv("CORPSCOUT_S3_SECRET_KEY"),
+	})
 	if err != nil {
-		log.Fatalf("read worklist: %v", err)
+		log.Fatalf("RustFS init: %v", err)
 	}
-	log.Printf("worklist: %d pages", len(items))
+	input, err := stagedinput.Open(ctx, store, o.crawlID, o.selection, o.part, filepath.Join(outDir, ".rustfs-input"))
+	if err != nil {
+		log.Fatalf("RustFS part input: %v", err)
+	}
+	defer func() {
+		if err := input.Close(); err != nil {
+			log.Printf("close RustFS part input: %v", err)
+		}
+	}()
+	getter := input.Getter
+	items := input.Items
+	log.Printf("RustFS part: %d downloaded pages, %d failed pages skipped, %d chunks cached",
+		len(items), input.FailedRecords, input.ChunkCount)
 
 	cfg := worker.ShardConfig{
 		CrawlID: o.crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
@@ -405,7 +358,6 @@ func run(mode string, o opts) {
 	var pageSignals []output.PageSignalRow
 	var embeddings []output.EmbeddingRow
 
-	var written []string              // committed output paths (both branches populate this)
 	streamed := false                 // tech/both writes its own files (streaming) and skips the shared block
 	finalDomains, finalEmbeds := 0, 0 // for the done log (the accumulator slices are empty on the streamed path)
 
@@ -498,13 +450,12 @@ func run(mode string, o opts) {
 		}
 		if len(items) > 0 && streamer.DomainCount() == 0 {
 			streamer.Abort()
-			log.Fatalf("refusing to write: 0 domains from %d worklist pages (systemic fetch failure?) — part will be retried", len(items))
+			log.Fatalf("refusing to write: 0 domains from %d staged pages (systemic parse failure?) — part will be retried", len(items))
 		}
-		committed, cerr := streamer.Commit()
+		_, cerr := streamer.Commit()
 		if cerr != nil {
 			log.Fatalf("commit shard writers: %v", cerr)
 		}
-		written = committed
 		finalDomains = streamer.DomainCount()
 		finalEmbeds = streamer.EmbeddingCount()
 		streamed = true
@@ -524,7 +475,6 @@ func run(mode string, o opts) {
 			if err := fn(p); err != nil {
 				log.Fatalf("write %s: %v", name, err)
 			}
-			written = append(written, p)
 		}
 		if mode == "industry" { // domains master + classification; embed writes only the vectors below
 			write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) })
@@ -546,7 +496,6 @@ func run(mode string, o opts) {
 			if err := output.WriteEmbeddings(p, embeddings); err != nil {
 				log.Fatalf("write embeddings: %v", err)
 			}
-			written = append(written, p)
 			log.Printf("saved %d embeddings -> %s", len(embeddings), p)
 		}
 		finalDomains = len(domains)
@@ -568,21 +517,6 @@ func run(mode string, o opts) {
 		log.Printf("done: %d domains in %.1fs (%.1f domains/s) -> %s", finalDomains, dur, rate, outDir)
 	}
 
-	// Loading is a SEPARATE step (the `load` subcommand / `load --dir`) so produce and load can be
-	// run and checked independently — a bad produce never gets auto-loaded. See docs/cc-crawl-design.md.
-
-	if o.s3Bucket != "" {
-		g, ok := getter.(*fetch.S3Getter)
-		if !ok {
-			log.Printf("skip S3 upload: anonymous HTTP fetch mode has no S3 client")
-		} else {
-			for _, p := range written {
-				key := o.s3Prefix + p
-				if err := output.UploadToS3(ctx, g.Client, o.s3Bucket, key, p); err != nil {
-					log.Fatalf("upload %s: %v", p, err)
-				}
-				log.Printf("uploaded s3://%s/%s", o.s3Bucket, key)
-			}
-		}
-	}
+	// Loading remains a separate `load --dir` step so cc-crawl preserves its existing
+	// produce -> verify -> load -> local .loaded marker state machine.
 }

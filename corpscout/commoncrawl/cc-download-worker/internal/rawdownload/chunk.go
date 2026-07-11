@@ -24,7 +24,13 @@ type recordDownload struct {
 	attempts  int32
 }
 
-func (downloader *Downloader) downloadChunk(ctx context.Context, worklist worklistData, plan chunkPlan) (rawstore.CommittedChunkManifest, error) {
+func (downloader *Downloader) downloadChunk(
+	ctx context.Context,
+	worklist worklistData,
+	plan chunkPlan,
+	progress *downloadProgress,
+	cooldown *throttleCooldown,
+) (rawstore.CommittedChunkManifest, error) {
 	startedAt := time.Now().UTC()
 	downloads := make([]recordDownload, len(plan.Records))
 	var group errgroup.Group
@@ -32,7 +38,7 @@ func (downloader *Downloader) downloadChunk(ctx context.Context, worklist workli
 	for index := range plan.Records {
 		index := index
 		group.Go(func() error {
-			downloads[index] = downloader.downloadRecord(ctx, plan.Records[index])
+			downloads[index] = downloader.downloadRecord(ctx, plan.Records[index], progress, cooldown)
 			return nil
 		})
 	}
@@ -156,9 +162,22 @@ func (downloader *Downloader) downloadChunk(ctx context.Context, worklist workli
 	}, nil
 }
 
-func (downloader *Downloader) downloadRecord(ctx context.Context, record selectedRecord) recordDownload {
-	var result recordDownload
+func (downloader *Downloader) downloadRecord(
+	ctx context.Context,
+	record selectedRecord,
+	progress *downloadProgress,
+	cooldown *throttleCooldown,
+) (result recordDownload) {
+	progress.recordStarted()
+	defer func() { progress.recordFinished(result) }()
 	for attempt := 1; attempt <= downloader.Config.RecordAttempts; attempt++ {
+		if err := cooldown.wait(ctx); err != nil {
+			result.status = rawstore.Failed
+			result.errorCode = "canceled"
+			result.attempts = int32(attempt)
+			return result
+		}
+		progress.recordAttempted(attempt)
 		recordContext, cancel := context.WithTimeout(ctx, downloader.Config.RecordTimeout)
 		raw, err := fetch.FetchRawRecord(
 			recordContext,
@@ -178,8 +197,15 @@ func (downloader *Downloader) downloadRecord(ctx context.Context, record selecte
 			return result
 		}
 		result.status, result.errorCode = classifyDownloadError(err)
+		if result.errorCode == "throttled" {
+			progress.recordThrottled()
+			cooldown.slowDown(attempt)
+		}
 		if result.status == rawstore.NotFound || attempt == downloader.Config.RecordAttempts {
 			return result
+		}
+		if result.errorCode == "throttled" {
+			continue
 		}
 
 		timer := time.NewTimer(time.Duration(attempt) * 250 * time.Millisecond)

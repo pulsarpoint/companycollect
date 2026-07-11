@@ -23,6 +23,7 @@ type S3Stats struct {
 	GetObjectCalls   int64
 	GetObjectTime    time.Duration
 	HTTPAttempts     int64
+	HTTP429s         int64
 	HTTP503s         int64
 	HTTPHeaderTime   time.Duration
 	BodyReadAttempts int64
@@ -37,6 +38,7 @@ func (s S3Stats) Delta(previous S3Stats) S3Stats {
 		GetObjectCalls:   s.GetObjectCalls - previous.GetObjectCalls,
 		GetObjectTime:    s.GetObjectTime - previous.GetObjectTime,
 		HTTPAttempts:     s.HTTPAttempts - previous.HTTPAttempts,
+		HTTP429s:         s.HTTP429s - previous.HTTP429s,
 		HTTP503s:         s.HTTP503s - previous.HTTP503s,
 		HTTPHeaderTime:   s.HTTPHeaderTime - previous.HTTPHeaderTime,
 		BodyReadAttempts: s.BodyReadAttempts - previous.BodyReadAttempts,
@@ -48,10 +50,10 @@ func (s S3Stats) Delta(previous S3Stats) S3Stats {
 }
 
 type s3Counters struct {
-	getObjectCalls, getObjectNs      atomic.Int64
-	httpAttempts, http503s, headerNs atomic.Int64
-	bodyAttempts, bodyErrors         atomic.Int64
-	bodyRetries, bodyNs, bodyBytes   atomic.Int64
+	getObjectCalls, getObjectNs                atomic.Int64
+	httpAttempts, http429s, http503s, headerNs atomic.Int64
+	bodyAttempts, bodyErrors                   atomic.Int64
+	bodyRetries, bodyNs, bodyBytes             atomic.Int64
 }
 
 type s3StatsTransport struct {
@@ -64,8 +66,13 @@ func (t s3StatsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(req)
 	t.stats.httpAttempts.Add(1)
 	t.stats.headerNs.Add(time.Since(started).Nanoseconds())
-	if response != nil && response.StatusCode == http.StatusServiceUnavailable {
-		t.stats.http503s.Add(1)
+	if response != nil {
+		switch response.StatusCode {
+		case http.StatusTooManyRequests:
+			t.stats.http429s.Add(1)
+		case http.StatusServiceUnavailable:
+			t.stats.http503s.Add(1)
+		}
 	}
 	return response, err
 }
@@ -84,6 +91,7 @@ func (s *S3Getter) Stats() S3Stats {
 		GetObjectCalls:   s.stats.getObjectCalls.Load(),
 		GetObjectTime:    time.Duration(s.stats.getObjectNs.Load()),
 		HTTPAttempts:     s.stats.httpAttempts.Load(),
+		HTTP429s:         s.stats.http429s.Load(),
 		HTTP503s:         s.stats.http503s.Load(),
 		HTTPHeaderTime:   time.Duration(s.stats.headerNs.Load()),
 		BodyReadAttempts: s.stats.bodyAttempts.Load(),
@@ -100,7 +108,7 @@ func (s *S3Getter) Stats() S3Stats {
 // and the SDK's default transport keeps only 10 idle conns per host — at high --concurrency that
 // means a fresh TLS handshake for most requests instead of connection reuse (same sizing as
 // NewHTTPGetter).
-func NewS3Getter(ctx context.Context, region string, concurrency int) (RangeGetter, error) {
+func NewS3Getter(ctx context.Context, region string, concurrency int) (*S3Getter, error) {
 	if concurrency <= 0 {
 		concurrency = 16
 	}

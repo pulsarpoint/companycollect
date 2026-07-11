@@ -14,23 +14,24 @@ import (
 )
 
 type Config struct {
-	WorklistPath    string
-	WorklistKey     string
-	CrawlID         string
-	Selection       string
-	Part            int
-	SourceBucket    string
-	Concurrency     int
-	MaxPackBytes    int64
-	MaxRecords      int
-	MaxFailureRate  float64
-	RecordAttempts  int
-	RecordTimeout   time.Duration
-	TempDir         string
-	RunID           string
-	WorkerHost      string
-	GitCommit       string
-	ForceRedownload bool
+	WorklistPath     string
+	WorklistKey      string
+	CrawlID          string
+	Selection        string
+	Part             int
+	SourceBucket     string
+	Concurrency      int
+	MaxPackBytes     int64
+	MaxRecords       int
+	MaxFailureRate   float64
+	RecordAttempts   int
+	RecordTimeout    time.Duration
+	ProgressInterval time.Duration
+	TempDir          string
+	RunID            string
+	WorkerHost       string
+	GitCommit        string
+	ForceRedownload  bool
 }
 
 type Result struct {
@@ -84,21 +85,28 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 			return resultFromReady(ready, true), nil
 		}
 	}
+	cooldown := &throttleCooldown{}
+	progress := newDownloadProgress(downloader, int64(len(worklist.Records)), cooldown)
+	stopProgress := progress.start(ctx)
+	defer stopProgress()
 
 	committed := make([]rawstore.CommittedChunkManifest, 0, len(plans))
 	readyChunks := make([]rawstore.ReadyChunk, 0, len(plans))
 	var downloadedRecords, failedRecords, rawBytes int64
 	for _, plan := range plans {
+		chunkStartedAt := time.Now()
 		chunk, valid, err := downloader.loadCommittedChunk(ctx, worklist, plan)
 		if err != nil {
 			return Result{}, err
 		}
 		reused := valid
 		if !reused {
-			chunk, err = downloader.downloadChunk(ctx, worklist, plan)
+			chunk, err = downloader.downloadChunk(ctx, worklist, plan, progress, cooldown)
 			if err != nil {
 				return Result{}, errors.Wrapf(err, "download chunk %d", plan.Number)
 			}
+		} else {
+			progress.recordsReused(chunk.Manifest.Results.RequestedRecords)
 		}
 		manifest := chunk.Manifest
 		committed = append(committed, chunk)
@@ -118,6 +126,13 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 		downloadedRecords += manifest.Results.DownloadedRecords
 		failedRecords += manifest.Results.FailedRecords
 		rawBytes += chunkRawBytes
+		chunkElapsed := time.Since(chunkStartedAt)
+		chunkRecordsPerSecond := float64(0)
+		chunkMiBPerSecond := float64(0)
+		if !reused && chunkElapsed > 0 {
+			chunkRecordsPerSecond = float64(manifest.Results.RequestedRecords) / chunkElapsed.Seconds()
+			chunkMiBPerSecond = float64(manifest.Results.SourceBytes) / bytesPerMiB / chunkElapsed.Seconds()
+		}
 		downloader.Logger.Info("chunk ready",
 			"crawl", downloader.Config.CrawlID,
 			"selection", downloader.Config.Selection,
@@ -133,6 +148,9 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 			"failure_reasons", manifest.Results.FailureReasons,
 			"raw_bytes", chunkRawBytes,
 			"raw_size", humanize.IBytes(uint64(chunkRawBytes)),
+			"elapsed_seconds", chunkElapsed.Seconds(),
+			"records_per_second", chunkRecordsPerSecond,
+			"source_mib_per_second", chunkMiBPerSecond,
 		)
 	}
 
@@ -201,6 +219,9 @@ func (downloader *Downloader) validate() error {
 	}
 	if config.RecordAttempts < 1 || config.RecordAttempts > 10 {
 		return errors.Newf("record attempts must be between 1 and 10, got %d", config.RecordAttempts)
+	}
+	if config.ProgressInterval < 0 {
+		return errors.Newf("progress interval cannot be negative, got %s", config.ProgressInterval)
 	}
 	if config.MaxFailureRate < 0 || config.MaxFailureRate > 1 {
 		return errors.Newf("max failure rate must be between 0 and 1, got %f", config.MaxFailureRate)

@@ -23,10 +23,11 @@ vet:                      ## vet all Go modules
 	$(MAKE) -C cc-enrich-worker vet
 	$(MAKE) -C cc-crawl vet
 
-test:                     ## test shared contracts and both workers
+test:                     ## test shared contracts, both workers, and the orchestrator
 	$(MAKE) -C cc-raw test
 	$(MAKE) -C cc-download-worker test
 	$(MAKE) -C cc-enrich-worker test
+	$(MAKE) -C cc-crawl test
 
 clean:                    ## remove all build outputs
 	$(MAKE) -C cc-download-worker clean

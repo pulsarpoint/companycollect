@@ -114,17 +114,19 @@ delete staged raw data.
 
 ### `cc-enrich-worker`
 
-The worker gains a staged-input mode that:
+The worker uses staged input exclusively. It:
 
 - enumerates committed chunk manifests for a part;
 - verifies that each manifest matches the requested crawl, selection, part, and worklist identity;
-- streams packs sequentially from RustFS and uses `index.parquet` to locate individual records;
+- downloads each pack once to a temporary local cache and uses `index.parquet` to locate individual records;
 - parses the original WARC records and runs the selected processor;
-- writes processor heartbeats and atomically published completion markers;
-- produces the existing output artifacts and loads them through the existing explicit load stage.
+- produces the existing output artifacts and loads them through the existing explicit load stage; and
+- leaves raw RustFS objects untouched.
 
-Direct Common Crawl input may remain temporarily as a migration fallback. Staged-input processing must not
-need Common Crawl credentials.
+Direct Common Crawl input has been removed from `cc-enrich-worker`; it needs no Common Crawl credentials.
+The current orchestrator deliberately retains local `out_<mode>_<part>.loaded` files as its completion
+authority. Remote processor heartbeats and completion markers remain data contracts for possible future
+operations tooling, but are not consulted or written by `cc-crawl`/`cc-enrich-worker`.
 
 ### `cc-rawctl`
 
@@ -542,15 +544,15 @@ wrapped through lower layers and logged once at the command/worker boundary.
    changing direct-mode behavior.
 3. **Implemented:** add `cc-download-worker`, embed deterministic worklist generation, accept part ranges,
    and produce staged objects in RustFS.
-4. Add staged-input mode to `cc-enrich-worker`, reading packs sequentially and retaining the existing output
-   Parquet format.
-5. Run one representative part in both direct and staged modes and compare domain/page counts and all
-   normalized output rows. Explain any source-fetch failures rather than masking them in the comparison.
-6. Add processor heartbeats and atomically published processed markers, then tie the existing explicit load command to
-   loaded markers.
+4. **Implemented:** switch `cc-enrich-worker` to verified staged input while retaining the existing output
+   Parquet and explicit load formats.
+5. Run one representative previously processed part against staged input and compare domain/page counts and
+   normalized output rows. Explain downloader failures rather than masking them in the comparison.
+6. **Operational decision:** retain the existing machine-local `.loaded` marker as the process/load gate;
+   do not add remote processing ownership to the worker.
 7. Add `cc-rawctl status`, dry-run reclamation, validation, and executed reclamation.
-8. Update `cc-crawl` so download, process, and load can be scheduled independently. Keep direct Common Crawl
-   mode as a temporary fallback until staged runs are operationally proven.
+8. **Implemented:** keep `cc-crawl` processing and loading behavior unchanged while replacing only its
+   worker input with RustFS part coordinates.
 9. Deploy downloader and processor machines independently, set conservative storage watermarks, and measure
    RustFS/LAN throughput before increasing processor count.
 
@@ -558,10 +560,11 @@ wrapped through lower layers and logged once at the command/worker boundary.
 
 - A downloader restart does not duplicate a committed chunk and does recover an incomplete chunk.
 - A committed pack checksum and every downloaded index range validate.
-- Staged and direct modes produce equivalent output for the same worklist and processor revision.
+- Staged input produces equivalent normalized output to an earlier direct run for the same selection and
+  processor revision.
 - A processor restart can resume without reading Common Crawl.
-- A load failure never creates `loaded.json`, and a successful retry does not reprocess raw pages.
-- Technology, industry, and embedding markers coexist for the same raw part without overwriting each other.
+- A load failure never creates the local `.loaded` marker; rerunning the part retries produce and load.
+- Technology and industry local `.loaded` markers coexist for the same raw part without overwriting each other.
 - `cc-rawctl` reports active host/run ownership and explains every non-reclaimable part.
 - Reclamation defaults to dry run, rejects active processing, rejects missing required completion, and leaves
   an auditable `reclaimed.json` only after successful deletion.

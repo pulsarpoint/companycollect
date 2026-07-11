@@ -72,8 +72,8 @@ Use `--worklist-dir` only to move that cache; keep an override dedicated to one 
 `--rebuild-worklists` to replace valid cached shards.
 There are no `--worklist`, `--worklist-key`, `--selection`, or singular `--part` flags.
 
-The standalone `index-builder` remains temporarily for the legacy direct-fetch `cc-crawl` workflow. It is
-not invoked by and is not required as a separate application for this downloader API.
+The standalone `index-builder` remains only as a diagnostic/legacy CLI. `cc-crawl` consumes the ready
+RustFS parts produced by this service and does not invoke it.
 
 ### Flags
 
@@ -91,6 +91,7 @@ not invoked by and is not required as a separate application for this downloader
 | `--max-failure-rate` | `0.01` | Terminal failures allowed per committed chunk, rounded up to a whole record. |
 | `--record-attempts` | `3` | Logical attempts for transient record failures; `not_found` is never retried. |
 | `--record-timeout` | `30s` | Deadline for each logical attempt to download one selected WARC record. |
+| `--progress-interval` | `10s` | Periodic records/s, MiB/s, retry, and throttling telemetry. Set `0` to disable periodic lines. |
 | `--source-anonymous` | false | Use anonymous Common Crawl HTTPS instead of signed S3. |
 | `--temp-dir` | system temp | Parent directory for local pack/index construction. |
 | `--rustfs-endpoint` | environment | Override `CORPSCOUT_S3_ENDPOINT`. |
@@ -109,6 +110,32 @@ Common Crawl and RustFS intentionally use separate credential sources:
 | `CORPSCOUT_S3_BUCKET` | RustFS bucket containing `commoncrawl/raw` and `commoncrawl/state`. |
 | `CC_BASE_URL` | Optional anonymous Common Crawl HTTPS endpoint override, used with `--source-anonymous`. |
 | `CC_DOWNLOAD_PYTHON` | Python executable used by the embedded worklist builder; default `python3`. |
+
+## Progress, throughput, and throttling
+
+While a part is downloading, the worker emits `download progress` every 10 seconds. Important fields are:
+
+| Field | Meaning |
+|---|---|
+| `completed_records`, `requested_records` | Current part progress, including already-reused records. |
+| `records_per_second` | Records completed during the latest reporting interval. |
+| `source_mib_per_second` | Actual Common Crawl response-body throughput during the interval. |
+| `active_downloads`, `configured_concurrency` | Logical record downloads active and the configured ceiling. |
+| `record_retries` | Downloader-level retries after a logical attempt failed. |
+| `sdk_retry_attempts` | HTTP attempts performed internally by the AWS SDK beyond `GetObject` calls. |
+| `http_429`, `http_503` | Source throttling responses observed, including responses recovered by SDK retries. |
+| `body_read_errors`, `body_read_retries` | Interrupted response-body reads and their retries. |
+| `cooldown_remaining_ms` | Shared downloader cooldown after a terminal throttling error. |
+
+An interval containing throttling is logged at `WARN` as `download throttled`; normal intervals are
+`INFO`. `chunk ready` also reports chunk elapsed time, records/s, and MiB/s. `source S3 stats` at the end
+contains run-wide average request latency and wall throughput.
+
+Signed S3 uses the AWS SDK adaptive retry limiter. It observes 429/503 responses immediately, reduces the
+request rate through its shared token bucket, and ramps up again when the source recovers. If throttling
+still escapes the SDK after its retry budget, the downloader applies a shared exponential cooldown
+(1, 2, 4, 8, then 16 seconds) before new logical attempts. This prevents 64 workers from retrying as one
+new request wave. The startup log exposes `source_rate_control=aws_adaptive` so the active policy is clear.
 
 ## RustFS layout
 

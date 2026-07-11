@@ -1,6 +1,6 @@
-// cc-crawl drives CommonCrawl enrichment over a range of index parts — the Go replacement for
-// run_crawl.sh. For each part it runs, in order: build the worklist (index_builder), then TWO separate
-// cc-enrich-worker executions — (1) the pass that PRODUCES out_<mode>_<p>/, then (2) the LOADER
+// cc-crawl drives CommonCrawl enrichment over a range of parts — the Go replacement for
+// run_crawl.sh. For each part it runs TWO separate cc-enrich-worker executions: (1) the pass that
+// reads the ready RustFS raw part and PRODUCES out_<mode>_<p>/, then (2) the LOADER
 // (load --dir) that pushes it to ClickHouse. Every external command and its exit code are logged as
 // structured JSON (log/slog) to stdout AND a file under data/logs; the loader runs ONLY if the produce
 // step exited 0 and actually wrote domains.parquet, so a bad/partial produce is never loaded.
@@ -76,7 +76,7 @@ func runStep(name string, args []string, dir string) (code int, output string, e
 
 func main() {
 	// Load .env (overriding the ambient shell, like the old run_crawl.sh `set -a; . ./.env; set +a`)
-	// so the worker + index_builder children get the shared config. Missing file is fine.
+	// so the worker gets the shared RustFS, ClickHouse, and embedding config. Missing file is fine.
 	_ = godotenv.Overload(env("DOTENV", ".env"))
 
 	fs := flag.NewFlagSet("cc-crawl", flag.ExitOnError)
@@ -84,9 +84,9 @@ func main() {
 	partsF := fs.String("parts", "", "part range lo-hi, or a single part N  (required)")
 	crawlF := fs.String("crawl", env("CRAWL", ""), "CommonCrawl crawl id, e.g. CC-MAIN-2026-25  (required; or env CRAWL)")
 	baseF := fs.String("base", env("OUT_BASE_DIR", ""), "output ROOT (required; or env OUT_BASE_DIR) — all output lives under <base>/<crawl>/")
-	builderF := fs.String("builder-dir", env("BUILDER_DIR", "index-builder"), "index_builder project dir")
+	_ = fs.String("builder-dir", env("BUILDER_DIR", "index-builder"), "deprecated compatibility flag; RustFS input needs no index builder")
 	workerF := fs.String("worker", env("WORKER", "cc-enrich-worker/bin/cc-enrich-worker"), "cc-enrich-worker binary")
-	maxPagesF := fs.String("max-pages", env("MAX_PAGES", "25"), "tech: max pages per domain (0 = all)")
+	maxPagesF := fs.String("max-pages", env("MAX_PAGES", "25"), "raw selection pages per domain; derives RustFS selection pagesN")
 	indConcF := fs.String("ind-conc", env("IND_CONC", "64"), "industry: fetch concurrency")
 	embedConcF := fs.String("embed-conc", env("EMBED_CONC", "128"), "industry: embed concurrency")
 	// tech-conc counts DOMAINS in flight; the worker fetches each domain's pages through its own
@@ -113,18 +113,22 @@ func main() {
 	if err != nil {
 		fail("-parts %q: %v", *partsF, err)
 	}
-	crawl, builder, worker, maxPages := *crawlF, *builderF, *workerF, *maxPagesF
+	crawl, worker, maxPages := *crawlF, *workerF, *maxPagesF
+	pagesPerDomain, err := strconv.Atoi(maxPages)
+	if err != nil || pagesPerDomain < 1 {
+		fail("-max-pages must be a positive integer, got %q", maxPages)
+	}
+	selection := fmt.Sprintf("pages%d", pagesPerDomain)
 	// Output root MUST come from OUT_BASE_DIR — no silent default, so data can never scatter to an
-	// unexpected place. Everything for a crawl lives under <OUT_BASE_DIR>/<crawl>/ (crawl/: shards +
+	// unexpected place. Everything for a crawl lives under <OUT_BASE_DIR>/<crawl>/ (crawl/:
 	// per-part output + logs; embedding/: the vector tree), so different crawls never collide/overwrite.
 	base := *baseF
 	if base == "" {
 		fail("-base is required (output root; or env OUT_BASE_DIR), e.g. /opt/companycollect/corpscout/commoncrawl/data")
 	}
 	data := filepath.Join(base, crawl, "crawl")
-	// Resolve to absolute paths: index_builder runs with cwd=builder, so a relative --out would land
-	// under builder/, not data/. Absolute paths make every child write to the right place.
-	for _, p := range []*string{&data, &builder, &worker} {
+	// Resolve to absolute paths so every child writes to the intended location regardless of cwd.
+	for _, p := range []*string{&data, &worker} {
 		if abs, err := filepath.Abs(*p); err == nil {
 			*p = abs
 		}
@@ -149,7 +153,7 @@ func main() {
 	lg.Info("start", "mode", mode, "parts", *partsF, "crawl", crawl, "log", logPath)
 
 	pc := partCtx{
-		lg: lg, data: data, builder: builder, worker: worker, crawl: crawl, maxPages: maxPages,
+		lg: lg, data: data, worker: worker, crawl: crawl, selection: selection,
 		indConc: *indConcF, embedConc: *embedConcF, techConc: *techConcF, techChunk: *techChunkF,
 	}
 	var done, skipped, failed int
@@ -186,32 +190,10 @@ const (
 
 // partCtx is the shared, per-run configuration handed to each per-part runner.
 type partCtx struct {
-	lg                                     *slog.Logger
-	data, builder, worker, crawl, maxPages string
-	indConc, embedConc, techConc           string
-	techChunk                              string
-}
-
-// ensureWorklist returns the path to shard_<wlMode>_<p>.parquet, building it via index_builder if absent
-// (atomic tmp + rename). ok=false means the build failed (the caller should fail the part).
-func ensureWorklist(pc partCtx, plg *slog.Logger, wlMode string, p int) (shard string, ok bool) {
-	shard = filepath.Join(pc.data, fmt.Sprintf("shard_%s_%d.parquet", wlMode, p))
-	if _, err := os.Stat(shard); err == nil {
-		return shard, true
-	}
-	tmp := shard + ".tmp"
-	args := []string{"run", "python", "-m", "index_builder",
-		"--mode", wlMode, "--max-pages", pc.maxPages, "--crawl", pc.crawl, "--part", strconv.Itoa(p), "--out", tmp}
-	plg.Info("worklist.run", "cmd", "uv "+strings.Join(args, " "))
-	code, _, el := runStep("uv", args, pc.builder)
-	plg.Info("worklist.exit", "exit", code, "elapsed", el.String())
-	if code != 0 {
-		os.Remove(tmp)
-		plg.Error("failed", "step", "worklist", "exit", code)
-		return "", false
-	}
-	os.Rename(tmp, shard)
-	return shard, true
+	lg                             *slog.Logger
+	data, worker, crawl, selection string
+	indConc, embedConc, techConc   string
+	techChunk                      string
 }
 
 // runIndustryPart / runTechPart are the load-gated modes: produce → load into ClickHouse → mark. A "done"
@@ -228,16 +210,11 @@ func runProduceLoad(pc partCtx, mode string, p int) outcome {
 		plg.Info("skip", "reason", "already loaded")
 		return ocSkipped
 	}
-	shard, ok := ensureWorklist(pc, plg, mode, p)
-	if !ok {
-		return ocFailed
-	}
-
 	// Clear any stale/partial output (the worker requires an empty --out); safe — a done part already
 	// returned above on its marker.
 	os.RemoveAll(outDir)
 	pArgs := append(append([]string{mode}, passArgs(pc, mode)...),
-		"--worklist", shard, "--crawl-id", pc.crawl, "--out", outDir)
+		"--crawl-id", pc.crawl, "--selection", pc.selection, "--part", strconv.Itoa(p), "--out", outDir)
 	plg.Info("produce.run", "cmd", pc.worker+" "+strings.Join(pArgs, " "))
 	code, pout, pel := runStep(pc.worker, pArgs, "")
 	if code != 0 {
@@ -268,19 +245,15 @@ func runProduceLoad(pc partCtx, mode string, p int) outcome {
 	return ocDone
 }
 
-// runEmbedPart is the embed-only mode: REUSE the industry worklist, run ONE embed exec, no load, no
+// runEmbedPart is the embed-only mode: reuse the same RustFS raw selection, run ONE embed exec, no load, no
 // marker. There is deliberately NO RemoveAll — the worker opens the existing embeddings.parquet and skips
 // the part if it's already complete (the write is atomic, so a readable parquet == a complete run);
 // wiping it would defeat that. Vectors land in the sibling data/embedding/ tree.
 func runEmbedPart(pc partCtx, p int) outcome {
 	plg := pc.lg.With("mode", "embed", "part", p)
-	shard, ok := ensureWorklist(pc, plg, "industry", p) // embed reuses the industry worklist
-	if !ok {
-		return ocFailed
-	}
 	outDir := filepath.Join(filepath.Dir(pc.data), "embedding", fmt.Sprintf("out_industry_%d", p))
 	pArgs := append(append([]string{"embed"}, passArgs(pc, "embed")...),
-		"--worklist", shard, "--crawl-id", pc.crawl, "--out", outDir)
+		"--crawl-id", pc.crawl, "--selection", pc.selection, "--part", strconv.Itoa(p), "--out", outDir)
 	plg.Info("embed.run", "cmd", pc.worker+" "+strings.Join(pArgs, " "))
 	code, pout, pel := runStep(pc.worker, pArgs, "")
 	if code != 0 {

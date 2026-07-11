@@ -93,43 +93,46 @@ func TestS3GetterRetriesInterruptedBodyRead(t *testing.T) {
 	}
 }
 
-func TestS3StatsTransportCounts503(t *testing.T) {
-	stats := &s3Counters{}
-	transport := s3StatsTransport{
-		base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusServiceUnavailable,
-				Body:       http.NoBody,
-				Header:     make(http.Header),
-				Request:    req,
-			}, nil
-		}),
-		stats: stats,
-	}
-	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transport.RoundTrip(request); err != nil {
-		t.Fatal(err)
-	}
+func TestS3StatsTransportCountsThrottleResponses(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			stats := &s3Counters{}
+			transport := s3StatsTransport{
+				base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: status,
+						Body:       http.NoBody,
+						Header:     make(http.Header),
+						Request:    req,
+					}, nil
+				}),
+				stats: stats,
+			}
+			request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := transport.RoundTrip(request); err != nil {
+				t.Fatal(err)
+			}
 
-	getter := &S3Getter{stats: stats}
-	got := getter.Stats()
-	if got.HTTPAttempts != 1 || got.HTTP503s != 1 {
-		t.Fatalf("stats=%+v, want one HTTP attempt and one 503", got)
-	}
-	if got.HTTPHeaderTime <= 0 {
-		t.Fatalf("HTTP header time=%s, want positive duration", got.HTTPHeaderTime)
+			got := (&S3Getter{stats: stats}).Stats()
+			if got.HTTPAttempts != 1 || got.HTTP429s+got.HTTP503s != 1 {
+				t.Fatalf("stats=%+v, want one HTTP attempt and one throttle response", got)
+			}
+			if got.HTTPHeaderTime <= 0 {
+				t.Fatalf("HTTP header time=%s, want positive duration", got.HTTPHeaderTime)
+			}
+		})
 	}
 }
 
 func TestS3StatsDelta(t *testing.T) {
-	previous := S3Stats{GetObjectCalls: 2, GetObjectTime: 3 * time.Millisecond, BodyBytes: 10}
-	current := S3Stats{GetObjectCalls: 5, GetObjectTime: 8 * time.Millisecond, BodyBytes: 24}
+	previous := S3Stats{GetObjectCalls: 2, GetObjectTime: 3 * time.Millisecond, HTTP429s: 1, BodyBytes: 10}
+	current := S3Stats{GetObjectCalls: 5, GetObjectTime: 8 * time.Millisecond, HTTP429s: 3, BodyBytes: 24}
 
 	delta := current.Delta(previous)
-	if delta.GetObjectCalls != 3 || delta.GetObjectTime != 5*time.Millisecond || delta.BodyBytes != 14 {
+	if delta.GetObjectCalls != 3 || delta.GetObjectTime != 5*time.Millisecond || delta.HTTP429s != 2 || delta.BodyBytes != 14 {
 		t.Fatalf("delta=%+v", delta)
 	}
 }
