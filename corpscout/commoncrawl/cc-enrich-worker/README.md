@@ -268,6 +268,10 @@ use (re-classification, vector search): [`../docs/embeddings-design.md`](../docs
   are free (CommonCrawl is Open Data).
 - **`--s3-anonymous`** uses the public CDN (`data.commoncrawl.org`) — latency-bound, **rate-limited**, and
   **cannot upload** (`--s3-bucket` needs signed S3).
+- Signed-S3 runs emit structured `S3 range reads` diagnostics per tech chunk or industry stream. The
+  fields separate application `get_object_calls`, actual `http_attempts`, `sdk_retry_attempts`, `http_503`,
+  time to response headers, response-body time/bytes, and whole-body read retries. A body interrupted
+  after a successful response is re-fetched up to two times (three complete body-read attempts total).
 
 **Primary-page selection**
 - The worklist is shallowest-first; the first row per `root_domain` is `Primary`. industry/embed embed

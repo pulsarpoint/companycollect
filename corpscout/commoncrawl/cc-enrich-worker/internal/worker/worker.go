@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/url"
 	"runtime"
 	"strings"
@@ -186,6 +187,55 @@ type chunkStats struct {
 	errSample                             string
 }
 
+func s3Stats(getter fetch.RangeGetter) fetch.S3Stats {
+	if getter, ok := getter.(*fetch.S3Getter); ok {
+		return getter.Stats()
+	}
+	return fetch.S3Stats{}
+}
+
+func logS3Stats(ctx context.Context, getter fetch.RangeGetter, previous fetch.S3Stats, elapsed time.Duration, scope string) {
+	s3Getter, ok := getter.(*fetch.S3Getter)
+	if !ok {
+		return
+	}
+	stats := s3Getter.Stats().Delta(previous)
+	if stats.GetObjectCalls == 0 {
+		return
+	}
+	getObjectAvg := stats.GetObjectTime / time.Duration(stats.GetObjectCalls)
+	headerAvg := time.Duration(0)
+	if stats.HTTPAttempts > 0 {
+		headerAvg = stats.HTTPHeaderTime / time.Duration(stats.HTTPAttempts)
+	}
+	bodyAvg := time.Duration(0)
+	if stats.BodyReadAttempts > 0 {
+		bodyAvg = stats.BodyReadTime / time.Duration(stats.BodyReadAttempts)
+	}
+	throughputMiB := 0.0
+	if elapsed > 0 {
+		throughputMiB = float64(stats.BodyBytes) / (1024 * 1024) / elapsed.Seconds()
+	}
+	sdkRetryAttempts := stats.HTTPAttempts - stats.GetObjectCalls
+	if sdkRetryAttempts < 0 {
+		sdkRetryAttempts = 0
+	}
+	slog.InfoContext(ctx, "S3 range reads",
+		"scope", scope,
+		"get_object_calls", stats.GetObjectCalls,
+		"http_attempts", stats.HTTPAttempts,
+		"sdk_retry_attempts", sdkRetryAttempts,
+		"http_503", stats.HTTP503s,
+		"get_object_avg_ms", float64(getObjectAvg.Microseconds())/1000,
+		"http_header_avg_ms", float64(headerAvg.Microseconds())/1000,
+		"body_read_avg_ms", float64(bodyAvg.Microseconds())/1000,
+		"body_read_errors", stats.BodyReadErrors,
+		"body_read_retries", stats.BodyReadRetries,
+		"body_mib", float64(stats.BodyBytes)/(1024*1024),
+		"wall_throughput_mib_s", throughputMiB,
+	)
+}
+
 func (s *chunkStats) recordErr(err error) {
 	atomic.AddInt64(&s.errs, 1)
 	s.errOnce.Do(func() { s.errSample = err.Error() })
@@ -238,12 +288,12 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		atomic.AddInt64(&stats.techNs, time.Since(t2).Nanoseconds())
 		r.emails = parse.Emails(string(body))
 		prof, structIDs := extract.ExtractProfile(body)
-		r.profile = prof                                     // schema.org Organization JSON-LD
-		r.ids = append(r.ids, structIDs...)                  // ids declared in that JSON-LD
-		r.ids = append(r.ids, extract.ExtractLEIs(body)...)  // jsonld-regex + text LEIs
-		r.ids = append(r.ids, extract.ExtractVATs(body)...)  // EU VAT ids (format + checksum)
-		r.ids = append(r.ids, extract.Trackers(body)...)     // analytics/ad/tag account ids (ownership signal)
-		if it.Primary {                                      // per-domain head signals: the representative page
+		r.profile = prof                                    // schema.org Organization JSON-LD
+		r.ids = append(r.ids, structIDs...)                 // ids declared in that JSON-LD
+		r.ids = append(r.ids, extract.ExtractLEIs(body)...) // jsonld-regex + text LEIs
+		r.ids = append(r.ids, extract.ExtractVATs(body)...) // EU VAT ids (format + checksum)
+		r.ids = append(r.ids, extract.Trackers(body)...)    // analytics/ad/tag account ids (ownership signal)
+		if it.Primary {                                     // per-domain head signals: the representative page
 			r.security = security.HeaderMap(headers)
 			r.meta = parse.ParseHeadMeta(string(body))
 			r.jsonldTypes = extract.JSONLDTypes(body)
@@ -338,6 +388,8 @@ func processDomain(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfi
 // into its own PageConcurrency page pool — "parallel domains" is the speed dial, and in-flight
 // fetches are capped at Concurrency × PageConcurrency.
 func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter, cfg ShardConfig) FetchedChunk {
+	started := time.Now()
+	s3Before := s3Stats(getter)
 	byDomain := map[string][]model.WorklistItem{}
 	var order []string
 	for _, it := range items {
@@ -373,6 +425,7 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 			log.Printf("  first fetch error: %s", stats.errSample)
 		}
 	}
+	logS3Stats(ctx, getter, s3Before, time.Since(started), "fetch_chunk")
 	return FetchedChunk{aggs: aggs, Pages: atomic.LoadInt64(&stats.pages), Errs: atomic.LoadInt64(&stats.errs)}
 }
 
@@ -579,6 +632,7 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 	// progress ticker
 	stop := make(chan struct{})
 	start := time.Now()
+	s3Before := s3Stats(getter)
 	go func() {
 		t := time.NewTicker(10 * time.Second)
 		defer t.Stop()
@@ -692,6 +746,7 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 	close(ch)
 	ewg.Wait()
 	close(stop)
+	logS3Stats(ctx, getter, s3Before, time.Since(start), "industry_stream")
 	if embedErr != nil {
 		return ShardResult{}, embedErr
 	}
