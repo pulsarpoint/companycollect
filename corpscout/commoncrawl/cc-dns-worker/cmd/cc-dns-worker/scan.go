@@ -8,12 +8,10 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"cc-dns-worker/internal/hostsource"
 	"cc-dns-worker/internal/input"
-	"cc-dns-worker/internal/load"
 	"cc-dns-worker/internal/metrics"
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/records"
@@ -210,28 +208,6 @@ func seedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 		log.Printf("scan_id=%s: seeded %d domains from CH (%d new)", cfg.scanID, total, added)
 	}
 
-	// 1b) Host-load phase: mirror this scan's exact domain membership to ClickHouse (so the CT/registry
-	// shard queries can scope themselves to it — Task 11), then union CT + registry discovered
-	// hostnames into scan_hostnames (resumable, skipped on resume or when disabled). Runs before
-	// dispatch so the plan can consume it. Both steps are CH-only — no scheduler/dial concerns — and
-	// share one connection.
-	if cfg.hostEnrich {
-		conn, err := chConn()
-		if err != nil {
-			return err
-		}
-		defer conn.Close()
-		n, err := load.MirrorSeedDomains(ctx, conn, st, cfg.scanID, cfg.seedChunk)
-		if err != nil {
-			return fmt.Errorf("mirror seed domains: %w", err)
-		}
-		if n > 0 {
-			log.Printf("scan_id=%s: mirrored %d domains to dns_scan_seed_domains", cfg.scanID, n)
-		}
-		if err := hostLoadPhase(ctx, conn, st, cfg); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -281,6 +257,15 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	}
 	work := make(chan domainWork, cfg.workers)
 	results := make(chan model.DomainResult, cfg.commitBatch*2)
+	var hostConn driver.Conn
+	if cfg.hostEnrich {
+		var err error
+		hostConn, err = chConn()
+		if err != nil {
+			return fmt.Errorf("open hostname source: %w", err)
+		}
+		defer hostConn.Close()
+	}
 	var feedErr error
 	go func() {
 		defer close(work)
@@ -294,10 +279,14 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 			if len(batch) == 0 {
 				return
 			}
-			hostsByDomain, herr := st.HostnamesForBatch(ctx, cfg.scanID, batch)
-			if herr != nil {
-				feedErr = herr
-				return
+			hostsByDomain := map[string][]model.HostLabel{}
+			if cfg.hostEnrich {
+				var herr error
+				hostsByDomain, herr = hostsource.Fetch(ctx, hostConn, batch, cfg.hostCap)
+				if herr != nil {
+					feedErr = herr
+					return
+				}
 			}
 			for _, d := range batch {
 				select {
@@ -362,117 +351,6 @@ func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 		fmt.Println(metrics.Line(metrics.Snapshot{At: runStart}, stats.Snapshot(time.Now()), runStart))
 	}
 	log.Printf("scan_id=%s: done (%d domains resolved this run)", cfg.scanID, resolved)
-	return nil
-}
-
-// hostInsertBatch bounds how many hostsource.ShardStream rows accumulate before InsertHostnameRows
-// flushes them to SQLite — the streaming replacement for the old whole-shard
-// map[string][]HostLabel (Task 11): a shard's ranked+capped result is never held in memory beyond one
-// batch of this size.
-const hostInsertBatch = 5000
-
-// hostLoadPhase populates scan_hostnames for cfg.scanID from CT (ctlogs.hostnames) and the registry
-// (commoncrawl_domain_hostnames), capped at cfg.hostCap per domain, scoped to exactly the domains this
-// scan seeded (corpscout.dns_scan_seed_domains — mirrored by load.MirrorSeedDomains before this runs;
-// Task 11). It splits the domain space into hostsource.CTPartitions hash shards aligned to the ctlogs
-// physical partitioning — each shard's query prunes to one partition — and runs up to
-// cfg.hostConcurrency shards at once; each shard's union+rank+cap happens entirely in ClickHouse
-// (hostsource.shardQuery) and is STREAMED row-by-row into scan_hostnames in bounded batches
-// (hostsource.ShardStream + store.InsertHostnameRows), never materialized as a whole-shard map.
-// Resumable per shard via host_load_shards; idempotent (INSERT OR IGNORE). host_load_state is marked
-// complete once every shard finished, so a restart re-runs only the shards not yet done and the scanning
-// phase never starts on a partial enrichment. conn is opened by the caller (seedCycle), which also runs
-// MirrorSeedDomains on it first — this function is CH-only, no scheduler/dial concerns.
-func hostLoadPhase(ctx context.Context, conn driver.Conn, st *store.Store, cfg scanConfig) error {
-	if cfg.hostCap <= 0 {
-		cfg.hostCap = 100
-	}
-	if cfg.hostConcurrency <= 0 {
-		cfg.hostConcurrency = 4
-	}
-	done, err := st.HostLoadComplete(ctx, cfg.scanID)
-	if err != nil {
-		return err
-	}
-	if done {
-		log.Printf("scan_id=%s: host-load already complete — skipping", cfg.scanID)
-		return nil
-	}
-
-	// Cancel in-flight shard queries as soon as any shard fails, so we don't keep hammering CH.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	numShards := hostsource.CTPartitions
-	sem := make(chan struct{}, cfg.hostConcurrency)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var firstErr error
-	setErr := func(e error) {
-		mu.Lock()
-		if firstErr == nil {
-			firstErr = e
-			cancel()
-		}
-		mu.Unlock()
-	}
-	var totalRows, doneShards int64
-	start := time.Now()
-
-	for shard := 0; shard < numShards; shard++ {
-		complete, err := st.HostLoadShardComplete(ctx, cfg.scanID, shard)
-		if err != nil {
-			return err
-		}
-		if complete {
-			atomic.AddInt64(&doneShards, 1)
-			continue
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(shard int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			mu.Lock()
-			stop := firstErr != nil
-			mu.Unlock()
-			if stop {
-				return
-			}
-			sStart := time.Now()
-			var shardAdded int64
-			err := hostsource.ShardStream(ctx, conn, cfg.scanID, shard, numShards, cfg.hostCap, hostInsertBatch,
-				func(batch []model.ScanHostnameRow) error {
-					n, ierr := st.InsertHostnameRows(ctx, cfg.scanID, batch)
-					if ierr != nil {
-						return ierr
-					}
-					atomic.AddInt64(&shardAdded, int64(n))
-					return nil
-				})
-			if err != nil {
-				setErr(fmt.Errorf("host-load shard %d: %w", shard, err))
-				return
-			}
-			if err := st.MarkHostLoadShardComplete(ctx, cfg.scanID, shard); err != nil {
-				setErr(fmt.Errorf("mark shard %d: %w", shard, err))
-				return
-			}
-			atomic.AddInt64(&totalRows, shardAdded)
-			d := atomic.AddInt64(&doneShards, 1)
-			log.Printf("scan_id=%s: host-load shard %d done (%d hostnames, %s) — %d/%d shards complete",
-				cfg.scanID, shard, shardAdded, time.Since(sStart).Round(time.Second), d, numShards)
-		}(shard)
-	}
-	wg.Wait()
-	if firstErr != nil {
-		return firstErr
-	}
-	if err := st.MarkHostLoadComplete(ctx, cfg.scanID); err != nil {
-		return err
-	}
-	log.Printf("scan_id=%s: host-load complete (%d hostnames across %d shards, %s)",
-		cfg.scanID, atomic.LoadInt64(&totalRows), numShards, time.Since(start).Round(time.Second))
 	return nil
 }
 

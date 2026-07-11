@@ -33,6 +33,24 @@ func TestDefaultQueryIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestPageQueryUsesKeysetAndBoundParameters(t *testing.T) {
+	for _, fragment := range []string{
+		"FROM corpscout.commoncrawl_domains",
+		"root_domain != ''",
+		"root_domain > ?",
+		"GROUP BY root_domain",
+		"ORDER BY root_domain",
+		"LIMIT ?",
+	} {
+		if !strings.Contains(pageQuery, fragment) {
+			t.Errorf("page query missing %q: %s", fragment, pageQuery)
+		}
+	}
+	if strings.Contains(pageQuery, "OFFSET") {
+		t.Errorf("domain pagination must be keyset based: %s", pageQuery)
+	}
+}
+
 func TestDrainRows(t *testing.T) {
 	// Fake row source: yields the slice one at a time; empty strings must be dropped.
 	src := []string{"a", "", "b", "c", "d"}

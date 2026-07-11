@@ -240,6 +240,35 @@ func Incremental(ctx context.Context, conn driver.Conn, st *store.Store, scanID 
 	return nr, nd, err
 }
 
+// FlushDNS writes every sink for one ready bounded DNS batch before acknowledging and deleting it.
+// Each ClickHouse row has stable scan/event identity, so a crash after any successful insert but before
+// AcknowledgeDNS safely replays the entire batch.
+func FlushDNS(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batchSize int) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	ready, err := st.ReadyDNS(ctx, scanID, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("read ready DNS batch: %w", err)
+	}
+	if len(ready.Roots) == 0 {
+		return 0, nil
+	}
+	if _, err := insert(ctx, conn, recordObsTable, toObservationRows(ready.Records, scanID, time.Now().UTC())); err != nil {
+		return 0, fmt.Errorf("write DNS record observations: %w", err)
+	}
+	if _, err := insert(ctx, conn, scanTable, ready.Summaries); err != nil {
+		return 0, fmt.Errorf("write DNS summaries: %w", err)
+	}
+	if _, err := insert(ctx, conn, hostnamesTable, ready.Hostnames); err != nil {
+		return 0, fmt.Errorf("write DNS hostname registry: %w", err)
+	}
+	if err := st.AcknowledgeDNS(ctx, scanID, ready.Roots); err != nil {
+		return 0, fmt.Errorf("acknowledge DNS batch: %w", err)
+	}
+	return len(ready.Roots), nil
+}
+
 // MirrorSeedDomains ensures corpscout.dns_scan_seed_domains holds scanID's full domain membership
 // before the hostsource shard queries run (Task 11): CT/registry enrichment joins to this table to
 // scope itself to only the domains actually in THIS scan, never the whole commoncrawl_domains corpus.
@@ -343,6 +372,45 @@ func LoadAXFRPrior(ctx context.Context, conn driver.Conn) (map[store.AXFREndpoin
 	return prior, rows.Err()
 }
 
+// LoadAXFRPriorForRoots reads only endpoint history needed by the ready AXFR batch.
+func LoadAXFRPriorForRoots(ctx context.Context, conn driver.Conn, roots []string) (map[store.AXFREndpointKey]store.AXFRPriorState, error) {
+	if len(roots) == 0 {
+		return map[store.AXFREndpointKey]store.AXFRPriorState{}, nil
+	}
+	rows, err := conn.Query(ctx, `SELECT root_domain, name_server, name_server_ip,
+		has_definitive_state, axfr_open, definitive_at, definitive_scan_id,
+		last_probe_verdict, last_probe_reason, last_probed_at,
+		last_probe_records, last_probe_bytes, last_probe_truncated,
+		delegation_active, delegation_seen_at FROM `+axfrLatestTable+` FINAL
+		WHERE has(?, root_domain)`, roots)
+	if err != nil {
+		return nil, fmt.Errorf("query scoped AXFR prior: %w", err)
+	}
+	defer rows.Close()
+	prior := map[store.AXFREndpointKey]store.AXFRPriorState{}
+	for rows.Next() {
+		var key store.AXFREndpointKey
+		var state store.AXFRPriorState
+		var hasDefinitive, axfrOpen, truncated, delegationActive uint8
+		if err := rows.Scan(&key.RootDomain, &key.NameServer, &key.NameServerIP,
+			&hasDefinitive, &axfrOpen, &state.DefinitiveAt, &state.DefinitiveScanID,
+			&state.LastProbeVerdict, &state.LastProbeReason, &state.LastProbedAt,
+			&state.LastProbeRecords, &state.LastProbeBytes, &truncated,
+			&delegationActive, &state.DelegationSeenAt); err != nil {
+			return nil, fmt.Errorf("scan scoped AXFR prior: %w", err)
+		}
+		state.HasDefinitive = hasDefinitive != 0
+		state.AXFROpen = axfrOpen != 0
+		state.LastProbeTruncated = truncated != 0
+		state.DelegationActive = delegationActive != 0
+		prior[key] = state
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read scoped AXFR prior: %w", err)
+	}
+	return prior, nil
+}
+
 // WriteAXFRStateChanges inserts scanID's staged axfr_changes rows into dns_axfr_state_changes.
 // Idempotent: ReplacingMergeTree(changed_at) on a key that includes scan_id means re-inserting the same
 // rows (a retry) merges away to one copy, while distinct scans' changes never collide.
@@ -368,9 +436,13 @@ func BuildAXFRLatestRows(eps []store.AXFRProbedEndpoint, prior map[store.AXFREnd
 	rows := make([]model.AXFRLatestRow, 0, len(eps))
 	for _, e := range eps {
 		p := prior[e.AXFREndpointKey] // zero value if never seen before: HasDefinitive/DelegationActive false
+		updatedAt := now
+		if !e.StateObservedAt.IsZero() {
+			updatedAt = e.StateObservedAt.UTC()
+		}
 		row := model.AXFRLatestRow{
 			RootDomain: e.RootDomain, NameServer: e.NameServer, NameServerIP: e.NameServerIP,
-			UpdatedAt:          now,
+			UpdatedAt:          updatedAt,
 			DelegationActive:   boolToU8(e.DelegationActive),
 			DelegationSeenAt:   p.DelegationSeenAt,
 			LastProbeVerdict:   p.LastProbeVerdict,
@@ -404,6 +476,157 @@ func BuildAXFRLatestRows(eps []store.AXFRProbedEndpoint, prior map[store.AXFREnd
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// FlushAXFR derives changes/latest rows directly from one ready local batch, writes every dependent
+// sink, and deletes the local jobs only after all writes succeed.
+func FlushAXFR(ctx context.Context, conn driver.Conn, st *store.Store, scanID string, batchSize int) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	jobs, err := st.ReadyAXFR(ctx, scanID, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("read ready AXFR batch: %w", err)
+	}
+	if len(jobs) == 0 {
+		return 0, nil
+	}
+	roots := make([]string, len(jobs))
+	for index, job := range jobs {
+		roots[index] = job.RootDomain
+	}
+	prior, err := LoadAXFRPriorForRoots(ctx, conn, roots)
+	if err != nil {
+		return 0, err
+	}
+	endpoints := boundedAXFREndpoints(jobs, prior)
+	changes := boundedAXFRChanges(endpoints, prior, scanID)
+	latest := BuildAXFRLatestRows(endpoints, prior, scanID, time.Time{})
+	if _, err := insert(ctx, conn, axfrChangesTable, changes); err != nil {
+		return 0, fmt.Errorf("write AXFR state changes: %w", err)
+	}
+	if _, err := insert(ctx, conn, axfrLatestTable, latest); err != nil {
+		return 0, fmt.Errorf("write AXFR latest: %w", err)
+	}
+	records, hostnames := boundedAXFROutputs(jobs, scanID)
+	if _, err := insert(ctx, conn, recordObsTable, records); err != nil {
+		return 0, fmt.Errorf("write AXFR record observations: %w", err)
+	}
+	if _, err := insert(ctx, conn, hostnamesTable, hostnames); err != nil {
+		return 0, fmt.Errorf("write AXFR hostname registry: %w", err)
+	}
+	if err := st.AcknowledgeAXFR(ctx, scanID, roots); err != nil {
+		return 0, fmt.Errorf("acknowledge AXFR batch: %w", err)
+	}
+	return len(jobs), nil
+}
+
+func boundedAXFREndpoints(jobs []store.ReadyAXFRJob, prior map[store.AXFREndpointKey]store.AXFRPriorState) []store.AXFRProbedEndpoint {
+	var endpoints []store.AXFRProbedEndpoint
+	touched := map[string]time.Time{}
+	seen := map[store.AXFREndpointKey]bool{}
+	for _, job := range jobs {
+		touched[job.RootDomain] = job.DelegationObservedAt
+		current := map[store.AXFREndpointKey]bool{}
+		for _, endpoint := range job.Endpoints {
+			current[store.AXFREndpointKey{RootDomain: job.RootDomain, NameServer: endpoint.Name, NameServerIP: endpoint.IP}] = true
+		}
+		for _, probe := range job.Probes {
+			key := store.AXFREndpointKey{RootDomain: job.RootDomain, NameServer: probe.NSHost, NameServerIP: probe.NSIP}
+			seen[key] = true
+			endpoints = append(endpoints, store.AXFRProbedEndpoint{
+				AXFREndpointKey: key, Verdict: string(probe.Verdict), Reason: string(probe.Reason),
+				ObservedAt: probe.ObservedAt, Records: uint64(probe.Records), Bytes: uint64(probe.Bytes),
+				Truncated: probe.Truncated, StateObservedAt: probe.ObservedAt,
+				Definitive: probe.IsDefinitive(), DelegationActive: true,
+			})
+		}
+		for key := range current {
+			if seen[key] {
+				continue
+			}
+			if _, exists := prior[key]; !exists {
+				continue
+			}
+			seen[key] = true
+			endpoints = append(endpoints, store.AXFRProbedEndpoint{
+				AXFREndpointKey: key, DelegationActive: true, StateObservedAt: job.DelegationObservedAt,
+			})
+		}
+	}
+	for key := range prior {
+		observedAt, wasTouched := touched[key.RootDomain]
+		if !wasTouched || seen[key] {
+			continue
+		}
+		endpoints = append(endpoints, store.AXFRProbedEndpoint{
+			AXFREndpointKey: key, DelegationActive: false, StateObservedAt: observedAt,
+		})
+	}
+	return endpoints
+}
+
+func boundedAXFRChanges(endpoints []store.AXFRProbedEndpoint, prior map[store.AXFREndpointKey]store.AXFRPriorState, scanID string) []model.AXFRStateChangeRow {
+	var changes []model.AXFRStateChangeRow
+	for _, endpoint := range endpoints {
+		if !endpoint.Definitive {
+			continue
+		}
+		open := endpoint.Verdict == string(resolve.VerdictOpen)
+		state, exists := prior[endpoint.AXFREndpointKey]
+		if exists && state.HasDefinitive && state.AXFROpen == open {
+			continue
+		}
+		if (!exists || !state.HasDefinitive) && !open {
+			continue
+		}
+		changes = append(changes, model.AXFRStateChangeRow{
+			RootDomain: endpoint.RootDomain, NameServer: endpoint.NameServer,
+			NameServerIP: endpoint.NameServerIP, AXFROpen: boolToU8(open),
+			ScanID: scanID, ChangedAt: endpoint.ObservedAt,
+		})
+	}
+	return changes
+}
+
+func boundedAXFROutputs(jobs []store.ReadyAXFRJob, scanID string) ([]model.RecordObservationRow, []model.HostnameRow) {
+	var records []model.RecordObservationRow
+	hostnames := map[string]model.HostnameRow{}
+	for _, job := range jobs {
+		observedAt := job.DelegationObservedAt
+		for _, probe := range job.Probes {
+			if probe.IsOpen() {
+				observedAt = probe.ObservedAt
+				break
+			}
+		}
+		for _, record := range job.Zone {
+			records = append(records, model.RecordObservationRow{
+				RootDomain: job.RootDomain, Name: record.Name, RecordType: record.RecordType,
+				Slot: record.Slot, Value: record.Value, Source: "axfr", Discovery: "axfr",
+				ScanID: scanID, TTL: record.TTL, Priority: record.Priority, Rcode: record.Rcode,
+				ObservedAt: observedAt, LoadedAt: time.Now().UTC(),
+			})
+			name := strings.ToLower(record.Name)
+			suffix := "." + strings.ToLower(job.RootDomain)
+			if name == strings.ToLower(job.RootDomain) || !strings.HasSuffix(name, suffix) {
+				continue
+			}
+			label := strings.TrimSuffix(name, suffix)
+			if label == "" || strings.Contains(label, "*") {
+				continue
+			}
+			hostnames[job.RootDomain+"\x00"+label] = model.HostnameRow{
+				RootDomain: job.RootDomain, Label: label, DiscoverySource: "axfr",
+				FirstSeen: observedAt, LastSeen: observedAt, LastResolved: observedAt,
+			}
+		}
+	}
+	hostnameRows := make([]model.HostnameRow, 0, len(hostnames))
+	for _, row := range hostnames {
+		hostnameRows = append(hostnameRows, row)
+	}
+	return records, hostnameRows
 }
 
 // WriteAXFRLatest reads scanID's per-endpoint view from the store and upserts one dns_axfr_latest row

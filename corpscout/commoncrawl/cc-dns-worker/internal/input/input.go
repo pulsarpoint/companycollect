@@ -15,6 +15,43 @@ import (
 // run the order is immaterial — every domain is seeded regardless.
 const DefaultQuery = "SELECT DISTINCT root_domain FROM corpscout.commoncrawl_domains ORDER BY root_domain"
 
+const pageQuery = `
+SELECT root_domain
+FROM
+(
+    SELECT root_domain
+    FROM corpscout.commoncrawl_domains
+    WHERE root_domain != '' AND root_domain > ?
+    GROUP BY root_domain
+)
+ORDER BY root_domain
+LIMIT ?`
+
+// FetchPage returns one deterministic keyset page after cursor. Both the cursor and page size are
+// bound parameters, so a root-domain value can never alter the query text.
+func FetchPage(ctx context.Context, conn driver.Conn, cursor string, pageSize int) ([]string, error) {
+	if pageSize <= 0 {
+		pageSize = 5000
+	}
+	rows, err := conn.Query(ctx, pageQuery, cursor, pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("query domain page: %w", err)
+	}
+	defer rows.Close()
+	page := make([]string, 0, pageSize)
+	for rows.Next() {
+		var rootDomain string
+		if err := rows.Scan(&rootDomain); err != nil {
+			return nil, fmt.Errorf("scan domain page: %w", err)
+		}
+		page = append(page, rootDomain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read domain page: %w", err)
+	}
+	return page, nil
+}
+
 func applyLimit(q string, limit int) string {
 	if limit <= 0 {
 		return q

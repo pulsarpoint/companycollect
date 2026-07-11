@@ -168,6 +168,10 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
+	if _, err := db.ExecContext(context.Background(), boundedSchema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("bounded schema: %w", err)
+	}
 	migrate(db)
 	if err := backfillCompletedDomains(db); err != nil {
 		_ = db.Close()
@@ -1091,6 +1095,7 @@ type AXFRProbedEndpoint struct {
 	Records          uint64
 	Bytes            uint64
 	Truncated        bool
+	StateObservedAt  time.Time
 	Definitive       bool
 	DelegationActive bool
 }
