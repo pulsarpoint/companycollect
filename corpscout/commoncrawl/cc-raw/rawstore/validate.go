@@ -2,6 +2,7 @@ package rawstore
 
 import (
 	"encoding/hex"
+	"maps"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -78,6 +79,7 @@ func ValidateIndexRows(rows []IndexRow, manifest ChunkManifest) error {
 	}
 
 	var nextPackOffset, downloaded, failed, notFound, timeout, other int64
+	failureReasons := make(map[string]int64)
 	for i, row := range rows {
 		if err := row.Validate(); err != nil {
 			return errors.Wrapf(err, "index row %d", i)
@@ -97,9 +99,11 @@ func ValidateIndexRows(rows []IndexRow, manifest ChunkManifest) error {
 			nextPackOffset += *row.PackLength
 			downloaded++
 		case NotFound:
+			failureReasons[*row.ErrorCode]++
 			notFound++
 			failed++
 		case Failed:
+			failureReasons[*row.ErrorCode]++
 			if *row.ErrorCode == "timeout" {
 				timeout++
 			} else {
@@ -117,6 +121,8 @@ func ValidateIndexRows(rows []IndexRow, manifest ChunkManifest) error {
 		return errors.New("index download counts do not match chunk manifest")
 	case notFound != results.Errors.NotFound || timeout != results.Errors.Timeout || other != results.Errors.Other:
 		return errors.New("index error counts do not match chunk manifest")
+	case len(results.FailureReasons) > 0 && !maps.Equal(failureReasons, results.FailureReasons):
+		return errors.New("index failure reasons do not match chunk manifest")
 	}
 	return nil
 }
@@ -295,6 +301,18 @@ func validateDownloadResults(results DownloadResults, expectedRecords, expectedP
 	}
 	if results.Errors.NotFound+results.Errors.Timeout+results.Errors.Other != results.FailedRecords {
 		return errors.New("download error counts do not cover failed records")
+	}
+	if len(results.FailureReasons) > 0 {
+		var reasonTotal int64
+		for reason, count := range results.FailureReasons {
+			if strings.TrimSpace(reason) == "" || count <= 0 {
+				return errors.New("download failure reasons require non-empty names and positive counts")
+			}
+			reasonTotal += count
+		}
+		if reasonTotal != results.FailedRecords {
+			return errors.New("download failure reasons do not cover failed records")
+		}
 	}
 	if results.SourceBytes <= 0 || results.PackedBytes <= 0 || results.SourceBytes != results.PackedBytes {
 		return errors.Newf("source and packed bytes must be equal and positive, got source=%d packed=%d", results.SourceBytes, results.PackedBytes)

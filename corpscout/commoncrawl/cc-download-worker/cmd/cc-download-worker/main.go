@@ -19,6 +19,7 @@ import (
 	"cc-raw/fetch"
 	"cc-raw/rawstore"
 	"github.com/cockroachdb/errors"
+	"github.com/dustin/go-humanize"
 )
 
 type options struct {
@@ -36,6 +37,7 @@ type options struct {
 	maxPackBytes      int64
 	maxRecords        int
 	maxFailureRate    float64
+	recordAttempts    int
 	recordTimeout     time.Duration
 	tempDirectory     string
 	rustfsEndpoint    string
@@ -126,6 +128,7 @@ func run(logger *slog.Logger, args []string) error {
 		"concurrency", options.concurrency,
 		"max_pack_bytes", options.maxPackBytes,
 		"max_records", options.maxRecords,
+		"record_attempts", options.recordAttempts,
 		"run_id", runID,
 	)
 
@@ -166,6 +169,7 @@ func run(logger *slog.Logger, args []string) error {
 				MaxPackBytes:    options.maxPackBytes,
 				MaxRecords:      options.maxRecords,
 				MaxFailureRate:  options.maxFailureRate,
+				RecordAttempts:  options.recordAttempts,
 				RecordTimeout:   options.recordTimeout,
 				TempDir:         options.tempDirectory,
 				RunID:           runID,
@@ -189,6 +193,7 @@ func run(logger *slog.Logger, args []string) error {
 			"downloaded_records", result.DownloadedRecords,
 			"failed_records", result.FailedRecords,
 			"raw_bytes", result.RawBytes,
+			"raw_size", humanize.IBytes(uint64(result.RawBytes)),
 			"run_id", runID,
 		)
 	}
@@ -214,6 +219,7 @@ func run(logger *slog.Logger, args []string) error {
 		"downloaded_records", runTotals.downloadedRecords,
 		"failed_records", runTotals.failedRecords,
 		"raw_bytes", runTotals.rawBytes,
+		"raw_size", humanize.IBytes(uint64(runTotals.rawBytes)),
 		"run_id", runID,
 	)
 	return nil
@@ -235,7 +241,8 @@ func parseOptions(args []string) (options, error) {
 	flags.Int64Var(&options.maxPackBytes, "max-pack-bytes", 256<<20, "target maximum advertised bytes per raw pack")
 	flags.IntVar(&options.maxRecords, "max-records", 16384, "maximum worklist records per raw pack")
 	flags.Float64Var(&options.maxFailureRate, "max-failure-rate", 0.01, "maximum terminal record failure ratio allowed per committed chunk")
-	flags.DurationVar(&options.recordTimeout, "record-timeout", 30*time.Second, "deadline for one WARC record")
+	flags.IntVar(&options.recordAttempts, "record-attempts", 3, "logical attempts for transient record failures")
+	flags.DurationVar(&options.recordTimeout, "record-timeout", 30*time.Second, "deadline for each logical record attempt")
 	flags.StringVar(&options.tempDirectory, "temp-dir", "", "parent directory for temporary pack files (default system temp)")
 	flags.StringVar(&options.rustfsEndpoint, "rustfs-endpoint", os.Getenv("CORPSCOUT_S3_ENDPOINT"), "RustFS S3-compatible endpoint")
 	flags.StringVar(&options.rustfsRegion, "rustfs-region", "us-east-1", "RustFS signing region")
@@ -259,6 +266,9 @@ func parseOptions(args []string) (options, error) {
 	}
 	if options.maxFailureRate < 0 || options.maxFailureRate > 1 {
 		return options, errors.New("max-failure-rate must be between 0 and 1")
+	}
+	if options.recordAttempts < 1 || options.recordAttempts > 10 {
+		return options, errors.New("record-attempts must be between 1 and 10")
 	}
 	if _, err := parseParts(options.parts); err != nil {
 		return options, err

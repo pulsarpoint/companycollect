@@ -134,6 +134,128 @@ func TestPlanChunksHonorsByteLimitAndKeepsOversizedRecordWhole(t *testing.T) {
 	}
 }
 
+func TestDownloadFailureReasons(t *testing.T) {
+	tests := []struct {
+		err    error
+		status rawstore.DownloadStatus
+		code   string
+	}{
+		{err: context.DeadlineExceeded, status: rawstore.Failed, code: "timeout"},
+		{err: errors.New("http 404"), status: rawstore.NotFound, code: "not_found"},
+		{err: errors.New("http 429"), status: rawstore.Failed, code: "throttled"},
+		{err: errors.New("access denied"), status: rawstore.Failed, code: "access_denied"},
+		{err: errors.New("short WARC range"), status: rawstore.Failed, code: "short_read"},
+		{err: errors.New("connection reset by peer"), status: rawstore.Failed, code: "connection_reset"},
+	}
+	for _, test := range tests {
+		status, code := classifyDownloadError(test.err)
+		if status != test.status || code != test.code {
+			t.Errorf("classifyDownloadError(%q)=(%q, %q), want (%q, %q)", test.err, status, code, test.status, test.code)
+		}
+	}
+
+	results := summarizeDownloads([]recordDownload{
+		{status: rawstore.Downloaded, attempts: 1},
+		{status: rawstore.NotFound, errorCode: "not_found", attempts: 1},
+		{status: rawstore.Failed, errorCode: "timeout", attempts: 3},
+		{status: rawstore.Failed, errorCode: "connection_reset", attempts: 3},
+	})
+	if results.RequestedRecords != 4 || results.DownloadedRecords != 1 || results.FailedRecords != 3 {
+		t.Fatalf("unexpected summary %+v", results)
+	}
+	if results.Errors.NotFound != 1 || results.Errors.Timeout != 1 || results.Errors.Other != 1 {
+		t.Fatalf("unexpected error classes %+v", results.Errors)
+	}
+	if results.FailureReasons["not_found"] != 1 || results.FailureReasons["timeout"] != 1 || results.FailureReasons["connection_reset"] != 1 {
+		t.Fatalf("unexpected failure reasons %+v", results.FailureReasons)
+	}
+}
+
+func TestDownloaderRetriesTransientRecordFailures(t *testing.T) {
+	ctx := context.Background()
+	objectServer := newS3TestServer(t, "crawls")
+	store := newTestStore(t, ctx, objectServer.URL(), "crawls")
+	source := newTestSource()
+	worklistPath := filepath.Join(t.TempDir(), "part_000.parquet")
+	row := testWorklistRow(source, "example.com", "https://example.com/", "warc.gz", 10, []byte("record-one"), nil)
+	source.failNext("warc.gz", 10, 2)
+	if err := parquet.WriteFile(worklistPath, []worklistRow{row}); err != nil {
+		t.Fatal(err)
+	}
+	config := testDownloaderConfig(worklistPath)
+	config.MaxRecords = 1
+	config.RecordAttempts = 3
+	downloader := Downloader{Source: source, Store: store, Logger: testLogger(), Config: config}
+
+	result, err := downloader.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DownloadedRecords != 1 || result.FailedRecords != 0 || source.callCount() != 3 {
+		t.Fatalf("unexpected retry result=%+v source_calls=%d", result, source.callCount())
+	}
+	indexKey := "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000000/index.parquet"
+	indexBody := objectServer.body(indexKey)
+	indexRows, err := parquet.Read[rawstore.IndexRow](bytes.NewReader(indexBody), int64(len(indexBody)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(indexRows) != 1 || indexRows[0].DownloadAttempts != 3 || indexRows[0].DownloadStatus != rawstore.Downloaded {
+		t.Fatalf("unexpected index rows %+v", indexRows)
+	}
+}
+
+func TestDownloaderCommitsDescriptiveTerminalFailures(t *testing.T) {
+	ctx := context.Background()
+	objectServer := newS3TestServer(t, "crawls")
+	store := newTestStore(t, ctx, objectServer.URL(), "crawls")
+	source := newTestSource()
+	worklistPath := filepath.Join(t.TempDir(), "part_000.parquet")
+	rows := []worklistRow{
+		testWorklistRow(source, "example.com", "https://example.com/", "warc.gz", 0, []byte("record-one"), nil),
+		{
+			RootDomain:       "missing.example",
+			URL:              "https://missing.example/",
+			WARCFilename:     "missing.warc.gz",
+			WARCRecordOffset: 100,
+			WARCRecordLength: 10,
+		},
+	}
+	if err := parquet.WriteFile(worklistPath, rows); err != nil {
+		t.Fatal(err)
+	}
+	config := testDownloaderConfig(worklistPath)
+	config.MaxRecords = 2
+	config.MaxFailureRate = 0.5
+	config.RecordAttempts = 3
+	downloader := Downloader{Source: source, Store: store, Logger: testLogger(), Config: config}
+
+	result, err := downloader.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DownloadedRecords != 1 || result.FailedRecords != 1 || source.callCount() != 2 {
+		t.Fatalf("unexpected result=%+v source_calls=%d", result, source.callCount())
+	}
+	manifestKey := "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000000/manifest.json"
+	manifest, err := rawstore.DecodeChunkManifest(objectServer.body(manifestKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Results.Errors.NotFound != 1 || manifest.Results.FailureReasons["not_found"] != 1 {
+		t.Fatalf("unexpected failure details %+v", manifest.Results)
+	}
+	indexKey := "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000000/index.parquet"
+	indexBody := objectServer.body(indexKey)
+	indexRows, err := parquet.Read[rawstore.IndexRow](bytes.NewReader(indexBody), int64(len(indexBody)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(indexRows) != 2 || indexRows[1].DownloadAttempts != 1 || indexRows[1].ErrorCode == nil || *indexRows[1].ErrorCode != "not_found" {
+		t.Fatalf("unexpected failed index row %+v", indexRows)
+	}
+}
+
 func TestDownloaderDoesNotCommitChunkAboveFailureLimit(t *testing.T) {
 	ctx := context.Background()
 	objectServer := newS3TestServer(t, "crawls")
@@ -156,6 +278,7 @@ func TestDownloaderDoesNotCommitChunkAboveFailureLimit(t *testing.T) {
 	config := testDownloaderConfig(worklistPath)
 	config.MaxRecords = 2
 	config.MaxFailureRate = 0
+	config.RecordAttempts = 3
 	downloader := Downloader{Source: source, Store: store, Logger: testLogger(), Config: config}
 
 	if _, err := downloader.Run(ctx); err == nil || !strings.Contains(err.Error(), "failed records") {
@@ -163,6 +286,9 @@ func TestDownloaderDoesNotCommitChunkAboveFailureLimit(t *testing.T) {
 	}
 	if got := objectServer.putOrder(); len(got) != 0 {
 		t.Fatalf("failed chunk wrote objects: %v", got)
+	}
+	if source.callCount() != 2 {
+		t.Fatalf("not-found record was retried: source calls=%d, want 2", source.callCount())
 	}
 }
 
@@ -219,6 +345,7 @@ func testDownloaderConfig(worklistPath string) Config {
 		MaxPackBytes:    1 << 20,
 		MaxRecords:      2,
 		MaxFailureRate:  0,
+		RecordAttempts:  1,
 		RecordTimeout:   time.Second,
 		RunID:           "download-test-run",
 		WorkerHost:      "test-worker",
@@ -240,13 +367,17 @@ func testWorklistRow(source *testSource, domain, pageURL, filename string, offse
 }
 
 type testSource struct {
-	mu      sync.Mutex
-	records map[string][]byte
-	calls   int
+	mu                sync.Mutex
+	records           map[string][]byte
+	transientFailures map[string]int
+	calls             int
 }
 
 func newTestSource() *testSource {
-	return &testSource{records: make(map[string][]byte)}
+	return &testSource{
+		records:           make(map[string][]byte),
+		transientFailures: make(map[string]int),
+	}
 }
 
 func (source *testSource) add(key string, offset int64, body []byte) {
@@ -255,13 +386,24 @@ func (source *testSource) add(key string, offset int64, body []byte) {
 	source.records[fmt.Sprintf("%s:%d", key, offset)] = body
 }
 
+func (source *testSource) failNext(key string, offset int64, attempts int) {
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	source.transientFailures[fmt.Sprintf("%s:%d", key, offset)] = attempts
+}
+
 func (source *testSource) GetRange(_ context.Context, _, key string, start, end int64) ([]byte, error) {
 	source.mu.Lock()
 	defer source.mu.Unlock()
 	source.calls++
-	body, exists := source.records[fmt.Sprintf("%s:%d", key, start)]
+	recordKey := fmt.Sprintf("%s:%d", key, start)
+	body, exists := source.records[recordKey]
 	if !exists {
 		return nil, errors.New("http 404")
+	}
+	if source.transientFailures[recordKey] > 0 {
+		source.transientFailures[recordKey]--
+		return nil, errors.New("temporary range failure")
 	}
 	if end-start+1 != int64(len(body)) {
 		return nil, errors.New("unexpected range")

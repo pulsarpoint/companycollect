@@ -60,6 +60,7 @@ type DownloadResults struct {
 	SourceBytes       int64               `json:"source_bytes"`
 	PackedBytes       int64               `json:"packed_bytes"`
 	Errors            DownloadErrorCounts `json:"errors"`
+	FailureReasons    map[string]int64    `json:"failure_reasons,omitempty"`
 }
 
 type DownloadRun struct {

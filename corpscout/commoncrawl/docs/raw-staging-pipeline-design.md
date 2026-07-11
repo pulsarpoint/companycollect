@@ -238,6 +238,9 @@ The index has one row for every requested worklist record, including download fa
 | `record_checksum` | Optional checksum of the stored record bytes. |
 | `error_code` | Stable low-cardinality failure code; null when downloaded. |
 
+Failure codes distinguish conditions such as `timeout`, `not_found`, `throttled`, `access_denied`,
+`short_read`, `unexpected_eof`, `connection_reset`, `connection_refused`, and `network_unreachable`.
+
 Invariants:
 
 - `downloaded` requires non-null `pack_offset` and `pack_length` and a null `error_code`.
@@ -284,6 +287,10 @@ processor state, ClickHouse state, credentials, or secrets.
       "not_found": 0,
       "timeout": 3,
       "other": 1
+    },
+    "failure_reasons": {
+      "timeout": 3,
+      "connection_reset": 1
     }
   },
   "download": {
@@ -301,7 +308,8 @@ last. Readers treat a chunk without a valid manifest as incomplete. Orphaned pac
 garbage-collected after an age threshold, but are never eligible for processing.
 
 The downloader may commit a manifest with a small number of terminal record failures. Retryable failures are
-retried under a bounded policy first. A part-level `download/ready.json` is written only after every expected
+retried up to `--record-attempts` times, with an independent `--record-timeout` for each logical attempt;
+permanent `not_found` failures are not retried. A part-level `download/ready.json` is written only after every expected
 chunk has a valid manifest and the union of manifest ordinal ranges exactly covers the worklist.
 
 `ready.json` is the compact inventory used by processors and `cc-rawctl`; it avoids relying on eventually

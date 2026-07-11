@@ -89,7 +89,8 @@ not invoked by and is not required as a separate application for this downloader
 | `--max-pack-bytes` | `256 MiB` | Target maximum advertised WARC bytes per pack. An oversized record stays whole. |
 | `--max-records` | `16384` | Maximum worklist rows per pack. |
 | `--max-failure-rate` | `0.01` | Terminal failures allowed per committed chunk, rounded up to a whole record. |
-| `--record-timeout` | `30s` | Deadline for one selected WARC record. |
+| `--record-attempts` | `3` | Logical attempts for transient record failures; `not_found` is never retried. |
+| `--record-timeout` | `30s` | Deadline for each logical attempt to download one selected WARC record. |
 | `--source-anonymous` | false | Use anonymous Common Crawl HTTPS instead of signed S3. |
 | `--temp-dir` | system temp | Parent directory for local pack/index construction. |
 | `--rustfs-endpoint` | environment | Override `CORPSCOUT_S3_ENDPOINT`. |

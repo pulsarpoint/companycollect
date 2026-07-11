@@ -136,6 +136,23 @@ func TestChunkManifestRejectsContractViolations(t *testing.T) {
 	}
 }
 
+func TestChunkManifestFailureReasonsAreBackwardCompatible(t *testing.T) {
+	var manifest ChunkManifest
+	decodeFixture(t, "chunk_manifest.json", &manifest)
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("legacy manifest without failure reasons: %v", err)
+	}
+
+	manifest.Results.FailureReasons = map[string]int64{"timeout": 1}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("manifest with failure reasons: %v", err)
+	}
+	manifest.Results.FailureReasons["timeout"] = 2
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("failure reasons exceeding failed records unexpectedly validated")
+	}
+}
+
 func TestReadyManifestRejectsCoverageGaps(t *testing.T) {
 	var ready ReadyManifest
 	decodeFixture(t, "ready.json", &ready)

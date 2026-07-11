@@ -6,6 +6,7 @@ require (
 	cc-raw v0.0.0
 	github.com/aws/smithy-go v1.27.1
 	github.com/cockroachdb/errors v1.13.0
+	github.com/dustin/go-humanize v1.0.1
 	github.com/parquet-go/parquet-go v0.30.1
 	golang.org/x/sync v0.21.0
 )

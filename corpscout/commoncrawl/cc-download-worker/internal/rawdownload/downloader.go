@@ -10,6 +10,7 @@ import (
 	"cc-raw/rawstate"
 	"cc-raw/rawstore"
 	"github.com/cockroachdb/errors"
+	"github.com/dustin/go-humanize"
 )
 
 type Config struct {
@@ -23,6 +24,7 @@ type Config struct {
 	MaxPackBytes    int64
 	MaxRecords      int
 	MaxFailureRate  float64
+	RecordAttempts  int
 	RecordTimeout   time.Duration
 	TempDir         string
 	RunID           string
@@ -125,7 +127,12 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 			"requested_records", manifest.Results.RequestedRecords,
 			"downloaded_records", manifest.Results.DownloadedRecords,
 			"failed_records", manifest.Results.FailedRecords,
+			"failed_not_found", manifest.Results.Errors.NotFound,
+			"failed_timeout", manifest.Results.Errors.Timeout,
+			"failed_other", manifest.Results.Errors.Other,
+			"failure_reasons", manifest.Results.FailureReasons,
 			"raw_bytes", chunkRawBytes,
+			"raw_size", humanize.IBytes(uint64(chunkRawBytes)),
 		)
 	}
 
@@ -191,6 +198,9 @@ func (downloader *Downloader) validate() error {
 	}
 	if config.Concurrency <= 0 || config.MaxPackBytes <= 0 || config.MaxRecords <= 0 || config.RecordTimeout <= 0 {
 		return errors.New("concurrency, pack limits, and record timeout must be positive")
+	}
+	if config.RecordAttempts < 1 || config.RecordAttempts > 10 {
+		return errors.Newf("record attempts must be between 1 and 10, got %d", config.RecordAttempts)
 	}
 	if config.MaxFailureRate < 0 || config.MaxFailureRate > 1 {
 		return errors.Newf("max failure rate must be between 0 and 1, got %f", config.MaxFailureRate)
