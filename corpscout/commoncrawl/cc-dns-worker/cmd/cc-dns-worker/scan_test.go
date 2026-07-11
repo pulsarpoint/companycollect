@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,40 @@ import (
 
 	"github.com/miekg/dns"
 )
+
+func TestScanFlagsEnableAXFRAndHostEnrichmentByDefault(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	build := scanFlags(fs)
+	if err := fs.Parse([]string{"--resolvers", "127.0.0.1:53"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.axfr || !cfg.hostEnrich {
+		t.Fatalf("default features: axfr=%t hostEnrich=%t, want both enabled", cfg.axfr, cfg.hostEnrich)
+	}
+}
+
+func TestScanFlagsAllowExplicitFeatureOptOut(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	build := scanFlags(fs)
+	if err := fs.Parse([]string{
+		"--resolvers", "127.0.0.1:53",
+		"--axfr=false",
+		"--host-enrich=false",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.axfr || cfg.hostEnrich {
+		t.Fatalf("explicit opt-out: axfr=%t hostEnrich=%t, want both disabled", cfg.axfr, cfg.hostEnrich)
+	}
+}
 
 func TestCleanResolvers(t *testing.T) {
 	got := cleanResolvers([]string{" 1.1.1.1:53 ", "", "   ", "8.8.8.8:53", "\t"})
@@ -61,10 +96,9 @@ func TestRunScanRequiresResolversByDefault(t *testing.T) {
 	}
 }
 
-// TestHostnamesForBatchEmpty proves that on a scan with no host-enrich data (the default,
-// --host-enrich=false), HostnamesForBatch returns an empty map rather than erroring or panicking —
-// so the feeder's per-batch bulk-load is a no-op and resolveDomain's extra stays nil, preserving
-// pre-Phase-2 behaviour.
+// TestHostnamesForBatchEmpty proves that a scan explicitly run with --host-enrich=false can read an
+// empty hostname set without erroring or panicking, so the feeder's per-batch bulk-load remains a
+// safe no-op.
 func TestHostnamesForBatchEmpty(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {

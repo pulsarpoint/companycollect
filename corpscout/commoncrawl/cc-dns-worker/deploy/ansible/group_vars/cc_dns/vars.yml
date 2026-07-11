@@ -4,13 +4,8 @@ deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-worker"
 service_name: cc-dns-scan
 
 # --- worker run flags ---
-# CONTAINMENT (Task 0 of the correctness-hardening plan): --axfr and --host-enrich are DISABLED in
-# production until their release gates pass (AXFR: Tasks 2-6; host enrichment: Task 11). This is
-# temporary containment, NOT feature removal. To re-enable after the gates in
-# docs/superpowers/plans/2026-07-10-cc-dns-worker-correctness-hardening.md are met, append
-# `--axfr --host-enrich` to the flags below.
-# NOTE: the base resolver still requires Task 1 (public-target dial filtering), because authoritative
-# DNS queries also dial untrusted NS addresses — not just AXFR.
+# AXFR probing and ClickHouse hostname enrichment are enabled by the worker's CLI defaults. Add
+# --axfr=false or --host-enrich=false only for an intentional temporary opt-out.
 cc_dns_run_flags: >-
   run --dir {{ deploy_dir }}
   --resolvers 127.0.0.1:53

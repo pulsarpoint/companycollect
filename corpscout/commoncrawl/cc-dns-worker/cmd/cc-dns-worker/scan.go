@@ -75,14 +75,14 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 	breakerThreshold := fs.Int("breaker-threshold", 5, "consecutive transport failures before a server IP's circuit opens (0 disables)")
 	breakerCooldown := fs.Duration("breaker-cooldown", 30*time.Second, "how long a server IP's circuit stays open before a half-open probe")
 	statsInterval := fs.Duration("stats-interval", 5*time.Second, "how often to print live throughput/traffic stats (0 = off)")
-	axfr := fs.Bool("axfr", false, "enable the post-scan AXFR phase (a separate worker pool probes resolved domains' non-hyperscaler NS for open zones) — master switch, default off")
+	axfr := fs.Bool("axfr", true, "run the post-scan AXFR phase; set false to disable zone-transfer probing")
 	axfrWorkers := fs.Int("axfr-workers", 50, "AXFR phase: max concurrent domain probers (its own pool, never touches resolution)")
 	axfrQPS := fs.Float64("axfr-qps", 5, "max AXFR transfers/sec per NS IP")
 	axfrInflight := fs.Int("axfr-inflight", 50, "max total concurrent AXFR transfers across all domains")
 	axfrMaxRecords := fs.Int("axfr-max-records", 50000, "stop draining a zone past this many records")
 	axfrMaxBytes := fs.Int("axfr-max-bytes", 67108864, "stop draining a zone past this running byte sum")
 	axfrTimeout := fs.Duration("axfr-timeout", 20*time.Second, "whole-transfer timeout per AXFR")
-	hostEnrich := fs.Bool("host-enrich", false, "enable CT + registry hostname enrichment (seed-time) — master switch, default off")
+	hostEnrich := fs.Bool("host-enrich", true, "load CT + registry hostnames during seeding; set false to disable enrichment")
 	hostCap := fs.Int("host-cap", 100, "max discovered hosts per domain unioned into the scan")
 	hostConcurrency := fs.Int("host-concurrency", 4, "seed-time host-load: hash shards enriched concurrently (16 partition-aligned shards total; keep modest to spare the shared ctlogs node)")
 	return func() (scanConfig, error) {
@@ -159,10 +159,10 @@ func applyScanDefaults(cfg scanConfig) scanConfig {
 }
 
 // scanCycle seeds then resolves — the base-resolution single-shot path used by the standalone `scan`
-// subcommand (runScan runs this first, then — only when --axfr is set — the separate shared AXFR step,
-// axfrCycle). The orchestrator (run.go) instead runs seedCycle and scanResolve as separate crash-safe
-// phases so status reflects the long seeding/host-load window distinctly from actual resolution. Does
-// NOT open/close st.
+// subcommand (runScan runs this first, then — unless AXFR is explicitly disabled — the separate shared
+// AXFR step, axfrCycle). The orchestrator (run.go) instead runs seedCycle and scanResolve as separate
+// crash-safe phases so status reflects the long seeding/host-load window distinctly from actual
+// resolution. Does NOT open/close st.
 func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	if err := seedCycle(ctx, st, cfg); err != nil {
 		return err
@@ -171,9 +171,10 @@ func scanCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 }
 
 // seedCycle runs the SEEDING phase: stream domains from ClickHouse into the SQLite queue (unless a
-// prior seed for this scan-id finished) and, when --host-enrich is set, the CT+registry host-load
-// (the long part — enrichment for tens of millions of domains). Resumable + idempotent; populates the
-// queue that scanResolve consumes. No records are produced yet, so no incremental CH load runs here.
+// prior seed for this scan-id finished) and, unless hostname enrichment is explicitly disabled, the
+// CT+registry host-load (the long part — enrichment for tens of millions of domains). Resumable +
+// idempotent; populates the queue that scanResolve consumes. No records are produced yet, so no
+// incremental CH load runs here.
 func seedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	cfg = applyScanDefaults(cfg)
 
@@ -235,8 +236,8 @@ func seedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error {
 }
 
 // scanResolve runs the SCANNING phase: resolve the pending queue into the SQLite stage. Assumes the
-// seeding phase (seedCycle) already populated the queue (and scan_hostnames when --host-enrich). Does
-// NOT open/close st, so the orchestrator can share the store with a concurrent incremental loader.
+// seeding phase (seedCycle) already populated the queue and, by default, scan_hostnames. Does NOT
+// open/close st, so the orchestrator can share the store with a concurrent incremental loader.
 func scanResolve(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	cfg = applyScanDefaults(cfg)
 

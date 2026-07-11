@@ -152,9 +152,10 @@ func saveState(path string, s cycleState) error {
 	return os.Rename(tmp, path)
 }
 
-// runSeedPhase runs the SEEDING phase: stream domains from CH into the queue and (when --host-enrich)
-// the CT+registry host-load. No records exist yet, so no incremental loader runs — this is a distinct
-// phase so status reflects the long seed/host-load window rather than reading "scanning" throughout.
+// runSeedPhase runs the SEEDING phase: stream domains from CH into the queue and, unless explicitly
+// disabled, run the CT+registry host-load. No records exist yet, so no incremental loader runs — this
+// is a distinct phase so status reflects the long seed/host-load window rather than reading "scanning"
+// throughout.
 func runSeedPhase(ctx context.Context, state cycleState, dbPath string, cfg scanConfig) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -169,8 +170,8 @@ func runSeedPhase(ctx context.Context, state cycleState, dbPath string, cfg scan
 // runAXFRPhase runs the AXFR phase after scanning: stage+probe every resolved domain's non-hyperscaler
 // nameservers for open zone transfers (reusing the ns_endpoints/ns_ips resolution already stored), then
 // the AXFR ClickHouse load pass — both via the shared axfrCycle (axfr.go), the SAME function `scan
-// --axfr` calls. Separate from resolution entirely; runs only when --axfr is set (runOrchestrator only
-// enters this phase when cfg.axfr is true).
+// --axfr` calls. Separate from resolution entirely; runs by default unless AXFR is explicitly disabled
+// (runOrchestrator enters this phase when cfg.axfr is true).
 func runAXFRPhase(ctx context.Context, state cycleState, dbPath string, cfg scanConfig) error {
 	st, err := store.Open(dbPath)
 	if err != nil {

@@ -356,11 +356,11 @@ cc-dns-worker/
 
 ### `scan`
 
-Seeds (or resumes) the SQLite queue from ClickHouse, then resolves every pending domain. When `--axfr`
-is set, it then runs the same shared AXFR step `run` uses (`axfrCycle`): stage+probe every resolved
-domain's non-hyperscaler nameservers for open zone transfers, then the AXFR ClickHouse load pass. With
-`--axfr=false` (the default) no AXFR work happens at all — no queue seeding, no prober, no ClickHouse
-connection for it.
+Seeds (or resumes) the SQLite queue from ClickHouse, loads CT and registry hostnames into
+`scan_hostnames`, then resolves every pending domain. It subsequently runs the same shared AXFR step
+`run` uses (`axfrCycle`): stage+probe every resolved domain's non-hyperscaler nameservers for open zone
+transfers, then the AXFR ClickHouse load pass. Both features are enabled by default. With an explicit
+`--axfr=false`, no AXFR work happens at all; `--host-enrich=false` skips the hostname-load phase.
 
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
@@ -383,6 +383,8 @@ connection for it.
 | `--breaker-threshold` | int | `5` | consecutive transport failures before a server IP's circuit opens (`0` disables) |
 | `--breaker-cooldown` | duration | `30s` | how long a server IP's circuit stays open before a half-open probe |
 | `--stats-interval` | duration | `5s` | how often to print a live throughput/traffic stats line to **stdout** (`0` = off) |
+| `--axfr` | bool | `true` | run the post-scan AXFR phase; set `false` for an explicit opt-out |
+| `--host-enrich` | bool | `true` | load CT and registry hostnames into `scan_hostnames` during seeding; set `false` for an explicit opt-out |
 
 While `scan` runs it prints a live stats line to **stdout** every `--stats-interval` (progress logs go
 to stderr), so you can see throughput and how much DNS traffic is being generated — plus a final

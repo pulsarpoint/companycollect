@@ -10,10 +10,10 @@ import (
 	"cc-dns-worker/internal/store"
 )
 
-// TestScanAXFRDisabledDoesNoAXFRWork proves `scan --axfr=false` (scanConfig.axfr's zero value) makes
-// runScan skip the AXFR step ENTIRELY: axfr_domains stays completely unseeded — not merely empty-pending
-// — for a scan-id whose base resolution ran. This is the call-site gate task 6 requires: runAXFRPipeline
-// (queue seeding, a prober) and the ClickHouse load pass must never run when --axfr is off.
+// TestScanAXFRDisabledDoesNoAXFRWork proves `scan --axfr=false` makes runScan skip the AXFR step
+// ENTIRELY: axfr_domains stays completely unseeded — not merely empty-pending — for a scan-id whose
+// base resolution ran. This is the call-site gate task 6 requires: runAXFRPipeline (queue seeding, a
+// prober) and the ClickHouse load pass must never run when --axfr is off.
 //
 // Network-free: the scan-id's seed is pre-marked complete with zero queued domains (persisted to the
 // SQLite file before runScan opens it), so seedCycle skips ClickHouse entirely and scanResolve's feeder
@@ -35,7 +35,8 @@ func TestScanAXFRDisabledDoesNoAXFRWork(t *testing.T) {
 	}
 
 	if err := runScan([]string{
-		"-scan-id", scanID, "-db", dbPath, "-resolvers", "127.0.0.1:1", "-axfr=false",
+		"-scan-id", scanID, "-db", dbPath, "-resolvers", "127.0.0.1:1",
+		"-axfr=false", "-host-enrich=false",
 	}); err != nil {
 		t.Fatalf("runScan: %v", err)
 	}
