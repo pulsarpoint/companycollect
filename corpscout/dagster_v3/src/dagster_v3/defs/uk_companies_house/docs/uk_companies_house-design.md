@@ -101,6 +101,8 @@ mirroring `france_sirene`.
      and writes an immutable `raw/api_accounts/batches/run_id=<run-id>/catalog.json`. The catalog is
      the downstream contract and records requested, stored, and missing companies plus source URLs,
      content type, hash, size, and object key. Parsing and FX assets never call Companies House.
+     `CompaniesHouseResource` is the injected API boundary: it owns the `COMPANY_HOUSE`
+     credential, base URL, timeout, retrying HTTP session, and Filing History/Document API calls.
   4. **PDF-only PoC** (`uk_companies_house_pdf_financial_metrics`, config `company_numbers`) — for
      companies whose latest accounts are **PDF-only** (often scanned images), OCR the PDF
      (`pdftoppm` + `tesseract`) and extract metrics with the platform LLM (`pdf_extract.py`, the

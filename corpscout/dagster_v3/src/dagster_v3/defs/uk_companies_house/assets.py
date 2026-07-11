@@ -14,7 +14,6 @@ from dagster_v3.defs.uk_companies_house.clickhouse import (
     export_uk_companies_house_clickhouse_industries,
 )
 from dagster_v3.defs.uk_companies_house.documents_api import (
-    CompaniesHouseClient,
     load_api_financial_metrics_from_object_store,
     sync_api_accounts_documents,
 )
@@ -318,6 +317,7 @@ class CompaniesHousePdfConfig(dg.Config):
 def uk_companies_house_pdf_financial_metrics(
     context: AssetExecutionContext,
     config: CompaniesHousePdfConfig,
+    companies_house_api: resources.CompaniesHouseResource,
     uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
@@ -329,14 +329,12 @@ def uk_companies_house_pdf_financial_metrics(
     base_url = os.environ["TRANSLATION_PROVIDER_LOCAL_BASE_URL"]
     model = os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"]
     api_key = os.environ["TRANSLATION_PROVIDER_LOCAL_API_KEY"]
-    client = CompaniesHouseClient.from_env()
-
     rows: list[tuple] = []
     fetched = 0
     missing = 0
     for company_number in config.company_numbers:
         cn = str(company_number).strip()
-        pdf = client.latest_accounts_pdf(cn)
+        pdf = companies_house_api.latest_accounts_pdf(cn)
         if not pdf:
             missing += 1
             continue
@@ -460,12 +458,13 @@ def uk_companies_house_api_accounts_documents_s3(
     context: AssetExecutionContext,
     config: CompaniesHouseApiConfig,
     object_store: ObjectStoreResource,
+    companies_house_api: resources.CompaniesHouseResource,
 ) -> dg.MaterializeResult:
     result = sync_api_accounts_documents(
         object_store=object_store,
         company_numbers=config.company_numbers,
         run_id=context.run_id,
-        client=CompaniesHouseClient.from_env(),
+        client=companies_house_api,
         request_delay_seconds=config.request_delay_seconds,
         log=context.log.info,
     )
@@ -647,6 +646,7 @@ defs = dg.Definitions(
         uk_companies_house_accounts_incremental_schedule,
     ],
     resources={
+        "companies_house_api": resources.CompaniesHouseResource(),
         "uk_companies_house_duckdb": duckdb_resource(UK_DUCKDB_PATH),
     },
 )

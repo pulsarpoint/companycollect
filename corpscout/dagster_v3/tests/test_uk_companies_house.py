@@ -241,6 +241,20 @@ def test_api_financials_job_asset_graph():
     }
 
 
+def test_companies_house_api_resource_is_registered_and_injected():
+    from dagster_v3.defs.uk_companies_house import assets, resources
+
+    resource = assets.defs.resources["companies_house_api"]
+
+    assert isinstance(resource, resources.CompaniesHouseResource)
+    assert "companies_house_api" in (
+        assets.uk_companies_house_api_accounts_documents_s3.required_resource_keys
+    )
+    assert "companies_house_api" in (
+        assets.uk_companies_house_pdf_financial_metrics.required_resource_keys
+    )
+
+
 def test_pdf_extract_parsing_and_scale():
     from decimal import Decimal
 
@@ -260,8 +274,6 @@ def test_pdf_extract_parsing_and_scale():
 
 
 def test_pdf_extract_financials_with_fake_llm(monkeypatch):
-    from decimal import Decimal
-
     from dagster_v3.defs.uk_companies_house import pdf_extract
 
     # avoid real OCR: feed canned text.

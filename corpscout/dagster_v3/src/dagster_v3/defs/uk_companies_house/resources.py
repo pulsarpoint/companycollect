@@ -4,12 +4,15 @@ import tempfile
 import time
 import zipfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+import dagster as dg
 import duckdb
 import requests
 from dlt.sources.helpers import requests as dlt_requests
+from pydantic import PrivateAttr
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.uk_companies_house import tables
@@ -26,6 +29,9 @@ DEFAULT_USER_AGENT = "corpscout-dagster-v3/0.1 (goran.raovic@gmail.com)"
 DOWNLOAD_CHUNK_BYTES = 1 << 20
 DOWNLOAD_MAX_ATTEMPTS = 5
 DOWNLOAD_RETRY_BASE_SECONDS = 2.0
+API_BASE = "https://api.company-information.service.gov.uk"
+API_KEY_ENV = "COMPANY_HOUSE"
+IXBRL_CONTENT_TYPES = ("application/xhtml+xml", "application/xml")
 
 _DOWNLOAD_RETRYABLE_ERRORS = (
     requests.exceptions.ChunkedEncodingError,
@@ -36,6 +42,140 @@ _DOWNLOAD_RETRYABLE_ERRORS = (
 
 class HttpSession(Protocol):
     def get(self, url: str, *, timeout: int, stream: bool = False) -> Any: ...
+
+
+@dataclass(frozen=True)
+class ApiAccountsDocument:
+    company_number: str
+    filing_date: str
+    metadata_url: str
+    document_url: str
+    content_type: str
+    content: bytes
+
+
+class CompaniesHouseResource(dg.ConfigurableResource):
+    """Authenticated Companies House API boundary shared by Dagster assets."""
+
+    api_key: str = dg.EnvVar(API_KEY_ENV)
+    base_url: str = API_BASE
+    timeout_seconds: int = 60
+
+    _session: Any = PrivateAttr(default=None)
+
+    def __init__(self, session: Any = None, **data: Any) -> None:
+        super().__init__(**data)
+        self._session = session
+
+    def session(self) -> Any:
+        if self._session is None:
+            self._session = dlt_requests.Session()
+        return self._session
+
+    def _get_json(self, url: str) -> Any:
+        response = self.session().get(
+            url,
+            auth=(self.api_key, ""),
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _get_content(self, url: str, *, accept: str) -> bytes:
+        response = self.session().get(
+            url,
+            auth=(self.api_key, ""),
+            timeout=self.timeout_seconds,
+            headers={"Accept": accept},
+        )
+        response.raise_for_status()
+        return response.content
+
+    def latest_accounts_ixbrl_document(
+        self,
+        company_number: str,
+    ) -> ApiAccountsDocument | None:
+        """Return the latest available iXBRL accounts document and provenance."""
+        company_number = company_number.strip()
+        history = self._get_json(
+            f"{self.base_url}/company/{company_number}/filing-history"
+            "?category=accounts&items_per_page=100"
+        )
+        items = history.get("items") or []
+        items.sort(key=lambda item: item.get("date", ""), reverse=True)
+        for item in items:
+            filing_date = str(item.get("date") or "")
+            metadata_url = (item.get("links") or {}).get("document_metadata")
+            if not filing_date or not metadata_url:
+                continue
+            try:
+                metadata = self._get_json(metadata_url)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "CH document metadata failed for %s: %s", company_number, exc
+                )
+                continue
+            api_resources = metadata.get("resources") or {}
+            content_type = next(
+                (
+                    candidate
+                    for candidate in IXBRL_CONTENT_TYPES
+                    if candidate in api_resources
+                ),
+                None,
+            )
+            if content_type is None:
+                continue
+            document_url = (metadata.get("links") or {}).get(
+                "document"
+            ) or f"{metadata_url}/content"
+            try:
+                content = self._get_content(document_url, accept=content_type)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "CH document fetch failed for %s: %s", company_number, exc
+                )
+                continue
+            return ApiAccountsDocument(
+                company_number=company_number,
+                filing_date=filing_date,
+                metadata_url=str(metadata_url),
+                document_url=str(document_url),
+                content_type=content_type,
+                content=content,
+            )
+        return None
+
+    def latest_accounts_pdf(self, company_number: str) -> bytes | None:
+        """Return the PDF bytes of the company's most recent PDF accounts filing."""
+        company_number = company_number.strip()
+        history = self._get_json(
+            f"{self.base_url}/company/{company_number}/filing-history"
+            "?category=accounts&items_per_page=100"
+        )
+        items = history.get("items") or []
+        items.sort(key=lambda item: item.get("date", ""), reverse=True)
+        for item in items:
+            metadata_url = (item.get("links") or {}).get("document_metadata")
+            if not metadata_url:
+                continue
+            try:
+                metadata = self._get_json(metadata_url)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "CH document metadata failed for %s: %s", company_number, exc
+                )
+                continue
+            if "application/pdf" not in (metadata.get("resources") or {}):
+                continue
+            document_url = (metadata.get("links") or {}).get(
+                "document"
+            ) or f"{metadata_url}/content"
+            try:
+                return self._get_content(document_url, accept="application/pdf")
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("CH PDF fetch failed for %s: %s", company_number, exc)
+        return None
 
 
 def resolve_basic_company_data_url(

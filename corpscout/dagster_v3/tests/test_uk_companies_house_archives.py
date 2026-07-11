@@ -266,7 +266,7 @@ def test_accounts_sync_bootstraps_only_the_latest_published_archive() -> None:
 
 
 def test_api_accounts_documents_are_persisted_with_provenance() -> None:
-    from dagster_v3.defs.uk_companies_house import documents_api
+    from dagster_v3.defs.uk_companies_house import documents_api, resources
     from tests.test_xbrl_common import SAMPLE
 
     class ApiResponse:
@@ -327,7 +327,7 @@ def test_api_accounts_documents_are_persisted_with_provenance() -> None:
         object_store=object_store,
         company_numbers=["01234567"],
         run_id="run-1",
-        client=documents_api.CompaniesHouseClient("KEY", session=session),
+        client=resources.CompaniesHouseResource(api_key="KEY", session=session),
         request_delay_seconds=0,
         retrieved_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
     )
@@ -339,7 +339,7 @@ def test_api_accounts_documents_are_persisted_with_provenance() -> None:
         object_store=object_store,
         company_numbers=["01234567"],
         run_id="run-2",
-        client=documents_api.CompaniesHouseClient("KEY", session=session),
+        client=resources.CompaniesHouseResource(api_key="KEY", session=session),
         request_delay_seconds=0,
         retrieved_at=datetime(2026, 7, 10, 9, 0, tzinfo=UTC),
     )

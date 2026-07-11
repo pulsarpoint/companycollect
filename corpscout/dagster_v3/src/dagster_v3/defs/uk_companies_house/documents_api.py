@@ -11,7 +11,6 @@ company numbers — not all 5.7M (that's the archive-accumulation path).
 
 import json
 import logging
-import os
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
@@ -21,30 +20,14 @@ from pathlib import PurePosixPath
 from typing import Any
 
 import duckdb
-from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.uk_companies_house import financials, raw_archives
+from dagster_v3.defs.uk_companies_house import financials, raw_archives, resources
 
 LOGGER = logging.getLogger(__name__)
 
-API_BASE = "https://api.company-information.service.gov.uk"
-API_KEY_ENV = "COMPANY_HOUSE"
-# iXBRL content types, in preference order. Many filings are PDF-only (no XBRL) —
-# those carry no machine-readable figures and are skipped.
-IXBRL_CONTENT_TYPES = ("application/xhtml+xml", "application/xml")
 API_ACCOUNTS_PREFIX = "raw/api_accounts"
 API_ACCOUNTS_SOURCE_SLUG = "uk_companies_house_accounts_api"
-
-
-@dataclass(frozen=True)
-class ApiAccountsDocument:
-    company_number: str
-    filing_date: str
-    metadata_url: str
-    document_url: str
-    content_type: str
-    content: bytes
 
 
 @dataclass(frozen=True)
@@ -126,120 +109,12 @@ class ApiAccountsSyncResult:
         }
 
 
-class CompaniesHouseClient:
-    """Thin Companies House REST client (HTTP Basic: api_key as username)."""
-
-    def __init__(self, api_key: str, *, session: Any = None, timeout_seconds: int = 60):
-        self._api_key = api_key
-        self._session = session or dlt_requests.Session()
-        self._timeout = timeout_seconds
-
-    @classmethod
-    def from_env(cls, *, session: Any = None) -> "CompaniesHouseClient":
-        key = os.environ.get(API_KEY_ENV)
-        if not key:
-            raise RuntimeError(f"{API_KEY_ENV} environment variable is not set")
-        return cls(key, session=session)
-
-    def _get_json(self, url: str) -> Any:
-        resp = self._session.get(
-            url, auth=(self._api_key, ""), timeout=self._timeout
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    def _get_content(self, url: str, *, accept: str) -> bytes:
-        resp = self._session.get(
-            url,
-            auth=(self._api_key, ""),
-            timeout=self._timeout,
-            headers={"Accept": accept},
-        )
-        resp.raise_for_status()
-        return resp.content
-
-    def latest_accounts_ixbrl_document(
-        self,
-        company_number: str,
-    ) -> ApiAccountsDocument | None:
-        """Return the latest iXBRL document and its source provenance.
-
-        Walks accounts filings newest-first; for each it reads the document
-        metadata and only fetches when an iXBRL content type is actually offered
-        (PDF-only filings carry no machine-readable figures and are skipped).
-        """
-        cn = company_number.strip()
-        history = self._get_json(
-            f"{API_BASE}/company/{cn}/filing-history?category=accounts&items_per_page=100"
-        )
-        items = history.get("items") or []
-        items.sort(key=lambda it: it.get("date", ""), reverse=True)
-        for item in items:
-            filing_date = str(item.get("date") or "")
-            meta_url = (item.get("links") or {}).get("document_metadata")
-            if not filing_date or not meta_url:
-                continue
-            try:
-                meta = self._get_json(meta_url)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("CH document metadata failed for %s: %s", cn, exc)
-                continue
-            resources = meta.get("resources") or {}
-            content_type = next(
-                (ct for ct in IXBRL_CONTENT_TYPES if ct in resources), None
-            )
-            if content_type is None:
-                continue  # PDF-only -> no XBRL to parse
-            document_url = (meta.get("links") or {}).get("document") or f"{meta_url}/content"
-            try:
-                content = self._get_content(document_url, accept=content_type)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("CH document fetch failed for %s: %s", cn, exc)
-                continue
-            return ApiAccountsDocument(
-                company_number=cn,
-                filing_date=filing_date,
-                metadata_url=str(meta_url),
-                document_url=str(document_url),
-                content_type=content_type,
-                content=content,
-            )
-        return None
-
-    def latest_accounts_pdf(self, company_number: str) -> bytes | None:
-        """Return the PDF bytes of the company's most recent PDF accounts filing."""
-        cn = company_number.strip()
-        history = self._get_json(
-            f"{API_BASE}/company/{cn}/filing-history?category=accounts&items_per_page=100"
-        )
-        items = history.get("items") or []
-        items.sort(key=lambda it: it.get("date", ""), reverse=True)
-        for item in items:
-            meta_url = (item.get("links") or {}).get("document_metadata")
-            if not meta_url:
-                continue
-            try:
-                meta = self._get_json(meta_url)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("CH document metadata failed for %s: %s", cn, exc)
-                continue
-            if "application/pdf" not in (meta.get("resources") or {}):
-                continue
-            document_url = (meta.get("links") or {}).get("document") or f"{meta_url}/content"
-            try:
-                return self._get_content(document_url, accept="application/pdf")
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("CH PDF fetch failed for %s: %s", cn, exc)
-                continue
-        return None
-
-
 def sync_api_accounts_documents(
     *,
     object_store: ObjectStoreResource,
     company_numbers: Iterable[str],
     run_id: str,
-    client: CompaniesHouseClient,
+    client: resources.CompaniesHouseResource,
     request_delay_seconds: float,
     retrieved_at: datetime | None = None,
     log: Callable[..., object] | None = None,
