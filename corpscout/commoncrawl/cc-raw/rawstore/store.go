@@ -3,8 +3,11 @@ package rawstore
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -113,6 +116,54 @@ func (store *Store) ReadBytes(ctx context.Context, key string) ([]byte, error) {
 		return nil, errors.Wrapf(err, "read RustFS object %s", key)
 	}
 	return body, nil
+}
+
+func (store *Store) DownloadFile(ctx context.Context, object ObjectDescriptor, destination string) error {
+	if err := object.SHA256.Validate(); err != nil {
+		return errors.Wrap(err, "expected object SHA-256")
+	}
+	output, err := store.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(store.bucket),
+		Key:    aws.String(object.Key),
+	})
+	if err != nil {
+		return errors.Wrapf(err, "get RustFS object %s", object.Key)
+	}
+	defer output.Body.Close()
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return errors.Wrapf(err, "create destination directory for %s", destination)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(destination), ".download-*")
+	if err != nil {
+		return errors.Wrapf(err, "create temporary file for %s", destination)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+
+	hash := sha256.New()
+	size, copyErr := io.Copy(io.MultiWriter(temporary, hash), output.Body)
+	closeErr := temporary.Close()
+	if copyErr != nil {
+		return errors.Wrapf(copyErr, "download RustFS object %s", object.Key)
+	}
+	if closeErr != nil {
+		return errors.Wrapf(closeErr, "close downloaded RustFS object %s", object.Key)
+	}
+	checksum := SHA256(hex.EncodeToString(hash.Sum(nil)))
+	if size != object.SizeBytes || checksum != object.SHA256 {
+		return errors.Newf(
+			"downloaded RustFS object %s failed validation: size=%d/%d sha256=%s/%s",
+			object.Key,
+			size,
+			object.SizeBytes,
+			checksum,
+			object.SHA256,
+		)
+	}
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		return errors.Wrapf(err, "commit downloaded RustFS object %s", object.Key)
+	}
+	return nil
 }
 
 func (store *Store) Exists(ctx context.Context, key string) (bool, error) {
