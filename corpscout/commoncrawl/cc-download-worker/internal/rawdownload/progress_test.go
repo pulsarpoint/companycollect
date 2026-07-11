@@ -25,16 +25,28 @@ func TestDownloadProgressReportsRatesAndCounts(t *testing.T) {
 		},
 	}
 	cooldown := &throttleCooldown{}
-	progress := newDownloadProgress(downloader, 100, cooldown)
+	progress := newDownloadProgress(downloader, 100, 4, cooldown)
+	progress.beginChunk(chunkPlan{
+		Number:  2,
+		Records: []selectedRecord{{worklistRow: worklistRow{WARCRecordLength: 256 << 20}}},
+	})
 	stop := progress.start(context.Background())
 	progress.recordStarted()
 	progress.recordAttempted(1)
 	progress.recordFinished(recordDownload{status: rawstore.Downloaded, raw: []byte("record")})
+	progress.chunkReady(false, 1024)
 	stop()
 
 	logLine := output.String()
 	for _, field := range []string{
 		`"msg":"download progress"`,
+		`"phase":"chunk_ready"`,
+		`"chunks_total":4`,
+		`"chunks_ready":1`,
+		`"current_chunk":2`,
+		`"current_chunk_planned_bytes":268435456`,
+		`"current_chunk_downloaded_bytes":6`,
+		`"current_chunk_raw_bytes":1024`,
 		`"requested_records":100`,
 		`"completed_records":1`,
 		`"downloaded_records":1`,

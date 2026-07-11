@@ -86,7 +86,7 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 		}
 	}
 	cooldown := &throttleCooldown{}
-	progress := newDownloadProgress(downloader, int64(len(worklist.Records)), cooldown)
+	progress := newDownloadProgress(downloader, int64(len(worklist.Records)), len(plans), cooldown)
 	stopProgress := progress.start(ctx)
 	defer stopProgress()
 
@@ -94,6 +94,7 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 	readyChunks := make([]rawstore.ReadyChunk, 0, len(plans))
 	var downloadedRecords, failedRecords, rawBytes int64
 	for _, plan := range plans {
+		progress.beginChunk(plan)
 		chunkStartedAt := time.Now()
 		chunk, valid, err := downloader.loadCommittedChunk(ctx, worklist, plan)
 		if err != nil {
@@ -106,7 +107,11 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 				return Result{}, errors.Wrapf(err, "download chunk %d", plan.Number)
 			}
 		} else {
-			progress.recordsReused(chunk.Manifest.Results.RequestedRecords)
+			progress.recordsReused(
+				chunk.Manifest.Results.DownloadedRecords,
+				chunk.Manifest.Results.FailedRecords,
+				chunk.Manifest.Results.SourceBytes,
+			)
 		}
 		manifest := chunk.Manifest
 		committed = append(committed, chunk)
@@ -126,6 +131,7 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 		downloadedRecords += manifest.Results.DownloadedRecords
 		failedRecords += manifest.Results.FailedRecords
 		rawBytes += chunkRawBytes
+		progress.chunkReady(reused, chunkRawBytes)
 		chunkElapsed := time.Since(chunkStartedAt)
 		chunkRecordsPerSecond := float64(0)
 		chunkMiBPerSecond := float64(0)
@@ -184,6 +190,7 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 		return Result{}, errors.Wrap(err, "encode ready manifest")
 	}
 	readyChecksum := rawstore.ChecksumBytes(readyBody)
+	progress.setPhase("committing_part")
 	if err := downloader.Store.PutBytes(ctx, readyKey, "application/json", readyBody, readyChecksum); err != nil {
 		return Result{}, err
 	}
@@ -200,6 +207,7 @@ func (downloader *Downloader) Run(ctx context.Context) (Result, error) {
 			return Result{}, err
 		}
 	}
+	progress.setPhase("part_ready")
 	return resultFromReady(ready, false), nil
 }
 

@@ -117,6 +117,14 @@ While a part is downloading, the worker emits `download progress` every 10 secon
 
 | Field | Meaning |
 |---|---|
+| `phase` | Current work: `checking_chunk`, `downloading`, `building_pack`, `uploading_rustfs`, `committing_chunk`, or `committing_part`. |
+| `chunks_ready`, `chunks_remaining`, `chunks_total` | Committed chunk progress for the current part. |
+| `chunks_downloaded`, `chunks_reused` | Ready chunks created by this run versus valid existing chunks. |
+| `current_chunk` | Zero-based chunk currently being downloaded, packaged, or committed. |
+| `current_chunk_planned_size` | Sum of advertised WARC record sizes used to enforce the 256 MiB pack target. |
+| `current_chunk_downloaded_size` | Successfully downloaded WARC bytes for the current chunk. |
+| `current_chunk_raw_size` | Current chunk's pack + index + manifest size once those objects have been prepared. |
+| `committed_raw_size` | Total RustFS bytes committed across ready chunks in this part. |
 | `completed_records`, `requested_records` | Current part progress, including already-reused records. |
 | `records_per_second` | Records completed during the latest reporting interval. |
 | `source_mib_per_second` | Actual Common Crawl response-body throughput during the interval. |
@@ -126,6 +134,12 @@ While a part is downloading, the worker emits `download progress` every 10 secon
 | `http_429`, `http_503` | Source throttling responses observed, including responses recovered by SDK retries. |
 | `body_read_errors`, `body_read_retries` | Interrupted response-body reads and their retries. |
 | `cooldown_remaining_ms` | Shared downloader cooldown after a terminal throttling error. |
+
+`source_size` is cumulative Common Crawl response traffic for the entire part, including retry traffic;
+it is not constrained by `--max-pack-bytes`. The pack limit applies per chunk. Consequently a progress
+line may show `source_size=1.2 GiB` after several chunks while `current_chunk_planned_size` remains near
+`256 MiB`. `current_chunk_raw_size` can be slightly higher than 256 MiB because it also includes
+`index.parquet` and `manifest.json`.
 
 An interval containing throttling is logged at `WARN` as `download throttled`; normal intervals are
 `INFO`. `chunk ready` also reports chunk elapsed time, records/s, and MiB/s. `source S3 stats` at the end

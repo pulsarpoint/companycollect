@@ -75,6 +75,7 @@ type downloadProgress struct {
 	selection   string
 	part        int
 	requested   int64
+	totalChunks int
 	concurrency int
 	interval    time.Duration
 	startedAt   time.Time
@@ -82,16 +83,30 @@ type downloadProgress struct {
 
 	active, downloaded, failed, reused, downloadedBytes atomic.Int64
 	recordAttempts, recordRetries, throttleErrors       atomic.Int64
+	readyChunks, downloadedChunks, reusedChunks         atomic.Int64
+	committedRawBytes                                   atomic.Int64
+	currentChunk                                        atomic.Int64
+	currentChunkRequested, currentChunkPlannedBytes     atomic.Int64
+	currentChunkDownloaded, currentChunkFailed          atomic.Int64
+	currentChunkDownloadedBytes, currentChunkRawBytes   atomic.Int64
+	phase                                               atomic.Value
 }
 
 type progressSnapshot struct {
-	downloaded, failed, reused, downloadedBytes   int64
-	recordAttempts, recordRetries, throttleErrors int64
-	source                                        fetch.S3Stats
-	at                                            time.Time
+	downloaded, failed, reused, downloadedBytes       int64
+	recordAttempts, recordRetries, throttleErrors     int64
+	readyChunks, downloadedChunks, reusedChunks       int64
+	committedRawBytes                                 int64
+	currentChunk                                      int64
+	currentChunkRequested, currentChunkPlannedBytes   int64
+	currentChunkDownloaded, currentChunkFailed        int64
+	currentChunkDownloadedBytes, currentChunkRawBytes int64
+	phase                                             string
+	source                                            fetch.S3Stats
+	at                                                time.Time
 }
 
-func newDownloadProgress(downloader *Downloader, requested int64, cooldown *throttleCooldown) *downloadProgress {
+func newDownloadProgress(downloader *Downloader, requested int64, totalChunks int, cooldown *throttleCooldown) *downloadProgress {
 	progress := &downloadProgress{
 		logger:      downloader.Logger,
 		cooldown:    cooldown,
@@ -99,15 +114,53 @@ func newDownloadProgress(downloader *Downloader, requested int64, cooldown *thro
 		selection:   downloader.Config.Selection,
 		part:        downloader.Config.Part,
 		requested:   requested,
+		totalChunks: totalChunks,
 		concurrency: downloader.Config.Concurrency,
 		interval:    downloader.Config.ProgressInterval,
 		startedAt:   time.Now(),
 	}
+	progress.currentChunk.Store(-1)
+	progress.phase.Store("preparing")
 	if source, ok := downloader.Source.(*fetch.S3Getter); ok {
 		progress.source = source
 		progress.sourceStart = source.Stats()
 	}
 	return progress
+}
+
+func (progress *downloadProgress) beginChunk(plan chunkPlan) {
+	var plannedBytes int64
+	for _, record := range plan.Records {
+		plannedBytes += record.WARCRecordLength
+	}
+	progress.currentChunk.Store(int64(plan.Number))
+	progress.currentChunkRequested.Store(int64(len(plan.Records)))
+	progress.currentChunkPlannedBytes.Store(plannedBytes)
+	progress.currentChunkDownloaded.Store(0)
+	progress.currentChunkFailed.Store(0)
+	progress.currentChunkDownloadedBytes.Store(0)
+	progress.currentChunkRawBytes.Store(0)
+	progress.setPhase("checking_chunk")
+}
+
+func (progress *downloadProgress) setPhase(phase string) {
+	progress.phase.Store(phase)
+}
+
+func (progress *downloadProgress) chunkReady(reused bool, rawBytes int64) {
+	progress.readyChunks.Add(1)
+	progress.committedRawBytes.Add(rawBytes)
+	progress.currentChunkRawBytes.Store(rawBytes)
+	if reused {
+		progress.reusedChunks.Add(1)
+	} else {
+		progress.downloadedChunks.Add(1)
+	}
+	progress.setPhase("chunk_ready")
+}
+
+func (progress *downloadProgress) chunkPrepared(rawBytes int64) {
+	progress.currentChunkRawBytes.Store(rawBytes)
 }
 
 func (progress *downloadProgress) start(ctx context.Context) func() {
@@ -164,25 +217,43 @@ func (progress *downloadProgress) recordFinished(download recordDownload) {
 	if download.status == rawstore.Downloaded {
 		progress.downloaded.Add(1)
 		progress.downloadedBytes.Add(int64(len(download.raw)))
+		progress.currentChunkDownloaded.Add(1)
+		progress.currentChunkDownloadedBytes.Add(int64(len(download.raw)))
 		return
 	}
 	progress.failed.Add(1)
+	progress.currentChunkFailed.Add(1)
 }
 
-func (progress *downloadProgress) recordsReused(count int64) {
-	progress.reused.Add(count)
+func (progress *downloadProgress) recordsReused(downloaded, failed, downloadedBytes int64) {
+	progress.reused.Add(downloaded + failed)
+	progress.currentChunkDownloaded.Store(downloaded)
+	progress.currentChunkFailed.Store(failed)
+	progress.currentChunkDownloadedBytes.Store(downloadedBytes)
 }
 
 func (progress *downloadProgress) snapshot() progressSnapshot {
 	snapshot := progressSnapshot{
-		downloaded:      progress.downloaded.Load(),
-		failed:          progress.failed.Load(),
-		reused:          progress.reused.Load(),
-		downloadedBytes: progress.downloadedBytes.Load(),
-		recordAttempts:  progress.recordAttempts.Load(),
-		recordRetries:   progress.recordRetries.Load(),
-		throttleErrors:  progress.throttleErrors.Load(),
-		at:              time.Now(),
+		downloaded:                  progress.downloaded.Load(),
+		failed:                      progress.failed.Load(),
+		reused:                      progress.reused.Load(),
+		downloadedBytes:             progress.downloadedBytes.Load(),
+		recordAttempts:              progress.recordAttempts.Load(),
+		recordRetries:               progress.recordRetries.Load(),
+		throttleErrors:              progress.throttleErrors.Load(),
+		readyChunks:                 progress.readyChunks.Load(),
+		downloadedChunks:            progress.downloadedChunks.Load(),
+		reusedChunks:                progress.reusedChunks.Load(),
+		committedRawBytes:           progress.committedRawBytes.Load(),
+		currentChunk:                progress.currentChunk.Load(),
+		currentChunkRequested:       progress.currentChunkRequested.Load(),
+		currentChunkPlannedBytes:    progress.currentChunkPlannedBytes.Load(),
+		currentChunkDownloaded:      progress.currentChunkDownloaded.Load(),
+		currentChunkFailed:          progress.currentChunkFailed.Load(),
+		currentChunkDownloadedBytes: progress.currentChunkDownloadedBytes.Load(),
+		currentChunkRawBytes:        progress.currentChunkRawBytes.Load(),
+		phase:                       progress.phase.Load().(string),
+		at:                          time.Now(),
 	}
 	if progress.source != nil {
 		snapshot.source = progress.source.Stats()
@@ -226,6 +297,25 @@ func (progress *downloadProgress) log(ctx context.Context, previous, current pro
 		slog.String("selection", progress.selection),
 		slog.Int("part", progress.part),
 		slog.Bool("final", final),
+		slog.String("phase", current.phase),
+		slog.Int("chunks_total", progress.totalChunks),
+		slog.Int64("chunks_ready", current.readyChunks),
+		slog.Int64("chunks_remaining", int64(progress.totalChunks)-current.readyChunks),
+		slog.Int64("chunks_downloaded", current.downloadedChunks),
+		slog.Int64("chunks_reused", current.reusedChunks),
+		slog.Int64("current_chunk", current.currentChunk),
+		slog.Int64("current_chunk_requested_records", current.currentChunkRequested),
+		slog.Int64("current_chunk_completed_records", current.currentChunkDownloaded+current.currentChunkFailed),
+		slog.Int64("current_chunk_downloaded_records", current.currentChunkDownloaded),
+		slog.Int64("current_chunk_failed_records", current.currentChunkFailed),
+		slog.Int64("current_chunk_planned_bytes", current.currentChunkPlannedBytes),
+		slog.String("current_chunk_planned_size", humanize.IBytes(uint64(current.currentChunkPlannedBytes))),
+		slog.Int64("current_chunk_downloaded_bytes", current.currentChunkDownloadedBytes),
+		slog.String("current_chunk_downloaded_size", humanize.IBytes(uint64(current.currentChunkDownloadedBytes))),
+		slog.Int64("current_chunk_raw_bytes", current.currentChunkRawBytes),
+		slog.String("current_chunk_raw_size", humanize.IBytes(uint64(current.currentChunkRawBytes))),
+		slog.Int64("committed_raw_bytes", current.committedRawBytes),
+		slog.String("committed_raw_size", humanize.IBytes(uint64(current.committedRawBytes))),
 		slog.Int64("requested_records", progress.requested),
 		slog.Int64("completed_records", completed+current.reused),
 		slog.Int64("downloaded_records", current.downloaded),
