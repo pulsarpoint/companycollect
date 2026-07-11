@@ -75,7 +75,8 @@ func TestResolveDNSBatchUpdatesCumulativeStats(t *testing.T) {
 		t.Fatalf("successful batch result = %+v", results)
 	}
 	snapshot := stats.Snapshot(time.Now().UTC())
-	if snapshot.Domains != 1 || snapshot.Records != int64(len(results[0].Records)) || snapshot.DomainErrors != 0 {
+	if snapshot.Domains != 1 || snapshot.Records != int64(len(results[0].Records)) || snapshot.DomainErrors != 0 ||
+		snapshot.DNSChecks != int64(results[0].QueriesTotal) || snapshot.DNSChecksOK != int64(results[0].QueriesOK) {
 		t.Errorf("successful batch stats = %+v", snapshot)
 	}
 }
@@ -91,8 +92,26 @@ func TestResolveDNSBatchCountsDomainErrors(t *testing.T) {
 		t.Fatalf("failed batch result = %+v", results)
 	}
 	snapshot := stats.Snapshot(time.Now().UTC())
-	if snapshot.Domains != 1 || snapshot.DomainErrors != 1 || snapshot.Records != 0 {
+	if snapshot.Domains != 1 || snapshot.DomainErrors != 1 || snapshot.Records != 0 ||
+		snapshot.DNSChecks != int64(results[0].QueriesTotal) || snapshot.DNSChecksOK != 0 {
 		t.Errorf("failed batch stats = %+v", snapshot)
+	}
+}
+
+func TestResolveDNSBatchCountsZeroRecordDomainAsError(t *testing.T) {
+	var stats metrics.Stats
+	results := resolveDNSBatch(
+		context.Background(), scanConfig{workers: 1, scanID: "scan", runID: "run"},
+		resolve.NewDiscoverer(privateDelegationExchanger{}, []string{"resolver"}), nil,
+		&stats, []string{"example.com"}, nil,
+	)
+	if len(results) != 1 || results[0].Status != model.DomainStatusNoPublicNSEndpoints || len(results[0].Records) != 0 {
+		t.Fatalf("zero-record batch result = %+v", results)
+	}
+	snapshot := stats.Snapshot(time.Now().UTC())
+	if snapshot.Domains != 1 || snapshot.DomainErrors != 1 || snapshot.Records != 0 ||
+		snapshot.DNSChecks != int64(results[0].QueriesTotal) || snapshot.DNSChecksOK != 0 {
+		t.Errorf("zero-record batch stats = %+v", snapshot)
 	}
 }
 

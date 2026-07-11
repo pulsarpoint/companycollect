@@ -60,7 +60,7 @@ func scanFlags(fs *flag.FlagSet) func() (scanConfig, error) {
 	timeout := fs.Duration("query-timeout", 5*time.Second, "per-query timeout")
 	breakerThreshold := fs.Int("breaker-threshold", 5, "transport failures before an authoritative IP circuit opens")
 	breakerCooldown := fs.Duration("breaker-cooldown", 30*time.Second, "authoritative IP circuit cooldown")
-	statsInterval := fs.Duration("stats-interval", 5*time.Second, "periodic metrics interval (0 = off)")
+	statsInterval := fs.Duration("stats-interval", time.Second, "periodic metrics interval (0 = off)")
 	axfr := fs.Bool("axfr", true, "run the concurrent AXFR lane")
 	axfrWorkers := fs.Int("axfr-workers", 50, "max concurrent AXFR domain probers")
 	axfrQPS := fs.Float64("axfr-qps", 5, "max AXFR transfers/sec per NS IP")
@@ -179,7 +179,8 @@ func resolveDomain(ctx context.Context, discoverer *resolve.Discoverer, resolver
 			ScanID: scanID, RootDomain: domain, ETLD: delegation.ETLD,
 			Nameservers: delegation.NS, NSIPs: delegation.NSIPs, Endpoints: delegation.Endpoints,
 			DSPresent: delegation.DSOutcome == resolve.OutcomePresent, DSOutcome: delegation.DSOutcome,
-			Status: status, Error: message, SourceRunID: runID, ResolvedAt: now,
+			Status: status, Error: message, QueriesTotal: len(records.Plan(domain, config, extra)),
+			SourceRunID: runID, ResolvedAt: now,
 		}
 	}
 	return resolver.Resolve(ctx, domain, scanID, runID, delegation, config, now, extra)

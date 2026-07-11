@@ -190,7 +190,9 @@ func resolveDNSBatch(ctx context.Context, cfg scanConfig, discoverer *resolve.Di
 					root, cfg.scanID, cfg.runID, hosts[root])
 				stats.Domains.Add(1)
 				stats.Records.Add(int64(len(result.Records)))
-				if result.Status == model.DomainStatusError {
+				stats.DNSChecks.Add(int64(result.QueriesTotal))
+				stats.DNSChecksOK.Add(int64(result.QueriesOK))
+				if len(result.Records) == 0 {
 					stats.DomainErrors.Add(1)
 				}
 				select {
@@ -286,14 +288,16 @@ func boundedAXFRWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig, s
 }
 
 func boundedStatsLoop(ctx context.Context, st *store.Store, cfg scanConfig, resolverStats *metrics.Stats, startedAt time.Time) error {
-	previous := metrics.Snapshot{At: startedAt}
+	previous := resolverStats.Snapshot(startedAt)
+	recentErrors := metrics.NewErrorWindow(10 * time.Minute)
 	for {
 		if err := waitInterval(ctx, cfg.statsInterval); err != nil {
 			return err
 		}
 		now := time.Now().UTC()
 		current := resolverStats.Snapshot(now)
-		slog.Info(metrics.Line(previous, current), "scan_id", cfg.scanID)
+		recentErrors.Add(now, current.Domains-previous.Domains, current.DomainErrors-previous.DomainErrors)
+		slog.Info(metrics.Line(current, startedAt, recentErrors.Percent()), "scan_id", cfg.scanID)
 		previous = current
 		stats, err := st.OperationalStats(ctx, cfg.scanID)
 		if err != nil {

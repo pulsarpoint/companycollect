@@ -18,8 +18,10 @@ type Stats struct {
 	// granularity, so pct(QueryErrors, Queries) is a meaningful per-attempt error rate.
 	QueryErrors         atomic.Int64
 	Domains             atomic.Int64 // domains that reached a terminal status this run
-	DomainErrors        atomic.Int64 // domains that ended in status=error
+	DomainErrors        atomic.Int64 // completed domains that produced zero DNS records
 	Records             atomic.Int64 // DNS records observed across completed domains
+	DNSChecks           atomic.Int64 // logical planned DNS checks, excluding retries
+	DNSChecksOK         atomic.Int64 // logical checks that reached a definitive DNS response
 	BlockedTargets      atomic.Int64 // authoritative dials refused because the target address was not public (see resolve.Dialable)
 	AXFRPullsTried      atomic.Int64 // actual unique nameserver-IP pulls attempted per domain
 	AXFRPullsSuccessful atomic.Int64 // open AXFR pulls collected without truncation
@@ -33,6 +35,8 @@ type Snapshot struct {
 	Domains             int64
 	DomainErrors        int64
 	Records             int64
+	DNSChecks           int64
+	DNSChecksOK         int64
 	BlockedTargets      int64
 	AXFRPullsTried      int64
 	AXFRPullsSuccessful int64
@@ -47,25 +51,27 @@ func (s *Stats) Snapshot(now time.Time) Snapshot {
 		Domains:             s.Domains.Load(),
 		DomainErrors:        s.DomainErrors.Load(),
 		Records:             s.Records.Load(),
+		DNSChecks:           s.DNSChecks.Load(),
+		DNSChecksOK:         s.DNSChecksOK.Load(),
 		BlockedTargets:      s.BlockedTargets.Load(),
 		AXFRPullsTried:      s.AXFRPullsTried.Load(),
 		AXFRPullsSuccessful: s.AXFRPullsSuccessful.Load(),
 	}
 }
 
-// Line formats the compact operator-facing health line. Totals are cumulative for this process;
-// domains/sec is the only interval value needed to tell whether scanning is moving.
-func Line(prev, cur Snapshot) string {
-	dt := cur.At.Sub(prev.At).Seconds()
-	if dt <= 0 {
-		dt = 1
+// Line formats the compact operator-facing health line. Totals and average record throughput are
+// cumulative for this process.
+func Line(cur Snapshot, start time.Time, recentErrorPercent float64) string {
+	elapsed := cur.At.Sub(start).Seconds()
+	averageRecordsPerSecond := 0.0
+	if elapsed > 0 {
+		averageRecordsPerSecond = float64(cur.DNSChecksOK) / elapsed
 	}
-	dps := float64(cur.Domains-prev.Domains) / dt // domains/sec this interval
 	return fmt.Sprintf(
-		"stats domains=%d records=%d dns_err=%.2f%% axfr_try=%d axfr_ok=%d speed=%.0f domains/s",
-		cur.Domains, cur.Records, pct(cur.QueryErrors, cur.Queries),
-		cur.AXFRPullsTried, cur.AXFRPullsSuccessful,
-		dps,
+		"stats dns=%d/%d avg=%.1f records/s domains=%d answers=%d err=%.2f%% err10m=%.2f%% axfr=%d/%d",
+		cur.DNSChecksOK, cur.DNSChecks, averageRecordsPerSecond, cur.Domains, cur.Records,
+		pct(cur.DomainErrors, cur.Domains), recentErrorPercent,
+		cur.AXFRPullsSuccessful, cur.AXFRPullsTried,
 	)
 }
 
