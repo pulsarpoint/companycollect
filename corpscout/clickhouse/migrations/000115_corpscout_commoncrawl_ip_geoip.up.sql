@@ -1,29 +1,30 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- One current row per canonical IP observed in retry-safe DNS record summaries. The refreshable
--- materialized view performs the large DISTINCT/GROUP BY inside ClickHouse once, so each Dagster
--- GeoIP partition reads an index-pruned bucket rather than rescanning DNS history.
+-- One logical row per canonical IP observed in retry-safe DNS observations. The aggregate columns
+-- make retries and overlapping backfills idempotent: duplicate observations cannot move first_seen
+-- or last_seen in the wrong direction.
 CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_ip_addresses
 (
     bucket     UInt16,
     ip         String,
     ip_version UInt8,
-    first_seen DateTime64(3, 'UTC'),
-    last_seen  DateTime64(3, 'UTC')
+    first_seen SimpleAggregateFunction(min, DateTime64(3, 'UTC')),
+    last_seen  SimpleAggregateFunction(max, DateTime64(3, 'UTC'))
 )
-ENGINE = MergeTree()
-ORDER BY (bucket, ip);
+ENGINE = AggregatingMergeTree()
+ORDER BY (bucket, ip_version, ip);
 
+-- Incremental insert-block processing avoids repeatedly scanning all DNS history. Replayed source
+-- rows are harmless because the target only retains min/max event times for each canonical IP.
 CREATE MATERIALIZED VIEW IF NOT EXISTS corpscout.commoncrawl_ip_addresses_mv
-REFRESH EVERY 10 MINUTE
 TO corpscout.commoncrawl_ip_addresses
 AS
 SELECT
     toUInt16(cityHash64(ip) % 256) AS bucket,
     ip,
     ip_version,
-    min(first_seen) AS first_seen,
-    max(last_seen) AS last_seen
+    min(observed_at) AS first_seen,
+    max(observed_at) AS last_seen
 FROM
 (
     SELECT
@@ -35,9 +36,8 @@ FROM
             )
         ) AS ip,
         if(record_type = 'A', toUInt8(4), toUInt8(6)) AS ip_version,
-        first_seen,
-        last_seen
-    FROM corpscout.commoncrawl_domain_dns_record_summary
+        observed_at
+    FROM corpscout.commoncrawl_domain_dns_record_observations
     WHERE record_type IN ('A', 'AAAA')
       AND if(
           record_type = 'A',

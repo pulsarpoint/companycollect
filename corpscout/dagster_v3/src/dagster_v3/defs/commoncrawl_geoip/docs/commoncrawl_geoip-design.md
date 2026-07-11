@@ -9,9 +9,9 @@ technology inference.
 
 ## Source boundaries
 
-- `corpscout.commoncrawl_domain_dns_record_summary` is the retry-safe DNS record source.
-- `corpscout.commoncrawl_ip_addresses` is a refreshable ClickHouse projection containing
-  one canonical IP row with DNS first/last-seen timestamps.
+- `corpscout.commoncrawl_domain_dns_record_observations` is the retry-safe DNS record source.
+- `corpscout.commoncrawl_ip_addresses` is an incremental aggregate registry containing one
+  logical canonical IP row with DNS first/last-seen timestamps.
 - `MAXMIND_DATABASE_DIRECTORY` contains versioned `GeoLite2-City_*` and
   `GeoLite2-ASN_*` directories. The resource selects the newest matching database file and
   reads its embedded build epoch.
@@ -34,9 +34,10 @@ IPs missing the current City or ASN build epoch, so a partial run is safely resu
 
 ## ClickHouse model
 
-Migration `000115_corpscout_commoncrawl_ip_geoip` owns:
+Migrations `000115_corpscout_commoncrawl_ip_geoip` and
+`000122_corpscout_commoncrawl_ip_addresses_incremental` own:
 
-- `commoncrawl_ip_addresses` and its refreshable materialized view over the DNS summary;
+- `commoncrawl_ip_addresses` and its retry-safe incremental materialized view over DNS observations;
 - `commoncrawl_ip_geoip`, a `ReplacingMergeTree(enriched_at)` keyed by `(bucket, ip)`;
 - `commoncrawl_ip_geoip_current`, a `FINAL` view for consumers that require one current
   row per IP.

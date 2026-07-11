@@ -272,12 +272,20 @@ def test_geoip_migration_owns_registry_and_enrichment_tables() -> None:
     ).read_text(encoding="utf-8")
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_ip_addresses" in migration
-    assert "REFRESH EVERY 10 MINUTE" in migration
-    assert "FROM corpscout.commoncrawl_domain_dns_record_summary" in migration
+    assert "AggregatingMergeTree()" in migration
+    assert "SimpleAggregateFunction(min" in migration
+    assert "SimpleAggregateFunction(max" in migration
+    assert "REFRESH EVERY" not in migration
+    assert "FROM corpscout.commoncrawl_domain_dns_record_observations" in migration
     assert "cityHash64(ip) % 256" in migration
-    assert "ORDER BY (bucket, ip)" in migration
+    assert "ORDER BY (bucket, ip_version, ip)" in migration
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_ip_geoip" in migration
     assert "ReplacingMergeTree(enriched_at)" in migration
+
+
+def test_geoip_candidates_finalize_incremental_ip_registry() -> None:
+    assert "FROM corpscout.commoncrawl_ip_addresses FINAL" in GEOIP_CANDIDATES_SQL
+    assert "WHERE bucket = %(bucket_index)s" in GEOIP_CANDIDATES_SQL
 
 
 def test_geoip_insert_column_order_matches_migration() -> None:

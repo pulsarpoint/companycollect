@@ -56,8 +56,8 @@ GEOIP_COLUMNS = (
 COMMONCRAWL_IP_ADDRESSES_ASSET = dg.AssetSpec(
     key="commoncrawl_ip_addresses",
     description=(
-        "Canonical unique A/AAAA addresses refreshed in ClickHouse from the retry-safe "
-        "CommonCrawl DNS record summary."
+        "Canonical unique A/AAAA addresses incrementally aggregated from retry-safe "
+        "CommonCrawl DNS record observations."
     ),
     group_name="commoncrawl_geoip",
     kinds={"clickhouse", "dns"},
@@ -67,7 +67,14 @@ GEOIP_CANDIDATES_SQL = """
 SELECT
     addresses.ip,
     addresses.ip_version
-FROM corpscout.commoncrawl_ip_addresses AS addresses
+FROM
+(
+    SELECT
+        ip,
+        ip_version
+    FROM corpscout.commoncrawl_ip_addresses FINAL
+    WHERE bucket = %(bucket_index)s
+) AS addresses
 LEFT JOIN
 (
     SELECT
@@ -79,8 +86,7 @@ LEFT JOIN
     WHERE bucket = %(bucket_index)s
     GROUP BY ip
 ) AS current USING (ip)
-WHERE addresses.bucket = %(bucket_index)s
-  AND (
+WHERE (
       ifNull(current.matched, 0) = 0
       OR current.city_db_build_epoch != %(city_db_build_epoch)s
       OR current.asn_db_build_epoch != %(asn_db_build_epoch)s

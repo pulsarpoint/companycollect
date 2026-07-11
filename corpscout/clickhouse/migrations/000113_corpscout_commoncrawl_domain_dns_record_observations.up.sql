@@ -1,14 +1,10 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- Task 7 (correctness hardening): retry-safe raw DNS record observations. The legacy
--- commoncrawl_domain_dns_records table (migration 000105) is an AggregatingMergeTree that ingests
--- Scans=1 per inserted row -- it cannot tell a genuine re-observation apart from a retried load of the
--- SAME scan, so a retry after a crash/timeout silently double-counts forever. This table instead stores
--- one IMMUTABLE row per observation (root_domain, name, record_type, slot, value, source, discovery,
+-- Retry-safe raw DNS record observations. This table stores one immutable row per observation
+-- (root_domain, name, record_type, slot, value, source, discovery,
 -- scan_id): replaying the identical rows for the same scan_id always produces byte-identical rows,
 -- which ReplacingMergeTree(loaded_at) collapses back to one on merge (or FINAL), however many times
--- the load is retried. See 000114 for the refreshable summary this table feeds, and
--- internal/load/load.go for the cutover from the legacy table to this one.
+-- the load is retried.
 --
 -- Partition strategy: PARTITION BY a hash of root_domain ONLY -- never by loaded_at, scan_id, or any
 -- time-derived expression. root_domain is the one identity field that stays IDENTICAL across every

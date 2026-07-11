@@ -54,14 +54,14 @@ func insert[T any](ctx context.Context, conn driver.Conn, table string, rows []T
 	return len(rows), nil
 }
 
-func observationRows(records []model.RecordRow, scanID string, loadedAt time.Time) []model.RecordObservationRow {
+func observationRows(records []model.StagedDNSRecord, scanID string, loadedAt time.Time) []model.RecordObservationRow {
 	rows := make([]model.RecordObservationRow, len(records))
 	for index, record := range records {
 		rows[index] = model.RecordObservationRow{
 			RootDomain: record.RootDomain, Name: record.Name, RecordType: record.RecordType,
 			Slot: record.Slot, Value: record.Value, Source: record.Source,
 			Discovery: record.Discovery, ScanID: scanID, TTL: record.TTL,
-			Priority: record.Priority, Rcode: record.Rcode, ObservedAt: record.LastSeen,
+			Priority: record.Priority, Rcode: record.Rcode, ObservedAt: record.ObservedAt,
 			LoadedAt: loadedAt.UTC(),
 		}
 	}

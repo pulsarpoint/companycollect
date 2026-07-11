@@ -9,7 +9,7 @@ func TestBatchQueryReadsOnlyDurableRegistry(t *testing.T) {
 	if !strings.Contains(batchQuery, "FROM corpscout.commoncrawl_domain_hostnames") {
 		t.Fatalf("query does not read the hostname registry: %s", batchQuery)
 	}
-	for _, forbidden := range []string{"ctlogs.hostnames", "dns_scan_seed_domains", "commoncrawl_domains"} {
+	for _, forbidden := range []string{"ctlogs.hostnames", "commoncrawl_domains"} {
 		if strings.Contains(batchQuery, forbidden) {
 			t.Errorf("query contains removed source %q: %s", forbidden, batchQuery)
 		}

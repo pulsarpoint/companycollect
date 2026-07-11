@@ -22,8 +22,9 @@ The worker writes:
 - `corpscout.dns_axfr_latest`
 - `corpscout.dns_axfr_state_changes`
 
-`commoncrawl_domain_dns_record_summary` is refreshed from the retry-safe observations and the frozen
-legacy baseline. `dns_axfr_observations` is retained only as legacy backfill input.
+`commoncrawl_domain_dns_record_observations` is the authoritative DNS-record history.
+`commoncrawl_ip_addresses` incrementally aggregates canonical A/AAAA values for GeoIP enrichment.
+`dns_axfr_observations` is retained only as legacy backfill input.
 
 ## Bounded local state
 

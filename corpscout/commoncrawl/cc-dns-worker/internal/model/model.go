@@ -1,5 +1,5 @@
 // Package model holds the in-memory result a resolver emits (DomainResult/DNSRecord) and the
-// ClickHouse-load row structs (RecordRow/ScanRow) whose ch tags name the target columns.
+// ClickHouse-load row structs whose ch tags name the target columns.
 package model
 
 import "time"
@@ -148,38 +148,25 @@ type DomainResult struct {
 	ResolvedAt   time.Time
 }
 
-// RecordRow mirrors corpscout.commoncrawl_domain_dns_records. As of Task 7 this table is a frozen,
-// READ-ONLY legacy baseline (see internal/load/load.go's cutover doc comment): its AggregatingMergeTree
-// Scans=1-per-row insert has no way to tell a genuine re-observation from a retried load of the same
-// scan apart, so a retry silently double-counts. It is no longer written by the live loader — new scans
-// go to RecordObservationRow instead — but its accumulated first_seen/scans data is preserved and
-// folded into corpscout.commoncrawl_domain_dns_record_summary as the pre-cutover history. This type
-// remains the SQLite read shape, but production deliberately has no function that can write the frozen
-// legacy table again.
-type RecordRow struct {
-	RootDomain string    `ch:"root_domain"`
-	RecordType string    `ch:"record_type"`
-	Slot       string    `ch:"slot"`
-	Name       string    `ch:"name"`
-	Value      string    `ch:"value"`
-	TTL        uint32    `ch:"ttl"`
-	Priority   uint16    `ch:"priority"`
-	Rcode      string    `ch:"rcode"`
-	LastRunID  string    `ch:"last_run_id"`
-	FirstSeen  time.Time `ch:"first_seen"`
-	LastSeen   time.Time `ch:"last_seen"`
-	Scans      uint64    `ch:"scans"`
-	Source     string    `ch:"source"`
-	Discovery  string    `ch:"discovery"`
-
-	// Finding carries DNSRecord.Finding (Task 9) through the SQLite stage only — like ScanRow.Endpoints,
-	// it has NO ch tag, so chColumns/insert skip it: it is not yet part of the ClickHouse record
-	// (observation/legacy) schema, only of the local SQLite scan_records stage.
-	Finding string
+// StagedDNSRecord is the bounded SQLite read shape used to build retry-safe observations and hostname
+// updates. It carries one event timestamp rather than aggregate-table concepts such as scans or ranges.
+type StagedDNSRecord struct {
+	RootDomain string
+	RecordType string
+	Slot       string
+	Name       string
+	Value      string
+	TTL        uint32
+	Priority   uint16
+	Rcode      string
+	Source     string
+	Discovery  string
+	Finding    string
+	ObservedAt time.Time
 }
 
 // RecordObservationRow mirrors corpscout.commoncrawl_domain_dns_record_observations (Task 7's
-// retry-safe replacement record-load path). Unlike RecordRow, this is not a pre-aggregated fact —
+// retry-safe record-load path). This is not a pre-aggregated fact —
 // it is one IMMUTABLE row per (identity, source, discovery, scan_id) observation, so replaying a
 // scan's load (the same rows, same ScanID) always produces byte-identical rows that
 // ReplacingMergeTree(loaded_at) collapses to one on merge/FINAL, however many times it is retried.

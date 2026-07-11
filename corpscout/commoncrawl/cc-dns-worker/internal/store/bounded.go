@@ -325,7 +325,7 @@ func releaseRoots(ctx context.Context, db *sql.DB, table, scanID string, roots [
 type ReadyDNSBatch struct {
 	Roots     []string
 	Results   []model.DomainResult
-	Records   []model.RecordRow
+	Records   []model.StagedDNSRecord
 	Summaries []model.ScanRow
 	Hostnames []model.HostnameRow
 }
@@ -372,24 +372,22 @@ func (s *Store) ReadyDNS(ctx context.Context, scanID string, limit int) (ReadyDN
 
 func (s *Store) populateReadyDNS(ctx context.Context, scanID string, batch ReadyDNSBatch) (ReadyDNSBatch, error) {
 	query, args := rootsQuery(`SELECT root_domain, name, record_type, slot, value, ttl, priority,
-		rcode, source, discovery, finding, source_run_id, resolved_at FROM dns_records
+		rcode, source, discovery, finding, resolved_at FROM dns_records
 		WHERE scan_id = ? AND root_domain IN (%s)`, scanID, batch.Roots)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return ReadyDNSBatch{}, err
 	}
 	for rows.Next() {
-		var record model.RecordRow
+		var record model.StagedDNSRecord
 		var observedAt string
 		if err := rows.Scan(&record.RootDomain, &record.Name, &record.RecordType, &record.Slot,
 			&record.Value, &record.TTL, &record.Priority, &record.Rcode, &record.Source,
-			&record.Discovery, &record.Finding, &record.LastRunID, &observedAt); err != nil {
+			&record.Discovery, &record.Finding, &observedAt); err != nil {
 			rows.Close()
 			return ReadyDNSBatch{}, err
 		}
-		record.FirstSeen = parseTS(observedAt)
-		record.LastSeen = record.FirstSeen
-		record.Scans = 1
+		record.ObservedAt = parseTS(observedAt)
 		batch.Records = append(batch.Records, record)
 	}
 	if err := rows.Err(); err != nil {
@@ -422,7 +420,7 @@ func scanRows(results []model.DomainResult) []model.ScanRow {
 	return rows
 }
 
-func hostnameRows(records []model.RecordRow) []model.HostnameRow {
+func hostnameRows(records []model.StagedDNSRecord) []model.HostnameRow {
 	type key struct{ root, label string }
 	byKey := map[key]model.HostnameRow{}
 	for _, record := range records {
@@ -443,10 +441,10 @@ func hostnameRows(records []model.RecordRow) []model.HostnameRow {
 		}
 		identity := key{record.RootDomain, label}
 		row, exists := byKey[identity]
-		if !exists || record.LastSeen.After(row.LastSeen) {
+		if !exists || record.ObservedAt.After(row.LastSeen) {
 			byKey[identity] = model.HostnameRow{
 				RootDomain: record.RootDomain, Label: label, DiscoverySource: record.Discovery,
-				FirstSeen: record.FirstSeen, LastSeen: record.LastSeen, LastResolved: record.LastSeen,
+				FirstSeen: record.ObservedAt, LastSeen: record.ObservedAt, LastResolved: record.ObservedAt,
 			}
 		}
 	}
