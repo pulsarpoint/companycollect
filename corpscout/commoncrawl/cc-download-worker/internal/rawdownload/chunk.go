@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"cc-enrich-worker/internal/fetch"
-	"cc-enrich-worker/internal/rawstore"
+	"cc-raw/fetch"
+	"cc-raw/rawstore"
 	"github.com/aws/smithy-go"
 	"github.com/cockroachdb/errors"
 	"github.com/parquet-go/parquet-go"

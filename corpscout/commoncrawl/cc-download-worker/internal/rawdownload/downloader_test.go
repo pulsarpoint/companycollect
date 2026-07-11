@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-enrich-worker/internal/rawstate"
-	"cc-enrich-worker/internal/rawstore"
+	"cc-raw/rawstate"
+	"cc-raw/rawstore"
 	"github.com/cockroachdb/errors"
 	"github.com/parquet-go/parquet-go"
 )
@@ -51,13 +51,13 @@ func TestDownloaderCommitsChunksThenReadyAndResumes(t *testing.T) {
 	}
 
 	expectedOrder := []string{
-		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000000/records.pack",
-		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000000/index.parquet",
-		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000000/manifest.json",
-		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000001/records.pack",
-		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000001/index.parquet",
-		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000001/manifest.json",
-		"commoncrawl/state/crawl=CC-MAIN-2026-25/selection=tech25/part=000/download/ready.json",
+		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000000/records.pack",
+		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000000/index.parquet",
+		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000000/manifest.json",
+		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000001/records.pack",
+		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000001/index.parquet",
+		"commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000001/manifest.json",
+		"commoncrawl/state/crawl=CC-MAIN-2026-25/selection=pages25/part=000/download/ready.json",
 	}
 	if got := objectServer.putOrder(); !equalStrings(got, expectedOrder) {
 		t.Fatalf("put order\ngot:  %v\nwant: %v", got, expectedOrder)
@@ -178,7 +178,7 @@ func TestDownloaderRequiresForceAfterReclamation(t *testing.T) {
 	if err := parquet.WriteFile(worklistPath, rows); err != nil {
 		t.Fatal(err)
 	}
-	reclaimedKey, err := rawstate.ReclaimedKey("CC-MAIN-2026-25", "tech25", 0)
+	reclaimedKey, err := rawstate.ReclaimedKey("CC-MAIN-2026-25", "pages25", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func testDownloaderConfig(worklistPath string) Config {
 		WorklistPath:    worklistPath,
 		WorklistKey:     filepath.Base(worklistPath),
 		CrawlID:         "CC-MAIN-2026-25",
-		Selection:       "tech25",
+		Selection:       "pages25",
 		Part:            0,
 		SourceBucket:    "commoncrawl",
 		Concurrency:     4,

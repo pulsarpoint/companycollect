@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"cc-enrich-worker/internal/rawstore"
+	"cc-raw/rawstore"
 	"github.com/cockroachdb/errors"
 )
 

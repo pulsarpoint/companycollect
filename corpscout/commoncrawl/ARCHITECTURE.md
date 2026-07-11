@@ -30,9 +30,11 @@ NACE matrix.
 
 | Component | Lang | Role | Touches ClickHouse? |
 |---|---|---|---|
-| **`index-builder/`** | Python (duckdb, pyarrow) | Builds the **worklist** — "what pages to fetch" — from the CommonCrawl URL index. | no (reads the CC index only) |
+| **`index-builder/`** | Python (duckdb, pyarrow) | Legacy worklist CLI for the current direct-fetch `cc-crawl` path. | no (reads the CC index only) |
 | **`reference-builder/`** | Python (numpy, openai, clickhouse) | Builds the **NACE reference matrix** + page-type exemplars (industry only). | **writes** the 2 reference tables |
+| **`cc-download-worker/`** | Go + embedded Python | Builds/reuses its URL-index worklists, downloads selected compressed WARC records, and commits bounded, resumable raw packs to RustFS. | no |
 | **`cc-enrich-worker/`** | Go | The **processor**. Subcommands `industry`/`tech`/`both`/`embed` (produce) + `load`. Fetches WARC pages, runs the workflow → Parquet; the `load` subcommand inserts Parquet → ClickHouse. | **reads** reference (produce), **writes** result tables (load) |
+| **`cc-raw/`** | Go | Shared WARC fetch/parse and RustFS manifest/state contracts. No binary or orchestration. | no |
 | **`cc-crawl/`** | Go (stdlib only) | The **orchestrator**. Per-part loop: worklist → produce → load → marker, with JSON logging. `os/exec` only — it does **not** import the worker and **never** touches ClickHouse itself. | no |
 
 **Boundary that matters:** `cc-crawl` orchestrates by shelling out; **all** ClickHouse I/O lives in

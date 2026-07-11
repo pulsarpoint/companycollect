@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-enrich-worker/internal/fetch"
-	"cc-enrich-worker/internal/rawstate"
-	"cc-enrich-worker/internal/rawstore"
+	"cc-raw/fetch"
+	"cc-raw/rawstate"
+	"cc-raw/rawstore"
 	"github.com/cockroachdb/errors"
 )
 

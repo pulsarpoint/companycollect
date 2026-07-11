@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"cc-enrich-worker/internal/rawstore"
+	"cc-raw/rawstore"
 	"github.com/cockroachdb/errors"
 )
 

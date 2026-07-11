@@ -18,7 +18,7 @@ prebuilt reference; tech is CPU-bound and needs only S3. Run them as separate pr
 Self-contained: pure Go + Python, **no dagster**. The only upstream dependency is one ClickHouse
 table (`corpscout.nace_categories`, populated by dagster) that the industry workflow reads.
 
-This is the single doc for all three packages — the worker (Go) and the two Python helpers.
+This is the pipeline-level runbook. Each Go service also has its own README.
 
 ---
 
@@ -27,12 +27,19 @@ This is the single doc for all three packages — the worker (Go) and the two Py
 | Dir | Lang | Role |
 |---|---|---|
 | `cc-crawl/` | Go | The **orchestrator** (replaces `run_crawl.sh`). Drives the per-part loop: worklist → produce → load, structured JSON logs. Reference §5, design `docs/cc-crawl-design.md`. |
+| `cc-download-worker/` | Go + embedded Python | The independent **raw downloader**. Builds/reuses its own URL-index worklists, downloads selected records, and commits bounded packs to RustFS. |
 | `cc-enrich-worker/` | Go | The **processor**. Subcommand CLI `cc-enrich-worker <industry\|tech\|both>` + `load`; byte-range-fetches WARC pages, runs the chosen workflow → Parquet, and (separately) loads it. Reference §6. |
-| `index-builder/` | Python (duckdb, pyarrow) | Builds **worklists** from the CommonCrawl URL index — the "what to fetch" list. Two shapes: `industry` (1 page/domain), `tech` (many). Reference §7. |
+| `cc-raw/` | Go | Shared WARC fetch/parse and RustFS manifest/state contracts; no binary. |
+| `index-builder/` | Python (duckdb, pyarrow) | Legacy worklist CLI used by the current direct-fetch `cc-crawl` path. The raw downloader no longer requires this separate application. Reference §7. |
 | `reference-builder/` | Python (numpy, openai, clickhouse) | Builds the **reference embeddings** (industry only) — NACE categories + page-type seed → `nace_category_embeddings`/`page_type_exemplars`. Reference §8. |
 
 The ClickHouse **schema** lives in `../clickhouse/migrations/` (golang-migrate), not in any package —
 code reads/writes tables whose DDL the migrations own; the worker never issues DDL.
+
+Current migration state: `cc-download-worker` can stage complete worklist parts in RustFS. The current
+`cc-enrich-worker` still supports direct Common Crawl reads; sequential staged-pack input is the next phase.
+The downloader is therefore safe to test independently, but it is not yet wired into `cc-crawl` production
+processing.
 
 ---
 
@@ -61,21 +68,38 @@ CLICKHOUSE_USER=...  CLICKHOUSE_PASSWORD=...  CLICKHOUSE_DATABASE=corpscout
 
 # Signed S3 (off-AWS: any IAM user's keys; CommonCrawl is Open Data → reads are free)
 AWS_ACCESS_KEY_ID=AKIA...  AWS_SECRET_ACCESS_KEY=...  AWS_REGION=us-east-1
+
+# Local-network RustFS staging used by cc-download-worker
+CORPSCOUT_S3_ENDPOINT=http://companycollect:9000
+CORPSCOUT_S3_ACCESS_KEY=...
+CORPSCOUT_S3_SECRET_KEY=...
+CORPSCOUT_S3_BUCKET=crawls
+
+# Bare-metal cc-download-worker only; its container already includes Python + DuckDB
+CC_DOWNLOAD_PYTHON=python3
 ```
 Load with `set -a; source ../.env; set +a` (exports every var; `env | grep` to verify — `echo`
 shows set-but-unexported vars and lies). `AWS_REGION` is the only place the S3 region is set (the
 CommonCrawl bucket is permanently `us-east-1`); there is no region flag.
 
-**c. Build the binaries** — one `make` at `commoncrawl/` builds **both** Go binaries (gitignored `bin/`)
+**c. Build the binaries** — one `make` at `commoncrawl/` builds all three Go binaries (gitignored `bin/`)
 ```bash
-cd commoncrawl && make             # -> cc-enrich-worker/bin/cc-enrich-worker  +  cc-crawl/bin/cc-crawl
-# make worker  /  make crawl       # build just one
-# make vet  /  make test           # vet both / test the worker
+cd commoncrawl && make             # downloader + enrichment worker + orchestrator
+# make download / make worker / make crawl
+# make vet / make test             # cover cc-raw and both worker modules
+# make -C cc-download-worker arm   # cross-compile downloader linux/arm64
 # make -C cc-enrich-worker arm     # cross-compile the worker linux/arm64 (Graviton)
-# or: docker build -t cc-enrich-worker cc-enrich-worker/   (distroless image, see Dockerfile)
+# docker build -f cc-download-worker/Dockerfile -t cc-download-worker .
+# docker build -f cc-enrich-worker/Dockerfile -t cc-enrich-worker .
 ```
 
-**d. Worklists — the worker's input (`--worklist`).** Every pass consumes a *worklist shard*: a
+**d. Worklists.** `cc-download-worker` builds and caches its own worklists from `--crawl`,
+`--pages-per-domain`, and `--parts`; there is no public raw-downloader `--worklist` flag:
+```bash
+cc-download-worker/bin/cc-download-worker \
+  --base "$OUT_BASE_DIR" --crawl CC-MAIN-2026-25 --pages-per-domain 25 --parts 0-10
+```
+The current direct-fetch `cc-crawl` and `cc-enrich-worker` path still consumes a *worklist shard*: a
 Parquet file with one row per page to fetch (`root_domain, url, warc_filename, warc_record_offset,
 warc_record_length, content_languages`), built by `index-builder` from the CommonCrawl URL index.
 The crawl's index is ~300 parts; one part → one shard. **`cc-crawl` (§5) builds them automatically
@@ -392,9 +416,11 @@ must exist (`make clickhouse-migrate-up`).
 
 ---
 
-## 7. Reference — `index-builder` CLI
+## 7. Reference — legacy `index-builder` CLI
 
-Pure duckdb + pyarrow (no dagster). Resolves exact index-part URLs from CommonCrawl's HTTPS manifest
+This remains for the current direct-fetch `cc-crawl`/`cc-enrich-worker` workflow; the raw downloader has
+the equivalent page-selection builder embedded in its own API. Pure duckdb + pyarrow (no dagster), it
+resolves exact index-part URLs from CommonCrawl's HTTPS manifest
 (anonymous S3 LIST is denied, so no globs). One part → one shard, cached at
 the gitignored `commoncrawl/data/index/<crawl>/shard_<mode>_<part>.parquet`, skipped if present.
 

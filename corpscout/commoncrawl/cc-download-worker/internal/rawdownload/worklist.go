@@ -3,7 +3,7 @@ package rawdownload
 import (
 	"strings"
 
-	"cc-enrich-worker/internal/rawstore"
+	"cc-raw/rawstore"
 	"github.com/cockroachdb/errors"
 	"github.com/parquet-go/parquet-go"
 )

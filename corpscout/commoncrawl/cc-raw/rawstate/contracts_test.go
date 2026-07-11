@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-enrich-worker/internal/rawstore"
+	"cc-raw/rawstore"
 )
 
 const (

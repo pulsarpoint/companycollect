@@ -1,10 +1,9 @@
 # Common Crawl raw staging pipeline
 
-Status: agreed for implementation. Phases 1-3 are implemented: raw contracts and validation live in
-`cc-enrich-worker/internal/rawstore` and `cc-enrich-worker/internal/rawstate`, and the current fetch path now
-separates exact compressed WARC retrieval from WARC/HTTP parsing. `cc-download-worker` now stages one
-worklist part as bounded, resumable RustFS packs. Multi-part scheduling and storage watermarks remain future
-work.
+Status: agreed for implementation. Phases 1-3 are implemented: shared raw contracts and WARC handling live
+in the sibling `cc-raw` module, `cc-download-worker` builds worklists and stages requested part ranges as
+bounded, resumable RustFS packs, and `cc-enrich-worker` remains an independent processor service. Storage
+watermarks remain future work.
 
 This document defines how Common Crawl network reads are separated from enrichment compute. A downloader
 retrieves the selected WARC records once, stores bounded raw packs in the local RustFS object store, and
@@ -12,8 +11,8 @@ independent processors consume those packs. Processor and load completion are re
 same raw data can be reused by technology, industry, embedding, and future passes before an operator
 explicitly reclaims it.
 
-The design replaces neither the worklist nor the final ClickHouse tables. It inserts a durable, bounded
-staging boundary between them.
+The design keeps the established page-selection policy and final ClickHouse tables. It inserts a durable,
+bounded staging boundary between them.
 
 ## 1. Why split download from processing
 
@@ -50,7 +49,7 @@ RustFS and processors are connected over the local network.
 - Mirroring complete WARC files or an entire Common Crawl snapshot.
 - Automatically deciding which processor types are required for a crawl.
 - Automatically deleting raw packs after one processor finishes or loads.
-- Replacing the worklist builder, output Parquet contract, or ClickHouse schema.
+- Changing the established page-ranking policy, output Parquet contract, or ClickHouse schema.
 - Providing high availability for the existing single-node RustFS deployment. Staged data is reproducible
   from Common Crawl, so checksums and regeneration are the recovery mechanism.
 
@@ -62,7 +61,7 @@ use that word for several different units.
 | Term | Meaning |
 |---|---|
 | crawl | One Common Crawl snapshot, such as `CC-MAIN-2026-25`. |
-| selection | The worklist policy and limit, such as `tech25`. It prevents incompatible worklists from sharing raw state. |
+| selection | The processor-neutral worklist policy and limit, such as `pages25`. It prevents incompatible worklists from sharing raw state. |
 | part | One URL-index/worklist partition, currently numbered approximately 0-299. It is the initial processing and reclamation unit. |
 | chunk | A bounded consecutive subset of a part. One chunk produces one raw pack, index, and manifest. |
 | source WARC | A Common Crawl WARC file named by a worklist row. |
@@ -103,6 +102,7 @@ cc-rawctl <------ reads all RustFS state; reports status and performs explicit r
 The downloader owns:
 
 - Common Crawl S3 access and credentials;
+- materializing and caching deterministic per-part worklists from the Common Crawl URL index;
 - range-request concurrency, timeouts, retry policy, and S3 metrics;
 - reading a deterministic part worklist;
 - writing `records.pack`, `index.parquet`, and `manifest.json` to RustFS;
@@ -145,18 +145,24 @@ validation, marker validation, and deterministic key construction. Keep Common C
 processor-specific behavior in their owning commands. Do not introduce a generic service layer or an
 interface unless a second real implementation requires it.
 
-An initial repository layout can remain in the existing Go module:
+Repository layout:
 
 ```text
-cc-enrich-worker/
+cc-raw/
+  fetch/
+  rawstore/
+  rawstate/
+cc-download-worker/
   cmd/cc-download-worker/
+  internal/rawdownload/
+  internal/worklistbuilder/
+cc-enrich-worker/
   cmd/cc-enrich-worker/
-  cmd/cc-rawctl/
-  internal/rawstore/
-  internal/rawstate/
+cc-rawctl/                       # future sibling command
 ```
 
-The current directory name is not a reason to move modules during the first implementation.
+`cc-download-worker` and `cc-enrich-worker` have independent Go modules, binaries, containers, and runtime
+configuration. Neither application imports the other. They share only the concrete `cc-raw` protocol module.
 
 ## 5. RustFS object layout
 
@@ -165,7 +171,7 @@ Raw data and state use separate prefixes. State must survive deletion of the raw
 ```text
 commoncrawl/raw/
   crawl=CC-MAIN-2026-25/
-    selection=tech25/
+    selection=pages25/
       part=000/
         chunk=000042/
           records.pack
@@ -174,7 +180,7 @@ commoncrawl/raw/
 
 commoncrawl/state/
   crawl=CC-MAIN-2026-25/
-    selection=tech25/
+    selection=pages25/
       part=000/
         download/ready.json
         processor=tech/processing.json
@@ -192,8 +198,8 @@ There is no path-level `version=v1` directory initially. Each persisted document
 `schema_version`. If an incompatible schema is introduced later, readers can support both schemas or a
 new prefix can be introduced as part of a deliberate migration.
 
-`selection` identifies the exact worklist policy, not merely the processor name. For example, `tech25`
-means the technology page-ranking policy with a maximum of 25 pages per domain. Its exact worklist file and
+`selection` identifies the exact processor-neutral worklist policy. For example, `pages25` means the
+homepage/legal/contact ranking policy with a maximum of 25 pages per domain. Its exact worklist file and
 checksum are recorded in every chunk manifest.
 
 ## 6. Raw chunk commit contract
@@ -249,7 +255,7 @@ processor state, ClickHouse state, credentials, or secrets.
 {
   "schema_version": 1,
   "crawl_id": "CC-MAIN-2026-25",
-  "selection": "tech25",
+  "selection": "pages25",
   "part": 0,
   "chunk": 42,
   "worklist": {
@@ -259,12 +265,12 @@ processor state, ClickHouse state, credentials, or secrets.
     "record_count": 16384
   },
   "pack": {
-    "key": "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000042/records.pack",
+    "key": "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000042/records.pack",
     "size_bytes": 402653184,
     "sha256": "..."
   },
   "index": {
-    "key": "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000042/index.parquet",
+    "key": "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000042/index.parquet",
     "size_bytes": 1572864,
     "sha256": "..."
   },
@@ -305,7 +311,7 @@ consistent prefix listing as the source of truth:
 {
   "schema_version": 1,
   "crawl_id": "CC-MAIN-2026-25",
-  "selection": "tech25",
+  "selection": "pages25",
   "part": 0,
   "worklist": {
     "key": "crawl/shard_tech_0.parquet",
@@ -316,7 +322,7 @@ consistent prefix listing as the source of truth:
   "chunks": [
     {
       "chunk": 0,
-      "manifest_key": "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000000/manifest.json",
+      "manifest_key": "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=pages25/part=000/chunk=000000/manifest.json",
       "manifest_sha256": "...",
       "first_ordinal": 0,
       "record_count": 4,
@@ -354,7 +360,7 @@ snapshots live under the separate state prefix, once per processor.
 {
   "schema_version": 1,
   "crawl_id": "CC-MAIN-2026-25",
-  "selection": "tech25",
+  "selection": "pages25",
   "part": 0,
   "processor": "tech",
   "processing_version": "fast-v2",
@@ -426,14 +432,14 @@ A processor crash leaves the raw input intact. A loader crash leaves `processed.
 Initial commands:
 
 ```text
-cc-rawctl status --crawl CC-MAIN-2026-25 --selection tech25
-cc-rawctl status --crawl CC-MAIN-2026-25 --selection tech25 --part 0
-cc-rawctl list --crawl CC-MAIN-2026-25 --selection tech25 --state processing
-cc-rawctl list --crawl CC-MAIN-2026-25 --selection tech25 --state reclaimable \
+cc-rawctl status --crawl CC-MAIN-2026-25 --selection pages25
+cc-rawctl status --crawl CC-MAIN-2026-25 --selection pages25 --part 0
+cc-rawctl list --crawl CC-MAIN-2026-25 --selection pages25 --state processing
+cc-rawctl list --crawl CC-MAIN-2026-25 --selection pages25 --state reclaimable \
   --require-loaded tech,industry --require-processed embedding
-cc-rawctl remove --crawl CC-MAIN-2026-25 --selection tech25 --part 0 \
+cc-rawctl remove --crawl CC-MAIN-2026-25 --selection pages25 --part 0 \
   --require-loaded tech,industry --require-processed embedding
-cc-rawctl remove --crawl CC-MAIN-2026-25 --selection tech25 --part 0 \
+cc-rawctl remove --crawl CC-MAIN-2026-25 --selection pages25 --part 0 \
   --require-loaded tech,industry --require-processed embedding --execute
 ```
 
@@ -526,7 +532,8 @@ wrapped through lower layers and logged once at the command/worker boundary.
    processed, loaded, and reclaimed documents, with golden contract fixtures.
 2. **Implemented:** split the existing fetch path into byte-range retrieval and raw WARC parsing without
    changing direct-mode behavior.
-3. **Implemented:** add `cc-download-worker` and produce staged objects for one part in RustFS.
+3. **Implemented:** add `cc-download-worker`, embed deterministic worklist generation, accept part ranges,
+   and produce staged objects in RustFS.
 4. Add staged-input mode to `cc-enrich-worker`, reading packs sequentially and retaining the existing output
    Parquet format.
 5. Run one representative part in both direct and staged modes and compare domain/page counts and all

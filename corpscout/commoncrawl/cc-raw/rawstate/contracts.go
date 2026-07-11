@@ -3,7 +3,7 @@ package rawstate
 import (
 	"time"
 
-	"cc-enrich-worker/internal/rawstore"
+	"cc-raw/rawstore"
 )
 
 const SchemaVersion = 1

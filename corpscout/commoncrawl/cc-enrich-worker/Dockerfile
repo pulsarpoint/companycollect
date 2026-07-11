@@ -1,8 +1,11 @@
+# Build from the commoncrawl directory:
+# docker build -f cc-enrich-worker/Dockerfile .
 FROM golang:1.26 AS build
 WORKDIR /src
-COPY go.mod go.sum ./
+COPY cc-raw ./cc-raw
+COPY cc-enrich-worker ./cc-enrich-worker
+WORKDIR /src/cc-enrich-worker
 RUN go mod download
-COPY . .
 RUN CGO_ENABLED=0 go build -o /cc-enrich-worker ./cmd/cc-enrich-worker
 
 FROM gcr.io/distroless/static-debian12

@@ -19,7 +19,7 @@ import (
 
 	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/embed"
-	"cc-enrich-worker/internal/fetch"
+	"cc-raw/fetch"
 	"cc-enrich-worker/internal/load"
 	mdl "cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
