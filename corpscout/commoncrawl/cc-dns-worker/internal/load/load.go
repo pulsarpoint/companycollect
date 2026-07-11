@@ -317,6 +317,7 @@ func WriteHostnameRegistry(ctx context.Context, conn driver.Conn, st *store.Stor
 func LoadAXFRPrior(ctx context.Context, conn driver.Conn) (map[store.AXFREndpointKey]store.AXFRPriorState, error) {
 	rows, err := conn.Query(ctx, `SELECT root_domain, name_server, name_server_ip, has_definitive_state, axfr_open,
 		definitive_at, definitive_scan_id, last_probe_verdict, last_probe_reason, last_probed_at,
+		last_probe_records, last_probe_bytes, last_probe_truncated,
 		delegation_active, delegation_seen_at FROM `+axfrLatestTable+` FINAL`)
 	if err != nil {
 		return nil, err
@@ -325,15 +326,17 @@ func LoadAXFRPrior(ctx context.Context, conn driver.Conn) (map[store.AXFREndpoin
 	prior := map[store.AXFREndpointKey]store.AXFRPriorState{}
 	for rows.Next() {
 		var key store.AXFREndpointKey
-		var hasDefinitive, axfrOpen, delegationActive uint8
+		var hasDefinitive, axfrOpen, lastProbeTruncated, delegationActive uint8
 		var p store.AXFRPriorState
 		if err := rows.Scan(&key.RootDomain, &key.NameServer, &key.NameServerIP, &hasDefinitive, &axfrOpen,
 			&p.DefinitiveAt, &p.DefinitiveScanID, &p.LastProbeVerdict, &p.LastProbeReason, &p.LastProbedAt,
+			&p.LastProbeRecords, &p.LastProbeBytes, &lastProbeTruncated,
 			&delegationActive, &p.DelegationSeenAt); err != nil {
 			return nil, err
 		}
 		p.HasDefinitive = hasDefinitive != 0
 		p.AXFROpen = axfrOpen != 0
+		p.LastProbeTruncated = lastProbeTruncated != 0
 		p.DelegationActive = delegationActive != 0
 		prior[key] = p
 	}
@@ -373,6 +376,9 @@ func BuildAXFRLatestRows(eps []store.AXFRProbedEndpoint, prior map[store.AXFREnd
 			LastProbeVerdict:   p.LastProbeVerdict,
 			LastProbeReason:    p.LastProbeReason,
 			LastProbedAt:       p.LastProbedAt,
+			LastProbeRecords:   p.LastProbeRecords,
+			LastProbeBytes:     p.LastProbeBytes,
+			LastProbeTruncated: boolToU8(p.LastProbeTruncated),
 			HasDefinitiveState: boolToU8(p.HasDefinitive),
 			AXFROpen:           boolToU8(p.AXFROpen),
 			DefinitiveAt:       p.DefinitiveAt,
@@ -385,6 +391,9 @@ func BuildAXFRLatestRows(eps []store.AXFRProbedEndpoint, prior map[store.AXFREnd
 			row.LastProbeVerdict = e.Verdict
 			row.LastProbeReason = e.Reason
 			row.LastProbedAt = e.ObservedAt
+			row.LastProbeRecords = e.Records
+			row.LastProbeBytes = e.Bytes
+			row.LastProbeTruncated = boolToU8(e.Truncated)
 			if e.Definitive {
 				row.HasDefinitiveState = 1
 				row.AXFROpen = boolToU8(e.Verdict == string(resolve.VerdictOpen))

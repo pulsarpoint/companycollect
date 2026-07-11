@@ -1063,15 +1063,18 @@ type AXFREndpointKey struct {
 // load.LoadAXFRPrior before this scan's changes are staged). The zero value correctly represents an
 // endpoint never seen before: HasDefinitive/DelegationActive false, every timestamp zero.
 type AXFRPriorState struct {
-	HasDefinitive    bool // true once any past probe reached a definitive (open/closed) verdict
-	AXFROpen         bool // meaningful only when HasDefinitive is true
-	DefinitiveAt     time.Time
-	DefinitiveScanID string
-	LastProbeVerdict string // most recent probe of ANY kind, including unknown
-	LastProbeReason  string
-	LastProbedAt     time.Time
-	DelegationActive bool // whether the endpoint was active as of the last latest-row write
-	DelegationSeenAt time.Time
+	HasDefinitive      bool // true once any past probe reached a definitive (open/closed) verdict
+	AXFROpen           bool // meaningful only when HasDefinitive is true
+	DefinitiveAt       time.Time
+	DefinitiveScanID   string
+	LastProbeVerdict   string // most recent probe of ANY kind, including unknown
+	LastProbeReason    string
+	LastProbedAt       time.Time
+	LastProbeRecords   uint64
+	LastProbeBytes     uint64
+	LastProbeTruncated bool
+	DelegationActive   bool // whether the endpoint was active as of the last latest-row write
+	DelegationSeenAt   time.Time
 }
 
 // AXFRProbedEndpoint is one endpoint the AXFR load pass considers for scanID's dns_axfr_latest rows.
@@ -1085,6 +1088,9 @@ type AXFRProbedEndpoint struct {
 	Verdict          string
 	Reason           string
 	ObservedAt       time.Time
+	Records          uint64
+	Bytes            uint64
+	Truncated        bool
 	Definitive       bool
 	DelegationActive bool
 }
@@ -1229,7 +1235,8 @@ func (s *Store) AXFRLoadRows(ctx context.Context, scanID string, prior map[AXFRE
 	}
 	domainRows.Close()
 
-	probeRows, err := s.db.QueryContext(ctx, `SELECT root_domain, name_server, name_server_ip, verdict, reason, observed_at
+	probeRows, err := s.db.QueryContext(ctx, `SELECT root_domain, name_server, name_server_ip, verdict, reason,
+		records, bytes, truncated, observed_at
 		FROM axfr_probes WHERE scan_id = ?`, scanID)
 	if err != nil {
 		return nil, err
@@ -1238,7 +1245,9 @@ func (s *Store) AXFRLoadRows(ctx context.Context, scanID string, prior map[AXFRE
 	var out []AXFRProbedEndpoint
 	for probeRows.Next() {
 		var rd, ns, ip, verdict, reason, ts string
-		if err := probeRows.Scan(&rd, &ns, &ip, &verdict, &reason, &ts); err != nil {
+		var records, bytes uint64
+		var truncated int
+		if err := probeRows.Scan(&rd, &ns, &ip, &verdict, &reason, &records, &bytes, &truncated, &ts); err != nil {
 			probeRows.Close()
 			return nil, err
 		}
@@ -1246,6 +1255,7 @@ func (s *Store) AXFRLoadRows(ctx context.Context, scanID string, prior map[AXFRE
 		seen[key] = true
 		out = append(out, AXFRProbedEndpoint{
 			AXFREndpointKey: key, Verdict: verdict, Reason: reason, ObservedAt: parseTS(ts),
+			Records: records, Bytes: bytes, Truncated: truncated != 0,
 			Definitive:       verdict == string(resolve.VerdictOpen) || verdict == string(resolve.VerdictClosed),
 			DelegationActive: true,
 		})

@@ -75,11 +75,12 @@ func TestToObservationRowsScanIDNotLastRunID(t *testing.T) {
 func TestBuildAXFRLatestRowsPreservesDefinitiveOnUnknown(t *testing.T) {
 	key := store.AXFREndpointKey{RootDomain: "d.com", NameServer: "ns1.d.com", NameServerIP: "9.9.9.9"}
 	prior := map[store.AXFREndpointKey]store.AXFRPriorState{
-		key: {HasDefinitive: true, AXFROpen: true, DefinitiveAt: time.Unix(100, 0).UTC(), DefinitiveScanID: "sc1"},
+		key: {HasDefinitive: true, AXFROpen: true, DefinitiveAt: time.Unix(100, 0).UTC(), DefinitiveScanID: "sc1",
+			LastProbeRecords: 11, LastProbeBytes: 1200, LastProbeTruncated: false},
 	}
 	eps := []store.AXFRProbedEndpoint{
 		{AXFREndpointKey: key, Verdict: "unknown", Reason: "timeout", ObservedAt: time.Unix(200, 0).UTC(),
-			Definitive: false, DelegationActive: true},
+			Records: 7, Bytes: 800, Truncated: true, Definitive: false, DelegationActive: true},
 	}
 
 	rows := BuildAXFRLatestRows(eps, prior, "sc2", time.Unix(300, 0).UTC())
@@ -95,6 +96,9 @@ func TestBuildAXFRLatestRowsPreservesDefinitiveOnUnknown(t *testing.T) {
 	}
 	if r.LastProbeVerdict != "unknown" || r.LastProbeReason != "timeout" || !r.LastProbedAt.Equal(time.Unix(200, 0).UTC()) {
 		t.Errorf("last_probe_* must reflect THIS scan's unknown probe, got %+v", r)
+	}
+	if r.LastProbeRecords != 7 || r.LastProbeBytes != 800 || r.LastProbeTruncated != 1 {
+		t.Errorf("latest probe metrics must reflect THIS scan's partial probe, got %+v", r)
 	}
 	if r.DelegationActive != 1 {
 		t.Errorf("delegation_active = %d, want 1 (still delegated)", r.DelegationActive)
@@ -134,6 +138,7 @@ func TestBuildAXFRLatestRowsDelegationRemovalInactive(t *testing.T) {
 		key: {
 			HasDefinitive: true, AXFROpen: true, DelegationActive: true, DelegationSeenAt: time.Unix(50, 0).UTC(),
 			LastProbeVerdict: "open", LastProbeReason: "transferred", LastProbedAt: time.Unix(50, 0).UTC(),
+			LastProbeRecords: 42, LastProbeBytes: 4096, LastProbeTruncated: true,
 			DefinitiveAt: time.Unix(50, 0).UTC(), DefinitiveScanID: "sc0",
 		},
 	}
@@ -157,5 +162,8 @@ func TestBuildAXFRLatestRowsDelegationRemovalInactive(t *testing.T) {
 	}
 	if r.LastProbeVerdict != "open" || !r.LastProbedAt.Equal(time.Unix(50, 0).UTC()) {
 		t.Errorf("last_probe_* must carry forward since no probe happened this scan: %+v", r)
+	}
+	if r.LastProbeRecords != 42 || r.LastProbeBytes != 4096 || r.LastProbeTruncated != 1 {
+		t.Errorf("last probe metrics must carry forward when no probe happened: %+v", r)
 	}
 }

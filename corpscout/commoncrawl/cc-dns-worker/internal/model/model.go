@@ -60,6 +60,9 @@ type AXFRLatestRow struct {
 	LastProbeVerdict   string    `ch:"last_probe_verdict"`
 	LastProbeReason    string    `ch:"last_probe_reason"`
 	LastProbedAt       time.Time `ch:"last_probed_at"`
+	LastProbeRecords   uint64    `ch:"last_probe_records"`
+	LastProbeBytes     uint64    `ch:"last_probe_bytes"`
+	LastProbeTruncated uint8     `ch:"last_probe_truncated"`
 	HasDefinitiveState uint8     `ch:"has_definitive_state"`
 	AXFROpen           uint8     `ch:"axfr_open"`
 	DefinitiveAt       time.Time `ch:"definitive_at"`

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
@@ -8,6 +10,7 @@ COMMONCRAWL_DOMAIN_HOSTNAME_SHARDS = dg.StaticPartitionsDefinition(
 )
 COMMONCRAWL_HOSTNAME_POOL = "commoncrawl_hostname_sync"
 COMMONCRAWL_HOSTNAME_GROUP = "commoncrawl_dns"
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 CTLOGS_HOSTNAMES_ASSET = dg.AssetSpec(
     key="ctlogs_hostnames",
@@ -30,7 +33,8 @@ INSERT INTO corpscout.commoncrawl_domain_hostnames
     discovery_source,
     first_seen,
     last_seen,
-    last_resolved
+    last_resolved,
+    last_not_after
 )
 SELECT
     registered_domain AS root_domain,
@@ -42,7 +46,8 @@ SELECT
     'ct' AS discovery_source,
     first_seen,
     last_seen,
-    toDateTime64(0, 3, 'UTC') AS last_resolved
+    toDateTime64(0, 3, 'UTC') AS last_resolved,
+    last_not_after
 FROM
 (
     SELECT
@@ -51,7 +56,9 @@ FROM
         lower(trimRight(fqdn, '.')) AS fqdn_normalized,
         max(is_wildcard) AS is_wildcard,
         min(first_seen) AS first_seen,
-        max(last_seen) AS last_seen
+        max(last_seen) AS last_seen,
+        max(last_not_after) AS last_not_after,
+        max(last_ingested_at) AS last_ingested_at
     FROM ctlogs.hostnames
     WHERE cityHash64(registered_domain) %% %(shard_count)s = %(shard_index)s
       AND registered_domain IN
@@ -65,10 +72,66 @@ FROM
         fqdn
 )
 WHERE is_wildcard = 0
+  AND last_ingested_at <= %(ct_ingested_through)s
+  AND
+  (
+      %(is_bootstrap)s = 1
+      OR last_ingested_at > %(ct_ingested_after)s
+      OR registered_domain IN
+      (
+          SELECT DISTINCT root_domain
+          FROM corpscout.commoncrawl_domains
+          WHERE root_domain != ''
+            AND cityHash64(root_domain) %% %(shard_count)s = %(shard_index)s
+            AND resolved_at > %(domains_resolved_after)s
+            AND resolved_at <= %(domains_resolved_through)s
+      )
+  )
   AND domain_normalized != ''
   AND fqdn_normalized != domain_normalized
   AND endsWith(fqdn_normalized, concat('.', domain_normalized))
   AND position(fqdn_normalized, '*') = 0
+"""
+
+CT_HOSTNAME_SYNC_STATE_SQL = """
+SELECT
+    count() AS state_rows,
+    max(ct_ingested_through) AS ct_ingested_through,
+    max(domains_resolved_through) AS domains_resolved_through
+FROM corpscout.commoncrawl_domain_hostname_sync_state
+WHERE shard_index = %(shard_index)s
+"""
+
+CT_HOSTNAME_WATERMARKS_SQL = """
+SELECT
+    (
+        SELECT max(last_ingested_at)
+        FROM ctlogs.hostnames
+        WHERE cityHash64(registered_domain) %% %(shard_count)s = %(shard_index)s
+    ) AS ct_ingested_through,
+    (
+        SELECT max(resolved_at)
+        FROM corpscout.commoncrawl_domains
+        WHERE root_domain != ''
+          AND cityHash64(root_domain) %% %(shard_count)s = %(shard_index)s
+    ) AS domains_resolved_through
+"""
+
+CT_HOSTNAME_SYNC_CHECKPOINT_SQL = """
+INSERT INTO corpscout.commoncrawl_domain_hostname_sync_state
+(
+    shard_index,
+    ct_ingested_through,
+    domains_resolved_through,
+    completed_at,
+    completed_run
+)
+SELECT
+    %(shard_index)s,
+    %(ct_ingested_through)s,
+    %(domains_resolved_through)s,
+    %(completed_at)s,
+    argMaxState(%(run_id)s, %(completed_at)s)
 """
 
 
@@ -91,7 +154,7 @@ def commoncrawl_domain_hostnames(
 ) -> dg.MaterializeResult:
     """Merge one CT hostname shard into the Common Crawl hostname inventory."""
     shard_index = ct_hostname_shard_index(context.partition_key)
-    parameters = {
+    shard_parameters = {
         "shard_count": CT_HOSTNAME_SHARD_COUNT,
         "shard_index": shard_index,
     }
@@ -102,17 +165,60 @@ def commoncrawl_domain_hostnames(
         shard_index,
     )
     with clickhouse.get_connection() as client:
-        client.execute(CT_HOSTNAME_UPSERT_SQL, parameters)
+        state_rows, ct_ingested_after, domains_resolved_after = client.execute(
+            CT_HOSTNAME_SYNC_STATE_SQL,
+            {"shard_index": shard_index},
+        )[0]
+        bootstrap = state_rows == 0
+        ct_ingested_after = ct_ingested_after or EPOCH
+        domains_resolved_after = domains_resolved_after or EPOCH
+
+        ct_ingested_through, domains_resolved_through = client.execute(
+            CT_HOSTNAME_WATERMARKS_SQL,
+            shard_parameters,
+        )[0]
+        ct_ingested_through = ct_ingested_through or ct_ingested_after
+        domains_resolved_through = domains_resolved_through or domains_resolved_after
+
+        upsert_parameters = {
+            **shard_parameters,
+            "is_bootstrap": int(bootstrap),
+            "ct_ingested_after": ct_ingested_after,
+            "ct_ingested_through": ct_ingested_through,
+            "domains_resolved_after": domains_resolved_after,
+            "domains_resolved_through": domains_resolved_through,
+        }
+        client.execute(CT_HOSTNAME_UPSERT_SQL, upsert_parameters)
         progress = client.last_query.progress
+        written_rows = progress.written_rows
+        written_bytes = progress.written_bytes
+        elapsed_seconds = client.last_query.elapsed
+
+        completed_at = datetime.now(UTC)
+        client.execute(
+            CT_HOSTNAME_SYNC_CHECKPOINT_SQL,
+            {
+                "shard_index": shard_index,
+                "ct_ingested_through": ct_ingested_through,
+                "domains_resolved_through": domains_resolved_through,
+                "completed_at": completed_at,
+                "run_id": context.run.run_id,
+            },
+        )
         metadata = {
             "source_table": "ctlogs.hostnames",
             "membership_table": "corpscout.commoncrawl_domains",
             "destination_table": "corpscout.commoncrawl_domain_hostnames",
             "shard_index": shard_index,
             "shard_count": CT_HOSTNAME_SHARD_COUNT,
-            "written_rows": progress.written_rows,
-            "written_bytes": progress.written_bytes,
-            "elapsed_seconds": client.last_query.elapsed,
+            "bootstrap": bootstrap,
+            "ct_ingested_after": ct_ingested_after.isoformat(),
+            "ct_ingested_through": ct_ingested_through.isoformat(),
+            "domains_resolved_after": domains_resolved_after.isoformat(),
+            "domains_resolved_through": domains_resolved_through.isoformat(),
+            "written_rows": written_rows,
+            "written_bytes": written_bytes,
+            "elapsed_seconds": elapsed_seconds,
         }
 
     context.log.info(
