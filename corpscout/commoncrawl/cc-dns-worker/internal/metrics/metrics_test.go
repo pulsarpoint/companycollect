@@ -15,21 +15,15 @@ func TestLineComputesRates(t *testing.T) {
 		Domains: 1000, DomainErrors: 50, // +600 domains in 5s => 120/s, 5% err
 		Records: 18000, // +10000 records in 5s => 2000/s
 	}
-	line := Line(prev, cur, start)
+	line := Line(prev, cur)
 
 	for _, want := range []string{
-		"elapsed=15s",
 		"domains=1000",
-		"120/s",    // interval domains/sec (600/5)
-		"avg 67/s", // cumulative: 1000/15 = 66.7 -> 67
 		"records=18000",
-		"2000/s",
-		"18.0/domain",
-		"queries=10000",
-		"1000/s",      // interval queries/sec (5000/5)
-		"10.0/domain", // 10000/1000
-		"queries=200 (2.0%)",
-		"domains=50 (5.0%)",
+		"dns_err=2.00%",
+		"axfr_try=0",
+		"axfr_ok=0",
+		"dps=120",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line missing %q\n  got: %s", want, line)
@@ -40,8 +34,8 @@ func TestLineComputesRates(t *testing.T) {
 func TestLineZeroSafe(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
 	// No progress yet: no divide-by-zero, percentages 0.
-	line := Line(Snapshot{At: start}, Snapshot{At: start}, start)
-	if !strings.Contains(line, "domains=0") || !strings.Contains(line, "queries=0 (0.0%)") {
+	line := Line(Snapshot{At: start}, Snapshot{At: start})
+	if !strings.Contains(line, "domains=0") || !strings.Contains(line, "dns_err=0.00%") {
 		t.Errorf("zero snapshot line wrong: %s", line)
 	}
 }
@@ -52,8 +46,11 @@ func TestSnapshotReadsCounters(t *testing.T) {
 	s.Domains.Add(3)
 	s.DomainErrors.Add(1)
 	s.Records.Add(11)
+	s.AXFRPullsTried.Add(5)
+	s.AXFRPullsSuccessful.Add(2)
 	snap := s.Snapshot(time.Unix(0, 0).UTC())
-	if snap.Queries != 7 || snap.Domains != 3 || snap.DomainErrors != 1 || snap.Records != 11 {
+	if snap.Queries != 7 || snap.Domains != 3 || snap.DomainErrors != 1 || snap.Records != 11 ||
+		snap.AXFRPullsTried != 5 || snap.AXFRPullsSuccessful != 2 {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 }

@@ -58,7 +58,7 @@ func runBoundedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error
 	})
 	group.Go(func() error { return dnsFlushLoop(groupContext, st, cfg) })
 	if cfg.axfr {
-		group.Go(func() error { return boundedAXFRWorkLoop(groupContext, st, cfg) })
+		group.Go(func() error { return boundedAXFRWorkLoop(groupContext, st, cfg, stats) })
 		group.Go(func() error { return axfrFlushLoop(groupContext, st, cfg) })
 	}
 	if cfg.statsInterval > 0 {
@@ -252,7 +252,7 @@ func dnsFlushLoop(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	}
 }
 
-func boundedAXFRWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig) error {
+func boundedAXFRWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig, stats *metrics.Stats) error {
 	axfrScheduler := scheduler.New(scheduler.Config{
 		PerServerQPS: cfg.axfrQPS, Burst: max(1, int(cfg.axfrQPS)), MaxInFlight: 1,
 	})
@@ -277,7 +277,7 @@ func boundedAXFRWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig) e
 			}
 			continue
 		}
-		for _, result := range probeAXFRBatch(ctx, prober, targets, cfg.axfrWorkers) {
+		for _, result := range probeAXFRBatch(ctx, prober, stats, targets, cfg.axfrWorkers) {
 			if err := st.CommitAXFR(ctx, cfg.scanID, result.domain, result.probes, result.zone, ""); err != nil {
 				return fmt.Errorf("commit AXFR result for %s: %w", result.domain, err)
 			}
@@ -293,13 +293,13 @@ func boundedStatsLoop(ctx context.Context, st *store.Store, cfg scanConfig, reso
 		}
 		now := time.Now().UTC()
 		current := resolverStats.Snapshot(now)
-		slog.Info(metrics.Line(previous, current, startedAt), "scan_id", cfg.scanID)
+		slog.Info(metrics.Line(previous, current), "scan_id", cfg.scanID)
 		previous = current
 		stats, err := st.OperationalStats(ctx, cfg.scanID)
 		if err != nil {
 			return fmt.Errorf("read operational stats: %w", err)
 		}
-		slog.Info("bounded SQLite status",
+		slog.Debug("bounded SQLite status",
 			"scan_id", cfg.scanID, "domain_cursor", stats.Source.Cursor,
 			"input_domains_fetched", stats.Source.DomainsFetched,
 			"source_exhausted", stats.Source.SourceExhausted,
@@ -325,7 +325,7 @@ func boundedStatsLoop(ctx context.Context, st *store.Store, cfg scanConfig, reso
 	}
 }
 
-func probeAXFRBatch(ctx context.Context, prober axfrProber, targets []store.BoundedAXFRTarget, workerLimit int) []axfrDomainResult {
+func probeAXFRBatch(ctx context.Context, prober axfrProber, stats *metrics.Stats, targets []store.BoundedAXFRTarget, workerLimit int) []axfrDomainResult {
 	workers := min(max(workerLimit, 1), len(targets))
 	work := make(chan store.BoundedAXFRTarget)
 	results := make(chan axfrDomainResult, len(targets))
@@ -335,7 +335,7 @@ func probeAXFRBatch(ctx context.Context, prober axfrProber, targets []store.Boun
 			for target := range work {
 				results <- processAXFRTarget(ctx, prober, store.AXFRTarget{
 					RootDomain: target.RootDomain, Endpoints: target.Endpoints,
-				})
+				}, stats)
 			}
 			return nil
 		})

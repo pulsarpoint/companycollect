@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"cc-dns-worker/internal/metrics"
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/resolve"
 	"cc-dns-worker/internal/scheduler"
@@ -23,7 +24,7 @@ type axfrDomainResult struct {
 
 // processAXFRTarget probes each dialable, non-hyperscaler IP once while preserving every NS hostname
 // endpoint identity in the local result.
-func processAXFRTarget(ctx context.Context, prober axfrProber, target store.AXFRTarget) axfrDomainResult {
+func processAXFRTarget(ctx context.Context, prober axfrProber, target store.AXFRTarget, stats *metrics.Stats) axfrDomainResult {
 	now := time.Now().UTC()
 	var zone []model.DNSRecord
 	var probes []resolve.AXFROutcome
@@ -34,7 +35,11 @@ func processAXFRTarget(ctx context.Context, prober axfrProber, target store.AXFR
 		}
 		outcome, exists := probesByIP[endpoint.IP]
 		if !exists {
+			stats.AXFRPullsTried.Add(1)
 			outcome = prober.ProbeServer(ctx, target.RootDomain, endpoint.Name, endpoint.IP)
+			if outcome.IsOpen() && !outcome.Truncated {
+				stats.AXFRPullsSuccessful.Add(1)
+			}
 			probesByIP[endpoint.IP] = outcome
 		}
 		outcome.NSHost, outcome.NSIP = endpoint.Name, endpoint.IP
