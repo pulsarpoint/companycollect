@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "crawl_id": "CC-MAIN-2026-25",
+  "selection": "tech25",
+  "part": 0,
+  "processor": "tech",
+  "processing_version": "fast-v2",
+  "git_commit": "0123456789abcdef",
+  "run_id": "process-run-1",
+  "worker_host": "enrich-tech-2",
+  "pid": 18422,
+  "input_ready_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "started_at": "2026-07-11T18:00:00Z",
+  "heartbeat_at": "2026-07-11T18:07:00Z",
+  "lease_expires_at": "2026-07-11T18:12:00Z"
+}

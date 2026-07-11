@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "crawl_id": "CC-MAIN-2026-25",
+  "selection": "tech25",
+  "part": 0,
+  "processor": "tech",
+  "processing_version": "fast-v2",
+  "git_commit": "0123456789abcdef",
+  "run_id": "process-run-1",
+  "worker_host": "enrich-tech-2",
+  "input_ready_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "input_manifests": [
+    {
+      "chunk": 0,
+      "manifest_key": "commoncrawl/raw/crawl=CC-MAIN-2026-25/selection=tech25/part=000/chunk=000000/manifest.json",
+      "manifest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "counts": {
+    "input_records": 4,
+    "downloaded_records": 3,
+    "failed_records": 1,
+    "processed_records": 2,
+    "skipped_records": 1
+  },
+  "outputs": [
+    {
+      "name": "domains",
+      "location": "/data/CC-MAIN-2026-25/crawl/out_tech_0/domains.parquet",
+      "size_bytes": 2048,
+      "row_count": 2,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  ],
+  "started_at": "2026-07-11T18:00:00Z",
+  "completed_at": "2026-07-11T18:20:00Z"
+}
