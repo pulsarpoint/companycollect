@@ -131,7 +131,7 @@ SELECT
     %(ct_ingested_through)s,
     %(domains_resolved_through)s,
     %(completed_at)s,
-    argMaxState(%(run_id)s, %(completed_at)s)
+    argMaxState(toString(%(run_id)s), toDateTime64(%(completed_at)s, 3, 'UTC'))
 """
 
 
@@ -202,7 +202,7 @@ def commoncrawl_domain_hostnames(
                 "ct_ingested_through": ct_ingested_through,
                 "domains_resolved_through": domains_resolved_through,
                 "completed_at": completed_at,
-                "run_id": context.run.run_id,
+                "run_id": context.run_id,
             },
         )
         metadata = {

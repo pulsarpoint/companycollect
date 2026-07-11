@@ -58,8 +58,11 @@ func runBoundedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error
 	})
 	group.Go(func() error { return dnsFlushLoop(groupContext, st, cfg) })
 	if cfg.axfr {
-		group.Go(func() error { return boundedAXFRWorkLoop(groupContext, st, cfg, stats) })
+		group.Go(func() error { return boundedAXFRWorkLoop(groupContext, st, cfg) })
 		group.Go(func() error { return axfrFlushLoop(groupContext, st, cfg) })
+	}
+	if cfg.statsInterval > 0 {
+		group.Go(func() error { return boundedStatsLoop(groupContext, st, cfg) })
 	}
 	if err := group.Wait(); err != nil {
 		return err
@@ -244,14 +247,13 @@ func dnsFlushLoop(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	}
 }
 
-func boundedAXFRWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig, stats *metrics.Stats) error {
+func boundedAXFRWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig) error {
 	axfrScheduler := scheduler.New(scheduler.Config{
 		PerServerQPS: cfg.axfrQPS, Burst: max(1, int(cfg.axfrQPS)), MaxInFlight: 1,
 	})
 	prober := resolve.NewAXFRProber(axfrScheduler, resolve.AXFRCaps{
 		MaxRecords: cfg.axfrMaxRecords, MaxBytes: cfg.axfrMaxBytes, Deadline: cfg.axfrTimeout,
 	}, cfg.axfrInflight)
-	_ = stats
 	for {
 		targets, err := st.ClaimAXFR(ctx, cfg.scanID, cfg.axfrClaimBatch)
 		if err != nil {
@@ -270,15 +272,77 @@ func boundedAXFRWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig, s
 			}
 			continue
 		}
-		for _, target := range targets {
-			result := processAXFRTarget(ctx, prober, store.AXFRTarget{
-				RootDomain: target.RootDomain, Endpoints: target.Endpoints,
-			})
-			if err := st.CommitAXFR(ctx, cfg.scanID, target.RootDomain, result.probes, result.zone, ""); err != nil {
-				return fmt.Errorf("commit AXFR result for %s: %w", target.RootDomain, err)
+		for _, result := range probeAXFRBatch(ctx, prober, targets, cfg.axfrWorkers) {
+			if err := st.CommitAXFR(ctx, cfg.scanID, result.domain, result.probes, result.zone, ""); err != nil {
+				return fmt.Errorf("commit AXFR result for %s: %w", result.domain, err)
 			}
 		}
 	}
+}
+
+func boundedStatsLoop(ctx context.Context, st *store.Store, cfg scanConfig) error {
+	for {
+		if err := waitInterval(ctx, cfg.statsInterval); err != nil {
+			return err
+		}
+		stats, err := st.OperationalStats(ctx, cfg.scanID)
+		if err != nil {
+			return fmt.Errorf("read operational stats: %w", err)
+		}
+		slog.Info("bounded pipeline status",
+			"scan_id", cfg.scanID, "domain_cursor", stats.Source.Cursor,
+			"domains_fetched", stats.Source.DomainsFetched,
+			"source_exhausted", stats.Source.SourceExhausted,
+			"dns_pending", stats.DNS.Pending, "dns_running", stats.DNS.Running,
+			"dns_ready", stats.DNS.Ready, "dns_records", stats.DNSRecords,
+			"axfr_pending", stats.AXFR.Pending, "axfr_running", stats.AXFR.Running,
+			"axfr_ready", stats.AXFR.Ready, "axfr_probes", stats.AXFRProbes,
+			"axfr_zone_records", stats.AXFRZoneRecords, "sqlite_pages", stats.PageCount,
+			"sqlite_free_pages", stats.FreePages, "sqlite_wal_bytes", stats.WALBytes,
+		)
+		var done bool
+		if cfg.axfr {
+			done, err = axfrDrainDone(ctx, st, cfg.scanID)
+		} else {
+			done, err = dnsDrainDone(ctx, st, cfg.scanID)
+		}
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+	}
+}
+
+func probeAXFRBatch(ctx context.Context, prober axfrProber, targets []store.BoundedAXFRTarget, workerLimit int) []axfrDomainResult {
+	workers := min(max(workerLimit, 1), len(targets))
+	work := make(chan store.BoundedAXFRTarget)
+	results := make(chan axfrDomainResult, len(targets))
+	var group errgroup.Group
+	for range workers {
+		group.Go(func() error {
+			for target := range work {
+				results <- processAXFRTarget(ctx, prober, store.AXFRTarget{
+					RootDomain: target.RootDomain, Endpoints: target.Endpoints,
+				})
+			}
+			return nil
+		})
+	}
+	go func() {
+		for _, target := range targets {
+			work <- target
+		}
+		close(work)
+		_ = group.Wait()
+		close(results)
+	}()
+	out := make([]axfrDomainResult, 0, len(targets))
+	for result := range results {
+		out = append(out, result)
+	}
+	return out
 }
 
 func axfrFlushLoop(ctx context.Context, st *store.Store, cfg scanConfig) error {

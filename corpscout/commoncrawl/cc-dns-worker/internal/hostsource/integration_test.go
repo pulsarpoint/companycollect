@@ -86,7 +86,7 @@ func TestFetchCapKeepsAXFRBeforeCT(t *testing.T) {
 		_ = conn.Close()
 	})
 	for index := range 3 {
-		insertRegistry(t, ctx, conn, rootDomain, fmt.Sprintf("axfr-%d", index), "axfr", time.Time{})
+		insertRegistry(t, ctx, conn, rootDomain, fmt.Sprintf("axfr-%d", index), "axfr", time.Unix(0, 0).UTC())
 	}
 	for index := range 20 {
 		insertRegistry(t, ctx, conn, rootDomain, fmt.Sprintf("ct-%d", index), "ct", time.Now().Add(time.Hour))

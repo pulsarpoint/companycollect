@@ -14,9 +14,8 @@ Usage:
   cc-dns-worker <command> [flags]
 
 Commands:
-  scan   resolve domains from ClickHouse into a durable SQLite stage (resumable)
-  load   bulk-copy the SQLite stage into corpscout ClickHouse tables
-  run    continuous orchestrator: scan -> incrementally load -> repeat, crash-safe
+  scan   run one bounded, resumable DNS + AXFR cycle
+  run    continuously run bounded, resumable cycles
 
 Run "cc-dns-worker <command> -h" for that command's flags.
 `)
@@ -31,11 +30,6 @@ func main() {
 	case "scan":
 		if err := runScan(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "scan:", err)
-			os.Exit(1)
-		}
-	case "load":
-		if err := runLoad(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "load:", err)
 			os.Exit(1)
 		}
 	case "run":

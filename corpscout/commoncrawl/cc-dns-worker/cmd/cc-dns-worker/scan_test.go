@@ -11,7 +11,6 @@ import (
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/records"
 	"cc-dns-worker/internal/resolve"
-	"cc-dns-worker/internal/store"
 
 	"github.com/miekg/dns"
 )
@@ -93,24 +92,6 @@ func TestRunScanRequiresResolversByDefault(t *testing.T) {
 	err := runScan([]string{"-db", dbPath}) // no -resolvers at all
 	if err == nil || !strings.Contains(err.Error(), "--resolvers is required") {
 		t.Fatalf("runScan without --resolvers: want '--resolvers is required' error, got %v", err)
-	}
-}
-
-// TestHostnamesForBatchEmpty proves that a scan explicitly run with --host-enrich=false can read an
-// empty hostname set without erroring or panicking, so the feeder's per-batch bulk-load remains a
-// safe no-op.
-func TestHostnamesForBatchEmpty(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	m, err := st.HostnamesForBatch(context.Background(), "s1", []string{"example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(m) != 0 {
-		t.Fatalf("want empty map, got %+v", m)
 	}
 }
 
