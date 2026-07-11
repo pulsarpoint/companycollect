@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"cc-dns-worker/internal/model"
-	"cc-dns-worker/internal/resolve"
 )
 
 const boundedSchema = `
@@ -18,6 +17,11 @@ CREATE TABLE IF NOT EXISTS scan_state (
   domain_cursor    TEXT NOT NULL DEFAULT '',
   source_exhausted INTEGER NOT NULL DEFAULT 0,
   domains_fetched  INTEGER NOT NULL DEFAULT 0,
+  domains_processed INTEGER NOT NULL DEFAULT 0,
+  domain_errors    INTEGER NOT NULL DEFAULT 0,
+  records_observed INTEGER NOT NULL DEFAULT 0,
+  dns_checks       INTEGER NOT NULL DEFAULT 0,
+  dns_checks_ok    INTEGER NOT NULL DEFAULT 0,
   started_at       TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS dns_work (
@@ -63,48 +67,6 @@ CREATE TABLE IF NOT EXISTS dns_records (
   resolved_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_dns_records_work ON dns_records (scan_id, root_domain);
-CREATE TABLE IF NOT EXISTS axfr_work (
-  scan_id                TEXT NOT NULL,
-  root_domain            TEXT NOT NULL,
-  ns_endpoints_json      TEXT NOT NULL,
-  delegation_observed_at TEXT NOT NULL,
-  status                 TEXT NOT NULL DEFAULT 'pending',
-  error                  TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (scan_id, root_domain)
-);
-CREATE INDEX IF NOT EXISTS idx_axfr_work_status ON axfr_work (scan_id, status, root_domain);
-CREATE TABLE IF NOT EXISTS axfr_probes (
-  scan_id       TEXT NOT NULL,
-  root_domain   TEXT NOT NULL,
-  name_server   TEXT NOT NULL,
-  name_server_ip TEXT NOT NULL,
-  verdict       TEXT NOT NULL,
-  reason        TEXT NOT NULL,
-  records       INTEGER NOT NULL DEFAULT 0,
-  bytes         INTEGER NOT NULL DEFAULT 0,
-  truncated     INTEGER NOT NULL DEFAULT 0,
-  observed_at   TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_axfr_probes_work ON axfr_probes (scan_id, root_domain);
-CREATE TABLE IF NOT EXISTS axfr_zone_records (
-  scan_id       TEXT NOT NULL,
-  root_domain   TEXT NOT NULL,
-  name          TEXT NOT NULL,
-  record_type   TEXT NOT NULL,
-  record_type_code INTEGER NOT NULL DEFAULT 0,
-  record_class_code INTEGER NOT NULL DEFAULT 0,
-  slot          TEXT NOT NULL DEFAULT '',
-  value         TEXT NOT NULL,
-  rdata_wire    BLOB NOT NULL DEFAULT X'',
-  ttl           INTEGER NOT NULL DEFAULT 0,
-  priority      INTEGER NOT NULL DEFAULT 0,
-  rcode         TEXT NOT NULL DEFAULT '',
-  discovery     TEXT NOT NULL DEFAULT 'axfr',
-  name_server   TEXT NOT NULL DEFAULT '',
-  name_server_ip TEXT NOT NULL DEFAULT '',
-  observed_at   TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_axfr_zone_records_work ON axfr_zone_records (scan_id, root_domain);
 `
 
 type SourceState struct {
@@ -118,6 +80,15 @@ type WorkCounts struct {
 	Pending int
 	Running int
 	Ready   int
+}
+
+// CumulativeStats are committed with DNS results and survive worker restarts.
+type CumulativeStats struct {
+	Domains      int64
+	DomainErrors int64
+	Records      int64
+	DNSChecks    int64
+	DNSChecksOK  int64
 }
 
 // BeginCycle creates the single durable source cursor for a scan without changing an existing cycle.
@@ -200,14 +171,13 @@ func (s *Store) DNSWorkCounts(ctx context.Context, scanID string) (WorkCounts, e
 	return workCounts(ctx, s.db, "dns_work", scanID)
 }
 
-func (s *Store) AXFRWorkCounts(ctx context.Context, scanID string) (WorkCounts, error) {
-	return workCounts(ctx, s.db, "axfr_work", scanID)
-}
-
-func (s *Store) AXFRWorkCount(ctx context.Context, scanID string) (int, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM axfr_work WHERE scan_id = ?`, scanID).Scan(&count)
-	return count, err
+func (s *Store) CumulativeStats(ctx context.Context, scanID string) (CumulativeStats, error) {
+	var stats CumulativeStats
+	err := s.db.QueryRowContext(ctx, `SELECT domains_processed, domain_errors, records_observed,
+		dns_checks, dns_checks_ok FROM scan_state WHERE scan_id = ?`, scanID).Scan(
+		&stats.Domains, &stats.DomainErrors, &stats.Records, &stats.DNSChecks, &stats.DNSChecksOK,
+	)
+	return stats, err
 }
 
 func (s *Store) CheckpointWAL(ctx context.Context) error {
@@ -226,10 +196,7 @@ func workCounts(ctx context.Context, db *sql.DB, table, scanID string) (WorkCoun
 }
 
 func (s *Store) ResetRunning(ctx context.Context, scanID string) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE dns_work SET status = 'pending' WHERE scan_id = ? AND status = 'running'`, scanID); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx, `UPDATE axfr_work SET status = 'pending' WHERE scan_id = ? AND status = 'running'`, scanID)
+	_, err := s.db.ExecContext(ctx, `UPDATE dns_work SET status = 'pending' WHERE scan_id = ? AND status = 'running'`, scanID)
 	return err
 }
 
@@ -279,8 +246,8 @@ func claimRoots(ctx context.Context, db *sql.DB, table, scanID string, limit int
 	return roots, tx.Commit()
 }
 
-// CommitDNS atomically stores the DNS outbox, marks work ready, and creates independent AXFR work.
-func (s *Store) CommitDNS(ctx context.Context, result model.DomainResult, enqueueAXFR bool) error {
+// CommitDNS atomically stores the DNS outbox and marks the domain ready for ClickHouse.
+func (s *Store) CommitDNS(ctx context.Context, result model.DomainResult) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -320,17 +287,13 @@ func (s *Store) CommitDNS(ctx context.Context, result model.DomainResult, enqueu
 	if rows, err := updated.RowsAffected(); err != nil || rows != 1 {
 		return fmt.Errorf("commit DNS %q: work is not running", result.RootDomain)
 	}
-	delegationTrustworthy := result.Status != model.DomainStatusError && len(result.Endpoints) > 0
-	if enqueueAXFR && delegationTrustworthy {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO axfr_work
-			(scan_id, root_domain, ns_endpoints_json, delegation_observed_at, status)
-			VALUES (?, ?, ?, ?, 'pending') ON CONFLICT(scan_id, root_domain) DO UPDATE SET
-			ns_endpoints_json = excluded.ns_endpoints_json,
-			delegation_observed_at = excluded.delegation_observed_at,
-			status = CASE WHEN axfr_work.status = 'ready' THEN axfr_work.status ELSE 'pending' END`,
-			result.ScanID, result.RootDomain, string(endpoints), observedAt); err != nil {
-			return err
-		}
+	if _, err := tx.ExecContext(ctx, `UPDATE scan_state SET
+		domains_processed = domains_processed + 1,
+		domain_errors = domain_errors + ?, records_observed = records_observed + ?,
+		dns_checks = dns_checks + ?, dns_checks_ok = dns_checks_ok + ? WHERE scan_id = ?`,
+		b2i(len(result.Records) == 0), len(result.Records), result.QueriesTotal, result.QueriesOK,
+		result.ScanID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -517,207 +480,4 @@ func rootsQuery(format, scanID string, roots []string) (string, []any) {
 		args = append(args, root)
 	}
 	return fmt.Sprintf(format, placeholders), args
-}
-
-type BoundedAXFRTarget struct {
-	RootDomain           string
-	Endpoints            []model.NameserverEndpoint
-	DelegationObservedAt time.Time
-}
-
-func (s *Store) ClaimAXFR(ctx context.Context, scanID string, limit int) ([]BoundedAXFRTarget, error) {
-	roots, err := claimRoots(ctx, s.db, "axfr_work", scanID, limit)
-	if err != nil || len(roots) == 0 {
-		return nil, err
-	}
-	query, args := rootsQuery(`SELECT root_domain, ns_endpoints_json, delegation_observed_at
-		FROM axfr_work WHERE scan_id = ? AND root_domain IN (%s) ORDER BY root_domain`, scanID, roots)
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var targets []BoundedAXFRTarget
-	for rows.Next() {
-		var target BoundedAXFRTarget
-		var endpoints, observedAt string
-		if err := rows.Scan(&target.RootDomain, &endpoints, &observedAt); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(endpoints), &target.Endpoints); err != nil {
-			return nil, err
-		}
-		target.DelegationObservedAt = parseTS(observedAt)
-		targets = append(targets, target)
-	}
-	return targets, rows.Err()
-}
-
-func (s *Store) CommitAXFR(ctx context.Context, scanID, rootDomain string, probes []resolve.AXFROutcome, zone []model.DNSRecord, errMessage string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM axfr_probes WHERE scan_id = ? AND root_domain = ?`, scanID, rootDomain); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM axfr_zone_records WHERE scan_id = ? AND root_domain = ?`, scanID, rootDomain); err != nil {
-		return err
-	}
-	for _, probe := range probes {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO axfr_probes
-			(scan_id, root_domain, name_server, name_server_ip, verdict, reason, records, bytes, truncated, observed_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, scanID, rootDomain, probe.NSHost, probe.NSIP,
-			string(probe.Verdict), string(probe.Reason), probe.Records, probe.Bytes, b2i(probe.Truncated),
-			probe.ObservedAt.UTC().Format(time.RFC3339Nano)); err != nil {
-			return err
-		}
-	}
-	observedAt := ""
-	for _, record := range zone {
-		for _, probe := range probes {
-			if probe.IsOpen() {
-				observedAt = probe.ObservedAt.UTC().Format(time.RFC3339Nano)
-				break
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO axfr_zone_records
-			(scan_id, root_domain, name, record_type, record_type_code, record_class_code, slot, value,
-			rdata_wire, ttl, priority, rcode, discovery, name_server, name_server_ip, observed_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, scanID, rootDomain, record.Name,
-			record.RecordType, record.TypeCode, record.ClassCode, record.Slot, record.Value,
-			[]byte(record.RDataWire), record.TTL, record.Priority, record.Rcode, record.Discovery,
-			record.NameServer, record.NameServerIP, observedAt); err != nil {
-			return err
-		}
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE axfr_work SET status = 'ready', error = ?
-		WHERE scan_id = ? AND root_domain = ? AND status = 'running'`, errMessage, scanID, rootDomain)
-	if err != nil {
-		return err
-	}
-	if rows, err := result.RowsAffected(); err != nil || rows != 1 {
-		return fmt.Errorf("commit AXFR %q: work is not running", rootDomain)
-	}
-	return tx.Commit()
-}
-
-type ReadyAXFRJob struct {
-	BoundedAXFRTarget
-	Probes []resolve.AXFROutcome
-	Zone   []model.DNSRecord
-}
-
-func (s *Store) ReadyAXFR(ctx context.Context, scanID string, limit int) ([]ReadyAXFRJob, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT root_domain, ns_endpoints_json, delegation_observed_at
-		FROM axfr_work WHERE scan_id = ? AND status = 'ready' ORDER BY root_domain LIMIT ?`, scanID, limit)
-	if err != nil {
-		return nil, err
-	}
-	var jobs []ReadyAXFRJob
-	for rows.Next() {
-		var job ReadyAXFRJob
-		var endpoints, observedAt string
-		if err := rows.Scan(&job.RootDomain, &endpoints, &observedAt); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(endpoints), &job.Endpoints); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		job.DelegationObservedAt = parseTS(observedAt)
-		jobs = append(jobs, job)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
-	if len(jobs) == 0 {
-		return nil, nil
-	}
-	byRoot := make(map[string]*ReadyAXFRJob, len(jobs))
-	roots := make([]string, len(jobs))
-	for index := range jobs {
-		byRoot[jobs[index].RootDomain] = &jobs[index]
-		roots[index] = jobs[index].RootDomain
-	}
-	query, args := rootsQuery(`SELECT root_domain, name_server, name_server_ip, verdict, reason,
-		records, bytes, truncated, observed_at FROM axfr_probes
-		WHERE scan_id = ? AND root_domain IN (%s)`, scanID, roots)
-	probeRows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	for probeRows.Next() {
-		var rootDomain, verdict, reason, observedAt string
-		var probe resolve.AXFROutcome
-		var truncated int
-		if err := probeRows.Scan(&rootDomain, &probe.NSHost, &probe.NSIP, &verdict, &reason,
-			&probe.Records, &probe.Bytes, &truncated, &observedAt); err != nil {
-			probeRows.Close()
-			return nil, err
-		}
-		probe.Verdict = resolve.AXFRVerdict(verdict)
-		probe.Reason = resolve.AXFRReason(reason)
-		probe.Truncated = truncated != 0
-		probe.ObservedAt = parseTS(observedAt)
-		byRoot[rootDomain].Probes = append(byRoot[rootDomain].Probes, probe)
-	}
-	if err := probeRows.Err(); err != nil {
-		probeRows.Close()
-		return nil, err
-	}
-	probeRows.Close()
-	query, args = rootsQuery(`SELECT root_domain, name, record_type, record_type_code,
-		record_class_code, slot, value, rdata_wire, ttl, priority, rcode, discovery, name_server,
-		name_server_ip FROM axfr_zone_records WHERE scan_id = ? AND root_domain IN (%s)`, scanID, roots)
-	zoneRows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	for zoneRows.Next() {
-		var rootDomain string
-		var record model.DNSRecord
-		var rdataWire []byte
-		if err := zoneRows.Scan(&rootDomain, &record.Name, &record.RecordType, &record.TypeCode,
-			&record.ClassCode, &record.Slot, &record.Value, &rdataWire, &record.TTL, &record.Priority,
-			&record.Rcode, &record.Discovery, &record.NameServer, &record.NameServerIP); err != nil {
-			zoneRows.Close()
-			return nil, err
-		}
-		record.RDataWire = string(rdataWire)
-		record.Source = "axfr"
-		byRoot[rootDomain].Zone = append(byRoot[rootDomain].Zone, record)
-	}
-	if err := zoneRows.Err(); err != nil {
-		zoneRows.Close()
-		return nil, err
-	}
-	zoneRows.Close()
-	return jobs, nil
-}
-
-func (s *Store) AcknowledgeAXFR(ctx context.Context, scanID string, roots []string) error {
-	if len(roots) == 0 {
-		return nil
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, table := range []string{"axfr_probes", "axfr_zone_records"} {
-		query, args := rootsQuery(`DELETE FROM `+table+` WHERE scan_id = ? AND root_domain IN (%s)`, scanID, roots)
-		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-			return err
-		}
-	}
-	query, args := rootsQuery(`DELETE FROM axfr_work WHERE scan_id = ? AND status = 'ready' AND root_domain IN (%s)`, scanID, roots)
-	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-		return err
-	}
-	return tx.Commit()
 }

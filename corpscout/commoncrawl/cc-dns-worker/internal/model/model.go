@@ -47,46 +47,6 @@ type NameserverEndpoint struct {
 	Dialable bool   // true only when Scope is publicly dialable (resolve.Dialable(scope))
 }
 
-// AXFRLatestRow mirrors corpscout.dns_axfr_latest: one row per AXFR-probed endpoint (root_domain,
-// name_server, name_server_ip) carrying its most recent probe and its most recent DEFINITIVE state,
-// tracked separately because an unknown probe must update the former without ever touching the latter.
-// HasDefinitiveState/AXFROpen/DefinitiveAt/DefinitiveScanID describe the last probe that reached open
-// or closed; LastProbeVerdict/LastProbeReason/LastProbedAt describe the most recent probe of any kind
-// (including unknown). DelegationActive is whether this (host, ip) is still part of the domain's
-// current NS delegation as of this scan; DelegationSeenAt is when it was last seen active. Field order
-// matches the CREATE TABLE column order (the ch tags drive `insert`'s column list from struct order).
-type AXFRLatestRow struct {
-	RootDomain         string    `ch:"root_domain"`
-	NameServer         string    `ch:"name_server"`
-	NameServerIP       string    `ch:"name_server_ip"`
-	UpdatedAt          time.Time `ch:"updated_at"`
-	DelegationActive   uint8     `ch:"delegation_active"`
-	DelegationSeenAt   time.Time `ch:"delegation_seen_at"`
-	LastProbeVerdict   string    `ch:"last_probe_verdict"`
-	LastProbeReason    string    `ch:"last_probe_reason"`
-	LastProbedAt       time.Time `ch:"last_probed_at"`
-	LastProbeRecords   uint64    `ch:"last_probe_records"`
-	LastProbeBytes     uint64    `ch:"last_probe_bytes"`
-	LastProbeTruncated uint8     `ch:"last_probe_truncated"`
-	HasDefinitiveState uint8     `ch:"has_definitive_state"`
-	AXFROpen           uint8     `ch:"axfr_open"`
-	DefinitiveAt       time.Time `ch:"definitive_at"`
-	DefinitiveScanID   string    `ch:"definitive_scan_id"`
-}
-
-// AXFRStateChangeRow mirrors corpscout.dns_axfr_state_changes: one row per DEFINITIVE AXFR state
-// transition for one endpoint. ScanID is part of the table's ORDER BY key, so re-loading the same
-// scan's staged changes (a retry) is idempotent, while two distinct open periods from different scans
-// never collapse into one even if their ChangedAt values coincide.
-type AXFRStateChangeRow struct {
-	RootDomain   string    `ch:"root_domain"`
-	NameServer   string    `ch:"name_server"`
-	NameServerIP string    `ch:"name_server_ip"`
-	AXFROpen     uint8     `ch:"axfr_open"`
-	ScanID       string    `ch:"scan_id"`
-	ChangedAt    time.Time `ch:"changed_at"`
-}
-
 // HostLabel is one discovered subdomain label to scan for a domain (from CT, the registry, or a
 // zone transfer). Label is the name minus ".<root_domain>", lowercased. DiscoverySource is how it
 // was found (ct|axfr|static); LiveCert is true when a CT source had a still-valid certificate.
@@ -103,10 +63,9 @@ const (
 	DomainStatusNoPublicNSEndpoints = "no_public_ns_endpoints"
 )
 
-// DomainResult is everything learned for one domain in one scan. AXFR is NOT part of this shape — it
-// runs as its own post-scan phase (see cmd/cc-dns-worker/axfr.go) and is staged/loaded through the
-// dns_axfr_latest/dns_axfr_state_changes tables (AXFRLatestRow/AXFRStateChangeRow), never through a
-// per-domain summary field here.
+// DomainResult is everything learned by dnsscan for one domain in one cycle. AXFR is not part of
+// this shape: axfrscan reads the latest persisted delegation summaries independently and owns its own
+// endpoint state and record outbox.
 type DomainResult struct {
 	ScanID       string
 	RootDomain   string
@@ -226,8 +185,8 @@ type HostnameRow struct {
 //
 // NOTE (deprecated columns, NOT a deprecated type): the table's axfr_open/axfr_records/
 // axfr_truncated/axfr_server columns are deprecated — per-endpoint AXFR state now lives in
-// dns_axfr_latest/dns_axfr_state_changes (AXFRLatestRow/AXFRStateChangeRow), the only source of truth
-// since AXFR moved off resolveDomain into its own post-scan phase. This struct intentionally has NO
+// dns_axfr_latest/dns_axfr_state_changes, the only source of truth since AXFR moved into its independent
+// scanner package. This struct intentionally has NO
 // fields for them so the loader never again writes default/false values into those columns every
 // cycle. The ClickHouse columns are left in place (defaulted) for backward compatibility; a future
 // audited cleanup can drop them. (ScanRow itself is fully current — do not treat it as deprecated;

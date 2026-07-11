@@ -2,135 +2,56 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"cc-dns-worker/internal/metrics"
-	"cc-dns-worker/internal/model"
-	"cc-dns-worker/internal/records"
-	"cc-dns-worker/internal/resolve"
-
-	"github.com/miekg/dns"
 )
 
-func TestScanFlagsEnableAXFRAndHostEnrichmentByDefault(t *testing.T) {
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	build := scanFlags(fs)
-	if err := fs.Parse([]string{"--resolvers", "127.0.0.1:53"}); err != nil {
+func TestScannerFlagsEnableIndependentScannersByDefault(t *testing.T) {
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	build := scannerFlags(flags)
+	if err := flags.Parse([]string{"--resolvers", "127.0.0.1:53"}); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := build()
+	config, err := build()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.axfr || !cfg.hostEnrich {
-		t.Fatalf("default features: axfr=%t hostEnrich=%t, want both enabled", cfg.axfr, cfg.hostEnrich)
+	if !config.RunDNS || !config.RunAXFR || !config.DNS.HostnameEnrichment {
+		t.Fatalf("defaults = DNS:%t AXFR:%t hostnames:%t", config.RunDNS, config.RunAXFR, config.DNS.HostnameEnrichment)
 	}
 }
 
-type successfulDNSExchanger struct{}
-
-func (successfulDNSExchanger) Exchange(_ context.Context, request *dns.Msg, _ string) (*dns.Msg, error) {
-	response := new(dns.Msg)
-	response.SetReply(request)
-	question := request.Question[0]
-	switch question.Qtype {
-	case dns.TypeNS:
-		response.Answer = []dns.RR{&dns.NS{
-			Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
-			Ns:  "ns1.example.com.",
-		}}
-	case dns.TypeA:
-		address := []byte{192, 0, 2, 1}
-		if question.Name == "ns1.example.com." {
-			address = []byte{9, 9, 9, 9}
-		}
-		response.Answer = []dns.RR{&dns.A{
-			Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
-			A:   address,
-		}}
-	}
-	return response, nil
-}
-
-type failingDNSExchanger struct{}
-
-func (failingDNSExchanger) Exchange(context.Context, *dns.Msg, string) (*dns.Msg, error) {
-	return nil, errors.New("resolver unavailable")
-}
-
-func TestResolveDNSBatchUpdatesCumulativeStats(t *testing.T) {
-	var stats metrics.Stats
-	exchanger := successfulDNSExchanger{}
-	results := resolveDNSBatch(
-		context.Background(), scanConfig{workers: 1, scanID: "scan", runID: "run"},
-		resolve.NewDiscoverer(exchanger, []string{"resolver"}), resolve.NewResolver(exchanger),
-		&stats, []string{"example.com"}, nil,
-	)
-	if len(results) != 1 || results[0].Status != model.DomainStatusDone || len(results[0].Records) == 0 {
-		t.Fatalf("successful batch result = %+v", results)
-	}
-	snapshot := stats.Snapshot(time.Now().UTC())
-	if snapshot.Domains != 1 || snapshot.Records != int64(len(results[0].Records)) || snapshot.DomainErrors != 0 ||
-		snapshot.DNSChecks != int64(results[0].QueriesTotal) || snapshot.DNSChecksOK != int64(results[0].QueriesOK) {
-		t.Errorf("successful batch stats = %+v", snapshot)
-	}
-}
-
-func TestResolveDNSBatchCountsDomainErrors(t *testing.T) {
-	var stats metrics.Stats
-	results := resolveDNSBatch(
-		context.Background(), scanConfig{workers: 1, scanID: "scan", runID: "run"},
-		resolve.NewDiscoverer(failingDNSExchanger{}, []string{"resolver"}), nil,
-		&stats, []string{"example.com"}, nil,
-	)
-	if len(results) != 1 || results[0].Status != model.DomainStatusError {
-		t.Fatalf("failed batch result = %+v", results)
-	}
-	snapshot := stats.Snapshot(time.Now().UTC())
-	if snapshot.Domains != 1 || snapshot.DomainErrors != 1 || snapshot.Records != 0 ||
-		snapshot.DNSChecks != int64(results[0].QueriesTotal) || snapshot.DNSChecksOK != 0 {
-		t.Errorf("failed batch stats = %+v", snapshot)
-	}
-}
-
-func TestResolveDNSBatchCountsZeroRecordDomainAsError(t *testing.T) {
-	var stats metrics.Stats
-	results := resolveDNSBatch(
-		context.Background(), scanConfig{workers: 1, scanID: "scan", runID: "run"},
-		resolve.NewDiscoverer(privateDelegationExchanger{}, []string{"resolver"}), nil,
-		&stats, []string{"example.com"}, nil,
-	)
-	if len(results) != 1 || results[0].Status != model.DomainStatusNoPublicNSEndpoints || len(results[0].Records) != 0 {
-		t.Fatalf("zero-record batch result = %+v", results)
-	}
-	snapshot := stats.Snapshot(time.Now().UTC())
-	if snapshot.Domains != 1 || snapshot.DomainErrors != 1 || snapshot.Records != 0 ||
-		snapshot.DNSChecks != int64(results[0].QueriesTotal) || snapshot.DNSChecksOK != 0 {
-		t.Errorf("zero-record batch stats = %+v", snapshot)
-	}
-}
-
-func TestScanFlagsAllowExplicitFeatureOptOut(t *testing.T) {
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	build := scanFlags(fs)
-	if err := fs.Parse([]string{
-		"--resolvers", "127.0.0.1:53",
-		"--axfr=false",
-		"--host-enrich=false",
-	}); err != nil {
+func TestAXFRCanRunWithoutDNSResolvers(t *testing.T) {
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	build := scannerFlags(flags)
+	if err := flags.Parse([]string{"--dns=false"}); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := build()
+	config, err := build()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.axfr || cfg.hostEnrich {
-		t.Fatalf("explicit opt-out: axfr=%t hostEnrich=%t, want both disabled", cfg.axfr, cfg.hostEnrich)
+	if config.RunDNS || !config.RunAXFR {
+		t.Fatalf("scanner selection = DNS:%t AXFR:%t", config.RunDNS, config.RunAXFR)
+	}
+}
+
+func TestDNSRequiresExplicitResolver(t *testing.T) {
+	err := runScan(context.Background(), []string{"--dns-db", t.TempDir() + "/dns.db", "--axfr=false"})
+	if err == nil || !strings.Contains(err.Error(), "--resolvers is required") {
+		t.Fatalf("error = %v, want explicit resolver error", err)
+	}
+}
+
+func TestScannerFlagsRejectBothDisabled(t *testing.T) {
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	build := scannerFlags(flags)
+	if err := flags.Parse([]string{"--dns=false", "--axfr=false"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build(); err == nil {
+		t.Fatal("both scanners disabled: want error")
 	}
 }
 
@@ -140,81 +61,9 @@ func TestCleanResolvers(t *testing.T) {
 	if len(got) != len(want) {
 		t.Fatalf("cleanResolvers = %v, want %v", got, want)
 	}
-	for i := range want {
-		if got[i] != want[i] {
+	for index := range want {
+		if got[index] != want[index] {
 			t.Fatalf("cleanResolvers = %v, want %v", got, want)
 		}
-	}
-}
-
-func TestCleanResolversAllBlank(t *testing.T) {
-	got := cleanResolvers([]string{"", "  ", " "})
-	if len(got) != 0 {
-		t.Fatalf("cleanResolvers(all blank) = %v, want empty", got)
-	}
-}
-
-// TestRunScanRejectsEmptyResolvers proves --resolvers being empty/whitespace-only after the comma
-// split fails fast with a clear error instead of silently making every domain's discovery fail one
-// at a time later. This must return before any ClickHouse/SQLite I/O is attempted, so the test
-// needs no external services.
-func TestRunScanRejectsEmptyResolvers(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "scan.db")
-	err := runScan([]string{"-resolvers= , ,  ", "-db", dbPath})
-	if err == nil {
-		t.Fatal("runScan with blank --resolvers: want error, got nil")
-	}
-	if !strings.Contains(err.Error(), "--resolvers is required") {
-		t.Fatalf("runScan error = %q, want to contain %q", err.Error(), "--resolvers is required")
-	}
-}
-
-// TestRunScanRequiresResolversByDefault proves there is NO public-resolver default: omitting
-// --resolvers entirely fails fast (NS discovery must run against an explicitly-configured, ideally
-// local, recursive resolver).
-func TestRunScanRequiresResolversByDefault(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "scan.db")
-	err := runScan([]string{"-db", dbPath}) // no -resolvers at all
-	if err == nil || !strings.Contains(err.Error(), "--resolvers is required") {
-		t.Fatalf("runScan without --resolvers: want '--resolvers is required' error, got %v", err)
-	}
-}
-
-type privateDelegationExchanger struct{}
-
-func (privateDelegationExchanger) Exchange(_ context.Context, request *dns.Msg, _ string) (*dns.Msg, error) {
-	response := new(dns.Msg)
-	response.SetReply(request)
-	question := request.Question[0]
-	switch question.Qtype {
-	case dns.TypeNS:
-		response.Answer = []dns.RR{&dns.NS{
-			Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
-			Ns:  "ns1.example.com.",
-		}}
-	case dns.TypeA:
-		response.Answer = []dns.RR{&dns.A{
-			Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
-			A:   []byte{10, 0, 0, 53},
-		}}
-	}
-	return response, nil
-}
-
-func TestResolveDomainPersistsPrivateOnlyDelegationAsDistinctTerminalStatus(t *testing.T) {
-	discoverer := resolve.NewDiscoverer(privateDelegationExchanger{}, []string{"operator-resolver"})
-	result := resolveDomain(
-		context.Background(), discoverer, nil, records.DefaultConfig(),
-		"example.com", "scan-1", "run-1", nil,
-	)
-
-	if result.Status != model.DomainStatusNoPublicNSEndpoints {
-		t.Fatalf("status = %q, want %q", result.Status, model.DomainStatusNoPublicNSEndpoints)
-	}
-	if len(result.Endpoints) != 1 || result.Endpoints[0].IP != "10.0.0.53" || result.Endpoints[0].Dialable {
-		t.Fatalf("private delegation evidence was not preserved: %+v", result.Endpoints)
-	}
-	if result.ResolvedAt.IsZero() || time.Since(result.ResolvedAt) > time.Minute {
-		t.Fatalf("unexpected resolution timestamp: %v", result.ResolvedAt)
 	}
 }

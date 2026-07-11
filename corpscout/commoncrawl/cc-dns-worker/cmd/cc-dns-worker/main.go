@@ -3,8 +3,13 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func usage() {
@@ -14,8 +19,8 @@ Usage:
   cc-dns-worker <command> [flags]
 
 Commands:
-  scan   run one bounded, resumable DNS + AXFR cycle
-  run    continuously run bounded, resumable cycles
+  scan   run one DNS cycle and one AXFR cycle concurrently
+  run    continuously supervise independent DNS and AXFR cycles
 
 Run "cc-dns-worker <command> -h" for that command's flags.
 `)
@@ -26,14 +31,22 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	switch os.Args[1] {
 	case "scan":
-		if err := runScan(os.Args[2:]); err != nil {
+		if err := runScan(ctx, os.Args[2:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
 			fmt.Fprintln(os.Stderr, "scan:", err)
 			os.Exit(1)
 		}
 	case "run":
-		if err := runOrchestrator(os.Args[2:]); err != nil {
+		if err := runOrchestrator(ctx, os.Args[2:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
 			fmt.Fprintln(os.Stderr, "run:", err)
 			os.Exit(1)
 		}

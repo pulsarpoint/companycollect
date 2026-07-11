@@ -1,18 +1,24 @@
 # cc-dns-worker
 
-`cc-dns-worker` continuously resolves Common Crawl root domains directly against their authoritative
-DNS servers. ClickHouse owns the complete input and output datasets. SQLite contains only bounded,
-restartable active work and output that ClickHouse has not fully acknowledged.
+`cc-dns-worker` is one binary containing two independent scanner packages. `dnsscan` resolves Common
+Crawl root domains directly against authoritative DNS servers. `axfrscan` independently probes the
+latest authoritative endpoints for zone-transfer exposure. The binary starts them as separate
+top-level goroutines; neither scanner reads, throttles, enqueues, or waits for the other scanner's
+work.
 
 ## Data ownership
 
-The scanner reads only:
+The DNS scanner reads:
 
 - `corpscout.commoncrawl_domains`, keyset-paged by `root_domain`
 - `corpscout.commoncrawl_domain_hostnames`, queried for the exact claimed root-domain batch
 
 The Dagster `commoncrawl_domain_hostnames` asset incrementally merges Certificate Transparency
 hostnames into the registry. The scanner does not query `ctlogs.hostnames`.
+
+The AXFR scanner independently keyset-pages `corpscout.commoncrawl_domain_dns_scan FINAL`. It
+reclassifies every current endpoint address before creating work and probes only public addresses.
+It does not consume DNS SQLite output or wait for the current DNS traversal.
 
 The worker writes:
 
@@ -35,30 +41,31 @@ Apply ClickHouse migration `000123_corpscout_dns_observations_universal_rr` befo
 built from this version. The migration is metadata-only and does not rewrite historical observation
 parts.
 
-## Bounded local state
+## Independent bounded local state
 
-One active cycle database contains:
+The scanners never share a SQLite connection or queue. A production run maintains:
 
-- `scan_state`: cycle ID, source cursor, fetched count, and source-exhaustion marker
-- `dns_work`: `pending`, `running`, or `ready` DNS jobs and compact summaries
-- `dns_records`: DNS record outbox belonging to active `dns_work`
-- `axfr_work`: copied delegation endpoints and their stable observation time
-- `axfr_probes`: endpoint outcomes and transfer metrics
-- `axfr_zone_records`: zone records waiting for ClickHouse acknowledgement
+- `dns-cycle-state.json` and `dns-scan-<cycle-id>.db`, owned only by `dnsscan`
+- `axfr-cycle-state.json` and `axfr-scan-<cycle-id>.db`, owned only by `axfrscan`
 
-The domain source transaction inserts a page into `dns_work` and advances `scan_state.domain_cursor`
-together. A DNS result transaction stores its records, marks the job ready, and—when AXFR is enabled
-and delegation discovery was trustworthy—creates `axfr_work` with every public and private endpoint.
-Private/special endpoints remain security evidence but are never dialed.
+The DNS database contains its source cursor, cumulative health counters, `dns_work`, and
+`dns_records`. A DNS result transaction stores its records, marks the job ready, and advances durable
+statistics. It never creates AXFR work. The persistent DNS worker pool refills before the current
+buffer drains, so a slow tail cannot leave the other resolver workers idle.
+
+The AXFR database contains its own ClickHouse cursor, durable probe counters, current delegation
+snapshots, endpoint jobs, and transferred-record outbox. Work is keyed by unique public
+`(root_domain, name_server_ip)`; a shared IP is pulled once and its outcome is applied to each current
+NS hostname identity. Each endpoint result is committed immediately, without a domain-batch result
+barrier.
 
 At startup, only interrupted `running` jobs return to `pending`; `ready` output is retained. A loader
 deletes a ready batch only after all of its ClickHouse sinks succeed. Lost acknowledgements replay the
 same logical observation identities safely.
 
-DNS and AXFR are independent concurrent lanes with separate capacities, workers, QPS limits, and
-flush intervals. Input pauses at capacity while already active work continues. A cycle completes only
-after its source is exhausted and both local lanes are empty. The completed cycle database is then
-deleted rather than retained as a corpus copy.
+Each scanner has its own capacity, workers, QPS limits, retry loop, completion condition, and
+one-second statistics. One scanner can fail and retry while the other continues. Each completed cycle
+database is deleted only after that scanner's own ClickHouse outbox drains.
 
 ## DNS and AXFR behavior
 
@@ -70,7 +77,7 @@ Special-use answers are stored and can be flagged as misconfiguration. Special-u
 addresses are also stored, but target classification is separate from observation and prevents them
 from becoming network probe destinations.
 
-AXFR uses a dedicated scheduler. One IP is probed once per domain batch even when several NS hostnames
+AXFR uses a dedicated scheduler. One IP is probed once per domain even when several NS hostnames
 share it, while the outcome is persisted for every `(root_domain, name_server, name_server_ip)`
 identity. Unknown outcomes never become closed. Delegation removal marks an endpoint inactive rather
 than closed. `dns_axfr_latest.updated_at` uses the stable probe/delegation observation time, so a replay
@@ -83,14 +90,16 @@ cc-dns-worker scan [flags]   # one bounded cycle, then exit
 cc-dns-worker run [flags]    # continuous production cycles
 ```
 
-Both commands invoke the same cycle engine. `run` stores the current cycle ID in
-`orchestrator-state.json` and resumes its derived `scan-<cycle-id>.db` after a restart.
+`run` starts independent DNS and AXFR supervisors. Each supervisor resumes only its own state and
+retries only its own failures. `--dns=false` or `--axfr=false` can intentionally disable one scanner;
+both default to true.
 
 Required/common flags:
 
 | Flag | Default | Meaning |
 |---|---:|---|
-| `--resolvers` | required | recursive resolver addresses, comma separated |
+| `--resolvers` | required with DNS | recursive resolver addresses, comma separated |
+| `--dns` | `true` | run the independent DNS scanner |
 | `--max-domains` | `0` | durably fetched domain limit, `0` means all |
 | `--workers` | `4000` | DNS domain worker limit |
 | `--domain-page-size` | `5000` | ClickHouse keyset page size |
@@ -100,15 +109,16 @@ Required/common flags:
 | `--dns-flush-interval` | `5s` | DNS output retry/poll interval |
 | `--host-enrich` | `true` | query hostname registry labels |
 | `--host-cap` | `100` | ranked registry labels per root |
-| `--axfr` | `true` | enable concurrent AXFR lane |
-| `--axfr-workers` | `50` | AXFR domain worker limit |
-| `--axfr-work-capacity` | `5000` | maximum active AXFR jobs in SQLite |
-| `--axfr-claim-batch` | `100` | claimed AXFR jobs per batch |
-| `--axfr-flush-batch` | `100` | ready AXFR jobs per acknowledgement pass |
+| `--axfr` | `true` | run the independent AXFR scanner |
+| `--axfr-workers` | `50` | AXFR endpoint worker limit |
+| `--axfr-domain-page-size` | `1000` | latest DNS-summary roots per AXFR source page |
+| `--axfr-work-capacity` | `5000` | maximum active AXFR domains in AXFR SQLite |
+| `--axfr-claim-batch` | `100` | claimed endpoint probes per batch |
+| `--axfr-flush-batch` | `100` | ready AXFR domains per acknowledgement pass |
 | `--axfr-flush-interval` | `5s` | AXFR output retry/poll interval |
 
-`scan` additionally accepts `--scan-id`, `--run-id`, and `--db`. `run` accepts `--dir`; it assigns a
-UTC cycle ID and removes the cycle DB only after complete drain.
+`scan` additionally accepts `--scan-id`, `--run-id`, `--dns-db`, and `--axfr-db`. `run` accepts
+`--dir`; each supervisor assigns its own UTC cycle ID and removes only its own completed database.
 
 Run `cc-dns-worker <command> -h` for DNS timeout, QPS, in-flight, circuit-breaker, and AXFR cap flags.
 
@@ -122,7 +132,8 @@ staticcheck ./...
 ```
 
 The Ansible role builds the Linux/amd64 binary on the control machine with `CGO_ENABLED=0`, stops an
-existing service before replacing the binary, installs configuration, and starts the service:
+existing service before replacing the binary, installs configuration, and leaves the service stopped
+and disabled:
 
 ```bash
 cd deploy/ansible
@@ -135,11 +146,12 @@ materialization successfully, and validate expected CT labels in production.
 
 ## Manual cutover and rollback
 
-Do not resume an old full-corpus SQLite cycle with this binary. Before first deployment:
+The new supervisors deliberately ignore the coupled worker's `orchestrator-state.json` and
+`scan-<cycle-id>.db`. Before first start of this binary:
 
 1. Stop the existing service.
 2. Independently decide whether the old cycle is fully flushed or intentionally abandoned.
-3. Archive/delete its old state and cycle DB manually.
+3. Archive/delete its old state and cycle DB manually; deployment does not alter them.
 4. Apply migrations and complete the hostname-registry release gate.
 5. Deploy and start the bounded worker.
 

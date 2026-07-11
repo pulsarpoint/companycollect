@@ -5,11 +5,11 @@ resolver (`unbound`), and the worker service itself (`cc_dns_worker`).
 
 ## Production feature defaults
 
-AXFR probing and ClickHouse hostname enrichment are enabled by default in the
-worker. The production command intentionally omits `--axfr` and `--host-enrich`
-because their CLI defaults are `true`. Add `--axfr=false` or
-`--host-enrich=false` to `cc_dns_run_flags` only for an explicit temporary
-opt-out.
+The binary starts independent DNS and AXFR scanner goroutines by default. They
+use separate state files, SQLite databases, worker pools, and retry loops. The
+production command intentionally omits `--dns`, `--axfr`, and `--host-enrich`
+because their defaults are `true`. Add a `=false` override only for an explicit
+temporary opt-out.
 
 ## Prerequisites
 
@@ -79,6 +79,11 @@ it to the target. If `cc-dns-scan` already exists and is running, the role stops
 it before replacing the deployed files. Deployment leaves the service stopped
 and disabled. It does not modify or retire worker state; any required state
 migration or cleanup must be performed manually before running the playbook.
+
+The independent supervisors use `dns-cycle-state.json`/`dns-scan-*.db` and
+`axfr-cycle-state.json`/`axfr-scan-*.db`. They do not resume the coupled legacy
+`orchestrator-state.json`/`scan-*.db`; inspect and handle those files manually
+before the first start.
 
 Start the deployed worker explicitly only after checking its state:
 

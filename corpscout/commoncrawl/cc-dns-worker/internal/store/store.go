@@ -1,11 +1,10 @@
-// Package store owns the bounded, restartable SQLite work queues and output outboxes.
+// Package store owns the bounded, restartable DNS SQLite work queue and output outbox.
 package store
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"time"
 
 	"cc-dns-worker/internal/model"
@@ -14,8 +13,7 @@ import (
 )
 
 type Store struct {
-	db   *sql.DB
-	path string
+	db *sql.DB
 }
 
 func Open(path string) (*Store, error) {
@@ -33,7 +31,7 @@ func Open(path string) (*Store, error) {
 		_ = database.Close()
 		return nil, fmt.Errorf("upgrade bounded record outboxes: %w", err)
 	}
-	return &Store{db: database, path: path}, nil
+	return &Store{db: database}, nil
 }
 
 type sqliteColumn struct {
@@ -52,7 +50,7 @@ func upgradeRecordOutboxes(ctx context.Context, database *sql.DB) error {
 		{"name_server", "TEXT NOT NULL DEFAULT ''"},
 		{"name_server_ip", "TEXT NOT NULL DEFAULT ''"},
 	}
-	for _, table := range []string{"dns_records", "axfr_zone_records"} {
+	for _, table := range []string{"dns_records"} {
 		existing, err := sqliteColumns(ctx, database, table)
 		if err != nil {
 			return err
@@ -64,6 +62,25 @@ func upgradeRecordOutboxes(ctx context.Context, database *sql.DB) error {
 			if _, err := database.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column.name+" "+column.definition); err != nil {
 				return fmt.Errorf("add %s.%s: %w", table, column.name, err)
 			}
+		}
+	}
+	stateColumns := []sqliteColumn{
+		{"domains_processed", "INTEGER NOT NULL DEFAULT 0"},
+		{"domain_errors", "INTEGER NOT NULL DEFAULT 0"},
+		{"records_observed", "INTEGER NOT NULL DEFAULT 0"},
+		{"dns_checks", "INTEGER NOT NULL DEFAULT 0"},
+		{"dns_checks_ok", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	existing, err := sqliteColumns(ctx, database, "scan_state")
+	if err != nil {
+		return err
+	}
+	for _, column := range stateColumns {
+		if existing[column.name] {
+			continue
+		}
+		if _, err := database.ExecContext(ctx, "ALTER TABLE scan_state ADD COLUMN "+column.name+" "+column.definition); err != nil {
+			return fmt.Errorf("add scan_state.%s: %w", column.name, err)
 		}
 	}
 	return nil
@@ -92,89 +109,6 @@ func sqliteColumns(ctx context.Context, database *sql.DB, table string) (map[str
 }
 
 func (s *Store) Close() error { return s.db.Close() }
-
-type OperationalStats struct {
-	Source          SourceState
-	DNS             WorkCounts
-	AXFR            WorkCounts
-	DNSRecords      int
-	AXFRProbes      int
-	AXFRZoneRecords int
-	PageCount       int
-	FreePages       int
-	WALBytes        int64
-}
-
-func (s *Store) OperationalStats(ctx context.Context, scanID string) (OperationalStats, error) {
-	var stats OperationalStats
-	var err error
-	if stats.Source, err = s.SourceState(ctx, scanID); err != nil {
-		return OperationalStats{}, err
-	}
-	if stats.DNS, err = s.DNSWorkCounts(ctx, scanID); err != nil {
-		return OperationalStats{}, err
-	}
-	if stats.AXFR, err = s.AXFRWorkCounts(ctx, scanID); err != nil {
-		return OperationalStats{}, err
-	}
-	for table, destination := range map[string]*int{
-		"dns_records": &stats.DNSRecords, "axfr_probes": &stats.AXFRProbes,
-		"axfr_zone_records": &stats.AXFRZoneRecords,
-	} {
-		if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE scan_id = ?", scanID).Scan(destination); err != nil {
-			return OperationalStats{}, err
-		}
-	}
-	if err := s.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&stats.PageCount); err != nil {
-		return OperationalStats{}, err
-	}
-	if err := s.db.QueryRowContext(ctx, `PRAGMA freelist_count`).Scan(&stats.FreePages); err != nil {
-		return OperationalStats{}, err
-	}
-	if fileInfo, err := os.Stat(s.path + "-wal"); err == nil {
-		stats.WALBytes = fileInfo.Size()
-	}
-	return stats, nil
-}
-
-type AXFRTarget struct {
-	RootDomain string
-	Endpoints  []model.NameserverEndpoint
-}
-
-type AXFREndpointKey struct {
-	RootDomain   string
-	NameServer   string
-	NameServerIP string
-}
-
-type AXFRPriorState struct {
-	HasDefinitive      bool
-	AXFROpen           bool
-	DefinitiveAt       time.Time
-	DefinitiveScanID   string
-	LastProbeVerdict   string
-	LastProbeReason    string
-	LastProbedAt       time.Time
-	LastProbeRecords   uint64
-	LastProbeBytes     uint64
-	LastProbeTruncated bool
-	DelegationActive   bool
-	DelegationSeenAt   time.Time
-}
-
-type AXFRProbedEndpoint struct {
-	AXFREndpointKey
-	Verdict          string
-	Reason           string
-	ObservedAt       time.Time
-	Records          uint64
-	Bytes            uint64
-	Truncated        bool
-	StateObservedAt  time.Time
-	Definitive       bool
-	DelegationActive bool
-}
 
 func parseTS(value string) time.Time {
 	parsed, _ := time.Parse(time.RFC3339Nano, value)

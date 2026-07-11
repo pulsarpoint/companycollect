@@ -4,8 +4,8 @@ deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-worker"
 service_name: cc-dns-scan
 
 # --- worker run flags ---
-# AXFR probing and ClickHouse hostname enrichment are enabled by the worker's CLI defaults. Add
-# --axfr=false or --host-enrich=false only for an intentional temporary opt-out.
+# The binary starts independent DNS and AXFR goroutines by default. Add --dns=false, --axfr=false, or
+# --host-enrich=false only for an intentional temporary opt-out.
 cc_dns_run_flags: >-
   run --dir {{ deploy_dir }}
   --resolvers 127.0.0.1:53

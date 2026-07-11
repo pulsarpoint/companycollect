@@ -1,4 +1,4 @@
-// Package metrics holds live counters for a scan run and formats the periodic stdout stats line
+// Package metrics holds live counters for a DNS scan and formats the periodic stdout stats line
 // (throughput + generated DNS traffic). Counters are updated concurrently from many resolver
 // goroutines via atomics; the reporter reads Snapshots and formats deltas into rates.
 package metrics
@@ -16,62 +16,60 @@ type Stats struct {
 	// well-formed SERVFAIL response (Task 9 — SERVFAIL is not a Go error but every caller retries it
 	// exactly like one; see resolve.client.Exchange). Paired 1:1 with Queries at the same per-attempt
 	// granularity, so pct(QueryErrors, Queries) is a meaningful per-attempt error rate.
-	QueryErrors         atomic.Int64
-	Domains             atomic.Int64 // domains that reached a terminal status this run
-	DomainErrors        atomic.Int64 // completed domains that produced zero DNS records
-	Records             atomic.Int64 // DNS records observed across completed domains
-	DNSChecks           atomic.Int64 // logical planned DNS checks, excluding retries
-	DNSChecksOK         atomic.Int64 // logical checks that reached a definitive DNS response
-	BlockedTargets      atomic.Int64 // authoritative dials refused because the target address was not public (see resolve.Dialable)
-	AXFRPullsTried      atomic.Int64 // actual unique nameserver-IP pulls attempted per domain
-	AXFRPullsSuccessful atomic.Int64 // open AXFR pulls collected without truncation
+	QueryErrors    atomic.Int64
+	Domains        atomic.Int64 // domains that reached a terminal status this run
+	DomainErrors   atomic.Int64 // completed domains that produced zero DNS records
+	Records        atomic.Int64 // DNS records observed across completed domains
+	DNSChecks      atomic.Int64 // logical planned DNS checks, excluding retries
+	DNSChecksOK    atomic.Int64 // logical checks that reached a definitive DNS response
+	BlockedTargets atomic.Int64 // authoritative dials refused because the target address was not public (see resolve.Dialable)
 }
 
 // Snapshot is a point-in-time read of Stats.
 type Snapshot struct {
-	At                  time.Time
-	Queries             int64
-	QueryErrors         int64
-	Domains             int64
-	DomainErrors        int64
-	Records             int64
-	DNSChecks           int64
-	DNSChecksOK         int64
-	BlockedTargets      int64
-	AXFRPullsTried      int64
-	AXFRPullsSuccessful int64
+	At             time.Time
+	Queries        int64
+	QueryErrors    int64
+	Domains        int64
+	DomainErrors   int64
+	Records        int64
+	DNSChecks      int64
+	DNSChecksOK    int64
+	BlockedTargets int64
 }
 
 // Snapshot reads the counters at time now.
 func (s *Stats) Snapshot(now time.Time) Snapshot {
 	return Snapshot{
-		At:                  now,
-		Queries:             s.Queries.Load(),
-		QueryErrors:         s.QueryErrors.Load(),
-		Domains:             s.Domains.Load(),
-		DomainErrors:        s.DomainErrors.Load(),
-		Records:             s.Records.Load(),
-		DNSChecks:           s.DNSChecks.Load(),
-		DNSChecksOK:         s.DNSChecksOK.Load(),
-		BlockedTargets:      s.BlockedTargets.Load(),
-		AXFRPullsTried:      s.AXFRPullsTried.Load(),
-		AXFRPullsSuccessful: s.AXFRPullsSuccessful.Load(),
+		At:             now,
+		Queries:        s.Queries.Load(),
+		QueryErrors:    s.QueryErrors.Load(),
+		Domains:        s.Domains.Load(),
+		DomainErrors:   s.DomainErrors.Load(),
+		Records:        s.Records.Load(),
+		DNSChecks:      s.DNSChecks.Load(),
+		DNSChecksOK:    s.DNSChecksOK.Load(),
+		BlockedTargets: s.BlockedTargets.Load(),
 	}
 }
 
 // Line formats the compact operator-facing health line. Totals and average record throughput are
 // cumulative for this process.
-func Line(cur Snapshot, start time.Time, recentErrorPercent float64) string {
+func Line(cur, previous Snapshot, start time.Time, recentErrorPercent float64) string {
 	elapsed := cur.At.Sub(start).Seconds()
+	interval := cur.At.Sub(previous.At).Seconds()
+	recordsPerSecond := 0.0
 	averageRecordsPerSecond := 0.0
+	if interval > 0 {
+		recordsPerSecond = float64(cur.DNSChecksOK-previous.DNSChecksOK) / interval
+	}
 	if elapsed > 0 {
 		averageRecordsPerSecond = float64(cur.DNSChecksOK) / elapsed
 	}
 	return fmt.Sprintf(
-		"stats dns=%d/%d avg=%.1f records/s domains=%d answers=%d err=%.2f%% err10m=%.2f%% axfr=%d/%d",
-		cur.DNSChecksOK, cur.DNSChecks, averageRecordsPerSecond, cur.Domains, cur.Records,
+		"stats dns=%d/%d speed=%.1f records/s avg=%.1f records/s domains=%d answers=%d err=%.2f%% err10m=%.2f%%",
+		cur.DNSChecksOK, cur.DNSChecks, recordsPerSecond, averageRecordsPerSecond, cur.Domains, cur.Records,
 		pct(cur.DomainErrors, cur.Domains), recentErrorPercent,
-		cur.AXFRPullsSuccessful, cur.AXFRPullsTried,
 	)
 }
 
