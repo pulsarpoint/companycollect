@@ -5,15 +5,18 @@ import pyarrow.parquet as pq
 from index_builder import worklist
 
 COLS = ["url_host_registered_domain", "url_host_name", "url", "url_path", "fetch_status",
-        "content_mime_detected", "warc_filename", "warc_record_offset",
+        "content_mime_type", "content_mime_detected", "warc_filename", "warc_record_offset",
         "warc_record_length", "content_languages"]
 
 
 def _write_index(path, rows):
     # rows: (registered_domain, host_name, url, url_path, status, mime, warc_filename, offset, length)
+    # modern index shape: mime present in both content_mime_type and content_mime_detected
     data = {c: [] for c in COLS}
     for r in rows:
-        for c, v in zip(COLS, list(r) + ["eng"]):
+        r = list(r)
+        r.insert(6, r[5])  # content_mime_detected = content_mime_type
+        for c, v in zip(COLS, r + ["eng"]):
             data[c].append(v)
     pq.write_table(pa.table(data), path)
 
@@ -114,13 +117,18 @@ def test_industry_mode_still_one_page_per_domain(tmp_path):
 
 
 def _write_index_pre2018(path, rows):
-    # crawls before mid-2018 (e.g. CC-MAIN-2016-22) have no content_languages column
+    # crawls before mid-2018 (e.g. CC-MAIN-2016-22): no content_languages column, and
+    # content_mime_detected exists but is NULL on every row — only content_mime_type is populated
     cols = [c for c in COLS if c != "content_languages"]
     data = {c: [] for c in cols}
     for r in rows:
+        r = list(r)
+        r.insert(6, None)  # content_mime_detected = NULL
         for c, v in zip(cols, r):
             data[c].append(v)
-    pq.write_table(pa.table(data), path)
+    table = pa.table({c: pa.array(data[c], type=pa.string() if c == "content_mime_detected" else None)
+                      for c in cols})
+    pq.write_table(table, path)
 
 
 def test_worklist_handles_pre2018_index_without_content_languages(tmp_path):
@@ -134,6 +142,19 @@ def test_worklist_handles_pre2018_index_without_content_languages(tmp_path):
     assert len(rows) == 1
     assert rows[0][1] == "http://old.com/"
     assert rows[0][5] is None                      # content_languages present but NULL
+
+
+def test_pre2018_falls_back_to_mime_type_when_detected_is_null(tmp_path):
+    # 2016-22 has content_mime_detected all-NULL; content_mime_type must drive the HTML filter,
+    # and non-HTML mime types must still be excluded
+    idx = tmp_path / "idx.parquet"
+    _write_index_pre2018(idx, [
+        ("old.com", "old.com", "http://old.com/", "/", 200, "text/html", "w.gz", 0, 5),
+        ("pdf.com", "pdf.com", "http://pdf.com/x", "/x", 200, "application/pdf", "w.gz", 5, 5),
+    ])
+    con = duckdb.connect()
+    rows = worklist.run_worklist(con, f"read_parquet('{idx}')").fetchall()
+    assert [r[0] for r in rows] == ["old.com"]     # html kept via mime_type, pdf dropped
 
 
 def test_build_worklist_pre2018_keeps_stable_schema(tmp_path):

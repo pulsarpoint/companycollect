@@ -85,7 +85,9 @@ def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25,
                  ) AS rn
           FROM {source}
           WHERE fetch_status = 200
-            AND content_mime_detected IN ({mime})
+            -- pre-mid-2018 crawls carry content_mime_detected as all-NULL; fall back to the
+            -- server-reported content_mime_type there (detected wins whenever populated)
+            AND COALESCE(content_mime_detected, content_mime_type) IN ({mime})
         ) WHERE {rn}
         ORDER BY root_domain, rn
     """
