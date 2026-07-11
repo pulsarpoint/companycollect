@@ -54,7 +54,7 @@ func runBoundedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error
 	group, groupContext := errgroup.WithContext(ctx)
 	group.Go(func() error { return domainSourceLoop(groupContext, st, cfg) })
 	group.Go(func() error {
-		return dnsWorkLoop(groupContext, st, cfg, discoverer, resolver)
+		return dnsWorkLoop(groupContext, st, cfg, discoverer, resolver, stats)
 	})
 	group.Go(func() error { return dnsFlushLoop(groupContext, st, cfg) })
 	if cfg.axfr {
@@ -62,7 +62,7 @@ func runBoundedCycle(ctx context.Context, st *store.Store, cfg scanConfig) error
 		group.Go(func() error { return axfrFlushLoop(groupContext, st, cfg) })
 	}
 	if cfg.statsInterval > 0 {
-		group.Go(func() error { return boundedStatsLoop(groupContext, st, cfg) })
+		group.Go(func() error { return boundedStatsLoop(groupContext, st, cfg, stats, startedAt) })
 	}
 	if err := group.Wait(); err != nil {
 		return err
@@ -119,7 +119,7 @@ func domainSourceLoop(ctx context.Context, st *store.Store, cfg scanConfig) erro
 	}
 }
 
-func dnsWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig, discoverer *resolve.Discoverer, resolver *resolve.Resolver) error {
+func dnsWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig, discoverer *resolve.Discoverer, resolver *resolve.Resolver, stats *metrics.Stats) error {
 	var hostnameConn driver.Conn
 	if cfg.hostEnrich {
 		var err error
@@ -169,7 +169,7 @@ func dnsWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig, discovere
 				return fmt.Errorf("fetch hostname batch: %w", err)
 			}
 		}
-		results := resolveDNSBatch(ctx, cfg, discoverer, resolver, roots, hosts)
+		results := resolveDNSBatch(ctx, cfg, discoverer, resolver, stats, roots, hosts)
 		for _, result := range results {
 			if err := st.CommitDNS(ctx, result, cfg.axfr); err != nil {
 				return fmt.Errorf("commit DNS result for %s: %w", result.RootDomain, err)
@@ -178,7 +178,7 @@ func dnsWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig, discovere
 	}
 }
 
-func resolveDNSBatch(ctx context.Context, cfg scanConfig, discoverer *resolve.Discoverer, resolver *resolve.Resolver, roots []string, hosts map[string][]model.HostLabel) []model.DomainResult {
+func resolveDNSBatch(ctx context.Context, cfg scanConfig, discoverer *resolve.Discoverer, resolver *resolve.Resolver, stats *metrics.Stats, roots []string, hosts map[string][]model.HostLabel) []model.DomainResult {
 	workers := min(cfg.workers, len(roots))
 	jobs := make(chan string)
 	results := make(chan model.DomainResult, len(roots))
@@ -188,6 +188,11 @@ func resolveDNSBatch(ctx context.Context, cfg scanConfig, discoverer *resolve.Di
 			for root := range jobs {
 				result := resolveDomain(groupContext, discoverer, resolver, records.DefaultConfig(),
 					root, cfg.scanID, cfg.runID, hosts[root])
+				stats.Domains.Add(1)
+				stats.Records.Add(int64(len(result.Records)))
+				if result.Status == model.DomainStatusError {
+					stats.DomainErrors.Add(1)
+				}
 				select {
 				case results <- result:
 				case <-groupContext.Done():
@@ -280,24 +285,29 @@ func boundedAXFRWorkLoop(ctx context.Context, st *store.Store, cfg scanConfig) e
 	}
 }
 
-func boundedStatsLoop(ctx context.Context, st *store.Store, cfg scanConfig) error {
+func boundedStatsLoop(ctx context.Context, st *store.Store, cfg scanConfig, resolverStats *metrics.Stats, startedAt time.Time) error {
+	previous := metrics.Snapshot{At: startedAt}
 	for {
 		if err := waitInterval(ctx, cfg.statsInterval); err != nil {
 			return err
 		}
+		now := time.Now().UTC()
+		current := resolverStats.Snapshot(now)
+		slog.Info(metrics.Line(previous, current, startedAt), "scan_id", cfg.scanID)
+		previous = current
 		stats, err := st.OperationalStats(ctx, cfg.scanID)
 		if err != nil {
 			return fmt.Errorf("read operational stats: %w", err)
 		}
-		slog.Info("bounded pipeline status",
+		slog.Info("bounded SQLite status",
 			"scan_id", cfg.scanID, "domain_cursor", stats.Source.Cursor,
-			"domains_fetched", stats.Source.DomainsFetched,
+			"input_domains_fetched", stats.Source.DomainsFetched,
 			"source_exhausted", stats.Source.SourceExhausted,
-			"dns_pending", stats.DNS.Pending, "dns_running", stats.DNS.Running,
-			"dns_ready", stats.DNS.Ready, "dns_records", stats.DNSRecords,
-			"axfr_pending", stats.AXFR.Pending, "axfr_running", stats.AXFR.Running,
-			"axfr_ready", stats.AXFR.Ready, "axfr_probes", stats.AXFRProbes,
-			"axfr_zone_records", stats.AXFRZoneRecords, "sqlite_pages", stats.PageCount,
+			"dns_queue_pending", stats.DNS.Pending, "dns_queue_claimed", stats.DNS.Running,
+			"dns_queue_ready", stats.DNS.Ready, "dns_outbox_records", stats.DNSRecords,
+			"axfr_queue_pending", stats.AXFR.Pending, "axfr_queue_claimed", stats.AXFR.Running,
+			"axfr_queue_ready", stats.AXFR.Ready, "axfr_outbox_probes", stats.AXFRProbes,
+			"axfr_outbox_zone_records", stats.AXFRZoneRecords, "sqlite_pages", stats.PageCount,
 			"sqlite_free_pages", stats.FreePages, "sqlite_wal_bytes", stats.WALBytes,
 		)
 		var done bool

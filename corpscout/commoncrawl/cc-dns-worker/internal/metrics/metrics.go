@@ -19,6 +19,7 @@ type Stats struct {
 	QueryErrors    atomic.Int64
 	Domains        atomic.Int64 // domains that reached a terminal status this run
 	DomainErrors   atomic.Int64 // domains that ended in status=error
+	Records        atomic.Int64 // DNS records observed across completed domains
 	BlockedTargets atomic.Int64 // authoritative dials refused because the target address was not public (see resolve.Dialable)
 }
 
@@ -29,6 +30,7 @@ type Snapshot struct {
 	QueryErrors    int64
 	Domains        int64
 	DomainErrors   int64
+	Records        int64
 	BlockedTargets int64
 }
 
@@ -40,6 +42,7 @@ func (s *Stats) Snapshot(now time.Time) Snapshot {
 		QueryErrors:    s.QueryErrors.Load(),
 		Domains:        s.Domains.Load(),
 		DomainErrors:   s.DomainErrors.Load(),
+		Records:        s.Records.Load(),
 		BlockedTargets: s.BlockedTargets.Load(),
 	}
 }
@@ -55,16 +58,20 @@ func Line(prev, cur Snapshot, start time.Time) string {
 		elapsed = time.Second
 	}
 	dps := float64(cur.Domains-prev.Domains) / dt // domains/sec this interval
+	rps := float64(cur.Records-prev.Records) / dt // records/sec this interval
 	qps := float64(cur.Queries-prev.Queries) / dt // queries/sec this interval (traffic)
 	avgDps := float64(cur.Domains) / elapsed.Seconds()
-	qPerDom := 0.0
+	recordsPerDomain, queriesPerDomain := 0.0, 0.0
 	if cur.Domains > 0 {
-		qPerDom = float64(cur.Queries) / float64(cur.Domains)
+		recordsPerDomain = float64(cur.Records) / float64(cur.Domains)
+		queriesPerDomain = float64(cur.Queries) / float64(cur.Domains)
 	}
 	return fmt.Sprintf(
-		"stats: elapsed=%s domains=%d (%.0f/s, avg %.0f/s) queries=%d (%.0f/s, %.1f/domain) err: q=%.1f%% dom=%.1f%% blocked=%d",
+		"stats: elapsed=%s domains=%d (%.0f/s, avg %.0f/s) records=%d (%.0f/s, %.1f/domain) queries=%d (%.0f/s, %.1f/domain) errors: queries=%d (%.1f%%) domains=%d (%.1f%%) blocked=%d",
 		elapsed.Round(time.Second), cur.Domains, dps, avgDps,
-		cur.Queries, qps, qPerDom, pct(cur.QueryErrors, cur.Queries), pct(cur.DomainErrors, cur.Domains),
+		cur.Records, rps, recordsPerDomain, cur.Queries, qps, queriesPerDomain,
+		cur.QueryErrors, pct(cur.QueryErrors, cur.Queries),
+		cur.DomainErrors, pct(cur.DomainErrors, cur.Domains),
 		cur.BlockedTargets, // cumulative: non-dialable authoritative targets refused (see resolve.Dialable)
 	)
 }

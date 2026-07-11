@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"cc-dns-worker/internal/metrics"
 	"cc-dns-worker/internal/model"
 	"cc-dns-worker/internal/records"
 	"cc-dns-worker/internal/resolve"
@@ -27,6 +29,70 @@ func TestScanFlagsEnableAXFRAndHostEnrichmentByDefault(t *testing.T) {
 	}
 	if !cfg.axfr || !cfg.hostEnrich {
 		t.Fatalf("default features: axfr=%t hostEnrich=%t, want both enabled", cfg.axfr, cfg.hostEnrich)
+	}
+}
+
+type successfulDNSExchanger struct{}
+
+func (successfulDNSExchanger) Exchange(_ context.Context, request *dns.Msg, _ string) (*dns.Msg, error) {
+	response := new(dns.Msg)
+	response.SetReply(request)
+	question := request.Question[0]
+	switch question.Qtype {
+	case dns.TypeNS:
+		response.Answer = []dns.RR{&dns.NS{
+			Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
+			Ns:  "ns1.example.com.",
+		}}
+	case dns.TypeA:
+		address := []byte{192, 0, 2, 1}
+		if question.Name == "ns1.example.com." {
+			address = []byte{9, 9, 9, 9}
+		}
+		response.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   address,
+		}}
+	}
+	return response, nil
+}
+
+type failingDNSExchanger struct{}
+
+func (failingDNSExchanger) Exchange(context.Context, *dns.Msg, string) (*dns.Msg, error) {
+	return nil, errors.New("resolver unavailable")
+}
+
+func TestResolveDNSBatchUpdatesCumulativeStats(t *testing.T) {
+	var stats metrics.Stats
+	exchanger := successfulDNSExchanger{}
+	results := resolveDNSBatch(
+		context.Background(), scanConfig{workers: 1, scanID: "scan", runID: "run"},
+		resolve.NewDiscoverer(exchanger, []string{"resolver"}), resolve.NewResolver(exchanger),
+		&stats, []string{"example.com"}, nil,
+	)
+	if len(results) != 1 || results[0].Status != model.DomainStatusDone || len(results[0].Records) == 0 {
+		t.Fatalf("successful batch result = %+v", results)
+	}
+	snapshot := stats.Snapshot(time.Now().UTC())
+	if snapshot.Domains != 1 || snapshot.Records != int64(len(results[0].Records)) || snapshot.DomainErrors != 0 {
+		t.Errorf("successful batch stats = %+v", snapshot)
+	}
+}
+
+func TestResolveDNSBatchCountsDomainErrors(t *testing.T) {
+	var stats metrics.Stats
+	results := resolveDNSBatch(
+		context.Background(), scanConfig{workers: 1, scanID: "scan", runID: "run"},
+		resolve.NewDiscoverer(failingDNSExchanger{}, []string{"resolver"}), nil,
+		&stats, []string{"example.com"}, nil,
+	)
+	if len(results) != 1 || results[0].Status != model.DomainStatusError {
+		t.Fatalf("failed batch result = %+v", results)
+	}
+	snapshot := stats.Snapshot(time.Now().UTC())
+	if snapshot.Domains != 1 || snapshot.DomainErrors != 1 || snapshot.Records != 0 {
+		t.Errorf("failed batch stats = %+v", snapshot)
 	}
 }
 

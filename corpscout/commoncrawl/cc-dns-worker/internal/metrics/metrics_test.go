@@ -8,11 +8,12 @@ import (
 
 func TestLineComputesRates(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
-	prev := Snapshot{At: start.Add(10 * time.Second), Queries: 5000, Domains: 400}
+	prev := Snapshot{At: start.Add(10 * time.Second), Queries: 5000, Domains: 400, Records: 8000}
 	cur := Snapshot{
 		At:      start.Add(15 * time.Second), // 5s interval
-		Queries: 10000, QueryErrors: 200,     // +5000 queries in 5s => 1000/s ; 2% err
-		Domains: 1000, DomainErrors: 50, // +600 domains in 5s => 120/s ; 5% err
+		Queries: 10000, QueryErrors: 200,     // +5000 queries in 5s => 1000/s, 2% err
+		Domains: 1000, DomainErrors: 50, // +600 domains in 5s => 120/s, 5% err
+		Records: 18000, // +10000 records in 5s => 2000/s
 	}
 	line := Line(prev, cur, start)
 
@@ -21,11 +22,14 @@ func TestLineComputesRates(t *testing.T) {
 		"domains=1000",
 		"120/s",    // interval domains/sec (600/5)
 		"avg 67/s", // cumulative: 1000/15 = 66.7 -> 67
+		"records=18000",
+		"2000/s",
+		"18.0/domain",
 		"queries=10000",
 		"1000/s",      // interval queries/sec (5000/5)
 		"10.0/domain", // 10000/1000
-		"q=2.0%",
-		"dom=5.0%",
+		"queries=200 (2.0%)",
+		"domains=50 (5.0%)",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line missing %q\n  got: %s", want, line)
@@ -37,7 +41,7 @@ func TestLineZeroSafe(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
 	// No progress yet: no divide-by-zero, percentages 0.
 	line := Line(Snapshot{At: start}, Snapshot{At: start}, start)
-	if !strings.Contains(line, "domains=0") || !strings.Contains(line, "q=0.0%") {
+	if !strings.Contains(line, "domains=0") || !strings.Contains(line, "queries=0 (0.0%)") {
 		t.Errorf("zero snapshot line wrong: %s", line)
 	}
 }
@@ -47,8 +51,9 @@ func TestSnapshotReadsCounters(t *testing.T) {
 	s.Queries.Add(7)
 	s.Domains.Add(3)
 	s.DomainErrors.Add(1)
+	s.Records.Add(11)
 	snap := s.Snapshot(time.Unix(0, 0).UTC())
-	if snap.Queries != 7 || snap.Domains != 3 || snap.DomainErrors != 1 {
+	if snap.Queries != 7 || snap.Domains != 3 || snap.DomainErrors != 1 || snap.Records != 11 {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 }
