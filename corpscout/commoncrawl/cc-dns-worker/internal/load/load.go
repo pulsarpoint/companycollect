@@ -59,8 +59,10 @@ func observationRows(records []model.StagedDNSRecord, scanID string, loadedAt ti
 	for index, record := range records {
 		rows[index] = model.RecordObservationRow{
 			RootDomain: record.RootDomain, Name: record.Name, RecordType: record.RecordType,
-			Slot: record.Slot, Value: record.Value, Source: record.Source,
-			Discovery: record.Discovery, ScanID: scanID, TTL: record.TTL,
+			TypeCode: record.TypeCode, ClassCode: record.ClassCode, Slot: record.Slot,
+			Value: record.Value, RDataWire: record.RDataWire, Source: record.Source,
+			Discovery: record.Discovery, NameServer: record.NameServer,
+			NameServerIP: record.NameServerIP, ScanID: scanID, TTL: record.TTL,
 			Priority: record.Priority, Rcode: record.Rcode, ObservedAt: record.ObservedAt,
 			LoadedAt: loadedAt.UTC(),
 		}
@@ -293,7 +295,9 @@ func boundedAXFROutputs(jobs []store.ReadyAXFRJob, scanID string) ([]model.Recor
 		for _, record := range job.Zone {
 			records = append(records, model.RecordObservationRow{
 				RootDomain: job.RootDomain, Name: record.Name, RecordType: record.RecordType,
-				Slot: record.Slot, Value: record.Value, Source: "axfr", Discovery: "axfr",
+				TypeCode: record.TypeCode, ClassCode: record.ClassCode, Slot: record.Slot,
+				Value: record.Value, RDataWire: record.RDataWire, Source: "axfr", Discovery: "axfr",
+				NameServer: record.NameServer, NameServerIP: record.NameServerIP,
 				ScanID: scanID, TTL: record.TTL, Priority: record.Priority, Rcode: record.Rcode,
 				ObservedAt: observedAt, LoadedAt: loadedAt,
 			})

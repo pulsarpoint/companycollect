@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"strconv"
-	"strings"
 	"time"
 
 	"cc-dns-worker/internal/model"
@@ -68,7 +66,7 @@ type AXFROutcome struct {
 	NSHost string // authoritative NS hostname, if known to the caller (may be empty)
 	NSIP   string // the IP actually dialed
 
-	Records   int // count of every RR collected (including SOA and unsupported types); may exceed len(Zone), since only supported types land there
+	Records   int // count of every RR collected (including SOA); equals len(Zone)
 	Bytes     int // running sum of collected RR wire sizes, bounded by AXFRCaps.MaxBytes
 	Truncated bool
 	Zone      []model.DNSRecord
@@ -214,52 +212,10 @@ func collectZone(ctx context.Context, zone, nsIP string, deadline time.Duration,
 				return
 			}
 			out.Bytes += dns.Len(rr)
-			if rec, ok := axfrRecord(rr); ok {
-				out.Zone = append(out.Zone, rec)
-			}
+			out.Zone = append(out.Zone, recordFromRR(rr, "", "NOERROR", "axfr", "axfr"))
 			out.Records++
 		}
 	}
-}
-
-// axfrRecord converts one transferred RR into a model.DNSRecord tagged Source="axfr" and
-// Discovery="axfr" (the host was learned from the zone transfer, not the static query plan). The slot
-// is empty (AXFR names are not tied to the query-plan slots); the name is the record owner, no trailing
-// dot. An A/AAAA value gets the same addressFinding classification query.go's collect() applies (Task
-// 9) — AXFR, like Tier-2 queries, only ever transfers from a Dialable (public) endpoint (see
-// cmd/cc-dns-worker/axfr.go's own Dialable check before dialing), so a non-public value here likewise
-// means a public authoritative server answered with a bogus/internal address. Unsupported RR types are
-// skipped (ok=false).
-func axfrRecord(rr dns.RR) (model.DNSRecord, bool) {
-	name := strings.TrimSuffix(strings.ToLower(rr.Header().Name), ".")
-	rec := model.DNSRecord{Name: name, Slot: "", Rcode: "NOERROR", TTL: rr.Header().Ttl, Source: "axfr", Discovery: "axfr"}
-	switch v := rr.(type) {
-	case *dns.A:
-		rec.RecordType, rec.Value = "A", v.A.String()
-		rec.Finding = addressFinding(rec.Value)
-	case *dns.AAAA:
-		rec.RecordType, rec.Value = "AAAA", v.AAAA.String()
-		rec.Finding = addressFinding(rec.Value)
-	case *dns.CNAME:
-		rec.RecordType, rec.Value = "CNAME", strings.TrimSuffix(strings.ToLower(v.Target), ".")
-	case *dns.MX:
-		rec.RecordType = "MX"
-		rec.Priority = v.Preference
-		rec.Value = strconv.Itoa(int(v.Preference)) + " " + strings.TrimSuffix(strings.ToLower(v.Mx), ".")
-	case *dns.NS:
-		rec.RecordType, rec.Value = "NS", strings.TrimSuffix(strings.ToLower(v.Ns), ".")
-	case *dns.TXT:
-		rec.RecordType, rec.Value = "TXT", strings.Join(v.Txt, "")
-	case *dns.SRV:
-		rec.RecordType = "SRV"
-		rec.Priority = v.Priority
-		rec.Value = strings.TrimSpace(v.String()[len(v.Hdr.String()):])
-	case *dns.SOA:
-		rec.RecordType, rec.Value = "SOA", strings.TrimSpace(v.String()[len(v.Hdr.String()):])
-	default:
-		return rec, false
-	}
-	return rec, true
 }
 
 // AXFRProber applies probe policy over the low-level transfer: it paces every dial through the AXFR

@@ -29,7 +29,66 @@ func Open(path string) (*Store, error) {
 		_ = database.Close()
 		return nil, fmt.Errorf("create bounded schema: %w", err)
 	}
+	if err := upgradeRecordOutboxes(context.Background(), database); err != nil {
+		_ = database.Close()
+		return nil, fmt.Errorf("upgrade bounded record outboxes: %w", err)
+	}
 	return &Store{db: database, path: path}, nil
+}
+
+type sqliteColumn struct {
+	name       string
+	definition string
+}
+
+// upgradeRecordOutboxes preserves queued records created by an older worker while adding the
+// protocol metadata needed for universal RR storage. Existing rows retain explicit zero/empty
+// values, meaning that the old worker did not capture those fields.
+func upgradeRecordOutboxes(ctx context.Context, database *sql.DB) error {
+	columns := []sqliteColumn{
+		{"record_type_code", "INTEGER NOT NULL DEFAULT 0"},
+		{"record_class_code", "INTEGER NOT NULL DEFAULT 0"},
+		{"rdata_wire", "BLOB NOT NULL DEFAULT X''"},
+		{"name_server", "TEXT NOT NULL DEFAULT ''"},
+		{"name_server_ip", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, table := range []string{"dns_records", "axfr_zone_records"} {
+		existing, err := sqliteColumns(ctx, database, table)
+		if err != nil {
+			return err
+		}
+		for _, column := range columns {
+			if existing[column.name] {
+				continue
+			}
+			if _, err := database.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column.name+" "+column.definition); err != nil {
+				return fmt.Errorf("add %s.%s: %w", table, column.name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func sqliteColumns(ctx context.Context, database *sql.DB, table string) (map[string]bool, error) {
+	rows, err := database.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+	defer rows.Close()
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, fmt.Errorf("read %s columns: %w", table, err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read %s columns: %w", table, err)
+	}
+	return columns, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

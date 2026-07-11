@@ -23,8 +23,17 @@ The worker writes:
 - `corpscout.dns_axfr_state_changes`
 
 `commoncrawl_domain_dns_record_observations` is the authoritative DNS-record history.
+Every query or AXFR RR is retained, including unknown RFC3597 types. `record_type_code` and
+`record_class_code` hold protocol identity, `value` holds complete presentation-format RDATA, and
+`rdata_wire` holds uncompressed binary RDATA. AXFR rows also identify the endpoint in `name_server`
+and `name_server_ip`. Zero/empty values in those columns mean a legacy observation did not capture
+that metadata, not that the DNS record had type or class zero.
 `commoncrawl_ip_addresses` incrementally aggregates canonical A/AAAA values for GeoIP enrichment.
 `dns_axfr_observations` is retained only as legacy backfill input.
+
+Apply ClickHouse migration `000123_corpscout_dns_observations_universal_rr` before starting a worker
+built from this version. The migration is metadata-only and does not rewrite historical observation
+parts.
 
 ## Bounded local state
 

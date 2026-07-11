@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"testing"
@@ -65,8 +66,8 @@ func TestResolveProducesRecords(t *testing.T) {
 	}
 	// MX preference is captured in both the priority column and the value (so the ReplacingMergeTree
 	// sort key, which includes value but not priority, never collapses two MX at different prefs).
-	if !find("MX", "", "10 mail.example.com") {
-		t.Errorf("MX value should be full rdata '10 mail.example.com'; records=%+v", res.Records)
+	if !find("MX", "", "10 mail.example.com.") {
+		t.Errorf("MX value should be complete presentation rdata; records=%+v", res.Records)
 	}
 	for _, rec := range res.Records {
 		if rec.RecordType == "MX" && rec.Priority != 10 {
@@ -89,12 +90,36 @@ func TestCollectCapturesCNAME(t *testing.T) {
 
 	found := false
 	for _, rec := range res.Records {
-		if rec.RecordType == "CNAME" && rec.Slot == "www" && rec.Value == "foo.cdn.net" {
+		if rec.RecordType == "CNAME" && rec.Slot == "www" && rec.Value == "foo.cdn.net." {
 			found = true
 		}
 	}
 	if !found {
 		t.Errorf("missing CNAME record for www (slot=www, value=foo.cdn.net); records=%+v", res.Records)
+	}
+}
+
+func TestCollectUsesAnswerOwnerAndRetainsUnknownType(t *testing.T) {
+	query := records.Query{Name: "alias.example.com.", Type: dns.TypeA, Slot: "alias", Discovery: "ct"}
+	response := new(dns.Msg)
+	response.Answer = []dns.RR{
+		mustRR(t, "target.example.com. 60 IN A 192.0.2.1"),
+		mustRR(t, `unknown.example.com. 60 IN TYPE65400 \# 4 DEADBEEF`),
+	}
+
+	records := collect(query, response, "NOERROR")
+	if len(records) != 2 {
+		t.Fatalf("collected %d records, want 2", len(records))
+	}
+	if records[0].Name != "target.example.com" {
+		t.Errorf("answer owner = %q, want target.example.com", records[0].Name)
+	}
+	unknown := records[1]
+	if unknown.RecordType != "TYPE65400" || unknown.TypeCode != 65400 || unknown.ClassCode != dns.ClassINET {
+		t.Errorf("unknown RR identity lost: %+v", unknown)
+	}
+	if unknown.Value != `\# 4 DEADBEEF` || !bytes.Equal([]byte(unknown.RDataWire), []byte{0xde, 0xad, 0xbe, 0xef}) {
+		t.Errorf("unknown RR payload lost: value=%q wire=%x", unknown.Value, unknown.RDataWire)
 	}
 }
 

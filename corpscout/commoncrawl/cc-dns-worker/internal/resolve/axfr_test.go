@@ -68,6 +68,28 @@ func TestTransferAXFROpen(t *testing.T) {
 	}
 }
 
+func TestTransferAXFRStoresMixedAndUnknownRecordTypes(t *testing.T) {
+	rrs := []dns.RR{
+		mustRR(t, "example.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 1 7200 3600 1209600 3600"),
+		mustRR(t, `example.com. 300 IN CAA 0 issue "letsencrypt.org"`),
+		mustRR(t, `example.com. 300 IN NAPTR 10 20 "S" "SIP+D2U" "" _sip._udp.example.com.`),
+		mustRR(t, `unknown.example.com. 60 IN TYPE65400 \# 4 DEADBEEF`),
+		mustRR(t, "example.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 1 7200 3600 1209600 3600"),
+	}
+	addr, stop := startAXFRServer(t, rrs, false)
+	defer stop()
+
+	result := transferAXFR(context.Background(), "example.com", addr, AXFRCaps{
+		MaxRecords: 100, MaxBytes: 1 << 20, Deadline: 5 * time.Second,
+	})
+	if result.Verdict != VerdictOpen || result.Records != len(rrs) || len(result.Zone) != len(rrs) {
+		t.Fatalf("mixed AXFR lost records: verdict=%s records=%d zone=%d", result.Verdict, result.Records, len(result.Zone))
+	}
+	if result.Zone[3].TypeCode != 65400 || result.Zone[3].RDataWire == "" {
+		t.Errorf("unknown AXFR RR lost: %+v", result.Zone[3])
+	}
+}
+
 func TestTransferAXFRRefused(t *testing.T) {
 	addr, stop := startAXFRServer(t, nil, true)
 	defer stop()

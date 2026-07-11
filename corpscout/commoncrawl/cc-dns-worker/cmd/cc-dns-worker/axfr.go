@@ -40,7 +40,11 @@ func processAXFRTarget(ctx context.Context, prober axfrProber, target store.AXFR
 		outcome.NSHost, outcome.NSIP = endpoint.Name, endpoint.IP
 		probes = append(probes, outcome)
 		if outcome.IsOpen() && zone == nil {
-			zone = outcome.Zone
+			zone = append([]model.DNSRecord(nil), outcome.Zone...)
+			for index := range zone {
+				zone[index].NameServer = endpoint.Name
+				zone[index].NameServerIP = endpoint.IP
+			}
 		}
 	}
 	return axfrDomainResult{domain: target.RootDomain, probes: probes, zone: zone, observedAt: now}

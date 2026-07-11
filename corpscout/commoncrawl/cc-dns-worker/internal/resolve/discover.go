@@ -29,7 +29,10 @@ const (
 // Delegation is what discovery learned for a domain.
 type Delegation struct {
 	ETLD string
-	DS   []string
+	DS   []string // presentation RDATA retained for summary/tests
+	// DSRecords preserves the complete parent response RRs for the raw observation stream. Resolve
+	// prefers these over reconstructing records from DS presentation strings.
+	DSRecords []model.DNSRecord
 
 	// DSOutcome is the tri-state outcome of the parent DS query above: OutcomePresent when DS holds at
 	// least one record, OutcomeAbsent for a definitive NOERROR/NODATA or NXDOMAIN with no DS records, or
@@ -109,7 +112,9 @@ func (d *Discoverer) DiscoverNS(ctx context.Context, domain string) (Delegation,
 	if dsResp, dsErr := d.query(ctx, fqdn, dns.TypeDS); dsErr == nil && dsResp != nil {
 		for _, rr := range dsResp.Answer {
 			if ds, ok := rr.(*dns.DS); ok {
-				del.DS = append(del.DS, strings.TrimSpace(ds.String()[len(ds.Hdr.String()):]))
+				record := recordFromRR(ds, "", "NOERROR", "query", "static")
+				del.DS = append(del.DS, record.Value)
+				del.DSRecords = append(del.DSRecords, record)
 			}
 		}
 		// The query itself got a definitive answer either way — NOERROR/NODATA and NXDOMAIN both mean

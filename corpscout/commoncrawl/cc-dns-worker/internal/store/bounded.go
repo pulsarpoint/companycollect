@@ -46,12 +46,17 @@ CREATE TABLE IF NOT EXISTS dns_records (
   root_domain   TEXT NOT NULL,
   name          TEXT NOT NULL,
   record_type   TEXT NOT NULL,
+  record_type_code INTEGER NOT NULL DEFAULT 0,
+  record_class_code INTEGER NOT NULL DEFAULT 0,
   slot          TEXT NOT NULL DEFAULT '',
   value         TEXT NOT NULL,
+  rdata_wire    BLOB NOT NULL DEFAULT X'',
   ttl           INTEGER NOT NULL DEFAULT 0,
   priority      INTEGER NOT NULL DEFAULT 0,
   source        TEXT NOT NULL DEFAULT 'query',
   discovery     TEXT NOT NULL DEFAULT 'static',
+  name_server   TEXT NOT NULL DEFAULT '',
+  name_server_ip TEXT NOT NULL DEFAULT '',
   rcode         TEXT NOT NULL DEFAULT '',
   finding       TEXT NOT NULL DEFAULT '',
   source_run_id TEXT NOT NULL DEFAULT '',
@@ -68,17 +73,35 @@ CREATE TABLE IF NOT EXISTS axfr_work (
   PRIMARY KEY (scan_id, root_domain)
 );
 CREATE INDEX IF NOT EXISTS idx_axfr_work_status ON axfr_work (scan_id, status, root_domain);
+CREATE TABLE IF NOT EXISTS axfr_probes (
+  scan_id       TEXT NOT NULL,
+  root_domain   TEXT NOT NULL,
+  name_server   TEXT NOT NULL,
+  name_server_ip TEXT NOT NULL,
+  verdict       TEXT NOT NULL,
+  reason        TEXT NOT NULL,
+  records       INTEGER NOT NULL DEFAULT 0,
+  bytes         INTEGER NOT NULL DEFAULT 0,
+  truncated     INTEGER NOT NULL DEFAULT 0,
+  observed_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_axfr_probes_work ON axfr_probes (scan_id, root_domain);
 CREATE TABLE IF NOT EXISTS axfr_zone_records (
   scan_id       TEXT NOT NULL,
   root_domain   TEXT NOT NULL,
   name          TEXT NOT NULL,
   record_type   TEXT NOT NULL,
+  record_type_code INTEGER NOT NULL DEFAULT 0,
+  record_class_code INTEGER NOT NULL DEFAULT 0,
   slot          TEXT NOT NULL DEFAULT '',
   value         TEXT NOT NULL,
+  rdata_wire    BLOB NOT NULL DEFAULT X'',
   ttl           INTEGER NOT NULL DEFAULT 0,
   priority      INTEGER NOT NULL DEFAULT 0,
   rcode         TEXT NOT NULL DEFAULT '',
   discovery     TEXT NOT NULL DEFAULT 'axfr',
+  name_server   TEXT NOT NULL DEFAULT '',
+  name_server_ip TEXT NOT NULL DEFAULT '',
   observed_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_axfr_zone_records_work ON axfr_zone_records (scan_id, root_domain);
@@ -269,10 +292,13 @@ func (s *Store) CommitDNS(ctx context.Context, result model.DomainResult, enqueu
 	observedAt := result.ResolvedAt.UTC().Format(time.RFC3339Nano)
 	for _, record := range result.Records {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO dns_records
-			(scan_id, root_domain, name, record_type, slot, value, ttl, priority, source, discovery,
-			rcode, finding, source_run_id, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			result.ScanID, result.RootDomain, record.Name, record.RecordType, record.Slot, record.Value,
-			record.TTL, record.Priority, record.Source, record.Discovery, record.Rcode, record.Finding,
+			(scan_id, root_domain, name, record_type, record_type_code, record_class_code, slot, value,
+			rdata_wire, ttl, priority, source, discovery, name_server, name_server_ip, rcode, finding,
+			source_run_id, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			result.ScanID, result.RootDomain, record.Name, record.RecordType, record.TypeCode,
+			record.ClassCode, record.Slot, record.Value, []byte(record.RDataWire), record.TTL,
+			record.Priority, record.Source, record.Discovery, record.NameServer, record.NameServerIP,
+			record.Rcode, record.Finding,
 			result.SourceRunID, observedAt); err != nil {
 			return err
 		}
@@ -371,8 +397,9 @@ func (s *Store) ReadyDNS(ctx context.Context, scanID string, limit int) (ReadyDN
 }
 
 func (s *Store) populateReadyDNS(ctx context.Context, scanID string, batch ReadyDNSBatch) (ReadyDNSBatch, error) {
-	query, args := rootsQuery(`SELECT root_domain, name, record_type, slot, value, ttl, priority,
-		rcode, source, discovery, finding, resolved_at FROM dns_records
+	query, args := rootsQuery(`SELECT root_domain, name, record_type, record_type_code,
+		record_class_code, slot, value, rdata_wire, ttl, priority, rcode, source, discovery,
+		name_server, name_server_ip, finding, resolved_at FROM dns_records
 		WHERE scan_id = ? AND root_domain IN (%s)`, scanID, batch.Roots)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -380,13 +407,16 @@ func (s *Store) populateReadyDNS(ctx context.Context, scanID string, batch Ready
 	}
 	for rows.Next() {
 		var record model.StagedDNSRecord
+		var rdataWire []byte
 		var observedAt string
-		if err := rows.Scan(&record.RootDomain, &record.Name, &record.RecordType, &record.Slot,
-			&record.Value, &record.TTL, &record.Priority, &record.Rcode, &record.Source,
-			&record.Discovery, &record.Finding, &observedAt); err != nil {
+		if err := rows.Scan(&record.RootDomain, &record.Name, &record.RecordType, &record.TypeCode,
+			&record.ClassCode, &record.Slot, &record.Value, &rdataWire, &record.TTL,
+			&record.Priority, &record.Rcode, &record.Source, &record.Discovery, &record.NameServer,
+			&record.NameServerIP, &record.Finding, &observedAt); err != nil {
 			rows.Close()
 			return ReadyDNSBatch{}, err
 		}
+		record.RDataWire = string(rdataWire)
 		record.ObservedAt = parseTS(observedAt)
 		batch.Records = append(batch.Records, record)
 	}
@@ -553,10 +583,12 @@ func (s *Store) CommitAXFR(ctx context.Context, scanID, rootDomain string, probe
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO axfr_zone_records
-			(scan_id, root_domain, name, record_type, slot, value, ttl, priority, rcode, discovery, observed_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, scanID, rootDomain, record.Name,
-			record.RecordType, record.Slot, record.Value, record.TTL, record.Priority, record.Rcode,
-			record.Discovery, observedAt); err != nil {
+			(scan_id, root_domain, name, record_type, record_type_code, record_class_code, slot, value,
+			rdata_wire, ttl, priority, rcode, discovery, name_server, name_server_ip, observed_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, scanID, rootDomain, record.Name,
+			record.RecordType, record.TypeCode, record.ClassCode, record.Slot, record.Value,
+			[]byte(record.RDataWire), record.TTL, record.Priority, record.Rcode, record.Discovery,
+			record.NameServer, record.NameServerIP, observedAt); err != nil {
 			return err
 		}
 	}
@@ -639,8 +671,9 @@ func (s *Store) ReadyAXFR(ctx context.Context, scanID string, limit int) ([]Read
 		return nil, err
 	}
 	probeRows.Close()
-	query, args = rootsQuery(`SELECT root_domain, name, record_type, slot, value, ttl, priority,
-		rcode, discovery FROM axfr_zone_records WHERE scan_id = ? AND root_domain IN (%s)`, scanID, roots)
+	query, args = rootsQuery(`SELECT root_domain, name, record_type, record_type_code,
+		record_class_code, slot, value, rdata_wire, ttl, priority, rcode, discovery, name_server,
+		name_server_ip FROM axfr_zone_records WHERE scan_id = ? AND root_domain IN (%s)`, scanID, roots)
 	zoneRows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -648,11 +681,14 @@ func (s *Store) ReadyAXFR(ctx context.Context, scanID string, limit int) ([]Read
 	for zoneRows.Next() {
 		var rootDomain string
 		var record model.DNSRecord
-		if err := zoneRows.Scan(&rootDomain, &record.Name, &record.RecordType, &record.Slot,
-			&record.Value, &record.TTL, &record.Priority, &record.Rcode, &record.Discovery); err != nil {
+		var rdataWire []byte
+		if err := zoneRows.Scan(&rootDomain, &record.Name, &record.RecordType, &record.TypeCode,
+			&record.ClassCode, &record.Slot, &record.Value, &rdataWire, &record.TTL, &record.Priority,
+			&record.Rcode, &record.Discovery, &record.NameServer, &record.NameServerIP); err != nil {
 			zoneRows.Close()
 			return nil, err
 		}
+		record.RDataWire = string(rdataWire)
 		record.Source = "axfr"
 		byRoot[rootDomain].Zone = append(byRoot[rootDomain].Zone, record)
 	}

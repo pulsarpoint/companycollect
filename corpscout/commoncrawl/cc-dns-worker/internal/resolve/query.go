@@ -3,8 +3,6 @@ package resolve
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -62,8 +60,16 @@ func (r *Resolver) Resolve(ctx context.Context, domain, scanID, runID string, de
 		DSPresent: del.DSOutcome == OutcomePresent, DSOutcome: del.DSOutcome,
 		SourceRunID: runID, ResolvedAt: now,
 	}
-	for _, ds := range del.DS {
-		res.Records = append(res.Records, model.DNSRecord{Name: domain, RecordType: "DS", Slot: "", Value: ds, Rcode: "NOERROR", Source: "query", Discovery: "static"})
+	if len(del.DSRecords) > 0 {
+		res.Records = append(res.Records, del.DSRecords...)
+	} else {
+		// Compatibility for Delegation values built by callers/tests rather than DiscoverNS.
+		for _, ds := range del.DS {
+			rr, err := dns.NewRR(dns.Fqdn(domain) + " 0 IN DS " + ds)
+			if err == nil {
+				res.Records = append(res.Records, recordFromRR(rr, "", "NOERROR", "query", "static"))
+			}
+		}
 	}
 
 	// Fire the plan's queries CONCURRENTLY instead of one-at-a-time. Each still passes through the
@@ -182,48 +188,9 @@ func addressFinding(value string) string {
 
 // collect turns one query's ANSWER RRs into DNSRecords, tagging them with the query's slot.
 func collect(q records.Query, resp *dns.Msg, rcode string) []model.DNSRecord {
-	name := strings.TrimSuffix(q.Name, ".")
-	var out []model.DNSRecord
+	out := make([]model.DNSRecord, 0, len(resp.Answer))
 	for _, rr := range resp.Answer {
-		rec := model.DNSRecord{Name: name, Slot: q.Slot, Rcode: rcode, TTL: rr.Header().Ttl, Source: "query", Discovery: q.Discovery}
-		switch v := rr.(type) {
-		case *dns.A:
-			rec.RecordType, rec.Value = "A", v.A.String()
-			rec.Finding = addressFinding(rec.Value)
-		case *dns.AAAA:
-			rec.RecordType, rec.Value = "AAAA", v.AAAA.String()
-			rec.Finding = addressFinding(rec.Value)
-		case *dns.MX:
-			// value = full rdata "<pref> <host>" so the ReplacingMergeTree sort key (which includes
-			// value but not the priority column) can't collapse two MX at different preferences.
-			rec.RecordType = "MX"
-			rec.Priority = v.Preference
-			rec.Value = strconv.Itoa(int(v.Preference)) + " " + strings.TrimSuffix(strings.ToLower(v.Mx), ".")
-		case *dns.NS:
-			rec.RecordType, rec.Value = "NS", strings.TrimSuffix(strings.ToLower(v.Ns), ".")
-		case *dns.SOA:
-			rec.RecordType, rec.Value = "SOA", strings.TrimSpace(v.String()[len(v.Hdr.String()):])
-		case *dns.CAA:
-			rec.RecordType, rec.Value = "CAA", strings.TrimSpace(v.String()[len(v.Hdr.String()):])
-		case *dns.DNSKEY:
-			rec.RecordType, rec.Value = "DNSKEY", strings.TrimSpace(v.String()[len(v.Hdr.String()):])
-		case *dns.TXT:
-			rec.RecordType, rec.Value = "TXT", strings.Join(v.Txt, "")
-		case *dns.CNAME:
-			rec.RecordType, rec.Value = "CNAME", strings.TrimSuffix(strings.ToLower(v.Target), ".")
-		case *dns.SRV:
-			// value = full rdata "<pri> <weight> <port> <target>"; SvcPriority also in the priority col.
-			rec.RecordType = "SRV"
-			rec.Priority = v.Priority
-			rec.Value = strings.TrimSpace(v.String()[len(v.Hdr.String()):])
-		case *dns.HTTPS:
-			rec.RecordType = "HTTPS"
-			rec.Priority = v.Priority // SvcPriority (0 = AliasMode)
-			rec.Value = strings.TrimSpace(v.String()[len(v.Hdr.String()):])
-		default:
-			continue
-		}
-		out = append(out, rec)
+		out = append(out, recordFromRR(rr, q.Slot, rcode, "query", q.Discovery))
 	}
 	return out
 }

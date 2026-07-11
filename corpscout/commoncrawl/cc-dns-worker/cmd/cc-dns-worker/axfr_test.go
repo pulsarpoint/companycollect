@@ -39,6 +39,9 @@ func TestProcessAXFRTargetSkipsPrivateAndSharesIPProbe(t *testing.T) {
 	if len(result.zone) != 1 || !result.probes[0].Truncated {
 		t.Errorf("open truncated transfer not preserved: %+v", result)
 	}
+	if result.zone[0].NameServer != "ns1.a.test" || result.zone[0].NameServerIP != "1.2.3.4" {
+		t.Errorf("zone record endpoint provenance lost: %+v", result.zone[0])
+	}
 }
 
 func TestProcessAXFRTargetAllSkippedStillCompletes(t *testing.T) {

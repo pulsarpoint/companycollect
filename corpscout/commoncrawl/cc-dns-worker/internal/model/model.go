@@ -6,15 +6,20 @@ import "time"
 
 // DNSRecord is one resolved resource record, stored verbatim.
 type DNSRecord struct {
-	Name       string // qname queried (FQDN without trailing dot)
-	RecordType string // A, AAAA, MX, TXT, NS, SOA, CAA, DNSKEY, DS
-	Slot       string // "@", hostname, DKIM selector, "dmarc"/"mta_sts"/"tls_rpt"/"bimi", or ""
-	Value      string // rdata verbatim
-	Rcode      string // query rcode for the query that produced this record
-	TTL        uint32
-	Priority   uint16 // MX preference; 0 otherwise
-	Source     string // "query" (actively queried) | "axfr" (from a zone transfer)
-	Discovery  string // "static" | "ct" | "axfr" — how the hostname was discovered
+	Name         string // RR owner name (FQDN without trailing dot)
+	RecordType   string // mnemonic when known (A, MX, HTTPS), otherwise TYPE<number>
+	TypeCode     uint16 // DNS RR TYPE code; authoritative identity even when RecordType is unknown
+	ClassCode    uint16 // DNS RR CLASS code (normally IN=1)
+	Slot         string // "@", hostname, DKIM selector, "dmarc"/"mta_sts"/"tls_rpt"/"bimi", or ""
+	Value        string // complete RFC presentation-format RDATA
+	RDataWire    string // exact uncompressed RDATA bytes; ClickHouse String and SQLite BLOB are binary-safe
+	Rcode        string // query rcode for the query that produced this record
+	TTL          uint32
+	Priority     uint16 // convenience projection for priority-bearing records; 0 otherwise
+	Source       string // "query" (actively queried) | "axfr" (from a zone transfer)
+	Discovery    string // "static" | "ct" | "axfr" — how the hostname was discovered
+	NameServer   string // AXFR endpoint hostname; empty for ordinary queries and legacy observations
+	NameServerIP string // AXFR endpoint IP; empty for ordinary queries and legacy observations
 
 	// Finding is a derived classification for this record, currently only ever
 	// "public_dns_private_address" (Task 9): an A/AAAA Value that resolve.ClassifyString classifies as
@@ -151,18 +156,23 @@ type DomainResult struct {
 // StagedDNSRecord is the bounded SQLite read shape used to build retry-safe observations and hostname
 // updates. It carries one event timestamp rather than aggregate-table concepts such as scans or ranges.
 type StagedDNSRecord struct {
-	RootDomain string
-	RecordType string
-	Slot       string
-	Name       string
-	Value      string
-	TTL        uint32
-	Priority   uint16
-	Rcode      string
-	Source     string
-	Discovery  string
-	Finding    string
-	ObservedAt time.Time
+	RootDomain   string
+	RecordType   string
+	TypeCode     uint16
+	ClassCode    uint16
+	Slot         string
+	Name         string
+	Value        string
+	RDataWire    string
+	TTL          uint32
+	Priority     uint16
+	Rcode        string
+	Source       string
+	Discovery    string
+	NameServer   string
+	NameServerIP string
+	Finding      string
+	ObservedAt   time.Time
 }
 
 // RecordObservationRow mirrors corpscout.commoncrawl_domain_dns_record_observations (Task 7's
@@ -170,25 +180,31 @@ type StagedDNSRecord struct {
 // it is one IMMUTABLE row per (identity, source, discovery, scan_id) observation, so replaying a
 // scan's load (the same rows, same ScanID) always produces byte-identical rows that
 // ReplacingMergeTree(loaded_at) collapses to one on merge/FINAL, however many times it is retried.
-// Field order matches the CREATE TABLE column order (see migration 000113); ORDER BY is
-// (root_domain, name, record_type, slot, value, source, discovery, scan_id) — the FULL logical
+// Field order matches the CREATE TABLE column order (see migrations 000113 and 000123); ORDER BY is
+// (root_domain, name, record_type, slot, value, source, discovery, scan_id, record_type_code,
+// record_class_code, name_server, name_server_ip) — the FULL logical
 // observation identity, so LoadedAt only decides which physical copy of an identical row survives a
 // retry, never whether two truly distinct observations collapse into one. See internal/load/load.go
 // for why LoadedAt is safe to set to time.Now() on every call (rather than pinned per scan_id).
 type RecordObservationRow struct {
-	RootDomain string    `ch:"root_domain"`
-	Name       string    `ch:"name"`
-	RecordType string    `ch:"record_type"`
-	Slot       string    `ch:"slot"`
-	Value      string    `ch:"value"`
-	Source     string    `ch:"source"`
-	Discovery  string    `ch:"discovery"`
-	ScanID     string    `ch:"scan_id"`
-	TTL        uint32    `ch:"ttl"`
-	Priority   uint16    `ch:"priority"`
-	Rcode      string    `ch:"rcode"`
-	ObservedAt time.Time `ch:"observed_at"` // event time: when this record was actually resolved
-	LoadedAt   time.Time `ch:"loaded_at"`   // ReplacingMergeTree version: when this row was inserted
+	RootDomain   string    `ch:"root_domain"`
+	Name         string    `ch:"name"`
+	RecordType   string    `ch:"record_type"`
+	TypeCode     uint16    `ch:"record_type_code"`
+	ClassCode    uint16    `ch:"record_class_code"`
+	Slot         string    `ch:"slot"`
+	Value        string    `ch:"value"`
+	RDataWire    string    `ch:"rdata_wire"`
+	Source       string    `ch:"source"`
+	Discovery    string    `ch:"discovery"`
+	NameServer   string    `ch:"name_server"`
+	NameServerIP string    `ch:"name_server_ip"`
+	ScanID       string    `ch:"scan_id"`
+	TTL          uint32    `ch:"ttl"`
+	Priority     uint16    `ch:"priority"`
+	Rcode        string    `ch:"rcode"`
+	ObservedAt   time.Time `ch:"observed_at"` // event time: when this record was actually resolved
+	LoadedAt     time.Time `ch:"loaded_at"`   // ReplacingMergeTree version: when this row was inserted
 }
 
 // HostnameRow mirrors corpscout.commoncrawl_domain_hostnames (AggregatingMergeTree registry). One

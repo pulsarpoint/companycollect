@@ -1,8 +1,8 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
 -- Retry-safe raw DNS record observations. This table stores one immutable row per observation
--- (root_domain, name, record_type, slot, value, source, discovery,
--- scan_id): replaying the identical rows for the same scan_id always produces byte-identical rows,
+-- (root_domain, name, record_type, slot, value, source, discovery, scan_id, numeric type/class,
+-- AXFR endpoint): replaying the identical rows for the same scan_id always produces byte-identical rows,
 -- which ReplacingMergeTree(loaded_at) collapses back to one on merge (or FINAL), however many times
 -- the load is retried.
 --
@@ -23,10 +23,15 @@ CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_record_observations
     root_domain String,
     name        String,
     record_type LowCardinality(String),
+    record_type_code UInt16,                 -- authoritative TYPE code, including unknown/future types
+    record_class_code UInt16,                -- authoritative CLASS code (normally IN=1)
     slot        LowCardinality(String),
-    value       String,                     -- rdata verbatim (MX value embeds "<pref> <host>")
+    value       String,                      -- complete RFC presentation-format RDATA
+    rdata_wire  String,                      -- exact uncompressed binary RDATA, String is binary-safe
     source      LowCardinality(String),      -- "query" | "axfr" -- how the record was obtained
     discovery   LowCardinality(String),      -- "static" | "ct" | "axfr" -- how the hostname was found
+    name_server String,                      -- AXFR endpoint hostname, empty for ordinary queries
+    name_server_ip String,                   -- AXFR endpoint IP, empty for ordinary queries
     scan_id     String,                      -- the scan (cycle) this observation belongs to
     ttl         UInt32,
     priority    UInt16,                      -- MX preference, convenience also embedded in value
@@ -36,4 +41,18 @@ CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_record_observations
 )
 ENGINE = ReplacingMergeTree(loaded_at)
 PARTITION BY cityHash64(root_domain) % 16
-ORDER BY (root_domain, name, record_type, slot, value, source, discovery, scan_id);
+ORDER BY
+(
+    root_domain,
+    name,
+    record_type,
+    slot,
+    value,
+    source,
+    discovery,
+    scan_id,
+    record_type_code,
+    record_class_code,
+    name_server,
+    name_server_ip
+);

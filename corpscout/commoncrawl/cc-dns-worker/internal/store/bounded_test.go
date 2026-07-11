@@ -2,12 +2,14 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"cc-dns-worker/internal/model"
+	"cc-dns-worker/internal/resolve"
 )
 
 func openBoundedTestStore(t *testing.T) *Store {
@@ -97,7 +99,10 @@ func TestCommitDNSAtomicallyCreatesAXFRWorkAndReadyOutbox(t *testing.T) {
 			{Name: "ns.a.test", IP: "1.1.1.1", Scope: "public", Dialable: true},
 			{Name: "ns.a.test", IP: "10.0.0.1", Scope: "private", Dialable: false},
 		},
-		Records: []model.DNSRecord{{Name: "www.a.test", RecordType: "A", Value: "1.2.3.4", Discovery: "ct"}},
+		Records: []model.DNSRecord{{
+			Name: "www.a.test", RecordType: "A", TypeCode: 1, ClassCode: 1,
+			Value: "1.2.3.4", RDataWire: string([]byte{1, 2, 3, 4, 0}), Discovery: "ct",
+		}},
 	}
 	if err := store.CommitDNS(ctx, result, true); err != nil {
 		t.Fatal(err)
@@ -120,6 +125,107 @@ func TestCommitDNSAtomicallyCreatesAXFRWorkAndReadyOutbox(t *testing.T) {
 	}
 	if len(ready.Records) != 1 || len(ready.Summaries) != 1 || len(ready.Hostnames) != 1 {
 		t.Errorf("ready batch = %+v", ready)
+	}
+	if record := ready.Records[0]; record.TypeCode != 1 || record.ClassCode != 1 || record.RDataWire != string([]byte{1, 2, 3, 4, 0}) {
+		t.Errorf("protocol metadata did not survive SQLite: %+v wire=%x", record, record.RDataWire)
+	}
+}
+
+func TestOpenUpgradesLegacyRecordOutboxesWithoutLosingRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `
+		CREATE TABLE dns_records (scan_id TEXT, root_domain TEXT, name TEXT, record_type TEXT,
+			slot TEXT, value TEXT, ttl INTEGER, priority INTEGER, source TEXT, discovery TEXT,
+			rcode TEXT, finding TEXT, source_run_id TEXT, resolved_at TEXT);
+		CREATE TABLE axfr_zone_records (scan_id TEXT, root_domain TEXT, name TEXT, record_type TEXT,
+			slot TEXT, value TEXT, ttl INTEGER, priority INTEGER, rcode TEXT, discovery TEXT,
+			observed_at TEXT);
+		INSERT INTO dns_records VALUES ('scan','example.com','www.example.com','A','www',
+			'192.0.2.1',60,0,'query','static','NOERROR','','run','2026-07-11T00:00:00Z');
+		INSERT INTO axfr_zone_records VALUES ('scan','example.com','example.com','SOA','',
+			'ns.example.com. hostmaster.example.com. 1 2 3 4 5',60,0,'NOERROR','axfr',
+			'2026-07-11T00:00:00Z');`
+	if _, err := database.Exec(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, table := range []string{"dns_records", "axfr_zone_records"} {
+		columns, err := sqliteColumns(context.Background(), store.db, table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"record_type_code", "record_class_code", "rdata_wire", "name_server", "name_server_ip"} {
+			if !columns[name] {
+				t.Errorf("%s.%s was not added", table, name)
+			}
+		}
+		var count int
+		if err := store.db.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 1 {
+			t.Errorf("%s row count = %d, err=%v", table, count, err)
+		}
+	}
+}
+
+func TestAXFRRecordProtocolFieldsRoundTripThroughSQLite(t *testing.T) {
+	ctx := context.Background()
+	store := openBoundedTestStore(t)
+	if err := store.BeginCycle(ctx, "scan", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddDomainPage(ctx, "scan", []string{"example.com"}, true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimDNS(ctx, "scan", 1); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := model.NameserverEndpoint{Name: "ns.example.com", IP: "192.0.2.53", Scope: "public", Dialable: true}
+	if err := store.CommitDNS(ctx, model.DomainResult{
+		ScanID: "scan", RootDomain: "example.com", Status: model.DomainStatusDone,
+		Endpoints: []model.NameserverEndpoint{endpoint}, ResolvedAt: time.Now().UTC(),
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimAXFR(ctx, "scan", 1); err != nil {
+		t.Fatal(err)
+	}
+	observedAt := time.Unix(100, 0).UTC()
+	probe := resolve.AXFROutcome{
+		Verdict: resolve.VerdictOpen, Reason: resolve.ReasonTransferred,
+		NSHost: endpoint.Name, NSIP: endpoint.IP, ObservedAt: observedAt,
+	}
+	wire := string([]byte{0xde, 0xad, 0, 0xbe, 0xef})
+	zone := []model.DNSRecord{{
+		Name: "unknown.example.com", RecordType: "TYPE65400", TypeCode: 65400,
+		ClassCode: 65280, Value: `\# 5 DEAD00BEEF`, RDataWire: wire,
+		Source: "axfr", Discovery: "axfr", Rcode: "NOERROR",
+		NameServer: endpoint.Name, NameServerIP: endpoint.IP,
+	}}
+	if err := store.CommitAXFR(ctx, "scan", "example.com", []resolve.AXFROutcome{probe}, zone, ""); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := store.ReadyAXFR(ctx, "scan", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || len(jobs[0].Zone) != 1 {
+		t.Fatalf("ready AXFR jobs = %+v", jobs)
+	}
+	record := jobs[0].Zone[0]
+	if record.TypeCode != 65400 || record.ClassCode != 65280 || record.RDataWire != wire ||
+		record.NameServer != endpoint.Name || record.NameServerIP != endpoint.IP {
+		t.Errorf("AXFR protocol fields did not survive SQLite: %+v wire=%x", record, record.RDataWire)
 	}
 }
 
