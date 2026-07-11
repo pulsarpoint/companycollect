@@ -27,7 +27,10 @@ func TestScanAXFRDisabledDoesNoAXFRWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := seed.MarkSeedComplete(ctx, scanID); err != nil {
+	if err := seed.BeginCycle(ctx, scanID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.AddDomainPage(ctx, scanID, nil, true, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := seed.Close(); err != nil {
@@ -46,12 +49,12 @@ func TestScanAXFRDisabledDoesNoAXFRWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	has, err := st.HasAXFRWork(ctx, scanID)
+	count, err := st.AXFRWorkCount(ctx, scanID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if has {
-		t.Error("axfr_domains has staged rows after --axfr=false; want zero AXFR work (no seeding at all)")
+	if count != 0 {
+		t.Errorf("axfr_work rows after --axfr=false = %d, want zero", count)
 	}
 }
 

@@ -43,9 +43,6 @@ func dbName(cycleID string) string { return "scan-" + cycleID + ".db" }
 func runOrchestrator(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	dir := fs.String("dir", ".", "working directory for cycle DBs and the state file")
-	loadInterval := fs.Duration("load-interval", 30*time.Minute, "how often to incrementally load the running cycle to ClickHouse")
-	loadBatch := fs.Int("load-batch", 20000, "records per incremental-load batch")
-	keepDBs := fs.Int("keep-dbs", 1, "previous cycle DBs to keep after loading (older are deleted)")
 	build := scanFlags(fs)
 	_ = fs.Parse(args)
 	cfg, err := build()
@@ -61,62 +58,23 @@ func runOrchestrator(args []string) error {
 			return err
 		}
 		dbPath := filepath.Join(*dir, dbName(state.CycleID))
-
-		if state.Phase == phaseSeeding {
-			if err := runSeedPhase(ctx, state, dbPath, cfg); err != nil {
-				log.Printf("cycle %s: seed phase error: %v — retrying in 30s (resumes, no new cycle)", state.CycleID, err)
-				time.Sleep(30 * time.Second)
-				continue
-			}
-			state.Phase = phaseScanning
-			if err := saveState(statePath, state); err != nil {
-				return err
-			}
+		st, err := store.Open(dbPath)
+		if err != nil {
+			return err
 		}
-
-		if state.Phase == phaseScanning {
-			if err := runScanPhase(ctx, state, dbPath, cfg, *loadInterval, *loadBatch); err != nil {
-				log.Printf("cycle %s: scan phase error: %v — retrying in 30s (resumes, no new cycle)", state.CycleID, err)
-				time.Sleep(30 * time.Second)
-				continue
-			}
-			if cfg.axfr {
-				state.Phase = phaseAXFR
-			} else {
-				state.Phase = phaseFlushing
-			}
-			if err := saveState(statePath, state); err != nil {
-				return err
-			}
+		cfg.scanID = state.CycleID
+		cfg.runID = state.CycleID
+		err = runBoundedCycle(ctx, st, cfg)
+		_ = st.Close()
+		if err != nil {
+			log.Printf("cycle %s: bounded engine error: %v — retrying in 30s", state.CycleID, err)
+			time.Sleep(30 * time.Second)
+			continue
 		}
-
-		if state.Phase == phaseAXFR {
-			if err := runAXFRPhase(ctx, state, dbPath, cfg); err != nil {
-				log.Printf("cycle %s: axfr phase error: %v — retrying in 30s (resumes, no new cycle)", state.CycleID, err)
-				time.Sleep(30 * time.Second)
-				continue
-			}
-			state.Phase = phaseFlushing
-			if err := saveState(statePath, state); err != nil {
-				return err
-			}
-		}
-
-		if state.Phase == phaseFlushing {
-			if err := runFlushPhase(ctx, state, dbPath, *loadBatch); err != nil {
-				log.Printf("cycle %s: flush phase error: %v — retrying in 30s", state.CycleID, err)
-				time.Sleep(30 * time.Second)
-				continue
-			}
-			state.Phase = phaseDone
-			if err := saveState(statePath, state); err != nil {
-				return err
-			}
-		}
-
-		// Done: prune old DBs and clear state so the next iteration mints a fresh cycle.
-		pruneOldDBs(*dir, *keepDBs)
 		log.Printf("cycle %s: complete", state.CycleID)
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			_ = os.Remove(dbPath + suffix)
+		}
 		_ = os.Remove(statePath)
 	}
 }

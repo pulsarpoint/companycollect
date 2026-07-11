@@ -11,7 +11,11 @@ cc_dns_run_flags: >-
   --resolvers 127.0.0.1:53
   --discovery-qps 3000 --workers 2000 --query-timeout 2s
   --per-server-qps 30 --per-server-inflight 20 --hyperscaler-qps 500
-  --discovery-inflight 3000 --load-interval 30m
+  --discovery-inflight 3000
+  --domain-page-size 5000 --dns-work-capacity 20000 --dns-claim-batch 2000
+  --dns-flush-batch 500 --dns-flush-interval 5s
+  --axfr-work-capacity 5000 --axfr-claim-batch 100
+  --axfr-flush-batch 100 --axfr-flush-interval 5s
 worker_limit_nofile: 1048576
 
 # --- unbound tuning (num-threads scales to the target's CPUs) ---

@@ -457,7 +457,7 @@ func BuildAXFRLatestRows(eps []store.AXFRProbedEndpoint, prior map[store.AXFREnd
 			DefinitiveScanID:   p.DefinitiveScanID,
 		}
 		if e.DelegationActive {
-			row.DelegationSeenAt = now // re-confirmed as part of the delegation this scan
+			row.DelegationSeenAt = updatedAt // stable delegation observation time, including on replay
 		}
 		if e.Verdict != "" { // a fresh probe landed this scan
 			row.LastProbeVerdict = e.Verdict

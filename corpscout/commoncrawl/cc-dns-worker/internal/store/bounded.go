@@ -181,6 +181,17 @@ func (s *Store) AXFRWorkCounts(ctx context.Context, scanID string) (WorkCounts, 
 	return workCounts(ctx, s.db, "axfr_work", scanID)
 }
 
+func (s *Store) AXFRWorkCount(ctx context.Context, scanID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM axfr_work WHERE scan_id = ?`, scanID).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CheckpointWAL(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+	return err
+}
+
 func workCounts(ctx context.Context, db *sql.DB, table, scanID string) (WorkCounts, error) {
 	var counts WorkCounts
 	err := db.QueryRowContext(ctx, `SELECT
