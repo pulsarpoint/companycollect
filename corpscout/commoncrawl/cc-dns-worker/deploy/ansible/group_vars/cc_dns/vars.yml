@@ -3,12 +3,6 @@ deploy_root: /opt/companycollect
 deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-worker"
 service_name: cc-dns-scan
 
-# One-time Task 7 boundary. Leave empty after the marker exists on the server. On the first deployment
-# of the raw-observation writer, pass one explicit mode with -e:
-#   abandon_active_cycle  stop the worker and preserve/retire its state file so a fresh scan_id starts
-#   already_complete      create the marker only after independently verifying the cutover already ran
-cc_dns_observation_cutover_mode: ""
-
 # --- worker run flags ---
 # CONTAINMENT (Task 0 of the correctness-hardening plan): --axfr and --host-enrich are DISABLED in
 # production until their release gates pass (AXFR: Tasks 2-6; host enrichment: Task 11). This is
