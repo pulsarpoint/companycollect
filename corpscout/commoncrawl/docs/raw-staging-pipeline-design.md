@@ -1,8 +1,10 @@
 # Common Crawl raw staging pipeline
 
-Status: agreed for implementation. Phases 1-2 are implemented: raw contracts and validation live in
+Status: agreed for implementation. Phases 1-3 are implemented: raw contracts and validation live in
 `cc-enrich-worker/internal/rawstore` and `cc-enrich-worker/internal/rawstate`, and the current fetch path now
-separates exact compressed WARC retrieval from WARC/HTTP parsing.
+separates exact compressed WARC retrieval from WARC/HTTP parsing. `cc-download-worker` now stages one
+worklist part as bounded, resumable RustFS packs. Multi-part scheduling and storage watermarks remain future
+work.
 
 This document defines how Common Crawl network reads are separated from enrichment compute. A downloader
 retrieves the selected WARC records once, stores bounded raw packs in the local RustFS object store, and
@@ -224,7 +226,7 @@ The index has one row for every requested worklist record, including download fa
 | `warc_offset` | Source range offset. |
 | `warc_length` | Source range length. |
 | `download_status` | `downloaded`, `not_found`, or `failed`. |
-| `download_attempts` | Number of remote HTTP attempts. |
+| `download_attempts` | Number of downloader attempts; the selected transport may perform internal HTTP retries. |
 | `pack_offset` | Start byte in `records.pack`; null on failure. |
 | `pack_length` | Record length in `records.pack`; null on failure. |
 | `record_checksum` | Optional checksum of the stored record bytes. |
@@ -524,7 +526,7 @@ wrapped through lower layers and logged once at the command/worker boundary.
    processed, loaded, and reclaimed documents, with golden contract fixtures.
 2. **Implemented:** split the existing fetch path into byte-range retrieval and raw WARC parsing without
    changing direct-mode behavior.
-3. Add `cc-download-worker` and produce staged objects for one part in RustFS.
+3. **Implemented:** add `cc-download-worker` and produce staged objects for one part in RustFS.
 4. Add staged-input mode to `cc-enrich-worker`, reading packs sequentially and retaining the existing output
    Parquet format.
 5. Run one representative part in both direct and staged modes and compare domain/page counts and all

@@ -1,14 +1,18 @@
-# CommonCrawl enrichment — build both Go binaries with a single `make`:
-#   cc-enrich-worker  (the enrichment pass + loader)   -> cc-enrich-worker/bin/cc-enrich-worker
-#   cc-crawl          (the orchestrator, ex run_crawl.sh) -> cc-crawl/bin/cc-crawl
-.PHONY: all build worker crawl vet test clean
+# Common Crawl pipeline binaries:
+#   cc-enrich-worker   -> cc-enrich-worker/bin/cc-enrich-worker
+#   cc-download-worker -> cc-enrich-worker/bin/cc-download-worker
+#   cc-crawl           -> cc-crawl/bin/cc-crawl
+.PHONY: all build worker download crawl vet test clean
 
-all: build                ## default: build both binaries
+all: build                ## default: build all pipeline binaries
 
-build: worker crawl       ## build cc-enrich-worker + cc-crawl
+build: worker crawl       ## build downloader + enrichment worker + orchestrator
 
-worker:                   ## build the enrichment worker
+worker:                   ## build download and enrichment workers
 	$(MAKE) -C cc-enrich-worker build
+
+download:                 ## build only the raw download worker
+	$(MAKE) -C cc-enrich-worker download
 
 crawl:                    ## build the cc-crawl orchestrator
 	$(MAKE) -C cc-crawl build

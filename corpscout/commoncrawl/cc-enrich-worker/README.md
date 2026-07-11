@@ -1,8 +1,11 @@
-# cc-enrich-worker
+# Common Crawl download and enrichment workers
 
-The **processor** of the CommonCrawl enrichment pipeline: a single Go binary that byte-range-fetches
-WARC pages from S3, runs one of two workflows over them (industry classification or technology/company-info
-extraction), writes **Parquet**, and — as a separate step — **loads** that Parquet into ClickHouse.
+This Go module provides two workers:
+
+- `cc-download-worker` reads selected compressed WARC records from Common Crawl and commits bounded raw
+  packs to RustFS for reuse by multiple processors.
+- `cc-enrich-worker` is the existing processor: it fetches/parses pages, runs industry or technology
+  enrichment, writes **Parquet**, and loads that Parquet into ClickHouse as a separate step.
 
 It is a subcommand CLI: `cc-enrich-worker <industry|embed|tech|both|load> [flags]`. The command **is** the
 workflow. It does not orchestrate parts or build worklists — that's `cc-crawl` and `index-builder`
@@ -28,13 +31,13 @@ and a crashed produce never half-writes ClickHouse. Both stages use the native C
 Go **1.26+**, no cgo. From `commoncrawl/`:
 
 ```bash
-make -C cc-enrich-worker            # -> cc-enrich-worker/bin/cc-enrich-worker  (static, CGO_ENABLED=0)
+make -C cc-enrich-worker            # -> bin/cc-enrich-worker + bin/cc-download-worker
 # or, at commoncrawl/:  make worker
 make -C cc-enrich-worker arm        # cross-compile linux/arm64 (Graviton)
 make -C cc-enrich-worker test       # go test ./...
 make -C cc-enrich-worker vet        # go vet ./...
 make -C cc-enrich-worker clean      # rm -rf bin
-# amd64 cross-compile (no target):  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/cc-enrich-worker ./cmd/cc-enrich-worker
+# amd64 cross-compile downloader: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/cc-download-worker ./cmd/cc-download-worker
 ```
 
 A minimal run (produce, then load) — see §Flags for every option:
@@ -45,26 +48,71 @@ set -a; source ../.env; set +a
 ./bin/cc-enrich-worker load --dir ../data/crawl/run0
 ```
 
+A one-part raw staging run:
+
+```bash
+set -a; source ../.env; set +a
+./bin/cc-download-worker \
+  --worklist ../data/CC-MAIN-2026-25/crawl/shard_tech_0.parquet \
+  --crawl-id CC-MAIN-2026-25 --selection tech25 --part 0
+```
+
+The downloader uses the normal AWS credential chain for Common Crawl and the separate
+`CORPSCOUT_S3_*` credentials for RustFS. Add `--source-anonymous` only when signed Common Crawl S3 access
+is unavailable.
+
 ## Module layout
 
 ```
 cc-enrich-worker/
-├── cmd/cc-enrich-worker/main.go   # subcommand dispatch, flag parsing, run() + runLoad()
+├── cmd/
+│   ├── cc-download-worker/main.go # Common Crawl -> validated RustFS raw packs
+│   └── cc-enrich-worker/main.go   # enrichment dispatch, run() + runLoad()
 ├── internal/
 │   ├── classify/   # NACE cosine classify + page-type signals + startup model-match check
 │   ├── embed/      # OpenAI-compatible embedding client (batching, concurrency, retry, L2-normalize)
 │   ├── extract/    # schema.org JSON-LD profile, LEI, VAT (checksum-validated)
-│   ├── fetch/      # RangeGetter: signed S3 + anonymous CDN; FetchRecord unpacks a WARC record
+│   ├── fetch/      # signed S3/anonymous ranges; separate raw retrieval and WARC/HTTP parsing
 │   ├── load/       # Parquet -> ClickHouse (native protocol); legacy fat-domains fan-out
 │   ├── model/      # shared types (Reference, Prototypes, WorklistItem, Technology, Identifier, …)
 │   ├── output/     # *Row structs (parquet+ch tags), Write* funcs, S3 upload
 │   ├── parse/      # HTML -> visible text, emails, social links
+│   ├── rawdownload/ # worklist chunking, concurrent download, pack commit, resume
+│   ├── rawstate/   # processing/processed/loaded/reclaimed marker contracts
+│   ├── rawstore/   # pack/index/manifest contracts and concrete RustFS boundary
 │   ├── tech/       # DetectTech: fast Aho-Corasick gating | upstream wappalyzergo
 │   ├── vec/        # Dot, L2-normalize
 │   └── worker/     # ShardConfig, ProcessIndustryStream, FetchChunk + Finalize
 ├── bin/            # build output (gitignored)
 ├── Makefile  ·  Dockerfile  ·  go.mod
 ```
+
+## Raw staging downloader
+
+`cc-download-worker` handles one worklist part per process. It plans deterministic chunks using both
+advertised WARC bytes and record count, downloads records concurrently, and writes records to each pack in
+worklist order. An individual record larger than `--max-pack-bytes` remains whole in its own pack.
+
+For every chunk, publication order is `records.pack` → `index.parquet` → `manifest.json`. After all chunks
+validate, the downloader publishes part-level `download/ready.json`. Existing chunks are reused only when
+their manifest identity and RustFS size/checksum metadata match. A fully valid ready part performs no source
+downloads or uploads on rerun.
+
+Important flags:
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `--worklist` | required | Local worklist Parquet shard. |
+| `--crawl-id`, `--selection`, `--part` | required | Stable raw object identity. |
+| `--concurrency` | `64` | Concurrent selected WARC record downloads. |
+| `--max-pack-bytes` | `256 MiB` | Target maximum advertised bytes per pack. |
+| `--max-records` | `16384` | Maximum worklist rows per pack. |
+| `--max-failure-rate` | `0.01` | Maximum terminal failures committed per chunk, rounded up to a whole record. |
+| `--record-timeout` | `30s` | Deadline for one selected record. |
+| `--force-redownload` | false | Recreate a part carrying `reclaimed.json`. |
+
+The downloader never deletes raw data. It logs one structured event per committed or reused chunk and a
+final part summary. Storage high/low-watermark scheduling and multi-part orchestration are subsequent phases.
 
 ## Subcommands
 
@@ -148,6 +196,9 @@ Read via `envOr()` / `envInt()` in `main.go`, plus the fetch/embed clients. Load
 | `AWS_REGION` | `us-east-1` | S3 region (the CommonCrawl bucket is permanently `us-east-1`) |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | (none) | signed-S3 credentials; validated upfront (5 s) in `NewS3Getter`. Off-AWS you must export these |
 | `CC_BASE_URL` | (empty → `https://data.commoncrawl.org/`) | anonymous CDN base for `--s3-anonymous` |
+| `CORPSCOUT_S3_ENDPOINT` | required by downloader | RustFS S3-compatible endpoint. |
+| `CORPSCOUT_S3_ACCESS_KEY` / `CORPSCOUT_S3_SECRET_KEY` | required by downloader | RustFS credentials; never accepted as command-line flags. |
+| `CORPSCOUT_S3_BUCKET` | required by downloader | RustFS bucket holding `commoncrawl/raw` and `commoncrawl/state`. |
 
 **Connection gating:** `embed` uses **no** ClickHouse (logs `embed-only mode: no NACE reference, no
 ClickHouse, no load`). `industry`/`both` connect to **read** the reference + run the startup model-match

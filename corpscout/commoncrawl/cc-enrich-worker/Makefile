@@ -1,13 +1,19 @@
-# cc-enrich-worker — builds into bin/ (gitignored). Run from this directory.
-BIN := bin/cc-enrich-worker
-PKG := ./cmd/cc-enrich-worker
+# Common Crawl workers — build into bin/ (gitignored). Run from this directory.
+ENRICH_BIN := bin/cc-enrich-worker
+DOWNLOAD_BIN := bin/cc-download-worker
 
-.PHONY: build arm test vet clean
-build:                ## static binary -> bin/cc-enrich-worker
-	CGO_ENABLED=0 go build -o $(BIN) $(PKG)
+.PHONY: build enrich download arm test vet clean
+build: enrich download
 
-arm:                  ## cross-compile linux/arm64 (Graviton)
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(BIN) $(PKG)
+enrich:               ## static enrichment binary
+	CGO_ENABLED=0 go build -o $(ENRICH_BIN) ./cmd/cc-enrich-worker
+
+download:             ## static raw-download binary
+	CGO_ENABLED=0 go build -o $(DOWNLOAD_BIN) ./cmd/cc-download-worker
+
+arm:                  ## cross-compile both binaries for linux/arm64 (Graviton)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(ENRICH_BIN) ./cmd/cc-enrich-worker
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(DOWNLOAD_BIN) ./cmd/cc-download-worker
 
 test:                 ## go test ./...
 	go test ./...

@@ -1,6 +1,7 @@
 package rawstore
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -33,6 +34,30 @@ func TestGoldenReadyManifest(t *testing.T) {
 	decodeFixture(t, "ready.json", &ready)
 	if err := ready.Validate(); err != nil {
 		t.Fatalf("validate golden ready manifest: %v", err)
+	}
+}
+
+func TestManifestDocumentsRoundTripAndRejectUnknownFields(t *testing.T) {
+	var manifest ChunkManifest
+	decodeFixture(t, "chunk_manifest.json", &manifest)
+	body, err := EncodeChunkManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeChunkManifest(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, manifest) {
+		t.Fatalf("manifest round trip mismatch\ngot:  %#v\nwant: %#v", decoded, manifest)
+	}
+
+	unknownField := bytes.Replace(body, []byte(`"schema_version": 1,`), []byte(`"schema_version": 1, "unexpected": true,`), 1)
+	if _, err := DecodeChunkManifest(unknownField); err == nil {
+		t.Fatal("manifest with unknown field passed decoding")
+	}
+	if _, err := DecodeChunkManifest(append(body, []byte("{}")...)); err == nil {
+		t.Fatal("manifest with trailing JSON passed decoding")
 	}
 }
 
