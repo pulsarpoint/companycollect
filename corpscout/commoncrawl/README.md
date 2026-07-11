@@ -28,6 +28,7 @@ This is the pipeline-level runbook. Each Go service also has its own README.
 |---|---|---|
 | `cc-crawl/` | Go | The **orchestrator**. Drives the unchanged per-part loop: local marker check → produce → load → local marker, with structured JSON logs. |
 | `cc-download-worker/` | Go + embedded Python | The independent **raw downloader**. Builds/reuses its own URL-index worklists, downloads selected records, and commits bounded packs to RustFS. |
+| `cc-download-worker/bin/cc-warc-analyzer` | Go + embedded Python | Standalone WARC range-strategy analyzer. Compares exact, bounded, junk-threshold, and whole-object downloads without staging WARC content. |
 | `cc-enrich-worker/` | Go | The **processor**. Reads verified raw parts from local RustFS, runs the chosen workflow → local Parquet, and separately loads it. Reference §6. |
 | `cc-raw/` | Go | Shared WARC fetch/parse and RustFS manifest/state contracts; no binary. |
 | `index-builder/` | Python (duckdb, pyarrow) | Legacy standalone worklist CLI. Its selection logic is embedded in `cc-download-worker`; `cc-crawl` does not invoke it. |
@@ -81,7 +82,7 @@ Load with `set -a; source ../.env; set +a` (exports every var; `env | grep` to v
 shows set-but-unexported vars and lies). `AWS_REGION` is the only place the S3 region is set (the
 CommonCrawl bucket is permanently `us-east-1`); there is no region flag.
 
-**c. Build the binaries** — one `make` at `commoncrawl/` builds all three Go binaries (gitignored `bin/`)
+**c. Build the binaries** — one `make` at `commoncrawl/` builds the pipeline binaries and WARC analyzer (gitignored `bin/`)
 ```bash
 cd commoncrawl && make             # downloader + enrichment worker + orchestrator
 # make download / make worker / make crawl

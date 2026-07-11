@@ -1,0 +1,49 @@
+# cc-warc-analyzer
+
+`cc-warc-analyzer` compares Common Crawl download strategies without downloading WARC content or writing
+to RustFS. It builds or reuses the same `pagesN` worklists as `cc-download-worker`, so the estimates cover
+the exact pages that would be staged.
+
+From the `commoncrawl/` directory:
+
+```bash
+make download
+
+./cc-download-worker/bin/cc-warc-analyzer \
+  --base /opt/companycollect/corpscout/commoncrawl/data \
+  --crawl CC-MAIN-2026-25 \
+  --parts 85-94
+```
+
+The analyzer compares:
+
+- `exact_records`: one range request per selected page, with no junk bytes.
+- `bounded_gap_*`: combine physically nearby selected records up to `--max-range-bytes`.
+- `junk_threshold_*`: combine records only while junk remains below each configured percentage.
+- `selected_warc_span_lower_bound`: one span between the first and last selected record in each WARC.
+- `whole_warc_objects`: exact complete-object sizes obtained with HTTP metadata requests.
+
+Each range policy is evaluated at three scopes:
+
+- `output_chunk`: safe with the existing 256 MiB pack and resume contract.
+- `part`: maximum locality available inside each original Common Crawl index part.
+- `part_block`: theoretical locality across the entire requested `--parts` block.
+
+Whole-WARC size checks use `HEAD`, falling back to a one-byte range metadata request. Results are cached
+under `<base>/<crawl>/analysis/warc_sizes.json`; use `--whole-warc-sizes=false` to run only index-based
+analysis.
+
+Useful controls:
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `--parts` | required | One part or inclusive block such as `85-94` or `85-114`. |
+| `--pages-per-domain` | `25` | Page-selection policy shared with the downloader. |
+| `--max-range-bytes` | `16 MiB` | Maximum candidate coalesced range. |
+| `--junk-thresholds` | `10,25,50,75` | Maximum junk percentages compared by the planner. |
+| `--whole-warc-sizes` | `true` | Measure exact sizes of all referenced WARC objects. |
+| `--warc-head-concurrency` | `32` | Concurrent WARC size metadata requests. |
+
+The reusable [`rangeplanner`](../../rangeplanner/) package contains the physical range planner and
+statistics. Once a policy is selected from real results, `cc-download-worker` can use the same package to
+execute it without duplicating the algorithm.

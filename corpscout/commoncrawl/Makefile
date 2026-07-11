@@ -1,6 +1,7 @@
 # Common Crawl pipeline binaries:
 #   cc-enrich-worker   -> cc-enrich-worker/bin/cc-enrich-worker
 #   cc-download-worker -> cc-download-worker/bin/cc-download-worker
+#   cc-warc-analyzer   -> cc-download-worker/bin/cc-warc-analyzer
 #   cc-crawl           -> cc-crawl/bin/cc-crawl
 .PHONY: all build worker download crawl vet test clean
 

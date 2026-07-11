@@ -1,13 +1,17 @@
 BIN := bin/cc-download-worker
 PKG := ./cmd/cc-download-worker
+ANALYZER_BIN := bin/cc-warc-analyzer
+ANALYZER_PKG := ./cmd/cc-warc-analyzer
 
 .PHONY: build arm test vet clean
 
 build:
 	CGO_ENABLED=0 go build -o $(BIN) $(PKG)
+	CGO_ENABLED=0 go build -o $(ANALYZER_BIN) $(ANALYZER_PKG)
 
 arm:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(BIN) $(PKG)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(ANALYZER_BIN) $(ANALYZER_PKG)
 
 test:
 	go test ./...

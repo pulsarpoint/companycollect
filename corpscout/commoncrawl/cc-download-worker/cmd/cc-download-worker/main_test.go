@@ -1,34 +1,6 @@
 package main
 
-import (
-	"reflect"
-	"testing"
-)
-
-func TestParseParts(t *testing.T) {
-	tests := []struct {
-		input string
-		want  []int
-	}{
-		{input: "0", want: []int{0}},
-		{input: "7", want: []int{7}},
-		{input: "0-3", want: []int{0, 1, 2, 3}},
-	}
-	for _, test := range tests {
-		got, err := parseParts(test.input)
-		if err != nil {
-			t.Fatalf("parseParts(%q): %v", test.input, err)
-		}
-		if !reflect.DeepEqual(got, test.want) {
-			t.Fatalf("parseParts(%q)=%v, want %v", test.input, got, test.want)
-		}
-	}
-	for _, input := range []string{"", "-1", "3-2", "x", "1-2-3", "0-10001"} {
-		if _, err := parseParts(input); err == nil {
-			t.Fatalf("parseParts(%q) unexpectedly succeeded", input)
-		}
-	}
-}
+import "testing"
 
 func TestParseOptionsUsesDownloaderDefaults(t *testing.T) {
 	t.Setenv("OUT_BASE_DIR", "/srv/commoncrawl")

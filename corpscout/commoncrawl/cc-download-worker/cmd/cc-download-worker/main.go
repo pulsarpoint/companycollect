@@ -9,11 +9,11 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"cc-download-worker/internal/partspec"
 	"cc-download-worker/internal/rawdownload"
 	"cc-download-worker/internal/worklistbuilder"
 	"cc-raw/fetch"
@@ -72,7 +72,7 @@ func run(logger *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	parts, err := parseParts(options.parts)
+	parts, err := partspec.Parse(options.parts)
 	if err != nil {
 		return err
 	}
@@ -263,37 +263,10 @@ func parseOptions(args []string) (options, error) {
 	if options.recordAttempts < 1 || options.recordAttempts > 10 {
 		return options, errors.New("record-attempts must be between 1 and 10")
 	}
-	if _, err := parseParts(options.parts); err != nil {
+	if _, err := partspec.Parse(options.parts); err != nil {
 		return options, err
 	}
 	return options, nil
-}
-
-func parseParts(value string) ([]int, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil, errors.New("parts are required")
-	}
-	lowText, highText, ranged := strings.Cut(value, "-")
-	if !ranged {
-		highText = lowText
-	}
-	low, err := strconv.Atoi(lowText)
-	if err != nil || low < 0 {
-		return nil, errors.Newf("invalid parts %q: expected a non-negative number or range N-M", value)
-	}
-	high, err := strconv.Atoi(highText)
-	if err != nil || high < low {
-		return nil, errors.Newf("invalid parts %q: expected an ascending range N-M", value)
-	}
-	if high-low > 10_000 {
-		return nil, errors.Newf("invalid parts %q: range exceeds 10001 parts", value)
-	}
-	parts := make([]int, high-low+1)
-	for index := range parts {
-		parts[index] = low + index
-	}
-	return parts, nil
 }
 
 func (totals *totals) add(result rawdownload.Result) {

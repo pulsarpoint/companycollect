@@ -4,6 +4,10 @@ Independent Common Crawl download service. One command builds or reuses the sele
 worklists, downloads only those compressed WARC records, and commits bounded reusable packs to RustFS.
 Downloading and enrichment can therefore run on different machines and scale independently.
 
+Range-strategy experiments are isolated in the separate
+[`cc-warc-analyzer`](cmd/cc-warc-analyzer/README.md) binary. The production downloader continues to use
+one exact Common Crawl range request per selected record until analyzer results justify a planner policy.
+
 The service never parses HTML, performs enrichment, writes ClickHouse, or deletes raw packs. Shared WARC
 and object contracts live in [`../cc-raw`](../cc-raw/).
 
