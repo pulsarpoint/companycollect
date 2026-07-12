@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any
 
 import pyarrow as pa
@@ -61,6 +61,7 @@ def export_duckdb_connection_table_to_clickhouse(
     batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
     column_expressions: Mapping[str, str] | None = None,
     log: Callable[..., object] | None = None,
+    allow_empty: bool = False,
 ) -> int:
     _validate_batch_size(batch_size)
     _validate_column_expressions(columns, column_expressions)
@@ -86,6 +87,15 @@ def export_duckdb_connection_table_to_clickhouse(
             column_expressions=column_expressions,
             log=log,
             log_table=f"{clickhouse_database}.{clickhouse_table}",
+        )
+
+    if not allow_empty and _count_duckdb_table_rows(
+        duckdb_connection, duckdb_schema, duckdb_table
+    ) == 0:
+        raise ValueError(
+            f"DuckDB table {duckdb_schema}.{duckdb_table} has 0 rows; refusing "
+            f"to replace ClickHouse table {clickhouse_database}.{clickhouse_table}. "
+            "Pass allow_empty=True if an empty replace is intended."
         )
 
     clickhouse_stage_table = _clickhouse_stage_table_name(clickhouse_table)
@@ -137,11 +147,29 @@ def replace_duckdb_connection_tables_in_clickhouse(
     clickhouse_database: str,
     tables: Sequence[tuple[str, Sequence[str]]],
     batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
+    allow_empty_tables: Collection[str] = (),
 ) -> dict[str, int]:
     _validate_batch_size(batch_size)
     requested_tables = tuple(
         (clickhouse_table, tuple(columns)) for clickhouse_table, columns in tables
     )
+
+    allowed_empty = frozenset(allow_empty_tables)
+    empty_tables = [
+        clickhouse_table
+        for clickhouse_table, _ in requested_tables
+        if clickhouse_table not in allowed_empty
+        and _count_duckdb_table_rows(duckdb_connection, duckdb_schema, clickhouse_table)
+        == 0
+    ]
+    if empty_tables:
+        raise ValueError(
+            f"DuckDB tables in {duckdb_schema} have 0 rows: "
+            + ", ".join(empty_tables)
+            + f"; refusing to replace the ClickHouse tables in {clickhouse_database}. "
+            "Pass the table names in allow_empty_tables if an empty replace is "
+            "intended."
+        )
 
     clickhouse_columns_by_table = {
         clickhouse_table: ", ".join(
@@ -411,6 +439,21 @@ def _insert_duckdb_rows_in_batches(
             batch_rows=len(rows),
             total_rows=row_count,
         )
+
+
+def _count_duckdb_table_rows(
+    duckdb_connection: Any,
+    duckdb_schema: str,
+    duckdb_table: str,
+) -> int:
+    duckdb_qualified_table = (
+        f"{_quote_duckdb_qualified_schema(duckdb_schema)}."
+        f"{_quote_duckdb_identifier(duckdb_table)}"
+    )
+    row = duckdb_connection.execute(
+        f"select count(*) from {duckdb_qualified_table}"
+    ).fetchone()
+    return int(row[0])
 
 
 def _validate_batch_size(batch_size: int) -> None:

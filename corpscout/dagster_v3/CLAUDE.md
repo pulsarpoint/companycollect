@@ -34,7 +34,10 @@ the day-to-day gotcha list that backs that standard.
   (`assert_clickhouse_tables_exist`) then atomically replaces it (stage table + `EXCHANGE TABLES`). Never
   duplicate DDL in Python. Pin the export column order with a contract test that greps the migration file.
 - **Refuse to replace on empty input** — `raise ValueError` when a download yields zero rows, so a bad fetch
-  can't blank a populated table.
+  can't blank a populated table. The shared exporters in `defs/clickhouse/resolved.py` now enforce this by
+  default (0-row DuckDB source + replace → `ValueError`); pass `allow_empty=True` /
+  `allow_empty_tables=(...)` only for tables that are legitimately empty (e.g. a canonical
+  `<src>_company_contacts` pair for a source with no contact data).
 - **A non-nullable ClickHouse `String`/`LowCardinality(String)` column must get `''`, never `NULL`.** The native
   driver calls `.encode()` per value and dies on `None` (`'NoneType' object has no attribute 'encode'`). Coalesce
   string columns to `''` in the producing SQL (e.g. `coalesce(spine.source_type,'')`); only make the migration

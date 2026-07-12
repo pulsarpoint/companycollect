@@ -493,7 +493,48 @@ def test__export_table_uses_stage_then_exchange_for_truncate(
     ]
 
 
-def test__export_table_returns_zero_for_empty_table(tmp_path, monkeypatch) -> None:
+def test__export_table_refuses_to_replace_with_empty_table(tmp_path) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar,
+                source_system varchar
+            )
+            """
+        )
+
+    client = FakeInsertClickHouseClient()
+
+    try:
+        _export_table(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            duckdb_table="fi_companies",
+            clickhouse_database="corpscout",
+            clickhouse_table="fi_companies",
+            columns=("business_id", "source_system"),
+            truncate=True,
+        )
+    except ValueError as exc:
+        assert str(exc) == (
+            "DuckDB table finland_resolved.fi_companies has 0 rows; refusing to "
+            "replace ClickHouse table corpscout.fi_companies. Pass "
+            "allow_empty=True if an empty replace is intended."
+        )
+    else:
+        raise AssertionError("expected empty-input error")
+
+    assert client.statements == []
+    assert client.insert_calls == []
+
+
+def test__export_table_replaces_with_empty_table_when_allow_empty(
+    tmp_path, monkeypatch
+) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute("create schema finland_resolved")
@@ -522,6 +563,7 @@ def test__export_table_returns_zero_for_empty_table(tmp_path, monkeypatch) -> No
         clickhouse_table="fi_companies",
         columns=("business_id", "source_system"),
         truncate=True,
+        allow_empty=True,
     )
 
     assert row_count == 0
@@ -531,6 +573,125 @@ def test__export_table_returns_zero_for_empty_table(tmp_path, monkeypatch) -> No
         "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_deadbeef`",
     ]
     assert client.insert_calls == []
+
+
+def test__export_table_appends_zero_rows_without_guard(tmp_path) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar,
+                source_system varchar
+            )
+            """
+        )
+
+    client = FakeInsertClickHouseClient()
+
+    row_count = _export_table(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema="finland_resolved",
+        duckdb_table="fi_companies",
+        clickhouse_database="corpscout",
+        clickhouse_table="fi_companies",
+        columns=("business_id", "source_system"),
+        truncate=False,
+    )
+
+    assert row_count == 0
+    assert client.statements == []
+    assert client.insert_calls == []
+
+
+def test__replace_tables_refuses_empty_table_by_default(tmp_path) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            "create table finland_resolved.fi_companies (business_id varchar)"
+        )
+        connection.execute(
+            "create table finland_resolved.fi_websites (business_id varchar)"
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
+
+    client = FakeInsertClickHouseClient()
+
+    try:
+        _replace_tables(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            clickhouse_database="corpscout",
+            tables=(
+                ("fi_companies", ("business_id",)),
+                ("fi_websites", ("business_id",)),
+            ),
+        )
+    except ValueError as exc:
+        assert str(exc) == (
+            "DuckDB tables in finland_resolved have 0 rows: fi_websites; "
+            "refusing to replace the ClickHouse tables in corpscout. Pass the "
+            "table names in allow_empty_tables if an empty replace is intended."
+        )
+    else:
+        raise AssertionError("expected empty-input error")
+
+    assert client.statements == []
+    assert client.insert_calls == []
+
+
+def test__replace_tables_allows_listed_empty_tables(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            "create table finland_resolved.fi_companies (business_id varchar)"
+        )
+        connection.execute(
+            "create table finland_resolved.fi_websites (business_id varchar)"
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
+
+    stage_names = iter(["first", "second"])
+    monkeypatch.setattr(
+        clickhouse_resolved.uuid,
+        "uuid4",
+        lambda: type("U", (), {"hex": next(stage_names)})(),
+    )
+    client = FakeInsertClickHouseClient()
+
+    row_counts = _replace_tables(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema="finland_resolved",
+        clickhouse_database="corpscout",
+        tables=(
+            ("fi_companies", ("business_id",)),
+            ("fi_websites", ("business_id",)),
+        ),
+        allow_empty_tables=("fi_websites",),
+    )
+
+    assert row_counts == {
+        "fi_companies": 1,
+        "fi_websites": 0,
+    }
+    assert client.statements == [
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_first` AS `corpscout`.`fi_companies`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_websites_second` AS `corpscout`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_first` AND `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_websites_second` AND `corpscout`.`fi_websites`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_first`",
+    ]
 
 
 def test__export_table_escapes_identifiers(tmp_path) -> None:
