@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"cc-download-worker/internal/partspec"
 	"cc-download-worker/internal/warcsize"
@@ -117,9 +118,10 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		"plan_whole_warc_threshold", options.planThreshold,
 	)
 
-	var allRecords []rangeplanner.Record
-	warcFiles := make(map[string]struct{})
+	selectionSummary := rangeplanner.NewSelection()
 	for _, part := range parts {
+		partStarted := time.Now()
+		prepareStarted := time.Now()
 		result, err := worklistbuilder.Ensure(ctx, worklistbuilder.Config{
 			Python:         options.python,
 			CrawlID:        options.crawlID,
@@ -131,6 +133,8 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		if err != nil {
 			return errors.Wrapf(err, "prepare worklist part %d", part)
 		}
+		prepareElapsed := time.Since(prepareStarted)
+		readStarted := time.Now()
 		worklist, err := rangeplanner.ReadWorklist(result.Path, options.maxPackBytes, options.maxRecords)
 		if err != nil && result.Reused {
 			result, err = worklistbuilder.Ensure(ctx, worklistbuilder.Config{
@@ -149,22 +153,24 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		if err != nil {
 			return errors.Wrapf(err, "read worklist part %d", part)
 		}
+		readElapsed := time.Since(readStarted)
+		checksumStarted := time.Now()
 		checksum, _, err := rawstore.ChecksumFile(result.Path)
 		if err != nil {
 			return errors.Wrapf(err, "checksum worklist part %d", part)
 		}
+		checksumElapsed := time.Since(checksumStarted)
+		importStarted := time.Now()
 		planReused, err := plannerStore.ImportPart(ctx, part, string(checksum), worklist)
 		if err != nil {
 			return errors.Wrapf(err, "import worklist part %d into plan database", part)
 		}
-		firstID := int64(len(allRecords))
-		for index := range worklist.Records {
-			worklist.Records[index].ID = firstID + int64(index)
+		importElapsed := time.Since(importStarted)
+		aggregateStarted := time.Now()
+		if err := selectionSummary.Add(worklist.Records); err != nil {
+			return errors.Wrapf(err, "summarize worklist part %d", part)
 		}
-		allRecords = append(allRecords, worklist.Records...)
-		for _, filename := range worklist.WARCFiles {
-			warcFiles[filename] = struct{}{}
-		}
+		aggregateElapsed := time.Since(aggregateStarted)
 		logger.Info("analysis worklist ready",
 			"crawl", options.crawlID,
 			"selection", selection,
@@ -174,20 +180,27 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 			"warc_objects", len(worklist.WARCFiles),
 			"reused", result.Reused,
 			"plan_reused", planReused,
+			"prepare_seconds", prepareElapsed.Seconds(),
+			"read_seconds", readElapsed.Seconds(),
+			"checksum_seconds", checksumElapsed.Seconds(),
+			"plan_import_seconds", importElapsed.Seconds(),
+			"aggregate_seconds", aggregateElapsed.Seconds(),
+			"elapsed_seconds", time.Since(partStarted).Seconds(),
 		)
 	}
+	strategyStarted := time.Now()
 	if err := plannerStore.RefreshStrategies(ctx, options.planThreshold); err != nil {
 		return err
 	}
+	logger.Info("SQLite WARC strategies refreshed",
+		"threshold_percent", options.planThreshold,
+		"elapsed_seconds", time.Since(strategyStarted).Seconds(),
+	)
 
-	logEstimate(logger, options, analyzedParts, rangeplanner.ExactEstimate(allRecords))
+	logEstimate(logger, options, analyzedParts, selectionSummary.ExactEstimate())
 
 	if options.wholeWARCSizes {
-		filenames := make([]string, 0, len(warcFiles))
-		for filename := range warcFiles {
-			filenames = append(filenames, filename)
-		}
-		sort.Strings(filenames)
+		filenames := selectionSummary.WARCFiles()
 		cachePath := options.warcSizeCache
 		if cachePath == "" {
 			cachePath = filepath.Join(options.baseDirectory, options.crawlID, "analysis", "warc_sizes.json")
@@ -217,9 +230,9 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		if err := plannerStore.RefreshStrategies(ctx, options.planThreshold); err != nil {
 			return err
 		}
-		exact := rangeplanner.ExactEstimate(allRecords)
+		exact := selectionSummary.ExactEstimate()
 		for _, threshold := range wholeWARCThresholds {
-			hybrid, err := rangeplanner.PlanWholeWARCHybrid(allRecords, cache, threshold)
+			hybrid, err := rangeplanner.PlanWholeWARCHybrid(selectionSummary, cache, threshold)
 			if err != nil {
 				return errors.Wrapf(err, "plan hybrid whole-WARC threshold %g", threshold)
 			}
@@ -250,8 +263,8 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		"requested_parts", requestedParts,
 		"parts", analyzedParts,
 		"skipped_loaded_parts", partspec.Format(skippedLoadedParts),
-		"selected_records", len(allRecords),
-		"warc_objects", len(warcFiles),
+		"selected_records", selectionSummary.ExactEstimate().SelectedRecords,
+		"warc_objects", len(selectionSummary.WARCFiles()),
 	)
 	return nil
 }

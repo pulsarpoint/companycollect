@@ -12,9 +12,10 @@ technology inference.
 - `corpscout.commoncrawl_domain_dns_record_observations` is the retry-safe DNS record source.
 - `corpscout.commoncrawl_ip_addresses` is an incremental aggregate registry containing one
   logical canonical IP row with DNS first/last-seen timestamps.
-- `MAXMIND_DATABASE_DIRECTORY` contains versioned `GeoLite2-City_*` and
-  `GeoLite2-ASN_*` directories. The resource selects the newest matching database file and
-  reads its embedded build epoch.
+- `MAXMIND_DATABASE_DIRECTORY` contains `GeoLite2-City.mmdb` and
+  `GeoLite2-ASN.mmdb` directly, or versioned `GeoLite2-City_*` and `GeoLite2-ASN_*`
+  directories. The resource prefers direct files, otherwise selects the newest matching
+  versioned database, and reads its embedded build epoch.
 
 This pipeline intentionally does not use dlt or DuckDB. There is no HTTP/file extraction
 or relational transformation: each input IP is a local MMDB point lookup and the rows are
@@ -50,7 +51,8 @@ Coordinates are nullable because `(0, 0)` is valid and cannot represent “missi
 ## Operational notes
 
 - Apply ClickHouse migrations through the existing migration workflow before launching.
-- Set `MAXMIND_DATABASE_DIRECTORY` to the directory containing the versioned MMDB folders.
+- Set `MAXMIND_DATABASE_DIRECTORY` to the directory containing the direct MMDB files or
+  versioned MMDB folders.
 - Materialize selected buckets manually. Rematerialize all buckets after installing a new
   City or ASN database; already-current rows are skipped.
 - Do not infer ISP/cloud/CDN identity from `asn_organization` in this asset. Provider

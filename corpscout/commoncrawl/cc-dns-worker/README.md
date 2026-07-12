@@ -67,18 +67,11 @@ Each scanner has its own capacity, workers, QPS limits, retry loop, completion c
 five-second statistics by default. One scanner can fail and retry while the other continues. Each completed cycle
 database is deleted only after that scanner's own ClickHouse outbox drains.
 
-The DNS health line reports actual network throughput as `qps` for the latest reporting interval,
-`qps1m` across a sliding one-minute window, and `avg_qps` since query measurement began. `checks`
-shows definitive logical checks over planned logical checks, while `checked` gives that ratio as a
-percentage. Retries affect query throughput but do not increase the logical check plan.
-
-Errors are measured per sent query attempt, not per domain. `err` is cumulative and `err10m` is the
-weighted recent rate for attempts that timed out, failed at transport, or returned an error RCODE such
-as SERVFAIL, REFUSED, or NOTAUTH. Valid NOERROR/NODATA and NXDOMAIN responses do not count as errors.
-`timeout` shows the cumulative timeout subset. Query counters and their measurement start are
-checkpointed to DNS SQLite once per reporting interval, not once per request.
-Upgrading an active database that lacks the measurement-start field begins a fresh query/error
-telemetry epoch while retaining domain, answer, and logical-check totals.
+The DNS health line reports only live in-memory rates for the latest five-second interval: `qps` is
+the number of DNS queries sent per second and `errps` is the number of real DNS errors per second.
+Real errors are timeouts, transport failures, and error RCODEs such as SERVFAIL, REFUSED, or NOTAUTH.
+Valid NOERROR/NODATA and NXDOMAIN responses are excluded. These process-local counters reset on
+restart and are never loaded from or checkpointed to SQLite.
 
 ## DNS and AXFR behavior
 

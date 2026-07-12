@@ -13,6 +13,14 @@ import duckdb
 
 from ._identity import decode_sha256, new_identity_digest, update_text
 from .manifests import IndexSource, SourceSchema, WarcObject, source_schema_sha256
+from .selection import (
+    RANKING_COLUMN_NAMES,
+    candidate_output_projection,
+    eligibility_predicate,
+    normalized_source_projection,
+    ranking_order_clause,
+    ranking_projection,
+)
 
 
 CATALOG_SCHEMA_VERSION = 1
@@ -433,6 +441,84 @@ def _require_matching_seeds(
         raise BuildStateConflict(
             "stored source shards conflict with the index manifest; use --rebuild"
         )
+
+
+def local_candidate_query(
+    schema: SourceSchema,
+    source_index: int,
+    pages_per_domain: int,
+) -> str:
+    """Build the parameterized query for one URL-index Parquet source."""
+    if not 0 <= source_index <= 0xFFFFFFFF:
+        raise ValueError("source_index must be between 0 and uint32 max")
+    if not 1 <= pages_per_domain <= 0xFFFF:
+        raise ValueError("pages_per_domain must be between 1 and uint16 max")
+
+    conflict_columns = ("root_domain", "url", *RANKING_COLUMN_NAMES)
+    conflict_expression = "\nOR ".join(
+        f"(count(DISTINCT {column}) + "
+        f"CASE WHEN count({column}) < count(*) THEN 1 ELSE 0 END) > 1"
+        for column in conflict_columns
+    )
+    ranking_aggregates = ",\n".join(
+        f"min({column}) AS {column}" for column in RANKING_COLUMN_NAMES
+    )
+    return f"""
+        WITH normalized AS (
+            SELECT {normalized_source_projection(schema)}
+            FROM read_parquet(?)
+        ),
+        eligible AS (
+            SELECT
+                CAST({source_index} AS UINTEGER) AS source_index,
+                CAST(root_domain AS VARCHAR) AS root_domain,
+                CAST(url AS VARCHAR) AS url,
+                CAST(content_languages AS VARCHAR) AS content_languages,
+                CAST(warc_filename AS VARCHAR) AS warc_filename,
+                CAST(warc_record_offset AS UBIGINT) AS warc_record_offset,
+                CAST(warc_record_length AS UBIGINT) AS warc_record_length,
+                {ranking_projection()}
+            FROM normalized
+            WHERE {eligibility_predicate()}
+        ),
+        coordinate_groups AS (
+            SELECT
+                min(source_index) AS source_index,
+                min(root_domain) AS root_domain,
+                min(url) AS url,
+                min(content_languages) FILTER (WHERE content_languages IS NOT NULL)
+                    AS content_languages,
+                warc_filename,
+                warc_record_offset,
+                warc_record_length,
+                {ranking_aggregates},
+                ({conflict_expression}) AS has_conflict
+            FROM eligible
+            GROUP BY warc_filename, warc_record_offset, warc_record_length
+        ),
+        conflict_check AS (
+            SELECT CASE
+                WHEN count(*) FILTER (WHERE has_conflict) > 0
+                THEN error('duplicate capture coordinate has conflicting selection values')
+                ELSE 0
+            END AS conflict_guard
+            FROM coordinate_groups
+        ),
+        ranked AS (
+            SELECT coordinate_groups.*,
+                   row_number() OVER (
+                       PARTITION BY root_domain
+                       ORDER BY {ranking_order_clause(pages_per_domain)}
+                   ) AS local_rank,
+                   conflict_check.conflict_guard
+            FROM coordinate_groups
+            CROSS JOIN conflict_check
+        )
+        SELECT {candidate_output_projection()}
+        FROM ranked
+        WHERE local_rank <= {pages_per_domain}
+          AND conflict_guard = 0
+    """.strip()
 
 
 def warc_inventory_sha256(inventory: Sequence[tuple[int, str, int]]) -> str:

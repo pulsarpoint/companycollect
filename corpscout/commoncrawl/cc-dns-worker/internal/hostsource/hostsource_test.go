@@ -17,8 +17,8 @@ func TestBatchQueryReadsOnlyDurableRegistry(t *testing.T) {
 }
 
 func TestBatchQueryBindsRootsAndCap(t *testing.T) {
-	if !strings.Contains(batchQuery, "WHERE has(?, root_domain)") {
-		t.Errorf("root batch must be a bound array parameter: %s", batchQuery)
+	if !strings.Contains(batchQuery, "WHERE root_domain IN (?)") {
+		t.Errorf("root batch must use a bound primary-key filter: %s", batchQuery)
 	}
 	if !strings.Contains(batchQuery, "LIMIT ? BY root_domain") {
 		t.Errorf("per-root cap must be a bound parameter: %s", batchQuery)

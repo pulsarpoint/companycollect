@@ -292,9 +292,9 @@ func TestExchangeTimeoutCountsAsErrorAndTimeout(t *testing.T) {
 	if _, err := ex.Exchange(context.Background(), m, addr); err == nil {
 		t.Fatal("expected timeout")
 	}
-	if stats.Queries.Load() != 1 || stats.QueryErrors.Load() != 1 || stats.QueryTimeouts.Load() != 1 {
-		t.Fatalf("timeout counters: queries=%d errors=%d timeouts=%d",
-			stats.Queries.Load(), stats.QueryErrors.Load(), stats.QueryTimeouts.Load())
+	if stats.Queries.Load() != 1 || stats.QueryErrors.Load() != 1 {
+		t.Fatalf("timeout counters: queries=%d errors=%d",
+			stats.Queries.Load(), stats.QueryErrors.Load())
 	}
 }
 

@@ -6,58 +6,34 @@ import (
 	"time"
 )
 
-func TestLineComputesRates(t *testing.T) {
+func TestLineReportsLatestQueryAndErrorRates(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
-	cur := Snapshot{
-		At:      start.Add(15 * time.Second),
-		Queries: 10000, QueryErrors: 200, QueryTimeouts: 50,
-		Domains:   1000,
-		Records:   18000, // +10000 records in 5s => 2000/s
-		DNSChecks: 25000, DNSChecksOK: 24000,
-	}
-	previous := Snapshot{At: start.Add(10 * time.Second), Queries: 5000}
-	line := Line(cur, previous, start, 900, 1.25)
+	previous := Snapshot{At: start, Queries: 1000, QueryErrors: 20}
+	current := Snapshot{At: start.Add(5 * time.Second), Queries: 6000, QueryErrors: 70}
+	line := Line(current, previous)
 
-	for _, want := range []string{
-		"queries=10000",
-		"qps=1000.0",
-		"qps1m=900.0",
-		"avg_qps=666.7",
-		"checks=24000/25000",
-		"checked=96.00%",
-		"domains=1000",
-		"answers=18000",
-		"err=2.00%",
-		"err10m=1.25%",
-		"timeout=0.50%",
-	} {
+	for _, want := range []string{"qps=1000.0", "errps=10.0"} {
 		if !strings.Contains(line, want) {
-			t.Errorf("line missing %q\n  got: %s", want, line)
+			t.Errorf("line missing %q: %s", want, line)
 		}
 	}
 }
 
-func TestLineZeroSafe(t *testing.T) {
-	start := time.Unix(0, 0).UTC()
-	// No progress yet: no divide-by-zero, percentages 0.
-	line := Line(Snapshot{At: start}, Snapshot{At: start}, start, 0, 0)
-	if !strings.Contains(line, "checks=0/0") || !strings.Contains(line, "avg_qps=0.0") {
-		t.Errorf("zero snapshot line wrong: %s", line)
+func TestLineHandlesZeroInterval(t *testing.T) {
+	now := time.Unix(0, 0).UTC()
+	line := Line(Snapshot{At: now}, Snapshot{At: now})
+	if line != "stats qps=0.0 errps=0.0" {
+		t.Fatalf("line = %q", line)
 	}
 }
 
-func TestSnapshotReadsCounters(t *testing.T) {
-	var s Stats
-	s.Queries.Add(7)
-	s.QueryErrors.Add(2)
-	s.QueryTimeouts.Add(1)
-	s.Domains.Add(3)
-	s.Records.Add(11)
-	s.DNSChecks.Add(20)
-	s.DNSChecksOK.Add(18)
-	snap := s.Snapshot(time.Unix(0, 0).UTC())
-	if snap.Queries != 7 || snap.QueryErrors != 2 || snap.QueryTimeouts != 1 || snap.Domains != 3 || snap.Records != 11 ||
-		snap.DNSChecks != 20 || snap.DNSChecksOK != 18 {
-		t.Fatalf("snapshot = %+v", snap)
+func TestSnapshotReadsNetworkCounters(t *testing.T) {
+	var stats Stats
+	stats.Queries.Add(7)
+	stats.QueryErrors.Add(2)
+	stats.BlockedTargets.Add(3)
+	snapshot := stats.Snapshot(time.Unix(0, 0).UTC())
+	if snapshot.Queries != 7 || snapshot.QueryErrors != 2 || snapshot.BlockedTargets != 3 {
+		t.Fatalf("snapshot = %+v", snapshot)
 	}
 }

@@ -6,7 +6,6 @@ package resolve
 
 import (
 	"context"
-	"errors"
 	"net"
 	"time"
 
@@ -80,9 +79,6 @@ func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dn
 		if err != nil {
 			if c.stats != nil {
 				c.stats.QueryErrors.Add(1)
-				if isTimeout(ctx, err) {
-					c.stats.QueryTimeouts.Add(1)
-				}
 			}
 			return err
 		}
@@ -98,12 +94,4 @@ func (c *client) Exchange(ctx context.Context, m *dns.Msg, serverIP string) (*dn
 		return nil
 	})
 	return resp, err
-}
-
-func isTimeout(ctx context.Context, err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return true
-	}
-	var networkError net.Error
-	return errors.As(err, &networkError) && networkError.Timeout()
 }

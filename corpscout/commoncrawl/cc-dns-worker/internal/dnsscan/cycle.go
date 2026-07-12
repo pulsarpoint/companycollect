@@ -22,7 +22,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const idlePollInterval = 200 * time.Millisecond
+const (
+	idlePollInterval        = 200 * time.Millisecond
+	hostnameEnrichmentBatch = 100
+)
 
 // RunCycle completes or resumes one bounded DNS traversal using dbPath as its private durable state.
 func RunCycle(ctx context.Context, dbPath string, config Config) error {
@@ -40,22 +43,7 @@ func RunCycle(ctx context.Context, dbPath string, config Config) error {
 		return fmt.Errorf("recover interrupted DNS work: %w", err)
 	}
 
-	queryStatsStartedAt, err := localStore.EnsureQueryStatsStartedAt(ctx, config.ScanID, time.Now().UTC())
-	if err != nil {
-		return fmt.Errorf("initialize DNS query stats start: %w", err)
-	}
-	cumulative, err := localStore.CumulativeStats(ctx, config.ScanID)
-	if err != nil {
-		return fmt.Errorf("read cumulative DNS stats: %w", err)
-	}
 	stats := &metrics.Stats{}
-	stats.Queries.Store(cumulative.Queries)
-	stats.QueryErrors.Store(cumulative.QueryErrors)
-	stats.QueryTimeouts.Store(cumulative.QueryTimeouts)
-	stats.Domains.Store(cumulative.Domains)
-	stats.Records.Store(cumulative.Records)
-	stats.DNSChecks.Store(cumulative.DNSChecks)
-	stats.DNSChecksOK.Store(cumulative.DNSChecksOK)
 	discoveryScheduler := scheduler.New(scheduler.Config{
 		PerServerQPS: config.DiscoveryQPS, Burst: max(1, int(config.DiscoveryQPS)),
 		MaxInFlight: config.DiscoveryInflight, BreakerCooldown: config.BreakerCooldown,
@@ -78,7 +66,7 @@ func RunCycle(ctx context.Context, dbPath string, config Config) error {
 	group.Go(func() error { return workLoop(groupContext, localStore, config, discoverer, resolver, stats) })
 	group.Go(func() error { return flushLoop(groupContext, localStore, config) })
 	group.Go(func() error {
-		return statsLoop(groupContext, localStore, config, stats, queryStatsStartedAt, config.StatsInterval > 0)
+		return statsLoop(groupContext, localStore, config, stats, config.StatsInterval > 0)
 	})
 	if err := group.Wait(); err != nil {
 		return err
@@ -155,10 +143,6 @@ func workLoop(ctx context.Context, localStore *store.Store, config Config, disco
 			for job := range jobs {
 				result := resolveDomain(workerContext, discoverer, resolver, job.rootDomain,
 					config.ScanID, config.RunID, job.hostnames)
-				stats.Domains.Add(1)
-				stats.Records.Add(int64(len(result.Records)))
-				stats.DNSChecks.Add(int64(result.QueriesTotal))
-				stats.DNSChecksOK.Add(int64(result.QueriesOK))
 				select {
 				case results <- result:
 				case <-workerContext.Done():
@@ -176,6 +160,9 @@ func workLoop(ctx context.Context, localStore *store.Store, config Config, disco
 	for {
 		if inFlight <= refillAt {
 			claimLimit := config.ClaimBatch - inFlight
+			if config.HostnameEnrichment {
+				claimLimit = min(claimLimit, hostnameEnrichmentBatch)
+			}
 			roots, err := localStore.ClaimDNS(ctx, config.ScanID, claimLimit)
 			if err != nil {
 				close(jobs)
@@ -268,11 +255,17 @@ func flushLoop(ctx context.Context, localStore *store.Store, config Config) erro
 			loaded, flushErr := load.FlushDNS(ctx, connection, localStore, config.ScanID, config.FlushBatch)
 			_ = connection.Close()
 			if flushErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				slog.Error("DNS flush failed", "scan_id", config.ScanID, "error", flushErr)
 			} else if loaded > 0 {
 				continue
 			}
 		} else {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			slog.Error("open DNS output connection", "scan_id", config.ScanID, "error", err)
 		}
 		done, err := drainDone(ctx, localStore, config.ScanID)
@@ -288,10 +281,8 @@ func flushLoop(ctx context.Context, localStore *store.Store, config Config) erro
 	}
 }
 
-func statsLoop(ctx context.Context, localStore *store.Store, config Config, stats *metrics.Stats, queryStatsStartedAt time.Time, emit bool) error {
+func statsLoop(ctx context.Context, localStore *store.Store, config Config, stats *metrics.Stats, emit bool) error {
 	previous := stats.Snapshot(time.Now().UTC())
-	recentErrors := metrics.NewErrorWindow(10 * time.Minute)
-	queryRate := metrics.NewRateWindow(time.Minute)
 	interval := config.StatsInterval
 	if interval <= 0 {
 		interval = time.Second
@@ -302,15 +293,8 @@ func statsLoop(ctx context.Context, localStore *store.Store, config Config, stat
 		}
 		now := time.Now().UTC()
 		current := stats.Snapshot(now)
-		queryDelta := current.Queries - previous.Queries
-		sampleDuration := current.At.Sub(previous.At)
-		recentErrors.Add(now, queryDelta, current.QueryErrors-previous.QueryErrors)
-		queryRate.Add(now, queryDelta, sampleDuration)
-		if err := localStore.SaveQueryStats(ctx, config.ScanID, current.Queries, current.QueryErrors, current.QueryTimeouts); err != nil {
-			return fmt.Errorf("checkpoint DNS query stats: %w", err)
-		}
 		if emit {
-			slog.Info(metrics.Line(current, previous, queryStatsStartedAt, queryRate.PerSecond(), recentErrors.Percent()),
+			slog.Info(metrics.Line(current, previous),
 				"component", "dns", "scan_id", config.ScanID)
 		}
 		previous = current

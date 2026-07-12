@@ -26,7 +26,7 @@ FROM
         max(discovery_source = 'ct' AND last_not_after >= now()) AS live_cert,
         max(last_seen) AS recency
     FROM corpscout.commoncrawl_domain_hostnames
-    WHERE has(?, root_domain)
+    WHERE root_domain IN (?)
       AND root_domain != ''
       AND label != ''
       AND position(label, '*') = 0

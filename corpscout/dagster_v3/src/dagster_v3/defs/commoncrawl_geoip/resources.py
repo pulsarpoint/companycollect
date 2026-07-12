@@ -4,7 +4,7 @@ import dagster as dg
 
 
 class MaxMindDatabaseResource(dg.ConfigurableResource):
-    """Find the newest versioned GeoLite2 City and ASN files at execution time."""
+    """Find installed GeoLite2 City and ASN files at execution time."""
 
     database_directory: str = dg.EnvVar("MAXMIND_DATABASE_DIRECTORY")
 
@@ -25,9 +25,14 @@ class MaxMindDatabaseResource(dg.ConfigurableResource):
 
 
 def _latest_database(directory: Path, *, directory_pattern: str, filename: str) -> Path:
+    direct_database = directory / filename
+    if direct_database.is_file():
+        return direct_database.resolve(strict=True)
+
     candidates = sorted(directory.glob(f"{directory_pattern}/{filename}"))
     if not candidates:
         raise FileNotFoundError(
-            f"No MaxMind database matching {directory_pattern}/{filename} under {directory}"
+            "No MaxMind database matching "
+            f"{filename} or {directory_pattern}/{filename} under {directory}"
         )
     return candidates[-1].resolve(strict=True)

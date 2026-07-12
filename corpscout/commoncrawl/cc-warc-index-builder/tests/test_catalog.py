@@ -16,6 +16,7 @@ from warc_index_builder.catalog import (
     SourceShardSeed,
     catalog_id,
     initialize_build_state,
+    local_candidate_query,
     prepare_build_directory,
     require_path_within,
     source_shard_seeds,
@@ -25,9 +26,11 @@ from warc_index_builder.manifests import (
     IndexSource,
     SourceSchema,
     WarcObject,
+    inspect_source_schema,
     source_schema_sha256,
 )
 from warc_index_builder.selection import (
+    CANDIDATE_COLUMNS,
     SELECTION_POLICY_VERSION,
     selection_policy_sha256,
 )
@@ -100,6 +103,89 @@ def _source_seeds() -> tuple[SourceShardSeed, ...]:
         ),
     )
     return source_shard_seeds(sources, schemas)
+
+
+def _candidate_page(
+    domain: str,
+    url: str,
+    path: str | None,
+    offset: int,
+    *,
+    host: str | None = None,
+    status: int = 200,
+    reported_mime: str = "text/html",
+    detected_mime: str | None = "text/html",
+    warc_filename: str = "crawl-data/fixture.warc.gz",
+    length: int = 100,
+    languages: str | None = "eng",
+) -> tuple[object, ...]:
+    return (
+        domain,
+        host or domain,
+        url,
+        path,
+        status,
+        reported_mime,
+        detected_mime,
+        warc_filename,
+        offset,
+        length,
+        languages,
+    )
+
+
+def _candidate_fixture(
+    tmp_path: Path,
+    rows: list[tuple[object, ...]],
+) -> tuple[duckdb.DuckDBPyConnection, Path, SourceSchema]:
+    connection = duckdb.connect()
+    connection.execute(
+        """
+        CREATE TABLE source_rows (
+            url_host_registered_domain VARCHAR,
+            url_host_name VARCHAR,
+            url VARCHAR,
+            url_path VARCHAR,
+            fetch_status BIGINT,
+            content_mime_type VARCHAR,
+            content_mime_detected VARCHAR,
+            warc_filename VARCHAR,
+            warc_record_offset HUGEINT,
+            warc_record_length HUGEINT,
+            content_languages VARCHAR
+        )
+        """
+    )
+    connection.executemany(
+        "INSERT INTO source_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    path = tmp_path / "source.parquet"
+    connection.execute("COPY source_rows TO ? (FORMAT PARQUET)", [str(path)])
+    schema = inspect_source_schema(
+        connection,
+        IndexSource(0, str(path), str(path)),
+    )
+    return connection, path, schema
+
+
+def _local_candidates(
+    connection: duckdb.DuckDBPyConnection,
+    path: Path,
+    schema: SourceSchema,
+    *,
+    source_index: int = 7,
+    pages_per_domain: int = 25,
+) -> list[tuple[object, ...]]:
+    query = local_candidate_query(schema, source_index, pages_per_domain)
+    return connection.execute(
+        f"""
+        SELECT * FROM ({query})
+        ORDER BY root_domain, url, warc_filename, warc_record_offset,
+                 warc_record_length
+        """,
+        [str(path)],
+    ).fetchall()
 
 
 def test_require_path_within_rejects_outside_target(tmp_path: Path) -> None:

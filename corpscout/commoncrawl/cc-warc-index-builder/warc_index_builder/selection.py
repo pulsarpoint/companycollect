@@ -95,6 +95,21 @@ _RANKING_COLUMNS = (
 )
 
 RANKING_COLUMN_NAMES = tuple(name for name, _expression in _RANKING_COLUMNS)
+CANDIDATE_COLUMNS = (
+    ("source_index", "UINTEGER"),
+    ("root_domain", "VARCHAR"),
+    ("url", "VARCHAR"),
+    ("content_languages", "VARCHAR"),
+    ("warc_filename", "VARCHAR"),
+    ("warc_record_offset", "UBIGINT"),
+    ("warc_record_length", "UBIGINT"),
+    ("rank_main_site", "UTINYINT"),
+    ("rank_homepage", "UTINYINT"),
+    ("rank_priority_path", "UTINYINT"),
+    ("rank_path_depth", "UBIGINT"),
+    ("rank_path_length", "UBIGINT"),
+    ("rank_apex", "UTINYINT"),
+)
 
 _SINGLE_PAGE_RANKING_COLUMNS = (
     "rank_main_site",
@@ -132,8 +147,8 @@ def normalized_source_projection(schema: SourceSchema) -> str:
         {detected_mime} AS content_mime_detected,
         {languages} AS content_languages,
         CAST(warc_filename AS VARCHAR) AS warc_filename,
-        TRY_CAST(warc_record_offset AS HUGEINT) AS warc_record_offset,
-        TRY_CAST(warc_record_length AS HUGEINT) AS warc_record_length
+        TRY_CAST(warc_record_offset AS UBIGINT) AS warc_record_offset,
+        TRY_CAST(warc_record_length AS UBIGINT) AS warc_record_length
     """.strip()
 
 
@@ -146,6 +161,14 @@ def ranking_projection() -> str:
     """Return all stable, named ranking fields for an eligible page row."""
     return ",\n".join(
         f"{expression} AS {name}" for name, expression in _RANKING_COLUMNS
+    )
+
+
+def candidate_output_projection() -> str:
+    """Return explicit casts into the stable local-candidate schema."""
+    return ",\n".join(
+        f"CAST({name} AS {column_type}) AS {name}"
+        for name, column_type in CANDIDATE_COLUMNS
     )
 
 

@@ -443,8 +443,8 @@ def test_legacy_and_current_schemas_normalize_to_stable_projection_types(tmp_pat
         ("content_mime_detected", "VARCHAR"),
         ("content_languages", "VARCHAR"),
         ("warc_filename", "VARCHAR"),
-        ("warc_record_offset", "HUGEINT"),
-        ("warc_record_length", "HUGEINT"),
+        ("warc_record_offset", "UBIGINT"),
+        ("warc_record_length", "UBIGINT"),
     ]
 
 

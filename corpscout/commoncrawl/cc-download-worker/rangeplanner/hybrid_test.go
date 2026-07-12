@@ -8,7 +8,11 @@ func TestPlanWholeWARCHybridUsesSelectedByteCoverage(t *testing.T) {
 		{ID: 1, WARCFile: "b.warc.gz", Offset: 0, Length: 200},
 		{ID: 2, WARCFile: "b.warc.gz", Offset: 300, Length: 200},
 	}
-	plan, err := PlanWholeWARCHybrid(records, map[string]int64{
+	selection := NewSelection()
+	if err := selection.Add(records); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanWholeWARCHybrid(selection, map[string]int64{
 		"a.warc.gz": 1_000,
 		"b.warc.gz": 1_000,
 	}, 50)
@@ -28,8 +32,29 @@ func TestPlanWholeWARCHybridUsesSelectedByteCoverage(t *testing.T) {
 }
 
 func TestPlanWholeWARCHybridRejectsMissingObjectSize(t *testing.T) {
-	_, err := PlanWholeWARCHybrid([]Record{{ID: 0, WARCFile: "missing.warc.gz", Offset: 0, Length: 100}}, nil, 50)
+	selection := NewSelection()
+	if err := selection.Add([]Record{{ID: 0, WARCFile: "missing.warc.gz", Offset: 0, Length: 100}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := PlanWholeWARCHybrid(selection, nil, 50)
 	if err == nil {
 		t.Fatal("missing object size unexpectedly succeeded")
+	}
+}
+
+func TestSelectionAccumulatesRecordsWithoutRetainingThem(t *testing.T) {
+	selection := NewSelection()
+	if err := selection.Add([]Record{{ID: 0, WARCFile: "a.warc.gz", Offset: 0, Length: 100}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := selection.Add([]Record{
+		{ID: 0, WARCFile: "a.warc.gz", Offset: 100, Length: 200},
+		{ID: 1, WARCFile: "b.warc.gz", Offset: 0, Length: 300},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	estimate := selection.ExactEstimate()
+	if estimate.WARCObjects != 2 || estimate.SelectedRecords != 3 || estimate.SelectedBytes != 600 {
+		t.Fatalf("unexpected selection estimate %+v", estimate)
 	}
 }

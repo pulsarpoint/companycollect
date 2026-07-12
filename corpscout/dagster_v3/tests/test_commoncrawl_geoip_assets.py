@@ -266,6 +266,19 @@ def test_maxmind_resource_selects_latest_city_and_asn_databases(tmp_path: Path) 
     assert resource.database_paths() == (new_city, asn)
 
 
+def test_maxmind_resource_supports_databases_directly_in_directory(
+    tmp_path: Path,
+) -> None:
+    city = tmp_path / "GeoLite2-City.mmdb"
+    asn = tmp_path / "GeoLite2-ASN.mmdb"
+    city.touch()
+    asn.touch()
+
+    resource = MaxMindDatabaseResource(database_directory=str(tmp_path))
+
+    assert resource.database_paths() == (city, asn)
+
+
 def test_geoip_migration_owns_registry_and_enrichment_tables() -> None:
     migration = (
         MIGRATIONS_DIR / "000115_corpscout_commoncrawl_ip_geoip.up.sql"

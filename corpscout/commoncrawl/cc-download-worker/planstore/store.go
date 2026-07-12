@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"cc-download-worker/rangeplanner"
 	"github.com/cockroachdb/errors"
@@ -15,9 +16,19 @@ import (
 )
 
 const (
-	committedState = 1
-	schemaVersion  = 1
+	committedState      = 1
+	pageInsertBatchSize = 500
+	schemaVersion       = 1
 )
+
+type pageInsert struct {
+	part            int
+	worklistOrdinal int64
+	chunk           int
+	warcID          int64
+	warcOffset      int64
+	warcLength      int64
+}
 
 type Store struct {
 	database *sql.DB
@@ -313,14 +324,7 @@ func (store *Store) ImportPart(ctx context.Context, part int, checksum string, w
 		return false, errors.Wrap(err, "prepare chunk insert")
 	}
 	defer insertChunk.Close()
-	insertPage, err := transaction.PrepareContext(ctx,
-		`INSERT INTO pages(part, worklist_ordinal, chunk, warc_id, warc_offset, warc_length) VALUES (?, ?, ?, ?, ?, ?)`,
-	)
-	if err != nil {
-		return false, errors.Wrap(err, "prepare page insert")
-	}
-	defer insertPage.Close()
-
+	pageBatch := make([]pageInsert, 0, pageInsertBatchSize)
 	for chunkNumber, records := range worklist.OutputChunks {
 		if _, err := insertChunk.ExecContext(ctx, part, chunkNumber, records[0].ID, len(records)); err != nil {
 			return false, errors.Wrapf(err, "insert part %d chunk %d", part, chunkNumber)
@@ -338,17 +342,58 @@ func (store *Store) ImportPart(ctx context.Context, part int, checksum string, w
 				}
 				warcIDs[record.WARCFile] = warcID
 			}
-			if _, err := insertPage.ExecContext(
-				ctx, part, record.ID, chunkNumber, warcID, record.Offset, record.Length,
-			); err != nil {
-				return false, errors.Wrapf(err, "insert part %d page %d", part, record.ID)
+			pageBatch = append(pageBatch, pageInsert{
+				part:            part,
+				worklistOrdinal: record.ID,
+				chunk:           chunkNumber,
+				warcID:          warcID,
+				warcOffset:      record.Offset,
+				warcLength:      record.Length,
+			})
+			if len(pageBatch) == pageInsertBatchSize {
+				if err := insertPageBatch(ctx, transaction, pageBatch); err != nil {
+					return false, err
+				}
+				pageBatch = pageBatch[:0]
 			}
 		}
+	}
+	if err := insertPageBatch(ctx, transaction, pageBatch); err != nil {
+		return false, err
 	}
 	if err := transaction.Commit(); err != nil {
 		return false, errors.Wrap(err, "commit part import")
 	}
 	return false, nil
+}
+
+func insertPageBatch(ctx context.Context, transaction *sql.Tx, pages []pageInsert) error {
+	if len(pages) == 0 {
+		return nil
+	}
+	var query strings.Builder
+	query.WriteString(`INSERT INTO pages(part, worklist_ordinal, chunk, warc_id, warc_offset, warc_length) VALUES `)
+	arguments := make([]any, 0, len(pages)*6)
+	for index, page := range pages {
+		if index > 0 {
+			query.WriteByte(',')
+		}
+		query.WriteString(`(?, ?, ?, ?, ?, ?)`)
+		arguments = append(arguments,
+			page.part,
+			page.worklistOrdinal,
+			page.chunk,
+			page.warcID,
+			page.warcOffset,
+			page.warcLength,
+		)
+	}
+	if _, err := transaction.ExecContext(ctx, query.String(), arguments...); err != nil {
+		first := pages[0]
+		last := pages[len(pages)-1]
+		return errors.Wrapf(err, "insert part %d pages %d-%d", first.part, first.worklistOrdinal, last.worklistOrdinal)
+	}
+	return nil
 }
 
 func loadWARCIDs(ctx context.Context, transaction *sql.Tx) (map[string]int64, error) {

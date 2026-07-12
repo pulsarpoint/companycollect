@@ -194,11 +194,17 @@ func axfrFlushLoop(ctx context.Context, store *axfrStore, config Config) error {
 			loaded, flushErr := flushReady(ctx, connection, store, config.ScanID, config.FlushBatch)
 			_ = connection.Close()
 			if flushErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				slog.Error("AXFR flush failed", "scan_id", config.ScanID, "error", flushErr)
 			} else if loaded > 0 {
 				continue
 			}
 		} else {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			slog.Error("open AXFR output connection", "scan_id", config.ScanID, "error", err)
 		}
 		done, err := axfrDrainDone(ctx, store, config.ScanID)
