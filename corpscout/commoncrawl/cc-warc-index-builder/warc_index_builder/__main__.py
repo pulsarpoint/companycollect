@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from .catalog import catalog_build_lock, prepare_build_directory, require_path_within
 from .events import emit_event
 
 
@@ -104,13 +105,19 @@ def parse_options(argv: Sequence[str] | None = None) -> CommandOptions:
         check=values.check,
     )
     try:
-        options.catalog_directory.relative_to(base)
+        require_path_within(base, options.catalog_directory)
     except ValueError:
         parser.error("catalog path escapes --base")
     return options
 
 
-def run(_options: CommandOptions) -> int:
+def run(options: CommandOptions) -> int:
+    if options.check:
+        return 0
+    catalog_directory = options.catalog_directory
+    require_path_within(options.base, catalog_directory)
+    with catalog_build_lock(catalog_directory):
+        prepare_build_directory(options.base, catalog_directory, rebuild=options.rebuild)
     return 0
 
 

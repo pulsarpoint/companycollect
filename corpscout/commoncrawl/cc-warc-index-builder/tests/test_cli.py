@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -142,6 +144,98 @@ def test_parsing_does_not_create_catalog_directories(tmp_path: Path) -> None:
 
 
 def test_main_accepts_valid_options(tmp_path: Path) -> None:
+    assert main(["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"]) == 0
+
+
+def test_build_creates_only_local_lifecycle_paths(tmp_path: Path) -> None:
+    assert main(["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"]) == 0
+
+    catalog_directory = tmp_path / "CC-MAIN-2026-25/catalog/pages25"
+    assert (catalog_directory / "build.lock").is_file()
+    assert (catalog_directory / ".build").is_dir()
+    assert (catalog_directory / "catalog.duckdb").exists() is False
+
+
+def test_check_does_not_create_catalog_paths(tmp_path: Path) -> None:
+    base = tmp_path / "unused"
+
+    assert main(["--base", str(base), "--crawl", "CC-MAIN-2026-25", "--check"]) == 0
+
+    assert base.exists() is False
+
+
+def test_rebuild_removes_only_staging_and_preserves_final_catalog(tmp_path: Path) -> None:
+    catalog_directory = tmp_path / "CC-MAIN-2026-25/catalog/pages25"
+    build_directory = catalog_directory / ".build"
+    build_directory.mkdir(parents=True)
+    (build_directory / "stale.partial").write_text("stale")
+    final_catalog = catalog_directory / "catalog.duckdb"
+    final_catalog.write_bytes(b"existing catalog")
+    sibling = catalog_directory / "keep.me"
+    sibling.write_text("keep")
+
+    assert main(["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25", "--rebuild"]) == 0
+
+    assert build_directory.is_dir()
+    assert list(build_directory.iterdir()) == []
+    assert final_catalog.read_bytes() == b"existing catalog"
+    assert sibling.read_text() == "keep"
+
+
+def test_rebuild_rejects_symlinked_build_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    catalog_directory = tmp_path / "CC-MAIN-2026-25/catalog/pages25"
+    catalog_directory.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_text("keep")
+    (catalog_directory / ".build").symlink_to(outside, target_is_directory=True)
+
+    exit_code = main(["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25", "--rebuild"])
+
+    assert exit_code == 1
+    assert sentinel.read_text() == "keep"
+    event = json.loads(capsys.readouterr().err)
+    assert event["error_type"] == "ValueError"
+    assert "must not be a symlink" in event["error"]
+
+
+def test_another_process_holding_lock_blocks_builder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    catalog_directory = tmp_path / "CC-MAIN-2026-25/catalog/pages25"
+    lock_holder = """
+import sys
+from pathlib import Path
+from warc_index_builder.catalog import catalog_build_lock
+
+with catalog_build_lock(Path(sys.argv[1])):
+    print("locked", flush=True)
+    sys.stdin.readline()
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", lock_holder, str(catalog_directory)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "locked"
+
+        exit_code = main(["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"])
+
+        assert exit_code == 1
+        event = json.loads(capsys.readouterr().err)
+        assert event["error_type"] == "CatalogBuildLocked"
+        assert "another builder holds" in event["error"]
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        process.wait(timeout=5)
+
     assert main(["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"]) == 0
 
 
