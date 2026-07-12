@@ -1,8 +1,11 @@
+import json
 from pathlib import Path
 
 import pytest
 
+import warc_index_builder.__main__ as command
 from warc_index_builder.__main__ import main, parse_options
+from warc_index_builder.events import binary_size, emit_event
 
 
 def test_defaults_resolve_from_working_directory(
@@ -140,3 +143,51 @@ def test_parsing_does_not_create_catalog_directories(tmp_path: Path) -> None:
 
 def test_main_accepts_valid_options(tmp_path: Path) -> None:
     assert main(["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"]) == 0
+
+
+def test_event_is_structured_json(capsys: pytest.CaptureFixture[str]) -> None:
+    emit_event("candidate shard ready", shard=3, rows=120, source_size=binary_size(271_088_921))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["time"].endswith("Z")
+    assert event["level"] == "INFO"
+    assert event["msg"] == "candidate shard ready"
+    assert event["shard"] == 3
+    assert event["rows"] == 120
+    assert event["source_size"] == "258.5 MiB"
+
+
+def test_binary_size_rejects_negative_bytes() -> None:
+    with pytest.raises(ValueError, match="must not be negative"):
+        binary_size(-1)
+
+
+def test_reserved_event_fields_cannot_be_overwritten() -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        emit_event("invalid", msg="replacement")
+
+
+def test_main_logs_runtime_failure_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(_options: command.CommandOptions) -> int:
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(command, "run", fail)
+
+    exit_code = main(["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["level"] == "ERROR"
+    assert event["msg"] == "catalog build failed"
+    assert event["crawl"] == "CC-MAIN-2026-25"
+    assert event["selection"] == "pages25"
+    assert event["error_type"] == "RuntimeError"
+    assert event["error"] == "simulated failure"

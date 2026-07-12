@@ -3,9 +3,12 @@
 import argparse
 import os
 import re
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from .events import emit_event
 
 
 _CRAWL_ID = re.compile(r"CC-MAIN-[0-9]{4}-[0-9]{2}")
@@ -107,9 +110,25 @@ def parse_options(argv: Sequence[str] | None = None) -> CommandOptions:
     return options
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parse_options(argv)
+def run(_options: CommandOptions) -> int:
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    options = parse_options(argv)
+    try:
+        return run(options)
+    except Exception as error:
+        emit_event(
+            "catalog build failed",
+            level="ERROR",
+            stream=sys.stderr,
+            crawl=options.crawl,
+            selection=options.selection_name,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
+        return 1
 
 
 if __name__ == "__main__":
