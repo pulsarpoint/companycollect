@@ -205,5 +205,14 @@ __marimo__/
 data/*.duckdb
 data/*.duckdb.wal
 
+# Dagster runtime state (DAGSTER_HOME points at the repo in dev)
+storage/
+logs/
+.dagster_home/
+.logs_queue/
+.nux/
+.tmp_dagster_dev.log
+.tmp_dagster_home_*/
+
 # Streamlit
 .streamlit/secrets.toml
