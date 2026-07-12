@@ -176,16 +176,28 @@ type PageMetaRow struct {
 	ResolvedAt  time.Time         `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
-func WriteDomains(path string, rows []DomainRow) error         { return parquet.WriteFile(path, rows) }
-func WriteIndustries(path string, rows []IndustryRow) error    { return parquet.WriteFile(path, rows) }
-func WritePageSignals(path string, rows []PageSignalRow) error { return parquet.WriteFile(path, rows) }
-func WriteContacts(path string, rows []ContactRow) error       { return parquet.WriteFile(path, rows) }
-func WriteMetadata(path string, rows []MetadataRow) error      { return parquet.WriteFile(path, rows) }
-func WriteTech(path string, rows []TechRow) error              { return parquet.WriteFile(path, rows) }
-func WriteIdentifiers(path string, rows []IdentifierRow) error { return parquet.WriteFile(path, rows) }
-func WriteEmbeddings(path string, rows []EmbeddingRow) error   { return parquet.WriteFile(path, rows) }
-func WriteSecurity(path string, rows []SecurityRow) error      { return parquet.WriteFile(path, rows) }
-func WritePageMeta(path string, rows []PageMetaRow) error      { return parquet.WriteFile(path, rows) }
+// Zstd is the compression codec for every parquet output — the text-heavy kinds compress 3-5x,
+// and every reader in the chain (loader, DuckDB, pyarrow) decodes it transparently.
+var Zstd = parquet.Compression(&parquet.Zstd)
+
+func WriteDomains(path string, rows []DomainRow) error { return parquet.WriteFile(path, rows, Zstd) }
+func WriteIndustries(path string, rows []IndustryRow) error {
+	return parquet.WriteFile(path, rows, Zstd)
+}
+func WritePageSignals(path string, rows []PageSignalRow) error {
+	return parquet.WriteFile(path, rows, Zstd)
+}
+func WriteContacts(path string, rows []ContactRow) error  { return parquet.WriteFile(path, rows, Zstd) }
+func WriteMetadata(path string, rows []MetadataRow) error { return parquet.WriteFile(path, rows, Zstd) }
+func WriteTech(path string, rows []TechRow) error         { return parquet.WriteFile(path, rows, Zstd) }
+func WriteIdentifiers(path string, rows []IdentifierRow) error {
+	return parquet.WriteFile(path, rows, Zstd)
+}
+func WriteEmbeddings(path string, rows []EmbeddingRow) error {
+	return parquet.WriteFile(path, rows, Zstd)
+}
+func WriteSecurity(path string, rows []SecurityRow) error { return parquet.WriteFile(path, rows, Zstd) }
+func WritePageMeta(path string, rows []PageMetaRow) error { return parquet.WriteFile(path, rows, Zstd) }
 
 // UploadToS3 puts a local file at the given bucket/key.
 func UploadToS3(ctx context.Context, client *s3.Client, bucket, key, path string) error {

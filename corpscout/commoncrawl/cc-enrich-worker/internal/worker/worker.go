@@ -45,6 +45,11 @@ type ShardResult struct {
 	Security    []output.SecurityRow  // full response-header map, from the tech pass
 	PageMeta    []output.PageMetaRow  // head content signals (title/meta/hreflang/jsonld @types), tech pass
 	Embeddings  []output.EmbeddingRow // raw page vectors, from the industry pass (saved separately)
+
+	// Pages/Errs carry the industry stream's fetch counts so the driver can enforce the same
+	// failure contract as the chunked path (FetchedChunk.Pages/Errs + maxFetchErrorRate): a
+	// systemically-failed fetch must not commit a near-empty part that then gets marked done.
+	Pages, Errs int64
 }
 
 func b2u8(b bool) uint8 {
@@ -131,6 +136,8 @@ type ShardConfig struct {
 
 type domainAgg struct {
 	rootDomain, primaryURL, primarySub, primaryText string
+	primaryWarc                                     string   // primary page's WARC record coords — re-fetch
+	primaryOff, primaryLen                          int64    // provenance carried onto the embedding row
 	emails                                          []string // regex-scraped, deduped (tech pass)
 	identifiers                                     []model.Identifier
 	profile                                         model.CompanyProfile
@@ -356,6 +363,9 @@ func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
 		if r.primary && !agg.hasPrimary {
 			agg.hasPrimary = true
 			agg.primaryText = r.text
+			agg.primaryWarc = r.source.WarcFilename
+			agg.primaryOff = r.source.Offset
+			agg.primaryLen = r.source.Length
 			agg.security = r.security
 			agg.meta = r.meta
 			agg.jsonldTypes = r.jsonldTypes
@@ -467,6 +477,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 
 	var industries []output.IndustryRow
 	var pageSignals []output.PageSignalRow
+	var embeddings []output.EmbeddingRow
 	var techRows []output.TechRow
 	var identRows []output.IdentifierRow
 	var metaRows []output.MetadataRow
@@ -524,6 +535,15 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 		for vi := range idx {
 			industries = append(industries, indByI[vi]...)
 			pageSignals = append(pageSignals, sigByI[vi])
+		}
+		// Keep the raw vectors: they are the expensive GPU artifact, and "both" streams them to the
+		// embedding tree exactly like the industry stream path does.
+		for vi, i := range idx {
+			a := aggs[i]
+			embeddings = append(embeddings, embeddingRow(cfg, streamItem{
+				root: a.rootDomain, url: a.primaryURL, sub: a.primarySub, text: a.primaryText,
+				warc: a.primaryWarc, off: a.primaryOff, length: a.primaryLen,
+			}, vecs[vi]))
 		}
 		if len(idx) > 0 {
 			log.Printf("  embed=%.1fs classify=%.1fs for %d domains (%d classify workers)",
@@ -603,7 +623,8 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 			}
 		}
 	}
-	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals, Tech: techRows,
+	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals,
+		Embeddings: embeddings, Tech: techRows,
 		Identifiers: identRows, Metadata: metaRows, Contacts: contacts,
 		Security: securityRows, PageMeta: pageMetaRows}, nil
 }
@@ -812,7 +833,8 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 			embeddings = append(embeddings, embByDi[di])
 		}
 	}
-	return ShardResult{Domains: out, Industries: industries, PageSignals: pageSignals, Embeddings: embeddings}, nil
+	return ShardResult{Domains: out, Industries: industries, PageSignals: pageSignals, Embeddings: embeddings,
+		Pages: atomic.LoadInt64(&pageCount), Errs: atomic.LoadInt64(&errCount)}, nil
 }
 
 // ProcessShard processes one worklist chunk end-to-end (fetch then finalize). Use FetchChunk +

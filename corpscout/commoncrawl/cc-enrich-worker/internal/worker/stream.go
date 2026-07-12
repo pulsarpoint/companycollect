@@ -199,7 +199,7 @@ func newKindStream[T any](dir, file string) (*kindStream[T], error) {
 	if err != nil {
 		return nil, err
 	}
-	return &kindStream[T]{path: p, f: f, w: parquet.NewGenericWriter[T](f)}, nil
+	return &kindStream[T]{path: p, f: f, w: parquet.NewGenericWriter[T](f, output.Zstd)}, nil
 }
 
 func (k *kindStream[T]) write(rows []T) (int, error) {

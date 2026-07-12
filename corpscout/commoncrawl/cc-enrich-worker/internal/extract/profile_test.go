@@ -54,6 +54,28 @@ func TestExtractProfile(t *testing.T) {
 	}
 }
 
+func TestIsOrgAcceptsLocalBusinessSubtypes(t *testing.T) {
+	// schema.org LocalBusiness/Organization subtypes whose names contain none of the generic
+	// substrings — exactly the SMB segment this pipeline targets.
+	yes := []string{
+		"Dentist", "Hotel", "Attorney", "Plumber", "AutoRepair", "Physician",
+		"BankOrCreditUnion", "TravelAgency", "RealEstateAgent", "Bakery", "HairSalon",
+		"https://schema.org/Electrician", "schema:Winery", "MedicalBusiness",
+		"Organization", "LocalBusiness", "Store", "Restaurant", "NGO",
+	}
+	for _, typ := range yes {
+		if !isOrg(map[string]any{"@type": typ, "name": "x"}) {
+			t.Errorf("isOrg(%q) = false, want true", typ)
+		}
+	}
+	no := []string{"WebPage", "Person", "BlogPosting", "Product", "Event", "WebSite", "BreadcrumbList"}
+	for _, typ := range no {
+		if isOrg(map[string]any{"@type": typ, "name": "x"}) {
+			t.Errorf("isOrg(%q) = true, want false", typ)
+		}
+	}
+}
+
 func TestExtractProfileGraphAndEmpty(t *testing.T) {
 	// @graph wrapper + a non-org type that must be ignored
 	body := []byte(`<script type="application/ld+json">

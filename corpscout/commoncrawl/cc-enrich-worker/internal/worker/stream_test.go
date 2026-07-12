@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/format"
 
 	"cc-enrich-worker/internal/output"
 )
@@ -56,6 +57,23 @@ func TestShardStreamerCommit(t *testing.T) {
 	sr, err := parquet.ReadFile[output.SecurityRow](filepath.Join(dir, "security.parquet"))
 	if err != nil || len(sr) != 1 || sr[0].Headers["server"] != "nginx" {
 		t.Fatalf("security: err=%v rows=%+v", err, sr)
+	}
+	// streamed files must be zstd-compressed like the single-shot writers
+	f, err := os.Open(filepath.Join(dir, "tech.parquet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pf, err := parquet.OpenFile(f, st.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codec := pf.Metadata().RowGroups[0].Columns[0].MetaData.Codec; codec != format.Zstd {
+		t.Fatalf("streamed tech.parquet codec = %v, want Zstd", codec)
 	}
 }
 

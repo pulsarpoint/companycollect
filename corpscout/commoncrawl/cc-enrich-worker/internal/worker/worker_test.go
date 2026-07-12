@@ -98,6 +98,39 @@ func TestProcessShardAndParquet(t *testing.T) {
 	}
 }
 
+// "both" pays the GPU for every primary page's vector; the rows must reach ShardResult.Embeddings
+// (the streamer's embeddings.parquet) instead of being dropped after classification.
+func TestProcessShardBothModeEmitsEmbeddings(t *testing.T) {
+	page1 := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><body>Acme software company</body></html>")
+	page2 := gzWarc("HTTP/1.1 200 OK\r\n\r\n<html><body>about us</body></html>")
+	getter := multiGetter{"f.warc.gz:0": page1, "f.warc.gz:1000": page2}
+	items := []model.WorklistItem{
+		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page1)), Primary: true},
+		{RootDomain: "acme.com", URL: "https://acme.com/about", WarcFilename: "f.warc.gz", Offset: 1000, Length: int64(len(page2)), Primary: false},
+	}
+	ref := &model.Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
+		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
+	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
+	cfg := ShardConfig{CrawlID: "C", SourceRunID: "run1", ResolvedAt: time.Unix(1700000000, 0).UTC(),
+		Concurrency: 2, Mode: "both"}
+
+	res, err := ProcessShard(context.Background(), items, getter, emb, ref, &model.Prototypes{}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Embeddings) != 1 {
+		t.Fatalf("both mode: want 1 embedding row for the primary page, got %d (%+v)", len(res.Embeddings), res.Embeddings)
+	}
+	e := res.Embeddings[0]
+	if e.RootDomain != "acme.com" || e.SourceURL != "https://acme.com/" ||
+		e.WarcFilename != "f.warc.gz" || e.WarcOffset != 0 || e.WarcLength != int64(len(page1)) {
+		t.Fatalf("embedding row provenance must point at the primary page: %+v", e)
+	}
+	if e.EmbedDim != 3 || len(e.Embedding) != 3 || e.TextLen == 0 {
+		t.Fatalf("embedding row vector wrong: dim=%d len=%d textlen=%d", e.EmbedDim, len(e.Embedding), e.TextLen)
+	}
+}
+
 func TestProcessShardIndustryMode(t *testing.T) {
 	page1 := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><body>Acme software company</body></html>")
 	getter := multiGetter{"f.warc.gz:0": page1}
@@ -161,6 +194,36 @@ func TestProcessShardTechMode(t *testing.T) {
 	}
 	if len(res.PageMeta) != 1 || res.PageMeta[0].RootDomain != "acme.com" {
 		t.Fatalf("tech mode primary-page metadata row missing: %+v", res.PageMeta)
+	}
+}
+
+// The industry stream must expose its fetch counts so the driver can refuse to commit a
+// systemically-failed part (same contract the chunked path enforces via FetchedChunk.Pages/Errs).
+func TestProcessIndustryStreamReportsFetchCounts(t *testing.T) {
+	page := gzWarc("HTTP/1.1 200 OK\r\n\r\n<html><body>Acme software company</body></html>")
+	getter := multiGetter{"ok.warc.gz:0": page} // a.com fetches; b.com and c.com fail
+	items := []model.WorklistItem{
+		{RootDomain: "a.com", URL: "https://a.com/", WarcFilename: "ok.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
+		{RootDomain: "b.com", URL: "https://b.com/", WarcFilename: "missing.warc.gz", Offset: 0, Length: 100, Primary: true},
+		{RootDomain: "c.com", URL: "https://c.com/", WarcFilename: "missing.warc.gz", Offset: 200, Length: 100, Primary: true},
+	}
+	ref := &model.Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
+		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
+	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2, Mode: "industry"}
+
+	res, err := ProcessIndustryStream(context.Background(), items, getter, emb, ref, &model.Prototypes{}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Pages != 3 || res.Errs != 2 {
+		t.Fatalf("fetch counts: pages=%d errs=%d, want 3/2", res.Pages, res.Errs)
+	}
+	if len(res.Domains) != 1 || res.Domains[0].RootDomain != "a.com" {
+		t.Fatalf("want the one surviving domain, got %+v", res.Domains)
+	}
+	if len(res.Embeddings) != 1 || res.Embeddings[0].RootDomain != "a.com" {
+		t.Fatalf("want the surviving domain's embedding, got %+v", res.Embeddings)
 	}
 }
 

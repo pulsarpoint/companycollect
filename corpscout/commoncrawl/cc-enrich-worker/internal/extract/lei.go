@@ -7,8 +7,10 @@ import (
 	"cc-enrich-worker/internal/model"
 )
 
-// A 20-char LEI: 18 alphanumeric + 2 check digits (ISO 17442).
-var leiTokenRe = regexp.MustCompile(`[A-Z0-9]{18}[0-9]{2}`)
+// A 20-char LEI: 18 alphanumeric + 2 check digits (ISO 17442). The \b anchors reject tokens
+// embedded in longer alphanumeric runs (order refs, hashes), where a misaligned window both
+// hides real LEIs and passes the checksum by chance ~1/97 of the time.
+var leiTokenRe = regexp.MustCompile(`\b[A-Z0-9]{18}[0-9]{2}\b`)
 
 // schema.org JSON-LD: "leiCode":"...". Keyed case-insensitively, value 20 alphanumerics.
 var leiCodeRe = regexp.MustCompile(`(?i)"lei(?:Code)?"\s*:\s*"([A-Za-z0-9]{20})"`)

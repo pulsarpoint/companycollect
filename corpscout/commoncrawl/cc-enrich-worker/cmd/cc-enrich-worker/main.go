@@ -33,6 +33,11 @@ import (
 
 const warcPreparationTimeout = 30 * time.Minute
 
+// maxFetchErrorRate is the failure contract for every fetch pass: above it the part is systemic
+// failure (throttling, auth, dead source), so refuse to write and let cc-crawl retry the part.
+// Normal WARC decay is a few %.
+const maxFetchErrorRate = 0.5
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -528,6 +533,10 @@ func run(mode string, o opts) {
 		if err != nil {
 			fatal("industry stream: %v", err)
 		}
+		if res.Pages > 0 && float64(res.Errs)/float64(res.Pages) > maxFetchErrorRate {
+			fatal("refusing to write: fetch error rate %.0f%% (%d/%d pages) exceeds %.0f%% — WARC index will be retried",
+				100*float64(res.Errs)/float64(res.Pages), res.Errs, res.Pages, 100*maxFetchErrorRate)
+		}
 		domains = res.Domains
 		industries = res.Industries
 		pageSignals = res.PageSignals
@@ -601,7 +610,6 @@ func run(mode string, o opts) {
 		}
 		// Failure contract: abort (delete partials) rather than commit a systemically-failed part. cc-crawl
 		// gates on exit code, so a Fatalf here retries the part next run.
-		const maxFetchErrorRate = 0.5 // >50% errors = systemic; normal WARC decay is a few %
 		if totalPages > 0 && float64(totalErrs)/float64(totalPages) > maxFetchErrorRate {
 			streamer.Abort()
 			fatal("refusing to write: fetch error rate %.0f%% (%d/%d pages) exceeds %.0f%% — WARC index will be retried",

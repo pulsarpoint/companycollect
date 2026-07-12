@@ -29,6 +29,23 @@ func TestValidLEI(t *testing.T) {
 	}
 }
 
+func TestExtractLEIsRequiresTokenBoundaries(t *testing.T) {
+	// An LEI embedded in a longer alphanumeric run is not an LEI mention: without boundaries the
+	// misaligned 20-char window is tried (and can, ~1/97 of the time, pass the checksum on random
+	// order refs / license keys / hex hashes), while the real LEI at offset 1 is never seen.
+	body := []byte(`<html><body>
+		ref REFAHWUPKR0MPOU8FGXBT394 and order 7LTWFZYICNSX8D621K86PLUS9
+		real one: HWUPKR0MPOU8FGXBT394, done.
+	</body></html>`)
+	ids := ExtractLEIs(body)
+	if len(ids) != 1 {
+		t.Fatalf("ExtractLEIs = %+v, want exactly the one standalone LEI", ids)
+	}
+	if ids[0].Value != "HWUPKR0MPOU8FGXBT394" || !ids[0].Valid || ids[0].Source != "text" {
+		t.Fatalf("ExtractLEIs = %+v, want valid text LEI HWUPKR0MPOU8FGXBT394", ids[0])
+	}
+}
+
 func TestExtractLEIs(t *testing.T) {
 	body := []byte(`<html><head>
 		<script type="application/ld+json">{"@type":"Organization","name":"Apple","leiCode":"HWUPKR0MPOU8FGXBT394"}</script>
