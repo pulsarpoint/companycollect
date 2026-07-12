@@ -23,6 +23,7 @@ NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS = dg.DailyPartitionsDefinition(
     name="norway_brreg_entity_updates_s3",
     group_name=GROUP_NAME,
     partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "s3", "parquet", "brreg"},
     description="Downloads Norway Brreg entity updates for one day and stores uniform entity records as parquet.",
 )

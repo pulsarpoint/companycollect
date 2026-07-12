@@ -174,6 +174,7 @@ def norway_brreg_financial_statements_snapshot_parquet(
     group_name=GROUP_NAME,
     kinds=FINANCIAL_STATEMENTS_PARQUET_KINDS,
     partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description=(
         "Builds native-currency Norway Brreg resolved financial statement parquet "
         "for one update fetch partition."
@@ -258,6 +259,7 @@ def norway_brreg_financial_statements_snapshot_usd_parquet(
     group_name=GROUP_NAME,
     kinds=FINANCIAL_STATEMENTS_PARQUET_KINDS,
     partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description=(
         "Enriches one Norway Brreg update financial statement parquet partition "
         "with USD amounts and FX fields."
@@ -350,6 +352,7 @@ def norway_brreg_financial_statements_snapshot_clickhouse(
     group_name=GROUP_NAME,
     kinds=FINANCIAL_STATEMENTS_CLICKHOUSE_KINDS,
     partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description=(
         "Deletes affected Norway org financial rows from ClickHouse and appends "
         "replacement rows from one update USD parquet partition."

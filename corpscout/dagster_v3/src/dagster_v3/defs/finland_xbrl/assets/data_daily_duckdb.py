@@ -88,6 +88,7 @@ def materialize_data_daily_duckdb(
     pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[dg.AssetKey("data_daily")],
     partitions_def=DAILY_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "s3", "csv", "duckdb"},
     description=(
         "Reads one daily Finland XBRL financial statement listing CSV from S3 "

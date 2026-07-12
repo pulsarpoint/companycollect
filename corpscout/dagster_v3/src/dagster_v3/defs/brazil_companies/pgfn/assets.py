@@ -55,6 +55,7 @@ def brazil_comp_pgfn_raw_archives_s3(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "csv", "pgfn"},
     partitions_def=BRAZIL_COMP_PGFN_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_PGFN_DUCKDB_POOL,
     description=(
         "Parses PGFN Dívida Ativa ZIP CSV members into a normalized company-debt "
@@ -90,6 +91,7 @@ def brazil_comp_pgfn_company_debts_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "pgfn"},
     partitions_def=BRAZIL_COMP_PGFN_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_PGFN_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_BR_PGFN_COMPANY_DEBTS_TABLE},
     description="Brazil PGFN company debt rows exported to ClickHouse.",

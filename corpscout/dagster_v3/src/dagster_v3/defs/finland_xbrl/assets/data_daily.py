@@ -89,6 +89,7 @@ def write_financial_data_daily_csv(
     name="data_daily",
     group_name="finland_xbrl",
     partitions_def=DAILY_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "s3", "csv", "prh"},
     description=(
         "Creates one daily PRH XBRL financial statement listing CSV in S3. Each "

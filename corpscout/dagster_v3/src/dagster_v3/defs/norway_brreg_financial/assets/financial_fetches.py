@@ -75,6 +75,7 @@ def norway_brreg_financial_fetches_snapshot_parquet(
     group_name=GROUP_NAME,
     kinds=FINANCIAL_FETCH_PARQUET_KINDS,
     partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description=(
         "Fetches Norway Brreg annual-account outcomes for one normalized update "
         "no_companies parquet partition and stores raw plus aggregate parquet diagnostics."

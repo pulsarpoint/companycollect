@@ -88,6 +88,7 @@ def export_data_daily_duckdb_to_clickhouse(
     pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[dg.AssetKey("data_daily_duckdb")],
     partitions_def=DAILY_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "duckdb", "clickhouse"},
     description=(
         "Inserts one daily Finland XBRL financial statement listing DuckDB "

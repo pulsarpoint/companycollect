@@ -81,6 +81,7 @@ def norway_brreg_entities_snapshot_clickhouse(
 @dg.asset(
     name="norway_brreg_entity_updates_clickhouse",
     partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     deps=[
         dg.AssetKey("norway_brreg_entity_updates_no_companies_parquet"),
         dg.AssetKey("norway_brreg_entity_updates_no_websites_parquet"),

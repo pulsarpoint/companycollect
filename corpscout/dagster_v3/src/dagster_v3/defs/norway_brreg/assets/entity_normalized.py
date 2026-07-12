@@ -223,6 +223,7 @@ def norway_brreg_entities_snapshot_normalized_parquets(
         dependency=dg.AssetKey("norway_brreg_entity_updates_s3"),
     ),
     partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
 )
 def norway_brreg_entity_updates_normalized_parquets(
     context,

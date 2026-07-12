@@ -169,6 +169,7 @@ class BrazilCompRfbDltTranslator(DagsterDltTranslator):
     name=SNAPSHOT_FILES_ASSET_KEY,
     dagster_dlt_translator=BrazilCompRfbDltTranslator(),
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_RFB_MANIFEST_DUCKDB_POOL,
 )
 def brazil_comp_rfb_snapshot_files_duckdb(
@@ -232,6 +233,7 @@ def brazil_comp_rfb_snapshot_files_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_RFB_EMPRESAS_DUCKDB_POOL,
     description="Brazil RFB Empresas raw CSV files loaded into a stage DuckDB file.",
 )
@@ -264,6 +266,7 @@ def brazil_comp_rfb_empresas_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_RFB_ESTABELECIMENTOS_DUCKDB_POOL,
     description=(
         "Brazil RFB Estabelecimentos raw CSV files loaded into a stage DuckDB file."
@@ -300,6 +303,7 @@ def brazil_comp_rfb_estabelecimentos_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_RFB_SIMPLES_DUCKDB_POOL,
     description="Brazil RFB Simples raw CSV files loaded into a stage DuckDB file.",
 )
@@ -332,6 +336,7 @@ def brazil_comp_rfb_simples_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_RFB_REFERENCE_DUCKDB_POOL,
     description="Brazil RFB reference CSV families loaded into a stage DuckDB file.",
 )
@@ -374,6 +379,7 @@ def brazil_comp_rfb_reference_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "sql"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_RFB_COMPANIES_DUCKDB_POOL,
     description="Brazil RFB legal entities and establishments normalized in DuckDB.",
 )
@@ -408,6 +414,7 @@ def brazil_comp_rfb_companies_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "sql"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_RFB_CONTACT_INFO_DUCKDB_POOL,
     description=(
         "Brazil RFB establishment contact info normalized in DuckDB "
@@ -440,6 +447,7 @@ def brazil_comp_rfb_contact_info_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "sql"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=BRAZIL_COMP_RFB_WEBSITES_DUCKDB_POOL,
     description=(
         "Brazil RFB email-derived br_websites feeder table for the "
@@ -471,6 +479,7 @@ def brazil_comp_rfb_websites_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     metadata={"table": tables.QUALIFIED_BR_COMPANIES_TABLE},
     description="Brazil RFB legal entities exported to ClickHouse corpscout.br_companies.",
 )
@@ -498,6 +507,7 @@ def brazil_comp_rfb_clickhouse_companies(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     metadata={"table": tables.QUALIFIED_BR_ESTABLISHMENTS_TABLE},
     description=(
         "Brazil RFB establishments exported to ClickHouse corpscout.br_establishments."
@@ -527,6 +537,7 @@ def brazil_comp_rfb_clickhouse_establishments(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     metadata={"table": tables.QUALIFIED_BR_COMPANY_CONTACTS_TABLE},
     description=(
         "Brazil RFB canonical company contacts exported to ClickHouse "
@@ -560,6 +571,7 @@ def brazil_comp_rfb_clickhouse_company_contacts(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     metadata={"table": tables.QUALIFIED_BR_COMPANY_DOMAINS_TABLE},
     description=(
         "Brazil RFB canonical company domains exported to ClickHouse "
@@ -593,6 +605,7 @@ def brazil_comp_rfb_clickhouse_company_domains(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     metadata={"table": tables.QUALIFIED_BR_WEBSITES_TABLE},
     description=(
         "Brazil RFB email-derived websites exported to ClickHouse "
@@ -629,6 +642,7 @@ def brazil_comp_rfb_clickhouse_websites(
     group_name=GROUP_NAME,
     kinds={"python", "filesystem"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description=(
         "Remove previous Brazil RFB partition stage/download folders after the "
         "current partition has been exported to ClickHouse."

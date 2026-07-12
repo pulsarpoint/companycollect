@@ -111,6 +111,7 @@ class ExchangeRatesV2Config(dg.Config):
     name="exchange_rates_v2_raw_duckdb",
     dagster_dlt_translator=ExchangeRatesV2DltTranslator(),
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
 )
 def exchange_rates_v2_raw_duckdb_asset(
@@ -157,6 +158,7 @@ def exchange_rates_v2_raw_duckdb_asset(
     project=exchange_rates_v2_dbt_project,
     dagster_dbt_translator=ExchangeRatesV2DbtTranslator(),
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
 )
 def exchange_rates_v2_dbt_assets(
@@ -181,6 +183,7 @@ def exchange_rates_v2_dbt_assets(
     ],
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     group_name=GROUP_NAME,
     kinds={"duckdb", "clickhouse"},
     description="Exchange-rate v2 dbt rows exported from DuckDB to migrated ClickHouse table.",

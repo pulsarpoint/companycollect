@@ -92,6 +92,7 @@ def _sync_raw_archives(
     group_name=GROUP_NAME,
     kinds={"python", "s3", "zip", "bolagsverket", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description="Downloads Sweden annual-report outer ZIP archives for 2020-2026 backfill.",
 )
 def sweden_financial_backfill_raw_archives_s3(
@@ -113,6 +114,7 @@ def sweden_financial_backfill_raw_archives_s3(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "zip", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description="Extracts Sweden backfill report XHTML files and replaces the year catalog.",
 )
 def sweden_financial_backfill_report_xhtml_catalog_duckdb(
@@ -154,6 +156,7 @@ def sweden_financial_backfill_report_xhtml_catalog_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "s3", "zip", "bolagsverket", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description="Checks 2026 Sweden annual-report ZIP archives every 7 days.",
 )
 def sweden_financial_current_raw_archives_s3(
@@ -175,6 +178,7 @@ def sweden_financial_current_raw_archives_s3(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "zip", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
     description="Extracts changed 2026 Sweden report XHTML archives for current refreshes.",
 )
@@ -225,6 +229,7 @@ def sweden_financial_current_report_xhtml_catalog_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description=(
         "Parses Sweden backfill XHTML/iXBRL reports into structured report and "
         "fact tables in the year DuckDB file."
@@ -258,6 +263,7 @@ def sweden_financial_backfill_parsed_reports_duckdb(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
     description=(
         "Parses changed Sweden current-year XHTML/iXBRL reports into structured "

@@ -47,6 +47,7 @@ def materialize_data_daily_xml_duckdb(
     pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[data_daily_xml],
     partitions_def=DAILY_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "duckdb", "parquet", "xml"},
     description=(
         "Parses daily Finland XBRL XML files into a partition-scoped DuckDB database."

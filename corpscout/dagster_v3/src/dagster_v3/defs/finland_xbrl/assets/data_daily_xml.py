@@ -44,6 +44,7 @@ def materialize_data_daily_xml(
     group_name="finland_xbrl",
     deps=[data_daily_duckdb_ch],
     partitions_def=DAILY_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "s3", "xml", "clickhouse"},
     description=(
         "Downloads daily Finland XBRL statement XML files for the daily "

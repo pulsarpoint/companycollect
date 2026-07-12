@@ -49,6 +49,7 @@ ORDER BY org_number
     group_name=GROUP_NAME,
     kinds={"python", "s3", "parquet", "clickhouse", "brreg"},
     partitions_def=NORWAY_BRREG_FINANCIAL_BOOTSTRAP_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=NORWAY_BRREG_FINANCIAL_BOOTSTRAP_POOL,
     description=(
         "Backfills Norway Brreg raw financial fetches for one org-number hash bucket "
