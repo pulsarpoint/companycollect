@@ -9,30 +9,8 @@ class MaxMindDatabaseResource(dg.ConfigurableResource):
     database_directory: str = dg.EnvVar("MAXMIND_DATABASE_DIRECTORY")
 
     def database_paths(self) -> tuple[Path, Path]:
-        directory = Path(self.database_directory).expanduser().resolve(strict=True)
+        directory = Path(self.database_directory).expanduser()
         return (
-            _latest_database(
-                directory,
-                directory_pattern="GeoLite2-City_*",
-                filename="GeoLite2-City.mmdb",
-            ),
-            _latest_database(
-                directory,
-                directory_pattern="GeoLite2-ASN_*",
-                filename="GeoLite2-ASN.mmdb",
-            ),
+            (directory / "GeoLite2-City.mmdb").resolve(strict=True),
+            (directory / "GeoLite2-ASN.mmdb").resolve(strict=True),
         )
-
-
-def _latest_database(directory: Path, *, directory_pattern: str, filename: str) -> Path:
-    direct_database = directory / filename
-    if direct_database.is_file():
-        return direct_database.resolve(strict=True)
-
-    candidates = sorted(directory.glob(f"{directory_pattern}/{filename}"))
-    if not candidates:
-        raise FileNotFoundError(
-            "No MaxMind database matching "
-            f"{filename} or {directory_pattern}/{filename} under {directory}"
-        )
-    return candidates[-1].resolve(strict=True)

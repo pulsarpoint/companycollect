@@ -253,19 +253,6 @@ def test_geoip_bucket_streams_candidates_and_inserts_resumable_batches() -> None
     assert inserted_rows[1][GEOIP_COLUMNS.index("city_lookup_status")] == "not_global"
 
 
-def test_maxmind_resource_selects_latest_city_and_asn_databases(tmp_path: Path) -> None:
-    old_city = tmp_path / "GeoLite2-City_20260701" / "GeoLite2-City.mmdb"
-    new_city = tmp_path / "GeoLite2-City_20260710" / "GeoLite2-City.mmdb"
-    asn = tmp_path / "GeoLite2-ASN_20260710" / "GeoLite2-ASN.mmdb"
-    for database_path in (old_city, new_city, asn):
-        database_path.parent.mkdir(parents=True, exist_ok=True)
-        database_path.touch()
-
-    resource = MaxMindDatabaseResource(database_directory=str(tmp_path))
-
-    assert resource.database_paths() == (new_city, asn)
-
-
 def test_maxmind_resource_supports_databases_directly_in_directory(
     tmp_path: Path,
 ) -> None:
