@@ -22,7 +22,7 @@ type scannerConfig struct {
 
 func scannerFlags(flags *flag.FlagSet) func() (scannerConfig, error) {
 	maxDomains := flags.Int("max-domains", 0, "cap domains fetched by each scanner cycle (0 = all)")
-	statsInterval := flags.Duration("stats-interval", time.Second, "periodic metrics interval (0 = off)")
+	statsInterval := flags.Duration("stats-interval", 5*time.Second, "periodic metrics interval (0 = off)")
 	runDNS := flags.Bool("dns", true, "run the independent DNS scanner")
 	runAXFR := flags.Bool("axfr", true, "run the independent AXFR scanner")
 

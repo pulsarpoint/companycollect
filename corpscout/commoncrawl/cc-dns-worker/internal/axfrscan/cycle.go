@@ -219,6 +219,7 @@ func axfrStatsLoop(ctx context.Context, store *axfrStore, config Config, started
 	if err != nil {
 		return fmt.Errorf("read initial AXFR stats: %w", err)
 	}
+	previousAt := time.Now().UTC()
 	for {
 		if err := axfrWait(ctx, config.StatsInterval); err != nil {
 			return err
@@ -227,8 +228,9 @@ func axfrStatsLoop(ctx context.Context, store *axfrStore, config Config, started
 		if err != nil {
 			return fmt.Errorf("read AXFR stats: %w", err)
 		}
-		elapsed := time.Since(startedAt).Seconds()
-		interval := config.StatsInterval.Seconds()
+		now := time.Now().UTC()
+		elapsed := now.Sub(startedAt).Seconds()
+		interval := now.Sub(previousAt).Seconds()
 		speed, average := 0.0, 0.0
 		if interval > 0 {
 			speed = float64(current.Tried-previous.Tried) / interval
@@ -241,6 +243,7 @@ func axfrStatsLoop(ctx context.Context, store *axfrStore, config Config, started
 			"unknown", current.Unknown, "speed", fmt.Sprintf("%.1f probes/s", speed),
 			"average", fmt.Sprintf("%.1f probes/s", average), "scan_id", config.ScanID)
 		previous = current
+		previousAt = now
 		done, err := axfrDrainDone(ctx, store, config.ScanID)
 		if err != nil {
 			return err

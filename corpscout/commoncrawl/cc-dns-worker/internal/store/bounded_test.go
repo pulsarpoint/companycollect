@@ -161,9 +161,12 @@ func TestOpenAddsQueryCountersToActiveDNSDatabase(t *testing.T) {
 		source_exhausted INTEGER NOT NULL DEFAULT 0, domains_fetched INTEGER NOT NULL DEFAULT 0,
 		domains_processed INTEGER NOT NULL DEFAULT 0, domain_errors INTEGER NOT NULL DEFAULT 0,
 		records_observed INTEGER NOT NULL DEFAULT 0, dns_checks INTEGER NOT NULL DEFAULT 0,
-		dns_checks_ok INTEGER NOT NULL DEFAULT 0, started_at TEXT NOT NULL
+		dns_checks_ok INTEGER NOT NULL DEFAULT 0, dns_queries INTEGER NOT NULL DEFAULT 0,
+		dns_query_errors INTEGER NOT NULL DEFAULT 0, dns_query_timeouts INTEGER NOT NULL DEFAULT 0,
+		started_at TEXT NOT NULL
 	);
-	INSERT INTO scan_state (scan_id, started_at) VALUES ('scan', '2026-07-11T00:00:00Z');`)
+	INSERT INTO scan_state (scan_id, dns_queries, dns_query_errors, dns_query_timeouts, started_at)
+	VALUES ('scan', 1000, 100, 80, '2026-07-11T00:00:00Z');`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,12 +183,23 @@ func TestOpenAddsQueryCountersToActiveDNSDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"dns_queries", "dns_query_errors", "dns_query_timeouts"} {
+	for _, column := range []string{"dns_queries", "dns_query_errors", "dns_query_timeouts", "dns_query_stats_started_at"} {
 		if !columns[column] {
 			t.Errorf("scan_state.%s was not added", column)
 		}
 	}
-	if _, err := store.CumulativeStats(context.Background(), "scan"); err != nil {
+	startedAt, err := store.EnsureQueryStatsStartedAt(context.Background(), "scan", time.Unix(100, 0).UTC())
+	if err != nil || !startedAt.Equal(time.Unix(100, 0).UTC()) {
+		t.Fatalf("initialize upgraded query stats start: %v, err=%v", startedAt, err)
+	}
+	stats, err := store.CumulativeStats(context.Background(), "scan")
+	if err != nil {
 		t.Fatalf("read upgraded counters: %v", err)
+	}
+	if !stats.QueryStatsStartedAt.Equal(startedAt) {
+		t.Fatalf("query stats start = %v, want %v", stats.QueryStatsStartedAt, startedAt)
+	}
+	if stats.Queries != 0 || stats.QueryErrors != 0 || stats.QueryTimeouts != 0 {
+		t.Fatalf("upgraded query epoch retained counters without their start: %+v", stats)
 	}
 }

@@ -15,13 +15,16 @@ func TestLineComputesRates(t *testing.T) {
 		Records:   18000, // +10000 records in 5s => 2000/s
 		DNSChecks: 25000, DNSChecksOK: 24000,
 	}
-	previous := Snapshot{At: start.Add(10 * time.Second), DNSChecksOK: 19000}
-	line := Line(cur, previous, start, 1.25)
+	previous := Snapshot{At: start.Add(10 * time.Second), Queries: 5000}
+	line := Line(cur, previous, start, 900, 1.25)
 
 	for _, want := range []string{
-		"dns=24000/25000",
-		"speed=1000.0 records/s",
-		"avg=1600.0 records/s",
+		"queries=10000",
+		"qps=1000.0",
+		"qps1m=900.0",
+		"avg_qps=666.7",
+		"checks=24000/25000",
+		"checked=96.00%",
 		"domains=1000",
 		"answers=18000",
 		"err=2.00%",
@@ -37,8 +40,8 @@ func TestLineComputesRates(t *testing.T) {
 func TestLineZeroSafe(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
 	// No progress yet: no divide-by-zero, percentages 0.
-	line := Line(Snapshot{At: start}, Snapshot{At: start}, start, 0)
-	if !strings.Contains(line, "dns=0/0") || !strings.Contains(line, "avg=0.0 records/s") {
+	line := Line(Snapshot{At: start}, Snapshot{At: start}, start, 0, 0)
+	if !strings.Contains(line, "checks=0/0") || !strings.Contains(line, "avg_qps=0.0") {
 		t.Errorf("zero snapshot line wrong: %s", line)
 	}
 }

@@ -52,22 +52,22 @@ func (s *Stats) Snapshot(now time.Time) Snapshot {
 	}
 }
 
-// Line formats the compact operator-facing health line. Totals and average record throughput are
-// cumulative for the scan and can be restored after a process restart.
-func Line(cur, previous Snapshot, start time.Time, recentQueryErrorPercent float64) string {
-	elapsed := cur.At.Sub(start).Seconds()
+// Line formats actual network-query throughput, logical check coverage, and query failure rates.
+func Line(cur, previous Snapshot, queryStatsStartedAt time.Time, slidingQueriesPerSecond, recentQueryErrorPercent float64) string {
+	elapsed := cur.At.Sub(queryStatsStartedAt).Seconds()
 	interval := cur.At.Sub(previous.At).Seconds()
-	recordsPerSecond := 0.0
-	averageRecordsPerSecond := 0.0
+	queriesPerSecond := 0.0
+	averageQueriesPerSecond := 0.0
 	if interval > 0 {
-		recordsPerSecond = float64(cur.DNSChecksOK-previous.DNSChecksOK) / interval
+		queriesPerSecond = float64(cur.Queries-previous.Queries) / interval
 	}
 	if elapsed > 0 {
-		averageRecordsPerSecond = float64(cur.DNSChecksOK) / elapsed
+		averageQueriesPerSecond = float64(cur.Queries) / elapsed
 	}
 	return fmt.Sprintf(
-		"stats dns=%d/%d speed=%.1f records/s avg=%.1f records/s domains=%d answers=%d err=%.2f%% err10m=%.2f%% timeout=%.2f%%",
-		cur.DNSChecksOK, cur.DNSChecks, recordsPerSecond, averageRecordsPerSecond, cur.Domains, cur.Records,
+		"stats queries=%d qps=%.1f qps1m=%.1f avg_qps=%.1f checks=%d/%d checked=%.2f%% domains=%d answers=%d err=%.2f%% err10m=%.2f%% timeout=%.2f%%",
+		cur.Queries, queriesPerSecond, slidingQueriesPerSecond, averageQueriesPerSecond,
+		cur.DNSChecksOK, cur.DNSChecks, pct(cur.DNSChecksOK, cur.DNSChecks), cur.Domains, cur.Records,
 		pct(cur.QueryErrors, cur.Queries), recentQueryErrorPercent, pct(cur.QueryTimeouts, cur.Queries),
 	)
 }

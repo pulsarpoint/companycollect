@@ -40,15 +40,14 @@ func RunCycle(ctx context.Context, dbPath string, config Config) error {
 		return fmt.Errorf("recover interrupted DNS work: %w", err)
 	}
 
-	state, err := localStore.SourceState(ctx, config.ScanID)
+	queryStatsStartedAt, err := localStore.EnsureQueryStatsStartedAt(ctx, config.ScanID, time.Now().UTC())
 	if err != nil {
-		return fmt.Errorf("read DNS cycle state: %w", err)
+		return fmt.Errorf("initialize DNS query stats start: %w", err)
 	}
 	cumulative, err := localStore.CumulativeStats(ctx, config.ScanID)
 	if err != nil {
 		return fmt.Errorf("read cumulative DNS stats: %w", err)
 	}
-	startedAt := state.StartedAt
 	stats := &metrics.Stats{}
 	stats.Queries.Store(cumulative.Queries)
 	stats.QueryErrors.Store(cumulative.QueryErrors)
@@ -79,7 +78,7 @@ func RunCycle(ctx context.Context, dbPath string, config Config) error {
 	group.Go(func() error { return workLoop(groupContext, localStore, config, discoverer, resolver, stats) })
 	group.Go(func() error { return flushLoop(groupContext, localStore, config) })
 	group.Go(func() error {
-		return statsLoop(groupContext, localStore, config, stats, startedAt, config.StatsInterval > 0)
+		return statsLoop(groupContext, localStore, config, stats, queryStatsStartedAt, config.StatsInterval > 0)
 	})
 	if err := group.Wait(); err != nil {
 		return err
@@ -289,9 +288,10 @@ func flushLoop(ctx context.Context, localStore *store.Store, config Config) erro
 	}
 }
 
-func statsLoop(ctx context.Context, localStore *store.Store, config Config, stats *metrics.Stats, startedAt time.Time, emit bool) error {
+func statsLoop(ctx context.Context, localStore *store.Store, config Config, stats *metrics.Stats, queryStatsStartedAt time.Time, emit bool) error {
 	previous := stats.Snapshot(time.Now().UTC())
 	recentErrors := metrics.NewErrorWindow(10 * time.Minute)
+	queryRate := metrics.NewRateWindow(time.Minute)
 	interval := config.StatsInterval
 	if interval <= 0 {
 		interval = time.Second
@@ -302,12 +302,16 @@ func statsLoop(ctx context.Context, localStore *store.Store, config Config, stat
 		}
 		now := time.Now().UTC()
 		current := stats.Snapshot(now)
-		recentErrors.Add(now, current.Queries-previous.Queries, current.QueryErrors-previous.QueryErrors)
+		queryDelta := current.Queries - previous.Queries
+		sampleDuration := current.At.Sub(previous.At)
+		recentErrors.Add(now, queryDelta, current.QueryErrors-previous.QueryErrors)
+		queryRate.Add(now, queryDelta, sampleDuration)
 		if err := localStore.SaveQueryStats(ctx, config.ScanID, current.Queries, current.QueryErrors, current.QueryTimeouts); err != nil {
 			return fmt.Errorf("checkpoint DNS query stats: %w", err)
 		}
 		if emit {
-			slog.Info(metrics.Line(current, previous, startedAt, recentErrors.Percent()), "component", "dns", "scan_id", config.ScanID)
+			slog.Info(metrics.Line(current, previous, queryStatsStartedAt, queryRate.PerSecond(), recentErrors.Percent()),
+				"component", "dns", "scan_id", config.ScanID)
 		}
 		previous = current
 		done, err := drainDone(ctx, localStore, config.ScanID)

@@ -36,7 +36,7 @@ func (window *ErrorWindow) Add(at time.Time, attempts, errors int64) {
 
 	cutoff := at.Add(-window.duration)
 	firstCurrent := 0
-	for firstCurrent < len(window.samples) && window.samples[firstCurrent].at.Before(cutoff) {
+	for firstCurrent < len(window.samples) && !window.samples[firstCurrent].at.After(cutoff) {
 		window.attempts -= window.samples[firstCurrent].attempts
 		window.errors -= window.samples[firstCurrent].errors
 		firstCurrent++

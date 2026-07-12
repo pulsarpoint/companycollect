@@ -72,6 +72,7 @@ func upgradeRecordOutboxes(ctx context.Context, database *sql.DB) error {
 		{"dns_queries", "INTEGER NOT NULL DEFAULT 0"},
 		{"dns_query_errors", "INTEGER NOT NULL DEFAULT 0"},
 		{"dns_query_timeouts", "INTEGER NOT NULL DEFAULT 0"},
+		{"dns_query_stats_started_at", "TEXT NOT NULL DEFAULT ''"},
 	}
 	existing, err := sqliteColumns(ctx, database, "scan_state")
 	if err != nil {

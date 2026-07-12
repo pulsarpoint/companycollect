@@ -5,6 +5,7 @@ import (
 	"flag"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScannerFlagsEnableIndependentScannersByDefault(t *testing.T) {
@@ -19,6 +20,9 @@ func TestScannerFlagsEnableIndependentScannersByDefault(t *testing.T) {
 	}
 	if !config.RunDNS || !config.RunAXFR || !config.DNS.HostnameEnrichment {
 		t.Fatalf("defaults = DNS:%t AXFR:%t hostnames:%t", config.RunDNS, config.RunAXFR, config.DNS.HostnameEnrichment)
+	}
+	if config.DNS.StatsInterval != 5*time.Second || config.AXFR.StatsInterval != 5*time.Second {
+		t.Fatalf("stats intervals = DNS:%s AXFR:%s, want 5s", config.DNS.StatsInterval, config.AXFR.StatsInterval)
 	}
 }
 
