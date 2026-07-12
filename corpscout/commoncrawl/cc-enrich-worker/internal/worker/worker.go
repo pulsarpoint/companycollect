@@ -541,7 +541,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 					WarcIndex: it.WarcIndex, WarcFilename: it.WarcFilename,
 					WarcRecordOffset: offset, WarcRecordLength: length,
 					Technology: technology.Name, Category: technology.Category,
-					Version: technology.Version, Confidence: 100,
+					Version: technology.Version, Confidence: technology.Confidence,
 					SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}

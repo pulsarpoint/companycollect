@@ -1,6 +1,8 @@
 package tech
 
 import (
+	"sort"
+
 	"cc-enrich-worker/internal/model"
 
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
@@ -38,7 +40,13 @@ func DetectTech(headers map[string][]string, body []byte) []model.Technology {
 		if len(app.Categories) > 0 {
 			cat = app.Categories[0]
 		}
-		out = append(out, model.Technology{Name: name, Category: cat, Version: version})
+		out = append(out, model.Technology{Name: name, Category: cat, Version: version, Confidence: 100})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Version < out[j].Version
+	})
 	return out
 }

@@ -3,6 +3,7 @@ package tech
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	ahocorasick "github.com/petar-dambovaliev/aho-corasick"
@@ -22,9 +23,9 @@ type fpat struct {
 // only patterns whose required literal is present in the body get their regex evaluated.
 // It reuses wappalyzergo's ParsePattern/Evaluate (exact matching + version extraction) and
 // category mapping; headers/cookies/meta evaluate the same patterns against the same inputs
-// as upstream (cookies: pattern vs the cookie VALUE, see normalizeCookies). Detections are a
-// SUPERSET of upstream's: implies are applied transitively (upstream is single-level) and
-// confidence-0 accumulation is not replicated.
+// as upstream (cookies: pattern vs the cookie VALUE, see normalizeCookies). Confidence follows
+// upstream's two-level aggregation: max within one evidence scope, then sum across scopes capped
+// at 100. Detections remain a SUPERSET of upstream's because implies are applied transitively.
 type FastMatcher struct {
 	ac         ahocorasick.AhoCorasick
 	litToPats  [][]fpat // index-aligned with the AC dictionary (HTML body)
@@ -34,7 +35,7 @@ type FastMatcher struct {
 	litToScriptPats [][]fpat
 	alwaysScript    []fpat
 
-	metaPats   map[string][]fpat // meta name (lower) -> patterns
+	metaPats   map[string][]fpat   // meta name (lower) -> patterns
 	headerPats map[string][]fpat   // header name (lower) -> patterns
 	cookiePats map[string][]fpat   // cookie name (lower) -> patterns
 	appCats    map[string][]string // app -> category names
@@ -74,6 +75,7 @@ func parseImplies(raw json.RawMessage) []string {
 			out = append(out, s)
 		}
 	}
+	sort.Strings(out)
 	return out
 }
 
@@ -83,6 +85,15 @@ func mustParse(p string) *wappalyzer.ParsedPattern {
 		return nil
 	}
 	return pp
+}
+
+func sortedKeys[V any](values map[string]V) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func NewFastMatcher() (*FastMatcher, error) {
@@ -104,7 +115,8 @@ func NewFastMatcher() (*FastMatcher, error) {
 	litMap := map[string][]fpat{}       // required literal -> html patterns
 	scriptLitMap := map[string][]fpat{} // required literal -> scriptSrc patterns
 
-	for app, a := range raw.Apps {
+	for _, app := range sortedKeys(raw.Apps) {
+		a := raw.Apps[app]
 		for _, c := range a.Cats {
 			if ci, ok := cats[c]; ok {
 				m.appCats[app] = append(m.appCats[app], ci.Name)
@@ -137,7 +149,8 @@ func NewFastMatcher() (*FastMatcher, error) {
 				m.alwaysScript = append(m.alwaysScript, fp)
 			}
 		}
-		for name, pats := range a.Meta {
+		for _, name := range sortedKeys(a.Meta) {
+			pats := a.Meta[name]
 			ln := strings.ToLower(name)
 			for _, p := range pats {
 				if pp := mustParse(p); pp != nil {
@@ -145,13 +158,15 @@ func NewFastMatcher() (*FastMatcher, error) {
 				}
 			}
 		}
-		for name, p := range a.Headers {
+		for _, name := range sortedKeys(a.Headers) {
+			p := a.Headers[name]
 			if pp := mustParse(p); pp != nil {
 				ln := strings.ToLower(name)
 				m.headerPats[ln] = append(m.headerPats[ln], fpat{app, pp})
 			}
 		}
-		for name, p := range a.Cookies {
+		for _, name := range sortedKeys(a.Cookies) {
+			p := a.Cookies[name]
 			if pp := mustParse(p); pp != nil {
 				ln := strings.ToLower(name)
 				m.cookiePats[ln] = append(m.cookiePats[ln], fpat{app, pp})
@@ -164,10 +179,7 @@ func NewFastMatcher() (*FastMatcher, error) {
 		DFA:       true,
 	}
 
-	dict := make([]string, 0, len(litMap))
-	for lit := range litMap {
-		dict = append(dict, lit)
-	}
+	dict := sortedKeys(litMap)
 	m.litToPats = make([][]fpat, len(dict))
 	for i, lit := range dict {
 		m.litToPats[i] = litMap[lit]
@@ -175,10 +187,7 @@ func NewFastMatcher() (*FastMatcher, error) {
 	htmlBuilder := ahocorasick.NewAhoCorasickBuilder(opts)
 	m.ac = htmlBuilder.Build(dict)
 
-	sdict := make([]string, 0, len(scriptLitMap))
-	for lit := range scriptLitMap {
-		sdict = append(sdict, lit)
-	}
+	sdict := sortedKeys(scriptLitMap)
 	m.litToScriptPats = make([][]fpat, len(sdict))
 	for i, lit := range sdict {
 		m.litToScriptPats[i] = scriptLitMap[lit]
@@ -223,50 +232,117 @@ func normalizeCookies(setCookies []string) map[string]string {
 	return out
 }
 
+type scopedMatch struct {
+	confidence int
+	version    string
+}
+
+type detectedTechnology struct {
+	confidence int
+	version    string
+}
+
+// recordScoped keeps one application's strongest evidence from a single matcher scope. This is
+// how upstream treats all headers, all cookies, the whole HTML body, or one script/meta element:
+// confidence is the maximum matching pattern confidence, not the sum of every matching regex.
+func recordScoped(matches map[string]scopedMatch, fp fpat, target string) {
+	matched, version := fp.pat.Evaluate(target)
+	if !matched {
+		return
+	}
+	current, exists := matches[fp.app]
+	if !exists || fp.pat.Confidence > current.confidence {
+		current.confidence = fp.pat.Confidence
+	}
+	if betterVersion(version, current.version) {
+		current.version = version
+	}
+	matches[fp.app] = current
+}
+
+func addDetected(found map[string]detectedTechnology, app string, confidence int, version string) {
+	current := found[app]
+	if confidence > 0 {
+		current.confidence += confidence
+		if current.confidence > 100 {
+			current.confidence = 100
+		}
+	}
+	// Across scopes, upstream keeps the first non-empty version. Scope order below is fixed, and
+	// an implied empty version never prevents a later direct version from filling this field.
+	if current.version == "" && version != "" {
+		current.version = version
+	}
+	found[app] = current
+}
+
+func (m *FastMatcher) addImplications(found map[string]detectedTechnology, app string, confidence int, seen map[string]bool) {
+	for _, implied := range m.appImplies[app] {
+		if seen[implied] {
+			continue
+		}
+		seen[implied] = true
+		addDetected(found, implied, confidence, "")
+		m.addImplications(found, implied, confidence, seen)
+	}
+}
+
+func (m *FastMatcher) mergeScope(found map[string]detectedTechnology, matches map[string]scopedMatch) {
+	for _, app := range sortedKeys(matches) {
+		match := matches[app]
+		addDetected(found, app, match.confidence, match.version)
+		m.addImplications(found, app, match.confidence, map[string]bool{app: true})
+	}
+}
+
+func normalizeHeaders(headers map[string][]string) map[string]string {
+	normalized := make(map[string]string, len(headers))
+	for _, name := range sortedKeys(headers) {
+		lowerName := strings.ToLower(name)
+		value := strings.ToLower(strings.Join(headers[name], ", "))
+		if previous := normalized[lowerName]; previous != "" {
+			if value == "" {
+				value = previous
+			} else {
+				value = previous + ", " + value
+			}
+		}
+		normalized[lowerName] = value
+	}
+	return normalized
+}
+
 // Detect mirrors wappalyzer.Fingerprint: lowercase, then headers + cookies + body.
 func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.Technology {
 	normBody := bytes.ToLower(body)
 	bodyStr := string(normBody)
-	found := map[string]string{} // app -> version (first match wins, "" if none)
+	found := map[string]detectedTechnology{}
+	normalizedHeaders := normalizeHeaders(headers)
 
-	var record func(app, ver string)
-	record = func(app, ver string) {
-		if _, ok := found[app]; ok {
-			return
-		}
-		found[app] = ver
-		for _, imp := range m.appImplies[app] {
-			record(imp, "") // transitive; found map guards cycles
+	// Upstream evaluates all normalized headers as one evidence scope.
+	headerMatches := map[string]scopedMatch{}
+	for _, name := range sortedKeys(normalizedHeaders) {
+		for _, fp := range m.headerPats[name] {
+			recordScoped(headerMatches, fp, normalizedHeaders[name])
 		}
 	}
-	eval := func(fp fpat, target string) {
-		if ok, ver := fp.pat.Evaluate(target); ok {
-			record(fp.app, ver)
-		}
-	}
+	m.mergeScope(found, headerMatches)
 
-	for k, vals := range headers {
-		pats, ok := m.headerPats[strings.ToLower(k)]
-		if !ok {
-			continue
-		}
-		for _, v := range vals {
-			lv := strings.ToLower(v)
-			for _, fp := range pats {
-				eval(fp, lv)
-			}
-		}
-	}
 	// Cookies: mirror upstream exactly (fingerprint_cookies.go) — normalize Set-Cookie into
 	// name->value and evaluate each pattern against the VALUE only. Evaluating against the whole
 	// "name=value; attrs" string dead-ends every anchored value pattern (^\d+$, ^\w+$, …).
-	for name, value := range normalizeCookies(headers["Set-Cookie"]) {
+	cookieMatches := map[string]scopedMatch{}
+	cookies := normalizeCookies([]string{normalizedHeaders["set-cookie"]})
+	for _, name := range sortedKeys(cookies) {
+		value := cookies[name]
 		for _, fp := range m.cookiePats[name] {
-			eval(fp, value)
+			recordScoped(cookieMatches, fp, value)
 		}
 	}
+	m.mergeScope(found, cookieMatches)
 
 	// HTML body — Aho-Corasick gate: only patterns whose required literal is present.
+	htmlMatches := map[string]scopedMatch{}
 	seen := make(map[int]bool)
 	iter := m.ac.IterOverlapping(bodyStr)
 	for match := iter.Next(); match != nil; match = iter.Next() {
@@ -276,14 +352,15 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.T
 		}
 		seen[idx] = true
 		for _, fp := range m.litToPats[idx] {
-			eval(fp, bodyStr)
+			recordScoped(htmlMatches, fp, bodyStr)
 		}
 	}
 	for _, fp := range m.alwaysHTML {
-		eval(fp, bodyStr)
+		recordScoped(htmlMatches, fp, bodyStr)
 	}
+	m.mergeScope(found, htmlMatches)
 
-	// scriptSrc + meta from the (lowercased) tokenized body, as wappalyzer does.
+	// Each script src and each meta element is a separate evidence scope, in document order.
 	tok := html.NewTokenizer(bytes.NewReader(normBody))
 	for {
 		tt := tok.Next()
@@ -301,6 +378,7 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.T
 					continue
 				}
 				src := a.Val // already lowercased (body was lowercased)
+				scriptMatches := map[string]scopedMatch{}
 				sseen := make(map[int]bool)
 				si := m.acScript.IterOverlapping(src)
 				for match := si.Next(); match != nil; match = si.Next() {
@@ -310,12 +388,13 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.T
 					}
 					sseen[idx] = true
 					for _, fp := range m.litToScriptPats[idx] {
-						eval(fp, src)
+						recordScoped(scriptMatches, fp, src)
 					}
 				}
 				for _, fp := range m.alwaysScript {
-					eval(fp, src)
+					recordScoped(scriptMatches, fp, src)
 				}
+				m.mergeScope(found, scriptMatches)
 			}
 		case "meta":
 			var name, content string
@@ -327,19 +406,27 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.T
 					content = a.Val
 				}
 			}
-			for _, fp := range m.metaPats[strings.ToLower(name)] {
-				eval(fp, content)
+			metaMatches := map[string]scopedMatch{}
+			for _, fp := range m.metaPats[name] {
+				recordScoped(metaMatches, fp, content)
 			}
+			m.mergeScope(found, metaMatches)
 		}
 	}
 
 	out := make([]model.Technology, 0, len(found))
-	for app, ver := range found {
+	for _, app := range sortedKeys(found) {
+		detection := found[app]
+		if detection.confidence == 0 {
+			continue
+		}
 		cat := ""
 		if cs := m.appCats[app]; len(cs) > 0 {
 			cat = cs[0]
 		}
-		out = append(out, model.Technology{Name: app, Category: cat, Version: ver})
+		out = append(out, model.Technology{
+			Name: app, Category: cat, Version: detection.version, Confidence: uint8(detection.confidence),
+		})
 	}
 	return out
 }

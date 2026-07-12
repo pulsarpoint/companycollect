@@ -1,6 +1,7 @@
 package tech
 
 import (
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -58,6 +59,15 @@ func eqStrings(a, b []string) bool {
 	return true
 }
 
+func technologyNamed(technologies []model.Technology, name string) (model.Technology, bool) {
+	for _, technology := range technologies {
+		if technology.Name == name {
+			return technology, true
+		}
+	}
+	return model.Technology{}, false
+}
+
 func TestFastMatcherParity(t *testing.T) {
 	fast, err := NewFastMatcher()
 	if err != nil {
@@ -102,10 +112,24 @@ func TestFastMatcherParity(t *testing.T) {
 		},
 	}
 	for _, s := range samples {
-		want := techNameSet(DetectTech(s.headers, []byte(s.body)))
-		got := techNameSet(fast.Detect(s.headers, []byte(s.body)))
+		wantTechnologies := DetectTech(s.headers, []byte(s.body))
+		gotTechnologies := fast.Detect(s.headers, []byte(s.body))
+		want := techNameSet(wantTechnologies)
+		got := techNameSet(gotTechnologies)
 		if !eqStrings(want, got) {
 			t.Errorf("%s:\n  fast = %v\n  want = %v", s.name, got, want)
+			continue
+		}
+		for _, wantTechnology := range wantTechnologies {
+			gotTechnology, found := technologyNamed(gotTechnologies, wantTechnology.Name)
+			if !found {
+				continue
+			}
+			if gotTechnology.Version != wantTechnology.Version || gotTechnology.Category != wantTechnology.Category {
+				t.Errorf("%s %s: fast version/category = %q/%q, want %q/%q",
+					s.name, wantTechnology.Name, gotTechnology.Version, gotTechnology.Category,
+					wantTechnology.Version, wantTechnology.Category)
+			}
 		}
 	}
 }
@@ -141,5 +165,108 @@ func TestFastMatcherCookieParity(t *testing.T) {
 		if !eqStrings(want, got) {
 			t.Errorf("%s:\n  fast = %v\n  want = %v", s.name, got, want)
 		}
+	}
+}
+
+func TestFastMatcherSuppressesConfidenceZeroEvidence(t *testing.T) {
+	fast, err := NewFastMatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := fast.Detect(nil, []byte(`<meta name="data-version" content="9.12.0">`))
+	if technology, found := technologyNamed(got, "Atlassian Jira"); found {
+		t.Fatalf("confidence-zero Jira evidence must not detect Jira: %+v", technology)
+	}
+	if technology, found := technologyNamed(got, "Java"); found {
+		t.Fatalf("confidence-zero Jira evidence must not imply Java: %+v", technology)
+	}
+}
+
+func TestFastMatcherConfidenceZeroEvidenceCanSupplyVersion(t *testing.T) {
+	fast, err := NewFastMatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bodies := [][]byte{
+		[]byte(`<meta name="application-name" content="jira"><meta name="data-version" content="9.12.0">`),
+		[]byte(`<meta name="data-version" content="9.12.0"><meta name="application-name" content="jira">`),
+	}
+	for _, body := range bodies {
+		jira, found := technologyNamed(fast.Detect(nil, body), "Atlassian Jira")
+		if !found {
+			t.Fatalf("positive Jira evidence was not detected for %q", body)
+		}
+		if jira.Version != "9.12.0" || jira.Confidence != 100 {
+			t.Fatalf("Jira evidence aggregation = %+v, want version 9.12.0 confidence 100", jira)
+		}
+	}
+}
+
+func TestFastMatcherUsesMaxConfidenceWithinScopeAndSumAcrossScopes(t *testing.T) {
+	fast, err := NewFastMatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	govukBody := []byte(`<html><body class="govuk-template__body"><a class="govuk-link">Link</a></body></html>`)
+	govuk, found := technologyNamed(fast.Detect(nil, govukBody), "GOV.UK Frontend")
+	if !found || govuk.Confidence != 80 {
+		t.Fatalf("same-scope confidence = %+v, want GOV.UK Frontend confidence 80", govuk)
+	}
+
+	odooBody := []byte(`<link href="/web/css/web.assets_common/x.css"><script src="/web/js/web.assets_common/x.js"></script>`)
+	odoo, found := technologyNamed(fast.Detect(nil, odooBody), "Odoo")
+	if !found || odoo.Confidence != 50 {
+		t.Fatalf("cross-scope confidence = %+v, want Odoo confidence 50", odoo)
+	}
+}
+
+func TestFastMatcherHeaderOrderIsDeterministicAndDirectVersionSurvivesImplication(t *testing.T) {
+	fast, err := NewFastMatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	headersA := map[string][]string{}
+	headersA["Server"] = []string{"PHP/8.2.4"}
+	headersA["X-Powered-By"] = []string{"MODX"}
+	headersB := map[string][]string{}
+	headersB["X-Powered-By"] = []string{"MODX"}
+	headersB["Server"] = []string{"PHP/8.2.4"}
+	body := []byte(`<html><body>plain</body></html>`)
+
+	gotA := fast.Detect(headersA, body)
+	gotB := fast.Detect(headersB, body)
+	if !reflect.DeepEqual(gotA, gotB) {
+		t.Fatalf("header insertion order changed output:\nA=%+v\nB=%+v", gotA, gotB)
+	}
+	php, found := technologyNamed(gotA, "PHP")
+	if !found || php.Version != "8.2.4" || php.Confidence != 100 {
+		t.Fatalf("direct PHP version was lost after MODX implication: %+v", php)
+	}
+	for index := 1; index < len(gotA); index++ {
+		if gotA[index-1].Name > gotA[index].Name {
+			t.Fatalf("technology output is not sorted: %+v", gotA)
+		}
+	}
+}
+
+func TestFastMatcherConstructionIsDeterministic(t *testing.T) {
+	headers := map[string][]string{"Server": {"PHP/8.2.4"}, "X-Powered-By": {"MODX"}}
+	body := []byte(`<meta name="application-name" content="jira"><meta name="data-version" content="9.12.0">`)
+
+	first, err := NewFastMatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := first.Detect(headers, body)
+	second, err := NewFastMatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := second.Detect(headers, body); !reflect.DeepEqual(got, want) {
+		t.Fatalf("matcher construction changed output:\nfirst=%+v\nsecond=%+v", want, got)
 	}
 }

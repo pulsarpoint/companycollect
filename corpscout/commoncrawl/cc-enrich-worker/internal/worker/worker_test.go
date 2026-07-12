@@ -164,6 +164,24 @@ func TestProcessShardTechMode(t *testing.T) {
 	}
 }
 
+func TestFinalizePreservesTechnologyConfidence(t *testing.T) {
+	fetched := FetchedChunk{pages: []pageResult{{
+		source: model.WorklistItem{
+			RootDomain: "example.com", URL: "https://example.com/", WarcIndex: 7,
+			WarcFilename: "example.warc.gz", Offset: 10, Length: 20,
+		},
+		tech: []model.Technology{{Name: "Odoo", Category: "CMS", Confidence: 25}},
+	}}}
+
+	result, err := Finalize(context.Background(), fetched, nil, nil, nil, ShardConfig{Mode: "tech"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tech) != 1 || result.Tech[0].Confidence != 25 {
+		t.Fatalf("technology confidence was not preserved: %+v", result.Tech)
+	}
+}
+
 func TestTechAndMetadataRowsRetainPageProvenance(t *testing.T) {
 	home := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><head>" +
 		`<script type="application/ld+json">{"@type":"Organization","name":"Acme Home"}</script>` +

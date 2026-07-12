@@ -2,6 +2,7 @@ package model
 
 type Technology struct {
 	Name, Category, Version string
+	Confidence              uint8 // accumulated fingerprint confidence, 1..100
 }
 
 // Reference: NACE matrix, rows co-ordered with Codes/Labels/Divisions, L2-normalized.
