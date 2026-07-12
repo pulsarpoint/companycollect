@@ -167,6 +167,19 @@ class WarcSizeBatchResult:
         return self.head_requests + self.range_requests
 
 
+GLOBAL_PAGE_COLUMNS = (
+    ("warc_index", "UINTEGER"),
+    ("root_domain", "VARCHAR"),
+    ("url", "VARCHAR"),
+    ("domain_page_rank", "USMALLINT"),
+    ("content_languages", "VARCHAR"),
+    ("warc_record_offset", "UBIGINT"),
+    ("warc_record_length", "UBIGINT"),
+)
+
+_SELECTION_CONFLICT_COLUMNS = ("root_domain", "url", *RANKING_COLUMN_NAMES)
+
+
 _BUILD_STATE_DDL = (
     """
     CREATE TABLE IF NOT EXISTS build_identity (
@@ -843,6 +856,180 @@ def verify_or_finalize_warc_inventory(
     return inventory_hash
 
 
+def ready_candidate_paths(
+    state_connection: duckdb.DuckDBPyConnection,
+    validation_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+) -> tuple[Path, ...]:
+    """Return every exact ready candidate path after validating its artifact."""
+    if state_connection is validation_connection:
+        raise ValueError("state and candidate validation connections must be distinct")
+    rows = state_connection.execute(
+        """
+        SELECT source_index, status, candidate_rows, candidate_bytes
+        FROM source_shards
+        ORDER BY source_index
+        """
+    ).fetchall()
+    if not rows:
+        raise BuildStateCorrupt("source shard state is empty; use --rebuild")
+
+    paths: list[Path] = []
+    for expected_index, (source_index, status, expected_rows, expected_bytes) in enumerate(rows):
+        if source_index != expected_index:
+            raise BuildStateCorrupt(
+                "source shard indexes are not contiguous; use --rebuild"
+            )
+        if status != "ready":
+            raise BuildStateCorrupt(
+                f"candidate source {source_index} is not ready"
+            )
+        if expected_rows is None or expected_bytes is None:
+            raise BuildStateCorrupt(
+                f"candidate source {source_index} has incomplete ready metadata; use --rebuild"
+            )
+        path = candidate_artifact_path(build_directory, int(source_index))
+        metadata = inspect_candidate_artifact(
+            validation_connection,
+            path,
+            int(source_index),
+        )
+        if metadata.rows != expected_rows or metadata.byte_count != expected_bytes:
+            raise CandidateArtifactError(
+                f"candidate source {source_index} conflicts with ready metadata: {path}"
+            )
+        paths.append(path)
+    return tuple(paths)
+
+
+def _selection_conflict_expression() -> str:
+    return "\nOR ".join(
+        f"(min({column}) IS DISTINCT FROM max({column}) "
+        f"OR (count({column}) > 0 AND count({column}) < count(*)))"
+        for column in _SELECTION_CONFLICT_COLUMNS
+    )
+
+
+def _ranking_aggregates() -> str:
+    return ",\n".join(
+        f"min({column}) AS {column}" for column in RANKING_COLUMN_NAMES
+    )
+
+
+def _canonical_provenance_projection() -> str:
+    order = (
+        'content_languages COLLATE "binary" ASC NULLS LAST, '
+        "source_index ASC NULLS LAST"
+    )
+    return f"""
+        first(source_index ORDER BY {order}) AS source_index,
+        first(content_languages ORDER BY {order}) AS content_languages
+    """.strip()
+
+
+def _global_page_projection() -> str:
+    return ",\n".join(
+        f"CAST({name} AS {column_type}) AS {name}"
+        for name, column_type in GLOBAL_PAGE_COLUMNS
+    )
+
+
+def global_selected_pages_query(pages_per_domain: int) -> str:
+    """Globally select and conflict-check the retained local candidate rows."""
+    if not 1 <= pages_per_domain <= 0xFFFF:
+        raise ValueError("pages_per_domain must be between 1 and uint16 max")
+    return f"""
+        WITH candidate_rows AS (
+            SELECT *
+            FROM read_parquet(?)
+        ),
+        validated_candidates AS (
+            SELECT *
+            FROM candidate_rows
+            WHERE CASE
+                WHEN source_index IS NULL
+                    THEN error('candidate source_index is null')
+                WHEN NULLIF(trim(root_domain), '') IS NULL
+                    THEN error('candidate root_domain is blank')
+                WHEN NULLIF(trim(url), '') IS NULL
+                    THEN error('candidate URL is blank')
+                WHEN NULLIF(trim(warc_filename), '') IS NULL
+                    THEN error('candidate WARC filename is blank')
+                WHEN warc_record_offset IS NULL
+                    THEN error('candidate WARC record offset is null')
+                WHEN warc_record_length IS NULL OR warc_record_length = 0
+                    THEN error('candidate WARC record length is not positive')
+                ELSE true
+            END
+        ),
+        coordinate_groups AS (
+            SELECT
+                {_canonical_provenance_projection()},
+                min(root_domain) AS root_domain,
+                min(url) AS url,
+                warc_filename,
+                warc_record_offset,
+                warc_record_length,
+                {_ranking_aggregates()},
+                ({_selection_conflict_expression()}) AS has_conflict
+            FROM validated_candidates
+            GROUP BY warc_filename, warc_record_offset, warc_record_length
+        ),
+        globally_ranked AS (
+            SELECT coordinate_groups.*,
+                   row_number() OVER (
+                       PARTITION BY root_domain
+                       ORDER BY {ranking_order_clause(pages_per_domain)}
+                   ) AS domain_page_rank,
+                   bool_or(has_conflict) OVER () AS has_any_conflict
+            FROM coordinate_groups
+        ),
+        selected AS (
+            SELECT *
+            FROM globally_ranked
+            WHERE domain_page_rank <= {pages_per_domain}
+              AND CASE
+                  WHEN has_any_conflict
+                      THEN error('duplicate capture coordinate has conflicting selection values')
+                  ELSE true
+              END
+        ),
+        inventory_by_filename AS (
+            SELECT warc_filename,
+                   count(*) AS mapping_count,
+                   min(warc_index) AS warc_index
+            FROM warc_inventory
+            GROUP BY warc_filename
+        ),
+        mapped AS (
+            SELECT selected.*,
+                   CASE
+                       WHEN inventory.mapping_count IS NULL
+                           THEN error('selected WARC filename is absent from inventory: ' || selected.warc_filename)
+                       WHEN inventory.mapping_count <> 1
+                           THEN error('selected WARC filename has multiple inventory mappings: ' || selected.warc_filename)
+                       ELSE inventory.warc_index
+                   END AS warc_index
+            FROM selected
+            LEFT JOIN inventory_by_filename AS inventory USING (warc_filename)
+        ),
+        mapped_coordinates AS (
+            SELECT mapped.*,
+                   count(*) OVER (
+                       PARTITION BY warc_index, warc_record_offset, warc_record_length
+                   ) AS mapped_coordinate_count
+            FROM mapped
+        )
+        SELECT {_global_page_projection()}
+        FROM mapped_coordinates
+        WHERE CASE
+            WHEN mapped_coordinate_count > 1
+                THEN error('selected mapped WARC coordinate is duplicated')
+            ELSE true
+        END
+    """.strip()
+
+
 def local_candidate_query(
     schema: SourceSchema,
     pages_per_domain: int,
@@ -854,15 +1041,6 @@ def local_candidate_query(
     if not 1 <= pages_per_domain <= 0xFFFF:
         raise ValueError("pages_per_domain must be between 1 and uint16 max")
 
-    conflict_columns = ("root_domain", "url", *RANKING_COLUMN_NAMES)
-    conflict_expression = "\nOR ".join(
-        f"(min({column}) IS DISTINCT FROM max({column}) "
-        f"OR (count({column}) > 0 AND count({column}) < count(*)))"
-        for column in conflict_columns
-    )
-    ranking_aggregates = ",\n".join(
-        f"min({column}) AS {column}" for column in RANKING_COLUMN_NAMES
-    )
     return f"""
         WITH normalized AS (
             SELECT {normalized_source_projection(schema)}
@@ -882,19 +1060,14 @@ def local_candidate_query(
         ),
         coordinate_groups AS (
             SELECT
-                min(source_index) AS source_index,
+                {_canonical_provenance_projection()},
                 min(root_domain) AS root_domain,
                 min(url) AS url,
-                first(
-                    content_languages
-                    ORDER BY content_languages COLLATE "binary" ASC NULLS LAST,
-                             source_index ASC
-                ) AS content_languages,
                 warc_filename,
                 warc_record_offset,
                 warc_record_length,
-                {ranking_aggregates},
-                ({conflict_expression}) AS has_conflict
+                {_ranking_aggregates()},
+                ({_selection_conflict_expression()}) AS has_conflict
             FROM eligible
             GROUP BY warc_filename, warc_record_offset, warc_record_length
         ),

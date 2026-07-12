@@ -1,6 +1,7 @@
 import io
 import json
 import os
+from random import Random
 import subprocess
 import sys
 import threading
@@ -2338,5 +2339,292 @@ def test_warc_size_build_checkpoints_drained_success_before_failing(
         assert event["level"] == "WARN"
         assert event["successful_objects"] == 1
         assert event["failed_objects"] == 1
+    finally:
+        connection.close()
+
+
+def _global_randomized_source_rows(
+    random: Random,
+    source_index: int,
+    pages_per_domain: int,
+) -> list[tuple[object, ...]]:
+    rows: list[tuple[object, ...]] = []
+    for domain_index, domain in enumerate(
+        ("duplicate.example", "alpha.example", "omega.example")
+    ):
+        for page_index in range(pages_per_domain + 3):
+            if domain_index == 0 and page_index == 0:
+                rows.append(
+                    _candidate_page(
+                        domain,
+                        f"https://{domain}/about",
+                        "/about",
+                        1,
+                        warc_filename="crawl-data/global-randomized-shared.warc.gz",
+                        length=101,
+                        languages="eng",
+                    )
+                )
+                continue
+
+            page_token = f"{source_index:02d}{page_index:02d}"
+            path = (
+                f"/about/{page_token}"
+                if page_index % 2 == 0
+                else f"/p{page_token}"
+            )
+            rows.append(
+                _candidate_page(
+                    domain,
+                    f"https://{domain}{path}",
+                    path,
+                    10_000 * domain_index + 100 * source_index + page_index + 10,
+                    warc_filename=(
+                        "crawl-data/global-randomized-"
+                        f"{domain_index}-{source_index}-{page_index}.warc.gz"
+                    ),
+                    length=200 + page_index,
+                    languages=random.choice((None, "deu", "eng", "fra")),
+                )
+            )
+    random.shuffle(rows)
+    return rows
+
+
+def _global_randomized_candidate_shards(
+    tmp_path: Path,
+    random: Random,
+    source_count: int,
+    pages_per_domain: int,
+) -> tuple[list[tuple[int, Path]], list[Path], set[str]]:
+    raw_shards: list[tuple[int, Path]] = []
+    candidate_paths: list[Path] = []
+    warc_filenames: set[str] = set()
+    source_indexes = list(range(source_count))
+    random.shuffle(source_indexes)
+
+    for source_index in source_indexes:
+        rows = _global_randomized_source_rows(
+            random,
+            source_index,
+            pages_per_domain,
+        )
+        assert all(
+            sum(row[0] == domain for row in rows) > pages_per_domain
+            for domain in ("duplicate.example", "alpha.example", "omega.example")
+        )
+        warc_filenames.update(str(row[7]) for row in rows)
+        connection, raw_path, schema = _candidate_fixture(
+            tmp_path / f"source-{source_index}",
+            rows,
+            source_index=source_index,
+        )
+        candidate_path = tmp_path / f"candidate-{source_index}.parquet"
+        try:
+            connection.execute(
+                f"COPY ({local_candidate_query(schema, pages_per_domain)}) "
+                "TO ? (FORMAT PARQUET)",
+                [str(candidate_path), str(raw_path)],
+            )
+        finally:
+            connection.close()
+        raw_shards.append((source_index, raw_path))
+        candidate_paths.append(candidate_path)
+
+    random.shuffle(raw_shards)
+    random.shuffle(candidate_paths)
+    return raw_shards, candidate_paths, warc_filenames
+
+
+def _global_randomized_direct_query(
+    raw_shards: list[tuple[int, Path]],
+    pages_per_domain: int,
+) -> str:
+    raw_union = "\nUNION ALL\n".join(
+        f"SELECT CAST({source_index} AS UINTEGER) AS source_index, * "
+        "FROM read_parquet(?)"
+        for source_index, _path in raw_shards
+    )
+    semantic_order = (
+        "rank_main_site, rank_path_depth, rank_path_length, rank_apex"
+        if pages_per_domain == 1
+        else (
+            "rank_main_site, rank_homepage, rank_priority_path, "
+            "rank_path_depth, rank_path_length, rank_apex"
+        )
+    )
+    return f"""
+        WITH raw_rows AS (
+            {raw_union}
+        ),
+        eligible AS (
+            SELECT
+                source_index,
+                CAST(url_host_registered_domain AS VARCHAR) AS root_domain,
+                CAST(url AS VARCHAR) AS url,
+                CAST(content_languages AS VARCHAR) AS content_languages,
+                CAST(warc_filename AS VARCHAR) AS warc_filename,
+                CAST(warc_record_offset AS UBIGINT) AS warc_record_offset,
+                CAST(warc_record_length AS UBIGINT) AS warc_record_length,
+                CAST(
+                    CASE
+                        WHEN url_host_name = url_host_registered_domain
+                          OR url_host_name = 'www.' || url_host_registered_domain
+                            THEN 0
+                        ELSE 1
+                    END AS UTINYINT
+                ) AS rank_main_site,
+                CAST(CASE WHEN url_path IN ('/', '') THEN 0 ELSE 1 END AS UTINYINT)
+                    AS rank_homepage,
+                CAST(
+                    CASE WHEN contains(lower(url_path), 'about') THEN 0 ELSE 1 END
+                    AS UTINYINT
+                ) AS rank_priority_path,
+                CAST(
+                    length(url_path) - length(replace(url_path, '/', ''))
+                    AS UBIGINT
+                ) AS rank_path_depth,
+                CAST(length(url_path) AS UBIGINT) AS rank_path_length,
+                CAST(
+                    CASE
+                        WHEN url_host_name = url_host_registered_domain THEN 0
+                        ELSE 1
+                    END AS UTINYINT
+                ) AS rank_apex
+            FROM raw_rows
+            WHERE fetch_status = 200
+              AND coalesce(content_mime_detected, content_mime_type)
+                    IN ('text/html', 'application/xhtml+xml')
+              AND nullif(trim(url_host_registered_domain), '') IS NOT NULL
+              AND nullif(trim(url), '') IS NOT NULL
+              AND nullif(trim(warc_filename), '') IS NOT NULL
+              AND warc_record_offset >= 0
+              AND warc_record_length > 0
+        ),
+        canonical_coordinates AS (
+            SELECT
+                min(source_index) AS source_index,
+                min(root_domain) AS root_domain,
+                min(url) AS url,
+                first(
+                    content_languages
+                    ORDER BY content_languages COLLATE "binary" ASC NULLS LAST,
+                             source_index ASC NULLS LAST
+                ) AS content_languages,
+                warc_filename,
+                warc_record_offset,
+                warc_record_length,
+                min(rank_main_site) AS rank_main_site,
+                min(rank_homepage) AS rank_homepage,
+                min(rank_priority_path) AS rank_priority_path,
+                min(rank_path_depth) AS rank_path_depth,
+                min(rank_path_length) AS rank_path_length,
+                min(rank_apex) AS rank_apex
+            FROM eligible
+            GROUP BY warc_filename, warc_record_offset, warc_record_length
+        ),
+        ranked AS (
+            SELECT *,
+                   row_number() OVER (
+                       PARTITION BY root_domain
+                       ORDER BY {semantic_order}, url, warc_filename,
+                                warc_record_offset, warc_record_length
+                   ) AS domain_page_rank
+            FROM canonical_coordinates
+        )
+        SELECT
+            CAST(inventory.warc_index AS UINTEGER) AS warc_index,
+            CAST(ranked.root_domain AS VARCHAR) AS root_domain,
+            CAST(ranked.url AS VARCHAR) AS url,
+            CAST(ranked.domain_page_rank AS USMALLINT) AS domain_page_rank,
+            CAST(ranked.content_languages AS VARCHAR) AS content_languages,
+            CAST(ranked.warc_record_offset AS UBIGINT) AS warc_record_offset,
+            CAST(ranked.warc_record_length AS UBIGINT) AS warc_record_length
+        FROM ranked
+        JOIN warc_inventory AS inventory USING (warc_filename)
+        WHERE ranked.domain_page_rank <= {pages_per_domain}
+    """.strip()
+
+
+@pytest.mark.parametrize(
+    "seed,pages_per_domain,source_count",
+    [
+        (103, 1, 2),
+        (211, 3, 3),
+        (307, 1, 4),
+        (401, 3, 5),
+        (503, 3, 6),
+    ],
+)
+def test_global_randomized_local_pruning_matches_direct_global_top_n(
+    tmp_path: Path,
+    seed: int,
+    pages_per_domain: int,
+    source_count: int,
+) -> None:
+    random = Random(seed)
+    raw_shards, candidate_paths, warc_filenames = _global_randomized_candidate_shards(
+        tmp_path,
+        random,
+        source_count,
+        pages_per_domain,
+    )
+    inventory_filenames = sorted(warc_filenames)
+    random.shuffle(inventory_filenames)
+
+    connection = duckdb.connect()
+    try:
+        connection.execute(
+            """
+            CREATE TABLE warc_inventory (
+                warc_index UINTEGER NOT NULL,
+                warc_filename VARCHAR NOT NULL
+            )
+            """
+        )
+        connection.executemany(
+            "INSERT INTO warc_inventory VALUES (?, ?)",
+            list(enumerate(inventory_filenames)),
+        )
+        connection.execute(
+            "CREATE TEMP TABLE global_randomized_actual AS "
+            f"{catalog.global_selected_pages_query(pages_per_domain)}",
+            [[str(path) for path in candidate_paths]],
+        )
+        connection.execute(
+            "CREATE TEMP TABLE global_randomized_expected AS "
+            f"{_global_randomized_direct_query(raw_shards, pages_per_domain)}",
+            [str(path) for _source_index, path in raw_shards],
+        )
+
+        mismatches = connection.execute(
+            """
+            SELECT 'actual_only' AS side, difference.*
+            FROM (
+                SELECT * FROM global_randomized_actual
+                EXCEPT ALL
+                SELECT * FROM global_randomized_expected
+            ) AS difference
+            UNION ALL
+            SELECT 'expected_only' AS side, difference.*
+            FROM (
+                SELECT * FROM global_randomized_expected
+                EXCEPT ALL
+                SELECT * FROM global_randomized_actual
+            ) AS difference
+            """
+        ).fetchall()
+
+        assert connection.execute(
+            "SELECT count(*) FROM global_randomized_actual"
+        ).fetchone() == (3 * pages_per_domain,)
+        assert connection.execute(
+            """
+            SELECT count(*)
+            FROM global_randomized_actual
+            WHERE url = 'https://duplicate.example/about'
+            """
+        ).fetchone() == (1,)
+        assert mismatches == []
     finally:
         connection.close()
