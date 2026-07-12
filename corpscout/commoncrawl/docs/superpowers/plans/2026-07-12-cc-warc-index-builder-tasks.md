@@ -317,12 +317,13 @@ duplicate coordinates, domain ranks, and stored counts; sample invalid rows in r
 
 **Depends on:** T19.
 
-**Files:** `warc_index_builder/catalog.py`, `tests/test_catalog.py`.
+**Files:** `warc_index_builder/catalog.py`, `tests/test_final_catalog.py`.
 
 **Deliver:** assemble partial catalog, validate, `FORCE CHECKPOINT`, close, reopen read-only, and validate
 again. No final-path mutation.
 
-**Verify:** fault injection around build/checkpoint/close/reopen: `uv run pytest tests/test_catalog.py -q -k final_build`.
+**Verify:** fault injection around build/checkpoint/close/reopen:
+`uv run pytest tests/test_final_catalog.py -q -k final_build`.
 
 **Commit:** `feat(commoncrawl): finalize catalog partials`
 

@@ -1,4 +1,5 @@
 import importlib.metadata
+from dataclasses import replace
 from pathlib import Path
 
 import duckdb
@@ -13,6 +14,7 @@ from warc_index_builder.catalog import (
     CatalogValidationError,
     FinalCatalogBuildError,
     SourceShardSeed,
+    build_final_catalog_partial,
     candidate_artifact_path,
     checkpoint_warc_size_batch,
     create_partial_catalog,
@@ -279,6 +281,60 @@ def _synchronize_validation_identity(
         """,
         [inventory_hash, identity],
     )
+
+
+def _prepare_final_build_inputs(
+    state_connection: duckdb.DuckDBPyConnection,
+    validation_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+) -> None:
+    _initialize_state(state_connection)
+    _write_ready_candidates(
+        state_connection,
+        validation_connection,
+        build_directory,
+        [
+            _candidate_row(
+                "example.com",
+                "https://example.com/",
+                _WARCS[0].warc_filename,
+                10,
+                100,
+            )
+        ],
+    )
+
+
+class _CatalogConnectionProxy:
+    def __init__(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        *,
+        fail_checkpoint: bool = False,
+        fail_close: bool = False,
+        wal_after_close: Path | None = None,
+    ) -> None:
+        self.connection = connection
+        self.fail_checkpoint = fail_checkpoint
+        self.fail_close = fail_close
+        self.wal_after_close = wal_after_close
+        self.closed = False
+
+    def execute(self, query: str, *args: object, **kwargs: object):
+        if self.fail_checkpoint and query.strip().upper() == "FORCE CHECKPOINT":
+            raise duckdb.IOException("simulated checkpoint failure")
+        return self.connection.execute(query, *args, **kwargs)
+
+    def close(self) -> None:
+        self.connection.close()
+        self.closed = True
+        if self.wal_after_close is not None:
+            self.wal_after_close.write_bytes(b"simulated WAL")
+        if self.fail_close:
+            raise RuntimeError("simulated close failure")
+
+    def __getattr__(self, name: str):
+        return getattr(self.connection, name)
 
 
 def test_final_warcs_partial_contains_exact_schema_and_complete_inventory(
@@ -1658,3 +1714,513 @@ def test_catalog_validation_rejects_incompatible_table_set(tmp_path: Path) -> No
         assert error.value.samples
     finally:
         connection.close()
+
+
+def test_final_build_checkpoints_closes_and_reopens_read_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    published = tmp_path / "catalog.duckdb"
+    published.write_bytes(b"published sentinel")
+    published_inode = published.stat().st_ino
+    access_modes: list[str] = []
+    original_validation = catalog.validate_catalog
+
+    def record_access_mode(connection: duckdb.DuckDBPyConnection):
+        access_modes.append(
+            str(
+                connection.execute(
+                    "SELECT current_setting('access_mode')"
+                ).fetchone()[0]
+            )
+        )
+        return original_validation(connection)
+
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+        monkeypatch.setattr(catalog, "validate_catalog", record_access_mode)
+
+        result = build_final_catalog_partial(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        assert result.path == partial_catalog_path(build_directory)
+        assert result.validation.selected_page_count == 1
+        assert access_modes == ["automatic", "read_only"]
+        assert Path(f"{result.path}.wal").exists() is False
+        assert state_connection.execute(
+            """
+            SELECT count(*) FROM duckdb_databases()
+            WHERE database_name = 'final_catalog'
+            """
+        ).fetchone() == (0,)
+        read_only_connection = duckdb.connect(str(result.path), read_only=True)
+        try:
+            with pytest.raises(duckdb.Error):
+                read_only_connection.execute("CREATE TABLE forbidden(value INTEGER)")
+        finally:
+            read_only_connection.close()
+        assert published.read_bytes() == b"published sentinel"
+        assert published.stat().st_ino == published_inode
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_build_failure_preserves_published_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    published = tmp_path / "catalog.duckdb"
+    published.write_bytes(b"published sentinel")
+    published_inode = published.stat().st_ino
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        def fail_pages(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("simulated final page build failure")
+
+        monkeypatch.setattr(catalog, "materialize_final_pages", fail_pages)
+        with pytest.raises(RuntimeError, match="simulated final page build"):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        assert published.read_bytes() == b"published sentinel"
+        assert published.stat().st_ino == published_inode
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+@pytest.mark.parametrize(
+    "phase,field",
+    [
+        ("warcs", "warc_count"),
+        ("warcs", "warc_inventory_sha256"),
+        ("pages", "selected_page_count"),
+        ("pages", "distinct_domain_count"),
+    ],
+)
+def test_final_build_rejects_phase_results_that_differ_from_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    field: str,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+        if phase == "warcs":
+            original = catalog.create_partial_catalog
+
+            def change_warcs(*args: object, **kwargs: object):
+                result = original(*args, **kwargs)
+                if field == "warc_count":
+                    return replace(result, warc_count=result.warc_count + 1)
+                return replace(result, inventory_sha256="00" * 32)
+
+            monkeypatch.setattr(catalog, "create_partial_catalog", change_warcs)
+        else:
+            original_pages = catalog.materialize_final_pages
+
+            def change_pages(*args: object, **kwargs: object):
+                result = original_pages(*args, **kwargs)
+                if field == "selected_page_count":
+                    return replace(
+                        result,
+                        selected_page_count=result.selected_page_count + 1,
+                    )
+                return replace(
+                    result,
+                    distinct_domain_count=result.distinct_domain_count + 1,
+                )
+
+            monkeypatch.setattr(catalog, "materialize_final_pages", change_pages)
+
+        with pytest.raises(
+            FinalCatalogBuildError,
+            match=field,
+        ):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_build_checkpoint_failure_closes_handle_and_stops_before_reopen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    real_connect = duckdb.connect
+    proxies: list[_CatalogConnectionProxy] = []
+    read_only_opens = 0
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        def connect(*args: object, **kwargs: object):
+            nonlocal read_only_opens
+            if kwargs.get("read_only"):
+                read_only_opens += 1
+                return real_connect(*args, **kwargs)
+            proxy = _CatalogConnectionProxy(
+                real_connect(*args, **kwargs),
+                fail_checkpoint=True,
+            )
+            proxies.append(proxy)
+            return proxy
+
+        monkeypatch.setattr(catalog.duckdb, "connect", connect)
+        with pytest.raises(
+            FinalCatalogBuildError,
+            match="force checkpoint completed partial catalog",
+        ):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        assert len(proxies) == 1
+        assert proxies[0].closed is True
+        assert read_only_opens == 0
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_build_writable_close_failure_blocks_reopen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    real_connect = duckdb.connect
+    proxies: list[_CatalogConnectionProxy] = []
+    read_only_opens = 0
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        def connect(*args: object, **kwargs: object):
+            nonlocal read_only_opens
+            if kwargs.get("read_only"):
+                read_only_opens += 1
+                return real_connect(*args, **kwargs)
+            proxy = _CatalogConnectionProxy(
+                real_connect(*args, **kwargs),
+                fail_close=True,
+            )
+            proxies.append(proxy)
+            return proxy
+
+        monkeypatch.setattr(catalog.duckdb, "connect", connect)
+        with pytest.raises(
+            FinalCatalogBuildError,
+            match="close checkpointed partial catalog",
+        ):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        assert proxies[0].closed is True
+        assert read_only_opens == 0
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_build_remaining_wal_blocks_read_only_reopen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    real_connect = duckdb.connect
+    read_only_opens = 0
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+        wal_path = Path(f"{partial_catalog_path(build_directory)}.wal")
+
+        def connect(*args: object, **kwargs: object):
+            nonlocal read_only_opens
+            if kwargs.get("read_only"):
+                read_only_opens += 1
+                return real_connect(*args, **kwargs)
+            return _CatalogConnectionProxy(
+                real_connect(*args, **kwargs),
+                wal_after_close=wal_path,
+            )
+
+        monkeypatch.setattr(catalog.duckdb, "connect", connect)
+        with pytest.raises(
+            FinalCatalogBuildError,
+            match="WAL remains after forced checkpoint and close",
+        ):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        assert wal_path.read_bytes() == b"simulated WAL"
+        assert read_only_opens == 0
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_build_read_only_reopen_failure_is_contextual(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    real_connect = duckdb.connect
+    writable_connection: duckdb.DuckDBPyConnection | None = None
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        def connect(*args: object, **kwargs: object):
+            nonlocal writable_connection
+            if kwargs.get("read_only"):
+                raise duckdb.IOException("simulated read-only reopen failure")
+            writable_connection = real_connect(*args, **kwargs)
+            return writable_connection
+
+        monkeypatch.setattr(catalog.duckdb, "connect", connect)
+        with pytest.raises(
+            FinalCatalogBuildError,
+            match="reopen completed partial catalog read-only",
+        ):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        assert writable_connection is not None
+        with pytest.raises(duckdb.ConnectionException):
+            writable_connection.execute("SELECT 1")
+        assert Path(f"{partial_catalog_path(build_directory)}.wal").exists() is False
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_build_reopened_validation_failure_closes_reader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    original_validation = catalog.validate_catalog
+    real_connect = duckdb.connect
+    validations = 0
+    read_only_proxy: _CatalogConnectionProxy | None = None
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        def fail_second_validation(connection: duckdb.DuckDBPyConnection):
+            nonlocal validations
+            validations += 1
+            if validations == 2:
+                raise CatalogValidationError("simulated reopened validation failure")
+            return original_validation(connection)
+
+        def connect(*args: object, **kwargs: object):
+            nonlocal read_only_proxy
+            connection = real_connect(*args, **kwargs)
+            if not kwargs.get("read_only"):
+                return connection
+            read_only_proxy = _CatalogConnectionProxy(connection)
+            return read_only_proxy
+
+        monkeypatch.setattr(
+            catalog,
+            "validate_catalog",
+            fail_second_validation,
+        )
+        monkeypatch.setattr(catalog.duckdb, "connect", connect)
+        with pytest.raises(
+            CatalogValidationError,
+            match="simulated reopened validation failure",
+        ):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        assert validations == 2
+        assert read_only_proxy is not None
+        assert read_only_proxy.closed is True
+        connection = real_connect(
+            str(partial_catalog_path(build_directory)), read_only=True
+        )
+        try:
+            assert original_validation(connection).selected_page_count == 1
+        finally:
+            connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_build_read_only_close_failure_rejects_partial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    real_connect = duckdb.connect
+    read_only_proxy: _CatalogConnectionProxy | None = None
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        def connect(*args: object, **kwargs: object):
+            nonlocal read_only_proxy
+            connection = real_connect(*args, **kwargs)
+            if not kwargs.get("read_only"):
+                return connection
+            read_only_proxy = _CatalogConnectionProxy(
+                connection,
+                fail_close=True,
+            )
+            return read_only_proxy
+
+        monkeypatch.setattr(catalog.duckdb, "connect", connect)
+        with pytest.raises(
+            FinalCatalogBuildError,
+            match="close read-only partial catalog",
+        ):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        assert read_only_proxy is not None
+        assert read_only_proxy.closed is True
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_build_rejects_changed_validation_after_reopen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    original_validation = catalog.validate_catalog
+    validations = 0
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        def change_second_validation(connection: duckdb.DuckDBPyConnection):
+            nonlocal validations
+            validations += 1
+            result = original_validation(connection)
+            if validations == 2:
+                return replace(
+                    result,
+                    selected_page_count=result.selected_page_count + 1,
+                )
+            return result
+
+        monkeypatch.setattr(
+            catalog,
+            "validate_catalog",
+            change_second_validation,
+        )
+        with pytest.raises(
+            FinalCatalogBuildError,
+            match="validation changed after checkpoint and reopen",
+        ):
+            build_final_catalog_partial(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        assert validations == 2
+    finally:
+        state_connection.close()
+        validation_connection.close()

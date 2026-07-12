@@ -220,6 +220,7 @@ class FinalMetadataResult:
 @dataclass(frozen=True, slots=True)
 class CatalogValidationResult:
     catalog_id: str
+    warc_inventory_sha256: str
     crawl_id: str
     selection_name: str
     pages_per_domain: int
@@ -227,6 +228,12 @@ class CatalogValidationResult:
     selected_page_count: int
     distinct_domain_count: int
     source_index_shard_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class FinalCatalogResult:
+    path: Path
+    validation: CatalogValidationResult
 
 
 GLOBAL_PAGE_COLUMNS = (
@@ -2165,6 +2172,7 @@ def _validate_catalog(
 
     return CatalogValidationResult(
         catalog_id=str(stored_catalog_id),
+        warc_inventory_sha256=computed_inventory_hash,
         crawl_id=str(crawl_id),
         selection_name=str(selection_name),
         pages_per_domain=int(pages_per_domain),
@@ -2173,6 +2181,119 @@ def _validate_catalog(
         distinct_domain_count=domain_count,
         source_index_shard_count=int(source_shard_count),
     )
+
+
+def build_final_catalog_partial(
+    state_connection: duckdb.DuckDBPyConnection,
+    validation_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+) -> FinalCatalogResult:
+    """Build, validate, checkpoint, close, and read-only reopen one partial catalog."""
+    warcs = create_partial_catalog(state_connection, build_directory)
+    pages = materialize_final_pages(
+        state_connection,
+        validation_connection,
+        build_directory,
+    )
+    metadata = materialize_final_metadata(state_connection, build_directory)
+    if warcs.path != pages.path or pages.path != metadata.path:
+        raise FinalCatalogBuildError("final catalog phases returned different paths")
+    path = metadata.path
+    if state_connection.execute(
+        """
+        SELECT count(*) FROM duckdb_databases()
+        WHERE database_name = 'final_catalog'
+        """
+    ).fetchone()[0]:
+        raise FinalCatalogBuildError(
+            "partial catalog remains attached after final build phases"
+        )
+
+    try:
+        writable_connection = duckdb.connect(str(path))
+    except duckdb.Error as error:
+        raise FinalCatalogBuildError(
+            f"open completed partial catalog for checkpoint: {error}"
+        ) from error
+    writable_error: BaseException | None = None
+    try:
+        before_checkpoint = validate_catalog(writable_connection)
+        phase_mismatches: list[str] = []
+        if warcs.warc_count != before_checkpoint.warc_count:
+            phase_mismatches.append("warc_count")
+        if warcs.inventory_sha256 != before_checkpoint.warc_inventory_sha256:
+            phase_mismatches.append("warc_inventory_sha256")
+        if pages.selected_page_count != before_checkpoint.selected_page_count:
+            phase_mismatches.append("selected_page_count")
+        if pages.distinct_domain_count != before_checkpoint.distinct_domain_count:
+            phase_mismatches.append("distinct_domain_count")
+        if metadata.catalog_id != before_checkpoint.catalog_id:
+            phase_mismatches.append("catalog_id")
+        if phase_mismatches:
+            raise FinalCatalogBuildError(
+                "final build phase results differ from completed partial catalog: "
+                + ", ".join(phase_mismatches)
+            )
+        try:
+            writable_connection.execute("FORCE CHECKPOINT")
+        except duckdb.Error as error:
+            raise FinalCatalogBuildError(
+                f"force checkpoint completed partial catalog: {error}"
+            ) from error
+    except BaseException as error:
+        writable_error = error
+        raise
+    finally:
+        try:
+            writable_connection.close()
+        except Exception as close_error:
+            if writable_error is None:
+                raise FinalCatalogBuildError(
+                    f"close checkpointed partial catalog: {close_error}"
+                ) from close_error
+            add_note = getattr(writable_error, "add_note", None)
+            if add_note is not None:
+                add_note(f"also failed to close checkpoint connection: {close_error}")
+
+    wal_path = Path(f"{path}.wal")
+    if wal_path.exists() or wal_path.is_symlink():
+        raise FinalCatalogBuildError(
+            f"partial catalog WAL remains after forced checkpoint and close: {wal_path}"
+        )
+
+    try:
+        read_only_connection = duckdb.connect(str(path), read_only=True)
+    except duckdb.Error as error:
+        raise FinalCatalogBuildError(
+            f"reopen completed partial catalog read-only: {error}"
+        ) from error
+    read_only_error: BaseException | None = None
+    try:
+        after_reopen = validate_catalog(read_only_connection)
+    except BaseException as error:
+        read_only_error = error
+        raise
+    finally:
+        try:
+            read_only_connection.close()
+        except Exception as close_error:
+            if read_only_error is None:
+                raise FinalCatalogBuildError(
+                    f"close read-only partial catalog: {close_error}"
+                ) from close_error
+            add_note = getattr(read_only_error, "add_note", None)
+            if add_note is not None:
+                add_note(f"also failed to close read-only connection: {close_error}")
+
+    if before_checkpoint != after_reopen:
+        raise FinalCatalogBuildError(
+            "partial catalog validation changed after checkpoint and reopen"
+        )
+    if metadata.catalog_id != after_reopen.catalog_id:
+        raise FinalCatalogBuildError(
+            "partial catalog metadata result differs after checkpoint and reopen"
+        )
+    return FinalCatalogResult(path=path, validation=after_reopen)
 
 
 def local_candidate_query(
