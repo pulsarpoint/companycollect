@@ -69,3 +69,23 @@ func TestEnsureRejectsInvalidConfiguration(t *testing.T) {
 		t.Fatal("expected pages-per-domain validation error")
 	}
 }
+
+func TestTransientBuildFailureClassification(t *testing.T) {
+	for _, output := range []string{
+		"HTTP Error: HTTP GET error (HTTP 503 Service Unavailable)",
+		"connection reset by peer",
+		"request timed out",
+	} {
+		if !isTransientBuildFailure([]byte(output)) {
+			t.Fatalf("transient output was not classified: %q", output)
+		}
+	}
+	for _, output := range []string{
+		"HTTP Error: HTTP 404 Not Found",
+		"Binder Error: missing column",
+	} {
+		if isTransientBuildFailure([]byte(output)) {
+			t.Fatalf("permanent output was classified as transient: %q", output)
+		}
+	}
+}

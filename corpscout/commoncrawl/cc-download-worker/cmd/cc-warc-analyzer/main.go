@@ -127,8 +127,8 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		{name: "part", groups: partGroups},
 		{name: "part_block", groups: [][]rangeplanner.Record{allRecords}},
 	}
-	for _, policy := range policies {
-		for _, scope := range scopes {
+	for _, scope := range scopes {
+		for _, policy := range policies {
 			estimate, err := rangeplanner.EstimateGroups(scope.name, scope.groups, policy)
 			if err != nil {
 				return errors.Wrapf(err, "estimate %s in scope %s", policy.Name, scope.name)

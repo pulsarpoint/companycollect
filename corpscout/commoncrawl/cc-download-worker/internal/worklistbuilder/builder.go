@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/parquet-go/parquet-go"
@@ -75,18 +76,31 @@ func Ensure(ctx context.Context, config Config) (Result, error) {
 	if err := temporary.Close(); err != nil {
 		return Result{}, errors.Wrap(err, "close temporary worklist file")
 	}
-	if err := os.Remove(temporaryPath); err != nil {
-		return Result{}, errors.Wrap(err, "prepare temporary worklist path")
-	}
-	command := exec.CommandContext(ctx, config.Python, "-c", builderScript,
-		"--crawl", config.CrawlID,
-		"--pages", fmt.Sprint(config.PagesPerDomain),
-		"--part", fmt.Sprint(config.Part),
-		"--out", temporaryPath,
-	)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return Result{}, errors.Wrapf(err, "build worklist: %s", strings.TrimSpace(string(output)))
+	var output []byte
+	var commandErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		if err := os.Remove(temporaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Result{}, errors.Wrap(err, "prepare temporary worklist path")
+		}
+		command := exec.CommandContext(ctx, config.Python, "-c", builderScript,
+			"--crawl", config.CrawlID,
+			"--pages", fmt.Sprint(config.PagesPerDomain),
+			"--part", fmt.Sprint(config.Part),
+			"--out", temporaryPath,
+		)
+		output, commandErr = command.CombinedOutput()
+		if commandErr == nil {
+			break
+		}
+		if attempt == 5 || !isTransientBuildFailure(output) {
+			return Result{}, errors.Wrapf(commandErr, "build worklist after %d attempt(s): %s", attempt, strings.TrimSpace(string(output)))
+		}
+		delay := time.Second << (attempt - 1)
+		select {
+		case <-ctx.Done():
+			return Result{}, errors.Wrap(ctx.Err(), "wait to retry worklist build")
+		case <-time.After(delay):
+		}
 	}
 	rows, err := parquetRows(temporaryPath)
 	if err != nil {
@@ -96,6 +110,19 @@ func Ensure(ctx context.Context, config Config) (Result, error) {
 		return Result{}, errors.Wrap(err, "commit generated worklist")
 	}
 	return Result{Path: config.OutputPath, Rows: rows}, nil
+}
+
+func isTransientBuildFailure(output []byte) bool {
+	message := strings.ToLower(string(output))
+	for _, indicator := range []string{
+		"http 429", "http 500", "http 502", "http 503", "http 504",
+		"connection reset", "temporarily unavailable", "timed out", "timeout", "unexpected eof",
+	} {
+		if strings.Contains(message, indicator) {
+			return true
+		}
+	}
+	return false
 }
 
 func validate(config Config) error {
