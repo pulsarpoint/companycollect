@@ -7,9 +7,19 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
-from .catalog import catalog_build_lock, prepare_build_directory, require_path_within
-from .events import emit_event
+import duckdb
+
+from .catalog import (
+    CandidateShardResult,
+    build_candidate_shard,
+    catalog_build_lock,
+    prepare_build_directory,
+    require_path_within,
+)
+from .events import binary_size, emit_event
+from .manifests import IndexSource, SourceSchema
 
 
 _CRAWL_ID = re.compile(r"CC-MAIN-[0-9]{4}-[0-9]{2}")
@@ -109,6 +119,63 @@ def parse_options(argv: Sequence[str] | None = None) -> CommandOptions:
     except ValueError:
         parser.error("catalog path escapes --base")
     return options
+
+
+def build_candidate_shards(
+    state_connection: duckdb.DuckDBPyConnection,
+    query_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+    sources: Sequence[IndexSource],
+    schemas: Sequence[SourceSchema],
+    *,
+    crawl_id: str,
+    pages_per_domain: int,
+    http_attempts: int,
+    stream: TextIO | None = None,
+) -> tuple[CandidateShardResult, ...]:
+    """Build candidates sequentially and report one completion per source."""
+    if len(sources) != len(schemas):
+        raise ValueError("index sources and source schemas must have the same length")
+    results: list[CandidateShardResult] = []
+    sources_total = len(sources)
+    for sources_completed, (source, schema) in enumerate(
+        zip(sources, schemas), start=1
+    ):
+        result = build_candidate_shard(
+            state_connection,
+            query_connection,
+            build_directory,
+            source,
+            schema,
+            pages_per_domain,
+            http_attempts,
+        )
+        results.append(result)
+        emit_event(
+            "candidate shard ready",
+            stream=stream,
+            crawl=crawl_id,
+            selection=f"pages{pages_per_domain}",
+            source_index=result.source_index,
+            sources_completed=sources_completed,
+            sources_total=sources_total,
+            candidate_rows=result.rows,
+            candidate_bytes=result.byte_count,
+            candidate_size=binary_size(result.byte_count),
+            elapsed_seconds=result.elapsed_seconds,
+            rows_per_second=(
+                None
+                if result.reused or result.elapsed_seconds <= 0
+                else result.rows / result.elapsed_seconds
+            ),
+            attempts=result.attempts_this_run,
+            attempts_total=result.attempts_total,
+            retries=result.retries,
+            http_429=result.http_429,
+            http_503=result.http_503,
+            reused=result.reused,
+        )
+    return tuple(results)
 
 
 def run(options: CommandOptions) -> int:

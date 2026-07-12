@@ -1,21 +1,32 @@
+import io
+import json
 import os
 import subprocess
 import sys
+import threading
+from contextlib import contextmanager
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import duckdb
 import pytest
 
 import warc_index_builder.catalog as catalog
+from warc_index_builder.__main__ import build_candidate_shards
 from warc_index_builder.catalog import (
     CATALOG_SCHEMA_VERSION,
     BuildIdentity,
     BuildStateConflict,
     BuildStateCorrupt,
+    CandidateArtifactError,
+    CandidateBuildError,
     SourceShardSeed,
+    build_candidate_shard,
+    candidate_artifact_path,
     catalog_id,
     initialize_build_state,
+    inspect_candidate_artifact,
     local_candidate_query,
     prepare_build_directory,
     require_path_within,
@@ -43,6 +54,68 @@ _IDENTITY_HASHES = {
     "index_manifest_sha256": "33" * 32,
     "warc_inventory_sha256": "44" * 32,
 }
+
+
+@contextmanager
+def _parquet_http_server(payload: bytes, failures: int):
+    state = {"failures_remaining": failures, "failures_sent": 0, "requests": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_HEAD(self) -> None:
+            self._serve(send_body=False)
+
+        def do_GET(self) -> None:
+            self._serve(send_body=True)
+
+        def _serve(self, *, send_body: bool) -> None:
+            state["requests"] += 1
+            if state["failures_remaining"] > 0:
+                state["failures_remaining"] -= 1
+                state["failures_sent"] += 1
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            start = 0
+            end = len(payload) - 1
+            range_header = self.headers.get("Range")
+            status = 200
+            if range_header:
+                start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
+                if start_text:
+                    start = int(start_text)
+                    end = int(end_text) if end_text else end
+                else:
+                    start = max(0, len(payload) - int(end_text))
+                end = min(end, len(payload) - 1)
+                status = 206
+            body = payload[start : end + 1]
+            self.send_response(status)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(len(body)))
+            if status == 206:
+                self.send_header(
+                    "Content-Range", f"bytes {start}-{end}/{len(payload)}"
+                )
+            self.end_headers()
+            if send_body:
+                self.wfile.write(body)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/source.parquet", state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def _catalog_identity_values() -> dict[str, object]:
@@ -137,7 +210,10 @@ def _candidate_page(
 def _candidate_fixture(
     tmp_path: Path,
     rows: list[tuple[object, ...]],
+    *,
+    source_index: int = 7,
 ) -> tuple[duckdb.DuckDBPyConnection, Path, SourceSchema]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect()
     connection.execute(
         """
@@ -156,17 +232,33 @@ def _candidate_fixture(
         )
         """
     )
-    connection.executemany(
-        "INSERT INTO source_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+    if rows:
+        connection.executemany(
+            "INSERT INTO source_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
     path = tmp_path / "source.parquet"
     connection.execute("COPY source_rows TO ? (FORMAT PARQUET)", [str(path)])
     schema = inspect_source_schema(
         connection,
-        IndexSource(7, str(path), str(path)),
+        IndexSource(source_index, str(path), str(path)),
     )
     return connection, path, schema
+
+
+def _initialize_candidate_state(
+    connection: duckdb.DuckDBPyConnection,
+    path: Path,
+    schema: SourceSchema,
+) -> IndexSource:
+    source = IndexSource(schema.source_index, str(path), str(path))
+    initialize_build_state(
+        connection,
+        _build_identity(),
+        _warc_seeds(),
+        source_shard_seeds((source,), (schema,)),
+    )
+    return source
 
 
 def _local_candidates(
@@ -1071,3 +1163,606 @@ def test_local_candidate_query_contains_no_source_or_output_path() -> None:
     assert "https://" not in query
     assert "/tmp/" not in query
     assert ".partial" not in query
+
+
+def test_candidate_artifact_path_is_fixed_and_contained(tmp_path: Path) -> None:
+    build_directory = tmp_path / ".build"
+
+    assert candidate_artifact_path(build_directory, 7) == (
+        build_directory / "candidates/source_00007.parquet"
+    )
+    with pytest.raises(ValueError):
+        candidate_artifact_path(build_directory, -1)
+
+
+def test_candidate_build_requires_distinct_state_and_query_connections(
+    tmp_path: Path,
+) -> None:
+    connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    source = _initialize_candidate_state(connection, source_path, schema)
+    try:
+        with pytest.raises(ValueError, match="connections must be distinct"):
+            build_candidate_shard(
+                connection,
+                connection,
+                tmp_path / "build",
+                source,
+                schema,
+                25,
+                1,
+            )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("rows", [[], [_candidate_page("example.com", "https://example.com/", "/", 10)]])
+def test_candidate_build_writes_valid_atomic_artifact_and_ready_state(
+    tmp_path: Path,
+    rows: list[tuple[object, ...]],
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        rows,
+        source_index=0,
+    )
+    state_connection = duckdb.connect()
+    source = _initialize_candidate_state(
+        state_connection,
+        source_path,
+        schema,
+    )
+    build_directory = tmp_path / "build"
+    try:
+        result = build_candidate_shard(
+            state_connection,
+            query_connection,
+            build_directory,
+            source,
+            schema,
+            25,
+            3,
+        )
+
+        assert result.reused is False
+        assert result.rows == len(rows)
+        assert result.attempts_this_run == 1
+        assert result.attempts_total == 1
+        assert result.path.is_file()
+        assert result.path.with_name(f"{result.path.name}.partial").exists() is False
+        assert inspect_candidate_artifact(
+            query_connection,
+            result.path,
+            source.source_index,
+        ) == catalog.CandidateMetadata(result.rows, result.byte_count)
+        assert state_connection.execute(
+            """
+            SELECT status, candidate_rows, candidate_bytes, attempts,
+                   last_error, completed_at IS NOT NULL
+            FROM source_shards WHERE source_index = 0
+            """
+        ).fetchone() == (
+            "ready",
+            len(rows),
+            result.byte_count,
+            1,
+            None,
+            True,
+        )
+        if rows:
+            with pytest.raises(CandidateArtifactError, match="different source_index"):
+                inspect_candidate_artifact(query_connection, result.path, 1)
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+def test_ready_candidate_is_reused_and_stale_partial_is_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    state_connection = duckdb.connect()
+    source = _initialize_candidate_state(state_connection, source_path, schema)
+    build_directory = tmp_path / "build"
+    try:
+        first = build_candidate_shard(
+            state_connection,
+            query_connection,
+            build_directory,
+            source,
+            schema,
+            25,
+            3,
+        )
+        partial_path = first.path.with_name(f"{first.path.name}.partial")
+        partial_path.write_bytes(b"stale")
+
+        def reject_copy(*_args, **_kwargs) -> None:
+            raise AssertionError("ready candidate must not access its source")
+
+        monkeypatch.setattr(catalog, "_write_candidate_artifact", reject_copy)
+        reused = build_candidate_shard(
+            state_connection,
+            query_connection,
+            build_directory,
+            source,
+            schema,
+            25,
+            3,
+        )
+
+        assert reused.reused is True
+        assert reused.attempts_this_run == 0
+        assert reused.attempts_total == 1
+        assert partial_path.exists() is False
+        assert state_connection.execute(
+            "SELECT attempts FROM source_shards WHERE source_index = 0"
+        ).fetchone() == (1,)
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+@pytest.mark.parametrize("corruption", ["file", "row_count"])
+def test_invalid_ready_candidate_rebuilds_only_that_artifact(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    state_connection = duckdb.connect()
+    source = _initialize_candidate_state(state_connection, source_path, schema)
+    build_directory = tmp_path / "build"
+    try:
+        first = build_candidate_shard(
+            state_connection,
+            query_connection,
+            build_directory,
+            source,
+            schema,
+            25,
+            2,
+        )
+        if corruption == "file":
+            first.path.write_bytes(b"truncated")
+        else:
+            state_connection.execute(
+                "UPDATE source_shards SET candidate_rows = candidate_rows + 1 "
+                "WHERE source_index = 0"
+            )
+
+        rebuilt = build_candidate_shard(
+            state_connection,
+            query_connection,
+            build_directory,
+            source,
+            schema,
+            25,
+            2,
+        )
+
+        assert rebuilt.reused is False
+        assert rebuilt.attempts_this_run == 1
+        assert rebuilt.attempts_total == 2
+        assert inspect_candidate_artifact(query_connection, rebuilt.path, 0).rows == 1
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+def test_transient_candidate_http_failure_retries_then_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    state_connection = duckdb.connect()
+    source = _initialize_candidate_state(state_connection, source_path, schema)
+    original_write = catalog._write_candidate_artifact
+    calls = 0
+    delays: list[float] = []
+
+    def transient_then_write(*args, **kwargs) -> None:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise duckdb.IOException("HTTP 503 Service Unavailable")
+        original_write(*args, **kwargs)
+
+    monkeypatch.setattr(catalog, "_write_candidate_artifact", transient_then_write)
+    monkeypatch.setattr(catalog.time, "sleep", delays.append)
+    try:
+        result = build_candidate_shard(
+            state_connection,
+            query_connection,
+            tmp_path / "build",
+            source,
+            schema,
+            25,
+            3,
+        )
+
+        assert result.attempts_this_run == 3
+        assert result.attempts_total == 3
+        assert result.retries == 2
+        assert result.http_503 == 2
+        assert delays == [1.0, 2.0]
+        assert state_connection.execute(
+            "SELECT status, attempts, last_error FROM source_shards"
+        ).fetchone() == ("ready", 3, None)
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+def test_candidate_duckdb_http_503_then_success_uses_outer_retry_and_copy_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    query_connection.execute("LOAD httpfs")
+    query_connection.execute("SET http_retries = 0")
+    state_connection = duckdb.connect()
+    delays: list[float] = []
+    monkeypatch.setattr(catalog.time, "sleep", delays.append)
+    with _parquet_http_server(source_path.read_bytes(), failures=1) as (url, server_state):
+        source = IndexSource(0, "fixture", url)
+        initialize_build_state(
+            state_connection,
+            _build_identity(),
+            _warc_seeds(),
+            source_shard_seeds((source,), (schema,)),
+        )
+        try:
+            result = build_candidate_shard(
+                state_connection,
+                query_connection,
+                tmp_path / "build",
+                source,
+                schema,
+                25,
+                2,
+            )
+
+            assert result.rows == 1
+            assert result.attempts_this_run == 2
+            assert result.retries == 1
+            assert result.http_503 == 1
+            assert delays == [1.0]
+            assert server_state["failures_sent"] == 1
+        finally:
+            state_connection.close()
+            query_connection.close()
+
+
+def test_candidate_duckdb_http_503_exhaustion_preserves_pending_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    query_connection.execute("LOAD httpfs")
+    query_connection.execute("SET http_retries = 0")
+    state_connection = duckdb.connect()
+    monkeypatch.setattr(catalog.time, "sleep", lambda _delay: None)
+    with _parquet_http_server(source_path.read_bytes(), failures=10) as (url, server_state):
+        source = IndexSource(0, "fixture", url)
+        initialize_build_state(
+            state_connection,
+            _build_identity(),
+            _warc_seeds(),
+            source_shard_seeds((source,), (schema,)),
+        )
+        try:
+            with pytest.raises(CandidateBuildError, match="source 0.*503"):
+                build_candidate_shard(
+                    state_connection,
+                    query_connection,
+                    tmp_path / "build",
+                    source,
+                    schema,
+                    25,
+                    2,
+                )
+
+            assert server_state["failures_sent"] == 2
+            status, attempts, error = state_connection.execute(
+                "SELECT status, attempts, last_error FROM source_shards"
+            ).fetchone()
+            assert (status, attempts) == ("pending", 2)
+            assert "503" in error
+        finally:
+            state_connection.close()
+            query_connection.close()
+
+
+def test_candidate_orphan_final_after_interrupted_ready_commit_is_rebuilt(
+    tmp_path: Path,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    state_connection = duckdb.connect()
+    source = _initialize_candidate_state(state_connection, source_path, schema)
+    build_directory = tmp_path / "build"
+    try:
+        first = build_candidate_shard(
+            state_connection,
+            query_connection,
+            build_directory,
+            source,
+            schema,
+            25,
+            2,
+        )
+        state_connection.execute(
+            """
+            UPDATE source_shards
+            SET status = 'running', candidate_rows = NULL, candidate_bytes = NULL,
+                completed_at = NULL
+            WHERE source_index = 0
+            """
+        )
+        reopened = initialize_build_state(
+            state_connection,
+            _build_identity(),
+            _warc_seeds(),
+            source_shard_seeds((source,), (schema,)),
+        )
+
+        assert reopened.recovered_source_shards == 1
+        assert first.path.is_file()
+        rebuilt = build_candidate_shard(
+            state_connection,
+            query_connection,
+            build_directory,
+            source,
+            schema,
+            25,
+            2,
+        )
+        assert rebuilt.reused is False
+        assert rebuilt.attempts_total == 2
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+def test_permanent_candidate_http_failure_does_not_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    state_connection = duckdb.connect()
+    source = _initialize_candidate_state(state_connection, source_path, schema)
+    delays: list[float] = []
+
+    def fail_permanently(*_args, **_kwargs) -> None:
+        raise duckdb.IOException("HTTP 404 Not Found")
+
+    monkeypatch.setattr(catalog, "_write_candidate_artifact", fail_permanently)
+    monkeypatch.setattr(catalog.time, "sleep", delays.append)
+    build_directory = tmp_path / "build"
+    try:
+        with pytest.raises(CandidateBuildError, match="source 0.*404"):
+            build_candidate_shard(
+                state_connection,
+                query_connection,
+                build_directory,
+                source,
+                schema,
+                25,
+                3,
+            )
+
+        assert delays == []
+        assert state_connection.execute(
+            "SELECT status, attempts, last_error FROM source_shards"
+        ).fetchone() == ("pending", 1, "HTTP 404 Not Found")
+        assert candidate_artifact_path(build_directory, 0).exists() is False
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+def test_candidate_http_404_stays_permanent_even_with_network_words() -> None:
+    error = duckdb.IOException("HTTP 404 Not Found: connection closed")
+
+    assert catalog._is_transient_candidate_error(error) is False
+
+
+def test_exhausted_transient_candidate_failure_returns_source_to_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    state_connection = duckdb.connect()
+    source = _initialize_candidate_state(state_connection, source_path, schema)
+    delays: list[float] = []
+
+    def stay_throttled(*_args, **_kwargs) -> None:
+        raise duckdb.HTTPException("HTTP 503 Service Unavailable")
+
+    monkeypatch.setattr(catalog, "_write_candidate_artifact", stay_throttled)
+    monkeypatch.setattr(catalog.time, "sleep", delays.append)
+    try:
+        with pytest.raises(CandidateBuildError, match="source 0.*503"):
+            build_candidate_shard(
+                state_connection,
+                query_connection,
+                tmp_path / "build",
+                source,
+                schema,
+                25,
+                2,
+            )
+
+        assert delays == [1.0]
+        assert state_connection.execute(
+            "SELECT status, attempts, last_error FROM source_shards"
+        ).fetchone() == ("pending", 2, "HTTP 503 Service Unavailable")
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+def test_candidate_coordinator_emits_one_event_for_build_and_reuse(
+    tmp_path: Path,
+) -> None:
+    query_connection, source_path, schema = _candidate_fixture(
+        tmp_path / "source",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    state_connection = duckdb.connect()
+    source = _initialize_candidate_state(state_connection, source_path, schema)
+    build_directory = tmp_path / "build"
+    try:
+        built_stream = io.StringIO()
+        reused_stream = io.StringIO()
+        built = build_candidate_shards(
+            state_connection,
+            query_connection,
+            build_directory,
+            (source,),
+            (schema,),
+            crawl_id="CC-MAIN-2026-25",
+            pages_per_domain=25,
+            http_attempts=2,
+            stream=built_stream,
+        )
+        reused = build_candidate_shards(
+            state_connection,
+            query_connection,
+            build_directory,
+            (source,),
+            (schema,),
+            crawl_id="CC-MAIN-2026-25",
+            pages_per_domain=25,
+            http_attempts=2,
+            stream=reused_stream,
+        )
+
+        built_event = json.loads(built_stream.getvalue())
+        reused_event = json.loads(reused_stream.getvalue())
+        assert len(built) == len(reused) == 1
+        assert built_event["msg"] == "candidate shard ready"
+        assert built_event["sources_completed"] == 1
+        assert built_event["sources_total"] == 1
+        assert built_event["candidate_rows"] == 1
+        assert built_event["candidate_size"].endswith("KiB")
+        assert built_event["attempts"] == 1
+        assert built_event["attempts_total"] == 1
+        assert built_event["reused"] is False
+        assert reused_event["attempts"] == 0
+        assert reused_event["attempts_total"] == 1
+        assert reused_event["rows_per_second"] is None
+        assert reused_event["reused"] is True
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+def test_later_candidate_failure_preserves_earlier_ready_source_and_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_connection, first_path, first_schema = _candidate_fixture(
+        tmp_path / "first",
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+        source_index=0,
+    )
+    second_directory = tmp_path / "second"
+    second_directory.mkdir()
+    second_path = second_directory / "source.parquet"
+    query_connection.execute(
+        "COPY source_rows TO ? (FORMAT PARQUET)", [str(second_path)]
+    )
+    second_schema = inspect_source_schema(
+        query_connection,
+        IndexSource(1, str(second_path), str(second_path)),
+    )
+    sources = (
+        IndexSource(0, str(first_path), str(first_path)),
+        IndexSource(1, str(second_path), str(second_path)),
+    )
+    schemas = (first_schema, second_schema)
+    state_connection = duckdb.connect()
+    initialize_build_state(
+        state_connection,
+        _build_identity(),
+        _warc_seeds(),
+        source_shard_seeds(sources, schemas),
+    )
+    original_write = catalog._write_candidate_artifact
+
+    def fail_second(*args, **kwargs) -> None:
+        source = args[1]
+        if source.source_index == 1:
+            raise duckdb.IOException("HTTP 404 Not Found")
+        original_write(*args, **kwargs)
+
+    monkeypatch.setattr(catalog, "_write_candidate_artifact", fail_second)
+    stream = io.StringIO()
+    build_directory = tmp_path / "build"
+    try:
+        with pytest.raises(CandidateBuildError, match="source 1"):
+            build_candidate_shards(
+                state_connection,
+                query_connection,
+                build_directory,
+                sources,
+                schemas,
+                crawl_id="CC-MAIN-2026-25",
+                pages_per_domain=25,
+                http_attempts=1,
+                stream=stream,
+            )
+
+        assert state_connection.execute(
+            "SELECT source_index, status FROM source_shards ORDER BY source_index"
+        ).fetchall() == [(0, "ready"), (1, "pending")]
+        assert candidate_artifact_path(build_directory, 0).is_file()
+        assert candidate_artifact_path(build_directory, 1).exists() is False
+        events = [json.loads(line) for line in stream.getvalue().splitlines()]
+        assert [event["source_index"] for event in events] == [0]
+    finally:
+        state_connection.close()
+        query_connection.close()
+
+
+def test_candidate_builder_does_not_depend_on_pyarrow() -> None:
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+
+    assert "pyarrow" not in pyproject.read_text().lower()
