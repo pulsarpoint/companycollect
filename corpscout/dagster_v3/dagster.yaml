@@ -15,3 +15,33 @@ concurrency:
   pools:
     granularity: op
     default_limit: 1
+
+# Retry runs that die for transient reasons (worker crash, ClickHouse/network
+# blip). Deterministic failures burn at most 2 extra attempts.
+run_retries:
+  enabled: true
+  max_retries: 2
+
+# Daemon-side watchdog for hung/zombie runs. A run stuck past max_runtime is
+# terminated instead of silently holding its limit-1 pool slot forever;
+# free_slots_after_run_end_seconds releases concurrency slots of terminal runs
+# even when the run worker crashed without cleanup (the leaked-slot wedge that
+# scripts/dagster-health-check.py otherwise has to repair).
+run_monitoring:
+  enabled: true
+  start_timeout_seconds: 600
+  cancel_timeout_seconds: 600
+  max_runtime_seconds: 21600 # 6h — longest bulk loads (Brazil RFB) run hours
+  poll_interval_seconds: 120
+  free_slots_after_run_end_seconds: 300
+
+# Purge old schedule/sensor ticks from the shared Postgres event log so it
+# doesn't grow unbounded (100+ sources ticking forever).
+retention:
+  schedule:
+    purge_after_days: 90
+  sensor:
+    purge_after_days:
+      skipped: 7
+      failure: 30
+      success: 30
