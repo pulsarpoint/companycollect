@@ -1,0 +1,88 @@
+"""Every ClickHouse leaf asset carries data-quality checks.
+
+Freshness (scheduled leaves only — "did the schedule silently stop") and
+row-count non-empty checks (all leaves, run with each materialization) are
+declared centrally in defs/common/clickhouse_checks.py from a registry of
+(asset_key, tables, cadence).
+"""
+
+import dagster as dg
+
+from dagster_v3.defs.common import clickhouse_checks as chk
+
+
+def _repo():
+    from dagster_v3.definitions import defs as load_defs
+
+    return load_defs().get_repository_def()
+
+
+def test_registry_covers_the_known_scheduled_leaves() -> None:
+    keys = {spec.asset_key for spec in chk.CLICKHOUSE_LEAVES}
+    # spot-check one leaf per module family
+    for expected in (
+        "czech_ares_clickhouse_companies",
+        "estonia_ar_clickhouse_companies",
+        "estonia_ar_clickhouse_financial_metrics",
+        "exchange_rates_v2_clickhouse",
+        "finland_ytj_resolved_clickhouse",
+        "data_daily_duckdb_ch",
+        "france_sirene_clickhouse_companies",
+        "gleif_reference_clickhouse",
+        "latvia_financial_metrics_clickhouse",
+        "latvia_ur_clickhouse_companies",
+        "nace_categories_clickhouse",
+        "open_page_rank_domains_clickhouse",
+        "slovakia_financials_metrics_clickhouse",
+        "slovakia_rpo_clickhouse_companies",
+        "sweden_company_companies_clickhouse",
+        "sweden_financial_reports_clickhouse",
+        "uk_companies_house_clickhouse_companies",
+        "wikidata_company_seed_clickhouse",
+    ):
+        assert expected in keys, expected
+
+
+def test_every_leaf_has_a_row_count_check_and_scheduled_leaves_freshness() -> None:
+    repo = _repo()
+    check_keys = set(repo.asset_checks_defs_by_key.keys())
+
+    for spec in chk.CLICKHOUSE_LEAVES:
+        asset_key = dg.AssetKey(spec.asset_key)
+        assert (
+            dg.AssetCheckKey(asset_key, chk.ROW_COUNT_CHECK_NAME) in check_keys
+        ), f"{spec.asset_key}: missing row-count check"
+        freshness_key = dg.AssetCheckKey(asset_key, chk.FRESHNESS_CHECK_NAME)
+        if spec.max_age is not None:
+            assert freshness_key in check_keys, f"{spec.asset_key}: missing freshness"
+        else:
+            assert freshness_key not in check_keys, (
+                f"{spec.asset_key}: unscheduled leaf must not have freshness"
+            )
+
+
+def test_freshness_sensor_is_registered_and_running() -> None:
+    repo = _repo()
+    sensor = repo.get_sensor_def("clickhouse_freshness_sensor")
+    assert sensor.default_status == dg.DefaultSensorStatus.RUNNING
+
+
+def test_evaluate_row_counts_fails_on_any_empty_table() -> None:
+    class FakeClient:
+        def __init__(self, counts):
+            self._counts = counts
+
+        def execute(self, sql, params=None):
+            for table, count in self._counts.items():
+                if f"`{table}`" in sql:
+                    return [(count,)]
+            raise AssertionError(sql)
+
+    counts = chk.fetch_row_counts(
+        FakeClient({"lv_companies": 5, "lv_company_domains": 0}),
+        ("lv_companies", "lv_company_domains"),
+    )
+    assert counts == {"lv_companies": 5, "lv_company_domains": 0}
+
+    ok = chk.fetch_row_counts(FakeClient({"lv_companies": 5}), ("lv_companies",))
+    assert ok == {"lv_companies": 5}
