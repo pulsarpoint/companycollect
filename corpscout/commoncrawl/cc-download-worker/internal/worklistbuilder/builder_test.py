@@ -33,6 +33,11 @@ class WorklistQueryTest(unittest.TestCase):
                 ("ex.com", "ex.com", "https://ex.com/", "/", 200, "text/html", "text/html", "w", 10, 10, "eng"),
                 ("ex.com", "shop.ex.com", "https://shop.ex.com/", "/", 200, "text/html", "text/html", "w", 40, 10, "eng"),
                 ("ignored.com", "ignored.com", "https://ignored.com/logo.png", "/logo.png", 200, "image/png", "image/png", "w", 50, 10, "eng"),
+                (None, None, "https://missing-domain.example/", "/", 200, "text/html", "text/html", "w", 60, 10, "eng"),
+                ("missing-url.example", "missing-url.example", None, "/", 200, "text/html", "text/html", "w", 70, 10, "eng"),
+                ("missing-warc.example", "missing-warc.example", "https://missing-warc.example/", "/", 200, "text/html", "text/html", None, 80, 10, "eng"),
+                ("bad-offset.example", "bad-offset.example", "https://bad-offset.example/", "/", 200, "text/html", "text/html", "w", -1, 10, "eng"),
+                ("bad-length.example", "bad-length.example", "https://bad-length.example/", "/", 200, "text/html", "text/html", "w", 90, 0, "eng"),
             ],
         )
 

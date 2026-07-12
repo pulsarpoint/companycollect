@@ -12,6 +12,7 @@ make download
 ./cc-download-worker/bin/cc-warc-analyzer \
   --base /opt/companycollect/corpscout/commoncrawl/data \
   --crawl CC-MAIN-2026-25 \
+  --mode tech \
   --parts 85-94
 ```
 
@@ -21,6 +22,8 @@ The analyzer compares:
 - `bounded_gap_*`: combine physically nearby selected records up to `--max-range-bytes`.
 - `junk_threshold_*`: combine records only while junk remains below each configured percentage.
 - `selected_warc_span_lower_bound`: one span between the first and last selected record in each WARC.
+- `hybrid_whole_warc_*pct`: download a complete WARC when selected compressed bytes meet the configured
+  percentage; otherwise use exact selected-record requests.
 - `whole_warc_objects`: exact complete-object sizes obtained with HTTP metadata requests.
 
 Each range policy is evaluated at three scopes:
@@ -33,14 +36,22 @@ Whole-WARC size checks use `HEAD`, falling back to a one-byte range metadata req
 under `<base>/<crawl>/analysis/warc_sizes.json`; use `--whole-warc-sizes=false` to run only index-based
 analysis.
 
+By default, the requested range is filtered through the same local completion markers as `cc-crawl`:
+`<base>/<crawl>/crawl/out_<mode>_<part>.loaded`. Only missing parts contribute selected bytes to WARC
+coverage and hybrid decisions. Use `--skip-loaded=false` only when intentionally analyzing completed
+parts again.
+
 Useful controls:
 
 | Flag | Default | Meaning |
 |---|---:|---|
 | `--parts` | required | One part or inclusive block such as `85-94` or `85-114`. |
+| `--mode` | `tech` | Marker namespace used to exclude completed parts (`tech` or `industry`). |
+| `--skip-loaded` | `true` | Exclude parts already carrying a local `.loaded` marker. |
 | `--pages-per-domain` | `25` | Page-selection policy shared with the downloader. |
 | `--max-range-bytes` | `16 MiB` | Maximum candidate coalesced range. |
 | `--junk-thresholds` | `10,25,50,75` | Maximum junk percentages compared by the planner. |
+| `--whole-warc-thresholds` | `25,50,75` | Selected compressed-byte coverage that triggers a complete WARC download. |
 | `--whole-warc-sizes` | `true` | Measure exact sizes of all referenced WARC objects. |
 | `--warc-head-concurrency` | `32` | Concurrent WARC size metadata requests. |
 

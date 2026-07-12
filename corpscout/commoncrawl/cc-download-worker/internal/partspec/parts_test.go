@@ -29,3 +29,12 @@ func TestParse(t *testing.T) {
 		}
 	}
 }
+
+func TestFormat(t *testing.T) {
+	if got := Format([]int{85, 86, 87, 90, 92, 93}); got != "85-87,90,92-93" {
+		t.Fatalf("Format()=%q", got)
+	}
+	if got := Format(nil); got != "" {
+		t.Fatalf("Format(nil)=%q", got)
+	}
+}

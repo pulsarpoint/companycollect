@@ -1,6 +1,7 @@
 package partspec
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -32,4 +33,30 @@ func Parse(value string) ([]int, error) {
 		parts[index] = low + index
 	}
 	return parts, nil
+}
+
+func Format(parts []int) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	var formatted []string
+	start := parts[0]
+	end := start
+	for _, part := range parts[1:] {
+		if part == end+1 {
+			end = part
+			continue
+		}
+		formatted = append(formatted, formatRange(start, end))
+		start = part
+		end = part
+	}
+	return strings.Join(append(formatted, formatRange(start, end)), ",")
+}
+
+func formatRange(start, end int) string {
+	if start == end {
+		return strconv.Itoa(start)
+	}
+	return fmt.Sprintf("%d-%d", start, end)
 }

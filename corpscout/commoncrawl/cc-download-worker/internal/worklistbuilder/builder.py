@@ -82,6 +82,11 @@ def worklist_query(source: str, pages_per_domain: int, languages_available: bool
           FROM {source}
           WHERE fetch_status = 200
             AND COALESCE(content_mime_detected, content_mime_type) IN ({mime})
+            AND NULLIF(trim(url_host_registered_domain), '') IS NOT NULL
+            AND NULLIF(trim(url), '') IS NOT NULL
+            AND NULLIF(trim(warc_filename), '') IS NOT NULL
+            AND warc_record_offset >= 0
+            AND warc_record_length > 0
         ) WHERE rn <= {pages_per_domain}
         ORDER BY root_domain, rn
     """
