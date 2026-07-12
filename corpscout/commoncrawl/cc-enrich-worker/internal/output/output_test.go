@@ -27,3 +27,44 @@ func TestRowTagsConsistent(t *testing.T) {
 		}
 	}
 }
+
+func TestPageEvidenceColumnsMatchClickHouse(t *testing.T) {
+	tests := []struct {
+		name string
+		row  any
+		want []string
+	}{
+		{
+			name: "technologies",
+			row:  TechRow{},
+			want: []string{
+				"crawl_id", "root_domain", "page_url", "subdomain",
+				"warc_index", "warc_filename", "warc_record_offset", "warc_record_length",
+				"technology", "category", "version", "confidence", "source_run_id", "resolved_at",
+			},
+		},
+		{
+			name: "metadata",
+			row:  MetadataRow{},
+			want: []string{
+				"crawl_id", "root_domain", "page_url", "subdomain",
+				"warc_index", "warc_filename", "warc_record_offset", "warc_record_length",
+				"name", "description", "logo", "country", "founding_year", "employee_count", "source",
+				"source_run_id", "resolved_at",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rt := reflect.TypeOf(test.row)
+			got := make([]string, 0, rt.NumField())
+			for i := 0; i < rt.NumField(); i++ {
+				got = append(got, rt.Field(i).Tag.Get("ch"))
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("columns = %v, want %v", got, test.want)
+			}
+		})
+	}
+}

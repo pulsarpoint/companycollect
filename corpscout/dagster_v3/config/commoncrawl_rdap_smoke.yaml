@@ -1,0 +1,10 @@
+ops:
+  commoncrawl_ip_rdap_networks:
+    config:
+      candidate_scan_limit: 100
+      max_requests: 5
+      insert_batch_size: 100
+      request_delay_seconds: 1.0
+      parent_depth: 1
+      rate_limit_retry_seconds: 3600
+      transient_retry_seconds: 900

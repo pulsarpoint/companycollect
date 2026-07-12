@@ -1,482 +1,337 @@
-"""Command-line entry point for the WARC index builder."""
+"""Command-line entry point for the WARC-oriented index builder."""
 
 import argparse
+import fcntl
+import hashlib
 import os
-import re
+import shutil
 import sys
-import time
-from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO
 
-import duckdb
 import httpx
 
 from .catalog import (
-    CatalogPublicationResult,
-    CandidateShardResult,
-    FinalCatalogBuildError,
-    FinalCatalogResult,
-    WarcSizeBatchResult,
-    build_candidate_shard,
-    catalog_build_lock,
-    checkpoint_warc_size_batch,
-    inspect_published_catalog,
-    prepare_build_directory,
-    prepare_warc_size_resume,
-    recover_published_catalog_cleanup,
-    require_path_within,
-    publish_catalog,
-    verify_or_finalize_warc_inventory,
+    CandidateBuildError,
+    build_candidate,
+    build_catalog,
+    complete_parquet,
+    open_duckdb,
+    publish_parquets,
+    read_catalog,
 )
 from .events import binary_size, emit_event
 from .manifests import (
-    IndexSource,
-    SourceSchema,
-    recheck_crawl_manifests,
+    read_index_sources,
+    read_warc_inventory,
+    sample_warc_sizes,
+    sync_manifests,
 )
-from .object_sizes import (
-    WarcSizeFailure,
-    WarcSizeOutcome,
-    iter_warc_size_outcomes,
-)
-from .selection import SELECTION_POLICY_VERSION, selection_policy_sha256
+from .selection import SELECTION_VERSION
 
 
-_CRAWL_ID = re.compile(r"CC-MAIN-[0-9]{4}-[0-9]{2}")
-_WARC_SIZE_CHECKPOINT_BATCH = 256
+WARC_SIZE_SAMPLE_COUNT = 256
+WARC_HEAD_CONCURRENCY = 32
 
 
-class WarcSizeBuildError(RuntimeError):
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class CommandOptions:
-    base: Path
-    crawl: str
-    pages_per_domain: int
-    threads: int | None
-    memory_limit: str | None
-    temp_dir: Path | None
-    warc_size_concurrency: int
-    http_attempts: int
-    rebuild: bool
-    check: bool
-
-    @property
-    def selection_name(self) -> str:
-        return f"pages{self.pages_per_domain}"
-
-    @property
-    def catalog_directory(self) -> Path:
-        return (self.base / self.crawl / "catalog" / self.selection_name).resolve()
-
-    @property
-    def catalog_path(self) -> Path:
-        return self.catalog_directory / "catalog.duckdb"
-
-
-@dataclass(frozen=True, slots=True)
-class WarcSizePhaseResult:
-    inventory_sha256: str
-    total_objects: int
-    reused_objects: int
-    sized_objects: int
-    batches: int
-    attempts: int
-    retries: int
-    head_requests: int
-    range_requests: int
-    http_429: int
-    http_503: int
-
-    @property
-    def http_requests(self) -> int:
-        return self.head_requests + self.range_requests
-
-
-def _crawl_id(value: str) -> str:
-    if _CRAWL_ID.fullmatch(value) is None:
-        raise argparse.ArgumentTypeError("must match CC-MAIN-YYYY-NN")
-    return value
-
-
-def _positive_integer(value: str) -> int:
+def positive_integer(value: str) -> int:
     try:
         number = int(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError("must be a positive integer") from error
-    if number <= 0:
+    if number < 1:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return number
 
 
-def _pages_per_domain(value: str) -> int:
-    number = _positive_integer(value)
-    if number > 65_535:
-        raise argparse.ArgumentTypeError("must be between 1 and 65535")
-    return number
-
-
-def _nonempty(value: str) -> str:
-    value = value.strip()
-    if not value:
-        raise argparse.ArgumentTypeError("must not be empty")
-    return value
-
-
-def parse_options(argv: Sequence[str] | None = None) -> CommandOptions:
-    default_base = os.environ.get("OUT_BASE_DIR") or "data"
+def parse_options(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="cc-warc-index-builder",
-        description="Build a WARC-oriented catalog from the Common Crawl Parquet URL Index.",
+        description=(
+            "Query Common Crawl URL-index Parquets per shard and build one "
+            "pruned WARC-oriented DuckDB catalog."
+        ),
     )
-    parser.add_argument("--base", type=_nonempty, default=default_base)
-    parser.add_argument("--crawl", type=_crawl_id, required=True)
-    parser.add_argument("--pages-per-domain", type=_pages_per_domain, default=25)
-    parser.add_argument("--threads", type=_positive_integer)
-    parser.add_argument("--memory-limit", type=_nonempty)
-    parser.add_argument("--temp-dir", type=_nonempty)
-    parser.add_argument("--warc-size-concurrency", type=_positive_integer, default=64)
-    parser.add_argument("--http-attempts", type=_positive_integer, default=5)
-    operation = parser.add_mutually_exclusive_group()
-    operation.add_argument("--rebuild", action="store_true")
-    operation.add_argument("--check", action="store_true")
-
-    values = parser.parse_args(argv)
-    base = Path(values.base).expanduser().resolve()
-    temp_dir = Path(values.temp_dir).expanduser().resolve() if values.temp_dir else None
-    options = CommandOptions(
-        base=base,
-        crawl=values.crawl,
-        pages_per_domain=values.pages_per_domain,
-        threads=values.threads,
-        memory_limit=values.memory_limit,
-        temp_dir=temp_dir,
-        warc_size_concurrency=values.warc_size_concurrency,
-        http_attempts=values.http_attempts,
-        rebuild=values.rebuild,
-        check=values.check,
+    parser.add_argument("--crawl", required=True)
+    parser.add_argument(
+        "--base",
+        type=Path,
+        default=Path(os.environ.get("OUT_BASE_DIR", "data")),
     )
-    try:
-        require_path_within(base, options.catalog_directory)
-    except ValueError:
-        parser.error("catalog path escapes --base")
+    parser.add_argument("--pages-per-domain", type=positive_integer, default=25)
+    parser.add_argument("--attempts", type=positive_integer, default=5)
+    parser.add_argument("--threads", type=positive_integer)
+    parser.add_argument("--memory-limit")
+    parser.add_argument("--rebuild-catalog", action="store_true")
+    parser.add_argument("--cleanup-candidates", action="store_true")
+    options = parser.parse_args(argv)
+    if options.pages_per_domain > 0xFFFF:
+        parser.error("--pages-per-domain must not exceed 65535")
+    options.base = options.base.expanduser().resolve()
     return options
 
 
-def build_candidate_shards(
-    state_connection: duckdb.DuckDBPyConnection,
-    query_connection: duckdb.DuckDBPyConnection,
-    build_directory: Path,
-    sources: Sequence[IndexSource],
-    schemas: Sequence[SourceSchema],
-    *,
-    crawl_id: str,
-    pages_per_domain: int,
-    http_attempts: int,
-    stream: TextIO | None = None,
-) -> tuple[CandidateShardResult, ...]:
-    """Build candidates sequentially and report one completion per source."""
-    if len(sources) != len(schemas):
-        raise ValueError("index sources and source schemas must have the same length")
-    results: list[CandidateShardResult] = []
-    sources_total = len(sources)
-    for sources_completed, (source, schema) in enumerate(
-        zip(sources, schemas), start=1
-    ):
-        result = build_candidate_shard(
-            state_connection,
-            query_connection,
-            build_directory,
-            source,
-            schema,
-            pages_per_domain,
-            http_attempts,
-        )
-        results.append(result)
-        emit_event(
-            "candidate shard ready",
-            stream=stream,
-            crawl=crawl_id,
-            selection=f"pages{pages_per_domain}",
-            source_index=result.source_index,
-            sources_completed=sources_completed,
-            sources_total=sources_total,
-            candidate_rows=result.rows,
-            candidate_bytes=result.byte_count,
-            candidate_size=binary_size(result.byte_count),
-            elapsed_seconds=result.elapsed_seconds,
-            rows_per_second=(
-                None
-                if result.reused or result.elapsed_seconds <= 0
-                else result.rows / result.elapsed_seconds
-            ),
-            attempts=result.attempts_this_run,
-            attempts_total=result.attempts_total,
-            retries=result.retries,
-            http_429=result.http_429,
-            http_503=result.http_503,
-            reused=result.reused,
-        )
-    return tuple(results)
+def file_sha256(path: Path) -> str:
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def _emit_warc_size_batch(
-    result: WarcSizeBatchResult,
-    *,
-    crawl_id: str,
-    selection_name: str,
-    batch_index: int,
-    total_objects: int,
-    reused_objects: int,
-    elapsed_seconds: float,
-    stream: TextIO | None,
-) -> None:
+def run(options: argparse.Namespace) -> int:
+    selection_directory = (
+        options.base / options.crawl / "warc-index" / f"pages{options.pages_per_domain}"
+    )
+    selection_directory.mkdir(parents=True, exist_ok=True)
+    lock_path = selection_directory / ".build.lock"
+    with lock_path.open("a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError(
+                f"another index build is active for {options.crawl} "
+                f"with {options.pages_per_domain} pages per domain"
+            ) from error
+        return _run_locked(options)
+
+
+def _run_locked(options: argparse.Namespace) -> int:
+    crawl_directory = options.base / options.crawl / "warc-index"
+    manifest_directory = crawl_directory / "manifests"
+    selection_directory = crawl_directory / f"pages{options.pages_per_domain}"
+    candidate_root = selection_directory / "candidates"
+    temp_directory = selection_directory / "temp"
+    catalog_path = selection_directory / "catalog.duckdb"
+    warcs_parquet_path = selection_directory / "warcs.parquet"
+    pages_parquet_path = selection_directory / "pages.parquet"
+
     emit_event(
-        "WARC size batch ready",
-        level="WARN" if result.failures else "INFO",
-        stream=stream,
-        crawl=crawl_id,
-        selection=selection_name,
-        batch=batch_index,
-        batch_objects=result.objects,
-        successful_objects=result.successes,
-        failed_objects=result.failures,
-        objects_completed=result.objects_completed,
-        objects_pending=result.objects_pending,
-        objects_total=total_objects,
-        reused_objects=reused_objects,
-        object_bytes=result.object_bytes,
-        object_size=binary_size(result.object_bytes),
-        known_bytes=result.known_bytes,
-        known_size=binary_size(result.known_bytes),
-        elapsed_seconds=elapsed_seconds,
-        objects_per_second=(
-            None if elapsed_seconds <= 0 else result.objects / elapsed_seconds
-        ),
-        attempts=result.attempts,
-        attempts_total=result.attempts_total,
-        retries=result.retries,
-        http_attempts=result.http_requests,
-        head_requests=result.head_requests,
-        range_requests=result.range_requests,
-        http_429=result.http_429,
-        http_503=result.http_503,
-        final=result.objects_pending == 0,
+        "WARC index build started",
+        crawl=options.crawl,
+        pages_per_domain=options.pages_per_domain,
+        output=str(catalog_path),
     )
-
-
-def build_warc_sizes(
-    state_connection: duckdb.DuckDBPyConnection,
-    client: httpx.Client,
-    *,
-    crawl_id: str,
-    selection_name: str,
-    concurrency: int,
-    http_attempts: int,
-    checkpoint_batch_size: int = _WARC_SIZE_CHECKPOINT_BATCH,
-    timeout: httpx.Timeout | float = 30.0,
-    stream: TextIO | None = None,
-) -> WarcSizePhaseResult:
-    """Probe only missing sizes and durably commit completion-ordered batches."""
-    if checkpoint_batch_size <= 0:
-        raise ValueError("checkpoint_batch_size must be positive")
-    resume = prepare_warc_size_resume(state_connection)
-    if not resume.pending:
-        inventory_hash = verify_or_finalize_warc_inventory(state_connection)
-        return WarcSizePhaseResult(
-            inventory_sha256=inventory_hash,
-            total_objects=resume.total_objects,
-            reused_objects=resume.reused_objects,
-            sized_objects=0,
-            batches=0,
-            attempts=0,
-            retries=0,
-            head_requests=0,
-            range_requests=0,
-            http_429=0,
-            http_503=0,
-        )
-
-    outcomes = iter_warc_size_outcomes(
-        client,
-        resume.pending,
-        concurrency=concurrency,
-        max_attempts=http_attempts,
-        timeout=timeout,
-    )
-    batch: list[WarcSizeOutcome] = []
-    failures: list[WarcSizeFailure] = []
-    batches: list[WarcSizeBatchResult] = []
-    batch_started = time.monotonic()
-    try:
-        while True:
-            try:
-                outcome = next(outcomes)
-            except StopIteration:
-                break
-            except BaseException:
-                if batch:
-                    result = checkpoint_warc_size_batch(state_connection, batch)
-                    _emit_warc_size_batch(
-                        result,
-                        crawl_id=crawl_id,
-                        selection_name=selection_name,
-                        batch_index=len(batches),
-                        total_objects=resume.total_objects,
-                        reused_objects=resume.reused_objects,
-                        elapsed_seconds=time.monotonic() - batch_started,
-                        stream=stream,
-                    )
-                    batches.append(result)
-                    batch = []
-                raise
-
-            batch.append(outcome)
-            if isinstance(outcome, WarcSizeFailure):
-                failures.append(outcome)
-            if len(batch) < checkpoint_batch_size:
-                continue
-
-            result = checkpoint_warc_size_batch(state_connection, batch)
-            _emit_warc_size_batch(
-                result,
-                crawl_id=crawl_id,
-                selection_name=selection_name,
-                batch_index=len(batches),
-                total_objects=resume.total_objects,
-                reused_objects=resume.reused_objects,
-                elapsed_seconds=time.monotonic() - batch_started,
-                stream=stream,
+    if (
+        not options.rebuild_catalog
+        and (
+            existing := read_catalog(
+                catalog_path,
+                expected_crawl=options.crawl,
+                expected_pages_per_domain=options.pages_per_domain,
             )
-            batches.append(result)
-            batch = []
-            batch_started = time.monotonic()
-    finally:
-        outcomes.close()
-
-    if batch:
-        result = checkpoint_warc_size_batch(state_connection, batch)
-        _emit_warc_size_batch(
-            result,
-            crawl_id=crawl_id,
-            selection_name=selection_name,
-            batch_index=len(batches),
-            total_objects=resume.total_objects,
-            reused_objects=resume.reused_objects,
-            elapsed_seconds=time.monotonic() - batch_started,
-            stream=stream,
         )
-        batches.append(result)
-
-    if failures:
-        first = failures[0]
-        raise WarcSizeBuildError(
-            f"{len(failures)} WARC size probe(s) failed; first "
-            f"warc_index={first.warc.warc_index}: {first.error}"
-        ) from first.error
-
-    inventory_hash = verify_or_finalize_warc_inventory(state_connection)
-    return WarcSizePhaseResult(
-        inventory_sha256=inventory_hash,
-        total_objects=resume.total_objects,
-        reused_objects=resume.reused_objects,
-        sized_objects=sum(batch_result.successes for batch_result in batches),
-        batches=len(batches),
-        attempts=sum(batch_result.attempts for batch_result in batches),
-        retries=sum(batch_result.retries for batch_result in batches),
-        head_requests=sum(batch_result.head_requests for batch_result in batches),
-        range_requests=sum(batch_result.range_requests for batch_result in batches),
-        http_429=sum(batch_result.http_429 for batch_result in batches),
-        http_503=sum(batch_result.http_503 for batch_result in batches),
-    )
-
-
-def recheck_and_publish_catalog(
-    client: httpx.Client,
-    final_catalog: FinalCatalogResult,
-    catalog_directory: Path,
-    build_directory: Path,
-    *,
-    http_attempts: int,
-    replace_existing: bool,
-    timeout_seconds: float = 60.0,
-) -> CatalogPublicationResult:
-    """Recheck both remote manifests immediately before local publication."""
-    validation = final_catalog.validation
-    recheck_crawl_manifests(
-        client,
-        validation.crawl_id,
-        expected_warc_sha256=validation.warc_manifest_sha256,
-        expected_index_sha256=validation.index_manifest_sha256,
-        attempts=http_attempts,
-        timeout_seconds=timeout_seconds,
-    )
-    return publish_catalog(
-        final_catalog,
-        catalog_directory,
-        build_directory,
-        replace_existing=replace_existing,
-    )
-
-
-def run(options: CommandOptions) -> int:
-    if options.check:
+        is not None
+    ):
+        parquets_reused = complete_parquet(warcs_parquet_path) and complete_parquet(
+            pages_parquet_path
+        )
+        if not parquets_reused:
+            publish_parquets(catalog_path)
+        warcs_parquet_bytes = warcs_parquet_path.stat().st_size
+        pages_parquet_bytes = pages_parquet_path.stat().st_size
+        emit_event(
+            "catalog ready",
+            crawl=options.crawl,
+            pages_per_domain=options.pages_per_domain,
+            catalog=str(existing.path),
+            warc_count=existing.warc_count,
+            selected_warc_count=existing.selected_warc_count,
+            selected_page_count=existing.selected_page_count,
+            selected_bytes=existing.selected_bytes,
+            selected_size=binary_size(existing.selected_bytes),
+            estimated_average_warc_bytes=existing.estimated_average_warc_bytes,
+            estimated_average_warc_size=binary_size(
+                round(existing.estimated_average_warc_bytes)
+            ),
+            reused=True,
+        )
+        emit_event(
+            "portable Parquets ready",
+            crawl=options.crawl,
+            warcs=str(warcs_parquet_path),
+            warcs_bytes=warcs_parquet_bytes,
+            warcs_size=binary_size(warcs_parquet_bytes),
+            pages=str(pages_parquet_path),
+            pages_bytes=pages_parquet_bytes,
+            pages_size=binary_size(pages_parquet_bytes),
+            reused=parquets_reused,
+        )
+        if options.cleanup_candidates and candidate_root.exists():
+            shutil.rmtree(candidate_root)
         return 0
-    catalog_directory = options.catalog_directory
-    require_path_within(options.base, catalog_directory)
-    with catalog_build_lock(catalog_directory):
-        if not options.rebuild:
-            existing = inspect_published_catalog(
-                options.catalog_path,
-                crawl_id=options.crawl,
-                pages_per_domain=options.pages_per_domain,
-                selection_policy_version=SELECTION_POLICY_VERSION,
-                selection_policy_sha256=selection_policy_sha256(),
-            )
-            if existing is not None:
-                if not existing.reusable:
-                    raise FinalCatalogBuildError(
-                        "published catalog conflicts with current crawl or selection; "
-                        "use --rebuild"
-                    )
-                build_directory = catalog_directory / ".build"
-                if not recover_published_catalog_cleanup(
-                    catalog_directory,
-                    build_directory,
-                    existing.catalog_id,
-                ):
-                    existing = None
-            if existing is not None:
-                emit_event(
-                    "catalog ready",
-                    crawl=options.crawl,
-                    selection=options.selection_name,
-                    catalog_id=existing.catalog_id,
-                    warc_count=existing.warc_count,
-                    selected_page_count=existing.selected_page_count,
-                    distinct_domain_count=existing.distinct_domain_count,
-                    reused=True,
+    if not options.rebuild_catalog and (
+        catalog_path.exists() or catalog_path.is_symlink()
+    ):
+        raise RuntimeError(
+            f"catalog exists but failed identity or health validation: {catalog_path}; "
+            "use --rebuild-catalog to replace it"
+        )
+
+    with httpx.Client(
+        timeout=httpx.Timeout(60.0, connect=30.0),
+        headers={"User-Agent": "cc-warc-index-builder/0.1"},
+    ) as client:
+        manifests = sync_manifests(
+            client,
+            options.crawl,
+            manifest_directory,
+            attempts=options.attempts,
+        )
+        sources = read_index_sources(manifests.index_path, options.crawl)
+        warcs = read_warc_inventory(manifests.warc_path, options.crawl)
+        index_manifest_sha256 = file_sha256(manifests.index_path)
+        warc_manifest_sha256 = file_sha256(manifests.warc_path)
+        candidate_directory = (
+            candidate_root / f"v{SELECTION_VERSION}-{index_manifest_sha256}"
+        )
+        candidate_directory.mkdir(parents=True, exist_ok=True)
+        emit_event(
+            "source manifests ready",
+            crawl=options.crawl,
+            index_sources=len(sources),
+            warc_objects=len(warcs),
+        )
+
+        shutil.rmtree(temp_directory, ignore_errors=True)
+        connection = open_duckdb(
+            None,
+            temp_directory / "candidates",
+            threads=options.threads,
+            memory_limit=options.memory_limit,
+        )
+        try:
+            ready = []
+            failures = []
+            for source in sources:
+                output_path = (
+                    candidate_directory / f"part-{source.source_index:05d}.parquet"
                 )
-                return 0
-        prepare_build_directory(options.base, catalog_directory, rebuild=options.rebuild)
+                try:
+                    result = build_candidate(
+                        connection,
+                        source,
+                        output_path,
+                        pages_per_domain=options.pages_per_domain,
+                        attempts=options.attempts,
+                    )
+                    ready.append(result)
+                    emit_event(
+                        "candidate shard ready",
+                        crawl=options.crawl,
+                        source_index=source.source_index,
+                        sources_ready=len(ready),
+                        sources_total=len(sources),
+                        candidate_rows=result.rows,
+                        candidate_bytes=result.byte_count,
+                        candidate_size=binary_size(result.byte_count),
+                        elapsed_seconds=result.elapsed_seconds,
+                        rows_per_second=(
+                            None
+                            if result.reused or result.elapsed_seconds <= 0
+                            else result.rows / result.elapsed_seconds
+                        ),
+                        attempts=result.attempts,
+                        reused=result.reused,
+                    )
+                except CandidateBuildError as error:
+                    failures.append((source, str(error)))
+                    emit_event(
+                        "candidate shard failed",
+                        level="WARN",
+                        crawl=options.crawl,
+                        source_index=source.source_index,
+                        source_path=source.path,
+                        attempts=options.attempts,
+                        error=str(error),
+                    )
+        finally:
+            connection.close()
+            shutil.rmtree(temp_directory, ignore_errors=True)
+
+        if failures:
+            raise RuntimeError(
+                f"{len(failures)} of {len(sources)} remote candidate queries failed; "
+                "rerun to retry only the missing shards"
+            )
+
+        sample = sample_warc_sizes(
+            client,
+            options.crawl,
+            warcs,
+            crawl_directory / f"warc-size-sample-{WARC_SIZE_SAMPLE_COUNT}.json",
+            count=WARC_SIZE_SAMPLE_COUNT,
+            workers=WARC_HEAD_CONCURRENCY,
+            attempts=options.attempts,
+        )
+        emit_event(
+            "WARC size sample ready",
+            crawl=options.crawl,
+            sampled_warcs=len(sample.sizes),
+            sampled_average_warc_bytes=sample.average_bytes,
+            sampled_average_warc_size=binary_size(round(sample.average_bytes)),
+            reused=sample.reused,
+        )
+
+    result = build_catalog(
+        catalog_path,
+        [candidate.path for candidate in ready],
+        warcs,
+        sample.sizes,
+        crawl=options.crawl,
+        pages_per_domain=options.pages_per_domain,
+        index_manifest_sha256=index_manifest_sha256,
+        warc_manifest_sha256=warc_manifest_sha256,
+        temp_directory=temp_directory / "catalog",
+        threads=options.threads,
+        memory_limit=options.memory_limit,
+    )
+    publish_parquets(catalog_path)
+    warcs_parquet_bytes = warcs_parquet_path.stat().st_size
+    pages_parquet_bytes = pages_parquet_path.stat().st_size
+    emit_event(
+        "catalog ready",
+        crawl=options.crawl,
+        pages_per_domain=options.pages_per_domain,
+        catalog=str(result.path),
+        warc_count=result.warc_count,
+        selected_warc_count=result.selected_warc_count,
+        selected_page_count=result.selected_page_count,
+        selected_bytes=result.selected_bytes,
+        selected_size=binary_size(result.selected_bytes),
+        estimated_average_warc_bytes=result.estimated_average_warc_bytes,
+        estimated_average_warc_size=binary_size(
+            round(result.estimated_average_warc_bytes)
+        ),
+        reused=result.reused,
+    )
+    emit_event(
+        "portable Parquets ready",
+        crawl=options.crawl,
+        warcs=str(warcs_parquet_path),
+        warcs_bytes=warcs_parquet_bytes,
+        warcs_size=binary_size(warcs_parquet_bytes),
+        pages=str(pages_parquet_path),
+        pages_bytes=pages_parquet_bytes,
+        pages_size=binary_size(pages_parquet_bytes),
+        reused=False,
+    )
+    if options.cleanup_candidates:
+        shutil.rmtree(candidate_root)
+        emit_event(
+            "candidate shards removed",
+            crawl=options.crawl,
+            path=str(candidate_root),
+        )
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     options = parse_options(argv)
     try:
         return run(options)
     except Exception as error:
         emit_event(
-            "catalog build failed",
+            "WARC index build failed",
             level="ERROR",
             stream=sys.stderr,
             crawl=options.crawl,
-            selection=options.selection_name,
             error_type=type(error).__name__,
             error=str(error),
         )

@@ -13,3 +13,12 @@ func TestKindsCoverTables(t *testing.T) {
 		}
 	}
 }
+
+func TestPageEvidenceKindsUsePageTables(t *testing.T) {
+	if got := Tables["tech"]; got != "commoncrawl_page_technologies" {
+		t.Errorf("tech table = %q, want commoncrawl_page_technologies", got)
+	}
+	if got := Tables["metadata"]; got != "commoncrawl_page_metadata" {
+		t.Errorf("metadata table = %q, want commoncrawl_page_metadata", got)
+	}
+}

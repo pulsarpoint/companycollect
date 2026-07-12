@@ -25,7 +25,9 @@ def emit_event(
     **fields: object,
 ) -> None:
     event: dict[str, object] = {
-        "time": datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        "time": datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z"),
         "level": level,
         "msg": message,
     }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/cockroachdb/errors"
 )
@@ -20,6 +21,14 @@ var (
 // the production implementations; tests use a focused fake at this protocol boundary.
 type RangeGetter interface {
 	GetRange(ctx context.Context, bucket, key string, start, end int64) ([]byte, error)
+}
+
+// ObjectGetter supports both indexed record reads and streaming a complete WARC
+// object to disk. S3 and anonymous HTTPS are the production implementations.
+type ObjectGetter interface {
+	RangeGetter
+	ObjectSize(ctx context.Context, bucket, key string) (int64, error)
+	DownloadObject(ctx context.Context, bucket, key string, destination *os.File) error
 }
 
 // FetchRecord preserves the original fetch-and-parse API while the downloader and

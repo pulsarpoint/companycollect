@@ -16,12 +16,13 @@ from dagster_v3.defs.commoncrawl_geoip.maxmind import (
     lookup_maxmind_record,
 )
 from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
-
-
-GEOIP_BUCKET_COUNT = 256
-COMMONCRAWL_GEOIP_PARTITIONS = dg.StaticPartitionsDefinition(
-    [f"bucket_{bucket_index:03d}" for bucket_index in range(GEOIP_BUCKET_COUNT)]
+from dagster_v3.defs.commoncrawl_ip import (
+    COMMONCRAWL_IP_ADDRESSES_ASSET,
+    COMMONCRAWL_IP_PARTITIONS,
+    commoncrawl_ip_bucket_index,
 )
+
+
 COMMONCRAWL_GEOIP_POOL = "commoncrawl_geoip"
 GEOIP_COLUMNS = (
     "bucket",
@@ -53,16 +54,6 @@ GEOIP_COLUMNS = (
     "asn_db_build_epoch",
     "enriched_at",
 )
-COMMONCRAWL_IP_ADDRESSES_ASSET = dg.AssetSpec(
-    key="commoncrawl_ip_addresses",
-    description=(
-        "Canonical unique A/AAAA addresses incrementally aggregated from retry-safe "
-        "CommonCrawl DNS record observations."
-    ),
-    group_name="commoncrawl_geoip",
-    kinds={"clickhouse", "dns"},
-)
-
 GEOIP_CANDIDATES_SQL = """
 SELECT
     addresses.ip,
@@ -139,7 +130,7 @@ class CommoncrawlGeoIPConfig(dg.Config):
     deps=[COMMONCRAWL_IP_ADDRESSES_ASSET.key],
     group_name="commoncrawl_geoip",
     kinds={"python", "clickhouse", "dns", "maxmind"},
-    partitions_def=COMMONCRAWL_GEOIP_PARTITIONS,
+    partitions_def=COMMONCRAWL_IP_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=COMMONCRAWL_GEOIP_POOL,
     description=(
@@ -156,7 +147,7 @@ def commoncrawl_ip_geoip(
     if config.insert_batch_size <= 0:
         raise ValueError("insert_batch_size must be greater than zero")
 
-    bucket_index = geoip_bucket_index(context.partition_key)
+    bucket_index = commoncrawl_ip_bucket_index(context.partition_key)
     assert_clickhouse_tables_exist(
         clickhouse,
         database="corpscout",
@@ -213,16 +204,6 @@ def commoncrawl_ip_geoip(
         metadata,
     )
     return dg.MaterializeResult(metadata=metadata)
-
-
-def geoip_bucket_index(partition_key: str) -> int:
-    prefix, separator, suffix = partition_key.partition("_")
-    if prefix != "bucket" or separator == "" or not suffix.isdigit():
-        raise ValueError(f"Invalid GeoIP partition key: {partition_key!r}")
-    bucket_index = int(suffix)
-    if not 0 <= bucket_index < GEOIP_BUCKET_COUNT:
-        raise ValueError(f"GeoIP bucket index out of range: {bucket_index}")
-    return bucket_index
 
 
 def _enrich_geoip_bucket(

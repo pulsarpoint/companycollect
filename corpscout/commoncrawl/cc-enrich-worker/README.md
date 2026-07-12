@@ -1,29 +1,44 @@
 # cc-enrich-worker
 
-The Common Crawl processor. It reads a completed raw part from local-network RustFS, parses the selected
-WARC records, runs industry or technology enrichment, writes local Parquet files, and loads those files
-into ClickHouse as a separate command.
+Processes selected pages directly from Common Crawl using the static WARC-oriented catalog created by
+[`cc-warc-index-builder`](../cc-warc-index-builder/).
 
-Raw downloading is owned by [`cc-download-worker`](../cc-download-worker/). Shared pack, index, manifest,
-and ready-document contracts live in [`cc-raw`](../cc-raw/).
+## Input contract
 
-## Processing contract
+For selection `pages25`, the worker reads:
 
-The existing two-stage lifecycle is unchanged:
+```text
+<base>/<crawl>/warc-index/pages25/warcs.parquet
+<base>/<crawl>/warc-index/pages25/pages.parquet
+```
 
-| Stage | Command | Result |
-|---|---|---|
-| produce | `industry`, `embed`, `tech`, or `both` | Reads one ready RustFS part and writes local Parquet. |
-| load | `load --dir ...` | Reads the local Parquet and inserts it into ClickHouse. |
+`--part N` means WARC index `N`. The worker loads that WARC's selected page coordinates and calculates
+the compressed bytes required by the current processor:
 
-Produce never inserts result rows into ClickHouse. `cc-crawl` runs produce, verifies
-`domains.parquet`, runs `load --dir`, and creates the local `out_<mode>_<part>.loaded` marker only after
-the load succeeds. A rerun skips that part before the worker reads RustFS.
+- `tech` and `both` use every selected page;
+- `industry` and `embed` use only pages whose catalog rank is `1`.
 
-There is no input-mode flag. RustFS is the only produce input. There is also no public worklist flag:
-`cc-download-worker` stores the exact worklist identity, indexes, and packs that comprise a ready part.
+It HEADs a non-empty WARC to get its actual object size. When
+`selected_bytes / object_bytes * 100` is at least `--whole-warc-threshold`, the complete WARC is streamed
+once to a temporary local file and indexed records are served with concurrent `ReadAt` calls. Below the
+threshold, the existing exact object-range reader is used. The complete WARC is never buffered in memory and
+the temporary file is removed when processing finishes or input preparation fails.
 
-## Build
+A WARC with no pages for the requested processor is a valid successful unit. It does not initialize an
+AWS client or make a network request.
+
+## Processing lifecycle
+
+The `cc-crawl` produce/load lifecycle remains unchanged for `industry` and `tech`:
+
+1. The processor produces local Parquet files.
+2. `load --dir ...` inserts supported files into ClickHouse.
+3. `cc-crawl` writes `out_<mode>_<warc-index>.loaded` only after loading succeeds.
+
+The local `.loaded` file remains the authoritative skip check. Produce never marks a WARC as loaded.
+`embed` uses its completed vector file, and direct-only `both` has no orchestrated marker.
+
+## Build and run
 
 From `commoncrawl/`:
 
@@ -31,104 +46,68 @@ From `commoncrawl/`:
 make -C cc-enrich-worker
 make -C cc-enrich-worker test
 make -C cc-enrich-worker vet
-make -C cc-enrich-worker arm
 ```
 
-The binary is written to `cc-enrich-worker/bin/cc-enrich-worker`.
+The normal entry point is `cc-crawl`:
 
-## Run
+```bash
+./cc-crawl/bin/cc-crawl \
+  -base /opt/companycollect/corpscout/commoncrawl/data \
+  -crawl CC-MAIN-2026-25 \
+  -mode tech \
+  -parts 0-10 \
+  -tech-conc 32 \
+  -whole-warc-threshold 50
+```
 
-The normal entry point remains `cc-crawl`; its CLI is unchanged:
+For a direct produce/load run:
 
 ```bash
 set -a; source .env; set +a
 
-./cc-crawl/bin/cc-crawl \
-  -base /opt/companycollect/corpscout/commoncrawl/data \
-  -mode tech \
-  -tech-conc 32 \
-  -parts 0-10 \
-  -crawl CC-MAIN-2026-25
-```
-
-For a direct worker run, identify the already-downloaded RustFS part:
-
-```bash
 ./cc-enrich-worker/bin/cc-enrich-worker tech \
+  --base /opt/companycollect/corpscout/commoncrawl/data \
   --crawl-id CC-MAIN-2026-25 \
   --selection pages25 \
   --part 0 \
+  --whole-warc-threshold 50 \
   --concurrency 32 \
-  --chunk 16384 \
-  --out data/CC-MAIN-2026-25/crawl/out_tech_0
+  --chunk 16384
 
 ./cc-enrich-worker/bin/cc-enrich-worker load \
-  --dir data/CC-MAIN-2026-25/crawl/out_tech_0
+  --dir /opt/companycollect/corpscout/commoncrawl/data/CC-MAIN-2026-25/warc/pages25/out_tech_0
 ```
 
-The downloader and processor must use the same selection. `cc-crawl -max-pages N` derives selection
-`pagesN`; its default remains `25`.
+Use `--s3-anonymous` off AWS to read through `https://data.commoncrawl.org/`. Signed S3 is the default
+and is preferred on EC2.
 
 ## Produce flags
 
-Common to `industry`, `embed`, `tech`, and `both`:
-
 | Flag | Default | Meaning |
 |---|---|---|
+| `--base` | `OUT_BASE_DIR` | Required root containing the crawl catalog and outputs. |
 | `--crawl-id` | required | Crawl identity, for example `CC-MAIN-2026-25`. |
-| `--selection` | `pages25` | RustFS raw selection identity. |
-| `--part` | required | Non-negative URL-index part number. |
-| `--out` | derived | Output directory; defaults to `<base>/<crawl>/crawl/out_<mode>_<part>`. |
-| `--base` | `OUT_BASE_DIR` | Root used only when `--out` is omitted. |
-| `--concurrency` | `32` | Industry/embed pages in flight; tech/both domains in flight. |
-| `--chunk` | `1024` | RustFS index rows processed per tech/both chunk. |
+| `--selection` | `pages25` | Catalog selection directory. |
+| `--part` | required | Zero-based WARC index. |
+| `--whole-warc-threshold` | `50` | Selected compressed-byte percentage that switches to one whole-object download. |
+| `--s3-anonymous` | `false` | Use anonymous HTTPS instead of signed S3. |
+| `--out` | derived | Defaults to `<base>/<crawl>/warc/<selection>/out_<mode>_<part>`. |
+| `--concurrency` | `32` | Industry/embed pages or tech/both domains in flight. |
+| `--chunk` | `1024` | Catalog pages per tech/both processing chunk. |
 
-Industry/embed/both additionally accept `--embed-batch` and `--embed-concurrency`. Tech/both additionally
-accept `--tech-engine` and `--tech-max-bytes`. Run a subcommand with `-h` for exact defaults.
-
-`load` accepts exactly one of `--dir` and `--file`; `--kind` can override kind inference for a single file.
+Industry/embed/both also accept `--embed-batch` and `--embed-concurrency`. Tech/both also accept
+`--tech-engine` and `--tech-max-bytes`.
 
 ## Environment
 
-RustFS produce input:
-
 | Variable | Meaning |
 |---|---|
-| `CORPSCOUT_S3_ENDPOINT` | Local-network RustFS endpoint, for example `http://rustfs:9000`. |
-| `CORPSCOUT_S3_ACCESS_KEY` | RustFS access key. |
-| `CORPSCOUT_S3_SECRET_KEY` | RustFS secret key. |
-| `CORPSCOUT_S3_BUCKET` | Bucket containing `commoncrawl/raw` and `commoncrawl/state`. |
-| `CORPSCOUT_S3_REGION` | Optional S3-compatible region; defaults to `us-east-1`. |
+| `OUT_BASE_DIR` | Default `--base`. |
+| `AWS_REGION` | Signed Common Crawl S3 region; defaults to `us-east-1`. |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Optional explicit credentials; EC2 instance roles are supported. |
+| `CC_BASE_URL` | Anonymous HTTP base; defaults to `https://data.commoncrawl.org/`. |
+| `COMMONCRAWL_EMBED_*` | Industry/embed/both endpoint and model settings. |
+| `CLICKHOUSE_*` | Industry/both reference reads and `load` destination. |
 
-Industry/embed use `COMMONCRAWL_EMBED_*`. Industry produce reads the NACE reference from ClickHouse, and
-`load` writes results using `CLICKHOUSE_*`. Tech produce itself needs neither AWS credentials nor
-ClickHouse.
-
-## RustFS input validation and local buffering
-
-Before processing a part, the worker:
-
-1. requires and validates `download/ready.json`;
-2. validates every chunk manifest and index checksum;
-3. downloads each complete `records.pack` to a temporary directory under `--out`;
-4. validates pack size and SHA-256 while streaming;
-5. serves the existing parser the same complete compressed WARC record bytes and original source
-   coordinates; and
-6. removes the temporary packs after a successful run.
-
-Failed downloader records remain auditable in `index.parquet` and are reported as skipped. A ready part
-with no downloaded records is rejected. RustFS objects are never removed by this worker.
-
-## Output and resumability
-
-Industry/tech outputs retain the existing fixed names such as `domains.parquet`, `tech.parquet`,
-`identifiers.parquet`, and `metadata.parquet`. Embed output remains under the sibling embedding tree and
-is skipped when a valid `embeddings.parquet` or `embeddings_fp16.parquet` already exists.
-
-The authoritative processed-and-loaded check remains the local file:
-
-```text
-data/<crawl>/crawl/out_<mode>_<part>.loaded
-```
-
-RustFS processing markers or distributed leases are not consulted by `cc-crawl`.
+The `WARC input ready` event reports the selected and object sizes, utilization, chosen mode, preparation
+time, and whole-download throughput. Signed-S3 runs additionally report throttling and body-retry counters.

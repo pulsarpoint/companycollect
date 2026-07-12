@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -93,6 +95,201 @@ func TestS3GetterRetriesInterruptedBodyRead(t *testing.T) {
 	}
 }
 
+func TestS3GetterGetsSizeAndStreamsObjectWithRetry(t *testing.T) {
+	const content = "complete WARC object"
+	var downloads atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("Content-Length", itoa(len(content)))
+		case http.MethodGet:
+			download := downloads.Add(1)
+			w.Header().Set("Content-Length", itoa(len(content)))
+			if download == 1 {
+				_, _ = io.WriteString(w, content[:5])
+				return
+			}
+			_, _ = io.WriteString(w, content)
+		default:
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	stats := &s3Counters{}
+	client := s3.New(s3.Options{
+		BaseEndpoint: aws.String(server.URL),
+		Region:       "us-east-1",
+		Credentials:  aws.AnonymousCredentials{},
+		HTTPClient: &http.Client{Transport: s3StatsTransport{
+			base:  server.Client().Transport,
+			stats: stats,
+		}},
+		Retryer:      aws.NopRetryer{},
+		UsePathStyle: true,
+	})
+	getter := &S3Getter{Client: client, stats: stats}
+
+	size, err := getter.ObjectSize(context.Background(), "bucket", "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != int64(len(content)) {
+		t.Fatalf("size=%d, want %d", size, len(content))
+	}
+
+	destination, err := os.CreateTemp(t.TempDir(), "warc-*.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	if _, err := destination.WriteString("old data that must be removed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := getter.DownloadObject(context.Background(), "bucket", "key", destination); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(destination.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Fatalf("downloaded body=%q, want %q", got, content)
+	}
+
+	gotStats := getter.Stats()
+	if gotStats.HeadObjectCalls != 1 || gotStats.GetObjectCalls != 2 || gotStats.HTTPAttempts != 3 {
+		t.Fatalf("HEAD calls=%d GET calls=%d HTTP attempts=%d, want 1/2/3", gotStats.HeadObjectCalls, gotStats.GetObjectCalls, gotStats.HTTPAttempts)
+	}
+	if gotStats.BodyReadAttempts != 2 || gotStats.BodyReadErrors != 1 || gotStats.BodyReadRetries != 1 {
+		t.Fatalf("body stats=%+v, want attempts=2 errors=1 retries=1", gotStats)
+	}
+	if gotStats.BodyBytes != int64(5+len(content)) {
+		t.Fatalf("body bytes=%d, want %d", gotStats.BodyBytes, 5+len(content))
+	}
+}
+
+func TestHTTPGetterGetsSizeAndStreamsObjectWithRetry(t *testing.T) {
+	const content = "complete WARC object"
+	var downloads atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("Content-Length", itoa(len(content)))
+		case http.MethodGet:
+			download := downloads.Add(1)
+			w.Header().Set("Content-Length", itoa(len(content)))
+			if download == 1 {
+				_, _ = io.WriteString(w, content[:5])
+				return
+			}
+			_, _ = io.WriteString(w, content)
+		default:
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	getter := NewHTTPGetter(server.URL, 1)
+	size, err := getter.ObjectSize(context.Background(), "ignored", "object.warc.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != int64(len(content)) {
+		t.Fatalf("size=%d, want %d", size, len(content))
+	}
+
+	destination, err := os.CreateTemp(t.TempDir(), "warc-*.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	if _, err := destination.WriteString("stale bytes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := getter.DownloadObject(context.Background(), "ignored", "object.warc.gz", destination); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(destination.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Fatalf("downloaded body=%q, want %q", got, content)
+	}
+	if downloads.Load() != 2 {
+		t.Fatalf("downloads=%d, want one interrupted attempt and one retry", downloads.Load())
+	}
+}
+
+func TestHTTPGetterDoesNotRetryPermanentDownloadFailure(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	destination, err := os.CreateTemp(t.TempDir(), "warc-*.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	err = NewHTTPGetter(server.URL, 1).DownloadObject(context.Background(), "ignored", "missing.warc.gz", destination)
+	if err == nil {
+		t.Fatal("expected permanent HTTP error")
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests=%d, want 1", requests.Load())
+	}
+}
+
+func TestHTTPGetterRejectsServerThatIgnoresRange(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "complete object that must not be accepted as one record")
+	}))
+	defer server.Close()
+
+	_, err := NewHTTPGetter(server.URL, 1).GetRange(context.Background(), "ignored", "object.warc.gz", 0, 5)
+	if err == nil || !strings.Contains(err.Error(), "ignored bytes=0-5") {
+		t.Fatalf("error=%v, want ignored-range failure", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests=%d, want no retries for HTTP 200", requests.Load())
+	}
+}
+
+func TestHTTPGetterRetriesInterruptedRangeBody(t *testing.T) {
+	const content = "abcdef"
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		request := requests.Add(1)
+		w.Header().Set("Content-Range", "bytes 0-5/100")
+		w.Header().Set("Content-Length", "6")
+		w.WriteHeader(http.StatusPartialContent)
+		if request == 1 {
+			_, _ = io.WriteString(w, content[:3])
+			return
+		}
+		_, _ = io.WriteString(w, content)
+	}))
+	defer server.Close()
+
+	got, err := NewHTTPGetter(server.URL, 1).GetRange(context.Background(), "ignored", "object.warc.gz", 0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Fatalf("range=%q, want %q", got, content)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("requests=%d, want one interrupted attempt and one retry", requests.Load())
+	}
+}
+
 func TestS3StatsTransportCountsThrottleResponses(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -128,11 +325,12 @@ func TestS3StatsTransportCountsThrottleResponses(t *testing.T) {
 }
 
 func TestS3StatsDelta(t *testing.T) {
-	previous := S3Stats{GetObjectCalls: 2, GetObjectTime: 3 * time.Millisecond, HTTP429s: 1, BodyBytes: 10}
-	current := S3Stats{GetObjectCalls: 5, GetObjectTime: 8 * time.Millisecond, HTTP429s: 3, BodyBytes: 24}
+	previous := S3Stats{HeadObjectCalls: 1, HeadObjectTime: time.Millisecond, GetObjectCalls: 2, GetObjectTime: 3 * time.Millisecond, HTTP429s: 1, BodyBytes: 10}
+	current := S3Stats{HeadObjectCalls: 3, HeadObjectTime: 4 * time.Millisecond, GetObjectCalls: 5, GetObjectTime: 8 * time.Millisecond, HTTP429s: 3, BodyBytes: 24}
 
 	delta := current.Delta(previous)
-	if delta.GetObjectCalls != 3 || delta.GetObjectTime != 5*time.Millisecond || delta.HTTP429s != 2 || delta.BodyBytes != 14 {
+	if delta.HeadObjectCalls != 2 || delta.HeadObjectTime != 3*time.Millisecond ||
+		delta.GetObjectCalls != 3 || delta.GetObjectTime != 5*time.Millisecond || delta.HTTP429s != 2 || delta.BodyBytes != 14 {
 		t.Fatalf("delta=%+v", delta)
 	}
 }

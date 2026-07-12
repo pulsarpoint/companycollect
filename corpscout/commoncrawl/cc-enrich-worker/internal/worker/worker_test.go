@@ -156,4 +156,82 @@ func TestProcessShardTechMode(t *testing.T) {
 		res.Identifiers[0].Valid != 1 || res.Identifiers[0].RootDomain != "acme.com" {
 		t.Fatalf("identifier row wrong: %+v", res.Identifiers)
 	}
+	if len(res.Security) != 1 || res.Security[0].RootDomain != "acme.com" {
+		t.Fatalf("tech mode primary-page security row missing: %+v", res.Security)
+	}
+	if len(res.PageMeta) != 1 || res.PageMeta[0].RootDomain != "acme.com" {
+		t.Fatalf("tech mode primary-page metadata row missing: %+v", res.PageMeta)
+	}
+}
+
+func TestTechAndMetadataRowsRetainPageProvenance(t *testing.T) {
+	home := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><head>" +
+		`<script type="application/ld+json">{"@type":"Organization","name":"Acme Home"}</script>` +
+		"</head><body>home</body></html>")
+	about := gzWarc("HTTP/1.1 200 OK\r\n\r\n<html><head>" +
+		`<meta name="generator" content="WordPress 6.4">` +
+		`<link href="/wp-content/themes/x/style.css" rel="stylesheet">` +
+		`<script type="application/ld+json">{"@type":"Organization","name":"Acme Shop"}</script>` +
+		"</head><body>about</body></html>")
+	getter := multiGetter{
+		"first.warc.gz:1234":  home,
+		"second.warc.gz:5678": about,
+	}
+	items := []model.WorklistItem{
+		{RootDomain: "acme.com", URL: "https://acme.com/", WarcIndex: 11, WarcFilename: "first.warc.gz", Offset: 1234, Length: int64(len(home)), Primary: true},
+		{RootDomain: "acme.com", URL: "https://shop.acme.com/about", WarcIndex: 29, WarcFilename: "second.warc.gz", Offset: 5678, Length: int64(len(about))},
+	}
+	resolvedAt := time.Unix(1700000000, 0).UTC()
+	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, ShardConfig{
+		CrawlID: "CC-MAIN-2026-25", SourceRunID: "run-pages", ResolvedAt: resolvedAt,
+		Concurrency: 2, Mode: "tech",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	techByName := make(map[string]output.TechRow)
+	for _, row := range res.Tech {
+		techByName[row.Technology] = row
+	}
+	nginx := techByName["Nginx"]
+	assertTechProvenance(t, nginx, "https://acme.com/", "", 11, "first.warc.gz", 1234, uint64(len(home)))
+	wordPress := techByName["WordPress"]
+	assertTechProvenance(t, wordPress, "https://shop.acme.com/about", "shop", 29, "second.warc.gz", 5678, uint64(len(about)))
+
+	if len(res.Metadata) != 2 {
+		t.Fatalf("want one metadata row per page, got %+v", res.Metadata)
+	}
+	metadataByURL := make(map[string]output.MetadataRow)
+	for _, row := range res.Metadata {
+		metadataByURL[row.PageURL] = row
+	}
+	homeMetadata := metadataByURL["https://acme.com/"]
+	if homeMetadata.Name != "Acme Home" {
+		t.Fatalf("home metadata lost: %+v", homeMetadata)
+	}
+	assertMetadataProvenance(t, homeMetadata, "https://acme.com/", "", 11, "first.warc.gz", 1234, uint64(len(home)))
+	shopMetadata := metadataByURL["https://shop.acme.com/about"]
+	if shopMetadata.Name != "Acme Shop" {
+		t.Fatalf("shop metadata lost: %+v", shopMetadata)
+	}
+	assertMetadataProvenance(t, shopMetadata, "https://shop.acme.com/about", "shop", 29, "second.warc.gz", 5678, uint64(len(about)))
+}
+
+func assertTechProvenance(t *testing.T, row output.TechRow, pageURL, subdomain string, warcIndex uint32, warcFilename string, offset, length uint64) {
+	t.Helper()
+	if row.PageURL != pageURL || row.RootDomain != "acme.com" || row.Subdomain != subdomain ||
+		row.WarcIndex != warcIndex || row.WarcFilename != warcFilename ||
+		row.WarcRecordOffset != offset || row.WarcRecordLength != length {
+		t.Fatalf("technology page provenance mismatch: %+v", row)
+	}
+}
+
+func assertMetadataProvenance(t *testing.T, row output.MetadataRow, pageURL, subdomain string, warcIndex uint32, warcFilename string, offset, length uint64) {
+	t.Helper()
+	if row.PageURL != pageURL || row.RootDomain != "acme.com" || row.Subdomain != subdomain ||
+		row.WarcIndex != warcIndex || row.WarcFilename != warcFilename ||
+		row.WarcRecordOffset != offset || row.WarcRecordLength != length {
+		t.Fatalf("metadata page provenance mismatch: %+v", row)
+	}
 }

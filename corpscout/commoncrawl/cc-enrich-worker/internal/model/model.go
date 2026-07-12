@@ -62,6 +62,7 @@ func (p CompanyProfile) Empty() bool {
 // WorklistItem is one row of the index-driven worklist (top-K pages per domain).
 type WorklistItem struct {
 	RootDomain, URL, WarcFilename string
+	WarcIndex                     uint32
 	Offset, Length                int64
 	Primary                       bool // rn == 1 (the shallowest page; gets embedded)
 }

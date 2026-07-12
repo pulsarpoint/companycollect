@@ -132,6 +132,9 @@ EXPECTED_MIGRATIONS = (
     "000121_corpscout_commoncrawl_domain_hostname_axfr_sync",
     "000122_corpscout_commoncrawl_ip_addresses_incremental",
     "000123_corpscout_dns_observations_universal_rr",
+    "000124_corpscout_rdap_networks",
+    "000125_corpscout_commoncrawl_page_evidence",
+    "000126_corpscout_rdap_dictionary_reader",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -470,6 +473,8 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             or "DROP TABLE IF EXISTS" in sql
             or "DROP VIEW IF EXISTS" in sql
             or "INSERT INTO" in sql  # data migration (e.g. backfill into a new table)
+            or "CREATE DICTIONARY IF NOT EXISTS" in sql
+            or "CREATE USER IF NOT EXISTS" in sql
         )
         # Never TRUNCATE TABLE in an up migration. Match the full statement, not the bare
         # substring: legitimate column names like axfr_truncated contain "TRUNCATE" but are
@@ -500,6 +505,8 @@ def test_clickhouse_migrations_have_down_files() -> None:
             or "CREATE TABLE IF NOT EXISTS" in sql
             or "CREATE OR REPLACE VIEW" in sql
             or "TRUNCATE TABLE IF EXISTS" in sql  # undo a data backfill
+            or "DROP DICTIONARY IF EXISTS" in sql
+            or "DROP USER IF EXISTS" in sql
         )
 
 
@@ -1364,6 +1371,66 @@ def test_drop_raw_norway_exports_migration_removes_orphaned_tables() -> None:
     assert "CREATE TABLE IF NOT EXISTS corpscout.companies" in down_sql
     assert "CREATE TABLE IF NOT EXISTS corpscout.financial_statements" in down_sql
     assert "CREATE OR REPLACE VIEW corpscout.norway_companies_translated" in down_sql
+
+
+def test_commoncrawl_page_evidence_replaces_aggregated_tables() -> None:
+    sql = _migration_sql("000125_corpscout_commoncrawl_page_evidence.up.sql")
+    down_sql = _migration_sql("000125_corpscout_commoncrawl_page_evidence.down.sql")
+
+    for table_name in (
+        "commoncrawl_page_metadata",
+        "commoncrawl_page_technologies",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        assert f"DROP TABLE IF EXISTS corpscout.{table_name}" in down_sql
+        for column_name in (
+            "crawl_id",
+            "root_domain",
+            "page_url",
+            "subdomain",
+            "warc_index",
+            "warc_filename",
+            "warc_record_offset",
+            "warc_record_length",
+            "source_run_id",
+            "resolved_at",
+        ):
+            assert f"    {column_name} " in sql
+
+    assert "domain_page_rank" not in sql
+
+    for column_name in (
+        "name",
+        "description",
+        "logo",
+        "country",
+        "founding_year",
+        "employee_count",
+        "source",
+    ):
+        assert f"    {column_name} " in sql
+    for column_name in ("technology", "category", "version", "confidence"):
+        assert f"    {column_name} " in sql
+
+    assert sql.count("PARTITION BY crawl_id") == 2
+    assert "ORDER BY (root_domain, crawl_id, warc_index, warc_record_offset)" in sql
+    assert (
+        "ORDER BY (root_domain, crawl_id, warc_index, warc_record_offset, "
+        "technology)" in sql
+    )
+    assert "PROJECTION by_technology_version" in sql
+    assert "SELECT technology, version, root_domain, _part_offset" in sql
+    assert "ORDER BY (technology, version, root_domain)" in sql
+    assert "deduplicate_merge_projection_mode = 'rebuild'" in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_metadata" in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_technologies" in sql
+    assert "INSERT INTO" not in sql
+    assert "MATERIALIZED VIEW" not in sql
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_metadata" in down_sql
+    )
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_technologies" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

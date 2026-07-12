@@ -60,19 +60,22 @@ type PageSignalRow struct {
 	ResolvedAt    time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
-// TechRow mirrors corpscout.commoncrawl_technologies (migration 000047) column order.
+// TechRow mirrors corpscout.commoncrawl_page_technologies (migration 000125) column order.
 type TechRow struct {
-	CrawlID     string    `parquet:"crawl_id" ch:"crawl_id"`
-	URL         string    `parquet:"url" ch:"url"`
-	RootDomain  string    `parquet:"root_domain" ch:"root_domain"`
-	Subdomain   string    `parquet:"subdomain" ch:"subdomain"`
-	Technology  string    `parquet:"technology" ch:"technology"`
-	Category    string    `parquet:"category" ch:"category"`
-	Version     string    `parquet:"version" ch:"version"`
-	Confidence  uint8     `parquet:"confidence" ch:"confidence"`
-	SourceURL   string    `parquet:"source_url" ch:"source_url"`
-	SourceRunID string    `parquet:"source_run_id" ch:"source_run_id"`
-	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+	CrawlID          string    `parquet:"crawl_id" ch:"crawl_id"`
+	RootDomain       string    `parquet:"root_domain" ch:"root_domain"`
+	PageURL          string    `parquet:"page_url" ch:"page_url"`
+	Subdomain        string    `parquet:"subdomain" ch:"subdomain"`
+	WarcIndex        uint32    `parquet:"warc_index" ch:"warc_index"`
+	WarcFilename     string    `parquet:"warc_filename" ch:"warc_filename"`
+	WarcRecordOffset uint64    `parquet:"warc_record_offset" ch:"warc_record_offset"`
+	WarcRecordLength uint64    `parquet:"warc_record_length" ch:"warc_record_length"`
+	Technology       string    `parquet:"technology" ch:"technology"`
+	Category         string    `parquet:"category" ch:"category"`
+	Version          string    `parquet:"version" ch:"version"`
+	Confidence       uint8     `parquet:"confidence" ch:"confidence"`
+	SourceRunID      string    `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt       time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
 // IdentifierRow mirrors corpscout.commoncrawl_domain_identifiers (migration 000051):
@@ -91,23 +94,26 @@ type IdentifierRow struct {
 	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
-// MetadataRow mirrors corpscout.commoncrawl_domain_metadata (migration 000067): one row per domain,
-// what a domain's pages say ABOUT THEMSELVES (schema.org Organization JSON-LD). Self-reported, not
-// verified. Contacts moved to ContactRow; authoritative company facts are the external company master.
+// MetadataRow mirrors corpscout.commoncrawl_page_metadata (migration 000125): self-reported
+// schema.org Organization evidence attributed to the page and WARC record that supplied it.
 type MetadataRow struct {
-	CrawlID       string    `parquet:"crawl_id" ch:"crawl_id"`
-	RootDomain    string    `parquet:"root_domain" ch:"root_domain"`
-	Subdomain     string    `parquet:"subdomain" ch:"subdomain"`
-	Name          string    `parquet:"name" ch:"name"`
-	Description   string    `parquet:"description" ch:"description"`
-	Logo          string    `parquet:"logo" ch:"logo"`
-	Country       string    `parquet:"country" ch:"country"`
-	FoundingYear  uint16    `parquet:"founding_year" ch:"founding_year"`
-	EmployeeCount uint32    `parquet:"employee_count" ch:"employee_count"`
-	Source        string    `parquet:"source" ch:"source"`
-	SourceURL     string    `parquet:"source_url" ch:"source_url"`
-	SourceRunID   string    `parquet:"source_run_id" ch:"source_run_id"`
-	ResolvedAt    time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+	CrawlID          string    `parquet:"crawl_id" ch:"crawl_id"`
+	RootDomain       string    `parquet:"root_domain" ch:"root_domain"`
+	PageURL          string    `parquet:"page_url" ch:"page_url"`
+	Subdomain        string    `parquet:"subdomain" ch:"subdomain"`
+	WarcIndex        uint32    `parquet:"warc_index" ch:"warc_index"`
+	WarcFilename     string    `parquet:"warc_filename" ch:"warc_filename"`
+	WarcRecordOffset uint64    `parquet:"warc_record_offset" ch:"warc_record_offset"`
+	WarcRecordLength uint64    `parquet:"warc_record_length" ch:"warc_record_length"`
+	Name             string    `parquet:"name" ch:"name"`
+	Description      string    `parquet:"description" ch:"description"`
+	Logo             string    `parquet:"logo" ch:"logo"`
+	Country          string    `parquet:"country" ch:"country"`
+	FoundingYear     uint16    `parquet:"founding_year" ch:"founding_year"`
+	EmployeeCount    uint32    `parquet:"employee_count" ch:"employee_count"`
+	Source           string    `parquet:"source" ch:"source"`
+	SourceRunID      string    `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt       time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
 // ContactRow mirrors corpscout.commoncrawl_domain_contact_info (migration 000068): one row per

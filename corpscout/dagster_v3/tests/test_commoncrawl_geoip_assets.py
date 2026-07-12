@@ -7,14 +7,11 @@ import dagster as dg
 import pytest
 
 from dagster_v3.defs.commoncrawl_geoip.assets import (
-    COMMONCRAWL_GEOIP_PARTITIONS,
-    GEOIP_BUCKET_COUNT,
     GEOIP_CANDIDATES_SQL,
     GEOIP_COLUMNS,
     GEOIP_INSERT_SQL,
     _enrich_geoip_bucket,
     commoncrawl_ip_geoip,
-    geoip_bucket_index,
 )
 from dagster_v3.defs.commoncrawl_geoip.maxmind import (
     MaxMindLookup,
@@ -22,6 +19,11 @@ from dagster_v3.defs.commoncrawl_geoip.maxmind import (
     classify_ip_scope,
 )
 from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
+from dagster_v3.defs.commoncrawl_ip import (
+    COMMONCRAWL_IP_BUCKET_COUNT,
+    COMMONCRAWL_IP_PARTITIONS,
+    commoncrawl_ip_bucket_index,
+)
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
@@ -77,20 +79,20 @@ class FakeMaxMindReader:
 
 
 def test_geoip_asset_uses_stable_static_hash_buckets() -> None:
-    partition_keys = COMMONCRAWL_GEOIP_PARTITIONS.get_partition_keys()
+    partition_keys = COMMONCRAWL_IP_PARTITIONS.get_partition_keys()
 
-    assert isinstance(COMMONCRAWL_GEOIP_PARTITIONS, dg.StaticPartitionsDefinition)
-    assert len(partition_keys) == GEOIP_BUCKET_COUNT == 256
+    assert isinstance(COMMONCRAWL_IP_PARTITIONS, dg.StaticPartitionsDefinition)
+    assert len(partition_keys) == COMMONCRAWL_IP_BUCKET_COUNT == 256
     assert partition_keys[0] == "bucket_000"
     assert partition_keys[-1] == "bucket_255"
-    assert geoip_bucket_index("bucket_007") == 7
-    assert commoncrawl_ip_geoip.partitions_def is COMMONCRAWL_GEOIP_PARTITIONS
+    assert commoncrawl_ip_bucket_index("bucket_007") == 7
+    assert commoncrawl_ip_geoip.partitions_def is COMMONCRAWL_IP_PARTITIONS
 
 
 def test_geoip_bucket_key_validation_rejects_out_of_range_values() -> None:
     for partition_key in ("bucket_256", "bucket_-1", "07", "bucket_x"):
         with pytest.raises(ValueError):
-            geoip_bucket_index(partition_key)
+            commoncrawl_ip_bucket_index(partition_key)
 
 
 def test_ip_scope_classification_keeps_non_global_reasons() -> None:

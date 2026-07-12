@@ -1,21 +1,21 @@
-// cc-crawl drives CommonCrawl enrichment over a range of parts — the Go replacement for
-// run_crawl.sh. For each part it runs TWO separate cc-enrich-worker executions: (1) the pass that
-// reads the ready RustFS raw part and PRODUCES out_<mode>_<p>/, then (2) the LOADER
+// cc-crawl drives CommonCrawl enrichment over a range of WARC indexes — the Go replacement for
+// run_crawl.sh. For each WARC index it runs TWO separate cc-enrich-worker executions: (1) the pass
+// that reads the selected pages from the WARC and PRODUCES out_<mode>_<p>/, then (2) the LOADER
 // (load --dir) that pushes it to ClickHouse. Every external command and its exit code are logged as
 // structured JSON (log/slog) to stdout AND a file under data/logs; the loader runs ONLY if the produce
 // step exited 0 and actually wrote domains.parquet, so a bad/partial produce is never loaded.
 //
 // It only orchestrates (os/exec) — it does not import cc-enrich-worker. Stdlib only.
 //
-// Resumable: a part whose out_<mode>_<p>.loaded marker exists is skipped.
+// Resumable: a WARC index whose out_<mode>_<p>.loaded marker exists is skipped.
 //
-//	cc-crawl -mode industry -parts 0-299 -crawl CC-MAIN-2026-25     (bare N = single part)
+//	cc-crawl -mode industry -parts 0-299 -crawl CC-MAIN-2026-25     (bare N = one WARC index)
 //
-// -mode embed is the exception: it REUSES the industry worklist, runs a single embed-only exec (no
-// load), and writes just the raw vectors into the sibling data/embedding/out_industry_<p>/ tree. It has
+// -mode embed is the exception: it REUSES the industry page selection, runs a single embed-only exec (no
+// load), and writes raw vectors into embedding/warc/<selection>/out_industry_<p>/. It has
 // NO .loaded marker and is NOT wiped before the run — instead the worker opens the existing
 // embeddings.parquet and skips the part if it's already a valid, non-empty file (the write is atomic, so
-// a readable parquet == a complete run). Used to backfill vectors for already-classified segments.
+// a readable parquet == a complete run). Used to backfill vectors for already-classified WARC units.
 //
 // All settings are flags; each defaults from the same-named env var. -mode, -parts, -crawl required.
 package main
@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,7 +44,7 @@ func env(key, def string) string {
 	return def
 }
 
-// Parsed from the worker's own log lines for the per-part counts.
+// Parsed from the worker's own log lines for the per-WARC counts.
 var (
 	reDomains = regexp.MustCompile(`done:\s+(\d+)\s+domains`) // produce step: "done: 87916 domains, …"
 	reEmbeds  = regexp.MustCompile(`(\d+)\s+embeddings`)      // embed: "done: 87916 embeddings" / "skip: 87916 embeddings already present"
@@ -76,17 +77,20 @@ func runStep(name string, args []string, dir string) (code int, output string, e
 
 func main() {
 	// Load .env (overriding the ambient shell, like the old run_crawl.sh `set -a; . ./.env; set +a`)
-	// so the worker gets the shared RustFS, ClickHouse, and embedding config. Missing file is fine.
+	// so the worker gets the shared S3, ClickHouse, and embedding config. Missing file is fine.
 	_ = godotenv.Overload(env("DOTENV", ".env"))
 
+	s3AnonymousDefault, s3AnonymousEnvErr := parseS3Anonymous(env("S3_ANONYMOUS", "false"))
 	fs := flag.NewFlagSet("cc-crawl", flag.ExitOnError)
 	modeF := fs.String("mode", "", "pass to run: industry | tech | embed  (required; embed = vectors only, no ClickHouse)")
-	partsF := fs.String("parts", "", "part range lo-hi, or a single part N  (required)")
+	partsF := fs.String("parts", "", "WARC index range lo-hi, or a single WARC index N  (required)")
 	crawlF := fs.String("crawl", env("CRAWL", ""), "CommonCrawl crawl id, e.g. CC-MAIN-2026-25  (required; or env CRAWL)")
 	baseF := fs.String("base", env("OUT_BASE_DIR", ""), "output ROOT (required; or env OUT_BASE_DIR) — all output lives under <base>/<crawl>/")
-	_ = fs.String("builder-dir", env("BUILDER_DIR", "index-builder"), "deprecated compatibility flag; RustFS input needs no index builder")
+	_ = fs.String("builder-dir", env("BUILDER_DIR", "index-builder"), "deprecated compatibility flag; ignored")
 	workerF := fs.String("worker", env("WORKER", "cc-enrich-worker/bin/cc-enrich-worker"), "cc-enrich-worker binary")
-	maxPagesF := fs.String("max-pages", env("MAX_PAGES", "25"), "raw selection pages per domain; derives RustFS selection pagesN")
+	maxPagesF := fs.String("max-pages", env("MAX_PAGES", "25"), "catalog selection pages per domain; derives selection pagesN")
+	wholeWARCThresholdF := fs.String("whole-warc-threshold", env("WHOLE_WARC_THRESHOLD", "50"), "selected compressed-byte percentage that triggers a whole-WARC download (0..100)")
+	s3AnonymousF := fs.Bool("s3-anonymous", s3AnonymousDefault, "use the anonymous Common Crawl HTTPS endpoint instead of signed S3")
 	indConcF := fs.String("ind-conc", env("IND_CONC", "64"), "industry: fetch concurrency")
 	embedConcF := fs.String("embed-conc", env("EMBED_CONC", "128"), "industry: embed concurrency")
 	// tech-conc counts DOMAINS in flight; the worker fetches each domain's pages through its own
@@ -102,6 +106,9 @@ func main() {
 		fs.Usage()
 		os.Exit(2)
 	}
+	if s3AnonymousEnvErr != nil {
+		fail("S3_ANONYMOUS: %v", s3AnonymousEnvErr)
+	}
 	mode := *modeF
 	if mode != "industry" && mode != "tech" && mode != "embed" {
 		fail("-mode must be industry|tech|embed")
@@ -113,25 +120,29 @@ func main() {
 	if err != nil {
 		fail("-parts %q: %v", *partsF, err)
 	}
-	crawl, worker, maxPages := *crawlF, *workerF, *maxPagesF
-	pagesPerDomain, err := strconv.Atoi(maxPages)
-	if err != nil || pagesPerDomain < 1 {
-		fail("-max-pages must be a positive integer, got %q", maxPages)
+	crawl, worker := *crawlF, *workerF
+	selection, err := selectionForMaxPages(*maxPagesF)
+	if err != nil {
+		fail("-max-pages %v", err)
 	}
-	selection := fmt.Sprintf("pages%d", pagesPerDomain)
+	wholeWARCThreshold := strings.TrimSpace(*wholeWARCThresholdF)
+	if err := validateWholeWARCThreshold(wholeWARCThreshold); err != nil {
+		fail("-whole-warc-threshold %v", err)
+	}
 	// Output root MUST come from OUT_BASE_DIR — no silent default, so data can never scatter to an
 	// unexpected place. Everything for a crawl lives under <OUT_BASE_DIR>/<crawl>/ (crawl/:
-	// per-part output + logs; embedding/: the vector tree), so different crawls never collide/overwrite.
+	// per-WARC output + logs; embedding/: the vector tree), so different crawls never collide/overwrite.
 	base := *baseF
 	if base == "" {
 		fail("-base is required (output root; or env OUT_BASE_DIR), e.g. /opt/companycollect/corpscout/commoncrawl/data")
 	}
-	data := filepath.Join(base, crawl, "crawl")
+	if abs, err := filepath.Abs(base); err == nil {
+		base = abs
+	}
+	data := filepath.Join(base, crawl, "warc", selection)
 	// Resolve to absolute paths so every child writes to the intended location regardless of cwd.
-	for _, p := range []*string{&data, &worker} {
-		if abs, err := filepath.Abs(*p); err == nil {
-			*p = abs
-		}
+	if abs, err := filepath.Abs(worker); err == nil {
+		worker = abs
 	}
 
 	if err := os.MkdirAll(filepath.Join(data, "logs"), 0o755); err != nil {
@@ -153,7 +164,8 @@ func main() {
 	lg.Info("start", "mode", mode, "parts", *partsF, "crawl", crawl, "log", logPath)
 
 	pc := partCtx{
-		lg: lg, data: data, worker: worker, crawl: crawl, selection: selection,
+		lg: lg, base: base, data: data, worker: worker, crawl: crawl, selection: selection,
+		wholeWARCThreshold: wholeWARCThreshold, s3Anonymous: *s3AnonymousF,
 		indConc: *indConcF, embedConc: *embedConcF, techConc: *techConcF, techChunk: *techChunkF,
 	}
 	var done, skipped, failed int
@@ -179,7 +191,7 @@ func main() {
 	lg.Info("complete", "mode", mode, "lo", lo, "hi", hi, "done", done, "skipped", skipped, "failed", failed)
 }
 
-// outcome is what a per-part runner reports back to the main loop for tallying.
+// outcome is what a per-WARC runner reports back to the main loop for tallying.
 type outcome int
 
 const (
@@ -188,16 +200,20 @@ const (
 	ocDone
 )
 
-// partCtx is the shared, per-run configuration handed to each per-part runner.
+// partCtx is the shared, per-run configuration handed to each WARC-index runner. The name preserves
+// the existing operator vocabulary used by -parts, log fields, output directories, and loaded markers.
 type partCtx struct {
-	lg                             *slog.Logger
-	data, worker, crawl, selection string
-	indConc, embedConc, techConc   string
-	techChunk                      string
+	lg                           *slog.Logger
+	base, data, worker           string
+	crawl, selection             string
+	wholeWARCThreshold           string
+	s3Anonymous                  bool
+	indConc, embedConc, techConc string
+	techChunk                    string
 }
 
 // runIndustryPart / runTechPart are the load-gated modes: produce → load into ClickHouse → mark. A "done"
-// part means produced AND loaded, recorded by the out_<mode>_<p>.loaded marker (the load is a remote side
+// WARC unit means produced AND loaded, recorded by the out_<mode>_<p>.loaded marker (the load is a remote side
 // effect not visible in local files, so the marker is the only record of it).
 func runIndustryPart(pc partCtx, p int) outcome { return runProduceLoad(pc, "industry", p) }
 func runTechPart(pc partCtx, p int) outcome     { return runProduceLoad(pc, "tech", p) }
@@ -209,12 +225,17 @@ func runProduceLoad(pc partCtx, mode string, p int) outcome {
 	if _, err := os.Stat(marker); err == nil {
 		plg.Info("skip", "reason", "already loaded")
 		return ocSkipped
+	} else if !os.IsNotExist(err) {
+		plg.Error("failed", "step", "check_marker", "err", err.Error())
+		return ocFailed
 	}
-	// Clear any stale/partial output (the worker requires an empty --out); safe — a done part already
+	// Clear any stale/partial output (the worker requires an empty --out); safe — a done WARC unit already
 	// returned above on its marker.
-	os.RemoveAll(outDir)
-	pArgs := append(append([]string{mode}, passArgs(pc, mode)...),
-		"--crawl-id", pc.crawl, "--selection", pc.selection, "--part", strconv.Itoa(p), "--out", outDir)
+	if err := os.RemoveAll(outDir); err != nil {
+		plg.Error("failed", "step", "clear_output", "err", err.Error())
+		return ocFailed
+	}
+	pArgs := workerProcessingArgs(pc, mode, p, outDir)
 	plg.Info("produce.run", "cmd", pc.worker+" "+strings.Join(pArgs, " "))
 	code, pout, pel := runStep(pc.worker, pArgs, "")
 	if code != 0 {
@@ -239,21 +260,21 @@ func runProduceLoad(pc partCtx, mode string, p int) outcome {
 	plg.Info("load.exit", "exit", 0, "rows_to_clickhouse", rows, "elapsed", lel.String())
 
 	if err := os.WriteFile(marker, nil, 0o644); err != nil {
-		plg.Warn("marker.write", "err", err.Error())
+		plg.Error("failed", "step", "marker", "err", err.Error())
+		return ocFailed
 	}
 	plg.Info("done", "produced", produced, "rows_to_clickhouse", rows)
 	return ocDone
 }
 
-// runEmbedPart is the embed-only mode: reuse the same RustFS raw selection, run ONE embed exec, no load, no
+// runEmbedPart is the embed-only mode: reuse the same catalog page selection, run ONE embed exec, no load, no
 // marker. There is deliberately NO RemoveAll — the worker opens the existing embeddings.parquet and skips
-// the part if it's already complete (the write is atomic, so a readable parquet == a complete run);
+// the WARC unit if it's already complete (the write is atomic, so a readable parquet == a complete run);
 // wiping it would defeat that. Vectors land in the sibling data/embedding/ tree.
 func runEmbedPart(pc partCtx, p int) outcome {
 	plg := pc.lg.With("mode", "embed", "part", p)
-	outDir := filepath.Join(filepath.Dir(pc.data), "embedding", fmt.Sprintf("out_industry_%d", p))
-	pArgs := append(append([]string{"embed"}, passArgs(pc, "embed")...),
-		"--crawl-id", pc.crawl, "--selection", pc.selection, "--part", strconv.Itoa(p), "--out", outDir)
+	outDir := filepath.Join(pc.base, pc.crawl, "embedding", "warc", pc.selection, fmt.Sprintf("out_industry_%d", p))
+	pArgs := workerProcessingArgs(pc, "embed", p, outDir)
 	plg.Info("embed.run", "cmd", pc.worker+" "+strings.Join(pArgs, " "))
 	code, pout, pel := runStep(pc.worker, pArgs, "")
 	if code != 0 {
@@ -285,6 +306,48 @@ func passArgs(pc partCtx, mode string) []string {
 	return nil
 }
 
+func workerProcessingArgs(pc partCtx, mode string, warcIndex int, outDir string) []string {
+	args := append([]string{mode}, passArgs(pc, mode)...)
+	args = append(args,
+		"--base", pc.base,
+		"--crawl-id", pc.crawl,
+		"--selection", pc.selection,
+		"--part", strconv.Itoa(warcIndex),
+		"--whole-warc-threshold", pc.wholeWARCThreshold,
+	)
+	if pc.s3Anonymous {
+		args = append(args, "--s3-anonymous")
+	}
+	return append(args, "--out", outDir)
+}
+
+func selectionForMaxPages(value string) (string, error) {
+	pagesPerDomain, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || pagesPerDomain < 1 || pagesPerDomain > 65535 {
+		return "", fmt.Errorf("must be an integer from 1 to 65535, got %q", value)
+	}
+	return fmt.Sprintf("pages%d", pagesPerDomain), nil
+}
+
+func validateWholeWARCThreshold(value string) error {
+	percentage, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(percentage) || math.IsInf(percentage, 0) {
+		return fmt.Errorf("must be a number from 0 to 100, got %q", value)
+	}
+	if percentage < 0 || percentage > 100 {
+		return fmt.Errorf("must be between 0 and 100, got %q", value)
+	}
+	return nil
+}
+
+func parseS3Anonymous(value string) (bool, error) {
+	anonymous, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, fmt.Errorf("must be true or false, got %q", value)
+	}
+	return anonymous, nil
+}
+
 func parseRange(s string) (int, int, error) {
 	lo, hi := s, s
 	if i := strings.IndexByte(s, '-'); i >= 0 {
@@ -297,6 +360,9 @@ func parseRange(s string) (int, int, error) {
 	h, err := strconv.Atoi(strings.TrimSpace(hi))
 	if err != nil {
 		return 0, 0, err
+	}
+	if l < 0 || h < 0 || uint64(l) > uint64(^uint32(0)) || uint64(h) > uint64(^uint32(0)) {
+		return 0, 0, fmt.Errorf("WARC indexes must be between 0 and 4294967295")
 	}
 	if h < l {
 		return 0, 0, fmt.Errorf("hi < lo")

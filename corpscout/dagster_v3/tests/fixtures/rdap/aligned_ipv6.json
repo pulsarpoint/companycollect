@@ -1,0 +1,23 @@
+{
+  "rir": "ripe",
+  "raw": {
+    "objectClassName": "ip network",
+    "handle": "IPV6-TEST",
+    "startAddress": "2001:0db8:0000:0000:0000:0000:0000:0000",
+    "endAddress": "2001:0db8:0000:0000:0000:0000:0000:00ff",
+    "ipVersion": "v6",
+    "name": "IPV6-DOCUMENTATION",
+    "type": "ALLOCATED-BY-RIR",
+    "country": "EU",
+    "status": ["active"],
+    "entities": [],
+    "links": [
+      {
+        "rel": "self",
+        "href": "https://rdap.db.ripe.net/ip/2001:db8::"
+      }
+    ],
+    "events": [],
+    "rdapConformance": ["rdap_level_0"]
+  }
+}

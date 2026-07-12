@@ -6,14 +6,18 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/dustin/go-humanize"
 	"github.com/parquet-go/parquet-go"
 
 	"cc-enrich-worker/internal/classify"
@@ -21,11 +25,13 @@ import (
 	"cc-enrich-worker/internal/load"
 	mdl "cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
-	"cc-enrich-worker/internal/stagedinput"
 	"cc-enrich-worker/internal/tech"
+	"cc-enrich-worker/internal/warcinput"
 	"cc-enrich-worker/internal/worker"
-	"cc-raw/rawstore"
+	"cc-raw/fetch"
 )
+
+const warcPreparationTimeout = 30 * time.Minute
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -59,7 +65,7 @@ Commands:
 Run "cc-enrich-worker <command> -h" to see that command's flags.
 
 Config is via environment (see ../.env.example): COMMONCRAWL_EMBED_*, CLICKHOUSE_*,
-CORPSCOUT_S3_* (the local RustFS input store).
+AWS_* for signed Common Crawl S3 access, and CC_BASE_URL for anonymous HTTPS access.
 `)
 }
 
@@ -69,6 +75,8 @@ type opts struct {
 	crawlID, out, base, selection string
 	part                          int
 	concurrency, chunk            int
+	anonymous                     bool
+	wholeWARCThreshold            float64
 	techEngine                    string // tech / both
 	techMax                       int    // tech / both
 	batch, embedConc              int    // industry / both
@@ -80,12 +88,14 @@ func parse(mode string, args []string) opts {
 	var o opts
 	// common to every command
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
-	fs.StringVar(&o.selection, "selection", "pages25", "RustFS raw selection identity")
-	fs.IntVar(&o.part, "part", -1, "RustFS raw part number (required)")
-	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/crawl/out_<mode>_<part>; an explicit dir must be empty)")
-	fs.StringVar(&o.base, "base", os.Getenv("OUT_BASE_DIR"), "output ROOT for the default --out (or env OUT_BASE_DIR); required when --out is not given")
+	fs.StringVar(&o.selection, "selection", "pages25", "catalog selection identity")
+	fs.IntVar(&o.part, "part", -1, "zero-based WARC index (required)")
+	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/warc/<selection>/out_<mode>_<part>; an explicit dir must be empty)")
+	fs.StringVar(&o.base, "base", os.Getenv("OUT_BASE_DIR"), "catalog and output ROOT (or env OUT_BASE_DIR); required")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
-	fs.IntVar(&o.chunk, "chunk", 1024, "RustFS index rows (pages) per process chunk (tech/both)")
+	fs.IntVar(&o.chunk, "chunk", 1024, "catalog pages per process chunk (tech/both)")
+	fs.Float64Var(&o.wholeWARCThreshold, "whole-warc-threshold", 50, "selected compressed-byte percentage that triggers one whole-WARC download (0..100)")
+	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch through anonymous HTTPS instead of signed Common Crawl S3")
 	if mode == "tech" || mode == "both" {
 		fs.StringVar(&o.techEngine, "tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
 		fs.IntVar(&o.techMax, "tech-max-bytes", 131072, "cap body bytes fed to Wappalyzer (0 = full body; full-body regex ~1.2s/page)")
@@ -95,8 +105,19 @@ func parse(mode string, args []string) opts {
 		fs.IntVar(&o.embedConc, "embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	}
 	_ = fs.Parse(args)
-	if o.crawlID == "" || o.part < 0 {
-		fmt.Fprintln(os.Stderr, "error: --crawl-id and a non-negative --part are required")
+	if o.crawlID == "" {
+		fmt.Fprintln(os.Stderr, "error: --crawl-id is required")
+		fs.Usage()
+		os.Exit(2)
+	}
+	if o.part < 0 || uint64(o.part) > uint64(^uint32(0)) {
+		fmt.Fprintln(os.Stderr, "error: --part must be a WARC index from 0 to 4294967295")
+		fs.Usage()
+		os.Exit(2)
+	}
+	if math.IsNaN(o.wholeWARCThreshold) || math.IsInf(o.wholeWARCThreshold, 0) ||
+		o.wholeWARCThreshold < 0 || o.wholeWARCThreshold > 100 {
+		fmt.Fprintln(os.Stderr, "error: --whole-warc-threshold must be between 0 and 100")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -212,20 +233,50 @@ func parquetRows(path string) (int64, error) {
 	return pf.NumRows(), nil
 }
 
+func completedEmbedding(outDir string) (string, int64, bool) {
+	for _, name := range []string{"embeddings.parquet", "embeddings_fp16.parquet"} {
+		path := filepath.Join(outDir, name)
+		rows, err := parquetRows(path)
+		if err == nil {
+			if rows > 0 {
+				return path, rows, true
+			}
+			if _, markerErr := os.Stat(path + ".empty"); markerErr == nil {
+				return path, 0, true
+			}
+			continue
+		}
+		// Converted fp16 files from the older toolchain may have a logical type parquet-go cannot
+		// decode. Their conversion step verified the file before removing fp32, so retain that fallback.
+		if name == "embeddings_fp16.parquet" {
+			info, statErr := os.Stat(path)
+			if statErr == nil && info.Size() > 0 {
+				return path, 0, true
+			}
+		}
+	}
+	return "", 0, false
+}
+
 func run(mode string, o opts) {
 	ctx := context.Background()
+	if o.base == "" {
+		log.Fatal("no --base / OUT_BASE_DIR — the WARC catalog root is required")
+	}
+	base, err := filepath.Abs(o.base)
+	if err != nil {
+		log.Fatalf("resolve base directory %s: %v", o.base, err)
+	}
+	o.base = base
 
 	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so
 	// `load --dir` knows which file → which table. cc-crawl always passes --out; for a standalone run the
 	// default is derived from OUT_BASE_DIR (REQUIRED — no silent fallback that could scatter data) as
-	// <OUT_BASE_DIR>/<crawl>/crawl/out_<mode>_<part>/, unique per part so parallel runs never collide. The
+	// <OUT_BASE_DIR>/<crawl>/warc/<selection>/out_<mode>_<part>/, unique per selection and WARC. The
 	// embedding tree is a sibling under <OUT_BASE_DIR>/<crawl>/embedding/ (derived from outDir below).
 	outDir := o.out
 	if outDir == "" {
-		if o.base == "" {
-			log.Fatal("no --out and no -base / OUT_BASE_DIR — refusing to guess an output directory")
-		}
-		outDir = filepath.Join(o.base, o.crawlID, "crawl", fmt.Sprintf("out_%s_%d", mode, o.part))
+		outDir = filepath.Join(o.base, o.crawlID, "warc", o.selection, fmt.Sprintf("out_%s_%d", mode, o.part))
 	}
 	// embed VERIFY-AND-SKIP: a part is DONE if its embed folder already holds a complete vector file under
 	// EITHER name — embeddings.parquet (fp32, fresh from this pass) or embeddings_fp16.parquet (converted
@@ -235,16 +286,7 @@ func run(mode string, o opts) {
 	// file was verified before its fp32 was pruned). If done, skip the whole part (no re-fetch/re-embed);
 	// else fall through and (over)write embeddings.parquet. embed deliberately reuses the dir (no empty rule).
 	if mode == "embed" {
-		for _, name := range []string{"embeddings.parquet", "embeddings_fp16.parquet"} {
-			embPath := filepath.Join(outDir, name)
-			rows, verr := parquetRows(embPath)
-			if verr == nil {
-				if rows <= 0 {
-					continue // readable but empty -> not done under this name
-				}
-			} else if st, serr := os.Stat(embPath); serr != nil || st.Size() == 0 {
-				continue // missing, or unreadable-and-empty -> not done under this name
-			}
+		if embPath, rows, complete := completedEmbedding(outDir); complete {
 			log.Printf("skip: embeddings already present (rows=%d) -> %s", rows, embPath)
 			return
 		}
@@ -255,7 +297,13 @@ func run(mode string, o opts) {
 		log.Fatalf("create output dir %s: %v", outDir, err)
 	}
 
-	if mode == "tech" || mode == "both" { // tech matcher only needed when we fingerprint
+	primaryPagesOnly := mode == "industry" || mode == "embed"
+	plan, err := warcinput.LoadPlan(o.base, o.crawlID, o.selection, uint32(o.part), primaryPagesOnly)
+	if err != nil {
+		log.Fatalf("load WARC catalog: %v", err)
+	}
+
+	if len(plan.Items) > 0 && (mode == "tech" || mode == "both") { // tech matcher only needed when we fingerprint
 		switch o.techEngine {
 		case "fast":
 			fm, err := tech.NewFastMatcher()
@@ -276,7 +324,7 @@ func run(mode string, o opts) {
 	var ref *mdl.Reference
 	var protos *mdl.Prototypes
 	var emb classify.Embedder
-	if mode != "tech" {
+	if len(plan.Items) > 0 && mode != "tech" {
 		baseURL := envOr("COMMONCRAWL_EMBED_BASE_URL", "http://localhost:8000/v1")
 		model := envOr("COMMONCRAWL_EMBED_MODEL", "")
 		if model == "" {
@@ -319,29 +367,141 @@ func run(mode string, o opts) {
 		}
 	}
 
-	store, err := rawstore.NewStore(ctx, rawstore.StoreConfig{
-		Endpoint:  os.Getenv("CORPSCOUT_S3_ENDPOINT"),
-		Region:    envOr("CORPSCOUT_S3_REGION", "us-east-1"),
-		Bucket:    os.Getenv("CORPSCOUT_S3_BUCKET"),
-		AccessKey: os.Getenv("CORPSCOUT_S3_ACCESS_KEY"),
-		SecretKey: os.Getenv("CORPSCOUT_S3_SECRET_KEY"),
-	})
-	if err != nil {
-		log.Fatalf("RustFS init: %v", err)
+	// Transport sizing = true in-flight range reads. Whole-WARC mode makes one streaming GET and
+	// then uses concurrent local ReadAt calls through the same RangeGetter boundary.
+	var objects fetch.ObjectGetter
+	source := "none"
+	if !plan.Empty() {
+		fetchConcurrency := o.concurrency
+		if mode == "tech" || mode == "both" {
+			fetchConcurrency *= worker.PageConcurrency
+		}
+		if o.anonymous {
+			objects = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), fetchConcurrency)
+			source = "anonymous_https"
+		} else {
+			objects, err = fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"), fetchConcurrency)
+			if err != nil {
+				log.Fatalf("Common Crawl S3 init: %v", err)
+			}
+			source = "signed_s3"
+		}
 	}
-	input, err := stagedinput.Open(ctx, store, o.crawlID, o.selection, o.part, filepath.Join(outDir, ".rustfs-input"))
+
+	var s3Before fetch.S3Stats
+	if s3Getter, ok := objects.(*fetch.S3Getter); ok {
+		s3Before = s3Getter.Stats()
+	}
+	prepareStarted := time.Now()
+	warcTempDirectory := filepath.Join(outDir, ".warc-input")
+	if err := os.RemoveAll(warcTempDirectory); err != nil {
+		log.Fatalf("remove stale WARC input directory: %v", err)
+	}
+	prepareContext, cancelPrepare := context.WithTimeout(ctx, warcPreparationTimeout)
+	input, err := plan.Open(
+		prepareContext,
+		objects,
+		"commoncrawl",
+		o.wholeWARCThreshold,
+		warcTempDirectory,
+	)
+	cancelPrepare()
 	if err != nil {
-		log.Fatalf("RustFS part input: %v", err)
+		if cleanupErr := os.RemoveAll(warcTempDirectory); cleanupErr != nil {
+			log.Printf("remove failed WARC input directory: %v", cleanupErr)
+		}
+		log.Fatalf("prepare WARC input: %v", err)
+	}
+	cleanupInput := func() error {
+		closeErr := input.Close()
+		removeErr := os.RemoveAll(warcTempDirectory)
+		if closeErr != nil && removeErr != nil {
+			return fmt.Errorf("close WARC input: %v; remove input directory: %w", closeErr, removeErr)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if removeErr != nil {
+			return fmt.Errorf("remove WARC input directory: %w", removeErr)
+		}
+		return nil
 	}
 	defer func() {
-		if err := input.Close(); err != nil {
-			log.Printf("close RustFS part input: %v", err)
+		if err := cleanupInput(); err != nil {
+			log.Printf("clean up WARC input: %v", err)
 		}
 	}()
+	fatal := func(format string, arguments ...any) {
+		if err := cleanupInput(); err != nil {
+			log.Printf("clean up WARC input after failure: %v", err)
+		}
+		log.Fatalf(format, arguments...)
+	}
+	prepareElapsed := time.Since(prepareStarted)
+	coveragePercent := 0.0
+	if input.ObjectBytes > 0 {
+		coveragePercent = 100 * float64(input.SelectedBytes) / float64(input.ObjectBytes)
+	}
+	inputLog := []any{
+		"crawl", o.crawlID,
+		"selection", o.selection,
+		"warc_index", input.WARCIndex,
+		"warc_filename", input.WARCFilename,
+		"mode", input.Mode,
+		"source", source,
+		"selected_pages", len(input.Items),
+		"selected_bytes", input.SelectedBytes,
+		"selected_size", humanize.Bytes(uint64(input.SelectedBytes)),
+		"object_bytes", input.ObjectBytes,
+		"object_size", humanize.Bytes(uint64(input.ObjectBytes)),
+		"utilization_percent", coveragePercent,
+		"whole_warc_threshold_percent", o.wholeWARCThreshold,
+		"prepare_seconds", prepareElapsed.Seconds(),
+	}
+	if s3Getter, ok := objects.(*fetch.S3Getter); ok {
+		stats := s3Getter.Stats().Delta(s3Before)
+		sdkRetryAttempts := stats.HTTPAttempts - stats.HeadObjectCalls - stats.GetObjectCalls
+		if sdkRetryAttempts < 0 {
+			sdkRetryAttempts = 0
+		}
+		requestsPerSecond := 0.0
+		if prepareElapsed > 0 {
+			requestsPerSecond = float64(stats.HTTPAttempts) / prepareElapsed.Seconds()
+		}
+		inputLog = append(inputLog,
+			"head_object_calls", stats.HeadObjectCalls,
+			"head_object_ms", float64(stats.HeadObjectTime.Microseconds())/1000,
+			"get_object_calls", stats.GetObjectCalls,
+			"http_attempts", stats.HTTPAttempts,
+			"requests_per_second", requestsPerSecond,
+			"sdk_retry_attempts", sdkRetryAttempts,
+			"http_429", stats.HTTP429s,
+			"http_503", stats.HTTP503s,
+			"body_bytes", stats.BodyBytes,
+			"body_size", humanize.Bytes(uint64(stats.BodyBytes)),
+			"body_read_errors", stats.BodyReadErrors,
+			"body_read_retries", stats.BodyReadRetries,
+		)
+	}
+	if input.Mode == warcinput.ModeWholeFile && prepareElapsed > 0 {
+		inputLog = append(inputLog, "download_mib_per_second",
+			float64(input.ObjectBytes)/(1024*1024)/prepareElapsed.Seconds())
+	}
+	slog.InfoContext(ctx, "WARC input ready", inputLog...)
+
 	getter := input.Getter
 	items := input.Items
-	log.Printf("RustFS part: %d downloaded pages, %d failed pages skipped, %d chunks cached",
-		len(items), input.FailedRecords, input.ChunkCount)
+	if mode == "tech" || mode == "both" {
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].RootDomain != items[j].RootDomain {
+				return items[i].RootDomain < items[j].RootDomain
+			}
+			if items[i].Primary != items[j].Primary {
+				return items[i].Primary
+			}
+			return items[i].Offset < items[j].Offset
+		})
+	}
 
 	cfg := worker.ShardConfig{
 		CrawlID: o.crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
@@ -366,7 +526,7 @@ func run(mode string, o opts) {
 	if mode == "industry" || mode == "embed" {
 		res, err := worker.ProcessIndustryStream(ctx, items, getter, emb, ref, protos, cfg)
 		if err != nil {
-			log.Fatalf("industry stream: %v", err)
+			fatal("industry stream: %v", err)
 		}
 		domains = res.Domains
 		industries = res.Industries
@@ -385,16 +545,15 @@ func run(mode string, o opts) {
 		runEmbedChunk := mode == "both" // "both" also emits vectors -> the separate data/embedding tree
 		embedDir := ""
 		if runEmbedChunk {
-			embedDir = filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
+			embedDir = filepath.Join(o.base, o.crawlID, "embedding", "warc", o.selection, filepath.Base(outDir))
 		}
 		streamer, serr := worker.NewShardStreamer(outDir, embedDir, runEmbedChunk, true /*runTech*/)
 		if serr != nil {
-			log.Fatalf("open shard writers: %v", serr)
+			fatal("open shard writers: %v", serr)
 		}
-		// Domain-aligned chunks: each snapped to a domain boundary so a domain's pages never split across a
-		// chunk (the worklist is ORDER BY root_domain, rn) — otherwise a straddling domain aggregates twice
-		// into two DomainRows with conflicting primary URLs (review C3). The loop advances by the ACTUAL
-		// snapped boundary, prefetching the next chunk over the network while the current one finalizes+writes.
+		// Items were sorted by root domain above. Snap every chunk to a domain boundary so a domain's pages
+		// cannot aggregate twice into conflicting DomainRows. The next chunk is read while the current one
+		// finalizes and writes; the reader may be Common Crawl ranges or a downloaded local WARC.
 		chunkEnd := func(i int) int {
 			e := i + o.chunk
 			if e >= len(items) {
@@ -426,11 +585,11 @@ func run(mode string, o opts) {
 			res, ferr := worker.Finalize(ctx, cur, emb, ref, protos, cfg)
 			if ferr != nil {
 				streamer.Abort()
-				log.Fatalf("process chunk [%d:%d]: %v", curLo, curHi, ferr)
+				fatal("process chunk [%d:%d]: %v", curLo, curHi, ferr)
 			}
 			if werr := streamer.Write(res); werr != nil {
 				streamer.Abort()
-				log.Fatalf("write chunk [%d:%d]: %v", curLo, curHi, werr)
+				fatal("write chunk [%d:%d]: %v", curLo, curHi, werr)
 			}
 			el := time.Since(start).Seconds()
 			log.Printf("progress: %d/%d pages, %d domains written (%.1f pages/s)",
@@ -445,16 +604,16 @@ func run(mode string, o opts) {
 		const maxFetchErrorRate = 0.5 // >50% errors = systemic; normal WARC decay is a few %
 		if totalPages > 0 && float64(totalErrs)/float64(totalPages) > maxFetchErrorRate {
 			streamer.Abort()
-			log.Fatalf("refusing to write: fetch error rate %.0f%% (%d/%d pages) exceeds %.0f%% — part will be retried",
+			fatal("refusing to write: fetch error rate %.0f%% (%d/%d pages) exceeds %.0f%% — WARC index will be retried",
 				100*float64(totalErrs)/float64(totalPages), totalErrs, totalPages, 100*maxFetchErrorRate)
 		}
 		if len(items) > 0 && streamer.DomainCount() == 0 {
 			streamer.Abort()
-			log.Fatalf("refusing to write: 0 domains from %d staged pages (systemic parse failure?) — part will be retried", len(items))
+			fatal("refusing to write: 0 domains from %d catalog pages (systemic parse failure?) — WARC index will be retried", len(items))
 		}
 		_, cerr := streamer.Commit()
 		if cerr != nil {
-			log.Fatalf("commit shard writers: %v", cerr)
+			fatal("commit shard writers: %v", cerr)
 		}
 		finalDomains = streamer.DomainCount()
 		finalEmbeds = streamer.EmbeddingCount()
@@ -462,18 +621,18 @@ func run(mode string, o opts) {
 	}
 
 	if !streamed {
-		// Failure contract (industry/embed): refuse to write when a non-empty worklist produced nothing.
+		// Failure contract (industry/embed): refuse to write when non-empty catalog input produced nothing.
 		produced := len(domains)
 		if mode == "embed" {
 			produced = len(embeddings)
 		}
 		if len(items) > 0 && produced == 0 {
-			log.Fatalf("refusing to write: 0 outputs from %d worklist pages (systemic fetch failure?) — part will be retried", len(items))
+			fatal("refusing to write: 0 outputs from %d catalog pages (systemic fetch failure?) — WARC index will be retried", len(items))
 		}
 		write := func(name string, fn func(string) error) {
 			p := filepath.Join(outDir, name)
 			if err := fn(p); err != nil {
-				log.Fatalf("write %s: %v", name, err)
+				fatal("write %s: %v", name, err)
 			}
 		}
 		if mode == "industry" { // domains master + classification; embed writes only the vectors below
@@ -483,23 +642,35 @@ func run(mode string, o opts) {
 		}
 		// Embeddings are the expensive GPU artifact — kept large, never loaded into ClickHouse. For embed
 		// mode --out IS the embed dir; for industry, write to the SEPARATE sibling tree
-		// data/crawl/<stem> -> data/embedding/<stem>.
-		if len(embeddings) > 0 {
+		// <crawl>/warc/<selection>/<stem> -> <crawl>/embedding/warc/<selection>/<stem>.
+		if len(embeddings) > 0 || mode == "embed" {
 			embedDir := outDir
 			if mode != "embed" {
-				embedDir = filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
+				embedDir = filepath.Join(o.base, o.crawlID, "embedding", "warc", o.selection, filepath.Base(outDir))
 			}
 			if err := os.MkdirAll(embedDir, 0o755); err != nil {
-				log.Fatalf("create embedding dir %s: %v", embedDir, err)
+				fatal("create embedding dir %s: %v", embedDir, err)
 			}
 			p := filepath.Join(embedDir, "embeddings.parquet")
 			if err := output.WriteEmbeddings(p, embeddings); err != nil {
-				log.Fatalf("write embeddings: %v", err)
+				fatal("write embeddings: %v", err)
+			}
+			emptyMarker := p + ".empty"
+			if len(embeddings) == 0 {
+				if err := os.WriteFile(emptyMarker, nil, 0o644); err != nil {
+					fatal("write empty embedding marker: %v", err)
+				}
+			} else if err := os.Remove(emptyMarker); err != nil && !os.IsNotExist(err) {
+				fatal("remove stale empty embedding marker: %v", err)
 			}
 			log.Printf("saved %d embeddings -> %s", len(embeddings), p)
 		}
 		finalDomains = len(domains)
 		finalEmbeds = len(embeddings)
+	}
+
+	if err := cleanupInput(); err != nil {
+		fatal("clean up WARC input: %v", err)
 	}
 
 	dur := time.Since(start).Seconds()

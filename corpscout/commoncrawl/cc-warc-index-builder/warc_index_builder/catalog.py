@@ -1,280 +1,41 @@
-"""Local catalog build paths and exclusive build lifecycle."""
+"""Build local candidates and one pruned WARC-oriented DuckDB catalog."""
 
-import fcntl
-import importlib.metadata
 import os
-import re
 import shutil
-import stat
 import time
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import duckdb
 
-from ._identity import decode_sha256, new_identity_digest, update_text
-from .manifests import IndexSource, SourceSchema, WarcObject, source_schema_sha256
-from .object_sizes import (
-    PermanentWarcSizeError,
-    ProbeMetrics,
-    WarcSizeFailure,
-    WarcSizeOutcome,
-    WarcSizeSuccess,
+from .manifests import IndexSource, WarcObject, WarcSize
+from .selection import SELECTION_VERSION, candidate_query, global_order_clause
+
+
+CANDIDATE_SCHEMA = (
+    ("selection_version", "USMALLINT"),
+    ("source_index", "UINTEGER"),
+    ("root_domain", "VARCHAR"),
+    ("url", "VARCHAR"),
+    ("content_languages", "VARCHAR"),
+    ("warc_filename", "VARCHAR"),
+    ("warc_record_offset", "UBIGINT"),
+    ("warc_record_length", "UBIGINT"),
+    ("rank_main_site", "UTINYINT"),
+    ("rank_homepage", "UTINYINT"),
+    ("rank_priority_path", "UTINYINT"),
+    ("rank_path_depth", "UBIGINT"),
+    ("rank_path_length", "UBIGINT"),
+    ("rank_apex", "UTINYINT"),
 )
-from .selection import (
-    CANDIDATE_COLUMNS,
-    RANKING_COLUMN_NAMES,
-    candidate_output_projection,
-    eligibility_predicate,
-    normalized_source_projection,
-    ranking_order_clause,
-    ranking_projection,
-    validated_candidate_coordinate_projection,
+WARCS_PARQUET_SCHEMA = (
+    ("warc_index", "UINTEGER"),
+    ("warc_filename", "VARCHAR"),
+    ("selected_pages", "UBIGINT"),
+    ("selected_bytes", "UBIGINT"),
 )
-
-
-CATALOG_SCHEMA_VERSION = 1
-_BUILD_STATE_SCHEMA_VERSION = 1
-_CRAWL_ID = re.compile(r"CC-MAIN-[0-9]{4}-[0-9]{2}")
-_CANDIDATE_HTTP_STATUS = re.compile(
-    r"(?:\bhttp\s+|statuscode:\s*)([1-5][0-9]{2})\b",
-    re.IGNORECASE,
-)
-_PUBLICATION_TARGET_FILENAME = "publication.target"
-_PUBLICATION_TARGET_PARTIAL_FILENAME = "publication.target.partial"
-_PUBLISHED_BUILD_DIRECTORY = ".build.published"
-_TRANSIENT_CANDIDATE_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
-_TRANSIENT_CANDIDATE_NETWORK_MARKERS = (
-    "connection reset",
-    "connection closed",
-    "connection refused",
-    "broken pipe",
-    "could not connect",
-    "failed to connect",
-    "network is unreachable",
-    "temporary failure",
-    "temporary name resolution failure",
-    "timed out",
-    "timeout",
-    "unexpected eof",
-)
-
-
-class CatalogBuildLocked(RuntimeError):
-    pass
-
-
-class BuildStateConflict(RuntimeError):
-    pass
-
-
-class BuildStateCorrupt(RuntimeError):
-    pass
-
-
-class CandidateArtifactError(RuntimeError):
-    pass
-
-
-class CandidateBuildError(RuntimeError):
-    pass
-
-
-class WarcSizeCheckpointError(RuntimeError):
-    pass
-
-
-class FinalCatalogBuildError(RuntimeError):
-    pass
-
-
-class CatalogPublicationError(RuntimeError):
-    def __init__(self, message: str, *, published: bool) -> None:
-        self.published = published
-        super().__init__(message)
-
-
-class CatalogValidationError(RuntimeError):
-    def __init__(
-        self,
-        message: str,
-        samples: Sequence[Sequence[object]] = (),
-    ) -> None:
-        raw_samples = tuple(tuple(row) for row in samples)
-        self.has_more_samples = len(raw_samples) > 3
-        self.samples = tuple(
-            tuple(
-                value[:197] + "..."
-                if isinstance(value, str) and len(value) > 200
-                else value
-                for value in row
-            )
-            for row in raw_samples[:3]
-        )
-        suffix = f"; samples={self.samples!r}" if self.samples else ""
-        if self.has_more_samples:
-            suffix += "; additional invalid rows omitted"
-        super().__init__(message + suffix)
-
-
-@dataclass(frozen=True, slots=True)
-class BuildIdentity:
-    catalog_schema_version: int
-    crawl_id: str
-    pages_per_domain: int
-    selection_policy_version: str
-    selection_policy_sha256: str
-    source_schema_sha256: str
-    warc_manifest_sha256: str
-    index_manifest_sha256: str
-
-
-@dataclass(frozen=True, slots=True)
-class SourceShardSeed:
-    source_index: int
-    source_url: str
-    source_schema_sha256: str
-
-
-@dataclass(frozen=True, slots=True)
-class BuildStateResult:
-    reused: bool
-    recovered_source_shards: int
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateMetadata:
-    rows: int
-    byte_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateShardResult:
-    source_index: int
-    path: Path
-    rows: int
-    byte_count: int
-    reused: bool
-    attempts_this_run: int
-    attempts_total: int
-    retries: int
-    http_429: int
-    http_503: int
-    elapsed_seconds: float
-
-
-@dataclass(frozen=True, slots=True)
-class _CandidateSourceState:
-    status: str
-    candidate_rows: int | None
-    candidate_bytes: int | None
-    attempts: int
-
-
-@dataclass(frozen=True, slots=True)
-class PendingWarcSizes:
-    total_objects: int
-    reused_objects: int
-    reused_bytes: int
-    attempts_total: int
-    pending: tuple[WarcObject, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class WarcSizeBatchResult:
-    objects: int
-    successes: int
-    failures: int
-    object_bytes: int
-    attempts: int
-    retries: int
-    head_requests: int
-    range_requests: int
-    http_429: int
-    http_503: int
-    objects_completed: int
-    objects_pending: int
-    known_bytes: int
-    attempts_total: int
-    inventory_sha256: str | None
-
-    @property
-    def http_requests(self) -> int:
-        return self.head_requests + self.range_requests
-
-
-@dataclass(frozen=True, slots=True)
-class FinalWarcsResult:
-    path: Path
-    warc_count: int
-    total_bytes: int
-    inventory_sha256: str
-
-
-@dataclass(frozen=True, slots=True)
-class FinalPagesResult:
-    path: Path
-    selected_page_count: int
-    distinct_domain_count: int
-    selected_bytes: int
-
-
-@dataclass(frozen=True, slots=True)
-class FinalMetadataResult:
-    path: Path
-    catalog_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogValidationResult:
-    catalog_id: str
-    warc_inventory_sha256: str
-    selection_policy_version: str
-    selection_policy_sha256: str
-    warc_manifest_sha256: str
-    index_manifest_sha256: str
-    crawl_id: str
-    selection_name: str
-    pages_per_domain: int
-    warc_count: int
-    selected_page_count: int
-    distinct_domain_count: int
-    source_index_shard_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class FinalCatalogResult:
-    path: Path
-    validation: CatalogValidationResult
-    file_identity: tuple[int, int, int, int, int, int]
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogInspectionResult:
-    path: Path
-    catalog_id: str
-    warc_count: int
-    selected_page_count: int
-    distinct_domain_count: int
-    reusable: bool
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogPublicationResult:
-    path: Path
-    validation: CatalogValidationResult
-
-
-@dataclass(frozen=True, slots=True)
-class _PublicationTarget:
-    catalog_id: str
-    device: int
-    inode: int
-
-
-GLOBAL_PAGE_COLUMNS = (
+PAGES_PARQUET_SCHEMA = (
     ("warc_index", "UINTEGER"),
     ("root_domain", "VARCHAR"),
     ("url", "VARCHAR"),
@@ -284,3453 +45,646 @@ GLOBAL_PAGE_COLUMNS = (
     ("warc_record_length", "UBIGINT"),
 )
 
-_SELECTION_CONFLICT_COLUMNS = ("root_domain", "url", *RANKING_COLUMN_NAMES)
 
-_FINAL_CATALOG_DDL = (
-    """
-    CREATE TABLE final_catalog.catalog_metadata (
-        singleton BOOLEAN PRIMARY KEY CHECK (singleton),
-        schema_version USMALLINT NOT NULL,
-        catalog_id VARCHAR NOT NULL,
-        crawl_id VARCHAR NOT NULL,
-        selection_name VARCHAR NOT NULL,
-        pages_per_domain USMALLINT NOT NULL,
-        selection_policy_version VARCHAR NOT NULL,
-        selection_policy_sha256 VARCHAR NOT NULL,
-        source_schema_sha256 VARCHAR NOT NULL,
-        warc_manifest_sha256 VARCHAR NOT NULL,
-        index_manifest_sha256 VARCHAR NOT NULL,
-        warc_inventory_sha256 VARCHAR NOT NULL,
-        warc_count UINTEGER NOT NULL,
-        selected_page_count UBIGINT NOT NULL,
-        distinct_domain_count UBIGINT NOT NULL,
-        source_index_shard_count UINTEGER NOT NULL,
-        duckdb_version VARCHAR NOT NULL,
-        builder_version VARCHAR NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE final_catalog.warcs (
-        warc_index UINTEGER PRIMARY KEY,
-        warc_filename VARCHAR NOT NULL UNIQUE,
-        object_bytes UBIGINT NOT NULL CHECK (object_bytes > 0)
-    )
-    """,
-    """
-    CREATE TABLE final_catalog.pages (
-        warc_index UINTEGER NOT NULL,
-        root_domain VARCHAR NOT NULL,
-        url VARCHAR NOT NULL,
-        domain_page_rank USMALLINT NOT NULL,
-        content_languages VARCHAR,
-        warc_record_offset UBIGINT NOT NULL,
-        warc_record_length UBIGINT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE final_catalog._build_progress (
-        singleton BOOLEAN PRIMARY KEY CHECK (singleton),
-        pages_materialized BOOLEAN NOT NULL
-    )
-    """,
-)
+class CandidateBuildError(RuntimeError):
+    pass
 
 
-_BUILD_STATE_DDL = (
-    """
-    CREATE TABLE IF NOT EXISTS build_identity (
-        singleton BOOLEAN PRIMARY KEY CHECK (singleton),
-        state_schema_version USMALLINT NOT NULL CHECK (state_schema_version > 0),
-        catalog_schema_version USMALLINT NOT NULL CHECK (catalog_schema_version > 0),
-        crawl_id VARCHAR NOT NULL
-            CHECK (regexp_full_match(crawl_id, 'CC-MAIN-[0-9]{4}-[0-9]{2}')),
-        pages_per_domain USMALLINT NOT NULL CHECK (pages_per_domain > 0),
-        selection_policy_version VARCHAR NOT NULL
-            CHECK (length(trim(selection_policy_version)) > 0),
-        selection_policy_sha256 VARCHAR NOT NULL
-            CHECK (regexp_full_match(selection_policy_sha256, '[0-9a-f]{64}')),
-        source_schema_sha256 VARCHAR NOT NULL
-            CHECK (regexp_full_match(source_schema_sha256, '[0-9a-f]{64}')),
-        warc_manifest_sha256 VARCHAR NOT NULL
-            CHECK (regexp_full_match(warc_manifest_sha256, '[0-9a-f]{64}')),
-        index_manifest_sha256 VARCHAR NOT NULL
-            CHECK (regexp_full_match(index_manifest_sha256, '[0-9a-f]{64}')),
-        warc_inventory_sha256 VARCHAR CHECK (
-            warc_inventory_sha256 IS NULL
-            OR regexp_full_match(warc_inventory_sha256, '[0-9a-f]{64}')
-        )
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS warc_inventory (
-        warc_index UINTEGER PRIMARY KEY,
-        warc_filename VARCHAR NOT NULL UNIQUE
-            CHECK (length(trim(warc_filename)) > 0),
-        object_bytes UBIGINT CHECK (object_bytes IS NULL OR object_bytes > 0),
-        attempts UINTEGER NOT NULL DEFAULT 0,
-        last_error VARCHAR CHECK (last_error IS NULL OR length(trim(last_error)) > 0),
-        CHECK (object_bytes IS NULL OR last_error IS NULL)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS source_shards (
-        source_index UINTEGER PRIMARY KEY,
-        source_url VARCHAR NOT NULL UNIQUE CHECK (length(trim(source_url)) > 0),
-        source_schema_sha256 VARCHAR NOT NULL
-            CHECK (regexp_full_match(source_schema_sha256, '[0-9a-f]{64}')),
-        status VARCHAR NOT NULL DEFAULT 'pending'
-            CHECK (status IN ('pending', 'running', 'ready')),
-        candidate_rows UBIGINT,
-        candidate_bytes UBIGINT CHECK (candidate_bytes IS NULL OR candidate_bytes > 0),
-        attempts UINTEGER NOT NULL DEFAULT 0,
-        last_error VARCHAR CHECK (last_error IS NULL OR length(trim(last_error)) > 0),
-        completed_at TIMESTAMPTZ,
-        CHECK (
-            (
-                status = 'ready'
-                AND candidate_rows IS NOT NULL
-                AND candidate_bytes IS NOT NULL
-                AND completed_at IS NOT NULL
-                AND last_error IS NULL
-            )
-            OR
-            (
-                status <> 'ready'
-                AND candidate_rows IS NULL
-                AND candidate_bytes IS NULL
-                AND completed_at IS NULL
-            )
-        )
-    )
-    """,
-)
-
-_BUILD_STATE_COLUMNS = {
-    "build_identity": (
-        ("singleton", "BOOLEAN", "NO"),
-        ("state_schema_version", "USMALLINT", "NO"),
-        ("catalog_schema_version", "USMALLINT", "NO"),
-        ("crawl_id", "VARCHAR", "NO"),
-        ("pages_per_domain", "USMALLINT", "NO"),
-        ("selection_policy_version", "VARCHAR", "NO"),
-        ("selection_policy_sha256", "VARCHAR", "NO"),
-        ("source_schema_sha256", "VARCHAR", "NO"),
-        ("warc_manifest_sha256", "VARCHAR", "NO"),
-        ("index_manifest_sha256", "VARCHAR", "NO"),
-        ("warc_inventory_sha256", "VARCHAR", "YES"),
-    ),
-    "warc_inventory": (
-        ("warc_index", "UINTEGER", "NO"),
-        ("warc_filename", "VARCHAR", "NO"),
-        ("object_bytes", "UBIGINT", "YES"),
-        ("attempts", "UINTEGER", "NO"),
-        ("last_error", "VARCHAR", "YES"),
-    ),
-    "source_shards": (
-        ("source_index", "UINTEGER", "NO"),
-        ("source_url", "VARCHAR", "NO"),
-        ("source_schema_sha256", "VARCHAR", "NO"),
-        ("status", "VARCHAR", "NO"),
-        ("candidate_rows", "UBIGINT", "YES"),
-        ("candidate_bytes", "UBIGINT", "YES"),
-        ("attempts", "UINTEGER", "NO"),
-        ("last_error", "VARCHAR", "YES"),
-        ("completed_at", "TIMESTAMP WITH TIME ZONE", "YES"),
-    ),
-}
-
-_FINAL_CATALOG_COLUMNS = {
-    "catalog_metadata": (
-        ("singleton", "BOOLEAN", "NO"),
-        ("schema_version", "USMALLINT", "NO"),
-        ("catalog_id", "VARCHAR", "NO"),
-        ("crawl_id", "VARCHAR", "NO"),
-        ("selection_name", "VARCHAR", "NO"),
-        ("pages_per_domain", "USMALLINT", "NO"),
-        ("selection_policy_version", "VARCHAR", "NO"),
-        ("selection_policy_sha256", "VARCHAR", "NO"),
-        ("source_schema_sha256", "VARCHAR", "NO"),
-        ("warc_manifest_sha256", "VARCHAR", "NO"),
-        ("index_manifest_sha256", "VARCHAR", "NO"),
-        ("warc_inventory_sha256", "VARCHAR", "NO"),
-        ("warc_count", "UINTEGER", "NO"),
-        ("selected_page_count", "UBIGINT", "NO"),
-        ("distinct_domain_count", "UBIGINT", "NO"),
-        ("source_index_shard_count", "UINTEGER", "NO"),
-        ("duckdb_version", "VARCHAR", "NO"),
-        ("builder_version", "VARCHAR", "NO"),
-        ("created_at", "TIMESTAMP WITH TIME ZONE", "NO"),
-    ),
-    "pages": (
-        ("warc_index", "UINTEGER", "NO"),
-        ("root_domain", "VARCHAR", "NO"),
-        ("url", "VARCHAR", "NO"),
-        ("domain_page_rank", "USMALLINT", "NO"),
-        ("content_languages", "VARCHAR", "YES"),
-        ("warc_record_offset", "UBIGINT", "NO"),
-        ("warc_record_length", "UBIGINT", "NO"),
-    ),
-    "warcs": (
-        ("warc_index", "UINTEGER", "NO"),
-        ("warc_filename", "VARCHAR", "NO"),
-        ("object_bytes", "UBIGINT", "NO"),
-    ),
-}
+@dataclass(frozen=True, slots=True)
+class CandidateResult:
+    source_index: int
+    path: Path
+    rows: int
+    byte_count: int
+    elapsed_seconds: float
+    attempts: int
+    reused: bool
 
 
-def source_shard_seeds(
-    sources: Sequence[IndexSource], schemas: Sequence[SourceSchema]
-) -> tuple[SourceShardSeed, ...]:
-    """Pair manifest sources with their inspected, path-free schema fingerprints."""
-    if len(sources) != len(schemas):
-        raise ValueError("index sources and source schemas must have the same length")
-    seeds: list[SourceShardSeed] = []
-    for expected_index, (source, schema) in enumerate(zip(sources, schemas)):
-        if source.source_index != expected_index or schema.source_index != expected_index:
-            raise ValueError("sources and schemas must be in matching source_index order")
-        seeds.append(
-            SourceShardSeed(
-                source_index=expected_index,
-                source_url=source.url,
-                source_schema_sha256=source_schema_sha256(schema),
-            )
-        )
-    return tuple(seeds)
+@dataclass(frozen=True, slots=True)
+class CatalogResult:
+    path: Path
+    warc_count: int
+    selected_warc_count: int
+    selected_page_count: int
+    selected_bytes: int
+    estimated_average_warc_bytes: float
+    reused: bool
 
 
-def initialize_build_state(
-    connection: duckdb.DuckDBPyConnection,
-    identity: BuildIdentity,
-    warcs: Sequence[WarcObject],
-    sources: Sequence[SourceShardSeed],
-) -> BuildStateResult:
-    """Create or exactly reopen one typed, transactionally seeded build state."""
-    _validate_build_state_inputs(identity, warcs, sources)
-    connection.execute("BEGIN TRANSACTION")
-    try:
-        _require_complete_build_state_table_set(connection)
-        for statement in _BUILD_STATE_DDL:
-            connection.execute(statement)
-        _require_build_state_table_shapes(connection)
-
-        rows = connection.execute(
-            """
-            SELECT state_schema_version, catalog_schema_version,
-                   crawl_id, pages_per_domain, selection_policy_version,
-                   selection_policy_sha256, source_schema_sha256,
-                   warc_manifest_sha256, index_manifest_sha256
-            FROM build_identity
-            """
-        ).fetchall()
-        if not rows:
-            _require_empty_seed_tables(connection)
-            _insert_build_identity(connection, identity)
-            _seed_warc_inventory(connection, warcs)
-            _seed_source_shards(connection, sources)
-            result = BuildStateResult(reused=False, recovered_source_shards=0)
-        elif len(rows) == 1:
-            state_schema_version, *identity_values = rows[0]
-            if state_schema_version != _BUILD_STATE_SCHEMA_VERSION:
-                raise BuildStateConflict(
-                    "build identity conflicts for: state_schema_version; use --rebuild"
-                )
-            stored_identity = BuildIdentity(*identity_values)
-            _require_matching_identity(identity, stored_identity)
-            _require_matching_seeds(connection, warcs, sources)
-            recovered_sources = connection.execute(
-                "UPDATE source_shards SET status = 'pending' WHERE status = 'running' RETURNING 1"
-            ).fetchall()
-            result = BuildStateResult(
-                reused=True,
-                recovered_source_shards=len(recovered_sources),
-            )
-        else:
-            raise BuildStateCorrupt("build_identity must contain exactly one row; use --rebuild")
-        connection.execute("COMMIT")
-        return result
-    except BaseException:
-        connection.execute("ROLLBACK")
-        raise
+def sql_string(value: str | Path) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
 
 
-def _validate_build_state_inputs(
-    identity: BuildIdentity,
-    warcs: Sequence[WarcObject],
-    sources: Sequence[SourceShardSeed],
-) -> None:
-    if identity.catalog_schema_version != CATALOG_SCHEMA_VERSION:
-        raise ValueError(
-            f"catalog_schema_version must be {CATALOG_SCHEMA_VERSION}"
-        )
-    if _CRAWL_ID.fullmatch(identity.crawl_id) is None:
-        raise ValueError("crawl_id must match CC-MAIN-YYYY-NN")
-    if not identity.selection_policy_version.strip():
-        raise ValueError("selection_policy_version must not be blank")
-    if not 1 <= identity.pages_per_domain <= 0xFFFF:
-        raise ValueError("pages_per_domain must be between 1 and uint16 max")
-    identity_hashes = (
-        ("selection_policy_sha256", identity.selection_policy_sha256),
-        ("source_schema_sha256", identity.source_schema_sha256),
-        ("warc_manifest_sha256", identity.warc_manifest_sha256),
-        ("index_manifest_sha256", identity.index_manifest_sha256),
-    )
-    for name, value in identity_hashes:
-        decode_sha256(value, name)
-
-    if not warcs:
-        raise ValueError("WARC inventory must not be empty")
-    warc_filenames: set[str] = set()
-    for expected_index, warc in enumerate(warcs):
-        if warc.warc_index != expected_index:
-            raise ValueError("WARC inventory must be in contiguous warc_index order")
-        if not warc.warc_filename.strip():
-            raise ValueError("WARC filenames must not be blank")
-        if warc.warc_filename in warc_filenames:
-            raise ValueError("WARC filenames must be unique")
-        warc_filenames.add(warc.warc_filename)
-
-    if not sources:
-        raise ValueError("source shards must not be empty")
-    source_urls: set[str] = set()
-    for expected_index, source in enumerate(sources):
-        if source.source_index != expected_index:
-            raise ValueError("source shards must be in contiguous source_index order")
-        if not source.source_url.strip():
-            raise ValueError("source URLs must not be blank")
-        if source.source_url in source_urls:
-            raise ValueError("source URLs must be unique")
-        decode_sha256(source.source_schema_sha256, "source_schema_sha256")
-        source_urls.add(source.source_url)
+def parquet_source(path_or_url: str | Path) -> str:
+    return f"read_parquet({sql_string(path_or_url)})"
 
 
-def _require_complete_build_state_table_set(
-    connection: duckdb.DuckDBPyConnection,
-) -> None:
-    existing = {
-        row[0]
-        for row in connection.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
-        ).fetchall()
+def complete_parquet(path: Path) -> bool:
+    if path.is_symlink() or not path.is_file() or path.stat().st_size < 12:
+        return False
+    with path.open("rb") as source:
+        if source.read(4) != b"PAR1":
+            return False
+        source.seek(-4, os.SEEK_END)
+        return source.read(4) == b"PAR1"
+
+
+def open_duckdb(
+    path: Path | None,
+    temp_directory: Path,
+    *,
+    threads: int | None,
+    memory_limit: str | None,
+) -> duckdb.DuckDBPyConnection:
+    temp_directory.mkdir(parents=True, exist_ok=True)
+    config = {
+        "temp_directory": str(temp_directory),
+        "preserve_insertion_order": "false",
     }
-    state_tables = set(_BUILD_STATE_COLUMNS)
-    present = existing & state_tables
-    if present and present != state_tables:
-        raise BuildStateCorrupt(
-            "build state has only some required tables; use --rebuild"
-        )
+    if threads is not None:
+        config["threads"] = str(threads)
+    if memory_limit is not None:
+        config["memory_limit"] = memory_limit
+    return duckdb.connect(":memory:" if path is None else str(path), config=config)
 
 
-def _require_build_state_table_shapes(
+def inspect_source_columns(
     connection: duckdb.DuckDBPyConnection,
-) -> None:
-    for table, expected_columns in _BUILD_STATE_COLUMNS.items():
-        try:
-            rows = connection.execute(f"DESCRIBE {table}").fetchall()
-        except duckdb.Error as error:
-            raise BuildStateCorrupt(
-                f"cannot inspect build state table {table}; use --rebuild"
-            ) from error
-        actual_columns = tuple((str(row[0]), str(row[1]), str(row[2])) for row in rows)
-        if actual_columns != expected_columns:
-            raise BuildStateCorrupt(
-                f"build state table {table} has an incompatible schema; use --rebuild"
-            )
+    source: IndexSource,
+) -> set[str]:
+    rows = connection.execute(
+        f"DESCRIBE SELECT * FROM {parquet_source(source.url)}"
+    ).fetchall()
+    columns = {str(row[0]) for row in rows}
+    required = {
+        "url",
+        "url_host_name",
+        "url_host_registered_domain",
+        "url_path",
+        "fetch_status",
+        "content_mime_type",
+        "warc_filename",
+        "warc_record_offset",
+        "warc_record_length",
+    }
+    if missing := sorted(required - columns):
+        raise ValueError(
+            f"URL-index source {source.path} is missing columns: {', '.join(missing)}"
+        )
+    return columns
 
 
-def _require_empty_seed_tables(connection: duckdb.DuckDBPyConnection) -> None:
-    warc_count, source_count = connection.execute(
-        """
-        SELECT (SELECT count(*) FROM warc_inventory),
-               (SELECT count(*) FROM source_shards)
+def _candidate_rows(
+    connection: duckdb.DuckDBPyConnection,
+    path: Path,
+    source_index: int,
+) -> int:
+    described = connection.execute(
+        f"DESCRIBE SELECT * FROM {parquet_source(path)}"
+    ).fetchall()
+    schema = tuple((str(row[0]), str(row[1]).upper()) for row in described)
+    if schema != CANDIDATE_SCHEMA:
+        raise ValueError(f"candidate has an incompatible schema: {path}")
+    rows, invalid_rows = connection.execute(
+        f"""
+        SELECT count(*), count(*) FILTER (
+            WHERE selection_version IS DISTINCT FROM {SELECTION_VERSION}
+               OR source_index IS DISTINCT FROM {source_index}
+        )
+        FROM {parquet_source(path)}
         """
     ).fetchone()
-    if warc_count or source_count:
-        raise BuildStateCorrupt(
-            "state tables contain rows without a build identity; use --rebuild"
+    if invalid_rows:
+        raise ValueError(
+            f"candidate contains a different selection_version or source_index: {path}"
         )
+    return int(rows)
 
 
-def _insert_build_identity(
-    connection: duckdb.DuckDBPyConnection, identity: BuildIdentity
-) -> None:
-    connection.execute(
-        """
-        INSERT INTO build_identity VALUES (
-            true, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
-        )
-        """,
-        [
-            _BUILD_STATE_SCHEMA_VERSION,
-            identity.catalog_schema_version,
-            identity.crawl_id,
-            identity.pages_per_domain,
-            identity.selection_policy_version,
-            identity.selection_policy_sha256,
-            identity.source_schema_sha256,
-            identity.warc_manifest_sha256,
-            identity.index_manifest_sha256,
-        ],
-    )
-
-
-def _seed_warc_inventory(
-    connection: duckdb.DuckDBPyConnection, warcs: Sequence[WarcObject]
-) -> None:
-    connection.executemany(
-        "INSERT INTO warc_inventory(warc_index, warc_filename) VALUES (?, ?)",
-        [(warc.warc_index, warc.warc_filename) for warc in warcs],
-    )
-
-
-def _seed_source_shards(
-    connection: duckdb.DuckDBPyConnection, sources: Sequence[SourceShardSeed]
-) -> None:
-    connection.executemany(
-        """
-        INSERT INTO source_shards(source_index, source_url, source_schema_sha256)
-        VALUES (?, ?, ?)
-        """,
-        [
-            (source.source_index, source.source_url, source.source_schema_sha256)
-            for source in sources
-        ],
-    )
-
-
-def _require_matching_identity(expected: BuildIdentity, stored: BuildIdentity) -> None:
-    conflicts = [
-        field.name
-        for field in fields(BuildIdentity)
-        if getattr(expected, field.name) != getattr(stored, field.name)
-    ]
-    if conflicts:
-        raise BuildStateConflict(
-            "build identity conflicts for: " + ", ".join(conflicts) + "; use --rebuild"
-        )
-
-
-def _require_matching_seeds(
+def build_candidate(
     connection: duckdb.DuckDBPyConnection,
-    warcs: Sequence[WarcObject],
-    sources: Sequence[SourceShardSeed],
+    source: IndexSource,
+    output_path: Path,
+    *,
+    pages_per_domain: int,
+    attempts: int,
+) -> CandidateResult:
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    if complete_parquet(output_path):
+        try:
+            rows = _candidate_rows(connection, output_path, source.source_index)
+            return CandidateResult(
+                source.source_index,
+                output_path,
+                rows,
+                output_path.stat().st_size,
+                0.0,
+                0,
+                True,
+            )
+        except duckdb.Error, ValueError:
+            output_path.unlink()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    partial = output_path.with_name(f"{output_path.name}.partial")
+    last_error: Exception | None = None
+    started = time.monotonic()
+    for attempt in range(1, attempts + 1):
+        partial.unlink(missing_ok=True)
+        try:
+            columns = inspect_source_columns(connection, source)
+            candidate = candidate_query(
+                parquet_source(source.url),
+                source.source_index,
+                pages_per_domain,
+                "content_mime_detected" in columns,
+                "content_languages" in columns,
+            )
+            query = (
+                f"SELECT CAST({SELECTION_VERSION} AS USMALLINT) "
+                f"AS selection_version, candidate.* FROM ({candidate}) candidate"
+            )
+            connection.execute(
+                f"COPY ({query}) TO {sql_string(partial)} "
+                "(FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000)"
+            )
+            if not complete_parquet(partial):
+                raise OSError("candidate output is not a complete Parquet file")
+            rows = _candidate_rows(connection, partial, source.source_index)
+            os.replace(partial, output_path)
+            return CandidateResult(
+                source.source_index,
+                output_path,
+                rows,
+                output_path.stat().st_size,
+                time.monotonic() - started,
+                attempt,
+                False,
+            )
+        except ValueError:
+            partial.unlink(missing_ok=True)
+            raise
+        except (duckdb.Error, OSError) as error:
+            last_error = error
+            partial.unlink(missing_ok=True)
+            if attempt < attempts:
+                time.sleep(min(2 ** (attempt - 1), 30))
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
+    raise CandidateBuildError(
+        f"query URL-index source {source.source_index} failed after "
+        f"{attempts} attempts: {last_error}"
+    ) from last_error
+
+
+def _candidate_list(paths: Sequence[Path]) -> str:
+    if not paths:
+        raise ValueError("candidate paths must not be empty")
+    return "[" + ",".join(sql_string(path) for path in paths) + "]"
+
+
+def _parquet_schema(
+    connection: duckdb.DuckDBPyConnection,
+    path: Path,
+) -> tuple[tuple[str, str], ...]:
+    rows = connection.execute(
+        f"DESCRIBE SELECT * FROM {parquet_source(path)}"
+    ).fetchall()
+    return tuple((str(row[0]), str(row[1]).upper()) for row in rows)
+
+
+def _validate_portable_parquets(
+    connection: duckdb.DuckDBPyConnection,
+    warcs_path: Path,
+    pages_path: Path,
+    expected_warcs: int,
+    expected_pages: int,
 ) -> None:
-    stored_warcs = tuple(
+    if _parquet_schema(connection, warcs_path) != WARCS_PARQUET_SCHEMA:
+        raise ValueError(
+            f"portable WARC Parquet has an incompatible schema: {warcs_path}"
+        )
+    if _parquet_schema(connection, pages_path) != PAGES_PARQUET_SCHEMA:
+        raise ValueError(
+            f"portable page Parquet has an incompatible schema: {pages_path}"
+        )
+
+    warc_rows, invalid_warcs, unordered_warcs, selected_pages, selected_bytes = (
         connection.execute(
-            "SELECT warc_index, warc_filename FROM warc_inventory ORDER BY warc_index"
-        ).fetchall()
-    )
-    expected_warcs = tuple((warc.warc_index, warc.warc_filename) for warc in warcs)
-    if len(stored_warcs) != len(expected_warcs):
-        raise BuildStateCorrupt(
-            "stored WARC inventory row count is incomplete; use --rebuild"
-        )
-    if stored_warcs != expected_warcs:
-        raise BuildStateConflict(
-            "stored WARC inventory conflicts with the manifest; use --rebuild"
-        )
-
-    stored_sources = tuple(
-        connection.execute(
+            f"""
+            SELECT count(*),
+                   count(*) FILTER (
+                       WHERE warc_index IS NULL OR warc_filename IS NULL
+                          OR nullif(trim(warc_filename), '') IS NULL
+                          OR selected_pages IS NULL OR selected_bytes IS NULL
+                   ),
+                   count(*) FILTER (WHERE previous_warc_index >= warc_index),
+                   coalesce(sum(selected_pages), 0),
+                   coalesce(sum(selected_bytes), 0)
+            FROM (
+                SELECT *, lag(warc_index) OVER () AS previous_warc_index
+                FROM {parquet_source(warcs_path)}
+            )
             """
-            SELECT source_index, source_url, source_schema_sha256
-            FROM source_shards
-            ORDER BY source_index
-            """
+        ).fetchone()
+    )
+    page_rows, invalid_pages, unordered_pages, page_bytes = connection.execute(
+        f"""
+        SELECT count(*),
+               count(*) FILTER (
+                   WHERE warc_index IS NULL OR root_domain IS NULL OR url IS NULL
+                      OR nullif(trim(root_domain), '') IS NULL
+                      OR nullif(trim(url), '') IS NULL
+                      OR domain_page_rank IS NULL OR domain_page_rank = 0
+                      OR warc_record_offset IS NULL OR warc_record_length IS NULL
+                      OR warc_record_offset < 0 OR warc_record_length <= 0
+               ),
+               count(*) FILTER (
+                   WHERE previous_warc_index > warc_index
+                      OR (previous_warc_index = warc_index
+                          AND previous_offset > warc_record_offset)
+               ),
+               coalesce(sum(warc_record_length), 0)
+        FROM (
+            SELECT *, lag(warc_index) OVER () AS previous_warc_index,
+                   lag(warc_record_offset) OVER () AS previous_offset
+            FROM {parquet_source(pages_path)}
+        )
+        """
+    ).fetchone()
+    if int(warc_rows) != expected_warcs or int(page_rows) != expected_pages:
+        raise ValueError(
+            "portable Parquet row counts differ from the catalog: "
+            f"warcs={warc_rows}/{expected_warcs}, pages={page_rows}/{expected_pages}"
+        )
+    if int(invalid_warcs) or int(invalid_pages):
+        raise ValueError(
+            "portable Parquets contain null or invalid required values: "
+            f"warcs={invalid_warcs}, pages={invalid_pages}"
+        )
+    if int(unordered_warcs) or int(unordered_pages):
+        raise ValueError(
+            "portable Parquets are not in deterministic WARC/offset order: "
+            f"warcs={unordered_warcs}, pages={unordered_pages}"
+        )
+    if int(selected_pages) != int(page_rows) or int(selected_bytes) != int(page_bytes):
+        raise ValueError(
+            "portable WARC totals differ from portable page totals: "
+            f"pages={selected_pages}/{page_rows}, bytes={selected_bytes}/{page_bytes}"
+        )
+    for path in (warcs_path, pages_path):
+        compression = connection.execute(
+            "SELECT DISTINCT compression FROM parquet_metadata(?)", [str(path)]
         ).fetchall()
-    )
-    expected_sources = tuple(
-        (source.source_index, source.source_url, source.source_schema_sha256)
-        for source in sources
-    )
-    if len(stored_sources) != len(expected_sources):
-        raise BuildStateCorrupt(
-            "stored source shard row count is incomplete; use --rebuild"
-        )
-    if stored_sources != expected_sources:
-        raise BuildStateConflict(
-            "stored source shards conflict with the index manifest; use --rebuild"
-        )
-
-
-def _build_inventory_hash(connection: duckdb.DuckDBPyConnection) -> str:
-    rows = connection.execute(
-        """
-        SELECT warc_index, warc_filename, object_bytes
-        FROM warc_inventory
-        ORDER BY warc_index
-        """
-    ).fetchall()
-    if any(object_bytes is None for _, _, object_bytes in rows):
-        raise BuildStateCorrupt("cannot hash WARC inventory with missing object sizes")
-    return warc_inventory_sha256(
-        tuple(
-            (int(warc_index), str(warc_filename), int(object_bytes))
-            for warc_index, warc_filename, object_bytes in rows
-        )
-    )
-
-
-def _stored_inventory_hash(connection: duckdb.DuckDBPyConnection) -> str | None:
-    rows = connection.execute(
-        "SELECT warc_inventory_sha256 FROM build_identity"
-    ).fetchall()
-    if len(rows) != 1:
-        raise BuildStateCorrupt("build_identity must contain exactly one row; use --rebuild")
-    return rows[0][0]
-
-
-def prepare_warc_size_resume(
-    connection: duckdb.DuckDBPyConnection,
-) -> PendingWarcSizes:
-    """Return only unsized WARC objects after validating persisted size progress."""
-    stored_hash = _stored_inventory_hash(connection)
-    rows = connection.execute(
-        """
-        SELECT warc_index, warc_filename, object_bytes, attempts, last_error
-        FROM warc_inventory
-        ORDER BY warc_index
-        """
-    ).fetchall()
-    if not rows:
-        raise BuildStateCorrupt("WARC inventory is empty; use --rebuild")
-
-    pending: list[WarcObject] = []
-    filenames: set[str] = set()
-    reused_bytes = 0
-    attempts_total = 0
-    for expected_index, row in enumerate(rows):
-        warc_index, warc_filename, object_bytes, attempts, last_error = row
-        if warc_index != expected_index:
-            raise BuildStateCorrupt(
-                "WARC inventory indexes are not contiguous; use --rebuild"
-            )
-        if not str(warc_filename).strip() or warc_filename in filenames:
-            raise BuildStateCorrupt(
-                "WARC inventory filenames are blank or duplicated; use --rebuild"
-            )
-        filenames.add(str(warc_filename))
-        attempts_total += int(attempts)
-        if object_bytes is None:
-            pending.append(WarcObject(int(warc_index), str(warc_filename)))
-        else:
-            if not 1 <= int(object_bytes) <= 0xFFFFFFFFFFFFFFFF:
-                raise BuildStateCorrupt(
-                    "WARC inventory contains an invalid object size; use --rebuild"
-                )
-            if last_error is not None:
-                raise BuildStateCorrupt(
-                    "sized WARC inventory row contains an error; use --rebuild"
-                )
-            reused_bytes += int(object_bytes)
-
-    if stored_hash is not None:
-        if pending:
-            raise BuildStateCorrupt(
-                "WARC inventory hash exists while object sizes are missing; use --rebuild"
-            )
-        computed_hash = _build_inventory_hash(connection)
-        if stored_hash != computed_hash:
-            raise BuildStateConflict(
-                "stored WARC inventory hash conflicts with exact sizes; use --rebuild"
+        if compression != [("ZSTD",)]:
+            raise ValueError(
+                f"portable Parquet is not entirely ZSTD-compressed: {path}"
             )
 
-    return PendingWarcSizes(
-        total_objects=len(rows),
-        reused_objects=len(rows) - len(pending),
-        reused_bytes=reused_bytes,
-        attempts_total=attempts_total,
-        pending=tuple(pending),
-    )
 
+def publish_parquets(catalog_path: Path) -> tuple[Path, Path]:
+    warcs_path = catalog_path.with_name("warcs.parquet")
+    pages_path = catalog_path.with_name("pages.parquet")
+    warcs_partial = warcs_path.with_name(f"{warcs_path.name}.partial")
+    pages_partial = pages_path.with_name(f"{pages_path.name}.partial")
+    warcs_partial.unlink(missing_ok=True)
+    pages_partial.unlink(missing_ok=True)
 
-def _validate_warc_size_outcomes(
-    outcomes: Sequence[WarcSizeOutcome],
-) -> tuple[WarcSizeOutcome, ...]:
-    if not outcomes:
-        raise ValueError("WARC size checkpoint batch must not be empty")
-    ordered = tuple(sorted(outcomes, key=lambda outcome: outcome.warc.warc_index))
-    seen_indexes: set[int] = set()
-    for outcome in ordered:
-        warc = outcome.warc
-        if not 0 <= warc.warc_index <= 0xFFFFFFFF:
-            raise ValueError("WARC size outcome index must fit uint32")
-        if warc.warc_index in seen_indexes:
-            raise ValueError("WARC size checkpoint batch contains a duplicate index")
-        if not warc.warc_filename.strip():
-            raise ValueError("WARC size outcome filename must not be blank")
-        if outcome.attempts <= 0 or outcome.retries != outcome.attempts - 1:
-            raise ValueError("WARC size outcome has inconsistent attempt metrics")
-        metrics = outcome.metrics
-        if min(
-            metrics.head_requests,
-            metrics.range_requests,
-            metrics.http_429,
-            metrics.http_503,
-        ) < 0:
-            raise ValueError("WARC size outcome metrics must not be negative")
-        if metrics.head_requests != outcome.attempts:
-            raise ValueError("each WARC size attempt must contain exactly one HEAD request")
-        if isinstance(outcome, WarcSizeSuccess):
-            if not 1 <= outcome.object_bytes <= 0xFFFFFFFFFFFFFFFF:
-                raise ValueError("WARC size outcome object_bytes must fit uint64")
-        elif isinstance(outcome, WarcSizeFailure):
-            error = outcome.error
-            if (
-                error.warc_index != warc.warc_index
-                or error.warc_filename != warc.warc_filename
-            ):
-                raise ValueError("WARC size failure error identifies a different WARC")
-            if outcome.permanent != isinstance(error, PermanentWarcSizeError):
-                raise ValueError("WARC size failure classification is inconsistent")
-        else:
-            raise TypeError(f"unsupported WARC size outcome: {type(outcome).__name__}")
-        seen_indexes.add(warc.warc_index)
-    return ordered
-
-
-def _outcome_error_message(outcome: WarcSizeFailure) -> str:
-    message = str(outcome.error).strip() or type(outcome.error).__name__
-    return message[:2000]
-
-
-def checkpoint_warc_size_batch(
-    connection: duckdb.DuckDBPyConnection,
-    outcomes: Sequence[WarcSizeOutcome],
-) -> WarcSizeBatchResult:
-    """Atomically persist one completion batch and finalize the last batch hash."""
-    ordered = _validate_warc_size_outcomes(outcomes)
-    rows = [
-        (
-            outcome.warc.warc_index,
-            outcome.warc.warc_filename,
-            outcome.object_bytes if isinstance(outcome, WarcSizeSuccess) else None,
-            outcome.attempts,
-            None
-            if isinstance(outcome, WarcSizeSuccess)
-            else _outcome_error_message(outcome),
-        )
-        for outcome in ordered
-    ]
-
-    connection.execute("BEGIN TRANSACTION")
+    connection = duckdb.connect(str(catalog_path), read_only=True)
     try:
-        stored_hash = _stored_inventory_hash(connection)
-        pending_before = connection.execute(
-            "SELECT count(*) FROM warc_inventory WHERE object_bytes IS NULL"
-        ).fetchone()[0]
-        if stored_hash is not None and pending_before:
-            raise BuildStateCorrupt(
-                "WARC inventory hash exists while object sizes are missing; use --rebuild"
-            )
+        expected_warcs, expected_pages = connection.execute(
+            "SELECT warc_count, selected_page_count FROM metadata"
+        ).fetchone()
+        actual_warcs, actual_pages, invalid_coordinates = connection.execute(
+            """
+            SELECT (SELECT count(*) FROM warcs),
+                   (SELECT count(*) FROM pages),
+                   (SELECT count(*) FROM pages
+                    WHERE warc_index IS NULL OR warc_record_offset IS NULL
+                       OR warc_record_length IS NULL OR warc_record_offset < 0
+                       OR warc_record_length < 0)
+            """
+        ).fetchone()
+        if int(actual_warcs) != int(expected_warcs) or int(actual_pages) != int(
+            expected_pages
+        ):
+            raise ValueError("catalog table counts differ from catalog metadata")
+        if int(invalid_coordinates):
+            raise ValueError("catalog pages contain null WARC coordinates")
+
+        connection.execute(
+            f"""
+            COPY (
+                SELECT CAST(warc_index AS UINTEGER) AS warc_index,
+                       CAST(warc_filename AS VARCHAR) AS warc_filename,
+                       CAST(selected_pages AS UBIGINT) AS selected_pages,
+                       CAST(selected_bytes AS UBIGINT) AS selected_bytes
+                FROM warc_stats
+                ORDER BY warc_index
+            ) TO {sql_string(warcs_partial)}
+            (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000);
+
+            COPY (
+                SELECT CAST(warc_index AS UINTEGER) AS warc_index,
+                       CAST(root_domain AS VARCHAR) AS root_domain,
+                       CAST(url AS VARCHAR) AS url,
+                       CAST(domain_page_rank AS USMALLINT) AS domain_page_rank,
+                       CAST(content_languages AS VARCHAR) AS content_languages,
+                       CAST(warc_record_offset AS UBIGINT) AS warc_record_offset,
+                       CAST(warc_record_length AS UBIGINT) AS warc_record_length
+                FROM pages
+                ORDER BY warc_index, warc_record_offset
+            ) TO {sql_string(pages_partial)}
+            (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000)
+            """
+        )
+        if not complete_parquet(warcs_partial) or not complete_parquet(pages_partial):
+            raise OSError("portable Parquet output is incomplete")
+        _validate_portable_parquets(
+            connection,
+            warcs_partial,
+            pages_partial,
+            int(expected_warcs),
+            int(expected_pages),
+        )
+    except BaseException:
+        warcs_partial.unlink(missing_ok=True)
+        pages_partial.unlink(missing_ok=True)
+        raise
+    finally:
+        connection.close()
+
+    try:
+        os.replace(warcs_partial, warcs_path)
+        os.replace(pages_partial, pages_path)
+    except BaseException:
+        warcs_partial.unlink(missing_ok=True)
+        pages_partial.unlink(missing_ok=True)
+        raise
+    return warcs_path, pages_path
+
+
+def read_catalog(
+    path: Path,
+    *,
+    expected_crawl: str | None = None,
+    expected_pages_per_domain: int | None = None,
+) -> CatalogResult | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        connection = duckdb.connect(str(path), read_only=True)
+    except duckdb.Error:
+        return None
+    try:
+        row = connection.execute(
+            """
+            SELECT crawl_id, pages_per_domain, selection_version,
+                   warc_count, selected_warc_count, selected_page_count,
+                   selected_bytes, estimated_average_warc_bytes,
+                   (SELECT count(*) FROM warcs),
+                   (SELECT count(*) FROM pages),
+                   (SELECT count(*) FROM warc_stats)
+            FROM metadata
+            """
+        ).fetchone()
+    except duckdb.Error:
+        return None
+    finally:
+        connection.close()
+    if row is None:
+        return None
+    crawl, pages_per_domain, version = str(row[0]), int(row[1]), int(row[2])
+    warc_count, selected_warc_count, selected_page_count, selected_bytes = (
+        int(value) for value in row[3:7]
+    )
+    if (
+        version != SELECTION_VERSION
+        or (expected_crawl is not None and crawl != expected_crawl)
+        or (
+            expected_pages_per_domain is not None
+            and pages_per_domain != expected_pages_per_domain
+        )
+        or int(row[8]) != warc_count
+        or int(row[9]) != selected_page_count
+        or int(row[10]) != warc_count
+    ):
+        return None
+    return CatalogResult(
+        path,
+        warc_count,
+        selected_warc_count,
+        selected_page_count,
+        selected_bytes,
+        float(row[7]),
+        True,
+    )
+
+
+def build_catalog(
+    catalog_path: Path,
+    candidate_paths: Sequence[Path],
+    warcs: Sequence[WarcObject],
+    warc_sizes: Sequence[WarcSize],
+    *,
+    crawl: str,
+    pages_per_domain: int,
+    index_manifest_sha256: str,
+    warc_manifest_sha256: str,
+    temp_directory: Path,
+    threads: int | None,
+    memory_limit: str | None,
+) -> CatalogResult:
+    if not warcs:
+        raise ValueError("WARC inventory must not be empty")
+    if not warc_sizes:
+        raise ValueError("WARC size sample must not be empty")
+
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    partial = catalog_path.with_name(f"{catalog_path.name}.partial")
+    partial.unlink(missing_ok=True)
+    Path(f"{partial}.wal").unlink(missing_ok=True)
+    average_warc_bytes = sum(size.object_bytes for size in warc_sizes) / len(warc_sizes)
+    candidates = _candidate_list(candidate_paths)
+    order = global_order_clause(pages_per_domain)
+
+    connection = open_duckdb(
+        partial,
+        temp_directory,
+        threads=threads,
+        memory_limit=memory_limit,
+    )
+    active_error: BaseException | None = None
+    try:
         connection.execute(
             """
-            CREATE TEMP TABLE warc_size_checkpoint_batch (
+            CREATE TABLE warcs (
                 warc_index UINTEGER PRIMARY KEY,
-                warc_filename VARCHAR NOT NULL,
-                object_bytes UBIGINT,
-                attempts UINTEGER NOT NULL CHECK (attempts > 0),
-                last_error VARCHAR
-            )
+                warc_filename VARCHAR NOT NULL UNIQUE
+            );
+            CREATE TABLE warc_size_sample (
+                warc_index UINTEGER PRIMARY KEY,
+                object_bytes UBIGINT NOT NULL
+            );
             """
         )
         connection.executemany(
-            "INSERT INTO warc_size_checkpoint_batch VALUES (?, ?, ?, ?, ?)",
-            rows,
+            "INSERT INTO warcs VALUES (?, ?)",
+            [(warc.warc_index, warc.warc_filename) for warc in warcs],
         )
-        updated = connection.execute(
-            """
-            UPDATE warc_inventory AS inventory
-            SET object_bytes = batch.object_bytes,
-                attempts = inventory.attempts + batch.attempts,
-                last_error = batch.last_error
-            FROM warc_size_checkpoint_batch AS batch
-            WHERE inventory.warc_index = batch.warc_index
-              AND inventory.warc_filename = batch.warc_filename
-              AND inventory.object_bytes IS NULL
-            RETURNING inventory.warc_index
-            """
-        ).fetchall()
-        if len(updated) != len(ordered):
-            raise WarcSizeCheckpointError(
-                "WARC size checkpoint contains stale, misrouted, or already-sized results"
+        connection.executemany(
+            "INSERT INTO warc_size_sample VALUES (?, ?)",
+            [(size.warc_index, size.object_bytes) for size in warc_sizes],
+        )
+        connection.execute(
+            f"""
+            CREATE TABLE pages AS
+            WITH deduplicated AS (
+                SELECT *
+                FROM read_parquet({candidates}, union_by_name=true)
+                QUALIFY row_number() OVER (
+                    PARTITION BY warc_filename, warc_record_offset,
+                                 warc_record_length
+                    ORDER BY root_domain ASC NULLS LAST, {order},
+                             source_index ASC NULLS LAST,
+                             content_languages ASC NULLS LAST
+                ) = 1
+            ),
+            ranked AS (
+                SELECT *, row_number() OVER (
+                    PARTITION BY root_domain ORDER BY {order}
+                ) AS domain_page_rank
+                FROM deduplicated
             )
+            SELECT warcs.warc_index, ranked.root_domain, ranked.url,
+                   CAST(ranked.domain_page_rank AS USMALLINT) AS domain_page_rank,
+                   ranked.content_languages, ranked.warc_record_offset,
+                   ranked.warc_record_length
+            FROM ranked
+            LEFT JOIN warcs USING (warc_filename)
+            WHERE ranked.domain_page_rank <= {pages_per_domain}
+            ORDER BY warcs.warc_index, ranked.warc_record_offset;
 
-        objects_completed, objects_pending, known_bytes, attempts_total = connection.execute(
+            CREATE TABLE warc_stats AS
+            SELECT warcs.warc_index, warcs.warc_filename,
+                   count(pages.warc_index)::UBIGINT AS selected_pages,
+                   coalesce(sum(pages.warc_record_length), 0)::HUGEINT
+                       AS selected_bytes,
+                   {average_warc_bytes}::DOUBLE AS estimated_warc_bytes,
+                   100.0 * coalesce(sum(pages.warc_record_length), 0)
+                       / {average_warc_bytes}::DOUBLE
+                       AS estimated_utilization_percent
+            FROM warcs
+            LEFT JOIN pages USING (warc_index)
+            GROUP BY warcs.warc_index, warcs.warc_filename
+            ORDER BY selected_bytes DESC, warcs.warc_index;
             """
-            SELECT count(object_bytes), count(*) FILTER (WHERE object_bytes IS NULL),
-                   coalesce(sum(object_bytes), 0), sum(attempts)
-            FROM warc_inventory
-            """
-        ).fetchone()
-        inventory_hash: str | None = None
-        if objects_pending:
-            if stored_hash is not None:
-                raise BuildStateCorrupt(
-                    "WARC inventory hash exists while object sizes are missing; use --rebuild"
-                )
-        else:
-            inventory_hash = _build_inventory_hash(connection)
-            if stored_hash is None:
-                connection.execute(
-                    """
-                    UPDATE build_identity
-                    SET warc_inventory_sha256 = ?
-                    WHERE singleton = true AND warc_inventory_sha256 IS NULL
-                    """,
-                    [inventory_hash],
-                )
-            elif stored_hash != inventory_hash:
-                raise BuildStateConflict(
-                    "stored WARC inventory hash conflicts with exact sizes; use --rebuild"
-                )
-
-        connection.execute("DROP TABLE warc_size_checkpoint_batch")
-        connection.execute("COMMIT")
-    except BaseException:
-        connection.execute("ROLLBACK")
-        raise
-
-    successes = tuple(
-        outcome for outcome in ordered if isinstance(outcome, WarcSizeSuccess)
-    )
-    failures = tuple(
-        outcome for outcome in ordered if isinstance(outcome, WarcSizeFailure)
-    )
-    metrics = ProbeMetrics(
-        head_requests=sum(outcome.metrics.head_requests for outcome in ordered),
-        range_requests=sum(outcome.metrics.range_requests for outcome in ordered),
-        http_429=sum(outcome.metrics.http_429 for outcome in ordered),
-        http_503=sum(outcome.metrics.http_503 for outcome in ordered),
-    )
-    return WarcSizeBatchResult(
-        objects=len(ordered),
-        successes=len(successes),
-        failures=len(failures),
-        object_bytes=sum(outcome.object_bytes for outcome in successes),
-        attempts=sum(outcome.attempts for outcome in ordered),
-        retries=sum(outcome.retries for outcome in ordered),
-        head_requests=metrics.head_requests,
-        range_requests=metrics.range_requests,
-        http_429=metrics.http_429,
-        http_503=metrics.http_503,
-        objects_completed=int(objects_completed),
-        objects_pending=int(objects_pending),
-        known_bytes=int(known_bytes),
-        attempts_total=int(attempts_total),
-        inventory_sha256=inventory_hash,
-    )
-
-
-def verify_or_finalize_warc_inventory(
-    connection: duckdb.DuckDBPyConnection,
-) -> str:
-    """Recompute and compare or atomically store the completed inventory hash."""
-    connection.execute("BEGIN TRANSACTION")
-    try:
-        inventory_hash = _build_inventory_hash(connection)
-        stored_hash = _stored_inventory_hash(connection)
-        if stored_hash is None:
+        )
+        warc_count, selected_warc_count, selected_page_count, selected_bytes = (
             connection.execute(
                 """
-                UPDATE build_identity
-                SET warc_inventory_sha256 = ?
-                WHERE singleton = true AND warc_inventory_sha256 IS NULL
-                """,
-                [inventory_hash],
-            )
-        elif stored_hash != inventory_hash:
-            raise BuildStateConflict(
-                "stored WARC inventory hash conflicts with exact sizes; use --rebuild"
-            )
-        connection.execute("COMMIT")
-    except BaseException:
-        connection.execute("ROLLBACK")
-        raise
-    connection.checkpoint()
-    return inventory_hash
-
-
-def ready_candidate_paths(
-    state_connection: duckdb.DuckDBPyConnection,
-    validation_connection: duckdb.DuckDBPyConnection,
-    build_directory: Path,
-) -> tuple[Path, ...]:
-    """Return every exact ready candidate path after validating its artifact."""
-    if state_connection is validation_connection:
-        raise ValueError("state and candidate validation connections must be distinct")
-    rows = state_connection.execute(
-        """
-        SELECT source_index, status, candidate_rows, candidate_bytes
-        FROM source_shards
-        ORDER BY source_index
-        """
-    ).fetchall()
-    if not rows:
-        raise BuildStateCorrupt("source shard state is empty; use --rebuild")
-
-    paths: list[Path] = []
-    for expected_index, (source_index, status, expected_rows, expected_bytes) in enumerate(rows):
-        if source_index != expected_index:
-            raise BuildStateCorrupt(
-                "source shard indexes are not contiguous; use --rebuild"
-            )
-        if status != "ready":
-            raise BuildStateCorrupt(
-                f"candidate source {source_index} is not ready"
-            )
-        if expected_rows is None or expected_bytes is None:
-            raise BuildStateCorrupt(
-                f"candidate source {source_index} has incomplete ready metadata; use --rebuild"
-            )
-        path = candidate_artifact_path(build_directory, int(source_index))
-        metadata = inspect_candidate_artifact(
-            validation_connection,
-            path,
-            int(source_index),
-        )
-        if metadata.rows != expected_rows or metadata.byte_count != expected_bytes:
-            raise CandidateArtifactError(
-                f"candidate source {source_index} conflicts with ready metadata: {path}"
-            )
-        paths.append(path)
-    return tuple(paths)
-
-
-def _selection_conflict_expression() -> str:
-    return "\nOR ".join(
-        f"(min({column}) IS DISTINCT FROM max({column}) "
-        f"OR (count({column}) > 0 AND count({column}) < count(*)))"
-        for column in _SELECTION_CONFLICT_COLUMNS
-    )
-
-
-def _ranking_aggregates() -> str:
-    return ",\n".join(
-        f"min({column}) AS {column}" for column in RANKING_COLUMN_NAMES
-    )
-
-
-def _canonical_provenance_projection() -> str:
-    order = (
-        'content_languages COLLATE "binary" ASC NULLS LAST, '
-        "source_index ASC NULLS LAST"
-    )
-    return f"""
-        first(source_index ORDER BY {order}) AS source_index,
-        first(content_languages ORDER BY {order}) AS content_languages
-    """.strip()
-
-
-def _global_page_projection() -> str:
-    return ",\n".join(
-        f"CAST({name} AS {column_type}) AS {name}"
-        for name, column_type in GLOBAL_PAGE_COLUMNS
-    )
-
-
-def global_selected_pages_query(pages_per_domain: int) -> str:
-    """Globally select and conflict-check the retained local candidate rows."""
-    if not 1 <= pages_per_domain <= 0xFFFF:
-        raise ValueError("pages_per_domain must be between 1 and uint16 max")
-    return f"""
-        WITH candidate_rows AS (
-            SELECT *
-            FROM read_parquet(?)
-        ),
-        validated_candidates AS (
-            SELECT *
-            FROM candidate_rows
-            WHERE CASE
-                WHEN source_index IS NULL
-                    THEN error('candidate source_index is null')
-                WHEN NULLIF(trim(root_domain), '') IS NULL
-                    THEN error('candidate root_domain is blank')
-                WHEN NULLIF(trim(url), '') IS NULL
-                    THEN error('candidate URL is blank')
-                WHEN NULLIF(trim(warc_filename), '') IS NULL
-                    THEN error('candidate WARC filename is blank')
-                WHEN warc_record_offset IS NULL
-                    THEN error('candidate WARC record offset is null')
-                WHEN warc_record_length IS NULL OR warc_record_length = 0
-                    THEN error('candidate WARC record length is not positive')
-                ELSE true
-            END
-        ),
-        coordinate_groups AS (
-            SELECT
-                {_canonical_provenance_projection()},
-                min(root_domain) AS root_domain,
-                min(url) AS url,
-                warc_filename,
-                warc_record_offset,
-                warc_record_length,
-                {_ranking_aggregates()},
-                ({_selection_conflict_expression()}) AS has_conflict
-            FROM validated_candidates
-            GROUP BY warc_filename, warc_record_offset, warc_record_length
-        ),
-        globally_ranked AS (
-            SELECT coordinate_groups.*,
-                   row_number() OVER (
-                       PARTITION BY root_domain
-                       ORDER BY {ranking_order_clause(pages_per_domain)}
-                   ) AS domain_page_rank,
-                   bool_or(has_conflict) OVER () AS has_any_conflict
-            FROM coordinate_groups
-        ),
-        selected AS (
-            SELECT *
-            FROM globally_ranked
-            WHERE domain_page_rank <= {pages_per_domain}
-              AND CASE
-                  WHEN has_any_conflict
-                      THEN error('duplicate capture coordinate has conflicting selection values')
-                  ELSE true
-              END
-        ),
-        inventory_by_filename AS (
-            SELECT warc_filename,
-                   count(*) AS mapping_count,
-                   min(warc_index) AS warc_index
-            FROM warc_inventory
-            GROUP BY warc_filename
-        ),
-        mapped AS (
-            SELECT selected.*,
-                   CASE
-                       WHEN inventory.mapping_count IS NULL
-                           THEN error('selected WARC filename is absent from inventory: ' || selected.warc_filename)
-                       WHEN inventory.mapping_count <> 1
-                           THEN error('selected WARC filename has multiple inventory mappings: ' || selected.warc_filename)
-                       ELSE inventory.warc_index
-                   END AS warc_index
-            FROM selected
-            LEFT JOIN inventory_by_filename AS inventory USING (warc_filename)
-        ),
-        mapped_coordinates AS (
-            SELECT mapped.*,
-                   count(*) OVER (
-                       PARTITION BY warc_index, warc_record_offset, warc_record_length
-                   ) AS mapped_coordinate_count
-            FROM mapped
-        )
-        SELECT {_global_page_projection()}
-        FROM mapped_coordinates
-        WHERE CASE
-            WHEN mapped_coordinate_count > 1
-                THEN error('selected mapped WARC coordinate is duplicated')
-            ELSE true
-        END
-    """.strip()
-
-
-def partial_catalog_path(build_directory: Path) -> Path:
-    path = build_directory / "catalog.duckdb.partial"
-    require_path_within(build_directory, path)
-    return path
-
-
-def _sql_string_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def _remove_partial_catalog_files(path: Path) -> bool:
-    removed = False
-    for candidate in (path, Path(f"{path}.wal")):
-        if candidate.is_dir() and not candidate.is_symlink():
-            raise FinalCatalogBuildError(
-                f"partial catalog path is a directory: {candidate}"
-            )
-        try:
-            existed = candidate.exists() or candidate.is_symlink()
-            candidate.unlink(missing_ok=True)
-            removed = removed or existed
-        except OSError as error:
-            raise FinalCatalogBuildError(
-                f"remove partial catalog file {candidate}: {error}"
-            ) from error
-    return removed
-
-
-def _final_warc_inventory(
-    connection: duckdb.DuckDBPyConnection,
-) -> tuple[tuple[tuple[int, str, int], ...], str]:
-    rows = tuple(
-        (int(warc_index), str(warc_filename), int(object_bytes))
-        for warc_index, warc_filename, object_bytes in connection.execute(
-            """
-            SELECT warc_index, warc_filename, object_bytes
-            FROM final_catalog.warcs
-            ORDER BY warc_index
-            """
-        ).fetchall()
-    )
-    try:
-        inventory_hash = warc_inventory_sha256(rows)
-    except ValueError as error:
-        raise FinalCatalogBuildError(f"validate final WARC inventory: {error}") from error
-    return rows, inventory_hash
-
-
-def create_partial_catalog(
-    state_connection: duckdb.DuckDBPyConnection,
-    build_directory: Path,
-) -> FinalWarcsResult:
-    """Create a fresh partial catalog and bulk-copy its complete WARC inventory."""
-    if build_directory.is_symlink() or not build_directory.is_dir():
-        raise FinalCatalogBuildError(
-            f"build directory must be a regular directory: {build_directory}"
-        )
-    if state_connection.execute(
-        """
-        SELECT count(*)
-        FROM duckdb_databases()
-        WHERE database_name = 'final_catalog'
-        """
-    ).fetchone()[0]:
-        raise FinalCatalogBuildError("database alias final_catalog is already attached")
-
-    expected_hash = verify_or_finalize_warc_inventory(state_connection)
-
-    path = partial_catalog_path(build_directory)
-    if _remove_partial_catalog_files(path):
-        _fsync_directory(build_directory)
-    attached = False
-    try:
-        state_connection.execute(
-            f"ATTACH {_sql_string_literal(str(path))} AS final_catalog"
-        )
-        attached = True
-        state_connection.execute("BEGIN TRANSACTION")
-        try:
-            for statement in _FINAL_CATALOG_DDL:
-                state_connection.execute(statement)
-            state_connection.execute(
-                "INSERT INTO final_catalog._build_progress VALUES (true, false)"
-            )
-            state_connection.execute(
-                """
-                INSERT INTO final_catalog.warcs
-                SELECT warc_index, warc_filename, object_bytes
-                FROM main.warc_inventory
-                ORDER BY warc_index
-                """
-            )
-            inventory, copied_hash = _final_warc_inventory(state_connection)
-            if copied_hash != expected_hash:
-                raise FinalCatalogBuildError(
-                    "final WARC inventory hash differs from build state"
-                )
-            result = FinalWarcsResult(
-                path=path,
-                warc_count=len(inventory),
-                total_bytes=sum(object_bytes for _, _, object_bytes in inventory),
-                inventory_sha256=copied_hash,
-            )
-            state_connection.execute("COMMIT")
-        except BaseException:
-            state_connection.execute("ROLLBACK")
-            raise
-        finally:
-            state_connection.execute("DETACH final_catalog")
-            attached = False
-
-        if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
-            raise FinalCatalogBuildError(
-                f"partial catalog is not a nonempty regular file: {path}"
-            )
-        return result
-    except BaseException:
-        if attached:
-            try:
-                state_connection.execute("DETACH final_catalog")
-            except duckdb.Error:
-                pass
-        if _remove_partial_catalog_files(path):
-            _fsync_directory(build_directory)
-        raise
-
-
-def _duplicate_final_page_coordinate(
-    connection: duckdb.DuckDBPyConnection,
-) -> tuple[object, ...] | None:
-    return connection.execute(
-        """
-        SELECT warc_index, warc_record_offset, warc_record_length, count(*)
-        FROM final_catalog.pages
-        GROUP BY warc_index, warc_record_offset, warc_record_length
-        HAVING count(*) > 1
-        ORDER BY warc_index, warc_record_offset, warc_record_length
-        LIMIT 1
-        """
-    ).fetchone()
-
-
-def _final_pages_materialized(
-    connection: duckdb.DuckDBPyConnection,
-) -> bool:
-    try:
-        rows = connection.execute(
-            """
-            SELECT singleton, pages_materialized
-            FROM final_catalog._build_progress
-            """
-        ).fetchall()
-    except duckdb.Error as error:
-        raise FinalCatalogBuildError(
-            "partial catalog build progress is missing or unreadable"
-        ) from error
-    if len(rows) != 1 or rows[0][0] is not True:
-        raise FinalCatalogBuildError(
-            "partial catalog build progress must contain exactly one row"
-        )
-    return bool(rows[0][1])
-
-
-def materialize_final_pages(
-    state_connection: duckdb.DuckDBPyConnection,
-    validation_connection: duckdb.DuckDBPyConnection,
-    build_directory: Path,
-) -> FinalPagesResult:
-    """Bulk-materialize final pages from every validated ready candidate shard."""
-    candidate_paths = ready_candidate_paths(
-        state_connection,
-        validation_connection,
-        build_directory,
-    )
-    expected_hash = verify_or_finalize_warc_inventory(state_connection)
-    identity_rows = state_connection.execute(
-        "SELECT pages_per_domain FROM build_identity"
-    ).fetchall()
-    if len(identity_rows) != 1:
-        raise BuildStateCorrupt(
-            "build_identity must contain exactly one row; use --rebuild"
-        )
-    pages_per_domain = int(identity_rows[0][0])
-    path = partial_catalog_path(build_directory)
-    if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
-        raise FinalCatalogBuildError(
-            f"partial catalog is not a regular file: {path}"
-        )
-    if state_connection.execute(
-        """
-        SELECT count(*)
-        FROM duckdb_databases()
-        WHERE database_name = 'final_catalog'
-        """
-    ).fetchone()[0]:
-        raise FinalCatalogBuildError("database alias final_catalog is already attached")
-
-    attached = False
-    try:
-        state_connection.execute(
-            f"ATTACH {_sql_string_literal(str(path))} AS final_catalog"
-        )
-        attached = True
-        state_connection.execute("BEGIN TRANSACTION")
-        try:
-            _inventory, final_hash = _final_warc_inventory(state_connection)
-            if final_hash != expected_hash:
-                raise FinalCatalogBuildError(
-                    "final WARC inventory hash differs from build state"
-                )
-            page_count, metadata_count = state_connection.execute(
-                """
-                SELECT (SELECT count(*) FROM final_catalog.pages),
-                       (SELECT count(*) FROM final_catalog.catalog_metadata)
+                SELECT (SELECT count(*) FROM warcs),
+                       (SELECT count(*) FROM warc_stats WHERE selected_pages > 0),
+                       (SELECT count(*) FROM pages),
+                       (SELECT coalesce(sum(warc_record_length), 0) FROM pages)
                 """
             ).fetchone()
-            if page_count:
-                raise FinalCatalogBuildError(
-                    "partial catalog pages are already materialized"
-                )
-            if metadata_count:
-                raise FinalCatalogBuildError(
-                    "partial catalog metadata must be empty before pages"
-                )
-            if _final_pages_materialized(state_connection):
-                raise FinalCatalogBuildError(
-                    "partial catalog pages are already materialized"
-                )
-            query = global_selected_pages_query(pages_per_domain)
-            try:
-                state_connection.execute(
-                    f"""
-                INSERT INTO final_catalog.pages (
-                    warc_index, root_domain, url, domain_page_rank,
-                    content_languages, warc_record_offset, warc_record_length
-                )
-                WITH selected_pages AS (
-                    {query}
-                ),
-                validated_pages AS (
-                    SELECT selected_pages.*, warcs.warc_index AS matched_warc_index,
-                           warcs.object_bytes
-                    FROM selected_pages
-                    LEFT JOIN final_catalog.warcs AS warcs
-                        ON warcs.warc_index = selected_pages.warc_index
-                )
-                SELECT warc_index, root_domain, url, domain_page_rank,
-                       content_languages, warc_record_offset, warc_record_length
-                FROM validated_pages
-                WHERE CASE
-                    WHEN matched_warc_index IS NULL
-                        THEN error(
-                            'selected WARC index is absent from final inventory: '
-                            || CAST(warc_index AS VARCHAR)
-                        )
-                    WHEN warc_record_offset > object_bytes
-                        THEN error('selected WARC record offset exceeds object size')
-                    WHEN warc_record_length > object_bytes - warc_record_offset
-                        THEN error('selected WARC record exceeds object size')
-                    ELSE true
-                END
-                ORDER BY warc_index, warc_record_offset, warc_record_length,
-                         root_domain COLLATE "binary", url COLLATE "binary"
-                    """,
-                    [[str(candidate_path) for candidate_path in candidate_paths]],
-                )
-            except duckdb.Error as error:
-                raise FinalCatalogBuildError(
-                    f"materialize final pages: {error}"
-                ) from error
-
-            duplicate = _duplicate_final_page_coordinate(state_connection)
-            if duplicate is not None:
-                raise FinalCatalogBuildError(
-                    "final pages contain duplicate WARC coordinate: "
-                    f"warc_index={duplicate[0]} offset={duplicate[1]} "
-                    f"length={duplicate[2]} count={duplicate[3]}"
-                )
-            page_count, distinct_domains, selected_bytes = state_connection.execute(
-                """
-                SELECT count(*), count(DISTINCT root_domain),
-                       coalesce(sum(warc_record_length), 0)
-                FROM final_catalog.pages
-                """
-            ).fetchone()
-            result = FinalPagesResult(
-                path=path,
-                selected_page_count=int(page_count),
-                distinct_domain_count=int(distinct_domains),
-                selected_bytes=int(selected_bytes),
-            )
-            updated = state_connection.execute(
-                """
-                UPDATE final_catalog._build_progress
-                SET pages_materialized = true
-                WHERE singleton = true AND pages_materialized = false
-                RETURNING 1
-                """
-            ).fetchall()
-            if len(updated) != 1:
-                raise FinalCatalogBuildError(
-                    "cannot commit final page materialization progress"
-                )
-            state_connection.execute("COMMIT")
-        except BaseException:
-            state_connection.execute("ROLLBACK")
-            raise
-        finally:
-            state_connection.execute("DETACH final_catalog")
-            attached = False
-        return result
-    except BaseException:
-        if attached:
-            try:
-                state_connection.execute("DETACH final_catalog")
-            except duckdb.Error:
-                pass
-        raise
-
-
-def _stored_build_identity(
-    connection: duckdb.DuckDBPyConnection,
-) -> BuildIdentity:
-    rows = connection.execute(
-        """
-        SELECT catalog_schema_version, crawl_id, pages_per_domain,
-               selection_policy_version, selection_policy_sha256,
-               source_schema_sha256, warc_manifest_sha256,
-               index_manifest_sha256
-        FROM build_identity
-        """
-    ).fetchall()
-    if len(rows) != 1:
-        raise BuildStateCorrupt(
-            "build_identity must contain exactly one row; use --rebuild"
         )
-    return BuildIdentity(*rows[0])
-
-
-def _ready_source_shard_count(
-    connection: duckdb.DuckDBPyConnection,
-) -> int:
-    rows = connection.execute(
-        "SELECT source_index, status FROM source_shards ORDER BY source_index"
-    ).fetchall()
-    if not rows:
-        raise BuildStateCorrupt("source shard state is empty; use --rebuild")
-    for expected_index, (source_index, status) in enumerate(rows):
-        if source_index != expected_index:
-            raise BuildStateCorrupt(
-                "source shard indexes are not contiguous; use --rebuild"
-            )
-        if status != "ready":
-            raise BuildStateCorrupt(f"candidate source {source_index} is not ready")
-    return len(rows)
-
-
-def _stored_final_metadata_identity(
-    connection: duckdb.DuckDBPyConnection,
-) -> tuple[bool, str]:
-    rows = connection.execute(
-        "SELECT singleton, catalog_id FROM final_catalog.catalog_metadata"
-    ).fetchall()
-    if len(rows) != 1:
-        raise FinalCatalogBuildError(
-            "final catalog metadata must contain exactly one row"
-        )
-    return bool(rows[0][0]), str(rows[0][1])
-
-
-def materialize_final_metadata(
-    state_connection: duckdb.DuckDBPyConnection,
-    build_directory: Path,
-) -> FinalMetadataResult:
-    """Write the single deterministic identity row for a completed partial catalog."""
-    expected_hash = verify_or_finalize_warc_inventory(state_connection)
-    identity = _stored_build_identity(state_connection)
-    source_shard_count = _ready_source_shard_count(state_connection)
-    builder_version = importlib.metadata.version("cc-warc-index-builder")
-
-    path = partial_catalog_path(build_directory)
-    if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
-        raise FinalCatalogBuildError(
-            f"partial catalog is not a nonempty regular file: {path}"
-        )
-    if state_connection.execute(
-        """
-        SELECT count(*)
-        FROM duckdb_databases()
-        WHERE database_name = 'final_catalog'
-        """
-    ).fetchone()[0]:
-        raise FinalCatalogBuildError("database alias final_catalog is already attached")
-
-    attached = False
-    try:
-        state_connection.execute(
-            f"ATTACH {_sql_string_literal(str(path))} AS final_catalog"
-        )
-        attached = True
-        state_connection.execute("BEGIN TRANSACTION")
-        try:
-            inventory, final_hash = _final_warc_inventory(state_connection)
-            if final_hash != expected_hash:
-                raise FinalCatalogBuildError(
-                    "final WARC inventory hash differs from build state"
+        invalid_domains = int(
+            connection.execute(
+                f"""
+                SELECT count(*) FROM (
+                    SELECT root_domain, min(domain_page_rank) AS first_rank,
+                           max(domain_page_rank) AS last_rank, count(*) AS pages
+                    FROM pages GROUP BY root_domain
+                    HAVING first_rank <> 1 OR last_rank <> pages
+                       OR last_rank > {pages_per_domain}
                 )
-            metadata_count = state_connection.execute(
-                "SELECT count(*) FROM final_catalog.catalog_metadata"
+                """
             ).fetchone()[0]
-            if metadata_count:
-                raise FinalCatalogBuildError(
-                    "partial catalog metadata is already materialized"
-                )
-            if not _final_pages_materialized(state_connection):
-                raise FinalCatalogBuildError(
-                    "partial catalog pages have not been materialized"
-                )
+        )
+        if invalid_domains:
+            raise ValueError(
+                f"catalog contains {invalid_domains} invalid domain rankings"
+            )
+        missing_warcs = int(
+            connection.execute(
+                "SELECT count(*) FROM pages WHERE warc_index IS NULL"
+            ).fetchone()[0]
+        )
+        if missing_warcs:
+            raise ValueError(
+                f"catalog contains {missing_warcs} pages absent from the WARC manifest"
+            )
+        if int(warc_count) != len(warcs):
+            raise ValueError("catalog WARC count differs from manifest")
 
-            selected_page_count, distinct_domain_count = state_connection.execute(
-                """
-                SELECT count(*), count(DISTINCT root_domain)
-                FROM final_catalog.pages
-                """
-            ).fetchone()
-            deterministic_id = catalog_id(
-                schema_version=identity.catalog_schema_version,
-                crawl_id=identity.crawl_id,
-                pages_per_domain=identity.pages_per_domain,
-                selection_policy_version=identity.selection_policy_version,
-                selection_policy_sha256=identity.selection_policy_sha256,
-                source_schema_sha256=identity.source_schema_sha256,
-                warc_manifest_sha256=identity.warc_manifest_sha256,
-                index_manifest_sha256=identity.index_manifest_sha256,
-                warc_inventory_sha256=final_hash,
-            )
-            duckdb_version = str(
-                state_connection.execute("SELECT version()").fetchone()[0]
-            )
-            state_connection.execute(
-                """
-                INSERT INTO final_catalog.catalog_metadata (
-                    singleton, schema_version, catalog_id, crawl_id,
-                    selection_name, pages_per_domain,
-                    selection_policy_version, selection_policy_sha256,
-                    source_schema_sha256, warc_manifest_sha256,
-                    index_manifest_sha256, warc_inventory_sha256,
-                    warc_count, selected_page_count, distinct_domain_count,
-                    source_index_shard_count, duckdb_version, builder_version,
-                    created_at
-                ) VALUES (
-                    true, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    current_timestamp
-                )
-                """,
-                [
-                    identity.catalog_schema_version,
-                    deterministic_id,
-                    identity.crawl_id,
-                    f"pages{identity.pages_per_domain}",
-                    identity.pages_per_domain,
-                    identity.selection_policy_version,
-                    identity.selection_policy_sha256,
-                    identity.source_schema_sha256,
-                    identity.warc_manifest_sha256,
-                    identity.index_manifest_sha256,
-                    final_hash,
-                    len(inventory),
-                    int(selected_page_count),
-                    int(distinct_domain_count),
-                    source_shard_count,
-                    duckdb_version,
-                    builder_version,
-                ],
-            )
-            stored_singleton, stored_id = _stored_final_metadata_identity(
-                state_connection
-            )
-            if not stored_singleton or stored_id != deterministic_id:
-                raise FinalCatalogBuildError(
-                    "final catalog metadata identity differs after insertion"
-                )
-            state_connection.execute("DROP TABLE final_catalog._build_progress")
-            result = FinalMetadataResult(path=path, catalog_id=deterministic_id)
-            state_connection.execute("COMMIT")
-        except BaseException:
-            state_connection.execute("ROLLBACK")
-            raise
-        finally:
-            state_connection.execute("DETACH final_catalog")
-            attached = False
-        return result
-    except BaseException:
-        if attached:
-            try:
-                state_connection.execute("DETACH final_catalog")
-            except duckdb.Error:
-                pass
-        raise
-
-
-def _require_final_catalog_shapes(
-    connection: duckdb.DuckDBPyConnection,
-) -> None:
-    tables = tuple(
-        str(row[0])
-        for row in connection.execute(
+        connection.execute(
             """
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_catalog = current_database()
-              AND table_schema = 'main'
-              AND table_type = 'BASE TABLE'
-            ORDER BY table_name
-            """
-        ).fetchall()
-    )
-    expected_tables = tuple(sorted(_FINAL_CATALOG_COLUMNS))
-    if tables != expected_tables:
-        raise CatalogValidationError(
-            "final catalog has an incompatible table set",
-            [("expected", *expected_tables), ("actual", *tables)],
-        )
-
-    for table, expected_columns in _FINAL_CATALOG_COLUMNS.items():
-        described = connection.execute(f"DESCRIBE main.{table}").fetchall()
-        actual_columns = tuple(
-            (str(row[0]), str(row[1]), str(row[2])) for row in described
-        )
-        if actual_columns != expected_columns:
-            raise CatalogValidationError(
-                f"final catalog table {table} has an incompatible schema",
-                actual_columns[:4],
+            CREATE TABLE metadata (
+                singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+                crawl_id VARCHAR NOT NULL,
+                pages_per_domain USMALLINT NOT NULL,
+                selection_version USMALLINT NOT NULL,
+                index_manifest_sha256 VARCHAR NOT NULL,
+                warc_manifest_sha256 VARCHAR NOT NULL,
+                index_shard_count UINTEGER NOT NULL,
+                warc_count UINTEGER NOT NULL,
+                selected_warc_count UINTEGER NOT NULL,
+                selected_page_count UBIGINT NOT NULL,
+                selected_bytes HUGEINT NOT NULL,
+                warc_sample_count UINTEGER NOT NULL,
+                estimated_average_warc_bytes DOUBLE NOT NULL,
+                created_at TIMESTAMP NOT NULL
             )
-
-
-def _validated_catalog_warcs(
-    connection: duckdb.DuckDBPyConnection,
-) -> tuple[tuple[tuple[int, str, int], ...], str]:
-    inventory = tuple(
-        (int(warc_index), str(warc_filename), int(object_bytes))
-        for warc_index, warc_filename, object_bytes in connection.execute(
             """
-            SELECT warc_index, warc_filename, object_bytes
-            FROM warcs
-            ORDER BY warc_index, warc_filename COLLATE "binary", object_bytes
+        )
+        connection.execute(
             """
-        ).fetchall()
-    )
-    if not inventory:
-        raise CatalogValidationError(
-            "final WARC inventory is empty",
-            [("warc_count", 0)],
-        )
-
-    invalid_indexes = [
-        (expected_index, warc_index, warc_filename, object_bytes)
-        for expected_index, (warc_index, warc_filename, object_bytes) in enumerate(
-            inventory
-        )
-        if warc_index != expected_index
-    ][:4]
-    if invalid_indexes:
-        raise CatalogValidationError(
-            "final WARC indexes are not contiguous from zero",
-            invalid_indexes,
-        )
-
-    blank_filenames = [
-        (warc_index, warc_filename, object_bytes)
-        for warc_index, warc_filename, object_bytes in inventory
-        if not warc_filename.strip()
-    ][:4]
-    if blank_filenames:
-        raise CatalogValidationError(
-            "final WARC filenames must not be blank",
-            blank_filenames,
-        )
-
-    seen_filenames: set[str] = set()
-    duplicate_filenames: list[tuple[object, ...]] = []
-    for warc_index, warc_filename, object_bytes in inventory:
-        if warc_filename in seen_filenames:
-            duplicate_filenames.append(
-                (warc_index, warc_filename, object_bytes)
+            INSERT INTO metadata VALUES (
+                true, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp::TIMESTAMP
             )
-            if len(duplicate_filenames) == 4:
-                break
-        seen_filenames.add(warc_filename)
-    if duplicate_filenames:
-        raise CatalogValidationError(
-            "final WARC filenames are not unique",
-            duplicate_filenames,
-        )
-
-    invalid_sizes = [
-        (warc_index, warc_filename, object_bytes)
-        for warc_index, warc_filename, object_bytes in inventory
-        if object_bytes <= 0
-    ][:4]
-    if invalid_sizes:
-        raise CatalogValidationError(
-            "final WARC object sizes must be positive",
-            invalid_sizes,
-        )
-
-    try:
-        inventory_hash = warc_inventory_sha256(inventory)
-    except ValueError as error:
-        raise CatalogValidationError(
-            f"cannot hash final WARC inventory: {error}"
-        ) from error
-    return inventory, inventory_hash
-
-
-def _validation_samples(
-    connection: duckdb.DuckDBPyConnection,
-    query: str,
-    parameters: Sequence[object] = (),
-) -> tuple[tuple[object, ...], ...]:
-    return tuple(
-        tuple(row)
-        for row in connection.execute(query, list(parameters)).fetchall()
-    )
-
-
-def _validate_catalog_pages(
-    connection: duckdb.DuckDBPyConnection,
-    pages_per_domain: int,
-) -> tuple[int, int]:
-    (
-        blank_identity_count,
-        zero_length_count,
-        missing_warc_count,
-        offset_out_of_bounds_count,
-        record_out_of_bounds_count,
-    ) = connection.execute(
-        """
-        SELECT count(*) FILTER (
-                   WHERE NULLIF(trim(pages.root_domain), '') IS NULL
-                      OR NULLIF(trim(pages.url), '') IS NULL
-               ),
-               count(*) FILTER (WHERE pages.warc_record_length = 0),
-               count(*) FILTER (WHERE warcs.warc_index IS NULL),
-               count(*) FILTER (
-                   WHERE warcs.warc_index IS NOT NULL
-                     AND pages.warc_record_offset > warcs.object_bytes
-               ),
-               count(*) FILTER (
-                   WHERE CASE
-                       WHEN warcs.warc_index IS NULL THEN false
-                       WHEN pages.warc_record_offset > warcs.object_bytes THEN false
-                       ELSE pages.warc_record_length
-                            > warcs.object_bytes - pages.warc_record_offset
-                   END
-               )
-        FROM pages
-        LEFT JOIN warcs USING (warc_index)
-        """
-    ).fetchone()
-
-    if blank_identity_count:
-        raise CatalogValidationError(
-            "final pages contain a blank domain or URL",
-            _validation_samples(
-                connection,
-                """
-                SELECT warc_index, warc_record_offset, warc_record_length,
-                       root_domain, url
-                FROM pages
-                WHERE NULLIF(trim(root_domain), '') IS NULL
-                   OR NULLIF(trim(url), '') IS NULL
-                ORDER BY warc_index, warc_record_offset, warc_record_length
-                LIMIT 4
-                """,
-            ),
-        )
-    if zero_length_count:
-        raise CatalogValidationError(
-            "final pages contain a zero-length WARC record",
-            _validation_samples(
-                connection,
-                """
-                SELECT warc_index, warc_record_offset, warc_record_length,
-                       root_domain, url
-                FROM pages
-                WHERE warc_record_length = 0
-                ORDER BY warc_index, warc_record_offset,
-                         root_domain COLLATE "binary", url COLLATE "binary"
-                LIMIT 4
-                """,
-            ),
-        )
-    if missing_warc_count:
-        raise CatalogValidationError(
-            "final pages reference a WARC absent from the inventory",
-            _validation_samples(
-                connection,
-                """
-                SELECT pages.warc_index, pages.warc_record_offset,
-                       pages.warc_record_length, pages.root_domain, pages.url
-                FROM pages
-                LEFT JOIN warcs USING (warc_index)
-                WHERE warcs.warc_index IS NULL
-                ORDER BY pages.warc_index, pages.warc_record_offset,
-                         pages.warc_record_length,
-                         pages.root_domain COLLATE "binary",
-                         pages.url COLLATE "binary"
-                LIMIT 4
-                """,
-            ),
-        )
-    if offset_out_of_bounds_count:
-        raise CatalogValidationError(
-            "final page WARC record offset exceeds object size",
-            _validation_samples(
-                connection,
-                """
-                SELECT pages.warc_index, pages.warc_record_offset,
-                       pages.warc_record_length, warcs.object_bytes,
-                       pages.root_domain, pages.url
-                FROM pages
-                JOIN warcs USING (warc_index)
-                WHERE pages.warc_record_offset > warcs.object_bytes
-                ORDER BY pages.warc_index, pages.warc_record_offset,
-                         pages.warc_record_length,
-                         pages.root_domain COLLATE "binary",
-                         pages.url COLLATE "binary"
-                LIMIT 4
-                """,
-            ),
-        )
-    if record_out_of_bounds_count:
-        raise CatalogValidationError(
-            "final page WARC record exceeds object size",
-            _validation_samples(
-                connection,
-                """
-                SELECT pages.warc_index, pages.warc_record_offset,
-                       pages.warc_record_length, warcs.object_bytes,
-                       pages.root_domain, pages.url
-                FROM pages
-                JOIN warcs USING (warc_index)
-                WHERE CASE
-                    WHEN pages.warc_record_offset > warcs.object_bytes THEN false
-                    ELSE pages.warc_record_length
-                         > warcs.object_bytes - pages.warc_record_offset
-                END
-                ORDER BY pages.warc_index, pages.warc_record_offset,
-                         pages.warc_record_length,
-                         pages.root_domain COLLATE "binary",
-                         pages.url COLLATE "binary"
-                LIMIT 4
-                """,
-            ),
-        )
-
-    duplicate_coordinates = _validation_samples(
-        connection,
-        """
-        SELECT warc_index, warc_record_offset, warc_record_length, count(*)
-        FROM pages
-        GROUP BY warc_index, warc_record_offset, warc_record_length
-        HAVING count(*) > 1
-        ORDER BY warc_index, warc_record_offset, warc_record_length
-        LIMIT 4
-        """,
-    )
-    if duplicate_coordinates:
-        raise CatalogValidationError(
-            "final pages contain duplicate WARC coordinates",
-            duplicate_coordinates,
-        )
-
-    domain_rank_rows = connection.execute(
-        """
-        WITH domain_ranks AS MATERIALIZED (
-            SELECT root_domain, count(*) AS page_count,
-                   count(DISTINCT domain_page_rank) AS distinct_rank_count,
-                   min(domain_page_rank) AS minimum_rank,
-                   max(domain_page_rank) AS maximum_rank
-            FROM pages
-            GROUP BY root_domain
-        ),
-        summary AS (
-            SELECT coalesce(sum(page_count), 0) AS page_count,
-                   count(*) AS distinct_domain_count
-            FROM domain_ranks
-        ),
-        invalid AS (
-            SELECT true AS invalid_present, root_domain, page_count,
-                   distinct_rank_count, minimum_rank, maximum_rank
-            FROM domain_ranks
-            WHERE minimum_rank <> 1
-               OR maximum_rank <> page_count
-               OR distinct_rank_count <> page_count
-               OR maximum_rank > ?
-            ORDER BY root_domain COLLATE "binary"
-            LIMIT 4
-        )
-        SELECT summary.page_count, summary.distinct_domain_count,
-               coalesce(invalid.invalid_present, false),
-               invalid.root_domain, invalid.page_count,
-               invalid.distinct_rank_count, invalid.minimum_rank,
-               invalid.maximum_rank, ? AS pages_per_domain
-        FROM summary
-        LEFT JOIN invalid ON true
-        ORDER BY invalid.root_domain COLLATE "binary" NULLS FIRST
-        """,
-        [pages_per_domain, pages_per_domain],
-    ).fetchall()
-    page_count = int(domain_rank_rows[0][0])
-    distinct_domain_count = int(domain_rank_rows[0][1])
-    invalid_domain_ranks = tuple(
-        tuple(row[3:]) for row in domain_rank_rows if row[2]
-    )
-    if invalid_domain_ranks:
-        raise CatalogValidationError(
-            "final page domain ranks are not unique, gapless, and bounded",
-            invalid_domain_ranks,
-        )
-
-    return page_count, distinct_domain_count
-
-
-def validate_catalog(
-    connection: duckdb.DuckDBPyConnection,
-) -> CatalogValidationResult:
-    """Read and fully validate one completed catalog without modifying it."""
-    try:
-        return _validate_catalog(connection)
-    except CatalogValidationError:
-        raise
-    except duckdb.Error as error:
-        raise CatalogValidationError(f"query final catalog: {error}") from error
-
-
-def _validate_catalog(
-    connection: duckdb.DuckDBPyConnection,
-) -> CatalogValidationResult:
-    _require_final_catalog_shapes(connection)
-    metadata_count = int(
-        connection.execute("SELECT count(*) FROM catalog_metadata").fetchone()[0]
-    )
-    if metadata_count != 1:
-        raise CatalogValidationError(
-            "final catalog must contain exactly one metadata row",
-            [("metadata_row_count", metadata_count)],
-        )
-
-    metadata = connection.execute(
-        """
-        SELECT singleton, schema_version, catalog_id, crawl_id,
-               selection_name, pages_per_domain,
-               selection_policy_version, selection_policy_sha256,
-               source_schema_sha256, warc_manifest_sha256,
-               index_manifest_sha256, warc_inventory_sha256,
-               warc_count, selected_page_count, distinct_domain_count,
-               source_index_shard_count, duckdb_version, builder_version,
-               created_at IS NOT NULL
-        FROM catalog_metadata
-        """
-    ).fetchone()
-    if metadata is None:
-        raise CatalogValidationError("final catalog metadata row disappeared")
-    (
-        singleton,
-        schema_version,
-        stored_catalog_id,
-        crawl_id,
-        selection_name,
-        pages_per_domain,
-        selection_policy_version,
-        selection_policy_sha256,
-        source_schema_sha256,
-        warc_manifest_sha256,
-        index_manifest_sha256,
-        stored_inventory_hash,
-        stored_warc_count,
-        stored_page_count,
-        stored_domain_count,
-        source_shard_count,
-        duckdb_version,
-        builder_version,
-        has_created_at,
-    ) = metadata
-
-    if singleton is not True:
-        raise CatalogValidationError(
-            "final catalog metadata singleton must be true",
-            [("singleton", singleton)],
-        )
-    if int(schema_version) != CATALOG_SCHEMA_VERSION:
-        raise CatalogValidationError(
-            "final catalog schema version is unsupported",
-            [("schema_version", schema_version, CATALOG_SCHEMA_VERSION)],
-        )
-    expected_selection_name = f"pages{int(pages_per_domain)}"
-    if selection_name != expected_selection_name:
-        raise CatalogValidationError(
-            "final catalog selection name conflicts with pages_per_domain",
-            [("selection_name", selection_name, expected_selection_name)],
-        )
-    if int(source_shard_count) <= 0:
-        raise CatalogValidationError(
-            "final catalog source shard count must be positive",
-            [("source_index_shard_count", source_shard_count)],
-        )
-    if not str(duckdb_version).strip() or not str(builder_version).strip():
-        raise CatalogValidationError(
-            "final catalog runtime versions must not be blank",
-            [("duckdb_version", duckdb_version), ("builder_version", builder_version)],
-        )
-    if has_created_at is not True:
-        raise CatalogValidationError("final catalog created_at must not be null")
-    for name, value in (
-        ("catalog_id", stored_catalog_id),
-        ("selection_policy_sha256", selection_policy_sha256),
-        ("source_schema_sha256", source_schema_sha256),
-        ("warc_manifest_sha256", warc_manifest_sha256),
-        ("index_manifest_sha256", index_manifest_sha256),
-        ("warc_inventory_sha256", stored_inventory_hash),
-    ):
-        try:
-            decode_sha256(str(value), name)
-        except ValueError as error:
-            raise CatalogValidationError(
-                f"final catalog metadata contains a noncanonical hash: {error}",
-                [(name, value)],
-            ) from error
-
-    inventory, computed_inventory_hash = _validated_catalog_warcs(connection)
-    if stored_inventory_hash != computed_inventory_hash:
-        raise CatalogValidationError(
-            "final WARC inventory hash differs from metadata",
-            [("warc_inventory_sha256", stored_inventory_hash, computed_inventory_hash)],
-        )
-
-    try:
-        computed_catalog_id = catalog_id(
-            schema_version=int(schema_version),
-            crawl_id=str(crawl_id),
-            pages_per_domain=int(pages_per_domain),
-            selection_policy_version=str(selection_policy_version),
-            selection_policy_sha256=str(selection_policy_sha256),
-            source_schema_sha256=str(source_schema_sha256),
-            warc_manifest_sha256=str(warc_manifest_sha256),
-            index_manifest_sha256=str(index_manifest_sha256),
-            warc_inventory_sha256=computed_inventory_hash,
-        )
-    except ValueError as error:
-        raise CatalogValidationError(
-            f"final catalog identity fields are invalid: {error}",
+            """,
             [
-                ("crawl_id", crawl_id),
-                ("pages_per_domain", pages_per_domain),
-                ("selection_policy_version", selection_policy_version),
+                crawl,
+                pages_per_domain,
+                SELECTION_VERSION,
+                index_manifest_sha256,
+                warc_manifest_sha256,
+                len(candidate_paths),
+                int(warc_count),
+                int(selected_warc_count),
+                int(selected_page_count),
+                int(selected_bytes),
+                len(warc_sizes),
+                average_warc_bytes,
             ],
-        ) from error
-    if stored_catalog_id != computed_catalog_id:
-        raise CatalogValidationError(
-            "final catalog ID differs from its logical identity",
-            [("catalog_id", stored_catalog_id, computed_catalog_id)],
         )
-
-    page_count, domain_count = _validate_catalog_pages(
-        connection,
-        int(pages_per_domain),
-    )
-    count_mismatches: list[tuple[object, ...]] = []
-    for name, stored, actual in (
-        ("warc_count", stored_warc_count, len(inventory)),
-        ("selected_page_count", stored_page_count, page_count),
-        ("distinct_domain_count", stored_domain_count, domain_count),
-    ):
-        if int(stored) != actual:
-            count_mismatches.append((name, int(stored), actual))
-    if count_mismatches:
-        raise CatalogValidationError(
-            "final catalog stored counts differ from actual rows",
-            count_mismatches,
-        )
-
-    return CatalogValidationResult(
-        catalog_id=str(stored_catalog_id),
-        warc_inventory_sha256=computed_inventory_hash,
-        selection_policy_version=str(selection_policy_version),
-        selection_policy_sha256=str(selection_policy_sha256),
-        warc_manifest_sha256=str(warc_manifest_sha256),
-        index_manifest_sha256=str(index_manifest_sha256),
-        crawl_id=str(crawl_id),
-        selection_name=str(selection_name),
-        pages_per_domain=int(pages_per_domain),
-        warc_count=len(inventory),
-        selected_page_count=page_count,
-        distinct_domain_count=domain_count,
-        source_index_shard_count=int(source_shard_count),
-    )
-
-
-def inspect_published_catalog(
-    path: Path,
-    *,
-    crawl_id: str,
-    pages_per_domain: int,
-    selection_policy_version: str,
-    selection_policy_sha256: str,
-) -> CatalogInspectionResult | None:
-    """Inspect only schema and metadata to decide network-free catalog reuse."""
-    if _CRAWL_ID.fullmatch(crawl_id) is None:
-        raise ValueError("crawl_id must match CC-MAIN-YYYY-NN")
-    if not 1 <= pages_per_domain <= 0xFFFF:
-        raise ValueError("pages_per_domain must be between 1 and uint16 max")
-    if not selection_policy_version.strip():
-        raise ValueError("selection_policy_version must not be blank")
-    decode_sha256(selection_policy_sha256, "selection_policy_sha256")
-    published_identity = _lstat_identity(path)
-    if published_identity is None:
-        return None
-    if not stat.S_ISREG(published_identity[2]):
-        raise FinalCatalogBuildError(
-            f"published catalog is not a regular file: {path}"
-        )
-    wal_path = Path(f"{path}.wal")
-    if wal_path.exists() or wal_path.is_symlink():
-        raise FinalCatalogBuildError(
-            f"published catalog WAL prevents reuse: {wal_path}"
-        )
-
-    try:
-        connection = duckdb.connect(str(path), read_only=True)
-    except duckdb.Error as error:
-        raise FinalCatalogBuildError(
-            f"open published catalog read-only: {error}"
-        ) from error
-    try:
-        _require_final_catalog_shapes(connection)
-        rows = connection.execute(
-            """
-            SELECT singleton, schema_version, catalog_id, crawl_id,
-                   selection_name, pages_per_domain,
-                   selection_policy_version, selection_policy_sha256,
-                   source_schema_sha256, warc_manifest_sha256,
-                   index_manifest_sha256, warc_inventory_sha256,
-                   warc_count, selected_page_count, distinct_domain_count,
-                   source_index_shard_count, duckdb_version, builder_version,
-                   created_at IS NOT NULL
-            FROM catalog_metadata
-            """
-        ).fetchall()
-    except (CatalogValidationError, duckdb.Error) as error:
-        raise FinalCatalogBuildError(
-            f"inspect published catalog metadata: {error}"
-        ) from error
-    finally:
-        connection.close()
-    if _lstat_identity(path) != published_identity:
-        raise FinalCatalogBuildError(
-            "published catalog changed during metadata inspection"
-        )
-    if wal_path.exists() or wal_path.is_symlink():
-        raise FinalCatalogBuildError(
-            f"published catalog WAL appeared during metadata inspection: {wal_path}"
-        )
-    if len(rows) != 1:
-        raise FinalCatalogBuildError(
-            "published catalog must contain exactly one metadata row"
-        )
-    (
-        singleton,
-        schema_version,
-        stored_catalog_id,
-        stored_crawl_id,
-        selection_name,
-        stored_pages_per_domain,
-        stored_policy_version,
-        stored_policy_hash,
-        source_schema_hash,
-        warc_manifest_hash,
-        index_manifest_hash,
-        inventory_hash,
-        warc_count,
-        selected_page_count,
-        distinct_domain_count,
-        source_shard_count,
-        duckdb_version,
-        builder_version,
-        has_created_at,
-    ) = rows[0]
-    if singleton is not True or int(schema_version) != CATALOG_SCHEMA_VERSION:
-        raise FinalCatalogBuildError(
-            "published catalog metadata has an invalid singleton or schema version"
-        )
-    if selection_name != f"pages{int(stored_pages_per_domain)}":
-        raise FinalCatalogBuildError(
-            "published catalog selection name conflicts with pages_per_domain"
-        )
-    if (
-        int(source_shard_count) <= 0
-        or int(warc_count) <= 0
-        or int(distinct_domain_count) > int(selected_page_count)
-        or ((int(selected_page_count) == 0) != (int(distinct_domain_count) == 0))
-        or not str(duckdb_version).strip()
-        or not str(builder_version).strip()
-        or has_created_at is not True
-    ):
-        raise FinalCatalogBuildError(
-            "published catalog metadata contains invalid build information"
-        )
-    try:
-        computed_catalog_id = catalog_id(
-            schema_version=int(schema_version),
-            crawl_id=str(stored_crawl_id),
-            pages_per_domain=int(stored_pages_per_domain),
-            selection_policy_version=str(stored_policy_version),
-            selection_policy_sha256=str(stored_policy_hash),
-            source_schema_sha256=str(source_schema_hash),
-            warc_manifest_sha256=str(warc_manifest_hash),
-            index_manifest_sha256=str(index_manifest_hash),
-            warc_inventory_sha256=str(inventory_hash),
-        )
-    except ValueError as error:
-        raise FinalCatalogBuildError(
-            f"published catalog metadata identity is invalid: {error}"
-        ) from error
-    if stored_catalog_id != computed_catalog_id:
-        raise FinalCatalogBuildError(
-            "published catalog ID differs from its metadata identity"
-        )
-
-    reusable = (
-        stored_crawl_id == crawl_id
-        and int(stored_pages_per_domain) == pages_per_domain
-        and selection_name == f"pages{pages_per_domain}"
-        and stored_policy_version == selection_policy_version
-        and stored_policy_hash == selection_policy_sha256
-    )
-    return CatalogInspectionResult(
-        path=path,
-        catalog_id=str(stored_catalog_id),
-        warc_count=int(warc_count),
-        selected_page_count=int(selected_page_count),
-        distinct_domain_count=int(distinct_domain_count),
-        reusable=reusable,
-    )
-
-
-def build_final_catalog_partial(
-    state_connection: duckdb.DuckDBPyConnection,
-    validation_connection: duckdb.DuckDBPyConnection,
-    build_directory: Path,
-) -> FinalCatalogResult:
-    """Build, validate, checkpoint, close, and read-only reopen one partial catalog."""
-    warcs = create_partial_catalog(state_connection, build_directory)
-    pages = materialize_final_pages(
-        state_connection,
-        validation_connection,
-        build_directory,
-    )
-    metadata = materialize_final_metadata(state_connection, build_directory)
-    if warcs.path != pages.path or pages.path != metadata.path:
-        raise FinalCatalogBuildError("final catalog phases returned different paths")
-    path = metadata.path
-    if state_connection.execute(
-        """
-        SELECT count(*) FROM duckdb_databases()
-        WHERE database_name = 'final_catalog'
-        """
-    ).fetchone()[0]:
-        raise FinalCatalogBuildError(
-            "partial catalog remains attached after final build phases"
-        )
-
-    try:
-        writable_connection = duckdb.connect(str(path))
-    except duckdb.Error as error:
-        raise FinalCatalogBuildError(
-            f"open completed partial catalog for checkpoint: {error}"
-        ) from error
-    writable_error: BaseException | None = None
-    try:
-        before_checkpoint = validate_catalog(writable_connection)
-        phase_mismatches: list[str] = []
-        if warcs.warc_count != before_checkpoint.warc_count:
-            phase_mismatches.append("warc_count")
-        if warcs.inventory_sha256 != before_checkpoint.warc_inventory_sha256:
-            phase_mismatches.append("warc_inventory_sha256")
-        if pages.selected_page_count != before_checkpoint.selected_page_count:
-            phase_mismatches.append("selected_page_count")
-        if pages.distinct_domain_count != before_checkpoint.distinct_domain_count:
-            phase_mismatches.append("distinct_domain_count")
-        if metadata.catalog_id != before_checkpoint.catalog_id:
-            phase_mismatches.append("catalog_id")
-        if phase_mismatches:
-            raise FinalCatalogBuildError(
-                "final build phase results differ from completed partial catalog: "
-                + ", ".join(phase_mismatches)
-            )
-        try:
-            writable_connection.execute("FORCE CHECKPOINT")
-        except duckdb.Error as error:
-            raise FinalCatalogBuildError(
-                f"force checkpoint completed partial catalog: {error}"
-            ) from error
+        connection.execute("FORCE CHECKPOINT")
     except BaseException as error:
-        writable_error = error
-        raise
-    finally:
-        try:
-            writable_connection.close()
-        except Exception as close_error:
-            if writable_error is None:
-                raise FinalCatalogBuildError(
-                    f"close checkpointed partial catalog: {close_error}"
-                ) from close_error
-            add_note = getattr(writable_error, "add_note", None)
-            if add_note is not None:
-                add_note(f"also failed to close checkpoint connection: {close_error}")
-
-    wal_path = Path(f"{path}.wal")
-    if wal_path.exists() or wal_path.is_symlink():
-        raise FinalCatalogBuildError(
-            f"partial catalog WAL remains after forced checkpoint and close: {wal_path}"
-        )
-
-    try:
-        read_only_connection = duckdb.connect(str(path), read_only=True)
-    except duckdb.Error as error:
-        raise FinalCatalogBuildError(
-            f"reopen completed partial catalog read-only: {error}"
-        ) from error
-    read_only_error: BaseException | None = None
-    try:
-        after_reopen = validate_catalog(read_only_connection)
-    except BaseException as error:
-        read_only_error = error
-        raise
-    finally:
-        try:
-            read_only_connection.close()
-        except Exception as close_error:
-            if read_only_error is None:
-                raise FinalCatalogBuildError(
-                    f"close read-only partial catalog: {close_error}"
-                ) from close_error
-            add_note = getattr(read_only_error, "add_note", None)
-            if add_note is not None:
-                add_note(f"also failed to close read-only connection: {close_error}")
-
-    if before_checkpoint != after_reopen:
-        raise FinalCatalogBuildError(
-            "partial catalog validation changed after checkpoint and reopen"
-        )
-    if metadata.catalog_id != after_reopen.catalog_id:
-        raise FinalCatalogBuildError(
-            "partial catalog metadata result differs after checkpoint and reopen"
-        )
-    file_identity = _lstat_identity(path)
-    if file_identity is None or not stat.S_ISREG(file_identity[2]):
-        raise FinalCatalogBuildError(
-            "partial catalog disappeared after read-only validation"
-        )
-    return FinalCatalogResult(
-        path=path,
-        validation=after_reopen,
-        file_identity=file_identity,
-    )
-
-
-def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
-        value.st_dev,
-        value.st_ino,
-        value.st_mode,
-        value.st_size,
-        value.st_mtime_ns,
-        value.st_ctime_ns,
-    )
-
-
-def _lstat_identity(path: Path) -> tuple[int, int, int, int, int, int] | None:
-    try:
-        value = os.lstat(path)
-    except FileNotFoundError:
-        return None
-    return _stat_identity(value)
-
-
-def _lstat_identity_at(
-    directory_descriptor: int,
-    name: str,
-) -> tuple[int, int, int, int, int, int] | None:
-    try:
-        value = os.stat(
-            name,
-            dir_fd=directory_descriptor,
-            follow_symlinks=False,
-        )
-    except FileNotFoundError:
-        return None
-    return _stat_identity(value)
-
-
-def _write_publication_target(
-    build_descriptor: int,
-    target: _PublicationTarget,
-) -> None:
-    decode_sha256(target.catalog_id, "catalog_id")
-    if target.device < 0 or target.inode <= 0:
-        raise ValueError("publication target device and inode must be valid")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(
-        _PUBLICATION_TARGET_PARTIAL_FILENAME,
-        flags,
-        0o644,
-        dir_fd=build_descriptor,
-    )
-    try:
-        remaining = memoryview(
-            (
-                "version=1\n"
-                f"catalog_id={target.catalog_id}\n"
-                f"device={target.device}\n"
-                f"inode={target.inode}\n"
-            ).encode("ascii")
-        )
-        while remaining:
-            written = os.write(descriptor, remaining)
-            if written <= 0:
-                raise OSError("write publication target returned no progress")
-            remaining = remaining[written:]
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.replace(
-        _PUBLICATION_TARGET_PARTIAL_FILENAME,
-        _PUBLICATION_TARGET_FILENAME,
-        src_dir_fd=build_descriptor,
-        dst_dir_fd=build_descriptor,
-    )
-
-
-def _read_publication_target(build_descriptor: int) -> _PublicationTarget | None:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(
-            _PUBLICATION_TARGET_FILENAME,
-            flags,
-            dir_fd=build_descriptor,
-        )
-    except FileNotFoundError:
-        return None
-    try:
-        data = os.read(descriptor, 1024)
-        if os.read(descriptor, 1):
-            raise FinalCatalogBuildError("publication target marker is too large")
-    finally:
-        os.close(descriptor)
-    try:
-        lines = data.decode("ascii").splitlines()
-        if len(lines) != 4 or lines[0] != "version=1":
-            raise ValueError("unexpected publication target fields")
-        fields = dict(line.split("=", 1) for line in lines[1:])
-        if set(fields) != {"catalog_id", "device", "inode"}:
-            raise ValueError("unexpected publication target fields")
-        catalog_id_value = fields["catalog_id"]
-        decode_sha256(catalog_id_value, "catalog_id")
-        if not fields["device"].isdecimal() or not fields["inode"].isdecimal():
-            raise ValueError("publication target identity is not numeric")
-        target = _PublicationTarget(
-            catalog_id=catalog_id_value,
-            device=int(fields["device"]),
-            inode=int(fields["inode"]),
-        )
-        if target.inode <= 0:
-            raise ValueError("publication target inode must be positive")
-    except (UnicodeDecodeError, ValueError) as error:
-        raise FinalCatalogBuildError(
-            "publication target marker is invalid"
-        ) from error
-    return target
-
-
-def _remove_open_directory_tree(
-    parent_descriptor: int,
-    directory_descriptor: int,
-    name: str,
-    expected_identity: tuple[int, int, int, int, int, int],
-) -> None:
-    """Remove a verified staging tree relative to its opened parent directory."""
-    opened_stat = os.fstat(directory_descriptor)
-    opened_identity = _stat_identity(opened_stat)
-    if (
-        opened_identity[:2] != expected_identity[:2]
-        or not stat.S_ISDIR(opened_stat.st_mode)
-    ):
-        raise FinalCatalogBuildError(
-            f"opened staging directory identity changed before cleanup: {name}"
-        )
-    current_identity = _lstat_identity_at(parent_descriptor, name)
-    if (
-        current_identity is None
-        or current_identity[:2] != opened_identity[:2]
-        or not stat.S_ISDIR(current_identity[2])
-    ):
-        raise FinalCatalogBuildError(
-            f"staging directory path changed before cleanup: {name}"
-        )
-
-    directory_flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        directory_flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        directory_flags |= os.O_NOFOLLOW
-
-    with os.scandir(directory_descriptor) as entries:
-        entry_names = sorted(entry.name for entry in entries)
-    for entry_name in entry_names:
-        entry_identity = _lstat_identity_at(directory_descriptor, entry_name)
-        if entry_identity is None:
-            continue
-        if not stat.S_ISDIR(entry_identity[2]):
-            os.unlink(entry_name, dir_fd=directory_descriptor)
-            continue
-
-        child_descriptor = os.open(
-            entry_name,
-            directory_flags,
-            dir_fd=directory_descriptor,
-        )
-        child_error: BaseException | None = None
-        try:
-            child_identity = _stat_identity(os.fstat(child_descriptor))
-            if child_identity[:2] != entry_identity[:2]:
-                raise FinalCatalogBuildError(
-                    "staging subdirectory changed while opening it for cleanup: "
-                    f"{entry_name}"
-                )
-            _remove_open_directory_tree(
-                directory_descriptor,
-                child_descriptor,
-                entry_name,
-                child_identity,
-            )
-        except BaseException as error:
-            child_error = error
-            raise
-        finally:
-            try:
-                os.close(child_descriptor)
-            except Exception as close_error:
-                if child_error is None:
-                    raise
-                add_note = getattr(child_error, "add_note", None)
-                if add_note is not None:
-                    add_note(
-                        "also failed to close staging subdirectory descriptor: "
-                        f"{close_error}"
-                    )
-
-    current_identity = _lstat_identity_at(parent_descriptor, name)
-    if (
-        current_identity is None
-        or current_identity[:2] != opened_identity[:2]
-        or not stat.S_ISDIR(current_identity[2])
-    ):
-        raise FinalCatalogBuildError(
-            f"staging directory path changed before cleanup: {name}"
-        )
-    os.rmdir(name, dir_fd=parent_descriptor)
-
-
-def publish_catalog(
-    final_catalog: FinalCatalogResult,
-    catalog_directory: Path,
-    build_directory: Path,
-    *,
-    replace_existing: bool,
-) -> CatalogPublicationResult:
-    """Atomically publish one closed partial and durably remove its staging tree."""
-    published = False
-    stage = "validate publication paths"
-    active_error: BaseException | None = None
-    partial_descriptor: int | None = None
-    build_descriptor: int | None = None
-    catalog_descriptor: int | None = None
-    try:
-        if catalog_directory.is_symlink() or not catalog_directory.is_dir():
-            raise FinalCatalogBuildError(
-                f"catalog directory must be a regular directory: {catalog_directory}"
-            )
-        expected_build_directory = catalog_directory / ".build"
-        if build_directory.resolve() != expected_build_directory.resolve():
-            raise FinalCatalogBuildError(
-                f"publication build directory must be {expected_build_directory}"
-            )
-        if build_directory.is_symlink() or not build_directory.is_dir():
-            raise FinalCatalogBuildError(
-                f"build directory must be a regular directory: {build_directory}"
-            )
-        expected_partial = partial_catalog_path(build_directory)
-        if final_catalog.path.resolve() != expected_partial.resolve():
-            raise FinalCatalogBuildError(
-                "final catalog result does not identify the exact partial path"
-            )
-        final_path = catalog_directory / "catalog.duckdb"
-        require_path_within(catalog_directory, final_path)
-
-        directory_flags = os.O_RDONLY
-        if hasattr(os, "O_DIRECTORY"):
-            directory_flags |= os.O_DIRECTORY
-        if hasattr(os, "O_NOFOLLOW"):
-            directory_flags |= os.O_NOFOLLOW
-        catalog_descriptor = os.open(catalog_directory, directory_flags)
-        build_descriptor = os.open(build_directory, directory_flags)
-        catalog_directory_identity = _stat_identity(os.fstat(catalog_descriptor))
-        build_directory_identity = _stat_identity(os.fstat(build_descriptor))
-        if _lstat_identity(catalog_directory) != catalog_directory_identity:
-            raise FinalCatalogBuildError(
-                "catalog directory changed while opening it for publication"
-            )
-        if _lstat_identity(build_directory) != build_directory_identity:
-            raise FinalCatalogBuildError(
-                "build directory changed while opening it for publication"
-            )
-        if catalog_directory_identity[0] != build_directory_identity[0]:
-            raise FinalCatalogBuildError(
-                "partial and published catalogs must be on the same filesystem"
-            )
-
-        existing_identity = _lstat_identity_at(
-            catalog_descriptor,
-            "catalog.duckdb",
-        )
-        if existing_identity is not None:
-            if not replace_existing:
-                raise FinalCatalogBuildError(
-                    f"published catalog already exists: {final_path}"
-                )
-            if not stat.S_ISREG(existing_identity[2]):
-                raise FinalCatalogBuildError(
-                    f"existing published catalog is not a regular file: {final_path}"
-                )
-        if _lstat_identity_at(catalog_descriptor, "catalog.duckdb.wal") is not None:
-            raise FinalCatalogBuildError(
-                "published catalog WAL prevents atomic replacement"
-            )
-        if _lstat_identity_at(catalog_descriptor, _PUBLISHED_BUILD_DIRECTORY) is not None:
-            raise FinalCatalogBuildError(
-                "published staging cleanup remains; run recovery before publication"
-            )
-        if _lstat_identity_at(build_descriptor, "catalog.duckdb.partial.wal") is not None:
-            raise FinalCatalogBuildError(
-                "partial catalog WAL prevents publication"
-            )
-
-        partial_flags = os.O_RDONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            partial_flags |= os.O_NOFOLLOW
-        partial_descriptor = os.open(
-            "catalog.duckdb.partial",
-            partial_flags,
-            dir_fd=build_descriptor,
-        )
-        partial_stat = os.fstat(partial_descriptor)
-        partial_identity = _stat_identity(partial_stat)
-        if not stat.S_ISREG(partial_stat.st_mode) or partial_stat.st_size <= 0:
-            raise FinalCatalogBuildError(
-                f"partial catalog must be a nonempty regular file: {expected_partial}"
-            )
-        if partial_identity != final_catalog.file_identity:
-            raise FinalCatalogBuildError(
-                "partial catalog identity changed after final validation"
-            )
-        if partial_stat.st_dev != catalog_directory_identity[0]:
-            raise FinalCatalogBuildError(
-                "partial and published catalogs must be on the same filesystem"
-            )
-
-        stage = "write publication target marker"
-        _write_publication_target(
-            build_descriptor,
-            _PublicationTarget(
-                catalog_id=final_catalog.validation.catalog_id,
-                device=partial_stat.st_dev,
-                inode=partial_stat.st_ino,
-            ),
-        )
-        stage = "fsync publication target directory"
-        os.fsync(build_descriptor)
-        stage = "fsync partial catalog"
-        os.fsync(partial_descriptor)
-        stage = "verify publication paths"
-        current_catalog_directory = _lstat_identity(catalog_directory)
-        if (
-            current_catalog_directory is None
-            or current_catalog_directory[:2] != catalog_directory_identity[:2]
-        ):
-            raise FinalCatalogBuildError(
-                "catalog directory changed before atomic replacement"
-            )
-        current_build_directory = _lstat_identity(build_directory)
-        if (
-            current_build_directory is None
-            or current_build_directory[:2] != build_directory_identity[:2]
-        ):
-            raise FinalCatalogBuildError(
-                "build directory changed before atomic replacement"
-            )
-        if (
-            _lstat_identity_at(build_descriptor, "catalog.duckdb.partial")
-            != partial_identity
-        ):
-            raise FinalCatalogBuildError(
-                "partial catalog path changed before atomic replacement"
-            )
-        if _lstat_identity_at(build_descriptor, "catalog.duckdb.partial.wal") is not None:
-            raise FinalCatalogBuildError(
-                "partial catalog WAL appeared before atomic replacement"
-            )
-        if (
-            _lstat_identity_at(catalog_descriptor, "catalog.duckdb")
-            != existing_identity
-        ):
-            raise FinalCatalogBuildError(
-                "published catalog path changed before atomic replacement"
-            )
-        if _lstat_identity_at(catalog_descriptor, "catalog.duckdb.wal") is not None:
-            raise FinalCatalogBuildError(
-                "published catalog WAL appeared before atomic replacement"
-            )
-        stage = "atomically replace published catalog"
-        os.replace(
-            "catalog.duckdb.partial",
-            "catalog.duckdb",
-            src_dir_fd=build_descriptor,
-            dst_dir_fd=catalog_descriptor,
-        )
-        published = True
-        final_identity = _lstat_identity_at(
-            catalog_descriptor,
-            "catalog.duckdb",
-        )
-        if final_identity is None or final_identity[:2] != (
-            partial_stat.st_dev,
-            partial_stat.st_ino,
-        ):
-            raise FinalCatalogBuildError(
-                "published catalog inode differs after atomic replacement"
-            )
-
-        stage = "fsync source build directory after replacement"
-        os.fsync(build_descriptor)
-        stage = "fsync catalog directory after replacement"
-        os.fsync(catalog_descriptor)
-        stage = "verify published catalog after replacement"
-        current_catalog_directory = _lstat_identity(catalog_directory)
-        if (
-            current_catalog_directory is None
-            or current_catalog_directory[:2] != catalog_directory_identity[:2]
-        ):
-            raise FinalCatalogBuildError(
-                "catalog directory changed after atomic replacement"
-            )
-        if _lstat_identity(final_path) != final_identity:
-            raise FinalCatalogBuildError(
-                "published catalog path changed after atomic replacement"
-            )
-        if _lstat_identity_at(catalog_descriptor, "catalog.duckdb.wal") is not None:
-            raise FinalCatalogBuildError(
-                "published catalog WAL appeared after atomic replacement"
-            )
-        stage = "atomically detach published catalog staging"
-        current_build_identity = _lstat_identity_at(catalog_descriptor, ".build")
-        if (
-            current_build_identity is None
-            or current_build_identity[:2] != build_directory_identity[:2]
-        ):
-            raise FinalCatalogBuildError(
-                "build directory changed before published staging detach"
-            )
-        if _lstat_identity_at(
-            catalog_descriptor,
-            _PUBLISHED_BUILD_DIRECTORY,
-        ) is not None:
-            raise FinalCatalogBuildError(
-                "published staging cleanup path appeared before atomic detach"
-            )
-        os.rename(
-            ".build",
-            _PUBLISHED_BUILD_DIRECTORY,
-            src_dir_fd=catalog_descriptor,
-            dst_dir_fd=catalog_descriptor,
-        )
-        published_build_identity = _lstat_identity_at(
-            catalog_descriptor,
-            _PUBLISHED_BUILD_DIRECTORY,
-        )
-        if (
-            published_build_identity is None
-            or published_build_identity[:2] != build_directory_identity[:2]
-        ):
-            raise FinalCatalogBuildError(
-                "published staging identity changed after atomic detach"
-            )
-        stage = "fsync catalog directory after staging detach"
-        os.fsync(catalog_descriptor)
-        stage = "remove published catalog staging"
-        _remove_open_directory_tree(
-            catalog_descriptor,
-            build_descriptor,
-            _PUBLISHED_BUILD_DIRECTORY,
-            build_directory_identity,
-        )
-        stage = "fsync catalog directory after staging cleanup"
-        os.fsync(catalog_descriptor)
-        return CatalogPublicationResult(
-            path=final_path,
-            validation=final_catalog.validation,
-        )
-    except CatalogPublicationError as error:
         active_error = error
         raise
-    except Exception as error:
-        boundary = (
-            "catalog was atomically replaced but publication finalization failed"
-            if published
-            else "catalog publication failed before atomic replacement"
-        )
-        publication_error = CatalogPublicationError(
-            f"{boundary} during {stage}: {error}",
-            published=published,
-        )
-        active_error = publication_error
-        raise publication_error from error
     finally:
-        close_errors: list[Exception] = []
-        for descriptor in (
-            partial_descriptor,
-            build_descriptor,
-            catalog_descriptor,
-        ):
-            if descriptor is not None:
-                try:
-                    os.close(descriptor)
-                except Exception as error:
-                    close_errors.append(error)
-        if close_errors:
-            details = "; ".join(str(error) for error in close_errors)
+        try:
+            connection.close()
+        except Exception as close_error:
             if active_error is None:
-                raise CatalogPublicationError(
-                    f"publication descriptor cleanup failed: {details}",
-                    published=published,
-                ) from close_errors[0]
-            add_note = getattr(active_error, "add_note", None)
-            if add_note is not None:
-                add_note(f"also failed to close publication descriptors: {details}")
+                raise
+            active_error.add_note(f"also failed to close DuckDB: {close_error}")
 
-
-def recover_published_catalog_cleanup(
-    catalog_directory: Path,
-    build_directory: Path,
-    catalog_id_value: str,
-) -> bool:
-    """Finish durability and staging cleanup after a committed publication fault."""
-    decode_sha256(catalog_id_value, "catalog_id")
-    if catalog_directory.is_symlink() or not catalog_directory.is_dir():
-        raise CatalogPublicationError(
-            "published catalog recovery found an invalid catalog directory",
-            published=True,
-        )
-    expected_build_directory = catalog_directory / ".build"
-    if build_directory.resolve() != expected_build_directory.resolve():
-        raise CatalogPublicationError(
-            f"published catalog recovery staging must be {expected_build_directory}",
-            published=True,
-        )
-
-    directory_flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        directory_flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        directory_flags |= os.O_NOFOLLOW
-    catalog_descriptor: int | None = None
-    build_descriptor: int | None = None
-    published_build_descriptor: int | None = None
-    catalog_file_descriptor: int | None = None
-    active_error: BaseException | None = None
-    try:
-        catalog_descriptor = os.open(catalog_directory, directory_flags)
-        catalog_directory_identity = _stat_identity(os.fstat(catalog_descriptor))
-        if _lstat_identity(catalog_directory) != catalog_directory_identity:
-            raise FinalCatalogBuildError(
-                "catalog directory changed while opening it for recovery"
-            )
-        file_flags = os.O_RDONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            file_flags |= os.O_NOFOLLOW
-        catalog_file_descriptor = os.open(
-            "catalog.duckdb",
-            file_flags,
-            dir_fd=catalog_descriptor,
-        )
-        catalog_stat = os.fstat(catalog_file_descriptor)
-        catalog_file_identity = _stat_identity(catalog_stat)
-        if not stat.S_ISREG(catalog_stat.st_mode) or catalog_stat.st_size <= 0:
-            raise FinalCatalogBuildError(
-                "published catalog recovery found an invalid catalog file"
-            )
-        if (
-            _lstat_identity_at(catalog_descriptor, "catalog.duckdb")
-            != catalog_file_identity
-        ):
-            raise FinalCatalogBuildError(
-                "published catalog changed while opening it for recovery"
-            )
-        if _lstat_identity_at(catalog_descriptor, "catalog.duckdb.wal") is not None:
-            raise FinalCatalogBuildError(
-                "published catalog WAL prevents recovery"
-            )
-        os.fsync(catalog_file_descriptor)
-
-        build_identity = _lstat_identity_at(catalog_descriptor, ".build")
-        published_build_identity = _lstat_identity_at(
-            catalog_descriptor,
-            _PUBLISHED_BUILD_DIRECTORY,
-        )
-        if published_build_identity is not None:
-            if not stat.S_ISDIR(published_build_identity[2]):
-                raise FinalCatalogBuildError(
-                    "published staging cleanup path is not a directory"
-                )
-            published_build_descriptor = os.open(
-                _PUBLISHED_BUILD_DIRECTORY,
-                directory_flags,
-                dir_fd=catalog_descriptor,
-            )
-            opened_published_identity = _stat_identity(
-                os.fstat(published_build_descriptor)
-            )
-            if opened_published_identity[:2] != published_build_identity[:2]:
-                raise FinalCatalogBuildError(
-                    "published staging cleanup directory changed while opening it"
-                )
-            os.fsync(catalog_descriptor)
-            _remove_open_directory_tree(
-                catalog_descriptor,
-                published_build_descriptor,
-                _PUBLISHED_BUILD_DIRECTORY,
-                opened_published_identity,
-            )
-            os.fsync(catalog_descriptor)
-            if build_identity is not None:
-                return False
-            return True
-
-        if build_identity is None:
-            os.fsync(catalog_descriptor)
-            return True
-        if not stat.S_ISDIR(build_identity[2]):
-            raise FinalCatalogBuildError(
-                "published catalog recovery found an invalid staging path"
-            )
-
-        build_descriptor = os.open(
-            ".build",
-            directory_flags,
-            dir_fd=catalog_descriptor,
-        )
-        build_directory_identity = _stat_identity(os.fstat(build_descriptor))
-        if build_directory_identity[:2] != build_identity[:2]:
-            raise FinalCatalogBuildError(
-                "build directory changed while opening it for recovery"
-            )
-        marker = _read_publication_target(build_descriptor)
-        if marker is None or marker.catalog_id != catalog_id_value:
-            return False
-        if (catalog_stat.st_dev, catalog_stat.st_ino) != (
-            marker.device,
-            marker.inode,
-        ):
-            return False
-
-        os.fsync(build_descriptor)
-        os.fsync(catalog_descriptor)
-        if _lstat_identity_at(
-            catalog_descriptor,
-            _PUBLISHED_BUILD_DIRECTORY,
-        ) is not None:
-            raise FinalCatalogBuildError(
-                "published staging cleanup path appeared during recovery"
-            )
-        os.rename(
-            ".build",
-            _PUBLISHED_BUILD_DIRECTORY,
-            src_dir_fd=catalog_descriptor,
-            dst_dir_fd=catalog_descriptor,
-        )
-        detached_identity = _lstat_identity_at(
-            catalog_descriptor,
-            _PUBLISHED_BUILD_DIRECTORY,
-        )
-        if (
-            detached_identity is None
-            or detached_identity[:2] != build_directory_identity[:2]
-        ):
-            raise FinalCatalogBuildError(
-                "published staging identity changed during recovery detach"
-            )
-        os.fsync(catalog_descriptor)
-        _remove_open_directory_tree(
-            catalog_descriptor,
-            build_descriptor,
-            _PUBLISHED_BUILD_DIRECTORY,
-            build_directory_identity,
-        )
-        os.fsync(catalog_descriptor)
-        return True
-    except Exception as error:
-        publication_error = CatalogPublicationError(
-            f"recover published catalog cleanup: {error}",
-            published=True,
-        )
-        active_error = publication_error
-        raise publication_error from error
-    finally:
-        close_errors: list[Exception] = []
-        for descriptor in (
-            catalog_file_descriptor,
-            build_descriptor,
-            published_build_descriptor,
-            catalog_descriptor,
-        ):
-            if descriptor is not None:
-                try:
-                    os.close(descriptor)
-                except Exception as error:
-                    close_errors.append(error)
-        if close_errors:
-            details = "; ".join(str(error) for error in close_errors)
-            if active_error is None:
-                raise CatalogPublicationError(
-                    f"published catalog recovery descriptor cleanup failed: {details}",
-                    published=True,
-                ) from close_errors[0]
-            add_note = getattr(active_error, "add_note", None)
-            if add_note is not None:
-                add_note(f"also failed to close recovery descriptors: {details}")
-
-
-def local_candidate_query(
-    schema: SourceSchema,
-    pages_per_domain: int,
-) -> str:
-    """Build the parameterized query for one URL-index Parquet source."""
-    source_index = schema.source_index
-    if not 0 <= source_index <= 0xFFFFFFFF:
-        raise ValueError("schema source_index must be between 0 and uint32 max")
-    if not 1 <= pages_per_domain <= 0xFFFF:
-        raise ValueError("pages_per_domain must be between 1 and uint16 max")
-
-    return f"""
-        WITH normalized AS (
-            SELECT {normalized_source_projection(schema)}
-            FROM read_parquet(?)
-        ),
-        eligible AS (
-            SELECT
-                CAST({source_index} AS UINTEGER) AS source_index,
-                CAST(root_domain AS VARCHAR) AS root_domain,
-                CAST(url AS VARCHAR) AS url,
-                CAST(content_languages AS VARCHAR) AS content_languages,
-                CAST(warc_filename AS VARCHAR) AS warc_filename,
-                {validated_candidate_coordinate_projection()},
-                {ranking_projection()}
-            FROM normalized
-            WHERE {eligibility_predicate()}
-        ),
-        coordinate_groups AS (
-            SELECT
-                {_canonical_provenance_projection()},
-                min(root_domain) AS root_domain,
-                min(url) AS url,
-                warc_filename,
-                warc_record_offset,
-                warc_record_length,
-                {_ranking_aggregates()},
-                ({_selection_conflict_expression()}) AS has_conflict
-            FROM eligible
-            GROUP BY warc_filename, warc_record_offset, warc_record_length
-        ),
-        ranked AS (
-            SELECT coordinate_groups.*,
-                   row_number() OVER (
-                       PARTITION BY root_domain
-                       ORDER BY {ranking_order_clause(pages_per_domain)}
-                   ) AS local_rank,
-                   bool_or(has_conflict) OVER () AS has_any_conflict
-            FROM coordinate_groups
-        )
-        SELECT {candidate_output_projection()}
-        FROM ranked
-        WHERE local_rank <= {pages_per_domain}
-          AND CASE
-              WHEN has_any_conflict
-                  THEN error('duplicate capture coordinate has conflicting selection values')
-              ELSE true
-          END
-    """.strip()
-
-
-def candidate_artifact_path(build_directory: Path, source_index: int) -> Path:
-    if not 0 <= source_index <= 0xFFFFFFFF:
-        raise ValueError("source_index must be between 0 and uint32 max")
-    candidate_directory = build_directory / "candidates"
-    require_path_within(build_directory, candidate_directory)
-    return candidate_directory / f"source_{source_index:05d}.parquet"
-
-
-def inspect_candidate_artifact(
-    connection: duckdb.DuckDBPyConnection,
-    path: Path,
-    source_index: int,
-) -> CandidateMetadata:
-    """Validate one closed candidate Parquet and return persisted metadata."""
-    if path.is_symlink() or not path.is_file():
-        raise CandidateArtifactError(f"candidate artifact is not a regular file: {path}")
-    try:
-        byte_count = path.stat().st_size
-    except OSError as error:
-        raise CandidateArtifactError(f"stat candidate artifact {path}: {error}") from error
-    if byte_count <= 0:
-        raise CandidateArtifactError(f"candidate artifact is empty: {path}")
-
-    try:
-        described = connection.execute(
-            "DESCRIBE SELECT * FROM read_parquet(?)", [str(path)]
-        ).fetchall()
-        actual_columns = tuple((str(row[0]), str(row[1]).upper()) for row in described)
-        if actual_columns != CANDIDATE_COLUMNS:
-            raise CandidateArtifactError(
-                f"candidate artifact has an incompatible schema: {path}"
-            )
-        rows, minimum_source, maximum_source = connection.execute(
-            """
-            SELECT count(*), min(source_index), max(source_index)
-            FROM read_parquet(?)
-            """,
-            [str(path)],
-        ).fetchone()
-    except CandidateArtifactError:
-        raise
-    except duckdb.Error as error:
-        raise CandidateArtifactError(f"read candidate artifact {path}: {error}") from error
-
-    if rows > 0 and (minimum_source != source_index or maximum_source != source_index):
-        raise CandidateArtifactError(
-            f"candidate artifact contains a different source_index: {path}"
-        )
-    return CandidateMetadata(rows=int(rows), byte_count=byte_count)
-
-
-def build_candidate_shard(
-    state_connection: duckdb.DuckDBPyConnection,
-    query_connection: duckdb.DuckDBPyConnection,
-    build_directory: Path,
-    source: IndexSource,
-    schema: SourceSchema,
-    pages_per_domain: int,
-    http_attempts: int,
-) -> CandidateShardResult:
-    """Reuse or atomically build one source candidate while checkpointing state."""
-    if state_connection is query_connection:
-        raise ValueError("state and candidate query connections must be distinct")
-    if http_attempts <= 0:
-        raise ValueError("http_attempts must be positive")
-    if source.source_index != schema.source_index:
-        raise ValueError("source and schema indexes must match")
-    started = time.monotonic()
-    candidate_path = candidate_artifact_path(build_directory, source.source_index)
-    candidate_directory = candidate_path.parent
-    _prepare_candidate_directory(build_directory, candidate_directory)
-    partial_path = candidate_path.with_name(f"{candidate_path.name}.partial")
-
-    state = _candidate_source_state(state_connection, source, schema)
-    if state.status == "ready":
-        expected_rows, expected_bytes = state.candidate_rows, state.candidate_bytes
-        try:
-            metadata = inspect_candidate_artifact(
-                query_connection, candidate_path, source.source_index
-            )
-        except CandidateArtifactError:
-            _invalidate_candidate_state(state_connection, source.source_index)
-        else:
-            if metadata.rows == expected_rows and metadata.byte_count == expected_bytes:
-                partial_removed = _remove_candidate_file(partial_path)
-                if partial_removed:
-                    _fsync_directory(candidate_directory)
-                return CandidateShardResult(
-                    source_index=source.source_index,
-                    path=candidate_path,
-                    rows=metadata.rows,
-                    byte_count=metadata.byte_count,
-                    reused=True,
-                    attempts_this_run=0,
-                    attempts_total=state.attempts,
-                    retries=0,
-                    http_429=0,
-                    http_503=0,
-                    elapsed_seconds=time.monotonic() - started,
-                )
-            _invalidate_candidate_state(state_connection, source.source_index)
-    elif state.status != "pending":
-        raise BuildStateCorrupt(
-            f"source {source.source_index} is {state.status!r}; reopen state before building"
-        )
-
-    removed_final = _remove_candidate_file(candidate_path)
-    removed_partial = _remove_candidate_file(partial_path)
-    if removed_final or removed_partial:
-        _fsync_directory(candidate_directory)
-    attempts = 0
-    retries = 0
-    http_429 = 0
-    http_503 = 0
-    attempts_total = state.attempts
-    for attempt in range(1, http_attempts + 1):
-        attempts += 1
-        attempts_total = _record_candidate_attempt(
-            state_connection, source.source_index
-        )
-        try:
-            _write_candidate_artifact(
-                query_connection,
-                source,
-                schema,
-                pages_per_domain,
-                partial_path,
-            )
-        except duckdb.Error as error:
-            _remove_candidate_file(partial_path)
-            statuses = _candidate_http_statuses(error)
-            http_429 += int(429 in statuses)
-            http_503 += int(503 in statuses)
-            if _is_transient_candidate_error(error) and attempt < http_attempts:
-                retries += 1
-                _record_candidate_retry(
-                    state_connection, source.source_index, error
-                )
-                time.sleep(min(float(2 ** (attempt - 1)), 30.0))
-                continue
-            _record_candidate_failure(state_connection, source.source_index, error)
-            raise CandidateBuildError(
-                f"build candidate source {source.source_index}: {error}"
-            ) from error
-
-        try:
-            metadata = inspect_candidate_artifact(
-                query_connection, partial_path, source.source_index
-            )
-            _fsync_file(partial_path)
-            os.replace(partial_path, candidate_path)
-            _fsync_directory(candidate_directory)
-            attempts_total = _record_candidate_ready(
-                state_connection,
-                source.source_index,
-                metadata,
-            )
-        except (CandidateArtifactError, OSError, duckdb.Error) as error:
-            _remove_candidate_file(partial_path)
-            _record_candidate_failure(state_connection, source.source_index, error)
-            raise CandidateBuildError(
-                f"finalize candidate source {source.source_index}: {error}"
-            ) from error
-
-        return CandidateShardResult(
-            source_index=source.source_index,
-            path=candidate_path,
-            rows=metadata.rows,
-            byte_count=metadata.byte_count,
-            reused=False,
-            attempts_this_run=attempts,
-            attempts_total=attempts_total,
-            retries=retries,
-            http_429=http_429,
-            http_503=http_503,
-            elapsed_seconds=time.monotonic() - started,
-        )
-    raise AssertionError("candidate attempt loop ended without a result")
-
-
-def _prepare_candidate_directory(
-    build_directory: Path, candidate_directory: Path
-) -> None:
-    require_path_within(build_directory, candidate_directory)
-    if candidate_directory.is_symlink():
-        raise CandidateArtifactError(
-            f"candidate directory must not be a symlink: {candidate_directory}"
-        )
-    candidate_directory.mkdir(parents=True, exist_ok=True)
-
-
-def _remove_candidate_file(path: Path) -> bool:
-    if path.is_dir() and not path.is_symlink():
-        raise CandidateArtifactError(f"candidate artifact path is a directory: {path}")
-    try:
-        existed = path.exists() or path.is_symlink()
-        path.unlink(missing_ok=True)
-    except OSError as error:
-        raise CandidateArtifactError(f"remove candidate artifact {path}: {error}") from error
-    return existed
-
-
-def _candidate_source_state(
-    connection: duckdb.DuckDBPyConnection,
-    source: IndexSource,
-    schema: SourceSchema,
-) -> _CandidateSourceState:
-    row = connection.execute(
-        """
-        SELECT source_url, source_schema_sha256, status,
-               candidate_rows, candidate_bytes, attempts
-        FROM source_shards
-        WHERE source_index = ?
-        """,
-        [source.source_index],
-    ).fetchone()
-    if row is None:
-        raise BuildStateCorrupt(f"source {source.source_index} is missing from build state")
-    expected_schema_hash = source_schema_sha256(schema)
-    if row[0] != source.url or row[1] != expected_schema_hash:
-        raise BuildStateConflict(
-            f"source {source.source_index} conflicts with build state; use --rebuild"
-        )
-    return _CandidateSourceState(
-        status=str(row[2]),
-        candidate_rows=row[3],
-        candidate_bytes=row[4],
-        attempts=int(row[5]),
+    if Path(f"{partial}.wal").exists():
+        raise RuntimeError(f"catalog WAL remains after checkpoint: {partial}.wal")
+    os.replace(partial, catalog_path)
+    shutil.rmtree(temp_directory, ignore_errors=True)
+    return CatalogResult(
+        catalog_path,
+        int(warc_count),
+        int(selected_warc_count),
+        int(selected_page_count),
+        int(selected_bytes),
+        average_warc_bytes,
+        False,
     )
-
-
-def _invalidate_candidate_state(
-    connection: duckdb.DuckDBPyConnection, source_index: int
-) -> None:
-    updated = connection.execute(
-        """
-        UPDATE source_shards
-        SET status = 'pending', candidate_rows = NULL, candidate_bytes = NULL,
-            last_error = 'candidate artifact failed reuse validation',
-            completed_at = NULL
-        WHERE source_index = ? AND status = 'ready'
-        RETURNING 1
-        """,
-        [source_index],
-    ).fetchall()
-    if len(updated) != 1:
-        raise BuildStateCorrupt(
-            f"cannot invalidate candidate source {source_index}; use --rebuild"
-        )
-
-
-def _record_candidate_attempt(
-    connection: duckdb.DuckDBPyConnection, source_index: int
-) -> int:
-    updated = connection.execute(
-        """
-        UPDATE source_shards
-        SET status = 'running', attempts = attempts + 1, last_error = NULL
-        WHERE source_index = ? AND status IN ('pending', 'running')
-        RETURNING attempts
-        """,
-        [source_index],
-    ).fetchall()
-    if len(updated) != 1:
-        raise BuildStateCorrupt(f"cannot claim candidate source {source_index}")
-    return int(updated[0][0])
-
-
-def _record_candidate_retry(
-    connection: duckdb.DuckDBPyConnection,
-    source_index: int,
-    error: BaseException,
-) -> None:
-    message = str(error).strip() or type(error).__name__
-    updated = connection.execute(
-        """
-        UPDATE source_shards
-        SET last_error = ?
-        WHERE source_index = ? AND status = 'running'
-        RETURNING 1
-        """,
-        [message[:2000], source_index],
-    ).fetchall()
-    if len(updated) != 1:
-        raise BuildStateCorrupt(f"cannot record retry for source {source_index}")
-
-
-def _record_candidate_ready(
-    connection: duckdb.DuckDBPyConnection,
-    source_index: int,
-    metadata: CandidateMetadata,
-) -> int:
-    updated = connection.execute(
-        """
-        UPDATE source_shards
-        SET status = 'ready', candidate_rows = ?, candidate_bytes = ?,
-            last_error = NULL, completed_at = current_timestamp
-        WHERE source_index = ? AND status = 'running'
-        RETURNING attempts
-        """,
-        [metadata.rows, metadata.byte_count, source_index],
-    ).fetchall()
-    if len(updated) != 1:
-        raise BuildStateCorrupt(f"cannot commit candidate source {source_index}")
-    return int(updated[0][0])
-
-
-def _record_candidate_failure(
-    connection: duckdb.DuckDBPyConnection,
-    source_index: int,
-    error: BaseException,
-) -> None:
-    message = str(error).strip() or type(error).__name__
-    updated = connection.execute(
-        """
-        UPDATE source_shards
-        SET status = 'pending', candidate_rows = NULL, candidate_bytes = NULL,
-            last_error = ?, completed_at = NULL
-        WHERE source_index = ? AND status = 'running'
-        RETURNING 1
-        """,
-        [message[:2000], source_index],
-    ).fetchall()
-    if len(updated) != 1:
-        raise BuildStateCorrupt(f"cannot record failure for source {source_index}")
-
-
-def _write_candidate_artifact(
-    connection: duckdb.DuckDBPyConnection,
-    source: IndexSource,
-    schema: SourceSchema,
-    pages_per_domain: int,
-    partial_path: Path,
-) -> None:
-    query = local_candidate_query(schema, pages_per_domain)
-    connection.execute(
-        f"COPY ({query}) TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
-        [str(partial_path), source.url],
-    )
-
-
-def _fsync_file(path: Path) -> None:
-    try:
-        with path.open("rb") as artifact:
-            os.fsync(artifact.fileno())
-    except OSError as error:
-        raise CandidateArtifactError(f"fsync candidate artifact {path}: {error}") from error
-
-
-def _fsync_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _candidate_http_statuses(error: BaseException) -> set[int]:
-    message = str(error).lower()
-    if "http" not in message and "statuscode" not in message:
-        return set()
-    return {int(status) for status in _CANDIDATE_HTTP_STATUS.findall(message)}
-
-
-def _is_transient_candidate_error(error: BaseException) -> bool:
-    message = str(error).lower()
-    statuses = _candidate_http_statuses(error)
-    if statuses:
-        return bool(statuses & _TRANSIENT_CANDIDATE_HTTP_STATUSES)
-    return any(
-        marker in message for marker in _TRANSIENT_CANDIDATE_NETWORK_MARKERS
-    )
-
-
-def warc_inventory_sha256(inventory: Sequence[tuple[int, str, int]]) -> str:
-    """Hash the complete index-ordered WARC inventory and exact object sizes."""
-    if not inventory:
-        raise ValueError("WARC inventory must not be empty")
-    digest = new_identity_digest("warc-inventory")
-    digest.update(len(inventory).to_bytes(4, byteorder="big"))
-    filenames: set[str] = set()
-    for expected_index, (warc_index, warc_filename, object_bytes) in enumerate(inventory):
-        if warc_index != expected_index:
-            raise ValueError(
-                "WARC inventory must be in contiguous warc_index order starting at 0"
-            )
-        if not warc_filename.strip():
-            raise ValueError("WARC filenames must not be blank")
-        if warc_filename in filenames:
-            raise ValueError("WARC filenames must be unique")
-        if not 1 <= object_bytes <= 0xFFFFFFFFFFFFFFFF:
-            raise ValueError("WARC object sizes must be between 1 and uint64 max")
-        filenames.add(warc_filename)
-        digest.update(warc_index.to_bytes(4, byteorder="big"))
-        update_text(digest, warc_filename)
-        digest.update(object_bytes.to_bytes(8, byteorder="big"))
-    return digest.hexdigest()
-
-
-def catalog_id(
-    *,
-    schema_version: int,
-    crawl_id: str,
-    pages_per_domain: int,
-    selection_policy_version: str,
-    selection_policy_sha256: str,
-    source_schema_sha256: str,
-    warc_manifest_sha256: str,
-    index_manifest_sha256: str,
-    warc_inventory_sha256: str,
-) -> str:
-    """Hash logical catalog inputs, excluding counts and build-time information."""
-    if not 1 <= schema_version <= 0xFFFF:
-        raise ValueError("schema_version must be between 1 and uint16 max")
-    if not 1 <= pages_per_domain <= 0xFFFF:
-        raise ValueError("pages_per_domain must be between 1 and uint16 max")
-    if _CRAWL_ID.fullmatch(crawl_id) is None:
-        raise ValueError("crawl_id must match CC-MAIN-YYYY-NN")
-    if not selection_policy_version.strip():
-        raise ValueError("selection_policy_version must not be blank")
-
-    hashes = (
-        ("selection_policy_sha256", selection_policy_sha256),
-        ("source_schema_sha256", source_schema_sha256),
-        ("warc_manifest_sha256", warc_manifest_sha256),
-        ("index_manifest_sha256", index_manifest_sha256),
-        ("warc_inventory_sha256", warc_inventory_sha256),
-    )
-    digest = new_identity_digest("catalog")
-    digest.update(schema_version.to_bytes(2, byteorder="big"))
-    update_text(digest, crawl_id)
-    digest.update(pages_per_domain.to_bytes(2, byteorder="big"))
-    update_text(digest, selection_policy_version)
-    for name, value in hashes:
-        digest.update(decode_sha256(value, name))
-    return digest.hexdigest()
-
-
-def require_path_within(base: Path, target: Path) -> None:
-    resolved_base = base.resolve()
-    resolved_target = target.resolve()
-    try:
-        resolved_target.relative_to(resolved_base)
-    except ValueError as error:
-        raise ValueError(f"path {resolved_target} escapes base {resolved_base}") from error
-
-
-@contextmanager
-def catalog_build_lock(catalog_directory: Path) -> Iterator[None]:
-    catalog_directory.mkdir(parents=True, exist_ok=True)
-    lock_path = catalog_directory / "build.lock"
-    flags = os.O_CREAT | os.O_RDWR
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(lock_path, flags, 0o644)
-    try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise CatalogBuildLocked(f"another builder holds {lock_path}") from error
-        try:
-            yield
-        finally:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-    finally:
-        os.close(descriptor)
-
-
-def prepare_build_directory(base: Path, catalog_directory: Path, *, rebuild: bool) -> Path:
-    require_path_within(base, catalog_directory)
-    build_directory = catalog_directory / ".build"
-    published_build_directory = catalog_directory / _PUBLISHED_BUILD_DIRECTORY
-    if build_directory.is_symlink():
-        raise ValueError(f"build directory must not be a symlink: {build_directory}")
-    require_path_within(base, build_directory)
-    require_path_within(base, published_build_directory)
-    if rebuild and (
-        published_build_directory.exists() or published_build_directory.is_symlink()
-    ):
-        if (
-            published_build_directory.is_symlink()
-            or not published_build_directory.is_dir()
-        ):
-            raise ValueError(
-                "published staging cleanup path is not a directory: "
-                f"{published_build_directory}"
-            )
-        shutil.rmtree(published_build_directory)
-    if rebuild and build_directory.exists():
-        if not build_directory.is_dir():
-            raise ValueError(f"build path is not a directory: {build_directory}")
-        shutil.rmtree(build_directory)
-    build_directory.mkdir(parents=True, exist_ok=True)
-    return build_directory

@@ -11,16 +11,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cockroachdb/errors"
 	"golang.org/x/sync/errgroup"
 
 	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/extract"
-	"cc-raw/fetch"
 	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/parse"
 	"cc-enrich-worker/internal/security"
 	"cc-enrich-worker/internal/tech"
+	"cc-raw/fetch"
 )
 
 const (
@@ -131,7 +132,6 @@ type ShardConfig struct {
 type domainAgg struct {
 	rootDomain, primaryURL, primarySub, primaryText string
 	emails                                          []string // regex-scraped, deduped (tech pass)
-	tech                                            []model.Technology
 	identifiers                                     []model.Identifier
 	profile                                         model.CompanyProfile
 	security                                        map[string]string // primary page's response headers
@@ -146,6 +146,7 @@ type domainAgg struct {
 // fetch must not write a near-empty part that then gets loaded + marked done).
 type FetchedChunk struct {
 	aggs        []*domainAgg
+	pages       []pageResult
 	Pages, Errs int64
 }
 
@@ -213,18 +214,23 @@ func logS3Stats(ctx context.Context, getter fetch.RangeGetter, previous fetch.S3
 		bodyAvg = stats.BodyReadTime / time.Duration(stats.BodyReadAttempts)
 	}
 	throughputMiB := 0.0
+	requestsPerSecond := 0.0
 	if elapsed > 0 {
 		throughputMiB = float64(stats.BodyBytes) / (1024 * 1024) / elapsed.Seconds()
+		requestsPerSecond = float64(stats.HTTPAttempts) / elapsed.Seconds()
 	}
-	sdkRetryAttempts := stats.HTTPAttempts - stats.GetObjectCalls
+	sdkRetryAttempts := stats.HTTPAttempts - stats.HeadObjectCalls - stats.GetObjectCalls
 	if sdkRetryAttempts < 0 {
 		sdkRetryAttempts = 0
 	}
 	slog.InfoContext(ctx, "S3 range reads",
 		"scope", scope,
+		"head_object_calls", stats.HeadObjectCalls,
 		"get_object_calls", stats.GetObjectCalls,
 		"http_attempts", stats.HTTPAttempts,
+		"requests_per_second", requestsPerSecond,
 		"sdk_retry_attempts", sdkRetryAttempts,
+		"http_429", stats.HTTP429s,
 		"http_503", stats.HTTP503s,
 		"get_object_avg_ms", float64(getObjectAvg.Microseconds())/1000,
 		"http_header_avg_ms", float64(headerAvg.Microseconds())/1000,
@@ -245,7 +251,8 @@ func (s *chunkStats) recordErr(err error) {
 // merged deterministically by mergePageResults. primary marks the result carrying the embed text
 // (the worklist's Primary page, embed/both modes only).
 type pageResult struct {
-	url, sub    string
+	source      model.WorklistItem
+	sub         string
 	primary     bool
 	text        string // parsed visible text (embed/both, Primary page only)
 	tech        []model.Technology
@@ -263,6 +270,12 @@ type pageResult struct {
 // it returns a pageResult and touches no aggregate.
 func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig, it model.WorklistItem, stats *chunkStats) (pageResult, error) {
 	_, runEmbed, runTech := modeFlags(cfg)
+	if it.Offset < 0 || it.Length <= 0 {
+		err := errors.Newf("invalid WARC record coordinates: offset=%d length=%d", it.Offset, it.Length)
+		atomic.AddInt64(&stats.pages, 1)
+		stats.recordErr(err)
+		return pageResult{}, err
+	}
 
 	t0 := time.Now()
 	fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -275,7 +288,7 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		return pageResult{}, err // a bad/slow page is skipped; the domain still emits if any page survived
 	}
 
-	r := pageResult{url: it.URL, sub: subdomainOf(it.URL, it.RootDomain)}
+	r := pageResult{source: it, sub: subdomainOf(it.URL, it.RootDomain), primary: it.Primary}
 	if runTech {
 		// Cap the body ONLY for the expensive Wappalyzer regex scan (~1.2s/page uncapped). The cheap
 		// linear extractors run on the FULL body — LEI/VAT/JSON-LD live in page footers, past the cap.
@@ -303,7 +316,6 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		t1 := time.Now()
 		text, _, _ := parse.ParseHTML(string(body))
 		atomic.AddInt64(&stats.parseNs, time.Since(t1).Nanoseconds())
-		r.primary = true
 		r.text = text
 	}
 	return r, nil
@@ -316,7 +328,6 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 // (no primaryURL), which Finalize drops.
 func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
 	agg := &domainAgg{rootDomain: dom}
-	techSeen := map[string]bool{}
 	idSeen := map[string]bool{}
 	emailSeen := map[string]bool{}
 	for i, r := range results {
@@ -324,14 +335,8 @@ func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
 			continue
 		}
 		if agg.primaryURL == "" { // lowest-rank surviving page keys this domain's rows
-			agg.primaryURL = r.url
+			agg.primaryURL = r.source.URL
 			agg.primarySub = r.sub
-		}
-		for _, t := range r.tech {
-			if !techSeen[t.Name] {
-				techSeen[t.Name] = true
-				agg.tech = append(agg.tech, t)
-			}
 		}
 		for _, e := range r.emails {
 			if !emailSeen[e] {
@@ -362,7 +367,7 @@ func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
 // processDomain is ONE unit of work: fetch a domain's pages through the domain's own bounded page
 // pool (PageConcurrency) and merge them into the domain aggregate. A failed page is recorded in
 // stats and skipped — it never fails the domain.
-func processDomain(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig, dom string, pages []model.WorklistItem, stats *chunkStats) *domainAgg {
+func processDomain(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig, dom string, pages []model.WorklistItem, stats *chunkStats) (*domainAgg, []pageResult) {
 	results := make([]pageResult, len(pages))
 	ok := make([]bool, len(pages))
 	var g errgroup.Group
@@ -376,7 +381,13 @@ func processDomain(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfi
 		})
 	}
 	_ = g.Wait()
-	return mergePageResults(dom, results, ok)
+	successful := make([]pageResult, 0, len(results))
+	for i, result := range results {
+		if ok[i] {
+			successful = append(successful, result)
+		}
+	}
+	return mergePageResults(dom, results, ok), successful
 }
 
 // FetchChunk downloads + parses every page of the chunk into per-domain aggregates; tech detection
@@ -400,6 +411,7 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 	}
 
 	aggs := make([]*domainAgg, len(order))
+	pagesByDomain := make([][]pageResult, len(order))
 	conc := cfg.Concurrency
 	if conc <= 0 {
 		conc = 8
@@ -409,11 +421,15 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 	g.SetLimit(conc)
 	for di, dom := range order {
 		g.Go(func() error {
-			aggs[di] = processDomain(ctx, getter, cfg, dom, byDomain[dom], stats)
+			aggs[di], pagesByDomain[di] = processDomain(ctx, getter, cfg, dom, byDomain[dom], stats)
 			return nil
 		})
 	}
 	_ = g.Wait()
+	var successfulPages []pageResult
+	for _, pages := range pagesByDomain {
+		successfulPages = append(successfulPages, pages...)
+	}
 
 	if n := atomic.LoadInt64(&stats.pages); n > 0 {
 		errs := atomic.LoadInt64(&stats.errs)
@@ -426,7 +442,12 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 		}
 	}
 	logS3Stats(ctx, getter, s3Before, time.Since(started), "fetch_chunk")
-	return FetchedChunk{aggs: aggs, Pages: atomic.LoadInt64(&stats.pages), Errs: atomic.LoadInt64(&stats.errs)}
+	return FetchedChunk{aggs: aggs, pages: successfulPages, Pages: atomic.LoadInt64(&stats.pages), Errs: atomic.LoadInt64(&stats.errs)}
+}
+
+func hasMetadataEvidence(profile model.CompanyProfile) bool {
+	return profile.Name != "" || profile.Description != "" || profile.Logo != "" ||
+		profile.Country != "" || profile.FoundingYear != 0 || profile.EmployeeCount != 0
 }
 
 // Finalize embeds + classifies (industry) and builds the output rows from a fetched chunk. For the
@@ -511,16 +532,34 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 	}
 
 	if runTech {
+		for _, page := range fc.pages {
+			it := page.source
+			offset, length := uint64(it.Offset), uint64(it.Length)
+			for _, technology := range page.tech {
+				techRows = append(techRows, output.TechRow{
+					CrawlID: cfg.CrawlID, RootDomain: it.RootDomain, PageURL: it.URL, Subdomain: page.sub,
+					WarcIndex: it.WarcIndex, WarcFilename: it.WarcFilename,
+					WarcRecordOffset: offset, WarcRecordLength: length,
+					Technology: technology.Name, Category: technology.Category,
+					Version: technology.Version, Confidence: 100,
+					SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+				})
+			}
+			if profile := page.profile; hasMetadataEvidence(profile) {
+				metaRows = append(metaRows, output.MetadataRow{
+					CrawlID: cfg.CrawlID, RootDomain: it.RootDomain, PageURL: it.URL, Subdomain: page.sub,
+					WarcIndex: it.WarcIndex, WarcFilename: it.WarcFilename,
+					WarcRecordOffset: offset, WarcRecordLength: length,
+					Name: profile.Name, Description: profile.Description, Logo: profile.Logo,
+					Country: profile.Country, FoundingYear: profile.FoundingYear,
+					EmployeeCount: profile.EmployeeCount, Source: "jsonld",
+					SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+				})
+			}
+		}
 		for _, a := range aggs {
 			if a == nil || a.primaryURL == "" {
 				continue
-			}
-			for _, t := range a.tech {
-				techRows = append(techRows, output.TechRow{
-					CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
-					Technology: t.Name, Category: t.Category, Version: t.Version, Confidence: 100,
-					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
-				})
 			}
 			for _, id := range a.identifiers {
 				valid := uint8(0)
@@ -530,15 +569,6 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 				identRows = append(identRows, output.IdentifierRow{
 					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, URL: a.primaryURL, Subdomain: a.primarySub,
 					IDType: id.Type, IDValue: id.Value, Valid: valid, Source: id.Source,
-					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
-				})
-			}
-			// metadata: the self-reported "about" fields (no contacts — those fan into ContactRows)
-			if p := a.profile; p.Name != "" || p.Description != "" || p.Logo != "" || p.Country != "" || p.FoundingYear != 0 || p.EmployeeCount != 0 {
-				metaRows = append(metaRows, output.MetadataRow{
-					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, Subdomain: a.primarySub,
-					Name: p.Name, Description: p.Description, Logo: p.Logo, Country: p.Country,
-					FoundingYear: p.FoundingYear, EmployeeCount: p.EmployeeCount, Source: "jsonld",
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}

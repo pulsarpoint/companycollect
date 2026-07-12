@@ -15,14 +15,15 @@ func TestMergePageResults(t *testing.T) {
 	ok := make([]bool, 4)
 	// rank 0 (the true primary) FAILED — ok[0] stays false.
 	results[1] = pageResult{
-		url: "https://acme.com/about", sub: "",
+		source: model.WorklistItem{URL: "https://acme.com/about"}, sub: "",
 		tech:   []model.Technology{{Name: "WordPress", Version: "6.4"}, {Name: "Nginx"}},
 		emails: []string{"info@acme.com"},
 		ids:    []model.Identifier{{Type: "vat", Value: "DE123456789", Valid: true}},
 	}
 	ok[1] = true
 	results[2] = pageResult{
-		url: "https://shop.acme.com/", sub: "shop",
+		source:  model.WorklistItem{URL: "https://shop.acme.com/"},
+		sub:     "shop",
 		tech:    []model.Technology{{Name: "WordPress", Version: "6.5"}, {Name: "WooCommerce"}}, // dup name, later rank
 		emails:  []string{"info@acme.com", "sales@acme.com"},                                    // first email is a dup
 		ids:     []model.Identifier{{Type: "lei", Value: "DE123456789"}},                        // dup value, different type
@@ -30,7 +31,7 @@ func TestMergePageResults(t *testing.T) {
 	}
 	ok[2] = true
 	results[3] = pageResult{
-		url: "https://acme.com/imprint", primary: true, text: "acme imprint text",
+		source: model.WorklistItem{URL: "https://acme.com/imprint"}, primary: true, text: "acme imprint text",
 		profile: model.CompanyProfile{Name: "Ignored — rank 2 already set one"},
 	}
 	ok[3] = true
@@ -39,9 +40,6 @@ func TestMergePageResults(t *testing.T) {
 
 	if agg.primaryURL != "https://acme.com/about" || agg.primarySub != "" {
 		t.Fatalf("primary must be the lowest-rank SURVIVOR: got %q sub=%q", agg.primaryURL, agg.primarySub)
-	}
-	if len(agg.tech) != 3 || agg.tech[0].Name != "WordPress" || agg.tech[0].Version != "6.4" {
-		t.Fatalf("tech dedup by name, lowest rank wins version: %+v", agg.tech)
 	}
 	if len(agg.emails) != 2 || agg.emails[0] != "info@acme.com" || agg.emails[1] != "sales@acme.com" {
 		t.Fatalf("email dedup in rank order: %+v", agg.emails)
@@ -61,7 +59,7 @@ func TestMergePageResults(t *testing.T) {
 // A domain whose every page failed produces an empty agg (no primaryURL) — Finalize drops it.
 func TestMergePageResultsAllFailed(t *testing.T) {
 	agg := mergePageResults("dead.com", make([]pageResult, 3), make([]bool, 3))
-	if agg.primaryURL != "" || len(agg.tech) != 0 {
+	if agg.primaryURL != "" {
 		t.Fatalf("all-failed domain must yield an empty agg: %+v", agg)
 	}
 }
@@ -87,12 +85,16 @@ func TestProcessDomainParallelPages(t *testing.T) {
 
 	for range 20 { // parallel pages: result must be deterministic across runs
 		stats := &chunkStats{}
-		agg := processDomain(context.Background(), getter, cfg, "acme.com", pages, stats)
+		agg, successful := processDomain(context.Background(), getter, cfg, "acme.com", pages, stats)
 		if agg.primaryURL != "https://acme.com/" {
 			t.Fatalf("primary = first surviving page: %q", agg.primaryURL)
 		}
-		if !hasTech(agg.tech, "Nginx") || !hasTech(agg.tech, "WordPress") {
-			t.Fatalf("tech union across pages: %+v", agg.tech)
+		if len(successful) != 2 || successful[0].source.URL != "https://acme.com/" ||
+			successful[1].source.URL != "https://acme.com/about" {
+			t.Fatalf("successful pages must retain worklist order: %+v", successful)
+		}
+		if !hasTech(successful[0].tech, "Nginx") || !hasTech(successful[1].tech, "WordPress") {
+			t.Fatalf("per-page technologies lost: %+v", successful)
 		}
 		if len(agg.emails) != 1 || agg.emails[0] != "info@acme.com" {
 			t.Fatalf("emails deduped across pages: %+v", agg.emails)

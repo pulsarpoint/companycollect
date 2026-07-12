@@ -1,0 +1,23 @@
+{
+  "rir": "apnic",
+  "raw": {
+    "objectClassName": "ip network",
+    "handle": "NON-ALIGNED-TEST",
+    "startAddress": "198.51.100.10",
+    "endAddress": "198.51.100.20",
+    "ipVersion": "v4",
+    "name": "NON-ALIGNED-RANGE",
+    "type": "ALLOCATED PORTABLE",
+    "country": "AU",
+    "status": ["active"],
+    "entities": [],
+    "links": [
+      {
+        "rel": "self",
+        "href": "https://rdap.apnic.net/ip/198.51.100.10"
+      }
+    ],
+    "events": [],
+    "rdapConformance": ["rdap_level_0"]
+  }
+}
