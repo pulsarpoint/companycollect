@@ -81,6 +81,10 @@ class WarcSizeCheckpointError(RuntimeError):
     pass
 
 
+class FinalCatalogBuildError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class BuildIdentity:
     catalog_schema_version: int
@@ -167,6 +171,14 @@ class WarcSizeBatchResult:
         return self.head_requests + self.range_requests
 
 
+@dataclass(frozen=True, slots=True)
+class FinalWarcsResult:
+    path: Path
+    warc_count: int
+    total_bytes: int
+    inventory_sha256: str
+
+
 GLOBAL_PAGE_COLUMNS = (
     ("warc_index", "UINTEGER"),
     ("root_domain", "VARCHAR"),
@@ -178,6 +190,50 @@ GLOBAL_PAGE_COLUMNS = (
 )
 
 _SELECTION_CONFLICT_COLUMNS = ("root_domain", "url", *RANKING_COLUMN_NAMES)
+
+_FINAL_CATALOG_DDL = (
+    """
+    CREATE TABLE final_catalog.catalog_metadata (
+        singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+        schema_version USMALLINT NOT NULL,
+        catalog_id VARCHAR NOT NULL,
+        crawl_id VARCHAR NOT NULL,
+        selection_name VARCHAR NOT NULL,
+        pages_per_domain USMALLINT NOT NULL,
+        selection_policy_version VARCHAR NOT NULL,
+        selection_policy_sha256 VARCHAR NOT NULL,
+        source_schema_sha256 VARCHAR NOT NULL,
+        warc_manifest_sha256 VARCHAR NOT NULL,
+        index_manifest_sha256 VARCHAR NOT NULL,
+        warc_inventory_sha256 VARCHAR NOT NULL,
+        warc_count UINTEGER NOT NULL,
+        selected_page_count UBIGINT NOT NULL,
+        distinct_domain_count UBIGINT NOT NULL,
+        source_index_shard_count UINTEGER NOT NULL,
+        duckdb_version VARCHAR NOT NULL,
+        builder_version VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE final_catalog.warcs (
+        warc_index UINTEGER PRIMARY KEY,
+        warc_filename VARCHAR NOT NULL UNIQUE,
+        object_bytes UBIGINT NOT NULL CHECK (object_bytes > 0)
+    )
+    """,
+    """
+    CREATE TABLE final_catalog.pages (
+        warc_index UINTEGER NOT NULL,
+        root_domain VARCHAR NOT NULL,
+        url VARCHAR NOT NULL,
+        domain_page_rank USMALLINT NOT NULL,
+        content_languages VARCHAR,
+        warc_record_offset UBIGINT NOT NULL,
+        warc_record_length UBIGINT NOT NULL
+    )
+    """,
+)
 
 
 _BUILD_STATE_DDL = (
@@ -1028,6 +1084,130 @@ def global_selected_pages_query(pages_per_domain: int) -> str:
             ELSE true
         END
     """.strip()
+
+
+def partial_catalog_path(build_directory: Path) -> Path:
+    path = build_directory / "catalog.duckdb.partial"
+    require_path_within(build_directory, path)
+    return path
+
+
+def _sql_string_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _remove_partial_catalog_files(path: Path) -> bool:
+    removed = False
+    for candidate in (path, Path(f"{path}.wal")):
+        if candidate.is_dir() and not candidate.is_symlink():
+            raise FinalCatalogBuildError(
+                f"partial catalog path is a directory: {candidate}"
+            )
+        try:
+            existed = candidate.exists() or candidate.is_symlink()
+            candidate.unlink(missing_ok=True)
+            removed = removed or existed
+        except OSError as error:
+            raise FinalCatalogBuildError(
+                f"remove partial catalog file {candidate}: {error}"
+            ) from error
+    return removed
+
+
+def _final_warc_inventory(
+    connection: duckdb.DuckDBPyConnection,
+) -> tuple[tuple[tuple[int, str, int], ...], str]:
+    rows = tuple(
+        (int(warc_index), str(warc_filename), int(object_bytes))
+        for warc_index, warc_filename, object_bytes in connection.execute(
+            """
+            SELECT warc_index, warc_filename, object_bytes
+            FROM final_catalog.warcs
+            ORDER BY warc_index
+            """
+        ).fetchall()
+    )
+    try:
+        inventory_hash = warc_inventory_sha256(rows)
+    except ValueError as error:
+        raise FinalCatalogBuildError(f"validate final WARC inventory: {error}") from error
+    return rows, inventory_hash
+
+
+def create_partial_catalog(
+    state_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+) -> FinalWarcsResult:
+    """Create a fresh partial catalog and bulk-copy its complete WARC inventory."""
+    if build_directory.is_symlink() or not build_directory.is_dir():
+        raise FinalCatalogBuildError(
+            f"build directory must be a regular directory: {build_directory}"
+        )
+    if state_connection.execute(
+        """
+        SELECT count(*)
+        FROM duckdb_databases()
+        WHERE database_name = 'final_catalog'
+        """
+    ).fetchone()[0]:
+        raise FinalCatalogBuildError("database alias final_catalog is already attached")
+
+    expected_hash = verify_or_finalize_warc_inventory(state_connection)
+
+    path = partial_catalog_path(build_directory)
+    if _remove_partial_catalog_files(path):
+        _fsync_directory(build_directory)
+    attached = False
+    try:
+        state_connection.execute(
+            f"ATTACH {_sql_string_literal(str(path))} AS final_catalog"
+        )
+        attached = True
+        state_connection.execute("BEGIN TRANSACTION")
+        try:
+            for statement in _FINAL_CATALOG_DDL:
+                state_connection.execute(statement)
+            state_connection.execute(
+                """
+                INSERT INTO final_catalog.warcs
+                SELECT warc_index, warc_filename, object_bytes
+                FROM main.warc_inventory
+                ORDER BY warc_index
+                """
+            )
+            inventory, copied_hash = _final_warc_inventory(state_connection)
+            if copied_hash != expected_hash:
+                raise FinalCatalogBuildError(
+                    "final WARC inventory hash differs from build state"
+                )
+            result = FinalWarcsResult(
+                path=path,
+                warc_count=len(inventory),
+                total_bytes=sum(object_bytes for _, _, object_bytes in inventory),
+                inventory_sha256=copied_hash,
+            )
+            state_connection.execute("COMMIT")
+        except BaseException:
+            state_connection.execute("ROLLBACK")
+            raise
+        finally:
+            state_connection.execute("DETACH final_catalog")
+            attached = False
+
+        if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
+            raise FinalCatalogBuildError(
+                f"partial catalog is not a nonempty regular file: {path}"
+            )
+        return result
+    except BaseException:
+        if attached:
+            try:
+                state_connection.execute("DETACH final_catalog")
+            except duckdb.Error:
+                pass
+        if _remove_partial_catalog_files(path):
+            _fsync_directory(build_directory)
+        raise
 
 
 def local_candidate_query(

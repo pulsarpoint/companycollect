@@ -264,12 +264,12 @@ query: `uv run pytest tests/test_catalog.py -q -k global`.
 
 **Depends on:** T14, T15.
 
-**Files:** `warc_index_builder/catalog.py`, `tests/test_catalog.py`.
+**Files:** `warc_index_builder/catalog.py`, `tests/test_final_catalog.py`.
 
 **Deliver:** create `catalog.duckdb.partial`, final DDL, and complete `warcs` bulk load with contiguous indexes,
 unique filenames, positive sizes, and inventory hash.
 
-**Verify:** `uv run pytest tests/test_catalog.py -q -k final_warcs`.
+**Verify:** `uv run pytest tests/test_final_catalog.py -q -k final_warcs`.
 
 **Commit:** `feat(commoncrawl): materialize catalog warcs`
 
