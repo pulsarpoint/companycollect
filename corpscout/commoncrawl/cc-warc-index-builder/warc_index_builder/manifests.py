@@ -1,5 +1,6 @@
 """Download immutable Common Crawl manifest snapshots."""
 
+import gzip
 import hashlib
 import os
 import time
@@ -19,6 +20,10 @@ class ManifestDownloadError(RuntimeError):
     pass
 
 
+class ManifestParseError(RuntimeError):
+    pass
+
+
 class _TransientDownloadError(RuntimeError):
     def __init__(self, message: str, retry_after: float | None = None) -> None:
         super().__init__(message)
@@ -34,8 +39,100 @@ class ManifestSnapshot:
     reused: bool
 
 
+@dataclass(frozen=True, slots=True)
+class WarcObject:
+    warc_index: int
+    warc_filename: str
+
+
+@dataclass(frozen=True, slots=True)
+class IndexSource:
+    source_index: int
+    path: str
+    url: str
+
+
 def crawl_manifest_url(crawl: str, filename: str) -> str:
     return f"{COMMON_CRAWL_DATA_URL}/crawl-data/{crawl}/{filename}"
+
+
+def _read_manifest_lines(path: Path) -> list[str]:
+    try:
+        with gzip.open(path, "rt", encoding="utf-8", newline=None) as manifest:
+            return [line.rstrip("\n") for line in manifest]
+    except (OSError, EOFError, UnicodeDecodeError) as error:
+        raise ManifestParseError(f"read gzip manifest {path}: {error}") from error
+
+
+def _validate_manifest_line(path: Path, line_number: int, value: str) -> None:
+    if not value:
+        raise ManifestParseError(f"{path}: line {line_number} is blank")
+    if value != value.strip():
+        raise ManifestParseError(f"{path}: line {line_number} has surrounding whitespace")
+    if any(part in {"", ".", ".."} for part in value.split("/")):
+        raise ManifestParseError(f"{path}: line {line_number} has an invalid object path: {value}")
+
+
+def read_warc_inventory(path: Path, crawl: str) -> tuple[WarcObject, ...]:
+    inventory: list[WarcObject] = []
+    seen: set[str] = set()
+    crawl_prefix = f"crawl-data/{crawl}/"
+    for line_number, warc_filename in enumerate(_read_manifest_lines(path), start=1):
+        _validate_manifest_line(path, line_number, warc_filename)
+        if not warc_filename.startswith(crawl_prefix):
+            raise ManifestParseError(
+                f"{path}: line {line_number} is outside crawl {crawl}: {warc_filename}"
+            )
+        if "/warc/" not in warc_filename or not warc_filename.endswith(".warc.gz"):
+            raise ManifestParseError(
+                f"{path}: line {line_number} is not a WARC object: {warc_filename}"
+            )
+        if warc_filename in seen:
+            raise ManifestParseError(
+                f"{path}: line {line_number} duplicates WARC path: {warc_filename}"
+            )
+        seen.add(warc_filename)
+        inventory.append(WarcObject(len(inventory), warc_filename))
+    if not inventory:
+        raise ManifestParseError(f"{path}: WARC inventory is empty")
+    return tuple(inventory)
+
+
+def read_index_sources(path: Path, crawl: str) -> tuple[IndexSource, ...]:
+    sources: list[IndexSource] = []
+    seen: set[str] = set()
+    expected_partition = f"/crawl={crawl}/subset=warc/"
+    for line_number, source_path in enumerate(_read_manifest_lines(path), start=1):
+        _validate_manifest_line(path, line_number, source_path)
+        if source_path in seen:
+            raise ManifestParseError(
+                f"{path}: line {line_number} duplicates index path: {source_path}"
+            )
+        seen.add(source_path)
+        if "/subset=warc/" not in source_path:
+            continue
+        if expected_partition not in source_path:
+            raise ManifestParseError(
+                f"{path}: line {line_number} is outside crawl {crawl}: {source_path}"
+            )
+        if not source_path.startswith("cc-index/table/cc-main/warc/"):
+            raise ManifestParseError(
+                f"{path}: line {line_number} has an invalid index prefix: {source_path}"
+            )
+        if not source_path.endswith(".parquet"):
+            raise ManifestParseError(
+                f"{path}: line {line_number} is not a Parquet source: {source_path}"
+            )
+        sources.append(
+            IndexSource(
+                source_index=len(sources),
+                path=source_path,
+                url=f"{COMMON_CRAWL_DATA_URL}/{source_path}",
+            )
+        )
+    if not sources:
+        raise ManifestParseError(f"{path}: URL-index WARC source inventory is empty")
+    return tuple(sources)
 
 
 def _hash_file(path: Path) -> tuple[str, int]:
