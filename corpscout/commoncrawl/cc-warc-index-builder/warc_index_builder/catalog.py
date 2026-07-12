@@ -20,6 +20,7 @@ from .selection import (
     normalized_source_projection,
     ranking_order_clause,
     ranking_projection,
+    validated_candidate_coordinate_projection,
 )
 
 
@@ -445,19 +446,19 @@ def _require_matching_seeds(
 
 def local_candidate_query(
     schema: SourceSchema,
-    source_index: int,
     pages_per_domain: int,
 ) -> str:
     """Build the parameterized query for one URL-index Parquet source."""
+    source_index = schema.source_index
     if not 0 <= source_index <= 0xFFFFFFFF:
-        raise ValueError("source_index must be between 0 and uint32 max")
+        raise ValueError("schema source_index must be between 0 and uint32 max")
     if not 1 <= pages_per_domain <= 0xFFFF:
         raise ValueError("pages_per_domain must be between 1 and uint16 max")
 
     conflict_columns = ("root_domain", "url", *RANKING_COLUMN_NAMES)
     conflict_expression = "\nOR ".join(
-        f"(count(DISTINCT {column}) + "
-        f"CASE WHEN count({column}) < count(*) THEN 1 ELSE 0 END) > 1"
+        f"(min({column}) IS DISTINCT FROM max({column}) "
+        f"OR (count({column}) > 0 AND count({column}) < count(*)))"
         for column in conflict_columns
     )
     ranking_aggregates = ",\n".join(
@@ -475,8 +476,7 @@ def local_candidate_query(
                 CAST(url AS VARCHAR) AS url,
                 CAST(content_languages AS VARCHAR) AS content_languages,
                 CAST(warc_filename AS VARCHAR) AS warc_filename,
-                CAST(warc_record_offset AS UBIGINT) AS warc_record_offset,
-                CAST(warc_record_length AS UBIGINT) AS warc_record_length,
+                {validated_candidate_coordinate_projection()},
                 {ranking_projection()}
             FROM normalized
             WHERE {eligibility_predicate()}
@@ -486,8 +486,11 @@ def local_candidate_query(
                 min(source_index) AS source_index,
                 min(root_domain) AS root_domain,
                 min(url) AS url,
-                min(content_languages) FILTER (WHERE content_languages IS NOT NULL)
-                    AS content_languages,
+                first(
+                    content_languages
+                    ORDER BY content_languages COLLATE "binary" ASC NULLS LAST,
+                             source_index ASC
+                ) AS content_languages,
                 warc_filename,
                 warc_record_offset,
                 warc_record_length,
@@ -496,28 +499,23 @@ def local_candidate_query(
             FROM eligible
             GROUP BY warc_filename, warc_record_offset, warc_record_length
         ),
-        conflict_check AS (
-            SELECT CASE
-                WHEN count(*) FILTER (WHERE has_conflict) > 0
-                THEN error('duplicate capture coordinate has conflicting selection values')
-                ELSE 0
-            END AS conflict_guard
-            FROM coordinate_groups
-        ),
         ranked AS (
             SELECT coordinate_groups.*,
                    row_number() OVER (
                        PARTITION BY root_domain
                        ORDER BY {ranking_order_clause(pages_per_domain)}
                    ) AS local_rank,
-                   conflict_check.conflict_guard
+                   bool_or(has_conflict) OVER () AS has_any_conflict
             FROM coordinate_groups
-            CROSS JOIN conflict_check
         )
         SELECT {candidate_output_projection()}
         FROM ranked
         WHERE local_rank <= {pages_per_domain}
-          AND conflict_guard = 0
+          AND CASE
+              WHEN has_any_conflict
+                  THEN error('duplicate capture coordinate has conflicting selection values')
+              ELSE true
+          END
     """.strip()
 
 

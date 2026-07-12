@@ -56,6 +56,7 @@ PRIORITY_PATH_TERMS = (
 )
 
 _HTML_MIME_SQL = ", ".join(f"'{mime_type}'" for mime_type in HTML_MIME_TYPES)
+_UBIGINT_MAX = 0xFFFFFFFFFFFFFFFF
 _ELIGIBILITY_TERMS = (
     "fetch_status = 200",
     "COALESCE(content_mime_detected, content_mime_type) "
@@ -147,8 +148,8 @@ def normalized_source_projection(schema: SourceSchema) -> str:
         {detected_mime} AS content_mime_detected,
         {languages} AS content_languages,
         CAST(warc_filename AS VARCHAR) AS warc_filename,
-        TRY_CAST(warc_record_offset AS UBIGINT) AS warc_record_offset,
-        TRY_CAST(warc_record_length AS UBIGINT) AS warc_record_length
+        TRY_CAST(warc_record_offset AS HUGEINT) AS warc_record_offset,
+        TRY_CAST(warc_record_length AS HUGEINT) AS warc_record_length
     """.strip()
 
 
@@ -170,6 +171,26 @@ def candidate_output_projection() -> str:
         f"CAST({name} AS {column_type}) AS {name}"
         for name, column_type in CANDIDATE_COLUMNS
     )
+
+
+def validated_candidate_coordinate_projection() -> str:
+    """Validate eligible wide coordinates before converting them to UBIGINT."""
+    return f"""
+        CASE
+            WHEN warc_record_offset > {_UBIGINT_MAX}::HUGEINT
+                THEN error('eligible WARC record offset exceeds UBIGINT')
+            WHEN warc_record_offset >= 0
+                THEN CAST(warc_record_offset AS UBIGINT)
+            ELSE CAST(NULL AS UBIGINT)
+        END AS warc_record_offset,
+        CASE
+            WHEN warc_record_length > {_UBIGINT_MAX}::HUGEINT
+                THEN error('eligible WARC record length exceeds UBIGINT')
+            WHEN warc_record_length > 0
+                THEN CAST(warc_record_length AS UBIGINT)
+            ELSE CAST(NULL AS UBIGINT)
+        END AS warc_record_length
+    """.strip()
 
 
 def ranking_column_names(pages_per_domain: int) -> tuple[str, ...]:

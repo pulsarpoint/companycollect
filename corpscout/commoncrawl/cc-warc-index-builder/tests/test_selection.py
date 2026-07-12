@@ -1,14 +1,17 @@
 import duckdb
 import pytest
 
+from warc_index_builder.manifests import SourceSchema
 from warc_index_builder.selection import (
     RANKING_COLUMN_NAMES,
     eligibility_predicate,
+    normalized_source_projection,
     ranking_column_names,
     ranking_order_clause,
     ranking_order_terms,
     ranking_projection,
     selection_policy_sha256,
+    validated_candidate_coordinate_projection,
 )
 
 
@@ -437,3 +440,52 @@ def test_selection_policy_identity_matches_golden_hash() -> None:
     assert selection_policy_sha256() == (
         "41e25e3706fd2187af80c1b4a87482bd72505a9f094aeb4ea1f5ae6589b7f605"
     )
+
+
+def test_coordinate_normalization_validates_wide_signed_values_before_casting() -> None:
+    schema = SourceSchema(
+        0,
+        (
+            ("content_mime_detected", "VARCHAR"),
+            ("content_languages", "VARCHAR"),
+        ),
+    )
+    connection = duckdb.connect()
+    try:
+        normalized = f"""
+            SELECT {normalized_source_projection(schema)}
+            FROM (
+                SELECT
+                    'example.com'::VARCHAR AS url_host_registered_domain,
+                    'example.com'::VARCHAR AS url_host_name,
+                    'https://example.com/'::VARCHAR AS url,
+                    '/'::VARCHAR AS url_path,
+                    200::BIGINT AS fetch_status,
+                    'text/html'::VARCHAR AS content_mime_type,
+                    'text/html'::VARCHAR AS content_mime_detected,
+                    'eng'::VARCHAR AS content_languages,
+                    'crawl-data/example.warc.gz'::VARCHAR AS warc_filename,
+                    18446744073709551616::HUGEINT AS warc_record_offset,
+                    18446744073709551616::HUGEINT AS warc_record_length
+            )
+        """
+
+        assert connection.execute(
+            f"""
+            SELECT warc_record_offset, warc_record_length
+            FROM ({normalized})
+            """
+        ).fetchone() == (2**64, 2**64)
+        assert connection.execute(
+            f"SELECT count(*) FROM ({normalized}) WHERE {eligibility_predicate()}"
+        ).fetchone() == (1,)
+        with pytest.raises(duckdb.Error, match="offset exceeds UBIGINT"):
+            connection.execute(
+                f"""
+                SELECT {validated_candidate_coordinate_projection()}
+                FROM ({normalized})
+                WHERE {eligibility_predicate()}
+                """
+            ).fetchall()
+    finally:
+        connection.close()

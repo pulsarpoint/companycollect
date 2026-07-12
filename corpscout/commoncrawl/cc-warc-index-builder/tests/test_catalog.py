@@ -150,8 +150,8 @@ def _candidate_fixture(
             content_mime_type VARCHAR,
             content_mime_detected VARCHAR,
             warc_filename VARCHAR,
-            warc_record_offset HUGEINT,
-            warc_record_length HUGEINT,
+            warc_record_offset BIGINT,
+            warc_record_length BIGINT,
             content_languages VARCHAR
         )
         """
@@ -164,7 +164,7 @@ def _candidate_fixture(
     connection.execute("COPY source_rows TO ? (FORMAT PARQUET)", [str(path)])
     schema = inspect_source_schema(
         connection,
-        IndexSource(0, str(path), str(path)),
+        IndexSource(7, str(path), str(path)),
     )
     return connection, path, schema
 
@@ -174,10 +174,9 @@ def _local_candidates(
     path: Path,
     schema: SourceSchema,
     *,
-    source_index: int = 7,
     pages_per_domain: int = 25,
 ) -> list[tuple[object, ...]]:
-    query = local_candidate_query(schema, source_index, pages_per_domain)
+    query = local_candidate_query(schema, pages_per_domain)
     return connection.execute(
         f"""
         SELECT * FROM ({query})
@@ -800,3 +799,275 @@ def test_build_state_database_constraints_reject_invalid_rows(
             connection.execute(statement, parameters)
     finally:
         connection.close()
+
+
+def test_local_candidate_query_emits_the_fixed_schema(tmp_path: Path) -> None:
+    connection, path, schema = _candidate_fixture(
+        tmp_path,
+        [_candidate_page("example.com", "https://example.com/", "/", 10)],
+    )
+    try:
+        query = local_candidate_query(schema, 25)
+        columns = connection.execute(
+            f"DESCRIBE SELECT * FROM ({query})",
+            [str(path)],
+        ).fetchall()
+        rows = _local_candidates(
+            connection,
+            path,
+            schema,
+        )
+
+        assert tuple((row[0], row[1]) for row in columns) == CANDIDATE_COLUMNS
+        assert len(rows) == 1
+        assert rows[0][0] == 7
+        assert len(rows[0]) == len(CANDIDATE_COLUMNS)
+    finally:
+        connection.close()
+
+
+def test_local_candidate_query_filters_ineligible_and_negative_coordinates(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        _candidate_page("valid.example", "https://valid.example/", "/", 10),
+        _candidate_page("status.example", "https://status.example/", "/", 20, status=404),
+        _candidate_page(
+            "mime.example",
+            "https://mime.example/",
+            "/",
+            30,
+            reported_mime="image/png",
+            detected_mime="image/png",
+        ),
+        _candidate_page("negative.example", "https://negative.example/", "/", -1),
+    ]
+    connection, path, schema = _candidate_fixture(tmp_path, rows)
+    try:
+        candidates = _local_candidates(connection, path, schema)
+
+        assert [row[1] for row in candidates] == ["valid.example"]
+    finally:
+        connection.close()
+
+
+def test_local_candidate_coordinate_canonicalization_precedes_top_n(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        _candidate_page(
+            "example.com",
+            "https://example.com/",
+            "/",
+            10,
+            languages="fra",
+        ),
+        _candidate_page(
+            "example.com",
+            "https://example.com/",
+            "/",
+            10,
+            languages=None,
+        ),
+        _candidate_page(
+            "example.com",
+            "https://example.com/",
+            "/",
+            10,
+            languages="eng",
+        ),
+        _candidate_page(
+            "example.com",
+            "https://example.com/contact",
+            "/contact",
+            20,
+            languages="deu",
+        ),
+        _candidate_page(
+            "example.com",
+            "https://example.com/news",
+            "/news",
+            30,
+            languages="eng",
+        ),
+    ]
+    connection, path, schema = _candidate_fixture(tmp_path, rows)
+    try:
+        candidates = _local_candidates(
+            connection,
+            path,
+            schema,
+            pages_per_domain=2,
+        )
+
+        assert [(row[2], row[3]) for row in candidates] == [
+            ("https://example.com/", "eng"),
+            ("https://example.com/contact", "deu"),
+        ]
+    finally:
+        connection.close()
+
+
+def test_local_candidate_coordinate_identity_includes_record_length(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        _candidate_page("example.com", "https://example.com/a", "/a", 10, length=100),
+        _candidate_page("example.com", "https://example.com/b", "/b", 10, length=101),
+    ]
+    connection, path, schema = _candidate_fixture(tmp_path, rows)
+    try:
+        candidates = _local_candidates(
+            connection,
+            path,
+            schema,
+            pages_per_domain=2,
+        )
+
+        assert [(row[2], row[6]) for row in candidates] == [
+            ("https://example.com/a", 100),
+            ("https://example.com/b", 101),
+        ]
+    finally:
+        connection.close()
+
+
+def test_local_candidate_top_n_is_applied_per_domain(tmp_path: Path) -> None:
+    rows = [
+        _candidate_page("a.example", "https://a.example/", "/", 10),
+        _candidate_page("a.example", "https://a.example/about", "/about", 20),
+        _candidate_page("a.example", "https://a.example/news", "/news", 30),
+        _candidate_page("b.example", "https://b.example/", "/", 40),
+        _candidate_page("b.example", "https://b.example/contact", "/contact", 50),
+        _candidate_page("b.example", "https://b.example/news", "/news", 60),
+    ]
+    connection, path, schema = _candidate_fixture(tmp_path, rows)
+    try:
+        candidates = _local_candidates(
+            connection,
+            path,
+            schema,
+            pages_per_domain=2,
+        )
+
+        assert [(row[1], row[2]) for row in candidates] == [
+            ("a.example", "https://a.example/"),
+            ("a.example", "https://a.example/about"),
+            ("b.example", "https://b.example/"),
+            ("b.example", "https://b.example/contact"),
+        ]
+    finally:
+        connection.close()
+
+
+def test_local_candidate_duplicate_null_ranks_do_not_create_false_conflict(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        _candidate_page(
+            "example.com",
+            "https://example.com/no-path",
+            None,
+            10,
+            languages="fra",
+        ),
+        _candidate_page(
+            "example.com",
+            "https://example.com/no-path",
+            None,
+            10,
+            languages="eng",
+        ),
+    ]
+    connection, path, schema = _candidate_fixture(tmp_path, rows)
+    try:
+        candidates = _local_candidates(connection, path, schema)
+
+        assert len(candidates) == 1
+        assert candidates[0][3] == "eng"
+        assert candidates[0][10:12] == (None, None)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "conflicting_row",
+    [
+        _candidate_page("other.example", "https://example.com/", "/", 10),
+        _candidate_page("example.com", "https://example.com/different", "/", 10),
+        _candidate_page("example.com", "https://example.com/", "/contact", 10),
+        _candidate_page("example.com", "https://example.com/", None, 10),
+    ],
+)
+def test_local_candidate_rejects_coordinate_selection_conflicts(
+    tmp_path: Path,
+    conflicting_row: tuple[object, ...],
+) -> None:
+    connection, path, schema = _candidate_fixture(
+        tmp_path,
+        [
+            _candidate_page("example.com", "https://example.com/", "/", 10),
+            conflicting_row,
+        ],
+    )
+    try:
+        with pytest.raises(
+            duckdb.Error,
+            match="duplicate capture coordinate has conflicting selection values",
+        ):
+            _local_candidates(connection, path, schema)
+    finally:
+        connection.close()
+
+
+def test_local_candidate_detects_conflict_below_top_n_boundary(tmp_path: Path) -> None:
+    rows = [
+        _candidate_page("example.com", "https://example.com/", "/", 1),
+        _candidate_page("example.com", "https://example.com/ordinary", "/ordinary", 2),
+        _candidate_page(
+            "example.com",
+            "https://example.com/ordinary",
+            "/deep/ordinary",
+            2,
+        ),
+    ]
+    connection, path, schema = _candidate_fixture(tmp_path, rows)
+    try:
+        with pytest.raises(
+            duckdb.Error,
+            match="duplicate capture coordinate has conflicting selection values",
+        ):
+            _local_candidates(
+                connection,
+                path,
+                schema,
+                pages_per_domain=1,
+            )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "source_index,pages_per_domain",
+    [(-1, 25), (2**32, 25), (0, 0), (0, 2**16)],
+)
+def test_local_candidate_query_rejects_invalid_limits(
+    source_index: int,
+    pages_per_domain: int,
+) -> None:
+    schema = SourceSchema(0, ())
+
+    with pytest.raises(ValueError):
+        local_candidate_query(
+            SourceSchema(source_index, schema.column_types),
+            pages_per_domain,
+        )
+
+
+def test_local_candidate_query_contains_no_source_or_output_path() -> None:
+    query = local_candidate_query(SourceSchema(0, ()), 25).lower()
+
+    assert "read_parquet(?)" in query
+    assert "https://" not in query
+    assert "/tmp/" not in query
+    assert ".partial" not in query
