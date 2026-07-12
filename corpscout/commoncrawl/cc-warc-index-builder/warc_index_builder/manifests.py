@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import duckdb
 import httpx
 
 
@@ -14,6 +15,36 @@ COMMON_CRAWL_DATA_URL = "https://data.commoncrawl.org"
 WARC_MANIFEST_FILENAME = "warc.paths.gz"
 INDEX_MANIFEST_FILENAME = "cc-index-table.paths.gz"
 _TRANSIENT_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+_REQUIRED_STRING_COLUMNS = (
+    "url",
+    "url_host_name",
+    "url_host_registered_domain",
+    "url_path",
+    "content_mime_type",
+    "warc_filename",
+)
+_REQUIRED_INTEGER_COLUMNS = (
+    "fetch_status",
+    "warc_record_offset",
+    "warc_record_length",
+)
+_OPTIONAL_STRING_COLUMNS = (
+    "content_mime_detected",
+    "content_languages",
+)
+_INTEGER_TYPES = frozenset(
+    {
+        "TINYINT",
+        "SMALLINT",
+        "INTEGER",
+        "BIGINT",
+        "HUGEINT",
+        "UTINYINT",
+        "USMALLINT",
+        "UINTEGER",
+        "UBIGINT",
+    }
+)
 
 
 class ManifestDownloadError(RuntimeError):
@@ -21,6 +52,10 @@ class ManifestDownloadError(RuntimeError):
 
 
 class ManifestParseError(RuntimeError):
+    pass
+
+
+class SourceSchemaError(RuntimeError):
     pass
 
 
@@ -50,6 +85,34 @@ class IndexSource:
     source_index: int
     path: str
     url: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchema:
+    source_index: int
+    column_types: tuple[tuple[str, str], ...]
+
+    @property
+    def has_content_mime_detected(self) -> bool:
+        return self.type_for("content_mime_detected") is not None
+
+    @property
+    def has_content_languages(self) -> bool:
+        return self.type_for("content_languages") is not None
+
+    def type_for(self, column: str) -> str | None:
+        return next((column_type for name, column_type in self.column_types if name == column), None)
+
+    @property
+    def normalized_descriptor(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (column, self.type_for(column) or "MISSING")
+            for column in (
+                *_REQUIRED_STRING_COLUMNS,
+                *_REQUIRED_INTEGER_COLUMNS,
+                *_OPTIONAL_STRING_COLUMNS,
+            )
+        )
 
 
 def crawl_manifest_url(crawl: str, filename: str) -> str:
@@ -133,6 +196,57 @@ def read_index_sources(path: Path, crawl: str) -> tuple[IndexSource, ...]:
     if not sources:
         raise ManifestParseError(f"{path}: URL-index WARC source inventory is empty")
     return tuple(sources)
+
+
+def inspect_source_schema(
+    connection: duckdb.DuckDBPyConnection, source: IndexSource
+) -> SourceSchema:
+    try:
+        rows = connection.execute(
+            "DESCRIBE SELECT * FROM read_parquet(?)", [source.url]
+        ).fetchall()
+    except duckdb.Error as error:
+        raise SourceSchemaError(f"inspect source schema {source.url}: {error}") from error
+
+    available = {str(row[0]): str(row[1]).upper() for row in rows}
+    missing = [
+        column
+        for column in (*_REQUIRED_STRING_COLUMNS, *_REQUIRED_INTEGER_COLUMNS)
+        if column not in available
+    ]
+    if missing:
+        raise SourceSchemaError(
+            f"source {source.url} is missing required columns: {', '.join(missing)}"
+        )
+
+    incompatible: list[str] = []
+    for column in _REQUIRED_STRING_COLUMNS:
+        if available[column] != "VARCHAR":
+            incompatible.append(f"{column}={available[column]} (expected VARCHAR)")
+    for column in _REQUIRED_INTEGER_COLUMNS:
+        if available[column] not in _INTEGER_TYPES:
+            incompatible.append(f"{column}={available[column]} (expected integral)")
+    for column in _OPTIONAL_STRING_COLUMNS:
+        if column in available and available[column] != "VARCHAR":
+            incompatible.append(f"{column}={available[column]} (expected VARCHAR)")
+    if incompatible:
+        raise SourceSchemaError(
+            f"source {source.url} has incompatible columns: {', '.join(incompatible)}"
+        )
+
+    relevant_columns = (
+        *_REQUIRED_STRING_COLUMNS,
+        *_REQUIRED_INTEGER_COLUMNS,
+        *(
+            column
+            for column in _OPTIONAL_STRING_COLUMNS
+            if column in available
+        ),
+    )
+    return SourceSchema(
+        source_index=source.source_index,
+        column_types=tuple((column, available[column]) for column in relevant_columns),
+    )
 
 
 def _hash_file(path: Path) -> tuple[str, int]:
