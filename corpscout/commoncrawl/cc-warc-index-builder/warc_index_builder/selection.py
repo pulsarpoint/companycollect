@@ -1,6 +1,109 @@
-"""Schema-normalized Common Crawl page-selection inputs."""
+"""Canonical Common Crawl page eligibility and ranking policy."""
+
+import re
 
 from .manifests import SourceSchema
+
+
+HTML_MIME_TYPES = ("text/html", "application/xhtml+xml")
+PRIORITY_PATH_TERMS = (
+    "imprint",
+    "impressum",
+    "legal",
+    "mentions",
+    "aviso-legal",
+    "note-legali",
+    "datenschutz",
+    "colofon",
+    "about",
+    "uber-uns",
+    "ueber-uns",
+    "a-propos",
+    "apropos",
+    "quienes-somos",
+    "sobre-nos",
+    "sobre-nosotros",
+    "acerca",
+    "chi-siamo",
+    "over-ons",
+    "o-nas",
+    "om-oss",
+    "om-os",
+    "hakkimizda",
+    "company",
+    "unternehmen",
+    "entreprise",
+    "empresa",
+    "azienda",
+    "contact",
+    "kontakt",
+    "contatti",
+    "contato",
+    "iletisim",
+    "privacy",
+    "privacidad",
+    "confidentialite",
+    "terms",
+    "termini",
+    "termos",
+    "terminos",
+    "agb",
+    "cgv",
+    "cgu",
+    "voorwaarden",
+)
+
+_PRIORITY_PATH_PATTERN = "|".join(re.escape(term) for term in PRIORITY_PATH_TERMS)
+_RANKING_COLUMNS = (
+    (
+        "rank_main_site",
+        """CAST(
+            CASE
+                WHEN url_host_name = root_domain THEN 0
+                WHEN url_host_name = 'www.' || root_domain THEN 0
+                ELSE 1
+            END AS UTINYINT
+        )""",
+    ),
+    (
+        "rank_homepage",
+        "CAST(CASE WHEN url_path IN ('/', '') THEN 0 ELSE 1 END AS UTINYINT)",
+    ),
+    (
+        "rank_priority_path",
+        f"""CAST(
+            CASE
+                WHEN regexp_matches(lower(url_path), '{_PRIORITY_PATH_PATTERN}') THEN 0
+                ELSE 1
+            END AS UTINYINT
+        )""",
+    ),
+    (
+        "rank_path_depth",
+        "CAST(length(url_path) - length(replace(url_path, '/', '')) AS UBIGINT)",
+    ),
+    ("rank_path_length", "CAST(length(url_path) AS UBIGINT)"),
+    (
+        "rank_apex",
+        "CAST(CASE WHEN url_host_name = root_domain THEN 0 ELSE 1 END AS UTINYINT)",
+    ),
+)
+
+RANKING_COLUMN_NAMES = tuple(name for name, _expression in _RANKING_COLUMNS)
+
+_SINGLE_PAGE_RANKING_COLUMNS = (
+    "rank_main_site",
+    "rank_path_depth",
+    "rank_path_length",
+    "rank_apex",
+)
+_MULTI_PAGE_RANKING_COLUMNS = RANKING_COLUMN_NAMES
+_DETERMINISTIC_TIE_COLUMNS = (
+    "url",
+    "warc_filename",
+    "warc_record_offset",
+    "warc_record_length",
+)
 
 
 def normalized_source_projection(schema: SourceSchema) -> str:
@@ -27,3 +130,44 @@ def normalized_source_projection(schema: SourceSchema) -> str:
         TRY_CAST(warc_record_offset AS HUGEINT) AS warc_record_offset,
         TRY_CAST(warc_record_length AS HUGEINT) AS warc_record_length
     """.strip()
+
+
+def eligibility_predicate() -> str:
+    """Return the path-free predicate shared by every selection stage."""
+    mime_types = ", ".join(f"'{mime_type}'" for mime_type in HTML_MIME_TYPES)
+    return f"""
+        fetch_status = 200
+        AND COALESCE(content_mime_detected, content_mime_type) IN ({mime_types})
+        AND NULLIF(trim(root_domain), '') IS NOT NULL
+        AND NULLIF(trim(url), '') IS NOT NULL
+        AND NULLIF(trim(warc_filename), '') IS NOT NULL
+        AND warc_record_offset >= 0
+        AND warc_record_length > 0
+    """.strip()
+
+
+def ranking_projection() -> str:
+    """Return all stable, named ranking fields for an eligible page row."""
+    return ",\n".join(
+        f"{expression} AS {name}" for name, expression in _RANKING_COLUMNS
+    )
+
+
+def ranking_column_names(pages_per_domain: int) -> tuple[str, ...]:
+    """Return the semantic ranking fields for the requested selection size."""
+    if pages_per_domain < 1:
+        raise ValueError("pages_per_domain must be at least 1")
+    if pages_per_domain == 1:
+        return _SINGLE_PAGE_RANKING_COLUMNS
+    return _MULTI_PAGE_RANKING_COLUMNS
+
+
+def ranking_order_terms(pages_per_domain: int) -> tuple[str, ...]:
+    """Return the one total ordering consumed by local and global selection."""
+    columns = ranking_column_names(pages_per_domain) + _DETERMINISTIC_TIE_COLUMNS
+    return tuple(f"{column} ASC NULLS LAST" for column in columns)
+
+
+def ranking_order_clause(pages_per_domain: int) -> str:
+    """Return the SQL ordering clause body for window functions."""
+    return ",\n".join(ranking_order_terms(pages_per_domain))
