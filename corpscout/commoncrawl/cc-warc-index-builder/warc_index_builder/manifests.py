@@ -118,6 +118,13 @@ class SourceSchema:
         )
 
 
+def source_schema_sha256(schema: SourceSchema) -> str:
+    """Hash one normalized capability descriptor without its path or shard index."""
+    digest = new_identity_digest("source-schema")
+    _update_source_schema_descriptor(digest, schema)
+    return digest.hexdigest()
+
+
 def source_schemas_sha256(schemas: Sequence[SourceSchema]) -> str:
     """Hash source-index-ordered normalized schemas without source locations."""
     if not schemas:
@@ -129,13 +136,17 @@ def source_schemas_sha256(schemas: Sequence[SourceSchema]) -> str:
             raise ValueError(
                 "source schemas must be in contiguous source_index order starting at 0"
             )
-        descriptor = schema.normalized_descriptor
         digest.update(schema.source_index.to_bytes(4, byteorder="big"))
-        digest.update(len(descriptor).to_bytes(4, byteorder="big"))
-        for column, column_type in descriptor:
-            update_text(digest, column)
-            update_text(digest, column_type)
+        _update_source_schema_descriptor(digest, schema)
     return digest.hexdigest()
+
+
+def _update_source_schema_descriptor(digest, schema: SourceSchema) -> None:
+    descriptor = schema.normalized_descriptor
+    digest.update(len(descriptor).to_bytes(4, byteorder="big"))
+    for column, column_type in descriptor:
+        update_text(digest, column)
+        update_text(digest, column_type)
 
 
 def crawl_manifest_url(crawl: str, filename: str) -> str:

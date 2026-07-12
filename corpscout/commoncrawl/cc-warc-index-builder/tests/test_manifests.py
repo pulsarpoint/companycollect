@@ -18,6 +18,7 @@ from warc_index_builder.manifests import (
     inspect_source_schema,
     read_index_sources,
     read_warc_inventory,
+    source_schema_sha256,
     source_schemas_sha256,
 )
 from warc_index_builder.selection import normalized_source_projection
@@ -561,6 +562,14 @@ def test_source_schema_identity_changes_for_capabilities_and_physical_types() ->
     assert source_schemas_sha256((current_at_zero,)) != legacy_hash
     assert source_schemas_sha256((changed_offset_type,)) != legacy_hash
     assert source_schemas_sha256(_identity_schemas()) != legacy_hash
+
+
+def test_single_source_schema_identity_excludes_source_index() -> None:
+    legacy, _current = _identity_schemas()
+
+    assert source_schema_sha256(legacy) == source_schema_sha256(
+        SourceSchema(999, legacy.column_types)
+    )
 
 
 @pytest.mark.parametrize(
