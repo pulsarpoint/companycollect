@@ -10,6 +10,10 @@ tree, JSON/API/partitioning rules, the mandatory currency + translation cross-cu
 Every new source ships a design doc from `docs/source-design-doc-template.md`. This file (CLAUDE.md) is
 the day-to-day gotcha list that backs that standard.
 
+**Operations/deploy**: `docs/deployment-runbook.md` — env contract, disk layout, migration
+ordering, startup sequence, and the backup-scope decision (Postgres + ClickHouse only; DuckDB
+files and S3 raw snapshots are rebuildable cache).
+
 ## Commands
 - Always use **`uv run`** for `dg`/`pytest`/`dagster` (e.g. `uv run dg check defs`, `uv run pytest tests/...`).
 - Start the dev instance with **`./scripts/dagster-dev.sh`** — it exports `DAGSTER_HOME`, `DAGSTER_PG_URL`
