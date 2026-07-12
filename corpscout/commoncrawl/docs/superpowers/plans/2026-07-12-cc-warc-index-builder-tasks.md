@@ -291,12 +291,12 @@ ambiguous mapping diagnostics, duplicate rejection, and overflow-safe bounds che
 
 **Depends on:** T09, T16, T17.
 
-**Files:** `warc_index_builder/catalog.py`, `tests/test_catalog.py`.
+**Files:** `warc_index_builder/catalog.py`, `tests/test_catalog.py`, `tests/test_final_catalog.py`.
 
 **Deliver:** exactly one metadata row with versions, counts, canonical hashes, deterministic catalog ID,
 and informational timestamp excluded from identity.
 
-**Verify:** `uv run pytest tests/test_catalog.py -q -k metadata`.
+**Verify:** `uv run pytest tests/test_catalog.py tests/test_final_catalog.py -q -k metadata`.
 
 **Commit:** `feat(commoncrawl): identify warc catalogs`
 

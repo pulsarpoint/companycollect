@@ -1,6 +1,7 @@
 """Local catalog build paths and exclusive build lifecycle."""
 
 import fcntl
+import importlib.metadata
 import os
 import re
 import shutil
@@ -187,6 +188,12 @@ class FinalPagesResult:
     selected_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class FinalMetadataResult:
+    path: Path
+    catalog_id: str
+
+
 GLOBAL_PAGE_COLUMNS = (
     ("warc_index", "UINTEGER"),
     ("root_domain", "VARCHAR"),
@@ -239,6 +246,12 @@ _FINAL_CATALOG_DDL = (
         content_languages VARCHAR,
         warc_record_offset UBIGINT NOT NULL,
         warc_record_length UBIGINT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE final_catalog._build_progress (
+        singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+        pages_materialized BOOLEAN NOT NULL
     )
     """,
 )
@@ -1176,6 +1189,9 @@ def create_partial_catalog(
             for statement in _FINAL_CATALOG_DDL:
                 state_connection.execute(statement)
             state_connection.execute(
+                "INSERT INTO final_catalog._build_progress VALUES (true, false)"
+            )
+            state_connection.execute(
                 """
                 INSERT INTO final_catalog.warcs
                 SELECT warc_index, warc_filename, object_bytes
@@ -1231,6 +1247,27 @@ def _duplicate_final_page_coordinate(
         LIMIT 1
         """
     ).fetchone()
+
+
+def _final_pages_materialized(
+    connection: duckdb.DuckDBPyConnection,
+) -> bool:
+    try:
+        rows = connection.execute(
+            """
+            SELECT singleton, pages_materialized
+            FROM final_catalog._build_progress
+            """
+        ).fetchall()
+    except duckdb.Error as error:
+        raise FinalCatalogBuildError(
+            "partial catalog build progress is missing or unreadable"
+        ) from error
+    if len(rows) != 1 or rows[0][0] is not True:
+        raise FinalCatalogBuildError(
+            "partial catalog build progress must contain exactly one row"
+        )
+    return bool(rows[0][1])
 
 
 def materialize_final_pages(
@@ -1294,6 +1331,10 @@ def materialize_final_pages(
                 raise FinalCatalogBuildError(
                     "partial catalog metadata must be empty before pages"
                 )
+            if _final_pages_materialized(state_connection):
+                raise FinalCatalogBuildError(
+                    "partial catalog pages are already materialized"
+                )
             query = global_selected_pages_query(pages_per_domain)
             try:
                 state_connection.execute(
@@ -1356,6 +1397,199 @@ def materialize_final_pages(
                 distinct_domain_count=int(distinct_domains),
                 selected_bytes=int(selected_bytes),
             )
+            updated = state_connection.execute(
+                """
+                UPDATE final_catalog._build_progress
+                SET pages_materialized = true
+                WHERE singleton = true AND pages_materialized = false
+                RETURNING 1
+                """
+            ).fetchall()
+            if len(updated) != 1:
+                raise FinalCatalogBuildError(
+                    "cannot commit final page materialization progress"
+                )
+            state_connection.execute("COMMIT")
+        except BaseException:
+            state_connection.execute("ROLLBACK")
+            raise
+        finally:
+            state_connection.execute("DETACH final_catalog")
+            attached = False
+        return result
+    except BaseException:
+        if attached:
+            try:
+                state_connection.execute("DETACH final_catalog")
+            except duckdb.Error:
+                pass
+        raise
+
+
+def _stored_build_identity(
+    connection: duckdb.DuckDBPyConnection,
+) -> BuildIdentity:
+    rows = connection.execute(
+        """
+        SELECT catalog_schema_version, crawl_id, pages_per_domain,
+               selection_policy_version, selection_policy_sha256,
+               source_schema_sha256, warc_manifest_sha256,
+               index_manifest_sha256
+        FROM build_identity
+        """
+    ).fetchall()
+    if len(rows) != 1:
+        raise BuildStateCorrupt(
+            "build_identity must contain exactly one row; use --rebuild"
+        )
+    return BuildIdentity(*rows[0])
+
+
+def _ready_source_shard_count(
+    connection: duckdb.DuckDBPyConnection,
+) -> int:
+    rows = connection.execute(
+        "SELECT source_index, status FROM source_shards ORDER BY source_index"
+    ).fetchall()
+    if not rows:
+        raise BuildStateCorrupt("source shard state is empty; use --rebuild")
+    for expected_index, (source_index, status) in enumerate(rows):
+        if source_index != expected_index:
+            raise BuildStateCorrupt(
+                "source shard indexes are not contiguous; use --rebuild"
+            )
+        if status != "ready":
+            raise BuildStateCorrupt(f"candidate source {source_index} is not ready")
+    return len(rows)
+
+
+def _stored_final_metadata_identity(
+    connection: duckdb.DuckDBPyConnection,
+) -> tuple[bool, str]:
+    rows = connection.execute(
+        "SELECT singleton, catalog_id FROM final_catalog.catalog_metadata"
+    ).fetchall()
+    if len(rows) != 1:
+        raise FinalCatalogBuildError(
+            "final catalog metadata must contain exactly one row"
+        )
+    return bool(rows[0][0]), str(rows[0][1])
+
+
+def materialize_final_metadata(
+    state_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+) -> FinalMetadataResult:
+    """Write the single deterministic identity row for a completed partial catalog."""
+    expected_hash = verify_or_finalize_warc_inventory(state_connection)
+    identity = _stored_build_identity(state_connection)
+    source_shard_count = _ready_source_shard_count(state_connection)
+    builder_version = importlib.metadata.version("cc-warc-index-builder")
+
+    path = partial_catalog_path(build_directory)
+    if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
+        raise FinalCatalogBuildError(
+            f"partial catalog is not a nonempty regular file: {path}"
+        )
+    if state_connection.execute(
+        """
+        SELECT count(*)
+        FROM duckdb_databases()
+        WHERE database_name = 'final_catalog'
+        """
+    ).fetchone()[0]:
+        raise FinalCatalogBuildError("database alias final_catalog is already attached")
+
+    attached = False
+    try:
+        state_connection.execute(
+            f"ATTACH {_sql_string_literal(str(path))} AS final_catalog"
+        )
+        attached = True
+        state_connection.execute("BEGIN TRANSACTION")
+        try:
+            inventory, final_hash = _final_warc_inventory(state_connection)
+            if final_hash != expected_hash:
+                raise FinalCatalogBuildError(
+                    "final WARC inventory hash differs from build state"
+                )
+            metadata_count = state_connection.execute(
+                "SELECT count(*) FROM final_catalog.catalog_metadata"
+            ).fetchone()[0]
+            if metadata_count:
+                raise FinalCatalogBuildError(
+                    "partial catalog metadata is already materialized"
+                )
+            if not _final_pages_materialized(state_connection):
+                raise FinalCatalogBuildError(
+                    "partial catalog pages have not been materialized"
+                )
+
+            selected_page_count, distinct_domain_count = state_connection.execute(
+                """
+                SELECT count(*), count(DISTINCT root_domain)
+                FROM final_catalog.pages
+                """
+            ).fetchone()
+            deterministic_id = catalog_id(
+                schema_version=identity.catalog_schema_version,
+                crawl_id=identity.crawl_id,
+                pages_per_domain=identity.pages_per_domain,
+                selection_policy_version=identity.selection_policy_version,
+                selection_policy_sha256=identity.selection_policy_sha256,
+                source_schema_sha256=identity.source_schema_sha256,
+                warc_manifest_sha256=identity.warc_manifest_sha256,
+                index_manifest_sha256=identity.index_manifest_sha256,
+                warc_inventory_sha256=final_hash,
+            )
+            duckdb_version = str(
+                state_connection.execute("SELECT version()").fetchone()[0]
+            )
+            state_connection.execute(
+                """
+                INSERT INTO final_catalog.catalog_metadata (
+                    singleton, schema_version, catalog_id, crawl_id,
+                    selection_name, pages_per_domain,
+                    selection_policy_version, selection_policy_sha256,
+                    source_schema_sha256, warc_manifest_sha256,
+                    index_manifest_sha256, warc_inventory_sha256,
+                    warc_count, selected_page_count, distinct_domain_count,
+                    source_index_shard_count, duckdb_version, builder_version,
+                    created_at
+                ) VALUES (
+                    true, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    current_timestamp
+                )
+                """,
+                [
+                    identity.catalog_schema_version,
+                    deterministic_id,
+                    identity.crawl_id,
+                    f"pages{identity.pages_per_domain}",
+                    identity.pages_per_domain,
+                    identity.selection_policy_version,
+                    identity.selection_policy_sha256,
+                    identity.source_schema_sha256,
+                    identity.warc_manifest_sha256,
+                    identity.index_manifest_sha256,
+                    final_hash,
+                    len(inventory),
+                    int(selected_page_count),
+                    int(distinct_domain_count),
+                    source_shard_count,
+                    duckdb_version,
+                    builder_version,
+                ],
+            )
+            stored_singleton, stored_id = _stored_final_metadata_identity(
+                state_connection
+            )
+            if not stored_singleton or stored_id != deterministic_id:
+                raise FinalCatalogBuildError(
+                    "final catalog metadata identity differs after insertion"
+                )
+            state_connection.execute("DROP TABLE final_catalog._build_progress")
+            result = FinalMetadataResult(path=path, catalog_id=deterministic_id)
             state_connection.execute("COMMIT")
         except BaseException:
             state_connection.execute("ROLLBACK")
@@ -1845,13 +2079,15 @@ def catalog_id(
     index_manifest_sha256: str,
     warc_inventory_sha256: str,
 ) -> str:
-    """Hash every logical input that determines one published catalog."""
+    """Hash logical catalog inputs, excluding counts and build-time information."""
     if not 1 <= schema_version <= 0xFFFF:
         raise ValueError("schema_version must be between 1 and uint16 max")
     if not 1 <= pages_per_domain <= 0xFFFF:
         raise ValueError("pages_per_domain must be between 1 and uint16 max")
-    if not crawl_id or not selection_policy_version:
-        raise ValueError("catalog identity strings must not be empty")
+    if _CRAWL_ID.fullmatch(crawl_id) is None:
+        raise ValueError("crawl_id must match CC-MAIN-YYYY-NN")
+    if not selection_policy_version.strip():
+        raise ValueError("selection_policy_version must not be blank")
 
     hashes = (
         ("selection_policy_sha256", selection_policy_sha256),

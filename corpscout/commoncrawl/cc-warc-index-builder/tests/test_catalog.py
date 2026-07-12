@@ -455,9 +455,11 @@ def test_catalog_identity_rejects_noncanonical_hashes(value: str) -> None:
         ("schema_version", 0),
         ("schema_version", 2**16),
         ("crawl_id", ""),
+        ("crawl_id", "CC-MAIN-invalid"),
         ("pages_per_domain", 0),
         ("pages_per_domain", 2**16),
         ("selection_policy_version", ""),
+        ("selection_policy_version", "   "),
     ],
 )
 def test_catalog_identity_rejects_invalid_fields(field: str, value: object) -> None:

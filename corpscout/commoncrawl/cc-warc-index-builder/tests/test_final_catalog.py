@@ -1,3 +1,4 @@
+import importlib.metadata
 from pathlib import Path
 
 import duckdb
@@ -15,6 +16,7 @@ from warc_index_builder.catalog import (
     checkpoint_warc_size_batch,
     create_partial_catalog,
     initialize_build_state,
+    materialize_final_metadata,
     materialize_final_pages,
     partial_catalog_path,
     warc_inventory_sha256,
@@ -143,6 +145,27 @@ def _write_ready_candidates(
     return path
 
 
+def _prepare_final_pages(
+    state_connection: duckdb.DuckDBPyConnection,
+    validation_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+    rows: list[tuple[object, ...]],
+) -> None:
+    _initialize_state(state_connection)
+    create_partial_catalog(state_connection, build_directory)
+    _write_ready_candidates(
+        state_connection,
+        validation_connection,
+        build_directory,
+        rows,
+    )
+    materialize_final_pages(
+        state_connection,
+        validation_connection,
+        build_directory,
+    )
+
+
 def test_final_warcs_partial_contains_exact_schema_and_complete_inventory(
     tmp_path: Path,
 ) -> None:
@@ -171,6 +194,7 @@ def test_final_warcs_partial_contains_exact_schema_and_complete_inventory(
             assert final_connection.execute(
                 "SELECT table_name FROM information_schema.tables ORDER BY table_name"
             ).fetchall() == [
+                ("_build_progress",),
                 ("catalog_metadata",),
                 ("pages",),
                 ("warcs",),
@@ -218,8 +242,9 @@ def test_final_warcs_partial_contains_exact_schema_and_complete_inventory(
             ]
             assert final_connection.execute(
                 "SELECT (SELECT count(*) FROM pages), "
-                "       (SELECT count(*) FROM catalog_metadata)"
-            ).fetchone() == (0, 0)
+                "       (SELECT count(*) FROM catalog_metadata), "
+                "       (SELECT pages_materialized FROM _build_progress)"
+            ).fetchone() == (0, 0, False)
         finally:
             final_connection.close()
     finally:
@@ -484,6 +509,9 @@ def test_final_pages_are_bulk_materialized_in_physical_warc_offset_order(
             assert final_connection.execute(
                 "SELECT count(*) FROM catalog_metadata"
             ).fetchone() == (0,)
+            assert final_connection.execute(
+                "SELECT pages_materialized FROM _build_progress"
+            ).fetchone() == (True,)
         finally:
             final_connection.close()
     finally:
@@ -805,6 +833,325 @@ def test_final_pages_rejects_final_warc_hash_divergence_before_insert(
             ).fetchone() == (1001,)
         finally:
             final_connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_metadata_contains_exact_identity_versions_and_actual_counts(
+    tmp_path: Path,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    rows = [
+        _candidate_row(
+            "example.com",
+            "https://example.com/",
+            _WARCS[0].warc_filename,
+            10,
+            100,
+        ),
+        _candidate_row(
+            "example.com",
+            "https://example.com/about",
+            _WARCS[0].warc_filename,
+            200,
+            50,
+            rank_homepage=0,
+        ),
+        _candidate_row(
+            "other.example",
+            "https://other.example/",
+            _WARCS[1].warc_filename,
+            20,
+            75,
+        ),
+    ]
+    try:
+        _prepare_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+            rows,
+        )
+        expected_inventory_hash = warc_inventory_sha256(
+            (
+                (0, _WARCS[0].warc_filename, 1000),
+                (1, _WARCS[1].warc_filename, 2000),
+            )
+        )
+        expected_id = catalog.catalog_id(
+            schema_version=CATALOG_SCHEMA_VERSION,
+            crawl_id=_identity().crawl_id,
+            pages_per_domain=_identity().pages_per_domain,
+            selection_policy_version=_identity().selection_policy_version,
+            selection_policy_sha256=_identity().selection_policy_sha256,
+            source_schema_sha256=_identity().source_schema_sha256,
+            warc_manifest_sha256=_identity().warc_manifest_sha256,
+            index_manifest_sha256=_identity().index_manifest_sha256,
+            warc_inventory_sha256=expected_inventory_hash,
+        )
+
+        result = materialize_final_metadata(state_connection, build_directory)
+
+        assert result.path == partial_catalog_path(build_directory)
+        assert result.catalog_id == expected_id
+        final_connection = duckdb.connect(str(result.path), read_only=True)
+        try:
+            metadata = final_connection.execute(
+                """
+                SELECT singleton, schema_version, catalog_id, crawl_id,
+                       selection_name, pages_per_domain,
+                       selection_policy_version, selection_policy_sha256,
+                       source_schema_sha256, warc_manifest_sha256,
+                       index_manifest_sha256, warc_inventory_sha256,
+                       warc_count, selected_page_count, distinct_domain_count,
+                       source_index_shard_count, duckdb_version, builder_version,
+                       created_at IS NOT NULL
+                FROM catalog_metadata
+                """
+            ).fetchall()
+            assert metadata == [
+                (
+                    True,
+                    CATALOG_SCHEMA_VERSION,
+                    expected_id,
+                    _identity().crawl_id,
+                    "pages25",
+                    25,
+                    _identity().selection_policy_version,
+                    _identity().selection_policy_sha256,
+                    _identity().source_schema_sha256,
+                    _identity().warc_manifest_sha256,
+                    _identity().index_manifest_sha256,
+                    expected_inventory_hash,
+                    2,
+                    3,
+                    2,
+                    1,
+                    state_connection.execute("SELECT version()").fetchone()[0],
+                    importlib.metadata.version("cc-warc-index-builder"),
+                    True,
+                )
+            ]
+            assert final_connection.execute(
+                "SELECT table_name FROM information_schema.tables ORDER BY table_name"
+            ).fetchall() == [
+                ("catalog_metadata",),
+                ("pages",),
+                ("warcs",),
+            ]
+        finally:
+            final_connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_metadata_catalog_id_is_stable_across_build_paths(
+    tmp_path: Path,
+) -> None:
+    results = []
+    for name in ("first", "second"):
+        state_connection = duckdb.connect()
+        validation_connection = duckdb.connect()
+        build_directory = tmp_path / name
+        build_directory.mkdir()
+        try:
+            _prepare_final_pages(
+                state_connection,
+                validation_connection,
+                build_directory,
+                [],
+            )
+            results.append(
+                materialize_final_metadata(state_connection, build_directory)
+            )
+        finally:
+            state_connection.close()
+            validation_connection.close()
+
+    assert results[0].path != results[1].path
+    assert results[0].catalog_id == results[1].catalog_id
+    for result in results:
+        connection = duckdb.connect(str(result.path), read_only=True)
+        try:
+            assert connection.execute(
+                """
+                SELECT selected_page_count, distinct_domain_count,
+                       created_at IS NOT NULL
+                FROM catalog_metadata
+                """
+            ).fetchone() == (0, 0, True)
+        finally:
+            connection.close()
+
+
+def test_final_metadata_failure_after_progress_drop_rolls_back_and_retry_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    try:
+        _prepare_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [
+                _candidate_row(
+                    "example.com",
+                    "https://example.com/",
+                    _WARCS[0].warc_filename,
+                    10,
+                    100,
+                )
+            ],
+        )
+        original_result_type = catalog.FinalMetadataResult
+
+        def fail_result(**_values: object) -> None:
+            raise RuntimeError("simulated metadata result failure")
+
+        monkeypatch.setattr(
+            catalog,
+            "FinalMetadataResult",
+            fail_result,
+        )
+        with pytest.raises(RuntimeError, match="simulated metadata result"):
+            materialize_final_metadata(state_connection, build_directory)
+
+        connection = duckdb.connect(
+            str(partial_catalog_path(build_directory)), read_only=True
+        )
+        try:
+            assert connection.execute(
+                """
+                SELECT (SELECT count(*) FROM catalog_metadata),
+                       (SELECT count(*) FROM warcs),
+                       (SELECT count(*) FROM pages),
+                       (SELECT pages_materialized FROM _build_progress)
+                """
+            ).fetchone() == (0, 2, 1, True)
+        finally:
+            connection.close()
+
+        monkeypatch.setattr(
+            catalog,
+            "FinalMetadataResult",
+            original_result_type,
+        )
+        result = materialize_final_metadata(state_connection, build_directory)
+        assert result.catalog_id
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_metadata_rejects_nonready_source_and_existing_metadata(
+    tmp_path: Path,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    try:
+        _initialize_state(state_connection)
+        create_partial_catalog(state_connection, build_directory)
+        with pytest.raises(BuildStateCorrupt, match="is not ready"):
+            materialize_final_metadata(state_connection, build_directory)
+
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [],
+        )
+        materialize_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+        first = materialize_final_metadata(state_connection, build_directory)
+        first_connection = duckdb.connect(str(first.path), read_only=True)
+        try:
+            stored_before = first_connection.execute(
+                "SELECT catalog_id, CAST(created_at AS VARCHAR) FROM catalog_metadata"
+            ).fetchone()
+        finally:
+            first_connection.close()
+
+        with pytest.raises(FinalCatalogBuildError, match="already materialized"):
+            materialize_final_metadata(state_connection, build_directory)
+
+        final_connection = duckdb.connect(str(first.path), read_only=True)
+        try:
+            assert final_connection.execute(
+                "SELECT catalog_id, CAST(created_at AS VARCHAR) FROM catalog_metadata"
+            ).fetchone() == stored_before
+        finally:
+            final_connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_metadata_requires_committed_page_materialization(
+    tmp_path: Path,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    try:
+        _initialize_state(state_connection)
+        create_partial_catalog(state_connection, build_directory)
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [
+                _candidate_row(
+                    "example.com",
+                    "https://example.com/",
+                    _WARCS[0].warc_filename,
+                    10,
+                    100,
+                )
+            ],
+        )
+
+        with pytest.raises(
+            FinalCatalogBuildError,
+            match="pages have not been materialized",
+        ):
+            materialize_final_metadata(state_connection, build_directory)
+
+        partial_connection = duckdb.connect(
+            str(partial_catalog_path(build_directory)), read_only=True
+        )
+        try:
+            assert partial_connection.execute(
+                """
+                SELECT (SELECT count(*) FROM pages),
+                       (SELECT count(*) FROM catalog_metadata),
+                       (SELECT pages_materialized FROM _build_progress)
+                """
+            ).fetchone() == (0, 0, False)
+        finally:
+            partial_connection.close()
+
+        materialize_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+        result = materialize_final_metadata(state_connection, build_directory)
+        assert result.catalog_id
     finally:
         state_connection.close()
         validation_connection.close()
