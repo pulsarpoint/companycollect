@@ -2,12 +2,158 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import duckdb
 import pytest
 
 import warc_index_builder.__main__ as command
 from warc_index_builder.__main__ import main, parse_options
+from warc_index_builder.catalog import (
+    CATALOG_SCHEMA_VERSION,
+    FinalCatalogResult,
+    catalog_id,
+    publish_catalog,
+    validate_catalog,
+    warc_inventory_sha256,
+)
 from warc_index_builder.events import binary_size, emit_event
+from warc_index_builder.selection import (
+    SELECTION_POLICY_VERSION,
+    selection_policy_sha256,
+)
+
+
+def _publish_valid_catalog(options: command.CommandOptions) -> str:
+    catalog_directory = options.catalog_directory
+    build_directory = catalog_directory / ".build"
+    build_directory.mkdir(parents=True)
+    partial_path = build_directory / "catalog.duckdb.partial"
+    warc_filename = (
+        "crawl-data/CC-MAIN-2026-25/segments/example/warc/example.warc.gz"
+    )
+    inventory_hash = warc_inventory_sha256(((0, warc_filename, 1_024),))
+    policy_hash = selection_policy_sha256()
+    source_schema_hash = "11" * 32
+    warc_manifest_hash = "22" * 32
+    index_manifest_hash = "33" * 32
+    expected_catalog_id = catalog_id(
+        schema_version=CATALOG_SCHEMA_VERSION,
+        crawl_id=options.crawl,
+        pages_per_domain=options.pages_per_domain,
+        selection_policy_version=SELECTION_POLICY_VERSION,
+        selection_policy_sha256=policy_hash,
+        source_schema_sha256=source_schema_hash,
+        warc_manifest_sha256=warc_manifest_hash,
+        index_manifest_sha256=index_manifest_hash,
+        warc_inventory_sha256=inventory_hash,
+    )
+
+    connection = duckdb.connect(str(partial_path))
+    try:
+        connection.execute(
+            """
+            CREATE TABLE catalog_metadata (
+                singleton BOOLEAN NOT NULL,
+                schema_version USMALLINT NOT NULL,
+                catalog_id VARCHAR NOT NULL,
+                crawl_id VARCHAR NOT NULL,
+                selection_name VARCHAR NOT NULL,
+                pages_per_domain USMALLINT NOT NULL,
+                selection_policy_version VARCHAR NOT NULL,
+                selection_policy_sha256 VARCHAR NOT NULL,
+                source_schema_sha256 VARCHAR NOT NULL,
+                warc_manifest_sha256 VARCHAR NOT NULL,
+                index_manifest_sha256 VARCHAR NOT NULL,
+                warc_inventory_sha256 VARCHAR NOT NULL,
+                warc_count UINTEGER NOT NULL,
+                selected_page_count UBIGINT NOT NULL,
+                distinct_domain_count UBIGINT NOT NULL,
+                source_index_shard_count UINTEGER NOT NULL,
+                duckdb_version VARCHAR NOT NULL,
+                builder_version VARCHAR NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE TABLE warcs (
+                warc_index UINTEGER NOT NULL,
+                warc_filename VARCHAR NOT NULL,
+                object_bytes UBIGINT NOT NULL
+            );
+            CREATE TABLE pages (
+                warc_index UINTEGER NOT NULL,
+                root_domain VARCHAR NOT NULL,
+                url VARCHAR NOT NULL,
+                domain_page_rank USMALLINT NOT NULL,
+                content_languages VARCHAR,
+                warc_record_offset UBIGINT NOT NULL,
+                warc_record_length UBIGINT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO warcs VALUES (0, ?, 1024)",
+            [warc_filename],
+        )
+        connection.execute(
+            """
+            INSERT INTO pages VALUES (
+                0, 'example.com', 'https://example.com/', 1, 'eng', 64, 128
+            )
+            """
+        )
+        duckdb_version = str(connection.execute("SELECT version()").fetchone()[0])
+        connection.execute(
+            """
+            INSERT INTO catalog_metadata VALUES (
+                true, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, ?,
+                'test-suite', current_timestamp
+            )
+            """,
+            [
+                CATALOG_SCHEMA_VERSION,
+                expected_catalog_id,
+                options.crawl,
+                options.selection_name,
+                options.pages_per_domain,
+                SELECTION_POLICY_VERSION,
+                policy_hash,
+                source_schema_hash,
+                warc_manifest_hash,
+                index_manifest_hash,
+                inventory_hash,
+                duckdb_version,
+            ],
+        )
+        connection.execute("FORCE CHECKPOINT")
+    finally:
+        connection.close()
+
+    read_only = duckdb.connect(str(partial_path), read_only=True)
+    try:
+        validation = validate_catalog(read_only)
+    finally:
+        read_only.close()
+    file_stat = partial_path.stat()
+    final_catalog = FinalCatalogResult(
+        path=partial_path,
+        validation=validation,
+        file_identity=(
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_mode,
+            file_stat.st_size,
+            file_stat.st_mtime_ns,
+            file_stat.st_ctime_ns,
+        ),
+    )
+    publication = publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=False,
+    )
+    assert publication.path == options.catalog_path
+    return expected_catalog_id
 
 
 def test_defaults_resolve_from_working_directory(
@@ -162,6 +308,54 @@ def test_check_does_not_create_catalog_paths(tmp_path: Path) -> None:
     assert main(["--base", str(base), "--crawl", "CC-MAIN-2026-25", "--check"]) == 0
 
     assert base.exists() is False
+
+
+def test_run_quickly_reuses_matching_published_catalog_before_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    options = parse_options(
+        ["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"]
+    )
+    expected_catalog_id = _publish_valid_catalog(options)
+    assert options.catalog_path.is_file()
+    assert (options.catalog_directory / ".build").exists() is False
+
+    def forbid_work(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("matching published catalog must bypass HTTP and build setup")
+
+    monkeypatch.setattr(command, "prepare_build_directory", forbid_work)
+    monkeypatch.setattr(command, "recheck_crawl_manifests", forbid_work)
+    monkeypatch.setattr(command.httpx, "Client", forbid_work)
+
+    assert command.run(options) == 0
+
+    event = json.loads(capsys.readouterr().out)
+    assert event["msg"] == "catalog ready"
+    assert event["catalog_id"] == expected_catalog_id
+    assert event["warc_count"] == 1
+    assert event["selected_page_count"] == 1
+    assert event["distinct_domain_count"] == 1
+    assert event["reused"] is True
+    assert (options.catalog_directory / ".build").exists() is False
+
+
+def test_run_requires_rebuild_for_nonmatching_published_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = parse_options(
+        ["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"]
+    )
+    monkeypatch.setattr(
+        command,
+        "inspect_published_catalog",
+        lambda *_args, **_kwargs: SimpleNamespace(reusable=False),
+    )
+
+    with pytest.raises(command.FinalCatalogBuildError, match="use --rebuild"):
+        command.run(options)
 
 
 def test_rebuild_removes_only_staging_and_preserves_final_catalog(tmp_path: Path) -> None:

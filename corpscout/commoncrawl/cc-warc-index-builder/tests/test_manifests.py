@@ -1,5 +1,7 @@
 import gzip
 import hashlib
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 
 import duckdb
@@ -8,16 +10,19 @@ import pytest
 
 import warc_index_builder.manifests as manifests
 from warc_index_builder.manifests import (
+    ManifestChangedError,
     ManifestDownloadError,
     ManifestParseError,
     IndexSource,
     SourceSchema,
     SourceSchemaError,
     crawl_manifest_url,
+    download_manifest_digest,
     download_manifest_snapshot,
     inspect_source_schema,
     read_index_sources,
     read_warc_inventory,
+    recheck_crawl_manifests,
     source_schema_sha256,
     source_schemas_sha256,
 )
@@ -108,6 +113,82 @@ def test_download_snapshot_preserves_exact_response_bytes(tmp_path: Path) -> Non
     assert destination.with_name("warc.paths.gz.partial").exists() is False
 
 
+def test_download_manifest_digest_always_fetches_exact_raw_bytes() -> None:
+    payload = gzip.compress(b"manifest\n")
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _streaming_response(payload, headers={"Content-Encoding": "gzip"})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        digest = download_manifest_digest(
+            client,
+            "https://example/manifest.gz",
+            attempts=1,
+        )
+
+    assert digest.sha256 == hashlib.sha256(payload).hexdigest()
+    assert digest.byte_count == len(payload)
+    assert len(requests) == 1
+    assert requests[0].headers["Accept-Encoding"] == "identity"
+
+
+def test_recheck_crawl_manifests_fetches_both_and_accepts_matching_hashes() -> None:
+    warc_payload = gzip.compress(b"warc\n")
+    index_payload = gzip.compress(b"index\n")
+    requested_paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        payload = (
+            index_payload
+            if request.url.path.endswith("cc-index-table.paths.gz")
+            else warc_payload
+        )
+        return _streaming_response(payload)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = recheck_crawl_manifests(
+            client,
+            "CC-MAIN-2026-25",
+            expected_warc_sha256=hashlib.sha256(warc_payload).hexdigest(),
+            expected_index_sha256=hashlib.sha256(index_payload).hexdigest(),
+            attempts=1,
+        )
+
+    assert result.warc.byte_count == len(warc_payload)
+    assert result.index.byte_count == len(index_payload)
+    assert requested_paths == [
+        "/crawl-data/CC-MAIN-2026-25/warc.paths.gz",
+        "/crawl-data/CC-MAIN-2026-25/cc-index-table.paths.gz",
+    ]
+
+
+def test_recheck_crawl_manifests_reports_both_changed_sources() -> None:
+    requested_paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        return _streaming_response(request.url.path.encode())
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ManifestChangedError) as error:
+            recheck_crawl_manifests(
+                client,
+                "CC-MAIN-2026-25",
+                expected_warc_sha256="00" * 32,
+                expected_index_sha256="11" * 32,
+                attempts=1,
+            )
+
+    assert [mismatch[0] for mismatch in error.value.mismatches] == [
+        "warc.paths.gz",
+        "cc-index-table.paths.gz",
+    ]
+    assert len(requested_paths) == 2
+
+
 def test_existing_snapshot_is_reused_without_http(tmp_path: Path) -> None:
     destination = tmp_path / "warc.paths.gz"
     destination.write_bytes(b"existing")
@@ -122,7 +203,7 @@ def test_existing_snapshot_is_reused_without_http(tmp_path: Path) -> None:
     assert snapshot.sha256 == hashlib.sha256(b"existing").hexdigest()
 
 
-def test_transient_status_retries_and_honors_retry_after(
+def test_transient_status_retries_and_honors_integer_retry_after(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     request_count = 0
@@ -132,7 +213,7 @@ def test_transient_status_retries_and_honors_retry_after(
         nonlocal request_count
         request_count += 1
         if request_count == 1:
-            return httpx.Response(503, headers={"Retry-After": "0.25"})
+            return httpx.Response(503, headers={"Retry-After": "3"})
         return _streaming_response(b"complete")
 
     monkeypatch.setattr(manifests.time, "sleep", delays.append)
@@ -143,7 +224,70 @@ def test_transient_status_retries_and_honors_retry_after(
 
     assert snapshot.byte_count == len(b"complete")
     assert request_count == 2
-    assert delays == [0.25]
+    assert delays == [3.0]
+
+
+def test_digest_retry_honors_http_date_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+    retry_at = format_datetime(now + timedelta(seconds=7), usegmt=True)
+    request_count = 0
+    delays: list[float] = []
+
+    class FixedDatetime:
+        @staticmethod
+        def now(requested_timezone: timezone) -> datetime:
+            assert requested_timezone is timezone.utc
+            return now
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return httpx.Response(503, headers={"Retry-After": retry_at})
+        return _streaming_response(b"complete")
+
+    monkeypatch.setattr(manifests, "datetime", FixedDatetime)
+    monkeypatch.setattr(manifests.time, "sleep", delays.append)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        digest = download_manifest_digest(
+            client,
+            "https://example/manifest.gz",
+            attempts=2,
+        )
+
+    assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
+    assert request_count == 2
+    assert delays == [7.0]
+
+
+@pytest.mark.parametrize("retry_after", ["not-a-date", "inf"])
+def test_digest_retry_invalid_retry_after_uses_exponential_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    retry_after: str,
+) -> None:
+    request_count = 0
+    delays: list[float] = []
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return httpx.Response(503, headers={"Retry-After": retry_after})
+        return _streaming_response(b"complete")
+
+    monkeypatch.setattr(manifests.time, "sleep", delays.append)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        digest = download_manifest_digest(
+            client,
+            "https://example/manifest.gz",
+            attempts=2,
+        )
+
+    assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
+    assert request_count == 2
+    assert delays == [1.0]
 
 
 def test_transport_error_retries_with_exponential_delay(
@@ -167,6 +311,56 @@ def test_transport_error_retries_with_exponential_delay(
 
     assert request_count == 2
     assert delays == [1.0]
+
+
+def test_digest_transport_error_retries_with_exponential_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_count = 0
+    delays: list[float] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            raise httpx.ConnectTimeout("simulated timeout", request=request)
+        return _streaming_response(b"complete")
+
+    monkeypatch.setattr(manifests.time, "sleep", delays.append)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        digest = download_manifest_digest(
+            client,
+            "https://example/manifest.gz",
+            attempts=2,
+        )
+
+    assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
+    assert request_count == 2
+    assert delays == [1.0]
+
+
+def test_digest_503_retry_exhaustion_reports_attempts_and_delays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_count = 0
+    delays: list[float] = []
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(503)
+
+    monkeypatch.setattr(manifests.time, "sleep", delays.append)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ManifestDownloadError, match="failed after 3 attempts"):
+            download_manifest_digest(
+                client,
+                "https://example/manifest.gz",
+                attempts=3,
+            )
+
+    assert request_count == 3
+    assert delays == [1.0, 2.0]
 
 
 def test_permanent_http_error_is_not_retried(tmp_path: Path) -> None:
@@ -207,6 +401,32 @@ class _InterruptedStream(httpx.SyncByteStream):
     def __iter__(self):
         yield b"partial"
         raise httpx.ReadError("simulated interrupted body")
+
+
+def test_digest_interrupted_body_retries_with_exponential_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_count = 0
+    delays: list[float] = []
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return httpx.Response(200, stream=_InterruptedStream())
+        return _streaming_response(b"complete")
+
+    monkeypatch.setattr(manifests.time, "sleep", delays.append)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        digest = download_manifest_digest(
+            client,
+            "https://example/manifest.gz",
+            attempts=2,
+        )
+
+    assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
+    assert request_count == 2
+    assert delays == [1.0]
 
 
 def test_interrupted_body_removes_partial_file(tmp_path: Path) -> None:

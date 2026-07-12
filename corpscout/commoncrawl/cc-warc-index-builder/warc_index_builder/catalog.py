@@ -5,6 +5,7 @@ import importlib.metadata
 import os
 import re
 import shutil
+import stat
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -41,6 +42,9 @@ _CANDIDATE_HTTP_STATUS = re.compile(
     r"(?:\bhttp\s+|statuscode:\s*)([1-5][0-9]{2})\b",
     re.IGNORECASE,
 )
+_PUBLICATION_TARGET_FILENAME = "publication.target"
+_PUBLICATION_TARGET_PARTIAL_FILENAME = "publication.target.partial"
+_PUBLISHED_BUILD_DIRECTORY = ".build.published"
 _TRANSIENT_CANDIDATE_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 _TRANSIENT_CANDIDATE_NETWORK_MARKERS = (
     "connection reset",
@@ -84,6 +88,12 @@ class WarcSizeCheckpointError(RuntimeError):
 
 class FinalCatalogBuildError(RuntimeError):
     pass
+
+
+class CatalogPublicationError(RuntimeError):
+    def __init__(self, message: str, *, published: bool) -> None:
+        self.published = published
+        super().__init__(message)
 
 
 class CatalogValidationError(RuntimeError):
@@ -221,6 +231,10 @@ class FinalMetadataResult:
 class CatalogValidationResult:
     catalog_id: str
     warc_inventory_sha256: str
+    selection_policy_version: str
+    selection_policy_sha256: str
+    warc_manifest_sha256: str
+    index_manifest_sha256: str
     crawl_id: str
     selection_name: str
     pages_per_domain: int
@@ -234,6 +248,30 @@ class CatalogValidationResult:
 class FinalCatalogResult:
     path: Path
     validation: CatalogValidationResult
+    file_identity: tuple[int, int, int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogInspectionResult:
+    path: Path
+    catalog_id: str
+    warc_count: int
+    selected_page_count: int
+    distinct_domain_count: int
+    reusable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogPublicationResult:
+    path: Path
+    validation: CatalogValidationResult
+
+
+@dataclass(frozen=True, slots=True)
+class _PublicationTarget:
+    catalog_id: str
+    device: int
+    inode: int
 
 
 GLOBAL_PAGE_COLUMNS = (
@@ -2173,6 +2211,10 @@ def _validate_catalog(
     return CatalogValidationResult(
         catalog_id=str(stored_catalog_id),
         warc_inventory_sha256=computed_inventory_hash,
+        selection_policy_version=str(selection_policy_version),
+        selection_policy_sha256=str(selection_policy_sha256),
+        warc_manifest_sha256=str(warc_manifest_sha256),
+        index_manifest_sha256=str(index_manifest_sha256),
         crawl_id=str(crawl_id),
         selection_name=str(selection_name),
         pages_per_domain=int(pages_per_domain),
@@ -2180,6 +2222,153 @@ def _validate_catalog(
         selected_page_count=page_count,
         distinct_domain_count=domain_count,
         source_index_shard_count=int(source_shard_count),
+    )
+
+
+def inspect_published_catalog(
+    path: Path,
+    *,
+    crawl_id: str,
+    pages_per_domain: int,
+    selection_policy_version: str,
+    selection_policy_sha256: str,
+) -> CatalogInspectionResult | None:
+    """Inspect only schema and metadata to decide network-free catalog reuse."""
+    if _CRAWL_ID.fullmatch(crawl_id) is None:
+        raise ValueError("crawl_id must match CC-MAIN-YYYY-NN")
+    if not 1 <= pages_per_domain <= 0xFFFF:
+        raise ValueError("pages_per_domain must be between 1 and uint16 max")
+    if not selection_policy_version.strip():
+        raise ValueError("selection_policy_version must not be blank")
+    decode_sha256(selection_policy_sha256, "selection_policy_sha256")
+    published_identity = _lstat_identity(path)
+    if published_identity is None:
+        return None
+    if not stat.S_ISREG(published_identity[2]):
+        raise FinalCatalogBuildError(
+            f"published catalog is not a regular file: {path}"
+        )
+    wal_path = Path(f"{path}.wal")
+    if wal_path.exists() or wal_path.is_symlink():
+        raise FinalCatalogBuildError(
+            f"published catalog WAL prevents reuse: {wal_path}"
+        )
+
+    try:
+        connection = duckdb.connect(str(path), read_only=True)
+    except duckdb.Error as error:
+        raise FinalCatalogBuildError(
+            f"open published catalog read-only: {error}"
+        ) from error
+    try:
+        _require_final_catalog_shapes(connection)
+        rows = connection.execute(
+            """
+            SELECT singleton, schema_version, catalog_id, crawl_id,
+                   selection_name, pages_per_domain,
+                   selection_policy_version, selection_policy_sha256,
+                   source_schema_sha256, warc_manifest_sha256,
+                   index_manifest_sha256, warc_inventory_sha256,
+                   warc_count, selected_page_count, distinct_domain_count,
+                   source_index_shard_count, duckdb_version, builder_version,
+                   created_at IS NOT NULL
+            FROM catalog_metadata
+            """
+        ).fetchall()
+    except (CatalogValidationError, duckdb.Error) as error:
+        raise FinalCatalogBuildError(
+            f"inspect published catalog metadata: {error}"
+        ) from error
+    finally:
+        connection.close()
+    if _lstat_identity(path) != published_identity:
+        raise FinalCatalogBuildError(
+            "published catalog changed during metadata inspection"
+        )
+    if wal_path.exists() or wal_path.is_symlink():
+        raise FinalCatalogBuildError(
+            f"published catalog WAL appeared during metadata inspection: {wal_path}"
+        )
+    if len(rows) != 1:
+        raise FinalCatalogBuildError(
+            "published catalog must contain exactly one metadata row"
+        )
+    (
+        singleton,
+        schema_version,
+        stored_catalog_id,
+        stored_crawl_id,
+        selection_name,
+        stored_pages_per_domain,
+        stored_policy_version,
+        stored_policy_hash,
+        source_schema_hash,
+        warc_manifest_hash,
+        index_manifest_hash,
+        inventory_hash,
+        warc_count,
+        selected_page_count,
+        distinct_domain_count,
+        source_shard_count,
+        duckdb_version,
+        builder_version,
+        has_created_at,
+    ) = rows[0]
+    if singleton is not True or int(schema_version) != CATALOG_SCHEMA_VERSION:
+        raise FinalCatalogBuildError(
+            "published catalog metadata has an invalid singleton or schema version"
+        )
+    if selection_name != f"pages{int(stored_pages_per_domain)}":
+        raise FinalCatalogBuildError(
+            "published catalog selection name conflicts with pages_per_domain"
+        )
+    if (
+        int(source_shard_count) <= 0
+        or int(warc_count) <= 0
+        or int(distinct_domain_count) > int(selected_page_count)
+        or ((int(selected_page_count) == 0) != (int(distinct_domain_count) == 0))
+        or not str(duckdb_version).strip()
+        or not str(builder_version).strip()
+        or has_created_at is not True
+    ):
+        raise FinalCatalogBuildError(
+            "published catalog metadata contains invalid build information"
+        )
+    try:
+        computed_catalog_id = catalog_id(
+            schema_version=int(schema_version),
+            crawl_id=str(stored_crawl_id),
+            pages_per_domain=int(stored_pages_per_domain),
+            selection_policy_version=str(stored_policy_version),
+            selection_policy_sha256=str(stored_policy_hash),
+            source_schema_sha256=str(source_schema_hash),
+            warc_manifest_sha256=str(warc_manifest_hash),
+            index_manifest_sha256=str(index_manifest_hash),
+            warc_inventory_sha256=str(inventory_hash),
+        )
+    except ValueError as error:
+        raise FinalCatalogBuildError(
+            f"published catalog metadata identity is invalid: {error}"
+        ) from error
+    if stored_catalog_id != computed_catalog_id:
+        raise FinalCatalogBuildError(
+            "published catalog ID differs from its metadata identity"
+        )
+
+    reusable = (
+        stored_crawl_id == crawl_id
+        and int(stored_pages_per_domain) == pages_per_domain
+        and selection_name == f"pages{pages_per_domain}"
+        and stored_policy_version == selection_policy_version
+        and stored_policy_hash == selection_policy_sha256
+    )
+    return CatalogInspectionResult(
+        path=path,
+        catalog_id=str(stored_catalog_id),
+        warc_count=int(warc_count),
+        selected_page_count=int(selected_page_count),
+        distinct_domain_count=int(distinct_domain_count),
+        reusable=reusable,
     )
 
 
@@ -2293,7 +2482,701 @@ def build_final_catalog_partial(
         raise FinalCatalogBuildError(
             "partial catalog metadata result differs after checkpoint and reopen"
         )
-    return FinalCatalogResult(path=path, validation=after_reopen)
+    file_identity = _lstat_identity(path)
+    if file_identity is None or not stat.S_ISREG(file_identity[2]):
+        raise FinalCatalogBuildError(
+            "partial catalog disappeared after read-only validation"
+        )
+    return FinalCatalogResult(
+        path=path,
+        validation=after_reopen,
+        file_identity=file_identity,
+    )
+
+
+def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _lstat_identity(path: Path) -> tuple[int, int, int, int, int, int] | None:
+    try:
+        value = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    return _stat_identity(value)
+
+
+def _lstat_identity_at(
+    directory_descriptor: int,
+    name: str,
+) -> tuple[int, int, int, int, int, int] | None:
+    try:
+        value = os.stat(
+            name,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return None
+    return _stat_identity(value)
+
+
+def _write_publication_target(
+    build_descriptor: int,
+    target: _PublicationTarget,
+) -> None:
+    decode_sha256(target.catalog_id, "catalog_id")
+    if target.device < 0 or target.inode <= 0:
+        raise ValueError("publication target device and inode must be valid")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(
+        _PUBLICATION_TARGET_PARTIAL_FILENAME,
+        flags,
+        0o644,
+        dir_fd=build_descriptor,
+    )
+    try:
+        remaining = memoryview(
+            (
+                "version=1\n"
+                f"catalog_id={target.catalog_id}\n"
+                f"device={target.device}\n"
+                f"inode={target.inode}\n"
+            ).encode("ascii")
+        )
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("write publication target returned no progress")
+            remaining = remaining[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(
+        _PUBLICATION_TARGET_PARTIAL_FILENAME,
+        _PUBLICATION_TARGET_FILENAME,
+        src_dir_fd=build_descriptor,
+        dst_dir_fd=build_descriptor,
+    )
+
+
+def _read_publication_target(build_descriptor: int) -> _PublicationTarget | None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(
+            _PUBLICATION_TARGET_FILENAME,
+            flags,
+            dir_fd=build_descriptor,
+        )
+    except FileNotFoundError:
+        return None
+    try:
+        data = os.read(descriptor, 1024)
+        if os.read(descriptor, 1):
+            raise FinalCatalogBuildError("publication target marker is too large")
+    finally:
+        os.close(descriptor)
+    try:
+        lines = data.decode("ascii").splitlines()
+        if len(lines) != 4 or lines[0] != "version=1":
+            raise ValueError("unexpected publication target fields")
+        fields = dict(line.split("=", 1) for line in lines[1:])
+        if set(fields) != {"catalog_id", "device", "inode"}:
+            raise ValueError("unexpected publication target fields")
+        catalog_id_value = fields["catalog_id"]
+        decode_sha256(catalog_id_value, "catalog_id")
+        if not fields["device"].isdecimal() or not fields["inode"].isdecimal():
+            raise ValueError("publication target identity is not numeric")
+        target = _PublicationTarget(
+            catalog_id=catalog_id_value,
+            device=int(fields["device"]),
+            inode=int(fields["inode"]),
+        )
+        if target.inode <= 0:
+            raise ValueError("publication target inode must be positive")
+    except (UnicodeDecodeError, ValueError) as error:
+        raise FinalCatalogBuildError(
+            "publication target marker is invalid"
+        ) from error
+    return target
+
+
+def _remove_open_directory_tree(
+    parent_descriptor: int,
+    directory_descriptor: int,
+    name: str,
+    expected_identity: tuple[int, int, int, int, int, int],
+) -> None:
+    """Remove a verified staging tree relative to its opened parent directory."""
+    opened_stat = os.fstat(directory_descriptor)
+    opened_identity = _stat_identity(opened_stat)
+    if (
+        opened_identity[:2] != expected_identity[:2]
+        or not stat.S_ISDIR(opened_stat.st_mode)
+    ):
+        raise FinalCatalogBuildError(
+            f"opened staging directory identity changed before cleanup: {name}"
+        )
+    current_identity = _lstat_identity_at(parent_descriptor, name)
+    if (
+        current_identity is None
+        or current_identity[:2] != opened_identity[:2]
+        or not stat.S_ISDIR(current_identity[2])
+    ):
+        raise FinalCatalogBuildError(
+            f"staging directory path changed before cleanup: {name}"
+        )
+
+    directory_flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        directory_flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+
+    with os.scandir(directory_descriptor) as entries:
+        entry_names = sorted(entry.name for entry in entries)
+    for entry_name in entry_names:
+        entry_identity = _lstat_identity_at(directory_descriptor, entry_name)
+        if entry_identity is None:
+            continue
+        if not stat.S_ISDIR(entry_identity[2]):
+            os.unlink(entry_name, dir_fd=directory_descriptor)
+            continue
+
+        child_descriptor = os.open(
+            entry_name,
+            directory_flags,
+            dir_fd=directory_descriptor,
+        )
+        child_error: BaseException | None = None
+        try:
+            child_identity = _stat_identity(os.fstat(child_descriptor))
+            if child_identity[:2] != entry_identity[:2]:
+                raise FinalCatalogBuildError(
+                    "staging subdirectory changed while opening it for cleanup: "
+                    f"{entry_name}"
+                )
+            _remove_open_directory_tree(
+                directory_descriptor,
+                child_descriptor,
+                entry_name,
+                child_identity,
+            )
+        except BaseException as error:
+            child_error = error
+            raise
+        finally:
+            try:
+                os.close(child_descriptor)
+            except Exception as close_error:
+                if child_error is None:
+                    raise
+                add_note = getattr(child_error, "add_note", None)
+                if add_note is not None:
+                    add_note(
+                        "also failed to close staging subdirectory descriptor: "
+                        f"{close_error}"
+                    )
+
+    current_identity = _lstat_identity_at(parent_descriptor, name)
+    if (
+        current_identity is None
+        or current_identity[:2] != opened_identity[:2]
+        or not stat.S_ISDIR(current_identity[2])
+    ):
+        raise FinalCatalogBuildError(
+            f"staging directory path changed before cleanup: {name}"
+        )
+    os.rmdir(name, dir_fd=parent_descriptor)
+
+
+def publish_catalog(
+    final_catalog: FinalCatalogResult,
+    catalog_directory: Path,
+    build_directory: Path,
+    *,
+    replace_existing: bool,
+) -> CatalogPublicationResult:
+    """Atomically publish one closed partial and durably remove its staging tree."""
+    published = False
+    stage = "validate publication paths"
+    active_error: BaseException | None = None
+    partial_descriptor: int | None = None
+    build_descriptor: int | None = None
+    catalog_descriptor: int | None = None
+    try:
+        if catalog_directory.is_symlink() or not catalog_directory.is_dir():
+            raise FinalCatalogBuildError(
+                f"catalog directory must be a regular directory: {catalog_directory}"
+            )
+        expected_build_directory = catalog_directory / ".build"
+        if build_directory.resolve() != expected_build_directory.resolve():
+            raise FinalCatalogBuildError(
+                f"publication build directory must be {expected_build_directory}"
+            )
+        if build_directory.is_symlink() or not build_directory.is_dir():
+            raise FinalCatalogBuildError(
+                f"build directory must be a regular directory: {build_directory}"
+            )
+        expected_partial = partial_catalog_path(build_directory)
+        if final_catalog.path.resolve() != expected_partial.resolve():
+            raise FinalCatalogBuildError(
+                "final catalog result does not identify the exact partial path"
+            )
+        final_path = catalog_directory / "catalog.duckdb"
+        require_path_within(catalog_directory, final_path)
+
+        directory_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            directory_flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            directory_flags |= os.O_NOFOLLOW
+        catalog_descriptor = os.open(catalog_directory, directory_flags)
+        build_descriptor = os.open(build_directory, directory_flags)
+        catalog_directory_identity = _stat_identity(os.fstat(catalog_descriptor))
+        build_directory_identity = _stat_identity(os.fstat(build_descriptor))
+        if _lstat_identity(catalog_directory) != catalog_directory_identity:
+            raise FinalCatalogBuildError(
+                "catalog directory changed while opening it for publication"
+            )
+        if _lstat_identity(build_directory) != build_directory_identity:
+            raise FinalCatalogBuildError(
+                "build directory changed while opening it for publication"
+            )
+        if catalog_directory_identity[0] != build_directory_identity[0]:
+            raise FinalCatalogBuildError(
+                "partial and published catalogs must be on the same filesystem"
+            )
+
+        existing_identity = _lstat_identity_at(
+            catalog_descriptor,
+            "catalog.duckdb",
+        )
+        if existing_identity is not None:
+            if not replace_existing:
+                raise FinalCatalogBuildError(
+                    f"published catalog already exists: {final_path}"
+                )
+            if not stat.S_ISREG(existing_identity[2]):
+                raise FinalCatalogBuildError(
+                    f"existing published catalog is not a regular file: {final_path}"
+                )
+        if _lstat_identity_at(catalog_descriptor, "catalog.duckdb.wal") is not None:
+            raise FinalCatalogBuildError(
+                "published catalog WAL prevents atomic replacement"
+            )
+        if _lstat_identity_at(catalog_descriptor, _PUBLISHED_BUILD_DIRECTORY) is not None:
+            raise FinalCatalogBuildError(
+                "published staging cleanup remains; run recovery before publication"
+            )
+        if _lstat_identity_at(build_descriptor, "catalog.duckdb.partial.wal") is not None:
+            raise FinalCatalogBuildError(
+                "partial catalog WAL prevents publication"
+            )
+
+        partial_flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            partial_flags |= os.O_NOFOLLOW
+        partial_descriptor = os.open(
+            "catalog.duckdb.partial",
+            partial_flags,
+            dir_fd=build_descriptor,
+        )
+        partial_stat = os.fstat(partial_descriptor)
+        partial_identity = _stat_identity(partial_stat)
+        if not stat.S_ISREG(partial_stat.st_mode) or partial_stat.st_size <= 0:
+            raise FinalCatalogBuildError(
+                f"partial catalog must be a nonempty regular file: {expected_partial}"
+            )
+        if partial_identity != final_catalog.file_identity:
+            raise FinalCatalogBuildError(
+                "partial catalog identity changed after final validation"
+            )
+        if partial_stat.st_dev != catalog_directory_identity[0]:
+            raise FinalCatalogBuildError(
+                "partial and published catalogs must be on the same filesystem"
+            )
+
+        stage = "write publication target marker"
+        _write_publication_target(
+            build_descriptor,
+            _PublicationTarget(
+                catalog_id=final_catalog.validation.catalog_id,
+                device=partial_stat.st_dev,
+                inode=partial_stat.st_ino,
+            ),
+        )
+        stage = "fsync publication target directory"
+        os.fsync(build_descriptor)
+        stage = "fsync partial catalog"
+        os.fsync(partial_descriptor)
+        stage = "verify publication paths"
+        current_catalog_directory = _lstat_identity(catalog_directory)
+        if (
+            current_catalog_directory is None
+            or current_catalog_directory[:2] != catalog_directory_identity[:2]
+        ):
+            raise FinalCatalogBuildError(
+                "catalog directory changed before atomic replacement"
+            )
+        current_build_directory = _lstat_identity(build_directory)
+        if (
+            current_build_directory is None
+            or current_build_directory[:2] != build_directory_identity[:2]
+        ):
+            raise FinalCatalogBuildError(
+                "build directory changed before atomic replacement"
+            )
+        if (
+            _lstat_identity_at(build_descriptor, "catalog.duckdb.partial")
+            != partial_identity
+        ):
+            raise FinalCatalogBuildError(
+                "partial catalog path changed before atomic replacement"
+            )
+        if _lstat_identity_at(build_descriptor, "catalog.duckdb.partial.wal") is not None:
+            raise FinalCatalogBuildError(
+                "partial catalog WAL appeared before atomic replacement"
+            )
+        if (
+            _lstat_identity_at(catalog_descriptor, "catalog.duckdb")
+            != existing_identity
+        ):
+            raise FinalCatalogBuildError(
+                "published catalog path changed before atomic replacement"
+            )
+        if _lstat_identity_at(catalog_descriptor, "catalog.duckdb.wal") is not None:
+            raise FinalCatalogBuildError(
+                "published catalog WAL appeared before atomic replacement"
+            )
+        stage = "atomically replace published catalog"
+        os.replace(
+            "catalog.duckdb.partial",
+            "catalog.duckdb",
+            src_dir_fd=build_descriptor,
+            dst_dir_fd=catalog_descriptor,
+        )
+        published = True
+        final_identity = _lstat_identity_at(
+            catalog_descriptor,
+            "catalog.duckdb",
+        )
+        if final_identity is None or final_identity[:2] != (
+            partial_stat.st_dev,
+            partial_stat.st_ino,
+        ):
+            raise FinalCatalogBuildError(
+                "published catalog inode differs after atomic replacement"
+            )
+
+        stage = "fsync source build directory after replacement"
+        os.fsync(build_descriptor)
+        stage = "fsync catalog directory after replacement"
+        os.fsync(catalog_descriptor)
+        stage = "verify published catalog after replacement"
+        current_catalog_directory = _lstat_identity(catalog_directory)
+        if (
+            current_catalog_directory is None
+            or current_catalog_directory[:2] != catalog_directory_identity[:2]
+        ):
+            raise FinalCatalogBuildError(
+                "catalog directory changed after atomic replacement"
+            )
+        if _lstat_identity(final_path) != final_identity:
+            raise FinalCatalogBuildError(
+                "published catalog path changed after atomic replacement"
+            )
+        if _lstat_identity_at(catalog_descriptor, "catalog.duckdb.wal") is not None:
+            raise FinalCatalogBuildError(
+                "published catalog WAL appeared after atomic replacement"
+            )
+        stage = "atomically detach published catalog staging"
+        current_build_identity = _lstat_identity_at(catalog_descriptor, ".build")
+        if (
+            current_build_identity is None
+            or current_build_identity[:2] != build_directory_identity[:2]
+        ):
+            raise FinalCatalogBuildError(
+                "build directory changed before published staging detach"
+            )
+        if _lstat_identity_at(
+            catalog_descriptor,
+            _PUBLISHED_BUILD_DIRECTORY,
+        ) is not None:
+            raise FinalCatalogBuildError(
+                "published staging cleanup path appeared before atomic detach"
+            )
+        os.rename(
+            ".build",
+            _PUBLISHED_BUILD_DIRECTORY,
+            src_dir_fd=catalog_descriptor,
+            dst_dir_fd=catalog_descriptor,
+        )
+        published_build_identity = _lstat_identity_at(
+            catalog_descriptor,
+            _PUBLISHED_BUILD_DIRECTORY,
+        )
+        if (
+            published_build_identity is None
+            or published_build_identity[:2] != build_directory_identity[:2]
+        ):
+            raise FinalCatalogBuildError(
+                "published staging identity changed after atomic detach"
+            )
+        stage = "fsync catalog directory after staging detach"
+        os.fsync(catalog_descriptor)
+        stage = "remove published catalog staging"
+        _remove_open_directory_tree(
+            catalog_descriptor,
+            build_descriptor,
+            _PUBLISHED_BUILD_DIRECTORY,
+            build_directory_identity,
+        )
+        stage = "fsync catalog directory after staging cleanup"
+        os.fsync(catalog_descriptor)
+        return CatalogPublicationResult(
+            path=final_path,
+            validation=final_catalog.validation,
+        )
+    except CatalogPublicationError as error:
+        active_error = error
+        raise
+    except Exception as error:
+        boundary = (
+            "catalog was atomically replaced but publication finalization failed"
+            if published
+            else "catalog publication failed before atomic replacement"
+        )
+        publication_error = CatalogPublicationError(
+            f"{boundary} during {stage}: {error}",
+            published=published,
+        )
+        active_error = publication_error
+        raise publication_error from error
+    finally:
+        close_errors: list[Exception] = []
+        for descriptor in (
+            partial_descriptor,
+            build_descriptor,
+            catalog_descriptor,
+        ):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except Exception as error:
+                    close_errors.append(error)
+        if close_errors:
+            details = "; ".join(str(error) for error in close_errors)
+            if active_error is None:
+                raise CatalogPublicationError(
+                    f"publication descriptor cleanup failed: {details}",
+                    published=published,
+                ) from close_errors[0]
+            add_note = getattr(active_error, "add_note", None)
+            if add_note is not None:
+                add_note(f"also failed to close publication descriptors: {details}")
+
+
+def recover_published_catalog_cleanup(
+    catalog_directory: Path,
+    build_directory: Path,
+    catalog_id_value: str,
+) -> bool:
+    """Finish durability and staging cleanup after a committed publication fault."""
+    decode_sha256(catalog_id_value, "catalog_id")
+    if catalog_directory.is_symlink() or not catalog_directory.is_dir():
+        raise CatalogPublicationError(
+            "published catalog recovery found an invalid catalog directory",
+            published=True,
+        )
+    expected_build_directory = catalog_directory / ".build"
+    if build_directory.resolve() != expected_build_directory.resolve():
+        raise CatalogPublicationError(
+            f"published catalog recovery staging must be {expected_build_directory}",
+            published=True,
+        )
+
+    directory_flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        directory_flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+    catalog_descriptor: int | None = None
+    build_descriptor: int | None = None
+    published_build_descriptor: int | None = None
+    catalog_file_descriptor: int | None = None
+    active_error: BaseException | None = None
+    try:
+        catalog_descriptor = os.open(catalog_directory, directory_flags)
+        catalog_directory_identity = _stat_identity(os.fstat(catalog_descriptor))
+        if _lstat_identity(catalog_directory) != catalog_directory_identity:
+            raise FinalCatalogBuildError(
+                "catalog directory changed while opening it for recovery"
+            )
+        file_flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            file_flags |= os.O_NOFOLLOW
+        catalog_file_descriptor = os.open(
+            "catalog.duckdb",
+            file_flags,
+            dir_fd=catalog_descriptor,
+        )
+        catalog_stat = os.fstat(catalog_file_descriptor)
+        catalog_file_identity = _stat_identity(catalog_stat)
+        if not stat.S_ISREG(catalog_stat.st_mode) or catalog_stat.st_size <= 0:
+            raise FinalCatalogBuildError(
+                "published catalog recovery found an invalid catalog file"
+            )
+        if (
+            _lstat_identity_at(catalog_descriptor, "catalog.duckdb")
+            != catalog_file_identity
+        ):
+            raise FinalCatalogBuildError(
+                "published catalog changed while opening it for recovery"
+            )
+        if _lstat_identity_at(catalog_descriptor, "catalog.duckdb.wal") is not None:
+            raise FinalCatalogBuildError(
+                "published catalog WAL prevents recovery"
+            )
+        os.fsync(catalog_file_descriptor)
+
+        build_identity = _lstat_identity_at(catalog_descriptor, ".build")
+        published_build_identity = _lstat_identity_at(
+            catalog_descriptor,
+            _PUBLISHED_BUILD_DIRECTORY,
+        )
+        if published_build_identity is not None:
+            if not stat.S_ISDIR(published_build_identity[2]):
+                raise FinalCatalogBuildError(
+                    "published staging cleanup path is not a directory"
+                )
+            published_build_descriptor = os.open(
+                _PUBLISHED_BUILD_DIRECTORY,
+                directory_flags,
+                dir_fd=catalog_descriptor,
+            )
+            opened_published_identity = _stat_identity(
+                os.fstat(published_build_descriptor)
+            )
+            if opened_published_identity[:2] != published_build_identity[:2]:
+                raise FinalCatalogBuildError(
+                    "published staging cleanup directory changed while opening it"
+                )
+            os.fsync(catalog_descriptor)
+            _remove_open_directory_tree(
+                catalog_descriptor,
+                published_build_descriptor,
+                _PUBLISHED_BUILD_DIRECTORY,
+                opened_published_identity,
+            )
+            os.fsync(catalog_descriptor)
+            if build_identity is not None:
+                return False
+            return True
+
+        if build_identity is None:
+            os.fsync(catalog_descriptor)
+            return True
+        if not stat.S_ISDIR(build_identity[2]):
+            raise FinalCatalogBuildError(
+                "published catalog recovery found an invalid staging path"
+            )
+
+        build_descriptor = os.open(
+            ".build",
+            directory_flags,
+            dir_fd=catalog_descriptor,
+        )
+        build_directory_identity = _stat_identity(os.fstat(build_descriptor))
+        if build_directory_identity[:2] != build_identity[:2]:
+            raise FinalCatalogBuildError(
+                "build directory changed while opening it for recovery"
+            )
+        marker = _read_publication_target(build_descriptor)
+        if marker is None or marker.catalog_id != catalog_id_value:
+            return False
+        if (catalog_stat.st_dev, catalog_stat.st_ino) != (
+            marker.device,
+            marker.inode,
+        ):
+            return False
+
+        os.fsync(build_descriptor)
+        os.fsync(catalog_descriptor)
+        if _lstat_identity_at(
+            catalog_descriptor,
+            _PUBLISHED_BUILD_DIRECTORY,
+        ) is not None:
+            raise FinalCatalogBuildError(
+                "published staging cleanup path appeared during recovery"
+            )
+        os.rename(
+            ".build",
+            _PUBLISHED_BUILD_DIRECTORY,
+            src_dir_fd=catalog_descriptor,
+            dst_dir_fd=catalog_descriptor,
+        )
+        detached_identity = _lstat_identity_at(
+            catalog_descriptor,
+            _PUBLISHED_BUILD_DIRECTORY,
+        )
+        if (
+            detached_identity is None
+            or detached_identity[:2] != build_directory_identity[:2]
+        ):
+            raise FinalCatalogBuildError(
+                "published staging identity changed during recovery detach"
+            )
+        os.fsync(catalog_descriptor)
+        _remove_open_directory_tree(
+            catalog_descriptor,
+            build_descriptor,
+            _PUBLISHED_BUILD_DIRECTORY,
+            build_directory_identity,
+        )
+        os.fsync(catalog_descriptor)
+        return True
+    except Exception as error:
+        publication_error = CatalogPublicationError(
+            f"recover published catalog cleanup: {error}",
+            published=True,
+        )
+        active_error = publication_error
+        raise publication_error from error
+    finally:
+        close_errors: list[Exception] = []
+        for descriptor in (
+            catalog_file_descriptor,
+            build_descriptor,
+            published_build_descriptor,
+            catalog_descriptor,
+        ):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except Exception as error:
+                    close_errors.append(error)
+        if close_errors:
+            details = "; ".join(str(error) for error in close_errors)
+            if active_error is None:
+                raise CatalogPublicationError(
+                    f"published catalog recovery descriptor cleanup failed: {details}",
+                    published=True,
+                ) from close_errors[0]
+            add_note = getattr(active_error, "add_note", None)
+            if add_note is not None:
+                add_note(f"also failed to close recovery descriptors: {details}")
 
 
 def local_candidate_query(
@@ -2828,9 +3711,23 @@ def catalog_build_lock(catalog_directory: Path) -> Iterator[None]:
 def prepare_build_directory(base: Path, catalog_directory: Path, *, rebuild: bool) -> Path:
     require_path_within(base, catalog_directory)
     build_directory = catalog_directory / ".build"
+    published_build_directory = catalog_directory / _PUBLISHED_BUILD_DIRECTORY
     if build_directory.is_symlink():
         raise ValueError(f"build directory must not be a symlink: {build_directory}")
     require_path_within(base, build_directory)
+    require_path_within(base, published_build_directory)
+    if rebuild and (
+        published_build_directory.exists() or published_build_directory.is_symlink()
+    ):
+        if (
+            published_build_directory.is_symlink()
+            or not published_build_directory.is_dir()
+        ):
+            raise ValueError(
+                "published staging cleanup path is not a directory: "
+                f"{published_build_directory}"
+            )
+        shutil.rmtree(published_build_directory)
     if rebuild and build_directory.exists():
         if not build_directory.is_dir():
             raise ValueError(f"build path is not a directory: {build_directory}")

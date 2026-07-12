@@ -14,23 +14,34 @@ import duckdb
 import httpx
 
 from .catalog import (
+    CatalogPublicationResult,
     CandidateShardResult,
+    FinalCatalogBuildError,
+    FinalCatalogResult,
     WarcSizeBatchResult,
     build_candidate_shard,
     catalog_build_lock,
     checkpoint_warc_size_batch,
+    inspect_published_catalog,
     prepare_build_directory,
     prepare_warc_size_resume,
+    recover_published_catalog_cleanup,
     require_path_within,
+    publish_catalog,
     verify_or_finalize_warc_inventory,
 )
 from .events import binary_size, emit_event
-from .manifests import IndexSource, SourceSchema
+from .manifests import (
+    IndexSource,
+    SourceSchema,
+    recheck_crawl_manifests,
+)
 from .object_sizes import (
     WarcSizeFailure,
     WarcSizeOutcome,
     iter_warc_size_outcomes,
 )
+from .selection import SELECTION_POLICY_VERSION, selection_policy_sha256
 
 
 _CRAWL_ID = re.compile(r"CC-MAIN-[0-9]{4}-[0-9]{2}")
@@ -384,12 +395,73 @@ def build_warc_sizes(
     )
 
 
+def recheck_and_publish_catalog(
+    client: httpx.Client,
+    final_catalog: FinalCatalogResult,
+    catalog_directory: Path,
+    build_directory: Path,
+    *,
+    http_attempts: int,
+    replace_existing: bool,
+    timeout_seconds: float = 60.0,
+) -> CatalogPublicationResult:
+    """Recheck both remote manifests immediately before local publication."""
+    validation = final_catalog.validation
+    recheck_crawl_manifests(
+        client,
+        validation.crawl_id,
+        expected_warc_sha256=validation.warc_manifest_sha256,
+        expected_index_sha256=validation.index_manifest_sha256,
+        attempts=http_attempts,
+        timeout_seconds=timeout_seconds,
+    )
+    return publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=replace_existing,
+    )
+
+
 def run(options: CommandOptions) -> int:
     if options.check:
         return 0
     catalog_directory = options.catalog_directory
     require_path_within(options.base, catalog_directory)
     with catalog_build_lock(catalog_directory):
+        if not options.rebuild:
+            existing = inspect_published_catalog(
+                options.catalog_path,
+                crawl_id=options.crawl,
+                pages_per_domain=options.pages_per_domain,
+                selection_policy_version=SELECTION_POLICY_VERSION,
+                selection_policy_sha256=selection_policy_sha256(),
+            )
+            if existing is not None:
+                if not existing.reusable:
+                    raise FinalCatalogBuildError(
+                        "published catalog conflicts with current crawl or selection; "
+                        "use --rebuild"
+                    )
+                build_directory = catalog_directory / ".build"
+                if not recover_published_catalog_cleanup(
+                    catalog_directory,
+                    build_directory,
+                    existing.catalog_id,
+                ):
+                    existing = None
+            if existing is not None:
+                emit_event(
+                    "catalog ready",
+                    crawl=options.crawl,
+                    selection=options.selection_name,
+                    catalog_id=existing.catalog_id,
+                    warc_count=existing.warc_count,
+                    selected_page_count=existing.selected_page_count,
+                    distinct_domain_count=existing.distinct_domain_count,
+                    reused=True,
+                )
+                return 0
         prepare_build_directory(options.base, catalog_directory, rebuild=options.rebuild)
     return 0
 

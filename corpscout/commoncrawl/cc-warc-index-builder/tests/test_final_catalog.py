@@ -1,16 +1,20 @@
+import hashlib
 import importlib.metadata
 from dataclasses import replace
 from pathlib import Path
 
 import duckdb
+import httpx
 import pytest
 
+import warc_index_builder.__main__ as command
 import warc_index_builder.catalog as catalog
 from warc_index_builder.catalog import (
     CATALOG_SCHEMA_VERSION,
     BuildIdentity,
     BuildStateConflict,
     BuildStateCorrupt,
+    CatalogPublicationError,
     CatalogValidationError,
     FinalCatalogBuildError,
     SourceShardSeed,
@@ -22,12 +26,22 @@ from warc_index_builder.catalog import (
     materialize_final_metadata,
     materialize_final_pages,
     partial_catalog_path,
+    inspect_published_catalog,
+    publish_catalog,
     validate_catalog,
     warc_inventory_sha256,
 )
-from warc_index_builder.manifests import WarcObject
+from warc_index_builder.manifests import (
+    ManifestChangedError,
+    ManifestDownloadError,
+    WarcObject,
+)
 from warc_index_builder.object_sizes import ProbeMetrics, WarcSizeSuccess
-from warc_index_builder.selection import CANDIDATE_COLUMNS, SELECTION_POLICY_VERSION
+from warc_index_builder.selection import (
+    CANDIDATE_COLUMNS,
+    SELECTION_POLICY_VERSION,
+    selection_policy_sha256,
+)
 
 
 _WARCS = (
@@ -53,10 +67,11 @@ def _initialize_state(
     connection: duckdb.DuckDBPyConnection,
     *,
     sized: bool = True,
+    identity: BuildIdentity | None = None,
 ) -> None:
     initialize_build_state(
         connection,
-        _identity(),
+        identity or _identity(),
         _WARCS,
         (SourceShardSeed(0, "https://example/index.parquet", "44" * 32),),
     )
@@ -287,8 +302,10 @@ def _prepare_final_build_inputs(
     state_connection: duckdb.DuckDBPyConnection,
     validation_connection: duckdb.DuckDBPyConnection,
     build_directory: Path,
+    *,
+    identity: BuildIdentity | None = None,
 ) -> None:
-    _initialize_state(state_connection)
+    _initialize_state(state_connection, identity=identity)
     _write_ready_candidates(
         state_connection,
         validation_connection,
@@ -303,6 +320,34 @@ def _prepare_final_build_inputs(
             )
         ],
     )
+
+
+def _completed_final_build(
+    catalog_directory: Path,
+    *,
+    identity: BuildIdentity | None = None,
+):
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    catalog_directory.mkdir(parents=True, exist_ok=True)
+    build_directory = catalog_directory / ".build"
+    build_directory.mkdir()
+    try:
+        _prepare_final_build_inputs(
+            state_connection,
+            validation_connection,
+            build_directory,
+            identity=identity,
+        )
+        result = build_final_catalog_partial(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+        return result, build_directory
+    finally:
+        state_connection.close()
+        validation_connection.close()
 
 
 class _CatalogConnectionProxy:
@@ -2224,3 +2269,1226 @@ def test_final_build_rejects_changed_validation_after_reopen(
     finally:
         state_connection.close()
         validation_connection.close()
+
+
+def _install_old_published_catalog(catalog_directory: Path) -> tuple[int, bytes]:
+    old_result, _old_build = _completed_final_build(
+        catalog_directory.parent / "old-catalog"
+    )
+    published = catalog_directory / "catalog.duckdb"
+    old_result.path.replace(published)
+    connection = duckdb.connect(str(published))
+    try:
+        connection.execute(
+            "UPDATE catalog_metadata SET builder_version = 'old-version'"
+        )
+        connection.execute("FORCE CHECKPOINT")
+    finally:
+        connection.close()
+    return published.stat().st_ino, published.read_bytes()
+
+
+def _publication_fsync_label(
+    descriptor: int,
+    final_catalog,
+    build_directory: Path,
+    catalog_directory: Path,
+) -> str:
+    value = catalog.os.fstat(descriptor)
+    identity = (value.st_dev, value.st_ino)
+    if identity == final_catalog.file_identity[:2]:
+        return "partial_file"
+    if identity == (
+        catalog_directory.stat().st_dev,
+        catalog_directory.stat().st_ino,
+    ):
+        return "catalog_directory"
+    if identity == (build_directory.stat().st_dev, build_directory.stat().st_ino):
+        return "build_directory"
+    return "target_marker"
+
+
+def test_publish_catalog_atomically_replaces_old_inode_and_cleans_staging(
+    tmp_path: Path,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, _old_bytes = _install_old_published_catalog(catalog_directory)
+    old_reader = duckdb.connect(
+        str(catalog_directory / "catalog.duckdb"), read_only=True
+    )
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    try:
+        result = publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+
+        assert result.path == catalog_directory / "catalog.duckdb"
+        assert result.path.stat().st_ino != old_inode
+        assert build_directory.exists() is False
+        assert old_reader.execute(
+            "SELECT builder_version FROM catalog_metadata"
+        ).fetchone() == ("old-version",)
+        old_reader.close()
+        new_reader = duckdb.connect(str(result.path), read_only=True)
+        try:
+            assert validate_catalog(new_reader) == result.validation
+            assert new_reader.execute(
+                "SELECT builder_version FROM catalog_metadata"
+            ).fetchone() == (importlib.metadata.version("cc-warc-index-builder"),)
+        finally:
+            new_reader.close()
+    finally:
+        old_reader.close()
+
+
+def test_publish_catalog_without_existing_final(tmp_path: Path) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+
+    result = publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=False,
+    )
+
+    assert result.path.is_file()
+    assert build_directory.exists() is False
+
+
+def test_publish_catalog_fsyncs_file_source_and_destination_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    original_fsync = catalog.os.fsync
+    fsync_labels: list[str] = []
+
+    def record_fsync(descriptor: int) -> None:
+        fsync_labels.append(
+            _publication_fsync_label(
+                descriptor,
+                final_catalog,
+                build_directory,
+                catalog_directory,
+            )
+        )
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(catalog.os, "fsync", record_fsync)
+
+    publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=False,
+    )
+
+    assert fsync_labels == [
+        "target_marker",
+        "build_directory",
+        "partial_file",
+        "build_directory",
+        "catalog_directory",
+        "catalog_directory",
+        "catalog_directory",
+    ]
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "marker_open",
+        "marker_write",
+        "marker_fsync",
+        "marker_replace",
+        "marker_directory_fsync",
+    ],
+)
+def test_publish_catalog_marker_failures_preserve_old_catalog_and_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+
+    if boundary == "marker_open":
+        original_open = catalog.os.open
+
+        def fail_marker_open(
+            path: object,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            if (
+                path == catalog._PUBLICATION_TARGET_PARTIAL_FILENAME
+                and flags & catalog.os.O_WRONLY
+            ):
+                raise OSError("simulated marker open failure")
+            return original_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(catalog.os, "open", fail_marker_open)
+    elif boundary == "marker_write":
+        monkeypatch.setattr(
+            catalog.os,
+            "write",
+            lambda _descriptor, _data: (_ for _ in ()).throw(
+                OSError("simulated marker write failure")
+            ),
+        )
+    elif boundary == "marker_replace":
+        original_replace = catalog.os.replace
+
+        def fail_marker_replace(
+            source: object,
+            destination: object,
+            **kwargs: object,
+        ) -> None:
+            if (
+                source == catalog._PUBLICATION_TARGET_PARTIAL_FILENAME
+                and destination == catalog._PUBLICATION_TARGET_FILENAME
+            ):
+                raise OSError("simulated marker replace failure")
+            original_replace(source, destination, **kwargs)
+
+        monkeypatch.setattr(catalog.os, "replace", fail_marker_replace)
+    else:
+        original_fsync = catalog.os.fsync
+
+        def fail_marker_boundary(descriptor: int) -> None:
+            label = _publication_fsync_label(
+                descriptor,
+                final_catalog,
+                build_directory,
+                catalog_directory,
+            )
+            if boundary == "marker_fsync" and label == "target_marker":
+                raise OSError("simulated marker fsync failure")
+            if boundary == "marker_directory_fsync" and label == "build_directory":
+                raise OSError("simulated marker directory fsync failure")
+            original_fsync(descriptor)
+
+        monkeypatch.setattr(catalog.os, "fsync", fail_marker_boundary)
+
+    with pytest.raises(CatalogPublicationError) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+
+    published = catalog_directory / "catalog.duckdb"
+    assert error.value.published is False
+    assert published.stat().st_ino == old_inode
+    assert published.read_bytes() == old_bytes
+    assert build_directory.is_dir()
+    assert final_catalog.path.is_file()
+
+
+@pytest.mark.parametrize("boundary", ["partial_fsync", "replace"])
+def test_publish_catalog_precommit_failures_preserve_old_inode_and_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    if boundary == "partial_fsync":
+        original_fsync = catalog.os.fsync
+
+        def fail_partial_fsync(descriptor: int) -> None:
+            if _publication_fsync_label(
+                descriptor,
+                final_catalog,
+                build_directory,
+                catalog_directory,
+            ) == "partial_file":
+                raise OSError("simulated partial fsync failure")
+            original_fsync(descriptor)
+
+        monkeypatch.setattr(catalog.os, "fsync", fail_partial_fsync)
+    else:
+        original_replace = catalog.os.replace
+
+        def fail_catalog_replace(
+            source: object,
+            destination: object,
+            **kwargs: object,
+        ) -> None:
+            if source == "catalog.duckdb.partial" and destination == "catalog.duckdb":
+                raise OSError("simulated catalog replace failure")
+            original_replace(source, destination, **kwargs)
+
+        monkeypatch.setattr(
+            catalog.os,
+            "replace",
+            fail_catalog_replace,
+        )
+
+    with pytest.raises(CatalogPublicationError) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+
+    published = catalog_directory / "catalog.duckdb"
+    assert error.value.published is False
+    assert published.stat().st_ino == old_inode
+    assert published.read_bytes() == old_bytes
+    assert build_directory.is_dir()
+    assert final_catalog.path.is_file()
+
+
+def test_recovery_rejects_same_catalog_id_marker_when_replace_never_committed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    original_replace = catalog.os.replace
+
+    def fail_catalog_replace(
+        source: object,
+        destination: object,
+        **kwargs: object,
+    ) -> None:
+        if source == "catalog.duckdb.partial" and destination == "catalog.duckdb":
+            raise OSError("simulated replace failure after marker write")
+        original_replace(source, destination, **kwargs)
+
+    monkeypatch.setattr(
+        catalog.os,
+        "replace",
+        fail_catalog_replace,
+    )
+
+    with pytest.raises(CatalogPublicationError) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+    assert error.value.published is False
+
+    monkeypatch.setattr(catalog.os, "replace", original_replace)
+    recovered = catalog.recover_published_catalog_cleanup(
+        catalog_directory,
+        build_directory,
+        final_catalog.validation.catalog_id,
+    )
+
+    published = catalog_directory / "catalog.duckdb"
+    assert recovered is False
+    assert published.stat().st_ino == old_inode
+    assert published.read_bytes() == old_bytes
+    assert final_catalog.path.is_file()
+    assert (build_directory / catalog._PUBLICATION_TARGET_FILENAME).is_file()
+
+
+def test_publish_catalog_rejects_partial_path_swap_before_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    original_fsync = catalog.os.fsync
+    swapped = False
+
+    def swap_after_partial_fsync(descriptor: int) -> None:
+        nonlocal swapped
+        label = _publication_fsync_label(
+            descriptor,
+            final_catalog,
+            build_directory,
+            catalog_directory,
+        )
+        original_fsync(descriptor)
+        if label == "partial_file" and not swapped:
+            replacement = build_directory / "replacement.duckdb"
+            replacement.write_bytes(b"unvalidated replacement")
+            replacement.replace(final_catalog.path)
+            swapped = True
+
+    monkeypatch.setattr(catalog.os, "fsync", swap_after_partial_fsync)
+
+    with pytest.raises(CatalogPublicationError, match="partial catalog path changed") as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+
+    published = catalog_directory / "catalog.duckdb"
+    assert error.value.published is False
+    assert published.stat().st_ino == old_inode
+    assert published.read_bytes() == old_bytes
+
+
+def test_publish_catalog_rejects_existing_destination_symlink(
+    tmp_path: Path,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    outside = tmp_path / "outside.duckdb"
+    outside.write_bytes(b"outside")
+    published = catalog_directory / "catalog.duckdb"
+    published.symlink_to(outside)
+
+    with pytest.raises(CatalogPublicationError) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+
+    assert error.value.published is False
+    assert published.is_symlink()
+    assert outside.read_bytes() == b"outside"
+    assert final_catalog.path.is_file()
+
+
+def test_publish_catalog_rejects_partial_wal_symlink(
+    tmp_path: Path,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    outside = tmp_path / "outside.wal"
+    outside.write_bytes(b"outside")
+    wal = Path(f"{final_catalog.path}.wal")
+    wal.symlink_to(outside)
+
+    with pytest.raises(CatalogPublicationError, match="WAL prevents publication") as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=False,
+        )
+
+    assert error.value.published is False
+    assert wal.is_symlink()
+    assert outside.read_bytes() == b"outside"
+    assert final_catalog.path.is_file()
+
+
+@pytest.mark.parametrize("sidecar_kind", ["file", "symlink"])
+def test_publish_catalog_rejects_destination_wal_sidecar(
+    tmp_path: Path,
+    sidecar_kind: str,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    wal = catalog_directory / "catalog.duckdb.wal"
+    if sidecar_kind == "file":
+        wal.write_bytes(b"unexpected wal")
+    else:
+        outside = tmp_path / "outside.wal"
+        outside.write_bytes(b"outside")
+        wal.symlink_to(outside)
+
+    with pytest.raises(
+        CatalogPublicationError,
+        match="published catalog WAL prevents atomic replacement",
+    ) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=False,
+        )
+
+    assert error.value.published is False
+    assert wal.exists() or wal.is_symlink()
+    assert final_catalog.path.is_file()
+
+
+def test_publish_catalog_rejects_destination_swap_before_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    _old_inode, _old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    published = catalog_directory / "catalog.duckdb"
+    outside = tmp_path / "outside.duckdb"
+    outside.write_bytes(b"outside")
+    original_fsync = catalog.os.fsync
+    swapped = False
+
+    def swap_destination_after_partial_fsync(descriptor: int) -> None:
+        nonlocal swapped
+        label = _publication_fsync_label(
+            descriptor,
+            final_catalog,
+            build_directory,
+            catalog_directory,
+        )
+        original_fsync(descriptor)
+        if label == "partial_file" and not swapped:
+            published.unlink()
+            published.symlink_to(outside)
+            swapped = True
+
+    monkeypatch.setattr(catalog.os, "fsync", swap_destination_after_partial_fsync)
+
+    with pytest.raises(CatalogPublicationError, match="published catalog path changed") as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+
+    assert error.value.published is False
+    assert published.is_symlink()
+    assert outside.read_bytes() == b"outside"
+    assert final_catalog.path.is_file()
+
+
+def test_publish_catalog_rejects_build_directory_swap_before_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    saved_build_directory = catalog_directory / ".build.saved"
+    original_fsync = catalog.os.fsync
+    swapped = False
+
+    def swap_build_after_partial_fsync(descriptor: int) -> None:
+        nonlocal swapped
+        label = _publication_fsync_label(
+            descriptor,
+            final_catalog,
+            build_directory,
+            catalog_directory,
+        )
+        original_fsync(descriptor)
+        if label == "partial_file" and not swapped:
+            build_directory.rename(saved_build_directory)
+            build_directory.mkdir()
+            (build_directory / "replacement-sentinel").write_text("replacement")
+            swapped = True
+
+    monkeypatch.setattr(catalog.os, "fsync", swap_build_after_partial_fsync)
+
+    with pytest.raises(CatalogPublicationError, match="build directory changed") as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+
+    published = catalog_directory / "catalog.duckdb"
+    assert error.value.published is False
+    assert published.stat().st_ino == old_inode
+    assert published.read_bytes() == old_bytes
+    assert (saved_build_directory / "catalog.duckdb.partial").is_file()
+    assert (build_directory / "replacement-sentinel").read_text() == "replacement"
+
+
+@pytest.mark.parametrize(
+    (
+        "boundary,fail_label,fail_occurrence,"
+        "active_staging_remains,tombstone_remains"
+    ),
+    [
+        ("source_directory_fsync", "build_directory", 2, True, False),
+        ("catalog_directory_fsync", "catalog_directory", 1, True, False),
+        ("detach_directory_fsync", "catalog_directory", 2, False, True),
+        ("staging_cleanup", None, None, False, True),
+        ("cleanup_directory_fsync", "catalog_directory", 3, False, False),
+    ],
+)
+def test_publish_catalog_postcommit_failures_report_visible_new_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+    fail_label: str | None,
+    fail_occurrence: int | None,
+    active_staging_remains: bool,
+    tombstone_remains: bool,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, _old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    if fail_label is not None:
+        original_fsync = catalog.os.fsync
+        label_counts: dict[str, int] = {}
+
+        def fail_selected_fsync(descriptor: int) -> None:
+            label = _publication_fsync_label(
+                descriptor,
+                final_catalog,
+                build_directory,
+                catalog_directory,
+            )
+            label_counts[label] = label_counts.get(label, 0) + 1
+            if label == fail_label and label_counts[label] == fail_occurrence:
+                raise OSError(f"simulated {boundary} failure")
+            original_fsync(descriptor)
+
+        monkeypatch.setattr(catalog.os, "fsync", fail_selected_fsync)
+    else:
+        monkeypatch.setattr(
+            catalog,
+            "_remove_open_directory_tree",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("simulated staging cleanup failure")
+            ),
+        )
+
+    with pytest.raises(CatalogPublicationError) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=True,
+        )
+
+    published = catalog_directory / "catalog.duckdb"
+    assert error.value.published is True
+    assert "atomically replaced" in str(error.value)
+    assert published.stat().st_ino != old_inode
+    assert build_directory.exists() is active_staging_remains
+    assert (
+        catalog_directory / catalog._PUBLISHED_BUILD_DIRECTORY
+    ).exists() is tombstone_remains
+    connection = duckdb.connect(str(published), read_only=True)
+    try:
+        assert validate_catalog(connection) == final_catalog.validation
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "boundary,fail_label,fail_occurrence",
+    [
+        ("source_directory_fsync", "build_directory", 2),
+        ("catalog_directory_fsync", "catalog_directory", 1),
+        ("staging_cleanup", None, None),
+    ],
+)
+def test_run_recovers_committed_publication_and_removes_stale_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+    fail_label: str | None,
+    fail_occurrence: int | None,
+) -> None:
+    catalog_directory = (
+        tmp_path / "CC-MAIN-2026-25" / "catalog" / "pages25"
+    )
+    identity = replace(
+        _identity(),
+        selection_policy_sha256=selection_policy_sha256(),
+    )
+    final_catalog, build_directory = _completed_final_build(
+        catalog_directory,
+        identity=identity,
+    )
+    original_fsync = catalog.os.fsync
+    original_remove_tree = catalog._remove_open_directory_tree
+    label_counts: dict[str, int] = {}
+
+    def fail_selected_fsync(descriptor: int) -> None:
+        label = _publication_fsync_label(
+            descriptor,
+            final_catalog,
+            build_directory,
+            catalog_directory,
+        )
+        label_counts[label] = label_counts.get(label, 0) + 1
+        if label == fail_label and label_counts[label] == fail_occurrence:
+            raise OSError(f"simulated {boundary} failure")
+        original_fsync(descriptor)
+
+    if fail_label is not None:
+        monkeypatch.setattr(catalog.os, "fsync", fail_selected_fsync)
+    else:
+        monkeypatch.setattr(
+            catalog,
+            "_remove_open_directory_tree",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("simulated staging cleanup failure")
+            ),
+        )
+    with pytest.raises(CatalogPublicationError) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=False,
+        )
+    assert error.value.published is True
+    tombstone = catalog_directory / catalog._PUBLISHED_BUILD_DIRECTORY
+    if boundary == "staging_cleanup":
+        assert build_directory.exists() is False
+        assert tombstone.is_dir()
+    else:
+        assert build_directory.is_dir()
+        assert tombstone.exists() is False
+
+    monkeypatch.setattr(catalog.os, "fsync", original_fsync)
+    monkeypatch.setattr(catalog, "_remove_open_directory_tree", original_remove_tree)
+    options = command.parse_options(
+        ["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"]
+    )
+    assert command.run(options) == 0
+    assert build_directory.exists() is False
+    assert tombstone.exists() is False
+
+
+def test_run_recovers_partially_cleaned_published_staging_tombstone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_directory = (
+        tmp_path / "CC-MAIN-2026-25" / "catalog" / "pages25"
+    )
+    identity = replace(
+        _identity(),
+        selection_policy_sha256=selection_policy_sha256(),
+    )
+    final_catalog, build_directory = _completed_final_build(
+        catalog_directory,
+        identity=identity,
+    )
+    (build_directory / "removed-before-crash").write_text("remove first")
+    (build_directory / "remaining-after-crash").write_text("recover later")
+    original_remove_tree = catalog._remove_open_directory_tree
+
+    def remove_one_entry_then_fail(
+        _parent_descriptor: int,
+        directory_descriptor: int,
+        name: str,
+        _expected_identity: tuple[int, int, int, int, int, int],
+    ) -> None:
+        assert name == catalog._PUBLISHED_BUILD_DIRECTORY
+        catalog.os.unlink("removed-before-crash", dir_fd=directory_descriptor)
+        raise OSError("simulated failure during tombstone cleanup")
+
+    monkeypatch.setattr(
+        catalog,
+        "_remove_open_directory_tree",
+        remove_one_entry_then_fail,
+    )
+    with pytest.raises(CatalogPublicationError) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=False,
+        )
+    assert error.value.published is True
+
+    tombstone = catalog_directory / catalog._PUBLISHED_BUILD_DIRECTORY
+    assert build_directory.exists() is False
+    assert (tombstone / "removed-before-crash").exists() is False
+    assert (tombstone / "remaining-after-crash").is_file()
+
+    monkeypatch.setattr(catalog, "_remove_open_directory_tree", original_remove_tree)
+    options = command.parse_options(
+        ["--base", str(tmp_path), "--crawl", "CC-MAIN-2026-25"]
+    )
+    assert command.run(options) == 0
+    assert build_directory.exists() is False
+    assert tombstone.exists() is False
+
+
+def test_rebuild_removes_published_staging_tombstone_and_preserves_catalog(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "data"
+    catalog_directory = base / "CC-MAIN-2026-25" / "catalog" / "pages25"
+    catalog_directory.mkdir(parents=True)
+    published = catalog_directory / "catalog.duckdb"
+    published.write_bytes(b"published catalog")
+    tombstone = catalog_directory / catalog._PUBLISHED_BUILD_DIRECTORY
+    (tombstone / "nested").mkdir(parents=True)
+    (tombstone / "nested" / "stale").write_text("stale")
+
+    build_directory = catalog.prepare_build_directory(
+        base,
+        catalog_directory,
+        rebuild=True,
+    )
+
+    assert build_directory == catalog_directory / ".build"
+    assert build_directory.is_dir()
+    assert list(build_directory.iterdir()) == []
+    assert tombstone.exists() is False
+    assert published.read_bytes() == b"published catalog"
+
+
+@pytest.mark.parametrize("marker_state", ["absent", "mismatch", "invalid"])
+def test_recovery_without_matching_valid_marker_never_deletes_staging(
+    tmp_path: Path,
+    marker_state: str,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    published = publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=False,
+    )
+    build_directory.mkdir()
+    sentinel = build_directory / "must-remain"
+    sentinel.write_text("staging")
+
+    if marker_state == "mismatch":
+        descriptor = catalog.os.open(build_directory, catalog.os.O_RDONLY)
+        try:
+            catalog._write_publication_target(
+                descriptor,
+                catalog._PublicationTarget(
+                    catalog_id="00" * 32,
+                    device=published.path.stat().st_dev,
+                    inode=published.path.stat().st_ino,
+                ),
+            )
+        finally:
+            catalog.os.close(descriptor)
+    elif marker_state == "invalid":
+        (build_directory / catalog._PUBLICATION_TARGET_FILENAME).write_text(
+            "invalid marker"
+        )
+
+    if marker_state == "invalid":
+        with pytest.raises(CatalogPublicationError, match="marker is invalid"):
+            catalog.recover_published_catalog_cleanup(
+                catalog_directory,
+                build_directory,
+                published.validation.catalog_id,
+            )
+    else:
+        assert (
+            catalog.recover_published_catalog_cleanup(
+                catalog_directory,
+                build_directory,
+                published.validation.catalog_id,
+            )
+            is False
+        )
+
+    assert sentinel.read_text() == "staging"
+    assert build_directory.is_dir()
+    assert published.path.is_file()
+
+
+@pytest.mark.parametrize(
+    (
+        "boundary,initial_state,fail_label,fail_occurrence,"
+        "active_staging_remains,tombstone_remains"
+    ),
+    [
+        ("catalog_file_fsync", "tombstone", "partial_file", 1, False, True),
+        ("build_directory_fsync", "active", "build_directory", 1, True, False),
+        (
+            "catalog_directory_fsync",
+            "tombstone",
+            "catalog_directory",
+            1,
+            False,
+            True,
+        ),
+        ("staging_cleanup", "tombstone", None, None, False, True),
+        (
+            "cleanup_directory_fsync",
+            "tombstone",
+            "catalog_directory",
+            2,
+            False,
+            False,
+        ),
+    ],
+)
+def test_recovery_faults_report_published_catalog_and_preserve_safe_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+    initial_state: str,
+    fail_label: str | None,
+    fail_occurrence: int | None,
+    active_staging_remains: bool,
+    tombstone_remains: bool,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    tombstone = catalog_directory / catalog._PUBLISHED_BUILD_DIRECTORY
+    original_fsync = catalog.os.fsync
+    original_remove_tree = catalog._remove_open_directory_tree
+    if initial_state == "active":
+        initial_build_fsyncs = 0
+
+        def fail_source_directory_fsync(descriptor: int) -> None:
+            nonlocal initial_build_fsyncs
+            label = _publication_fsync_label(
+                descriptor,
+                final_catalog,
+                build_directory,
+                catalog_directory,
+            )
+            if label == "build_directory":
+                initial_build_fsyncs += 1
+                if initial_build_fsyncs == 2:
+                    raise OSError("leave active staging for recovery")
+            original_fsync(descriptor)
+
+        monkeypatch.setattr(catalog.os, "fsync", fail_source_directory_fsync)
+    else:
+        monkeypatch.setattr(
+            catalog,
+            "_remove_open_directory_tree",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("leave detached staging for recovery")
+            ),
+        )
+    with pytest.raises(CatalogPublicationError) as publication_error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=False,
+        )
+    assert publication_error.value.published is True
+    monkeypatch.setattr(catalog.os, "fsync", original_fsync)
+    monkeypatch.setattr(catalog, "_remove_open_directory_tree", original_remove_tree)
+
+    label_counts: dict[str, int] = {}
+
+    def fail_selected_fsync(descriptor: int) -> None:
+        label = _publication_fsync_label(
+            descriptor,
+            final_catalog,
+            build_directory,
+            catalog_directory,
+        )
+        label_counts[label] = label_counts.get(label, 0) + 1
+        if label == fail_label and label_counts[label] == fail_occurrence:
+            raise OSError(f"simulated recovery {boundary} failure")
+        original_fsync(descriptor)
+
+    if fail_label is not None:
+        monkeypatch.setattr(catalog.os, "fsync", fail_selected_fsync)
+    else:
+        monkeypatch.setattr(
+            catalog,
+            "_remove_open_directory_tree",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("simulated recovery staging cleanup failure")
+            ),
+        )
+
+    with pytest.raises(CatalogPublicationError) as recovery_error:
+        catalog.recover_published_catalog_cleanup(
+            catalog_directory,
+            build_directory,
+            final_catalog.validation.catalog_id,
+        )
+
+    assert recovery_error.value.published is True
+    assert build_directory.exists() is active_staging_remains
+    assert tombstone.exists() is tombstone_remains
+    connection = duckdb.connect(
+        str(catalog_directory / "catalog.duckdb"),
+        read_only=True,
+    )
+    try:
+        assert validate_catalog(connection) == final_catalog.validation
+    finally:
+        connection.close()
+
+
+def test_publication_recursively_removes_nested_staging_without_following_symlinks(
+    tmp_path: Path,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    nested = build_directory / "duckdb-temp" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "spill.bin").write_bytes(b"spill")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_sentinel = outside / "must-remain"
+    outside_sentinel.write_text("outside")
+    (nested / "outside-link").symlink_to(outside, target_is_directory=True)
+
+    result = publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=False,
+    )
+
+    assert result.path.is_file()
+    assert build_directory.exists() is False
+    assert outside_sentinel.read_text() == "outside"
+
+
+def test_publish_catalog_replaces_invalid_existing_final_only_when_explicit(
+    tmp_path: Path,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    published = catalog_directory / "catalog.duckdb"
+    published.write_bytes(b"invalid existing catalog")
+    old_inode = published.stat().st_ino
+
+    with pytest.raises(CatalogPublicationError) as error:
+        publish_catalog(
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            replace_existing=False,
+        )
+
+    assert error.value.published is False
+    assert published.stat().st_ino == old_inode
+    assert published.read_bytes() == b"invalid existing catalog"
+    assert final_catalog.path.is_file()
+
+    result = publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=True,
+    )
+    assert result.path.stat().st_ino != old_inode
+    assert build_directory.exists() is False
+
+
+def test_inspect_published_catalog_is_quick_and_detects_reuse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    published = publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=False,
+    ).path
+
+    def forbid_full_warc_validation(_connection: duckdb.DuckDBPyConnection):
+        raise AssertionError("quick reuse must not scan the WARC inventory")
+
+    monkeypatch.setattr(
+        catalog,
+        "_validated_catalog_warcs",
+        forbid_full_warc_validation,
+    )
+    matching = inspect_published_catalog(
+        published,
+        crawl_id="CC-MAIN-2026-25",
+        pages_per_domain=25,
+        selection_policy_version=_identity().selection_policy_version,
+        selection_policy_sha256=_identity().selection_policy_sha256,
+    )
+    mismatching = inspect_published_catalog(
+        published,
+        crawl_id="CC-MAIN-2016-22",
+        pages_per_domain=25,
+        selection_policy_version=_identity().selection_policy_version,
+        selection_policy_sha256=_identity().selection_policy_sha256,
+    )
+
+    assert matching is not None and matching.reusable is True
+    assert mismatching is not None and mismatching.reusable is False
+
+
+@pytest.mark.parametrize("sidecar_kind", ["file", "symlink"])
+def test_inspect_published_catalog_rejects_wal_sidecar(
+    tmp_path: Path,
+    sidecar_kind: str,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    published = publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=False,
+    ).path
+    wal = Path(f"{published}.wal")
+    if sidecar_kind == "file":
+        wal.write_bytes(b"unexpected wal")
+    else:
+        outside = tmp_path / "outside.wal"
+        outside.write_bytes(b"outside")
+        wal.symlink_to(outside)
+
+    with pytest.raises(FinalCatalogBuildError, match="WAL prevents reuse"):
+        inspect_published_catalog(
+            published,
+            crawl_id="CC-MAIN-2026-25",
+            pages_per_domain=25,
+            selection_policy_version=_identity().selection_policy_version,
+            selection_policy_sha256=_identity().selection_policy_sha256,
+        )
+
+    assert published.is_file()
+    assert wal.exists() or wal.is_symlink()
+
+
+def test_inspect_published_catalog_rejects_impossible_metadata_counts(
+    tmp_path: Path,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+    published = publish_catalog(
+        final_catalog,
+        catalog_directory,
+        build_directory,
+        replace_existing=False,
+    ).path
+    connection = duckdb.connect(str(published))
+    try:
+        connection.execute("UPDATE catalog_metadata SET warc_count = 0")
+        connection.execute("FORCE CHECKPOINT")
+    finally:
+        connection.close()
+
+    with pytest.raises(FinalCatalogBuildError, match="invalid build information"):
+        inspect_published_catalog(
+            published,
+            crawl_id="CC-MAIN-2026-25",
+            pages_per_domain=25,
+            selection_policy_version=_identity().selection_policy_version,
+            selection_policy_sha256=_identity().selection_policy_sha256,
+        )
+
+
+def test_recheck_and_publish_catalog_uses_fresh_matching_manifests(
+    tmp_path: Path,
+) -> None:
+    warc_payload = b"fresh warc manifest"
+    index_payload = b"fresh index manifest"
+    identity = replace(
+        _identity(),
+        warc_manifest_sha256=hashlib.sha256(warc_payload).hexdigest(),
+        index_manifest_sha256=hashlib.sha256(index_payload).hexdigest(),
+    )
+    catalog_directory = tmp_path / "catalog"
+    final_catalog, build_directory = _completed_final_build(
+        catalog_directory,
+        identity=identity,
+    )
+    requests: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        payload = (
+            index_payload
+            if request.url.path.endswith("cc-index-table.paths.gz")
+            else warc_payload
+        )
+        return httpx.Response(200, stream=httpx.ByteStream(payload))
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = command.recheck_and_publish_catalog(
+            client,
+            final_catalog,
+            catalog_directory,
+            build_directory,
+            http_attempts=1,
+            replace_existing=False,
+        )
+
+    assert result.path.is_file()
+    assert build_directory.exists() is False
+    assert len(requests) == 2
+
+
+def test_recheck_and_publish_catalog_blocks_changed_manifest_before_replace(
+    tmp_path: Path,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(request.url.path.encode()),
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ManifestChangedError):
+            command.recheck_and_publish_catalog(
+                client,
+                final_catalog,
+                catalog_directory,
+                build_directory,
+                http_attempts=1,
+                replace_existing=True,
+            )
+
+    published = catalog_directory / "catalog.duckdb"
+    assert published.stat().st_ino == old_inode
+    assert published.read_bytes() == old_bytes
+    assert final_catalog.path.is_file()
+
+
+@pytest.mark.parametrize("failed_manifest", ["warc", "index"])
+def test_recheck_and_publish_catalog_network_failure_preserves_old_catalog(
+    tmp_path: Path,
+    failed_manifest: str,
+) -> None:
+    catalog_directory = tmp_path / "catalog"
+    catalog_directory.mkdir()
+    old_inode, old_bytes = _install_old_published_catalog(catalog_directory)
+    final_catalog, build_directory = _completed_final_build(catalog_directory)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        is_index = request.url.path.endswith("cc-index-table.paths.gz")
+        if (failed_manifest == "index") == is_index:
+            return httpx.Response(404)
+        return httpx.Response(200, stream=httpx.ByteStream(b"unchanged attempt"))
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ManifestDownloadError, match="HTTP 404"):
+            command.recheck_and_publish_catalog(
+                client,
+                final_catalog,
+                catalog_directory,
+                build_directory,
+                http_attempts=1,
+                replace_existing=True,
+            )
+
+    published = catalog_directory / "catalog.duckdb"
+    assert published.stat().st_ino == old_inode
+    assert published.read_bytes() == old_bytes
+    assert final_catalog.path.is_file()

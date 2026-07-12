@@ -6,12 +6,14 @@ import os
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import duckdb
 import httpx
 
-from ._identity import new_identity_digest, update_text
+from ._identity import decode_sha256, new_identity_digest, update_text
 
 
 COMMON_CRAWL_DATA_URL = "https://data.commoncrawl.org"
@@ -54,6 +56,16 @@ class ManifestDownloadError(RuntimeError):
     pass
 
 
+class ManifestChangedError(RuntimeError):
+    def __init__(self, mismatches: Sequence[tuple[str, str, str]]) -> None:
+        self.mismatches = tuple(mismatches)
+        details = ", ".join(
+            f"{name} expected={expected} actual={actual}"
+            for name, expected, actual in self.mismatches
+        )
+        super().__init__(f"crawl manifests changed during catalog build: {details}")
+
+
 class ManifestParseError(RuntimeError):
     pass
 
@@ -75,6 +87,19 @@ class ManifestSnapshot:
     sha256: str
     byte_count: int
     reused: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestDigest:
+    url: str
+    sha256: str
+    byte_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestRecheckResult:
+    warc: ManifestDigest
+    index: ManifestDigest
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,10 +322,19 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
     value = response.headers.get("Retry-After")
     if value is None:
         return None
+    value = value.strip()
+    if value.isdecimal():
+        try:
+            return float(int(value))
+        except (ValueError, OverflowError):
+            return None
     try:
-        return max(0.0, float(value))
-    except ValueError:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -314,29 +348,143 @@ def _fsync_directory(directory: Path) -> None:
 def _download_once(
     client: httpx.Client,
     url: str,
-    partial_path: Path,
+    partial_path: Path | None,
     timeout_seconds: float,
 ) -> tuple[str, int]:
-    with client.stream("GET", url, timeout=timeout_seconds, follow_redirects=True) as response:
+    with client.stream(
+        "GET",
+        url,
+        headers={"Accept-Encoding": "identity"},
+        timeout=timeout_seconds,
+        follow_redirects=True,
+    ) as response:
         if response.status_code in _TRANSIENT_STATUS_CODES:
             raise _TransientDownloadError(
                 f"HTTP {response.status_code}", retry_after=_retry_after_seconds(response)
             )
         if response.status_code != 200:
             raise ManifestDownloadError(f"download manifest {url}: HTTP {response.status_code}")
-
         digest = hashlib.sha256()
         byte_count = 0
-        with partial_path.open("wb") as manifest:
+        manifest = partial_path.open("wb") if partial_path is not None else None
+        try:
             for chunk in response.iter_raw():
                 if not chunk:
                     continue
-                manifest.write(chunk)
+                if manifest is not None:
+                    manifest.write(chunk)
                 digest.update(chunk)
                 byte_count += len(chunk)
-            manifest.flush()
-            os.fsync(manifest.fileno())
+            if manifest is not None:
+                manifest.flush()
+                os.fsync(manifest.fileno())
+        finally:
+            if manifest is not None:
+                manifest.close()
         return digest.hexdigest(), byte_count
+
+
+def _download_with_retries(
+    client: httpx.Client,
+    url: str,
+    partial_path: Path | None,
+    *,
+    attempts: int,
+    timeout_seconds: float,
+) -> tuple[str, int]:
+    for attempt in range(1, attempts + 1):
+        retry_after: float | None = None
+        try:
+            return _download_once(client, url, partial_path, timeout_seconds)
+        except _TransientDownloadError as error:
+            retry_after = error.retry_after
+            last_error: Exception = error
+        except httpx.TransportError as error:
+            last_error = error
+        except ManifestDownloadError:
+            if partial_path is not None:
+                partial_path.unlink(missing_ok=True)
+            raise
+        except OSError as error:
+            if partial_path is not None:
+                partial_path.unlink(missing_ok=True)
+            operation = (
+                f"download manifest {url}"
+                if partial_path is None
+                else f"write manifest snapshot {partial_path}"
+            )
+            raise ManifestDownloadError(
+                f"{operation}: {error}"
+            ) from error
+
+        if partial_path is not None:
+            partial_path.unlink(missing_ok=True)
+        if attempt == attempts:
+            raise ManifestDownloadError(
+                f"download manifest {url} failed after {attempts} attempts: {last_error}"
+            ) from last_error
+        time.sleep(retry_after if retry_after is not None else float(2 ** (attempt - 1)))
+
+    raise AssertionError("unreachable")
+
+
+def download_manifest_digest(
+    client: httpx.Client,
+    url: str,
+    *,
+    attempts: int,
+    timeout_seconds: float = 60.0,
+) -> ManifestDigest:
+    """Always download a manifest and return its exact compressed-byte digest."""
+    if attempts <= 0:
+        raise ValueError("attempts must be positive")
+    if timeout_seconds <= 0:
+        raise ValueError("timeout must be positive")
+    digest, byte_count = _download_with_retries(
+        client,
+        url,
+        None,
+        attempts=attempts,
+        timeout_seconds=timeout_seconds,
+    )
+    return ManifestDigest(url=url, sha256=digest, byte_count=byte_count)
+
+
+def recheck_crawl_manifests(
+    client: httpx.Client,
+    crawl: str,
+    *,
+    expected_warc_sha256: str,
+    expected_index_sha256: str,
+    attempts: int,
+    timeout_seconds: float = 60.0,
+) -> ManifestRecheckResult:
+    """Freshly download both crawl manifests and reject any build-time change."""
+    decode_sha256(expected_warc_sha256, "expected_warc_sha256")
+    decode_sha256(expected_index_sha256, "expected_index_sha256")
+    warc = download_manifest_digest(
+        client,
+        crawl_manifest_url(crawl, WARC_MANIFEST_FILENAME),
+        attempts=attempts,
+        timeout_seconds=timeout_seconds,
+    )
+    index = download_manifest_digest(
+        client,
+        crawl_manifest_url(crawl, INDEX_MANIFEST_FILENAME),
+        attempts=attempts,
+        timeout_seconds=timeout_seconds,
+    )
+    mismatches = [
+        (name, expected, digest.sha256)
+        for name, expected, digest in (
+            ("warc.paths.gz", expected_warc_sha256, warc),
+            ("cc-index-table.paths.gz", expected_index_sha256, index),
+        )
+        if digest.sha256 != expected
+    ]
+    if mismatches:
+        raise ManifestChangedError(mismatches)
+    return ManifestRecheckResult(warc=warc, index=index)
 
 
 def download_manifest_snapshot(
@@ -369,30 +517,19 @@ def download_manifest_snapshot(
         raise ManifestDownloadError(f"manifest partial path is a directory: {partial_path}")
     partial_path.unlink(missing_ok=True)
 
-    for attempt in range(1, attempts + 1):
-        retry_after: float | None = None
-        try:
-            digest, byte_count = _download_once(client, url, partial_path, timeout_seconds)
-            os.replace(partial_path, destination)
-            _fsync_directory(destination.parent)
-            return ManifestSnapshot(url, destination, digest, byte_count, reused=False)
-        except _TransientDownloadError as error:
-            retry_after = error.retry_after
-            last_error: Exception = error
-        except httpx.TransportError as error:
-            last_error = error
-        except ManifestDownloadError:
-            partial_path.unlink(missing_ok=True)
-            raise
-        except OSError as error:
-            partial_path.unlink(missing_ok=True)
-            raise ManifestDownloadError(f"write manifest snapshot {destination}: {error}") from error
-
+    digest, byte_count = _download_with_retries(
+        client,
+        url,
+        partial_path,
+        attempts=attempts,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        os.replace(partial_path, destination)
+        _fsync_directory(destination.parent)
+    except OSError as error:
         partial_path.unlink(missing_ok=True)
-        if attempt == attempts:
-            raise ManifestDownloadError(
-                f"download manifest {url} failed after {attempts} attempts: {last_error}"
-            ) from last_error
-        time.sleep(retry_after if retry_after is not None else float(2 ** (attempt - 1)))
-
-    raise AssertionError("unreachable")
+        raise ManifestDownloadError(
+            f"write manifest snapshot {destination}: {error}"
+        ) from error
+    return ManifestSnapshot(url, destination, digest, byte_count, reused=False)
