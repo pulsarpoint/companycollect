@@ -23,8 +23,8 @@ type analyzerWorklistRow struct {
 	WARCRecordLength int64  `parquet:"warc_record_length"`
 }
 
-func TestParseThresholds(t *testing.T) {
-	thresholds, err := parseThresholds("10, 25,75")
+func TestParsePercentages(t *testing.T) {
+	thresholds, err := parsePercentages("10, 25,75")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestParseThresholds(t *testing.T) {
 		t.Fatalf("unexpected thresholds %v", thresholds)
 	}
 	for _, value := range []string{"", "-1", "101", "ten", "NaN", "+Inf"} {
-		if _, err := parseThresholds(value); err == nil {
+		if _, err := parsePercentages(value); err == nil {
 			t.Fatalf("thresholds %q unexpectedly succeeded", value)
 		}
 	}

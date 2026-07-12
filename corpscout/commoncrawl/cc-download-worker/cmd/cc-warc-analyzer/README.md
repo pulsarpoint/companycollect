@@ -19,18 +19,9 @@ make download
 The analyzer compares:
 
 - `exact_records`: one range request per selected page, with no junk bytes.
-- `bounded_gap_*`: combine physically nearby selected records up to `--max-range-bytes`.
-- `junk_threshold_*`: combine records only while junk remains below each configured percentage.
-- `selected_warc_span_lower_bound`: one span between the first and last selected record in each WARC.
 - `hybrid_whole_warc_*pct`: download a complete WARC when selected compressed bytes meet the configured
   percentage; otherwise use exact selected-record requests.
 - `whole_warc_objects`: exact complete-object sizes obtained with HTTP metadata requests.
-
-Each range policy is evaluated at three scopes:
-
-- `output_chunk`: safe with the existing 256 MiB pack and resume contract.
-- `part`: maximum locality available inside each original Common Crawl index part.
-- `part_block`: theoretical locality across the entire requested `--parts` block.
 
 Whole-WARC size checks use `HEAD`, falling back to a one-byte range metadata request. Results are cached
 under `<base>/<crawl>/analysis/warc_sizes.json`; use `--whole-warc-sizes=false` to run only index-based
@@ -80,8 +71,6 @@ Useful controls:
 | `--mode` | `tech` | Marker namespace used to exclude completed parts (`tech` or `industry`). |
 | `--skip-loaded` | `true` | Exclude parts already carrying a local `.loaded` marker. |
 | `--pages-per-domain` | `25` | Page-selection policy shared with the downloader. |
-| `--max-range-bytes` | `16 MiB` | Maximum candidate coalesced range. |
-| `--junk-thresholds` | `10,25,50,75` | Maximum junk percentages compared by the planner. |
 | `--whole-warc-thresholds` | `25,50,75` | Selected compressed-byte coverage that triggers a complete WARC download. |
 | `--whole-warc-sizes` | `true` | Measure exact sizes of all referenced WARC objects. |
 | `--warc-head-concurrency` | `32` | Concurrent WARC size metadata requests. |
@@ -90,6 +79,6 @@ Useful controls:
 | `--plan-stats-limit` | `10` | Highest-utilization per-WARC rows written to the JSON log. |
 | `--check` | `false` | Read and report the existing SQLite plan without modifying it. |
 
-The reusable [`rangeplanner`](../../rangeplanner/) package contains the physical range planner and
-statistics. Once a policy is selected from real results, `cc-download-worker` can use the same package to
-execute it without duplicating the algorithm.
+The reusable [`rangeplanner`](../../rangeplanner/) package contains the exact-record and hybrid
+whole-WARC planning statistics. `cc-download-worker` can use the same package to execute the selected
+strategy without duplicating the algorithm.

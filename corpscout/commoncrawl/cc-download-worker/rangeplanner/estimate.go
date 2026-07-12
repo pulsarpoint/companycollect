@@ -3,7 +3,6 @@ package rangeplanner
 type Estimate struct {
 	Algorithm                 string
 	Scope                     string
-	Policy                    Policy
 	WARCObjects               int
 	SelectedRecords           int64
 	SelectedBytes             int64
@@ -34,30 +33,4 @@ func ExactEstimate(records []Record) Estimate {
 		SourceBytes:          selectedBytes,
 		MaxRecordsPerRequest: 1,
 	}
-}
-
-func EstimateGroups(scope string, groups [][]Record, policy Policy) (Estimate, error) {
-	estimate := Estimate{Algorithm: policy.Name, Scope: scope, Policy: policy}
-	warcObjects := make(map[string]struct{})
-	for _, records := range groups {
-		for _, record := range records {
-			estimate.SelectedRecords++
-			estimate.SelectedBytes += record.Length
-			warcObjects[record.WARCFile] = struct{}{}
-		}
-		planned, err := Plan(records, policy)
-		if err != nil {
-			return Estimate{}, err
-		}
-		for _, sourceRange := range planned {
-			estimate.SourceRequests++
-			estimate.SourceBytes += sourceRange.Length
-			if len(sourceRange.RecordIDs) > 1 {
-				estimate.MultiRecordRequests++
-			}
-			estimate.MaxRecordsPerRequest = max(estimate.MaxRecordsPerRequest, len(sourceRange.RecordIDs))
-		}
-	}
-	estimate.WARCObjects = len(warcObjects)
-	return estimate, nil
 }

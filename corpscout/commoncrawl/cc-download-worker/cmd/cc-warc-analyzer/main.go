@@ -33,8 +33,6 @@ type options struct {
 	python              string
 	maxPackBytes        int64
 	maxRecords          int
-	maxRangeBytes       int64
-	junkThresholds      string
 	wholeWARCThresholds string
 	wholeWARCSizes      bool
 	warcSizeBaseURL     string
@@ -89,11 +87,7 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		)
 		return nil
 	}
-	thresholds, err := parseThresholds(options.junkThresholds)
-	if err != nil {
-		return err
-	}
-	wholeWARCThresholds, err := parseThresholds(options.wholeWARCThresholds)
+	wholeWARCThresholds, err := parsePercentages(options.wholeWARCThresholds)
 	if err != nil {
 		return err
 	}
@@ -118,17 +112,12 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		"parts", analyzedParts,
 		"skipped_loaded_parts", partspec.Format(skippedLoadedParts),
 		"skipped_loaded_count", len(skippedLoadedParts),
-		"max_range_bytes", options.maxRangeBytes,
-		"max_range_size", humanize.IBytes(uint64(options.maxRangeBytes)),
-		"junk_thresholds", thresholds,
 		"whole_warc_thresholds", wholeWARCThresholds,
 		"plan_database", planDatabasePath,
 		"plan_whole_warc_threshold", options.planThreshold,
 	)
 
 	var allRecords []rangeplanner.Record
-	var outputChunkGroups [][]rangeplanner.Record
-	var partGroups [][]rangeplanner.Record
 	warcFiles := make(map[string]struct{})
 	for _, part := range parts {
 		result, err := worklistbuilder.Ensure(ctx, worklistbuilder.Config{
@@ -173,8 +162,6 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 			worklist.Records[index].ID = firstID + int64(index)
 		}
 		allRecords = append(allRecords, worklist.Records...)
-		partGroups = append(partGroups, worklist.Records)
-		outputChunkGroups = append(outputChunkGroups, worklist.OutputChunks...)
 		for _, filename := range worklist.WARCFiles {
 			warcFiles[filename] = struct{}{}
 		}
@@ -194,24 +181,6 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 	}
 
 	logEstimate(logger, options, analyzedParts, rangeplanner.ExactEstimate(allRecords))
-	policies := analysisPolicies(options.maxRangeBytes, thresholds)
-	scopes := []struct {
-		name   string
-		groups [][]rangeplanner.Record
-	}{
-		{name: "output_chunk", groups: outputChunkGroups},
-		{name: "part", groups: partGroups},
-		{name: "part_block", groups: [][]rangeplanner.Record{allRecords}},
-	}
-	for _, scope := range scopes {
-		for _, policy := range policies {
-			estimate, err := rangeplanner.EstimateGroups(scope.name, scope.groups, policy)
-			if err != nil {
-				return errors.Wrapf(err, "estimate %s in scope %s", policy.Name, scope.name)
-			}
-			logEstimate(logger, options, analyzedParts, estimate)
-		}
-	}
 
 	if options.wholeWARCSizes {
 		filenames := make([]string, 0, len(warcFiles))
@@ -413,25 +382,6 @@ func logPlanStatistics(
 	return nil
 }
 
-func analysisPolicies(maxRangeBytes int64, thresholds []float64) []rangeplanner.Policy {
-	policies := []rangeplanner.Policy{
-		{Name: "bounded_gap_64k", MaxGapBytes: 64 << 10, MaxRangeBytes: maxRangeBytes, MaxJunkPercent: 100},
-		{Name: "bounded_gap_256k", MaxGapBytes: 256 << 10, MaxRangeBytes: maxRangeBytes, MaxJunkPercent: 100},
-		{Name: "bounded_gap_1m", MaxGapBytes: 1 << 20, MaxRangeBytes: maxRangeBytes, MaxJunkPercent: 100},
-	}
-	for _, threshold := range thresholds {
-		policies = append(policies, rangeplanner.Policy{
-			Name:           "junk_threshold_" + strconv.FormatFloat(threshold, 'f', -1, 64),
-			MaxGapBytes:    maxRangeBytes,
-			MaxRangeBytes:  maxRangeBytes,
-			MaxJunkPercent: threshold,
-		})
-	}
-	return append(policies, rangeplanner.Policy{
-		Name: "selected_warc_span_lower_bound", MaxGapBytes: 1 << 40, MaxRangeBytes: 1 << 40, MaxJunkPercent: 100,
-	})
-}
-
 func logEstimate(logger *slog.Logger, options options, analyzedParts string, estimate rangeplanner.Estimate) {
 	junkBytes := max(int64(0), estimate.SourceBytes-estimate.SelectedBytes)
 	requestReductionPercent := percent(estimate.SelectedRecords-estimate.SourceRequests, estimate.SelectedRecords)
@@ -444,9 +394,6 @@ func logEstimate(logger *slog.Logger, options options, analyzedParts string, est
 		"algorithm", estimate.Algorithm,
 		"scope", estimate.Scope,
 		"warc_objects", estimate.WARCObjects,
-		"max_gap_bytes", estimate.Policy.MaxGapBytes,
-		"max_range_bytes", estimate.Policy.MaxRangeBytes,
-		"max_junk_percent", estimate.Policy.MaxJunkPercent,
 		"whole_warc_threshold_percent", estimate.WholeWARCThresholdPercent,
 		"whole_warc_objects", estimate.WholeWARCObjects,
 		"exact_warc_objects", estimate.ExactWARCObjects,
@@ -479,10 +426,8 @@ func parseOptions(args []string) (options, error) {
 	flags.IntVar(&options.pagesPerDomain, "pages-per-domain", 25, "selected pages per domain")
 	flags.StringVar(&options.worklistDirectory, "worklist-dir", "", "worklist cache directory override")
 	flags.BoolVar(&options.rebuildWorklists, "rebuild-worklists", false, "replace valid cached worklists")
-	flags.Int64Var(&options.maxPackBytes, "max-pack-bytes", 256<<20, "logical output pack size used for chunk-scope estimates")
+	flags.Int64Var(&options.maxPackBytes, "max-pack-bytes", 256<<20, "logical output pack size")
 	flags.IntVar(&options.maxRecords, "max-records", 16384, "logical output pack record limit")
-	flags.Int64Var(&options.maxRangeBytes, "max-range-bytes", 16<<20, "maximum candidate coalesced source range")
-	flags.StringVar(&options.junkThresholds, "junk-thresholds", "10,25,50,75", "comma-separated maximum junk percentages to compare")
 	flags.StringVar(&options.wholeWARCThresholds, "whole-warc-thresholds", "25,50,75", "compressed selected-byte percentages that trigger a complete WARC download")
 	flags.BoolVar(&options.wholeWARCSizes, "whole-warc-sizes", true, "measure exact sizes of referenced complete WARC objects")
 	flags.StringVar(&options.warcSizeBaseURL, "warc-base-url", "https://data.commoncrawl.org", "base URL used only for WARC size metadata checks")
@@ -505,8 +450,8 @@ func parseOptions(args []string) (options, error) {
 	if options.mode != "tech" && options.mode != "industry" {
 		return options, errors.New("mode must be tech or industry")
 	}
-	if options.pagesPerDomain < 1 || options.maxPackBytes <= 0 || options.maxRecords <= 0 || options.maxRangeBytes <= 0 || options.warcHeadConc <= 0 || options.planStatsLimit <= 0 {
-		return options, errors.New("page, pack, range, record, and concurrency limits must be positive")
+	if options.pagesPerDomain < 1 || options.maxPackBytes <= 0 || options.maxRecords <= 0 || options.warcHeadConc <= 0 || options.planStatsLimit <= 0 {
+		return options, errors.New("page, pack, record, and concurrency limits must be positive")
 	}
 	if math.IsNaN(options.planThreshold) || math.IsInf(options.planThreshold, 0) || options.planThreshold < 0 || options.planThreshold > 100 {
 		return options, errors.New("plan whole-WARC threshold must be between 0 and 100")
@@ -514,10 +459,7 @@ func parseOptions(args []string) (options, error) {
 	if _, err := partspec.Parse(options.parts); err != nil {
 		return options, err
 	}
-	if _, err := parseThresholds(options.junkThresholds); err != nil {
-		return options, err
-	}
-	if _, err := parseThresholds(options.wholeWARCThresholds); err != nil {
+	if _, err := parsePercentages(options.wholeWARCThresholds); err != nil {
 		return options, err
 	}
 	return options, nil
@@ -542,18 +484,18 @@ func filterLoadedParts(baseDirectory, crawlID, mode string, parts []int) ([]int,
 	return pending, loaded, nil
 }
 
-func parseThresholds(value string) ([]float64, error) {
+func parsePercentages(value string) ([]float64, error) {
 	fields := strings.Split(value, ",")
 	thresholds := make([]float64, 0, len(fields))
 	for _, field := range fields {
 		threshold, err := strconv.ParseFloat(strings.TrimSpace(field), 64)
 		if err != nil || math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 || threshold > 100 {
-			return nil, errors.Newf("invalid junk threshold %q: expected percentages from 0 to 100", field)
+			return nil, errors.Newf("invalid percentage %q: expected a value from 0 to 100", field)
 		}
 		thresholds = append(thresholds, threshold)
 	}
 	if len(thresholds) == 0 {
-		return nil, errors.New("at least one junk threshold is required")
+		return nil, errors.New("at least one percentage is required")
 	}
 	return thresholds, nil
 }
