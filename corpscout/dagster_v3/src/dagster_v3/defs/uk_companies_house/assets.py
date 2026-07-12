@@ -27,6 +27,7 @@ from dagster_v3.defs.uk_companies_house.incremental import (
     build_incremental_metrics,
     write_cursor,
 )
+from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.uk_companies_house.industries import (
     build_uk_companies_house_industries,
 )
@@ -553,6 +554,7 @@ def uk_companies_house_api_financial_metrics(
 # Register + industries both derive from the ONE monthly bulk download.
 uk_companies_house_register_job = dg.define_asset_job(
     "uk_companies_house_register_job",
+    tags=HEAVY_BULK_RUN_TAGS,
     selection=dg.AssetSelection.assets(
         "uk_companies_house_clickhouse_companies",
         "uk_companies_house_clickhouse_industries",
@@ -568,6 +570,7 @@ uk_companies_house_register_schedule = dg.ScheduleDefinition(
 # Financials (XBRL accounts) refresh on a separate cadence from the register.
 uk_companies_house_financials_job = dg.define_asset_job(
     "uk_companies_house_financials_job",
+    tags=HEAVY_BULK_RUN_TAGS,
     selection=dg.AssetSelection.assets(
         "uk_companies_house_clickhouse_financial_metrics"
     ).upstream(),

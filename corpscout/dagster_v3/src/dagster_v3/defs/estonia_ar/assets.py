@@ -23,6 +23,7 @@ from dagster_v3.defs.estonia_ar.clickhouse import (
 )
 from dagster_v3.defs.estonia_ar.company_domains import build_estonia_ar_company_domains
 from dagster_v3.defs.estonia_ar.general_data import build_estonia_ar_general_data
+from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 
 GROUP_NAME = "estonia_ar"
 ESTONIA_AR_DUCKDB_POOL = "estonia_ar_duckdb"
@@ -336,6 +337,7 @@ estonia_ar_register_schedule = dg.ScheduleDefinition(
 # download happens a single time and feeds every yldandmed-derived export.
 estonia_ar_general_data_job = dg.define_asset_job(
     "estonia_ar_general_data_job",
+    tags=HEAVY_BULK_RUN_TAGS,
     selection=dg.AssetSelection.assets(
         "estonia_ar_clickhouse_company_contacts",
         "estonia_ar_clickhouse_company_domains",

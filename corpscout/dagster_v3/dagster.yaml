@@ -10,6 +10,13 @@ concurrency:
   # from exhausting the shared Postgres connection slots. Tune to taste.
   runs:
     max_concurrent_runs: 32
+    # Multi-GB snapshot jobs (tagged via defs/common/tags.py) are additionally
+    # capped so a synchronized schedule storm can't fill all 32 run slots with
+    # bulk loads at once.
+    tag_concurrency_limits:
+      - key: corpscout/workload
+        value: heavy-bulk
+        limit: 2
   # Per-pool op limit (default 1). Assets that share a single-writer DuckDB file
   # (e.g. pool="exchange_rates_v2_duckdb") are serialized to one writer.
   pools:
