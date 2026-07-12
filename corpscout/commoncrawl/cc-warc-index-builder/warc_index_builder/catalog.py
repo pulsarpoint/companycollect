@@ -179,6 +179,14 @@ class FinalWarcsResult:
     inventory_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class FinalPagesResult:
+    path: Path
+    selected_page_count: int
+    distinct_domain_count: int
+    selected_bytes: int
+
+
 GLOBAL_PAGE_COLUMNS = (
     ("warc_index", "UINTEGER"),
     ("root_domain", "VARCHAR"),
@@ -1207,6 +1215,161 @@ def create_partial_catalog(
                 pass
         if _remove_partial_catalog_files(path):
             _fsync_directory(build_directory)
+        raise
+
+
+def _duplicate_final_page_coordinate(
+    connection: duckdb.DuckDBPyConnection,
+) -> tuple[object, ...] | None:
+    return connection.execute(
+        """
+        SELECT warc_index, warc_record_offset, warc_record_length, count(*)
+        FROM final_catalog.pages
+        GROUP BY warc_index, warc_record_offset, warc_record_length
+        HAVING count(*) > 1
+        ORDER BY warc_index, warc_record_offset, warc_record_length
+        LIMIT 1
+        """
+    ).fetchone()
+
+
+def materialize_final_pages(
+    state_connection: duckdb.DuckDBPyConnection,
+    validation_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+) -> FinalPagesResult:
+    """Bulk-materialize final pages from every validated ready candidate shard."""
+    candidate_paths = ready_candidate_paths(
+        state_connection,
+        validation_connection,
+        build_directory,
+    )
+    expected_hash = verify_or_finalize_warc_inventory(state_connection)
+    identity_rows = state_connection.execute(
+        "SELECT pages_per_domain FROM build_identity"
+    ).fetchall()
+    if len(identity_rows) != 1:
+        raise BuildStateCorrupt(
+            "build_identity must contain exactly one row; use --rebuild"
+        )
+    pages_per_domain = int(identity_rows[0][0])
+    path = partial_catalog_path(build_directory)
+    if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
+        raise FinalCatalogBuildError(
+            f"partial catalog is not a regular file: {path}"
+        )
+    if state_connection.execute(
+        """
+        SELECT count(*)
+        FROM duckdb_databases()
+        WHERE database_name = 'final_catalog'
+        """
+    ).fetchone()[0]:
+        raise FinalCatalogBuildError("database alias final_catalog is already attached")
+
+    attached = False
+    try:
+        state_connection.execute(
+            f"ATTACH {_sql_string_literal(str(path))} AS final_catalog"
+        )
+        attached = True
+        state_connection.execute("BEGIN TRANSACTION")
+        try:
+            _inventory, final_hash = _final_warc_inventory(state_connection)
+            if final_hash != expected_hash:
+                raise FinalCatalogBuildError(
+                    "final WARC inventory hash differs from build state"
+                )
+            page_count, metadata_count = state_connection.execute(
+                """
+                SELECT (SELECT count(*) FROM final_catalog.pages),
+                       (SELECT count(*) FROM final_catalog.catalog_metadata)
+                """
+            ).fetchone()
+            if page_count:
+                raise FinalCatalogBuildError(
+                    "partial catalog pages are already materialized"
+                )
+            if metadata_count:
+                raise FinalCatalogBuildError(
+                    "partial catalog metadata must be empty before pages"
+                )
+            query = global_selected_pages_query(pages_per_domain)
+            try:
+                state_connection.execute(
+                    f"""
+                INSERT INTO final_catalog.pages (
+                    warc_index, root_domain, url, domain_page_rank,
+                    content_languages, warc_record_offset, warc_record_length
+                )
+                WITH selected_pages AS (
+                    {query}
+                ),
+                validated_pages AS (
+                    SELECT selected_pages.*, warcs.warc_index AS matched_warc_index,
+                           warcs.object_bytes
+                    FROM selected_pages
+                    LEFT JOIN final_catalog.warcs AS warcs
+                        ON warcs.warc_index = selected_pages.warc_index
+                )
+                SELECT warc_index, root_domain, url, domain_page_rank,
+                       content_languages, warc_record_offset, warc_record_length
+                FROM validated_pages
+                WHERE CASE
+                    WHEN matched_warc_index IS NULL
+                        THEN error(
+                            'selected WARC index is absent from final inventory: '
+                            || CAST(warc_index AS VARCHAR)
+                        )
+                    WHEN warc_record_offset > object_bytes
+                        THEN error('selected WARC record offset exceeds object size')
+                    WHEN warc_record_length > object_bytes - warc_record_offset
+                        THEN error('selected WARC record exceeds object size')
+                    ELSE true
+                END
+                ORDER BY warc_index, warc_record_offset, warc_record_length
+                    """,
+                    [[str(candidate_path) for candidate_path in candidate_paths]],
+                )
+            except duckdb.Error as error:
+                raise FinalCatalogBuildError(
+                    f"materialize final pages: {error}"
+                ) from error
+
+            duplicate = _duplicate_final_page_coordinate(state_connection)
+            if duplicate is not None:
+                raise FinalCatalogBuildError(
+                    "final pages contain duplicate WARC coordinate: "
+                    f"warc_index={duplicate[0]} offset={duplicate[1]} "
+                    f"length={duplicate[2]} count={duplicate[3]}"
+                )
+            page_count, distinct_domains, selected_bytes = state_connection.execute(
+                """
+                SELECT count(*), count(DISTINCT root_domain),
+                       coalesce(sum(warc_record_length), 0)
+                FROM final_catalog.pages
+                """
+            ).fetchone()
+            result = FinalPagesResult(
+                path=path,
+                selected_page_count=int(page_count),
+                distinct_domain_count=int(distinct_domains),
+                selected_bytes=int(selected_bytes),
+            )
+            state_connection.execute("COMMIT")
+        except BaseException:
+            state_connection.execute("ROLLBACK")
+            raise
+        finally:
+            state_connection.execute("DETACH final_catalog")
+            attached = False
+        return result
+    except BaseException:
+        if attached:
+            try:
+                state_connection.execute("DETACH final_catalog")
+            except duckdb.Error:
+                pass
         raise
 
 

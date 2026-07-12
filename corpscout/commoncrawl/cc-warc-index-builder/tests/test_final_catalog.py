@@ -11,15 +11,17 @@ from warc_index_builder.catalog import (
     BuildStateCorrupt,
     FinalCatalogBuildError,
     SourceShardSeed,
+    candidate_artifact_path,
     checkpoint_warc_size_batch,
     create_partial_catalog,
     initialize_build_state,
+    materialize_final_pages,
     partial_catalog_path,
     warc_inventory_sha256,
 )
 from warc_index_builder.manifests import WarcObject
 from warc_index_builder.object_sizes import ProbeMetrics, WarcSizeSuccess
-from warc_index_builder.selection import SELECTION_POLICY_VERSION
+from warc_index_builder.selection import CANDIDATE_COLUMNS, SELECTION_POLICY_VERSION
 
 
 _WARCS = (
@@ -76,6 +78,69 @@ def _described_columns(
         (str(row[0]), str(row[1]), str(row[2]))
         for row in connection.execute(f"DESCRIBE {table}").fetchall()
     )
+
+
+def _candidate_row(
+    root_domain: str,
+    url: str,
+    warc_filename: str,
+    offset: int,
+    length: int,
+    *,
+    rank_homepage: int = 1,
+) -> tuple[object, ...]:
+    return (
+        0,
+        root_domain,
+        url,
+        None,
+        warc_filename,
+        offset,
+        length,
+        0,
+        rank_homepage,
+        1,
+        1,
+        len(url),
+        0,
+    )
+
+
+def _write_ready_candidates(
+    state_connection: duckdb.DuckDBPyConnection,
+    validation_connection: duckdb.DuckDBPyConnection,
+    build_directory: Path,
+    rows: list[tuple[object, ...]],
+) -> Path:
+    path = candidate_artifact_path(build_directory, 0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    columns = ", ".join(
+        f"{name} {column_type}" for name, column_type in CANDIDATE_COLUMNS
+    )
+    validation_connection.execute(
+        f"CREATE OR REPLACE TABLE final_page_candidates ({columns})"
+    )
+    if rows:
+        validation_connection.executemany(
+            "INSERT INTO final_page_candidates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+    validation_connection.execute(
+        "COPY final_page_candidates TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
+        [str(path)],
+    )
+    state_connection.execute(
+        """
+        UPDATE source_shards
+        SET status = 'ready', candidate_rows = ?, candidate_bytes = ?,
+            attempts = attempts + 1, last_error = NULL,
+            completed_at = current_timestamp
+        WHERE source_index = 0
+        """,
+        [len(rows), path.stat().st_size],
+    )
+    return path
 
 
 def test_final_warcs_partial_contains_exact_schema_and_complete_inventory(
@@ -369,3 +434,377 @@ def test_final_warcs_rebuilds_committed_partial_instead_of_resuming(
             final_connection.close()
     finally:
         state_connection.close()
+
+
+def test_final_pages_are_bulk_materialized_in_physical_warc_offset_order(
+    tmp_path: Path,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    rows = [
+        _candidate_row("four.example", "https://four.example/", _WARCS[1].warc_filename, 100, 50),
+        _candidate_row("two.example", "https://two.example/", _WARCS[0].warc_filename, 500, 50),
+        _candidate_row("one.example", "https://one.example/", _WARCS[0].warc_filename, 20, 50),
+        _candidate_row("three.example", "https://three.example/", _WARCS[1].warc_filename, 50, 50),
+    ]
+    try:
+        _initialize_state(state_connection)
+        create_partial_catalog(state_connection, build_directory)
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            rows,
+        )
+
+        result = materialize_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        assert result.path == partial_catalog_path(build_directory)
+        assert result.selected_page_count == 4
+        assert result.distinct_domain_count == 4
+        assert result.selected_bytes == 200
+        final_connection = duckdb.connect(str(result.path), read_only=True)
+        try:
+            assert final_connection.execute(
+                """
+                SELECT warc_index, warc_record_offset
+                FROM pages
+                ORDER BY rowid
+                """
+            ).fetchall() == [(0, 20), (0, 500), (1, 50), (1, 100)]
+            assert final_connection.execute(
+                "SELECT count(*) FROM warcs"
+            ).fetchone() == (2,)
+            assert final_connection.execute(
+                "SELECT count(*) FROM catalog_metadata"
+            ).fetchone() == (0,)
+        finally:
+            final_connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+@pytest.mark.parametrize(
+    "offset,length,message",
+    [
+        (1001, 1, "record offset exceeds object size"),
+        (950, 100, "record exceeds object size"),
+        (1000, 1, "record exceeds object size"),
+    ],
+)
+def test_final_pages_reject_overflow_safe_out_of_warc_bounds(
+    tmp_path: Path,
+    offset: int,
+    length: int,
+    message: str,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    try:
+        _initialize_state(state_connection)
+        create_partial_catalog(state_connection, build_directory)
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [
+                _candidate_row(
+                    "example.com",
+                    "https://example.com/",
+                    _WARCS[0].warc_filename,
+                    offset,
+                    length,
+                )
+            ],
+        )
+
+        with pytest.raises(FinalCatalogBuildError, match=message):
+            materialize_final_pages(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        final_connection = duckdb.connect(
+            str(partial_catalog_path(build_directory)),
+            read_only=True,
+        )
+        try:
+            assert final_connection.execute("SELECT count(*) FROM pages").fetchone() == (0,)
+            assert final_connection.execute("SELECT count(*) FROM warcs").fetchone() == (2,)
+        finally:
+            final_connection.close()
+        assert state_connection.execute(
+            """
+            SELECT count(*) FROM duckdb_databases()
+            WHERE database_name = 'final_catalog'
+            """
+        ).fetchone() == (0,)
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+@pytest.mark.parametrize("length,valid", [(2, True), (3, False)])
+def test_final_pages_uint64_max_bounds_do_not_overflow(
+    tmp_path: Path,
+    length: int,
+    valid: bool,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    maximum = 2**64 - 1
+    try:
+        _initialize_state(state_connection, sized=False)
+        checkpoint_warc_size_batch(
+            state_connection,
+            (
+                WarcSizeSuccess(
+                    warc=_WARCS[0],
+                    object_bytes=maximum,
+                    attempts=1,
+                    retries=0,
+                    metrics=ProbeMetrics(head_requests=1),
+                ),
+                WarcSizeSuccess(
+                    warc=_WARCS[1],
+                    object_bytes=2000,
+                    attempts=1,
+                    retries=0,
+                    metrics=ProbeMetrics(head_requests=1),
+                ),
+            ),
+        )
+        create_partial_catalog(state_connection, build_directory)
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [
+                _candidate_row(
+                    "maximum.example",
+                    "https://maximum.example/",
+                    _WARCS[0].warc_filename,
+                    maximum - 2,
+                    length,
+                )
+            ],
+        )
+
+        if valid:
+            result = materialize_final_pages(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+            assert result.selected_page_count == 1
+            assert result.selected_bytes == length
+        else:
+            with pytest.raises(FinalCatalogBuildError, match="record exceeds object size"):
+                materialize_final_pages(
+                    state_connection,
+                    validation_connection,
+                    build_directory,
+                )
+            final_connection = duckdb.connect(
+                str(partial_catalog_path(build_directory)),
+                read_only=True,
+            )
+            try:
+                assert final_connection.execute(
+                    "SELECT count(*) FROM pages"
+                ).fetchone() == (0,)
+            finally:
+                final_connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_pages_missing_mapping_rolls_back_and_corrected_retry_succeeds(
+    tmp_path: Path,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    valid_row = _candidate_row(
+        "example.com",
+        "https://example.com/",
+        _WARCS[0].warc_filename,
+        10,
+        100,
+    )
+    try:
+        _initialize_state(state_connection)
+        create_partial_catalog(state_connection, build_directory)
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [
+                _candidate_row(
+                    "missing.example",
+                    "https://missing.example/",
+                    "missing.warc.gz",
+                    10,
+                    100,
+                )
+            ],
+        )
+
+        with pytest.raises(FinalCatalogBuildError, match="absent from inventory"):
+            materialize_final_pages(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [valid_row],
+        )
+        result = materialize_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+
+        assert result.selected_page_count == 1
+        final_connection = duckdb.connect(str(result.path), read_only=True)
+        try:
+            assert final_connection.execute(
+                "SELECT root_domain, warc_record_offset FROM pages"
+            ).fetchall() == [("example.com", 10)]
+        finally:
+            final_connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_pages_rejects_nonempty_committed_pages(tmp_path: Path) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    try:
+        _initialize_state(state_connection)
+        create_partial_catalog(state_connection, build_directory)
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [
+                _candidate_row(
+                    "first.example",
+                    "https://first.example/",
+                    _WARCS[0].warc_filename,
+                    10,
+                    100,
+                )
+            ],
+        )
+        materialize_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+        )
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [
+                _candidate_row(
+                    "second.example",
+                    "https://second.example/",
+                    _WARCS[1].warc_filename,
+                    20,
+                    100,
+                )
+            ],
+        )
+
+        with pytest.raises(FinalCatalogBuildError, match="already materialized"):
+            materialize_final_pages(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        final_connection = duckdb.connect(
+            str(partial_catalog_path(build_directory)),
+            read_only=True,
+        )
+        try:
+            assert final_connection.execute(
+                "SELECT warc_index, root_domain, warc_record_offset FROM pages"
+            ).fetchall() == [(0, "first.example", 10)]
+        finally:
+            final_connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def test_final_pages_rejects_final_warc_hash_divergence_before_insert(
+    tmp_path: Path,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    try:
+        _initialize_state(state_connection)
+        result = create_partial_catalog(state_connection, build_directory)
+        _write_ready_candidates(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [
+                _candidate_row(
+                    "example.com",
+                    "https://example.com/",
+                    _WARCS[0].warc_filename,
+                    10,
+                    100,
+                )
+            ],
+        )
+        corrupt_connection = duckdb.connect(str(result.path))
+        corrupt_connection.execute(
+            "UPDATE warcs SET object_bytes = object_bytes + 1 WHERE warc_index = 0"
+        )
+        corrupt_connection.close()
+
+        with pytest.raises(FinalCatalogBuildError, match="hash differs"):
+            materialize_final_pages(
+                state_connection,
+                validation_connection,
+                build_directory,
+            )
+
+        final_connection = duckdb.connect(str(result.path), read_only=True)
+        try:
+            assert final_connection.execute("SELECT count(*) FROM pages").fetchone() == (0,)
+            assert final_connection.execute(
+                "SELECT object_bytes FROM warcs WHERE warc_index = 0"
+            ).fetchone() == (1001,)
+        finally:
+            final_connection.close()
+    finally:
+        state_connection.close()
+        validation_connection.close()

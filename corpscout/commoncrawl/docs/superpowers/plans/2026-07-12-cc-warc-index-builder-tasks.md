@@ -277,13 +277,13 @@ unique filenames, positive sizes, and inventory hash.
 
 **Depends on:** T15, T16.
 
-**Files:** `warc_index_builder/catalog.py`, `tests/test_catalog.py`.
+**Files:** `warc_index_builder/catalog.py`, `tests/test_final_catalog.py`.
 
 **Deliver:** bulk filename-to-index join, stable page types, physical `(warc_index, offset)` order, missing/
 ambiguous mapping diagnostics, duplicate rejection, and overflow-safe bounds checks using
 `offset <= object_bytes` then `length <= object_bytes - offset`.
 
-**Verify:** `uv run pytest tests/test_catalog.py -q -k final_pages`.
+**Verify:** `uv run pytest tests/test_final_catalog.py -q -k final_pages`.
 
 **Commit:** `feat(commoncrawl): materialize catalog pages`
 
