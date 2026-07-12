@@ -261,7 +261,7 @@ estonia_financials_job = dg.define_asset_job(
 estonia_financials_schedule = dg.ScheduleDefinition(
     name="estonia_financials_schedule",
     job=estonia_financials_job,
-    cron_schedule="0 5 5 * *",
+    cron_schedule="40 5 5 * *",
     execution_timezone="Europe/Belgrade",
 )
 

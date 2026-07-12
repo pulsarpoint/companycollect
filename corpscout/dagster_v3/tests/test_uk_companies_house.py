@@ -311,7 +311,7 @@ def test_register_job_and_schedule():
 
     repo = load_defs().get_repository_def()
     sch = repo.get_schedule_def("uk_companies_house_register_schedule")
-    assert sch.cron_schedule == "0 7 7 * *"
+    assert sch.cron_schedule == "30 7 7 * *"
     assert sch.job.name == "uk_companies_house_register_job"
     keys = {
         k.path[-1]

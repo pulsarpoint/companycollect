@@ -561,7 +561,7 @@ uk_companies_house_register_job = dg.define_asset_job(
 uk_companies_house_register_schedule = dg.ScheduleDefinition(
     name="uk_companies_house_register_schedule",
     job=uk_companies_house_register_job,
-    cron_schedule="0 7 7 * *",  # monthly, 7th 07:00 (after the new snapshot)
+    cron_schedule="30 7 7 * *",  # monthly, 7th 07:30 (after the new snapshot)
     execution_timezone="Europe/Belgrade",
 )
 

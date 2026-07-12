@@ -169,7 +169,7 @@ czech_ares_register_job = dg.define_asset_job(
 czech_ares_register_schedule = dg.ScheduleDefinition(
     name="czech_ares_register_schedule",
     job=czech_ares_register_job,
-    cron_schedule="0 7 17 * *",  # monthly, 17th 07:00 (after the mid-month snapshot)
+    cron_schedule="45 7 17 * *",  # monthly, 17th 07:45 (after the mid-month snapshot)
     execution_timezone="Europe/Belgrade",
 )
 

@@ -175,7 +175,7 @@ def test_register_job_and_schedule():
 
     repo = load_defs().get_repository_def()
     sch = repo.get_schedule_def("czech_ares_register_schedule")
-    assert sch.cron_schedule == "0 7 17 * *"
+    assert sch.cron_schedule == "45 7 17 * *"
     assert sch.job.name == "czech_ares_register_job"
     keys = {
         k.path[-1]

@@ -107,7 +107,7 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     fin = repo.get_schedule_def("latvia_financials_schedule")
     assert reg.cron_schedule == "30 4 * * *"  # daily, staggered
     assert reg.job.name == "latvia_ur_register_job"
-    assert fin.cron_schedule == "0 5 * * 1"  # weekly full refresh
+    assert fin.cron_schedule == "20 5 * * 1"  # weekly full refresh
     assert fin.job.name == "latvia_financials_job"
 
     register_keys = {

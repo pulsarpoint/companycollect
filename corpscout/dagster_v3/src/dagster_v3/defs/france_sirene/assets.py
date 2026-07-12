@@ -209,7 +209,7 @@ france_sirene_register_job = dg.define_asset_job(
 france_sirene_register_schedule = dg.ScheduleDefinition(
     name="france_sirene_register_schedule",
     job=france_sirene_register_job,
-    cron_schedule="0 7 6 * *",  # monthly, 6th 07:00 (after the new INSEE snapshot)
+    cron_schedule="15 7 6 * *",  # monthly, 6th 07:15 (after the new INSEE snapshot)
     execution_timezone="Europe/Belgrade",
 )
 

@@ -88,7 +88,7 @@ def test_wikidata_weekly_refresh_job_and_schedule_are_registered() -> None:
     assert "wikidata_company_seed_weekly_job" in job_names
     assert "wikidata_company_seed_weekly_schedule" in schedule_names
     assert weekly_schedule.job_name == "wikidata_company_seed_weekly_job"
-    assert weekly_schedule.cron_schedule == "0 3 * * 1"
+    assert weekly_schedule.cron_schedule == "30 3 * * 1"
     assert weekly_schedule.execution_timezone == "Europe/Belgrade"
 
 

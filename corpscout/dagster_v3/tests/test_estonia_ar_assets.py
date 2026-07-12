@@ -93,10 +93,10 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     assert not repo.has_schedule_def("estonia_ar_financials_schedule")
     assert reg.cron_schedule == "0 4 * * *"  # register: daily
     assert reg.job.name == "estonia_ar_register_job"
-    assert fin.cron_schedule == "0 5 5 * *"  # financials: 5th of month
+    assert fin.cron_schedule == "40 5 5 * *"  # financials: 5th of month
     assert fin.job.name == "estonia_financials_job"
     gen = repo.get_schedule_def("estonia_ar_general_data_schedule")
-    assert gen.cron_schedule == "0 6 8 * *"  # general data: monthly (single 4.5 GB download)
+    assert gen.cron_schedule == "20 6 8 * *"  # general data: monthly (single 4.5 GB download)
     assert gen.job.name == "estonia_ar_general_data_job"
 
     register_keys = {

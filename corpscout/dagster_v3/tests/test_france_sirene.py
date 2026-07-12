@@ -173,7 +173,7 @@ def test_register_job_and_schedule():
 
     repo = load_defs().get_repository_def()
     sch = repo.get_schedule_def("france_sirene_register_schedule")
-    assert sch.cron_schedule == "0 7 6 * *"
+    assert sch.cron_schedule == "15 7 6 * *"
     assert sch.job.name == "france_sirene_register_job"
 
     # .upstream() of the two exports pulls the single raw download once.

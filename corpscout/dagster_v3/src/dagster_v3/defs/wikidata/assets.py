@@ -1190,7 +1190,7 @@ wikidata_company_seed_weekly_job = dg.define_asset_job(
 
 @dg.schedule(
     name="wikidata_company_seed_weekly_schedule",
-    cron_schedule="0 3 * * 1",
+    cron_schedule="30 3 * * 1",
     execution_timezone="Europe/Belgrade",
     job=wikidata_company_seed_weekly_job,
 )

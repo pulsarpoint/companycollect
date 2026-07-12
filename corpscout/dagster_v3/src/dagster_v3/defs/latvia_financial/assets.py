@@ -269,7 +269,7 @@ latvia_financials_job = dg.define_asset_job(
 latvia_financials_schedule = dg.ScheduleDefinition(
     name="latvia_financials_schedule",
     job=latvia_financials_job,
-    cron_schedule="0 5 * * 1",  # weekly Monday 05:00; source publishes full CSV snapshots.
+    cron_schedule="20 5 * * 1",  # weekly Monday 05:20; source publishes full CSV snapshots.
     execution_timezone="Europe/Belgrade",
 )
 

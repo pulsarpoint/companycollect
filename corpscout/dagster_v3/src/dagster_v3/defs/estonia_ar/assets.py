@@ -345,7 +345,7 @@ estonia_ar_general_data_job = dg.define_asset_job(
 estonia_ar_general_data_schedule = dg.ScheduleDefinition(
     name="estonia_ar_general_data_schedule",
     job=estonia_ar_general_data_job,
-    cron_schedule="0 6 8 * *",
+    cron_schedule="20 6 8 * *",
     execution_timezone="Europe/Belgrade",
 )
 
