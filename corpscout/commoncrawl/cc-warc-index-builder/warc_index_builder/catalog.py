@@ -3,13 +3,80 @@
 import fcntl
 import os
 import shutil
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+
+from ._identity import decode_sha256, new_identity_digest, update_text
+
+
+CATALOG_SCHEMA_VERSION = 1
 
 
 class CatalogBuildLocked(RuntimeError):
     pass
+
+
+def warc_inventory_sha256(inventory: Sequence[tuple[int, str, int]]) -> str:
+    """Hash the complete index-ordered WARC inventory and exact object sizes."""
+    if not inventory:
+        raise ValueError("WARC inventory must not be empty")
+    digest = new_identity_digest("warc-inventory")
+    digest.update(len(inventory).to_bytes(4, byteorder="big"))
+    filenames: set[str] = set()
+    for expected_index, (warc_index, warc_filename, object_bytes) in enumerate(inventory):
+        if warc_index != expected_index:
+            raise ValueError(
+                "WARC inventory must be in contiguous warc_index order starting at 0"
+            )
+        if not warc_filename.strip():
+            raise ValueError("WARC filenames must not be blank")
+        if warc_filename in filenames:
+            raise ValueError("WARC filenames must be unique")
+        if not 1 <= object_bytes <= 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("WARC object sizes must be between 1 and uint64 max")
+        filenames.add(warc_filename)
+        digest.update(warc_index.to_bytes(4, byteorder="big"))
+        update_text(digest, warc_filename)
+        digest.update(object_bytes.to_bytes(8, byteorder="big"))
+    return digest.hexdigest()
+
+
+def catalog_id(
+    *,
+    schema_version: int,
+    crawl_id: str,
+    pages_per_domain: int,
+    selection_policy_version: str,
+    selection_policy_sha256: str,
+    source_schema_sha256: str,
+    warc_manifest_sha256: str,
+    index_manifest_sha256: str,
+    warc_inventory_sha256: str,
+) -> str:
+    """Hash every logical input that determines one published catalog."""
+    if not 1 <= schema_version <= 0xFFFF:
+        raise ValueError("schema_version must be between 1 and uint16 max")
+    if not 1 <= pages_per_domain <= 0xFFFF:
+        raise ValueError("pages_per_domain must be between 1 and uint16 max")
+    if not crawl_id or not selection_policy_version:
+        raise ValueError("catalog identity strings must not be empty")
+
+    hashes = (
+        ("selection_policy_sha256", selection_policy_sha256),
+        ("source_schema_sha256", source_schema_sha256),
+        ("warc_manifest_sha256", warc_manifest_sha256),
+        ("index_manifest_sha256", index_manifest_sha256),
+        ("warc_inventory_sha256", warc_inventory_sha256),
+    )
+    digest = new_identity_digest("catalog")
+    digest.update(schema_version.to_bytes(2, byteorder="big"))
+    update_text(digest, crawl_id)
+    digest.update(pages_per_domain.to_bytes(2, byteorder="big"))
+    update_text(digest, selection_policy_version)
+    for name, value in hashes:
+        digest.update(decode_sha256(value, name))
+    return digest.hexdigest()
 
 
 def require_path_within(base: Path, target: Path) -> None:

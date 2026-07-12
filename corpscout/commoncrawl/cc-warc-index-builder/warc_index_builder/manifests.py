@@ -4,11 +4,14 @@ import gzip
 import hashlib
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 import duckdb
 import httpx
+
+from ._identity import new_identity_digest, update_text
 
 
 COMMON_CRAWL_DATA_URL = "https://data.commoncrawl.org"
@@ -106,13 +109,33 @@ class SourceSchema:
     @property
     def normalized_descriptor(self) -> tuple[tuple[str, str], ...]:
         return tuple(
-            (column, self.type_for(column) or "MISSING")
+            (column, (self.type_for(column) or "MISSING").upper())
             for column in (
                 *_REQUIRED_STRING_COLUMNS,
                 *_REQUIRED_INTEGER_COLUMNS,
                 *_OPTIONAL_STRING_COLUMNS,
             )
         )
+
+
+def source_schemas_sha256(schemas: Sequence[SourceSchema]) -> str:
+    """Hash source-index-ordered normalized schemas without source locations."""
+    if not schemas:
+        raise ValueError("source schemas must not be empty")
+    digest = new_identity_digest("source-schemas")
+    digest.update(len(schemas).to_bytes(4, byteorder="big"))
+    for expected_index, schema in enumerate(schemas):
+        if schema.source_index != expected_index:
+            raise ValueError(
+                "source schemas must be in contiguous source_index order starting at 0"
+            )
+        descriptor = schema.normalized_descriptor
+        digest.update(schema.source_index.to_bytes(4, byteorder="big"))
+        digest.update(len(descriptor).to_bytes(4, byteorder="big"))
+        for column, column_type in descriptor:
+            update_text(digest, column)
+            update_text(digest, column_type)
+    return digest.hexdigest()
 
 
 def crawl_manifest_url(crawl: str, filename: str) -> str:

@@ -8,6 +8,7 @@ from warc_index_builder.selection import (
     ranking_order_clause,
     ranking_order_terms,
     ranking_projection,
+    selection_policy_sha256,
 )
 
 
@@ -430,3 +431,9 @@ def test_generated_policy_sql_is_path_free() -> None:
 def test_invalid_selection_size_is_rejected(pages_per_domain: int) -> None:
     with pytest.raises(ValueError, match="at least 1"):
         ranking_order_clause(pages_per_domain)
+
+
+def test_selection_policy_identity_matches_golden_hash() -> None:
+    assert selection_policy_sha256() == (
+        "41e25e3706fd2187af80c1b4a87482bd72505a9f094aeb4ea1f5ae6589b7f605"
+    )

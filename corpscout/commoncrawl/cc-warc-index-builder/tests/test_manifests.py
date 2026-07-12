@@ -10,13 +10,15 @@ import warc_index_builder.manifests as manifests
 from warc_index_builder.manifests import (
     ManifestDownloadError,
     ManifestParseError,
+    IndexSource,
+    SourceSchema,
     SourceSchemaError,
     crawl_manifest_url,
     download_manifest_snapshot,
     inspect_source_schema,
     read_index_sources,
     read_warc_inventory,
-    IndexSource,
+    source_schemas_sha256,
 )
 from warc_index_builder.selection import normalized_source_projection
 
@@ -54,6 +56,32 @@ def _required_schema_columns() -> list[tuple[str, str]]:
         ("warc_record_offset", "INTEGER"),
         ("warc_record_length", "UBIGINT"),
     ]
+
+
+def _identity_schemas() -> tuple[SourceSchema, SourceSchema]:
+    required = tuple(_required_schema_columns())
+    current = tuple(
+        (
+            name,
+            {
+                "fetch_status": "USMALLINT",
+                "warc_record_offset": "UINTEGER",
+                "warc_record_length": "BIGINT",
+            }.get(name, column_type),
+        )
+        for name, column_type in required
+    )
+    return (
+        SourceSchema(0, required),
+        SourceSchema(
+            1,
+            current
+            + (
+                ("content_mime_detected", "VARCHAR"),
+                ("content_languages", "VARCHAR"),
+            ),
+        ),
+    )
 
 
 def test_crawl_manifest_url() -> None:
@@ -498,3 +526,74 @@ def test_incompatible_source_types_are_rejected(
             inspect_source_schema(connection, IndexSource(0, "invalid", str(path)))
     finally:
         connection.close()
+
+
+def test_aggregate_source_schema_identity_matches_golden_hash() -> None:
+    assert source_schemas_sha256(_identity_schemas()) == (
+        "2baff3dcf223069294ec4a5ebc85bce92815c499d8cd37dc07221217ad074c64"
+    )
+
+
+def test_source_schema_identity_ignores_column_order_case_and_future_columns() -> None:
+    required = tuple(_required_schema_columns())
+    canonical = SourceSchema(0, required)
+    reordered = SourceSchema(
+        0,
+        tuple((name, column_type.lower()) for name, column_type in reversed(required))
+        + (("future_metadata", "VARCHAR"),),
+    )
+
+    assert source_schemas_sha256((canonical,)) == source_schemas_sha256((reordered,))
+
+
+def test_source_schema_identity_changes_for_capabilities_and_physical_types() -> None:
+    legacy, current = _identity_schemas()
+    current_at_zero = SourceSchema(0, current.column_types)
+    changed_offset_type = SourceSchema(
+        0,
+        tuple(
+            (name, "BIGINT" if name == "warc_record_offset" else column_type)
+            for name, column_type in legacy.column_types
+        ),
+    )
+
+    legacy_hash = source_schemas_sha256((legacy,))
+    assert source_schemas_sha256((current_at_zero,)) != legacy_hash
+    assert source_schemas_sha256((changed_offset_type,)) != legacy_hash
+    assert source_schemas_sha256(_identity_schemas()) != legacy_hash
+
+
+@pytest.mark.parametrize(
+    "schemas",
+    [
+        (),
+        (SourceSchema(1, ()),),
+        (SourceSchema(0, ()), SourceSchema(0, ())),
+        (SourceSchema(1, ()), SourceSchema(0, ())),
+    ],
+)
+def test_source_schema_identity_rejects_missing_duplicate_or_out_of_order_indexes(
+    schemas: tuple[SourceSchema, ...],
+) -> None:
+    with pytest.raises(ValueError):
+        source_schemas_sha256(schemas)
+
+
+def test_source_schema_identity_does_not_depend_on_fixture_paths(tmp_path: Path) -> None:
+    schemas: list[SourceSchema] = []
+    for directory_name in ("first/location", "different/second/location"):
+        fixture_path = tmp_path / directory_name / "source.parquet"
+        fixture_path.parent.mkdir(parents=True)
+        _write_schema_fixture(fixture_path, _required_schema_columns())
+        connection = duckdb.connect()
+        try:
+            schemas.append(
+                inspect_source_schema(
+                    connection,
+                    IndexSource(0, str(fixture_path), str(fixture_path)),
+                )
+            )
+        finally:
+            connection.close()
+
+    assert source_schemas_sha256((schemas[0],)) == source_schemas_sha256((schemas[1],))

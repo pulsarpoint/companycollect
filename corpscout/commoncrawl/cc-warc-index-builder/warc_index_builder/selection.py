@@ -2,9 +2,11 @@
 
 import re
 
+from ._identity import new_identity_digest, update_text
 from .manifests import SourceSchema
 
 
+SELECTION_POLICY_VERSION = "page-selection-v1"
 HTML_MIME_TYPES = ("text/html", "application/xhtml+xml")
 PRIORITY_PATH_TERMS = (
     "imprint",
@@ -53,17 +55,24 @@ PRIORITY_PATH_TERMS = (
     "voorwaarden",
 )
 
+_HTML_MIME_SQL = ", ".join(f"'{mime_type}'" for mime_type in HTML_MIME_TYPES)
+_ELIGIBILITY_TERMS = (
+    "fetch_status = 200",
+    "COALESCE(content_mime_detected, content_mime_type) "
+    f"IN ({_HTML_MIME_SQL})",
+    "NULLIF(trim(root_domain), '') IS NOT NULL",
+    "NULLIF(trim(url), '') IS NOT NULL",
+    "NULLIF(trim(warc_filename), '') IS NOT NULL",
+    "warc_record_offset >= 0",
+    "warc_record_length > 0",
+)
 _PRIORITY_PATH_PATTERN = "|".join(re.escape(term) for term in PRIORITY_PATH_TERMS)
 _RANKING_COLUMNS = (
     (
         "rank_main_site",
-        """CAST(
-            CASE
-                WHEN url_host_name = root_domain THEN 0
-                WHEN url_host_name = 'www.' || root_domain THEN 0
-                ELSE 1
-            END AS UTINYINT
-        )""",
+        "CAST(CASE WHEN url_host_name = root_domain THEN 0 "
+        "WHEN url_host_name = 'www.' || root_domain THEN 0 "
+        "ELSE 1 END AS UTINYINT)",
     ),
     (
         "rank_homepage",
@@ -71,12 +80,8 @@ _RANKING_COLUMNS = (
     ),
     (
         "rank_priority_path",
-        f"""CAST(
-            CASE
-                WHEN regexp_matches(lower(url_path), '{_PRIORITY_PATH_PATTERN}') THEN 0
-                ELSE 1
-            END AS UTINYINT
-        )""",
+        "CAST(CASE WHEN regexp_matches(lower(url_path), "
+        f"'{_PRIORITY_PATH_PATTERN}') THEN 0 ELSE 1 END AS UTINYINT)",
     ),
     (
         "rank_path_depth",
@@ -134,16 +139,7 @@ def normalized_source_projection(schema: SourceSchema) -> str:
 
 def eligibility_predicate() -> str:
     """Return the path-free predicate shared by every selection stage."""
-    mime_types = ", ".join(f"'{mime_type}'" for mime_type in HTML_MIME_TYPES)
-    return f"""
-        fetch_status = 200
-        AND COALESCE(content_mime_detected, content_mime_type) IN ({mime_types})
-        AND NULLIF(trim(root_domain), '') IS NOT NULL
-        AND NULLIF(trim(url), '') IS NOT NULL
-        AND NULLIF(trim(warc_filename), '') IS NOT NULL
-        AND warc_record_offset >= 0
-        AND warc_record_length > 0
-    """.strip()
+    return "\nAND ".join(_ELIGIBILITY_TERMS)
 
 
 def ranking_projection() -> str:
@@ -171,3 +167,30 @@ def ranking_order_terms(pages_per_domain: int) -> tuple[str, ...]:
 def ranking_order_clause(pages_per_domain: int) -> str:
     """Return the SQL ordering clause body for window functions."""
     return ",\n".join(ranking_order_terms(pages_per_domain))
+
+
+def selection_policy_sha256() -> str:
+    """Hash both exact path-free eligibility and ranking profiles."""
+    digest = new_identity_digest("selection-policy")
+    update_text(digest, SELECTION_POLICY_VERSION)
+
+    digest.update(len(_ELIGIBILITY_TERMS).to_bytes(4, byteorder="big"))
+    for expression in _ELIGIBILITY_TERMS:
+        update_text(digest, expression)
+
+    digest.update(len(_RANKING_COLUMNS).to_bytes(4, byteorder="big"))
+    for name, expression in _RANKING_COLUMNS:
+        update_text(digest, name)
+        update_text(digest, expression)
+
+    for ranking_names in (
+        _SINGLE_PAGE_RANKING_COLUMNS,
+        _MULTI_PAGE_RANKING_COLUMNS,
+        _DETERMINISTIC_TIE_COLUMNS,
+    ):
+        digest.update(len(ranking_names).to_bytes(4, byteorder="big"))
+        for name in ranking_names:
+            update_text(digest, name)
+    update_text(digest, "ASC")
+    update_text(digest, "NULLS LAST")
+    return digest.hexdigest()
