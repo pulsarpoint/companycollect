@@ -10,6 +10,7 @@ from warc_index_builder.catalog import (
     BuildIdentity,
     BuildStateConflict,
     BuildStateCorrupt,
+    CatalogValidationError,
     FinalCatalogBuildError,
     SourceShardSeed,
     candidate_artifact_path,
@@ -19,6 +20,7 @@ from warc_index_builder.catalog import (
     materialize_final_metadata,
     materialize_final_pages,
     partial_catalog_path,
+    validate_catalog,
     warc_inventory_sha256,
 )
 from warc_index_builder.manifests import WarcObject
@@ -163,6 +165,119 @@ def _prepare_final_pages(
         state_connection,
         validation_connection,
         build_directory,
+    )
+
+
+def _completed_catalog_path(tmp_path: Path) -> Path:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    rows = [
+        _candidate_row(
+            "example.com",
+            "https://example.com/",
+            _WARCS[0].warc_filename,
+            10,
+            100,
+        ),
+        _candidate_row(
+            "example.com",
+            "https://example.com/about",
+            _WARCS[0].warc_filename,
+            200,
+            50,
+            rank_homepage=0,
+        ),
+        _candidate_row(
+            "other.example",
+            "https://other.example/",
+            _WARCS[1].warc_filename,
+            20,
+            75,
+        ),
+    ]
+    try:
+        _prepare_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+            rows,
+        )
+        return materialize_final_metadata(
+            state_connection,
+            build_directory,
+        ).path
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+
+def _replace_validation_warcs_without_constraints(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    connection.execute(
+        """
+        CREATE TABLE replacement_warcs (
+            warc_index UINTEGER NOT NULL,
+            warc_filename VARCHAR NOT NULL,
+            object_bytes UBIGINT NOT NULL
+        )
+        """
+    )
+    connection.execute("INSERT INTO replacement_warcs SELECT * FROM warcs")
+    connection.execute("DROP TABLE warcs")
+    connection.execute("ALTER TABLE replacement_warcs RENAME TO warcs")
+
+
+def _synchronize_validation_identity(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    inventory = tuple(
+        (int(index), str(filename), int(byte_count))
+        for index, filename, byte_count in connection.execute(
+            """
+            SELECT warc_index, warc_filename, object_bytes
+            FROM warcs ORDER BY warc_index
+            """
+        ).fetchall()
+    )
+    inventory_hash = warc_inventory_sha256(inventory)
+    (
+        schema_version,
+        crawl_id,
+        pages_per_domain,
+        policy_version,
+        policy_hash,
+        schema_hash,
+        warc_manifest_hash,
+        index_manifest_hash,
+    ) = connection.execute(
+        """
+        SELECT schema_version, crawl_id, pages_per_domain,
+               selection_policy_version, selection_policy_sha256,
+               source_schema_sha256, warc_manifest_sha256,
+               index_manifest_sha256
+        FROM catalog_metadata
+        """
+    ).fetchone()
+    identity = catalog.catalog_id(
+        schema_version=int(schema_version),
+        crawl_id=str(crawl_id),
+        pages_per_domain=int(pages_per_domain),
+        selection_policy_version=str(policy_version),
+        selection_policy_sha256=str(policy_hash),
+        source_schema_sha256=str(schema_hash),
+        warc_manifest_sha256=str(warc_manifest_hash),
+        index_manifest_sha256=str(index_manifest_hash),
+        warc_inventory_sha256=inventory_hash,
+    )
+    connection.execute(
+        """
+        UPDATE catalog_metadata
+        SET warc_inventory_sha256 = ?, catalog_id = ?
+        """,
+        [inventory_hash, identity],
     )
 
 
@@ -1155,3 +1270,391 @@ def test_final_metadata_requires_committed_page_materialization(
     finally:
         state_connection.close()
         validation_connection.close()
+
+
+def test_catalog_validation_accepts_completed_catalog_read_only_without_changes(
+    tmp_path: Path,
+) -> None:
+    path = _completed_catalog_path(tmp_path)
+    bytes_before = path.read_bytes()
+    connection = duckdb.connect(str(path), read_only=True)
+    try:
+        result = validate_catalog(connection)
+    finally:
+        connection.close()
+
+    assert result.catalog_id
+    assert result.crawl_id == "CC-MAIN-2026-25"
+    assert result.selection_name == "pages25"
+    assert result.pages_per_domain == 25
+    assert result.warc_count == 2
+    assert result.selected_page_count == 3
+    assert result.distinct_domain_count == 2
+    assert result.source_index_shard_count == 1
+    assert path.read_bytes() == bytes_before
+
+
+def test_catalog_validation_accepts_completed_catalog_with_zero_pages(
+    tmp_path: Path,
+) -> None:
+    state_connection = duckdb.connect()
+    validation_connection = duckdb.connect()
+    build_directory = tmp_path / "build"
+    build_directory.mkdir()
+    try:
+        _prepare_final_pages(
+            state_connection,
+            validation_connection,
+            build_directory,
+            [],
+        )
+        path = materialize_final_metadata(
+            state_connection,
+            build_directory,
+        ).path
+    finally:
+        state_connection.close()
+        validation_connection.close()
+
+    connection = duckdb.connect(str(path), read_only=True)
+    try:
+        result = validate_catalog(connection)
+    finally:
+        connection.close()
+    assert result.selected_page_count == 0
+    assert result.distinct_domain_count == 0
+
+
+@pytest.mark.parametrize(
+    "statement,message",
+    [
+        ("DELETE FROM catalog_metadata", "exactly one metadata row"),
+        (
+            "UPDATE catalog_metadata SET schema_version = 2",
+            "schema version is unsupported",
+        ),
+        (
+            "UPDATE catalog_metadata SET selection_name = 'pages1'",
+            "selection name conflicts",
+        ),
+        (
+            "UPDATE catalog_metadata SET catalog_id = repeat('0', 64)",
+            "catalog ID differs",
+        ),
+        (
+            "UPDATE catalog_metadata SET selection_policy_sha256 = 'invalid'",
+            "noncanonical hash",
+        ),
+        (
+            "UPDATE catalog_metadata SET crawl_id = 'invalid'",
+            "identity fields are invalid",
+        ),
+        (
+            "UPDATE catalog_metadata SET source_index_shard_count = 0",
+            "source shard count must be positive",
+        ),
+        (
+            "UPDATE catalog_metadata SET builder_version = '   '",
+            "runtime versions must not be blank",
+        ),
+    ],
+)
+def test_catalog_validation_rejects_invalid_metadata(
+    tmp_path: Path,
+    statement: str,
+    message: str,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        connection.execute(statement)
+
+        with pytest.raises(CatalogValidationError, match=message) as error:
+            validate_catalog(connection)
+
+        assert error.value.samples
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "statement,message",
+    [
+        (
+            "UPDATE warcs SET warc_index = 2 WHERE warc_index = 1",
+            "indexes are not contiguous",
+        ),
+        (
+            "UPDATE warcs SET object_bytes = object_bytes + 1 WHERE warc_index = 0",
+            "inventory hash differs",
+        ),
+    ],
+)
+def test_catalog_validation_rejects_warc_identity_or_hash_corruption(
+    tmp_path: Path,
+    statement: str,
+    message: str,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        connection.execute(statement)
+
+        with pytest.raises(CatalogValidationError, match=message) as error:
+            validate_catalog(connection)
+
+        assert error.value.samples
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "statement,message",
+    [
+        (
+            """
+            UPDATE warcs
+            SET warc_filename = (
+                SELECT warc_filename FROM warcs WHERE warc_index = 0
+            )
+            WHERE warc_index = 1
+            """,
+            "filenames are not unique",
+        ),
+        (
+            "UPDATE warcs SET object_bytes = 0 WHERE warc_index = 0",
+            "object sizes must be positive",
+        ),
+    ],
+)
+def test_catalog_validation_rejects_invalid_warc_rows(
+    tmp_path: Path,
+    statement: str,
+    message: str,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        _replace_validation_warcs_without_constraints(connection)
+        connection.execute(statement)
+
+        with pytest.raises(CatalogValidationError, match=message) as error:
+            validate_catalog(connection)
+
+        assert error.value.samples
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "statement,message",
+    [
+        (
+            "UPDATE pages SET warc_index = 99 WHERE root_domain = 'other.example'",
+            "WARC absent from the inventory",
+        ),
+        (
+            "UPDATE pages SET warc_record_length = 0 WHERE root_domain = 'other.example'",
+            "zero-length WARC record",
+        ),
+        (
+            "UPDATE pages SET root_domain = '' WHERE root_domain = 'other.example'",
+            "blank domain or URL",
+        ),
+        (
+            "UPDATE pages SET warc_record_offset = 2001 WHERE root_domain = 'other.example'",
+            "offset exceeds object size",
+        ),
+        (
+            """
+            UPDATE pages
+            SET warc_record_offset = 1950, warc_record_length = 100
+            WHERE root_domain = 'other.example'
+            """,
+            "record exceeds object size",
+        ),
+    ],
+)
+def test_catalog_validation_rejects_invalid_page_mapping_or_bounds(
+    tmp_path: Path,
+    statement: str,
+    message: str,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        connection.execute(statement)
+
+        with pytest.raises(CatalogValidationError, match=message) as error:
+            validate_catalog(connection)
+
+        assert error.value.samples
+    finally:
+        connection.close()
+
+
+def test_catalog_validation_rejects_duplicate_page_coordinates(
+    tmp_path: Path,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        connection.execute(
+            """
+            INSERT INTO pages
+            SELECT * FROM pages WHERE root_domain = 'other.example'
+            """
+        )
+
+        with pytest.raises(
+            CatalogValidationError,
+            match="duplicate WARC coordinates",
+        ) as error:
+            validate_catalog(connection)
+
+        assert error.value.samples[0][3] == 2
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        """
+        UPDATE pages SET domain_page_rank = 0
+        WHERE root_domain = 'example.com' AND domain_page_rank = 1
+        """,
+        """
+        UPDATE pages SET domain_page_rank = 3
+        WHERE root_domain = 'example.com' AND domain_page_rank = 2
+        """,
+        """
+        UPDATE pages SET domain_page_rank = 1
+        WHERE root_domain = 'example.com' AND domain_page_rank = 2
+        """,
+        """
+        UPDATE pages SET domain_page_rank = 26
+        WHERE root_domain = 'example.com' AND domain_page_rank = 2
+        """,
+    ],
+)
+def test_catalog_validation_rejects_invalid_domain_rank_sequences(
+    tmp_path: Path,
+    statement: str,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        connection.execute(statement)
+
+        with pytest.raises(
+            CatalogValidationError,
+            match="domain ranks are not unique, gapless, and bounded",
+        ) as error:
+            validate_catalog(connection)
+
+        assert error.value.samples[0][0] == "example.com"
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["warc_count", "selected_page_count", "distinct_domain_count"],
+)
+def test_catalog_validation_rejects_incorrect_stored_counts(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        connection.execute(f"UPDATE catalog_metadata SET {field} = {field} + 1")
+
+        with pytest.raises(
+            CatalogValidationError,
+            match="stored counts differ",
+        ) as error:
+            validate_catalog(connection)
+
+        assert error.value.samples[0][0] == field
+    finally:
+        connection.close()
+
+
+def test_catalog_validation_samples_are_bounded_and_deterministic(
+    tmp_path: Path,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        connection.executemany(
+            """
+            INSERT INTO pages VALUES (?, ?, ?, ?, NULL, ?, ?)
+            """,
+            [
+                (99, f"invalid-{index}.example", f"https://invalid-{index}.example/", 1, 0, 10)
+                for index in range(5)
+            ],
+        )
+
+        with pytest.raises(CatalogValidationError) as error:
+            validate_catalog(connection)
+
+        assert len(error.value.samples) == 3
+        assert error.value.has_more_samples is True
+        assert [sample[3] for sample in error.value.samples] == [
+            "invalid-0.example",
+            "invalid-1.example",
+            "invalid-2.example",
+        ]
+        assert "additional invalid rows omitted" in str(error.value)
+    finally:
+        connection.close()
+
+
+def test_catalog_validation_uses_overflow_safe_uint64_bounds(
+    tmp_path: Path,
+) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    maximum = 2**64 - 1
+    try:
+        connection.execute(
+            "UPDATE warcs SET object_bytes = ? WHERE warc_index = 0",
+            [maximum],
+        )
+        _synchronize_validation_identity(connection)
+        connection.execute(
+            """
+            UPDATE pages
+            SET warc_record_offset = ?, warc_record_length = 1
+            WHERE url = 'https://example.com/'
+            """,
+            [maximum - 1],
+        )
+
+        assert validate_catalog(connection).selected_page_count == 3
+
+        connection.execute(
+            """
+            UPDATE pages
+            SET warc_record_length = 2
+            WHERE url = 'https://example.com/'
+            """
+        )
+        with pytest.raises(
+            CatalogValidationError,
+            match="record exceeds object size",
+        ) as error:
+            validate_catalog(connection)
+        assert error.value.samples[0][3] == maximum
+    finally:
+        connection.close()
+
+
+def test_catalog_validation_rejects_incompatible_table_set(tmp_path: Path) -> None:
+    connection = duckdb.connect(str(_completed_catalog_path(tmp_path)))
+    try:
+        connection.execute("CREATE TABLE unexpected(value INTEGER)")
+
+        with pytest.raises(
+            CatalogValidationError,
+            match="incompatible table set",
+        ) as error:
+            validate_catalog(connection)
+
+        assert error.value.samples
+    finally:
+        connection.close()

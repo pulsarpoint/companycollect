@@ -304,12 +304,12 @@ and informational timestamp excluded from identity.
 
 **Depends on:** T18.
 
-**Files:** `warc_index_builder/catalog.py`, `tests/test_catalog.py`.
+**Files:** `warc_index_builder/catalog.py`, `tests/test_final_catalog.py`.
 
 **Deliver:** one validation path for metadata, WARC identity/hash, mapping, overflow-safe coordinates,
 duplicate coordinates, domain ranks, and stored counts; sample invalid rows in returned errors.
 
-**Verify:** one failing fixture per invariant: `uv run pytest tests/test_catalog.py -q -k validation`.
+**Verify:** one failing fixture per invariant: `uv run pytest tests/test_final_catalog.py -q -k validation`.
 
 **Commit:** `feat(commoncrawl): validate warc catalogs`
 

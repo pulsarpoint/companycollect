@@ -86,6 +86,29 @@ class FinalCatalogBuildError(RuntimeError):
     pass
 
 
+class CatalogValidationError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        samples: Sequence[Sequence[object]] = (),
+    ) -> None:
+        raw_samples = tuple(tuple(row) for row in samples)
+        self.has_more_samples = len(raw_samples) > 3
+        self.samples = tuple(
+            tuple(
+                value[:197] + "..."
+                if isinstance(value, str) and len(value) > 200
+                else value
+                for value in row
+            )
+            for row in raw_samples[:3]
+        )
+        suffix = f"; samples={self.samples!r}" if self.samples else ""
+        if self.has_more_samples:
+            suffix += "; additional invalid rows omitted"
+        super().__init__(message + suffix)
+
+
 @dataclass(frozen=True, slots=True)
 class BuildIdentity:
     catalog_schema_version: int
@@ -192,6 +215,18 @@ class FinalPagesResult:
 class FinalMetadataResult:
     path: Path
     catalog_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogValidationResult:
+    catalog_id: str
+    crawl_id: str
+    selection_name: str
+    pages_per_domain: int
+    warc_count: int
+    selected_page_count: int
+    distinct_domain_count: int
+    source_index_shard_count: int
 
 
 GLOBAL_PAGE_COLUMNS = (
@@ -357,6 +392,44 @@ _BUILD_STATE_COLUMNS = {
         ("attempts", "UINTEGER", "NO"),
         ("last_error", "VARCHAR", "YES"),
         ("completed_at", "TIMESTAMP WITH TIME ZONE", "YES"),
+    ),
+}
+
+_FINAL_CATALOG_COLUMNS = {
+    "catalog_metadata": (
+        ("singleton", "BOOLEAN", "NO"),
+        ("schema_version", "USMALLINT", "NO"),
+        ("catalog_id", "VARCHAR", "NO"),
+        ("crawl_id", "VARCHAR", "NO"),
+        ("selection_name", "VARCHAR", "NO"),
+        ("pages_per_domain", "USMALLINT", "NO"),
+        ("selection_policy_version", "VARCHAR", "NO"),
+        ("selection_policy_sha256", "VARCHAR", "NO"),
+        ("source_schema_sha256", "VARCHAR", "NO"),
+        ("warc_manifest_sha256", "VARCHAR", "NO"),
+        ("index_manifest_sha256", "VARCHAR", "NO"),
+        ("warc_inventory_sha256", "VARCHAR", "NO"),
+        ("warc_count", "UINTEGER", "NO"),
+        ("selected_page_count", "UBIGINT", "NO"),
+        ("distinct_domain_count", "UBIGINT", "NO"),
+        ("source_index_shard_count", "UINTEGER", "NO"),
+        ("duckdb_version", "VARCHAR", "NO"),
+        ("builder_version", "VARCHAR", "NO"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE", "NO"),
+    ),
+    "pages": (
+        ("warc_index", "UINTEGER", "NO"),
+        ("root_domain", "VARCHAR", "NO"),
+        ("url", "VARCHAR", "NO"),
+        ("domain_page_rank", "USMALLINT", "NO"),
+        ("content_languages", "VARCHAR", "YES"),
+        ("warc_record_offset", "UBIGINT", "NO"),
+        ("warc_record_length", "UBIGINT", "NO"),
+    ),
+    "warcs": (
+        ("warc_index", "UINTEGER", "NO"),
+        ("warc_filename", "VARCHAR", "NO"),
+        ("object_bytes", "UBIGINT", "NO"),
     ),
 }
 
@@ -1368,7 +1441,8 @@ def materialize_final_pages(
                         THEN error('selected WARC record exceeds object size')
                     ELSE true
                 END
-                ORDER BY warc_index, warc_record_offset, warc_record_length
+                ORDER BY warc_index, warc_record_offset, warc_record_length,
+                         root_domain COLLATE "binary", url COLLATE "binary"
                     """,
                     [[str(candidate_path) for candidate_path in candidate_paths]],
                 )
@@ -1605,6 +1679,500 @@ def materialize_final_metadata(
             except duckdb.Error:
                 pass
         raise
+
+
+def _require_final_catalog_shapes(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    tables = tuple(
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_catalog = current_database()
+              AND table_schema = 'main'
+              AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+            """
+        ).fetchall()
+    )
+    expected_tables = tuple(sorted(_FINAL_CATALOG_COLUMNS))
+    if tables != expected_tables:
+        raise CatalogValidationError(
+            "final catalog has an incompatible table set",
+            [("expected", *expected_tables), ("actual", *tables)],
+        )
+
+    for table, expected_columns in _FINAL_CATALOG_COLUMNS.items():
+        described = connection.execute(f"DESCRIBE main.{table}").fetchall()
+        actual_columns = tuple(
+            (str(row[0]), str(row[1]), str(row[2])) for row in described
+        )
+        if actual_columns != expected_columns:
+            raise CatalogValidationError(
+                f"final catalog table {table} has an incompatible schema",
+                actual_columns[:4],
+            )
+
+
+def _validated_catalog_warcs(
+    connection: duckdb.DuckDBPyConnection,
+) -> tuple[tuple[tuple[int, str, int], ...], str]:
+    inventory = tuple(
+        (int(warc_index), str(warc_filename), int(object_bytes))
+        for warc_index, warc_filename, object_bytes in connection.execute(
+            """
+            SELECT warc_index, warc_filename, object_bytes
+            FROM warcs
+            ORDER BY warc_index, warc_filename COLLATE "binary", object_bytes
+            """
+        ).fetchall()
+    )
+    if not inventory:
+        raise CatalogValidationError(
+            "final WARC inventory is empty",
+            [("warc_count", 0)],
+        )
+
+    invalid_indexes = [
+        (expected_index, warc_index, warc_filename, object_bytes)
+        for expected_index, (warc_index, warc_filename, object_bytes) in enumerate(
+            inventory
+        )
+        if warc_index != expected_index
+    ][:4]
+    if invalid_indexes:
+        raise CatalogValidationError(
+            "final WARC indexes are not contiguous from zero",
+            invalid_indexes,
+        )
+
+    blank_filenames = [
+        (warc_index, warc_filename, object_bytes)
+        for warc_index, warc_filename, object_bytes in inventory
+        if not warc_filename.strip()
+    ][:4]
+    if blank_filenames:
+        raise CatalogValidationError(
+            "final WARC filenames must not be blank",
+            blank_filenames,
+        )
+
+    seen_filenames: set[str] = set()
+    duplicate_filenames: list[tuple[object, ...]] = []
+    for warc_index, warc_filename, object_bytes in inventory:
+        if warc_filename in seen_filenames:
+            duplicate_filenames.append(
+                (warc_index, warc_filename, object_bytes)
+            )
+            if len(duplicate_filenames) == 4:
+                break
+        seen_filenames.add(warc_filename)
+    if duplicate_filenames:
+        raise CatalogValidationError(
+            "final WARC filenames are not unique",
+            duplicate_filenames,
+        )
+
+    invalid_sizes = [
+        (warc_index, warc_filename, object_bytes)
+        for warc_index, warc_filename, object_bytes in inventory
+        if object_bytes <= 0
+    ][:4]
+    if invalid_sizes:
+        raise CatalogValidationError(
+            "final WARC object sizes must be positive",
+            invalid_sizes,
+        )
+
+    try:
+        inventory_hash = warc_inventory_sha256(inventory)
+    except ValueError as error:
+        raise CatalogValidationError(
+            f"cannot hash final WARC inventory: {error}"
+        ) from error
+    return inventory, inventory_hash
+
+
+def _validation_samples(
+    connection: duckdb.DuckDBPyConnection,
+    query: str,
+    parameters: Sequence[object] = (),
+) -> tuple[tuple[object, ...], ...]:
+    return tuple(
+        tuple(row)
+        for row in connection.execute(query, list(parameters)).fetchall()
+    )
+
+
+def _validate_catalog_pages(
+    connection: duckdb.DuckDBPyConnection,
+    pages_per_domain: int,
+) -> tuple[int, int]:
+    (
+        blank_identity_count,
+        zero_length_count,
+        missing_warc_count,
+        offset_out_of_bounds_count,
+        record_out_of_bounds_count,
+    ) = connection.execute(
+        """
+        SELECT count(*) FILTER (
+                   WHERE NULLIF(trim(pages.root_domain), '') IS NULL
+                      OR NULLIF(trim(pages.url), '') IS NULL
+               ),
+               count(*) FILTER (WHERE pages.warc_record_length = 0),
+               count(*) FILTER (WHERE warcs.warc_index IS NULL),
+               count(*) FILTER (
+                   WHERE warcs.warc_index IS NOT NULL
+                     AND pages.warc_record_offset > warcs.object_bytes
+               ),
+               count(*) FILTER (
+                   WHERE CASE
+                       WHEN warcs.warc_index IS NULL THEN false
+                       WHEN pages.warc_record_offset > warcs.object_bytes THEN false
+                       ELSE pages.warc_record_length
+                            > warcs.object_bytes - pages.warc_record_offset
+                   END
+               )
+        FROM pages
+        LEFT JOIN warcs USING (warc_index)
+        """
+    ).fetchone()
+
+    if blank_identity_count:
+        raise CatalogValidationError(
+            "final pages contain a blank domain or URL",
+            _validation_samples(
+                connection,
+                """
+                SELECT warc_index, warc_record_offset, warc_record_length,
+                       root_domain, url
+                FROM pages
+                WHERE NULLIF(trim(root_domain), '') IS NULL
+                   OR NULLIF(trim(url), '') IS NULL
+                ORDER BY warc_index, warc_record_offset, warc_record_length
+                LIMIT 4
+                """,
+            ),
+        )
+    if zero_length_count:
+        raise CatalogValidationError(
+            "final pages contain a zero-length WARC record",
+            _validation_samples(
+                connection,
+                """
+                SELECT warc_index, warc_record_offset, warc_record_length,
+                       root_domain, url
+                FROM pages
+                WHERE warc_record_length = 0
+                ORDER BY warc_index, warc_record_offset,
+                         root_domain COLLATE "binary", url COLLATE "binary"
+                LIMIT 4
+                """,
+            ),
+        )
+    if missing_warc_count:
+        raise CatalogValidationError(
+            "final pages reference a WARC absent from the inventory",
+            _validation_samples(
+                connection,
+                """
+                SELECT pages.warc_index, pages.warc_record_offset,
+                       pages.warc_record_length, pages.root_domain, pages.url
+                FROM pages
+                LEFT JOIN warcs USING (warc_index)
+                WHERE warcs.warc_index IS NULL
+                ORDER BY pages.warc_index, pages.warc_record_offset,
+                         pages.warc_record_length,
+                         pages.root_domain COLLATE "binary",
+                         pages.url COLLATE "binary"
+                LIMIT 4
+                """,
+            ),
+        )
+    if offset_out_of_bounds_count:
+        raise CatalogValidationError(
+            "final page WARC record offset exceeds object size",
+            _validation_samples(
+                connection,
+                """
+                SELECT pages.warc_index, pages.warc_record_offset,
+                       pages.warc_record_length, warcs.object_bytes,
+                       pages.root_domain, pages.url
+                FROM pages
+                JOIN warcs USING (warc_index)
+                WHERE pages.warc_record_offset > warcs.object_bytes
+                ORDER BY pages.warc_index, pages.warc_record_offset,
+                         pages.warc_record_length,
+                         pages.root_domain COLLATE "binary",
+                         pages.url COLLATE "binary"
+                LIMIT 4
+                """,
+            ),
+        )
+    if record_out_of_bounds_count:
+        raise CatalogValidationError(
+            "final page WARC record exceeds object size",
+            _validation_samples(
+                connection,
+                """
+                SELECT pages.warc_index, pages.warc_record_offset,
+                       pages.warc_record_length, warcs.object_bytes,
+                       pages.root_domain, pages.url
+                FROM pages
+                JOIN warcs USING (warc_index)
+                WHERE CASE
+                    WHEN pages.warc_record_offset > warcs.object_bytes THEN false
+                    ELSE pages.warc_record_length
+                         > warcs.object_bytes - pages.warc_record_offset
+                END
+                ORDER BY pages.warc_index, pages.warc_record_offset,
+                         pages.warc_record_length,
+                         pages.root_domain COLLATE "binary",
+                         pages.url COLLATE "binary"
+                LIMIT 4
+                """,
+            ),
+        )
+
+    duplicate_coordinates = _validation_samples(
+        connection,
+        """
+        SELECT warc_index, warc_record_offset, warc_record_length, count(*)
+        FROM pages
+        GROUP BY warc_index, warc_record_offset, warc_record_length
+        HAVING count(*) > 1
+        ORDER BY warc_index, warc_record_offset, warc_record_length
+        LIMIT 4
+        """,
+    )
+    if duplicate_coordinates:
+        raise CatalogValidationError(
+            "final pages contain duplicate WARC coordinates",
+            duplicate_coordinates,
+        )
+
+    domain_rank_rows = connection.execute(
+        """
+        WITH domain_ranks AS MATERIALIZED (
+            SELECT root_domain, count(*) AS page_count,
+                   count(DISTINCT domain_page_rank) AS distinct_rank_count,
+                   min(domain_page_rank) AS minimum_rank,
+                   max(domain_page_rank) AS maximum_rank
+            FROM pages
+            GROUP BY root_domain
+        ),
+        summary AS (
+            SELECT coalesce(sum(page_count), 0) AS page_count,
+                   count(*) AS distinct_domain_count
+            FROM domain_ranks
+        ),
+        invalid AS (
+            SELECT true AS invalid_present, root_domain, page_count,
+                   distinct_rank_count, minimum_rank, maximum_rank
+            FROM domain_ranks
+            WHERE minimum_rank <> 1
+               OR maximum_rank <> page_count
+               OR distinct_rank_count <> page_count
+               OR maximum_rank > ?
+            ORDER BY root_domain COLLATE "binary"
+            LIMIT 4
+        )
+        SELECT summary.page_count, summary.distinct_domain_count,
+               coalesce(invalid.invalid_present, false),
+               invalid.root_domain, invalid.page_count,
+               invalid.distinct_rank_count, invalid.minimum_rank,
+               invalid.maximum_rank, ? AS pages_per_domain
+        FROM summary
+        LEFT JOIN invalid ON true
+        ORDER BY invalid.root_domain COLLATE "binary" NULLS FIRST
+        """,
+        [pages_per_domain, pages_per_domain],
+    ).fetchall()
+    page_count = int(domain_rank_rows[0][0])
+    distinct_domain_count = int(domain_rank_rows[0][1])
+    invalid_domain_ranks = tuple(
+        tuple(row[3:]) for row in domain_rank_rows if row[2]
+    )
+    if invalid_domain_ranks:
+        raise CatalogValidationError(
+            "final page domain ranks are not unique, gapless, and bounded",
+            invalid_domain_ranks,
+        )
+
+    return page_count, distinct_domain_count
+
+
+def validate_catalog(
+    connection: duckdb.DuckDBPyConnection,
+) -> CatalogValidationResult:
+    """Read and fully validate one completed catalog without modifying it."""
+    try:
+        return _validate_catalog(connection)
+    except CatalogValidationError:
+        raise
+    except duckdb.Error as error:
+        raise CatalogValidationError(f"query final catalog: {error}") from error
+
+
+def _validate_catalog(
+    connection: duckdb.DuckDBPyConnection,
+) -> CatalogValidationResult:
+    _require_final_catalog_shapes(connection)
+    metadata_count = int(
+        connection.execute("SELECT count(*) FROM catalog_metadata").fetchone()[0]
+    )
+    if metadata_count != 1:
+        raise CatalogValidationError(
+            "final catalog must contain exactly one metadata row",
+            [("metadata_row_count", metadata_count)],
+        )
+
+    metadata = connection.execute(
+        """
+        SELECT singleton, schema_version, catalog_id, crawl_id,
+               selection_name, pages_per_domain,
+               selection_policy_version, selection_policy_sha256,
+               source_schema_sha256, warc_manifest_sha256,
+               index_manifest_sha256, warc_inventory_sha256,
+               warc_count, selected_page_count, distinct_domain_count,
+               source_index_shard_count, duckdb_version, builder_version,
+               created_at IS NOT NULL
+        FROM catalog_metadata
+        """
+    ).fetchone()
+    if metadata is None:
+        raise CatalogValidationError("final catalog metadata row disappeared")
+    (
+        singleton,
+        schema_version,
+        stored_catalog_id,
+        crawl_id,
+        selection_name,
+        pages_per_domain,
+        selection_policy_version,
+        selection_policy_sha256,
+        source_schema_sha256,
+        warc_manifest_sha256,
+        index_manifest_sha256,
+        stored_inventory_hash,
+        stored_warc_count,
+        stored_page_count,
+        stored_domain_count,
+        source_shard_count,
+        duckdb_version,
+        builder_version,
+        has_created_at,
+    ) = metadata
+
+    if singleton is not True:
+        raise CatalogValidationError(
+            "final catalog metadata singleton must be true",
+            [("singleton", singleton)],
+        )
+    if int(schema_version) != CATALOG_SCHEMA_VERSION:
+        raise CatalogValidationError(
+            "final catalog schema version is unsupported",
+            [("schema_version", schema_version, CATALOG_SCHEMA_VERSION)],
+        )
+    expected_selection_name = f"pages{int(pages_per_domain)}"
+    if selection_name != expected_selection_name:
+        raise CatalogValidationError(
+            "final catalog selection name conflicts with pages_per_domain",
+            [("selection_name", selection_name, expected_selection_name)],
+        )
+    if int(source_shard_count) <= 0:
+        raise CatalogValidationError(
+            "final catalog source shard count must be positive",
+            [("source_index_shard_count", source_shard_count)],
+        )
+    if not str(duckdb_version).strip() or not str(builder_version).strip():
+        raise CatalogValidationError(
+            "final catalog runtime versions must not be blank",
+            [("duckdb_version", duckdb_version), ("builder_version", builder_version)],
+        )
+    if has_created_at is not True:
+        raise CatalogValidationError("final catalog created_at must not be null")
+    for name, value in (
+        ("catalog_id", stored_catalog_id),
+        ("selection_policy_sha256", selection_policy_sha256),
+        ("source_schema_sha256", source_schema_sha256),
+        ("warc_manifest_sha256", warc_manifest_sha256),
+        ("index_manifest_sha256", index_manifest_sha256),
+        ("warc_inventory_sha256", stored_inventory_hash),
+    ):
+        try:
+            decode_sha256(str(value), name)
+        except ValueError as error:
+            raise CatalogValidationError(
+                f"final catalog metadata contains a noncanonical hash: {error}",
+                [(name, value)],
+            ) from error
+
+    inventory, computed_inventory_hash = _validated_catalog_warcs(connection)
+    if stored_inventory_hash != computed_inventory_hash:
+        raise CatalogValidationError(
+            "final WARC inventory hash differs from metadata",
+            [("warc_inventory_sha256", stored_inventory_hash, computed_inventory_hash)],
+        )
+
+    try:
+        computed_catalog_id = catalog_id(
+            schema_version=int(schema_version),
+            crawl_id=str(crawl_id),
+            pages_per_domain=int(pages_per_domain),
+            selection_policy_version=str(selection_policy_version),
+            selection_policy_sha256=str(selection_policy_sha256),
+            source_schema_sha256=str(source_schema_sha256),
+            warc_manifest_sha256=str(warc_manifest_sha256),
+            index_manifest_sha256=str(index_manifest_sha256),
+            warc_inventory_sha256=computed_inventory_hash,
+        )
+    except ValueError as error:
+        raise CatalogValidationError(
+            f"final catalog identity fields are invalid: {error}",
+            [
+                ("crawl_id", crawl_id),
+                ("pages_per_domain", pages_per_domain),
+                ("selection_policy_version", selection_policy_version),
+            ],
+        ) from error
+    if stored_catalog_id != computed_catalog_id:
+        raise CatalogValidationError(
+            "final catalog ID differs from its logical identity",
+            [("catalog_id", stored_catalog_id, computed_catalog_id)],
+        )
+
+    page_count, domain_count = _validate_catalog_pages(
+        connection,
+        int(pages_per_domain),
+    )
+    count_mismatches: list[tuple[object, ...]] = []
+    for name, stored, actual in (
+        ("warc_count", stored_warc_count, len(inventory)),
+        ("selected_page_count", stored_page_count, page_count),
+        ("distinct_domain_count", stored_domain_count, domain_count),
+    ):
+        if int(stored) != actual:
+            count_mismatches.append((name, int(stored), actual))
+    if count_mismatches:
+        raise CatalogValidationError(
+            "final catalog stored counts differ from actual rows",
+            count_mismatches,
+        )
+
+    return CatalogValidationResult(
+        catalog_id=str(stored_catalog_id),
+        crawl_id=str(crawl_id),
+        selection_name=str(selection_name),
+        pages_per_domain=int(pages_per_domain),
+        warc_count=len(inventory),
+        selected_page_count=page_count,
+        distinct_domain_count=domain_count,
+        source_index_shard_count=int(source_shard_count),
+    )
 
 
 def local_candidate_query(
