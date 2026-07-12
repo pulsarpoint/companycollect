@@ -33,6 +33,9 @@ from dagster_v3.defs.nace.source import (
 
 GROUP_NAME = "nace"
 NACE_DUCKDB_PATH = Path("data/nace_source.duckdb")
+# Single-writer pool for every asset touching the nace DuckDB file
+# (the instance defaults every pool to limit 1).
+NACE_DUCKDB_POOL = "nace_duckdb"
 
 
 class NaceDltTranslator(DagsterDltTranslator):
@@ -62,6 +65,7 @@ class NaceDltTranslator(DagsterDltTranslator):
     ),
     name="nace_raw_duckdb",
     dagster_dlt_translator=NaceDltTranslator(),
+    pool=NACE_DUCKDB_POOL,
 )
 def nace_raw_duckdb_asset(
     context: AssetExecutionContext,
@@ -89,6 +93,7 @@ def nace_raw_duckdb_asset(
 @dg.asset(
     deps=[dg.AssetKey("nace_raw_duckdb")],
     group_name=GROUP_NAME,
+    pool=NACE_DUCKDB_POOL,
     kinds={"duckdb", "reference"},
     metadata={
         "dagster/column_schema": dagster_table_schema_from_contract(
@@ -114,6 +119,7 @@ def nace_categories_duckdb(
 @dg.asset(
     deps=[dg.AssetKey("nace_categories_duckdb")],
     group_name=GROUP_NAME,
+    pool=NACE_DUCKDB_POOL,
     kinds={"duckdb", "clickhouse", "reference"},
     description="NACE category reference rows exported from DuckDB to migrated ClickHouse table.",
 )

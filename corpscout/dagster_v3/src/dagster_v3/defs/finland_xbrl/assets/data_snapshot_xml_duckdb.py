@@ -12,7 +12,10 @@ import polars as pl
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.finland_xbrl import tables
-from dagster_v3.defs.finland_xbrl.assets.common import XBRL_BUCKET
+from dagster_v3.defs.finland_xbrl.assets.common import (
+    FINLAND_XBRL_DUCKDB_POOL,
+    XBRL_BUCKET,
+)
 from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml import (
     XML_SNAPSHOT_PARTITIONS,
     data_snapshot_xml,
@@ -377,6 +380,7 @@ def materialize_data_snapshot_xml_duckdb(
 @dg.asset(
     name="data_snapshot_xml_duckdb",
     group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[data_snapshot_xml],
     partitions_def=XML_SNAPSHOT_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),

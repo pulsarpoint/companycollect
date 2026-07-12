@@ -5,6 +5,7 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.finland_xbrl import metric_mapping
+from dagster_v3.defs.finland_xbrl.assets.common import FINLAND_XBRL_DUCKDB_POOL
 from dagster_v3.defs.finland_xbrl.assets.data_daily_xml_duckdb import (
     data_daily_xml_duckdb,
 )
@@ -31,6 +32,7 @@ from dagster_v3.defs.finland_xbrl.resources import XbrlParquetStorageResource
 @dg.asset(
     name="fi_financial_statements_ch",
     group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[data_snapshot_xml_duckdb, data_daily_xml_duckdb],
     kinds={"python", "duckdb", "clickhouse"},
     description=(
@@ -61,6 +63,7 @@ def fi_financial_statements_ch(
 @dg.asset(
     name="fi_financial_metrics_parquet",
     group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[data_snapshot_xml_duckdb, data_daily_xml_duckdb],
     kinds={"python", "duckdb", "polars", "parquet"},
     description=(

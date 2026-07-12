@@ -2,7 +2,11 @@ import dagster as dg
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.finland_xbrl.assets.common import DAILY_PARTITIONS, XBRL_BUCKET
+from dagster_v3.defs.finland_xbrl.assets.common import (
+    DAILY_PARTITIONS,
+    FINLAND_XBRL_DUCKDB_POOL,
+    XBRL_BUCKET,
+)
 from dagster_v3.defs.finland_xbrl.assets.data_daily import (
     financial_data_daily_key,
 )
@@ -81,6 +85,7 @@ def materialize_data_daily_duckdb(
 @dg.asset(
     name="data_daily_duckdb",
     group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[dg.AssetKey("data_daily")],
     partitions_def=DAILY_PARTITIONS,
     kinds={"python", "s3", "csv", "duckdb"},

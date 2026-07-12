@@ -2087,6 +2087,8 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
     all_keys = graph.get_all_asset_keys()
     assert all(AssetKey([key]) not in all_keys for key in legacy_keys)
 
+    # Every asset that opens one of the module's DuckDB files carries the
+    # single-writer pool (instance pools default to limit 1).
     for key in (
         "data_snapshot_duckdb",
         "data_snapshot_duckdb_ch",
@@ -2094,12 +2096,24 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
         "data_daily_duckdb_ch",
         "data_snapshot_xml_duckdb",
         "data_daily_xml_duckdb",
+        "fi_financial_statements_ch",
         "fi_financial_metrics_parquet",
-        "fi_financial_metrics_usd_parquet",
     ):
         node = graph.get(AssetKey([key]))
         assert "finland_ytj_duckdb" not in node.pools, f"{key} should not use YTJ pool"
-        assert "finland_xbrl_duckdb" not in node.pools, f"{key} should not use DuckDB pool"
+        assert node.pools == {"finland_xbrl_duckdb"}, f"{key} must use the module pool"
+
+    # S3/parquet-only assets stay poolless.
+    for key in (
+        "data_snapshot",
+        "data_daily",
+        "data_snapshot_xml",
+        "data_daily_xml",
+        "fi_financial_metrics_usd_parquet",
+        "fi_financial_metrics_ch",
+    ):
+        node = graph.get(AssetKey([key]))
+        assert node.pools == set(), f"{key} does not touch DuckDB"
 
 
 def test_finland_xbrl_no_longer_exposes_dedicated_duckdb_file() -> None:

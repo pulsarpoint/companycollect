@@ -4,7 +4,10 @@ from pathlib import Path
 import dagster as dg
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.finland_xbrl.assets.common import DAILY_PARTITIONS
+from dagster_v3.defs.finland_xbrl.assets.common import (
+    DAILY_PARTITIONS,
+    FINLAND_XBRL_DUCKDB_POOL,
+)
 from dagster_v3.defs.finland_xbrl.assets.data_daily_xml import data_daily_xml
 from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml_duckdb import (
     StatementParser,
@@ -41,6 +44,7 @@ def materialize_data_daily_xml_duckdb(
 @dg.asset(
     name="data_daily_xml_duckdb",
     group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[data_daily_xml],
     partitions_def=DAILY_PARTITIONS,
     kinds={"python", "duckdb", "parquet", "xml"},

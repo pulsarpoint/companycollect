@@ -8,7 +8,10 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
 )
-from dagster_v3.defs.finland_xbrl.assets.common import DAILY_PARTITIONS
+from dagster_v3.defs.finland_xbrl.assets.common import (
+    DAILY_PARTITIONS,
+    FINLAND_XBRL_DUCKDB_POOL,
+)
 from dagster_v3.defs.finland_xbrl.assets.data_daily_duckdb import (
     FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE,
 )
@@ -82,6 +85,7 @@ def export_data_daily_duckdb_to_clickhouse(
 @dg.asset(
     name="data_daily_duckdb_ch",
     group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[dg.AssetKey("data_daily_duckdb")],
     partitions_def=DAILY_PARTITIONS,
     kinds={"python", "duckdb", "clickhouse"},

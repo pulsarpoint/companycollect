@@ -5,7 +5,10 @@ import dagster as dg
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.finland_xbrl.assets.common import XBRL_BUCKET
+from dagster_v3.defs.finland_xbrl.assets.common import (
+    FINLAND_XBRL_DUCKDB_POOL,
+    XBRL_BUCKET,
+)
 from dagster_v3.defs.finland_xbrl.assets.data_snapshot import (
     FINANCIAL_DATA_S3_SNAPSHOT_COLUMNS,
     FINANCIAL_DATA_S3_SNAPSHOT_KEY,
@@ -73,6 +76,7 @@ def materialize_data_snapshot_duckdb(
 @dg.asset(
     name="data_snapshot_duckdb",
     group_name="finland_xbrl",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
     deps=[dg.AssetKey("data_snapshot")],
     kinds={"python", "s3", "csv", "duckdb"},
     description=(

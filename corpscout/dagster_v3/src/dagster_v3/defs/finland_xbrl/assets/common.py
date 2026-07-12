@@ -1,6 +1,9 @@
 import dagster as dg
 
 XBRL_BUCKET = "source-finland-prh-xbrl"
+# Single-writer pool for every asset touching the finland_xbrl DuckDB files
+# (the instance defaults every pool to limit 1).
+FINLAND_XBRL_DUCKDB_POOL = "finland_xbrl_duckdb"
 XBRL_BASE_URL = "https://avoindata.prh.fi/opendata-xbrl-api/v3"
 XBRL_TIMEOUT_SECONDS = 120
 DEFAULT_XBRL_REQUEST_DELAY_SECONDS = 1.0
