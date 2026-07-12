@@ -92,21 +92,20 @@ func sourceLoop(ctx context.Context, localStore *store.Store, config Config) err
 		if err != nil {
 			return fmt.Errorf("count DNS work: %w", err)
 		}
-		available := config.WorkCapacity - active
-		if available <= 0 {
+		remainingLimit := -1
+		if config.MaxDomains > 0 {
+			remainingLimit = config.MaxDomains - state.DomainsFetched
+			if remainingLimit <= 0 {
+				_, err := localStore.AddDomainPage(ctx, config.ScanID, nil, true, config.MaxDomains)
+				return err
+			}
+		}
+		pageSize := sourcePageSize(config, active, remainingLimit)
+		if pageSize == 0 {
 			if err := wait(ctx, idlePollInterval); err != nil {
 				return err
 			}
 			continue
-		}
-		pageSize := min(config.DomainPageSize, available)
-		if config.MaxDomains > 0 {
-			remaining := config.MaxDomains - state.DomainsFetched
-			if remaining <= 0 {
-				_, err := localStore.AddDomainPage(ctx, config.ScanID, nil, true, config.MaxDomains)
-				return err
-			}
-			pageSize = min(pageSize, remaining)
 		}
 		page, err := input.FetchPage(ctx, connection, state.Cursor, pageSize)
 		if err != nil {
@@ -117,6 +116,17 @@ func sourceLoop(ctx context.Context, localStore *store.Store, config Config) err
 			return fmt.Errorf("commit DNS domain page: %w", err)
 		}
 	}
+}
+
+func sourcePageSize(config Config, active, remainingLimit int) int {
+	pageSize := min(config.DomainPageSize, config.WorkCapacity)
+	if remainingLimit >= 0 {
+		pageSize = min(pageSize, remainingLimit)
+	}
+	if pageSize <= 0 || config.WorkCapacity-active < pageSize {
+		return 0
+	}
+	return pageSize
 }
 
 func workLoop(ctx context.Context, localStore *store.Store, config Config, discoverer *resolve.Discoverer, resolver *resolve.Resolver, stats *metrics.Stats) error {

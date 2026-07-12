@@ -7,14 +7,16 @@ import (
 
 func TestPageQueryUsesBoundKeysetPagination(t *testing.T) {
 	for _, fragment := range []string{
-		"FROM corpscout.commoncrawl_domains", "root_domain != ''", "root_domain > ?",
-		"GROUP BY root_domain", "ORDER BY root_domain", "LIMIT ?",
+		"SELECT DISTINCT root_domain", "FROM corpscout.commoncrawl_domains", "PREWHERE root_domain > ?",
+		"ORDER BY root_domain", "LIMIT ?", "optimize_distinct_in_order = 1",
 	} {
 		if !strings.Contains(pageQuery, fragment) {
 			t.Errorf("page query missing %q: %s", fragment, pageQuery)
 		}
 	}
-	if strings.Contains(pageQuery, "OFFSET") {
-		t.Errorf("pagination must be keyset based: %s", pageQuery)
+	for _, forbidden := range []string{"OFFSET", "GROUP BY", "FROM\n("} {
+		if strings.Contains(pageQuery, forbidden) {
+			t.Errorf("page query contains expensive construct %q: %s", forbidden, pageQuery)
+		}
 	}
 }

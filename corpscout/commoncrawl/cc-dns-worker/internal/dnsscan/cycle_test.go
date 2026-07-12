@@ -44,3 +44,24 @@ func TestResolveDomainPreservesPrivateDelegationWithoutDialingIt(t *testing.T) {
 		t.Fatalf("unexpected resolution timestamp: %v", result.ResolvedAt)
 	}
 }
+
+func TestSourcePageSizeWaitsForOneFullBlock(t *testing.T) {
+	config := Config{DomainPageSize: 5000, WorkCapacity: 20000}
+	if got := sourcePageSize(config, 15001, -1); got != 0 {
+		t.Fatalf("page size with 4,999 free slots = %d, want 0", got)
+	}
+	if got := sourcePageSize(config, 15000, -1); got != 5000 {
+		t.Fatalf("page size with 5,000 free slots = %d, want 5000", got)
+	}
+}
+
+func TestSourcePageSizeHandlesBoundedTailAndSmallCapacity(t *testing.T) {
+	config := Config{DomainPageSize: 5000, WorkCapacity: 20000}
+	if got := sourcePageSize(config, 19900, 100); got != 100 {
+		t.Fatalf("bounded final page size = %d, want 100", got)
+	}
+	config.WorkCapacity = 2000
+	if got := sourcePageSize(config, 0, -1); got != 2000 {
+		t.Fatalf("page size with capacity below configured page = %d, want 2000", got)
+	}
+}

@@ -9,16 +9,12 @@ import (
 )
 
 const pageQuery = `
-SELECT root_domain
-FROM
-(
-    SELECT root_domain
-    FROM corpscout.commoncrawl_domains
-    WHERE root_domain != '' AND root_domain > ?
-    GROUP BY root_domain
-)
+SELECT DISTINCT root_domain
+FROM corpscout.commoncrawl_domains
+PREWHERE root_domain > ?
 ORDER BY root_domain
-LIMIT ?`
+LIMIT ?
+SETTINGS optimize_read_in_order = 1, optimize_distinct_in_order = 1`
 
 func FetchPage(ctx context.Context, conn driver.Conn, cursor string, pageSize int) ([]string, error) {
 	if pageSize <= 0 {
