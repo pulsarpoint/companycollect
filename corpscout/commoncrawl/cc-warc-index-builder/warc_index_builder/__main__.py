@@ -4,25 +4,41 @@ import argparse
 import os
 import re
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
 import duckdb
+import httpx
 
 from .catalog import (
     CandidateShardResult,
+    WarcSizeBatchResult,
     build_candidate_shard,
     catalog_build_lock,
+    checkpoint_warc_size_batch,
     prepare_build_directory,
+    prepare_warc_size_resume,
     require_path_within,
+    verify_or_finalize_warc_inventory,
 )
 from .events import binary_size, emit_event
 from .manifests import IndexSource, SourceSchema
+from .object_sizes import (
+    WarcSizeFailure,
+    WarcSizeOutcome,
+    iter_warc_size_outcomes,
+)
 
 
 _CRAWL_ID = re.compile(r"CC-MAIN-[0-9]{4}-[0-9]{2}")
+_WARC_SIZE_CHECKPOINT_BATCH = 256
+
+
+class WarcSizeBuildError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +65,25 @@ class CommandOptions:
     @property
     def catalog_path(self) -> Path:
         return self.catalog_directory / "catalog.duckdb"
+
+
+@dataclass(frozen=True, slots=True)
+class WarcSizePhaseResult:
+    inventory_sha256: str
+    total_objects: int
+    reused_objects: int
+    sized_objects: int
+    batches: int
+    attempts: int
+    retries: int
+    head_requests: int
+    range_requests: int
+    http_429: int
+    http_503: int
+
+    @property
+    def http_requests(self) -> int:
+        return self.head_requests + self.range_requests
 
 
 def _crawl_id(value: str) -> str:
@@ -176,6 +211,177 @@ def build_candidate_shards(
             reused=result.reused,
         )
     return tuple(results)
+
+
+def _emit_warc_size_batch(
+    result: WarcSizeBatchResult,
+    *,
+    crawl_id: str,
+    selection_name: str,
+    batch_index: int,
+    total_objects: int,
+    reused_objects: int,
+    elapsed_seconds: float,
+    stream: TextIO | None,
+) -> None:
+    emit_event(
+        "WARC size batch ready",
+        level="WARN" if result.failures else "INFO",
+        stream=stream,
+        crawl=crawl_id,
+        selection=selection_name,
+        batch=batch_index,
+        batch_objects=result.objects,
+        successful_objects=result.successes,
+        failed_objects=result.failures,
+        objects_completed=result.objects_completed,
+        objects_pending=result.objects_pending,
+        objects_total=total_objects,
+        reused_objects=reused_objects,
+        object_bytes=result.object_bytes,
+        object_size=binary_size(result.object_bytes),
+        known_bytes=result.known_bytes,
+        known_size=binary_size(result.known_bytes),
+        elapsed_seconds=elapsed_seconds,
+        objects_per_second=(
+            None if elapsed_seconds <= 0 else result.objects / elapsed_seconds
+        ),
+        attempts=result.attempts,
+        attempts_total=result.attempts_total,
+        retries=result.retries,
+        http_attempts=result.http_requests,
+        head_requests=result.head_requests,
+        range_requests=result.range_requests,
+        http_429=result.http_429,
+        http_503=result.http_503,
+        final=result.objects_pending == 0,
+    )
+
+
+def build_warc_sizes(
+    state_connection: duckdb.DuckDBPyConnection,
+    client: httpx.Client,
+    *,
+    crawl_id: str,
+    selection_name: str,
+    concurrency: int,
+    http_attempts: int,
+    checkpoint_batch_size: int = _WARC_SIZE_CHECKPOINT_BATCH,
+    timeout: httpx.Timeout | float = 30.0,
+    stream: TextIO | None = None,
+) -> WarcSizePhaseResult:
+    """Probe only missing sizes and durably commit completion-ordered batches."""
+    if checkpoint_batch_size <= 0:
+        raise ValueError("checkpoint_batch_size must be positive")
+    resume = prepare_warc_size_resume(state_connection)
+    if not resume.pending:
+        inventory_hash = verify_or_finalize_warc_inventory(state_connection)
+        return WarcSizePhaseResult(
+            inventory_sha256=inventory_hash,
+            total_objects=resume.total_objects,
+            reused_objects=resume.reused_objects,
+            sized_objects=0,
+            batches=0,
+            attempts=0,
+            retries=0,
+            head_requests=0,
+            range_requests=0,
+            http_429=0,
+            http_503=0,
+        )
+
+    outcomes = iter_warc_size_outcomes(
+        client,
+        resume.pending,
+        concurrency=concurrency,
+        max_attempts=http_attempts,
+        timeout=timeout,
+    )
+    batch: list[WarcSizeOutcome] = []
+    failures: list[WarcSizeFailure] = []
+    batches: list[WarcSizeBatchResult] = []
+    batch_started = time.monotonic()
+    try:
+        while True:
+            try:
+                outcome = next(outcomes)
+            except StopIteration:
+                break
+            except BaseException:
+                if batch:
+                    result = checkpoint_warc_size_batch(state_connection, batch)
+                    _emit_warc_size_batch(
+                        result,
+                        crawl_id=crawl_id,
+                        selection_name=selection_name,
+                        batch_index=len(batches),
+                        total_objects=resume.total_objects,
+                        reused_objects=resume.reused_objects,
+                        elapsed_seconds=time.monotonic() - batch_started,
+                        stream=stream,
+                    )
+                    batches.append(result)
+                    batch = []
+                raise
+
+            batch.append(outcome)
+            if isinstance(outcome, WarcSizeFailure):
+                failures.append(outcome)
+            if len(batch) < checkpoint_batch_size:
+                continue
+
+            result = checkpoint_warc_size_batch(state_connection, batch)
+            _emit_warc_size_batch(
+                result,
+                crawl_id=crawl_id,
+                selection_name=selection_name,
+                batch_index=len(batches),
+                total_objects=resume.total_objects,
+                reused_objects=resume.reused_objects,
+                elapsed_seconds=time.monotonic() - batch_started,
+                stream=stream,
+            )
+            batches.append(result)
+            batch = []
+            batch_started = time.monotonic()
+    finally:
+        outcomes.close()
+
+    if batch:
+        result = checkpoint_warc_size_batch(state_connection, batch)
+        _emit_warc_size_batch(
+            result,
+            crawl_id=crawl_id,
+            selection_name=selection_name,
+            batch_index=len(batches),
+            total_objects=resume.total_objects,
+            reused_objects=resume.reused_objects,
+            elapsed_seconds=time.monotonic() - batch_started,
+            stream=stream,
+        )
+        batches.append(result)
+
+    if failures:
+        first = failures[0]
+        raise WarcSizeBuildError(
+            f"{len(failures)} WARC size probe(s) failed; first "
+            f"warc_index={first.warc.warc_index}: {first.error}"
+        ) from first.error
+
+    inventory_hash = verify_or_finalize_warc_inventory(state_connection)
+    return WarcSizePhaseResult(
+        inventory_sha256=inventory_hash,
+        total_objects=resume.total_objects,
+        reused_objects=resume.reused_objects,
+        sized_objects=sum(batch_result.successes for batch_result in batches),
+        batches=len(batches),
+        attempts=sum(batch_result.attempts for batch_result in batches),
+        retries=sum(batch_result.retries for batch_result in batches),
+        head_requests=sum(batch_result.head_requests for batch_result in batches),
+        range_requests=sum(batch_result.range_requests for batch_result in batches),
+        http_429=sum(batch_result.http_429 for batch_result in batches),
+        http_503=sum(batch_result.http_503 for batch_result in batches),
+    )
 
 
 def run(options: CommandOptions) -> int:

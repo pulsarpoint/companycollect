@@ -1,16 +1,27 @@
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
 from datetime import datetime, timezone
 from email.utils import format_datetime
+import threading
 
 import httpx
 import pytest
 
+import warc_index_builder.object_sizes as object_sizes
 from warc_index_builder.manifests import WarcObject
 from warc_index_builder.object_sizes import (
     PermanentWarcSizeError,
+    ProbeMetrics,
+    SharedCooldown,
     TransientWarcSizeError,
+    WarcSizeFailure,
+    WarcSizePoolError,
+    WarcSizeResult,
+    WarcSizeSuccess,
+    iter_warc_size_outcomes,
     parse_retry_after,
     probe_warc_size_once,
+    probe_warc_size_with_retries,
     retry_delay_seconds,
     warc_object_url,
 )
@@ -24,6 +35,43 @@ _RANGE_HEADERS = {
     "Content-Range": "bytes 0-0/987654",
     "Content-Length": "1",
 }
+
+
+def _warcs(count: int) -> tuple[WarcObject, ...]:
+    return tuple(
+        WarcObject(
+            index,
+            f"crawl-data/CC-MAIN-2026-25/segments/example/warc/{index}.warc.gz",
+        )
+        for index in range(count)
+    )
+
+
+def _success_outcome(warc: WarcObject) -> WarcSizeSuccess:
+    return WarcSizeSuccess(
+        warc=warc,
+        object_bytes=1_000 + warc.warc_index,
+        attempts=1,
+        retries=0,
+        metrics=ProbeMetrics(head_requests=1),
+    )
+
+
+def _transient_error(
+    warc: WarcObject,
+    status_code: int,
+    metrics: ProbeMetrics,
+    *,
+    retry_after_seconds: float | None = None,
+) -> TransientWarcSizeError:
+    return TransientWarcSizeError(
+        f"HTTP {status_code}",
+        warc=warc,
+        method="HEAD",
+        status_code=status_code,
+        metrics=metrics,
+        retry_after_seconds=retry_after_seconds,
+    )
 
 
 def _response(
@@ -418,3 +466,439 @@ def test_warc_object_url_uses_common_crawl_data_endpoint() -> None:
 def test_warc_object_url_rejects_invalid_relative_paths(filename: str) -> None:
     with pytest.raises(ValueError):
         warc_object_url(filename)
+
+
+def test_warc_size_pool_bounds_submitted_futures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warcs = _warcs(6)
+    release_workers = threading.Event()
+    initial_workers_started = threading.Event()
+    lock = threading.Lock()
+    started_indexes: set[int] = set()
+    outstanding_futures = 0
+    maximum_outstanding_futures = 0
+
+    class CountingExecutor:
+        def __init__(self, *, max_workers: int, thread_name_prefix: str) -> None:
+            self._executor = RealThreadPoolExecutor(
+                max_workers=max_workers,
+                thread_name_prefix=thread_name_prefix,
+            )
+
+        def submit(self, function, *args, **kwargs):
+            nonlocal outstanding_futures, maximum_outstanding_futures
+            with lock:
+                outstanding_futures += 1
+                maximum_outstanding_futures = max(
+                    maximum_outstanding_futures,
+                    outstanding_futures,
+                )
+            future = self._executor.submit(function, *args, **kwargs)
+
+            def completed(_future) -> None:
+                nonlocal outstanding_futures
+                with lock:
+                    outstanding_futures -= 1
+
+            future.add_done_callback(completed)
+            return future
+
+        def shutdown(self, *, wait: bool, cancel_futures: bool) -> None:
+            self._executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    def fake_probe(
+        _client: httpx.Client,
+        warc: WarcObject,
+        **_kwargs: object,
+    ) -> WarcSizeSuccess:
+        with lock:
+            started_indexes.add(warc.warc_index)
+            if len(started_indexes) == 2:
+                initial_workers_started.set()
+        if not release_workers.wait(timeout=5):
+            raise AssertionError("size-pool worker was not released")
+        return _success_outcome(warc)
+
+    monkeypatch.setattr(object_sizes, "ThreadPoolExecutor", CountingExecutor)
+    monkeypatch.setattr(object_sizes, "probe_warc_size_with_retries", fake_probe)
+    outcomes: list[WarcSizeSuccess | WarcSizeFailure] = []
+    errors: list[BaseException] = []
+
+    with httpx.Client() as client:
+        def consume() -> None:
+            try:
+                outcomes.extend(
+                    iter_warc_size_outcomes(
+                        client,
+                        warcs,
+                        concurrency=2,
+                        max_attempts=1,
+                    )
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        consumer = threading.Thread(target=consume)
+        consumer.start()
+        try:
+            assert initial_workers_started.wait(timeout=2)
+            with lock:
+                assert started_indexes == {0, 1}
+                assert outstanding_futures == 2
+                assert maximum_outstanding_futures == 2
+        finally:
+            release_workers.set()
+            consumer.join(timeout=5)
+
+    assert consumer.is_alive() is False
+    assert errors == []
+    assert len(outcomes) == len(warcs)
+    assert maximum_outstanding_futures == 2
+
+
+def test_warc_size_pool_failure_stops_replacement_and_drains_active_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warcs = _warcs(5)
+    all_initial_workers_started = threading.Event()
+    release_successes = threading.Event()
+    failure_yielded = threading.Event()
+    lock = threading.Lock()
+    started_indexes: set[int] = set()
+
+    def fake_probe(
+        _client: httpx.Client,
+        warc: WarcObject,
+        **_kwargs: object,
+    ) -> WarcSizeSuccess | WarcSizeFailure:
+        with lock:
+            started_indexes.add(warc.warc_index)
+            if len(started_indexes) == 3:
+                all_initial_workers_started.set()
+        if not all_initial_workers_started.wait(timeout=2):
+            raise AssertionError("initial size-pool workers did not start")
+        if warc.warc_index == 0:
+            metrics = ProbeMetrics(head_requests=1)
+            error = PermanentWarcSizeError(
+                "HTTP 404",
+                warc=warc,
+                method="HEAD",
+                status_code=404,
+                metrics=metrics,
+            )
+            return WarcSizeFailure(
+                warc=warc,
+                attempts=1,
+                retries=0,
+                metrics=metrics,
+                error=error,
+                permanent=True,
+            )
+        if not release_successes.wait(timeout=5):
+            raise AssertionError("active size-pool outcome was not drained")
+        return _success_outcome(warc)
+
+    monkeypatch.setattr(object_sizes, "probe_warc_size_with_retries", fake_probe)
+    outcomes: list[WarcSizeSuccess | WarcSizeFailure] = []
+    errors: list[BaseException] = []
+
+    with httpx.Client() as client:
+        def consume() -> None:
+            try:
+                for outcome in iter_warc_size_outcomes(
+                    client,
+                    warcs,
+                    concurrency=3,
+                    max_attempts=1,
+                ):
+                    outcomes.append(outcome)
+                    if isinstance(outcome, WarcSizeFailure):
+                        failure_yielded.set()
+            except BaseException as error:
+                errors.append(error)
+
+        consumer = threading.Thread(target=consume)
+        consumer.start()
+        try:
+            assert all_initial_workers_started.wait(timeout=2)
+            assert failure_yielded.wait(timeout=2)
+            with lock:
+                assert started_indexes == {0, 1, 2}
+        finally:
+            release_successes.set()
+            consumer.join(timeout=5)
+
+    assert consumer.is_alive() is False
+    assert errors == []
+    assert len(outcomes) == 3
+    assert {outcome.warc.warc_index for outcome in outcomes} == {0, 1, 2}
+    assert sum(isinstance(outcome, WarcSizeFailure) for outcome in outcomes) == 1
+
+
+@pytest.mark.parametrize(
+    "status_code,expected_shared_delays,expected_local_delays",
+    [
+        (503, [0.5], []),
+        (500, [], [0.5]),
+    ],
+)
+def test_warc_size_retry_routes_throttle_to_shared_cooldown_and_500_to_local_sleep(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    expected_shared_delays: list[float],
+    expected_local_delays: list[float],
+) -> None:
+    calls = 0
+    status_metrics = ProbeMetrics(
+        head_requests=1,
+        http_503=1 if status_code == 503 else 0,
+    )
+
+    def fake_probe_once(
+        _client: httpx.Client,
+        warc: WarcObject,
+        **_kwargs: object,
+    ) -> WarcSizeResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise _transient_error(warc, status_code, status_metrics)
+        return WarcSizeResult(
+            warc_index=warc.warc_index,
+            warc_filename=warc.warc_filename,
+            object_bytes=123,
+            used_range_fallback=False,
+            metrics=ProbeMetrics(head_requests=1),
+        )
+
+    cooldown = SharedCooldown()
+    cooldown_waits: list[None] = []
+    shared_delays: list[float] = []
+    local_delays: list[float] = []
+    monkeypatch.setattr(object_sizes, "probe_warc_size_once", fake_probe_once)
+    monkeypatch.setattr(cooldown, "wait", lambda: cooldown_waits.append(None))
+    monkeypatch.setattr(cooldown, "extend", shared_delays.append)
+    monkeypatch.setattr(cooldown, "wait_local", local_delays.append)
+
+    with httpx.Client() as client:
+        outcome = probe_warc_size_with_retries(
+            client,
+            _WARC,
+            max_attempts=2,
+            cooldown=cooldown,
+            random_fraction=lambda: 0.0,
+        )
+
+    assert isinstance(outcome, WarcSizeSuccess)
+    assert outcome.attempts == 2
+    assert outcome.retries == 1
+    assert outcome.metrics.head_requests == 2
+    assert cooldown_waits == [None, None]
+    assert shared_delays == expected_shared_delays
+    assert local_delays == expected_local_delays
+
+
+def test_warc_size_retry_aggregates_exact_metrics_across_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_probe_once(
+        _client: httpx.Client,
+        warc: WarcObject,
+        **_kwargs: object,
+    ) -> WarcSizeResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise _transient_error(
+                warc,
+                429,
+                ProbeMetrics(head_requests=1, http_429=1),
+            )
+        if calls == 2:
+            raise _transient_error(
+                warc,
+                503,
+                ProbeMetrics(head_requests=1, range_requests=1, http_503=1),
+            )
+        return WarcSizeResult(
+            warc_index=warc.warc_index,
+            warc_filename=warc.warc_filename,
+            object_bytes=456,
+            used_range_fallback=False,
+            metrics=ProbeMetrics(head_requests=1),
+        )
+
+    cooldown = SharedCooldown()
+    shared_delays: list[float] = []
+    monkeypatch.setattr(object_sizes, "probe_warc_size_once", fake_probe_once)
+    monkeypatch.setattr(cooldown, "wait", lambda: None)
+    monkeypatch.setattr(cooldown, "extend", shared_delays.append)
+    monkeypatch.setattr(
+        cooldown,
+        "wait_local",
+        lambda _delay: pytest.fail("429/503 retries must use the shared cooldown"),
+    )
+
+    with httpx.Client() as client:
+        outcome = probe_warc_size_with_retries(
+            client,
+            _WARC,
+            max_attempts=3,
+            cooldown=cooldown,
+            random_fraction=lambda: 0.0,
+        )
+
+    assert isinstance(outcome, WarcSizeSuccess)
+    assert outcome.object_bytes == 456
+    assert outcome.attempts == 3
+    assert outcome.retries == 2
+    assert outcome.metrics == ProbeMetrics(
+        head_requests=3,
+        range_requests=1,
+        http_429=1,
+        http_503=1,
+    )
+    assert shared_delays == [0.5, 1.0]
+
+
+def test_warc_size_shared_cooldown_later_extension_cannot_shorten_deadline() -> None:
+    clock = [100.0]
+    waited: list[float] = []
+    notifications = 0
+
+    class RecordingCondition:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def wait(self, *, timeout: float) -> None:
+            waited.append(timeout)
+            clock[0] += timeout
+
+        def notify_all(self) -> None:
+            nonlocal notifications
+            notifications += 1
+
+    cooldown = SharedCooldown(monotonic=lambda: clock[0])
+    cooldown._condition = RecordingCondition()
+    cooldown.extend(10.0)
+    clock[0] = 103.0
+    cooldown.extend(2.0)
+    cooldown.wait()
+
+    assert waited == [7.0]
+    assert notifications == 2
+
+
+def test_warc_size_shared_cooldown_chunks_platform_oversized_waits() -> None:
+    clock = [0.0]
+    waited: list[float] = []
+
+    class RecordingCondition:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def wait(self, *, timeout: float) -> None:
+            waited.append(timeout)
+            clock[0] = 1e18
+
+        def notify_all(self) -> None:
+            return None
+
+    cooldown = SharedCooldown(monotonic=lambda: clock[0])
+    cooldown._condition = RecordingCondition()
+    cooldown.extend(1e18)
+    cooldown.wait()
+
+    assert waited == [threading.TIMEOUT_MAX]
+
+
+def test_warc_size_final_throttle_still_extends_shared_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = ProbeMetrics(head_requests=1, http_503=1)
+
+    def fail_probe(
+        _client: httpx.Client,
+        warc: WarcObject,
+        **_kwargs: object,
+    ) -> WarcSizeResult:
+        raise _transient_error(warc, 503, metrics, retry_after_seconds=20.0)
+
+    cooldown = SharedCooldown()
+    extensions: list[float] = []
+    monkeypatch.setattr(object_sizes, "probe_warc_size_once", fail_probe)
+    monkeypatch.setattr(cooldown, "wait", lambda: None)
+    monkeypatch.setattr(cooldown, "extend", extensions.append)
+
+    with httpx.Client() as client:
+        outcome = probe_warc_size_with_retries(
+            client,
+            _WARC,
+            max_attempts=1,
+            cooldown=cooldown,
+            random_fraction=lambda: 0.0,
+        )
+
+    assert isinstance(outcome, WarcSizeFailure)
+    assert extensions == [20.0]
+
+
+def test_warc_size_pool_surfaces_unexpected_worker_error_without_waiting_for_peer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    peer_started = threading.Event()
+    error_surfaced = threading.Event()
+    errors: list[BaseException] = []
+
+    def fake_probe(
+        _client: httpx.Client,
+        warc: WarcObject,
+        **kwargs: object,
+    ) -> WarcSizeSuccess:
+        if warc.warc_index == 0:
+            if not peer_started.wait(timeout=2):
+                raise AssertionError("peer worker did not start")
+            raise RuntimeError("unexpected worker failure")
+        peer_started.set()
+        cooldown = kwargs["cooldown"]
+        assert isinstance(cooldown, SharedCooldown)
+        cooldown.wait_local(60.0)
+        raise AssertionError("cancelled peer unexpectedly resumed")
+
+    monkeypatch.setattr(object_sizes, "probe_warc_size_with_retries", fake_probe)
+
+    with httpx.Client() as client:
+        def consume() -> None:
+            try:
+                list(
+                    iter_warc_size_outcomes(
+                        client,
+                        _warcs(2),
+                        concurrency=2,
+                        max_attempts=1,
+                    )
+                )
+            except BaseException as error:
+                errors.append(error)
+                error_surfaced.set()
+
+        consumer = threading.Thread(target=consume)
+        consumer.start()
+        assert peer_started.wait(timeout=2)
+        error_surfaced_promptly = error_surfaced.wait(timeout=1)
+        consumer.join(timeout=5)
+
+    assert consumer.is_alive() is False
+    assert error_surfaced_promptly is True
+    assert len(errors) == 1
+    assert isinstance(errors[0], WarcSizePoolError)
+    assert isinstance(errors[0].__cause__, RuntimeError)

@@ -10,10 +10,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import duckdb
+import httpx
 import pytest
 
+import warc_index_builder.__main__ as command
 import warc_index_builder.catalog as catalog
-from warc_index_builder.__main__ import build_candidate_shards
+from warc_index_builder.__main__ import (
+    WarcSizeBuildError,
+    build_candidate_shards,
+    build_warc_sizes,
+)
 from warc_index_builder.catalog import (
     CATALOG_SCHEMA_VERSION,
     BuildIdentity,
@@ -21,6 +27,7 @@ from warc_index_builder.catalog import (
     BuildStateCorrupt,
     CandidateArtifactError,
     CandidateBuildError,
+    WarcSizeCheckpointError,
     SourceShardSeed,
     build_candidate_shard,
     candidate_artifact_path,
@@ -28,9 +35,12 @@ from warc_index_builder.catalog import (
     initialize_build_state,
     inspect_candidate_artifact,
     local_candidate_query,
+    checkpoint_warc_size_batch,
     prepare_build_directory,
+    prepare_warc_size_resume,
     require_path_within,
     source_shard_seeds,
+    verify_or_finalize_warc_inventory,
     warc_inventory_sha256,
 )
 from warc_index_builder.manifests import (
@@ -44,6 +54,13 @@ from warc_index_builder.selection import (
     CANDIDATE_COLUMNS,
     SELECTION_POLICY_VERSION,
     selection_policy_sha256,
+)
+from warc_index_builder.object_sizes import (
+    PermanentWarcSizeError,
+    ProbeMetrics,
+    TransientWarcSizeError,
+    WarcSizeFailure,
+    WarcSizeSuccess,
 )
 
 
@@ -176,6 +193,56 @@ def _source_seeds() -> tuple[SourceShardSeed, ...]:
         ),
     )
     return source_shard_seeds(sources, schemas)
+
+
+def _warc_size_success(
+    warc: WarcObject,
+    object_bytes: int,
+    *,
+    attempts: int = 1,
+    metrics: ProbeMetrics | None = None,
+) -> WarcSizeSuccess:
+    return WarcSizeSuccess(
+        warc=warc,
+        object_bytes=object_bytes,
+        attempts=attempts,
+        retries=attempts - 1,
+        metrics=metrics or ProbeMetrics(head_requests=attempts),
+    )
+
+
+def _warc_size_failure(
+    warc: WarcObject,
+    *,
+    attempts: int = 1,
+    permanent: bool = True,
+    metrics: ProbeMetrics | None = None,
+) -> WarcSizeFailure:
+    outcome_metrics = metrics or ProbeMetrics(head_requests=attempts)
+    error_type = PermanentWarcSizeError if permanent else TransientWarcSizeError
+    arguments = {
+        "warc": warc,
+        "method": "HEAD",
+        "status_code": 404 if permanent else 503,
+        "metrics": outcome_metrics,
+    }
+    error = (
+        error_type("missing WARC", **arguments)
+        if permanent
+        else error_type(
+            "throttled WARC",
+            **arguments,
+            retry_after_seconds=None,
+        )
+    )
+    return WarcSizeFailure(
+        warc=warc,
+        attempts=attempts,
+        retries=attempts - 1,
+        metrics=outcome_metrics,
+        error=error,
+        permanent=permanent,
+    )
 
 
 def _candidate_page(
@@ -1766,3 +1833,510 @@ def test_candidate_builder_does_not_depend_on_pyarrow() -> None:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
 
     assert "pyarrow" not in pyproject.read_text().lower()
+
+
+def test_warc_size_resume_submits_only_null_rows_and_preserves_attempts() -> None:
+    connection = duckdb.connect()
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            _warc_seeds(),
+            _source_seeds(),
+        )
+        connection.execute(
+            """
+            UPDATE warc_inventory
+            SET object_bytes = 4096, attempts = 3
+            WHERE warc_index = 0
+            """
+        )
+        connection.execute(
+            """
+            UPDATE warc_inventory
+            SET attempts = 2, last_error = 'retry me'
+            WHERE warc_index = 1
+            """
+        )
+
+        resume = prepare_warc_size_resume(connection)
+
+        assert resume.total_objects == 2
+        assert resume.reused_objects == 1
+        assert resume.reused_bytes == 4096
+        assert resume.attempts_total == 5
+        assert resume.pending == (_warc_seeds()[1],)
+    finally:
+        connection.close()
+
+
+def test_warc_size_resume_rejects_hash_with_pending_rows() -> None:
+    connection = duckdb.connect()
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            _warc_seeds(),
+            _source_seeds(),
+        )
+        connection.execute(
+            "UPDATE build_identity SET warc_inventory_sha256 = ?",
+            ["aa" * 32],
+        )
+
+        with pytest.raises(BuildStateCorrupt, match="hash exists.*missing"):
+            prepare_warc_size_resume(connection)
+    finally:
+        connection.close()
+
+
+def test_warc_size_checkpoint_rejects_hash_with_pending_rows_before_update() -> None:
+    connection = duckdb.connect()
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            _warc_seeds(),
+            _source_seeds(),
+        )
+        connection.execute(
+            "UPDATE build_identity SET warc_inventory_sha256 = ?",
+            ["aa" * 32],
+        )
+
+        with pytest.raises(BuildStateCorrupt, match="hash exists.*missing"):
+            checkpoint_warc_size_batch(
+                connection,
+                (_warc_size_success(_warc_seeds()[0], 1000),),
+            )
+
+        assert connection.execute(
+            "SELECT object_bytes, attempts FROM warc_inventory ORDER BY warc_index"
+        ).fetchall() == [(None, 0), (None, 0)]
+    finally:
+        connection.close()
+
+
+def test_warc_size_checkpoint_persists_mixed_outcomes_and_exact_metrics() -> None:
+    connection = duckdb.connect()
+    warcs = _warc_seeds()
+    success = _warc_size_success(
+        warcs[0],
+        8192,
+        attempts=2,
+        metrics=ProbeMetrics(
+            head_requests=2,
+            range_requests=1,
+            http_503=1,
+        ),
+    )
+    failure = _warc_size_failure(
+        warcs[1],
+        attempts=3,
+        permanent=False,
+        metrics=ProbeMetrics(
+            head_requests=3,
+            range_requests=1,
+            http_429=1,
+            http_503=1,
+        ),
+    )
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            warcs,
+            _source_seeds(),
+        )
+        connection.execute(
+            "UPDATE warc_inventory SET last_error = 'old error' WHERE warc_index = 0"
+        )
+
+        result = checkpoint_warc_size_batch(connection, (failure, success))
+
+        assert result.objects == 2
+        assert result.successes == 1
+        assert result.failures == 1
+        assert result.object_bytes == 8192
+        assert result.attempts == 5
+        assert result.retries == 3
+        assert result.head_requests == 5
+        assert result.range_requests == 2
+        assert result.http_requests == 7
+        assert result.http_429 == 1
+        assert result.http_503 == 2
+        assert result.objects_completed == 1
+        assert result.objects_pending == 1
+        assert result.known_bytes == 8192
+        assert result.attempts_total == 5
+        assert result.inventory_sha256 is None
+        assert connection.execute(
+            """
+            SELECT warc_index, object_bytes, attempts, last_error
+            FROM warc_inventory ORDER BY warc_index
+            """
+        ).fetchall() == [
+            (0, 8192, 2, None),
+            (1, None, 3, "throttled WARC"),
+        ]
+        assert connection.execute(
+            "SELECT warc_inventory_sha256 FROM build_identity"
+        ).fetchone() == (None,)
+    finally:
+        connection.close()
+
+
+def test_warc_size_checkpoint_stale_result_rolls_back_whole_batch() -> None:
+    connection = duckdb.connect()
+    warcs = _warc_seeds()
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            warcs,
+            _source_seeds(),
+        )
+        connection.execute(
+            "UPDATE warc_inventory SET object_bytes = 100, attempts = 1 WHERE warc_index = 0"
+        )
+
+        with pytest.raises(WarcSizeCheckpointError, match="stale"):
+            checkpoint_warc_size_batch(
+                connection,
+                (
+                    _warc_size_success(warcs[0], 200),
+                    _warc_size_success(warcs[1], 300),
+                ),
+            )
+
+        assert connection.execute(
+            "SELECT object_bytes, attempts FROM warc_inventory ORDER BY warc_index"
+        ).fetchall() == [(100, 1), (None, 0)]
+    finally:
+        connection.close()
+
+
+def test_warc_size_checkpoint_rejects_duplicate_indexes_before_transaction() -> None:
+    connection = duckdb.connect()
+    warc = _warc_seeds()[0]
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            _warc_seeds(),
+            _source_seeds(),
+        )
+
+        with pytest.raises(ValueError, match="duplicate index"):
+            checkpoint_warc_size_batch(
+                connection,
+                (
+                    _warc_size_success(warc, 100),
+                    _warc_size_success(warc, 200),
+                ),
+            )
+
+        assert connection.execute(
+            "SELECT count(*) FROM warc_inventory WHERE object_bytes IS NOT NULL"
+        ).fetchone() == (0,)
+    finally:
+        connection.close()
+
+
+def test_final_warc_size_batch_stores_ordered_hash_atomically() -> None:
+    connection = duckdb.connect()
+    warcs = _warc_seeds()
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            warcs,
+            _source_seeds(),
+        )
+
+        result = checkpoint_warc_size_batch(
+            connection,
+            (
+                _warc_size_success(warcs[1], 2000),
+                _warc_size_success(warcs[0], 1000),
+            ),
+        )
+
+        expected_hash = warc_inventory_sha256(
+            (
+                (0, warcs[0].warc_filename, 1000),
+                (1, warcs[1].warc_filename, 2000),
+            )
+        )
+        assert result.inventory_sha256 == expected_hash
+        assert result.objects_pending == 0
+        assert connection.execute(
+            "SELECT warc_inventory_sha256 FROM build_identity"
+        ).fetchone() == (expected_hash,)
+        assert verify_or_finalize_warc_inventory(connection) == expected_hash
+    finally:
+        connection.close()
+
+
+def test_final_warc_size_hash_failure_rolls_back_size_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = duckdb.connect()
+    warcs = _warc_seeds()
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            warcs,
+            _source_seeds(),
+        )
+
+        def fail_hash(_inventory) -> str:
+            raise RuntimeError("simulated hash failure")
+
+        monkeypatch.setattr(catalog, "warc_inventory_sha256", fail_hash)
+        with pytest.raises(RuntimeError, match="simulated hash failure"):
+            checkpoint_warc_size_batch(
+                connection,
+                (
+                    _warc_size_success(warcs[0], 1000),
+                    _warc_size_success(warcs[1], 2000),
+                ),
+            )
+
+        assert connection.execute(
+            "SELECT object_bytes, attempts FROM warc_inventory ORDER BY warc_index"
+        ).fetchall() == [(None, 0), (None, 0)]
+        assert connection.execute(
+            "SELECT warc_inventory_sha256 FROM build_identity"
+        ).fetchone() == (None,)
+    finally:
+        connection.close()
+
+
+def test_warc_size_checkpoint_survives_reopen_and_resumes_only_missing(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state.duckdb"
+    warcs = _warc_seeds()
+    connection = duckdb.connect(str(state_path))
+    initialize_build_state(
+        connection,
+        _build_identity(),
+        warcs,
+        _source_seeds(),
+    )
+    checkpoint_warc_size_batch(
+        connection,
+        (_warc_size_success(warcs[0], 1000),),
+    )
+    connection.close()
+
+    connection = duckdb.connect(str(state_path))
+    try:
+        resume = prepare_warc_size_resume(connection)
+        assert resume.reused_objects == 1
+        assert resume.pending == (warcs[1],)
+        assert connection.execute(
+            "SELECT object_bytes, attempts FROM warc_inventory ORDER BY warc_index"
+        ).fetchall() == [(1000, 1), (None, 0)]
+    finally:
+        connection.close()
+
+
+def test_warc_size_checkpoint_survives_process_exit_without_connection_close(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state.duckdb"
+    warcs = _warc_seeds()
+    connection = duckdb.connect(str(state_path))
+    initialize_build_state(
+        connection,
+        _build_identity(),
+        warcs,
+        _source_seeds(),
+    )
+    connection.close()
+
+    script = """
+import os
+import sys
+
+import duckdb
+
+from warc_index_builder.catalog import checkpoint_warc_size_batch
+from warc_index_builder.manifests import WarcObject
+from warc_index_builder.object_sizes import ProbeMetrics, WarcSizeSuccess
+
+connection = duckdb.connect(sys.argv[1])
+warc = WarcObject(0, sys.argv[2])
+checkpoint_warc_size_batch(
+    connection,
+    (
+        WarcSizeSuccess(
+            warc=warc,
+            object_bytes=1000,
+            attempts=1,
+            retries=0,
+            metrics=ProbeMetrics(head_requests=1),
+        ),
+    ),
+)
+os._exit(0)
+"""
+    subprocess.run(
+        [sys.executable, "-c", script, str(state_path), warcs[0].warc_filename],
+        check=True,
+        cwd=Path(__file__).parents[1],
+    )
+
+    connection = duckdb.connect(str(state_path))
+    try:
+        resume = prepare_warc_size_resume(connection)
+        assert resume.reused_objects == 1
+        assert resume.pending == (warcs[1],)
+        assert connection.execute(
+            "SELECT object_bytes, attempts FROM warc_inventory ORDER BY warc_index"
+        ).fetchall() == [(1000, 1), (None, 0)]
+    finally:
+        connection.close()
+
+
+def test_warc_size_build_with_no_pending_rows_performs_no_http_and_sets_hash() -> None:
+    connection = duckdb.connect()
+    warcs = _warc_seeds()
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            warcs,
+            _source_seeds(),
+        )
+        connection.execute(
+            """
+            UPDATE warc_inventory
+            SET object_bytes = CASE warc_index WHEN 0 THEN 1000 ELSE 2000 END
+            """
+        )
+
+        def reject_http(_request: httpx.Request) -> httpx.Response:
+            raise AssertionError("completed WARC sizes must not be probed")
+
+        with httpx.Client(transport=httpx.MockTransport(reject_http)) as client:
+            result = build_warc_sizes(
+                connection,
+                client,
+                crawl_id="CC-MAIN-2026-25",
+                selection_name="pages25",
+                concurrency=2,
+                http_attempts=2,
+            )
+
+        assert result.reused_objects == 2
+        assert result.sized_objects == 0
+        assert result.batches == 0
+        assert connection.execute(
+            "SELECT warc_inventory_sha256 IS NOT NULL FROM build_identity"
+        ).fetchone() == (True,)
+    finally:
+        connection.close()
+
+
+def test_warc_size_build_emits_only_one_event_per_committed_batch() -> None:
+    connection = duckdb.connect()
+    stream = io.StringIO()
+    warcs = _warc_seeds()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.method == "HEAD"
+        size = "1000" if request.url.path.endswith("a.warc.gz") else "2000"
+        return httpx.Response(200, headers={"Content-Length": size})
+
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            warcs,
+            _source_seeds(),
+        )
+        with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+            result = build_warc_sizes(
+                connection,
+                client,
+                crawl_id="CC-MAIN-2026-25",
+                selection_name="pages25",
+                concurrency=2,
+                http_attempts=2,
+                checkpoint_batch_size=1,
+                stream=stream,
+            )
+
+        events = [json.loads(line) for line in stream.getvalue().splitlines()]
+        assert result.sized_objects == 2
+        assert result.batches == 2
+        assert result.attempts == 2
+        assert result.http_requests == 2
+        assert len(events) == 2
+        assert [event["msg"] for event in events] == [
+            "WARC size batch ready",
+            "WARC size batch ready",
+        ]
+        assert [event["batch_objects"] for event in events] == [1, 1]
+        assert [event["objects_completed"] for event in events] == [1, 2]
+        assert events[-1]["final"] is True
+        assert events[-1]["http_attempts"] == 1
+        assert events[-1]["object_size"].endswith("KiB")
+    finally:
+        connection.close()
+
+
+def test_warc_size_build_checkpoints_drained_success_before_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = duckdb.connect()
+    stream = io.StringIO()
+    warcs = _warc_seeds()
+
+    def outcomes(*_args, **_kwargs):
+        yield _warc_size_failure(warcs[0])
+        yield _warc_size_success(warcs[1], 2000)
+
+    monkeypatch.setattr(command, "iter_warc_size_outcomes", outcomes)
+    try:
+        initialize_build_state(
+            connection,
+            _build_identity(),
+            warcs,
+            _source_seeds(),
+        )
+        with httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: (_ for _ in ()).throw(AssertionError("unused"))
+            )
+        ) as client:
+            with pytest.raises(WarcSizeBuildError, match="warc_index=0"):
+                build_warc_sizes(
+                    connection,
+                    client,
+                    crawl_id="CC-MAIN-2026-25",
+                    selection_name="pages25",
+                    concurrency=2,
+                    http_attempts=2,
+                    stream=stream,
+                )
+
+        assert connection.execute(
+            "SELECT object_bytes, attempts, last_error FROM warc_inventory ORDER BY warc_index"
+        ).fetchall() == [
+            (None, 1, "missing WARC"),
+            (2000, 1, None),
+        ]
+        assert connection.execute(
+            "SELECT warc_inventory_sha256 FROM build_identity"
+        ).fetchone() == (None,)
+        event = json.loads(stream.getvalue())
+        assert event["level"] == "WARN"
+        assert event["successful_objects"] == 1
+        assert event["failed_objects"] == 1
+    finally:
+        connection.close()

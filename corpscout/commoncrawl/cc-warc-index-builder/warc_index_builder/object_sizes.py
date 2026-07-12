@@ -1,10 +1,16 @@
 """Determine exact Common Crawl WARC object sizes without downloading objects."""
 
+import random
 import re
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from queue import Queue
+from threading import TIMEOUT_MAX, Condition
+from typing import TypeAlias
 
 import httpx
 
@@ -88,6 +94,36 @@ class TransientWarcSizeError(WarcSizeProbeError):
         self.throttled = status_code in _THROTTLE_STATUS_CODES
 
 
+class WarcSizePoolError(RuntimeError):
+    """An unexpected worker failure outside the classified probe contract."""
+
+
+class _CooldownCancelled(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class WarcSizeSuccess:
+    warc: WarcObject
+    object_bytes: int
+    attempts: int
+    retries: int
+    metrics: ProbeMetrics
+
+
+@dataclass(frozen=True, slots=True)
+class WarcSizeFailure:
+    warc: WarcObject
+    attempts: int
+    retries: int
+    metrics: ProbeMetrics
+    error: WarcSizeProbeError
+    permanent: bool
+
+
+WarcSizeOutcome: TypeAlias = WarcSizeSuccess | WarcSizeFailure
+
+
 @dataclass(slots=True)
 class _ProbeCounters:
     head_requests: int = 0
@@ -108,6 +144,56 @@ class _ProbeCounters:
             http_429=self.http_429,
             http_503=self.http_503,
         )
+
+
+class SharedCooldown:
+    """One monotonic throttle deadline shared by every size-probe worker."""
+
+    def __init__(self, *, monotonic: Callable[[], float] = time.monotonic) -> None:
+        self._monotonic = monotonic
+        self._condition = Condition()
+        self._deadline = 0.0
+        self._cancelled = False
+
+    def wait(self) -> None:
+        with self._condition:
+            while True:
+                if self._cancelled:
+                    raise _CooldownCancelled
+                remaining = self._deadline - self._monotonic()
+                if remaining <= 0:
+                    return
+                self._condition.wait(timeout=min(remaining, TIMEOUT_MAX))
+
+    def wait_local(self, delay_seconds: float) -> None:
+        if delay_seconds < 0:
+            raise ValueError("local retry delay must not be negative")
+        deadline = self._monotonic() + delay_seconds
+        with self._condition:
+            while True:
+                if self._cancelled:
+                    raise _CooldownCancelled
+                remaining = deadline - self._monotonic()
+                if remaining <= 0:
+                    return
+                self._condition.wait(timeout=min(remaining, TIMEOUT_MAX))
+
+    def extend(self, delay_seconds: float) -> None:
+        if delay_seconds < 0:
+            raise ValueError("cooldown delay must not be negative")
+        with self._condition:
+            if self._cancelled:
+                raise _CooldownCancelled
+            self._deadline = max(
+                self._deadline,
+                self._monotonic() + delay_seconds,
+            )
+            self._condition.notify_all()
+
+    def cancel(self) -> None:
+        with self._condition:
+            self._cancelled = True
+            self._condition.notify_all()
 
 
 def warc_object_url(warc_filename: str) -> str:
@@ -383,3 +469,157 @@ def probe_warc_size_once(
         used_range_fallback=True,
         metrics=counters.snapshot(),
     )
+
+
+def _add_probe_metrics(first: ProbeMetrics, second: ProbeMetrics) -> ProbeMetrics:
+    return ProbeMetrics(
+        head_requests=first.head_requests + second.head_requests,
+        range_requests=first.range_requests + second.range_requests,
+        http_429=first.http_429 + second.http_429,
+        http_503=first.http_503 + second.http_503,
+    )
+
+
+def probe_warc_size_with_retries(
+    client: httpx.Client,
+    warc: WarcObject,
+    *,
+    max_attempts: int,
+    cooldown: SharedCooldown,
+    timeout: httpx.Timeout | float = 30.0,
+    random_fraction: Callable[[], float] | None = None,
+) -> WarcSizeOutcome:
+    """Probe one WARC to a terminal outcome while honoring shared throttling."""
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
+    choose_fraction = random.random if random_fraction is None else random_fraction
+    metrics = ProbeMetrics()
+
+    for attempt in range(1, max_attempts + 1):
+        cooldown.wait()
+        try:
+            result = probe_warc_size_once(
+                client,
+                warc,
+                timeout=timeout,
+            )
+        except PermanentWarcSizeError as error:
+            metrics = _add_probe_metrics(metrics, error.metrics)
+            return WarcSizeFailure(
+                warc=warc,
+                attempts=attempt,
+                retries=attempt - 1,
+                metrics=metrics,
+                error=error,
+                permanent=True,
+            )
+        except TransientWarcSizeError as error:
+            metrics = _add_probe_metrics(metrics, error.metrics)
+            delay: float | None = None
+            if error.throttled or attempt < max_attempts:
+                delay = retry_delay_seconds(
+                    attempt,
+                    retry_after_seconds=error.retry_after_seconds,
+                    random_fraction=choose_fraction,
+                )
+            if error.throttled:
+                assert delay is not None
+                cooldown.extend(delay)
+            if attempt == max_attempts:
+                return WarcSizeFailure(
+                    warc=warc,
+                    attempts=attempt,
+                    retries=attempt - 1,
+                    metrics=metrics,
+                    error=error,
+                    permanent=False,
+                )
+            if not error.throttled:
+                assert delay is not None
+                cooldown.wait_local(delay)
+            continue
+
+        if (
+            result.warc_index != warc.warc_index
+            or result.warc_filename != warc.warc_filename
+        ):
+            raise WarcSizePoolError(
+                f"size probe returned a different WARC for index {warc.warc_index}"
+            )
+        metrics = _add_probe_metrics(metrics, result.metrics)
+        return WarcSizeSuccess(
+            warc=warc,
+            object_bytes=result.object_bytes,
+            attempts=attempt,
+            retries=attempt - 1,
+            metrics=metrics,
+        )
+
+    raise AssertionError("WARC size attempt loop ended without a terminal outcome")
+
+
+def iter_warc_size_outcomes(
+    client: httpx.Client,
+    warcs: Sequence[WarcObject],
+    *,
+    concurrency: int,
+    max_attempts: int,
+    timeout: httpx.Timeout | float = 30.0,
+    random_fraction: Callable[[], float] | None = None,
+) -> Iterator[WarcSizeOutcome]:
+    """Yield completion-ordered outcomes with at most ``concurrency`` active jobs."""
+    if concurrency <= 0:
+        raise ValueError("concurrency must be positive")
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
+    if not warcs:
+        return
+
+    cooldown = SharedCooldown()
+    completed: Queue[Future[WarcSizeOutcome]] = Queue()
+    remaining_warcs = iter(warcs)
+    active = 0
+    stop_submitting = False
+    executor = ThreadPoolExecutor(
+        max_workers=min(concurrency, len(warcs)),
+        thread_name_prefix="warc-size",
+    )
+
+    def submit(warc: WarcObject) -> None:
+        nonlocal active
+        future = executor.submit(
+            probe_warc_size_with_retries,
+            client,
+            warc,
+            max_attempts=max_attempts,
+            cooldown=cooldown,
+            timeout=timeout,
+            random_fraction=random_fraction,
+        )
+        future.add_done_callback(completed.put)
+        active += 1
+
+    try:
+        for _ in range(min(concurrency, len(warcs))):
+            submit(next(remaining_warcs))
+
+        while active:
+            future = completed.get()
+            active -= 1
+            try:
+                outcome = future.result()
+            except BaseException as error:
+                stop_submitting = True
+                raise WarcSizePoolError("unexpected WARC size worker failure") from error
+
+            if isinstance(outcome, WarcSizeFailure):
+                stop_submitting = True
+            if not stop_submitting:
+                try:
+                    submit(next(remaining_warcs))
+                except StopIteration:
+                    stop_submitting = True
+            yield outcome
+    finally:
+        cooldown.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)

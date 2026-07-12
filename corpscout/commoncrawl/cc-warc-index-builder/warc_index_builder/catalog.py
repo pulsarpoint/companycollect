@@ -14,6 +14,13 @@ import duckdb
 
 from ._identity import decode_sha256, new_identity_digest, update_text
 from .manifests import IndexSource, SourceSchema, WarcObject, source_schema_sha256
+from .object_sizes import (
+    PermanentWarcSizeError,
+    ProbeMetrics,
+    WarcSizeFailure,
+    WarcSizeOutcome,
+    WarcSizeSuccess,
+)
 from .selection import (
     CANDIDATE_COLUMNS,
     RANKING_COLUMN_NAMES,
@@ -70,6 +77,10 @@ class CandidateBuildError(RuntimeError):
     pass
 
 
+class WarcSizeCheckpointError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class BuildIdentity:
     catalog_schema_version: int
@@ -122,6 +133,38 @@ class _CandidateSourceState:
     candidate_rows: int | None
     candidate_bytes: int | None
     attempts: int
+
+
+@dataclass(frozen=True, slots=True)
+class PendingWarcSizes:
+    total_objects: int
+    reused_objects: int
+    reused_bytes: int
+    attempts_total: int
+    pending: tuple[WarcObject, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class WarcSizeBatchResult:
+    objects: int
+    successes: int
+    failures: int
+    object_bytes: int
+    attempts: int
+    retries: int
+    head_requests: int
+    range_requests: int
+    http_429: int
+    http_503: int
+    objects_completed: int
+    objects_pending: int
+    known_bytes: int
+    attempts_total: int
+    inventory_sha256: str | None
+
+    @property
+    def http_requests(self) -> int:
+        return self.head_requests + self.range_requests
 
 
 _BUILD_STATE_DDL = (
@@ -500,6 +543,304 @@ def _require_matching_seeds(
         raise BuildStateConflict(
             "stored source shards conflict with the index manifest; use --rebuild"
         )
+
+
+def _build_inventory_hash(connection: duckdb.DuckDBPyConnection) -> str:
+    rows = connection.execute(
+        """
+        SELECT warc_index, warc_filename, object_bytes
+        FROM warc_inventory
+        ORDER BY warc_index
+        """
+    ).fetchall()
+    if any(object_bytes is None for _, _, object_bytes in rows):
+        raise BuildStateCorrupt("cannot hash WARC inventory with missing object sizes")
+    return warc_inventory_sha256(
+        tuple(
+            (int(warc_index), str(warc_filename), int(object_bytes))
+            for warc_index, warc_filename, object_bytes in rows
+        )
+    )
+
+
+def _stored_inventory_hash(connection: duckdb.DuckDBPyConnection) -> str | None:
+    rows = connection.execute(
+        "SELECT warc_inventory_sha256 FROM build_identity"
+    ).fetchall()
+    if len(rows) != 1:
+        raise BuildStateCorrupt("build_identity must contain exactly one row; use --rebuild")
+    return rows[0][0]
+
+
+def prepare_warc_size_resume(
+    connection: duckdb.DuckDBPyConnection,
+) -> PendingWarcSizes:
+    """Return only unsized WARC objects after validating persisted size progress."""
+    stored_hash = _stored_inventory_hash(connection)
+    rows = connection.execute(
+        """
+        SELECT warc_index, warc_filename, object_bytes, attempts, last_error
+        FROM warc_inventory
+        ORDER BY warc_index
+        """
+    ).fetchall()
+    if not rows:
+        raise BuildStateCorrupt("WARC inventory is empty; use --rebuild")
+
+    pending: list[WarcObject] = []
+    filenames: set[str] = set()
+    reused_bytes = 0
+    attempts_total = 0
+    for expected_index, row in enumerate(rows):
+        warc_index, warc_filename, object_bytes, attempts, last_error = row
+        if warc_index != expected_index:
+            raise BuildStateCorrupt(
+                "WARC inventory indexes are not contiguous; use --rebuild"
+            )
+        if not str(warc_filename).strip() or warc_filename in filenames:
+            raise BuildStateCorrupt(
+                "WARC inventory filenames are blank or duplicated; use --rebuild"
+            )
+        filenames.add(str(warc_filename))
+        attempts_total += int(attempts)
+        if object_bytes is None:
+            pending.append(WarcObject(int(warc_index), str(warc_filename)))
+        else:
+            if not 1 <= int(object_bytes) <= 0xFFFFFFFFFFFFFFFF:
+                raise BuildStateCorrupt(
+                    "WARC inventory contains an invalid object size; use --rebuild"
+                )
+            if last_error is not None:
+                raise BuildStateCorrupt(
+                    "sized WARC inventory row contains an error; use --rebuild"
+                )
+            reused_bytes += int(object_bytes)
+
+    if stored_hash is not None:
+        if pending:
+            raise BuildStateCorrupt(
+                "WARC inventory hash exists while object sizes are missing; use --rebuild"
+            )
+        computed_hash = _build_inventory_hash(connection)
+        if stored_hash != computed_hash:
+            raise BuildStateConflict(
+                "stored WARC inventory hash conflicts with exact sizes; use --rebuild"
+            )
+
+    return PendingWarcSizes(
+        total_objects=len(rows),
+        reused_objects=len(rows) - len(pending),
+        reused_bytes=reused_bytes,
+        attempts_total=attempts_total,
+        pending=tuple(pending),
+    )
+
+
+def _validate_warc_size_outcomes(
+    outcomes: Sequence[WarcSizeOutcome],
+) -> tuple[WarcSizeOutcome, ...]:
+    if not outcomes:
+        raise ValueError("WARC size checkpoint batch must not be empty")
+    ordered = tuple(sorted(outcomes, key=lambda outcome: outcome.warc.warc_index))
+    seen_indexes: set[int] = set()
+    for outcome in ordered:
+        warc = outcome.warc
+        if not 0 <= warc.warc_index <= 0xFFFFFFFF:
+            raise ValueError("WARC size outcome index must fit uint32")
+        if warc.warc_index in seen_indexes:
+            raise ValueError("WARC size checkpoint batch contains a duplicate index")
+        if not warc.warc_filename.strip():
+            raise ValueError("WARC size outcome filename must not be blank")
+        if outcome.attempts <= 0 or outcome.retries != outcome.attempts - 1:
+            raise ValueError("WARC size outcome has inconsistent attempt metrics")
+        metrics = outcome.metrics
+        if min(
+            metrics.head_requests,
+            metrics.range_requests,
+            metrics.http_429,
+            metrics.http_503,
+        ) < 0:
+            raise ValueError("WARC size outcome metrics must not be negative")
+        if metrics.head_requests != outcome.attempts:
+            raise ValueError("each WARC size attempt must contain exactly one HEAD request")
+        if isinstance(outcome, WarcSizeSuccess):
+            if not 1 <= outcome.object_bytes <= 0xFFFFFFFFFFFFFFFF:
+                raise ValueError("WARC size outcome object_bytes must fit uint64")
+        elif isinstance(outcome, WarcSizeFailure):
+            error = outcome.error
+            if (
+                error.warc_index != warc.warc_index
+                or error.warc_filename != warc.warc_filename
+            ):
+                raise ValueError("WARC size failure error identifies a different WARC")
+            if outcome.permanent != isinstance(error, PermanentWarcSizeError):
+                raise ValueError("WARC size failure classification is inconsistent")
+        else:
+            raise TypeError(f"unsupported WARC size outcome: {type(outcome).__name__}")
+        seen_indexes.add(warc.warc_index)
+    return ordered
+
+
+def _outcome_error_message(outcome: WarcSizeFailure) -> str:
+    message = str(outcome.error).strip() or type(outcome.error).__name__
+    return message[:2000]
+
+
+def checkpoint_warc_size_batch(
+    connection: duckdb.DuckDBPyConnection,
+    outcomes: Sequence[WarcSizeOutcome],
+) -> WarcSizeBatchResult:
+    """Atomically persist one completion batch and finalize the last batch hash."""
+    ordered = _validate_warc_size_outcomes(outcomes)
+    rows = [
+        (
+            outcome.warc.warc_index,
+            outcome.warc.warc_filename,
+            outcome.object_bytes if isinstance(outcome, WarcSizeSuccess) else None,
+            outcome.attempts,
+            None
+            if isinstance(outcome, WarcSizeSuccess)
+            else _outcome_error_message(outcome),
+        )
+        for outcome in ordered
+    ]
+
+    connection.execute("BEGIN TRANSACTION")
+    try:
+        stored_hash = _stored_inventory_hash(connection)
+        pending_before = connection.execute(
+            "SELECT count(*) FROM warc_inventory WHERE object_bytes IS NULL"
+        ).fetchone()[0]
+        if stored_hash is not None and pending_before:
+            raise BuildStateCorrupt(
+                "WARC inventory hash exists while object sizes are missing; use --rebuild"
+            )
+        connection.execute(
+            """
+            CREATE TEMP TABLE warc_size_checkpoint_batch (
+                warc_index UINTEGER PRIMARY KEY,
+                warc_filename VARCHAR NOT NULL,
+                object_bytes UBIGINT,
+                attempts UINTEGER NOT NULL CHECK (attempts > 0),
+                last_error VARCHAR
+            )
+            """
+        )
+        connection.executemany(
+            "INSERT INTO warc_size_checkpoint_batch VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
+        updated = connection.execute(
+            """
+            UPDATE warc_inventory AS inventory
+            SET object_bytes = batch.object_bytes,
+                attempts = inventory.attempts + batch.attempts,
+                last_error = batch.last_error
+            FROM warc_size_checkpoint_batch AS batch
+            WHERE inventory.warc_index = batch.warc_index
+              AND inventory.warc_filename = batch.warc_filename
+              AND inventory.object_bytes IS NULL
+            RETURNING inventory.warc_index
+            """
+        ).fetchall()
+        if len(updated) != len(ordered):
+            raise WarcSizeCheckpointError(
+                "WARC size checkpoint contains stale, misrouted, or already-sized results"
+            )
+
+        objects_completed, objects_pending, known_bytes, attempts_total = connection.execute(
+            """
+            SELECT count(object_bytes), count(*) FILTER (WHERE object_bytes IS NULL),
+                   coalesce(sum(object_bytes), 0), sum(attempts)
+            FROM warc_inventory
+            """
+        ).fetchone()
+        inventory_hash: str | None = None
+        if objects_pending:
+            if stored_hash is not None:
+                raise BuildStateCorrupt(
+                    "WARC inventory hash exists while object sizes are missing; use --rebuild"
+                )
+        else:
+            inventory_hash = _build_inventory_hash(connection)
+            if stored_hash is None:
+                connection.execute(
+                    """
+                    UPDATE build_identity
+                    SET warc_inventory_sha256 = ?
+                    WHERE singleton = true AND warc_inventory_sha256 IS NULL
+                    """,
+                    [inventory_hash],
+                )
+            elif stored_hash != inventory_hash:
+                raise BuildStateConflict(
+                    "stored WARC inventory hash conflicts with exact sizes; use --rebuild"
+                )
+
+        connection.execute("DROP TABLE warc_size_checkpoint_batch")
+        connection.execute("COMMIT")
+    except BaseException:
+        connection.execute("ROLLBACK")
+        raise
+
+    successes = tuple(
+        outcome for outcome in ordered if isinstance(outcome, WarcSizeSuccess)
+    )
+    failures = tuple(
+        outcome for outcome in ordered if isinstance(outcome, WarcSizeFailure)
+    )
+    metrics = ProbeMetrics(
+        head_requests=sum(outcome.metrics.head_requests for outcome in ordered),
+        range_requests=sum(outcome.metrics.range_requests for outcome in ordered),
+        http_429=sum(outcome.metrics.http_429 for outcome in ordered),
+        http_503=sum(outcome.metrics.http_503 for outcome in ordered),
+    )
+    return WarcSizeBatchResult(
+        objects=len(ordered),
+        successes=len(successes),
+        failures=len(failures),
+        object_bytes=sum(outcome.object_bytes for outcome in successes),
+        attempts=sum(outcome.attempts for outcome in ordered),
+        retries=sum(outcome.retries for outcome in ordered),
+        head_requests=metrics.head_requests,
+        range_requests=metrics.range_requests,
+        http_429=metrics.http_429,
+        http_503=metrics.http_503,
+        objects_completed=int(objects_completed),
+        objects_pending=int(objects_pending),
+        known_bytes=int(known_bytes),
+        attempts_total=int(attempts_total),
+        inventory_sha256=inventory_hash,
+    )
+
+
+def verify_or_finalize_warc_inventory(
+    connection: duckdb.DuckDBPyConnection,
+) -> str:
+    """Recompute and compare or atomically store the completed inventory hash."""
+    connection.execute("BEGIN TRANSACTION")
+    try:
+        inventory_hash = _build_inventory_hash(connection)
+        stored_hash = _stored_inventory_hash(connection)
+        if stored_hash is None:
+            connection.execute(
+                """
+                UPDATE build_identity
+                SET warc_inventory_sha256 = ?
+                WHERE singleton = true AND warc_inventory_sha256 IS NULL
+                """,
+                [inventory_hash],
+            )
+        elif stored_hash != inventory_hash:
+            raise BuildStateConflict(
+                "stored WARC inventory hash conflicts with exact sizes; use --rebuild"
+            )
+        connection.execute("COMMIT")
+    except BaseException:
+        connection.execute("ROLLBACK")
+        raise
+    connection.checkpoint()
+    return inventory_hash
 
 
 def local_candidate_query(
