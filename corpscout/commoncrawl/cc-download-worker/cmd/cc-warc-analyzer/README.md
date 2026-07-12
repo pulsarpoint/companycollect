@@ -41,6 +41,37 @@ By default, the requested range is filtered through the same local completion ma
 coverage and hybrid decisions. Use `--skip-loaded=false` only when intentionally analyzing completed
 parts again.
 
+The analyzer also creates a resumable SQLite plan under
+`<base>/<crawl>/download/plans/pagesN/<mode>_parts_<range>.sqlite`. It contains normalized page,
+chunk, and WARC rows; pending/committed state; exact object sizes; cache state; and the active
+whole-WARC versus exact-range strategy. RustFS chunk manifests remain authoritative when the downloader
+later reconciles completion state.
+
+The readable SQLite views are `page_plan` and `warc_plan`. For example:
+
+```sql
+SELECT warc_filename, pending_pages, pending_bytes, selected_percent, strategy
+FROM warc_plan
+ORDER BY selected_percent DESC
+LIMIT 20;
+```
+
+Use `--check` to inspect an existing plan without building worklists, making network requests, or changing
+SQLite state:
+
+```bash
+./cc-download-worker/bin/cc-warc-analyzer \
+  --base /opt/companycollect/corpscout/commoncrawl/data \
+  --crawl CC-MAIN-2026-25 \
+  --mode tech \
+  --parts 85-150 \
+  --check
+```
+
+The check reports complete-WARC and individual-page totals, estimated requests/source bytes/junk,
+complete-WARC utilization in ten-percentage-point buckets, and the highest-utilization individual WARC
+objects.
+
 Useful controls:
 
 | Flag | Default | Meaning |
@@ -54,6 +85,10 @@ Useful controls:
 | `--whole-warc-thresholds` | `25,50,75` | Selected compressed-byte coverage that triggers a complete WARC download. |
 | `--whole-warc-sizes` | `true` | Measure exact sizes of all referenced WARC objects. |
 | `--warc-head-concurrency` | `32` | Concurrent WARC size metadata requests. |
+| `--plan-db` | derived | SQLite planning/progress database path override. |
+| `--plan-whole-warc-threshold` | `50` | Threshold persisted as the active strategy in SQLite. |
+| `--plan-stats-limit` | `10` | Highest-utilization per-WARC rows written to the JSON log. |
+| `--check` | `false` | Read and report the existing SQLite plan without modifying it. |
 
 The reusable [`rangeplanner`](../../rangeplanner/) package contains the physical range planner and
 statistics. Once a policy is selected from real results, `cc-download-worker` can use the same package to

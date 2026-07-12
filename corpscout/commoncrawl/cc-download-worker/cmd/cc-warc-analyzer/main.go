@@ -14,7 +14,9 @@ import (
 	"cc-download-worker/internal/partspec"
 	"cc-download-worker/internal/warcsize"
 	"cc-download-worker/internal/worklistbuilder"
+	"cc-download-worker/planstore"
 	"cc-download-worker/rangeplanner"
+	"cc-raw/rawstore"
 	"github.com/cockroachdb/errors"
 	"github.com/dustin/go-humanize"
 )
@@ -38,6 +40,10 @@ type options struct {
 	warcSizeBaseURL     string
 	warcSizeCache       string
 	warcHeadConc        int
+	planDatabase        string
+	planThreshold       float64
+	planStatsLimit      int
+	check               bool
 }
 
 func main() {
@@ -61,6 +67,11 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		return err
 	}
 	requestedParts := partspec.Format(parts)
+	selection := worklistbuilder.Selection(options.pagesPerDomain)
+	planDatabasePath := resolvedPlanDatabasePath(options, selection, requestedParts)
+	if options.check {
+		return checkPlan(ctx, logger, options, requestedParts, planDatabasePath)
+	}
 	skippedLoadedParts := []int(nil)
 	if options.skipLoaded {
 		parts, skippedLoadedParts, err = filterLoadedParts(options.baseDirectory, options.crawlID, options.mode, parts)
@@ -86,10 +97,17 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	selection := worklistbuilder.Selection(options.pagesPerDomain)
 	worklistDirectory := options.worklistDirectory
 	if worklistDirectory == "" {
 		worklistDirectory = worklistbuilder.DefaultDirectory(options.baseDirectory, options.crawlID, options.pagesPerDomain)
+	}
+	plannerStore, err := planstore.Open(planDatabasePath)
+	if err != nil {
+		return err
+	}
+	defer plannerStore.Close()
+	if err := plannerStore.SyncParts(ctx, parts); err != nil {
+		return err
 	}
 
 	logger.Info("WARC analysis started",
@@ -104,6 +122,8 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		"max_range_size", humanize.IBytes(uint64(options.maxRangeBytes)),
 		"junk_thresholds", thresholds,
 		"whole_warc_thresholds", wholeWARCThresholds,
+		"plan_database", planDatabasePath,
+		"plan_whole_warc_threshold", options.planThreshold,
 	)
 
 	var allRecords []rangeplanner.Record
@@ -140,6 +160,14 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		if err != nil {
 			return errors.Wrapf(err, "read worklist part %d", part)
 		}
+		checksum, _, err := rawstore.ChecksumFile(result.Path)
+		if err != nil {
+			return errors.Wrapf(err, "checksum worklist part %d", part)
+		}
+		planReused, err := plannerStore.ImportPart(ctx, part, string(checksum), worklist)
+		if err != nil {
+			return errors.Wrapf(err, "import worklist part %d into plan database", part)
+		}
 		firstID := int64(len(allRecords))
 		for index := range worklist.Records {
 			worklist.Records[index].ID = firstID + int64(index)
@@ -158,7 +186,11 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 			"output_chunks", len(worklist.OutputChunks),
 			"warc_objects", len(worklist.WARCFiles),
 			"reused", result.Reused,
+			"plan_reused", planReused,
 		)
+	}
+	if err := plannerStore.RefreshStrategies(ctx, options.planThreshold); err != nil {
+		return err
 	}
 
 	logEstimate(logger, options, analyzedParts, rangeplanner.ExactEstimate(allRecords))
@@ -210,6 +242,12 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		if err := warcsize.SaveCache(cachePath, cache); err != nil {
 			return err
 		}
+		if err := plannerStore.SetObjectSizes(ctx, cache); err != nil {
+			return err
+		}
+		if err := plannerStore.RefreshStrategies(ctx, options.planThreshold); err != nil {
+			return err
+		}
 		exact := rangeplanner.ExactEstimate(allRecords)
 		for _, threshold := range wholeWARCThresholds {
 			hybrid, err := rangeplanner.PlanWholeWARCHybrid(allRecords, cache, threshold)
@@ -233,6 +271,9 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 			"http_checks", summary.HTTPChecks,
 		)
 	}
+	if err := logPlanStatistics(ctx, logger, plannerStore, options, requestedParts, analyzedParts); err != nil {
+		return err
+	}
 
 	logger.Info("WARC analysis complete",
 		"crawl", options.crawlID,
@@ -243,6 +284,132 @@ func run(ctx context.Context, logger *slog.Logger, args []string) error {
 		"selected_records", len(allRecords),
 		"warc_objects", len(warcFiles),
 	)
+	return nil
+}
+
+func resolvedPlanDatabasePath(options options, selection, requestedParts string) string {
+	if options.planDatabase != "" {
+		return options.planDatabase
+	}
+	return filepath.Join(
+		options.baseDirectory,
+		options.crawlID,
+		"download",
+		"plans",
+		selection,
+		options.mode+"_parts_"+strings.ReplaceAll(requestedParts, ",", "_")+".sqlite",
+	)
+}
+
+func checkPlan(ctx context.Context, logger *slog.Logger, options options, requestedParts, databasePath string) error {
+	if _, err := os.Stat(databasePath); err != nil {
+		return errors.Wrap(err, "open existing SQLite plan for check")
+	}
+	store, err := planstore.OpenReadOnly(databasePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	parts, err := store.Parts(ctx)
+	if err != nil {
+		return err
+	}
+	if len(parts) == 0 {
+		return errors.New("SQLite plan contains no parts")
+	}
+	if err := logPlanStatistics(ctx, logger, store, options, requestedParts, partspec.Format(parts)); err != nil {
+		return err
+	}
+	logger.Info("SQLite WARC plan check complete",
+		"crawl", options.crawlID,
+		"requested_parts", requestedParts,
+		"parts", partspec.Format(parts),
+		"database", databasePath,
+	)
+	return nil
+}
+
+func logPlanStatistics(
+	ctx context.Context,
+	logger *slog.Logger,
+	store *planstore.Store,
+	options options,
+	requestedParts string,
+	analyzedParts string,
+) error {
+	stats, err := store.Stats(ctx)
+	if err != nil {
+		return err
+	}
+	junkBytes := max(int64(0), stats.EstimatedSourceBytes-stats.PendingBytes)
+	logger.Info("SQLite WARC plan stats",
+		"crawl", options.crawlID,
+		"mode", options.mode,
+		"requested_parts", requestedParts,
+		"parts", analyzedParts,
+		"database", store.Path(),
+		"whole_warc_threshold_percent", stats.WholeWARCThresholdPercent,
+		"planned_parts", stats.Parts,
+		"chunks", stats.Chunks,
+		"committed_chunks", stats.CommittedChunks,
+		"pages", stats.Pages,
+		"committed_pages", stats.Pages-stats.PendingPages,
+		"pending_pages", stats.PendingPages,
+		"pending_bytes", stats.PendingBytes,
+		"pending_size", humanize.IBytes(uint64(stats.PendingBytes)),
+		"warc_objects", stats.WARCObjects,
+		"whole_warc_objects", stats.WholeWARCObjects,
+		"whole_warc_pages", stats.WholeWARCPages,
+		"whole_warc_selected_bytes", stats.WholeWARCSelectedBytes,
+		"whole_warc_selected_size", humanize.IBytes(uint64(stats.WholeWARCSelectedBytes)),
+		"whole_warc_download_bytes", stats.WholeWARCDownloadBytes,
+		"whole_warc_download_size", humanize.IBytes(uint64(stats.WholeWARCDownloadBytes)),
+		"exact_warc_objects", stats.ExactWARCObjects,
+		"individual_pages", stats.ExactPages,
+		"individual_bytes", stats.ExactSelectedBytes,
+		"individual_size", humanize.IBytes(uint64(stats.ExactSelectedBytes)),
+		"estimated_requests", stats.EstimatedRequests,
+		"estimated_source_bytes", stats.EstimatedSourceBytes,
+		"estimated_source_size", humanize.IBytes(uint64(stats.EstimatedSourceBytes)),
+		"junk_bytes", junkBytes,
+		"junk_size", humanize.IBytes(uint64(junkBytes)),
+	)
+	buckets, err := store.UtilizationBuckets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, bucket := range buckets {
+		logger.Info("SQLite WARC utilization bucket",
+			"utilization_from_percent", bucket.FromPercent,
+			"utilization_to_percent", bucket.ToPercent,
+			"warc_objects", bucket.WARCObjects,
+			"pages", bucket.Pages,
+			"selected_bytes", bucket.SelectedBytes,
+			"selected_size", humanize.IBytes(uint64(bucket.SelectedBytes)),
+			"object_bytes", bucket.ObjectBytes,
+			"object_size", humanize.IBytes(uint64(bucket.ObjectBytes)),
+			"junk_bytes", bucket.JunkBytes,
+			"junk_size", humanize.IBytes(uint64(bucket.JunkBytes)),
+		)
+	}
+	warcs, err := store.WARCStats(ctx, options.planStatsLimit)
+	if err != nil {
+		return err
+	}
+	for _, warc := range warcs {
+		logger.Info("SQLite WARC plan object",
+			"warc_filename", warc.Filename,
+			"object_bytes", warc.ObjectBytes,
+			"object_size", humanize.IBytes(uint64(warc.ObjectBytes)),
+			"pending_pages", warc.PendingPages,
+			"pending_bytes", warc.PendingBytes,
+			"pending_size", humanize.IBytes(uint64(warc.PendingBytes)),
+			"selected_percent", warc.SelectedPercent,
+			"strategy", warc.Strategy,
+			"cache_state", warc.CacheState,
+			"local_path", warc.LocalPath,
+		)
+	}
 	return nil
 }
 
@@ -321,6 +488,10 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&options.warcSizeBaseURL, "warc-base-url", "https://data.commoncrawl.org", "base URL used only for WARC size metadata checks")
 	flags.StringVar(&options.warcSizeCache, "warc-size-cache", "", "WARC size JSON cache path override")
 	flags.IntVar(&options.warcHeadConc, "warc-head-concurrency", 32, "concurrent WARC size metadata checks")
+	flags.StringVar(&options.planDatabase, "plan-db", "", "SQLite plan database path override")
+	flags.Float64Var(&options.planThreshold, "plan-whole-warc-threshold", 50, "selected-byte percentage used for the persisted SQLite strategy")
+	flags.IntVar(&options.planStatsLimit, "plan-stats-limit", 10, "highest-utilization WARC rows logged from the SQLite plan")
+	flags.BoolVar(&options.check, "check", false, "read and report an existing SQLite plan without changing it")
 	if err := flags.Parse(args); err != nil {
 		return options, err
 	}
@@ -334,8 +505,11 @@ func parseOptions(args []string) (options, error) {
 	if options.mode != "tech" && options.mode != "industry" {
 		return options, errors.New("mode must be tech or industry")
 	}
-	if options.pagesPerDomain < 1 || options.maxPackBytes <= 0 || options.maxRecords <= 0 || options.maxRangeBytes <= 0 || options.warcHeadConc <= 0 {
+	if options.pagesPerDomain < 1 || options.maxPackBytes <= 0 || options.maxRecords <= 0 || options.maxRangeBytes <= 0 || options.warcHeadConc <= 0 || options.planStatsLimit <= 0 {
 		return options, errors.New("page, pack, range, record, and concurrency limits must be positive")
+	}
+	if math.IsNaN(options.planThreshold) || math.IsInf(options.planThreshold, 0) || options.planThreshold < 0 || options.planThreshold > 100 {
+		return options, errors.New("plan whole-WARC threshold must be between 0 and 100")
 	}
 	if _, err := partspec.Parse(options.parts); err != nil {
 		return options, err
