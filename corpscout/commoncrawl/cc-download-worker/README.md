@@ -9,7 +9,7 @@ Range-strategy experiments are isolated in the separate
 one exact Common Crawl range request per selected record until analyzer results justify a planner policy.
 
 The service never parses HTML, performs enrichment, writes ClickHouse, or deletes raw packs. Shared WARC
-and object contracts live in [`../cc-raw`](../cc-raw/).
+and object contracts live in [`../cc-processor/cc-raw`](../cc-processor/cc-raw/).
 
 ## Data flow
 
@@ -44,7 +44,7 @@ container includes both dependencies:
 docker build -f cc-download-worker/Dockerfile -t cc-download-worker .
 ```
 
-Use `commoncrawl/` as the Docker build context because `cc-raw` is a sibling module.
+Use `commoncrawl/` as the Docker build context so the build can include the processor-owned `cc-raw` module.
 
 ## Run
 

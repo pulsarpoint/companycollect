@@ -21,7 +21,7 @@ scripts measure the difference so we don't re-embed ~19M pages twice.
 | `crosscheck.py` *(planned)* | embed ~200 pages WITH instruction in Python, cosine vs stored instructed → validate text extraction matches the Go worker | tiny |
 | `general_ab.py` *(planned)* | anisotropy/rank/NN for both instructed and neutral, side by side | none |
 
-## Env (read from environment; source the repo `.env`)
+## Env (read from environment; source the processor `.env`)
 `COMMONCRAWL_EMBED_BASE_URL`, `COMMONCRAWL_EMBED_MODEL`, `COMMONCRAWL_EMBED_MAX_CHARS`, `AWS_*`, `CLICKHOUSE_*`.
 
 ## Setup — this is a `uv` project
@@ -34,7 +34,7 @@ uv add <pkg>            # to add another dependency later
 ## Run (on the box, where the endpoint + S3 + ClickHouse are reachable)
 ```bash
 cd /opt/companycollect/corpscout/commoncrawl/embedding-ab
-set -a; . ../.env; set +a          # endpoint + AWS + ClickHouse creds
+set -a; . ../cc-processor/.env; set +a  # endpoint + AWS + ClickHouse creds
 DATA=../data/embedding/out_industry_68/embeddings.parquet
 uv run python general_quality.py    "$DATA"
 uv run python intrinsic_purposes.py "$DATA"

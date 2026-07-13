@@ -19,7 +19,7 @@
 #
 # Prereqs:
 #   - the static clickhouse binary:  curl -s https://clickhouse.com/ | sh   (or set CLICKHOUSE_BIN=/path)
-#   - commoncrawl/.env with CLICKHOUSE_HOST / _NATIVE_PORT / _USER / _PASSWORD
+#   - commoncrawl/cc-processor/.env with CLICKHOUSE_HOST / _NATIVE_PORT / _USER / _PASSWORD
 #   - the table exists:  (cd .. && make clickhouse-migrate-up)
 set -euo pipefail
 
@@ -31,8 +31,8 @@ CRAWL_ID="${2:?usage: load-domain-ranks.sh <ranks-file> <crawl-id>  (DRY=1 to pr
 CH_BIN="${CLICKHOUSE_BIN:-$(command -v clickhouse || echo /opt/clickhouse)}"
 [ -x "$CH_BIN" ] || { echo "clickhouse binary not found at '$CH_BIN' — set CLICKHOUSE_BIN, or run: curl -s https://clickhouse.com/ | sh" >&2; exit 1; }
 
-# ClickHouse connection from commoncrawl/.env (next to this script).
-set -a; . "$(dirname "$0")/.env"; set +a
+# ClickHouse connection from the Common Crawl processor environment.
+set -a; . "$(dirname "$0")/cc-processor/.env"; set +a
 : "${CLICKHOUSE_HOST:?}" "${CLICKHOUSE_NATIVE_PORT:?}" "${CLICKHOUSE_USER:?}" "${CLICKHOUSE_PASSWORD:?}"
 
 SCHEMA='harmonicc_pos UInt32, harmonicc_val Float64, pr_pos UInt32, pr_val Float64, host_rev String, n_hosts UInt32'

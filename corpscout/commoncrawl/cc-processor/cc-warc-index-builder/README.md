@@ -35,7 +35,7 @@ prioritizes home, company, legal, contact, privacy, and terms pages.
 - [`uv`](https://docs.astral.sh/uv/)
 
 ```bash
-cd corpscout/commoncrawl/cc-warc-index-builder
+cd corpscout/commoncrawl/cc-processor/cc-warc-index-builder
 uv sync --frozen
 uv run pytest -q
 make build
@@ -46,14 +46,18 @@ make build
 ## Run
 
 RustFS publication is part of a successful build, including a run that reuses an existing local catalog.
-Configure the S3-compatible endpoint and catalog base before starting:
+The canonical entry point is the processor Makefile, which loads the one shared `cc-processor/.env`:
 
 ```bash
-export CORPSCOUT_S3_ENDPOINT=http://rustfs:9000
-export CORPSCOUT_S3_ACCESS_KEY=<access-key>
-export CORPSCOUT_S3_SECRET_KEY=<secret-key>
-export CORPSCOUT_S3_REGION=us-east-1
-export COMMONCRAWL_CATALOG_S3_BASE=s3://crawls/commoncrawl/catalogs
+cd corpscout/commoncrawl/cc-processor
+make catalog CRAWL=CC-MAIN-2026-25 PAGES_PER_DOMAIN=25
+```
+
+For a direct component invocation, export the parent environment file before starting:
+
+```bash
+cd cc-warc-index-builder
+set -a; source ../.env; set +a
 ```
 
 The region defaults to `us-east-1`; RustFS access always uses path-style S3 URLs. The base URI supplies
@@ -173,23 +177,33 @@ Keep the checkout, data, DuckDB spill, and logs under `/home/graovic`; never use
 Recommended paths:
 
 ```text
-/home/graovic/cc-warc-index-builder          # deployed builder
+/home/graovic/cc-processor                   # grouped checkout and shared .env
 /home/graovic/cc-warc-index-data             # --base and DuckDB spill
 /home/graovic/logs                            # persistent logs
 ```
 
-After placing the checkout on `graovic@wappalyzer`:
+After placing the grouped processor checkout on `graovic@wappalyzer` and creating the single protected
+`/home/graovic/cc-processor/.env`:
 
 ```bash
 ssh graovic@wappalyzer
 mkdir -p /home/graovic/cc-warc-index-data /home/graovic/logs
-cd /home/graovic/cc-warc-index-builder
-uv sync --frozen
-make build
-set -a; source .env; set +a
+cd /home/graovic/cc-processor
+chmod 0600 .env
 tmux new -s cc-warc-index
 
-./bin/cc-warc-index-builder \
+make catalog CRAWL=CC-MAIN-2026-25 PAGES_PER_DOMAIN=25 \
+  2>&1 | tee /home/graovic/logs/cc-warc-index-CC-MAIN-2026-25.log
+```
+
+Use the direct command when overriding builder-specific controls:
+
+```bash
+cd /home/graovic/cc-processor/cc-warc-index-builder
+set -a; source ../.env; set +a
+uv sync --frozen
+
+uv run --frozen cc-warc-index-builder \
   --base /home/graovic/cc-warc-index-data \
   --crawl CC-MAIN-2026-25 \
   --pages-per-domain 25 \

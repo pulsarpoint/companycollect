@@ -3,6 +3,9 @@
 Processes selected pages directly from Common Crawl using the static WARC-oriented catalog created by
 [`cc-warc-index-builder`](../cc-warc-index-builder/).
 
+See the parent [`cc-processor` runbook](../README.md) for the complete catalog, migration, processing,
+state, and deployment workflow. This README documents the worker boundary and its direct CLI.
+
 ## Input contract
 
 Set `COMMONCRAWL_CATALOG_S3_BASE` to the RustFS bucket and catalog prefix. For example, with
@@ -65,7 +68,7 @@ single-profile `metadata.parquet` output is not produced or loaded.
 
 ## Build and run
 
-From `commoncrawl/`:
+From `commoncrawl/cc-processor/`:
 
 ```bash
 make -C cc-enrich-worker
@@ -102,6 +105,10 @@ set -a; source .env; set +a
 ./cc-enrich-worker/bin/cc-enrich-worker load \
   --dir /opt/companycollect/corpscout/commoncrawl/data/CC-MAIN-2026-25/warc/pages25/out_tech_0
 ```
+
+`.env` exists only at the processor root. `cc-crawl` resolves it relative to its own binary, with the
+working directory as a fallback, and passes it to the worker. If invoking the worker from its component
+directory instead, source `../.env`.
 
 Use `--s3-anonymous` off AWS to read through `https://data.commoncrawl.org/`. Signed S3 is the default
 and is preferred on EC2.

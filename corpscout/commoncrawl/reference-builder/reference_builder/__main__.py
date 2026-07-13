@@ -1,7 +1,7 @@
 """Rebuild the CommonCrawl reference embeddings against the current endpoint.
 
-    cp ../.env.example ../.env && edit it     # COMMONCRAWL_EMBED_* + CLICKHOUSE_*
-    set -a; . ../.env; set +a
+    cp ../cc-processor/.env.example ../cc-processor/.env && edit it
+    set -a; . ../cc-processor/.env; set +a    # COMMONCRAWL_EMBED_* + CLICKHOUSE_*
     python -m reference_builder
 
 Run from a host that reaches BOTH the embedding endpoint and ClickHouse.

@@ -1,5 +1,6 @@
 ---
-commoncrawl_deploy_root: /opt/companycollect/corpscout/commoncrawl
+commoncrawl_deploy_root: /opt/companycollect/corpscout/commoncrawl/cc-processor
+commoncrawl_legacy_environment_file: /opt/companycollect/corpscout/commoncrawl/.env
 commoncrawl_target_goos: linux
 commoncrawl_target_goarch: amd64
 commoncrawl_target_architecture: x86_64

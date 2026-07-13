@@ -56,4 +56,4 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace cc-raw => ../cc-raw
+replace cc-raw => ../cc-processor/cc-raw

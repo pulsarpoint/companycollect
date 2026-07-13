@@ -2,7 +2,7 @@
 # docker build -f cc-download-worker/Dockerfile .
 FROM golang:1.26 AS build
 WORKDIR /src
-COPY cc-raw ./cc-raw
+COPY cc-processor/cc-raw ./cc-processor/cc-raw
 COPY cc-download-worker ./cc-download-worker
 WORKDIR /src/cc-download-worker
 RUN go mod download

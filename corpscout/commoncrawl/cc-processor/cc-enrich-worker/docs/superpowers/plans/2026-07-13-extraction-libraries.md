@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work in `corpscout/commoncrawl/cc-enrich-worker` (module `cc-enrich-worker`); git root is `companycollect/`.
+- Work in `corpscout/commoncrawl/cc-processor/cc-enrich-worker` (module `cc-enrich-worker`); git root is `companycollect/`.
 - TDD: write the failing test, watch it fail, implement, watch it pass. One commit per task, Conventional Commits style, ending with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 - Raw (undecoded) body ALWAYS feeds `tech.DetectTech` — upstream wappalyzergo parity.
 - All existing tests must stay green: `go test -race ./...`, `gofmt -l .` empty, `go vet ./...` clean.
@@ -209,7 +209,7 @@ In `ProcessIndustryStream`'s fetch worker, stop discarding headers and decode:
 - [ ] **Step 8: Commit**
 
 ```bash
-git add corpscout/commoncrawl/cc-enrich-worker
+git add corpscout/commoncrawl/cc-processor/cc-enrich-worker
 git commit -m "feat(cc-enrich-worker): transcode non-UTF-8 pages before extraction"
 ```
 
@@ -349,7 +349,7 @@ func MainText(body []byte, pageURL string) string {
 - [ ] **Step 8: Commit**
 
 ```bash
-git add corpscout/commoncrawl/cc-enrich-worker
+git add corpscout/commoncrawl/cc-processor/cc-enrich-worker
 git commit -m "feat(cc-enrich-worker): trafilatura main-content extraction for embed text"
 ```
 
@@ -638,7 +638,7 @@ and in the contacts block replace the literal `"jsonld"` source for email/phone/
 - [ ] **Step 9: Commit**
 
 ```bash
-git add corpscout/commoncrawl/cc-enrich-worker
+git add corpscout/commoncrawl/cc-processor/cc-enrich-worker
 git commit -m "feat(cc-enrich-worker): microdata org profiles as JSON-LD fallback"
 ```
 
@@ -743,7 +743,7 @@ func NormalizePhone(raw, rootDomain string) string {
 - [ ] **Step 8: Commit**
 
 ```bash
-git add corpscout/commoncrawl/cc-enrich-worker
+git add corpscout/commoncrawl/cc-processor/cc-enrich-worker
 git commit -m "feat(cc-enrich-worker): normalize phone contacts to E.164 via libphonenumber"
 ```
 

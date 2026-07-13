@@ -1,72 +1,56 @@
-# Common Crawl runtime binaries:
-#   cc-enrich-worker -> cc-enrich-worker/bin/cc-enrich-worker
-#   cc-crawl         -> cc-crawl/bin/cc-crawl
-#   cc-dns-scan      -> cc-dns-scan/bin/cc-dns-scan
-#   cc-dns-axfr      -> cc-dns-axfr/bin/cc-dns-axfr
-TARGET_GOOS ?= linux
-TARGET_GOARCH ?= amd64
-DIST_DIR ?= $(CURDIR)/dist/$(TARGET_GOOS)-$(TARGET_GOARCH)
+# Common Crawl contains two independently deployed systems:
+#   cc-processor -> catalog builder plus WARC processing runtime
+#   DNS          -> authoritative scanner and AXFR scanner
 
-.PHONY: all build worker crawl dns-scan dns-axfr vet test verify runtime-vet runtime-test runtime-verify release clean
+.PHONY: all build processor builder worker crawl dns-scan dns-axfr vet test verify runtime-vet runtime-test runtime-verify release clean
 
-all: build                    ## default: build all Common Crawl binaries
+all: build
 
-build: worker crawl dns-scan dns-axfr
+build: processor dns-scan dns-axfr
 
-worker:                   ## build enrichment worker
-	$(MAKE) -C cc-enrich-worker build
+processor:
+	$(MAKE) -C cc-processor build
 
-crawl:                    ## build the cc-crawl orchestrator
-	$(MAKE) -C cc-crawl build
+builder:
+	$(MAKE) -C cc-processor builder
 
-dns-scan:                 ## build the authoritative DNS scanner
+worker:
+	$(MAKE) -C cc-processor worker
+
+crawl:
+	$(MAKE) -C cc-processor crawl
+
+dns-scan:
 	$(MAKE) -C cc-dns-scan build
 
-dns-axfr:                 ## build the AXFR scanner
+dns-axfr:
 	$(MAKE) -C cc-dns-axfr build
 
-vet:                      ## vet all Go modules
-	$(MAKE) -C cc-raw vet
-	$(MAKE) -C cc-enrich-worker vet
-	$(MAKE) -C cc-crawl vet
-	$(MAKE) -C cc-dns-scan vet
-	$(MAKE) -C cc-dns-axfr vet
-
-test:                     ## test every Common Crawl Go module
-	$(MAKE) -C cc-raw test
-	$(MAKE) -C cc-enrich-worker test
-	$(MAKE) -C cc-crawl test
+test:
+	$(MAKE) -C cc-processor test
 	$(MAKE) -C cc-dns-scan test
 	$(MAKE) -C cc-dns-axfr test
 
-verify: test vet          ## test and vet every runtime module
+vet:
+	$(MAKE) -C cc-processor vet
+	$(MAKE) -C cc-dns-scan vet
+	$(MAKE) -C cc-dns-axfr vet
 
-runtime-test:             ## test the paired Common Crawl processing runtime
-	$(MAKE) -C cc-raw test
-	$(MAKE) -C cc-enrich-worker test
-	$(MAKE) -C cc-crawl test
+verify: test vet
 
-runtime-vet:              ## vet the paired Common Crawl processing runtime
-	$(MAKE) -C cc-raw vet
-	$(MAKE) -C cc-enrich-worker vet
-	$(MAKE) -C cc-crawl vet
+runtime-test:
+	$(MAKE) -C cc-processor runtime-test
 
-runtime-verify: runtime-test runtime-vet
+runtime-vet:
+	$(MAKE) -C cc-processor runtime-vet
 
-release: runtime-verify  ## build the paired Linux runtime locally with its CGO dependency
-	rm -rf $(DIST_DIR)
-	mkdir -p $(DIST_DIR)
-	docker build \
-		--platform $(TARGET_GOOS)/$(TARGET_GOARCH) \
-		--file deploy/runtime.Dockerfile \
-		--output type=local,dest=$(DIST_DIR) \
-		.
-	test -x $(DIST_DIR)/cc-enrich-worker
-	test -x $(DIST_DIR)/cc-crawl
+runtime-verify:
+	$(MAKE) -C cc-processor runtime-verify
 
-clean:                    ## remove all build outputs
-	$(MAKE) -C cc-enrich-worker clean
+release:
+	$(MAKE) -C cc-processor release
+
+clean:
+	$(MAKE) -C cc-processor clean
 	$(MAKE) -C cc-dns-scan clean
 	$(MAKE) -C cc-dns-axfr clean
-	rm -rf cc-crawl/bin
-	rm -rf dist

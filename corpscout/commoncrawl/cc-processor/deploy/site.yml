@@ -4,7 +4,7 @@
   become: true
   gather_facts: true
   vars:
-    commoncrawl_source_directory: "{{ playbook_dir }}/../.."
+    commoncrawl_source_directory: "{{ playbook_dir }}/.."
     commoncrawl_artifact_directory: >-
       {{ commoncrawl_source_directory }}/dist/{{ commoncrawl_target_goos }}-{{ commoncrawl_target_goarch }}
     commoncrawl_current_target: "releases/{{ commoncrawl_release_id }}"
@@ -100,6 +100,76 @@
       ansible.builtin.set_fact:
         commoncrawl_release_id: >-
           {{ (commoncrawl_local_crawl.stat.checksum ~ commoncrawl_local_worker.stat.checksum) | hash('sha256') }}
+
+    - name: Inspect the processor environment file
+      ansible.builtin.stat:
+        path: "{{ commoncrawl_deploy_root }}/.env"
+        follow: false
+      register: commoncrawl_environment
+
+    - name: Inspect the legacy processor environment file
+      ansible.builtin.stat:
+        path: "{{ commoncrawl_legacy_environment_file }}"
+        follow: false
+      register: commoncrawl_legacy_environment
+
+    - name: Require a processor environment file
+      ansible.builtin.assert:
+        that:
+          - >-
+            (commoncrawl_environment.stat.isreg | default(false)) or
+            (
+              not (commoncrawl_environment.stat.exists | default(false)) and
+              (commoncrawl_legacy_environment.stat.isreg | default(false))
+            )
+        fail_msg: >-
+          Create {{ commoncrawl_deploy_root }}/.env, or retain the regular legacy file
+          {{ commoncrawl_legacy_environment_file }}, before deploying the runtime.
+
+    - name: Create the processor deployment root
+      ansible.builtin.file:
+        path: "{{ commoncrawl_deploy_root }}"
+        state: directory
+        owner: "{{ commoncrawl_owner }}"
+        group: "{{ commoncrawl_group }}"
+        mode: "0755"
+
+    - name: Copy the legacy environment into the processor root
+      ansible.builtin.copy:
+        src: "{{ commoncrawl_legacy_environment_file }}"
+        dest: "{{ commoncrawl_deploy_root }}/.env"
+        remote_src: true
+        force: false
+        owner: "{{ commoncrawl_owner }}"
+        group: "{{ commoncrawl_group }}"
+        mode: "0600"
+      when:
+        - not ansible_check_mode
+        - not (commoncrawl_environment.stat.exists | default(false))
+
+    - name: Verify the effective processor environment file
+      ansible.builtin.stat:
+        path: "{{ commoncrawl_deploy_root }}/.env"
+        follow: false
+      register: commoncrawl_effective_environment
+
+    - name: Protect the processor environment file
+      ansible.builtin.file:
+        path: "{{ commoncrawl_deploy_root }}/.env"
+        state: file
+        owner: "{{ commoncrawl_owner }}"
+        group: "{{ commoncrawl_group }}"
+        mode: "0600"
+      when: commoncrawl_effective_environment.stat.isreg | default(false)
+
+    - name: Configure the crawl-derived RustFS catalog base
+      ansible.builtin.lineinfile:
+        path: "{{ commoncrawl_deploy_root }}/.env"
+        regexp: '^COMMONCRAWL_CATALOG_S3_BASE='
+        line: "COMMONCRAWL_CATALOG_S3_BASE={{ commoncrawl_catalog_s3_base }}"
+        state: present
+        backup: true
+      when: commoncrawl_effective_environment.stat.isreg | default(false)
 
     - name: Inspect the current release link
       ansible.builtin.stat:
@@ -272,33 +342,6 @@
         owner: "{{ commoncrawl_owner }}"
         group: "{{ commoncrawl_group }}"
         force: true
-
-    - name: Inspect the existing runtime environment file
-      ansible.builtin.stat:
-        path: "{{ commoncrawl_deploy_root }}/.env"
-        follow: false
-      register: commoncrawl_environment
-
-    - name: Require the existing runtime environment file
-      ansible.builtin.assert:
-        that: commoncrawl_environment.stat.isreg | default(false)
-        fail_msg: >-
-          {{ commoncrawl_deploy_root }}/.env must exist with the RustFS and Common Crawl credentials
-          before deploying the runtime.
-
-    - name: Configure the crawl-derived RustFS catalog base
-      ansible.builtin.lineinfile:
-        path: "{{ commoncrawl_deploy_root }}/.env"
-        regexp: '^COMMONCRAWL_CATALOG_S3_BASE='
-        line: "COMMONCRAWL_CATALOG_S3_BASE={{ commoncrawl_catalog_s3_base }}"
-        state: present
-        backup: true
-
-    - name: Protect the runtime environment file
-      ansible.builtin.file:
-        path: "{{ commoncrawl_deploy_root }}/.env"
-        state: file
-        mode: "0600"
 
     - name: Report the active paired release
       ansible.builtin.debug:

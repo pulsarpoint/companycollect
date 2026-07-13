@@ -37,11 +37,28 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const repositoryWorkerFallback = "cc-enrich-worker/bin/cc-enrich-worker"
+
 func env(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return def
+}
+
+func dotenvPath(executable string) string {
+	if configured := os.Getenv("DOTENV"); configured != "" {
+		return configured
+	}
+	if executable != "" {
+		processorEnvironment := filepath.Clean(filepath.Join(
+			filepath.Dir(executable), "..", "..", ".env",
+		))
+		if isRegularFile(processorEnvironment) {
+			return processorEnvironment
+		}
+	}
+	return ".env"
 }
 
 // defaultWorkerPath pins the worker to the same versioned release as cc-crawl when both binaries
@@ -52,7 +69,7 @@ func defaultWorkerPath() string {
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return "cc-enrich-worker/bin/cc-enrich-worker"
+		return repositoryWorkerFallback
 	}
 	return workerPathBesideExecutable(executable)
 }
@@ -60,14 +77,30 @@ func defaultWorkerPath() string {
 func workerPathBesideExecutable(executable string) string {
 	realExecutable, err := filepath.EvalSymlinks(executable)
 	if err != nil {
-		return "cc-enrich-worker/bin/cc-enrich-worker"
+		return repositoryWorkerFallback
 	}
 	sibling := filepath.Join(filepath.Dir(realExecutable), "cc-enrich-worker")
-	info, err := os.Stat(sibling)
-	if err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+	if isExecutableFile(sibling) {
 		return sibling
 	}
-	return "cc-enrich-worker/bin/cc-enrich-worker"
+	developmentWorker := filepath.Clean(filepath.Join(
+		filepath.Dir(realExecutable),
+		"..", "..", "cc-enrich-worker", "bin", "cc-enrich-worker",
+	))
+	if isExecutableFile(developmentWorker) {
+		return developmentWorker
+	}
+	return repositoryWorkerFallback
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+}
+
+func isRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // Parsed from the worker's own log lines for the per-WARC counts.
@@ -104,7 +137,8 @@ func runStep(name string, args []string, dir string) (code int, output string, e
 func main() {
 	// Load .env (overriding the ambient shell, like the old run_crawl.sh `set -a; . ./.env; set +a`)
 	// so the worker gets the shared S3, ClickHouse, and embedding config. Missing file is fine.
-	_ = godotenv.Overload(env("DOTENV", ".env"))
+	executable, _ := os.Executable()
+	_ = godotenv.Overload(dotenvPath(executable))
 
 	s3AnonymousDefault, s3AnonymousEnvErr := parseS3Anonymous(env("S3_ANONYMOUS", "false"))
 	fs := flag.NewFlagSet("cc-crawl", flag.ExitOnError)

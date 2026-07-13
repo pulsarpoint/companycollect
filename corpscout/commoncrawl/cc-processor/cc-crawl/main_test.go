@@ -317,15 +317,65 @@ func TestWorkerPathBesideVersionedExecutable(t *testing.T) {
 	}
 }
 
+func TestDotenvPathHonorsOverride(t *testing.T) {
+	t.Setenv("DOTENV", "/configured/processor.env")
+	if got := dotenvPath("/ignored/cc-crawl"); got != "/configured/processor.env" {
+		t.Fatalf("dotenv path=%q, want explicit override", got)
+	}
+}
+
+func TestDotenvPathFindsProcessorEnvironmentFromDevelopmentBinary(t *testing.T) {
+	processorDirectory := t.TempDir()
+	executable := filepath.Join(processorDirectory, "cc-crawl", "bin", "cc-crawl")
+	environment := filepath.Join(processorDirectory, ".env")
+	if err := os.WriteFile(environment, []byte("OUT_BASE_DIR=/data\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := dotenvPath(executable); got != environment {
+		t.Fatalf("dotenv path=%q, want processor environment %q", got, environment)
+	}
+}
+
+func TestDotenvPathFallsBackToWorkingDirectory(t *testing.T) {
+	if got := dotenvPath(filepath.Join(t.TempDir(), "cc-crawl", "bin", "cc-crawl")); got != ".env" {
+		t.Fatalf("dotenv path=%q, want working-directory fallback", got)
+	}
+}
+
+func TestWorkerPathFindsWorkerInDevelopmentCheckout(t *testing.T) {
+	processorDirectory := t.TempDir()
+	crawl := filepath.Join(processorDirectory, "cc-crawl", "bin", "cc-crawl")
+	worker := filepath.Join(
+		processorDirectory,
+		"cc-enrich-worker", "bin", "cc-enrich-worker",
+	)
+	for _, path := range []string{crawl, worker} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	realWorker, err := filepath.EvalSymlinks(worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := workerPathBesideExecutable(crawl); got != realWorker {
+		t.Fatalf("worker path=%q, want development worker %q", got, realWorker)
+	}
+}
+
 func TestWorkerPathFallsBackForDevelopmentBuild(t *testing.T) {
 	executable := filepath.Join(t.TempDir(), "cc-crawl")
 	if err := os.WriteFile(executable, []byte("crawl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	const fallback = "cc-enrich-worker/bin/cc-enrich-worker"
-	if got := workerPathBesideExecutable(executable); got != fallback {
-		t.Fatalf("worker path=%q, want repository fallback %q", got, fallback)
+	if got := workerPathBesideExecutable(executable); got != repositoryWorkerFallback {
+		t.Fatalf("worker path=%q, want repository fallback %q", got, repositoryWorkerFallback)
 	}
 }
 
