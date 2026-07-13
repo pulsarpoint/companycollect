@@ -98,8 +98,14 @@ crawl (or a meaningful part range) with matching outputs.
   - `--mode local`: two pools connected by a bounded buffer of downloaded WARCs:
     - DOWNLOAD pool: `--download-parallel D` (default 2) whole-WARC downloads run
       continuously — as soon as one finishes, the next queued part starts — until every part
-      in the runner's class is fetched. Backpressure: at most `--download-buffer B`
-      (default D+2) downloaded-but-unprocessed WARCs on disk; disk budget = B * ~1 GiB.
+      in the runner's class is fetched. Backpressure (disk exhaustion is the failure mode
+      this guards): a new download may start only when
+      (in-flight downloads + downloaded-but-unprocessed WARCs) < `--download-buffer B`
+      (default D+2) — the bound counts partial files too, so total on-disk WARC footprint
+      never exceeds ~B GiB. Additionally `--min-free-disk` (default 5 GiB): before starting
+      any download, check the temp volume's free space and WAIT (with a periodic warning
+      log) while it is below the floor — a hard backstop against whatever else fills the
+      disk. Processing draining the buffer is what unblocks the pool in both cases.
     - PROCESS pool: `--process-parallel P` (default 2) parts processed concurrently from the
       buffer, each feeding (local warc path, offset, length) page entries to the existing
       CPU-bound page workers; total page workers sized to the machine's cores. A part's
