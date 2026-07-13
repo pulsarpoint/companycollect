@@ -22,6 +22,7 @@ func TestShardStreamerCommit(t *testing.T) {
 	if err := s.Write(ShardResult{
 		Domains:  []output.DomainRow{{RootDomain: "a.com"}},
 		Tech:     []output.TechRow{{RootDomain: "a.com", Technology: "nginx"}},
+		JSONLD:   []output.JSONLDRow{{RootDomain: "a.com", EntityPath: "/publisher", Name: "A"}},
 		Security: []output.SecurityRow{{RootDomain: "a.com", Headers: map[string]string{"server": "nginx"}}},
 	}); err != nil {
 		t.Fatal(err)
@@ -29,6 +30,7 @@ func TestShardStreamerCommit(t *testing.T) {
 	if err := s.Write(ShardResult{
 		Domains: []output.DomainRow{{RootDomain: "b.com"}},
 		Tech:    []output.TechRow{{RootDomain: "b.com", Technology: "php"}, {RootDomain: "b.com", Technology: "mysql"}},
+		JSONLD:  []output.JSONLDRow{{RootDomain: "b.com", EntityPath: "/0", Name: "B"}, {RootDomain: "b.com", EntityPath: "/1", Name: "C"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +55,10 @@ func TestShardStreamerCommit(t *testing.T) {
 	tr, err := parquet.ReadFile[output.TechRow](filepath.Join(dir, "tech.parquet"))
 	if err != nil || len(tr) != 3 {
 		t.Fatalf("tech: err=%v n=%d want 3", err, len(tr))
+	}
+	jr, err := parquet.ReadFile[output.JSONLDRow](filepath.Join(dir, "jsonld.parquet"))
+	if err != nil || len(jr) != 3 {
+		t.Fatalf("jsonld: err=%v n=%d want 3", err, len(jr))
 	}
 	sr, err := parquet.ReadFile[output.SecurityRow](filepath.Join(dir, "security.parquet"))
 	if err != nil || len(sr) != 1 || sr[0].Headers["server"] != "nginx" {

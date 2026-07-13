@@ -206,13 +206,15 @@ namespace and from other page-count selections.
 The marker is written only after a successful ClickHouse load. Remove a specific marker to rerun that
 WARC index. `embed` remains file-based under `<base>/<crawl>/embedding/warc/pagesN/` and does not load ClickHouse.
 
-Technology and metadata evidence is stored per page in:
+Technology and structured-data evidence is stored per page in:
 
 - `corpscout.commoncrawl_page_technologies`
-- `corpscout.commoncrawl_page_metadata`
+- `corpscout.commoncrawl_page_jsonld`
 
 Both tables are partitioned by crawl ID. Technology rows remain normalized for reverse lookups by
-technology and version.
+technology and version. JSON-LD stores every typed or identified entity separately with its script
+index, stable JSON pointer, canonical JSON, and page/WARC provenance; the worker does not select a
+single organization profile.
 
 See [`cc-warc-index-builder/README.md`](cc-warc-index-builder/README.md) and
 [`cc-enrich-worker/README.md`](cc-enrich-worker/README.md) for component-level details.

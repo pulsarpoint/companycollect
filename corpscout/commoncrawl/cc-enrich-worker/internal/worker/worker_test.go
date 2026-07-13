@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -273,7 +274,7 @@ func TestProcessPageFullScanDetectsLateTechnology(t *testing.T) {
 	}
 }
 
-func TestTechAndMetadataRowsRetainPageProvenance(t *testing.T) {
+func TestTechAndJSONLDRowsRetainPageProvenance(t *testing.T) {
 	home := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><head>" +
 		`<script type="application/ld+json">{"@type":"Organization","name":"Acme Home"}</script>` +
 		"</head><body>home</body></html>")
@@ -308,23 +309,75 @@ func TestTechAndMetadataRowsRetainPageProvenance(t *testing.T) {
 	wordPress := techByName["WordPress"]
 	assertTechProvenance(t, wordPress, "https://shop.acme.com/about", "shop", 29, "second.warc.gz", 5678, uint64(len(about)))
 
-	if len(res.Metadata) != 2 {
-		t.Fatalf("want one metadata row per page, got %+v", res.Metadata)
+	if len(res.JSONLD) != 2 {
+		t.Fatalf("want one JSON-LD row per entity, got %+v", res.JSONLD)
 	}
-	metadataByURL := make(map[string]output.MetadataRow)
-	for _, row := range res.Metadata {
-		metadataByURL[row.PageURL] = row
+	jsonldByURL := make(map[string]output.JSONLDRow)
+	for _, row := range res.JSONLD {
+		jsonldByURL[row.PageURL] = row
 	}
-	homeMetadata := metadataByURL["https://acme.com/"]
-	if homeMetadata.Name != "Acme Home" {
-		t.Fatalf("home metadata lost: %+v", homeMetadata)
+	homeJSONLD := jsonldByURL["https://acme.com/"]
+	if homeJSONLD.Name != "Acme Home" {
+		t.Fatalf("home JSON-LD lost: %+v", homeJSONLD)
 	}
-	assertMetadataProvenance(t, homeMetadata, "https://acme.com/", "", 11, "first.warc.gz", 1234, uint64(len(home)))
-	shopMetadata := metadataByURL["https://shop.acme.com/about"]
-	if shopMetadata.Name != "Acme Shop" {
-		t.Fatalf("shop metadata lost: %+v", shopMetadata)
+	assertJSONLDProvenance(t, homeJSONLD, "https://acme.com/", "", 11, "first.warc.gz", 1234, uint64(len(home)))
+	shopJSONLD := jsonldByURL["https://shop.acme.com/about"]
+	if shopJSONLD.Name != "Acme Shop" {
+		t.Fatalf("shop JSON-LD lost: %+v", shopJSONLD)
 	}
-	assertMetadataProvenance(t, shopMetadata, "https://shop.acme.com/about", "shop", 29, "second.warc.gz", 5678, uint64(len(about)))
+	assertJSONLDProvenance(t, shopJSONLD, "https://shop.acme.com/about", "shop", 29, "second.warc.gz", 5678, uint64(len(about)))
+}
+
+func TestProcessShardKeepsSiblingJSONLDEntities(t *testing.T) {
+	page := gzWarc("HTTP/1.1 200 OK\r\n\r\n<html><head>" +
+		`<script type="application/ld+json">{` +
+		`"@type":"WebPage",` +
+		`"publisher":{"@type":"Organization","name":"Publisher Ltd","email":"publisher@example.com"},` +
+		`"provider":{"@type":"Organization","name":"Provider Ltd","email":"provider@example.com"}` +
+		`}</script></head></html>`)
+	getter := multiGetter{"f.warc.gz:10": page}
+	items := []model.WorklistItem{{
+		RootDomain: "example.com", URL: "https://example.com/", WarcIndex: 7,
+		WarcFilename: "f.warc.gz", Offset: 10, Length: int64(len(page)), Primary: true,
+	}}
+	cfg := ShardConfig{
+		CrawlID: "C", SourceRunID: "run", ResolvedAt: time.Unix(1700000000, 0).UTC(),
+		Concurrency: 1, Mode: "tech",
+	}
+
+	first, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.JSONLD) != 3 {
+		t.Fatalf("JSON-LD rows = %d, want 3: %+v", len(first.JSONLD), first.JSONLD)
+	}
+	if first.JSONLD[1].EntityPath != "/provider" || first.JSONLD[1].Name != "Provider Ltd" ||
+		first.JSONLD[2].EntityPath != "/publisher" || first.JSONLD[2].Name != "Publisher Ltd" {
+		t.Fatalf("sibling organizations were merged or reordered: %+v", first.JSONLD)
+	}
+	if len(first.PageMeta) != 1 || !reflect.DeepEqual(first.PageMeta[0].JSONLDTypes, []string{"Organization", "WebPage"}) {
+		t.Fatalf("JSON-LD type summary is not stable: %+v", first.PageMeta)
+	}
+	jsonldEmails := map[string]bool{}
+	for _, contact := range first.Contacts {
+		if contact.Source == "jsonld" && contact.ContactType == "email" {
+			jsonldEmails[contact.Value] = true
+		}
+	}
+	if !jsonldEmails["publisher@example.com"] || !jsonldEmails["provider@example.com"] {
+		t.Fatalf("contacts from sibling entities were lost: %+v", first.Contacts)
+	}
+
+	for range 20 {
+		again, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(again.JSONLD, first.JSONLD) || !reflect.DeepEqual(again.PageMeta, first.PageMeta) {
+			t.Fatal("identical page produced different JSON-LD output")
+		}
+	}
 }
 
 func assertTechProvenance(t *testing.T, row output.TechRow, pageURL, subdomain string, warcIndex uint32, warcFilename string, offset, length uint64) {
@@ -336,12 +389,12 @@ func assertTechProvenance(t *testing.T, row output.TechRow, pageURL, subdomain s
 	}
 }
 
-func assertMetadataProvenance(t *testing.T, row output.MetadataRow, pageURL, subdomain string, warcIndex uint32, warcFilename string, offset, length uint64) {
+func assertJSONLDProvenance(t *testing.T, row output.JSONLDRow, pageURL, subdomain string, warcIndex uint32, warcFilename string, offset, length uint64) {
 	t.Helper()
 	if row.PageURL != pageURL || row.RootDomain != "acme.com" || row.Subdomain != subdomain ||
 		row.WarcIndex != warcIndex || row.WarcFilename != warcFilename ||
 		row.WarcRecordOffset != offset || row.WarcRecordLength != length {
-		t.Fatalf("metadata page provenance mismatch: %+v", row)
+		t.Fatalf("JSON-LD page provenance mismatch: %+v", row)
 	}
 }
 
@@ -359,8 +412,8 @@ func TestProcessShardDecodesLatin1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Metadata) != 1 || res.Metadata[0].Name != "Müller GmbH" {
-		t.Fatalf("latin-1 JSON-LD name mangled: %+v", res.Metadata)
+	if len(res.JSONLD) != 1 || res.JSONLD[0].Name != "Müller GmbH" {
+		t.Fatalf("latin-1 JSON-LD name mangled: %+v", res.JSONLD)
 	}
 	if len(res.PageMeta) != 1 || res.PageMeta[0].Charset == "" {
 		t.Fatalf("detected charset not backfilled: %+v", res.PageMeta)
@@ -382,8 +435,8 @@ func TestProcessShardMicrodataProfileFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Metadata) != 1 || res.Metadata[0].Name != "Smile Dental" || res.Metadata[0].Source != "microdata" {
-		t.Fatalf("microdata profile not used: %+v", res.Metadata)
+	if len(res.JSONLD) != 0 {
+		t.Fatalf("microdata must not be written as JSON-LD: %+v", res.JSONLD)
 	}
 	// Profile-derived contact rows must carry the profile's provenance, not a hardcoded "jsonld".
 	emailRows, phoneRows := 0, 0
@@ -400,8 +453,7 @@ func TestProcessShardMicrodataProfileFallback(t *testing.T) {
 	}
 }
 
-// A page can carry a partial JSON-LD org (profile wins, Source "jsonld") AND microdata
-// identifiers the JSON-LD lacks — the identifiers must be unioned, never dropped.
+// A page can carry JSON-LD entities and microdata identifiers; both must be retained.
 func TestProcessShardUnionsMicrodataIdentifiersWithPartialJSONLD(t *testing.T) {
 	page := gzWarc("HTTP/1.1 200 OK\r\n\r\n<html><head>" +
 		`<script type="application/ld+json">{"@type":"Organization","name":"Acme"}</script>` +
@@ -417,8 +469,8 @@ func TestProcessShardUnionsMicrodataIdentifiersWithPartialJSONLD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Metadata) != 1 || res.Metadata[0].Name != "Acme" || res.Metadata[0].Source != "jsonld" {
-		t.Fatalf("JSON-LD profile should win: %+v", res.Metadata)
+	if len(res.JSONLD) != 1 || res.JSONLD[0].Name != "Acme" {
+		t.Fatalf("JSON-LD entity missing: %+v", res.JSONLD)
 	}
 	vats := 0
 	for _, id := range res.Identifiers {

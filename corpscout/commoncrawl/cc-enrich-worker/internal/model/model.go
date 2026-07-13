@@ -41,8 +41,8 @@ type Identifier struct {
 	Source string // "jsonld" | "microdata" | "text" | "html" (tracker/analytics extraction)
 }
 
-// CompanyProfile is the firmographic record distilled from a page's schema.org
-// Organization / LocalBusiness JSON-LD or microdata (clean structured data, when present).
+// CompanyProfile is the firmographic record distilled from one page's schema.org microdata.
+// JSON-LD nodes are retained individually as JSONLDEntity values instead of being merged here.
 type CompanyProfile struct {
 	Name          string
 	Description   string
@@ -64,22 +64,23 @@ func (p CompanyProfile) Empty() bool {
 // and EntityPath identify the node within the immutable archived page; fields are never merged
 // across nodes, and RawJSON retains properties that do not have dedicated columns.
 type JSONLDEntity struct {
-	ScriptIndex  uint32
-	EntityPath   string
-	ID           string
-	Types        []string
-	Name         string
-	LegalName    string
-	Description  string
-	URL          string
-	Logo         string
-	Email        string
-	Phone        string
-	SameAs       []string
-	Country      string
-	FoundingYear uint16
-	EmployeeCount uint32
-	RawJSON      string
+	ScriptIndex    uint32
+	EntityPath     string
+	ID             string
+	Types          []string
+	IsOrganization bool
+	Name           string
+	LegalName      string
+	Description    string
+	URL            string
+	Logo           string
+	Email          string
+	Phone          string
+	SameAs         []string
+	Country        string
+	FoundingYear   uint16
+	EmployeeCount  uint32
+	RawJSON        string
 }
 
 // WorklistItem is one row of the index-driven worklist (top-K pages per domain).

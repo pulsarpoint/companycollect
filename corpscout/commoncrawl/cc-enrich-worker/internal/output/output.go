@@ -16,7 +16,7 @@ import (
 
 // DomainRow mirrors corpscout.commoncrawl_domains (migration 000046 + 000066 slim): the domain
 // master/identity, one row per domain, written by EVERY pass. Classification moved to IndustryRow,
-// page/decision signals to PageSignalRow, self-reported "about" to MetadataRow, contacts to ContactRow.
+// page/decision signals to PageSignalRow, structured entities to JSONLDRow, contacts to ContactRow.
 type DomainRow struct {
 	CrawlID     string    `parquet:"crawl_id" ch:"crawl_id"`
 	URL         string    `parquet:"url" ch:"url"`
@@ -94,9 +94,9 @@ type IdentifierRow struct {
 	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
-// MetadataRow mirrors corpscout.commoncrawl_page_metadata (migration 000125): self-reported
-// schema.org Organization evidence attributed to the page and WARC record that supplied it.
-type MetadataRow struct {
+// JSONLDRow mirrors corpscout.commoncrawl_page_jsonld (migration 000127): one independently
+// addressable JSON-LD entity with the exact page and WARC record that supplied it.
+type JSONLDRow struct {
 	CrawlID          string    `parquet:"crawl_id" ch:"crawl_id"`
 	RootDomain       string    `parquet:"root_domain" ch:"root_domain"`
 	PageURL          string    `parquet:"page_url" ch:"page_url"`
@@ -105,13 +105,23 @@ type MetadataRow struct {
 	WarcFilename     string    `parquet:"warc_filename" ch:"warc_filename"`
 	WarcRecordOffset uint64    `parquet:"warc_record_offset" ch:"warc_record_offset"`
 	WarcRecordLength uint64    `parquet:"warc_record_length" ch:"warc_record_length"`
+	ScriptIndex      uint32    `parquet:"script_index" ch:"script_index"`
+	EntityPath       string    `parquet:"entity_path" ch:"entity_path"`
+	EntityID         string    `parquet:"entity_id" ch:"entity_id"`
+	EntityTypes      []string  `parquet:"entity_types" ch:"entity_types"`
+	IsOrganization   uint8     `parquet:"is_organization" ch:"is_organization"`
 	Name             string    `parquet:"name" ch:"name"`
+	LegalName        string    `parquet:"legal_name" ch:"legal_name"`
 	Description      string    `parquet:"description" ch:"description"`
+	EntityURL        string    `parquet:"entity_url" ch:"entity_url"`
 	Logo             string    `parquet:"logo" ch:"logo"`
+	Email            string    `parquet:"email" ch:"email"`
+	Telephone        string    `parquet:"telephone" ch:"telephone"`
+	SameAs           []string  `parquet:"same_as" ch:"same_as"`
 	Country          string    `parquet:"country" ch:"country"`
 	FoundingYear     uint16    `parquet:"founding_year" ch:"founding_year"`
 	EmployeeCount    uint32    `parquet:"employee_count" ch:"employee_count"`
-	Source           string    `parquet:"source" ch:"source"`
+	EntityJSON       string    `parquet:"entity_json" ch:"entity_json"`
 	SourceRunID      string    `parquet:"source_run_id" ch:"source_run_id"`
 	ResolvedAt       time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
@@ -187,9 +197,9 @@ func WriteIndustries(path string, rows []IndustryRow) error {
 func WritePageSignals(path string, rows []PageSignalRow) error {
 	return parquet.WriteFile(path, rows, Zstd)
 }
-func WriteContacts(path string, rows []ContactRow) error  { return parquet.WriteFile(path, rows, Zstd) }
-func WriteMetadata(path string, rows []MetadataRow) error { return parquet.WriteFile(path, rows, Zstd) }
-func WriteTech(path string, rows []TechRow) error         { return parquet.WriteFile(path, rows, Zstd) }
+func WriteContacts(path string, rows []ContactRow) error { return parquet.WriteFile(path, rows, Zstd) }
+func WriteJSONLD(path string, rows []JSONLDRow) error    { return parquet.WriteFile(path, rows, Zstd) }
+func WriteTech(path string, rows []TechRow) error        { return parquet.WriteFile(path, rows, Zstd) }
 func WriteIdentifiers(path string, rows []IdentifierRow) error {
 	return parquet.WriteFile(path, rows, Zstd)
 }

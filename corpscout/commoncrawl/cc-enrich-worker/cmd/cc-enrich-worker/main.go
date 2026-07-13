@@ -156,9 +156,9 @@ func main() {
 // shard's output dir); `--file` loads one. The kind→table mapping comes from the FIXED filenames.
 func runLoad(args []string) {
 	fs := flag.NewFlagSet("cc-enrich-worker load", flag.ExitOnError)
-	dir := fs.String("dir", "", "a shard output directory; loads every {domains,industries,page_signals,metadata,contacts,tech,identifiers}.parquet in it")
+	dir := fs.String("dir", "", "a shard output directory; loads every supported output parquet in it")
 	file := fs.String("file", "", "a single Parquet output file to load")
-	kind := fs.String("kind", "", "override the kind for --file: domains|industries|page_signals|metadata|contacts|tech|identifiers")
+	kind := fs.String("kind", "", "override the kind for --file: "+strings.Join(load.Kinds, "|"))
 	_ = fs.Parse(args)
 	if (*dir == "") == (*file == "") {
 		fmt.Fprintln(os.Stderr, "error: pass exactly one of --dir or --file")

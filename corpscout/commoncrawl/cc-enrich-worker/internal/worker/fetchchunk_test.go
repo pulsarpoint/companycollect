@@ -8,8 +8,8 @@ import (
 )
 
 // mergePageResults must be deterministic in WORKLIST order (slice index = rank), regardless of the
-// (parallel) completion order that produced the results: primary = lowest-rank SURVIVOR, dedup is
-// first-rank-wins, profile is the first non-empty.
+// (parallel) completion order that produced the results: primary = lowest-rank survivor and
+// identifier dedup is first-rank-wins.
 func TestMergePageResults(t *testing.T) {
 	results := make([]pageResult, 4)
 	ok := make([]bool, 4)
@@ -22,17 +22,15 @@ func TestMergePageResults(t *testing.T) {
 	}
 	ok[1] = true
 	results[2] = pageResult{
-		source:  model.WorklistItem{URL: "https://shop.acme.com/"},
-		sub:     "shop",
-		tech:    []model.Technology{{Name: "WordPress", Version: "6.5"}, {Name: "WooCommerce"}}, // dup name, later rank
-		emails:  []string{"info@acme.com", "sales@acme.com"},                                    // first email is a dup
-		ids:     []model.Identifier{{Type: "lei", Value: "DE123456789"}},                        // dup value, different type
-		profile: model.CompanyProfile{Name: "ACME GmbH"},
+		source: model.WorklistItem{URL: "https://shop.acme.com/"},
+		sub:    "shop",
+		tech:   []model.Technology{{Name: "WordPress", Version: "6.5"}, {Name: "WooCommerce"}},
+		emails: []string{"info@acme.com", "sales@acme.com"},
+		ids:    []model.Identifier{{Type: "lei", Value: "DE123456789"}},
 	}
 	ok[2] = true
 	results[3] = pageResult{
 		source: model.WorklistItem{URL: "https://acme.com/imprint"}, primary: true, text: "acme imprint text",
-		profile: model.CompanyProfile{Name: "Ignored — rank 2 already set one"},
 	}
 	ok[3] = true
 
@@ -41,14 +39,8 @@ func TestMergePageResults(t *testing.T) {
 	if agg.primaryURL != "https://acme.com/about" || agg.primarySub != "" {
 		t.Fatalf("primary must be the lowest-rank SURVIVOR: got %q sub=%q", agg.primaryURL, agg.primarySub)
 	}
-	if len(agg.emails) != 2 || agg.emails[0] != "info@acme.com" || agg.emails[1] != "sales@acme.com" {
-		t.Fatalf("email dedup in rank order: %+v", agg.emails)
-	}
 	if len(agg.identifiers) != 1 || agg.identifiers[0].Type != "vat" {
 		t.Fatalf("id dedup by value, lowest rank wins: %+v", agg.identifiers)
-	}
-	if agg.profile.Name != "ACME GmbH" {
-		t.Fatalf("profile = first non-empty by rank: %+v", agg.profile)
 	}
 	if !agg.hasPrimary || agg.primaryText != "acme imprint text" {
 		t.Fatalf("primaryText must come from the result flagged primary: hasPrimary=%v text=%q",
@@ -95,9 +87,6 @@ func TestProcessDomainParallelPages(t *testing.T) {
 		}
 		if !hasTech(successful[0].tech, "Nginx") || !hasTech(successful[1].tech, "WordPress") {
 			t.Fatalf("per-page technologies lost: %+v", successful)
-		}
-		if len(agg.emails) != 1 || agg.emails[0] != "info@acme.com" {
-			t.Fatalf("emails deduped across pages: %+v", agg.emails)
 		}
 		if stats.errs != 1 || stats.pages != 3 {
 			t.Fatalf("stats: want errs=1 pages=3, got errs=%d pages=%d", stats.errs, stats.pages)

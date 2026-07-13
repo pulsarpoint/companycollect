@@ -26,7 +26,7 @@ type ShardStreamer struct {
 	pageSignals *kindStream[output.PageSignalRow]
 	tech        *kindStream[output.TechRow]
 	idents      *kindStream[output.IdentifierRow]
-	metadata    *kindStream[output.MetadataRow]
+	jsonld      *kindStream[output.JSONLDRow]
 	contacts    *kindStream[output.ContactRow]
 	security    *kindStream[output.SecurityRow]
 	pageMeta    *kindStream[output.PageMetaRow]
@@ -70,10 +70,10 @@ func NewShardStreamer(dir, embedDir string, runEmbed, runTech bool) (s *ShardStr
 			return
 		}
 		s.all = append(s.all, s.idents)
-		if s.metadata, err = newKindStream[output.MetadataRow](dir, "metadata.parquet"); err != nil {
+		if s.jsonld, err = newKindStream[output.JSONLDRow](dir, "jsonld.parquet"); err != nil {
 			return
 		}
-		s.all = append(s.all, s.metadata)
+		s.all = append(s.all, s.jsonld)
 		if s.contacts, err = newKindStream[output.ContactRow](dir, "contacts.parquet"); err != nil {
 			return
 		}
@@ -123,8 +123,8 @@ func (s *ShardStreamer) Write(res ShardResult) error {
 			return err
 		}
 	}
-	if s.metadata != nil {
-		if _, err := s.metadata.write(res.Metadata); err != nil {
+	if s.jsonld != nil {
+		if _, err := s.jsonld.write(res.JSONLD); err != nil {
 			return err
 		}
 	}

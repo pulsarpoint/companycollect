@@ -32,15 +32,14 @@ const classifyInstruction = "Classify the business into its industry category"
 
 type embedderIface = classify.Embedder
 
-// ShardResult bundles the per-pass outputs (domains from industry; tech/identifiers/
-// profiles from tech). Each maps to its own ClickHouse table.
+// ShardResult bundles the per-pass outputs. Each maps to its own ClickHouse table.
 type ShardResult struct {
 	Domains     []output.DomainRow // identity master, written by every pass
 	Industries  []output.IndustryRow
 	PageSignals []output.PageSignalRow
 	Tech        []output.TechRow
 	Identifiers []output.IdentifierRow
-	Metadata    []output.MetadataRow  // self-reported "about", from the tech pass
+	JSONLD      []output.JSONLDRow    // every typed/identified JSON-LD entity, from the tech pass
 	Contacts    []output.ContactRow   // emails/phones/social, from the tech pass
 	Security    []output.SecurityRow  // full response-header map, from the tech pass
 	PageMeta    []output.PageMetaRow  // head content signals (title/meta/hreflang/jsonld @types), tech pass
@@ -136,12 +135,9 @@ type ShardConfig struct {
 
 type domainAgg struct {
 	rootDomain, primaryURL, primarySub, primaryText string
-	primaryWarc                                     string   // primary page's WARC record coords — re-fetch
-	primaryOff, primaryLen                          int64    // provenance carried onto the embedding row
-	emails                                          []string // regex-scraped, deduped (tech pass)
+	primaryWarc                                     string // primary page's WARC record coords — re-fetch
+	primaryOff, primaryLen                          int64  // provenance carried onto the embedding row
 	identifiers                                     []model.Identifier
-	profile                                         model.CompanyProfile
-	profileSource                                   string            // "jsonld" | "microdata"
 	security                                        map[string]string // primary page's response headers
 	meta                                            parse.HeadMeta    // primary page's head signals
 	jsonldTypes                                     []string          // primary page's JSON-LD @types
@@ -269,22 +265,22 @@ func (s *chunkStats) recordErr(err error) {
 // merged deterministically by mergePageResults. primary marks the result carrying the embed text
 // (the worklist's Primary page, embed/both modes only).
 type pageResult struct {
-	source        model.WorklistItem
-	sub           string
-	primary       bool
-	text          string // parsed visible text (embed/both, Primary page only)
-	tech          []model.Technology
-	emails        []string
-	ids           []model.Identifier
-	profile       model.CompanyProfile
-	profileSource string            // "jsonld" | "microdata"
-	security      map[string]string // response headers, Primary page only
-	meta          parse.HeadMeta    // head signals, Primary page only
-	jsonldTypes   []string          // JSON-LD @types, Primary page only
+	source      model.WorklistItem
+	sub         string
+	primary     bool
+	text        string // parsed visible text (embed/both, Primary page only)
+	tech        []model.Technology
+	emails      []string
+	ids         []model.Identifier
+	jsonld      []model.JSONLDEntity
+	microdata   model.CompanyProfile
+	security    map[string]string // response headers, Primary page only
+	meta        parse.HeadMeta    // head signals, Primary page only
+	jsonldTypes []string          // JSON-LD @types, Primary page only
 }
 
 // processPage fetches ONE page and runs the per-page extraction for the configured mode:
-// tech detection (body capped at TechMaxBytes) + emails + JSON-LD profile + LEI/VAT (tech/both),
+// tech detection (body capped at TechMaxBytes) + emails + JSON-LD entities + LEI/VAT (tech/both),
 // and the visible-text parse of the Primary page (embed/both). Pure with respect to the chunk —
 // it returns a pageResult and touches no aggregate.
 func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig, it model.WorklistItem, stats *chunkStats) (pageResult, error) {
@@ -320,19 +316,13 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		r.tech = tech.DetectTech(headers, techBody)
 		atomic.AddInt64(&stats.techNs, time.Since(t2).Nanoseconds())
 		r.emails = parse.Emails(string(decoded))
-		prof, structIDs := extract.ExtractProfile(decoded)
-		r.profileSource = "jsonld"
-		// Identifiers union unconditionally (cheap: bails without a DOM parse when the body has
-		// no itemtype); the microdata PROFILE is only a fallback when JSON-LD yielded nothing.
+		r.jsonld, r.ids = extract.ExtractJSONLD(decoded)
+		// Microdata is retained for contacts and identifiers. It is not written to the JSON-LD
+		// evidence table and never competes with or replaces any JSON-LD entity.
 		if mdProf, mdIDs := extract.ExtractProfileMicrodata(decoded, it.URL); !mdProf.Empty() || len(mdIDs) > 0 {
-			if prof.Empty() && !mdProf.Empty() {
-				prof = mdProf
-				r.profileSource = "microdata"
-			}
-			structIDs = append(structIDs, mdIDs...)
+			r.microdata = mdProf
+			r.ids = append(r.ids, mdIDs...)
 		}
-		r.profile = prof
-		r.ids = append(r.ids, structIDs...)
 		r.ids = append(r.ids, extract.ExtractLEIs(decoded)...)
 		r.ids = append(r.ids, extract.ExtractVATs(decoded)...)
 		r.ids = append(r.ids, extract.Trackers(decoded)...)
@@ -342,7 +332,7 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 			if r.meta.Charset == "" {
 				r.meta.Charset = encName // head declared nothing — record what we detected
 			}
-			r.jsonldTypes = extract.JSONLDTypes(decoded)
+			r.jsonldTypes = extract.JSONLDTypeNames(r.jsonld)
 		}
 	}
 	if runEmbed && it.Primary {
@@ -355,13 +345,12 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 
 // mergePageResults folds one domain's per-page results into its aggregate, in WORKLIST order
 // (slice index = the page's rank) — deterministic regardless of the parallel completion order:
-// the primary row = the lowest-rank SURVIVOR, dedup is first-rank-wins, profile = first non-empty.
+// the primary row = the lowest-rank survivor and identifier dedup is first-rank-wins.
 // ok[i] marks pages that fetched successfully; a domain with no survivor yields an empty agg
 // (no primaryURL), which Finalize drops.
 func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
 	agg := &domainAgg{rootDomain: dom}
 	idSeen := map[string]bool{}
-	emailSeen := map[string]bool{}
 	for i, r := range results {
 		if !ok[i] {
 			continue
@@ -370,21 +359,11 @@ func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
 			agg.primaryURL = r.source.URL
 			agg.primarySub = r.sub
 		}
-		for _, e := range r.emails {
-			if !emailSeen[e] {
-				emailSeen[e] = true
-				agg.emails = append(agg.emails, e)
-			}
-		}
 		for _, id := range r.ids {
 			if !idSeen[id.Value] {
 				idSeen[id.Value] = true
 				agg.identifiers = append(agg.identifiers, id)
 			}
-		}
-		if agg.profile.Empty() && !r.profile.Empty() {
-			agg.profile = r.profile
-			agg.profileSource = r.profileSource
 		}
 		if r.primary && !agg.hasPrimary {
 			agg.hasPrimary = true
@@ -427,7 +406,7 @@ func processDomain(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfi
 }
 
 // FetchChunk downloads + parses every page of the chunk into per-domain aggregates; tech detection
-// and identifier/profile extraction run per page (processPage). It does NOT embed/classify — call
+// and structured-evidence extraction run per page (processPage). It does NOT embed/classify — call
 // Finalize for that. Splitting the two phases lets the driver overlap one chunk's embed (GPU) with
 // the next chunk's fetch (network), so the GPU isn't idle while pages download.
 //
@@ -481,11 +460,6 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 	return FetchedChunk{aggs: aggs, pages: successfulPages, Pages: atomic.LoadInt64(&stats.pages), Errs: atomic.LoadInt64(&stats.errs)}
 }
 
-func hasMetadataEvidence(profile model.CompanyProfile) bool {
-	return profile.Name != "" || profile.Description != "" || profile.Logo != "" ||
-		profile.Country != "" || profile.FoundingYear != 0 || profile.EmployeeCount != 0
-}
-
 // Finalize embeds + classifies (industry) and builds the output rows from a fetched chunk. For the
 // industry path this is the GPU-bound phase the driver overlaps with the next chunk's FetchChunk.
 func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *model.Reference, protos *model.Prototypes, cfg ShardConfig) (ShardResult, error) {
@@ -506,7 +480,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 	var embeddings []output.EmbeddingRow
 	var techRows []output.TechRow
 	var identRows []output.IdentifierRow
-	var metaRows []output.MetadataRow
+	var jsonldRows []output.JSONLDRow
 	var contacts []output.ContactRow
 	var securityRows []output.SecurityRow
 	var pageMetaRows []output.PageMetaRow
@@ -578,6 +552,20 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 	}
 
 	if runTech {
+		contactSeen := map[string]bool{}
+		addContact := func(rootDomain, pageURL, contactType, value, source string) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return
+			}
+			key := rootDomain + "\x00" + contactType + "\x00" + value
+			if contactSeen[key] {
+				return
+			}
+			contactSeen[key] = true
+			contacts = append(contacts, contactRow(cfg, rootDomain, pageURL, contactType, value, source))
+		}
+
 		for _, page := range fc.pages {
 			it := page.source
 			offset, length := uint64(it.Offset), uint64(it.Length)
@@ -591,20 +579,36 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 					SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
-			if profile := page.profile; hasMetadataEvidence(profile) {
-				src := page.profileSource
-				if src == "" {
-					src = "jsonld"
-				}
-				metaRows = append(metaRows, output.MetadataRow{
+			for _, entity := range page.jsonld {
+				jsonldRows = append(jsonldRows, output.JSONLDRow{
 					CrawlID: cfg.CrawlID, RootDomain: it.RootDomain, PageURL: it.URL, Subdomain: page.sub,
 					WarcIndex: it.WarcIndex, WarcFilename: it.WarcFilename,
 					WarcRecordOffset: offset, WarcRecordLength: length,
-					Name: profile.Name, Description: profile.Description, Logo: profile.Logo,
-					Country: profile.Country, FoundingYear: profile.FoundingYear,
-					EmployeeCount: profile.EmployeeCount, Source: src,
+					ScriptIndex: entity.ScriptIndex, EntityPath: entity.EntityPath,
+					EntityID: entity.ID, EntityTypes: entity.Types,
+					IsOrganization: b2u8(entity.IsOrganization),
+					Name:           entity.Name, LegalName: entity.LegalName, Description: entity.Description,
+					EntityURL: entity.URL, Logo: entity.Logo, Email: entity.Email,
+					Telephone: entity.Phone, SameAs: entity.SameAs, Country: entity.Country,
+					FoundingYear: entity.FoundingYear, EmployeeCount: entity.EmployeeCount,
+					EntityJSON:  entity.RawJSON,
 					SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
+				if entity.IsOrganization {
+					addContact(it.RootDomain, it.URL, "email", entity.Email, "jsonld")
+					addContact(it.RootDomain, it.URL, "phone", extract.NormalizePhone(entity.Phone, it.RootDomain), "jsonld")
+					for _, sameAs := range entity.SameAs {
+						addContact(it.RootDomain, it.URL, "social", sameAs, "jsonld")
+					}
+				}
+			}
+			addContact(it.RootDomain, it.URL, "email", page.microdata.Email, "microdata")
+			addContact(it.RootDomain, it.URL, "phone", extract.NormalizePhone(page.microdata.Phone, it.RootDomain), "microdata")
+			for _, sameAs := range page.microdata.SameAs {
+				addContact(it.RootDomain, it.URL, "social", sameAs, "microdata")
+			}
+			for _, email := range page.emails {
+				addContact(it.RootDomain, it.URL, "email", email, "regex")
 			}
 		}
 		for _, a := range aggs {
@@ -621,24 +625,6 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 					IDType: id.Type, IDValue: id.Value, Valid: valid, Source: id.Source,
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
-			}
-			// contacts: emails (regex + profile), phone (profile), social links (profile same_as)
-			profSrc := a.profileSource
-			if profSrc == "" {
-				profSrc = "jsonld"
-			}
-			for _, e := range a.emails {
-				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", e, "regex"))
-			}
-			if a.profile.Email != "" {
-				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", a.profile.Email, profSrc))
-			}
-			if a.profile.Phone != "" {
-				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "phone",
-					extract.NormalizePhone(a.profile.Phone, a.rootDomain), profSrc))
-			}
-			for _, s := range a.profile.SameAs {
-				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "social", s, profSrc))
 			}
 			// security posture + head signals: the primary page's captured headers/meta (empty if the
 			// homepage itself failed to fetch — then this domain has no security/meta row).
@@ -660,7 +646,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 	}
 	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals,
 		Embeddings: embeddings, Tech: techRows,
-		Identifiers: identRows, Metadata: metaRows, Contacts: contacts,
+		Identifiers: identRows, JSONLD: jsonldRows, Contacts: contacts,
 		Security: securityRows, PageMeta: pageMetaRows}, nil
 }
 
@@ -877,7 +863,7 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 // Finalize directly to pipeline fetch and embed across chunks.
 //
 //	"industry": fetch each domain's primary page -> embed -> classify -> domain rows
-//	"tech":     fetch every page -> Wappalyzer + identifiers/profile -> per-domain rows
+//	"tech":     fetch every page -> Wappalyzer + identifiers/JSON-LD -> per-page rows
 //	"both"  :   both in a single fetch pass (default)
 func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter, emb embedderIface,
 	ref *model.Reference, protos *model.Prototypes, cfg ShardConfig) (ShardResult, error) {

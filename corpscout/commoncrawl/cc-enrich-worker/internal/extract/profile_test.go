@@ -1,62 +1,86 @@
 package extract
 
 import (
+	"reflect"
 	"testing"
-
-	"cc-enrich-worker/internal/model"
 )
 
-func TestExtractProfile(t *testing.T) {
+func TestExtractJSONLDPreservesEveryEntityDeterministically(t *testing.T) {
 	body := []byte(`<html><head>
-<script type="application/ld+json">
-{
-  "@context":"https://schema.org",
-  "@type":"Organization",
-  "name":"Acme Corporation",
-  "legalName":"Acme Corp Ltd",
-  "description":"We build rockets.",
-  "url":"https://acme.com",
-  "logo":"https://acme.com/logo.png",
-  "telephone":"+1-555-0100",
-  "email":"info@acme.com",
-  "foundingDate":"1985-06-15",
-  "numberOfEmployees":{"@type":"QuantitativeValue","value":250},
-  "vatID":"GB123456789",
-  "leiCode":"HWUPKR0MPOU8FGXBT394",
-  "address":{"@type":"PostalAddress","streetAddress":"1 Rocket Rd","addressLocality":"Hawthorne","addressCountry":"US"},
-  "sameAs":["https://www.linkedin.com/company/acme","https://twitter.com/acme"]
+<script type="application/ld+json">{
+  "@context":{"company":{"@id":"https://schema.org/Organization"}},
+  "@type":"WebPage",
+  "@id":"https://example.com/#page",
+  "publisher":{"@type":"Organization","@id":"#publisher","name":"Example Ltd","email":"hello@example.com"},
+  "author":{"@type":"Organization","@id":"#author","name":"Editorial Team","sameAs":["https://b.example","https://a.example","https://a.example"]}
+}</script>
+<script type="application/ld+json">[
+  {"@type":["Store","LocalBusiness","Store"],"name":"Example Shop","legalName":"Example Shop GmbH","vatID":"DE136695976","address":{"addressCountry":"DE"}},
+  {"@id":"#reference"}
+]</script></head></html>`)
+
+	entities, identifiers := ExtractJSONLD(body)
+	if len(entities) != 5 {
+		t.Fatalf("entities = %d, want 5: %+v", len(entities), entities)
+	}
+	wantLocations := []struct {
+		script uint32
+		path   string
+		name   string
+	}{
+		{0, "", ""},
+		{0, "/author", "Editorial Team"},
+		{0, "/publisher", "Example Ltd"},
+		{1, "/0", "Example Shop"},
+		{1, "/1", ""},
+	}
+	for i, want := range wantLocations {
+		got := entities[i]
+		if got.ScriptIndex != want.script || got.EntityPath != want.path || got.Name != want.name {
+			t.Fatalf("entity %d = script %d path %q name %q, want %+v", i, got.ScriptIndex, got.EntityPath, got.Name, want)
+		}
+	}
+	if got := entities[1].SameAs; !reflect.DeepEqual(got, []string{"https://a.example", "https://b.example"}) {
+		t.Fatalf("same_as not sorted/deduped: %v", got)
+	}
+	if got := entities[3].Types; !reflect.DeepEqual(got, []string{"LocalBusiness", "Store"}) {
+		t.Fatalf("types not sorted/deduped: %v", got)
+	}
+	if entities[0].IsOrganization || !entities[1].IsOrganization || !entities[2].IsOrganization || !entities[3].IsOrganization {
+		t.Fatalf("organization classification wrong: %+v", entities)
+	}
+	if entities[3].LegalName != "Example Shop GmbH" || entities[3].Country != "DE" {
+		t.Fatalf("entity fields lost: %+v", entities[3])
+	}
+	if len(identifiers) != 1 || identifiers[0].Type != "vat" || identifiers[0].Value != "DE136695976" {
+		t.Fatalf("structured identifiers lost: %+v", identifiers)
+	}
+	if got := JSONLDTypeNames(entities); !reflect.DeepEqual(got, []string{"LocalBusiness", "Organization", "Store", "WebPage"}) {
+		t.Fatalf("type summary = %v", got)
+	}
+
+	for range 100 {
+		again, againIDs := ExtractJSONLD(body)
+		if !reflect.DeepEqual(again, entities) || !reflect.DeepEqual(againIDs, identifiers) {
+			t.Fatal("identical JSON-LD produced different entities or identifiers")
+		}
+	}
 }
-</script></head><body>x</body></html>`)
 
-	p, ids := ExtractProfile(body)
-	if p.Name != "Acme Corporation" || p.Description != "We build rockets." {
-		t.Fatalf("name/desc wrong: %+v", p)
-	}
-	if p.Logo == "" || p.Phone != "+1-555-0100" || p.Email != "info@acme.com" {
-		t.Fatalf("contact wrong: %+v", p)
-	}
-	if p.FoundingYear != 1985 || p.EmployeeCount != 250 || p.Country != "US" {
-		t.Fatalf("firmographics wrong: %+v", p)
-	}
-	if len(p.SameAs) != 2 {
-		t.Fatalf("sameAs wrong: %+v", p.SameAs)
-	}
-
-	byType := map[string]model.Identifier{}
-	for _, id := range ids {
-		byType[id.Type] = id
-	}
-	if l, ok := byType["lei"]; !ok || l.Value != "HWUPKR0MPOU8FGXBT394" || !l.Valid || l.Source != "jsonld" {
-		t.Fatalf("lei id wrong: %+v", byType)
-	}
-	if v, ok := byType["vat"]; !ok || v.Value != "GB123456789" {
-		t.Fatalf("vat id wrong: %+v", byType)
+func TestExtractJSONLDSkipsInvalidBlocksAndContextDefinitions(t *testing.T) {
+	body := []byte(`<script type="application/ld+json">{broken</script>
+<script type="application/ld+json">{
+  "@context":{"Organization":{"@id":"https://schema.org/Organization"}},
+  "@type":"Organization",
+  "name":"Acme"
+}</script>`)
+	entities, _ := ExtractJSONLD(body)
+	if len(entities) != 1 || entities[0].Name != "Acme" || entities[0].EntityPath != "" {
+		t.Fatalf("unexpected entities: %+v", entities)
 	}
 }
 
 func TestIsOrgAcceptsLocalBusinessSubtypes(t *testing.T) {
-	// schema.org LocalBusiness/Organization subtypes whose names contain none of the generic
-	// substrings — exactly the SMB segment this pipeline targets.
 	yes := []string{
 		"Dentist", "Hotel", "Attorney", "Plumber", "AutoRepair", "Physician",
 		"BankOrCreditUnion", "TravelAgency", "RealEstateAgent", "Bakery", "HairSalon",
@@ -73,21 +97,5 @@ func TestIsOrgAcceptsLocalBusinessSubtypes(t *testing.T) {
 		if isOrg(map[string]any{"@type": typ, "name": "x"}) {
 			t.Errorf("isOrg(%q) = true, want false", typ)
 		}
-	}
-}
-
-func TestExtractProfileGraphAndEmpty(t *testing.T) {
-	// @graph wrapper + a non-org type that must be ignored
-	body := []byte(`<script type="application/ld+json">
-{"@context":"https://schema.org","@graph":[
-  {"@type":"WebSite","name":"not a company"},
-  {"@type":["LocalBusiness","Store"],"name":"Corner Store","address":{"addressCountry":"DE"}}
-]}</script>`)
-	p, _ := ExtractProfile(body)
-	if p.Name != "Corner Store" || p.Country != "DE" {
-		t.Fatalf("graph/localbusiness extraction wrong: %+v", p)
-	}
-	if e, _ := ExtractProfile([]byte(`<html><body>no json-ld here</body></html>`)); !e.Empty() {
-		t.Fatalf("expected empty profile, got %+v", e)
 	}
 }

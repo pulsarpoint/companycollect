@@ -135,6 +135,7 @@ EXPECTED_MIGRATIONS = (
     "000124_corpscout_rdap_networks",
     "000125_corpscout_commoncrawl_page_evidence",
     "000126_corpscout_rdap_dictionary_reader",
+    "000127_corpscout_commoncrawl_page_jsonld",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1431,6 +1432,55 @@ def test_commoncrawl_page_evidence_replaces_aggregated_tables() -> None:
         "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_metadata" in down_sql
     )
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_technologies" in down_sql
+
+
+def test_commoncrawl_jsonld_keeps_each_page_entity() -> None:
+    sql = _migration_sql("000127_corpscout_commoncrawl_page_jsonld.up.sql")
+    down_sql = _migration_sql("000127_corpscout_commoncrawl_page_jsonld.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_page_jsonld" in sql
+    for column_name in (
+        "crawl_id",
+        "root_domain",
+        "page_url",
+        "subdomain",
+        "warc_index",
+        "warc_filename",
+        "warc_record_offset",
+        "warc_record_length",
+        "script_index",
+        "entity_path",
+        "entity_id",
+        "entity_types",
+        "is_organization",
+        "name",
+        "legal_name",
+        "description",
+        "entity_url",
+        "logo",
+        "email",
+        "telephone",
+        "same_as",
+        "country",
+        "founding_year",
+        "employee_count",
+        "entity_json",
+        "source_run_id",
+        "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+
+    assert "PARTITION BY crawl_id" in sql
+    for key_column in (
+        "warc_index",
+        "warc_record_offset",
+        "script_index",
+        "entity_path",
+    ):
+        assert key_column in sql.split("ORDER BY", maxsplit=1)[1]
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_metadata" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_page_metadata" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_jsonld" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

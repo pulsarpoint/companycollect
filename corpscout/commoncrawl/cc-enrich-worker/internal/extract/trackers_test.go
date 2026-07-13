@@ -45,12 +45,15 @@ func TestJSONLDTypes(t *testing.T) {
 	<script type="application/ld+json">{"@type":"Organization","name":"Acme"}</script>
 	<script type="application/ld+json">{"@type":["Product","Offer"],"name":"Widget"}</script>
 	<script type="application/ld+json">{"@type":"Organization"}</script>`)
-	types := JSONLDTypes(body)
-	seen := map[string]bool{}
-	for _, ty := range types {
-		seen[ty] = true
-	}
-	if !seen["Organization"] || !seen["Product"] || !seen["Offer"] || len(types) != 3 {
+	entities, _ := ExtractJSONLD(body)
+	types := JSONLDTypeNames(entities)
+	want := []string{"Offer", "Organization", "Product"}
+	if len(types) != len(want) {
 		t.Fatalf("distinct @types: %+v", types)
+	}
+	for i := range want {
+		if types[i] != want[i] {
+			t.Fatalf("distinct @types: got %+v want %+v", types, want)
+		}
 	}
 }

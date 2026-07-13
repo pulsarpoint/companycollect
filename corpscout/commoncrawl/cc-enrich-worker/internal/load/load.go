@@ -22,7 +22,7 @@ var Tables = map[string]string{
 	"domains":      "commoncrawl_domains",
 	"industries":   "commoncrawl_industries",
 	"page_signals": "commoncrawl_page_signals",
-	"metadata":     "commoncrawl_page_metadata",
+	"jsonld":       "commoncrawl_page_jsonld",
 	"contacts":     "commoncrawl_domain_contact_info",
 	"tech":         "commoncrawl_page_technologies",
 	"identifiers":  "commoncrawl_domain_identifiers",
@@ -31,7 +31,7 @@ var Tables = map[string]string{
 }
 
 // Kinds is the load order (domains is the parent master, written by every pass).
-var Kinds = []string{"domains", "industries", "page_signals", "metadata", "contacts", "tech", "identifiers", "security", "page_meta"}
+var Kinds = []string{"domains", "industries", "page_signals", "jsonld", "contacts", "tech", "identifiers", "security", "page_meta"}
 
 // Result is one loaded file.
 type Result struct {
@@ -147,8 +147,8 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 		}
 		n, err := Insert(ctx, conn, table, rows)
 		return table, n, err
-	case "metadata":
-		rows, err := parquet.ReadFile[output.MetadataRow](path)
+	case "jsonld":
+		rows, err := parquet.ReadFile[output.JSONLDRow](path)
 		if err != nil {
 			return table, 0, err
 		}
@@ -168,6 +168,12 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 // FromDir inserts every <kind>.parquet present in dir (whichever the run produced).
 func FromDir(ctx context.Context, conn driver.Conn, dir string) ([]Result, error) {
 	var out []Result
+	legacyMetadata := filepath.Join(dir, "metadata.parquet")
+	if _, err := os.Stat(legacyMetadata); err == nil {
+		return nil, fmt.Errorf("%s is legacy single-profile output; rerun this WARC to produce jsonld.parquet", legacyMetadata)
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect %s: %w", legacyMetadata, err)
+	}
 	// An old shard dir has only a fat domains.parquet (no industries/page_signals files): fan it into
 	// all three split tables, then skip those kinds in the normal loop.
 	skipSplit := false

@@ -52,6 +52,17 @@ The `cc-crawl` produce/load lifecycle remains unchanged for `industry` and `tech
 The local `.loaded` file remains the authoritative skip check. Produce never marks a WARC as loaded.
 `embed` uses its completed vector file, and direct-only `both` has no orchestrated marker.
 
+## JSON-LD output
+
+Tech processing writes `jsonld.parquet`, loaded into `corpscout.commoncrawl_page_jsonld`. Every JSON-LD
+object carrying `@type` or `@id` is a separate row, including nested publisher, author, provider, and
+organization objects. Rows retain the page URL, WARC coordinates, zero-based script index, RFC 6901
+entity path, sorted types, commonly queried fields, and canonical raw JSON.
+
+No entity is selected as the page's organization and fields from different entities are never merged.
+The source record coordinates plus script index and entity path make reprocessing idempotent. The former
+single-profile `metadata.parquet` output is not produced or loaded.
+
 ## Build and run
 
 From `commoncrawl/`:

@@ -45,7 +45,7 @@ func fileCodec(t *testing.T, path string) format.CompressionCodec {
 // INSERT (ch tag). They MUST name the same column, or the `load` command silently maps to the
 // wrong/missing column. Pin ch == the parquet column name (the part before any ,option).
 func TestRowTagsConsistent(t *testing.T) {
-	for _, v := range []any{DomainRow{}, IndustryRow{}, PageSignalRow{}, MetadataRow{}, ContactRow{}, TechRow{}, IdentifierRow{}, SecurityRow{}, PageMetaRow{}} {
+	for _, v := range []any{DomainRow{}, IndustryRow{}, PageSignalRow{}, JSONLDRow{}, ContactRow{}, TechRow{}, IdentifierRow{}, SecurityRow{}, PageMetaRow{}} {
 		rt := reflect.TypeOf(v)
 		for i := 0; i < rt.NumField(); i++ {
 			f := rt.Field(i)
@@ -79,12 +79,14 @@ func TestPageEvidenceColumnsMatchClickHouse(t *testing.T) {
 			},
 		},
 		{
-			name: "metadata",
-			row:  MetadataRow{},
+			name: "jsonld",
+			row:  JSONLDRow{},
 			want: []string{
 				"crawl_id", "root_domain", "page_url", "subdomain",
 				"warc_index", "warc_filename", "warc_record_offset", "warc_record_length",
-				"name", "description", "logo", "country", "founding_year", "employee_count", "source",
+				"script_index", "entity_path", "entity_id", "entity_types", "is_organization",
+				"name", "legal_name", "description", "entity_url", "logo", "email", "telephone", "same_as",
+				"country", "founding_year", "employee_count", "entity_json",
 				"source_run_id", "resolved_at",
 			},
 		},

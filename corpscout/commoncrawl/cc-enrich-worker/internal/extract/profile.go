@@ -1,8 +1,10 @@
 package extract
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -66,21 +68,42 @@ var localBusinessTypes = map[string]bool{
 }
 var yearRe = regexp.MustCompile(`(?:18|19|20)\d{2}`)
 
-// ExtractProfile parses schema.org Organization/LocalBusiness JSON-LD into a company
-// profile plus any structured identifiers (lei/vat/tax/duns/naics). First non-empty
-// org object wins for each field; identifiers are unioned.
-func ExtractProfile(body []byte) (model.CompanyProfile, []model.Identifier) {
-	var prof model.CompanyProfile
+// ExtractJSONLD returns every typed or identified JSON-LD node without merging sibling entities.
+// Scripts and arrays keep document order; object children use sorted keys so paths and output order
+// are stable across runs. @context definitions are vocabulary metadata, not page entities.
+func ExtractJSONLD(body []byte) ([]model.JSONLDEntity, []model.Identifier) {
+	var entities []model.JSONLDEntity
 	var ids []model.Identifier
 	seen := map[string]bool{}
 
-	for _, m := range ldBlockRe.FindAllSubmatch(body, -1) {
+	for scriptIndex, m := range ldBlockRe.FindAllSubmatch(body, -1) {
 		var v any
-		if json.Unmarshal(m[1], &v) != nil {
+		decoder := json.NewDecoder(bytes.NewReader(m[1]))
+		decoder.UseNumber()
+		if decoder.Decode(&v) != nil {
 			continue
 		}
-		walkLD(v, func(obj map[string]any) {
-			if !isOrg(obj) {
+		walkJSONLD(v, "", func(path string, obj map[string]any) {
+			types := normalizedLDTypes(obj["@type"])
+			entityID := ldString(obj["@id"])
+			organization := isOrg(obj)
+			if len(types) > 0 || entityID != "" {
+				raw, err := json.Marshal(obj)
+				if err == nil {
+					entities = append(entities, model.JSONLDEntity{
+						ScriptIndex: uint32(scriptIndex), EntityPath: path, ID: entityID, Types: types,
+						IsOrganization: organization,
+						Name:           ldString(obj["name"]), LegalName: ldString(obj["legalName"]),
+						Description: ldString(obj["description"]), URL: ldString(obj["url"]),
+						Logo: ldString(obj["logo"]), Email: strings.TrimPrefix(ldString(obj["email"]), "mailto:"),
+						Phone: ldString(obj["telephone"]), SameAs: sortedLDStrings(obj["sameAs"]),
+						Country: countryOf(obj["address"]), FoundingYear: parseYear(ldString(obj["foundingDate"])),
+						EmployeeCount: ldNumber(obj["numberOfEmployees"]), RawJSON: string(raw),
+					})
+				}
+			}
+
+			if !organization {
 				return
 			}
 			for _, pair := range []struct{ key, typ string }{
@@ -93,38 +116,15 @@ func ExtractProfile(body []byte) (model.CompanyProfile, []model.Identifier) {
 				seen[pair.typ+":"+val] = true
 				ids = append(ids, model.Identifier{Type: pair.typ, Value: val, Valid: identValid(pair.typ, val), Source: "jsonld"})
 			}
-			if prof.Name == "" {
-				if prof.Name = ldString(obj["name"]); prof.Name == "" {
-					prof.Name = ldString(obj["legalName"])
-				}
-			}
-			if prof.Description == "" {
-				prof.Description = ldString(obj["description"])
-			}
-			if prof.Logo == "" {
-				prof.Logo = ldString(obj["logo"])
-			}
-			if prof.Email == "" {
-				prof.Email = ldString(obj["email"])
-			}
-			if prof.Phone == "" {
-				prof.Phone = ldString(obj["telephone"])
-			}
-			if prof.FoundingYear == 0 {
-				prof.FoundingYear = parseYear(ldString(obj["foundingDate"]))
-			}
-			if prof.EmployeeCount == 0 {
-				prof.EmployeeCount = ldNumber(obj["numberOfEmployees"])
-			}
-			if prof.Country == "" {
-				prof.Country = countryOf(obj["address"])
-			}
-			if len(prof.SameAs) == 0 {
-				prof.SameAs = ldStrings(obj["sameAs"])
-			}
 		})
 	}
-	return prof, ids
+	sort.Slice(ids, func(i, j int) bool {
+		if ids[i].Type != ids[j].Type {
+			return ids[i].Type < ids[j].Type
+		}
+		return ids[i].Value < ids[j].Value
+	})
+	return entities, ids
 }
 
 func identValid(typ, val string) bool {
@@ -137,19 +137,32 @@ func identValid(typ, val string) bool {
 	return false // no validation yet for tax/duns/naics
 }
 
-// walkLD visits every JSON object in a parsed JSON-LD value (handles @graph, arrays, nesting).
-func walkLD(v any, fn func(map[string]any)) {
+// walkJSONLD visits every JSON object and carries an RFC 6901 JSON Pointer. The root pointer is
+// empty; object keys are sorted because JSON object order has no semantic meaning.
+func walkJSONLD(v any, path string, fn func(string, map[string]any)) {
 	switch x := v.(type) {
 	case map[string]any:
-		fn(x)
-		for _, val := range x {
-			walkLD(val, fn)
+		fn(path, x)
+		keys := make([]string, 0, len(x))
+		for key := range x {
+			if key != "@context" {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			walkJSONLD(x[key], path+"/"+jsonPointerToken(key), fn)
 		}
 	case []any:
-		for _, it := range x {
-			walkLD(it, fn)
+		for i, item := range x {
+			walkJSONLD(item, path+"/"+strconv.Itoa(i), fn)
 		}
 	}
+}
+
+func jsonPointerToken(value string) string {
+	value = strings.ReplaceAll(value, "~", "~0")
+	return strings.ReplaceAll(value, "/", "~1")
 }
 
 func isOrg(obj map[string]any) bool {
@@ -222,6 +235,10 @@ func ldNumber(v any) uint32 {
 	case float64:
 		if x > 0 {
 			return uint32(x)
+		}
+	case json.Number:
+		if n, err := strconv.ParseUint(string(x), 10, 32); err == nil {
+			return uint32(n)
 		}
 	case string:
 		i := 0
