@@ -38,11 +38,11 @@ type Identifier struct {
 	Type   string // "lei"
 	Value  string
 	Valid  bool   // checksum/format validated
-	Source string // "jsonld" | "text"
+	Source string // "jsonld" | "microdata" | "text" | "html" (tracker/analytics extraction)
 }
 
 // CompanyProfile is the firmographic record distilled from a page's schema.org
-// Organization / LocalBusiness JSON-LD (clean structured data, when present).
+// Organization / LocalBusiness JSON-LD or microdata (clean structured data, when present).
 type CompanyProfile struct {
 	Name          string
 	Description   string

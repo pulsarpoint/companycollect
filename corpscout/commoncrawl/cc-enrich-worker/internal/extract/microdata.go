@@ -106,6 +106,15 @@ func mdFill(it *microdata.Item, prof *model.CompanyProfile, ids *[]model.Identif
 	if prof.EmployeeCount == 0 {
 		if n := mdString(it, "numberOfEmployees"); n != "" {
 			prof.EmployeeCount = ldNumber(n)
+		} else {
+			for _, v := range it.Properties["numberOfEmployees"] {
+				if q, ok := v.(*microdata.Item); ok {
+					if n := mdString(q, "value"); n != "" {
+						prof.EmployeeCount = ldNumber(n)
+						break
+					}
+				}
+			}
 		}
 	}
 	if prof.Country == "" {

@@ -37,3 +37,13 @@ func TestDecodeHTMLUndeclaredUTF8NotMangled(t *testing.T) {
 		t.Fatalf("undeclared UTF-8 was mangled: %q", decoded)
 	}
 }
+
+func TestDecodeHTMLMisdeclaredHeaderKeepsRealUTF8(t *testing.T) {
+	// Servers commonly declare latin-1 while serving UTF-8; decoding real UTF-8 as a charmap
+	// manufactures mojibake. Valid UTF-8 with multi-byte runes must pass through untouched.
+	body := []byte("<html><body>Müller GmbH — København</body></html>")
+	decoded, name := DecodeHTML(body, "text/html; charset=iso-8859-1")
+	if !strings.Contains(string(decoded), "Müller GmbH — København") {
+		t.Fatalf("misdeclared latin-1 header corrupted real UTF-8 (name=%s): %q", name, decoded)
+	}
+}

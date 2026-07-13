@@ -15,6 +15,9 @@ func TestExtractProfileMicrodata(t *testing.T) {
   <div itemprop="address" itemscope itemtype="http://schema.org/PostalAddress">
     <span itemprop="addressCountry">de</span>
   </div>
+  <div itemprop="numberOfEmployees" itemscope itemtype="http://schema.org/QuantitativeValue">
+    <span itemprop="value">250</span>
+  </div>
 </div></body></html>`)
 	prof, ids := ExtractProfileMicrodata(body, "https://smile-dental.de/")
 	if prof.Name != "Smile Dental" || prof.Description != "Family dentistry in Berlin." {
@@ -25,6 +28,9 @@ func TestExtractProfileMicrodata(t *testing.T) {
 	}
 	if prof.Phone != "+49 30 1234567" || prof.Country != "DE" {
 		t.Fatalf("phone/country wrong: %+v", prof)
+	}
+	if prof.EmployeeCount != 250 {
+		t.Fatalf("nested QuantitativeValue numberOfEmployees not read: %+v", prof)
 	}
 	if len(ids) != 1 || ids[0].Type != "vat" || ids[0].Value != "DE136695976" || ids[0].Source != "microdata" {
 		t.Fatalf("vat identifier wrong: %+v", ids)
