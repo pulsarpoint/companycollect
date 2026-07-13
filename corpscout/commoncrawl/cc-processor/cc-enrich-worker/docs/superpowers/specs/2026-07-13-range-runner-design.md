@@ -1,7 +1,9 @@
 # Range runner: worker-native part orchestration — design
 
 Date: 2026-07-13
-Status: approved in discussion (this document is the written record)
+Status: implemented (`plan`, range `--parts --mode local|remote`, `load --scan/--watch`, `status`; see
+cc-enrich-worker/README.md for the operator-facing docs). The optional `--duckdb` snapshot under
+"4. Status" was not built (YAGNI) — `status` is markers-only, no ClickHouse or DuckDB dependency.
 
 ## Goal
 

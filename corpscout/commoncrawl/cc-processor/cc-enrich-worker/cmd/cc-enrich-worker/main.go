@@ -70,6 +70,7 @@ Commands:
   both       run both in one fetch pass  (discouraged — co-locating throttles the GPU; prefer two processes)
   load       load already-produced Parquet into ClickHouse: --dir/--file one output, or --scan a root of .produced markers (--watch to keep sweeping)
   plan       read-only report: local/remote lane split + threshold sweep for a WARC part range
+  status     read-only report: per-command produced/loaded/pending marker counts + oldest pending age
 
 Run "cc-enrich-worker <command> -h" to see that command's flags.
 
@@ -191,6 +192,8 @@ func main() {
 		runLoad(os.Args[2:])
 	case "plan":
 		runPlanCmd(os.Args[2:])
+	case "status":
+		runStatusCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
