@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -76,11 +77,130 @@ func TestParseRecordReturnsEmbeddedHTTPResponse(t *testing.T) {
 	}
 }
 
+func TestParseRecordSkipsInvalidEmbeddedHeaderName(t *testing.T) {
+	body := []byte("<html>recovered technology</html>")
+	raw := compressedWARCResponse(t,
+		"Server: nginx\r\n"+
+			"Set-Cookie: first=one; Path=/\r\n"+
+			"Accept-Encoding,: User-Agent\r\n"+
+			"\tcontinued invalid header\r\n"+
+			"Content-Type: text/html\r\n"+
+			"Set-Cookie: second=two; Path=/\r\n",
+		body,
+	)
+
+	headers, gotBody, err := ParseRecord(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotBody, body) {
+		t.Fatalf("body=%q, want %q", gotBody, body)
+	}
+	if headers.Get("Server") != "nginx" || headers.Get("Content-Type") != "text/html" {
+		t.Fatalf("valid headers were not preserved: %v", headers)
+	}
+	wantCookies := []string{"first=one; Path=/", "second=two; Path=/"}
+	if gotCookies := headers.Values("Set-Cookie"); !slices.Equal(gotCookies, wantCookies) {
+		t.Fatalf("Set-Cookie values=%q, want %q", gotCookies, wantCookies)
+	}
+	if _, exists := headers["Accept-Encoding,"]; exists {
+		t.Fatalf("invalid header name survived fallback: %v", headers)
+	}
+}
+
+func TestParseRecordPreservesChunkedBodyAfterHeaderFallback(t *testing.T) {
+	body := []byte("<html>chunked</html>")
+	chunked := strconv.FormatInt(int64(len(body)), 16) + "\r\n" + string(body) + "\r\n0\r\n\r\n"
+	record := []byte("WARC/1.0\r\nWARC-Type: response\r\n\r\n" +
+		"HTTP/1.1 200 OK\r\n" +
+		"Server: nginx\r\n" +
+		"Accept-Encoding,: User-Agent\r\n" +
+		"Transfer-Encoding: chunked\r\n\r\n" + chunked)
+
+	headers, gotBody, err := ParseRecord(compressedBytes(t, record))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headers.Get("Server") != "nginx" || !bytes.Equal(gotBody, body) {
+		t.Fatalf("headers/body changed: headers=%v body=%q, want %q", headers, gotBody, body)
+	}
+}
+
+func TestParseRecordDoesNotSanitizeBody(t *testing.T) {
+	body := []byte("Accept-Encoding,: User-Agent\r\n\r\n<html>body</html>")
+	raw := compressedWARCResponse(t, "Server: nginx\r\nAccept-Encoding,: User-Agent\r\n", body)
+
+	_, gotBody, err := ParseRecord(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotBody, body) {
+		t.Fatalf("body=%q, want byte-identical %q", gotBody, body)
+	}
+}
+
+func TestParseRecordUsesWARCContentLengthForCloseDelimitedBody(t *testing.T) {
+	body := []byte("<html>close-delimited</html>")
+	embeddedHTTP := []byte("HTTP/1.1 200 OK\r\n" +
+		"Server: nginx\r\n" +
+		"Accept-Encoding,: User-Agent\r\n\r\n" + string(body))
+	record := []byte("WARC/1.0\r\nWARC-Type: response\r\nContent-Length: " +
+		strconv.Itoa(len(embeddedHTTP)) + "\r\n\r\n" + string(embeddedHTTP) + "\r\n\r\n")
+
+	_, gotBody, err := ParseRecord(compressedBytes(t, record))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotBody, body) {
+		t.Fatalf("body=%q, want %q without WARC record separator", gotBody, body)
+	}
+}
+
+func TestParseRecordRejectsMalformedBodyFramingHeader(t *testing.T) {
+	body := []byte("<html>must not be re-framed</html>")
+	record := []byte("WARC/1.0\r\nWARC-Type: response\r\n\r\n" +
+		"HTTP/1.1 200 OK\r\n" +
+		"Accept-Encoding,: User-Agent\r\n" +
+		"Content-Length,: " + strconv.Itoa(len(body)) + "\r\n\r\n" + string(body))
+
+	_, _, err := ParseRecord(compressedBytes(t, record))
+	if err == nil || !errors.Is(err, ErrParseRecord) || errors.Is(err, ErrFetchRecord) {
+		t.Fatalf("malformed framing header must remain a parse error, got %v", err)
+	}
+}
+
+func TestParseRecordRejectsInvalidHeaderValueAfterFallback(t *testing.T) {
+	body := []byte("<html>invalid header value</html>")
+	record := append([]byte("WARC/1.0\r\nWARC-Type: response\r\n\r\n"+
+		"HTTP/1.1 200 OK\r\n"+
+		"Accept-Encoding,: User-Agent\r\n"+
+		"X-Test: invalid"), 0)
+	record = append(record, []byte("value\r\nContent-Length: "+strconv.Itoa(len(body))+"\r\n\r\n"+string(body))...)
+
+	_, _, err := ParseRecord(compressedBytes(t, record))
+	if err == nil || !errors.Is(err, ErrParseRecord) || errors.Is(err, ErrFetchRecord) {
+		t.Fatalf("invalid header value must remain a parse error, got %v", err)
+	}
+}
+
+func TestParseRecordRejectsTruncatedDeclaredBodyAfterFallback(t *testing.T) {
+	record := []byte("WARC/1.0\r\nWARC-Type: response\r\n\r\n" +
+		"HTTP/1.1 200 OK\r\n" +
+		"Accept-Encoding,: User-Agent\r\n" +
+		"Content-Length: 100\r\n\r\nshort")
+
+	_, _, err := ParseRecord(compressedBytes(t, record))
+	if err == nil || !errors.Is(err, ErrParseRecord) || errors.Is(err, ErrFetchRecord) {
+		t.Fatalf("truncated HTTP body must remain a parse error, got %v", err)
+	}
+}
+
 func TestParseRecordClassifiesMalformedRecords(t *testing.T) {
 	tests := map[string][]byte{
 		"not gzip":            []byte("not a gzip member"),
 		"missing WARC end":    compressedBytes(t, []byte("WARC/1.0\r\nWARC-Type: response")),
 		"malformed HTTP":      compressedBytes(t, []byte("WARC/1.0\r\n\r\nHTTP/1.1 200 OK\r\nBad Header\r\n\r\n")),
+		"malformed status":    compressedBytes(t, []byte("WARC/1.0\r\n\r\nNOT AN HTTP RESPONSE\r\nServer: nginx\r\n\r\n")),
 		"truncated gzip body": truncatedCompressedBytes(t, []byte("WARC/1.0\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")),
 	}
 	for name, raw := range tests {

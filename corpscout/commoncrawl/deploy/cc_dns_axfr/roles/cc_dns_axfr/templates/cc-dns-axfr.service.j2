@@ -1,0 +1,16 @@
+[Unit]
+Description=Common Crawl DNS AXFR scanner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ cc_dns_axfr_deploy_dir }}
+ExecStart={{ cc_dns_axfr_deploy_dir }}/bin/cc-dns-axfr {{ cc_dns_axfr_run_flags }}
+EnvironmentFile={{ cc_dns_axfr_deploy_dir }}/.env
+LimitNOFILE={{ worker_limit_nofile }}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

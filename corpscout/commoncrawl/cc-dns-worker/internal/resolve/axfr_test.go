@@ -298,5 +298,5 @@ func TestTransferAXFRNoLeakOnMidStreamCap(t *testing.T) {
 
 func newTestProber(caps AXFRCaps) *AXFRProber {
 	sched := scheduler.New(scheduler.Config{PerServerQPS: 100, MaxInFlight: 1})
-	return NewAXFRProber(sched, caps, 8)
+	return NewAXFRProber(sched, caps)
 }

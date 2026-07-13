@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,8 +20,8 @@ Usage:
   cc-dns-worker <command> [flags]
 
 Commands:
-  scan   run one DNS cycle and one AXFR cycle concurrently
-  run    continuously supervise independent DNS and AXFR cycles
+  scan   run one DNS cycle
+  run    continuously supervise DNS cycles
 
 Run "cc-dns-worker <command> -h" for that command's flags.
 `)
@@ -33,25 +34,21 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	switch os.Args[1] {
+	command := os.Args[1]
+	var err error
+	switch command {
 	case "scan":
-		if err := runScan(ctx, os.Args[2:]); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return
-			}
-			fmt.Fprintln(os.Stderr, "scan:", err)
-			os.Exit(1)
-		}
+		err = runScan(ctx, os.Args[2:])
 	case "run":
-		if err := runOrchestrator(ctx, os.Args[2:]); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return
-			}
-			fmt.Fprintln(os.Stderr, "run:", err)
-			os.Exit(1)
-		}
+		err = runSupervisor(ctx, os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
 	}
+
+	if err == nil || errors.Is(err, flag.ErrHelp) || errors.Is(err, context.Canceled) {
+		return
+	}
+	slog.Error("DNS worker command failed", "command", command, "error", err)
+	os.Exit(1)
 }

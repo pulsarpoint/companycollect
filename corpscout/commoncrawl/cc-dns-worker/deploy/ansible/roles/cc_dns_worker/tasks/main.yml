@@ -4,11 +4,9 @@
 
 - name: Stop the running worker before deployment
   ansible.builtin.systemd_service:
-    name: "{{ service_name }}"
+    name: "{{ cc_dns_service_name }}"
     state: stopped
-  when:
-    - service_name + '.service' in ansible_facts.services
-    - ansible_facts.services[service_name + '.service'].state == 'running'
+  when: cc_dns_service_name + '.service' in ansible_facts.services
 
 - name: Create deploy dir + bin/
   ansible.builtin.file:
@@ -57,14 +55,14 @@
 - name: Install the systemd unit
   ansible.builtin.template:
     src: cc-dns-scan.service.j2
-    dest: "/etc/systemd/system/{{ service_name }}.service"
+    dest: "/etc/systemd/system/{{ cc_dns_service_name }}.service"
     owner: root
     group: root
     mode: "0644"
 
 - name: Reload systemd and leave the worker stopped and disabled
   ansible.builtin.systemd_service:
-    name: "{{ service_name }}"
+    name: "{{ cc_dns_service_name }}"
     enabled: false
     state: stopped
     daemon_reload: true

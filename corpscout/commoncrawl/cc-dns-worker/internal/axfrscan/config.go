@@ -12,7 +12,6 @@ type Config struct {
 	MaxDomains     int
 	Workers        int
 	PerServerQPS   float64
-	MaxInflight    int
 	MaxRecords     int
 	MaxBytes       int
 	Timeout        time.Duration
@@ -27,9 +26,6 @@ type Config struct {
 func (config Config) withDefaults() Config {
 	if config.Workers <= 0 {
 		config.Workers = 50
-	}
-	if config.MaxInflight <= 0 {
-		config.MaxInflight = 50
 	}
 	if config.PerServerQPS <= 0 {
 		config.PerServerQPS = 5

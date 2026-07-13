@@ -1,0 +1,73 @@
+---
+- name: Gather service state
+  ansible.builtin.service_facts:
+
+- name: Stop the DNS scanner before deployment
+  ansible.builtin.systemd_service:
+    name: "{{ cc_dns_scan_service_name }}"
+    state: stopped
+  when: cc_dns_scan_service_name + '.service' in ansible_facts.services
+
+- name: Create the DNS deploy and compatibility state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ cc_dns_scan_deploy_dir }}/bin"
+    - "{{ cc_dns_state_dir }}"
+
+- name: Create the local DNS build directory
+  ansible.builtin.file:
+    path: "{{ cc_dns_scan_source_dir }}/bin"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+
+- name: Build cc-dns-scan for linux/amd64 on the control machine
+  ansible.builtin.command:
+    cmd: go build -o bin/cc-dns-scan ./cmd/cc-dns-scan
+    chdir: "{{ cc_dns_scan_source_dir }}"
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: amd64
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: false
+
+- name: Copy the DNS scanner binary
+  ansible.builtin.copy:
+    src: "{{ cc_dns_scan_source_dir }}/bin/cc-dns-scan"
+    dest: "{{ cc_dns_scan_deploy_dir }}/bin/cc-dns-scan"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Template the DNS scanner environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ cc_dns_scan_deploy_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the DNS scanner systemd unit
+  ansible.builtin.template:
+    src: cc-dns-scan.service.j2
+    dest: "/etc/systemd/system/{{ cc_dns_scan_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd and leave the DNS scanner stopped and disabled
+  ansible.builtin.systemd_service:
+    name: "{{ cc_dns_scan_service_name }}"
+    enabled: false
+    state: stopped
+    daemon_reload: true

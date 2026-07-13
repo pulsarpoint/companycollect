@@ -1,0 +1,26 @@
+# --- source and deploy layout ---
+deploy_root: /opt/companycollect
+cc_dns_axfr_source_dir: "{{ playbook_dir }}/../../cc-dns-axfr"
+cc_dns_axfr_deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-axfr"
+# Keep the former combined-project directory as state-only storage so AXFR
+# resumes the existing cycle ID and SQLite database in place.
+cc_dns_state_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-worker"
+cc_dns_axfr_service_name: cc-dns-axfr
+cc_dns_axfr_stale_service_name: cc-axfr-scan
+
+# --- AXFR run flags ---
+cc_dns_axfr_run_flags: >-
+  run --dir {{ cc_dns_state_dir }}
+  --workers 500 --work-capacity 5000 --claim-batch 1000
+  --flush-batch 100 --flush-interval 5s
+worker_limit_nofile: 1048576
+
+# --- ClickHouse connection (non-secret; password from vault) ---
+clickhouse_host: companycollect
+clickhouse_native_port: 9002
+clickhouse_user: default
+clickhouse_database: corpscout
+# Native-protocol traffic (including this password) is unencrypted on the wire;
+# this relies entirely on the Tailscale tunnel between hosts. Do not expose off-Tailscale.
+clickhouse_secure: "false"
+clickhouse_password: "{{ vault_clickhouse_password }}"

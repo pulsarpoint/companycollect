@@ -1,0 +1,58 @@
+---
+- name: Install unbound
+  ansible.builtin.apt:
+    name: [unbound, dns-root-data]
+    state: present
+    update_cache: true
+
+- name: Install + validate scanner.conf atomically
+  block:
+    - name: Install scanner.conf (tuned recursive resolver)
+      ansible.builtin.template:
+        src: scanner.conf.j2
+        dest: /etc/unbound/unbound.conf.d/scanner.conf
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      register: scanner_conf
+      notify: Restart unbound
+    - name: Validate the assembled unbound config
+      ansible.builtin.command: unbound-checkconf
+      changed_when: false
+  rescue:
+    - name: Restore previous scanner.conf after failed validation
+      ansible.builtin.copy:
+        src: "{{ scanner_conf.backup_file }}"
+        dest: /etc/unbound/unbound.conf.d/scanner.conf
+        remote_src: true
+        mode: "0644"
+      when: scanner_conf.backup_file is defined
+    - name: Fail — scanner.conf did not validate (previous restored)
+      ansible.builtin.fail:
+        msg: "unbound scanner.conf failed unbound-checkconf; the previous config was restored."
+
+- name: Ensure unbound systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/unbound.service.d/
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Systemd drop-in — raise unbound LimitNOFILE
+  ansible.builtin.template:
+    src: unbound-limits.conf.j2
+    dest: /etc/systemd/system/unbound.service.d/limits.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd (unbound)
+    - Restart unbound
+
+- name: Enable + start unbound
+  ansible.builtin.systemd_service:
+    name: unbound
+    enabled: true
+    state: started

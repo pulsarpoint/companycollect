@@ -1,10 +1,13 @@
-# cc-dns-worker
+# Common Crawl DNS workers
 
-`cc-dns-worker` is one binary containing two independent scanner packages. `dnsscan` resolves Common
-Crawl root domains directly against authoritative DNS servers. `axfrscan` independently probes the
-latest authoritative endpoints for zone-transfer exposure. The binary starts them as separate
-top-level goroutines; neither scanner reads, throttles, enqueues, or waits for the other scanner's
-work.
+This module builds two independently deployed scanners:
+
+- `cc-dns-worker` resolves Common Crawl root domains directly against authoritative DNS servers.
+- `cc-axfr-worker` probes the latest authoritative endpoints for zone-transfer exposure.
+
+The binaries have separate processes, flags, worker pools, retry loops, local state, and systemd
+services. AXFR reads the latest persisted DNS summaries from ClickHouse; it does not wait for or
+coordinate with a live DNS worker process.
 
 ## Data ownership
 
@@ -20,7 +23,7 @@ The AXFR scanner independently keyset-pages `corpscout.commoncrawl_domain_dns_sc
 reclassifies every current endpoint address before creating work and probes only public addresses.
 It does not consume DNS SQLite output or wait for the current DNS traversal.
 
-The worker writes:
+The workers write:
 
 - `corpscout.commoncrawl_domain_dns_scan`
 - `corpscout.commoncrawl_domain_dns_record_observations`
@@ -43,7 +46,7 @@ parts.
 
 ## Independent bounded local state
 
-The scanners never share a SQLite connection or queue. A production run maintains:
+The binaries never share a SQLite connection or queue. Production maintains:
 
 - `dns-cycle-state.json` and `dns-scan-<cycle-id>.db`, owned only by `dnsscan`
 - `axfr-cycle-state.json` and `axfr-scan-<cycle-id>.db`, owned only by `axfrscan`
@@ -63,9 +66,10 @@ At startup, only interrupted `running` jobs return to `pending`; `ready` output 
 deletes a ready batch only after all of its ClickHouse sinks succeed. Lost acknowledgements replay the
 same logical observation identities safely.
 
-Each scanner has its own capacity, workers, QPS limits, retry loop, completion condition, and
-five-second statistics by default. One scanner can fail and retry while the other continues. Each completed cycle
-database is deleted only after that scanner's own ClickHouse outbox drains.
+Each binary has its own capacity, workers, QPS limits, retry loop, completion condition, and
+five-second statistics by default. One service can fail, restart, or be deployed while the other
+continues. Each completed cycle database is deleted only after that scanner's own ClickHouse outbox
+drains.
 
 The DNS health line reports only live in-memory rates for the latest five-second interval: `qps` is
 the number of DNS queries sent per second and `errps` is the number of real DNS errors per second.
@@ -92,20 +96,19 @@ of older local work cannot replace newer state.
 ## Commands
 
 ```text
-cc-dns-worker scan [flags]   # one bounded cycle, then exit
-cc-dns-worker run [flags]    # continuous production cycles
+cc-dns-worker scan [flags]    # one bounded authoritative-DNS cycle
+cc-dns-worker run [flags]     # continuous authoritative-DNS cycles
+cc-axfr-worker scan [flags]   # one bounded AXFR cycle
+cc-axfr-worker run [flags]    # continuous AXFR cycles
 ```
 
-`run` starts independent DNS and AXFR supervisors. Each supervisor resumes only its own state and
-retries only its own failures. `--dns=false` or `--axfr=false` can intentionally disable one scanner;
-both default to true.
+Each `run` command resumes only its own state and retries only its own failures.
 
-Required/common flags:
+DNS flags:
 
 | Flag | Default | Meaning |
 |---|---:|---|
 | `--resolvers` | required with DNS | recursive resolver addresses, comma separated |
-| `--dns` | `true` | run the independent DNS scanner |
 | `--max-domains` | `0` | durably fetched domain limit, `0` means all |
 | `--workers` | `4000` | DNS domain worker limit |
 | `--domain-page-size` | `5000` | ClickHouse keyset page size |
@@ -115,18 +118,28 @@ Required/common flags:
 | `--dns-flush-interval` | `5s` | DNS output retry/poll interval |
 | `--host-enrich` | `true` | query hostname registry labels |
 | `--host-cap` | `100` | ranked registry labels per root |
-| `--axfr` | `true` | run the independent AXFR scanner |
-| `--axfr-workers` | `50` | AXFR endpoint worker limit |
-| `--axfr-domain-page-size` | `1000` | latest DNS-summary roots per AXFR source page |
-| `--axfr-work-capacity` | `5000` | maximum active AXFR domains in AXFR SQLite |
-| `--axfr-claim-batch` | `100` | claimed endpoint probes per batch |
-| `--axfr-flush-batch` | `100` | ready AXFR domains per acknowledgement pass |
-| `--axfr-flush-interval` | `5s` | AXFR output retry/poll interval |
 
-`scan` additionally accepts `--scan-id`, `--run-id`, `--dns-db`, and `--axfr-db`. `run` accepts
-`--dir`; each supervisor assigns its own UTC cycle ID and removes only its own completed database.
+AXFR flags:
 
-Run `cc-dns-worker <command> -h` for DNS timeout, QPS, in-flight, circuit-breaker, and AXFR cap flags.
+| Flag | Default | Meaning |
+|---|---:|---|
+| `--max-domains` | `0` | durably fetched domain limit, `0` means all |
+| `--workers` | `50` | AXFR endpoint worker limit |
+| `--per-server-qps` | `5` | AXFR starts per second for one NS IP |
+| `--timeout` | `20s` | AXFR connection deadline |
+| `--max-records` | `50000` | records retained per transfer |
+| `--max-bytes` | `67108864` | bytes retained per transfer |
+| `--domain-page-size` | `1000` | latest DNS-summary roots per source page |
+| `--work-capacity` | `5000` | maximum active AXFR domains in SQLite |
+| `--claim-batch` | `100` | claimed endpoint probes per batch |
+| `--flush-batch` | `100` | ready AXFR domains per acknowledgement pass |
+| `--flush-interval` | `5s` | AXFR output retry/poll interval |
+
+DNS `scan` additionally accepts `--scan-id`, `--run-id`, and `--dns-db`. AXFR `scan` accepts
+`--scan-id` and `--db`. Both `run` commands accept `--dir`, assign their own UTC cycle ID, and remove
+only their own completed database.
+
+Run either binary with `<command> -h` for its complete flag set.
 
 ## Build, test, and deploy
 
@@ -137,9 +150,9 @@ go vet ./...
 staticcheck ./...
 ```
 
-The Ansible role builds the Linux/amd64 binary on the control machine with `CGO_ENABLED=0`, stops an
-existing service before replacing the binary, installs configuration, and leaves the service stopped
-and disabled:
+The Ansible roles build both Linux/AMD64 binaries on the control machine with `CGO_ENABLED=0`, stop
+each corresponding service before replacing it, install separate systemd units, and leave both
+services stopped and disabled:
 
 ```bash
 cd deploy/ansible
@@ -150,20 +163,21 @@ The ClickHouse migrations must be applied before deploying a binary that uses th
 Dagster hostname registry release gate is: bootstrap all 16 partitions, run one incremental
 materialization successfully, and validate expected CT labels in production.
 
-## Manual cutover and rollback
+## Split-service cutover and rollback
 
-The new supervisors deliberately ignore the coupled worker's `orchestrator-state.json` and
-`scan-<cycle-id>.db`. Before first start of this binary:
+The split preserves `dns-cycle-state.json`/`dns-scan-*.db` and
+`axfr-cycle-state.json`/`axfr-scan-*.db` in the existing deployment directory. To cut over without
+duplicating AXFR probes:
 
-1. Stop the existing service.
-2. Independently decide whether the old cycle is fully flushed or intentionally abandoned.
-3. Archive/delete its old state and cycle DB manually; deployment does not alter them.
-4. Apply migrations and complete the hostname-registry release gate.
-5. Deploy and start the bounded worker.
+1. Stop the existing combined `cc-dns-scan.service`.
+2. Deploy both binaries and units.
+3. Start the new DNS-only `cc-dns-scan.service`.
+4. Start `cc-axfr-scan.service`.
+5. Confirm each service resumes its existing cycle ID before enabling either service at boot.
 
-Rollback stops the bounded service, preserves its active DB for diagnosis, restores the old binary,
-and starts only a separately verified old cycle. Legacy ClickHouse tables remain during the rollback
-window; removing them is a delayed migration, not part of first deployment.
+Never run an older combined worker and `cc-axfr-scan.service` simultaneously. Rollback must stop both
+split services before restoring and starting the combined binary. Deployment does not delete or move
+either scanner's active state.
 
 ## Baseline captured 2026-07-11
 

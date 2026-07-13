@@ -1,0 +1,68 @@
+---
+- name: Gather service state
+  ansible.builtin.service_facts:
+
+- name: Stop the running worker before deployment
+  ansible.builtin.systemd_service:
+    name: "{{ cc_axfr_service_name }}"
+    state: stopped
+  when: cc_axfr_service_name + '.service' in ansible_facts.services
+
+- name: Create deploy dir + bin/
+  ansible.builtin.file:
+    path: "{{ deploy_dir }}/bin"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create local build directory
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/../../bin"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+
+- name: Build the AXFR worker binary (CGO-free, linux/amd64) on the control machine
+  ansible.builtin.command:
+    cmd: go build -o bin/cc-axfr-worker ./cmd/cc-axfr-worker
+    chdir: "{{ playbook_dir }}/../.."   # -> corpscout/commoncrawl/cc-dns-worker
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: amd64
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Copy the AXFR worker binary
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../bin/cc-axfr-worker"
+    dest: "{{ deploy_dir }}/bin/cc-axfr-worker"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Template the .env (secret)
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ deploy_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: cc-axfr-scan.service.j2
+    dest: "/etc/systemd/system/{{ cc_axfr_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd and leave the worker stopped and disabled
+  ansible.builtin.systemd_service:
+    name: "{{ cc_axfr_service_name }}"
+    enabled: false
+    state: stopped
+    daemon_reload: true

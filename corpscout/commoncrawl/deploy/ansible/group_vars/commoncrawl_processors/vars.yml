@@ -1,0 +1,8 @@
+---
+commoncrawl_deploy_root: /opt/companycollect/corpscout/commoncrawl
+commoncrawl_target_goos: linux
+commoncrawl_target_goarch: amd64
+commoncrawl_target_architecture: x86_64
+commoncrawl_owner: root
+commoncrawl_group: root
+commoncrawl_catalog_s3_base: s3://crawls/commoncrawl/catalogs

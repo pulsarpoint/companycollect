@@ -1,15 +1,13 @@
-# cc-dns-worker Ansible deploy
+# Common Crawl DNS workers Ansible deploy
 
-Deploys `cc-dns-worker` to `hetzner01`: OS tuning (`os_tuning`), a local recursive
-resolver (`unbound`), and the worker service itself (`cc_dns_worker`).
+Deploys two independent binaries and services to `hetzner01`:
 
-## Production feature defaults
+- `cc_dns_worker` installs the DNS-only `cc-dns-worker` and `cc-dns-scan.service`.
+- `cc_axfr_worker` installs `cc-axfr-worker` and `cc-axfr-scan.service`.
 
-The binary starts independent DNS and AXFR scanner goroutines by default. They
-use separate state files, SQLite databases, worker pools, and retry loops. The
-production command intentionally omits `--dns`, `--axfr`, and `--host-enrich`
-because their defaults are `true`. Add a `=false` override only for an explicit
-temporary opt-out.
+The play also applies OS tuning and configures local Unbound for the DNS worker. The services share
+ClickHouse credentials and a deployment directory, but they have separate processes, flags, state
+files, SQLite databases, and restart lifecycles.
 
 ## Prerequisites
 
@@ -20,8 +18,7 @@ temporary opt-out.
   `companycollect`.
 - The control machine has:
   - Ansible installed (`ansible-playbook`, `ansible-vault`).
-  - Go installed (used to build `cc-dns-worker` before it's shipped to the
-    target, per the `cc_dns_worker` role).
+  - Go installed (used to build both worker binaries before they are shipped to the target).
   - This repository checked out.
   - Required Ansible collections installed:
 
@@ -74,21 +71,19 @@ cd deploy/ansible
 ansible-playbook site.yml
 ```
 
-The role builds a CGO-free Linux/AMD64 binary on the control machine and copies
-it to the target. If `cc-dns-scan` already exists and is running, the role stops
-it before replacing the deployed files. Deployment leaves the service stopped
-and disabled. It does not modify or retire worker state; any required state
-migration or cleanup must be performed manually before running the playbook.
+The first split-service deployment must use the complete play. `cc_dns_worker` runs first, stopping
+the legacy combined `cc-dns-scan.service` before its binary is replaced with the DNS-only build. The
+AXFR role then installs its binary and unit. Both services are left stopped and disabled.
 
-The independent supervisors use `dns-cycle-state.json`/`dns-scan-*.db` and
-`axfr-cycle-state.json`/`axfr-scan-*.db`. They do not resume the coupled legacy
-`orchestrator-state.json`/`scan-*.db`; inspect and handle those files manually
-before the first start.
+No state migration is needed. The DNS service resumes `dns-cycle-state.json`/`dns-scan-*.db`; the
+AXFR service resumes `axfr-cycle-state.json`/`axfr-scan-*.db` from the existing deployment directory.
+Deployment never deletes or moves those files.
 
-Start the deployed worker explicitly only after checking its state:
+Start each service explicitly after checking its state:
 
 ```bash
 ssh hetzner01 'systemctl start cc-dns-scan'
+ssh hetzner01 'systemctl start cc-axfr-scan'
 ```
 
 The deployment is non-interactive — the vault password is read from
@@ -100,11 +95,15 @@ Dry run (no changes applied):
 ansible-playbook site.yml --check --diff
 ```
 
-Apply a single role (roles are tagged with their own name):
+After the initial full cutover, deploy either worker independently with its role tag:
 
 ```bash
-ansible-playbook site.yml --tags unbound
+ansible-playbook site.yml --tags cc_dns_worker
+ansible-playbook site.yml --tags cc_axfr_worker
 ```
+
+Do not run an AXFR-only tagged deployment as the initial cutover while the legacy combined binary is
+still running. That would leave two AXFR supervisors operating on the same state.
 
 ## Layout
 
@@ -112,12 +111,13 @@ ansible-playbook site.yml --tags unbound
 deploy/ansible/
 ├── ansible.cfg              # inventory + vault_password_file config
 ├── inventory.ini            # [cc_dns] hetzner01
-├── site.yml                 # play: os_tuning, unbound, cc_dns_worker
+├── site.yml                 # DNS worker first, then OS/Unbound and AXFR worker
 ├── group_vars/cc_dns/
 │   ├── vars.yml              # deploy layout, worker run flags, unbound/OS tuning, CH connection
 │   └── vault.yml              # encrypted: vault_clickhouse_password
 └── roles/
+    ├── cc_dns_worker/
+    ├── cc_axfr_worker/
     ├── os_tuning/
-    ├── unbound/
-    └── cc_dns_worker/
+    └── unbound/
 ```

@@ -1,0 +1,16 @@
+[Unit]
+Description=Common Crawl DNS scanner
+After=network-online.target unbound.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ cc_dns_scan_deploy_dir }}
+ExecStart={{ cc_dns_scan_deploy_dir }}/bin/cc-dns-scan {{ cc_dns_scan_run_flags }}
+EnvironmentFile={{ cc_dns_scan_deploy_dir }}/.env
+LimitNOFILE={{ worker_limit_nofile }}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

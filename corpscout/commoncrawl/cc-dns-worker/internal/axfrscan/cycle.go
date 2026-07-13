@@ -43,7 +43,7 @@ func RunCycle(ctx context.Context, dbPath string, config Config) error {
 		MaxRecords: config.MaxRecords,
 		MaxBytes:   config.MaxBytes,
 		Deadline:   config.Timeout,
-	}, config.MaxInflight)
+	})
 
 	group, groupContext := errgroup.WithContext(ctx)
 	group.Go(func() error { return axfrSourceLoop(groupContext, store, config) })

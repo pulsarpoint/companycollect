@@ -1,0 +1,111 @@
+---
+- name: Check for an active legacy combined DNS worker
+  ansible.builtin.command:
+    argv:
+      - pgrep
+      - -a
+      - -x
+      - cc-dns-worker
+  register: cc_dns_axfr_legacy_process
+  changed_when: false
+  failed_when: cc_dns_axfr_legacy_process.rc not in [0, 1]
+  check_mode: false
+
+- name: Require the DNS package cutover before deploying AXFR
+  ansible.builtin.fail:
+    msg: >-
+      A legacy combined cc-dns-worker process is still active:
+      {{ cc_dns_axfr_legacy_process.stdout }}.
+      Deploy corpscout/commoncrawl/deploy/cc_dns_scan first, then rerun this package.
+  when: cc_dns_axfr_legacy_process.rc == 0
+
+- name: Gather service state
+  ansible.builtin.service_facts:
+
+- name: Stop the AXFR scanner before deployment
+  ansible.builtin.systemd_service:
+    name: "{{ cc_dns_axfr_service_name }}"
+    state: stopped
+  when: cc_dns_axfr_service_name + '.service' in ansible_facts.services
+
+- name: Stop and disable the stale interim AXFR service
+  ansible.builtin.systemd_service:
+    name: "{{ cc_dns_axfr_stale_service_name }}"
+    enabled: false
+    state: stopped
+  when: cc_dns_axfr_stale_service_name + '.service' in ansible_facts.services
+
+- name: Remove the stale interim AXFR systemd unit
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ cc_dns_axfr_stale_service_name }}.service"
+    state: absent
+  register: cc_dns_axfr_stale_unit
+
+- name: Reload systemd after removing the stale interim AXFR unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: cc_dns_axfr_stale_unit.changed
+
+- name: Create the AXFR deploy and compatibility state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ cc_dns_axfr_deploy_dir }}/bin"
+    - "{{ cc_dns_state_dir }}"
+
+- name: Create the local AXFR build directory
+  ansible.builtin.file:
+    path: "{{ cc_dns_axfr_source_dir }}/bin"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+
+- name: Build cc-dns-axfr for linux/amd64 on the control machine
+  ansible.builtin.command:
+    cmd: go build -o bin/cc-dns-axfr ./cmd/cc-dns-axfr
+    chdir: "{{ cc_dns_axfr_source_dir }}"
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: amd64
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: false
+
+- name: Copy the AXFR scanner binary
+  ansible.builtin.copy:
+    src: "{{ cc_dns_axfr_source_dir }}/bin/cc-dns-axfr"
+    dest: "{{ cc_dns_axfr_deploy_dir }}/bin/cc-dns-axfr"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Template the AXFR scanner environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ cc_dns_axfr_deploy_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the AXFR scanner systemd unit
+  ansible.builtin.template:
+    src: cc-dns-axfr.service.j2
+    dest: "/etc/systemd/system/{{ cc_dns_axfr_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd and leave the AXFR scanner stopped and disabled
+  ansible.builtin.systemd_service:
+    name: "{{ cc_dns_axfr_service_name }}"
+    enabled: false
+    state: stopped
+    daemon_reload: true

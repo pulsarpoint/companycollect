@@ -1,0 +1,9 @@
+---
+- name: Deploy Common Crawl DNS scanner
+  hosts: cc_dns_scan
+  become: true
+  gather_facts: true
+  roles:
+    - { role: cc_dns_scan, tags: [cc_dns_scan] }
+    - { role: os_tuning, tags: [cc_dns_scan] }
+    - { role: unbound, tags: [cc_dns_scan] }

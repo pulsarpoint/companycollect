@@ -81,6 +81,16 @@ make -C cc-enrich-worker build
 make -C cc-crawl build
 ```
 
+For production, deploy both binaries together with the versioned Ansible flow instead of copying local
+`bin/` files. The control machine cross-compiles static Linux binaries and activates one paired release:
+
+```bash
+cd deploy/ansible
+ansible-playbook site.yml --limit commoncrawl2 --ask-become-pass
+```
+
+See [`deploy/ansible/README.md`](deploy/ansible/README.md) for release layout, safety checks, and rollback.
+
 ## 4. Process WARC indexes
 
 The existing `-parts` operator flag is retained, but its values are now WARC indexes:

@@ -25,9 +25,9 @@ func (f fakeGetter) GetRange(ctx context.Context, bucket, key string, start, end
 
 func TestFetchRecord(t *testing.T) {
 	body := "<html>wp-content here</html>"
-	record := "WARC/1.0\r\nWARC-Type: response\r\nContent-Length: 999\r\n\r\n" +
-		"HTTP/1.1 200 OK\r\nServer: nginx\r\nContent-Type: text/html\r\n" +
+	embeddedHTTP := "HTTP/1.1 200 OK\r\nServer: nginx\r\nContent-Type: text/html\r\n" +
 		"Content-Length: " + itoa(len(body)) + "\r\n\r\n" + body
+	record := "WARC/1.0\r\nWARC-Type: response\r\nContent-Length: " + itoa(len(embeddedHTTP)) + "\r\n\r\n" + embeddedHTTP
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	gw.Write([]byte(record))

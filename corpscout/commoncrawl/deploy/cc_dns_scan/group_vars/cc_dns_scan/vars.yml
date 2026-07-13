@@ -1,0 +1,45 @@
+# --- source and deploy layout ---
+deploy_root: /opt/companycollect
+cc_dns_scan_source_dir: "{{ playbook_dir }}/../../cc-dns-scan"
+cc_dns_scan_deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-scan"
+# Keep the former combined-project directory as state-only storage so the DNS
+# scanner resumes the existing cycle ID and SQLite database in place.
+cc_dns_state_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-worker"
+cc_dns_scan_service_name: cc-dns-scan
+
+# --- worker run flags ---
+cc_dns_scan_run_flags: >-
+  run --dir {{ cc_dns_state_dir }}
+  --resolvers 127.0.0.1:53
+  --discovery-qps 3000 --workers 2000 --query-timeout 2s
+  --per-server-qps 30 --per-server-inflight 20 --hyperscaler-qps 500
+  --discovery-inflight 3000
+  --domain-page-size 5000 --dns-work-capacity 20000 --dns-claim-batch 4000
+  --dns-flush-batch 500 --dns-flush-interval 5s
+worker_limit_nofile: 1048576
+
+# --- unbound tuning (num-threads scales to the target's CPUs) ---
+unbound_num_threads: "{{ ansible_facts.processor_vcpus }}"
+unbound_msg_cache_size: 4g
+unbound_rrset_cache_size: 8g
+unbound_outgoing_range: 4096
+unbound_so_rcvbuf: 8m
+unbound_so_sndbuf: 8m
+unbound_limit_nofile: 131072
+
+# --- OS tuning ---
+nf_conntrack_max: 1048576
+# rmem/wmem raised so unbound's so-rcvbuf/sndbuf (8m) are not clamped (source bug)
+net_core_rmem_max: 16777216
+net_core_wmem_max: 16777216
+sys_nofile: 1048576
+
+# --- ClickHouse connection (non-secret; password from vault) ---
+clickhouse_host: companycollect
+clickhouse_native_port: 9002
+clickhouse_user: default
+clickhouse_database: corpscout
+# Native-protocol traffic (including this password) is unencrypted on the wire;
+# this relies entirely on the Tailscale tunnel between hosts. Do not expose off-Tailscale.
+clickhouse_secure: "false"
+clickhouse_password: "{{ vault_clickhouse_password }}"

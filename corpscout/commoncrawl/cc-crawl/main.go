@@ -44,6 +44,32 @@ func env(key, def string) string {
 	return def
 }
 
+// defaultWorkerPath pins the worker to the same versioned release as cc-crawl when both binaries
+// are deployed together. Development checkouts retain the historical repository-relative fallback.
+func defaultWorkerPath() string {
+	if configured := os.Getenv("WORKER"); configured != "" {
+		return configured
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return "cc-enrich-worker/bin/cc-enrich-worker"
+	}
+	return workerPathBesideExecutable(executable)
+}
+
+func workerPathBesideExecutable(executable string) string {
+	realExecutable, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return "cc-enrich-worker/bin/cc-enrich-worker"
+	}
+	sibling := filepath.Join(filepath.Dir(realExecutable), "cc-enrich-worker")
+	info, err := os.Stat(sibling)
+	if err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+		return sibling
+	}
+	return "cc-enrich-worker/bin/cc-enrich-worker"
+}
+
 // Parsed from the worker's own log lines for the per-WARC counts.
 var (
 	reDomains = regexp.MustCompile(`done:\s+(\d+)\s+domains`) // produce step: "done: 87916 domains, …"
@@ -87,7 +113,7 @@ func main() {
 	crawlF := fs.String("crawl", env("CRAWL", ""), "CommonCrawl crawl id, e.g. CC-MAIN-2026-25  (required; or env CRAWL)")
 	baseF := fs.String("base", env("OUT_BASE_DIR", ""), "output ROOT (required; or env OUT_BASE_DIR) — all output lives under <base>/<crawl>/")
 	_ = fs.String("builder-dir", env("BUILDER_DIR", "index-builder"), "deprecated compatibility flag; ignored")
-	workerF := fs.String("worker", env("WORKER", "cc-enrich-worker/bin/cc-enrich-worker"), "cc-enrich-worker binary")
+	workerF := fs.String("worker", defaultWorkerPath(), "cc-enrich-worker binary")
 	maxPagesF := fs.String("max-pages", env("MAX_PAGES", "25"), "catalog selection pages per domain; derives selection pagesN")
 	wholeWARCThresholdF := fs.String("whole-warc-threshold", env("WHOLE_WARC_THRESHOLD", "50"), "selected compressed-byte percentage that triggers a whole-WARC download (0..100)")
 	s3AnonymousF := fs.Bool("s3-anonymous", s3AnonymousDefault, "use the anonymous Common Crawl HTTPS endpoint instead of signed S3")

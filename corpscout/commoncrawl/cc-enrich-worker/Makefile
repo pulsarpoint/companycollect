@@ -1,14 +1,19 @@
 # cc-enrich-worker — builds into bin/ (gitignored). Run from this directory.
-BIN := bin/cc-enrich-worker
+BIN ?= bin/cc-enrich-worker
 PKG := ./cmd/cc-enrich-worker
+GOOS ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
+CGO_ENABLED ?= 0
+BUILD_FLAGS ?= -trimpath
 
 .PHONY: build arm test vet clean
 
 build:                ## static enrichment binary
-	CGO_ENABLED=0 go build -o $(BIN) $(PKG)
+	mkdir -p $(dir $(BIN))
+	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=$(CGO_ENABLED) go build $(BUILD_FLAGS) -o $(BIN) $(PKG)
 
 arm:                  ## cross-compile linux/arm64 (Graviton)
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(BIN) $(PKG)
+	$(MAKE) build GOOS=linux GOARCH=arm64
 
 test:                 ## go test ./...
 	go test ./...

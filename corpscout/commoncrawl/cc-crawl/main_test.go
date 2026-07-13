@@ -235,3 +235,51 @@ func TestParseRangeRequiresWARCIndexes(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerPathBesideVersionedExecutable(t *testing.T) {
+	releaseDirectory := filepath.Join(t.TempDir(), "releases", "release-1", "bin")
+	if err := os.MkdirAll(releaseDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worker := filepath.Join(releaseDirectory, "cc-enrich-worker")
+	if err := os.WriteFile(worker, []byte("worker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	crawl := filepath.Join(releaseDirectory, "cc-crawl")
+	if err := os.WriteFile(crawl, []byte("crawl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	releaseRoot := filepath.Dir(filepath.Dir(filepath.Dir(releaseDirectory)))
+	currentDirectory := filepath.Join(releaseRoot, "current")
+	if err := os.Symlink(filepath.Join("releases", "release-1"), currentDirectory); err != nil {
+		t.Fatal(err)
+	}
+	realWorker, err := filepath.EvalSymlinks(worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := workerPathBesideExecutable(filepath.Join(currentDirectory, "bin", "cc-crawl"))
+	if got != realWorker {
+		t.Fatalf("worker path=%q, want pinned release worker %q", got, realWorker)
+	}
+}
+
+func TestWorkerPathFallsBackForDevelopmentBuild(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "cc-crawl")
+	if err := os.WriteFile(executable, []byte("crawl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const fallback = "cc-enrich-worker/bin/cc-enrich-worker"
+	if got := workerPathBesideExecutable(executable); got != fallback {
+		t.Fatalf("worker path=%q, want repository fallback %q", got, fallback)
+	}
+}
+
+func TestDefaultWorkerPathHonorsOverride(t *testing.T) {
+	t.Setenv("WORKER", "/custom/cc-enrich-worker")
+	if got := defaultWorkerPath(); got != "/custom/cc-enrich-worker" {
+		t.Fatalf("worker path=%q, want explicit override", got)
+	}
+}

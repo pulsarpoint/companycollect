@@ -1,0 +1,7 @@
+---
+- name: Deploy the Common Crawl DNS AXFR scanner
+  hosts: cc_dns_axfr
+  become: true
+  gather_facts: false
+  roles:
+    - { role: cc_dns_axfr, tags: [cc_dns_axfr] }

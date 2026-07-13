@@ -1,9 +1,10 @@
 ---
-- name: Deploy cc-dns-worker
+- name: Deploy Common Crawl DNS workers
   hosts: cc_dns
   become: true
   gather_facts: true
   roles:
+    - { role: cc_dns_worker, tags: [cc_dns_worker] }
     - { role: os_tuning, tags: [os_tuning] }
     - { role: unbound, tags: [unbound] }
-    - { role: cc_dns_worker, tags: [cc_dns_worker] }
+    - { role: cc_axfr_worker, tags: [cc_axfr_worker] }

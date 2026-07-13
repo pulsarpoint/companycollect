@@ -6,27 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
-	"cc-dns-worker/internal/axfrscan"
 	"cc-dns-worker/internal/dnsscan"
 )
 
-type scannerConfig struct {
-	DNS     dnsscan.Config
-	AXFR    axfrscan.Config
-	RunDNS  bool
-	RunAXFR bool
-}
-
-func scannerFlags(flags *flag.FlagSet) func() (scannerConfig, error) {
-	maxDomains := flags.Int("max-domains", 0, "cap domains fetched by each scanner cycle (0 = all)")
+func dnsScannerFlags(flags *flag.FlagSet) func() (dnsscan.Config, error) {
+	maxDomains := flags.Int("max-domains", 0, "cap domains fetched by each DNS cycle (0 = all)")
 	statsInterval := flags.Duration("stats-interval", 5*time.Second, "periodic metrics interval (0 = off)")
-	runDNS := flags.Bool("dns", true, "run the independent DNS scanner")
-	runAXFR := flags.Bool("axfr", true, "run the independent AXFR scanner")
-
-	resolvers := flags.String("resolvers", "", "REQUIRED when DNS is enabled: comma-separated recursive resolvers")
+	resolvers := flags.String("resolvers", "", "REQUIRED: comma-separated recursive resolvers")
 	discoveryQPS := flags.Float64("discovery-qps", 50, "DNS discovery queries/sec per recursive resolver")
 	discoveryInflight := flags.Int("discovery-inflight", 500, "DNS discovery queries in flight per resolver")
 	perServerQPS := flags.Float64("per-server-qps", 10, "DNS queries/sec per authoritative NS IP")
@@ -44,45 +32,20 @@ func scannerFlags(flags *flag.FlagSet) func() (scannerConfig, error) {
 	dnsFlushBatch := flags.Int("dns-flush-batch", 500, "ready DNS domains flushed per batch")
 	dnsFlushInterval := flags.Duration("dns-flush-interval", 5*time.Second, "DNS output retry interval")
 
-	axfrWorkers := flags.Int("axfr-workers", 50, "AXFR endpoints probed concurrently")
-	axfrQPS := flags.Float64("axfr-qps", 5, "AXFR transfers/sec per NS IP")
-	axfrInflight := flags.Int("axfr-inflight", 50, "total AXFR transfers in flight")
-	axfrMaxRecords := flags.Int("axfr-max-records", 50000, "records retained per AXFR transfer")
-	axfrMaxBytes := flags.Int("axfr-max-bytes", 67108864, "bytes retained per AXFR transfer")
-	axfrTimeout := flags.Duration("axfr-timeout", 20*time.Second, "whole-transfer AXFR timeout")
-	axfrPageSize := flags.Int("axfr-domain-page-size", 1000, "AXFR root domains per ClickHouse page")
-	axfrCapacity := flags.Int("axfr-work-capacity", 5000, "active AXFR domains retained in AXFR SQLite")
-	axfrClaimBatch := flags.Int("axfr-claim-batch", 100, "AXFR endpoints claimed per batch")
-	axfrFlushBatch := flags.Int("axfr-flush-batch", 100, "ready AXFR domains flushed per batch")
-	axfrFlushInterval := flags.Duration("axfr-flush-interval", 5*time.Second, "AXFR output retry interval")
-
-	return func() (scannerConfig, error) {
+	return func() (dnsscan.Config, error) {
 		resolverList := cleanResolvers(strings.Split(*resolvers, ","))
-		if *runDNS && len(resolverList) == 0 {
-			return scannerConfig{}, fmt.Errorf("--resolvers is required when --dns=true, for example 127.0.0.1:53")
+		if len(resolverList) == 0 {
+			return dnsscan.Config{}, fmt.Errorf("--resolvers is required, for example 127.0.0.1:53")
 		}
-		if !*runDNS && !*runAXFR {
-			return scannerConfig{}, fmt.Errorf("at least one of --dns or --axfr must be enabled")
-		}
-		return scannerConfig{
-			RunDNS: *runDNS, RunAXFR: *runAXFR,
-			DNS: dnsscan.Config{
-				MaxDomains: *maxDomains, Resolvers: resolverList,
-				DiscoveryQPS: *discoveryQPS, DiscoveryInflight: *discoveryInflight,
-				PerServerQPS: *perServerQPS, PerServerInflight: *perServerInflight,
-				HyperscalerQPS: *hyperscalerQPS, Workers: *workers, QueryTimeout: *queryTimeout,
-				BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown,
-				StatsInterval: *statsInterval, HostnameEnrichment: *hostEnrich, HostnameCap: *hostCap,
-				DomainPageSize: *domainPageSize, WorkCapacity: *dnsCapacity,
-				ClaimBatch: *dnsClaimBatch, FlushBatch: *dnsFlushBatch, FlushInterval: *dnsFlushInterval,
-			},
-			AXFR: axfrscan.Config{
-				MaxDomains: *maxDomains, Workers: *axfrWorkers, PerServerQPS: *axfrQPS,
-				MaxInflight: *axfrInflight, MaxRecords: *axfrMaxRecords, MaxBytes: *axfrMaxBytes,
-				Timeout: *axfrTimeout, StatsInterval: *statsInterval, DomainPageSize: *axfrPageSize,
-				WorkCapacity: *axfrCapacity, ClaimBatch: *axfrClaimBatch,
-				FlushBatch: *axfrFlushBatch, FlushInterval: *axfrFlushInterval,
-			},
+		return dnsscan.Config{
+			MaxDomains: *maxDomains, Resolvers: resolverList,
+			DiscoveryQPS: *discoveryQPS, DiscoveryInflight: *discoveryInflight,
+			PerServerQPS: *perServerQPS, PerServerInflight: *perServerInflight,
+			HyperscalerQPS: *hyperscalerQPS, Workers: *workers, QueryTimeout: *queryTimeout,
+			BreakerThreshold: *breakerThreshold, BreakerCooldown: *breakerCooldown,
+			StatsInterval: *statsInterval, HostnameEnrichment: *hostEnrich, HostnameCap: *hostCap,
+			DomainPageSize: *domainPageSize, WorkCapacity: *dnsCapacity,
+			ClaimBatch: *dnsClaimBatch, FlushBatch: *dnsFlushBatch, FlushInterval: *dnsFlushInterval,
 		}, nil
 	}
 }
@@ -92,8 +55,7 @@ func runScan(ctx context.Context, args []string) error {
 	scanID := flags.String("scan-id", time.Now().UTC().Format("2006-01-02"), "scan cycle id")
 	runID := flags.String("run-id", "", "DNS source run id (defaults to scan-id)")
 	dnsDB := flags.String("dns-db", "dns-scan.db", "DNS SQLite work/outbox path")
-	axfrDB := flags.String("axfr-db", "axfr-scan.db", "AXFR SQLite work/outbox path")
-	build := scannerFlags(flags)
+	build := dnsScannerFlags(flags)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -101,34 +63,12 @@ func runScan(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	config.DNS.ScanID, config.DNS.RunID = *scanID, *runID
-	config.AXFR.ScanID = *scanID
-
-	var waitGroup sync.WaitGroup
-	errorsByScanner := make(chan error, 2)
-	if config.RunDNS {
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
-			errorsByScanner <- dnsscan.RunCycle(ctx, *dnsDB, config.DNS)
-		}()
+	config.ScanID, config.RunID = *scanID, *runID
+	err = dnsscan.RunCycle(ctx, *dnsDB, config)
+	if errors.Is(err, context.Canceled) {
+		return nil
 	}
-	if config.RunAXFR {
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
-			errorsByScanner <- axfrscan.RunCycle(ctx, *axfrDB, config.AXFR)
-		}()
-	}
-	waitGroup.Wait()
-	close(errorsByScanner)
-	var scannerErrors []error
-	for scannerError := range errorsByScanner {
-		if scannerError != nil && !errors.Is(scannerError, context.Canceled) {
-			scannerErrors = append(scannerErrors, scannerError)
-		}
-	}
-	return errors.Join(scannerErrors...)
+	return err
 }
 
 func cleanResolvers(raw []string) []string {
