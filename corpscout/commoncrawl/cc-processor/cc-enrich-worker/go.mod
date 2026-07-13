@@ -13,7 +13,6 @@ require (
 	github.com/duckdb/duckdb-go/v2 v2.10504.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/iand/microdata v0.0.28
 	github.com/markusmobius/go-trafilatura v1.12.2
 	github.com/nyaruka/phonenumbers v1.8.0
 	github.com/parquet-go/parquet-go v0.30.1

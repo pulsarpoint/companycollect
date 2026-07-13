@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/iand/microdata"
+	"cc-enrich-worker/internal/microdata"
 
 	"cc-enrich-worker/internal/model"
 )
