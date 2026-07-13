@@ -14,7 +14,7 @@ from pydantic import field_validator
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.commoncrawl_geoip.maxmind import classify_ip_scope
 from dagster_v3.defs.commoncrawl_ip import (
-    COMMONCRAWL_IP_ADDRESSES_ASSET,
+    COMMONCRAWL_IP_ADDRESSES_KEY,
     COMMONCRAWL_IP_PARTITIONS,
     commoncrawl_ip_bucket_index,
 )
@@ -151,6 +151,105 @@ ORDER BY ip_version, ip
 LIMIT %(candidate_scan_limit)s
 """
 
+RDAP_ACTIONABLE_BY_BUCKET_SQL = """
+SELECT
+    bucket,
+    count() AS actionable_ip_count,
+    countIf(actionable_reason = 'new_uncovered') AS new_uncovered_ip_count,
+    countIf(actionable_reason = 'due_retry') AS due_retry_ip_count,
+    min(first_seen) AS oldest_uncovered_first_seen
+FROM
+(
+    SELECT
+        addresses.bucket AS bucket,
+        addresses.first_seen AS first_seen,
+        if(
+            ifNull(current.matched, 0) = 0,
+            'new_uncovered',
+            'due_retry'
+        ) AS actionable_reason
+    FROM
+    (
+        SELECT
+            bucket,
+            ip,
+            ip_version,
+            first_seen
+        FROM corpscout.commoncrawl_ip_addresses FINAL
+        WHERE ip_version = 4
+    ) AS addresses
+    LEFT JOIN
+    (
+        SELECT
+            bucket,
+            ip,
+            ip_version,
+            toUInt8(1) AS matched,
+            lookup_status,
+            retry_after
+        FROM corpscout.rdap_ip_lookup_results_current
+        WHERE ip_version = 4
+    ) AS current USING (bucket, ip, ip_version)
+    WHERE dictHas(
+              'corpscout.rdap_network_trie',
+              tuple(toIPv4(addresses.ip))
+          ) = 0
+      AND (
+          ifNull(current.matched, 0) = 0
+          OR (
+              current.lookup_status = 'retryable_error'
+              AND (current.retry_after IS NULL OR current.retry_after <= now64(3))
+          )
+      )
+
+    UNION ALL
+
+    SELECT
+        addresses.bucket AS bucket,
+        addresses.first_seen AS first_seen,
+        if(
+            ifNull(current.matched, 0) = 0,
+            'new_uncovered',
+            'due_retry'
+        ) AS actionable_reason
+    FROM
+    (
+        SELECT
+            bucket,
+            ip,
+            ip_version,
+            first_seen
+        FROM corpscout.commoncrawl_ip_addresses FINAL
+        WHERE ip_version = 6
+    ) AS addresses
+    LEFT JOIN
+    (
+        SELECT
+            bucket,
+            ip,
+            ip_version,
+            toUInt8(1) AS matched,
+            lookup_status,
+            retry_after
+        FROM corpscout.rdap_ip_lookup_results_current
+        WHERE ip_version = 6
+    ) AS current USING (bucket, ip, ip_version)
+    WHERE dictHas(
+              'corpscout.rdap_network_trie',
+              tuple(toIPv6(addresses.ip))
+          ) = 0
+      AND (
+          ifNull(current.matched, 0) = 0
+          OR (
+              current.lookup_status = 'retryable_error'
+              AND (current.retry_after IS NULL OR current.retry_after <= now64(3))
+          )
+      )
+)
+GROUP BY bucket
+ORDER BY bucket
+"""
+
 RDAP_NETWORK_INSERT_SQL = """
 INSERT INTO corpscout.rdap_networks
 (
@@ -248,7 +347,7 @@ class CommoncrawlRdapConfig(dg.Config):
 
 @dg.asset(
     name="commoncrawl_ip_rdap_networks",
-    deps=[COMMONCRAWL_IP_ADDRESSES_ASSET.key],
+    deps=[COMMONCRAWL_IP_ADDRESSES_KEY],
     group_name="commoncrawl_rdap",
     kinds={"python", "clickhouse", "dns", "rdap"},
     partitions_def=COMMONCRAWL_IP_PARTITIONS,

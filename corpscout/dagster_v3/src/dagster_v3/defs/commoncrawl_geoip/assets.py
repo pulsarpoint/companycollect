@@ -17,7 +17,7 @@ from dagster_v3.defs.commoncrawl_geoip.maxmind import (
 )
 from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
 from dagster_v3.defs.commoncrawl_ip import (
-    COMMONCRAWL_IP_ADDRESSES_ASSET,
+    COMMONCRAWL_IP_ADDRESSES_KEY,
     COMMONCRAWL_IP_PARTITIONS,
     commoncrawl_ip_bucket_index,
 )
@@ -85,6 +85,32 @@ WHERE (
 ORDER BY addresses.ip
 """
 
+GEOIP_MISSING_BY_BUCKET_SQL = """
+SELECT
+    addresses.bucket AS bucket,
+    count() AS actionable_ip_count,
+    min(addresses.first_seen) AS oldest_uncovered_first_seen
+FROM
+(
+    SELECT
+        bucket,
+        ip,
+        first_seen
+    FROM corpscout.commoncrawl_ip_addresses FINAL
+) AS addresses
+LEFT JOIN
+(
+    SELECT
+        bucket,
+        ip,
+        toUInt8(1) AS matched
+    FROM corpscout.commoncrawl_ip_geoip FINAL
+) AS current USING (bucket, ip)
+WHERE ifNull(current.matched, 0) = 0
+GROUP BY addresses.bucket
+ORDER BY addresses.bucket
+"""
+
 GEOIP_INSERT_SQL = """
 INSERT INTO corpscout.commoncrawl_ip_geoip
 (
@@ -127,7 +153,7 @@ class CommoncrawlGeoIPConfig(dg.Config):
 
 @dg.asset(
     name="commoncrawl_ip_geoip",
-    deps=[COMMONCRAWL_IP_ADDRESSES_ASSET.key],
+    deps=[COMMONCRAWL_IP_ADDRESSES_KEY],
     group_name="commoncrawl_geoip",
     kinds={"python", "clickhouse", "dns", "maxmind"},
     partitions_def=COMMONCRAWL_IP_PARTITIONS,
