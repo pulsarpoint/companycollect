@@ -218,25 +218,19 @@ func collectZone(ctx context.Context, zone, nsIP string, deadline time.Duration,
 	}
 }
 
-// AXFRProber applies probe policy over the low-level transfer: it paces every dial through the AXFR
-// scheduler lane and bounds total concurrent transfers with an aggregate semaphore. It does not cache
-// verdicts across calls — a REFUSED or a transient failure on one call says nothing definitive about
-// the next (it may be a different zone serial, a transient network blip, or a server that just came
-// back), so every call re-probes; only a genuine, sustained transport failure trips the scheduler's own
-// per-server circuit breaker.
+// AXFRProber applies probe policy over the low-level transfer and paces every dial through the AXFR
+// scheduler lane. It does not cache verdicts across calls — a REFUSED or a transient failure on one
+// call says nothing definitive about the next (it may be a different zone serial, a transient network
+// blip, or a server that just came back), so every call re-probes; only a genuine, sustained transport
+// failure trips the scheduler's own per-server circuit breaker.
 type AXFRProber struct {
 	sched *scheduler.Scheduler
 	caps  AXFRCaps
-	sem   chan struct{}
 }
 
-// NewAXFRProber builds a prober over the AXFR scheduler lane. maxInflight bounds total concurrent
-// transfers across all domains (aggregate held-open TCP connections); <=0 defaults to 50.
-func NewAXFRProber(sched *scheduler.Scheduler, caps AXFRCaps, maxInflight int) *AXFRProber {
-	if maxInflight <= 0 {
-		maxInflight = 50
-	}
-	return &AXFRProber{sched: sched, caps: caps, sem: make(chan struct{}, maxInflight)}
+// NewAXFRProber builds a prober over the AXFR scheduler lane.
+func NewAXFRProber(sched *scheduler.Scheduler, caps AXFRCaps) *AXFRProber {
+	return &AXFRProber{sched: sched, caps: caps}
 }
 
 // ProbeServer transfers zone from a single NS IP — the per-NS entry point for the standalone AXFR
@@ -256,13 +250,6 @@ func (p *AXFRProber) ProbeServer(ctx context.Context, zone, nsHost, nsIP string)
 	if scope, ok := ClassifyString(target); !ok || !Dialable(scope) {
 		return fill(AXFROutcome{Verdict: VerdictUnknown, Reason: ReasonSkipped})
 	}
-
-	select {
-	case p.sem <- struct{}{}:
-	case <-ctx.Done():
-		return fill(AXFROutcome{Verdict: VerdictUnknown, Reason: classifyErr(ctx, ctx.Err())})
-	}
-	defer func() { <-p.sem }()
 
 	var out AXFROutcome
 	err := p.sched.Do(ctx, nsIP, func() error {

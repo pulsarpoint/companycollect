@@ -17,7 +17,7 @@ type sourceDomain struct {
 	ObservedAt time.Time
 }
 
-serfunc fetchSourcePage(ctx context.Context, connection driver.Conn, cursor string, limit int) ([]sourceDomain, error) {
+func fetchSourcePage(ctx context.Context, connection driver.Conn, cursor string, limit int) ([]sourceDomain, error) {
 	rows, err := connection.Query(ctx, `SELECT root_domain, ns_endpoint_names, ns_endpoint_ips, resolved_at
 		FROM corpscout.commoncrawl_domain_dns_scan FINAL
 		WHERE root_domain > ? AND status IN ('done', 'no_public_ns_endpoints')

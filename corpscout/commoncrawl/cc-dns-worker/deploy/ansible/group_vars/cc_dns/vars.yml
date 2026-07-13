@@ -14,7 +14,7 @@ cc_dns_run_flags: >-
   --discovery-inflight 3000
   --domain-page-size 5000 --dns-work-capacity 20000 --dns-claim-batch 4000
   --dns-flush-batch 500 --dns-flush-interval 5s
-  --axfr-work-capacity 5000 --axfr-claim-batch 100
+  --axfr-workers 500 --axfr-work-capacity 5000 --axfr-claim-batch 1000
   --axfr-flush-batch 100 --axfr-flush-interval 5s
 worker_limit_nofile: 1048576
 

@@ -46,7 +46,6 @@ func scannerFlags(flags *flag.FlagSet) func() (scannerConfig, error) {
 
 	axfrWorkers := flags.Int("axfr-workers", 50, "AXFR endpoints probed concurrently")
 	axfrQPS := flags.Float64("axfr-qps", 5, "AXFR transfers/sec per NS IP")
-	axfrInflight := flags.Int("axfr-inflight", 50, "total AXFR transfers in flight")
 	axfrMaxRecords := flags.Int("axfr-max-records", 50000, "records retained per AXFR transfer")
 	axfrMaxBytes := flags.Int("axfr-max-bytes", 67108864, "bytes retained per AXFR transfer")
 	axfrTimeout := flags.Duration("axfr-timeout", 20*time.Second, "whole-transfer AXFR timeout")
@@ -78,7 +77,7 @@ func scannerFlags(flags *flag.FlagSet) func() (scannerConfig, error) {
 			},
 			AXFR: axfrscan.Config{
 				MaxDomains: *maxDomains, Workers: *axfrWorkers, PerServerQPS: *axfrQPS,
-				MaxInflight: *axfrInflight, MaxRecords: *axfrMaxRecords, MaxBytes: *axfrMaxBytes,
+				MaxRecords: *axfrMaxRecords, MaxBytes: *axfrMaxBytes,
 				Timeout: *axfrTimeout, StatsInterval: *statsInterval, DomainPageSize: *axfrPageSize,
 				WorkCapacity: *axfrCapacity, ClaimBatch: *axfrClaimBatch,
 				FlushBatch: *axfrFlushBatch, FlushInterval: *axfrFlushInterval,
