@@ -120,8 +120,13 @@ crawl (or a meaningful part range) with matching outputs.
 
 ### 3. Loader
 
-- `cc-enrich-worker load --scan <root> [--loop 5m] [--parallel K, default 1]`
+- `cc-enrich-worker load --scan <root> [--watch] [--parallel K, default 1]`
   (existing `load --dir/--file` forms unchanged).
+- Without `--watch`: one sweep, then exit (cron-friendly). With `--watch`: stay running —
+  fsnotify (inotify/kqueue) on marker creation for near-instant pickup, PLUS an unconditional
+  fallback re-sweep every 5 minutes, because inotify events can be dropped on queue overflow
+  and never arrive for files that appear via rsync/NFS from producer machines. The sweep is
+  the correctness mechanism; inotify is the latency optimization.
 - Walk `<root>` recursively for `out_*.produced` markers lacking a sibling `.loaded`;
   for each: load every fixed-name parquet in the dir via the existing native-driver kind
   mapping, compare loaded row counts against the counts recorded in `.produced`, then write
