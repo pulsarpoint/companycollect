@@ -15,6 +15,7 @@ import (
 	"cc-enrich-worker/internal/catalog"
 	"cc-enrich-worker/internal/markers"
 	"cc-enrich-worker/internal/warcinput"
+	"cc-enrich-worker/internal/worker"
 )
 
 // consecutiveFailureLimit is the circuit breaker: after this many CONSECUTIVE part failures the pool
@@ -72,6 +73,7 @@ func runRangePool(
 	cmd, runID string,
 	outDirFor func(uint32) string,
 	produce partProducer,
+	prog *poolProgress,
 ) rangeSummary {
 	workers := warcParallel
 	if workers > len(class) {
@@ -106,6 +108,7 @@ func runRangePool(
 					mu.Lock()
 					sum.Skipped++
 					mu.Unlock()
+					prog.addSkipped()
 					continue
 				}
 				// A non-empty output dir with no .produced marker is USUALLY debris from a produce that
@@ -118,6 +121,7 @@ func runRangePool(
 						mu.Lock()
 						sum.Skipped++
 						mu.Unlock()
+						prog.addSkipped()
 						continue
 					}
 					log.Printf("range: removing stale output dir (crashed produce?) part=%d %s", part, outDir)
@@ -127,7 +131,9 @@ func runRangePool(
 				}
 
 				partStart := time.Now()
+				prog.startPart()
 				res, perr := produce(ctx, part, outDir)
+				prog.endPart()
 				if perr == nil {
 					perr = markers.WriteProduced(outDir, markers.Produced{
 						Part:        part,
@@ -153,6 +159,7 @@ func runRangePool(
 						sum.Breaker = true
 					}
 					mu.Unlock()
+					prog.addFailed()
 					if tripped {
 						cancel()
 						return
@@ -162,6 +169,7 @@ func runRangePool(
 				consecutive = 0
 				sum.Produced++
 				mu.Unlock()
+				prog.addProduced()
 				log.Printf("range: part %d produced -> %s", part, outDir)
 			}
 		}()
@@ -267,10 +275,20 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	// One run id for every .produced marker written by this invocation. No crawl-wide run identity
 	// exists in the CLI, so derive the cheapest truthful one: command + range + start time.
 	runID := fmt.Sprintf("%s-%d-%d-%d", cmd, lo, hi, start.Unix())
+
+	// The process-wide sink: every chunk of every part folds its page/fetch/tech counters here (and
+	// its per-chunk logs fall silent) so the ticker below can print ONE cumulative line. Wiring it on
+	// deps is what puts producePart's ShardConfig into range mode; the single --part path never does.
+	runStats := &worker.RunStats{}
+	deps.runStats = runStats
+	prog := &poolProgress{total: len(class)}
+	stopTicker := startRangeStatsTicker(deps.objects, runStats, prog, start)
+
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 		return producePart(ctx, deps, part, outDir)
 	}
-	sum := runRangePool(ctx, class, ro.warcParallel, cmd, runID, outDirFor, produce)
+	sum := runRangePool(ctx, class, ro.warcParallel, cmd, runID, outDirFor, produce, prog)
+	stopTicker() // prints the final cumulative line, before the summary below
 	elapsed := time.Since(start).Round(time.Second)
 
 	partsMsg := ""

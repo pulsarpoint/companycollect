@@ -131,6 +131,44 @@ type ShardConfig struct {
 	TechMaxBytes         int    // body cap fed to Wappalyzer; 0 => no cap (full body)
 	Mode                 string // "industry" | "tech" | "both" | "embed" (default "both")
 	EmbedOnly            bool   // embed mode: fetch+embed+keep the vector, skip NACE classify & rows
+
+	// RunStats, when non-nil, is the process-wide sink the range runner uses to aggregate every
+	// chunk's fetch/tech/page counters into ONE periodic stats line. Setting it also SUPPRESSES the
+	// per-chunk timing/page + "S3 range reads scope=fetch_chunk" logs and the industry stream's own
+	// progress ticker — the interleaving noise the aggregate line replaces. nil (a single --part run)
+	// keeps the original per-chunk logging byte-for-byte and skips aggregation.
+	RunStats *RunStats
+}
+
+// RunStats accumulates fetch diagnostics across every chunk of every part in a range run so the
+// runner can print one cumulative line. All fields are updated atomically; the ticker only reads via
+// Snapshot. A nil *RunStats is never dereferenced — ShardConfig.RunStats == nil is the single-part path.
+type RunStats struct {
+	pages, errs, fetchNs, parseNs, techNs int64
+}
+
+func (r *RunStats) add(pages, errs, fetchNs, parseNs, techNs int64) {
+	atomic.AddInt64(&r.pages, pages)
+	atomic.AddInt64(&r.errs, errs)
+	atomic.AddInt64(&r.fetchNs, fetchNs)
+	atomic.AddInt64(&r.parseNs, parseNs)
+	atomic.AddInt64(&r.techNs, techNs)
+}
+
+// RunStatsSnapshot is a consistent-enough atomic read of RunStats for the formatter (each field is
+// loaded atomically; the set is not a single transaction, which is fine for a progress line).
+type RunStatsSnapshot struct {
+	Pages, Errs, FetchNs, ParseNs, TechNs int64
+}
+
+func (r *RunStats) Snapshot() RunStatsSnapshot {
+	return RunStatsSnapshot{
+		Pages:   atomic.LoadInt64(&r.pages),
+		Errs:    atomic.LoadInt64(&r.errs),
+		FetchNs: atomic.LoadInt64(&r.fetchNs),
+		ParseNs: atomic.LoadInt64(&r.parseNs),
+		TechNs:  atomic.LoadInt64(&r.techNs),
+	}
 }
 
 type domainAgg struct {
@@ -447,17 +485,25 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 		successfulPages = append(successfulPages, pages...)
 	}
 
-	if n := atomic.LoadInt64(&stats.pages); n > 0 {
-		errs := atomic.LoadInt64(&stats.errs)
-		mode, _, _ := modeFlags(cfg)
-		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  errs=%d/%d  conc=%dx%d mode=%s",
-			float64(stats.fetchNs)/float64(n)/1e6, float64(stats.parseNs)/float64(n)/1e6,
-			float64(stats.techNs)/float64(n)/1e6, errs, n, conc, PageConcurrency, mode)
-		if errs > 0 {
-			log.Printf("  first fetch error: %s", stats.errSample)
+	n := atomic.LoadInt64(&stats.pages)
+	if cfg.RunStats != nil {
+		// Range run: fold this chunk into the process-wide sink and stay silent — the runner's
+		// periodic aggregate line is the ONLY per-chunk output (spec §2 suppression).
+		cfg.RunStats.add(n, atomic.LoadInt64(&stats.errs),
+			atomic.LoadInt64(&stats.fetchNs), atomic.LoadInt64(&stats.parseNs), atomic.LoadInt64(&stats.techNs))
+	} else {
+		if n > 0 {
+			errs := atomic.LoadInt64(&stats.errs)
+			mode, _, _ := modeFlags(cfg)
+			log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  errs=%d/%d  conc=%dx%d mode=%s",
+				float64(stats.fetchNs)/float64(n)/1e6, float64(stats.parseNs)/float64(n)/1e6,
+				float64(stats.techNs)/float64(n)/1e6, errs, n, conc, PageConcurrency, mode)
+			if errs > 0 {
+				log.Printf("  first fetch error: %s", stats.errSample)
+			}
 		}
+		logS3Stats(ctx, getter, s3Before, time.Since(started), "fetch_chunk")
 	}
-	logS3Stats(ctx, getter, s3Before, time.Since(started), "fetch_chunk")
 	return FetchedChunk{aggs: aggs, pages: successfulPages, Pages: atomic.LoadInt64(&stats.pages), Errs: atomic.LoadInt64(&stats.errs)}
 }
 
@@ -702,27 +748,30 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 	var errOnce, embedErrOnce sync.Once
 	var embedErr error
 
-	// progress ticker
+	// progress ticker — suppressed in a range run (cfg.RunStats set): the runner's cumulative line
+	// replaces it, and 8 of these interleaving is exactly the noise being removed.
 	stop := make(chan struct{})
 	start := time.Now()
 	s3Before := s3Stats(getter)
-	go func() {
-		t := time.NewTicker(10 * time.Second)
-		defer t.Stop()
-		last, lastT := int64(0), start
-		for {
-			select {
-			case <-stop:
-				return
-			case now := <-t.C:
-				n := atomic.LoadInt64(&done)
-				inst := float64(n-last) / now.Sub(lastT).Seconds() // rate over the last tick (not cold-start avg)
-				log.Printf("  industry stream: %d/%d domains (%.0f/s now, %.0f/s avg, conc=%d embed=%d)",
-					n, len(order), inst, float64(n)/time.Since(start).Seconds(), conc, embConc)
-				last, lastT = n, now
+	if cfg.RunStats == nil {
+		go func() {
+			t := time.NewTicker(10 * time.Second)
+			defer t.Stop()
+			last, lastT := int64(0), start
+			for {
+				select {
+				case <-stop:
+					return
+				case now := <-t.C:
+					n := atomic.LoadInt64(&done)
+					inst := float64(n-last) / now.Sub(lastT).Seconds() // rate over the last tick (not cold-start avg)
+					log.Printf("  industry stream: %d/%d domains (%.0f/s now, %.0f/s avg, conc=%d embed=%d)",
+						n, len(order), inst, float64(n)/time.Since(start).Seconds(), conc, embConc)
+					last, lastT = n, now
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	// embed workers: each keeps one request in flight; embConc of them => embConc concurrent.
 	var ewg sync.WaitGroup
@@ -820,22 +869,29 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 	close(ch)
 	ewg.Wait()
 	close(stop)
-	logS3Stats(ctx, getter, s3Before, time.Since(start), "industry_stream")
 	if embedErr != nil {
 		return ShardResult{}, embedErr
 	}
 
-	if n := atomic.LoadInt64(&pageCount); n > 0 {
-		reqs := atomic.LoadInt64(&embedReqs)
-		avgEmbed := 0.0
-		if reqs > 0 {
-			avgEmbed = float64(embedNs) / float64(reqs) / 1e6
-		}
-		log.Printf("  industry: fetch=%.0fms parse=%.1fms/page, embed=%.0fms/req over %d reqs, errs=%d/%d conc=%d embed=%d",
-			float64(fetchNs)/float64(n)/1e6, float64(parseNs)/float64(n)/1e6, avgEmbed, reqs,
-			atomic.LoadInt64(&errCount), n, conc, embConc)
-		if errCount > 0 {
-			log.Printf("  first fetch error: %s", errSample)
+	if cfg.RunStats != nil {
+		// Range run: fold this shard's page counters into the sink (no tech in this path) and stay
+		// silent, leaving the runner's cumulative line as the only progress output.
+		cfg.RunStats.add(atomic.LoadInt64(&pageCount), atomic.LoadInt64(&errCount),
+			atomic.LoadInt64(&fetchNs), atomic.LoadInt64(&parseNs), 0)
+	} else {
+		logS3Stats(ctx, getter, s3Before, time.Since(start), "industry_stream")
+		if n := atomic.LoadInt64(&pageCount); n > 0 {
+			reqs := atomic.LoadInt64(&embedReqs)
+			avgEmbed := 0.0
+			if reqs > 0 {
+				avgEmbed = float64(embedNs) / float64(reqs) / 1e6
+			}
+			log.Printf("  industry: fetch=%.0fms parse=%.1fms/page, embed=%.0fms/req over %d reqs, errs=%d/%d conc=%d embed=%d",
+				float64(fetchNs)/float64(n)/1e6, float64(parseNs)/float64(n)/1e6, avgEmbed, reqs,
+				atomic.LoadInt64(&errCount), n, conc, embConc)
+			if errCount > 0 {
+				log.Printf("  first fetch error: %s", errSample)
+			}
 		}
 	}
 	out := domains[:0]

@@ -405,6 +405,11 @@ type partDeps struct {
 
 	objects fetch.ObjectGetter
 	source  string
+
+	// runStats is the range runner's process-wide sink. Non-nil ONLY on the --parts path: it puts
+	// every part's ShardConfig into range mode (aggregate + suppress per-chunk logs) and gates the
+	// per-part "progress:" lines off. nil for a single --part run, which keeps all logging unchanged.
+	runStats *worker.RunStats
 }
 
 // partResult reports what a single part produced. Rows maps parquet kind names (the loader's table
@@ -684,11 +689,17 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 		})
 	}
 
+	// rangeMode: a --parts run wires deps.runStats, which both aggregates counters and (via
+	// ShardConfig.RunStats) silences the per-chunk logs. It also gates the per-part "progress:" lines
+	// off so the runner's cumulative line is the sole progress output. A single --part run leaves
+	// runStats nil, so everything below prints exactly as before.
+	rangeMode := d.runStats != nil
 	cfg := worker.ShardConfig{
 		CrawlID: o.crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
 		ResolvedAt: time.Now().UTC(), Concurrency: o.concurrency, TechMaxBytes: o.techMax,
 		EmbedConcurrency: o.embedConc, EmbedBatch: o.batch, Mode: mode,
 		EmbedOnly: mode == "embed",
+		RunStats:  d.runStats,
 	}
 	start := time.Now()
 	// Accumulators for the industry/embed path, which builds ONE ShardResult for the whole shard. The
@@ -718,12 +729,14 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 		industries = res.Industries
 		pageSignals = res.PageSignals
 		embeddings = res.Embeddings
-		unit, n := "domains", len(domains)
-		if mode == "embed" {
-			unit, n = "embeddings", len(embeddings)
+		if !rangeMode {
+			unit, n := "domains", len(domains)
+			if mode == "embed" {
+				unit, n = "embeddings", len(embeddings)
+			}
+			log.Printf("progress: %d/%d pages, %d %s (%.1f pages/s)",
+				len(items), len(items), n, unit, float64(len(items))/time.Since(start).Seconds())
 		}
-		log.Printf("progress: %d/%d pages, %d %s (%.1f pages/s)",
-			len(items), len(items), n, unit, float64(len(items))/time.Since(start).Seconds())
 	} else {
 		// Streaming write: the chunked tech/both path writes each chunk's rows as ONE parquet row group
 		// immediately (worker.ShardStreamer) instead of buffering the whole shard, so peak memory is
@@ -777,9 +790,11 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 				streamer.Abort()
 				return partResult{}, fmt.Errorf("write chunk [%d:%d]: %w", curLo, curHi, werr)
 			}
-			el := time.Since(start).Seconds()
-			log.Printf("progress: %d/%d pages, %d domains written (%.1f pages/s)",
-				curHi, len(items), streamer.DomainCount(), float64(curHi)/el)
+			if !rangeMode {
+				el := time.Since(start).Seconds()
+				log.Printf("progress: %d/%d pages, %d domains written (%.1f pages/s)",
+					curHi, len(items), streamer.DomainCount(), float64(curHi)/el)
+			}
 			if nextCh != nil {
 				fetched = <-nextCh
 			}

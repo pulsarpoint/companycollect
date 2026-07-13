@@ -213,7 +213,7 @@ func TestRunRangePoolAllSucceed(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", "test-run", outDirFor, produce)
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", "test-run", outDirFor, produce, nil)
 
 	if sum.Produced != 4 || sum.Failed != 0 || sum.Skipped != 0 || sum.Breaker {
 		t.Fatalf("summary = %+v, want produced=4 failed=0 skipped=0 breaker=false", sum)
@@ -261,7 +261,7 @@ func TestRunRangePoolFailureAndResume(t *testing.T) {
 	}
 
 	// warcParallel=1 keeps failure ordering deterministic.
-	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", outDirFor, produce)
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", outDirFor, produce, nil)
 	if sum.Produced != 3 || sum.Failed != 1 || !reflectEqualU32(sum.FailedParts, []uint32{2}) {
 		t.Fatalf("run1 summary = %+v, want produced=3 failed=1 failedParts=[2]", sum)
 	}
@@ -278,7 +278,7 @@ func TestRunRangePoolFailureAndResume(t *testing.T) {
 	for k := range producedParts {
 		delete(producedParts, k)
 	}
-	sum2 := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", outDirFor, produce)
+	sum2 := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", outDirFor, produce, nil)
 	if sum2.Skipped != 3 {
 		t.Errorf("run2 skipped = %d, want 3", sum2.Skipped)
 	}
@@ -300,7 +300,7 @@ func TestRunRangePoolParallelDeterministic(t *testing.T) {
 		produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 			return producePart(ctx, deps, part, outDir)
 		}
-		sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, warcParallel, "tech", "test-run", outDirFor, produce)
+		sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, warcParallel, "tech", "test-run", outDirFor, produce, nil)
 		if sum.Produced != 4 {
 			t.Fatalf("warcParallel=%d produced=%d, want 4", warcParallel, sum.Produced)
 		}
@@ -339,7 +339,7 @@ func TestRunRangePoolBreaker(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", outDirFor, produce)
+	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", outDirFor, produce, nil)
 
 	if !sum.Breaker {
 		t.Error("breaker should have tripped")
@@ -419,7 +419,7 @@ func TestRunRangePoolPreservesLoadedDir(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", outDirFor, produce)
+	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", outDirFor, produce, nil)
 
 	if sum.Produced != 1 || sum.Skipped != 1 || sum.Failed != 0 {
 		t.Fatalf("summary = %+v, want produced=1 skipped=1 failed=0", sum)
