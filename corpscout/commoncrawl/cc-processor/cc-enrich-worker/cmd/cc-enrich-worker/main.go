@@ -68,6 +68,7 @@ Commands:
   tech       fingerprint technologies + extract identifiers/profiles  (CPU-bound; S3 only)
   both       run both in one fetch pass  (discouraged — co-locating throttles the GPU; prefer two processes)
   load       load an already-produced Parquet output into ClickHouse (native driver — no clickhouse-client needed)
+  plan       read-only report: local/remote lane split + threshold sweep for a WARC part range
 
 Run "cc-enrich-worker <command> -h" to see that command's flags.
 
@@ -142,6 +143,8 @@ func main() {
 		run(cmd, parse(cmd, os.Args[2:]))
 	case "load":
 		runLoad(os.Args[2:])
+	case "plan":
+		runPlanCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
