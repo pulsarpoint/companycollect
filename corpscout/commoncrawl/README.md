@@ -2,14 +2,14 @@
 
 This directory contains independent systems that consume Common Crawl data. The WARC catalog, page
 processor, runtime configuration, and deployment tooling now live together under
-[`cc-processor/`](cc-processor/). Start with its README for building a catalog, running `cc-crawl`, loading
-ClickHouse, or deploying the processing runtime.
+[`cc-processor/`](cc-processor/). Start with its README for building a catalog, running `cc-enrich-worker` part ranges,
+loading ClickHouse, or deploying the processing runtime.
 
 ## Active subsystems
 
 | Directory | Role |
 |---|---|
-| [`cc-processor/`](cc-processor/) | Builds the WARC-oriented DuckDB catalog and processes selected pages with `cc-crawl` and `cc-enrich-worker`. |
+| [`cc-processor/`](cc-processor/) | Builds the WARC-oriented DuckDB catalog and processes selected pages with `cc-enrich-worker`. |
 | [`cc-dns-scan/`](cc-dns-scan/) | Resolves Common Crawl domains against authoritative DNS and stores observations. |
 | [`cc-dns-axfr/`](cc-dns-axfr/) | Probes authoritative endpoints for zone-transfer exposure. |
 | [`reference-builder/`](reference-builder/) | Builds NACE and page-type reference embeddings used by industry processing. |

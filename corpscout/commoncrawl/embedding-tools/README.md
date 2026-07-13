@@ -1,7 +1,7 @@
 # embedding-tools
 
 Offline utilities for the stored CommonCrawl page-embedding parquet files. Standalone `uv` project — no
-changes to `cc-enrich-worker` / `cc-crawl`. (The A/B *experiments* live in `../embedding-ab`; this is the
+changes to `cc-enrich-worker`. (The A/B *experiments* live in `../embedding-ab`; this is the
 production-side tooling.)
 
 ## convert_fp16.py — fp32 → fp16

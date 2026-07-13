@@ -1,6 +1,6 @@
 # embedding-ab — instructed vs neutral embedding A/B test
 
-Standalone scripts (NO changes to `cc-enrich-worker` / `cc-crawl` / `index-builder`) to decide whether to
+Standalone scripts (NO changes to `cc-enrich-worker` / `index-builder`) to decide whether to
 store the industry-**instructed** page embedding or a **neutral** (plain document) one — by testing both on
 NACE classification AND general-purpose use (similar-domain, clustering, near-dup, re-classification,
 semantic search).
