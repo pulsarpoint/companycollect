@@ -14,9 +14,7 @@ from .catalog import (
     CandidateBuildError,
     build_candidate,
     build_catalog,
-    complete_parquet,
     open_duckdb,
-    publish_parquets,
     read_catalog,
 )
 from .events import binary_size, emit_event
@@ -26,6 +24,7 @@ from .manifests import (
     sample_warc_sizes,
     sync_manifests,
 )
+from .publication import destination_from_environment, publish_catalog
 from .selection import SELECTION_VERSION
 
 
@@ -95,12 +94,12 @@ def run(options: argparse.Namespace) -> int:
 def _run_locked(options: argparse.Namespace) -> int:
     crawl_directory = options.base / options.crawl / "warc-index"
     manifest_directory = crawl_directory / "manifests"
-    selection_directory = crawl_directory / f"pages{options.pages_per_domain}"
+    selection = f"pages{options.pages_per_domain}"
+    selection_directory = crawl_directory / selection
     candidate_root = selection_directory / "candidates"
     temp_directory = selection_directory / "temp"
     catalog_path = selection_directory / "catalog.duckdb"
-    warcs_parquet_path = selection_directory / "warcs.parquet"
-    pages_parquet_path = selection_directory / "pages.parquet"
+    catalog_destination = destination_from_environment(os.environ)
 
     emit_event(
         "WARC index build started",
@@ -119,13 +118,6 @@ def _run_locked(options: argparse.Namespace) -> int:
         )
         is not None
     ):
-        parquets_reused = complete_parquet(warcs_parquet_path) and complete_parquet(
-            pages_parquet_path
-        )
-        if not parquets_reused:
-            publish_parquets(catalog_path)
-        warcs_parquet_bytes = warcs_parquet_path.stat().st_size
-        pages_parquet_bytes = pages_parquet_path.stat().st_size
         emit_event(
             "catalog ready",
             crawl=options.crawl,
@@ -142,16 +134,22 @@ def _run_locked(options: argparse.Namespace) -> int:
             ),
             reused=True,
         )
-        emit_event(
-            "portable Parquets ready",
+        publication = publish_catalog(
+            catalog_destination,
             crawl=options.crawl,
-            warcs=str(warcs_parquet_path),
-            warcs_bytes=warcs_parquet_bytes,
-            warcs_size=binary_size(warcs_parquet_bytes),
-            pages=str(pages_parquet_path),
-            pages_bytes=pages_parquet_bytes,
-            pages_size=binary_size(pages_parquet_bytes),
-            reused=parquets_reused,
+            selection=selection,
+            catalog_path=existing.path,
+        )
+        emit_event(
+            "RustFS catalog ready",
+            crawl=options.crawl,
+            selection=selection,
+            bucket=publication.bucket,
+            ready_key=publication.ready_key,
+            catalog_key=publication.catalog.key,
+            catalog_bytes=publication.catalog.size_bytes,
+            catalog_size=binary_size(publication.catalog.size_bytes),
+            catalog_sha256=publication.catalog.sha256,
         )
         if options.cleanup_candidates and candidate_root.exists():
             shutil.rmtree(candidate_root)
@@ -282,9 +280,6 @@ def _run_locked(options: argparse.Namespace) -> int:
         threads=options.threads,
         memory_limit=options.memory_limit,
     )
-    publish_parquets(catalog_path)
-    warcs_parquet_bytes = warcs_parquet_path.stat().st_size
-    pages_parquet_bytes = pages_parquet_path.stat().st_size
     emit_event(
         "catalog ready",
         crawl=options.crawl,
@@ -301,16 +296,22 @@ def _run_locked(options: argparse.Namespace) -> int:
         ),
         reused=result.reused,
     )
-    emit_event(
-        "portable Parquets ready",
+    publication = publish_catalog(
+        catalog_destination,
         crawl=options.crawl,
-        warcs=str(warcs_parquet_path),
-        warcs_bytes=warcs_parquet_bytes,
-        warcs_size=binary_size(warcs_parquet_bytes),
-        pages=str(pages_parquet_path),
-        pages_bytes=pages_parquet_bytes,
-        pages_size=binary_size(pages_parquet_bytes),
-        reused=False,
+        selection=selection,
+        catalog_path=result.path,
+    )
+    emit_event(
+        "RustFS catalog ready",
+        crawl=options.crawl,
+        selection=selection,
+        bucket=publication.bucket,
+        ready_key=publication.ready_key,
+        catalog_key=publication.catalog.key,
+        catalog_bytes=publication.catalog.size_bytes,
+        catalog_size=binary_size(publication.catalog.size_bytes),
+        catalog_sha256=publication.catalog.sha256,
     )
     if options.cleanup_candidates:
         shutil.rmtree(candidate_root)

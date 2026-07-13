@@ -2,8 +2,8 @@
 
 Builds a compact, WARC-oriented DuckDB catalog from the official Common Crawl URL-index Parquets.
 The builder queries each index shard remotely, keeps only the pages that can still enter the requested
-per-domain top N, and performs the final ranking locally. It does not download complete URL-index
-Parquet shards or WARC bodies.
+per-domain top N, performs the final ranking locally, and publishes the resulting DuckDB to RustFS.
+It does not download complete URL-index Parquet shards or WARC bodies.
 
 ## Pipeline
 
@@ -13,8 +13,9 @@ Parquet shards or WARC bodies.
 4. Reuse every complete candidate on restart and retry only missing or invalid candidates.
 5. Take a deterministic, HEAD-only sample of WARC object sizes and cache it as JSON.
 6. Read all candidates locally, calculate the global top N, join pages to stable `warc_index` values,
-   aggregate WARC statistics, checkpoint, and atomically publish `catalog.duckdb`, `warcs.parquet`,
-   and `pages.parquet`.
+   aggregate WARC statistics, checkpoint, and atomically publish local `catalog.duckdb`.
+7. Remove the previous remote `ready.json`, upload `catalog.duckdb` with SHA-256 metadata, verify its
+   size and hash metadata with a HEAD request, and upload the new `ready.json` last.
 
 ### Why local top N is exact
 
@@ -43,6 +44,20 @@ make build
 `make build` creates `bin/cc-warc-index-builder` as a link to the locked uv environment.
 
 ## Run
+
+RustFS publication is part of a successful build, including a run that reuses an existing local catalog.
+Configure the S3-compatible endpoint and catalog base before starting:
+
+```bash
+export CORPSCOUT_S3_ENDPOINT=http://rustfs:9000
+export CORPSCOUT_S3_ACCESS_KEY=<access-key>
+export CORPSCOUT_S3_SECRET_KEY=<secret-key>
+export CORPSCOUT_S3_REGION=us-east-1
+export COMMONCRAWL_CATALOG_S3_BASE=s3://crawls/commoncrawl/catalogs
+```
+
+The region defaults to `us-east-1`; RustFS access always uses path-style S3 URLs. The base URI supplies
+the bucket and optional object-key prefix. Credentials are read only from the environment.
 
 ```bash
 ./bin/cc-warc-index-builder \
@@ -75,18 +90,31 @@ For the command above:
     │   └── v1-<index-manifest-sha256>/
     │       ├── part-00000.parquet
     │       └── ...
-    ├── catalog.duckdb
-    ├── warcs.parquet
-    └── pages.parquet
+    └── catalog.duckdb
 ```
 
-DuckDB spill directories and partial publication files are created beneath `pages25/` and removed after a
-successful build.
+DuckDB spill directories and `catalog.duckdb.partial` are created beneath `pages25/` and removed after a
+successful build. The completed catalog contains both the WARC inventory and selected page coordinates.
 
-`warcs.parquet` is the portable WARC inventory with selected page/byte totals. `pages.parquet` is the
-portable processing worklist with page URLs and WARC record coordinates. Both are ZSTD-compressed,
-validated before atomic publication, and can be recreated from an existing `catalog.duckdb` without
-querying Common Crawl again.
+For the example configuration, the remote layout is:
+
+```text
+s3://crawls/commoncrawl/catalogs/CC-MAIN-2026-25/pages25/
+├── catalog.duckdb
+└── ready.json
+```
+
+Candidate Parquets remain local. A consumer must treat `ready.json` as the commit marker; the remote
+DuckDB is not ready while that marker is absent. It contains:
+
+```json
+{
+  "schema_version": 1,
+  "crawl_id": "CC-MAIN-2026-25",
+  "selection": "pages25",
+  "catalog": {"key": ".../catalog.duckdb", "size_bytes": 123, "sha256": "..."}
+}
+```
 
 ### DuckDB tables
 
@@ -110,6 +138,9 @@ percentage. A downloader must obtain the specific object's size before making an
   per-shard files themselves are the resume state.
 - The WARC-size JSON sample is reused only when its crawl and deterministic sampled objects match.
 - The final DuckDB is built separately and atomically replaces the published catalog after checkpointing.
+- Remote replacement first deletes the old readiness marker. Any upload or HEAD-verification failure exits
+  nonzero and leaves the remote catalog uncommitted; rerunning uploads the existing healthy local DuckDB
+  without rebuilding it.
 - One build lock prevents two processes from sharing partial paths for the same crawl and selection.
 - An existing catalog that fails identity or health checks is preserved unless `--rebuild-catalog` is
   supplied.
@@ -155,6 +186,7 @@ mkdir -p /home/graovic/cc-warc-index-data /home/graovic/logs
 cd /home/graovic/cc-warc-index-builder
 uv sync --frozen
 make build
+set -a; source .env; set +a
 tmux new -s cc-warc-index
 
 ./bin/cc-warc-index-builder \

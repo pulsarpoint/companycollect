@@ -5,6 +5,31 @@ import pytest
 
 import warc_index_builder.__main__ as command
 from warc_index_builder.catalog import CatalogResult
+from warc_index_builder.publication import (
+    CatalogDestination,
+    CatalogPublication,
+    PublishedObject,
+)
+
+
+def _destination() -> CatalogDestination:
+    return CatalogDestination(
+        bucket="crawls",
+        prefix="commoncrawl/catalogs",
+        endpoint="http://rustfs:9000",
+        region="us-east-1",
+        access_key="access",
+        secret_key="secret",
+    )
+
+
+def _publication(crawl: str, selection: str) -> CatalogPublication:
+    prefix = f"commoncrawl/catalogs/{crawl}/{selection}"
+    return CatalogPublication(
+        bucket="crawls",
+        ready_key=f"{prefix}/ready.json",
+        catalog=PublishedObject(f"{prefix}/catalog.duckdb", 12, "a" * 64),
+    )
 
 
 def test_cli_defaults_and_python_314_runtime(tmp_path: Path) -> None:
@@ -32,6 +57,26 @@ def test_cli_rejects_invalid_positive_options(arguments: list[str]) -> None:
         command.parse_options(arguments)
 
 
+def test_missing_rustfs_catalog_configuration_fails_before_catalog_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = command.parse_options(
+        ["--crawl", "CC-MAIN-2026-25", "--base", str(tmp_path)]
+    )
+    monkeypatch.delenv("COMMONCRAWL_CATALOG_S3_BASE", raising=False)
+    monkeypatch.setattr(
+        command,
+        "read_catalog",
+        lambda *_args, **_kwargs: pytest.fail(
+            "catalog must not be read before publication configuration validates"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="COMMONCRAWL_CATALOG_S3_BASE is required"):
+        command.run(options)
+
+
 def test_existing_catalog_returns_without_network_or_candidate_queries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -50,17 +95,28 @@ def test_existing_catalog_returns_without_network_or_candidate_queries(
             path, 100_000, 80_000, 1_000_000, 20_000_000, 1e9, True
         ),
     )
-    published = []
+    published: list[Path] = []
+    monkeypatch.setattr(
+        command,
+        "destination_from_environment",
+        lambda _environment: _destination(),
+    )
 
-    def publish_parquets(path: Path) -> tuple[Path, Path]:
-        published.append(path)
-        warcs_path = path.with_name("warcs.parquet")
-        pages_path = path.with_name("pages.parquet")
-        warcs_path.write_bytes(b"PAR1xxxxPAR1")
-        pages_path.write_bytes(b"PAR1xxxxPAR1")
-        return warcs_path, pages_path
+    def publish_catalog(
+        _destination: CatalogDestination,
+        *,
+        crawl: str,
+        selection: str,
+        catalog_path: Path,
+    ) -> CatalogPublication:
+        published.append(catalog_path)
+        return _publication(crawl, selection)
 
-    monkeypatch.setattr(command, "publish_parquets", publish_parquets)
+    monkeypatch.setattr(
+        command,
+        "publish_catalog",
+        publish_catalog,
+    )
 
     class ForbiddenClient:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -73,15 +129,17 @@ def test_existing_catalog_returns_without_network_or_candidate_queries(
     assert [event["msg"] for event in events] == [
         "WARC index build started",
         "catalog ready",
-        "portable Parquets ready",
+        "RustFS catalog ready",
     ]
     assert events[-2]["catalog"] == str(catalog_path)
     assert events[-2]["reused"] is True
-    assert events[-1]["reused"] is False
-    assert events[-1]["warcs_bytes"] == 12
-    assert events[-1]["warcs_size"] == command.binary_size(12)
-    assert events[-1]["pages_bytes"] == 12
-    assert events[-1]["pages_size"] == command.binary_size(12)
+    assert events[-1]["ready_key"].endswith("/CC-MAIN-2026-25/pages25/ready.json")
+    assert events[-1]["catalog_key"].endswith(
+        "/CC-MAIN-2026-25/pages25/catalog.duckdb"
+    )
+    assert events[-1]["catalog_bytes"] == 12
+    assert events[-1]["catalog_size"] == command.binary_size(12)
+    assert events[-1]["catalog_sha256"] == "a" * 64
     assert published == [catalog_path]
 
 
@@ -97,6 +155,12 @@ def test_invalid_existing_catalog_requires_explicit_rebuild(
     )
     catalog_path.parent.mkdir(parents=True)
     catalog_path.write_bytes(b"not a DuckDB catalog")
+
+    monkeypatch.setattr(
+        command,
+        "destination_from_environment",
+        lambda _environment: _destination(),
+    )
 
     monkeypatch.setattr(
         command.httpx,

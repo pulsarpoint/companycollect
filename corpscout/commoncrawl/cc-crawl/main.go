@@ -215,6 +215,9 @@ func main() {
 		}
 	}
 	lg.Info("complete", "mode", mode, "lo", lo, "hi", hi, "done", done, "skipped", skipped, "failed", failed)
+	if failed > 0 {
+		os.Exit(1)
+	}
 }
 
 // outcome is what a per-WARC runner reports back to the main loop for tallying.

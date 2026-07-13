@@ -1,0 +1,6 @@
+/cc-dns-scan
+/bin/
+*.db
+*.db-shm
+*.db-wal
+dns-cycle-state.json

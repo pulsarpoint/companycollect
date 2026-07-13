@@ -11,6 +11,10 @@ directly from Common Crawl. There is no runtime raw downloader or URL-index-part
 | `cc-crawl/` | Runs an inclusive WARC-index range and preserves local produce → load → `.loaded` orchestration. |
 | `cc-enrich-worker/` | Chooses exact source ranges or one whole-WARC download, processes pages, writes Parquet, and loads ClickHouse. |
 | `cc-raw/` | Shared direct Common Crawl fetch and WARC-record parser. |
+| `cc-dns-scan/` | Resolves Common Crawl domains against authoritative DNS and persists delegation/record observations. |
+| `cc-dns-axfr/` | Independently probes persisted authoritative endpoints for zone-transfer exposure. |
+| `deploy/cc_dns_scan/` | Deploys the authoritative DNS scanner, Unbound, and DNS host tuning. |
+| `deploy/cc_dns_axfr/` | Independently deploys the AXFR scanner. |
 | `reference-builder/` | Builds NACE and page-type reference embeddings for the industry processor. |
 
 ClickHouse DDL lives in `../clickhouse/migrations/`. The worker never creates tables.
@@ -30,22 +34,38 @@ uv run --frozen cc-warc-index-builder \
   --memory-limit 24GB
 ```
 
-Remote index shards are retried and completed candidate shards are reused. The final runtime files are:
+Remote index shards are retried and completed candidate shards are reused. After checkpointing and
+validating the single DuckDB catalog, the builder uploads it to RustFS and writes `ready.json` last:
 
 ```text
-/data/commoncrawl/CC-MAIN-2026-25/warc-index/pages25/warcs.parquet
-/data/commoncrawl/CC-MAIN-2026-25/warc-index/pages25/pages.parquet
+s3://crawls/commoncrawl/catalogs/CC-MAIN-2026-25/pages25/catalog.duckdb
+s3://crawls/commoncrawl/catalogs/CC-MAIN-2026-25/pages25/ready.json
 ```
 
-`warcs.parquet` assigns a stable zero-based index to every WARC object. `pages.parquet` contains only the
-selected pages with their WARC index, compressed offset, compressed length, URL, domain, and domain page
-rank. The DuckDB catalog is a builder artifact; processing machines need only the two Parquet files.
+`catalog.duckdb` assigns a stable zero-based index to every WARC object and contains the selected pages
+with their WARC index, compressed offset, compressed length, URL, domain, and domain page rank. RustFS is
+the authoritative catalog store. A processing machine downloads and verifies each committed catalog once,
+then queries this local read-only cache:
 
-Copy those files to the same `<base>/<crawl>/warc-index/pagesN/` path on every processing machine.
+```text
+<base>/<crawl>/warc-index/<selection>/catalog.duckdb
+<base>/<crawl>/warc-index/<selection>/catalog.duckdb.sha256
+```
 
-## 2. Configure direct Common Crawl access
+The SHA sidecar records the verified digest from `ready.json`. Workers reuse the cache while it matches the
+committed digest; they do not attach to the DuckDB database remotely.
 
-Copy `.env.example` to `.env`.
+## 2. Configure the catalog and Common Crawl access
+
+Copy `.env.example` to `.env`. Configure the RustFS catalog once; the builder and worker append the crawl
+ID and `pagesN` selection themselves:
+
+```bash
+CORPSCOUT_S3_ENDPOINT=http://rustfs:9000
+CORPSCOUT_S3_ACCESS_KEY=...
+CORPSCOUT_S3_SECRET_KEY=...
+COMMONCRAWL_CATALOG_S3_BASE=s3://crawls/commoncrawl/catalogs
+```
 
 Signed S3 is the default and preferred path on EC2:
 
@@ -72,16 +92,30 @@ Industry/embed additionally use `COMMONCRAWL_EMBED_*`; industry and `load` use `
 
 ## 3. Build and test the Go runtime
 
+Build all four runtime binaries from this directory:
+
+```bash
+make
+make test
+make vet
+```
+
+Individual modules remain directly runnable:
+
 ```bash
 make -C cc-raw test
 make -C cc-enrich-worker test
 make -C cc-crawl test
+make -C cc-dns-scan test
+make -C cc-dns-axfr test
 
 make -C cc-enrich-worker build
 make -C cc-crawl build
+make -C cc-dns-scan build
+make -C cc-dns-axfr build
 ```
 
-For production, deploy both binaries together with the versioned Ansible flow instead of copying local
+For production, deploy the WARC processor pair with its versioned Ansible flow instead of copying local
 `bin/` files. The control machine cross-compiles static Linux binaries and activates one paired release:
 
 ```bash
@@ -90,6 +124,26 @@ ansible-playbook site.yml --limit commoncrawl2 --ask-become-pass
 ```
 
 See [`deploy/ansible/README.md`](deploy/ansible/README.md) for release layout, safety checks, and rollback.
+DNS and AXFR have independent runbooks under [`deploy/cc_dns_scan`](deploy/cc_dns_scan/) and
+[`deploy/cc_dns_axfr`](deploy/cc_dns_axfr/).
+
+Deploy DNS first, then AXFR. Each playbook installs its unit but deliberately leaves it stopped and
+disabled; start and enable it only after the playbook succeeds:
+
+```bash
+cd deploy/cc_dns_scan
+ansible-playbook site.yml
+ssh root@hetzner01 'systemctl enable --now cc-dns-scan'
+ssh root@hetzner01 'journalctl -u cc-dns-scan -n 100 -f'
+
+cd ../cc_dns_axfr
+ansible-playbook site.yml
+ssh root@hetzner01 'systemctl enable --now cc-dns-axfr'
+ssh root@hetzner01 'journalctl -u cc-dns-axfr -n 100 -f'
+```
+
+`cc-axfr-scan` is the obsolete pre-split unit name. Do not use
+`journalctl -u cc-axfr-scan`; the standalone scanner logs under `cc-dns-axfr`.
 
 ## 4. Process WARC indexes
 
@@ -118,14 +172,16 @@ Industry uses only catalog rank-1 pages:
 
 For each WARC index, the worker:
 
-1. reads its catalog pages;
-2. filters to rank 1 for industry/embed;
-3. HEADs a non-empty WARC for its actual size;
-4. compares selected compressed bytes with the configured threshold;
-5. either issues exact record ranges or streams the complete WARC to a temporary local file;
-6. parses the same indexed gzip members through the existing processor;
-7. removes a temporary complete WARC after processing; and
-8. writes local Parquet output.
+1. validates `ready.json`, then downloads `catalog.duckdb` only when the verified local cache is absent or
+   its SHA sidecar differs;
+2. queries the cached DuckDB for the WARC and its selected page coordinates;
+3. filters to rank 1 for industry/embed;
+4. HEADs a non-empty WARC for its actual size;
+5. compares selected compressed bytes with the configured threshold;
+6. either issues exact record ranges or streams the complete WARC to a temporary local file;
+7. parses the same indexed gzip members through the existing processor;
+8. removes a temporary complete WARC after processing; and
+9. writes local Parquet output.
 
 Whole-WARC mode uses local concurrent `ReadAt` calls and never holds the complete object in memory. A
 WARC with no pages for the selected processor completes without AWS initialization or network traffic.

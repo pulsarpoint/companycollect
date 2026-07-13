@@ -1,7 +1,11 @@
 # Durable Hostname Discovery, Provenance & CT Enrichment — Design Spec
 
-Status: **spec only, not implemented.** Decisions recorded 2026-07-09. Supersedes the
-earlier CT-only draft (this file was renamed from `ct-hostname-enrichment-spec.md`).
+> Historical design record. DNS resolution and AXFR now run as the separate
+> [`cc-dns-scan`](../cc-dns-scan/) and [`cc-dns-axfr`](../cc-dns-axfr/) projects. References below to
+> a combined `cc-dns-worker` describe the architecture when this proposal was written.
+
+Status: **historical proposal, superseded by the split scanners.** Decisions recorded 2026-07-09.
+Supersedes the earlier CT-only draft (this file was renamed from `ct-hostname-enrichment-spec.md`).
 
 Give `cc-dns-worker` a **durable, monotonic per-domain hostname set** so every hostname we
 ever discover — from Certificate Transparency, from an AXFR zone transfer, or from the

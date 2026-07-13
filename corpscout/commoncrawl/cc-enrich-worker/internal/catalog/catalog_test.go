@@ -1,215 +1,196 @@
 package catalog
 
 import (
+	"context"
+	"database/sql"
 	"math"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/parquet-go/parquet-go"
 )
 
-func writeCatalogFixture(t *testing.T, warcs []Warc, pages []pageRow) (string, string) {
-	t.Helper()
-	directory := t.TempDir()
-	warcsPath := filepath.Join(directory, "warcs.parquet")
-	pagesPath := filepath.Join(directory, "pages.parquet")
-	if err := parquet.WriteFile(warcsPath, warcs); err != nil {
-		t.Fatal(err)
-	}
-	if err := parquet.WriteFile(pagesPath, pages, parquet.MaxRowsPerRowGroup(2)); err != nil {
-		t.Fatal(err)
-	}
-	return warcsPath, pagesPath
+type catalogFixturePage struct {
+	warcIndex uint32
+	domain    string
+	url       string
+	rank      uint64
+	offset    uint64
+	length    uint64
 }
 
-func TestLoadRangeReturnsOnlyRequestedWarcs(t *testing.T) {
-	warcsPath, pagesPath := writeCatalogFixture(t,
-		[]Warc{
-			{WarcIndex: 0, WarcFilename: "zero.warc.gz"},
-			{WarcIndex: 1, WarcFilename: "one.warc.gz", SelectedPages: 2, SelectedBytes: 30},
-			{WarcIndex: 2, WarcFilename: "two.warc.gz", SelectedPages: 1, SelectedBytes: 30},
-		},
-		[]pageRow{
-			{WarcIndex: 1, RootDomain: "one.example", URL: "https://one.example/", DomainPageRank: 1, WarcRecordOffset: 10, WarcRecordLength: 10},
-			{WarcIndex: 1, RootDomain: "one.example", URL: "https://one.example/about", DomainPageRank: 2, WarcRecordOffset: 30, WarcRecordLength: 20},
-			{WarcIndex: 2, RootDomain: "two.example", URL: "https://two.example/", DomainPageRank: 1, WarcRecordOffset: 5, WarcRecordLength: 30},
-		},
-	)
-
-	warcs, items, err := LoadRange(warcsPath, pagesPath, 1, 1)
+func writeCatalogFixture(t *testing.T, warcs []Warc, pages []catalogFixturePage) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "catalog.duckdb")
+	database, err := sql.Open("duckdb", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warcs) != 1 || warcs[0].WarcIndex != 1 {
-		t.Fatalf("warcs = %+v, want only WARC index 1", warcs)
+	if _, err := database.Exec(`
+		CREATE TABLE warcs (
+			warc_index UINTEGER,
+			warc_filename VARCHAR
+		);
+		CREATE TABLE pages (
+			warc_index UINTEGER,
+			root_domain VARCHAR,
+			url VARCHAR,
+			domain_page_rank UBIGINT,
+			warc_record_offset UBIGINT,
+			warc_record_length UBIGINT
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for _, warc := range warcs {
+		if _, err := database.Exec("INSERT INTO warcs VALUES (?, ?)", warc.WarcIndex, warc.WarcFilename); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, page := range pages {
+		if _, err := database.Exec(
+			"INSERT INTO pages VALUES (?, ?, ?, CAST(? AS UBIGINT), CAST(? AS UBIGINT), CAST(? AS UBIGINT))",
+			page.warcIndex,
+			page.domain,
+			page.url,
+			strconv.FormatUint(page.rank, 10),
+			strconv.FormatUint(page.offset, 10),
+			strconv.FormatUint(page.length, 10),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.Exec("FORCE CHECKPOINT"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadWARCReturnsOnlyRequestedWARC(t *testing.T) {
+	path := writeCatalogFixture(t,
+		[]Warc{
+			{WarcIndex: 0, WarcFilename: "zero.warc.gz"},
+			{WarcIndex: 1, WarcFilename: "one.warc.gz"},
+			{WarcIndex: 2, WarcFilename: "two.warc.gz"},
+		},
+		[]catalogFixturePage{
+			{warcIndex: 1, domain: "one.example", url: "https://one.example/", rank: 1, offset: 10, length: 10},
+			{warcIndex: 2, domain: "two.example", url: "https://two.example/", rank: 1, offset: 5, length: 30},
+			{warcIndex: 1, domain: "one.example", url: "https://one.example/about", rank: 2, offset: 30, length: 20},
+		},
+	)
+
+	warc, items, err := LoadWARC(context.Background(), path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warc.WarcIndex != 1 || warc.WarcFilename != "one.warc.gz" {
+		t.Fatalf("warc = %+v", warc)
 	}
 	if len(items) != 2 {
 		t.Fatalf("items = %+v, want two pages", items)
 	}
-	if items[0].WarcIndex != 1 || items[0].WarcFilename != "one.warc.gz" || !items[0].Primary {
+	if items[0].Offset != 10 || !items[0].Primary || items[0].WarcFilename != warc.WarcFilename {
 		t.Fatalf("first item = %+v", items[0])
 	}
-	if items[1].WarcIndex != 1 || items[1].WarcFilename != "one.warc.gz" || items[1].Primary {
+	if items[1].Offset != 30 || items[1].Primary || items[1].WarcFilename != warc.WarcFilename {
 		t.Fatalf("second item = %+v", items[1])
 	}
 }
 
-func TestLoadRangeAcceptsZeroPageWarc(t *testing.T) {
-	warcsPath, pagesPath := writeCatalogFixture(t,
-		[]Warc{
-			{WarcIndex: 0, WarcFilename: "zero.warc.gz"},
-			{WarcIndex: 1, WarcFilename: "one.warc.gz", SelectedPages: 1, SelectedBytes: 10},
-		},
-		[]pageRow{
-			{WarcIndex: 1, RootDomain: "one.example", URL: "https://one.example/", DomainPageRank: 1, WarcRecordOffset: 10, WarcRecordLength: 10},
-		},
-	)
+func TestLoadWARCAcceptsZeroPageWARC(t *testing.T) {
+	path := writeCatalogFixture(t, []Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz"}}, nil)
 
-	warcs, items, err := LoadRange(warcsPath, pagesPath, 0, 0)
+	warc, items, err := LoadWARC(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warcs) != 1 || warcs[0].WarcIndex != 0 {
-		t.Fatalf("warcs = %+v, want zero-page WARC", warcs)
-	}
-	if len(items) != 0 {
-		t.Fatalf("items = %+v, want no pages", items)
+	if warc.WarcIndex != 0 || warc.WarcFilename != "zero.warc.gz" || len(items) != 0 {
+		t.Fatalf("warc = %+v items = %+v", warc, items)
 	}
 }
 
-func TestLoadRangeRejectsInvalidPageSchema(t *testing.T) {
-	type invalidPageRow struct {
-		WarcIndex        uint32 `parquet:"warc_index"`
-		RootDomain       string `parquet:"root_domain"`
-		URL              uint64 `parquet:"url"`
-		DomainPageRank   uint16 `parquet:"domain_page_rank"`
-		WarcRecordOffset uint64 `parquet:"warc_record_offset"`
-		WarcRecordLength uint64 `parquet:"warc_record_length"`
-	}
+func TestLoadWARCRejectsAbsentWARC(t *testing.T) {
+	path := writeCatalogFixture(t, []Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz"}}, nil)
 
-	directory := t.TempDir()
-	warcsPath := filepath.Join(directory, "warcs.parquet")
-	pagesPath := filepath.Join(directory, "pages.parquet")
-	if err := parquet.WriteFile(warcsPath, []Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz", SelectedPages: 1, SelectedBytes: 10}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := parquet.WriteFile(pagesPath, []invalidPageRow{{
-		WarcIndex: 0, RootDomain: "one.example", URL: 1, DomainPageRank: 1,
-		WarcRecordOffset: 10, WarcRecordLength: 10,
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	_, _, err := LoadRange(warcsPath, pagesPath, 0, 0)
-	if err == nil || !strings.Contains(err.Error(), `column "url" has type uint64, want string`) {
+	_, _, err := LoadWARC(context.Background(), path, 1)
+	if err == nil || !strings.Contains(err.Error(), "WARC index 1 is absent") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestLoadWarcsRejectsInvalidSchema(t *testing.T) {
-	type invalidWarcRow struct {
-		WarcIndex     uint32 `parquet:"warc_index"`
-		WarcFilename  string `parquet:"warc_filename"`
-		SelectedPages uint64 `parquet:"selected_pages"`
-	}
-
-	path := filepath.Join(t.TempDir(), "warcs.parquet")
-	if err := parquet.WriteFile(path, []invalidWarcRow{{WarcIndex: 1, WarcFilename: "one.warc.gz", SelectedPages: 1}}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := LoadWarcs(path)
-	if err == nil || !strings.Contains(err.Error(), `missing required column "selected_bytes"`) {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLoadRangeRequiresContentLanguagesColumn(t *testing.T) {
-	type pageWithoutLanguages struct {
-		WarcIndex        uint32 `parquet:"warc_index"`
-		RootDomain       string `parquet:"root_domain"`
-		URL              string `parquet:"url"`
-		DomainPageRank   uint16 `parquet:"domain_page_rank"`
-		WarcRecordOffset uint64 `parquet:"warc_record_offset"`
-		WarcRecordLength uint64 `parquet:"warc_record_length"`
-	}
-
-	directory := t.TempDir()
-	warcsPath := filepath.Join(directory, "warcs.parquet")
-	pagesPath := filepath.Join(directory, "pages.parquet")
-	if err := parquet.WriteFile(warcsPath, []Warc{{WarcFilename: "zero.warc.gz", SelectedPages: 1, SelectedBytes: 10}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := parquet.WriteFile(pagesPath, []pageWithoutLanguages{{
-		RootDomain: "one.example", URL: "https://one.example/", DomainPageRank: 1,
-		WarcRecordOffset: 10, WarcRecordLength: 10,
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	_, _, err := LoadRange(warcsPath, pagesPath, 0, 0)
-	if err == nil || !strings.Contains(err.Error(), `missing required column "content_languages"`) {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLoadWarcsRequiresOrderedContiguousIndexes(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "warcs.parquet")
-	if err := parquet.WriteFile(path, []Warc{
-		{WarcIndex: 0, WarcFilename: "zero.warc.gz"},
-		{WarcIndex: 2, WarcFilename: "two.warc.gz"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := LoadWarcs(path)
-	if err == nil || !strings.Contains(err.Error(), "indexes must be ordered and contiguous from zero") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLoadRangeRejectsRangeLargerThanInventory(t *testing.T) {
-	warcsPath, pagesPath := writeCatalogFixture(t,
-		[]Warc{{WarcFilename: "zero.warc.gz"}},
-		nil,
-	)
-
-	_, _, err := LoadRange(warcsPath, pagesPath, 0, math.MaxUint32)
-	if err == nil || !strings.Contains(err.Error(), "exceeds inventory indexes") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLoadRangeRejectsInvalidCoordinates(t *testing.T) {
+func TestLoadWARCRejectsInvalidPageValues(t *testing.T) {
 	tests := []struct {
-		name   string
-		offset uint64
-		length uint64
+		name      string
+		page      catalogFixturePage
+		wantError string
 	}{
-		{name: "zero length", offset: 10, length: 0},
-		{name: "offset exceeds int64", offset: math.MaxInt64 + 1, length: 1},
-		{name: "length exceeds int64", offset: 0, length: math.MaxInt64 + 1},
-		{name: "range end overflows int64", offset: math.MaxInt64, length: 2},
+		{
+			name:      "missing domain",
+			page:      catalogFixturePage{url: "https://example.com/", rank: 1, length: 1},
+			wantError: "missing domain or URL",
+		},
+		{
+			name:      "zero rank",
+			page:      catalogFixturePage{domain: "example.com", url: "https://example.com/", length: 1},
+			wantError: "invalid domain rank 0",
+		},
+		{
+			name:      "rank exceeds uint16",
+			page:      catalogFixturePage{domain: "example.com", url: "https://example.com/", rank: math.MaxUint16 + 1, length: 1},
+			wantError: "invalid domain rank 65536",
+		},
+		{
+			name:      "zero length",
+			page:      catalogFixturePage{domain: "example.com", url: "https://example.com/", rank: 1},
+			wantError: "invalid WARC coordinates",
+		},
+		{
+			name:      "offset exceeds int64",
+			page:      catalogFixturePage{domain: "example.com", url: "https://example.com/", rank: 1, offset: math.MaxInt64 + 1, length: 1},
+			wantError: "invalid WARC coordinates",
+		},
+		{
+			name:      "range end overflows int64",
+			page:      catalogFixturePage{domain: "example.com", url: "https://example.com/", rank: 1, offset: math.MaxInt64, length: 2},
+			wantError: "invalid WARC coordinates",
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			selectedBytes := test.length
-			if selectedBytes == 0 {
-				selectedBytes = 1
-			}
-			warcsPath, pagesPath := writeCatalogFixture(t,
-				[]Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz", SelectedPages: 1, SelectedBytes: selectedBytes}},
-				[]pageRow{{
-					WarcIndex: 0, RootDomain: "one.example", URL: "https://one.example/", DomainPageRank: 1,
-					WarcRecordOffset: test.offset, WarcRecordLength: test.length,
-				}},
+			test.page.warcIndex = 0
+			path := writeCatalogFixture(
+				t,
+				[]Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz"}},
+				[]catalogFixturePage{test.page},
 			)
-
-			_, _, err := LoadRange(warcsPath, pagesPath, 0, 0)
-			if err == nil || !strings.Contains(err.Error(), "invalid WARC coordinates") {
-				t.Fatalf("error = %v", err)
+			_, _, err := LoadWARC(context.Background(), path, 0)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("error = %v, want %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestLoadWARCRequiresExpectedTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "catalog.duckdb")
+	database, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("CREATE TABLE unrelated (value INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = LoadWARC(context.Background(), path, 0)
+	if err == nil || !strings.Contains(err.Error(), "query WARC index 0") {
+		t.Fatalf("error = %v", err)
 	}
 }

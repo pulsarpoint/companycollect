@@ -60,6 +60,28 @@ func (p CompanyProfile) Empty() bool {
 		p.Email == "" && p.Phone == "" && p.FoundingYear == 0 && p.EmployeeCount == 0 && len(p.SameAs) == 0
 }
 
+// JSONLDEntity is one independently addressable node from a page's JSON-LD scripts. ScriptIndex
+// and EntityPath identify the node within the immutable archived page; fields are never merged
+// across nodes, and RawJSON retains properties that do not have dedicated columns.
+type JSONLDEntity struct {
+	ScriptIndex  uint32
+	EntityPath   string
+	ID           string
+	Types        []string
+	Name         string
+	LegalName    string
+	Description  string
+	URL          string
+	Logo         string
+	Email        string
+	Phone        string
+	SameAs       []string
+	Country      string
+	FoundingYear uint16
+	EmployeeCount uint32
+	RawJSON      string
+}
+
 // WorklistItem is one row of the index-driven worklist (top-K pages per domain).
 type WorklistItem struct {
 	RootDomain, URL, WarcFilename string

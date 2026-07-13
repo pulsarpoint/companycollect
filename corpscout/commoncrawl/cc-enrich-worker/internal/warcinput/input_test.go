@@ -3,6 +3,7 @@ package warcinput
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"math"
 	"os"
@@ -10,20 +11,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/parquet-go/parquet-go"
-
 	"cc-enrich-worker/internal/catalog"
 	"cc-enrich-worker/internal/model"
 )
 
 type pageFixture struct {
-	WARCIndex        uint32  `parquet:"warc_index"`
-	RootDomain       string  `parquet:"root_domain"`
-	URL              string  `parquet:"url"`
-	DomainPageRank   uint16  `parquet:"domain_page_rank"`
-	ContentLanguages *string `parquet:"content_languages,optional"`
-	WARCRecordOffset uint64  `parquet:"warc_record_offset"`
-	WARCRecordLength uint64  `parquet:"warc_record_length"`
+	WARCIndex        uint32
+	RootDomain       string
+	URL              string
+	DomainPageRank   uint16
+	WARCRecordOffset uint64
+	WARCRecordLength uint64
 }
 
 func writeCatalog(t *testing.T, baseDirectory, crawlID, selection string, warcs []catalog.Warc, pages []pageFixture) {
@@ -32,10 +30,45 @@ func writeCatalog(t *testing.T, baseDirectory, crawlID, selection string, warcs 
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := parquet.WriteFile(filepath.Join(directory, "warcs.parquet"), warcs); err != nil {
+	database, err := sql.Open("duckdb", filepath.Join(directory, "catalog.duckdb"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := parquet.WriteFile(filepath.Join(directory, "pages.parquet"), pages); err != nil {
+	if _, err := database.Exec(`
+		CREATE TABLE warcs (warc_index UINTEGER, warc_filename VARCHAR);
+		CREATE TABLE pages (
+			warc_index UINTEGER,
+			root_domain VARCHAR,
+			url VARCHAR,
+			domain_page_rank USMALLINT,
+			warc_record_offset UBIGINT,
+			warc_record_length UBIGINT
+		)
+	`); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	for _, warc := range warcs {
+		if _, err := database.Exec("INSERT INTO warcs VALUES (?, ?)", warc.WarcIndex, warc.WarcFilename); err != nil {
+			database.Close()
+			t.Fatal(err)
+		}
+	}
+	for _, page := range pages {
+		if _, err := database.Exec(
+			"INSERT INTO pages VALUES (?, ?, ?, ?, ?, ?)",
+			page.WARCIndex,
+			page.RootDomain,
+			page.URL,
+			page.DomainPageRank,
+			page.WARCRecordOffset,
+			page.WARCRecordLength,
+		); err != nil {
+			database.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -43,7 +76,7 @@ func writeCatalog(t *testing.T, baseDirectory, crawlID, selection string, warcs 
 func TestLoadPlanFiltersPrimaryPagesBeforeSummingBytes(t *testing.T) {
 	baseDirectory := t.TempDir()
 	writeCatalog(t, baseDirectory, "CC-MAIN-2026-25", "pages25",
-		[]catalog.Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz", SelectedPages: 2, SelectedBytes: 30}},
+		[]catalog.Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz"}},
 		[]pageFixture{
 			{WARCIndex: 0, RootDomain: "example.com", URL: "https://example.com/", DomainPageRank: 1, WARCRecordOffset: 10, WARCRecordLength: 10},
 			{WARCIndex: 0, RootDomain: "example.com", URL: "https://example.com/about", DomainPageRank: 2, WARCRecordOffset: 30, WARCRecordLength: 20},

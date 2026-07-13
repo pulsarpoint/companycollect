@@ -26,7 +26,7 @@ COMMONCRAWL_DOMAINS_ASSET = dg.AssetSpec(
 )
 DNS_RECORD_OBSERVATIONS_ASSET = dg.AssetSpec(
     key="commoncrawl_domain_dns_record_observations",
-    description="Retry-safe DNS record observations written by cc-dns-worker.",
+    description="Retry-safe DNS record observations written by cc-dns-scan and cc-dns-axfr.",
     group_name=COMMONCRAWL_HOSTNAME_GROUP,
     kinds={"clickhouse", "dns", "axfr"},
 )

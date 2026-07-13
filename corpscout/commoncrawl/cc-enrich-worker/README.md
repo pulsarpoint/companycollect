@@ -5,12 +5,26 @@ Processes selected pages directly from Common Crawl using the static WARC-orient
 
 ## Input contract
 
-For selection `pages25`, the worker reads:
+Set `COMMONCRAWL_CATALOG_S3_BASE` to the RustFS bucket and catalog prefix. For example, with
+`COMMONCRAWL_CATALOG_S3_BASE=s3://crawls/commoncrawl/catalogs` and selection `pages25`, the worker reads:
 
 ```text
-<base>/<crawl>/warc-index/pages25/warcs.parquet
-<base>/<crawl>/warc-index/pages25/pages.parquet
+s3://crawls/commoncrawl/catalogs/<crawl>/pages25/ready.json
+s3://crawls/commoncrawl/catalogs/<crawl>/pages25/catalog.duckdb
 ```
+
+RustFS is the authoritative catalog store. The worker fetches `ready.json` first and validates the
+requested crawl and selection plus the committed catalog key, size, and SHA-256. It caches the complete
+catalog once under the configured local base:
+
+```text
+<base>/<crawl>/warc-index/<selection>/catalog.duckdb
+<base>/<crawl>/warc-index/<selection>/catalog.duckdb.sha256
+```
+
+A missing or different SHA sidecar causes a fresh download to a partial file, size and SHA verification,
+and atomic cache replacement. A matching cache is reused by subsequent WARC runs. All runtime DuckDB
+queries use this local read-only file; the worker does not attach directly to the RustFS object.
 
 `--part N` means WARC index `N`. The worker loads that WARC's selected page coordinates and calculates
 the compressed bytes required by the current processor:
@@ -24,8 +38,8 @@ once to a temporary local file and indexed records are served with concurrent `R
 threshold, the existing exact object-range reader is used. The complete WARC is never buffered in memory and
 the temporary file is removed when processing finishes or input preparation fails.
 
-A WARC with no pages for the requested processor is a valid successful unit. It does not initialize an
-AWS client or make a network request.
+A WARC with no pages for the requested processor is a valid successful unit. After reading its catalog
+entry, the worker does not initialize the Common Crawl WARC client or access the WARC object.
 
 ## Processing lifecycle
 
@@ -85,7 +99,7 @@ and is preferred on EC2.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--base` | `OUT_BASE_DIR` | Required root containing the crawl catalog and outputs. |
+| `--base` | `OUT_BASE_DIR` | Required local output and catalog-cache root. |
 | `--crawl-id` | required | Crawl identity, for example `CC-MAIN-2026-25`. |
 | `--selection` | `pages25` | Catalog selection directory. |
 | `--part` | required | Zero-based WARC index. |
@@ -105,6 +119,10 @@ Industry/embed/both also accept `--embed-batch` and `--embed-concurrency`. Tech/
 | Variable | Meaning |
 |---|---|
 | `OUT_BASE_DIR` | Default `--base`. |
+| `COMMONCRAWL_CATALOG_S3_BASE` | Required authoritative catalog location in `s3://bucket/prefix` form. |
+| `CORPSCOUT_S3_ENDPOINT` | Required RustFS S3-compatible endpoint. |
+| `CORPSCOUT_S3_REGION` | RustFS signing region; defaults to `us-east-1`. |
+| `CORPSCOUT_S3_ACCESS_KEY`, `CORPSCOUT_S3_SECRET_KEY` | Required RustFS catalog credentials. |
 | `AWS_REGION` | Signed Common Crawl S3 region; defaults to `us-east-1`. |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Optional explicit credentials; EC2 instance roles are supported. |
 | `CC_BASE_URL` | Anonymous HTTP base; defaults to `https://data.commoncrawl.org/`. |

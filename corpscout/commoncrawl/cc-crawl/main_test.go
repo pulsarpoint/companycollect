@@ -4,11 +4,63 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestMainProcessesAllWARCsAndExitsNonzeroAfterFailures(t *testing.T) {
+	if os.Getenv("CC_CRAWL_TEST_MAIN_FAILURE") == "1" {
+		os.Args = []string{
+			"cc-crawl",
+			"-base", os.Getenv("CC_CRAWL_TEST_BASE"),
+			"-crawl", "CC-MAIN-2026-25",
+			"-mode", "tech",
+			"-parts", "7-8",
+			"-worker", os.Getenv("CC_CRAWL_TEST_WORKER"),
+		}
+		main()
+		os.Exit(42)
+	}
+
+	directory := t.TempDir()
+	workerPath := filepath.Join(directory, "worker.sh")
+	callsPath := filepath.Join(directory, "calls.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$CC_CRAWL_TEST_CALLS"
+exit 1
+`
+	if err := os.WriteFile(workerPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command(os.Args[0], "-test.run=^TestMainProcessesAllWARCsAndExitsNonzeroAfterFailures$")
+	command.Env = append(os.Environ(),
+		"CC_CRAWL_TEST_MAIN_FAILURE=1",
+		"CC_CRAWL_TEST_BASE="+directory,
+		"CC_CRAWL_TEST_WORKER="+workerPath,
+		"CC_CRAWL_TEST_CALLS="+callsPath,
+		"DOTENV="+filepath.Join(directory, "missing.env"),
+	)
+	output, err := command.CombinedOutput()
+	exitError, exited := err.(*exec.ExitError)
+	if !exited || exitError.ExitCode() != 1 {
+		t.Fatalf("cc-crawl exit error=%v, want status 1; output:\n%s", err, output)
+	}
+	if !strings.Contains(string(output), `"msg":"complete"`) ||
+		!strings.Contains(string(output), `"failed":2`) {
+		t.Fatalf("cc-crawl did not report the final failure summary:\n%s", output)
+	}
+	calls, err := os.ReadFile(callsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(strings.Split(strings.TrimSpace(string(calls)), "\n")); got != 2 {
+		t.Fatalf("worker calls=%d, want both requested WARCs; calls:\n%s", got, calls)
+	}
+}
 
 func TestRunProduceLoadPreservesLocalLoadedMarkerFlow(t *testing.T) {
 	directory := t.TempDir()

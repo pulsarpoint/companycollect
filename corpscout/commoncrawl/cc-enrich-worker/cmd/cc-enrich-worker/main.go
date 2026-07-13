@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -20,6 +21,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/parquet-go/parquet-go"
 
+	"cc-enrich-worker/internal/catalog"
 	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/embed"
 	"cc-enrich-worker/internal/load"
@@ -69,8 +71,9 @@ Commands:
 
 Run "cc-enrich-worker <command> -h" to see that command's flags.
 
-Config is via environment (see ../.env.example): COMMONCRAWL_EMBED_*, CLICKHOUSE_*,
-AWS_* for signed Common Crawl S3 access, and CC_BASE_URL for anonymous HTTPS access.
+Config is via environment (see ../.env.example): COMMONCRAWL_CATALOG_S3_BASE and CORPSCOUT_S3_*
+for the RustFS catalog, COMMONCRAWL_EMBED_*, CLICKHOUSE_*, AWS_* for signed Common Crawl S3 access,
+and CC_BASE_URL for anonymous HTTPS access.
 `)
 }
 
@@ -96,7 +99,7 @@ func parse(mode string, args []string) opts {
 	fs.StringVar(&o.selection, "selection", "pages25", "catalog selection identity")
 	fs.IntVar(&o.part, "part", -1, "zero-based WARC index (required)")
 	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/warc/<selection>/out_<mode>_<part>; an explicit dir must be empty)")
-	fs.StringVar(&o.base, "base", os.Getenv("OUT_BASE_DIR"), "catalog and output ROOT (or env OUT_BASE_DIR); required")
+	fs.StringVar(&o.base, "base", os.Getenv("OUT_BASE_DIR"), "output ROOT (or env OUT_BASE_DIR); required")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "catalog pages per process chunk (tech/both)")
 	fs.Float64Var(&o.wholeWARCThreshold, "whole-warc-threshold", 50, "selected compressed-byte percentage that triggers one whole-WARC download (0..100)")
@@ -266,13 +269,17 @@ func completedEmbedding(outDir string) (string, int64, bool) {
 func run(mode string, o opts) {
 	ctx := context.Background()
 	if o.base == "" {
-		log.Fatal("no --base / OUT_BASE_DIR — the WARC catalog root is required")
+		log.Fatal("no --base / OUT_BASE_DIR — the output root is required")
 	}
 	base, err := filepath.Abs(o.base)
 	if err != nil {
 		log.Fatalf("resolve base directory %s: %v", o.base, err)
 	}
 	o.base = base
+	catalogS3Base := strings.TrimSpace(os.Getenv("COMMONCRAWL_CATALOG_S3_BASE"))
+	if catalogS3Base == "" {
+		log.Fatal("COMMONCRAWL_CATALOG_S3_BASE is required (s3://bucket/prefix)")
+	}
 
 	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so
 	// `load --dir` knows which file → which table. cc-crawl always passes --out; for a standalone run the
@@ -303,10 +310,38 @@ func run(mode string, o opts) {
 	}
 
 	primaryPagesOnly := mode == "industry" || mode == "embed"
-	plan, err := warcinput.LoadPlan(o.base, o.crawlID, o.selection, uint32(o.part), primaryPagesOnly)
+	catalogCachePath := filepath.Join(o.base, o.crawlID, "warc-index", o.selection, "catalog.duckdb")
+	catalogStarted := time.Now()
+	log.Printf(
+		"catalog: checking RustFS commit and local cache crawl=%s selection=%s path=%s",
+		o.crawlID,
+		o.selection,
+		catalogCachePath,
+	)
+	plan, err := warcinput.LoadS3Plan(
+		ctx,
+		catalog.S3Config{
+			BaseURI:   catalogS3Base,
+			Endpoint:  os.Getenv("CORPSCOUT_S3_ENDPOINT"),
+			Region:    envOr("CORPSCOUT_S3_REGION", "us-east-1"),
+			AccessKey: os.Getenv("CORPSCOUT_S3_ACCESS_KEY"),
+			SecretKey: os.Getenv("CORPSCOUT_S3_SECRET_KEY"),
+		},
+		o.base,
+		o.crawlID,
+		o.selection,
+		uint32(o.part),
+		primaryPagesOnly,
+	)
 	if err != nil {
 		log.Fatalf("load WARC catalog: %v", err)
 	}
+	log.Printf(
+		"catalog: ready warc_index=%d selected_pages=%d elapsed=%s",
+		plan.WARCIndex,
+		len(plan.Items),
+		time.Since(catalogStarted).Round(time.Millisecond),
+	)
 
 	if len(plan.Items) > 0 && (mode == "tech" || mode == "both") { // tech matcher only needed when we fingerprint
 		switch o.techEngine {

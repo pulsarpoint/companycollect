@@ -1,7 +1,12 @@
 # AXFR (DNS Zone Transfer) Probe — Design Spec
 
-Status: **spec only, not implemented.** Original decisions 2026-07-07. **Revised
-2026-07-09** — storage reversed from *infer-and-discard* to *retain-with-provenance*
+> Historical design record. The implemented scanner now lives in the standalone
+> [`cc-dns-axfr`](../cc-dns-axfr/) project and consumes delegation summaries produced by
+> [`cc-dns-scan`](../cc-dns-scan/); the combined-worker paths and flags below describe the original
+> proposal rather than current runtime behavior.
+
+Status: **historical proposal, superseded by the standalone scanner.** Original decisions
+2026-07-07. **Revised 2026-07-09** — storage reversed from *infer-and-discard* to *retain-with-provenance*
 (§5 + Risk), after the primary purpose was fixed as **technology detection** over
 third-party (CommonCrawl-wide) domains rather than authorized per-target scanning.
 

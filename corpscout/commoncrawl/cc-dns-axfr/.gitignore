@@ -1,0 +1,6 @@
+/cc-dns-axfr
+/bin/
+*.db
+*.db-shm
+*.db-wal
+axfr-cycle-state.json

@@ -24,8 +24,8 @@ const (
 	ModeWholeFile Mode = "whole"
 )
 
-// Plan contains the selected pages for one catalog WARC. Loading it performs no network I/O,
-// so callers can finish an empty WARC before constructing an object-store client.
+// Plan contains the selected pages for one catalog WARC. Opening it performs no WARC-object I/O
+// for an empty selection.
 type Plan struct {
 	Items         []model.WorklistItem
 	WARCIndex     uint32
@@ -67,19 +67,44 @@ func LoadPlan(baseDirectory, crawlID, selection string, warcIndex uint32, primar
 	}
 
 	catalogDirectory := filepath.Join(baseDirectory, crawlID, "warc-index", selection)
-	warcs, items, err := catalog.LoadRange(
-		filepath.Join(catalogDirectory, "warcs.parquet"),
-		filepath.Join(catalogDirectory, "pages.parquet"),
-		warcIndex,
+	warc, items, err := catalog.LoadWARC(
+		context.Background(),
+		filepath.Join(catalogDirectory, "catalog.duckdb"),
 		warcIndex,
 	)
 	if err != nil {
 		return Plan{}, errors.Wrapf(err, "load WARC catalog index %d", warcIndex)
 	}
-	if len(warcs) != 1 {
-		return Plan{}, errors.Newf("catalog returned %d WARCs for index %d, want one", len(warcs), warcIndex)
-	}
+	return buildPlan(warc, items, primaryPagesOnly)
+}
 
+// LoadS3Plan synchronizes the committed RustFS catalog into the local base directory, then reads it.
+func LoadS3Plan(
+	ctx context.Context,
+	config catalog.S3Config,
+	baseDirectory, crawlID, selection string,
+	warcIndex uint32,
+	primaryPagesOnly bool,
+) (Plan, error) {
+	warc, items, err := catalog.LoadS3WARC(
+		ctx,
+		config,
+		baseDirectory,
+		crawlID,
+		selection,
+		warcIndex,
+	)
+	if err != nil {
+		return Plan{}, errors.Wrapf(err, "load RustFS WARC catalog index %d", warcIndex)
+	}
+	return buildPlan(warc, items, primaryPagesOnly)
+}
+
+func buildPlan(
+	warc catalog.Warc,
+	items []model.WorklistItem,
+	primaryPagesOnly bool,
+) (Plan, error) {
 	selectedItems := make([]model.WorklistItem, 0, len(items))
 	var selectedBytes int64
 	for _, item := range items {
@@ -87,7 +112,7 @@ func LoadPlan(baseDirectory, crawlID, selection string, warcIndex uint32, primar
 			continue
 		}
 		if item.Length > math.MaxInt64-selectedBytes {
-			return Plan{}, errors.Newf("selected byte total overflows for WARC index %d", warcIndex)
+			return Plan{}, errors.Newf("selected byte total overflows for WARC index %d", warc.WarcIndex)
 		}
 		selectedItems = append(selectedItems, item)
 		selectedBytes += item.Length
@@ -95,8 +120,8 @@ func LoadPlan(baseDirectory, crawlID, selection string, warcIndex uint32, primar
 
 	return Plan{
 		Items:         selectedItems,
-		WARCIndex:     warcs[0].WarcIndex,
-		WARCFilename:  warcs[0].WarcFilename,
+		WARCIndex:     warc.WarcIndex,
+		WARCFilename:  warc.WarcFilename,
 		SelectedBytes: selectedBytes,
 	}, nil
 }
