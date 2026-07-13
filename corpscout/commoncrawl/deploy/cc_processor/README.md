@@ -1,4 +1,4 @@
-# Common Crawl runtime deployment
+# CC processor deployment
 
 This playbook tests, vets, and cross-compiles `cc-crawl` and `cc-enrich-worker` on the control machine,
 then deploys them to one processing server as a single atomic release. It does not copy source code and
@@ -20,7 +20,7 @@ Requirements on the control machine:
 ## Deploy
 
 ```bash
-cd corpscout/commoncrawl/deploy/ansible
+cd corpscout/commoncrawl/deploy/cc_processor
 ansible-playbook site.yml --limit commoncrawl2 --ask-become-pass
 ```
 

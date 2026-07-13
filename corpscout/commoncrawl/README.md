@@ -115,15 +115,15 @@ make -C cc-dns-scan build
 make -C cc-dns-axfr build
 ```
 
-For production, deploy the WARC processor pair with its versioned Ansible flow instead of copying local
+For production, deploy the WARC processor pair with `cc_processor` instead of copying local
 `bin/` files. The control machine cross-compiles static Linux binaries and activates one paired release:
 
 ```bash
-cd deploy/ansible
+cd deploy/cc_processor
 ansible-playbook site.yml --limit commoncrawl2 --ask-become-pass
 ```
 
-See [`deploy/ansible/README.md`](deploy/ansible/README.md) for release layout, safety checks, and rollback.
+See [`deploy/cc_processor/README.md`](deploy/cc_processor/README.md) for release layout, safety checks, and rollback.
 DNS and AXFR have independent runbooks under [`deploy/cc_dns_scan`](deploy/cc_dns_scan/) and
 [`deploy/cc_dns_axfr`](deploy/cc_dns_axfr/).
 
