@@ -366,3 +366,67 @@ func TestProcessShardDecodesLatin1(t *testing.T) {
 		t.Fatalf("detected charset not backfilled: %+v", res.PageMeta)
 	}
 }
+
+func TestProcessShardMicrodataProfileFallback(t *testing.T) {
+	page := gzWarc("HTTP/1.1 200 OK\r\n\r\n<html><body>" +
+		`<div itemscope itemtype="http://schema.org/Dentist"><span itemprop="name">Smile Dental</span>` +
+		`<a itemprop="email" href="mailto:info@smile.de">m</a>` +
+		`<span itemprop="telephone">+49 30 1234567</span></div>` +
+		"</body></html>")
+	getter := multiGetter{"f.warc.gz:0": page}
+	items := []model.WorklistItem{
+		{RootDomain: "smile.de", URL: "https://smile.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
+	}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
+	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Metadata) != 1 || res.Metadata[0].Name != "Smile Dental" || res.Metadata[0].Source != "microdata" {
+		t.Fatalf("microdata profile not used: %+v", res.Metadata)
+	}
+	// Profile-derived contact rows must carry the profile's provenance, not a hardcoded "jsonld".
+	emailRows, phoneRows := 0, 0
+	for _, c := range res.Contacts {
+		switch {
+		case c.ContactType == "email" && c.Value == "info@smile.de" && c.Source == "microdata":
+			emailRows++
+		case c.ContactType == "phone" && c.Source == "microdata":
+			phoneRows++
+		}
+	}
+	if emailRows != 1 || phoneRows != 1 {
+		t.Fatalf("microdata contact provenance wrong (email=%d phone=%d): %+v", emailRows, phoneRows, res.Contacts)
+	}
+}
+
+// A page can carry a partial JSON-LD org (profile wins, Source "jsonld") AND microdata
+// identifiers the JSON-LD lacks — the identifiers must be unioned, never dropped.
+func TestProcessShardUnionsMicrodataIdentifiersWithPartialJSONLD(t *testing.T) {
+	page := gzWarc("HTTP/1.1 200 OK\r\n\r\n<html><head>" +
+		`<script type="application/ld+json">{"@type":"Organization","name":"Acme"}</script>` +
+		"</head><body>" +
+		`<div itemscope itemtype="http://schema.org/Organization"><span itemprop="vatID">DE136695976</span></div>` +
+		"</body></html>")
+	getter := multiGetter{"f.warc.gz:0": page}
+	items := []model.WorklistItem{
+		{RootDomain: "acme.de", URL: "https://acme.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
+	}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
+	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Metadata) != 1 || res.Metadata[0].Name != "Acme" || res.Metadata[0].Source != "jsonld" {
+		t.Fatalf("JSON-LD profile should win: %+v", res.Metadata)
+	}
+	vats := 0
+	for _, id := range res.Identifiers {
+		if id.IDType == "vat" && id.IDValue == "DE136695976" && id.Source == "microdata" {
+			vats++
+		}
+	}
+	if vats != 1 {
+		t.Fatalf("microdata VAT identifier dropped alongside partial JSON-LD: %+v", res.Identifiers)
+	}
+}

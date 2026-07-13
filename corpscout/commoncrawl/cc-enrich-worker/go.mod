@@ -9,6 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/cockroachdb/errors v1.13.0
 	github.com/dustin/go-humanize v1.0.1
+	github.com/iand/microdata v0.0.28
+	github.com/markusmobius/go-trafilatura v1.12.2
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745
 	github.com/projectdiscovery/wappalyzergo v0.2.86
@@ -63,7 +65,6 @@ require (
 	github.com/markusmobius/go-dateparser v1.2.3 // indirect
 	github.com/markusmobius/go-domdistiller v0.0.0-20240926050704-25b8d046ffb4 // indirect
 	github.com/markusmobius/go-htmldate v1.9.1 // indirect
-	github.com/markusmobius/go-trafilatura v1.12.2 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/parquet-go/bitpack v1.0.0 // indirect

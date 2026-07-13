@@ -141,6 +141,7 @@ type domainAgg struct {
 	emails                                          []string // regex-scraped, deduped (tech pass)
 	identifiers                                     []model.Identifier
 	profile                                         model.CompanyProfile
+	profileSource                                   string            // "jsonld" | "microdata"
 	security                                        map[string]string // primary page's response headers
 	meta                                            parse.HeadMeta    // primary page's head signals
 	jsonldTypes                                     []string          // primary page's JSON-LD @types
@@ -268,17 +269,18 @@ func (s *chunkStats) recordErr(err error) {
 // merged deterministically by mergePageResults. primary marks the result carrying the embed text
 // (the worklist's Primary page, embed/both modes only).
 type pageResult struct {
-	source      model.WorklistItem
-	sub         string
-	primary     bool
-	text        string // parsed visible text (embed/both, Primary page only)
-	tech        []model.Technology
-	emails      []string
-	ids         []model.Identifier
-	profile     model.CompanyProfile
-	security    map[string]string // response headers, Primary page only
-	meta        parse.HeadMeta    // head signals, Primary page only
-	jsonldTypes []string          // JSON-LD @types, Primary page only
+	source        model.WorklistItem
+	sub           string
+	primary       bool
+	text          string // parsed visible text (embed/both, Primary page only)
+	tech          []model.Technology
+	emails        []string
+	ids           []model.Identifier
+	profile       model.CompanyProfile
+	profileSource string            // "jsonld" | "microdata"
+	security      map[string]string // response headers, Primary page only
+	meta          parse.HeadMeta    // head signals, Primary page only
+	jsonldTypes   []string          // JSON-LD @types, Primary page only
 }
 
 // processPage fetches ONE page and runs the per-page extraction for the configured mode:
@@ -319,6 +321,16 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		atomic.AddInt64(&stats.techNs, time.Since(t2).Nanoseconds())
 		r.emails = parse.Emails(string(decoded))
 		prof, structIDs := extract.ExtractProfile(decoded)
+		r.profileSource = "jsonld"
+		// Identifiers union unconditionally (cheap: bails without a DOM parse when the body has
+		// no itemtype); the microdata PROFILE is only a fallback when JSON-LD yielded nothing.
+		if mdProf, mdIDs := extract.ExtractProfileMicrodata(decoded, it.URL); !mdProf.Empty() || len(mdIDs) > 0 {
+			if prof.Empty() && !mdProf.Empty() {
+				prof = mdProf
+				r.profileSource = "microdata"
+			}
+			structIDs = append(structIDs, mdIDs...)
+		}
 		r.profile = prof
 		r.ids = append(r.ids, structIDs...)
 		r.ids = append(r.ids, extract.ExtractLEIs(decoded)...)
@@ -372,6 +384,7 @@ func mergePageResults(dom string, results []pageResult, ok []bool) *domainAgg {
 		}
 		if agg.profile.Empty() && !r.profile.Empty() {
 			agg.profile = r.profile
+			agg.profileSource = r.profileSource
 		}
 		if r.primary && !agg.hasPrimary {
 			agg.hasPrimary = true
@@ -579,13 +592,17 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 				})
 			}
 			if profile := page.profile; hasMetadataEvidence(profile) {
+				src := page.profileSource
+				if src == "" {
+					src = "jsonld"
+				}
 				metaRows = append(metaRows, output.MetadataRow{
 					CrawlID: cfg.CrawlID, RootDomain: it.RootDomain, PageURL: it.URL, Subdomain: page.sub,
 					WarcIndex: it.WarcIndex, WarcFilename: it.WarcFilename,
 					WarcRecordOffset: offset, WarcRecordLength: length,
 					Name: profile.Name, Description: profile.Description, Logo: profile.Logo,
 					Country: profile.Country, FoundingYear: profile.FoundingYear,
-					EmployeeCount: profile.EmployeeCount, Source: "jsonld",
+					EmployeeCount: profile.EmployeeCount, Source: src,
 					SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
@@ -605,18 +622,22 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
-			// contacts: emails (regex + jsonld), phone (jsonld), social links (jsonld same_as)
+			// contacts: emails (regex + profile), phone (profile), social links (profile same_as)
+			profSrc := a.profileSource
+			if profSrc == "" {
+				profSrc = "jsonld"
+			}
 			for _, e := range a.emails {
 				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", e, "regex"))
 			}
 			if a.profile.Email != "" {
-				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", a.profile.Email, "jsonld"))
+				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", a.profile.Email, profSrc))
 			}
 			if a.profile.Phone != "" {
-				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "phone", a.profile.Phone, "jsonld"))
+				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "phone", a.profile.Phone, profSrc))
 			}
 			for _, s := range a.profile.SameAs {
-				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "social", s, "jsonld"))
+				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "social", s, profSrc))
 			}
 			// security posture + head signals: the primary page's captured headers/meta (empty if the
 			// homepage itself failed to fetch — then this domain has no security/meta row).
