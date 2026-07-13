@@ -128,6 +128,7 @@ func buildPlan(
 
 // Open validates the selected ranges against the current object size, then either keeps the
 // network range getter or downloads the WARC once and serves its selected records from disk.
+// It computes the whole-vs-range mode from the threshold and delegates to OpenAs.
 func (plan Plan) Open(
 	ctx context.Context,
 	objects fetch.ObjectGetter,
@@ -145,26 +146,78 @@ func (plan Plan) Open(
 	if plan.Empty() {
 		return plan.newInput(ModeEmpty, 0, emptyGetter{}), nil
 	}
-	if objects == nil {
-		return nil, errors.New("object getter is required for a non-empty WARC")
-	}
-	if bucket == "" {
-		return nil, errors.New("object bucket is required for a non-empty WARC")
-	}
-
-	objectBytes, err := objects.ObjectSize(ctx, bucket, plan.WARCFilename)
+	objectBytes, err := plan.resolveObjectBytes(ctx, objects, bucket)
 	if err != nil {
-		return nil, errors.Wrapf(err, "read WARC object size %s", plan.WARCFilename)
-	}
-	if objectBytes <= 0 {
-		return nil, errors.Newf("WARC object %s has invalid size %d", plan.WARCFilename, objectBytes)
-	}
-	if err := plan.validateObjectRanges(objectBytes); err != nil {
 		return nil, err
 	}
 
+	mode := ModeRange
 	coveragePercent := float64(plan.SelectedBytes) * 100 / float64(objectBytes)
-	if coveragePercent < wholeWARCThresholdPercent {
+	if coveragePercent >= wholeWARCThresholdPercent {
+		mode = ModeWholeFile
+	}
+	return plan.serveMode(ctx, objects, bucket, mode, objectBytes, tempDirectory)
+}
+
+// OpenAs opens the plan with an EXPLICIT mode (ModeRange or ModeWholeFile), skipping the
+// threshold decision — range runners force the lane's strategy. Empty plans still return
+// ModeEmpty. Open computes the mode from the threshold then delegates here.
+func (plan Plan) OpenAs(
+	ctx context.Context,
+	objects fetch.ObjectGetter,
+	bucket string,
+	mode Mode,
+	tempDirectory string,
+) (*Input, error) {
+	if err := plan.validate(); err != nil {
+		return nil, err
+	}
+	if plan.Empty() {
+		return plan.newInput(ModeEmpty, 0, emptyGetter{}), nil
+	}
+	if mode != ModeRange && mode != ModeWholeFile {
+		return nil, errors.Newf("open mode must be %q or %q, got %q", ModeRange, ModeWholeFile, mode)
+	}
+	objectBytes, err := plan.resolveObjectBytes(ctx, objects, bucket)
+	if err != nil {
+		return nil, err
+	}
+	return plan.serveMode(ctx, objects, bucket, mode, objectBytes, tempDirectory)
+}
+
+// resolveObjectBytes reads and validates the current object size for a non-empty plan. It performs
+// exactly one HEAD (ObjectSize) call, so both Open and OpenAs charge a single size request.
+func (plan Plan) resolveObjectBytes(ctx context.Context, objects fetch.ObjectGetter, bucket string) (int64, error) {
+	if objects == nil {
+		return 0, errors.New("object getter is required for a non-empty WARC")
+	}
+	if bucket == "" {
+		return 0, errors.New("object bucket is required for a non-empty WARC")
+	}
+	objectBytes, err := objects.ObjectSize(ctx, bucket, plan.WARCFilename)
+	if err != nil {
+		return 0, errors.Wrapf(err, "read WARC object size %s", plan.WARCFilename)
+	}
+	if objectBytes <= 0 {
+		return 0, errors.Newf("WARC object %s has invalid size %d", plan.WARCFilename, objectBytes)
+	}
+	if err := plan.validateObjectRanges(objectBytes); err != nil {
+		return 0, err
+	}
+	return objectBytes, nil
+}
+
+// serveMode builds the Input for a validated non-empty plan whose object size is already known:
+// ModeRange keeps the network getter, ModeWholeFile downloads the object once.
+func (plan Plan) serveMode(
+	ctx context.Context,
+	objects fetch.ObjectGetter,
+	bucket string,
+	mode Mode,
+	objectBytes int64,
+	tempDirectory string,
+) (*Input, error) {
+	if mode == ModeRange {
 		return plan.newInput(ModeRange, objectBytes, objects), nil
 	}
 	return plan.downloadWholeWARC(ctx, objects, bucket, objectBytes, tempDirectory)

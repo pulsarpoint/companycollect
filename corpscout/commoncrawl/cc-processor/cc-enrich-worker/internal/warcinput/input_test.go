@@ -258,6 +258,59 @@ func TestWholeWARCDownloadFailureRemovesTemporaryFile(t *testing.T) {
 	}
 }
 
+func TestOpenAsForcesMode(t *testing.T) {
+	data := make([]byte, 100)
+	for index := range data {
+		data[index] = byte(index)
+	}
+
+	// ModeWholeFile downloads even though the selected coverage is tiny (20/100 = 20%),
+	// because the forced lane skips the threshold decision.
+	t.Run("whole forces download at tiny coverage", func(t *testing.T) {
+		plan := Plan{
+			Items: []model.WorklistItem{
+				{RootDomain: "example.com", URL: "https://example.com/", WarcIndex: 0, WarcFilename: "zero.warc.gz", Offset: 0, Length: 10, Primary: true},
+				{RootDomain: "example.com", URL: "https://example.com/about", WarcIndex: 0, WarcFilename: "zero.warc.gz", Offset: 20, Length: 10, Primary: false},
+			},
+			WARCIndex:     0,
+			WARCFilename:  "zero.warc.gz",
+			SelectedBytes: 20,
+		}
+		objects := &fakeObjects{objectSize: int64(len(data)), downloadBody: data, rangeBody: data}
+		input, err := plan.OpenAs(context.Background(), objects, "commoncrawl", ModeWholeFile, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer input.Close()
+		if input.Mode != ModeWholeFile || input.ObjectBytes != 100 || input.SelectedBytes != 20 {
+			t.Fatalf("input = %+v", input)
+		}
+		if objects.sizeCalls != 1 || objects.downloadCalls != 1 || objects.rangeCalls != 0 {
+			t.Fatalf("object calls: size=%d download=%d range=%d", objects.sizeCalls, objects.downloadCalls, objects.rangeCalls)
+		}
+	})
+
+	// ModeRange keeps the network getter and creates no temp file even at 100% coverage.
+	t.Run("range forces no download at full coverage", func(t *testing.T) {
+		plan := testPlan(0, 100) // selected == object size -> 100% coverage
+		objects := &fakeObjects{objectSize: int64(len(data)), rangeBody: data}
+		input, err := plan.OpenAs(context.Background(), objects, "commoncrawl", ModeRange, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer input.Close()
+		if input.Mode != ModeRange || input.ObjectBytes != 100 || input.SelectedBytes != 100 {
+			t.Fatalf("input = %+v", input)
+		}
+		if objects.sizeCalls != 1 || objects.downloadCalls != 0 {
+			t.Fatalf("object calls: size=%d download=%d", objects.sizeCalls, objects.downloadCalls)
+		}
+		if objects.destinationPath != "" {
+			t.Fatalf("ModeRange created a temp file: %s", objects.destinationPath)
+		}
+	})
+}
+
 func testPlan(offset, length int64) Plan {
 	return Plan{
 		Items: []model.WorklistItem{{
