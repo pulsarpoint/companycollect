@@ -7,8 +7,6 @@
     commoncrawl_source_directory: "{{ playbook_dir }}/.."
     commoncrawl_artifact_directory: >-
       {{ commoncrawl_source_directory }}/dist/{{ commoncrawl_target_goos }}-{{ commoncrawl_target_goarch }}
-    commoncrawl_current_target: "releases/{{ commoncrawl_release_id }}"
-    commoncrawl_release_directory: "{{ commoncrawl_deploy_root }}/{{ commoncrawl_current_target }}"
 
   tasks:
     - name: Verify the target operating system and architecture
@@ -35,324 +33,70 @@
       check_mode: false
       changed_when: false
 
-    - name: Read the local cc-crawl artifact checksum
+    - name: Verify both local release artifacts exist and are executable
       ansible.builtin.stat:
-        path: "{{ commoncrawl_artifact_directory }}/cc-crawl"
-        checksum_algorithm: sha256
-      register: commoncrawl_local_crawl
+        path: "{{ commoncrawl_artifact_directory }}/{{ item }}"
+      register: commoncrawl_local_binaries
+      loop:
+        - cc-crawl
+        - cc-enrich-worker
       delegate_to: localhost
       become: false
 
-    - name: Read the local cc-enrich-worker artifact checksum
-      ansible.builtin.stat:
-        path: "{{ commoncrawl_artifact_directory }}/cc-enrich-worker"
-        checksum_algorithm: sha256
-      register: commoncrawl_local_worker
-      delegate_to: localhost
-      become: false
-
-    - name: Verify both local release artifacts
+    - name: Require both build artifacts
       ansible.builtin.assert:
         that:
-          - commoncrawl_local_crawl.stat.isreg | default(false)
-          - commoncrawl_local_crawl.stat.executable | default(false)
-          - commoncrawl_local_worker.stat.isreg | default(false)
-          - commoncrawl_local_worker.stat.executable | default(false)
-        fail_msg: "The paired Linux release did not produce two executable files."
+          - item.stat.isreg | default(false)
+          - item.stat.executable | default(false)
+        fail_msg: "make release did not produce an executable {{ item.item }}."
+      loop: "{{ commoncrawl_local_binaries.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
-    - name: Read the source revision
-      ansible.builtin.command:
-        argv: [git, rev-parse, HEAD]
-        chdir: "{{ commoncrawl_source_directory }}"
-      register: commoncrawl_git_revision
-      delegate_to: localhost
-      become: false
-      check_mode: false
-      changed_when: false
-
-    - name: Check whether runtime source files are modified
-      ansible.builtin.command:
-        argv:
-          - git
-          - status
-          - --porcelain=v1
-          - --
-          - cc-raw
-          - cc-enrich-worker
-          - cc-crawl
-        chdir: "{{ commoncrawl_source_directory }}"
-      register: commoncrawl_git_status
-      delegate_to: localhost
-      become: false
-      check_mode: false
-      changed_when: false
-
-    - name: Read the control-machine Go version
-      ansible.builtin.command:
-        argv: [go, version]
-      register: commoncrawl_go_version
-      delegate_to: localhost
-      become: false
-      check_mode: false
-      changed_when: false
-
-    - name: Derive the immutable paired-release identity
-      ansible.builtin.set_fact:
-        commoncrawl_release_id: >-
-          {{ (commoncrawl_local_crawl.stat.checksum ~ commoncrawl_local_worker.stat.checksum) | hash('sha256') }}
-
-    - name: Inspect the processor environment file
+    - name: Require the processor environment file
       ansible.builtin.stat:
         path: "{{ commoncrawl_deploy_root }}/.env"
         follow: false
       register: commoncrawl_environment
 
-    - name: Inspect the legacy processor environment file
-      ansible.builtin.stat:
-        path: "{{ commoncrawl_legacy_environment_file }}"
-        follow: false
-      register: commoncrawl_legacy_environment
-
-    - name: Require a processor environment file
+    - name: Refuse to deploy without the processor environment file
       ansible.builtin.assert:
         that:
-          - >-
-            (commoncrawl_environment.stat.isreg | default(false)) or
-            (
-              not (commoncrawl_environment.stat.exists | default(false)) and
-              (commoncrawl_legacy_environment.stat.isreg | default(false))
-            )
+          - commoncrawl_environment.stat.isreg | default(false)
         fail_msg: >-
-          Create {{ commoncrawl_deploy_root }}/.env, or retain the regular legacy file
-          {{ commoncrawl_legacy_environment_file }}, before deploying the runtime.
+          Create {{ commoncrawl_deploy_root }}/.env before deploying the runtime.
 
-    - name: Create the processor deployment root
+    - name: Create the binary directories
       ansible.builtin.file:
-        path: "{{ commoncrawl_deploy_root }}"
-        state: directory
-        owner: "{{ commoncrawl_owner }}"
-        group: "{{ commoncrawl_group }}"
-        mode: "0755"
-
-    - name: Copy the legacy environment into the processor root
-      ansible.builtin.copy:
-        src: "{{ commoncrawl_legacy_environment_file }}"
-        dest: "{{ commoncrawl_deploy_root }}/.env"
-        remote_src: true
-        force: false
-        owner: "{{ commoncrawl_owner }}"
-        group: "{{ commoncrawl_group }}"
-        mode: "0600"
-      when:
-        - not ansible_check_mode
-        - not (commoncrawl_environment.stat.exists | default(false))
-
-    - name: Verify the effective processor environment file
-      ansible.builtin.stat:
-        path: "{{ commoncrawl_deploy_root }}/.env"
-        follow: false
-      register: commoncrawl_effective_environment
-
-    - name: Protect the processor environment file
-      ansible.builtin.file:
-        path: "{{ commoncrawl_deploy_root }}/.env"
-        state: file
-        owner: "{{ commoncrawl_owner }}"
-        group: "{{ commoncrawl_group }}"
-        mode: "0600"
-      when: commoncrawl_effective_environment.stat.isreg | default(false)
-
-    - name: Configure the crawl-derived RustFS catalog base
-      ansible.builtin.lineinfile:
-        path: "{{ commoncrawl_deploy_root }}/.env"
-        regexp: '^COMMONCRAWL_CATALOG_S3_BASE='
-        line: "COMMONCRAWL_CATALOG_S3_BASE={{ commoncrawl_catalog_s3_base }}"
-        state: present
-        backup: true
-      when: commoncrawl_effective_environment.stat.isreg | default(false)
-
-    - name: Inspect the current release link
-      ansible.builtin.stat:
-        path: "{{ commoncrawl_deploy_root }}/current"
-        follow: false
-      register: commoncrawl_current_link
-      check_mode: false
-
-    - name: Reject a non-symlink current path
-      ansible.builtin.assert:
-        that:
-          - not commoncrawl_current_link.stat.exists or commoncrawl_current_link.stat.islnk
-        fail_msg: "{{ commoncrawl_deploy_root }}/current exists but is not a release symlink."
-
-    - name: Find active legacy Common Crawl processes before the first release migration
-      ansible.builtin.command:
-        argv:
-          - pgrep
-          - -af
-          - "(^|/)(cc-crawl|cc-enrich-worker)([[:space:]]|$)"
-      register: commoncrawl_active_processes
-      failed_when: commoncrawl_active_processes.rc not in [0, 1]
-      changed_when: false
-      check_mode: false
-
-    - name: Require the legacy runtime to be idle for the first release migration
-      ansible.builtin.assert:
-        that:
-          - commoncrawl_current_link.stat.islnk | default(false) or commoncrawl_active_processes.rc == 1
-        fail_msg: >-
-          The first versioned deployment cannot replace the legacy worker path while a crawl is active.
-          Stop these processes and retry: {{ commoncrawl_active_processes.stdout }}
-
-    - name: Create the immutable release directory
-      ansible.builtin.file:
-        path: "{{ commoncrawl_release_directory }}/bin"
-        state: directory
-        owner: "{{ commoncrawl_owner }}"
-        group: "{{ commoncrawl_group }}"
-        mode: "0755"
-
-    - name: Create compatibility binary directories
-      ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ commoncrawl_deploy_root }}/{{ item }}/bin"
         state: directory
         owner: "{{ commoncrawl_owner }}"
         group: "{{ commoncrawl_group }}"
         mode: "0755"
       loop:
-        - "{{ commoncrawl_deploy_root }}/cc-crawl/bin"
-        - "{{ commoncrawl_deploy_root }}/cc-enrich-worker/bin"
+        - cc-crawl
+        - cc-enrich-worker
 
-    - name: Copy the paired binaries into the immutable release
+    - name: Copy the binaries into place
       ansible.builtin.copy:
         src: "{{ commoncrawl_artifact_directory }}/{{ item }}"
-        dest: "{{ commoncrawl_release_directory }}/bin/{{ item }}"
+        dest: "{{ commoncrawl_deploy_root }}/{{ item }}/bin/{{ item }}"
         owner: "{{ commoncrawl_owner }}"
         group: "{{ commoncrawl_group }}"
         mode: "0755"
       loop:
         - cc-crawl
         - cc-enrich-worker
-      when: not ansible_check_mode
-
-    - name: Record release provenance
-      ansible.builtin.copy:
-        dest: "{{ commoncrawl_release_directory }}/release.json"
-        owner: "{{ commoncrawl_owner }}"
-        group: "{{ commoncrawl_group }}"
-        mode: "0644"
-        content: |
-          {
-            "release_id": {{ commoncrawl_release_id | to_json }},
-            "git_revision": {{ commoncrawl_git_revision.stdout | to_json }},
-            "runtime_source_modified": {{ (commoncrawl_git_status.stdout | length > 0) | to_json }},
-            "go_version": {{ commoncrawl_go_version.stdout | to_json }},
-            "target": {{ (commoncrawl_target_goos ~ "/" ~ commoncrawl_target_goarch) | to_json }},
-            "cc_crawl_sha256": {{ commoncrawl_local_crawl.stat.checksum | to_json }},
-            "cc_enrich_worker_sha256": {{ commoncrawl_local_worker.stat.checksum | to_json }}
-          }
-      when: not ansible_check_mode
-
-    - name: Read deployed release checksums
-      ansible.builtin.stat:
-        path: "{{ commoncrawl_release_directory }}/bin/{{ item }}"
-        checksum_algorithm: sha256
-      register: commoncrawl_remote_binaries
-      loop:
-        - cc-crawl
-        - cc-enrich-worker
-      when: not ansible_check_mode
-
-    - name: Verify deployed release checksums
-      ansible.builtin.assert:
-        that:
-          - commoncrawl_remote_binaries.results[0].stat.checksum == commoncrawl_local_crawl.stat.checksum
-          - commoncrawl_remote_binaries.results[1].stat.checksum == commoncrawl_local_worker.stat.checksum
-        fail_msg: "A deployed binary checksum differs from its locally-built artifact."
       when: not ansible_check_mode
 
     - name: Validate the deployed cc-crawl binary
       ansible.builtin.command:
-        argv: ["{{ commoncrawl_release_directory }}/bin/cc-crawl", -h]
+        argv: ["{{ commoncrawl_deploy_root }}/cc-crawl/bin/cc-crawl", -h]
       changed_when: false
       when: not ansible_check_mode
 
     - name: Validate the deployed cc-enrich-worker binary
       ansible.builtin.command:
-        argv: ["{{ commoncrawl_release_directory }}/bin/cc-enrich-worker", --help]
+        argv: ["{{ commoncrawl_deploy_root }}/cc-enrich-worker/bin/cc-enrich-worker", --help]
       changed_when: false
       when: not ansible_check_mode
-
-    - name: Read the active release target
-      ansible.builtin.command:
-        argv: [readlink, "{{ commoncrawl_deploy_root }}/current"]
-      register: commoncrawl_active_release
-      failed_when: commoncrawl_active_release.rc not in [0, 1]
-      changed_when: false
-      check_mode: false
-
-    - name: Remember the previous release
-      ansible.builtin.file:
-        src: "{{ commoncrawl_active_release.stdout }}"
-        dest: "{{ commoncrawl_deploy_root }}/previous"
-        state: link
-        force: true
-      when:
-        - not ansible_check_mode
-        - commoncrawl_active_release.rc == 0
-        - commoncrawl_active_release.stdout != commoncrawl_current_target
-
-    - name: Prepare the next current link
-      ansible.builtin.command:
-        argv:
-          - ln
-          - -sfn
-          - "{{ commoncrawl_current_target }}"
-          - "{{ commoncrawl_deploy_root }}/.current-next"
-      changed_when: true
-      when:
-        - not ansible_check_mode
-        - commoncrawl_active_release.stdout != commoncrawl_current_target
-
-    - name: Activate both binaries with one atomic link switch
-      ansible.builtin.command:
-        argv:
-          - mv
-          - -Tf
-          - "{{ commoncrawl_deploy_root }}/.current-next"
-          - "{{ commoncrawl_deploy_root }}/current"
-      changed_when: true
-      when:
-        - not ansible_check_mode
-        - commoncrawl_active_release.stdout != commoncrawl_current_target
-
-    - name: Preserve the existing cc-crawl command path
-      ansible.builtin.file:
-        src: ../../current/bin/cc-crawl
-        dest: "{{ commoncrawl_deploy_root }}/cc-crawl/bin/cc-crawl"
-        state: link
-        owner: "{{ commoncrawl_owner }}"
-        group: "{{ commoncrawl_group }}"
-        force: true
-
-    - name: Preserve the existing cc-enrich-worker command path
-      ansible.builtin.file:
-        src: ../../current/bin/cc-enrich-worker
-        dest: "{{ commoncrawl_deploy_root }}/cc-enrich-worker/bin/cc-enrich-worker"
-        state: link
-        owner: "{{ commoncrawl_owner }}"
-        group: "{{ commoncrawl_group }}"
-        force: true
-
-    - name: Report the active paired release
-      ansible.builtin.debug:
-        msg: >-
-          {{ inventory_hostname }} uses paired release {{ commoncrawl_release_id }} at
-          {{ commoncrawl_deploy_root }}/current. Existing data, catalogs, output, and loaded markers were untouched.
-      when: not ansible_check_mode
-
-    - name: Report the checked paired release
-      ansible.builtin.debug:
-        msg: >-
-          Check succeeded for paired release {{ commoncrawl_release_id }} on {{ inventory_hostname }};
-          no remote files were changed.
-      when: ansible_check_mode
