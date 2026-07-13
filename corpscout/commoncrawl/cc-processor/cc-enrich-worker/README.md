@@ -108,20 +108,24 @@ unit; `.loaded` is the loader's skip unit. A part's row counts in `.produced` ar
 parquet kind names the loader maps to ClickHouse tables (`domains`, `industries`, `page_signals`,
 `jsonld`, `contacts`, `tech`, `identifiers`, `security`, `page_meta`).
 
-### `plan` — read-only sizing report
+### `sync-db` — pre-warm the catalog cache
 
-`plan` reports the size of a part range without touching Parquet, markers, or ClickHouse — useful for
-gauging how much work a range represents before committing to it:
+`sync-db` pulls the committed WARC catalog from S3/RustFS and caches it locally at
+`<base>/<crawl-id>/warc-index/<selection>/catalog.duckdb`. Run it once on a freshly provisioned host to
+download the (~17 GB) catalog before the first range run, so that run does not stall on the initial
+sync:
 
 ```bash
-./cc-enrich-worker/bin/cc-enrich-worker plan \
+./cc-enrich-worker/bin/cc-enrich-worker sync-db \
   --base /opt/companycollect/corpscout/commoncrawl/data \
-  --crawl-id CC-MAIN-2026-25 \
-  --parts 0-99
+  --crawl-id CC-MAIN-2026-25
 ```
 
-It prints the number of selected (non-empty) and empty parts, the total and average selected pages per
-part, and the total selected bytes for the range.
+It reads `COMMONCRAWL_CATALOG_S3_BASE` and `CORPSCOUT_S3_*` (same config as a range run) and prints the
+resolved local path once the catalog is ready. It is idempotent: the cached SHA is validated against
+the commit, so a second run with an up-to-date cache re-verifies and returns without downloading. A
+range run performs the same sync automatically, so `sync-db` is only needed when you want the download
+to happen up front as an explicit step.
 
 ### `status` — read-only marker report
 

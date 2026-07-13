@@ -165,6 +165,50 @@ func TestValidateCatalogObjectChecksHeadMetadata(t *testing.T) {
 	}
 }
 
+func TestSyncLocalPropagatesLocationErrors(t *testing.T) {
+	// The catalog-location derivation runs before any RustFS I/O, so an ambiguous base URI or a key
+	// component that is not a single S3 path segment fails fast — no endpoint/credentials required.
+	for _, test := range []struct {
+		name      string
+		baseURI   string
+		crawlID   string
+		selection string
+	}{
+		{name: "wrong scheme", baseURI: "https://crawls/catalogs", crawlID: "CC-MAIN-2026-25", selection: "pages25"},
+		{name: "missing bucket", baseURI: "s3:///catalogs", crawlID: "CC-MAIN-2026-25", selection: "pages25"},
+		{name: "crawl path", baseURI: "s3://crawls/catalogs", crawlID: "CC-MAIN/2026-25", selection: "pages25"},
+		{name: "selection path", baseURI: "s3://crawls/catalogs", crawlID: "CC-MAIN-2026-25", selection: "pages/25"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := SyncLocal(
+				context.Background(),
+				S3Config{BaseURI: test.baseURI},
+				t.TempDir(),
+				test.crawlID,
+				test.selection,
+			)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+}
+
+func TestSyncLocalRequiresS3Credentials(t *testing.T) {
+	// A valid location but missing endpoint/credentials fails in the client constructor, before any
+	// network call — SyncLocal propagates newS3Client's error unchanged.
+	_, err := SyncLocal(
+		context.Background(),
+		S3Config{BaseURI: "s3://crawls/catalogs"},
+		t.TempDir(),
+		"CC-MAIN-2026-25",
+		"pages25",
+	)
+	if err == nil || !strings.Contains(err.Error(), "CORPSCOUT_S3_ENDPOINT") {
+		t.Fatalf("error = %v, want CORPSCOUT_S3_ENDPOINT/REGION requirement", err)
+	}
+}
+
 func TestEnsureLocalCatalogDownloadsThenReuses(t *testing.T) {
 	state, client, location := newCacheS3Server(t, []byte("first catalog"))
 	defer state.server.Close()

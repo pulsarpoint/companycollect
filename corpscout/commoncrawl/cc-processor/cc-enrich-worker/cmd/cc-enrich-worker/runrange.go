@@ -10,11 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/errors"
-
 	"cc-enrich-worker/internal/catalog"
 	"cc-enrich-worker/internal/markers"
-	"cc-enrich-worker/internal/warcinput"
 	"cc-enrich-worker/internal/worker"
 )
 
@@ -210,11 +207,11 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	lo, hi := ro.parts.lo, ro.parts.hi
 	catalogS3Base := strings.TrimSpace(os.Getenv("COMMONCRAWL_CATALOG_S3_BASE"))
 	if catalogS3Base != "" {
-		// Sync the committed RustFS catalog into the local cache up front (side effect only), so
-		// LoadPartStats and every per-part LoadPlan read a present local catalog. A "requested index
-		// absent from the catalog" error is expected when lo itself has no selected pages; any other
-		// error (bad credentials, unreachable RustFS, corrupt commit) is a fatal setup failure.
-		_, planErr := warcinput.LoadS3Plan(
+		// Sync the committed RustFS catalog into the local cache up front, so LoadPartStats and every
+		// per-part LoadPlan read a present local catalog. SyncLocal pulls the whole catalog (not a
+		// single WARC), so it needs no index and any error (bad credentials, unreachable RustFS,
+		// corrupt commit) is a fatal setup failure.
+		if _, err := catalog.SyncLocal(
 			ctx,
 			catalog.S3Config{
 				BaseURI:   catalogS3Base,
@@ -223,10 +220,9 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 				AccessKey: os.Getenv("CORPSCOUT_S3_ACCESS_KEY"),
 				SecretKey: os.Getenv("CORPSCOUT_S3_SECRET_KEY"),
 			},
-			o.base, o.crawlID, o.selection, lo, false,
-		)
-		if planErr != nil && !errors.Is(planErr, catalog.ErrWARCIndexAbsent) {
-			log.Fatalf("sync catalog cache: %v", planErr)
+			o.base, o.crawlID, o.selection,
+		); err != nil {
+			log.Fatalf("sync catalog cache: %v", err)
 		}
 	}
 

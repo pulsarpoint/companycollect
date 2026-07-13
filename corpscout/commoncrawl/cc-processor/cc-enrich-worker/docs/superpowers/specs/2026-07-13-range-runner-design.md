@@ -4,6 +4,9 @@ Date: 2026-07-13
 Status: implemented (`plan`, range `--parts --mode local|remote`, `load --scan/--watch`, `status`; see
 cc-enrich-worker/README.md for the operator-facing docs). The optional `--duckdb` snapshot under
 "4. Status" was not built (YAGNI) — `status` is markers-only, no ClickHouse or DuckDB dependency.
+Amendment (2026-07-13): the `plan` sizing report was retired and replaced by `sync-db`, an explicit
+"pull the catalog from S3/RustFS and cache it locally" command (idempotent; pre-warms the catalog on a
+new host before the first range run).
 
 > **Status update (2026-07-13, post-implementation):** the local lane and whole-WARC download mode were
 > removed after implementation. Measuring the real `pages25` catalog showed a uniform distribution —

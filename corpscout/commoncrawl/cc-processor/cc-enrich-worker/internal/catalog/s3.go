@@ -81,6 +81,27 @@ func LoadS3WARC(
 	return LoadWARC(ctx, path, warcIndex)
 }
 
+// SyncLocal synchronizes the immutable RustFS catalog into the local cache and returns the local
+// catalog path. It composes the same steps LoadS3WARC uses to prime the cache, but queries no WARC —
+// operators call it to pre-warm the catalog on a freshly provisioned host before the first range run.
+// It is idempotent: ensureLocalCatalog validates the cached SHA and skips the download whenever the
+// local copy already matches the committed catalog.
+func SyncLocal(
+	ctx context.Context,
+	config S3Config,
+	cacheBase, crawlID, selection string,
+) (string, error) {
+	location, err := deriveCatalogLocation(config.BaseURI, crawlID, selection)
+	if err != nil {
+		return "", err
+	}
+	client, err := newS3Client(ctx, config)
+	if err != nil {
+		return "", err
+	}
+	return ensureLocalCatalog(ctx, client, location, cacheBase, crawlID, selection)
+}
+
 func ensureLocalCatalog(
 	ctx context.Context,
 	client *s3.Client,
