@@ -19,6 +19,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/dustin/go-humanize"
+	"github.com/fsnotify/fsnotify"
 	"github.com/parquet-go/parquet-go"
 
 	"cc-enrich-worker/internal/catalog"
@@ -67,7 +68,7 @@ Commands:
   embed      embed each domain's page, save the raw vector only — no NACE, no ClickHouse  (GPU + embed endpoint)
   tech       fingerprint technologies + extract identifiers/profiles  (CPU-bound; S3 only)
   both       run both in one fetch pass  (discouraged — co-locating throttles the GPU; prefer two processes)
-  load       load an already-produced Parquet output into ClickHouse (native driver — no clickhouse-client needed)
+  load       load already-produced Parquet into ClickHouse: --dir/--file one output, or --scan a root of .produced markers (--watch to keep sweeping)
   plan       read-only report: local/remote lane split + threshold sweep for a WARC part range
 
 Run "cc-enrich-worker <command> -h" to see that command's flags.
@@ -207,9 +208,20 @@ func runLoad(args []string) {
 	dir := fs.String("dir", "", "a shard output directory; loads every supported output parquet in it")
 	file := fs.String("file", "", "a single Parquet output file to load")
 	kind := fs.String("kind", "", "override the kind for --file: "+strings.Join(load.Kinds, "|"))
+	scan := fs.String("scan", "", "a producer output root; sweep it for .produced dirs lacking .loaded and load each")
+	watch := fs.Bool("watch", false, "with --scan, keep sweeping: after each pass wait for a filesystem event under root or a 5-minute tick")
+	parallel := fs.Int("parallel", 4, "with --scan, how many output dirs to load concurrently")
 	_ = fs.Parse(args)
-	if (*dir == "") == (*file == "") {
-		fmt.Fprintln(os.Stderr, "error: pass exactly one of --dir or --file")
+
+	// --scan is mutually exclusive with --dir/--file; --dir/--file remain mutually exclusive with each other.
+	if *scan != "" {
+		if *dir != "" || *file != "" {
+			fmt.Fprintln(os.Stderr, "error: --scan cannot be combined with --dir or --file")
+			fs.Usage()
+			os.Exit(2)
+		}
+	} else if (*dir == "") == (*file == "") {
+		fmt.Fprintln(os.Stderr, "error: pass exactly one of --scan, --dir, or --file")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -220,6 +232,22 @@ func runLoad(args []string) {
 		log.Fatalf("clickhouse connect: %v", err)
 	}
 	defer conn.Close()
+
+	if *scan != "" {
+		if *watch {
+			watchLoad(ctx, conn, *scan, *parallel)
+			return
+		}
+		res, err := load.Sweep(ctx, conn, *scan, *parallel)
+		if err != nil {
+			log.Fatalf("scan %s: %v", *scan, err)
+		}
+		log.Printf("sweep %s: loaded=%d failed=%d pending=%d", *scan, res.Loaded, res.Failed, res.Pending)
+		if res.Failed > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *dir != "" {
 		results, err := load.FromDir(ctx, conn, *dir)
@@ -236,6 +264,64 @@ func runLoad(args []string) {
 		log.Fatalf("load %s: %v", *file, err)
 	}
 	log.Printf("loaded %d rows: %s -> %s", n, *file, table)
+}
+
+// watchLoad runs Sweep in a loop. The 5-minute ticker is the correctness backstop (a sweep always
+// happens); fsnotify Create/Rename events under root only cut latency. If the watcher can't be set
+// up it logs ONE warning and degrades to pure ticker polling.
+func watchLoad(ctx context.Context, conn driver.Conn, root string, parallel int) {
+	trigger := make(chan struct{}, 1)
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("warning: fsnotify unavailable (%v); falling back to 5-minute polling", err)
+		watcher = nil
+	} else if err := watcher.Add(root); err != nil {
+		log.Printf("warning: cannot watch %s (%v); falling back to 5-minute polling", root, err)
+		watcher.Close()
+		watcher = nil
+	}
+	if watcher != nil {
+		defer watcher.Close()
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case ev, ok := <-watcher.Events:
+					if !ok {
+						return
+					}
+					if ev.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
+						select {
+						case trigger <- struct{}{}:
+						default:
+						}
+					}
+				case _, ok := <-watcher.Errors:
+					if !ok {
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		res, err := load.Sweep(ctx, conn, root, parallel)
+		if err != nil {
+			log.Printf("sweep %s: %v", root, err)
+		} else {
+			log.Printf("sweep %s: loaded=%d failed=%d pending=%d", root, res.Loaded, res.Failed, res.Pending)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		case <-trigger:
+		}
+	}
 }
 
 func chConnect(ctx context.Context) (driver.Conn, error) {
