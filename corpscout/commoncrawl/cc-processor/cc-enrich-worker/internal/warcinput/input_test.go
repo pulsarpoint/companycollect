@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,7 +113,7 @@ func TestEmptyPlanOpensWithoutObjectGetter(t *testing.T) {
 		t.Fatalf("plan = %+v, want empty", plan)
 	}
 
-	input, err := plan.Open(context.Background(), nil, "", 50, "")
+	input, err := plan.Open(context.Background(), nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,56 +126,12 @@ func TestEmptyPlanOpensWithoutObjectGetter(t *testing.T) {
 	}
 }
 
-func TestOpenDownloadsWholeWARCAtInclusiveThreshold(t *testing.T) {
-	data := make([]byte, 100)
-	for index := range data {
-		data[index] = byte(index)
-	}
-	objects := &fakeObjects{objectSize: int64(len(data)), downloadBody: data, rangeBody: data}
-	plan := testPlan(10, 50)
-
-	input, err := plan.Open(context.Background(), objects, "commoncrawl", 50, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if input.Mode != ModeWholeFile || input.SelectedBytes != 50 || input.ObjectBytes != 100 {
-		t.Fatalf("input = %+v", input)
-	}
-	if objects.sizeCalls != 1 || objects.downloadCalls != 1 || objects.rangeCalls != 0 {
-		t.Fatalf("object calls: size=%d download=%d range=%d", objects.sizeCalls, objects.downloadCalls, objects.rangeCalls)
-	}
-	got, err := input.Getter.GetRange(context.Background(), "commoncrawl", "zero.warc.gz", 10, 59)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, data[10:60]) {
-		t.Fatalf("local range = %v, want %v", got, data[10:60])
-	}
-	if _, err := input.Getter.GetRange(context.Background(), "commoncrawl", "zero.warc.gz", 11, 59); err == nil ||
-		!strings.Contains(err.Error(), "not a selected record") {
-		t.Fatalf("unselected-range error = %v", err)
-	}
-	tempPath := objects.destinationPath
-	if _, err := os.Stat(tempPath); err != nil {
-		t.Fatalf("downloaded object before close: %v", err)
-	}
-	if err := input.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := input.Close(); err != nil {
-		t.Fatalf("second close: %v", err)
-	}
-	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
-		t.Fatalf("downloaded object still exists after close: %v", err)
-	}
-}
-
-func TestOpenKeepsNetworkGetterBelowThreshold(t *testing.T) {
+func TestOpenServesNetworkRangeReads(t *testing.T) {
 	data := bytes.Repeat([]byte{'x'}, 100)
 	objects := &fakeObjects{objectSize: int64(len(data)), rangeBody: data}
 	plan := testPlan(10, 50)
 
-	input, err := plan.Open(context.Background(), objects, "commoncrawl", 50.01, "")
+	input, err := plan.Open(context.Background(), objects, "commoncrawl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,19 +145,6 @@ func TestOpenKeepsNetworkGetterBelowThreshold(t *testing.T) {
 	}
 	if len(got) != 50 || objects.sizeCalls != 1 || objects.downloadCalls != 0 || objects.rangeCalls != 1 {
 		t.Fatalf("range bytes=%d calls: size=%d download=%d range=%d", len(got), objects.sizeCalls, objects.downloadCalls, objects.rangeCalls)
-	}
-}
-
-func TestOpenRejectsInvalidThresholdWithoutObjectIO(t *testing.T) {
-	for _, threshold := range []float64{-1, 101, math.NaN(), math.Inf(1)} {
-		objects := &fakeObjects{objectSize: 100}
-		_, err := testPlan(10, 10).Open(context.Background(), objects, "commoncrawl", threshold, "")
-		if err == nil || !strings.Contains(err.Error(), "threshold must be between 0 and 100") {
-			t.Fatalf("threshold %v error = %v", threshold, err)
-		}
-		if objects.sizeCalls != 0 || objects.downloadCalls != 0 || objects.rangeCalls != 0 {
-			t.Fatalf("threshold %v performed object I/O", threshold)
-		}
 	}
 }
 
@@ -220,7 +162,7 @@ func TestOpenValidatesObjectSizeAndSelectedRanges(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			objects := &fakeObjects{objectSize: test.objectSize}
-			_, err := test.plan.Open(context.Background(), objects, "commoncrawl", 50, "")
+			_, err := test.plan.Open(context.Background(), objects, "commoncrawl")
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("error = %v, want %q", err, test.wantError)
 			}
@@ -229,86 +171,6 @@ func TestOpenValidatesObjectSizeAndSelectedRanges(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestWholeWARCDownloadFailureRemovesTemporaryFile(t *testing.T) {
-	tests := []struct {
-		name         string
-		downloadBody []byte
-		downloadErr  error
-		wantError    string
-	}{
-		{name: "download error", downloadErr: errors.New("connection reset"), wantError: "connection reset"},
-		{name: "short download", downloadBody: bytes.Repeat([]byte{'x'}, 99), wantError: "HEAD reported 100"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			objects := &fakeObjects{objectSize: 100, downloadBody: test.downloadBody, downloadErr: test.downloadErr}
-			_, err := testPlan(10, 50).Open(context.Background(), objects, "commoncrawl", 50, t.TempDir())
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("error = %v, want %q", err, test.wantError)
-			}
-			if objects.destinationPath == "" {
-				t.Fatal("download did not receive a temporary file")
-			}
-			if _, err := os.Stat(objects.destinationPath); !os.IsNotExist(err) {
-				t.Fatalf("temporary file still exists: %v", err)
-			}
-		})
-	}
-}
-
-func TestOpenAsForcesMode(t *testing.T) {
-	data := make([]byte, 100)
-	for index := range data {
-		data[index] = byte(index)
-	}
-
-	// ModeWholeFile downloads even though the selected coverage is tiny (20/100 = 20%),
-	// because the forced lane skips the threshold decision.
-	t.Run("whole forces download at tiny coverage", func(t *testing.T) {
-		plan := Plan{
-			Items: []model.WorklistItem{
-				{RootDomain: "example.com", URL: "https://example.com/", WarcIndex: 0, WarcFilename: "zero.warc.gz", Offset: 0, Length: 10, Primary: true},
-				{RootDomain: "example.com", URL: "https://example.com/about", WarcIndex: 0, WarcFilename: "zero.warc.gz", Offset: 20, Length: 10, Primary: false},
-			},
-			WARCIndex:     0,
-			WARCFilename:  "zero.warc.gz",
-			SelectedBytes: 20,
-		}
-		objects := &fakeObjects{objectSize: int64(len(data)), downloadBody: data, rangeBody: data}
-		input, err := plan.OpenAs(context.Background(), objects, "commoncrawl", ModeWholeFile, t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer input.Close()
-		if input.Mode != ModeWholeFile || input.ObjectBytes != 100 || input.SelectedBytes != 20 {
-			t.Fatalf("input = %+v", input)
-		}
-		if objects.sizeCalls != 1 || objects.downloadCalls != 1 || objects.rangeCalls != 0 {
-			t.Fatalf("object calls: size=%d download=%d range=%d", objects.sizeCalls, objects.downloadCalls, objects.rangeCalls)
-		}
-	})
-
-	// ModeRange keeps the network getter and creates no temp file even at 100% coverage.
-	t.Run("range forces no download at full coverage", func(t *testing.T) {
-		plan := testPlan(0, 100) // selected == object size -> 100% coverage
-		objects := &fakeObjects{objectSize: int64(len(data)), rangeBody: data}
-		input, err := plan.OpenAs(context.Background(), objects, "commoncrawl", ModeRange, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer input.Close()
-		if input.Mode != ModeRange || input.ObjectBytes != 100 || input.SelectedBytes != 100 {
-			t.Fatalf("input = %+v", input)
-		}
-		if objects.sizeCalls != 1 || objects.downloadCalls != 0 {
-			t.Fatalf("object calls: size=%d download=%d", objects.sizeCalls, objects.downloadCalls)
-		}
-		if objects.destinationPath != "" {
-			t.Fatalf("ModeRange created a temp file: %s", objects.destinationPath)
-		}
-	})
 }
 
 func testPlan(offset, length int64) Plan {

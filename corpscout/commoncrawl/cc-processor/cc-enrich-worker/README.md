@@ -35,11 +35,10 @@ the compressed bytes required by the current processor:
 - `tech` and `both` use every selected page;
 - `industry` and `embed` use only pages whose catalog rank is `1`.
 
-It HEADs a non-empty WARC to get its actual object size. When
-`selected_bytes / object_bytes * 100` is at least `--whole-warc-threshold`, the complete WARC is streamed
-once to a temporary local file and indexed records are served with concurrent `ReadAt` calls. Below the
-threshold, the existing exact object-range reader is used. The complete WARC is never buffered in memory and
-the temporary file is removed when processing finishes or input preparation fails.
+It HEADs a non-empty WARC to get its actual object size (to validate the selected ranges), then serves
+each selected record with an exact object-range read. Range reads are the only fetch strategy: measured
+across the real catalog every part selects ~3,500 pages / ~12% of the object's bytes, so a whole-object
+download never wins. Nothing is buffered in memory and no temporary WARC file is written.
 
 A WARC with no pages for the requested processor is a valid successful unit. After reading its catalog
 entry, the worker does not initialize the Common Crawl WARC client or access the WARC object.
@@ -61,53 +60,31 @@ lifecycles write the same output layout and are interchangeable per part; see
 [`docs/superpowers/specs/2026-07-13-range-runner-design.md`](docs/superpowers/specs/2026-07-13-range-runner-design.md)
 for the full design record.
 
-## Range runner: part ranges across two lanes
+## Range runner: process a part range
 
-`--parts A-B --mode local|remote` processes an inclusive WARC index range in one worker invocation,
-without `cc-crawl`. `--mode` is required — there is no default and no `all`; it selects both what the
-runner claims from the catalog and how it fetches those parts:
+`--parts A-B` processes an inclusive WARC index range in one worker invocation, without `cc-crawl`.
+Every part in the range with at least one selected page is produced via range reads; parts with zero
+selected pages are **empty** and skipped. `industry`, `embed`, `tech`, and `both` all use the same
+single strategy — there is no lane split and no `--mode`.
 
-- At startup the runner classifies parts `A`–`B` by selected page count against
-  `--remote-max-pages X`: parts with `<= X` selected pages are **remote**-eligible (small enough that
-  per-page S3 range reads beat downloading the whole object); parts with `> X` are **local** (large
-  enough that one whole-WARC download followed by local reads is cheaper in requests). Parts with zero
-  selected pages are **empty** and skipped.
-- `tech` and `both` cover a full range by running BOTH lanes — normally as two separate processes, one
-  per lane (see "Two-server operating model" below); each lane only takes the parts of its own class.
-- `industry` and `embed` accept only `--mode remote`: their primary-pages-only selections are sparse,
-  so there is no local lane for them. The remote runner takes every non-empty part in the range with no
-  classification filtering; `--mode local` is rejected with an error.
+- At startup the runner reads the per-part catalog stats and prints `parts=<n> selected=<n> empty=<k>`.
+- `--warc-parallel` (default 4) sets how many parts are produced concurrently; it also sizes the shared
+  S3/HTTP transport so the parts genuinely contend for one connection budget rather than oversubscribing.
 - Within a range, `.produced` markers make the run resumable: a part with an existing marker is
   skipped; an output directory with no marker (a crashed produce) is wiped and reproduced. A circuit
   breaker aborts the run after 5 CONSECUTIVE part failures (protects an unattended box from e.g. expired
   credentials silently burning hours); failed parts are logged, left unmarked, and retried on the next
   invocation. The run exits non-zero if any part failed.
 
-Example — remote lane, tech fingerprinting, parts 0-99:
+Example — tech fingerprinting, parts 0-99:
 
 ```bash
 ./cc-enrich-worker/bin/cc-enrich-worker tech \
   --base /opt/companycollect/corpscout/commoncrawl/data \
   --crawl-id CC-MAIN-2026-25 \
-  --parts 0-99 --mode remote \
-  --remote-max-pages 1000 \
+  --parts 0-99 \
   --warc-parallel 4
 ```
-
-Example — local lane, same crawl, the large parts the remote lane above skipped:
-
-```bash
-./cc-enrich-worker/bin/cc-enrich-worker tech \
-  --base /opt/companycollect/corpscout/commoncrawl/data \
-  --crawl-id CC-MAIN-2026-25 \
-  --parts 0-99 --mode local \
-  --remote-max-pages 1000 \
-  --download-parallel 2 --process-parallel 2 --max-warc-files 5
-```
-
-Both lane runs must be given the SAME `--remote-max-pages` value — that is what makes the two classes a
-disjoint, complete partition of the range. Each run prints its `X` and class counts at startup so a
-mismatch between the two lane invocations is visible immediately.
 
 ### Markers
 
@@ -126,24 +103,20 @@ unit; `.loaded` is the loader's skip unit. A part's row counts in `.produced` ar
 parquet kind names the loader maps to ClickHouse tables (`domains`, `industries`, `page_signals`,
 `jsonld`, `contacts`, `tech`, `identifiers`, `security`, `page_meta`).
 
-### `plan` — read-only lane report
+### `plan` — read-only sizing report
 
-`plan` classifies a part range at a given `--remote-max-pages` threshold and reports the split, without
-touching Parquet, markers, or ClickHouse — useful for picking a threshold before committing a range to
-either lane:
+`plan` reports the size of a part range without touching Parquet, markers, or ClickHouse — useful for
+gauging how much work a range represents before committing to it:
 
 ```bash
 ./cc-enrich-worker/bin/cc-enrich-worker plan \
   --base /opt/companycollect/corpscout/commoncrawl/data \
   --crawl-id CC-MAIN-2026-25 \
-  --parts 0-99 \
-  --remote-max-pages 1000
+  --parts 0-99
 ```
 
-It prints local/remote/empty part counts, selected page and byte totals per lane, an estimated local-lane
-download volume (parts x ~1 GiB), and a threshold sweep across `X` in `{100, 500, 1000, 2500, 5000,
-10000}` (plus whatever `X` was passed) so the split can be tuned from the range's real page-count
-distribution.
+It prints the number of selected (non-empty) and empty parts, the total and average selected pages per
+part, and the total selected bytes for the range.
 
 ### `status` — read-only marker report
 
@@ -197,24 +170,18 @@ NACE reference once at startup as a fail-fast setup check, not per part). Run `l
 long-lived process wherever ClickHouse is reachable — it can lag behind the producers and catch up later,
 and restarting it after a ClickHouse outage resumes cleanly from whatever is still pending.
 
-## Two-server operating model
+## Operating model
 
-The local and remote lanes are intended to run on DIFFERENT servers, and the loader on a third role
-(possibly colocated with either, or with ClickHouse itself):
+There is one producer role — a range runner over `--parts` — and one loader role running
+`load --scan --watch` wherever ClickHouse is reachable, decoupled from the producer (possibly colocated
+with it or with ClickHouse itself). A second producer host running a different part sub-range is a
+legitimate way to scale the aggregate Common Crawl S3 request budget across more source IPs.
 
-- **Remote-lane host**: S3-request-rate heavy, modest CPU and disk — runs `--mode remote` for the small
-  parts.
-- **Local-lane host**: disk-write and CPU heavy — runs `--mode local`, sustaining `--download-parallel`
-  concurrent ~1 GiB downloads bounded by `--max-warc-files`, then processing them locally.
-- **Loader host**: runs `load --scan --watch` wherever ClickHouse is reachable, decoupled from both
-  producers.
-
-Nothing in the code enforces this split — it is the documented operating model, chosen because it keeps
-each box's bottleneck singular and the Common Crawl S3 request budget accountable per host. Both lanes
-write to the same `OUT_BASE_DIR` layout and marker vocabulary (`out_<cmd>_<part>` plus its `.produced` /
-`.loaded` siblings), so `load --scan` and `status` see one uniform tree regardless of which host produced
-a given part — point them at the shared root (over a shared filesystem, or after rsync from each
-producer host) and they work the same either way.
+Nothing in the code enforces any particular split. Every producer writes to the same `OUT_BASE_DIR`
+layout and marker vocabulary (`out_<cmd>_<part>` plus its `.produced` / `.loaded` siblings), so
+`load --scan` and `status` see one uniform tree regardless of which host produced a given part — point
+them at the shared root (over a shared filesystem, or after rsync from each producer host) and they work
+the same either way.
 
 ## JSON-LD output
 
@@ -245,8 +212,7 @@ The normal entry point is `cc-crawl`:
   -crawl CC-MAIN-2026-25 \
   -mode tech \
   -parts 0-10 \
-  -tech-conc 32 \
-  -whole-warc-threshold 50
+  -tech-conc 32
 ```
 
 For a direct produce/load run:
@@ -259,7 +225,6 @@ set -a; source .env; set +a
   --crawl-id CC-MAIN-2026-25 \
   --selection pages25 \
   --part 0 \
-  --whole-warc-threshold 50 \
   --concurrency 32 \
   --chunk 16384
 
@@ -268,8 +233,8 @@ set -a; source .env; set +a
 ```
 
 Or, to process a whole range natively (no `cc-crawl`) and load it as it becomes available, see
-"Range runner: part ranges across two lanes" and "Loader deployment" above for the `--parts --mode
-local|remote` and `load --scan --watch` forms.
+"Range runner: process a part range" and "Loader deployment" above for the `--parts` and
+`load --scan --watch` forms.
 
 `.env` exists only at the processor root. `cc-crawl` resolves it relative to its own binary, with the
 working directory as a fallback, and passes it to the worker. If invoking the worker from its component
@@ -286,7 +251,6 @@ and is preferred on EC2.
 | `--crawl-id` | required | Crawl identity, for example `CC-MAIN-2026-25`. |
 | `--selection` | `pages25` | Catalog selection directory. |
 | `--part` | required | Zero-based WARC index. |
-| `--whole-warc-threshold` | `50` | Selected compressed-byte percentage that switches to one whole-object download. |
 | `--s3-anonymous` | `false` | Use anonymous HTTPS instead of signed S3. |
 | `--out` | derived | Defaults to `<base>/<crawl>/warc/<selection>/out_<mode>_<part>`. |
 | `--concurrency` | `32` | Industry/embed pages or tech/both domains in flight. |
@@ -300,19 +264,14 @@ Industry/embed/both also accept `--embed-batch` and `--embed-concurrency`. Tech/
 ## Range runner flags
 
 `--parts` is mutually exclusive with `--part` (and with `--out`, which only applies to a single-part
-run); it activates the flags below. `--base`, `--crawl-id`, `--selection`, `--whole-warc-threshold`,
-`--s3-anonymous`, `--concurrency`, `--chunk`, `--tech-engine`, and `--tech-max-bytes` are shared with the
-single-part flags above and behave identically per part.
+run); it activates the flags below. `--base`, `--crawl-id`, `--selection`, `--s3-anonymous`,
+`--concurrency`, `--chunk`, `--tech-engine`, and `--tech-max-bytes` are shared with the single-part
+flags above and behave identically per part.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--parts` | required for a range run | WARC index range `"A-B"` (inclusive) or a single `"N"`. |
-| `--mode` | required with `--parts` | `local` or `remote`; no default. `industry`/`embed` accept only `remote`. |
-| `--remote-max-pages` | required (>=1) for tech/both | Split threshold `X`: parts with `<= X` selected pages are remote-eligible, `> X` are local. |
-| `--warc-parallel` | `4` | Remote lane: parts produced concurrently. |
-| `--download-parallel` | `2` | Local lane: whole-WARC downloads in flight; must be `<= --max-warc-files`. |
-| `--process-parallel` | `2` | Local lane: downloaded WARCs processed concurrently. |
-| `--max-warc-files` | required (>=1) for `--mode local`, no default (recommended 5) | Local lane: max whole WARC files on disk (in-flight downloads plus downloaded-but-unprocessed) at once — the disk-usage bound. |
+| `--warc-parallel` | `4` | Parts produced concurrently (>=1); also sizes the shared transport budget. |
 
 ## Environment
 

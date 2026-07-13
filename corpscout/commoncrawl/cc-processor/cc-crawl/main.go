@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -149,7 +148,6 @@ func main() {
 	_ = fs.String("builder-dir", env("BUILDER_DIR", "index-builder"), "deprecated compatibility flag; ignored")
 	workerF := fs.String("worker", defaultWorkerPath(), "cc-enrich-worker binary")
 	maxPagesF := fs.String("max-pages", env("MAX_PAGES", "25"), "catalog selection pages per domain; derives selection pagesN")
-	wholeWARCThresholdF := fs.String("whole-warc-threshold", env("WHOLE_WARC_THRESHOLD", "50"), "selected compressed-byte percentage that triggers a whole-WARC download (0..100)")
 	s3AnonymousF := fs.Bool("s3-anonymous", s3AnonymousDefault, "use the anonymous Common Crawl HTTPS endpoint instead of signed S3")
 	indConcF := fs.String("ind-conc", env("IND_CONC", "64"), "industry: fetch concurrency")
 	embedConcF := fs.String("embed-conc", env("EMBED_CONC", "128"), "industry: embed concurrency")
@@ -184,10 +182,6 @@ func main() {
 	selection, err := selectionForMaxPages(*maxPagesF)
 	if err != nil {
 		fail("-max-pages %v", err)
-	}
-	wholeWARCThreshold := strings.TrimSpace(*wholeWARCThresholdF)
-	if err := validateWholeWARCThreshold(wholeWARCThreshold); err != nil {
-		fail("-whole-warc-threshold %v", err)
 	}
 	// Output root MUST come from OUT_BASE_DIR — no silent default, so data can never scatter to an
 	// unexpected place. Everything for a crawl lives under <OUT_BASE_DIR>/<crawl>/ (crawl/:
@@ -225,8 +219,8 @@ func main() {
 
 	pc := partCtx{
 		lg: lg, base: base, data: data, worker: worker, crawl: crawl, selection: selection,
-		wholeWARCThreshold: wholeWARCThreshold, s3Anonymous: *s3AnonymousF,
-		indConc: *indConcF, embedConc: *embedConcF, techConc: *techConcF, techChunk: *techChunkF,
+		s3Anonymous: *s3AnonymousF,
+		indConc:     *indConcF, embedConc: *embedConcF, techConc: *techConcF, techChunk: *techChunkF,
 	}
 	var done, skipped, failed int
 	for p := lo; p <= hi; p++ {
@@ -269,7 +263,6 @@ type partCtx struct {
 	lg                           *slog.Logger
 	base, data, worker           string
 	crawl, selection             string
-	wholeWARCThreshold           string
 	s3Anonymous                  bool
 	indConc, embedConc, techConc string
 	techChunk                    string
@@ -376,7 +369,6 @@ func workerProcessingArgs(pc partCtx, mode string, warcIndex int, outDir string)
 		"--crawl-id", pc.crawl,
 		"--selection", pc.selection,
 		"--part", strconv.Itoa(warcIndex),
-		"--whole-warc-threshold", pc.wholeWARCThreshold,
 	)
 	if pc.s3Anonymous {
 		args = append(args, "--s3-anonymous")
@@ -390,17 +382,6 @@ func selectionForMaxPages(value string) (string, error) {
 		return "", fmt.Errorf("must be an integer from 1 to 65535, got %q", value)
 	}
 	return fmt.Sprintf("pages%d", pagesPerDomain), nil
-}
-
-func validateWholeWARCThreshold(value string) error {
-	percentage, err := strconv.ParseFloat(value, 64)
-	if err != nil || math.IsNaN(percentage) || math.IsInf(percentage, 0) {
-		return fmt.Errorf("must be a number from 0 to 100, got %q", value)
-	}
-	if percentage < 0 || percentage > 100 {
-		return fmt.Errorf("must be between 0 and 100, got %q", value)
-	}
-	return nil
 }
 
 func parseS3Anonymous(value string) (bool, error) {

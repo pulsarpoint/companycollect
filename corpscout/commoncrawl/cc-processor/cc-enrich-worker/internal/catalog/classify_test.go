@@ -87,15 +87,4 @@ func TestLoadPartStatsAggregatesPagesPerPart(t *testing.T) {
 	if !reflect.DeepEqual(stats, want) {
 		t.Fatalf("stats = %+v, want %+v", stats, want)
 	}
-
-	classification := ClassifyParts(stats, 0, 3, 2)
-	if !reflect.DeepEqual(classification.Remote, []uint32{1}) {
-		t.Fatalf("Remote = %v, want [1]", classification.Remote)
-	}
-	if !reflect.DeepEqual(classification.Local, []uint32{0, 3}) {
-		t.Fatalf("Local = %v, want [0,3]", classification.Local)
-	}
-	if !reflect.DeepEqual(classification.Empty, []uint32{2}) {
-		t.Fatalf("Empty = %v, want [2]", classification.Empty)
-	}
 }

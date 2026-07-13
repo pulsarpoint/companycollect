@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,7 +68,7 @@ Commands:
   tech       fingerprint technologies + extract identifiers/profiles  (CPU-bound; S3 only)
   both       run both in one fetch pass  (discouraged — co-locating throttles the GPU; prefer two processes)
   load       load already-produced Parquet into ClickHouse: --dir/--file one output, or --scan a root of .produced markers (--watch to keep sweeping)
-  plan       read-only report: local/remote lane split + threshold sweep for a WARC part range
+  plan       read-only report: parts/pages/bytes sizing for a WARC part range
   status     read-only report: per-command produced/loaded/pending marker counts + oldest pending age
 
 Run "cc-enrich-worker <command> -h" to see that command's flags.
@@ -87,15 +86,14 @@ type opts struct {
 	part                          int
 	concurrency, chunk            int
 	anonymous                     bool
-	wholeWARCThreshold            float64
 	techEngine                    string // tech / both
 	techMax                       int    // tech / both
 	batch, embedConc              int    // industry / both
 }
 
 // parse builds a per-command flag set (so tech flags don't show under industry and vice-versa). It
-// serves both the single-part run (--part) and the range runner (--parts + --mode). When --parts is
-// set it returns isRange=true and a populated runnerOpts; the two selectors are mutually exclusive.
+// serves both the single-part run (--part) and the range runner (--parts). When --parts is set it
+// returns isRange=true and a populated runnerOpts; the two selectors are mutually exclusive.
 func parse(mode string, args []string) (opts, runnerOpts, bool) {
 	fs := flag.NewFlagSet("cc-enrich-worker "+mode, flag.ExitOnError)
 	var o opts
@@ -107,7 +105,6 @@ func parse(mode string, args []string) (opts, runnerOpts, bool) {
 	fs.StringVar(&o.base, "base", "", "output ROOT (required, explicit — no environment fallback)")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "catalog pages per process chunk (tech/both)")
-	fs.Float64Var(&o.wholeWARCThreshold, "whole-warc-threshold", 50, "selected compressed-byte percentage that triggers one whole-WARC download (0..100)")
 	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch through anonymous HTTPS instead of signed Common Crawl S3")
 	if mode == "tech" || mode == "both" {
 		fs.StringVar(&o.techEngine, "tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
@@ -117,25 +114,14 @@ func parse(mode string, args []string) (opts, runnerOpts, bool) {
 		fs.IntVar(&o.batch, "embed-batch", embed.DefaultBatch, "texts per embed request — keep small (big batches overflow the engine's token budget)")
 		fs.IntVar(&o.embedConc, "embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	}
-	// Range runner: process a whole WARC part range through the bounded lane pool.
-	var partsFlag, modeFlag string
+	// Range runner: process a whole WARC part range through the bounded pool of range readers.
+	var partsFlag string
 	var ro runnerOpts
 	fs.StringVar(&partsFlag, "parts", "", `WARC part range "A-B" or "N" (range runner; mutually exclusive with --part)`)
-	fs.StringVar(&modeFlag, "mode", "", "range runner lane: local|remote (required with --parts)")
-	fs.Int64Var(&ro.remoteMaxPages, "remote-max-pages", 0, "range split threshold: parts with <= this many selected pages are remote-eligible (required >=1 for tech/both)")
-	fs.IntVar(&ro.warcParallel, "warc-parallel", 4, "range remote lane: parts produced concurrently (>=1)")
-	fs.IntVar(&ro.downloadParallel, "download-parallel", 2, "range local lane: whole-WARC downloads in flight (>=1)")
-	fs.IntVar(&ro.processParallel, "process-parallel", 2, "range local lane: downloaded WARCs processed in flight (>=1)")
-	fs.IntVar(&ro.maxWARCFiles, "max-warc-files", 0, "range local lane: max whole WARC files on disk at once (required >=1 for --mode local)")
+	fs.IntVar(&ro.warcParallel, "warc-parallel", 4, "range runner: parts produced concurrently (>=1)")
 	_ = fs.Parse(args)
 	if o.crawlID == "" {
 		fmt.Fprintln(os.Stderr, "error: --crawl-id is required")
-		fs.Usage()
-		os.Exit(2)
-	}
-	if math.IsNaN(o.wholeWARCThreshold) || math.IsInf(o.wholeWARCThreshold, 0) ||
-		o.wholeWARCThreshold < 0 || o.wholeWARCThreshold > 100 {
-		fmt.Fprintln(os.Stderr, "error: --whole-warc-threshold must be between 0 and 100")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -146,11 +132,6 @@ func parse(mode string, args []string) (opts, runnerOpts, bool) {
 			fs.Usage()
 			os.Exit(2)
 		}
-		if modeFlag == "" {
-			fmt.Fprintln(os.Stderr, "error: --parts requires --mode (local|remote)")
-			fs.Usage()
-			os.Exit(2)
-		}
 		parts, err := parsePartsRange(partsFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: invalid --parts: %v\n", err)
@@ -158,8 +139,7 @@ func parse(mode string, args []string) (opts, runnerOpts, bool) {
 			os.Exit(2)
 		}
 		ro.parts = parts
-		ro.mode = modeFlag
-		if err := validateRunnerOpts(mode, ro); err != nil {
+		if err := validateRunnerOpts(ro); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			fs.Usage()
 			os.Exit(2)
@@ -435,27 +415,20 @@ type partResult struct {
 	Domains, Embeds int
 }
 
-// preparedPart is a WARC input opened for one part, carried from openInput to processInput so the
-// local lane (Task 7) can download in one pool and process in another.
-//
-// Cleanup contract: on the normal path processInput owns the input's close + temp-dir removal (its
-// deferred cleanupInput). But a preparedPart that is DROPPED between the two stages — never reaching
-// processInput, e.g. a breaker trip or context cancel in the local lane — is NOT cleaned up by
-// processInput; whoever drops it MUST close input and remove warcTempDirectory itself (see
-// cleanupPrepared in runrange.go). Because a dropped part never reaches processInput, there is no
-// double close/remove.
+// preparedPart is a WARC input opened for one part, carried from openInput to processInput. The
+// split keeps plan-loading/HEAD separate from the process+write remainder. processInput owns the
+// input's close (its deferred cleanupInput).
 type preparedPart struct {
-	input             *warcinput.Input
-	outDir            string
-	warcTempDirectory string
+	input  *warcinput.Input
+	outDir string
 }
 
 // fetchConcurrencyFor sizes the shared S3/HTTP transport connection budget. The per-part base is the
 // domain pool (o.concurrency), multiplied by the per-domain page pool (worker.PageConcurrency) for
 // tech/both since those fetch PageConcurrency pages per in-flight domain. partsParallel scales that
-// by how many parts share the ONE transport concurrently: 1 for a single --part run; the range
-// runner passes its lane's parts-parallelism (spec §2: X * concurrency * PageConcurrency) so that,
-// e.g., --warc-parallel 4 does not squeeze 4 parts through one part's connection budget.
+// by how many parts share the ONE transport concurrently: 1 for a single --part run; warcParallel
+// for the range runner so that, e.g., --warc-parallel 4 does not squeeze 4 parts through one part's
+// connection budget.
 func fetchConcurrencyFor(mode string, concurrency, partsParallel int) int {
 	if partsParallel < 1 {
 		partsParallel = 1
@@ -538,8 +511,7 @@ func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) 
 		}
 	}
 
-	// Transport sizing = true in-flight range reads. Whole-WARC mode makes one streaming GET and
-	// then uses concurrent local ReadAt calls through the same RangeGetter boundary.
+	// Transport sizing = true in-flight range reads across the parts sharing this transport.
 	fetchConcurrency := fetchConcurrencyFor(mode, o.concurrency, partsParallel)
 	if o.anonymous {
 		d.objects = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), fetchConcurrency)
@@ -555,10 +527,9 @@ func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) 
 	return d, nil
 }
 
-// openInput loads one part's plan, prepares the WARC input, and logs "WARC input ready". forced ==
-// "" keeps the legacy threshold decision (single --part); a range lane passes warcinput.ModeRange or
-// warcinput.ModeWholeFile to force the strategy. On failure it cleans up any stale/partial temp dir.
-func openInput(ctx context.Context, d partDeps, part uint32, forced warcinput.Mode, outDir string) (preparedPart, error) {
+// openInput loads one part's plan, prepares the WARC input as network range reads, and logs "WARC
+// input ready".
+func openInput(ctx context.Context, d partDeps, part uint32, outDir string) (preparedPart, error) {
 	o := d.o
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return preparedPart{}, fmt.Errorf("create output dir %s: %w", outDir, err)
@@ -613,22 +584,11 @@ func openInput(ctx context.Context, d partDeps, part uint32, forced warcinput.Mo
 		s3Before = s3Getter.Stats()
 	}
 	prepareStarted := time.Now()
-	warcTempDirectory := filepath.Join(outDir, ".warc-input")
-	if err := os.RemoveAll(warcTempDirectory); err != nil {
-		return preparedPart{}, fmt.Errorf("remove stale WARC input directory: %w", err)
-	}
 	prepareContext, cancelPrepare := context.WithTimeout(ctx, warcPreparationTimeout)
 	var input *warcinput.Input
-	if forced == "" {
-		input, err = plan.Open(prepareContext, d.objects, "commoncrawl", o.wholeWARCThreshold, warcTempDirectory)
-	} else {
-		input, err = plan.OpenAs(prepareContext, d.objects, "commoncrawl", forced, warcTempDirectory)
-	}
+	input, err = plan.Open(prepareContext, d.objects, "commoncrawl")
 	cancelPrepare()
 	if err != nil {
-		if cleanupErr := os.RemoveAll(warcTempDirectory); cleanupErr != nil {
-			log.Printf("remove failed WARC input directory: %v", cleanupErr)
-		}
 		return preparedPart{}, fmt.Errorf("prepare WARC input: %w", err)
 	}
 	prepareElapsed := time.Since(prepareStarted)
@@ -649,7 +609,6 @@ func openInput(ctx context.Context, d partDeps, part uint32, forced warcinput.Mo
 		"object_bytes", input.ObjectBytes,
 		"object_size", humanize.Bytes(uint64(input.ObjectBytes)),
 		"utilization_percent", coveragePercent,
-		"whole_warc_threshold_percent", o.wholeWARCThreshold,
 		"prepare_seconds", prepareElapsed.Seconds(),
 	}
 	if s3Getter, ok := d.objects.(*fetch.S3Getter); ok {
@@ -677,21 +636,16 @@ func openInput(ctx context.Context, d partDeps, part uint32, forced warcinput.Mo
 			"body_read_retries", stats.BodyReadRetries,
 		)
 	}
-	if input.Mode == warcinput.ModeWholeFile && prepareElapsed > 0 {
-		inputLog = append(inputLog, "download_mib_per_second",
-			float64(input.ObjectBytes)/(1024*1024)/prepareElapsed.Seconds())
-	}
 	slog.InfoContext(ctx, "WARC input ready", inputLog...)
 
-	return preparedPart{input: input, outDir: outDir, warcTempDirectory: warcTempDirectory}, nil
+	return preparedPart{input: input, outDir: outDir}, nil
 }
 
-// producePart processes one WARC part end to end: open the input (forced or threshold-decided),
-// process + write its outputs, clean up, and return the row counts. Every failure returns an error
-// (the deferred cleanup still runs); the caller decides whether to fatal (single --part) or record
-// and continue (range lanes).
-func producePart(ctx context.Context, d partDeps, part uint32, forced warcinput.Mode, outDir string) (partResult, error) {
-	prepared, err := openInput(ctx, d, part, forced, outDir)
+// producePart processes one WARC part end to end: open the input (range reads), process + write its
+// outputs, clean up, and return the row counts. Every failure returns an error (the deferred cleanup
+// still runs); the caller decides whether to fatal (single --part) or record and continue (range runner).
+func producePart(ctx context.Context, d partDeps, part uint32, outDir string) (partResult, error) {
+	prepared, err := openInput(ctx, d, part, outDir)
 	if err != nil {
 		return partResult{}, err
 	}
@@ -699,28 +653,16 @@ func producePart(ctx context.Context, d partDeps, part uint32, forced warcinput.
 }
 
 // processInput runs the post-open remainder of producePart: process the opened WARC, write outputs,
-// clean up, log "done", and report row counts. Split from openInput so the local lane (Task 7) can
-// download and process in separate pools.
+// clean up, log "done", and report row counts. Split from openInput so plan-loading/HEAD stays
+// separate from the process+write remainder.
 func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partResult, error) {
 	o := d.o
 	mode := d.mode
 	input := prepared.input
 	outDir := prepared.outDir
-	warcTempDirectory := prepared.warcTempDirectory
 
 	cleanupInput := func() error {
-		closeErr := input.Close()
-		removeErr := os.RemoveAll(warcTempDirectory)
-		if closeErr != nil && removeErr != nil {
-			return fmt.Errorf("close WARC input: %v; remove input directory: %w", closeErr, removeErr)
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if removeErr != nil {
-			return fmt.Errorf("remove WARC input directory: %w", removeErr)
-		}
-		return nil
+		return input.Close()
 	}
 	defer func() {
 		if err := cleanupInput(); err != nil {
@@ -989,7 +931,7 @@ func run(mode string, o opts) {
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
-	if _, err := producePart(ctx, d, uint32(o.part), "", outDir); err != nil {
+	if _, err := producePart(ctx, d, uint32(o.part), outDir); err != nil {
 		log.Fatalf("%v", err)
 	}
 

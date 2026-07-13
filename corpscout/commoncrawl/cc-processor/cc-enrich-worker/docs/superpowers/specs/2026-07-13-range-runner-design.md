@@ -5,6 +5,14 @@ Status: implemented (`plan`, range `--parts --mode local|remote`, `load --scan/-
 cc-enrich-worker/README.md for the operator-facing docs). The optional `--duckdb` snapshot under
 "4. Status" was not built (YAGNI) — `status` is markers-only, no ClickHouse or DuckDB dependency.
 
+> **Status update (2026-07-13, post-implementation):** the local lane and whole-WARC download mode were
+> removed after implementation. Measuring the real `pages25` catalog showed a uniform distribution —
+> ~3,500 selected pages / ~12% byte coverage per part — so range reads always win and the whole-file
+> path never did. `--parts` now runs a single strategy (range reads over every non-empty part); the
+> `--mode`, `--remote-max-pages`, `--download-parallel`, `--process-parallel`, and `--max-warc-files`
+> flags, the coverage-threshold decision, and `plan`'s lane split + threshold sweep are gone. `plan` is
+> now a pure sizing report. The body below is retained unedited as the original design record.
+
 ## Goal
 
 cc-enrich-worker processes a RANGE of WARC parts natively, split into two explicit workload

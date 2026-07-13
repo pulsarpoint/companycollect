@@ -96,15 +96,14 @@ esac
 		t.Fatal(err)
 	}
 	pc := partCtx{
-		lg:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
-		base:               directory,
-		data:               dataDirectory,
-		worker:             workerPath,
-		crawl:              "CC-MAIN-2026-25",
-		selection:          "pages25",
-		wholeWARCThreshold: "50",
-		techConc:           "32",
-		techChunk:          "16384",
+		lg:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		base:      directory,
+		data:      dataDirectory,
+		worker:    workerPath,
+		crawl:     "CC-MAIN-2026-25",
+		selection: "pages25",
+		techConc:  "32",
+		techChunk: "16384",
 	}
 	if outcome := runProduceLoad(pc, "tech", 0); outcome != ocDone {
 		t.Fatalf("first outcome=%v, want done", outcome)
@@ -120,7 +119,7 @@ esac
 	produceCommand := strings.Split(strings.TrimSpace(string(arguments)), "\n")[0]
 	for _, expected := range []string{
 		"tech", "--base " + directory, "--crawl-id CC-MAIN-2026-25", "--selection pages25",
-		"--part 0", "--whole-warc-threshold 50",
+		"--part 0",
 	} {
 		if !strings.Contains(produceCommand, expected) {
 			t.Fatalf("produce command %q does not contain %q", produceCommand, expected)
@@ -163,15 +162,14 @@ exit 1
 		t.Fatal(err)
 	}
 	pc := partCtx{
-		lg:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
-		base:               directory,
-		data:               dataDirectory,
-		worker:             workerPath,
-		crawl:              "CC-MAIN-2026-25",
-		selection:          "pages25",
-		wholeWARCThreshold: "50",
-		techConc:           "32",
-		techChunk:          "16384",
+		lg:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		base:      directory,
+		data:      dataDirectory,
+		worker:    workerPath,
+		crawl:     "CC-MAIN-2026-25",
+		selection: "pages25",
+		techConc:  "32",
+		techChunk: "16384",
 	}
 	if outcome := runProduceLoad(pc, "tech", 0); outcome != ocFailed {
 		t.Fatalf("outcome=%v, want failed", outcome)
@@ -190,13 +188,12 @@ exit 1
 
 func TestWorkerProcessingArgsUseWARCIndexCatalogAndSourceOptions(t *testing.T) {
 	pc := partCtx{
-		base:               "/data",
-		crawl:              "CC-MAIN-2026-25",
-		selection:          "pages7",
-		wholeWARCThreshold: "50.25",
-		s3Anonymous:        true,
-		techConc:           "32",
-		techChunk:          "16384",
+		base:        "/data",
+		crawl:       "CC-MAIN-2026-25",
+		selection:   "pages7",
+		s3Anonymous: true,
+		techConc:    "32",
+		techChunk:   "16384",
 	}
 	want := []string{
 		"tech",
@@ -207,7 +204,6 @@ func TestWorkerProcessingArgsUseWARCIndexCatalogAndSourceOptions(t *testing.T) {
 		"--crawl-id", "CC-MAIN-2026-25",
 		"--selection", "pages7",
 		"--part", "85",
-		"--whole-warc-threshold", "50.25",
 		"--s3-anonymous",
 		"--out", "/data/CC-MAIN-2026-25/warc/pages7/out_tech_85",
 	}
@@ -220,19 +216,6 @@ func TestWorkerProcessingArgsUseWARCIndexCatalogAndSourceOptions(t *testing.T) {
 	got = workerProcessingArgs(pc, "tech", 85, "/output")
 	if slices.Contains(got, "--s3-anonymous") {
 		t.Fatalf("signed-source worker args contain --s3-anonymous: %q", got)
-	}
-}
-
-func TestValidateWholeWARCThreshold(t *testing.T) {
-	for _, value := range []string{"0", "50", "50.25", "100"} {
-		if err := validateWholeWARCThreshold(value); err != nil {
-			t.Errorf("validateWholeWARCThreshold(%q): %v", value, err)
-		}
-	}
-	for _, value := range []string{"", "-0.01", "100.01", "NaN", "+Inf", "half"} {
-		if err := validateWholeWARCThreshold(value); err == nil {
-			t.Errorf("validateWholeWARCThreshold(%q) succeeded, want error", value)
-		}
 	}
 }
 

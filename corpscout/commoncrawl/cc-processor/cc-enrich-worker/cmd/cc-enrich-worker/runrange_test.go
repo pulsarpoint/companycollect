@@ -6,24 +6,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/parquet-go/parquet-go"
 
-	"cc-enrich-worker/internal/catalog"
 	"cc-enrich-worker/internal/markers"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/tech"
-	"cc-enrich-worker/internal/warcinput"
 	"cc-raw/fetch"
 )
 
@@ -40,9 +35,9 @@ func gzWarc(httpResp string) []byte {
 }
 
 // rangeGetter serves fixed WARC record bytes keyed by "<key>:<start>" (mirrors internal/worker's
-// multiGetter) and satisfies the full fetch.ObjectGetter so producePart's ModeRange path (one
-// HEAD/ObjectSize + per-record GetRange) runs unchanged against local fixtures. A part whose bytes
-// are absent from ranges fails at fetch time, which is exactly the "WARC bytes missing" scenario.
+// multiGetter) and satisfies the full fetch.ObjectGetter so producePart's range-read path (one
+// HEAD/ObjectSize + per-record GetRange) runs against local fixtures. A part whose bytes are absent
+// from ranges fails at fetch time, which is exactly the "WARC bytes missing" scenario.
 type rangeGetter struct {
 	ranges map[string][]byte
 	size   int64
@@ -79,8 +74,8 @@ const (
 )
 
 // fixtureWARCFilename / fixtureBody produce the WARC object identity and bytes for part i: one domain
-// d<i>.com whose single primary page record sits at offset 0. The whole object IS that record, so
-// range-mode (offset 0..len-1) and whole-file-mode (download the file) both see identical bytes.
+// d<i>.com whose single primary page record sits at offset 0. The whole object IS that record, so the
+// range read (offset 0..len-1) returns the entire object's bytes.
 func fixtureWARCFilename(index uint32) string { return fmt.Sprintf("part%d.warc.gz", index) }
 
 func fixtureBody(index uint32) []byte {
@@ -148,112 +143,6 @@ func writeRangeFixture(t *testing.T, base string, parts []fixturePart) *rangeGet
 	return getter
 }
 
-// localFixtureGetter serves whole-WARC downloads for the local-lane tests. Each present part's WARC
-// object is its single gzipped record, so ObjectSize is the record length and DownloadObject writes
-// those bytes; an absent part is withheld, so ObjectSize/DownloadObject fail — the "WARC bytes
-// missing" scenario. It instruments the maxWARCFiles bound: every download, after writing its bytes,
-// waits `delay` and samples the number of whole-WARC temp files on disk under base, recording the
-// peak. A correct pipeline never lets that peak exceed maxWARCFiles.
-type localFixtureGetter struct {
-	objects map[string][]byte
-	base    string
-	delay   time.Duration
-
-	mu         sync.Mutex
-	peakOnDisk int
-}
-
-func (g *localFixtureGetter) ObjectSize(_ context.Context, _, key string) (int64, error) {
-	b, ok := g.objects[key]
-	if !ok {
-		return 0, fmt.Errorf("no object %s", key)
-	}
-	return int64(len(b)), nil
-}
-
-func (g *localFixtureGetter) GetRange(_ context.Context, _, key string, start, end int64) ([]byte, error) {
-	b, ok := g.objects[key]
-	if !ok {
-		return nil, fmt.Errorf("no object %s", key)
-	}
-	if start < 0 || end < start || end >= int64(len(b)) {
-		return nil, fmt.Errorf("invalid range %d-%d for %s (len %d)", start, end, key, len(b))
-	}
-	return append([]byte(nil), b[start:end+1]...), nil
-}
-
-func (g *localFixtureGetter) DownloadObject(_ context.Context, _, key string, f *os.File) error {
-	b, ok := g.objects[key]
-	if !ok {
-		return fmt.Errorf("no object %s", key)
-	}
-	if _, err := f.Write(b); err != nil {
-		return err
-	}
-	if g.delay > 0 {
-		time.Sleep(g.delay)
-	}
-	n := countWholeWARCTempFiles(g.base)
-	g.mu.Lock()
-	if n > g.peakOnDisk {
-		g.peakOnDisk = n
-	}
-	g.mu.Unlock()
-	return nil
-}
-
-func (g *localFixtureGetter) peak() int {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.peakOnDisk
-}
-
-var _ fetch.ObjectGetter = (*localFixtureGetter)(nil)
-
-// writeLocalFixture builds the catalog and returns a whole-file getter for the present parts.
-func writeLocalFixture(t *testing.T, base string, parts []fixturePart) *localFixtureGetter {
-	t.Helper()
-	writeFixtureCatalog(t, base, parts)
-	getter := &localFixtureGetter{objects: map[string][]byte{}, base: base}
-	for _, p := range parts {
-		if p.present {
-			getter.objects[fixtureWARCFilename(p.index)] = fixtureBody(p.index)
-		}
-	}
-	return getter
-}
-
-// countWholeWARCTempFiles counts the downloaded whole-WARC temp files (created by warcinput inside
-// each part's .warc-input dir) currently on disk under base — the true measure of on-disk WARC files.
-func countWholeWARCTempFiles(base string) int {
-	n := 0
-	_ = filepath.WalkDir(base, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !d.IsDir() && strings.HasPrefix(d.Name(), "cc-enrich-") && strings.HasSuffix(d.Name(), ".warc.gz") {
-			n++
-		}
-		return nil
-	})
-	return n
-}
-
-// countWARCInputDirs counts leftover .warc-input directories under base (must be 0 after a clean run).
-func countWARCInputDirs(base string) int {
-	n := 0
-	_ = filepath.WalkDir(base, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() && d.Name() == ".warc-input" {
-			n++
-		}
-		return nil
-	})
-	return n
-}
-
 // techDeps builds a tech-mode partDeps around a fixture getter with no ClickHouse/embed endpoint.
 func techDeps(t *testing.T, base string, getter fetch.ObjectGetter) partDeps {
 	t.Helper()
@@ -300,23 +189,6 @@ func domainsFromParquet(t *testing.T, outDir string) []string {
 	return out
 }
 
-func TestSelectClass(t *testing.T) {
-	c := catalog.Classification{Local: []uint32{0, 3}, Remote: []uint32{1}, Empty: []uint32{2}}
-
-	if got := selectClass("tech", c); !reflectEqualU32(got, []uint32{1}) {
-		t.Errorf("tech selectClass = %v, want [1]", got)
-	}
-	if got := selectClass("both", c); !reflectEqualU32(got, []uint32{1}) {
-		t.Errorf("both selectClass = %v, want [1]", got)
-	}
-	if got := selectClass("industry", c); !reflectEqualU32(got, []uint32{0, 1, 3}) {
-		t.Errorf("industry selectClass = %v, want [0 1 3]", got)
-	}
-	if got := selectClass("embed", c); !reflectEqualU32(got, []uint32{0, 1, 3}) {
-		t.Errorf("embed selectClass = %v, want [0 1 3]", got)
-	}
-}
-
 func reflectEqualU32(a, b []uint32) bool {
 	if len(a) != len(b) {
 		return false
@@ -338,7 +210,7 @@ func TestRunRangePoolAllSucceed(t *testing.T) {
 	deps := techDeps(t, base, getter)
 	outDirFor := outDirForTest(base, "tech")
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
-		return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
+		return producePart(ctx, deps, part, outDir)
 	}
 
 	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", "test-run", outDirFor, produce)
@@ -385,7 +257,7 @@ func TestRunRangePoolFailureAndResume(t *testing.T) {
 		mu.Lock()
 		producedParts[part]++
 		mu.Unlock()
-		return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
+		return producePart(ctx, deps, part, outDir)
 	}
 
 	// warcParallel=1 keeps failure ordering deterministic.
@@ -426,7 +298,7 @@ func TestRunRangePoolParallelDeterministic(t *testing.T) {
 		deps := techDeps(t, base, getter)
 		outDirFor := outDirForTest(base, "tech")
 		produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
-			return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
+			return producePart(ctx, deps, part, outDir)
 		}
 		sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, warcParallel, "tech", "test-run", outDirFor, produce)
 		if sum.Produced != 4 {
@@ -464,7 +336,7 @@ func TestRunRangePoolBreaker(t *testing.T) {
 	var attempts atomic.Int64
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 		attempts.Add(1)
-		return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
+		return producePart(ctx, deps, part, outDir)
 	}
 
 	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", outDirFor, produce)
@@ -544,7 +416,7 @@ func TestRunRangePoolPreservesLoadedDir(t *testing.T) {
 		if part == 1 {
 			t.Errorf("part 1 (loaded, preserved) must not be produced")
 		}
-		return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
+		return producePart(ctx, deps, part, outDir)
 	}
 
 	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", outDirFor, produce)
@@ -563,185 +435,5 @@ func TestRunRangePoolPreservesLoadedDir(t *testing.T) {
 	}
 	if !markers.Exists(markers.ProducedPath(outDirFor(0))) {
 		t.Error("healthy sibling part 0 should be produced")
-	}
-}
-
-// localLanes builds the download (ModeWholeFile) + process closures for the local pool over deps.
-func localLanes(deps partDeps) (partOpener, partProcessor) {
-	open := func(ctx context.Context, part uint32, outDir string) (preparedPart, error) {
-		return openInput(ctx, deps, part, warcinput.ModeWholeFile, outDir)
-	}
-	process := func(ctx context.Context, prepared preparedPart) (partResult, error) {
-		return processInput(ctx, deps, prepared)
-	}
-	return open, process
-}
-
-// TestRunRangeLocalPoolIdenticalToWholeFile proves the local (download/process) pipeline yields the
-// same per-part domains.parquet as sequential ModeWholeFile producePart runs, marks every part, and
-// leaves no temp state behind.
-func TestRunRangeLocalPoolIdenticalToWholeFile(t *testing.T) {
-	class := []uint32{0, 1, 2}
-	parts := []fixturePart{{index: 0, present: true}, {index: 1, present: true}, {index: 2, present: true}}
-
-	// Reference: sequential ModeWholeFile producePart into an isolated base.
-	refBase := t.TempDir()
-	refGetter := writeLocalFixture(t, refBase, parts)
-	refDeps := techDeps(t, refBase, refGetter)
-	refOutFor := outDirForTest(refBase, "tech")
-	want := map[uint32][]string{}
-	for _, part := range class {
-		if _, err := producePart(context.Background(), refDeps, part, warcinput.ModeWholeFile, refOutFor(part)); err != nil {
-			t.Fatalf("reference producePart part %d: %v", part, err)
-		}
-		want[part] = domainsFromParquet(t, refOutFor(part))
-	}
-
-	// Under test: the local pool, single-file / single-lane so ordering is deterministic.
-	base := t.TempDir()
-	getter := writeLocalFixture(t, base, parts)
-	deps := techDeps(t, base, getter)
-	outDirFor := outDirForTest(base, "tech")
-	open, process := localLanes(deps)
-
-	sum := runRangeLocalPool(context.Background(), class, 1, 1, 1, "tech", "test-run", outDirFor, open, process)
-
-	if sum.Produced != 3 || sum.Failed != 0 || sum.Skipped != 0 || sum.Breaker {
-		t.Fatalf("summary = %+v, want produced=3 failed=0 skipped=0 breaker=false", sum)
-	}
-	for _, part := range class {
-		outDir := outDirFor(part)
-		if !markers.Exists(markers.ProducedPath(outDir)) {
-			t.Errorf("part %d: missing .produced marker", part)
-		}
-		if got := domainsFromParquet(t, outDir); !reflectEqualStr(got, want[part]) {
-			t.Errorf("part %d: local domains %v != whole-file %v", part, got, want[part])
-		}
-	}
-	if n := countWARCInputDirs(base); n != 0 {
-		t.Errorf("leftover .warc-input dirs = %d, want 0", n)
-	}
-}
-
-// TestRunRangeLocalPoolConcurrencyBound proves the single slots semaphore keeps on-disk whole-WARC
-// files at or below maxWARCFiles even when downloadParallel would otherwise run more downloads at
-// once, and that all temp state is removed at exit.
-func TestRunRangeLocalPoolConcurrencyBound(t *testing.T) {
-	cases := []struct {
-		name             string
-		downloadParallel int
-		processParallel  int
-		maxWARCFiles     int
-	}{
-		{"brief-2x2", 2, 2, 2},
-		{"semaphore-below-download", 2, 1, 1}, // downloadParallel > maxWARCFiles: slot must gate
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var parts []fixturePart
-			var class []uint32
-			for i := uint32(0); i < 6; i++ {
-				parts = append(parts, fixturePart{index: i, present: true})
-				class = append(class, i)
-			}
-			base := t.TempDir()
-			getter := writeLocalFixture(t, base, parts)
-			getter.delay = 25 * time.Millisecond // widen the on-disk window so overlap is observable
-			deps := techDeps(t, base, getter)
-			outDirFor := outDirForTest(base, "tech")
-			open, process := localLanes(deps)
-
-			sum := runRangeLocalPool(context.Background(), class, tc.downloadParallel, tc.processParallel, tc.maxWARCFiles, "tech", "test-run", outDirFor, open, process)
-
-			if sum.Produced != len(class) || sum.Failed != 0 {
-				t.Fatalf("summary = %+v, want produced=%d failed=0", sum, len(class))
-			}
-			peak := getter.peak()
-			t.Logf("peak on-disk WARC files = %d (maxWARCFiles=%d, downloadParallel=%d)", peak, tc.maxWARCFiles, tc.downloadParallel)
-			if peak > tc.maxWARCFiles {
-				t.Errorf("peak on-disk WARC files = %d, exceeds maxWARCFiles=%d", peak, tc.maxWARCFiles)
-			}
-			if n := countWARCInputDirs(base); n != 0 {
-				t.Errorf("leftover .warc-input dirs = %d, want 0", n)
-			}
-			if n := countWholeWARCTempFiles(base); n != 0 {
-				t.Errorf("leftover whole-WARC temp files = %d, want 0", n)
-			}
-		})
-	}
-}
-
-// TestRunRangeLocalPoolFailureNoMarkerNoTemp proves a part whose WARC bytes are missing is recorded
-// failed, writes no .produced marker, and leaves no temp file behind, while healthy parts still
-// produce.
-func TestRunRangeLocalPoolFailureNoMarkerNoTemp(t *testing.T) {
-	base := t.TempDir()
-	parts := []fixturePart{
-		{index: 0, present: true},
-		{index: 1, present: false}, // bytes withheld -> download fails
-		{index: 2, present: true},
-	}
-	getter := writeLocalFixture(t, base, parts)
-	deps := techDeps(t, base, getter)
-	outDirFor := outDirForTest(base, "tech")
-	open, process := localLanes(deps)
-
-	sum := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 2, "tech", "test-run", outDirFor, open, process)
-
-	if sum.Produced != 2 || sum.Failed != 1 || !reflectEqualU32(sum.FailedParts, []uint32{1}) {
-		t.Fatalf("summary = %+v, want produced=2 failed=1 failedParts=[1]", sum)
-	}
-	if markers.Exists(markers.ProducedPath(outDirFor(1))) {
-		t.Error("failed part 1 must not be marked produced")
-	}
-	for _, part := range []uint32{0, 2} {
-		if !markers.Exists(markers.ProducedPath(outDirFor(part))) {
-			t.Errorf("part %d should be marked produced", part)
-		}
-	}
-	if n := countWARCInputDirs(base); n != 0 {
-		t.Errorf("leftover .warc-input dirs = %d, want 0", n)
-	}
-	if n := countWholeWARCTempFiles(base); n != 0 {
-		t.Errorf("leftover whole-WARC temp files = %d, want 0", n)
-	}
-}
-
-// TestRunRangeLocalPoolResumeSkips proves a rerun skips parts already carrying a .produced marker
-// (download slot acquired then released on skip) and attempts only the unmarked part.
-func TestRunRangeLocalPoolResumeSkips(t *testing.T) {
-	base := t.TempDir()
-	parts := []fixturePart{{index: 0, present: true}, {index: 1, present: true}, {index: 2, present: true}}
-	getter := writeLocalFixture(t, base, parts)
-	deps := techDeps(t, base, getter)
-	outDirFor := outDirForTest(base, "tech")
-
-	var mu sync.Mutex
-	opened := map[uint32]int{}
-	baseOpen, process := localLanes(deps)
-	open := func(ctx context.Context, part uint32, outDir string) (preparedPart, error) {
-		mu.Lock()
-		opened[part]++
-		mu.Unlock()
-		return baseOpen(ctx, part, outDir)
-	}
-
-	if sum := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 1, "tech", "test-run", outDirFor, open, process); sum.Produced != 3 {
-		t.Fatalf("run1 produced = %d, want 3", sum.Produced)
-	}
-	// Wipe part 1's marker so only it reruns.
-	if err := os.Remove(markers.ProducedPath(outDirFor(1))); err != nil {
-		t.Fatal(err)
-	}
-	for k := range opened {
-		delete(opened, k)
-	}
-
-	sum2 := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 1, "tech", "test-run", outDirFor, open, process)
-	if sum2.Skipped != 2 || sum2.Produced != 1 {
-		t.Errorf("run2 summary = %+v, want skipped=2 produced=1", sum2)
-	}
-	if len(opened) != 1 || opened[1] != 1 {
-		t.Errorf("run2 opened parts = %v, want only {1:1}", opened)
 	}
 }

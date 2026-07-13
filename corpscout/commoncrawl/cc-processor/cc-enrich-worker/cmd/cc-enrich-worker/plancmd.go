@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -17,110 +16,55 @@ import (
 	"cc-enrich-worker/internal/warcinput"
 )
 
-// planSweepValues are the fixed --remote-max-pages thresholds always shown in a plan report's
-// sweep table, regardless of the threshold the operator actually picked.
-var planSweepValues = []int64{100, 500, 1000, 2500, 5000, 10000}
-
-// sweepRow is one row of the threshold sweep: at X pages, how many parts land in each lane.
-type sweepRow struct {
-	X             int64
-	Local, Remote int
-}
-
-// planReport summarizes lane assignment (local whole-WARC download vs remote range reads) and
-// page/byte totals for one WARC part range at one --remote-max-pages threshold, plus a sweep
-// showing how the split would look at other thresholds. It is a pure, testable value — no I/O.
+// planReport is a sizing summary for one WARC part range: how many parts carry selected pages
+// (non-empty), how many are empty, and the page/byte totals across the selected parts. Range reads
+// are the only fetch strategy, so there is no lane split — this is a pure, testable value, no I/O.
 type planReport struct {
-	Lo, Hi                  uint32
-	Local, Remote, Empty    int
-	LocalPages, RemotePages int64
-	LocalBytes, RemoteBytes int64
-	Sweep                   []sweepRow // X in {100, 500, 1000, 2500, 5000, 10000} plus the flag value
+	Lo, Hi     uint32
+	Selected   int // parts with at least one selected page
+	Empty      int // parts in [lo,hi] with no selected pages
+	TotalPages int64
+	TotalBytes int64
 }
 
-// buildPlanReport classifies [lo,hi] at threshold x (catalog.ClassifyParts split semantics:
-// Pages <= x -> remote, Pages > x -> local, no stats row -> empty) and computes a sweep over the
-// fixed planSweepValues plus x itself, deduplicated and sorted ascending.
-func buildPlanReport(stats []catalog.PartStats, lo, hi uint32, x int64) planReport {
-	byIndex := make(map[uint32]catalog.PartStats, len(stats))
+// buildPlanReport tallies selected/empty part counts and page/byte totals for [lo,hi]. LoadPartStats
+// returns exactly one row per non-empty part in the range, so len(stats) is the selected count and
+// the remaining indices in [lo,hi] are empty.
+func buildPlanReport(stats []catalog.PartStats, lo, hi uint32) planReport {
+	report := planReport{Lo: lo, Hi: hi, Selected: len(stats)}
 	for _, stat := range stats {
-		byIndex[stat.WarcIndex] = stat
+		report.TotalPages += stat.Pages
+		report.TotalBytes += stat.SelectedBytes
 	}
-
-	classification := catalog.ClassifyParts(stats, lo, hi, x)
-	report := planReport{
-		Lo:     lo,
-		Hi:     hi,
-		Local:  len(classification.Local),
-		Remote: len(classification.Remote),
-		Empty:  len(classification.Empty),
-	}
-	for _, index := range classification.Local {
-		report.LocalPages += byIndex[index].Pages
-		report.LocalBytes += byIndex[index].SelectedBytes
-	}
-	for _, index := range classification.Remote {
-		report.RemotePages += byIndex[index].Pages
-		report.RemoteBytes += byIndex[index].SelectedBytes
-	}
-
-	sweepXs := sweepThresholds(x)
-	report.Sweep = make([]sweepRow, 0, len(sweepXs))
-	for _, sweepX := range sweepXs {
-		c := catalog.ClassifyParts(stats, lo, hi, sweepX)
-		report.Sweep = append(report.Sweep, sweepRow{X: sweepX, Local: len(c.Local), Remote: len(c.Remote)})
-	}
+	total := int64(hi) - int64(lo) + 1
+	report.Empty = int(total) - len(stats)
 	return report
 }
 
-// sweepThresholds returns planSweepValues plus x, deduplicated and sorted ascending.
-func sweepThresholds(x int64) []int64 {
-	all := append(append([]int64(nil), planSweepValues...), x)
-	seen := make(map[int64]struct{}, len(all))
-	values := make([]int64, 0, len(all))
-	for _, v := range all {
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		values = append(values, v)
-	}
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-	return values
-}
-
-const bytesPerWholeWARCDownload = 1 << 30 // ~1 GiB — approximate uncompressed WARC part size
-
-// String renders a human-readable plan report: lane totals, then a download-size estimate
-// (local parts x ~1 GiB), then the threshold sweep table.
+// String renders a human-readable sizing report: part counts, page totals/average, byte total.
 func (r planReport) String() string {
+	avgPages := 0.0
+	if r.Selected > 0 {
+		avgPages = float64(r.TotalPages) / float64(r.Selected)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "plan: parts [%d,%d]\n", r.Lo, r.Hi)
-	fmt.Fprintf(&b, "  local:  %d parts, %d pages, %s\n", r.Local, r.LocalPages, humanize.Bytes(uint64(r.LocalBytes)))
-	fmt.Fprintf(&b, "  remote: %d parts, %d pages, %s\n", r.Remote, r.RemotePages, humanize.Bytes(uint64(r.RemoteBytes)))
-	fmt.Fprintf(&b, "  empty:  %d parts\n", r.Empty)
-	fmt.Fprintf(&b, "  download estimate: %d local parts x ~1 GiB = ~%s\n",
-		r.Local, humanize.Bytes(uint64(r.Local)*bytesPerWholeWARCDownload))
-	b.WriteString("\n  threshold sweep (--remote-max-pages -> local/remote parts):\n")
-	for _, row := range r.Sweep {
-		fmt.Fprintf(&b, "    X=%-8d local=%-6d remote=%-6d\n", row.X, row.Local, row.Remote)
-	}
+	fmt.Fprintf(&b, "  selected: %d parts, %d pages (avg %.1f/part), %s\n",
+		r.Selected, r.TotalPages, avgPages, humanize.Bytes(uint64(r.TotalBytes)))
+	fmt.Fprintf(&b, "  empty:    %d parts\n", r.Empty)
 	return b.String()
 }
 
-// runPlanCmd implements the `plan` command: read-only reporting of how a WARC part range would
-// split across the local (whole-WARC download) and remote (range read) lanes at a given
-// --remote-max-pages threshold, plus a sweep across other thresholds. It never writes parquet,
-// markers, or ClickHouse data — it only reads the catalog.
+// runPlanCmd implements the `plan` command: a read-only sizing report (part counts, pages, bytes)
+// for a WARC part range. It never writes parquet, markers, or ClickHouse data — it only reads the
+// catalog.
 func runPlanCmd(args []string) {
 	fs := flag.NewFlagSet("cc-enrich-worker plan", flag.ExitOnError)
 	var crawlID, selection, base, partsFlag string
-	var remoteMaxPages int64
 	fs.StringVar(&crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
 	fs.StringVar(&selection, "selection", "pages25", "catalog selection identity")
 	fs.StringVar(&base, "base", "", "output ROOT (required, explicit — no environment fallback)")
 	fs.StringVar(&partsFlag, "parts", "", `WARC part range, e.g. "100-200" or "42" (required)`)
-	fs.Int64Var(&remoteMaxPages, "remote-max-pages", 0, "split threshold: parts with <= this many selected pages are remote-eligible (required, >=1)")
 	_ = fs.Parse(args)
 
 	if crawlID == "" {
@@ -141,11 +85,6 @@ func runPlanCmd(args []string) {
 	parts, err := parsePartsRange(partsFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: invalid --parts: %v\n", err)
-		fs.Usage()
-		os.Exit(2)
-	}
-	if remoteMaxPages < 1 {
-		fmt.Fprintln(os.Stderr, "error: --remote-max-pages must be >= 1")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -189,6 +128,6 @@ func runPlanCmd(args []string) {
 		log.Fatalf("load part stats from %s: %v", catalogPath, err)
 	}
 
-	report := buildPlanReport(stats, parts.lo, parts.hi, remoteMaxPages)
+	report := buildPlanReport(stats, parts.lo, parts.hi)
 	fmt.Print(report.String())
 }

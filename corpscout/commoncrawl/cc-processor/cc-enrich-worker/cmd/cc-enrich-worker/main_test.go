@@ -30,7 +30,7 @@ func TestFetchConcurrencyFor(t *testing.T) {
 		{"both", 10, 1, 10 * worker.PageConcurrency},     // single-part both folds in page pool
 		{"tech", 32, 4, 32 * worker.PageConcurrency * 4}, // remote lane: warcParallel=4
 		{"industry", 32, 4, 32 * 4},                      // industry remote lane scales too
-		{"both", 16, 2, 16 * worker.PageConcurrency * 2}, // local lane: downloadParallel=2
+		{"both", 16, 2, 16 * worker.PageConcurrency * 2}, // range runner: warcParallel=2
 		{"tech", 10, 0, 10 * worker.PageConcurrency},     // partsParallel<1 clamps to 1
 	}
 	for _, tc := range tests {

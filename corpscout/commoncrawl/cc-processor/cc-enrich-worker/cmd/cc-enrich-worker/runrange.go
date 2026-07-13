@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -34,23 +33,8 @@ type rangeSummary struct {
 }
 
 // partProducer produces one part into outDir, returning its per-kind row counts. In production it
-// wraps producePart with warcinput.ModeRange; tests inject a fixture-backed producer.
+// wraps producePart (range reads); tests inject a fixture-backed producer.
 type partProducer func(ctx context.Context, part uint32, outDir string) (partResult, error)
-
-// selectClass picks which classified parts a command actually processes. industry/embed selections
-// are sparse — even a part the threshold called "local" is small enough to range-read — so they take
-// EVERY non-empty part (local + remote, ascending). tech/both take only the remote lane; their local
-// parts are large and belong to the local (whole-WARC download) runner.
-func selectClass(cmd string, c catalog.Classification) []uint32 {
-	if cmd == "industry" || cmd == "embed" {
-		merged := make([]uint32, 0, len(c.Local)+len(c.Remote))
-		merged = append(merged, c.Local...)
-		merged = append(merged, c.Remote...)
-		sort.Slice(merged, func(i, j int) bool { return merged[i] < merged[j] })
-		return merged
-	}
-	return append([]uint32(nil), c.Remote...)
-}
 
 // preserveStaleDir reports whether a NON-EMPTY output dir that lacks a .produced marker must be
 // kept (and its part skipped) instead of wiped as crashed-produce debris:
@@ -199,239 +183,10 @@ func runRangePool(
 	return sum
 }
 
-// partOpener downloads/opens one part's WARC input (the local lane forces warcinput.ModeWholeFile).
-// In production it wraps openInput; tests inject a fixture-backed opener.
-type partOpener func(ctx context.Context, part uint32, outDir string) (preparedPart, error)
-
-// partProcessor runs the post-open remainder for one prepared part. In production it wraps
-// processInput (whose deferred cleanup closes the input and removes its temp dir).
-type partProcessor func(ctx context.Context, prepared preparedPart) (partResult, error)
-
-// downloadedPart carries a downloaded (opened) part from the download pool to the process pool. The
-// part index rides alongside the preparedPart so the processor can write its marker / report failure.
-type downloadedPart struct {
-	part      uint32
-	prepared  preparedPart
-	startedAt time.Time // when this part's download began, for the marker's duration_s
-}
-
-// cleanupPrepared releases a preparedPart that was DROPPED between the download and process stages
-// (breaker trip / context cancel) and so will never reach processInput's deferred cleanup: it closes
-// the input (removing the downloaded whole-WARC file) and removes the .warc-input temp dir. Safe to
-// call on a dropped part exactly once; a part handed to processInput must NOT also be cleaned here.
-func cleanupPrepared(p preparedPart) {
-	if p.input != nil {
-		if err := p.input.Close(); err != nil {
-			log.Printf("range local: close dropped WARC input: %v", err)
-		}
-	}
-	if p.warcTempDirectory != "" {
-		if err := os.RemoveAll(p.warcTempDirectory); err != nil {
-			log.Printf("range local: remove dropped WARC temp dir %s: %v", p.warcTempDirectory, err)
-		}
-	}
-}
-
-// runRangeLocalPool runs the local (whole-WARC download) lane as a bounded two-stage pipeline.
-//
-// A SINGLE slots semaphore (capacity maxWARCFiles) is the on-disk WARC-file bound: one token is
-// acquired BEFORE a part's download begins and released only after the part finishes processing AND
-// its temp dir is removed (or immediately after cleanup on skip/failure/drop). So in-flight +
-// buffered whole WARC files can never exceed maxWARCFiles — this semaphore, not any channel buffer,
-// IS the --max-warc-files guarantee (the handoff channel is deliberately unbuffered).
-//
-// downloadParallel goroutines pull parts, honor the .produced marker (skip), preserve a
-// complete-but-unmarked output (.loaded) as skipped, remove a stale output dir left by a crashed
-// produce, then open the input as ModeWholeFile and hand it to processParallel
-// goroutines. Processors run processInput (its defer closes the input + removes the temp dir), write
-// the .produced marker, and release the slot. A prepared part dropped between stages (breaker trip /
-// cancel) is closed and its temp dir removed via cleanupPrepared before its slot is released. The
-// shared consecutive-failure counter trips the same breaker as the remote pool. Returns the tally —
-// no printing, no os.Exit.
-func runRangeLocalPool(
-	ctx context.Context,
-	class []uint32,
-	downloadParallel, processParallel, maxWARCFiles int,
-	cmd, runID string,
-	outDirFor func(uint32) string,
-	open partOpener,
-	process partProcessor,
-) rangeSummary {
-	if downloadParallel < 1 {
-		downloadParallel = 1
-	}
-	if downloadParallel > len(class) {
-		downloadParallel = len(class)
-	}
-	if processParallel < 1 {
-		processParallel = 1
-	}
-	if maxWARCFiles < 1 {
-		maxWARCFiles = 1
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	slots := make(chan struct{}, maxWARCFiles)
-	parts := make(chan uint32)
-	ready := make(chan downloadedPart) // unbuffered: the slot cap, not a buffer, bounds disk
-
-	var mu sync.Mutex
-	var sum rangeSummary
-	consecutive := 0
-
-	// fail records a part failure under the lock and trips + cancels the breaker at the limit.
-	fail := func(part uint32, err error) {
-		mu.Lock()
-		sum.Failed++
-		sum.FailedParts = append(sum.FailedParts, part)
-		consecutive++
-		tripped := consecutive >= consecutiveFailureLimit
-		if tripped {
-			sum.Breaker = true
-		}
-		mu.Unlock()
-		log.Printf("range local: part %d FAILED: %v", part, err)
-		if tripped {
-			cancel()
-		}
-	}
-
-	// Feed parts; stop early once the breaker cancels.
-	go func() {
-		defer close(parts)
-		for _, part := range class {
-			select {
-			case <-ctx.Done():
-				return
-			case parts <- part:
-			}
-		}
-	}()
-
-	// DOWNLOAD pool.
-	var downloaders sync.WaitGroup
-	for i := 0; i < downloadParallel; i++ {
-		downloaders.Add(1)
-		go func() {
-			defer downloaders.Done()
-			for part := range parts {
-				if ctx.Err() != nil {
-					return
-				}
-				outDir := outDirFor(part)
-
-				// One token per WARC file on disk: acquire BEFORE the download starts.
-				select {
-				case <-ctx.Done():
-					return
-				case slots <- struct{}{}:
-				}
-
-				if markers.Exists(markers.ProducedPath(outDir)) {
-					mu.Lock()
-					sum.Skipped++
-					mu.Unlock()
-					<-slots
-					continue
-				}
-				// A non-empty output dir with no .produced marker is USUALLY debris from a crashed produce
-				// — remove it so the download starts clean (openInput recreates the dir). But a
-				// complete-but-unmarked output (.loaded from cc-crawl) is authoritative: preserve it and
-				// skip the part rather than wiping loaded data. (tech/both never hit the embed branch.)
-				if info, statErr := os.Stat(outDir); statErr == nil && info.IsDir() {
-					if preserveStaleDir(cmd, outDir) {
-						log.Printf("range local: preserving complete-but-unmarked output dir (skip) part=%d %s", part, outDir)
-						mu.Lock()
-						sum.Skipped++
-						mu.Unlock()
-						<-slots
-						continue
-					}
-					log.Printf("range local: removing stale output dir (crashed produce?) part=%d %s", part, outDir)
-					if rmErr := os.RemoveAll(outDir); rmErr != nil {
-						log.Printf("range local: remove stale output dir part=%d: %v", part, rmErr)
-					}
-				}
-
-				partStart := time.Now()
-				prepared, err := open(ctx, part, outDir)
-				if err != nil {
-					fail(part, err)
-					<-slots
-					continue
-				}
-
-				select {
-				case <-ctx.Done():
-					// Dropped before any processor took it: close + remove temp, then release the slot.
-					cleanupPrepared(prepared)
-					<-slots
-					return
-				case ready <- downloadedPart{part: part, prepared: prepared, startedAt: partStart}:
-					// Ownership (and the slot) transfers to the processor.
-				}
-			}
-		}()
-	}
-
-	// Close ready once every downloader has stopped so processors drain and exit.
-	go func() {
-		downloaders.Wait()
-		close(ready)
-	}()
-
-	// PROCESS pool.
-	var processors sync.WaitGroup
-	for i := 0; i < processParallel; i++ {
-		processors.Add(1)
-		go func() {
-			defer processors.Done()
-			for dp := range ready {
-				// Breaker already tripped: drop this downloaded part without processing.
-				if ctx.Err() != nil {
-					cleanupPrepared(dp.prepared)
-					<-slots
-					continue
-				}
-				res, err := process(ctx, dp.prepared) // processInput's defer closes input + removes temp dir
-				if err != nil {
-					fail(dp.part, err)
-					<-slots
-					continue
-				}
-				if merr := markers.WriteProduced(dp.prepared.outDir, markers.Produced{
-					Part:        dp.part,
-					Cmd:         cmd,
-					Rows:        res.Rows,
-					SourceRunID: runID,
-					DurationS:   time.Since(dp.startedAt).Seconds(),
-					FinishedAt:  time.Now().UTC(),
-				}); merr != nil {
-					fail(dp.part, fmt.Errorf("write produced marker: %w", merr))
-					<-slots
-					continue
-				}
-				mu.Lock()
-				consecutive = 0
-				sum.Produced++
-				mu.Unlock()
-				<-slots
-				log.Printf("range local: part %d produced -> %s", dp.part, dp.prepared.outDir)
-			}
-		}()
-	}
-
-	processors.Wait()
-	return sum
-}
-
-// runRange is the CLI entry for `<cmd> --parts A-B --mode local|remote`: resolve and (if configured)
-// sync the catalog, classify the range, pick this command's parts (local lane = the large whole-WARC
-// parts, remote lane = the range-read parts), build the shared deps once, run the lane's bounded pool
-// (the two-stage download/process pipeline for local, the single pool for remote), print the summary,
-// and exit non-zero if any part failed (breaker included).
+// runRange is the CLI entry for `<cmd> --parts A-B`: resolve and (if configured) sync the catalog,
+// select every non-empty part in the range (range reads are the only fetch strategy), build the
+// shared deps once, run the bounded pool, print the summary, and exit non-zero if any part failed
+// (breaker included).
 func runRange(cmd string, o opts, ro runnerOpts) {
 	ctx := context.Background()
 	if o.base == "" {
@@ -471,34 +226,35 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	if err != nil {
 		log.Fatalf("load part stats from %s: %v", catalogPath, err)
 	}
-	classification := catalog.ClassifyParts(stats, lo, hi, ro.remoteMaxPages)
-	// The local lane owns the large (whole-WARC download) parts; the remote lane owns the range-read
-	// parts (selectClass). Task 1 validation already rejects industry/embed + local, so only tech/both
-	// reach the local branch.
+
+	// Every part with catalog stats is range-read; parts with no stats row are empty and skipped.
+	present := make(map[uint32]struct{}, len(stats))
+	for _, stat := range stats {
+		present[stat.WarcIndex] = struct{}{}
+	}
 	var class []uint32
-	if ro.mode == "local" {
-		class = append([]uint32(nil), classification.Local...)
-	} else {
-		class = selectClass(cmd, classification)
+	empty := 0
+	for i := lo; ; i++ {
+		if _, ok := present[i]; ok {
+			class = append(class, i)
+		} else {
+			empty++
+		}
+		if i == hi {
+			break
+		}
 	}
 
-	fmt.Printf("mode=%s X=%d parts=%d local=%d remote=%d empty=%d\n",
-		ro.mode, ro.remoteMaxPages, len(class), len(classification.Local), len(classification.Remote), len(classification.Empty))
+	fmt.Printf("parts=%d selected=%d empty=%d\n", len(class)+empty, len(class), empty)
 
 	if len(class) == 0 {
 		log.Printf("range: nothing to do — no parts to process in [%d,%d]", lo, hi)
 		return
 	}
 
-	// Parts-level parallelism sizes the shared transport (fetchConcurrencyFor). Remote: every part
-	// range-reads concurrently, so warcParallel parts genuinely contend (spec §2). Local: parts are
-	// processed from LOCAL downloaded files (ReadAt, no S3), so only the in-flight whole-WARC
-	// downloads touch the transport — downloadParallel is the honest S3 parts-parallelism there.
-	partsParallel := ro.warcParallel
-	if ro.mode == "local" {
-		partsParallel = ro.downloadParallel
-	}
-	deps, err := buildPartDeps(ctx, cmd, o, partsParallel)
+	// Parts-level parallelism sizes the shared transport (fetchConcurrencyFor): every part range-reads
+	// concurrently, so warcParallel parts genuinely contend for the one transport (spec §2).
+	deps, err := buildPartDeps(ctx, cmd, o, ro.warcParallel)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -511,21 +267,10 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	// One run id for every .produced marker written by this invocation. No crawl-wide run identity
 	// exists in the CLI, so derive the cheapest truthful one: command + range + start time.
 	runID := fmt.Sprintf("%s-%d-%d-%d", cmd, lo, hi, start.Unix())
-	var sum rangeSummary
-	if ro.mode == "local" {
-		open := func(ctx context.Context, part uint32, outDir string) (preparedPart, error) {
-			return openInput(ctx, deps, part, warcinput.ModeWholeFile, outDir)
-		}
-		process := func(ctx context.Context, prepared preparedPart) (partResult, error) {
-			return processInput(ctx, deps, prepared)
-		}
-		sum = runRangeLocalPool(ctx, class, ro.downloadParallel, ro.processParallel, ro.maxWARCFiles, cmd, runID, outDirFor, open, process)
-	} else {
-		produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
-			return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
-		}
-		sum = runRangePool(ctx, class, ro.warcParallel, cmd, runID, outDirFor, produce)
+	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
+		return producePart(ctx, deps, part, outDir)
 	}
+	sum := runRangePool(ctx, class, ro.warcParallel, cmd, runID, outDirFor, produce)
 	elapsed := time.Since(start).Round(time.Second)
 
 	partsMsg := ""

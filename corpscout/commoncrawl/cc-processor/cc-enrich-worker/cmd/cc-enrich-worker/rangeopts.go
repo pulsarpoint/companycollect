@@ -55,48 +55,15 @@ func parsePartsRange(s string) (partsRange, error) {
 }
 
 type runnerOpts struct {
-	parts            partsRange
-	mode             string // "local" or "remote"
-	remoteMaxPages   int64  // required > 0 for tech/both; industry/embed: used only to warn
-	warcParallel     int    // remote lane; default 4, >=1
-	downloadParallel int    // local lane; default 2, >=1
-	processParallel  int    // local lane; default 2, >=1
-	maxWARCFiles     int    // local lane; REQUIRED >=1 (recommend 5); downloadParallel <= maxWARCFiles
+	parts        partsRange
+	warcParallel int // parts produced concurrently; default 4, >=1
 }
 
-// validateRunnerOpts validates the runner options.
-// Rules:
-// - mode must be "local" or "remote"
-// - cmd "industry"/"embed" + mode "local" → error "industry/embed selections are sparse; only --mode remote is supported"
-// - mode local requires maxWARCFiles >= 1 and downloadParallel <= maxWARCFiles
-// - tech/both require remoteMaxPages >= 1
-func validateRunnerOpts(cmd string, o runnerOpts) error {
-	// Check mode is valid
-	if o.mode != "local" && o.mode != "remote" {
-		return fmt.Errorf("invalid mode: %q", o.mode)
+// validateRunnerOpts validates the runner options. Range reads are the only fetch strategy, so the
+// single remaining rule is that the parts-parallelism is at least one.
+func validateRunnerOpts(o runnerOpts) error {
+	if o.warcParallel < 1 {
+		return fmt.Errorf("warcParallel must be >= 1")
 	}
-
-	// Check industry/embed + local mode
-	if (cmd == "industry" || cmd == "embed") && o.mode == "local" {
-		return fmt.Errorf("industry/embed selections are sparse; only --mode remote is supported")
-	}
-
-	// Check mode local requirements
-	if o.mode == "local" {
-		if o.maxWARCFiles < 1 {
-			return fmt.Errorf("maxWARCFiles must be >= 1 for local mode")
-		}
-		if o.downloadParallel > o.maxWARCFiles {
-			return fmt.Errorf("downloadParallel (%d) must be <= maxWARCFiles (%d)", o.downloadParallel, o.maxWARCFiles)
-		}
-	}
-
-	// Check tech/both require remoteMaxPages >= 1
-	if cmd == "tech" || cmd == "both" {
-		if o.remoteMaxPages < 1 {
-			return fmt.Errorf("remoteMaxPages must be >= 1 for %s", cmd)
-		}
-	}
-
 	return nil
 }
