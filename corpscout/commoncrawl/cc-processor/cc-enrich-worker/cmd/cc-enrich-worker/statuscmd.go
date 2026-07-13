@@ -23,12 +23,17 @@ type markerEntry struct {
 }
 
 // scanMarkers walks root for every "<dir>.produced" marker (a sibling of the output dir it
-// describes — see markers.ProducedPath) and returns one markerEntry per marker found. A bare
+// describes — see markers.ProducedPath) and returns one markerEntry per marker read. A bare
 // output directory with no .produced marker (a crashed produce that was never retried, or one
 // that simply hasn't run yet) contributes nothing: it is neither produced, loaded, nor pending.
-func scanMarkers(root string) ([]markerEntry, error) {
-	var entries []markerEntry
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+//
+// A marker that exists but cannot be read/parsed does NOT abort the scan: the writer's
+// temp+rename atomicity does not survive an rsync/NFS copy from a producer host, so a transient
+// partial marker must degrade one line of the report, not kill `status` outright (the same
+// per-item isolation the loader's sweep uses). Such markers are logged, collected into the
+// second return value, and surfaced as a count in the report.
+func scanMarkers(root string) (entries []markerEntry, unparsable []string, err error) {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -38,7 +43,9 @@ func scanMarkers(root string) ([]markerEntry, error) {
 		outDir := strings.TrimSuffix(path, ".produced")
 		produced, rerr := markers.ReadProduced(outDir)
 		if rerr != nil {
-			return fmt.Errorf("read %s: %w", path, rerr)
+			log.Printf("status: skipping unparsable marker %s: %v", path, rerr)
+			unparsable = append(unparsable, path)
+			return nil
 		}
 		entries = append(entries, markerEntry{
 			Cmd:        produced.Cmd,
@@ -48,9 +55,9 @@ func scanMarkers(root string) ([]markerEntry, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return entries, nil
+	return entries, unparsable, nil
 }
 
 // cmdCounts is one command's marker tally: how many parts have finished producing, how many of
@@ -64,11 +71,14 @@ type cmdCounts struct {
 
 // statusReport summarizes marker state across every command found under a root, keyed by the
 // Produced.Cmd recorded in each marker (e.g. "tech", "industry"). Cmds is sorted so String()
-// prints deterministically.
+// prints deterministically. Unparsable is the count of .produced markers that existed but could
+// not be read (skipped by scanMarkers, each already logged with its path); the caller sets it
+// after building, so the aggregation stays a pure function of the healthy entries.
 type statusReport struct {
-	Root  string
-	Cmds  []string
-	ByCmd map[string]cmdCounts
+	Root       string
+	Cmds       []string
+	ByCmd      map[string]cmdCounts
+	Unparsable int
 }
 
 // buildStatusReport aggregates markerEntry values into per-command counts. It is pure — no
@@ -106,22 +116,26 @@ func buildStatusReport(root string, entries []markerEntry, now time.Time) status
 }
 
 // String renders one table: per-command produced/loaded/pending counts and the oldest pending
-// marker's age ("-" when nothing is pending for that command).
+// marker's age ("-" when nothing is pending for that command), plus a trailing warning line when
+// any markers were skipped as unparsable.
 func (r statusReport) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "status: %s\n", r.Root)
 	if len(r.Cmds) == 0 {
 		b.WriteString("  (no .produced markers found)\n")
-		return b.String()
-	}
-	fmt.Fprintf(&b, "  %-10s %-10s %-10s %-10s %s\n", "cmd", "produced", "loaded", "pending", "oldest pending age")
-	for _, cmd := range r.Cmds {
-		c := r.ByCmd[cmd]
-		age := "-"
-		if c.Pending > 0 {
-			age = c.OldestPendingAge.Round(time.Second).String()
+	} else {
+		fmt.Fprintf(&b, "  %-10s %-10s %-10s %-10s %s\n", "cmd", "produced", "loaded", "pending", "oldest pending age")
+		for _, cmd := range r.Cmds {
+			c := r.ByCmd[cmd]
+			age := "-"
+			if c.Pending > 0 {
+				age = c.OldestPendingAge.Round(time.Second).String()
+			}
+			fmt.Fprintf(&b, "  %-10s %-10d %-10d %-10d %s\n", cmd, c.Produced, c.Loaded, c.Pending, age)
 		}
-		fmt.Fprintf(&b, "  %-10s %-10d %-10d %-10d %s\n", cmd, c.Produced, c.Loaded, c.Pending, age)
+	}
+	if r.Unparsable > 0 {
+		fmt.Fprintf(&b, "  warning: %d unparsable .produced marker(s) skipped — not counted above (paths logged; partial copy in flight?)\n", r.Unparsable)
 	}
 	return b.String()
 }
@@ -145,11 +159,12 @@ func runStatusCmd(args []string) {
 		log.Fatalf("resolve root %s: %v", *root, err)
 	}
 
-	entries, err := scanMarkers(rootAbs)
+	entries, unparsable, err := scanMarkers(rootAbs)
 	if err != nil {
 		log.Fatalf("scan markers under %s: %v", rootAbs, err)
 	}
 
 	report := buildStatusReport(rootAbs, entries, time.Now())
+	report.Unparsable = len(unparsable)
 	fmt.Print(report.String())
 }

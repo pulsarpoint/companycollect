@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,9 +49,12 @@ func TestScanMarkersFindsProducedIgnoresBareDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := scanMarkers(root)
+	entries, unparsable, err := scanMarkers(root)
 	if err != nil {
 		t.Fatalf("scanMarkers: %v", err)
+	}
+	if len(unparsable) != 0 {
+		t.Fatalf("unparsable = %v, want none", unparsable)
 	}
 	if len(entries) != 4 {
 		t.Fatalf("scanMarkers found %d entries, want 4 (bare dir must be excluded)", len(entries))
@@ -66,6 +70,64 @@ func TestScanMarkersFindsProducedIgnoresBareDirs(t *testing.T) {
 	}
 	if loaded != 1 {
 		t.Errorf("loaded entries = %d, want 1", loaded)
+	}
+}
+
+// TestScanMarkersSkipsUnparsableMarker: one corrupt .produced file (truncated JSON — e.g. a
+// partial rsync copy from a producer host, where the writer's temp+rename atomicity does not
+// travel) must NOT abort the scan. The healthy markers are still returned, the corrupt marker's
+// path is surfaced in the unparsable list, and the report both counts healthy markers normally
+// and mentions the unparsable count in its rendered output.
+func TestScanMarkersSkipsUnparsableMarker(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+
+	statusProducedDir(t, root, "out_tech_0", "tech", now.Add(-1*time.Hour))
+	good := statusProducedDir(t, root, "out_tech_1", "tech", now.Add(-2*time.Hour))
+	if err := markers.WriteLoaded(good); err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt marker: truncated JSON, exactly as a partial copy would leave it.
+	corrupt := filepath.Join(root, "out_tech_2.produced")
+	if err := os.WriteFile(corrupt, []byte(`{"part":2,"cmd":"te`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, unparsable, err := scanMarkers(root)
+	if err != nil {
+		t.Fatalf("scanMarkers must not fail on one corrupt marker: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("scanMarkers found %d healthy entries, want 2", len(entries))
+	}
+	if len(unparsable) != 1 || unparsable[0] != corrupt {
+		t.Fatalf("unparsable = %v, want [%s]", unparsable, corrupt)
+	}
+
+	// The healthy counts still aggregate normally despite the corrupt sibling, and the rendered
+	// report surfaces the unparsable count.
+	report := buildStatusReport(root, entries, now)
+	report.Unparsable = len(unparsable)
+	got := report.ByCmd["tech"]
+	if got.Produced != 2 || got.Loaded != 1 || got.Pending != 1 {
+		t.Errorf("tech counts = %+v, want Produced=2 Loaded=1 Pending=1", got)
+	}
+	out := report.String()
+	if !strings.Contains(out, "unparsable") {
+		t.Errorf("String() must surface the unparsable marker count, got:\n%s", out)
+	}
+}
+
+// TestStatusReportStringOmitsUnparsableWhenZero: a clean tree's report must not mention
+// unparsable markers at all.
+func TestStatusReportStringOmitsUnparsableWhenZero(t *testing.T) {
+	now := time.Now()
+	report := buildStatusReport("/root", []markerEntry{
+		{Cmd: "tech", FinishedAt: now.Add(-time.Hour), Loaded: false},
+	}, now)
+	if strings.Contains(report.String(), "unparsable") {
+		t.Errorf("String() mentions unparsable markers with none present:\n%s", report.String())
 	}
 }
 

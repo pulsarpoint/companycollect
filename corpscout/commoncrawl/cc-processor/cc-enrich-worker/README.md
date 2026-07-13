@@ -124,7 +124,7 @@ Each part writes `.produced` as a SIBLING of its output directory once it finish
 Both files are written via temp file + atomic rename. `.produced` is the range runner's skip/resume
 unit; `.loaded` is the loader's skip unit. A part's row counts in `.produced` are keyed by the same
 parquet kind names the loader maps to ClickHouse tables (`domains`, `industries`, `page_signals`,
-`tech`, `identifiers`, `security`, `page_meta`, ...).
+`jsonld`, `contacts`, `tech`, `identifiers`, `security`, `page_meta`).
 
 ### `plan` — read-only lane report
 
