@@ -335,9 +335,8 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 	}
 	if runEmbed && it.Primary {
 		t1 := time.Now()
-		text, _, _ := parse.ParseHTML(string(decoded))
+		r.text = parse.MainText(decoded, it.URL)
 		atomic.AddInt64(&stats.parseNs, time.Since(t1).Nanoseconds())
-		r.text = text
 	}
 	return r, nil
 }
@@ -797,7 +796,7 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 				}
 				decoded, _ := parse.DecodeHTML(body, contentTypeOf(headers))
 				t1 := time.Now()
-				text, _, _ := parse.ParseHTML(string(decoded))
+				text := parse.MainText(decoded, wit.URL)
 				atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
 				select {
 				case ch <- streamItem{di: di, root: dom, url: wit.URL, sub: subdomainOf(wit.URL, dom), text: text,
