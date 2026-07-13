@@ -342,6 +342,13 @@ type partResult struct {
 
 // preparedPart is a WARC input opened for one part, carried from openInput to processInput so the
 // local lane (Task 7) can download in one pool and process in another.
+//
+// Cleanup contract: on the normal path processInput owns the input's close + temp-dir removal (its
+// deferred cleanupInput). But a preparedPart that is DROPPED between the two stages — never reaching
+// processInput, e.g. a breaker trip or context cancel in the local lane — is NOT cleaned up by
+// processInput; whoever drops it MUST close input and remove warcTempDirectory itself (see
+// cleanupPrepared in runrange.go). Because a dropped part never reaches processInput, there is no
+// double close/remove.
 type preparedPart struct {
 	input             *warcinput.Input
 	outDir            string
