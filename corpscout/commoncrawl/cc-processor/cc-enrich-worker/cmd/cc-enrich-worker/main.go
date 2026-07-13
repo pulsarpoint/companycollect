@@ -228,6 +228,12 @@ func runLoad(args []string) {
 		fs.Usage()
 		os.Exit(2)
 	}
+	// --watch only governs the --scan sweep loop; without --scan it would be silently ignored.
+	if *watch && *scan == "" {
+		fmt.Fprintln(os.Stderr, "error: --watch requires --scan")
+		fs.Usage()
+		os.Exit(2)
+	}
 
 	ctx := context.Background()
 	conn, err := chConnect(ctx)
@@ -245,7 +251,7 @@ func runLoad(args []string) {
 		if err != nil {
 			log.Fatalf("scan %s: %v", *scan, err)
 		}
-		log.Printf("sweep %s: loaded=%d failed=%d pending=%d", *scan, res.Loaded, res.Failed, res.Pending)
+		log.Printf("sweep %s: loaded=%d failed=%d pending=%d skipped=%d", *scan, res.Loaded, res.Failed, res.Pending, res.Skipped)
 		if res.Failed > 0 {
 			os.Exit(1)
 		}
@@ -316,7 +322,7 @@ func watchLoad(ctx context.Context, conn driver.Conn, root string, parallel int)
 		if err != nil {
 			log.Printf("sweep %s: %v", root, err)
 		} else {
-			log.Printf("sweep %s: loaded=%d failed=%d pending=%d", root, res.Loaded, res.Failed, res.Pending)
+			log.Printf("sweep %s: loaded=%d failed=%d pending=%d skipped=%d", root, res.Loaded, res.Failed, res.Pending, res.Skipped)
 		}
 		select {
 		case <-ctx.Done():
@@ -444,10 +450,30 @@ type preparedPart struct {
 	warcTempDirectory string
 }
 
+// fetchConcurrencyFor sizes the shared S3/HTTP transport connection budget. The per-part base is the
+// domain pool (o.concurrency), multiplied by the per-domain page pool (worker.PageConcurrency) for
+// tech/both since those fetch PageConcurrency pages per in-flight domain. partsParallel scales that
+// by how many parts share the ONE transport concurrently: 1 for a single --part run; the range
+// runner passes its lane's parts-parallelism (spec §2: X * concurrency * PageConcurrency) so that,
+// e.g., --warc-parallel 4 does not squeeze 4 parts through one part's connection budget.
+func fetchConcurrencyFor(mode string, concurrency, partsParallel int) int {
+	if partsParallel < 1 {
+		partsParallel = 1
+	}
+	c := concurrency
+	if mode == "tech" || mode == "both" {
+		c *= worker.PageConcurrency
+	}
+	return c * partsParallel
+}
+
 // buildPartDeps constructs the once-per-process resources. Unlike the old inline setup it does not
 // gate on plan emptiness — the plan is loaded per part inside producePart, the range runner only
 // dispatches non-empty parts, and a non-empty single --part run builds exactly the same resources.
-func buildPartDeps(ctx context.Context, mode string, o opts) (partDeps, error) {
+//
+// partsParallel is how many parts will share the single transport concurrently (1 for a single
+// --part run; the range lane's parts-parallelism otherwise) — see fetchConcurrencyFor.
+func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) (partDeps, error) {
 	d := partDeps{mode: mode, o: o}
 
 	if mode == "tech" || mode == "both" { // tech matcher only needed when we fingerprint
@@ -514,10 +540,7 @@ func buildPartDeps(ctx context.Context, mode string, o opts) (partDeps, error) {
 
 	// Transport sizing = true in-flight range reads. Whole-WARC mode makes one streaming GET and
 	// then uses concurrent local ReadAt calls through the same RangeGetter boundary.
-	fetchConcurrency := o.concurrency
-	if mode == "tech" || mode == "both" {
-		fetchConcurrency *= worker.PageConcurrency
-	}
+	fetchConcurrency := fetchConcurrencyFor(mode, o.concurrency, partsParallel)
 	if o.anonymous {
 		d.objects = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), fetchConcurrency)
 		d.source = "anonymous_https"
@@ -962,7 +985,7 @@ func run(mode string, o opts) {
 		log.Fatalf("output dir %s is not empty — point --out at a fresh/empty directory", outDir)
 	}
 
-	d, err := buildPartDeps(ctx, mode, o)
+	d, err := buildPartDeps(ctx, mode, o, 1) // single-part run: one part shares the transport
 	if err != nil {
 		log.Fatalf("%v", err)
 	}

@@ -13,6 +13,11 @@ import (
 	"cc-enrich-worker/internal/model"
 )
 
+// ErrWARCIndexAbsent marks the "WARC index N is absent from the catalog" error. Callers detect a
+// not-in-catalog part via errors.Is (which survives warcinput's errors.Wrapf chain) instead of
+// matching the message text. The dynamic message stays unchanged via errors.Mark.
+var ErrWARCIndexAbsent = errors.New("WARC index is absent from the catalog")
+
 // Warc identifies one Common Crawl WARC object.
 type Warc struct {
 	WarcIndex    uint32
@@ -68,7 +73,7 @@ func loadWARC(
 		warcIndex,
 	).Scan(&loadedIndex, &filename)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Warc{}, nil, errors.Newf("WARC index %d is absent from the catalog", warcIndex)
+		return Warc{}, nil, errors.Mark(errors.Newf("WARC index %d is absent from the catalog", warcIndex), ErrWARCIndexAbsent)
 	}
 	if err != nil {
 		return Warc{}, nil, errors.Wrapf(err, "query WARC index %d", warcIndex)

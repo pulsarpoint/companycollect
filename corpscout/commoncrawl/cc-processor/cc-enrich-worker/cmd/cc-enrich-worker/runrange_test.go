@@ -341,7 +341,7 @@ func TestRunRangePoolAllSucceed(t *testing.T) {
 		return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
 	}
 
-	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", outDirFor, produce)
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", "test-run", outDirFor, produce)
 
 	if sum.Produced != 4 || sum.Failed != 0 || sum.Skipped != 0 || sum.Breaker {
 		t.Fatalf("summary = %+v, want produced=4 failed=0 skipped=0 breaker=false", sum)
@@ -389,7 +389,7 @@ func TestRunRangePoolFailureAndResume(t *testing.T) {
 	}
 
 	// warcParallel=1 keeps failure ordering deterministic.
-	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", outDirFor, produce)
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", outDirFor, produce)
 	if sum.Produced != 3 || sum.Failed != 1 || !reflectEqualU32(sum.FailedParts, []uint32{2}) {
 		t.Fatalf("run1 summary = %+v, want produced=3 failed=1 failedParts=[2]", sum)
 	}
@@ -406,7 +406,7 @@ func TestRunRangePoolFailureAndResume(t *testing.T) {
 	for k := range producedParts {
 		delete(producedParts, k)
 	}
-	sum2 := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", outDirFor, produce)
+	sum2 := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", outDirFor, produce)
 	if sum2.Skipped != 3 {
 		t.Errorf("run2 skipped = %d, want 3", sum2.Skipped)
 	}
@@ -428,7 +428,7 @@ func TestRunRangePoolParallelDeterministic(t *testing.T) {
 		produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 			return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
 		}
-		sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, warcParallel, "tech", outDirFor, produce)
+		sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, warcParallel, "tech", "test-run", outDirFor, produce)
 		if sum.Produced != 4 {
 			t.Fatalf("warcParallel=%d produced=%d, want 4", warcParallel, sum.Produced)
 		}
@@ -467,7 +467,7 @@ func TestRunRangePoolBreaker(t *testing.T) {
 		return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
 	}
 
-	sum := runRangePool(context.Background(), class, 1, "tech", outDirFor, produce)
+	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", outDirFor, produce)
 
 	if !sum.Breaker {
 		t.Error("breaker should have tripped")
@@ -477,6 +477,92 @@ func TestRunRangePoolBreaker(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 5 {
 		t.Errorf("produce attempts = %d, want exactly 5", got)
+	}
+}
+
+// TestPreserveStaleDir unit-tests the predicate that guards the stale-dir wipe: a bare debris dir
+// is wipeable, a sibling .loaded marker or a complete embed file is authoritative and preserved,
+// and the embed check is scoped to the embed command only.
+func TestPreserveStaleDir(t *testing.T) {
+	// Bare non-empty dir, no markers -> wipeable (not preserved).
+	bare := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bare, "junk"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if preserveStaleDir("tech", bare) {
+		t.Error("bare debris dir should not be preserved")
+	}
+
+	// A sibling .loaded marker -> preserved for any command.
+	loaded := filepath.Join(t.TempDir(), "out_tech_0")
+	if err := os.MkdirAll(loaded, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := markers.WriteLoaded(loaded); err != nil {
+		t.Fatal(err)
+	}
+	if !preserveStaleDir("tech", loaded) {
+		t.Error(".loaded dir must be preserved")
+	}
+
+	// A complete embeddings file -> preserved for embed, but NOT for tech (embed check is scoped).
+	emb := t.TempDir()
+	if err := parquet.WriteFile(filepath.Join(emb, "embeddings.parquet"), []embeddingFixture{{Value: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if !preserveStaleDir("embed", emb) {
+		t.Error("complete embed dir must be preserved for embed")
+	}
+	if preserveStaleDir("tech", emb) {
+		t.Error("an embeddings file must not preserve a tech dir")
+	}
+}
+
+// TestRunRangePoolPreservesLoadedDir proves a non-empty output dir carrying a .loaded marker but no
+// .produced (cc-crawl's produce→load lifecycle) survives a range run: it is skipped, its content
+// and .loaded marker are untouched, and no .produced is written — while a sibling part still runs.
+func TestRunRangePoolPreservesLoadedDir(t *testing.T) {
+	base := t.TempDir()
+	getter := writeRangeFixture(t, base, []fixturePart{{index: 0, present: true}, {index: 1, present: true}})
+	deps := techDeps(t, base, getter)
+	outDirFor := outDirForTest(base, "tech")
+
+	// Pre-create part 1's output with content + a .loaded marker but NO .produced.
+	loaded := outDirFor(1)
+	if err := os.MkdirAll(loaded, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(loaded, "domains.parquet")
+	if err := os.WriteFile(sentinel, []byte("loaded-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := markers.WriteLoaded(loaded); err != nil {
+		t.Fatal(err)
+	}
+
+	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
+		if part == 1 {
+			t.Errorf("part 1 (loaded, preserved) must not be produced")
+		}
+		return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
+	}
+
+	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", outDirFor, produce)
+
+	if sum.Produced != 1 || sum.Skipped != 1 || sum.Failed != 0 {
+		t.Fatalf("summary = %+v, want produced=1 skipped=1 failed=0", sum)
+	}
+	if !markers.Exists(markers.LoadedPath(loaded)) {
+		t.Error("preserved dir lost its .loaded marker")
+	}
+	if markers.Exists(markers.ProducedPath(loaded)) {
+		t.Error("preserved dir must not be marked .produced")
+	}
+	if b, err := os.ReadFile(sentinel); err != nil || string(b) != "loaded-data" {
+		t.Errorf("preserved content wiped: b=%q err=%v", b, err)
+	}
+	if !markers.Exists(markers.ProducedPath(outDirFor(0))) {
+		t.Error("healthy sibling part 0 should be produced")
 	}
 }
 
@@ -518,7 +604,7 @@ func TestRunRangeLocalPoolIdenticalToWholeFile(t *testing.T) {
 	outDirFor := outDirForTest(base, "tech")
 	open, process := localLanes(deps)
 
-	sum := runRangeLocalPool(context.Background(), class, 1, 1, 1, "tech", outDirFor, open, process)
+	sum := runRangeLocalPool(context.Background(), class, 1, 1, 1, "tech", "test-run", outDirFor, open, process)
 
 	if sum.Produced != 3 || sum.Failed != 0 || sum.Skipped != 0 || sum.Breaker {
 		t.Fatalf("summary = %+v, want produced=3 failed=0 skipped=0 breaker=false", sum)
@@ -565,7 +651,7 @@ func TestRunRangeLocalPoolConcurrencyBound(t *testing.T) {
 			outDirFor := outDirForTest(base, "tech")
 			open, process := localLanes(deps)
 
-			sum := runRangeLocalPool(context.Background(), class, tc.downloadParallel, tc.processParallel, tc.maxWARCFiles, "tech", outDirFor, open, process)
+			sum := runRangeLocalPool(context.Background(), class, tc.downloadParallel, tc.processParallel, tc.maxWARCFiles, "tech", "test-run", outDirFor, open, process)
 
 			if sum.Produced != len(class) || sum.Failed != 0 {
 				t.Fatalf("summary = %+v, want produced=%d failed=0", sum, len(class))
@@ -600,7 +686,7 @@ func TestRunRangeLocalPoolFailureNoMarkerNoTemp(t *testing.T) {
 	outDirFor := outDirForTest(base, "tech")
 	open, process := localLanes(deps)
 
-	sum := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 2, "tech", outDirFor, open, process)
+	sum := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 2, "tech", "test-run", outDirFor, open, process)
 
 	if sum.Produced != 2 || sum.Failed != 1 || !reflectEqualU32(sum.FailedParts, []uint32{1}) {
 		t.Fatalf("summary = %+v, want produced=2 failed=1 failedParts=[1]", sum)
@@ -640,7 +726,7 @@ func TestRunRangeLocalPoolResumeSkips(t *testing.T) {
 		return baseOpen(ctx, part, outDir)
 	}
 
-	if sum := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 1, "tech", outDirFor, open, process); sum.Produced != 3 {
+	if sum := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 1, "tech", "test-run", outDirFor, open, process); sum.Produced != 3 {
 		t.Fatalf("run1 produced = %d, want 3", sum.Produced)
 	}
 	// Wipe part 1's marker so only it reruns.
@@ -651,7 +737,7 @@ func TestRunRangeLocalPoolResumeSkips(t *testing.T) {
 		delete(opened, k)
 	}
 
-	sum2 := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 1, "tech", outDirFor, open, process)
+	sum2 := runRangeLocalPool(context.Background(), []uint32{0, 1, 2}, 1, 1, 1, "tech", "test-run", outDirFor, open, process)
 	if sum2.Skipped != 2 || sum2.Produced != 1 {
 		t.Errorf("run2 summary = %+v, want skipped=2 produced=1", sum2)
 	}

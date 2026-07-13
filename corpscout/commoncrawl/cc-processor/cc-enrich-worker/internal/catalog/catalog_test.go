@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cockroachdb/errors"
 )
 
 type catalogFixturePage struct {
@@ -119,6 +121,26 @@ func TestLoadWARCRejectsAbsentWARC(t *testing.T) {
 	_, _, err := LoadWARC(context.Background(), path, 1)
 	if err == nil || !strings.Contains(err.Error(), "WARC index 1 is absent") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestLoadWARCAbsentIsErrWARCIndexAbsent pins that the absent-index error is detectable via
+// errors.Is(err, ErrWARCIndexAbsent) — directly AND through the same cockroachdb Wrapf that
+// warcinput.LoadPlan/LoadS3Plan apply — while its human message stays byte-for-byte unchanged.
+func TestLoadWARCAbsentIsErrWARCIndexAbsent(t *testing.T) {
+	path := writeCatalogFixture(t, []Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz"}}, nil)
+
+	_, _, err := LoadWARC(context.Background(), path, 1)
+	if !errors.Is(err, ErrWARCIndexAbsent) {
+		t.Fatalf("errors.Is(err, ErrWARCIndexAbsent) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "WARC index 1 is absent from the catalog") {
+		t.Fatalf("message changed: %v", err)
+	}
+
+	wrapped := errors.Wrapf(err, "load WARC catalog index %d", 1)
+	if !errors.Is(wrapped, ErrWARCIndexAbsent) {
+		t.Fatalf("errors.Is through Wrapf = false; wrapped = %v", wrapped)
 	}
 }
 

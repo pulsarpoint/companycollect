@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cockroachdb/errors"
 	"github.com/dustin/go-humanize"
 
 	"cc-enrich-worker/internal/catalog"
@@ -177,7 +178,7 @@ func runPlanCmd(args []string) {
 			parts.lo,
 			false,
 		)
-		if planErr != nil && !strings.Contains(planErr.Error(), "is absent from the catalog") {
+		if planErr != nil && !errors.Is(planErr, catalog.ErrWARCIndexAbsent) {
 			log.Fatalf("sync catalog cache: %v", planErr)
 		}
 	}

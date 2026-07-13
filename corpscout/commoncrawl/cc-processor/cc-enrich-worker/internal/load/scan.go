@@ -19,10 +19,12 @@ import (
 //	Pending    output dirs found needing load (== Loaded+Failed for the pass)
 //	Loaded     dirs that loaded and verified, now marked .loaded
 //	Failed     dirs whose load or row-count verification failed (no .loaded written)
+//	Skipped    produced dirs deliberately not loaded (embed-only output — embeddings.parquet is
+//	           not a loadable kind, so it stays produced-but-unloaded forever by design)
 //	FailedDirs the output dirs behind Failed, for logging/retry
 type ScanResult struct {
-	Loaded, Pending, Failed int
-	FailedDirs              []string
+	Loaded, Pending, Failed, Skipped int
+	FailedDirs                       []string
 }
 
 // loadFunc loads every output parquet in dir. Sweep injects load.FromDir; tests inject a fake.
@@ -31,6 +33,10 @@ type loadFunc func(ctx context.Context, dir string) ([]Result, error)
 // findPending walks root and returns each output dir whose sibling ".produced" marker exists but
 // whose ".loaded" marker does not. Markers are siblings of the dir they describe
 // (<dir>.produced / <dir>.loaded), so the dir is the ".produced" path with the suffix trimmed.
+//
+// findPending does NOT inspect marker contents: it returns EVERY produced-but-unloaded dir,
+// including embed-only ones. sweep classifies embed markers and skips them (see Skipped) so the
+// walker's contract stays a pure filesystem predicate that tests can rely on.
 func findPending(root string) ([]string, error) {
 	var pending []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -64,11 +70,25 @@ func Sweep(ctx context.Context, conn driver.Conn, root string, parallel int) (Sc
 }
 
 func sweep(ctx context.Context, root string, parallel int, load loadFunc) (ScanResult, error) {
-	pending, err := findPending(root)
+	found, err := findPending(root)
 	if err != nil {
 		return ScanResult{}, err
 	}
-	res := ScanResult{Pending: len(pending)}
+	// Partition out embed-only produced dirs: their sole artifact is embeddings.parquet, which is not
+	// in load.Kinds, so FromDir can never load it. Without this every embed dir would fail on EVERY
+	// sweep, permanently failing `load --scan` (cron exits 1 forever). They are skipped, not failed:
+	// the produced-but-unloaded state is correct and final for embed output.
+	var pending []string
+	var skipped int
+	for _, dir := range found {
+		if p, perr := markers.ReadProduced(dir); perr == nil && p.Cmd == "embed" {
+			log.Printf("load sweep: skipping embed-only output %s (embeddings.parquet is not a loadable kind)", dir)
+			skipped++
+			continue
+		}
+		pending = append(pending, dir)
+	}
+	res := ScanResult{Pending: len(pending), Skipped: skipped}
 	if len(pending) == 0 {
 		return res, nil
 	}

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cockroachdb/errors"
+
 	"cc-enrich-worker/internal/catalog"
 	"cc-enrich-worker/internal/markers"
 	"cc-enrich-worker/internal/warcinput"
@@ -50,8 +52,32 @@ func selectClass(cmd string, c catalog.Classification) []uint32 {
 	return append([]uint32(nil), c.Remote...)
 }
 
+// preserveStaleDir reports whether a NON-EMPTY output dir that lacks a .produced marker must be
+// kept (and its part skipped) instead of wiped as crashed-produce debris:
+//
+//   - a sibling .loaded marker means cc-crawl's produce→verify→load lifecycle already loaded this
+//     output into ClickHouse and wrote .loaded (it does not always leave .produced behind). Wiping
+//     it would delete data the DB still references — disk would diverge from ClickHouse.
+//   - for embed, an already-complete embeddings file (the single-part verify-and-skip predicate,
+//     completedEmbedding) is the expensive GPU artifact; spec §2 keeps that as the inner safety net.
+//
+// Either way the on-disk output is authoritative, so the caller skips the part rather than
+// reproducing it.
+func preserveStaleDir(cmd, outDir string) bool {
+	if markers.Exists(markers.LoadedPath(outDir)) {
+		return true
+	}
+	if cmd == "embed" {
+		if _, _, complete := completedEmbedding(outDir); complete {
+			return true
+		}
+	}
+	return false
+}
+
 // runRangePool consumes class over min(warcParallel, len(class)) worker goroutines. Per part it
-// honors the .produced marker (skip), removes a stale output dir left by a crashed produce, runs the
+// honors the .produced marker (skip), preserves a complete-but-unmarked output (.loaded or a
+// complete embed file) as skipped, removes a stale output dir left by a crashed produce, runs the
 // producer, and on success writes the .produced marker with the row counts. A shared consecutive-
 // failure counter trips the breaker (cancels the context) at consecutiveFailureLimit; parts not yet
 // started are neither run nor marked. It returns the tally — no printing, no os.Exit.
@@ -59,7 +85,7 @@ func runRangePool(
 	ctx context.Context,
 	class []uint32,
 	warcParallel int,
-	cmd string,
+	cmd, runID string,
 	outDirFor func(uint32) string,
 	produce partProducer,
 ) rangeSummary {
@@ -98,22 +124,34 @@ func runRangePool(
 					mu.Unlock()
 					continue
 				}
-				// A non-empty output dir with no marker is the debris of a produce that crashed mid-write.
-				// Remove it so producePart starts from a clean slate.
+				// A non-empty output dir with no .produced marker is USUALLY debris from a produce that
+				// crashed mid-write — remove it so producePart starts clean. But a complete-but-unmarked
+				// output (.loaded from cc-crawl, or a complete embed file) is authoritative: preserve it
+				// and skip the part rather than destroying loaded data.
 				if info, statErr := os.Stat(outDir); statErr == nil && info.IsDir() {
+					if preserveStaleDir(cmd, outDir) {
+						log.Printf("range: preserving complete-but-unmarked output dir (skip) part=%d %s", part, outDir)
+						mu.Lock()
+						sum.Skipped++
+						mu.Unlock()
+						continue
+					}
 					log.Printf("range: removing stale output dir (crashed produce?) part=%d %s", part, outDir)
 					if rmErr := os.RemoveAll(outDir); rmErr != nil {
 						log.Printf("range: remove stale output dir part=%d: %v", part, rmErr)
 					}
 				}
 
+				partStart := time.Now()
 				res, perr := produce(ctx, part, outDir)
 				if perr == nil {
 					perr = markers.WriteProduced(outDir, markers.Produced{
-						Part:       part,
-						Cmd:        cmd,
-						Rows:       res.Rows,
-						FinishedAt: time.Now().UTC(),
+						Part:        part,
+						Cmd:         cmd,
+						Rows:        res.Rows,
+						SourceRunID: runID,
+						DurationS:   time.Since(partStart).Seconds(),
+						FinishedAt:  time.Now().UTC(),
 					})
 					if perr != nil {
 						perr = fmt.Errorf("write produced marker: %w", perr)
@@ -172,8 +210,9 @@ type partProcessor func(ctx context.Context, prepared preparedPart) (partResult,
 // downloadedPart carries a downloaded (opened) part from the download pool to the process pool. The
 // part index rides alongside the preparedPart so the processor can write its marker / report failure.
 type downloadedPart struct {
-	part     uint32
-	prepared preparedPart
+	part      uint32
+	prepared  preparedPart
+	startedAt time.Time // when this part's download began, for the marker's duration_s
 }
 
 // cleanupPrepared releases a preparedPart that was DROPPED between the download and process stages
@@ -201,8 +240,9 @@ func cleanupPrepared(p preparedPart) {
 // buffered whole WARC files can never exceed maxWARCFiles — this semaphore, not any channel buffer,
 // IS the --max-warc-files guarantee (the handoff channel is deliberately unbuffered).
 //
-// downloadParallel goroutines pull parts, honor the .produced marker (skip) and remove a stale output
-// dir left by a crashed produce, then open the input as ModeWholeFile and hand it to processParallel
+// downloadParallel goroutines pull parts, honor the .produced marker (skip), preserve a
+// complete-but-unmarked output (.loaded) as skipped, remove a stale output dir left by a crashed
+// produce, then open the input as ModeWholeFile and hand it to processParallel
 // goroutines. Processors run processInput (its defer closes the input + removes the temp dir), write
 // the .produced marker, and release the slot. A prepared part dropped between stages (breaker trip /
 // cancel) is closed and its temp dir removed via cleanupPrepared before its slot is released. The
@@ -212,7 +252,7 @@ func runRangeLocalPool(
 	ctx context.Context,
 	class []uint32,
 	downloadParallel, processParallel, maxWARCFiles int,
-	cmd string,
+	cmd, runID string,
 	outDirFor func(uint32) string,
 	open partOpener,
 	process partProcessor,
@@ -296,15 +336,26 @@ func runRangeLocalPool(
 					<-slots
 					continue
 				}
-				// A non-empty output dir with no marker is debris from a crashed produce — remove it so
-				// the download starts clean (openInput recreates the dir).
+				// A non-empty output dir with no .produced marker is USUALLY debris from a crashed produce
+				// — remove it so the download starts clean (openInput recreates the dir). But a
+				// complete-but-unmarked output (.loaded from cc-crawl) is authoritative: preserve it and
+				// skip the part rather than wiping loaded data. (tech/both never hit the embed branch.)
 				if info, statErr := os.Stat(outDir); statErr == nil && info.IsDir() {
+					if preserveStaleDir(cmd, outDir) {
+						log.Printf("range local: preserving complete-but-unmarked output dir (skip) part=%d %s", part, outDir)
+						mu.Lock()
+						sum.Skipped++
+						mu.Unlock()
+						<-slots
+						continue
+					}
 					log.Printf("range local: removing stale output dir (crashed produce?) part=%d %s", part, outDir)
 					if rmErr := os.RemoveAll(outDir); rmErr != nil {
 						log.Printf("range local: remove stale output dir part=%d: %v", part, rmErr)
 					}
 				}
 
+				partStart := time.Now()
 				prepared, err := open(ctx, part, outDir)
 				if err != nil {
 					fail(part, err)
@@ -318,7 +369,7 @@ func runRangeLocalPool(
 					cleanupPrepared(prepared)
 					<-slots
 					return
-				case ready <- downloadedPart{part: part, prepared: prepared}:
+				case ready <- downloadedPart{part: part, prepared: prepared, startedAt: partStart}:
 					// Ownership (and the slot) transfers to the processor.
 				}
 			}
@@ -351,10 +402,12 @@ func runRangeLocalPool(
 					continue
 				}
 				if merr := markers.WriteProduced(dp.prepared.outDir, markers.Produced{
-					Part:       dp.part,
-					Cmd:        cmd,
-					Rows:       res.Rows,
-					FinishedAt: time.Now().UTC(),
+					Part:        dp.part,
+					Cmd:         cmd,
+					Rows:        res.Rows,
+					SourceRunID: runID,
+					DurationS:   time.Since(dp.startedAt).Seconds(),
+					FinishedAt:  time.Now().UTC(),
 				}); merr != nil {
 					fail(dp.part, fmt.Errorf("write produced marker: %w", merr))
 					<-slots
@@ -408,7 +461,7 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 			},
 			o.base, o.crawlID, o.selection, lo, false,
 		)
-		if planErr != nil && !strings.Contains(planErr.Error(), "is absent from the catalog") {
+		if planErr != nil && !errors.Is(planErr, catalog.ErrWARCIndexAbsent) {
 			log.Fatalf("sync catalog cache: %v", planErr)
 		}
 	}
@@ -437,7 +490,15 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 		return
 	}
 
-	deps, err := buildPartDeps(ctx, cmd, o)
+	// Parts-level parallelism sizes the shared transport (fetchConcurrencyFor). Remote: every part
+	// range-reads concurrently, so warcParallel parts genuinely contend (spec §2). Local: parts are
+	// processed from LOCAL downloaded files (ReadAt, no S3), so only the in-flight whole-WARC
+	// downloads touch the transport — downloadParallel is the honest S3 parts-parallelism there.
+	partsParallel := ro.warcParallel
+	if ro.mode == "local" {
+		partsParallel = ro.downloadParallel
+	}
+	deps, err := buildPartDeps(ctx, cmd, o, partsParallel)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -447,6 +508,9 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	}
 
 	start := time.Now()
+	// One run id for every .produced marker written by this invocation. No crawl-wide run identity
+	// exists in the CLI, so derive the cheapest truthful one: command + range + start time.
+	runID := fmt.Sprintf("%s-%d-%d-%d", cmd, lo, hi, start.Unix())
 	var sum rangeSummary
 	if ro.mode == "local" {
 		open := func(ctx context.Context, part uint32, outDir string) (preparedPart, error) {
@@ -455,12 +519,12 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 		process := func(ctx context.Context, prepared preparedPart) (partResult, error) {
 			return processInput(ctx, deps, prepared)
 		}
-		sum = runRangeLocalPool(ctx, class, ro.downloadParallel, ro.processParallel, ro.maxWARCFiles, cmd, outDirFor, open, process)
+		sum = runRangeLocalPool(ctx, class, ro.downloadParallel, ro.processParallel, ro.maxWARCFiles, cmd, runID, outDirFor, open, process)
 	} else {
 		produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 			return producePart(ctx, deps, part, warcinput.ModeRange, outDir)
 		}
-		sum = runRangePool(ctx, class, ro.warcParallel, cmd, outDirFor, produce)
+		sum = runRangePool(ctx, class, ro.warcParallel, cmd, runID, outDirFor, produce)
 	}
 	elapsed := time.Since(start).Round(time.Second)
 

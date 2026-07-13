@@ -102,6 +102,57 @@ func TestSweepLoadLoop(t *testing.T) {
 	}
 }
 
+// TestSweepSkipsEmbed proves an embed-only produced dir (whose sole artifact, embeddings.parquet,
+// is not a loadable kind) is skipped — never loaded, never failed — so `load --scan` does not exit
+// 1 on it forever, while normal produced dirs alongside it still load. A second sweep is identical:
+// the embed dir stays produced-but-unloaded and untouched.
+func TestSweepSkipsEmbed(t *testing.T) {
+	root := t.TempDir()
+
+	normal := producedDir(t, root, "normal", map[string]int{"domains": 2})
+	// An embed-only produced dir: marker Cmd == "embed".
+	embedOut := filepath.Join(root, "emb")
+	if err := os.MkdirAll(embedOut, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := markers.WriteProduced(embedOut, markers.Produced{Cmd: "embed", Rows: map[string]int{}, FinishedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	loadFn := func(_ context.Context, dir string) ([]Result, error) {
+		if filepath.Base(dir) == "emb" {
+			t.Errorf("loader must never be called for the embed dir %s", dir)
+		}
+		return []Result{{Path: filepath.Join(dir, "domains.parquet"), Rows: 2}}, nil
+	}
+
+	res, err := sweep(context.Background(), root, 2, loadFn)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if res.Loaded != 1 || res.Failed != 0 || res.Skipped != 1 || res.Pending != 1 {
+		t.Fatalf("first sweep = %+v, want Loaded=1 Failed=0 Skipped=1 Pending=1", res)
+	}
+	if !markers.Exists(markers.LoadedPath(normal)) {
+		t.Errorf("normal should be .loaded")
+	}
+	if markers.Exists(markers.LoadedPath(embedOut)) {
+		t.Errorf("embed dir must NOT be .loaded")
+	}
+
+	// Second sweep: normal is done, embed dir is still produced-but-unloaded and skipped again.
+	res2, err := sweep(context.Background(), root, 2, loadFn)
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if res2.Loaded != 0 || res2.Failed != 0 || res2.Skipped != 1 || res2.Pending != 0 {
+		t.Fatalf("second sweep = %+v, want Loaded=0 Failed=0 Skipped=1 Pending=0", res2)
+	}
+	if markers.Exists(markers.LoadedPath(embedOut)) {
+		t.Errorf("embed dir must still NOT be .loaded after second sweep")
+	}
+}
+
 func TestSweepLoaderError(t *testing.T) {
 	root := t.TempDir()
 	good := producedDir(t, root, "good", map[string]int{"domains": 1})
