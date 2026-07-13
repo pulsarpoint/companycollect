@@ -3,6 +3,7 @@ package tech
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -14,8 +15,56 @@ import (
 )
 
 type fpat struct {
-	app string
-	pat *wappalyzer.ParsedPattern
+	app   string
+	pat   *wappalyzer.ParsedPattern
+	match *regexp.Regexp // capture-free twin of pat's regex; MatchString skips submatch tracking
+}
+
+// wappalyzergo's version-capture rewrites (patterns.go ParsePattern), replicated verbatim so the
+// match-only twin compiles from exactly the same regex source as ParsedPattern's internal one.
+const (
+	wapVerCap1        = `(\d+(?:\.\d+)+)`
+	wapVerCap1Fill    = "__verCap1__"
+	wapVerCap1Limited = `(\d{1,20}(?:\.\d{1,20}){1,20})`
+
+	wapVerCap2        = `((?:\d+\.)+\d+)`
+	wapVerCap2Fill    = "__verCap2__"
+	wapVerCap2Limited = `((?:\d{1,20}\.){1,20}\d{1,20})`
+)
+
+// matchOnlyRegex compiles the same regex ParsePattern builds internally, for use with
+// MatchString: Go's regexp only runs the slow capture-tracking machine for submatch calls, so
+// rejecting (the overwhelmingly common case for gated patterns) through this twin avoids it.
+// Returns nil for empty (SkipRegex) or uncompilable patterns — callers then use pat.Evaluate.
+func matchOnlyRegex(pattern string) *regexp.Regexp {
+	parts := strings.Split(pattern, "\\;")
+	if parts[0] == "" {
+		return nil
+	}
+	r := parts[0]
+	r = strings.ReplaceAll(r, wapVerCap1, wapVerCap1Fill)
+	r = strings.ReplaceAll(r, wapVerCap2, wapVerCap2Fill)
+	r = strings.ReplaceAll(r, "\\+", "__escapedPlus__")
+	r = strings.ReplaceAll(r, "+", "{1,250}")
+	r = strings.ReplaceAll(r, "*", "{0,250}")
+	r = strings.ReplaceAll(r, "__escapedPlus__", "\\+")
+	r = strings.ReplaceAll(r, wapVerCap1Fill, wapVerCap1Limited)
+	r = strings.ReplaceAll(r, wapVerCap2Fill, wapVerCap2Limited)
+	re, err := regexp.Compile("(?i)" + r)
+	if err != nil {
+		return nil
+	}
+	return re
+}
+
+// newFpat parses a wappalyzer pattern and builds its match-only twin. ok is false when the
+// pattern cannot be parsed at all (upstream would drop it too).
+func newFpat(app, pattern string) (fpat, bool) {
+	pp := mustParse(pattern)
+	if pp == nil {
+		return fpat{}, false
+	}
+	return fpat{app: app, pat: pp, match: matchOnlyRegex(pattern)}, true
 }
 
 // FastMatcher reimplements wappalyzergo's detection orchestration (headers → cookies →
@@ -126,25 +175,27 @@ func NewFastMatcher() (*FastMatcher, error) {
 			m.appImplies[app] = imp
 		}
 		for _, p := range a.HTML {
-			pp := mustParse(p)
-			if pp == nil {
+			fp, ok := newFpat(app, p)
+			if !ok {
 				continue
 			}
-			fp := fpat{app, pp}
-			if lit := longestRequiredLiteral(p); len([]rune(lit)) >= 4 {
-				litMap[lit] = append(litMap[lit], fp)
+			if lits := gateLiterals(p); len(lits) > 0 { // any-of gate: pattern registered under every literal
+				for _, lit := range lits {
+					litMap[lit] = append(litMap[lit], fp)
+				}
 			} else {
 				m.alwaysHTML = append(m.alwaysHTML, fp)
 			}
 		}
 		for _, p := range a.ScriptSrc {
-			pp := mustParse(p)
-			if pp == nil {
+			fp, ok := newFpat(app, p)
+			if !ok {
 				continue
 			}
-			fp := fpat{app, pp}
-			if lit := longestRequiredLiteral(p); len([]rune(lit)) >= 4 {
-				scriptLitMap[lit] = append(scriptLitMap[lit], fp)
+			if lits := gateLiterals(p); len(lits) > 0 {
+				for _, lit := range lits {
+					scriptLitMap[lit] = append(scriptLitMap[lit], fp)
+				}
 			} else {
 				m.alwaysScript = append(m.alwaysScript, fp)
 			}
@@ -153,23 +204,21 @@ func NewFastMatcher() (*FastMatcher, error) {
 			pats := a.Meta[name]
 			ln := strings.ToLower(name)
 			for _, p := range pats {
-				if pp := mustParse(p); pp != nil {
-					m.metaPats[ln] = append(m.metaPats[ln], fpat{app, pp})
+				if fp, ok := newFpat(app, p); ok {
+					m.metaPats[ln] = append(m.metaPats[ln], fp)
 				}
 			}
 		}
 		for _, name := range sortedKeys(a.Headers) {
-			p := a.Headers[name]
-			if pp := mustParse(p); pp != nil {
+			if fp, ok := newFpat(app, a.Headers[name]); ok {
 				ln := strings.ToLower(name)
-				m.headerPats[ln] = append(m.headerPats[ln], fpat{app, pp})
+				m.headerPats[ln] = append(m.headerPats[ln], fp)
 			}
 		}
 		for _, name := range sortedKeys(a.Cookies) {
-			p := a.Cookies[name]
-			if pp := mustParse(p); pp != nil {
+			if fp, ok := newFpat(app, a.Cookies[name]); ok {
 				ln := strings.ToLower(name)
-				m.cookiePats[ln] = append(m.cookiePats[ln], fpat{app, pp})
+				m.cookiePats[ln] = append(m.cookiePats[ln], fp)
 			}
 		}
 	}
@@ -246,7 +295,18 @@ type detectedTechnology struct {
 // how upstream treats all headers, all cookies, the whole HTML body, or one script/meta element:
 // confidence is the maximum matching pattern confidence, not the sum of every matching regex.
 func recordScoped(matches map[string]scopedMatch, fp fpat, target string) {
-	matched, version := fp.pat.Evaluate(target)
+	var matched bool
+	var version string
+	switch {
+	case fp.match == nil: // SkipRegex or no twin — upstream evaluation path
+		matched, version = fp.pat.Evaluate(target)
+	case !fp.match.MatchString(target):
+		return // capture-free reject: the overwhelmingly common outcome for gated patterns
+	case fp.pat.Version == "":
+		matched = true // real hit, no version template — nothing left to extract
+	default:
+		matched, version = fp.pat.Evaluate(target) // real hit: pay the submatch machine for the version
+	}
 	if !matched {
 		return
 	}
@@ -341,9 +401,11 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.T
 	}
 	m.mergeScope(found, cookieMatches)
 
-	// HTML body — Aho-Corasick gate: only patterns whose required literal is present.
+	// HTML body — Aho-Corasick gate: only patterns whose required literal is present. A pattern
+	// gated by several literals (any-of alternation gates) must still evaluate only once.
 	htmlMatches := map[string]scopedMatch{}
 	seen := make(map[int]bool)
+	evaluated := make(map[*wappalyzer.ParsedPattern]bool)
 	iter := m.ac.IterOverlapping(bodyStr)
 	for match := iter.Next(); match != nil; match = iter.Next() {
 		idx := match.Pattern()
@@ -352,6 +414,10 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.T
 		}
 		seen[idx] = true
 		for _, fp := range m.litToPats[idx] {
+			if evaluated[fp.pat] {
+				continue
+			}
+			evaluated[fp.pat] = true
 			recordScoped(htmlMatches, fp, bodyStr)
 		}
 	}

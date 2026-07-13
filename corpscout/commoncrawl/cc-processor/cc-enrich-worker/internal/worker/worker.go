@@ -315,7 +315,8 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		t2 := time.Now()
 		r.tech = tech.DetectTech(headers, techBody)
 		atomic.AddInt64(&stats.techNs, time.Since(t2).Nanoseconds())
-		r.emails = parse.Emails(string(decoded))
+		decodedStr := string(decoded) // one shared copy: Emails + ParseHeadMeta both take strings
+		r.emails = parse.Emails(decodedStr)
 		r.jsonld, r.ids = extract.ExtractJSONLD(decoded)
 		// Microdata is retained for contacts and identifiers. It is not written to the JSON-LD
 		// evidence table and never competes with or replaces any JSON-LD entity.
@@ -328,7 +329,7 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		r.ids = append(r.ids, extract.Trackers(decoded)...)
 		if it.Primary {
 			r.security = security.HeaderMap(headers)
-			r.meta = parse.ParseHeadMeta(string(decoded))
+			r.meta = parse.ParseHeadMeta(decodedStr)
 			if r.meta.Charset == "" {
 				r.meta.Charset = encName // head declared nothing — record what we detected
 			}
