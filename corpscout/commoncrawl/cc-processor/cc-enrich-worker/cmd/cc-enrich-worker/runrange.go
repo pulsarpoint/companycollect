@@ -435,7 +435,7 @@ func runRangeLocalPool(
 func runRange(cmd string, o opts, ro runnerOpts) {
 	ctx := context.Background()
 	if o.base == "" {
-		log.Fatal("no --base / OUT_BASE_DIR — the output root is required")
+		log.Fatal("--base is required (output root)")
 	}
 	base, err := filepath.Abs(o.base)
 	if err != nil {

@@ -118,7 +118,7 @@ func runPlanCmd(args []string) {
 	var remoteMaxPages int64
 	fs.StringVar(&crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
 	fs.StringVar(&selection, "selection", "pages25", "catalog selection identity")
-	fs.StringVar(&base, "base", os.Getenv("OUT_BASE_DIR"), "output ROOT (or env OUT_BASE_DIR); required")
+	fs.StringVar(&base, "base", "", "output ROOT (required, explicit — no environment fallback)")
 	fs.StringVar(&partsFlag, "parts", "", `WARC part range, e.g. "100-200" or "42" (required)`)
 	fs.Int64Var(&remoteMaxPages, "remote-max-pages", 0, "split threshold: parts with <= this many selected pages are remote-eligible (required, >=1)")
 	_ = fs.Parse(args)
@@ -129,7 +129,7 @@ func runPlanCmd(args []string) {
 		os.Exit(2)
 	}
 	if base == "" {
-		fmt.Fprintln(os.Stderr, "error: no --base / OUT_BASE_DIR — the catalog root is required")
+		fmt.Fprintln(os.Stderr, "error: --base is required (catalog root)")
 		fs.Usage()
 		os.Exit(2)
 	}

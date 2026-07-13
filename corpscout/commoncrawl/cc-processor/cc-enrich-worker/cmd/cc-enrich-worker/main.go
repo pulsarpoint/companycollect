@@ -104,7 +104,7 @@ func parse(mode string, args []string) (opts, runnerOpts, bool) {
 	fs.StringVar(&o.selection, "selection", "pages25", "catalog selection identity")
 	fs.IntVar(&o.part, "part", -1, "zero-based WARC index (single-part run; mutually exclusive with --parts)")
 	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/warc/<selection>/out_<mode>_<part>; an explicit dir must be empty)")
-	fs.StringVar(&o.base, "base", os.Getenv("OUT_BASE_DIR"), "output ROOT (or env OUT_BASE_DIR); required")
+	fs.StringVar(&o.base, "base", "", "output ROOT (required, explicit — no environment fallback)")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "catalog pages per process chunk (tech/both)")
 	fs.Float64Var(&o.wholeWARCThreshold, "whole-warc-threshold", 50, "selected compressed-byte percentage that triggers one whole-WARC download (0..100)")
@@ -948,7 +948,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 func run(mode string, o opts) {
 	ctx := context.Background()
 	if o.base == "" {
-		log.Fatal("no --base / OUT_BASE_DIR — the output root is required")
+		log.Fatal("--base is required (output root)")
 	}
 	base, err := filepath.Abs(o.base)
 	if err != nil {
@@ -962,9 +962,9 @@ func run(mode string, o opts) {
 
 	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so
 	// `load --dir` knows which file → which table. cc-crawl always passes --out; for a standalone run the
-	// default is derived from OUT_BASE_DIR (REQUIRED — no silent fallback that could scatter data) as
-	// <OUT_BASE_DIR>/<crawl>/warc/<selection>/out_<mode>_<part>/, unique per selection and WARC. The
-	// embedding tree is a sibling under <OUT_BASE_DIR>/<crawl>/embedding/ (derived from outDir below).
+	// default is derived from --base (REQUIRED, explicit — no silent fallback that could scatter data) as
+	// <base>/<crawl>/warc/<selection>/out_<mode>_<part>/, unique per selection and WARC. The
+	// embedding tree is a sibling under <base>/<crawl>/embedding/ (derived from outDir below).
 	outDir := o.out
 	if outDir == "" {
 		outDir = filepath.Join(o.base, o.crawlID, "warc", o.selection, fmt.Sprintf("out_%s_%d", mode, o.part))

@@ -282,7 +282,7 @@ and is preferred on EC2.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--base` | `OUT_BASE_DIR` | Required local output and catalog-cache root. |
+| `--base` | required | Local output and catalog-cache root — always passed explicitly (no environment fallback). |
 | `--crawl-id` | required | Crawl identity, for example `CC-MAIN-2026-25`. |
 | `--selection` | `pages25` | Catalog selection directory. |
 | `--part` | required | Zero-based WARC index. |
@@ -318,7 +318,6 @@ single-part flags above and behave identically per part.
 
 | Variable | Meaning |
 |---|---|
-| `OUT_BASE_DIR` | Default `--base`. |
 | `COMMONCRAWL_CATALOG_S3_BASE` | Required authoritative catalog location in `s3://bucket/prefix` form. |
 | `CORPSCOUT_S3_ENDPOINT` | Required RustFS S3-compatible endpoint. |
 | `CORPSCOUT_S3_REGION` | RustFS signing region; defaults to `us-east-1`. |
