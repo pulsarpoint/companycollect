@@ -36,8 +36,8 @@ import (
 const warcPreparationTimeout = 30 * time.Minute
 
 // maxFetchErrorRate is the failure contract for every fetch pass: above it the part is systemic
-// failure (throttling, auth, dead source), so refuse to write and let cc-crawl retry the part.
-// Normal WARC decay is a few %.
+// failure (throttling, auth, dead source), so refuse to write and let the range runner retry the part
+// on its next pass. Normal WARC decay is a few %.
 const maxFetchErrorRate = 0.5
 
 func envOr(key, def string) string {
@@ -67,7 +67,7 @@ Commands:
   embed      embed each domain's page, save the raw vector only — no NACE, no ClickHouse  (GPU + embed endpoint)
   tech       fingerprint technologies + extract identifiers/profiles  (CPU-bound; S3 only)
   both       run both in one fetch pass  (discouraged — co-locating throttles the GPU; prefer two processes)
-  load       load already-produced Parquet into ClickHouse: --dir/--file one output, or --scan a root of .produced markers (--watch to keep sweeping)
+  load       load already-produced Parquet into ClickHouse: --scan a producer root for .produced markers (--watch to keep sweeping)
   plan       read-only report: parts/pages/bytes sizing for a WARC part range
   status     read-only report: per-command produced/loaded/pending marker counts + oldest pending age
 
@@ -183,34 +183,20 @@ func main() {
 	}
 }
 
-// runLoad implements the `load` command: push already-produced Parquet output into ClickHouse over
-// the native driver (no clickhouse-client needed). `--dir` loads every output file in a folder (a
-// shard's output dir); `--file` loads one. The kind→table mapping comes from the FIXED filenames.
+// runLoad implements the `load` command: sweep a producer output ROOT for `.produced` dirs lacking
+// `.loaded` and push each into ClickHouse over the native driver (no clickhouse-client needed). This
+// is the marker-driven counterpart to the range runner — the runner produces + writes `.produced`;
+// `load --scan` loads + writes `.loaded`. `--watch` keeps sweeping. The kind→table mapping comes from
+// each output's FIXED parquet filenames.
 func runLoad(args []string) {
 	fs := flag.NewFlagSet("cc-enrich-worker load", flag.ExitOnError)
-	dir := fs.String("dir", "", "a shard output directory; loads every supported output parquet in it")
-	file := fs.String("file", "", "a single Parquet output file to load")
-	kind := fs.String("kind", "", "override the kind for --file: "+strings.Join(load.Kinds, "|"))
-	scan := fs.String("scan", "", "a producer output root; sweep it for .produced dirs lacking .loaded and load each")
-	watch := fs.Bool("watch", false, "with --scan, keep sweeping: after each pass wait for a filesystem event under root or a 5-minute tick")
-	parallel := fs.Int("parallel", 4, "with --scan, how many output dirs to load concurrently")
+	scan := fs.String("scan", "", "a producer output root; sweep it for .produced dirs lacking .loaded and load each (required)")
+	watch := fs.Bool("watch", false, "keep sweeping: after each pass wait for a filesystem event under root or a 5-minute tick")
+	parallel := fs.Int("parallel", 4, "how many output dirs to load concurrently")
 	_ = fs.Parse(args)
 
-	// --scan is mutually exclusive with --dir/--file; --dir/--file remain mutually exclusive with each other.
-	if *scan != "" {
-		if *dir != "" || *file != "" {
-			fmt.Fprintln(os.Stderr, "error: --scan cannot be combined with --dir or --file")
-			fs.Usage()
-			os.Exit(2)
-		}
-	} else if (*dir == "") == (*file == "") {
-		fmt.Fprintln(os.Stderr, "error: pass exactly one of --scan, --dir, or --file")
-		fs.Usage()
-		os.Exit(2)
-	}
-	// --watch only governs the --scan sweep loop; without --scan it would be silently ignored.
-	if *watch && *scan == "" {
-		fmt.Fprintln(os.Stderr, "error: --watch requires --scan")
+	if *scan == "" {
+		fmt.Fprintln(os.Stderr, "error: --scan <root> is required")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -222,37 +208,18 @@ func runLoad(args []string) {
 	}
 	defer conn.Close()
 
-	if *scan != "" {
-		if *watch {
-			watchLoad(ctx, conn, *scan, *parallel)
-			return
-		}
-		res, err := load.Sweep(ctx, conn, *scan, *parallel)
-		if err != nil {
-			log.Fatalf("scan %s: %v", *scan, err)
-		}
-		log.Printf("sweep %s: loaded=%d failed=%d pending=%d skipped=%d", *scan, res.Loaded, res.Failed, res.Pending, res.Skipped)
-		if res.Failed > 0 {
-			os.Exit(1)
-		}
+	if *watch {
+		watchLoad(ctx, conn, *scan, *parallel)
 		return
 	}
-
-	if *dir != "" {
-		results, err := load.FromDir(ctx, conn, *dir)
-		if err != nil {
-			log.Fatalf("load %s: %v", *dir, err)
-		}
-		for _, r := range results {
-			log.Printf("loaded %d rows: %s -> %s", r.Rows, r.Path, r.Table)
-		}
-		return
-	}
-	table, n, err := load.FromFile(ctx, conn, *file, *kind)
+	res, err := load.Sweep(ctx, conn, *scan, *parallel)
 	if err != nil {
-		log.Fatalf("load %s: %v", *file, err)
+		log.Fatalf("scan %s: %v", *scan, err)
 	}
-	log.Printf("loaded %d rows: %s -> %s", n, *file, table)
+	log.Printf("sweep %s: loaded=%d failed=%d pending=%d skipped=%d", *scan, res.Loaded, res.Failed, res.Pending, res.Skipped)
+	if res.Failed > 0 {
+		os.Exit(1)
+	}
 }
 
 // watchLoad runs Sweep in a loop. The 5-minute ticker is the correctness backstop (a sweep always
@@ -800,8 +767,9 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 			}
 			curLo, curHi = nextLo, nextHi
 		}
-		// Failure contract: abort (delete partials) rather than commit a systemically-failed part. cc-crawl
-		// gates on exit code, so a non-nil error here retries the part next run.
+		// Failure contract: abort (delete partials) rather than commit a systemically-failed part. The
+		// range runner gates on the error (no .produced marker), so a non-nil error here retries the part
+		// on its next pass.
 		if totalPages > 0 && float64(totalErrs)/float64(totalPages) > maxFetchErrorRate {
 			streamer.Abort()
 			return partResult{}, fmt.Errorf("refusing to write: fetch error rate %.0f%% (%d/%d pages) exceeds %.0f%% — WARC index will be retried",
@@ -917,9 +885,10 @@ func run(mode string, o opts) {
 		log.Fatal("COMMONCRAWL_CATALOG_S3_BASE is required (s3://bucket/prefix)")
 	}
 
-	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so
-	// `load --dir` knows which file → which table. cc-crawl always passes --out; for a standalone run the
-	// default is derived from --base (REQUIRED, explicit — no silent fallback that could scatter data) as
+	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so the
+	// loader knows which file → which table. A single --part run is for ad-hoc/debug produce; it does NOT
+	// write a .produced marker, so its output is for inspection, not the load pipeline. The default is
+	// derived from --base (REQUIRED, explicit — no silent fallback that could scatter data) as
 	// <base>/<crawl>/warc/<selection>/out_<mode>_<part>/, unique per selection and WARC. The
 	// embedding tree is a sibling under <base>/<crawl>/embedding/ (derived from outDir below).
 	outDir := o.out
@@ -950,6 +919,6 @@ func run(mode string, o opts) {
 		log.Fatalf("%v", err)
 	}
 
-	// Loading remains a separate `load --dir` step so cc-crawl preserves its existing
-	// produce -> verify -> load -> local .loaded marker state machine.
+	// A single --part run writes no .produced marker, so `load --scan` will not pick it up: this path is
+	// for ad-hoc/debug produce + inspection. Use `--parts A-B` + `load --scan` for the load pipeline.
 }

@@ -10,9 +10,9 @@ The normal production flow is:
 official Common Crawl Parquet URL index
     -> cc-warc-index-builder on wappalyzer
     -> catalog.duckdb + ready.json on RustFS
-    -> cc-crawl on commoncrawl2
-    -> cc-enrich-worker range reads or one whole-WARC download
-    -> local Parquet
+    -> cc-enrich-worker range runner on commoncrawl2 (range reads or one whole-WARC download)
+    -> local Parquet + .produced marker
+    -> cc-enrich-worker load --scan
     -> ClickHouse
     -> local .loaded marker
 ```
@@ -25,11 +25,10 @@ Common Crawl WARC bodies. The worker reads WARC data directly from Common Crawl.
 | Path | Responsibility |
 |---|---|
 | `cc-warc-index-builder/` | Selects up to N pages per domain from the official URL-index Parquets, builds one WARC-oriented DuckDB catalog, and publishes it to RustFS. |
-| `cc-crawl/` | Runs an inclusive range of catalog WARC indexes and owns produce -> load -> `.loaded` orchestration. |
-| `cc-enrich-worker/` | Reads one catalog WARC, chooses exact range requests or a complete WARC download, extracts data, writes Parquet, and loads ClickHouse. |
+| `cc-enrich-worker/` | Runs an inclusive range of catalog WARC indexes (`--parts A-B`) via range reads or a complete WARC download, extracts data, writes Parquet + `.produced`, and loads ClickHouse via `load --scan` (which writes `.loaded`). |
 | `cc-raw/` | Shared Common Crawl range-fetch and WARC/embedded-HTTP parsing code. It has no executable. |
-| `deploy/` | Builds and atomically deploys the paired `cc-crawl` and `cc-enrich-worker` Linux binaries. |
-| `.env` | The single ignored environment file shared by the builder, orchestrator, and worker in this checkout. |
+| `deploy/` | Builds and atomically deploys the `cc-enrich-worker` Linux binary. |
+| `.env` | The single ignored environment file shared by the builder and worker in this checkout. |
 | `.env.example` | Safe configuration template. |
 
 Component details remain in
@@ -80,10 +79,8 @@ At minimum, configure:
 Industry and embed modes additionally require `COMMONCRAWL_EMBED_*`. Reference embeddings and processed
 page embeddings must use the same model.
 
-`make catalog` loads the root `.env`. `cc-crawl` first locates the processor-root `.env` relative to its
-binary, then falls back to `.env` in the working directory; `DOTENV` can explicitly override both. It passes
-the resulting environment to `cc-enrich-worker`. A direct builder or worker invocation does not load the
-file itself; export it first:
+`make catalog` loads the root `.env`. A builder or worker invocation does not load the file itself;
+export it first:
 
 ```bash
 set -a
@@ -109,11 +106,11 @@ The main targets are:
 
 | Target | Result |
 |---|---|
-| `make` | Builds the Python builder entry point plus the two Go binaries. |
+| `make` | Builds the Python builder entry point plus the Go worker binary. |
 | `make catalog CRAWL=...` | Builds/resumes and publishes one catalog using `.env`. |
 | `make test` | Runs builder and all Go runtime tests. |
 | `make vet` | Vets the Go runtime modules. |
-| `make release` | Produces the paired Linux runtime artifacts under `dist/<os>-<arch>/`. |
+| `make release` | Produces the Linux runtime artifact under `dist/<os>-<arch>/`. |
 | `make clean` | Removes generated component binaries and processor release artifacts. |
 
 The Go modules can also be checked independently:
@@ -121,17 +118,16 @@ The Go modules can also be checked independently:
 ```bash
 make -C cc-raw test
 make -C cc-enrich-worker test
-make -C cc-crawl test
 ```
 
-Build the production Linux/AMD64 runtime pair with:
+Build the production Linux/AMD64 runtime with:
 
 ```bash
 make release TARGET_GOOS=linux TARGET_GOARCH=amd64
 ```
 
 The release target tests and vets the Go runtime, then uses `deploy/runtime.Dockerfile` to write
-`cc-crawl` and `cc-enrich-worker` under `dist/linux-amd64/`. The catalog builder is a Python application
+`cc-enrich-worker` under `dist/linux-amd64/`. The catalog builder is a Python application
 run on `wappalyzer`; it is not part of the processor-server binary release.
 
 ## Apply the ClickHouse schema
@@ -272,27 +268,27 @@ the verified local cache while the remote committed checksum remains unchanged.
 
 ## Process WARC indexes
 
-The examples run `cc-crawl` from the processor root. The binary also resolves the shared `.env` and its
-paired/development worker relative to its own path, so a deployed command does not depend on the caller's
-working directory:
+The examples run `cc-enrich-worker` from the processor root after sourcing the shared `.env`:
 
 ```bash
-./cc-crawl/bin/cc-crawl \
-  -crawl CC-MAIN-2026-25 \
-  -mode tech \
-  -parts 0-1000 \
-  -max-pages 25 \
-  -whole-warc-threshold 50 \
-  -tech-conc 32
+set -a; source .env; set +a
+
+./cc-enrich-worker/bin/cc-enrich-worker tech \
+  --crawl-id CC-MAIN-2026-25 \
+  --base /opt/companycollect/corpscout/commoncrawl/data \
+  --parts 0-1000 \
+  --warc-parallel 8 \
+  --concurrency 32
 ```
 
-`-parts` is retained as the operator-facing name, but it now means one stable WARC index or an inclusive
-WARC-index range from the catalog. It is not a URL-index shard number. For example, `-parts 85-150`
-processes catalog WARC indexes 85 through 150, inclusive. Machines can be assigned arbitrary non-overlapping
-ranges of different sizes.
+`--parts` means one stable WARC index or an inclusive WARC-index range from the catalog. It is not a
+URL-index shard number. For example, `--parts 85-150` processes catalog WARC indexes 85 through 150,
+inclusive. Machines can be assigned arbitrary non-overlapping ranges of different sizes. Each produced
+part writes a `.produced` marker; load them into ClickHouse with `cc-enrich-worker load --scan <root>`
+(add `--watch` to load parts as they land).
 
-`-max-pages N` selects the `pagesN` catalog and must match a catalog that has been built and committed. Tech
-uses all selected pages. Industry and embed use only each domain's rank-1 page from the same catalog.
+`--selection pagesN` selects the `pagesN` catalog and must match a catalog that has been built and committed.
+Tech uses all selected pages. Industry and embed use only each domain's rank-1 page from the same catalog.
 
 For each non-empty WARC, the worker obtains the actual Common Crawl object size and computes:
 
@@ -300,28 +296,32 @@ For each non-empty WARC, the worker obtains the actual Common Crawl object size 
 selected compressed record bytes / complete WARC object bytes * 100
 ```
 
-At or above `-whole-warc-threshold`, it downloads the WARC once to a temporary local file and serves the
+At or above the whole-WARC threshold, it downloads the WARC once to a temporary local file and serves the
 selected gzip members with concurrent local reads. Below the threshold, it performs exact range reads for
 the selected records. The temporary complete WARC is removed after processing. A catalog WARC with no pages
 for the selected mode is a successful no-op and does not access the WARC object.
 
-Signed Common Crawl S3 is preferred on EC2. Off AWS, set `S3_ANONYMOUS=true` or pass `-s3-anonymous` to use
+Signed Common Crawl S3 is preferred on EC2. Off AWS, pass `--s3-anonymous` to use
 `CC_BASE_URL`, which defaults to `https://data.commoncrawl.org/`.
 
 ## Produce, load, and completion state
 
-For `tech` and `industry`, each WARC index follows this state machine:
+For `tech` and `industry`, the lifecycle is split across two decoupled commands, each idempotent through
+its own on-disk marker:
 
 ```text
-out_<mode>_<warc-index>.loaded exists
-    -> skip
+produce (cc-enrich-worker <mode> --parts A-B):
+  .produced marker exists (or .loaded)   -> skip the part
+  otherwise                              -> remove stale output directory
+                                            -> produce Parquet
+                                            -> require domains.parquet
+                                            -> write .produced with per-kind row counts
 
-otherwise
-    -> remove stale output directory
-    -> produce Parquet
-    -> require domains.parquet
+load (cc-enrich-worker load --scan <root> [--watch]):
+  sweep for .produced dirs lacking .loaded
     -> load all supported Parquet files into ClickHouse
-    -> write out_<mode>_<warc-index>.loaded
+    -> verify loaded row counts against the .produced marker
+    -> write .loaded
 ```
 
 Files live under:
@@ -354,7 +354,7 @@ A valid existing embeddings file is its completion check.
 
 ## Deploy to `commoncrawl2`
 
-The Ansible package builds on the control machine and deploys `cc-crawl` and `cc-enrich-worker` as one
+The Ansible package builds on the control machine and deploys `cc-enrich-worker` as one
 checksum-addressed release:
 
 ```bash
@@ -363,7 +363,7 @@ cd corpscout/commoncrawl/cc-processor/deploy
 # Full build and remote preflight without changing the server.
 ansible-playbook site.yml --limit commoncrawl2 --ask-become-pass --check --diff
 
-# Deploy and atomically activate both binaries.
+# Deploy and atomically activate the binary.
 ansible-playbook site.yml --limit commoncrawl2 --ask-become-pass
 ```
 
@@ -372,12 +372,9 @@ sudo. The playbook does not deploy the catalog builder, catalogs, data, logs, ou
 requires the protected processor-root `.env` or, on the first migration, copies the existing legacy file;
 it then preserves the new file and only ensures the non-secret catalog base setting is present.
 
-The paired release is installed beneath
-`/opt/companycollect/corpscout/commoncrawl/cc-processor/releases/` and activated through `current`.
-Compatibility command paths within the processor root are:
+The binary is installed at its stable command path within the processor root:
 
 ```text
-/opt/companycollect/corpscout/commoncrawl/cc-processor/cc-crawl/bin/cc-crawl
 /opt/companycollect/corpscout/commoncrawl/cc-processor/cc-enrich-worker/bin/cc-enrich-worker
 ```
 
@@ -443,9 +440,10 @@ is not written after a failed load, so the same WARC can be retried after fixing
 
 ### A WARC is skipped unexpectedly
 
-`cc-crawl` skips `tech` and `industry` when the adjacent `.loaded` marker exists. Inspect the corresponding
-output and log before removing the marker. Removing it authorizes a complete produce/load retry for that
-WARC.
+The range runner skips `tech` and `industry` for a part whose output dir already has a `.produced` (or
+`.loaded`) marker, and `load --scan` skips any dir already carrying `.loaded`. Inspect the corresponding
+output and log before removing a marker. Removing `.produced` authorizes a produce retry; removing
+`.loaded` authorizes a load retry for that WARC.
 
 ### The builder stops after remote shard failures
 

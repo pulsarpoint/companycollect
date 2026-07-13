@@ -11,16 +11,12 @@ RUN apt-get update \
 WORKDIR /src
 COPY cc-raw ./cc-raw
 COPY cc-enrich-worker ./cc-enrich-worker
-COPY cc-crawl ./cc-crawl
 
 RUN mkdir /out \
     && cd /src/cc-enrich-worker \
     && CC=x86_64-linux-gnu-gcc CXX=x86_64-linux-gnu-g++ \
        CGO_ENABLED=1 GOOS=linux GOARCH="${TARGETARCH}" \
-       go build -buildvcs=false -trimpath -o /out/cc-enrich-worker ./cmd/cc-enrich-worker \
-    && cd /src/cc-crawl \
-    && CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
-       go build -buildvcs=false -trimpath -o /out/cc-crawl .
+       go build -buildvcs=false -trimpath -o /out/cc-enrich-worker ./cmd/cc-enrich-worker
 
 FROM scratch AS artifacts
 COPY --from=build /out/ /

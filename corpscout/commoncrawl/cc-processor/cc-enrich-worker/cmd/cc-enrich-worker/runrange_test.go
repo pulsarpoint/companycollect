@@ -391,7 +391,7 @@ func TestPreserveStaleDir(t *testing.T) {
 }
 
 // TestRunRangePoolPreservesLoadedDir proves a non-empty output dir carrying a .loaded marker but no
-// .produced (cc-crawl's produce→load lifecycle) survives a range run: it is skipped, its content
+// .produced (the retired cc-crawl produce→load lifecycle) survives a range run: it is skipped, its content
 // and .loaded marker are untouched, and no .produced is written — while a sibling part still runs.
 func TestRunRangePoolPreservesLoadedDir(t *testing.T) {
 	base := t.TempDir()

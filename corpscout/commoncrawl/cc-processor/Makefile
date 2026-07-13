@@ -4,20 +4,17 @@ DIST_DIR ?= $(CURDIR)/dist/$(TARGET_GOOS)-$(TARGET_GOARCH)
 ENV_FILE ?= .env
 PAGES_PER_DOMAIN ?= 25
 
-.PHONY: all build builder worker crawl catalog test builder-test vet verify runtime-test runtime-vet runtime-verify release clean
+.PHONY: all build builder worker catalog test builder-test vet verify runtime-test runtime-vet runtime-verify release clean
 
 all: build
 
-build: builder worker crawl
+build: builder worker
 
 builder:
 	$(MAKE) -C cc-warc-index-builder build
 
 worker:
 	$(MAKE) -C cc-enrich-worker build
-
-crawl:
-	$(MAKE) -C cc-crawl build
 
 catalog:
 	@test -n "$(CRAWL)" || { echo "CRAWL is required, for example CRAWL=CC-MAIN-2026-25" >&2; exit 2; }
@@ -34,14 +31,12 @@ builder-test:
 runtime-test:
 	$(MAKE) -C cc-raw test
 	$(MAKE) -C cc-enrich-worker test
-	$(MAKE) -C cc-crawl test
 
 test: builder-test runtime-test
 
 runtime-vet:
 	$(MAKE) -C cc-raw vet
 	$(MAKE) -C cc-enrich-worker vet
-	$(MAKE) -C cc-crawl vet
 
 vet: runtime-vet
 
@@ -58,10 +53,8 @@ release: runtime-verify
 		--output "type=local,dest=$(DIST_DIR)" \
 		.
 	test -x "$(DIST_DIR)/cc-enrich-worker"
-	test -x "$(DIST_DIR)/cc-crawl"
 
 clean:
 	$(MAKE) -C cc-warc-index-builder clean
 	$(MAKE) -C cc-enrich-worker clean
-	$(MAKE) -C cc-crawl clean
 	rm -rf dist

@@ -1,9 +1,9 @@
 # CC processor deployment
 
-This playbook tests, vets, and cross-compiles `cc-crawl` and `cc-enrich-worker` on the control machine,
-then copies the two binaries to the processing server. That is the whole deployment: no release
-directories, no symlinks, no version pinning. It does not copy source code and does not modify crawl
-catalogs, Parquet output, logs, or markers.
+This playbook tests, vets, and cross-compiles `cc-enrich-worker` on the control machine, then copies the
+single binary to the processing server. That is the whole deployment: no release directories, no
+symlinks, no version pinning. It does not copy source code and does not modify crawl catalogs, Parquet
+output, logs, or markers.
 
 See the parent [`cc-processor` runbook](../README.md) for catalog construction, the shared environment,
 ClickHouse migrations, processing commands, and completion semantics. It does not deploy or run
@@ -11,7 +11,7 @@ ClickHouse migrations, processing commands, and completion semantics. It does no
 
 ## Target
 
-The tracked inventory deploys Linux/AMD64 binaries to `commoncrawl2` over the existing `graovic` SSH
+The tracked inventory deploys the Linux/AMD64 binary to `commoncrawl2` over the existing `graovic` SSH
 account. Root SSH is not required; Ansible uses `sudo` only for the remote installation.
 
 Requirements on the control machine:
@@ -33,16 +33,15 @@ ansible-playbook site.yml
 ```
 
 Ansible runs `make release` locally (tests + vet + the pinned CGO Docker build for `linux/amd64`), then
-copies both binaries to their stable command paths and validates each with `--help`:
+copies the binary to its stable command path and validates it with `--help`:
 
 ```text
 /opt/companycollect/corpscout/commoncrawl/cc-processor/
 ├── .env                                      # never touched by the playbook
-├── cc-crawl/bin/cc-crawl
 └── cc-enrich-worker/bin/cc-enrich-worker
 ```
 
-Copies are atomic (temp file + rename), so deploying while a worker is running is safe: the running
+The copy is atomic (temp file + rename), so deploying while a worker is running is safe: the running
 process keeps its already-open executable; new invocations get the new binary.
 
 A check run performs the complete local build and the remote preflight without changing the server:

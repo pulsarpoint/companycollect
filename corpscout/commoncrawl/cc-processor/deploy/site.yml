@@ -19,7 +19,7 @@
           {{ inventory_hostname }} reports
           {{ ansible_facts["system"] }}/{{ ansible_facts["architecture"] }}.
 
-    - name: Test, vet, and build both Linux binaries on the control machine
+    - name: Test, vet, and build the Linux binary on the control machine
       ansible.builtin.command:
         argv:
           - make
@@ -33,25 +33,19 @@
       check_mode: false
       changed_when: false
 
-    - name: Verify both local release artifacts exist and are executable
+    - name: Verify the local release artifact exists and is executable
       ansible.builtin.stat:
-        path: "{{ commoncrawl_artifact_directory }}/{{ item }}"
-      register: commoncrawl_local_binaries
-      loop:
-        - cc-crawl
-        - cc-enrich-worker
+        path: "{{ commoncrawl_artifact_directory }}/cc-enrich-worker"
+      register: commoncrawl_local_binary
       delegate_to: localhost
       become: false
 
-    - name: Require both build artifacts
+    - name: Require the build artifact
       ansible.builtin.assert:
         that:
-          - item.stat.isreg | default(false)
-          - item.stat.executable | default(false)
-        fail_msg: "make release did not produce an executable {{ item.item }}."
-      loop: "{{ commoncrawl_local_binaries.results }}"
-      loop_control:
-        label: "{{ item.item }}"
+          - commoncrawl_local_binary.stat.isreg | default(false)
+          - commoncrawl_local_binary.stat.executable | default(false)
+        fail_msg: "make release did not produce an executable cc-enrich-worker."
 
     - name: Require the processor environment file
       ansible.builtin.stat:
@@ -66,33 +60,21 @@
         fail_msg: >-
           Create {{ commoncrawl_deploy_root }}/.env before deploying the runtime.
 
-    - name: Create the binary directories
+    - name: Create the binary directory
       ansible.builtin.file:
-        path: "{{ commoncrawl_deploy_root }}/{{ item }}/bin"
+        path: "{{ commoncrawl_deploy_root }}/cc-enrich-worker/bin"
         state: directory
         owner: "{{ commoncrawl_owner }}"
         group: "{{ commoncrawl_group }}"
         mode: "0755"
-      loop:
-        - cc-crawl
-        - cc-enrich-worker
 
-    - name: Copy the binaries into place
+    - name: Copy the binary into place
       ansible.builtin.copy:
-        src: "{{ commoncrawl_artifact_directory }}/{{ item }}"
-        dest: "{{ commoncrawl_deploy_root }}/{{ item }}/bin/{{ item }}"
+        src: "{{ commoncrawl_artifact_directory }}/cc-enrich-worker"
+        dest: "{{ commoncrawl_deploy_root }}/cc-enrich-worker/bin/cc-enrich-worker"
         owner: "{{ commoncrawl_owner }}"
         group: "{{ commoncrawl_group }}"
         mode: "0755"
-      loop:
-        - cc-crawl
-        - cc-enrich-worker
-      when: not ansible_check_mode
-
-    - name: Validate the deployed cc-crawl binary
-      ansible.builtin.command:
-        argv: ["{{ commoncrawl_deploy_root }}/cc-crawl/bin/cc-crawl", -h]
-      changed_when: false
       when: not ansible_check_mode
 
     - name: Validate the deployed cc-enrich-worker binary

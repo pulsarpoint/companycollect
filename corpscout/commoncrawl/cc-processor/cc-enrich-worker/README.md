@@ -45,24 +45,29 @@ entry, the worker does not initialize the Common Crawl WARC client or access the
 
 ## Processing lifecycle
 
-The `cc-crawl` produce/load lifecycle remains unchanged for `industry` and `tech`:
+There is one lifecycle, split across two decoupled commands driven by on-disk markers:
 
-1. The processor produces local Parquet files.
-2. `load --dir ...` inserts supported files into ClickHouse.
-3. `cc-crawl` writes `out_<mode>_<warc-index>.loaded` only after loading succeeds.
+1. **Produce + mark** — the range runner (`<cmd> --parts A-B`) produces each part's Parquet output via
+   range reads and, on success, writes a `.produced` marker carrying the per-kind row counts.
+2. **Load + mark** — `load --scan <root> [--watch]` sweeps that output root for `.produced` dirs that
+   lack `.loaded`, inserts each into ClickHouse, verifies the row counts against the marker, and writes
+   `.loaded`. The load side is independent of the producer and can run on a different host or schedule.
 
-The local `.loaded` file remains the authoritative skip check. Produce never marks a WARC as loaded.
-`embed` uses its completed vector file, and direct-only `both` has no orchestrated marker.
+The `.produced`/`.loaded` marker pair is the authoritative resume + skip state: a part with `.produced`
+is not reproduced, and a dir with `.loaded` is not reloaded. `embed` additionally uses its completed
+vector file as an inner skip check.
 
-`industry`, `tech`, `embed`, and `both` also support the range runner described below, which processes
-a whole WARC part range in one worker process instead of one `--part` at a time under `cc-crawl`. Both
-lifecycles write the same output layout and are interchangeable per part; see
-[`docs/superpowers/specs/2026-07-13-range-runner-design.md`](docs/superpowers/specs/2026-07-13-range-runner-design.md)
+A single `--part` run is retained only for **ad-hoc / debug produce**: it writes the same output layout
+but does **not** write a `.produced` marker, so `load --scan` will not pick it up. Its output is for
+inspection, not the load pipeline. (You could point `load --scan` at the parent dir to load it, but only
+if a `.produced` marker exists — single-part runs never write one.)
+
+See [`docs/superpowers/specs/2026-07-13-range-runner-design.md`](docs/superpowers/specs/2026-07-13-range-runner-design.md)
 for the full design record.
 
 ## Range runner: process a part range
 
-`--parts A-B` processes an inclusive WARC index range in one worker invocation, without `cc-crawl`.
+`--parts A-B` processes an inclusive WARC index range in one worker invocation.
 Every part in the range with at least one selected page is produced via range reads; parts with zero
 selected pages are **empty** and skipped. `industry`, `embed`, `tech`, and `both` all use the same
 single strategy — there is no lane split and no `--mode`.
@@ -204,18 +209,7 @@ make -C cc-enrich-worker test
 make -C cc-enrich-worker vet
 ```
 
-The normal entry point is `cc-crawl`:
-
-```bash
-./cc-crawl/bin/cc-crawl \
-  -base /opt/companycollect/corpscout/commoncrawl/data \
-  -crawl CC-MAIN-2026-25 \
-  -mode tech \
-  -parts 0-10 \
-  -tech-conc 32
-```
-
-For a direct produce/load run:
+The normal entry point is the range runner producing a part range, with `load --scan` loading it:
 
 ```bash
 set -a; source .env; set +a
@@ -224,21 +218,24 @@ set -a; source .env; set +a
   --base /opt/companycollect/corpscout/commoncrawl/data \
   --crawl-id CC-MAIN-2026-25 \
   --selection pages25 \
-  --part 0 \
+  --parts 0-10 \
   --concurrency 32 \
-  --chunk 16384
+  --chunk 16384 \
+  --warc-parallel 8
 
 ./cc-enrich-worker/bin/cc-enrich-worker load \
-  --dir /opt/companycollect/corpscout/commoncrawl/data/CC-MAIN-2026-25/warc/pages25/out_tech_0
+  --scan /opt/companycollect/corpscout/commoncrawl/data/CC-MAIN-2026-25/warc/pages25 --parallel 4
 ```
 
-Or, to process a whole range natively (no `cc-crawl`) and load it as it becomes available, see
-"Range runner: process a part range" and "Loader deployment" above for the `--parts` and
-`load --scan --watch` forms.
+See "Range runner: process a part range" and "Loader deployment" above for the `--parts` and
+`load --scan --watch` forms (run the loader with `--watch` to load parts as they become available).
 
-`.env` exists only at the processor root. `cc-crawl` resolves it relative to its own binary, with the
-working directory as a fallback, and passes it to the worker. If invoking the worker from its component
-directory instead, source `../.env`.
+For ad-hoc / debug produce of a single part, swap `--parts 0-10` for `--part 0`. A single-part run
+writes the same output layout but no `.produced` marker, so `load --scan` will not pick it up — its
+output is for inspection only.
+
+`.env` exists only at the processor root. When invoking the worker from its component directory,
+source `../.env`.
 
 Use `--s3-anonymous` off AWS to read through `https://data.commoncrawl.org/`. Signed S3 is the default
 and is preferred on EC2.

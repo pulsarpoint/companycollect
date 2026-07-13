@@ -40,9 +40,10 @@ type partProducer func(ctx context.Context, part uint32, outDir string) (partRes
 // preserveStaleDir reports whether a NON-EMPTY output dir that lacks a .produced marker must be
 // kept (and its part skipped) instead of wiped as crashed-produce debris:
 //
-//   - a sibling .loaded marker means cc-crawl's produce→verify→load lifecycle already loaded this
-//     output into ClickHouse and wrote .loaded (it does not always leave .produced behind). Wiping
-//     it would delete data the DB still references — disk would diverge from ClickHouse.
+//   - a sibling .loaded marker means the retired cc-crawl produce→verify→load lifecycle already
+//     loaded this output into ClickHouse and wrote .loaded (it did not always leave .produced behind).
+//     Historical output on disk still has that shape, and wiping it would delete data the DB still
+//     references — disk would diverge from ClickHouse.
 //   - for embed, an already-complete embeddings file (the single-part verify-and-skip predicate,
 //     completedEmbedding) is the expensive GPU artifact; spec §2 keeps that as the inner safety net.
 //
@@ -113,8 +114,8 @@ func runRangePool(
 				}
 				// A non-empty output dir with no .produced marker is USUALLY debris from a produce that
 				// crashed mid-write — remove it so producePart starts clean. But a complete-but-unmarked
-				// output (.loaded from cc-crawl, or a complete embed file) is authoritative: preserve it
-				// and skip the part rather than destroying loaded data.
+				// output (.loaded from the retired cc-crawl lifecycle, or a complete embed file) is
+				// authoritative: preserve it and skip the part rather than destroying loaded data.
 				if info, statErr := os.Stat(outDir); statErr == nil && info.IsDir() {
 					if preserveStaleDir(cmd, outDir) {
 						log.Printf("range: preserving complete-but-unmarked output dir (skip) part=%d %s", part, outDir)
