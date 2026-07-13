@@ -23,11 +23,16 @@ crawl (or a meaningful part range) with matching outputs.
 
 ## Decisions (from design discussion)
 
-1. `--mode local|remote` is REQUIRED — no default, no `all`. A runner invocation states
-   exactly how it fetches. For tech/both, covering a whole range = explicitly launching both
-   lanes. (Classification is advisory for lane assignment; a part still derives its true
-   fetch strategy at open time, so a stale plan can only mis-assign a lane, never
-   mis-process.)
+1. `--mode local|remote` is REQUIRED — no default, no `all`. The mode determines BOTH what
+   the runner claims from the catalog AND how those parts are fetched:
+   - At startup the runner queries the catalog (DuckDB) for parts A–B and selects the WARCs
+     of its class: selected pages >= X → local class, < X → remote class (X =
+     `--local-min-pages`, the split threshold; see Classifier).
+   - The lane then FORCES the fetch strategy — local always downloads the whole WARC to a
+     temp file, processes it, and deletes the file; remote always uses S3 range reads. No
+     open-time re-derivation: the runner is fully explicit about what it will do.
+   - For tech/both, covering a whole range = explicitly launching both lanes (on different
+     servers — see Deployment).
    industry and embed accept ONLY `--mode remote`: their primary-pages-only selections are
    sparse, so there is no local lane for them — the remote runner takes EVERY non-empty part
    in the range (no classification filtering), and `--mode local` is rejected with an error.
@@ -47,18 +52,22 @@ crawl (or a meaningful part range) with matching outputs.
 
 ### 1. Classifier + `plan` subcommand
 
-- DuckDB (existing dependency) queries the catalog parquet for parts A–B: per-part page
-  counts and selected compressed bytes. Catalog remains local under OUT_BASE_DIR (S3-hosted
-  catalog via httpfs is out of scope).
-- Concurrent HeadObject sweep fetches each WARC's total size (~200 in flight; the fleet pays
-  these HEADs at open time anyway). Cached in `<base>/<crawl-id>/warc/<selection>/plan.json`
-  keyed by (crawl, selection, part) → {object_bytes, selected_bytes, pages}; reruns reuse it.
-- coverage = selected_bytes / object_bytes; coverage >= --whole-warc-threshold → local,
-  else remote; zero pages → empty (skipped, reported).
-- `cc-enrich-worker plan --crawl-id C --selection S --parts A-B [--whole-warc-threshold N]
-  [--estimate]` prints: counts per class, download total (local lane GiB), selected total,
-  average coverage, and a threshold sweep (e.g. 30/50/70%). `--estimate` skips HEADs and
-  assumes ~1 GiB per WARC for an instant preview.
+- DuckDB (existing dependency) queries the catalog parquet for parts A–B: per-part selected
+  page count and selected compressed bytes. Catalog remains local under OUT_BASE_DIR
+  (S3-hosted catalog via httpfs is out of scope).
+- Split criterion is catalog-only — NO S3 HEAD sweep, no plan.json cache needed:
+  selected pages >= `--local-min-pages` X → local class; < X → remote; zero pages → empty
+  (skipped, reported). The same X must be passed to both lanes' runners for a disjoint,
+  complete partition of the range (each runner prints its X and class counts at startup so a
+  mismatch is visible immediately).
+- Rationale: page count is a direct proxy for when whole-WARC download beats per-record
+  range reads (request-count economics), and it removes an entire network dependency from
+  classification. The old byte-coverage criterion required per-WARC HeadObject calls; it
+  survives only inside `plan` stats as an OPTIONAL `--head-sizes` enrichment.
+- `cc-enrich-worker plan --crawl-id C --selection S --parts A-B [--local-min-pages X]`
+  prints: counts per class, selected pages/bytes totals per class, estimated download volume
+  for the local class (parts x ~1 GiB, or exact with --head-sizes), and a threshold sweep
+  over several X values so the split can be tuned from the real distribution.
 
 ### 2. Range producer
 
@@ -80,11 +89,23 @@ crawl (or a meaningful part range) with matching outputs.
     (`out_<cmd>_<part>.produced`, matching cc-crawl's `.loaded` placement), containing JSON
     {part, cmd, rows per kind, duration, source_run_id, finished_at}. Written via
     temp+rename.
-- Lane dynamics:
-  - `--mode local`: prefetch — download part N+1's WARC (through the existing plan.Open
-    whole-WARC path) while part N processes. Exactly one ahead; disk bound = 2 WARCs.
-  - `--mode remote`: parts strictly sequential; the continuous range-fetch pipeline has no
-    download bubble, and memory stays O(chunk).
+- Lane dynamics — each lane is a two-pool pipeline with explicit, configurable parallelism:
+  - `--mode remote`: `cc-enrich-worker tech --parts 1-100000 --mode remote` must just work.
+    One part-pool processes `--warc-parallel X` (default 4) parts concurrently — each part
+    runs the existing per-part pipeline (pages fetched by the existing page pool, aggregated,
+    streamed to its own output dir) — all sharing one S3 transport sized to
+    X * concurrency * PageConcurrency. Memory is O(chunk) * X.
+  - `--mode local`: two pools connected by a bounded buffer of downloaded WARCs:
+    - DOWNLOAD pool: `--download-parallel D` (default 2) whole-WARC downloads run
+      continuously — as soon as one finishes, the next queued part starts — until every part
+      in the runner's class is fetched. Backpressure: at most `--download-buffer B`
+      (default D+2) downloaded-but-unprocessed WARCs on disk; disk budget = B * ~1 GiB.
+    - PROCESS pool: `--process-parallel P` (default 2) parts processed concurrently from the
+      buffer, each feeding (local warc path, offset, length) page entries to the existing
+      CPU-bound page workers; total page workers sized to the machine's cores. A part's
+      temp WARC is deleted as soon as its part completes (produce + verify + marker).
+    Download of later parts overlaps processing of earlier ones for the entire run — the
+    continuous-batch behavior, not just prefetch-one.
 - Failure handling per Decisions #4. Summary at end: produced / skipped / failed(list) /
   wall-clock; exit 0 only if no produce failures.
 - Industry/embed: single lane per Decisions #1 — `--mode remote` processes every non-empty
@@ -121,6 +142,16 @@ produce failure        --> no marker; retried on next producer run; counted by b
 load failure           --> stays pending; retried each loader sweep
 ```
 
+## Deployment
+
+- Local-lane and remote-lane runners are intended for DIFFERENT servers: the local lane is
+  disk-write + CPU heavy (sustained ~D concurrent 1 GiB downloads, then pure local reads),
+  the remote lane is S3-request-rate heavy with modest CPU. Separating them keeps each box's
+  bottleneck singular and the S3 request budget accountable per host. Nothing in the code
+  enforces this; it is the documented operating model.
+- Both lanes write to the same OUT_BASE_DIR layout and marker vocabulary, so the loader and
+  status commands see one uniform tree regardless of which host produced a part.
+
 ## Out of scope
 
 - cc-crawl changes or removal (follow-up after a verified crawl; includes ansible/deploy).
@@ -134,8 +165,10 @@ load failure           --> stays pending; retried each loader sweep
   marker read/write transitions incl. temp+rename atomicity; breaker (5 consecutive vs
   interleaved failures); parts-range parsing.
 - Integration (fake getter WARC fixtures, as existing worker tests): a 4-part range with one
-  part failing → continue + summary + exit code + resume-on-rerun behavior; local-lane
-  prefetch produces identical output to sequential.
+  part failing → continue + summary + exit code + resume-on-rerun behavior; remote lane with
+  --warc-parallel 2 produces byte-identical outputs to sequential; local lane's
+  download/process pools produce identical output to one-at-a-time, temp WARCs deleted after
+  their part completes, buffer bound respected.
 - Loader integration against REAL local ClickHouse (skip if unreachable): produce two parts,
   run `load --scan`, verify rows + `.loaded`; kill CH → parts stay pending → restart CH →
   next sweep catches up. Per the real-integration-tests rule.
