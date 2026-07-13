@@ -173,6 +173,16 @@ func subdomainOf(rawURL, root string) string {
 	return ""
 }
 
+// contentTypeOf returns the response Content-Type header (any casing), or "".
+func contentTypeOf(headers map[string][]string) string {
+	for k, v := range headers {
+		if strings.EqualFold(k, "Content-Type") && len(v) > 0 {
+			return v[0]
+		}
+	}
+	return ""
+}
+
 func modeFlags(cfg ShardConfig) (mode string, runEmbed, runTech bool) {
 	mode = cfg.Mode
 	if mode == "" {
@@ -295,6 +305,7 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		return pageResult{}, err // a bad/slow page is skipped; the domain still emits if any page survived
 	}
 
+	decoded, encName := parse.DecodeHTML(body, contentTypeOf(headers))
 	r := pageResult{source: it, sub: subdomainOf(it.URL, it.RootDomain), primary: it.Primary}
 	if runTech {
 		// Cap the body ONLY for the expensive Wappalyzer regex scan (~1.2s/page uncapped). The cheap
@@ -306,22 +317,25 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 		t2 := time.Now()
 		r.tech = tech.DetectTech(headers, techBody)
 		atomic.AddInt64(&stats.techNs, time.Since(t2).Nanoseconds())
-		r.emails = parse.Emails(string(body))
-		prof, structIDs := extract.ExtractProfile(body)
-		r.profile = prof                                    // schema.org Organization JSON-LD
-		r.ids = append(r.ids, structIDs...)                 // ids declared in that JSON-LD
-		r.ids = append(r.ids, extract.ExtractLEIs(body)...) // jsonld-regex + text LEIs
-		r.ids = append(r.ids, extract.ExtractVATs(body)...) // EU VAT ids (format + checksum)
-		r.ids = append(r.ids, extract.Trackers(body)...)    // analytics/ad/tag account ids (ownership signal)
-		if it.Primary {                                     // per-domain head signals: the representative page
+		r.emails = parse.Emails(string(decoded))
+		prof, structIDs := extract.ExtractProfile(decoded)
+		r.profile = prof
+		r.ids = append(r.ids, structIDs...)
+		r.ids = append(r.ids, extract.ExtractLEIs(decoded)...)
+		r.ids = append(r.ids, extract.ExtractVATs(decoded)...)
+		r.ids = append(r.ids, extract.Trackers(decoded)...)
+		if it.Primary {
 			r.security = security.HeaderMap(headers)
-			r.meta = parse.ParseHeadMeta(string(body))
-			r.jsonldTypes = extract.JSONLDTypes(body)
+			r.meta = parse.ParseHeadMeta(string(decoded))
+			if r.meta.Charset == "" {
+				r.meta.Charset = encName // head declared nothing — record what we detected
+			}
+			r.jsonldTypes = extract.JSONLDTypes(decoded)
 		}
 	}
 	if runEmbed && it.Primary {
 		t1 := time.Now()
-		text, _, _ := parse.ParseHTML(string(body))
+		text, _, _ := parse.ParseHTML(string(decoded))
 		atomic.AddInt64(&stats.parseNs, time.Since(t1).Nanoseconds())
 		r.text = text
 	}
@@ -772,7 +786,7 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 				}
 				t0 := time.Now()
 				fctx, fcancel := context.WithTimeout(cctx, 30*time.Second)
-				_, body, err := fetch.FetchRecord(fctx, getter, ccBucket, wit.WarcFilename, wit.Offset, wit.Length)
+				headers, body, err := fetch.FetchRecord(fctx, getter, ccBucket, wit.WarcFilename, wit.Offset, wit.Length)
 				fcancel()
 				atomic.AddInt64(&fetchNs, time.Since(t0).Nanoseconds())
 				atomic.AddInt64(&pageCount, 1)
@@ -781,8 +795,9 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 					errOnce.Do(func() { errSample = err.Error() })
 					return
 				}
+				decoded, _ := parse.DecodeHTML(body, contentTypeOf(headers))
 				t1 := time.Now()
-				text, _, _ := parse.ParseHTML(string(body))
+				text, _, _ := parse.ParseHTML(string(decoded))
 				atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
 				select {
 				case ch <- streamItem{di: di, root: dom, url: wit.URL, sub: subdomainOf(wit.URL, dom), text: text,

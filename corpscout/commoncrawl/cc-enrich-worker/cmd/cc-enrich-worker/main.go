@@ -103,7 +103,7 @@ func parse(mode string, args []string) opts {
 	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch through anonymous HTTPS instead of signed Common Crawl S3")
 	if mode == "tech" || mode == "both" {
 		fs.StringVar(&o.techEngine, "tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
-		fs.IntVar(&o.techMax, "tech-max-bytes", 131072, "cap body bytes fed to Wappalyzer (0 = full body; full-body regex ~1.2s/page)")
+		fs.IntVar(&o.techMax, "tech-max-bytes", 0, "maximum page bytes scanned for technologies (0 = full page)")
 	}
 	if mode == "industry" || mode == "both" || mode == "embed" {
 		fs.IntVar(&o.batch, "embed-batch", embed.DefaultBatch, "texts per embed request — keep small (big batches overflow the engine's token budget)")

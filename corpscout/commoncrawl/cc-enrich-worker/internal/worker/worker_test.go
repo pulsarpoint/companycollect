@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
+	"cc-enrich-worker/internal/tech"
 	"cc-enrich-worker/internal/vec"
 )
 
@@ -245,6 +247,32 @@ func TestFinalizePreservesTechnologyConfidence(t *testing.T) {
 	}
 }
 
+func TestProcessPageFullScanDetectsLateTechnology(t *testing.T) {
+	matcher, err := tech.NewFastMatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tech.SetFastMatcher(matcher)
+	t.Cleanup(func() { tech.SetFastMatcher(nil) })
+
+	body := "<html><body>" + strings.Repeat("x", 160<<10) +
+		`<meta name="generator" content="WordPress 6.4"></body></html>`
+	raw := gzWarc("HTTP/1.1 200 OK\r\n\r\n" + body)
+	getter := multiGetter{"late.warc.gz:0": raw}
+	item := model.WorklistItem{
+		RootDomain: "example.com", URL: "https://example.com/", WarcFilename: "late.warc.gz",
+		Offset: 0, Length: int64(len(raw)),
+	}
+
+	full, err := processPage(context.Background(), getter, ShardConfig{Mode: "tech"}, item, &chunkStats{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasTech(full.tech, "WordPress") {
+		t.Fatalf("full-page scan missed technology after 160 KiB: %+v", full.tech)
+	}
+}
+
 func TestTechAndMetadataRowsRetainPageProvenance(t *testing.T) {
 	home := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><head>" +
 		`<script type="application/ld+json">{"@type":"Organization","name":"Acme Home"}</script>` +
@@ -314,5 +342,27 @@ func assertMetadataProvenance(t *testing.T, row output.MetadataRow, pageURL, sub
 		row.WarcIndex != warcIndex || row.WarcFilename != warcFilename ||
 		row.WarcRecordOffset != offset || row.WarcRecordLength != length {
 		t.Fatalf("metadata page provenance mismatch: %+v", row)
+	}
+}
+
+func TestProcessShardDecodesLatin1(t *testing.T) {
+	latin1 := "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=iso-8859-1\">" +
+		"<script type=\"application/ld+json\">{\"@type\":\"Organization\",\"name\":\"M\xfcller GmbH\"}</script>" +
+		"</head><body>M\xfcller GmbH</body></html>"
+	page := gzWarc("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=iso-8859-1\r\n\r\n" + latin1)
+	getter := multiGetter{"f.warc.gz:0": page}
+	items := []model.WorklistItem{
+		{RootDomain: "mueller.de", URL: "https://mueller.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
+	}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
+	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Metadata) != 1 || res.Metadata[0].Name != "Müller GmbH" {
+		t.Fatalf("latin-1 JSON-LD name mangled: %+v", res.Metadata)
+	}
+	if len(res.PageMeta) != 1 || res.PageMeta[0].Charset == "" {
+		t.Fatalf("detected charset not backfilled: %+v", res.PageMeta)
 	}
 }

@@ -94,9 +94,11 @@ and is preferred on EC2.
 | `--out` | derived | Defaults to `<base>/<crawl>/warc/<selection>/out_<mode>_<part>`. |
 | `--concurrency` | `32` | Industry/embed pages or tech/both domains in flight. |
 | `--chunk` | `1024` | Catalog pages per tech/both processing chunk. |
+| `--tech-engine` | `fast` | Technology matcher used by tech/both. |
+| `--tech-max-bytes` | `0` | Cap on page bytes scanned for technologies; `0` scans the complete page. |
 
 Industry/embed/both also accept `--embed-batch` and `--embed-concurrency`. Tech/both also accept
-`--tech-engine` and `--tech-max-bytes`.
+`--tech-engine` and `--tech-max-bytes`. Technology detection scans the complete page by default.
 
 ## Environment
 
