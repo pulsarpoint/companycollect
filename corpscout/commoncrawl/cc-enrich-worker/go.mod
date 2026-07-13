@@ -11,6 +11,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/iand/microdata v0.0.28
 	github.com/markusmobius/go-trafilatura v1.12.2
+	github.com/nyaruka/phonenumbers v1.8.0
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745
 	github.com/projectdiscovery/wappalyzergo v0.2.86
@@ -87,5 +88,5 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	google.golang.org/protobuf v1.34.2 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 )

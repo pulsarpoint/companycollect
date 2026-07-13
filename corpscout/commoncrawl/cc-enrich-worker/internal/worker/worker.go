@@ -634,7 +634,8 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", a.profile.Email, profSrc))
 			}
 			if a.profile.Phone != "" {
-				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "phone", a.profile.Phone, profSrc))
+				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "phone",
+					extract.NormalizePhone(a.profile.Phone, a.rootDomain), profSrc))
 			}
 			for _, s := range a.profile.SameAs {
 				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "social", s, profSrc))
