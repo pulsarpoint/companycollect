@@ -138,7 +138,7 @@ func formatRangeStats(pool poolSnapshot, rs worker.RunStatsSnapshot, s3cur, s3pr
 	if elapsed > 0 {
 		pagesRate = float64(rs.Pages) / elapsed.Seconds()
 	}
-	fmt.Fprintf(&b, " | pages %.1f/s (%d total)", pagesRate, rs.Pages)
+	fmt.Fprintf(&b, " | pages %.1f/s (%d total) errs=%d", pagesRate, rs.Pages, rs.Errs)
 
 	if hasS3 {
 		d := s3cur.Delta(s3prev)
@@ -151,6 +151,8 @@ func formatRangeStats(pool poolSnapshot, rs worker.RunStatsSnapshot, s3cur, s3pr
 		if retries < 0 {
 			retries = 0
 		}
+		// 5xx currently means HTTP 503 only: fetch.S3Stats has no generic 5xx bucket, and 503
+		// SlowDown is the server-error signal Common Crawl's throttling actually emits.
 		fmt.Fprintf(&b, " | s3 %.0f req/s %.1f MiB/s 429=%d 5xx=%d retries=%d",
 			reqRate, mibRate, s3cur.HTTP429s, s3cur.HTTP503s, retries)
 	}

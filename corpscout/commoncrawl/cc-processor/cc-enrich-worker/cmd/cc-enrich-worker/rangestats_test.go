@@ -31,7 +31,7 @@ func TestFormatRangeStats(t *testing.T) {
 	got := formatRangeStats(pool, rs, s3cur, fetch.S3Stats{}, true, 100*time.Minute, 10*time.Second)
 
 	// parts + pages + cumulative-429 + rates + avg segments present and correct.
-	want := "stats: parts run=8 done=42/100 skip=2 fail=1 | pages 200.7/s (1204480 total) | s3 1652 req/s 51.0 MiB/s 429=0 5xx=0 retries=0 | avg fetch=165ms tech=38ms"
+	want := "stats: parts run=8 done=42/100 skip=2 fail=1 | pages 200.7/s (1204480 total) errs=0 | s3 1652 req/s 51.0 MiB/s 429=0 5xx=0 retries=0 | avg fetch=165ms tech=38ms"
 	if got != want {
 		t.Fatalf("formatRangeStats mismatch:\n got=%q\nwant=%q", got, want)
 	}
@@ -47,7 +47,7 @@ func TestFormatRangeStats(t *testing.T) {
 func TestFormatRangeStatsZeroStart(t *testing.T) {
 	pool := poolSnapshot{inFlight: 1, produced: 0, skipped: 0, failed: 0, total: 4}
 	got := formatRangeStats(pool, worker.RunStatsSnapshot{}, fetch.S3Stats{}, fetch.S3Stats{}, false, 0, 0)
-	want := "stats: parts run=1 done=0/4 skip=0 fail=0 | pages 0.0/s (0 total) | avg fetch=0ms tech=0ms"
+	want := "stats: parts run=1 done=0/4 skip=0 fail=0 | pages 0.0/s (0 total) errs=0 | avg fetch=0ms tech=0ms"
 	if got != want {
 		t.Fatalf("zero-start mismatch:\n got=%q\nwant=%q", got, want)
 	}
@@ -58,9 +58,9 @@ func TestFormatRangeStatsCumulativeThrottleSignals(t *testing.T) {
 	pool := poolSnapshot{inFlight: 8, produced: 1, skipped: 0, failed: 0, total: 8}
 	s3cur := fetch.S3Stats{HTTPAttempts: 500, GetObjectCalls: 400, HeadObjectCalls: 50, HTTP429s: 7, HTTP503s: 3}
 	// prev == cur => zero request delta this tick, but the cumulative 429/5xx must still show.
-	got := formatRangeStats(pool, worker.RunStatsSnapshot{Pages: 10}, s3cur, s3cur, true, time.Minute, 10*time.Second)
+	got := formatRangeStats(pool, worker.RunStatsSnapshot{Pages: 10, Errs: 4}, s3cur, s3cur, true, time.Minute, 10*time.Second)
 	// retries = 500 - 400 - 50 = 50 (cumulative).
-	want := "stats: parts run=8 done=1/8 skip=0 fail=0 | pages 0.2/s (10 total) | s3 0 req/s 0.0 MiB/s 429=7 5xx=3 retries=50 | avg fetch=0ms tech=0ms"
+	want := "stats: parts run=8 done=1/8 skip=0 fail=0 | pages 0.2/s (10 total) errs=4 | s3 0 req/s 0.0 MiB/s 429=7 5xx=3 retries=50 | avg fetch=0ms tech=0ms"
 	if got != want {
 		t.Fatalf("cumulative signals mismatch:\n got=%q\nwant=%q", got, want)
 	}

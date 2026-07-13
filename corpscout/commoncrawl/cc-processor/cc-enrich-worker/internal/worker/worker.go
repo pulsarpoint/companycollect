@@ -487,10 +487,15 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 
 	n := atomic.LoadInt64(&stats.pages)
 	if cfg.RunStats != nil {
-		// Range run: fold this chunk into the process-wide sink and stay silent — the runner's
-		// periodic aggregate line is the ONLY per-chunk output (spec §2 suppression).
+		// Range run: fold this chunk into the process-wide sink and stay quiet — the runner's
+		// periodic aggregate line is the per-chunk output. The one exception is the first-error
+		// sample: the aggregate line only carries an errs COUNT, and a rising count with no
+		// example is undebuggable, so the sample line stays even in range mode.
 		cfg.RunStats.add(n, atomic.LoadInt64(&stats.errs),
 			atomic.LoadInt64(&stats.fetchNs), atomic.LoadInt64(&stats.parseNs), atomic.LoadInt64(&stats.techNs))
+		if errs := atomic.LoadInt64(&stats.errs); errs > 0 {
+			log.Printf("  first fetch error: %s", stats.errSample)
+		}
 	} else {
 		if n > 0 {
 			errs := atomic.LoadInt64(&stats.errs)
