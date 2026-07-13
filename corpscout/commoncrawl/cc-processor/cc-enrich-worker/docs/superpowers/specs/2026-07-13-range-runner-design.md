@@ -26,8 +26,9 @@ crawl (or a meaningful part range) with matching outputs.
 1. `--mode local|remote` is REQUIRED — no default, no `all`. The mode determines BOTH what
    the runner claims from the catalog AND how those parts are fetched:
    - At startup the runner queries the catalog (DuckDB) for parts A–B and selects the WARCs
-     of its class: selected pages >= X → local class, < X → remote class (X =
-     `--local-min-pages`, the split threshold; see Classifier).
+     of its class: selected pages <= X → remote class, > X → local class (X =
+     `--remote-max-pages`, the split threshold: the most pages a WARC may have and still be
+     worth fetching page-by-page; see Classifier).
    - The lane then FORCES the fetch strategy — local always downloads the whole WARC to a
      temp file, processes it, and deletes the file; remote always uses S3 range reads. No
      open-time re-derivation: the runner is fully explicit about what it will do.
@@ -56,7 +57,7 @@ crawl (or a meaningful part range) with matching outputs.
   page count and selected compressed bytes. Catalog remains local under OUT_BASE_DIR
   (S3-hosted catalog via httpfs is out of scope).
 - Split criterion is catalog-only — NO S3 HEAD sweep, no plan.json cache needed:
-  selected pages >= `--local-min-pages` X → local class; < X → remote; zero pages → empty
+  selected pages <= `--remote-max-pages` X → remote class; > X → local; zero pages → empty
   (skipped, reported). The same X must be passed to both lanes' runners for a disjoint,
   complete partition of the range (each runner prints its X and class counts at startup so a
   mismatch is visible immediately).
@@ -64,7 +65,7 @@ crawl (or a meaningful part range) with matching outputs.
   range reads (request-count economics), and it removes an entire network dependency from
   classification. The old byte-coverage criterion required per-WARC HeadObject calls; it
   survives only inside `plan` stats as an OPTIONAL `--head-sizes` enrichment.
-- `cc-enrich-worker plan --crawl-id C --selection S --parts A-B [--local-min-pages X]`
+- `cc-enrich-worker plan --crawl-id C --selection S --parts A-B [--remote-max-pages X]`
   prints: counts per class, selected pages/bytes totals per class, estimated download volume
   for the local class (parts x ~1 GiB, or exact with --head-sizes), and a threshold sweep
   over several X values so the split can be tuned from the real distribution.
