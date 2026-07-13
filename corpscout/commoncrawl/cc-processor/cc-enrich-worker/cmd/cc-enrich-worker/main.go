@@ -91,14 +91,16 @@ type opts struct {
 	batch, embedConc              int    // industry / both
 }
 
-// parse builds a per-command flag set (so tech flags don't show under industry and vice-versa).
-func parse(mode string, args []string) opts {
+// parse builds a per-command flag set (so tech flags don't show under industry and vice-versa). It
+// serves both the single-part run (--part) and the range runner (--parts + --mode). When --parts is
+// set it returns isRange=true and a populated runnerOpts; the two selectors are mutually exclusive.
+func parse(mode string, args []string) (opts, runnerOpts, bool) {
 	fs := flag.NewFlagSet("cc-enrich-worker "+mode, flag.ExitOnError)
 	var o opts
 	// common to every command
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
 	fs.StringVar(&o.selection, "selection", "pages25", "catalog selection identity")
-	fs.IntVar(&o.part, "part", -1, "zero-based WARC index (required)")
+	fs.IntVar(&o.part, "part", -1, "zero-based WARC index (single-part run; mutually exclusive with --parts)")
 	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/warc/<selection>/out_<mode>_<part>; an explicit dir must be empty)")
 	fs.StringVar(&o.base, "base", os.Getenv("OUT_BASE_DIR"), "output ROOT (or env OUT_BASE_DIR); required")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
@@ -113,14 +115,19 @@ func parse(mode string, args []string) opts {
 		fs.IntVar(&o.batch, "embed-batch", embed.DefaultBatch, "texts per embed request — keep small (big batches overflow the engine's token budget)")
 		fs.IntVar(&o.embedConc, "embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	}
+	// Range runner: process a whole WARC part range through the bounded lane pool.
+	var partsFlag, modeFlag string
+	var ro runnerOpts
+	fs.StringVar(&partsFlag, "parts", "", `WARC part range "A-B" or "N" (range runner; mutually exclusive with --part)`)
+	fs.StringVar(&modeFlag, "mode", "", "range runner lane: local|remote (required with --parts)")
+	fs.Int64Var(&ro.remoteMaxPages, "remote-max-pages", 0, "range split threshold: parts with <= this many selected pages are remote-eligible (required >=1 for tech/both)")
+	fs.IntVar(&ro.warcParallel, "warc-parallel", 4, "range remote lane: parts produced concurrently (>=1)")
+	fs.IntVar(&ro.downloadParallel, "download-parallel", 2, "range local lane: whole-WARC downloads in flight (>=1)")
+	fs.IntVar(&ro.processParallel, "process-parallel", 2, "range local lane: downloaded WARCs processed in flight (>=1)")
+	fs.IntVar(&ro.maxWARCFiles, "max-warc-files", 0, "range local lane: max whole WARC files on disk at once (required >=1 for --mode local)")
 	_ = fs.Parse(args)
 	if o.crawlID == "" {
 		fmt.Fprintln(os.Stderr, "error: --crawl-id is required")
-		fs.Usage()
-		os.Exit(2)
-	}
-	if o.part < 0 || uint64(o.part) > uint64(^uint32(0)) {
-		fmt.Fprintln(os.Stderr, "error: --part must be a WARC index from 0 to 4294967295")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -130,7 +137,40 @@ func parse(mode string, args []string) opts {
 		fs.Usage()
 		os.Exit(2)
 	}
-	return o
+
+	if partsFlag != "" {
+		if o.part >= 0 {
+			fmt.Fprintln(os.Stderr, "error: --part and --parts are mutually exclusive")
+			fs.Usage()
+			os.Exit(2)
+		}
+		if modeFlag == "" {
+			fmt.Fprintln(os.Stderr, "error: --parts requires --mode (local|remote)")
+			fs.Usage()
+			os.Exit(2)
+		}
+		parts, err := parsePartsRange(partsFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: invalid --parts: %v\n", err)
+			fs.Usage()
+			os.Exit(2)
+		}
+		ro.parts = parts
+		ro.mode = modeFlag
+		if err := validateRunnerOpts(mode, ro); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			fs.Usage()
+			os.Exit(2)
+		}
+		return o, ro, true
+	}
+
+	if o.part < 0 || uint64(o.part) > uint64(^uint32(0)) {
+		fmt.Fprintln(os.Stderr, "error: --part must be a WARC index from 0 to 4294967295")
+		fs.Usage()
+		os.Exit(2)
+	}
+	return o, ro, false
 }
 
 func main() {
@@ -140,7 +180,12 @@ func main() {
 	}
 	switch cmd := os.Args[1]; cmd {
 	case "industry", "tech", "both", "embed":
-		run(cmd, parse(cmd, os.Args[2:]))
+		o, ro, isRange := parse(cmd, os.Args[2:])
+		if isRange {
+			runRange(cmd, o, ro)
+		} else {
+			run(cmd, o)
+		}
 	case "load":
 		runLoad(os.Args[2:])
 	case "plan":
@@ -410,21 +455,30 @@ func openInput(ctx context.Context, d partDeps, part uint32, forced warcinput.Mo
 		o.selection,
 		catalogCachePath,
 	)
-	plan, err := warcinput.LoadS3Plan(
-		ctx,
-		catalog.S3Config{
-			BaseURI:   catalogS3Base,
-			Endpoint:  os.Getenv("CORPSCOUT_S3_ENDPOINT"),
-			Region:    envOr("CORPSCOUT_S3_REGION", "us-east-1"),
-			AccessKey: os.Getenv("CORPSCOUT_S3_ACCESS_KEY"),
-			SecretKey: os.Getenv("CORPSCOUT_S3_SECRET_KEY"),
-		},
-		o.base,
-		o.crawlID,
-		o.selection,
-		part,
-		primaryPagesOnly,
-	)
+	// With no RustFS base configured we read the already-synced LOCAL catalog directly (same path the
+	// S3 sync writes to). This mirrors plancmd's "sync only if a base is set" contract and lets the
+	// range runner operate on a catalog that was synced once up front rather than per part.
+	var plan warcinput.Plan
+	var err error
+	if catalogS3Base == "" {
+		plan, err = warcinput.LoadPlan(o.base, o.crawlID, o.selection, part, primaryPagesOnly)
+	} else {
+		plan, err = warcinput.LoadS3Plan(
+			ctx,
+			catalog.S3Config{
+				BaseURI:   catalogS3Base,
+				Endpoint:  os.Getenv("CORPSCOUT_S3_ENDPOINT"),
+				Region:    envOr("CORPSCOUT_S3_REGION", "us-east-1"),
+				AccessKey: os.Getenv("CORPSCOUT_S3_ACCESS_KEY"),
+				SecretKey: os.Getenv("CORPSCOUT_S3_SECRET_KEY"),
+			},
+			o.base,
+			o.crawlID,
+			o.selection,
+			part,
+			primaryPagesOnly,
+		)
+	}
 	if err != nil {
 		return preparedPart{}, fmt.Errorf("load WARC catalog: %w", err)
 	}
