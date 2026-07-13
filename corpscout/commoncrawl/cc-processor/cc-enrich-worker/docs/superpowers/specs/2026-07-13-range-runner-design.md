@@ -37,7 +37,11 @@ crawl (or a meaningful part range) with matching outputs.
    industry and embed accept ONLY `--mode remote`: their primary-pages-only selections are
    sparse, so there is no local lane for them — the remote runner takes EVERY non-empty part
    in the range (no classification filtering), and `--mode local` is rejected with an error.
-2. Producer never touches ClickHouse. No credentials, no connectivity, no load step.
+2. Producer never WRITES to ClickHouse — no load step, and tech/embed producers need no CH
+   connectivity at all. Clarification: the industry producer still READS the NACE reference
+   matrix from ClickHouse once at startup (as today); that is a fail-fast setup dependency,
+   not part of the per-part pipeline, and does not weaken the "processing never blocks on
+   CH" guarantee (an unreachable CH aborts before any part starts, never mid-range).
 3. Load-state tracking = one marker file per part, NOT a shared DuckDB table (single-writer
    file shared across machines = sync races; corruption loses all state; markers are
    per-part-atomic, rsync-friendly, and already the operator vocabulary). DuckDB appears only
