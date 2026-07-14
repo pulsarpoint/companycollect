@@ -20,14 +20,14 @@ var (
 	ErrParseRecord = errors.New("WARC record parse failed")
 )
 
-// RangeGetter fetches a byte range of an object. S3 and anonymous HTTPS are
-// the production implementations; tests use a focused fake at this protocol boundary.
+// RangeGetter fetches a byte range of an object. Signed S3 is the production
+// implementation; tests use a focused fake at this protocol boundary.
 type RangeGetter interface {
 	GetRange(ctx context.Context, bucket, key string, start, end int64) ([]byte, error)
 }
 
 // ObjectGetter supports both indexed record reads and streaming a complete WARC
-// object to disk. S3 and anonymous HTTPS are the production implementations.
+// object to disk. Signed S3 is the production implementation.
 type ObjectGetter interface {
 	RangeGetter
 	ObjectSize(ctx context.Context, bucket, key string) (int64, error)

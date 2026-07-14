@@ -4,11 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -114,12 +111,11 @@ func (s *S3Getter) Stats() S3Stats {
 	}
 }
 
-// NewS3Getter signs requests (in-AWS instance role / configured creds). CommonCrawl's
-// S3 API denies anonymous access — off-AWS use httpRangeGetter instead.
+// NewS3Getter signs requests (in-AWS instance role / configured creds); CommonCrawl's
+// S3 API denies anonymous access.
 // concurrency sizes the HTTP transport: every request hits the single CommonCrawl S3 endpoint,
 // and the SDK's default transport keeps only 10 idle conns per host — at high --concurrency that
-// means a fresh TLS handshake for most requests instead of connection reuse (same sizing as
-// NewHTTPGetter).
+// means a fresh TLS handshake for most requests instead of connection reuse.
 func NewS3Getter(ctx context.Context, region string, concurrency int) (*S3Getter, error) {
 	if concurrency <= 0 {
 		concurrency = 16
@@ -148,7 +144,7 @@ func NewS3Getter(ctx context.Context, region string, concurrency int) (*S3Getter
 	defer cancel()
 	if _, err := cfg.Credentials.Retrieve(cctx); err != nil {
 		return &S3Getter{}, fmt.Errorf("no usable AWS credentials — export AWS_ACCESS_KEY_ID + "+
-			"AWS_SECRET_ACCESS_KEY (or run with --s3-anonymous): %w", err)
+			"AWS_SECRET_ACCESS_KEY: %w", err)
 	}
 	// Install the measured transport only after credential resolution so IMDS/STS traffic does not
 	// contaminate the S3 request counters.
@@ -279,180 +275,4 @@ func resetDestination(destination *os.File) error {
 		return errors.Wrap(err, "seek destination")
 	}
 	return nil
-}
-
-// httpRangeGetter fetches byte ranges over CommonCrawl's anonymous HTTPS CDN
-// (data.commoncrawl.org), the only anonymous path — the S3 API denies unsigned reads.
-type httpRangeGetter struct {
-	base   string
-	client *http.Client
-}
-
-var _ ObjectGetter = httpRangeGetter{}
-
-func NewHTTPGetter(base string, concurrency int) ObjectGetter {
-	if base == "" {
-		base = "https://data.commoncrawl.org/"
-	}
-	if !strings.HasSuffix(base, "/") {
-		base += "/"
-	}
-	if concurrency <= 0 {
-		concurrency = 16
-	}
-	return httpRangeGetter{base: base, client: &http.Client{Transport: &http.Transport{
-		MaxIdleConns:        concurrency * 2,
-		MaxIdleConnsPerHost: concurrency * 2,
-		MaxConnsPerHost:     concurrency,
-	}}}
-}
-
-func (g httpRangeGetter) GetRange(ctx context.Context, bucket, key string, start, end int64) ([]byte, error) {
-	if start < 0 || end < start || end-start == math.MaxInt64 {
-		return nil, errors.Newf("invalid HTTP range %d-%d", start, end)
-	}
-	rng := fmt.Sprintf("bytes=%d-%d", start, end)
-	expectedBytes := end - start + 1
-	expectedContentRange := fmt.Sprintf("bytes %d-%d/", start, end)
-	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
-		if err := waitForHTTPRetry(ctx, attempt); err != nil {
-			return nil, errors.Wrap(err, "wait to retry HTTP range")
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base+key, nil)
-		if err != nil {
-			return nil, errors.Wrap(err, "create HTTP range request")
-		}
-		req.Header.Set("Range", rng)
-		resp, err := g.client.Do(req)
-		if err != nil {
-			lastErr = errors.Wrap(err, "get HTTP range")
-			continue
-		}
-		if resp.StatusCode == http.StatusPartialContent {
-			if !strings.HasPrefix(resp.Header.Get("Content-Range"), expectedContentRange) {
-				_ = resp.Body.Close()
-				lastErr = errors.Newf("invalid HTTP Content-Range %q for requested %s", resp.Header.Get("Content-Range"), rng)
-				continue
-			}
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, expectedBytes+1))
-			_ = resp.Body.Close()
-			if readErr != nil {
-				lastErr = errors.Wrap(readErr, "read HTTP range body")
-				continue
-			}
-			if int64(len(body)) != expectedBytes {
-				lastErr = errors.Newf("HTTP range returned %d bytes, want %d", len(body), expectedBytes)
-				continue
-			}
-			return body, nil
-		}
-		status := resp.StatusCode
-		_ = resp.Body.Close()
-		if status == http.StatusOK {
-			return nil, errors.Newf("HTTP server ignored %s for %s; refusing to read the complete object", rng, key)
-		}
-		lastErr = errors.Newf("HTTP %d fetching %s", status, key)
-		if !isRetryableHTTPStatus(status) {
-			return nil, lastErr // 403/404 etc. are permanent — don't retry
-		}
-	}
-	return nil, errors.Wrap(lastErr, "fetch HTTP range after retries")
-}
-
-func (g httpRangeGetter) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {
-	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
-		if err := waitForHTTPRetry(ctx, attempt); err != nil {
-			return 0, errors.Wrap(err, "wait to retry HTTP object size")
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, g.base+key, nil)
-		if err != nil {
-			return 0, errors.Wrap(err, "create HTTP object size request")
-		}
-		resp, err := g.client.Do(req)
-		if err != nil {
-			lastErr = errors.Wrap(err, "head HTTP object")
-			continue
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-			contentLength := resp.Header.Get("Content-Length")
-			size, parseErr := strconv.ParseInt(contentLength, 10, 64)
-			if parseErr != nil {
-				return 0, errors.Wrapf(parseErr, "parse HTTP object content length %q for key=%s", contentLength, key)
-			}
-			if size < 0 {
-				return 0, errors.Newf("HTTP object has negative content length %d for key=%s", size, key)
-			}
-			return size, nil
-		}
-		lastErr = errors.Newf("HTTP %d heading %s", resp.StatusCode, key)
-		if !isRetryableHTTPStatus(resp.StatusCode) {
-			return 0, lastErr
-		}
-	}
-	return 0, errors.Wrap(lastErr, "head HTTP object after retries")
-}
-
-func (g httpRangeGetter) DownloadObject(ctx context.Context, bucket, key string, destination *os.File) error {
-	if destination == nil {
-		return errors.New("download HTTP object: destination is nil")
-	}
-
-	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
-		if err := waitForHTTPRetry(ctx, attempt); err != nil {
-			return errors.Wrap(err, "wait to retry HTTP object download")
-		}
-		if err := resetDestination(destination); err != nil {
-			return errors.Wrap(err, "reset HTTP object destination")
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base+key, nil)
-		if err != nil {
-			return errors.Wrap(err, "create HTTP object download request")
-		}
-		resp, err := g.client.Do(req)
-		if err != nil {
-			lastErr = errors.Wrap(err, "get HTTP object")
-			continue
-		}
-		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			status := resp.StatusCode
-			_ = resp.Body.Close()
-			lastErr = errors.Newf("HTTP %d fetching %s", status, key)
-			if !isRetryableHTTPStatus(status) {
-				return lastErr
-			}
-			continue
-		}
-		_, readErr := io.Copy(destination, resp.Body)
-		closeErr := resp.Body.Close()
-		if readErr == nil {
-			readErr = closeErr
-		}
-		if readErr == nil {
-			return nil
-		}
-		lastErr = errors.Wrap(readErr, "read HTTP object body")
-	}
-	return errors.Wrap(lastErr, "download HTTP object after retries")
-}
-
-func waitForHTTPRetry(ctx context.Context, attempt int) error {
-	if attempt == 0 {
-		return nil
-	}
-	timer := time.NewTimer(time.Duration(attempt*attempt) * 250 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-func isRetryableHTTPStatus(status int) bool {
-	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }

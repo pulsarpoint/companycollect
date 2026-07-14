@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -166,127 +165,6 @@ func TestS3GetterGetsSizeAndStreamsObjectWithRetry(t *testing.T) {
 	}
 	if gotStats.BodyBytes != int64(5+len(content)) {
 		t.Fatalf("body bytes=%d, want %d", gotStats.BodyBytes, 5+len(content))
-	}
-}
-
-func TestHTTPGetterGetsSizeAndStreamsObjectWithRetry(t *testing.T) {
-	const content = "complete WARC object"
-	var downloads atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodHead:
-			w.Header().Set("Content-Length", itoa(len(content)))
-		case http.MethodGet:
-			download := downloads.Add(1)
-			w.Header().Set("Content-Length", itoa(len(content)))
-			if download == 1 {
-				_, _ = io.WriteString(w, content[:5])
-				return
-			}
-			_, _ = io.WriteString(w, content)
-		default:
-			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
-		}
-	}))
-	defer server.Close()
-
-	getter := NewHTTPGetter(server.URL, 1)
-	size, err := getter.ObjectSize(context.Background(), "ignored", "object.warc.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if size != int64(len(content)) {
-		t.Fatalf("size=%d, want %d", size, len(content))
-	}
-
-	destination, err := os.CreateTemp(t.TempDir(), "warc-*.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer destination.Close()
-	if _, err := destination.WriteString("stale bytes"); err != nil {
-		t.Fatal(err)
-	}
-	if err := getter.DownloadObject(context.Background(), "ignored", "object.warc.gz", destination); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(destination.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != content {
-		t.Fatalf("downloaded body=%q, want %q", got, content)
-	}
-	if downloads.Load() != 2 {
-		t.Fatalf("downloads=%d, want one interrupted attempt and one retry", downloads.Load())
-	}
-}
-
-func TestHTTPGetterDoesNotRetryPermanentDownloadFailure(t *testing.T) {
-	var requests atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		http.Error(w, "not found", http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	destination, err := os.CreateTemp(t.TempDir(), "warc-*.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer destination.Close()
-	err = NewHTTPGetter(server.URL, 1).DownloadObject(context.Background(), "ignored", "missing.warc.gz", destination)
-	if err == nil {
-		t.Fatal("expected permanent HTTP error")
-	}
-	if requests.Load() != 1 {
-		t.Fatalf("requests=%d, want 1", requests.Load())
-	}
-}
-
-func TestHTTPGetterRejectsServerThatIgnoresRange(t *testing.T) {
-	var requests atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, "complete object that must not be accepted as one record")
-	}))
-	defer server.Close()
-
-	_, err := NewHTTPGetter(server.URL, 1).GetRange(context.Background(), "ignored", "object.warc.gz", 0, 5)
-	if err == nil || !strings.Contains(err.Error(), "ignored bytes=0-5") {
-		t.Fatalf("error=%v, want ignored-range failure", err)
-	}
-	if requests.Load() != 1 {
-		t.Fatalf("requests=%d, want no retries for HTTP 200", requests.Load())
-	}
-}
-
-func TestHTTPGetterRetriesInterruptedRangeBody(t *testing.T) {
-	const content = "abcdef"
-	var requests atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		request := requests.Add(1)
-		w.Header().Set("Content-Range", "bytes 0-5/100")
-		w.Header().Set("Content-Length", "6")
-		w.WriteHeader(http.StatusPartialContent)
-		if request == 1 {
-			_, _ = io.WriteString(w, content[:3])
-			return
-		}
-		_, _ = io.WriteString(w, content)
-	}))
-	defer server.Close()
-
-	got, err := NewHTTPGetter(server.URL, 1).GetRange(context.Background(), "ignored", "object.warc.gz", 0, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != content {
-		t.Fatalf("range=%q, want %q", got, content)
-	}
-	if requests.Load() != 2 {
-		t.Fatalf("requests=%d, want one interrupted attempt and one retry", requests.Load())
 	}
 }
 

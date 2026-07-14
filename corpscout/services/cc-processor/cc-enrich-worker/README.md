@@ -279,8 +279,8 @@ output is for inspection only.
 `.env` exists only at the processor root. When invoking the worker from its component directory,
 source `../.env`.
 
-Use `--s3-anonymous` off AWS to read through `https://data.commoncrawl.org/`. Signed S3 is the default
-and is preferred on EC2.
+WARC reads always go through signed Common Crawl S3 — an EC2 instance role on AWS, or explicit
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` off AWS.
 
 ## Produce flags
 
@@ -290,7 +290,6 @@ and is preferred on EC2.
 | `--crawl-id` | required | Crawl identity, for example `CC-MAIN-2026-25`. |
 | `--selection` | `pages25` | Catalog selection directory. |
 | `--part` | required | Zero-based WARC index. |
-| `--s3-anonymous` | `false` | Use anonymous HTTPS instead of signed S3. |
 | `--out` | derived | Defaults to `<base>/<crawl>/warc/<selection>/out_<mode>_<part>`. |
 | `--concurrency` | `32` | Industry/embed pages or tech/both domains in flight. |
 | `--chunk` | `1024` | Catalog pages per tech/both processing chunk. |
@@ -303,7 +302,7 @@ Industry/embed/both also accept `--embed-batch` and `--embed-concurrency`. Tech/
 ## Range runner flags
 
 `--parts` is mutually exclusive with `--part` (and with `--out`, which only applies to a single-part
-run); it activates the flags below. `--base`, `--crawl-id`, `--selection`, `--s3-anonymous`,
+run); it activates the flags below. `--base`, `--crawl-id`, `--selection`,
 `--concurrency`, `--chunk`, `--tech-engine`, and `--tech-max-bytes` are shared with the single-part
 flags above and behave identically per part.
 
@@ -322,7 +321,6 @@ flags above and behave identically per part.
 | `CORPSCOUT_S3_ACCESS_KEY`, `CORPSCOUT_S3_SECRET_KEY` | Required RustFS catalog credentials. |
 | `AWS_REGION` | Signed Common Crawl S3 region; defaults to `us-east-1`. |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Optional explicit credentials; EC2 instance roles are supported. |
-| `CC_BASE_URL` | Anonymous HTTP base; defaults to `https://data.commoncrawl.org/`. |
 | `COMMONCRAWL_EMBED_*` | Industry/embed/both endpoint and model settings. |
 | `CLICKHOUSE_*` | Industry/both reference reads and `load` destination. |
 

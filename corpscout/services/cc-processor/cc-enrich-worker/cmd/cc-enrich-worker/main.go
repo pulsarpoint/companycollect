@@ -74,8 +74,8 @@ Commands:
 Run "cc-enrich-worker <command> -h" to see that command's flags.
 
 Config is via environment (see ../.env.example): COMMONCRAWL_CATALOG_S3_BASE and CORPSCOUT_S3_*
-for the RustFS catalog, COMMONCRAWL_EMBED_*, CLICKHOUSE_*, AWS_* for signed Common Crawl S3 access,
-and CC_BASE_URL for anonymous HTTPS access.
+for the RustFS catalog, COMMONCRAWL_EMBED_*, CLICKHOUSE_*, and AWS_* for signed Common Crawl S3
+access.
 `)
 }
 
@@ -85,7 +85,6 @@ type opts struct {
 	crawlID, out, base, selection string
 	part                          int
 	concurrency, chunk            int
-	anonymous                     bool
 	techEngine                    string // tech / both
 	techMax                       int    // tech / both
 	batch, embedConc              int    // industry / both
@@ -105,7 +104,6 @@ func parse(mode string, args []string) (opts, runnerOpts, bool) {
 	fs.StringVar(&o.base, "base", "", "output ROOT (required, explicit — no environment fallback)")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "catalog pages per process chunk (tech/both)")
-	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch through anonymous HTTPS instead of signed Common Crawl S3")
 	if mode == "tech" || mode == "both" {
 		fs.StringVar(&o.techEngine, "tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
 		fs.IntVar(&o.techMax, "tech-max-bytes", 0, "maximum page bytes scanned for technologies (0 = full page)")
@@ -372,7 +370,6 @@ type partDeps struct {
 	protos *mdl.Prototypes
 
 	objects fetch.ObjectGetter
-	source  string
 
 	// runStats is the range runner's process-wide sink. Non-nil ONLY on the --parts path: it puts
 	// every part's ShardConfig into range mode (aggregate + suppress per-chunk logs) and gates the
@@ -486,17 +483,11 @@ func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) 
 
 	// Transport sizing = true in-flight range reads across the parts sharing this transport.
 	fetchConcurrency := fetchConcurrencyFor(mode, o.concurrency, partsParallel)
-	if o.anonymous {
-		d.objects = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), fetchConcurrency)
-		d.source = "anonymous_https"
-	} else {
-		s3Getter, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"), fetchConcurrency)
-		if err != nil {
-			return partDeps{}, fmt.Errorf("Common Crawl S3 init: %w", err)
-		}
-		d.objects = s3Getter
-		d.source = "signed_s3"
+	s3Getter, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"), fetchConcurrency)
+	if err != nil {
+		return partDeps{}, fmt.Errorf("Common Crawl S3 init: %w", err)
 	}
+	d.objects = s3Getter
 	return d, nil
 }
 
@@ -575,7 +566,6 @@ func openInput(ctx context.Context, d partDeps, part uint32, outDir string) (pre
 		"warc_index", input.WARCIndex,
 		"warc_filename", input.WARCFilename,
 		"mode", input.Mode,
-		"source", d.source,
 		"selected_pages", len(input.Items),
 		"selected_bytes", input.SelectedBytes,
 		"selected_size", humanize.Bytes(uint64(input.SelectedBytes)),

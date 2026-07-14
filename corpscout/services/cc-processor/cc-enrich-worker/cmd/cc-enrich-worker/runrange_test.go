@@ -165,7 +165,6 @@ func techDeps(t *testing.T, base string, getter fetch.ObjectGetter) partDeps {
 			techEngine:  "fast",
 		},
 		objects: getter,
-		source:  "test",
 	}
 }
 

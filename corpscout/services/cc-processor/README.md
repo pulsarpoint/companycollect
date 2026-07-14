@@ -71,8 +71,7 @@ At minimum, configure:
   `CORPSCOUT_S3_REGION` for RustFS;
 - `COMMONCRAWL_CATALOG_S3_BASE` for the catalog bucket and base prefix;
 - `OUT_BASE_DIR` for local catalog-build or processing data;
-- Common Crawl AWS credentials or an EC2 instance role for signed S3 access, or `S3_ANONYMOUS=true` for
-  anonymous HTTPS; and
+- Common Crawl AWS credentials or an EC2 instance role for signed S3 access; and
 - `CLICKHOUSE_*` before a produce/load run.
 
 Industry and embed modes additionally require `COMMONCRAWL_EMBED_*`. Reference embeddings and processed
@@ -299,8 +298,8 @@ selected gzip members with concurrent local reads. Below the threshold, it perfo
 the selected records. The temporary complete WARC is removed after processing. A catalog WARC with no pages
 for the selected mode is a successful no-op and does not access the WARC object.
 
-Signed Common Crawl S3 is preferred on EC2. Off AWS, pass `--s3-anonymous` to use
-`CC_BASE_URL`, which defaults to `https://data.commoncrawl.org/`.
+WARC reads always go through signed Common Crawl S3; off AWS, export explicit
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` credentials.
 
 ## Produce, load, and completion state
 

@@ -15,8 +15,8 @@ import (
 // startRangeStatsTicker launches the 10-second cumulative-stats goroutine for a range run and returns
 // a stop function. The stop function prints one FINAL line (so short runs that never reach a 10s tick
 // still get one) and then blocks until the goroutine has exited. The s3 segment is included only when
-// the shared getter is a *fetch.S3Getter exposing cumulative Stats(); any other getter (anonymous
-// HTTPS) is tolerated by dropping that segment.
+// the shared getter is a *fetch.S3Getter exposing cumulative Stats(); any other getter (test fakes)
+// is tolerated by dropping that segment.
 func startRangeStatsTicker(getter fetch.ObjectGetter, rs *worker.RunStats, prog *poolProgress, start time.Time) func() {
 	s3Getter, hasS3 := getter.(*fetch.S3Getter)
 	stop := make(chan struct{})
