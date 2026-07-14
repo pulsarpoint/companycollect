@@ -13,7 +13,7 @@ import (
 )
 
 func TestFormatRangeStats(t *testing.T) {
-	pool := poolSnapshot{inFlight: 8, produced: 42, skipped: 2, failed: 1, total: 100}
+	pool := poolSnapshot{inFlight: 8, produced: 42, skipped: 2, failed: 1, retryWait: 3, total: 100}
 	rs := worker.RunStatsSnapshot{
 		Pages:   1204480,
 		FetchNs: 1204480 * 165 * int64(time.Millisecond),
@@ -31,23 +31,23 @@ func TestFormatRangeStats(t *testing.T) {
 	got := formatRangeStats(pool, rs, s3cur, fetch.S3Stats{}, true, 100*time.Minute, 10*time.Second)
 
 	// parts + pages + cumulative-429 + rates + avg segments present and correct.
-	want := "stats: parts run=8 done=42/100 skip=2 fail=1 | pages 200.7/s (1204480 total) errs=0 | s3 1652 req/s 51.0 MiB/s 429=0 5xx=0 retries=0 | avg fetch=165ms tech=38ms"
+	want := "stats: parts run=8 done=42/100 skip=2 fail=1 retrywait=3 | pages 200.7/s (1204480 total) errs=0 | s3 1652 req/s 51.0 MiB/s 429=0 5xx=0 retries=0 | avg fetch=165ms tech=38ms"
 	if got != want {
 		t.Fatalf("formatRangeStats mismatch:\n got=%q\nwant=%q", got, want)
 	}
 	// The spec's own example line is 153 chars, so "~140" is a soft target, not a hard cap: assert a
 	// realistic ceiling that keeps the line to one terminal row while preserving the required shape.
-	if len(got) > 160 {
-		t.Errorf("line length %d exceeds 160: %q", len(got), got)
+	if len(got) > 180 {
+		t.Errorf("line length %d exceeds 180: %q", len(got), got)
 	}
 }
 
 // Zero-page / zero-elapsed start must not divide by zero and must omit the s3 segment when the
 // getter is not stats-capable (hasS3=false).
 func TestFormatRangeStatsZeroStart(t *testing.T) {
-	pool := poolSnapshot{inFlight: 1, produced: 0, skipped: 0, failed: 0, total: 4}
+	pool := poolSnapshot{inFlight: 1, produced: 0, skipped: 0, failed: 0, retryWait: 0, total: 4}
 	got := formatRangeStats(pool, worker.RunStatsSnapshot{}, fetch.S3Stats{}, fetch.S3Stats{}, false, 0, 0)
-	want := "stats: parts run=1 done=0/4 skip=0 fail=0 | pages 0.0/s (0 total) errs=0 | avg fetch=0ms tech=0ms"
+	want := "stats: parts run=1 done=0/4 skip=0 fail=0 retrywait=0 | pages 0.0/s (0 total) errs=0 | avg fetch=0ms tech=0ms"
 	if got != want {
 		t.Fatalf("zero-start mismatch:\n got=%q\nwant=%q", got, want)
 	}
@@ -55,12 +55,12 @@ func TestFormatRangeStatsZeroStart(t *testing.T) {
 
 // Cumulative 429/5xx/retries must survive across ticks even when the per-tick request delta is zero.
 func TestFormatRangeStatsCumulativeThrottleSignals(t *testing.T) {
-	pool := poolSnapshot{inFlight: 8, produced: 1, skipped: 0, failed: 0, total: 8}
+	pool := poolSnapshot{inFlight: 8, produced: 1, skipped: 0, failed: 0, retryWait: 0, total: 8}
 	s3cur := fetch.S3Stats{HTTPAttempts: 500, GetObjectCalls: 400, HeadObjectCalls: 50, HTTP429s: 7, HTTP503s: 3}
 	// prev == cur => zero request delta this tick, but the cumulative 429/5xx must still show.
 	got := formatRangeStats(pool, worker.RunStatsSnapshot{Pages: 10, Errs: 4}, s3cur, s3cur, true, time.Minute, 10*time.Second)
 	// retries = 500 - 400 - 50 = 50 (cumulative).
-	want := "stats: parts run=8 done=1/8 skip=0 fail=0 | pages 0.2/s (10 total) errs=4 | s3 0 req/s 0.0 MiB/s 429=7 5xx=3 retries=50 | avg fetch=0ms tech=0ms"
+	want := "stats: parts run=8 done=1/8 skip=0 fail=0 retrywait=0 | pages 0.2/s (10 total) errs=4 | s3 0 req/s 0.0 MiB/s 429=7 5xx=3 retries=50 | avg fetch=0ms tech=0ms"
 	if got != want {
 		t.Fatalf("cumulative signals mismatch:\n got=%q\nwant=%q", got, want)
 	}

@@ -65,6 +65,7 @@ func startRangeStatsTicker(getter fetch.ObjectGetter, rs *worker.RunStats, prog 
 // a single --part run and the unit tests can pass a nil *poolProgress and get plain no-ops.
 type poolProgress struct {
 	inFlight, produced, skipped, failed atomic.Int64
+	retryWait                           atomic.Int64 // parts requeued and waiting out a backoff
 	total                               int
 }
 
@@ -98,9 +99,24 @@ func (p *poolProgress) addFailed() {
 	}
 }
 
+// addRetryWait / endRetryWait track how many parts are requeued and waiting out a retry backoff.
+// The dispatcher increments on requeue and decrements when the retry is dispatched.
+func (p *poolProgress) addRetryWait() {
+	if p != nil {
+		p.retryWait.Add(1)
+	}
+}
+
+func (p *poolProgress) endRetryWait() {
+	if p != nil {
+		p.retryWait.Add(-1)
+	}
+}
+
 // poolSnapshot is a consistent-enough read of poolProgress for one stats line.
 type poolSnapshot struct {
 	inFlight, produced, skipped, failed int64
+	retryWait                           int64
 	total                               int
 }
 
@@ -109,11 +125,12 @@ func (p *poolProgress) snapshot() poolSnapshot {
 		return poolSnapshot{}
 	}
 	return poolSnapshot{
-		inFlight: p.inFlight.Load(),
-		produced: p.produced.Load(),
-		skipped:  p.skipped.Load(),
-		failed:   p.failed.Load(),
-		total:    p.total,
+		inFlight:  p.inFlight.Load(),
+		produced:  p.produced.Load(),
+		skipped:   p.skipped.Load(),
+		failed:    p.failed.Load(),
+		retryWait: p.retryWait.Load(),
+		total:     p.total,
 	}
 }
 
@@ -131,8 +148,8 @@ func (p *poolProgress) snapshot() poolSnapshot {
 // (s3 delta rates). Guards keep a zero-page / zero-duration start from dividing by zero.
 func formatRangeStats(pool poolSnapshot, rs worker.RunStatsSnapshot, s3cur, s3prev fetch.S3Stats, hasS3 bool, elapsed, tick time.Duration) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "stats: parts run=%d done=%d/%d skip=%d fail=%d",
-		pool.inFlight, pool.produced, pool.total, pool.skipped, pool.failed)
+	fmt.Fprintf(&b, "stats: parts run=%d done=%d/%d skip=%d fail=%d retrywait=%d",
+		pool.inFlight, pool.produced, pool.total, pool.skipped, pool.failed, pool.retryWait)
 
 	pagesRate := 0.0
 	if elapsed > 0 {
