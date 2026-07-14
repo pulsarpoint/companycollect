@@ -181,7 +181,10 @@ its local Parquet is redundant. `--delete-loaded` (default **off**) makes the lo
   is harmless: the next sweep sees `.loaded` and reclaims the leftover dir as a catch-up prune.
 - **Catch-up prune** — any still-existing dir that already has *both* `.produced` and `.loaded` (leftovers
   from before the flag, or from that crash window) is removed on the sweep. This reclaims historical disk
-  on the first flagged run and keeps a `--watch` daemon self-cleaning.
+  on the first flagged run and keeps a `--watch` daemon self-cleaning. One scope limit: the sweep walks by
+  `.produced` markers, so dirs from the retired cc-crawl lifecycle that carry only `.loaded` (no
+  `.produced`) are invisible to it and stay on disk — safe (ClickHouse already has their rows) but
+  reclaimed only if you remove them by hand.
 - **Never deletes markers** — `.produced` / `.loaded` are *siblings* of the dir (`<dir>.produced`,
   `<dir>.loaded`), so `RemoveAll(<dir>)` cannot touch them. They stay the range runner's resume record and
   `status`'s ledger; only the Parquet directory is reclaimed.
