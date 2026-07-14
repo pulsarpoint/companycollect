@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cc-dns-scan/internal/metrics"
+	"cc-dns-scan/internal/model"
 	"cc-dns-scan/internal/records"
 
 	"github.com/miekg/dns"
@@ -97,6 +98,26 @@ func TestCollectCapturesCNAME(t *testing.T) {
 	if !found {
 		t.Errorf("missing CNAME record for www (slot=www, value=foo.cdn.net); records=%+v", res.Records)
 	}
+}
+
+func TestResolveQueriesConfirmedAliasAndCapturesCNAME(t *testing.T) {
+	z := map[string][]dns.RR{
+		"aaa.example.com./A": {mustRR(t, "aaa.example.com. 300 IN CNAME edge.example.net.")},
+	}
+	r := &Resolver{Ex: stubEx{z: z}}
+	del := Delegation{ETLD: "com", NS: []string{"ns1.example.com."}, NSIPs: []string{"9.9.9.9"}, DialableNSIPs: []string{"9.9.9.9"}}
+	confirmedHostnames := []model.HostLabel{{Label: "aaa", DiscoverySource: "axfr"}}
+
+	res := r.Resolve(context.Background(), "example.com", "2026-07-05", "run1", del,
+		records.DefaultConfig(), time.Unix(0, 0).UTC(), confirmedHostnames)
+
+	for _, rec := range res.Records {
+		if rec.Name == "aaa.example.com" && rec.RecordType == "CNAME" &&
+			rec.Slot == "aaa" && rec.Value == "edge.example.net." && rec.Discovery == "axfr" {
+			return
+		}
+	}
+	t.Errorf("missing CNAME returned while resolving confirmed hostname aaa.example.com; records=%+v", res.Records)
 }
 
 func TestCollectUsesAnswerOwnerAndRetainsUnknownType(t *testing.T) {

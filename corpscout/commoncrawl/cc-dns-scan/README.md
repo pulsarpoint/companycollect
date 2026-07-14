@@ -32,6 +32,13 @@ Tier 1 uses the required `--resolvers` list to discover authoritative nameserver
 and the parent DS response. Production points it at local Unbound. Tier 2 sends `RD=0` queries
 directly to publicly dialable authoritative endpoints with per-IP pacing and circuit breakers.
 
+For each claimed root-domain batch, the scanner reads up to `--host-cap` ranked labels per root from
+`domain_hostnames` and unions them with the predefined hostname list. It sends A and AAAA questions
+for every resulting hostname. When an address response identifies the owner as an alias, the scanner
+also persists the returned CNAME record; a separate CNAME question would duplicate that resolution.
+This lets a hostname discovered by AXFR become part of subsequent ordinary DNS scans without a
+separate writable hostname registry.
+
 Special-use answers are stored as evidence. Special-use nameserver addresses are also stored, but
 the target classifier prevents them from becoming network destinations.
 

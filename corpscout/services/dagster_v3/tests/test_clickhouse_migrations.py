@@ -137,6 +137,7 @@ EXPECTED_MIGRATIONS = (
     "000126_corpscout_rdap_dictionary_reader",
     "000127_corpscout_commoncrawl_page_jsonld",
     "000128_corpscout_domain_hostnames_view",
+    "000129_corpscout_drop_commoncrawl_domain_hostnames",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -534,6 +535,21 @@ def test_domain_hostnames_view_normalizes_addressable_dns_record_owners() -> Non
     assert "source = 'axfr'" not in sql
     assert "DROP TABLE" not in sql
     assert "DROP VIEW IF EXISTS corpscout.domain_hostnames" in down_sql
+
+
+def test_legacy_hostname_registry_is_removed_after_view_cutover() -> None:
+    sql = _migration_sql("000129_corpscout_drop_commoncrawl_domain_hostnames.up.sql")
+    down_sql = _migration_sql("000129_corpscout_drop_commoncrawl_domain_hostnames.down.sql")
+
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_hostnames;" in sql
+    assert "domain_hostnames" in sql
+    assert "DROP VIEW" not in sql
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_hostnames" in down_sql
+    )
+    assert "last_not_after" in down_sql
+    assert "DROP VIEW" not in down_sql
 
 
 def test_sweden_company_registry_migration_covers_exported_columns() -> None:

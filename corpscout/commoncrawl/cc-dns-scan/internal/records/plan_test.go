@@ -134,12 +134,18 @@ func TestPlanUnionsExtraHosts(t *testing.T) {
 		{Label: "www", DiscoverySource: "ct"}, // dup of a static hostname — must NOT double-query
 	}
 	qs := Plan("example.com", cfg, extra)
-	var jenkinsA, wwwStatic int
+	var jenkinsA, jenkinsAAAA, wwwStatic int
 	for _, q := range qs {
 		if q.Name == "jenkins.example.com." && q.Type == dns.TypeA {
 			jenkinsA++
 			if q.Discovery != "axfr" {
 				t.Errorf("jenkins A discovery = %q, want axfr", q.Discovery)
+			}
+		}
+		if q.Name == "jenkins.example.com." && q.Type == dns.TypeAAAA {
+			jenkinsAAAA++
+			if q.Discovery != "axfr" {
+				t.Errorf("jenkins AAAA discovery = %q, want axfr", q.Discovery)
 			}
 		}
 		if q.Name == "www.example.com." && q.Type == dns.TypeA {
@@ -151,6 +157,9 @@ func TestPlanUnionsExtraHosts(t *testing.T) {
 	}
 	if jenkinsA != 1 {
 		t.Errorf("want exactly 1 jenkins A query, got %d", jenkinsA)
+	}
+	if jenkinsAAAA != 1 {
+		t.Errorf("want exactly 1 jenkins AAAA query, got %d", jenkinsAAAA)
 	}
 	if wwwStatic != 1 {
 		t.Errorf("want exactly 1 www A query (deduped), got %d", wwwStatic)
