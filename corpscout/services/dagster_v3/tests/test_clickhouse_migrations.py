@@ -136,6 +136,7 @@ EXPECTED_MIGRATIONS = (
     "000125_corpscout_commoncrawl_page_evidence",
     "000126_corpscout_rdap_dictionary_reader",
     "000127_corpscout_commoncrawl_page_jsonld",
+    "000128_corpscout_domain_hostnames_view",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

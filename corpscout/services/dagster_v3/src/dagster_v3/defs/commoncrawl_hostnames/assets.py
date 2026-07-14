@@ -11,24 +11,13 @@ COMMONCRAWL_DOMAIN_HOSTNAME_SHARDS = dg.StaticPartitionsDefinition(
 COMMONCRAWL_HOSTNAME_POOL = "commoncrawl_hostname_sync"
 COMMONCRAWL_HOSTNAME_GROUP = "commoncrawl_dns"
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-
-CTLOGS_HOSTNAMES_ASSET = dg.AssetSpec(
-    key="ctlogs_hostnames",
-    description="Certificate Transparency hostnames stored in ctlogs.hostnames.",
-    group_name=COMMONCRAWL_HOSTNAME_GROUP,
-    kinds={"clickhouse", "ct"},
-)
-COMMONCRAWL_DOMAINS_ASSET = dg.AssetSpec(
-    key="commoncrawl_domains",
-    description="Root domains selected from Common Crawl for DNS scanning.",
-    group_name=COMMONCRAWL_HOSTNAME_GROUP,
-    kinds={"clickhouse", "commoncrawl", "dns"},
-)
-DNS_RECORD_OBSERVATIONS_ASSET = dg.AssetSpec(
-    key="commoncrawl_domain_dns_record_observations",
-    description="Retry-safe DNS record observations written by cc-dns-scan and cc-dns-axfr.",
-    group_name=COMMONCRAWL_HOSTNAME_GROUP,
-    kinds={"clickhouse", "dns", "axfr"},
+CTLOGS_HOSTNAMES_KEY = dg.AssetKey("ctlogs_hostnames")
+COMMONCRAWL_DOMAINS_KEY = dg.AssetKey("commoncrawl_domains")
+DNS_RECORD_OBSERVATIONS_KEY = dg.AssetKey("commoncrawl_domain_dns_record_observations")
+COMMONCRAWL_HOSTNAME_SOURCE_KEYS = (
+    CTLOGS_HOSTNAMES_KEY,
+    COMMONCRAWL_DOMAINS_KEY,
+    DNS_RECORD_OBSERVATIONS_KEY,
 )
 
 CT_HOSTNAME_UPSERT_SQL = """
@@ -202,11 +191,7 @@ SELECT
 
 @dg.asset(
     name="commoncrawl_domain_hostnames",
-    deps=[
-        CTLOGS_HOSTNAMES_ASSET.key,
-        COMMONCRAWL_DOMAINS_ASSET.key,
-        DNS_RECORD_OBSERVATIONS_ASSET.key,
-    ],
+    deps=list(COMMONCRAWL_HOSTNAME_SOURCE_KEYS),
     description=(
         "Adds non-wildcard CT and AXFR-observed subdomains for root domains present in "
         "the Common Crawl DNS domain set. Existing worker discoveries are preserved."

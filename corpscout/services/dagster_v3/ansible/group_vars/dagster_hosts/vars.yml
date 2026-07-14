@@ -1,0 +1,72 @@
+---
+# This deliberately preserves the current host-mode development topology.
+dagster_service_name: corpscout-dagster-dev
+dagster_service_user: root
+dagster_service_group: root
+dagster_unit_candidate: "/run/{{ dagster_service_name }}.candidate.service"
+
+dagster_source_dir: "{{ playbook_dir }}/.."
+dagster_deploy_dir: /opt/companycollect/corpscout/dagster_v3
+dagster_env_file: "{{ dagster_deploy_dir }}/.env"
+dagster_uv_binary: /root/.local/bin/uv
+dagster_venv_python: "{{ dagster_deploy_dir }}/.venv/bin/python"
+dagster_dg_binary: "{{ dagster_deploy_dir }}/.venv/bin/dg"
+
+dagster_listen_host: 0.0.0.0
+dagster_listen_port: 3000
+dagster_db_pool_max_overflow: 100
+dagster_probe_url: "http://127.0.0.1:{{ dagster_listen_port }}/graphql"
+
+dagster_legacy_tmux_session: dagster
+dagster_force_restart: false
+
+dagster_active_runs_query: |
+  query DeploymentRunPreflight {
+    activeRuns: runsOrError(filter: {statuses: [STARTING, STARTED]}) {
+      __typename
+      ... on Runs {
+        results {
+          runId
+          status
+          pipelineName
+        }
+      }
+    }
+    cancelingRuns: runsOrError(filter: {statuses: [CANCELING]}) {
+      __typename
+      ... on Runs {
+        results {
+          runId
+          status
+          pipelineName
+          updateTime
+        }
+      }
+    }
+  }
+
+dagster_health_query: |
+  query DeploymentHealth {
+    version
+    repositoriesOrError {
+      __typename
+      ... on RepositoryConnection {
+        nodes {
+          name
+          location {
+            name
+          }
+        }
+      }
+    }
+    instance {
+      daemonHealth {
+        allDaemonStatuses {
+          daemonType
+          healthy
+          required
+          lastHeartbeatTime
+        }
+      }
+    }
+  }

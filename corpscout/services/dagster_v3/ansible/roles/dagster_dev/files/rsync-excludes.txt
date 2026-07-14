@@ -1,0 +1,39 @@
+# Secrets are provisioned directly on the host and must never come from a
+# developer checkout.
+/.env
+/.dg/
+
+# The Linux environment is built from uv.lock on the target.
+/.venv/
+
+# Persistent and rebuildable runtime state. Some of this tree is hundreds of
+# gigabytes, so an accidental rsync delete would be destructive.
+/data/
+/storage/
+/logs/
+/.dagster_home/
+/.logs_queue/
+/.dlt/
+/.nux/
+/.telemetry/
+/.tmp_dagster_home_*
+/.tmp_dagster_dev.log
+/scripts/data/
+
+# Local tool state and deployment-only files.
+/.pytest_cache/
+/.ruff_cache/
+/.claude/
+/dist/
+/build/
+/ansible/
+**/.DS_Store
+
+# Generated Python and dbt state.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/dbt/target/
+**/dbt/logs/
+**/dbt/.user.yml
+**/*.concurrent-update-lock

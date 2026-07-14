@@ -13,7 +13,7 @@ if [[ -z "${DAGSTER_PG_URL:-}" ]]; then
 DAGSTER_PG_URL is required.
 
 Example:
-  export DAGSTER_PG_URL='postgresql://dagster:dagster@companycollect:5432/dagster_v3'
+  export DAGSTER_PG_URL='postgresql://DAGSTER_USER:DAGSTER_PASSWORD@companycollect:6432/dagster'
   ./scripts/dagster-dev.sh
 EOF
   exit 1

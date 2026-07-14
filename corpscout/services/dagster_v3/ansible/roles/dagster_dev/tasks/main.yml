@@ -1,0 +1,917 @@
+---
+- name: Require the supported Dagster target platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == 'Linux'
+      - ansible_facts.architecture == 'x86_64'
+    fail_msg: >-
+      The current development deployment expects Linux/x86_64, but
+      {{ inventory_hostname }} reports
+      {{ ansible_facts.system }}/{{ ansible_facts.architecture }}.
+
+- name: Inspect the local Dagster source tree
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ dagster_source_dir }}/pyproject.toml"
+    - "{{ dagster_source_dir }}/uv.lock"
+    - "{{ dagster_source_dir }}/scripts/dagster-dev.sh"
+  register: dagster_local_source_files
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Require a complete local Dagster source tree
+  ansible.builtin.assert:
+    that:
+      - dagster_local_source_files.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      Run this playbook from services/dagster_v3/ansible; the project file,
+      lockfile, or development launcher is missing.
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Ensure the stable Dagster deployment directory exists
+  ansible.builtin.file:
+    path: "{{ dagster_deploy_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Inspect the target uv binary and preserved environment
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: true
+  loop:
+    - "{{ dagster_uv_binary }}"
+    - "{{ dagster_env_file }}"
+  register: dagster_target_prerequisites
+  no_log: true
+
+- name: Require target uv and the server-owned environment
+  ansible.builtin.assert:
+    that:
+      - dagster_target_prerequisites.results[0].stat.exists
+      - dagster_target_prerequisites.results[0].stat.executable
+      - dagster_target_prerequisites.results[1].stat.exists
+      - dagster_target_prerequisites.results[1].stat.isreg
+    fail_msg: >-
+      {{ inventory_hostname }} must already have executable uv at
+      {{ dagster_uv_binary }} and its server-specific .env at
+      {{ dagster_env_file }}. Ansible deliberately does not copy secrets from
+      the developer checkout.
+
+- name: Protect the server-owned Dagster environment
+  ansible.builtin.file:
+    path: "{{ dagster_env_file }}"
+    state: file
+    owner: root
+    group: root
+    mode: "0600"
+  diff: false
+  no_log: true
+
+- name: Require the preserved Dagster metadata connection
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -q
+      - -E
+      - ^DAGSTER_PG_URL=.+$
+      - "{{ dagster_env_file }}"
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Verify deployment tools on the control machine
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -c
+      - command -v uv >/dev/null && command -v rsync >/dev/null
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Require pyproject.toml and uv.lock to agree
+  ansible.builtin.command:
+    argv:
+      - uv
+      - lock
+      - --check
+    chdir: "{{ dagster_source_dir }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Verify deployment tools on the Dagster host
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -c
+      - >-
+        command -v rsync >/dev/null &&
+        command -v lsof >/dev/null &&
+        command -v ss >/dev/null &&
+        command -v systemctl >/dev/null &&
+        command -v systemd-analyze >/dev/null
+  check_mode: false
+  changed_when: false
+
+- name: Preview the Dagster development systemd unit
+  ansible.builtin.template:
+    src: corpscout-dagster-dev.service.j2
+    dest: "/etc/systemd/system/{{ dagster_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: dagster_unit_preview
+  check_mode: true
+
+- name: Validate a candidate Dagster systemd unit before shutdown
+  when: not ansible_check_mode
+  block:
+    - name: Render the candidate Dagster systemd unit
+      ansible.builtin.template:
+        src: corpscout-dagster-dev.service.j2
+        dest: "{{ dagster_unit_candidate }}"
+        owner: root
+        group: root
+        mode: "0644"
+      changed_when: false
+
+    - name: Inspect the candidate Dagster executable
+      ansible.builtin.stat:
+        path: "{{ dagster_dg_binary }}"
+      register: dagster_candidate_executable
+
+    - name: Verify the candidate Dagster systemd unit
+      ansible.builtin.command:
+        argv:
+          - systemd-analyze
+          - verify
+          - "{{ dagster_unit_candidate }}"
+      changed_when: false
+      when: dagster_candidate_executable.stat.executable | default(false)
+  always:
+    - name: Remove the candidate Dagster systemd unit
+      ansible.builtin.file:
+        path: "{{ dagster_unit_candidate }}"
+        state: absent
+      changed_when: false
+
+- name: Read current Dagster systemd state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=LoadState
+      - --property=ActiveState
+      - --property=NeedDaemonReload
+      - "{{ dagster_service_name }}.service"
+  register: dagster_systemd_state
+  changed_when: false
+  failed_when: dagster_systemd_state.rc != 0
+  check_mode: false
+
+- name: Check whether tmux is installed
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -c
+      - command -v tmux
+  register: dagster_tmux_available
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check for the exact legacy Dagster tmux session
+  ansible.builtin.command:
+    argv:
+      - tmux
+      - has-session
+      - -t
+      - "={{ dagster_legacy_tmux_session }}"
+  register: dagster_legacy_tmux
+  changed_when: false
+  failed_when: dagster_legacy_tmux.rc not in [0, 1]
+  check_mode: false
+  when: dagster_tmux_available.rc == 0
+
+- name: Record current Dagster supervisor state
+  ansible.builtin.set_fact:
+    dagster_systemd_is_loaded: >-
+      {{ 'LoadState=not-found' not in dagster_systemd_state.stdout }}
+    dagster_systemd_is_active: >-
+      {{ 'ActiveState=active' in dagster_systemd_state.stdout }}
+    dagster_systemd_needs_reload: >-
+      {{ 'NeedDaemonReload=yes' in dagster_systemd_state.stdout }}
+    dagster_legacy_tmux_active: >-
+      {{
+        dagster_tmux_available.rc == 0
+        and (dagster_legacy_tmux.rc | default(1)) == 0
+      }}
+
+- name: Refuse simultaneous systemd and legacy tmux supervisors
+  ansible.builtin.assert:
+    that:
+      - not (dagster_systemd_is_active and dagster_legacy_tmux_active)
+    fail_msg: >-
+      Both {{ dagster_service_name }}.service and the exact
+      {{ dagster_legacy_tmux_session }} tmux session are active. Retire one
+      supervisor before deploying.
+
+- name: Inspect the exact legacy Dagster tmux pane
+  ansible.builtin.command:
+    argv:
+      - tmux
+      - list-panes
+      - -t
+      - "={{ dagster_legacy_tmux_session }}:"
+      - -F
+      - "#{pane_pid}|#{pane_current_path}"
+  register: dagster_legacy_panes
+  changed_when: false
+  check_mode: false
+  when: dagster_legacy_tmux_active
+
+- name: Bind the legacy cutover to one pane at the deployment path
+  ansible.builtin.assert:
+    that:
+      - dagster_legacy_panes.stdout_lines | length == 1
+      - dagster_legacy_panes.stdout.split('|') | length == 2
+      - dagster_legacy_panes.stdout.split('|')[1] == dagster_deploy_dir
+    fail_msg: >-
+      The exact {{ dagster_legacy_tmux_session }} tmux session is not a single
+      pane rooted at {{ dagster_deploy_dir }}. The playbook will not interrupt
+      an ambiguous legacy session.
+  when: dagster_legacy_tmux_active
+
+- name: Find the supervisor owned by the legacy Dagster pane
+  ansible.builtin.command:
+    argv:
+      - pgrep
+      - -P
+      - "{{ dagster_legacy_panes.stdout.split('|')[0] }}"
+      - -f
+      - ^uv run scripts/dagster-dev.sh
+  register: dagster_legacy_supervisors
+  changed_when: false
+  failed_when: dagster_legacy_supervisors.rc not in [0, 1]
+  check_mode: false
+  when: dagster_legacy_tmux_active
+
+- name: Refuse an ambiguous legacy Dagster cutover
+  ansible.builtin.assert:
+    that:
+      - dagster_legacy_supervisors.stdout_lines | default([]) | length == 1
+    fail_msg: >-
+      The exact legacy Dagster pane does not own exactly one
+      `uv run scripts/dagster-dev.sh` supervisor. The playbook will not guess
+      which process to stop.
+  when: dagster_legacy_tmux_active
+
+- name: Inspect the current Dagster port owner
+  ansible.builtin.command:
+    argv:
+      - lsof
+      - -t
+      - -nP
+      - "-iTCP:{{ dagster_listen_port }}"
+      - -sTCP:LISTEN
+  register: dagster_existing_listener_pid
+  changed_when: false
+  failed_when: dagster_existing_listener_pid.rc not in [0, 1]
+  check_mode: false
+
+- name: Refuse an unmanaged or ambiguous Dagster listener
+  ansible.builtin.assert:
+    that:
+      - dagster_existing_listener_pid.stdout_lines | length <= 1
+      - >-
+        dagster_existing_listener_pid.stdout_lines | length == 0
+        or dagster_systemd_is_active
+        or dagster_legacy_tmux_active
+    fail_msg: >-
+      Port {{ dagster_listen_port }} is owned by an unrecognized process or by
+      more than one process. The playbook will not mutate the live checkout
+      until the listener is reconciled with systemd or the exact legacy tmux
+      session.
+
+- name: Compare the legacy pane and listener process sessions
+  ansible.builtin.command:
+    argv:
+      - ps
+      - -o
+      - sid=
+      - -p
+      - >-
+        {{ dagster_legacy_panes.stdout.split('|')[0] }},{{
+        dagster_existing_listener_pid.stdout_lines[0] }}
+  register: dagster_legacy_process_sessions
+  changed_when: false
+  check_mode: false
+  when:
+    - dagster_legacy_tmux_active
+    - dagster_existing_listener_pid.stdout_lines | length == 1
+
+- name: Require the legacy listener to belong to the exact tmux pane
+  ansible.builtin.assert:
+    that:
+      - >-
+        dagster_legacy_process_sessions.stdout_lines
+        | map('trim')
+        | unique
+        | list
+        | length == 1
+    fail_msg: >-
+      The listener on port {{ dagster_listen_port }} does not share the exact
+      legacy tmux pane's process session. The playbook will not stop it.
+  when:
+    - dagster_legacy_tmux_active
+    - dagster_existing_listener_pid.stdout_lines | length == 1
+
+- name: Inspect the existing systemd listener control group
+  ansible.builtin.command:
+    argv:
+      - cat
+      - "/proc/{{ dagster_existing_listener_pid.stdout_lines[0] }}/cgroup"
+  register: dagster_existing_listener_cgroup
+  changed_when: false
+  check_mode: false
+  when:
+    - dagster_systemd_is_active
+    - dagster_existing_listener_pid.stdout_lines | length == 1
+
+- name: Require the existing listener to belong to the Dagster unit
+  ansible.builtin.assert:
+    that:
+      - >-
+        ('/system.slice/' ~ dagster_service_name ~ '.service')
+        in dagster_existing_listener_cgroup.stdout
+    fail_msg: >-
+      The listener on port {{ dagster_listen_port }} is not owned by
+      {{ dagster_service_name }}.service even though systemd reports it active.
+  when:
+    - dagster_systemd_is_active
+    - dagster_existing_listener_pid.stdout_lines | length == 1
+
+- name: Inspect the existing target virtual environment
+  ansible.builtin.stat:
+    path: "{{ dagster_venv_python }}"
+  register: dagster_venv
+
+- name: Check whether the target environment matches uv.lock
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_uv_binary }}"
+      - sync
+      - --frozen
+      - --check
+    chdir: "{{ dagster_deploy_dir }}"
+  environment:
+    HOME: /root
+  register: dagster_uv_check
+  changed_when: false
+  failed_when: dagster_uv_check.rc not in [0, 1]
+  check_mode: false
+  when: dagster_venv.stat.exists
+
+- name: Preview the local-to-host Dagster synchronization
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - --dry-run
+      - "--exclude-from={{ role_path }}/files/rsync-excludes.txt"
+      - "--rsync-path=sudo -n rsync"
+      - "{{ dagster_source_dir }}/"
+      - "{{ ansible_user }}@{{ ansible_host }}:{{ dagster_deploy_dir }}/"
+  register: dagster_rsync_preview
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: >-
+    dagster_rsync_preview.stdout_lines
+    | reject('match', '^cannot delete non-empty directory:')
+    | reject('match', '^[*]deleting .+/$')
+    | reject('equalto', '')
+    | list
+    | length > 0
+
+- name: Decide whether Dagster requires a stopped deployment
+  ansible.builtin.set_fact:
+    dagster_source_changed: >-
+      {{
+        dagster_rsync_preview.stdout_lines
+        | reject('match', '^cannot delete non-empty directory:')
+        | reject('match', '^[*]deleting .+/$')
+        | reject('equalto', '')
+        | list
+        | length > 0
+      }}
+    dagster_environment_changed: >-
+      {{
+        not dagster_venv.stat.exists
+        or (dagster_uv_check.rc | default(1)) != 0
+      }}
+    dagster_deployment_required: >-
+      {{
+        dagster_force_restart
+        or (
+          dagster_rsync_preview.stdout_lines
+          | reject('match', '^cannot delete non-empty directory:')
+          | reject('match', '^[*]deleting .+/$')
+          | reject('equalto', '')
+          | list
+          | length > 0
+        )
+        or not dagster_venv.stat.exists
+        or (dagster_uv_check.rc | default(1)) != 0
+        or dagster_unit_preview.changed
+        or dagster_systemd_needs_reload
+        or dagster_legacy_tmux_active
+        or not dagster_systemd_is_active
+      }}
+
+- name: Report the Dagster deployment decision
+  ansible.builtin.debug:
+    verbosity: 1
+    msg:
+      deployment_required: "{{ dagster_deployment_required }}"
+      environment_changed: "{{ dagster_environment_changed }}"
+      force_restart: "{{ dagster_force_restart }}"
+      legacy_tmux_active: "{{ dagster_legacy_tmux_active }}"
+      source_changed: "{{ dagster_source_changed }}"
+      systemd_active: "{{ dagster_systemd_is_active }}"
+      systemd_needs_reload: "{{ dagster_systemd_needs_reload }}"
+      unit_changed: "{{ dagster_unit_preview.changed }}"
+
+- name: Validate changed Dagster definitions on the control machine
+  ansible.builtin.command:
+    argv:
+      - uv
+      - run
+      - --frozen
+      - --no-sync
+      - dg
+      - check
+      - defs
+    chdir: "{{ dagster_source_dir }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+  environment:
+    DAGSTER_DISABLE_TELEMETRY: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
+  when:
+    - dagster_source_changed
+    - not ansible_check_mode
+
+- name: Check for runs that must not be interrupted
+  ansible.builtin.uri:
+    url: "{{ dagster_probe_url }}"
+    method: POST
+    body_format: json
+    body:
+      query: "{{ dagster_active_runs_query }}"
+    status_code: 200
+    return_content: true
+    use_proxy: false
+  register: dagster_run_preflight
+  changed_when: false
+  check_mode: false
+  when:
+    - dagster_deployment_required
+    - dagster_systemd_is_active or dagster_legacy_tmux_active
+
+- name: Refuse to interrupt active Dagster runs
+  ansible.builtin.assert:
+    that:
+      - dagster_run_preflight.json.errors is not defined
+      - dagster_run_preflight.json.data.activeRuns.__typename == 'Runs'
+      - dagster_run_preflight.json.data.activeRuns.results | length == 0
+    fail_msg: >-
+      Dagster has STARTING or STARTED runs:
+      {{ dagster_run_preflight.json.data.activeRuns.results | default([]) }}.
+      Wait for them to finish or cancel them before deploying.
+  when:
+    - dagster_deployment_required
+    - dagster_systemd_is_active or dagster_legacy_tmux_active
+
+- name: Report already-canceling Dagster runs
+  ansible.builtin.debug:
+    msg: >-
+      {{ dagster_run_preflight.json.data.cancelingRuns.results | length }} run(s)
+      are already CANCELING. Their statuses remain in Postgres; the deployment
+      does not rewrite or relaunch them.
+  when:
+    - dagster_deployment_required
+    - dagster_systemd_is_active or dagster_legacy_tmux_active
+    - dagster_run_preflight.json.data.cancelingRuns.results | length > 0
+
+- name: Stop the existing Dagster systemd service for deployment
+  ansible.builtin.systemd_service:
+    name: "{{ dagster_service_name }}"
+    state: stopped
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+    - dagster_systemd_is_loaded
+
+- name: Gracefully stop the legacy Dagster tmux supervisor
+  ansible.builtin.command:
+    argv:
+      - tmux
+      - send-keys
+      - -t
+      - "={{ dagster_legacy_tmux_session }}:"
+      - C-c
+  register: dagster_tmux_interrupt
+  changed_when: dagster_tmux_interrupt.rc == 0
+  failed_when: dagster_tmux_interrupt.rc not in [0, 1]
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+    - dagster_legacy_tmux_active
+
+- name: Wait for the legacy Dagster supervisor tree to exit
+  ansible.builtin.wait_for:
+    path: "/proc/{{ item }}/status"
+    state: absent
+    timeout: 180
+  loop: "{{ dagster_legacy_supervisors.stdout_lines | default([]) }}"
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+    - dagster_legacy_tmux_active
+
+- name: Remove only the retired Dagster tmux session
+  ansible.builtin.command:
+    argv:
+      - tmux
+      - kill-session
+      - -t
+      - "={{ dagster_legacy_tmux_session }}"
+  register: dagster_tmux_removed
+  changed_when: dagster_tmux_removed.rc == 0
+  failed_when: dagster_tmux_removed.rc not in [0, 1]
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+    - dagster_legacy_tmux_active
+
+- name: Wait for the old Dagster listener to close
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ dagster_listen_port }}"
+    state: stopped
+    timeout: 180
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+    - dagster_systemd_is_active or dagster_legacy_tmux_active
+
+- name: Synchronize changed Dagster source files
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - "--exclude-from={{ role_path }}/files/rsync-excludes.txt"
+      - "--rsync-path=sudo -n rsync"
+      - "{{ dagster_source_dir }}/"
+      - "{{ ansible_user }}@{{ ansible_host }}:{{ dagster_deploy_dir }}/"
+  register: dagster_rsync
+  delegate_to: localhost
+  become: false
+  changed_when: >-
+    dagster_rsync.stdout_lines
+    | reject('match', '^cannot delete non-empty directory:')
+    | reject('match', '^[*]deleting .+/$')
+    | reject('equalto', '')
+    | list
+    | length > 0
+  when:
+    - not ansible_check_mode
+    - dagster_source_changed
+
+- name: Verify rsync preserved the server environment
+  ansible.builtin.stat:
+    path: "{{ dagster_env_file }}"
+    get_checksum: true
+  register: dagster_env_after_sync
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - dagster_source_changed
+
+- name: Require the original server environment after synchronization
+  ansible.builtin.assert:
+    that:
+      - dagster_env_after_sync.stat.checksum == dagster_target_prerequisites.results[1].stat.checksum
+    fail_msg: >-
+      Rsync did not preserve {{ dagster_env_file }} exactly. The service will
+      not be started with an unverified environment.
+  when:
+    - not ansible_check_mode
+    - dagster_source_changed
+
+- name: Synchronize the target Python environment from uv.lock
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_uv_binary }}"
+      - sync
+      - --frozen
+    chdir: "{{ dagster_deploy_dir }}"
+  environment:
+    HOME: /root
+  register: dagster_uv_sync
+  changed_when: >-
+    'Installed ' in (dagster_uv_sync.stdout ~ dagster_uv_sync.stderr)
+    or 'Uninstalled ' in (dagster_uv_sync.stdout ~ dagster_uv_sync.stderr)
+  when:
+    - not ansible_check_mode
+    - dagster_source_changed or dagster_environment_changed
+
+- name: Validate synchronized Dagster definitions on the target
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_uv_binary }}"
+      - run
+      - --frozen
+      - --no-sync
+      - dg
+      - check
+      - defs
+    chdir: "{{ dagster_deploy_dir }}"
+  environment:
+    DAGSTER_HOME: "{{ dagster_deploy_dir }}"
+    DAGSTER_DISABLE_TELEMETRY: "1"
+    HOME: /root
+    PYTHONDONTWRITEBYTECODE: "1"
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+
+- name: Install the approved Dagster development systemd unit
+  ansible.builtin.template:
+    src: corpscout-dagster-dev.service.j2
+    dest: "/etc/systemd/system/{{ dagster_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: dagster_unit
+  when: not ansible_check_mode
+
+- name: Verify the installed Dagster systemd unit
+  ansible.builtin.command:
+    argv:
+      - systemd-analyze
+      - verify
+      - "/etc/systemd/system/{{ dagster_service_name }}.service"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Reload changed systemd unit metadata
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_unit.changed or dagster_systemd_needs_reload
+
+- name: Capture the deployment start boundary
+  ansible.builtin.command:
+    argv:
+      - date
+      - +%s
+  register: dagster_start_epoch
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+
+- name: Enable and start the Dagster development service
+  ansible.builtin.systemd_service:
+    name: "{{ dagster_service_name }}"
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Wait for Dagster webserver, code location, and daemon health
+  ansible.builtin.uri:
+    url: "{{ dagster_probe_url }}"
+    method: POST
+    body_format: json
+    body:
+      query: "{{ dagster_health_query }}"
+    status_code: 200
+    return_content: true
+    use_proxy: false
+  register: dagster_health
+  until:
+    - dagster_health.status == 200
+    - dagster_health.json.errors is not defined
+    - (dagster_health.json.data.version | default('')) | length > 0
+    - >-
+      (dagster_health.json.data.repositoriesOrError.__typename | default(''))
+      == 'RepositoryConnection'
+    - >-
+      'dagster_v3' in
+      ((dagster_health.json.data.repositoriesOrError.nodes | default([]))
+       | map(attribute='location.name') | list)
+    - >-
+      (dagster_health.json.data.instance.daemonHealth.allDaemonStatuses
+       | default([]) | length) > 0
+    - >-
+      (dagster_health.json.data.instance.daemonHealth.allDaemonStatuses
+       | default([]) | rejectattr('healthy', 'equalto', true) | list | length)
+      == 0
+    - >-
+      not dagster_deployment_required
+      or (
+        dagster_health.json.data.instance.daemonHealth.allDaemonStatuses
+        | default([])
+        | selectattr('required', 'equalto', true)
+        | map(attribute='lastHeartbeatTime')
+        | map('float')
+        | min
+      ) >= (dagster_start_epoch.stdout | default('0') | float)
+  retries: 45
+  delay: 2
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the Dagster systemd unit is active
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - "{{ dagster_service_name }}.service"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Read the active Dagster systemd PID
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=MainPID
+      - --value
+      - "{{ dagster_service_name }}.service"
+  register: dagster_main_pid
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require a live Dagster systemd supervisor
+  ansible.builtin.assert:
+    that:
+      - dagster_main_pid.stdout | trim | int > 0
+    fail_msg: >-
+      {{ dagster_service_name }}.service is active but has no live MainPID.
+  when: not ansible_check_mode
+
+- name: Capture the stable Dagster runtime state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=MainPID
+      - --property=NRestarts
+      - "{{ dagster_service_name }}.service"
+  register: dagster_runtime_before_stability
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Allow the Dagster supervisor to prove stability
+  ansible.builtin.pause:
+    seconds: 5
+  when: not ansible_check_mode
+
+- name: Re-read the stable Dagster runtime state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=MainPID
+      - --property=NRestarts
+      - "{{ dagster_service_name }}.service"
+  register: dagster_runtime_after_stability
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require a stable Dagster supervisor after health succeeds
+  ansible.builtin.assert:
+    that:
+      - >-
+        dagster_runtime_after_stability.stdout
+        == dagster_runtime_before_stability.stdout
+    fail_msg: >-
+      {{ dagster_service_name }}.service restarted during its post-health
+      stability window.
+  when: not ansible_check_mode
+
+- name: Read the Dagster webserver listener PID
+  ansible.builtin.command:
+    argv:
+      - lsof
+      - -t
+      - -nP
+      - "-iTCP:{{ dagster_listen_port }}"
+      - -sTCP:LISTEN
+  register: dagster_listener_pid
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require one Dagster webserver listener
+  ansible.builtin.assert:
+    that:
+      - dagster_listener_pid.stdout_lines | length == 1
+    fail_msg: >-
+      Expected exactly one listener on port {{ dagster_listen_port }}, found:
+      {{ dagster_listener_pid.stdout_lines }}.
+  when: not ansible_check_mode
+
+- name: Inspect the Dagster listener control group
+  ansible.builtin.command:
+    argv:
+      - cat
+      - "/proc/{{ dagster_listener_pid.stdout_lines[0] }}/cgroup"
+  register: dagster_listener_cgroup
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Inspect the Dagster listener address
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -H
+      - -ltnp
+      - sport
+      - "="
+      - ":{{ dagster_listen_port }}"
+  register: dagster_listener
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify systemd owns the intentionally public Dagster listener
+  ansible.builtin.assert:
+    that:
+      - >-
+        ('/system.slice/' ~ dagster_service_name ~ '.service')
+        in dagster_listener_cgroup.stdout
+      - dagster_listener.stdout_lines | length == 1
+      - >-
+        (dagster_listen_host ~ ':' ~ (dagster_listen_port | string))
+        in dagster_listener.stdout
+    fail_msg: >-
+      Port {{ dagster_listen_port }} is not bound to
+      {{ dagster_listen_host }} by {{ dagster_service_name }}.service.
+  when: not ansible_check_mode
+
+- name: Confirm the legacy Dagster tmux session is retired
+  ansible.builtin.command:
+    argv:
+      - tmux
+      - has-session
+      - -t
+      - "={{ dagster_legacy_tmux_session }}"
+  register: dagster_tmux_after_deploy
+  changed_when: false
+  failed_when: dagster_tmux_after_deploy.rc not in [0, 1]
+  when:
+    - not ansible_check_mode
+    - dagster_tmux_available.rc == 0
+
+- name: Require systemd to be the only Dagster supervisor
+  ansible.builtin.assert:
+    that:
+      - dagster_tmux_after_deploy.rc == 1
+    fail_msg: >-
+      The legacy {{ dagster_legacy_tmux_session }} tmux session still exists
+      after systemd startup.
+  when:
+    - not ansible_check_mode
+    - dagster_tmux_available.rc == 0

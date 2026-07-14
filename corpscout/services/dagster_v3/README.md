@@ -3,6 +3,10 @@
 Company open-data pipelines (ingest per country → DuckDB → ClickHouse). See `CLAUDE.md` for the
 authoring standard and day-to-day gotchas.
 
+The current host-mode development deployment is managed by
+[`ansible/`](ansible/README.md). It rsyncs the local source tree to `dagster` while
+preserving remote runtime state and supervises `dg dev` with systemd.
+
 ---
 
 # Translation

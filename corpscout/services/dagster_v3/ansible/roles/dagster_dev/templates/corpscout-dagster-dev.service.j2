@@ -1,0 +1,46 @@
+# MANAGED BY ANSIBLE (roles/dagster_dev).
+[Unit]
+Description=Corpscout Dagster development webserver and daemon
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+# Dependency outages must not permanently exhaust the restart limit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+
+# Transitional parity with the existing tmux deployment: uv, its managed
+# Python, dlt state, and 260+ GiB of runtime files currently belong to root.
+# A production deployment should move these into dedicated runtime volumes and
+# use an unprivileged Dagster account.
+User={{ dagster_service_user }}
+Group={{ dagster_service_group }}
+WorkingDirectory={{ dagster_deploy_dir }}
+Environment=HOME=/root
+Environment=DAGSTER_HOME={{ dagster_deploy_dir }}
+Environment=DAGSTER_DISABLE_TELEMETRY=1
+Environment=DAGSTER_DEPLOY_ENV_REVISION={{ dagster_target_prerequisites.results[1].stat.checksum }}
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=VIRTUAL_ENV={{ dagster_deploy_dir }}/.venv
+Environment=PATH={{ dagster_uv_binary | dirname }}:{{ dagster_deploy_dir }}/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart={{ dagster_dg_binary }} dev -h {{ dagster_listen_host }} -p {{ dagster_listen_port }} --db-pool-max-overflow {{ dagster_db_pool_max_overflow }}
+
+# dg dev can return success after an unexpected child exit, so on-failure is
+# insufficient. An explicit systemctl stop is still never restarted.
+Restart=always
+RestartSec=10s
+KillMode=mixed
+TimeoutStopSec=180s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+TasksMax=4096
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=corpscout-dagster-dev
+
+[Install]
+WantedBy=multi-user.target
