@@ -76,9 +76,13 @@ single strategy — there is no lane split and no `--mode`.
 - `--warc-parallel` (default 4) sets how many parts are produced concurrently; it also sizes the shared
   S3/HTTP transport so the parts genuinely contend for one connection budget rather than oversubscribing.
 - Within a range, `.produced` markers make the run resumable: a part with an existing marker is
-  skipped; an output directory with no marker (a crashed produce) is wiped and reproduced. A circuit
-  breaker aborts the run after 5 CONSECUTIVE part failures (protects an unattended box from e.g. expired
-  credentials silently burning hours); failed parts are logged, left unmarked, and retried on the next
+  skipped; an output directory with no marker (a crashed produce) is wiped and reproduced.
+- A failed part is requeued in-run with exponential backoff (1→30 min, 8 attempts, ~1.5 h span —
+  sized to Common Crawl's bursty S3 coldness) and counts as failed only when it exhausts all
+  attempts. The stats line shows parts waiting out a backoff as `retrywait=N`.
+- A circuit breaker aborts the run after 5 consecutive attempt failures *before the first success*
+  (protects an unattended box from e.g. a dead catalog silently burning hours), or 5 consecutive
+  *exhausted* parts after it. Failed parts are logged, left unmarked, and retried on the next
   invocation. The run exits non-zero if any part failed.
 
 Example — tech fingerprinting, parts 0-99:

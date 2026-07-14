@@ -406,8 +406,8 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	if len(sum.FailedParts) > 0 {
 		partsMsg = fmt.Sprintf(" [failed parts: %s]", joinParts(sum.FailedParts))
 	}
-	fmt.Printf("produced=%d skipped=%d failed=%d%s elapsed=%s\n",
-		sum.Produced, sum.Skipped, sum.Failed, partsMsg, elapsed)
+	fmt.Printf("produced=%d skipped=%d failed=%d retries=%d%s elapsed=%s\n",
+		sum.Produced, sum.Skipped, sum.Failed, sum.Retries, partsMsg, elapsed)
 
 	if sum.Breaker {
 		last := sum.FailedParts
