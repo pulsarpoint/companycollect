@@ -126,7 +126,7 @@ func TestLoadWARCRejectsAbsentWARC(t *testing.T) {
 
 // TestLoadWARCAbsentIsErrWARCIndexAbsent pins that the absent-index error is detectable via
 // errors.Is(err, ErrWARCIndexAbsent) — directly AND through the same cockroachdb Wrapf that
-// warcinput.LoadPlan/LoadS3Plan apply — while its human message stays byte-for-byte unchanged.
+// warcinput.LoadPlan applies — while its human message stays byte-for-byte unchanged.
 func TestLoadWARCAbsentIsErrWARCIndexAbsent(t *testing.T) {
 	path := writeCatalogFixture(t, []Warc{{WarcIndex: 0, WarcFilename: "zero.warc.gz"}}, nil)
 

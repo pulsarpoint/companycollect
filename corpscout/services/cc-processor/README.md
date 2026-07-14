@@ -69,7 +69,8 @@ At minimum, configure:
 
 - `CORPSCOUT_S3_ENDPOINT`, `CORPSCOUT_S3_ACCESS_KEY`, `CORPSCOUT_S3_SECRET_KEY`, and
   `CORPSCOUT_S3_REGION` for RustFS;
-- `COMMONCRAWL_CATALOG_S3_BASE` for the catalog bucket and base prefix;
+- `COMMONCRAWL_CATALOG_S3_BASE` for the catalog bucket and base prefix (read by the worker's
+  `sync-db` command — produce runs use the local cache it writes);
 - `OUT_BASE_DIR` for local catalog-build or processing data;
 - Common Crawl AWS credentials or an EC2 instance role for signed S3 access; and
 - `CLICKHOUSE_*` before a produce/load run.
@@ -253,7 +254,8 @@ The crawl and `pagesN` selection are appended in code; do not include either in
 its SHA-256 metadata, verifies its size and checksum metadata, and writes `ready.json` last. Consumers must
 treat `ready.json` as the commit marker and must not use an uncommitted catalog object.
 
-The worker validates that marker and caches the complete catalog once at:
+The worker's `sync-db` command — the explicit, only sync step; produce runs read just the local
+cache — validates that marker and caches the complete catalog once at:
 
 ```text
 <OUT_BASE_DIR>/<crawl>/warc-index/pagesN/catalog.duckdb

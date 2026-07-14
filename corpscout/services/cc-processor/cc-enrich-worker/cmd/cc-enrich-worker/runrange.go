@@ -309,10 +309,10 @@ func runPartAttempt(
 	return partOutcome{pending: pd, err: perr}
 }
 
-// runRange is the CLI entry for `<cmd> --parts A-B`: resolve and (if configured) sync the catalog,
-// select every non-empty part in the range (range reads are the only fetch strategy), build the
-// shared deps once, run the bounded pool, print the summary, and exit non-zero if any part failed
-// (breaker included).
+// runRange is the CLI entry for `<cmd> --parts A-B`: require the synced local catalog (sync-db is
+// the explicit sync step), select every non-empty part in the range (range reads are the only fetch
+// strategy), build the shared deps once, run the bounded pool, print the summary, and exit non-zero
+// if any part failed (breaker included).
 func runRange(cmd string, o opts, ro runnerOpts) {
 	ctx := context.Background()
 	if o.base == "" {
@@ -325,28 +325,9 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	o.base = base
 
 	lo, hi := ro.parts.lo, ro.parts.hi
-	catalogS3Base := strings.TrimSpace(os.Getenv("COMMONCRAWL_CATALOG_S3_BASE"))
-	if catalogS3Base != "" {
-		// Sync the committed RustFS catalog into the local cache up front, so LoadPartStats and every
-		// per-part LoadPlan read a present local catalog. SyncLocal pulls the whole catalog (not a
-		// single WARC), so it needs no index and any error (bad credentials, unreachable RustFS,
-		// corrupt commit) is a fatal setup failure.
-		if _, err := catalog.SyncLocal(
-			ctx,
-			catalog.S3Config{
-				BaseURI:   catalogS3Base,
-				Endpoint:  os.Getenv("CORPSCOUT_S3_ENDPOINT"),
-				Region:    envOr("CORPSCOUT_S3_REGION", "us-east-1"),
-				AccessKey: os.Getenv("CORPSCOUT_S3_ACCESS_KEY"),
-				SecretKey: os.Getenv("CORPSCOUT_S3_SECRET_KEY"),
-			},
-			o.base, o.crawlID, o.selection,
-		); err != nil {
-			log.Fatalf("sync catalog cache: %v", err)
-		}
-	}
-
-	catalogPath := filepath.Join(o.base, o.crawlID, "warc-index", o.selection, "catalog.duckdb")
+	// Produce runs never sync the catalog themselves — `sync-db` is the explicit, separate step
+	// that downloads and validates it. Fail fast with that command when the local copy is absent.
+	catalogPath := requireLocalCatalog(o.base, o.crawlID, o.selection)
 	stats, err := catalog.LoadPartStats(ctx, catalogPath, lo, hi)
 	if err != nil {
 		log.Fatalf("load part stats from %s: %v", catalogPath, err)

@@ -9,16 +9,16 @@ state, and deployment workflow. This README documents the worker boundary and it
 ## Input contract
 
 Set `COMMONCRAWL_CATALOG_S3_BASE` to the RustFS bucket and catalog prefix. For example, with
-`COMMONCRAWL_CATALOG_S3_BASE=s3://crawls/commoncrawl/catalogs` and selection `pages25`, the worker reads:
+`COMMONCRAWL_CATALOG_S3_BASE=s3://crawls/commoncrawl/catalogs` and selection `pages25`, `sync-db` reads:
 
 ```text
 s3://crawls/commoncrawl/catalogs/<crawl>/pages25/ready.json
 s3://crawls/commoncrawl/catalogs/<crawl>/pages25/catalog.duckdb
 ```
 
-RustFS is the authoritative catalog store. The worker fetches `ready.json` first and validates the
-requested crawl and selection plus the committed catalog key, size, and SHA-256. It caches the complete
-catalog once under the configured local base:
+RustFS is the authoritative catalog store, and `sync-db` is the only command that reads it. It fetches
+`ready.json` first and validates the requested crawl and selection plus the committed catalog key,
+size, and SHA-256. It caches the complete catalog once under the configured local base:
 
 ```text
 <base>/<crawl>/warc-index/<selection>/catalog.duckdb
@@ -26,8 +26,9 @@ catalog once under the configured local base:
 ```
 
 A missing or different SHA sidecar causes a fresh download to a partial file, size and SHA verification,
-and atomic cache replacement. A matching cache is reused by subsequent WARC runs. All runtime DuckDB
-queries use this local read-only file; the worker does not attach directly to the RustFS object.
+and atomic cache replacement. Produce runs (`--part` and `--parts`) read ONLY this local file — they
+never sync from RustFS — and fail fast with a pointer to `sync-db` when it is absent. All runtime
+DuckDB queries use this local read-only file; the worker does not attach directly to the RustFS object.
 
 `--part N` means WARC index `N`. The worker loads that WARC's selected page coordinates and calculates
 the compressed bytes required by the current processor:
@@ -115,9 +116,9 @@ parquet kind names the loader maps to ClickHouse tables (`domains`, `industries`
 ### `sync-db` — pre-warm the catalog cache
 
 `sync-db` pulls the committed WARC catalog from S3/RustFS and caches it locally at
-`<base>/<crawl-id>/warc-index/<selection>/catalog.duckdb`. Run it once on a freshly provisioned host to
-download the (~17 GB) catalog before the first range run, so that run does not stall on the initial
-sync:
+`<base>/<crawl-id>/warc-index/<selection>/catalog.duckdb`. It is the required, explicit sync step:
+run it on a freshly provisioned host (and again whenever a new catalog is committed) before any
+produce run — produce runs read only the local cache and refuse to start without it:
 
 ```bash
 ./cc-enrich-worker/bin/cc-enrich-worker sync-db \
@@ -125,11 +126,12 @@ sync:
   --crawl-id CC-MAIN-2026-25
 ```
 
-It reads `COMMONCRAWL_CATALOG_S3_BASE` and `CORPSCOUT_S3_*` (same config as a range run) and prints the
-resolved local path once the catalog is ready. It is idempotent: the cached SHA is validated against
-the commit, so a second run with an up-to-date cache re-verifies and returns without downloading. A
-range run performs the same sync automatically, so `sync-db` is only needed when you want the download
-to happen up front as an explicit step.
+It reads `COMMONCRAWL_CATALOG_S3_BASE` and `CORPSCOUT_S3_*` and prints the resolved local path once
+the catalog is ready. It is idempotent: the cached SHA is validated against the commit, so a second
+run with an up-to-date cache re-verifies and returns without downloading. `sync-db` is the ONLY
+command that syncs the catalog — produce runs (`--part` and `--parts`) read the local cache it wrote
+and fail fast with a pointer to `sync-db` when the catalog is missing. Re-run `sync-db` to pick up a
+newly committed catalog.
 
 ### `status` — read-only marker report
 
@@ -319,7 +321,7 @@ flags above and behave identically per part.
 
 | Variable | Meaning |
 |---|---|
-| `COMMONCRAWL_CATALOG_S3_BASE` | Required authoritative catalog location in `s3://bucket/prefix` form. |
+| `COMMONCRAWL_CATALOG_S3_BASE` | Authoritative catalog location in `s3://bucket/prefix` form; read only by `sync-db` (produce runs use the local cache). |
 | `CORPSCOUT_S3_ENDPOINT` | Required RustFS S3-compatible endpoint. |
 | `CORPSCOUT_S3_REGION` | RustFS signing region; defaults to `us-east-1`. |
 | `CORPSCOUT_S3_ACCESS_KEY`, `CORPSCOUT_S3_SECRET_KEY` | Required RustFS catalog credentials. |

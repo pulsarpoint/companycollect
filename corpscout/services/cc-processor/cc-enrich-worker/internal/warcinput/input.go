@@ -69,28 +69,6 @@ func LoadPlan(baseDirectory, crawlID, selection string, warcIndex uint32, primar
 	return buildPlan(warc, items, primaryPagesOnly)
 }
 
-// LoadS3Plan synchronizes the committed RustFS catalog into the local base directory, then reads it.
-func LoadS3Plan(
-	ctx context.Context,
-	config catalog.S3Config,
-	baseDirectory, crawlID, selection string,
-	warcIndex uint32,
-	primaryPagesOnly bool,
-) (Plan, error) {
-	warc, items, err := catalog.LoadS3WARC(
-		ctx,
-		config,
-		baseDirectory,
-		crawlID,
-		selection,
-		warcIndex,
-	)
-	if err != nil {
-		return Plan{}, errors.Wrapf(err, "load RustFS WARC catalog index %d", warcIndex)
-	}
-	return buildPlan(warc, items, primaryPagesOnly)
-}
-
 func buildPlan(
 	warc catalog.Warc,
 	items []model.WorklistItem,

@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -21,7 +20,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/parquet-go/parquet-go"
 
-	"cc-enrich-worker/internal/catalog"
 	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/embed"
 	"cc-enrich-worker/internal/fetch"
@@ -74,8 +72,8 @@ Commands:
 Run "cc-enrich-worker <command> -h" to see that command's flags.
 
 Config is via environment (see ../.env.example): COMMONCRAWL_CATALOG_S3_BASE and CORPSCOUT_S3_*
-for the RustFS catalog, COMMONCRAWL_EMBED_*, CLICKHOUSE_*, and AWS_* for signed Common Crawl S3
-access.
+for the RustFS catalog (read only by sync-db — produce runs use the local cache it writes),
+COMMONCRAWL_EMBED_*, CLICKHOUSE_*, and AWS_* for signed Common Crawl S3 access.
 `)
 }
 
@@ -493,46 +491,36 @@ func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) 
 
 // openInput loads one part's plan, prepares the WARC input as network range reads, and logs "WARC
 // input ready".
+// requireLocalCatalog returns the local catalog path for the run and fails fast when it is absent.
+// Produce runs never sync the catalog themselves — `sync-db` is the explicit, separate step that
+// downloads and validates it.
+func requireLocalCatalog(base, crawlID, selection string) string {
+	path := filepath.Join(base, crawlID, "warc-index", selection, "catalog.duckdb")
+	if _, err := os.Stat(path); err != nil {
+		log.Fatalf("local catalog missing at %s — run `cc-enrich-worker sync-db --crawl-id %s --selection %s --base %s` first (%v)",
+			path, crawlID, selection, base, err)
+	}
+	return path
+}
+
 func openInput(ctx context.Context, d partDeps, part uint32, outDir string) (preparedPart, error) {
 	o := d.o
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return preparedPart{}, fmt.Errorf("create output dir %s: %w", outDir, err)
 	}
-	catalogS3Base := strings.TrimSpace(os.Getenv("COMMONCRAWL_CATALOG_S3_BASE"))
-
 	primaryPagesOnly := d.mode == "industry" || d.mode == "embed"
 	catalogCachePath := filepath.Join(o.base, o.crawlID, "warc-index", o.selection, "catalog.duckdb")
 	catalogStarted := time.Now()
 	log.Printf(
-		"catalog: checking RustFS commit and local cache crawl=%s selection=%s path=%s",
+		"catalog: opening local catalog crawl=%s selection=%s path=%s",
 		o.crawlID,
 		o.selection,
 		catalogCachePath,
 	)
-	// With no RustFS base configured we read the already-synced LOCAL catalog directly (same path the
-	// S3 sync writes to). This mirrors plancmd's "sync only if a base is set" contract and lets the
-	// range runner operate on a catalog that was synced once up front rather than per part.
-	var plan warcinput.Plan
-	var err error
-	if catalogS3Base == "" {
-		plan, err = warcinput.LoadPlan(o.base, o.crawlID, o.selection, part, primaryPagesOnly)
-	} else {
-		plan, err = warcinput.LoadS3Plan(
-			ctx,
-			catalog.S3Config{
-				BaseURI:   catalogS3Base,
-				Endpoint:  os.Getenv("CORPSCOUT_S3_ENDPOINT"),
-				Region:    envOr("CORPSCOUT_S3_REGION", "us-east-1"),
-				AccessKey: os.Getenv("CORPSCOUT_S3_ACCESS_KEY"),
-				SecretKey: os.Getenv("CORPSCOUT_S3_SECRET_KEY"),
-			},
-			o.base,
-			o.crawlID,
-			o.selection,
-			part,
-			primaryPagesOnly,
-		)
-	}
+	// The synced LOCAL catalog is the only source — produce runs never sync from RustFS. `sync-db`
+	// is the explicit step that downloads and validates it; the CLI entries preflight its presence
+	// (requireLocalCatalog) so a missing catalog fails before any part starts.
+	plan, err := warcinput.LoadPlan(o.base, o.crawlID, o.selection, part, primaryPagesOnly)
 	if err != nil {
 		return preparedPart{}, fmt.Errorf("load WARC catalog: %w", err)
 	}
@@ -871,10 +859,7 @@ func run(mode string, o opts) {
 		log.Fatalf("resolve base directory %s: %v", o.base, err)
 	}
 	o.base = base
-	catalogS3Base := strings.TrimSpace(os.Getenv("COMMONCRAWL_CATALOG_S3_BASE"))
-	if catalogS3Base == "" {
-		log.Fatal("COMMONCRAWL_CATALOG_S3_BASE is required (s3://bucket/prefix)")
-	}
+	requireLocalCatalog(o.base, o.crawlID, o.selection)
 
 	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so the
 	// loader knows which file → which table. A single --part run is for ad-hoc/debug produce; it does NOT

@@ -17,8 +17,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/cockroachdb/errors"
 	"golang.org/x/sys/unix"
-
-	"cc-enrich-worker/internal/model"
 )
 
 const (
@@ -59,31 +57,9 @@ type readyObject struct {
 	SHA256    string `json:"sha256"`
 }
 
-// LoadS3WARC synchronizes the immutable RustFS catalog into the local cache and queries one WARC.
-func LoadS3WARC(
-	ctx context.Context,
-	config S3Config,
-	cacheBase, crawlID, selection string,
-	warcIndex uint32,
-) (Warc, []model.WorklistItem, error) {
-	location, err := deriveCatalogLocation(config.BaseURI, crawlID, selection)
-	if err != nil {
-		return Warc{}, nil, err
-	}
-	client, err := newS3Client(ctx, config)
-	if err != nil {
-		return Warc{}, nil, err
-	}
-	path, err := ensureLocalCatalog(ctx, client, location, cacheBase, crawlID, selection)
-	if err != nil {
-		return Warc{}, nil, err
-	}
-	return LoadWARC(ctx, path, warcIndex)
-}
-
 // SyncLocal synchronizes the immutable RustFS catalog into the local cache and returns the local
-// catalog path. It composes the same steps LoadS3WARC uses to prime the cache, but queries no WARC —
-// operators call it to pre-warm the catalog on a freshly provisioned host before the first range run.
+// catalog path. It backs the `sync-db` command — the ONLY step that syncs the catalog; produce runs
+// read the local cache it writes and fail fast when it is absent.
 // It is idempotent: ensureLocalCatalog validates the cached SHA and skips the download whenever the
 // local copy already matches the committed catalog.
 func SyncLocal(

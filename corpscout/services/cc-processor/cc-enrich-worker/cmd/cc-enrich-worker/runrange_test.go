@@ -153,8 +153,6 @@ func techDeps(t *testing.T, base string, getter fetch.ObjectGetter) partDeps {
 	}
 	tech.SetFastMatcher(fm)
 	t.Cleanup(func() { tech.SetFastMatcher(nil) })
-	// COMMONCRAWL_CATALOG_S3_BASE must be empty so openInput reads the LOCAL fixture catalog.
-	t.Setenv("COMMONCRAWL_CATALOG_S3_BASE", "")
 	return partDeps{
 		mode: "tech",
 		o: opts{
