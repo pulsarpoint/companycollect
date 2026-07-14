@@ -1,0 +1,7 @@
+# Top-level play: converge every CT-drain host to its declared state.
+# Run:  ansible-playbook site.yml            (add --check --diff for a dry run)
+- name: Deploy pulsarprotectctlog drains
+  hosts: ctlog_hosts
+  become: true
+  roles:
+    - ctlog

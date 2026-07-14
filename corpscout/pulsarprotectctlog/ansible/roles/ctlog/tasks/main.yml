@@ -1,0 +1,104 @@
+---
+# Converge one CT-drain host to its declared state. Idempotent: re-running with
+# no var changes reports zero changes.
+
+- name: Create the service group
+  ansible.builtin.group:
+    name: "{{ ctlog_service_user }}"
+    system: true
+
+- name: Create the service user
+  ansible.builtin.user:
+    name: "{{ ctlog_service_user }}"
+    group: "{{ ctlog_service_user }}"
+    system: true
+    home: "{{ ctlog_deploy_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Ensure deploy, data, and release directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ctlog_service_user }}"
+    group: "{{ ctlog_service_user }}"
+    mode: "0755"
+  loop:
+    - "{{ ctlog_deploy_dir }}"
+    - "{{ ctlog_data_dir }}"
+    - "{{ ctlog_release_dir }}"
+
+- name: Install the versioned binary
+  ansible.builtin.copy:
+    src: "{{ ctlog_binary_src }}"
+    dest: "{{ ctlog_release_dir }}/ctlog"
+    owner: "{{ ctlog_service_user }}"
+    group: "{{ ctlog_service_user }}"
+    mode: "0755"
+
+- name: Point `current` at this release (atomic switch / rollback pivot)
+  ansible.builtin.file:
+    src: "{{ ctlog_release_dir }}"
+    dest: "{{ ctlog_current_link }}"
+    state: link
+    owner: "{{ ctlog_service_user }}"
+    group: "{{ ctlog_service_user }}"
+    # force: the release dir is created by the tasks above, but in --check mode
+    # it exists only hypothetically; without force the link task false-fails.
+    force: true
+
+- name: Render the service environment file (config + vaulted secret)
+  ansible.builtin.template:
+    src: ctlog.env.j2
+    dest: "{{ ctlog_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  diff: false # never print the password, even with --diff
+
+- name: Ensure no stray .env shadows the systemd-provided config
+  ansible.builtin.file:
+    path: "{{ ctlog_deploy_dir }}/.env"
+    state: absent
+
+- name: Render sources.json from the declared source list
+  ansible.builtin.template:
+    src: sources.json.j2
+    dest: "{{ ctlog_deploy_dir }}/sources.json"
+    owner: "{{ ctlog_service_user }}"
+    group: "{{ ctlog_service_user }}"
+    mode: "0644"
+
+- name: Install the systemd unit templates
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "ctlog@.service"
+    - "ctlog@.timer"
+  notify: Reload systemd
+
+# Apply the reload NOW (before enabling), so enable/start act on fresh units.
+- name: Reload systemd if units changed
+  ansible.builtin.meta: flush_handlers
+
+# In --check mode on a FRESH host the unit templates exist only hypothetically,
+# so enabling timers would error. Probe for the real file and skip cleanly in
+# that one case; on real runs and on converged hosts the task always runs.
+- name: Check whether the timer unit template is installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/ctlog@.timer
+  register: ctlog_timer_unit
+
+- name: Enable + start a drain timer per source
+  ansible.builtin.systemd:
+    name: "ctlog@{{ item.name }}.timer"
+    enabled: true
+    state: started
+  loop: "{{ ctlog_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: ctlog_timer_unit.stat.exists or not ansible_check_mode

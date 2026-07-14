@@ -1,0 +1,44 @@
+---
+# ALL ctlog deployment configuration lives in THIS ONE FILE.
+# Secrets live next door in vault.yml (ansible-vault encrypted) and are pulled
+# in here via the vault_-prefixed indirection at the bottom.
+
+# --- Deployment layout -------------------------------------------------------
+ctlog_deploy_dir: /opt/pulsarprotectctlog
+ctlog_service_user: ctlog
+
+# Derived paths (formulas — normally never edited).
+ctlog_data_dir: "{{ ctlog_deploy_dir }}/data"
+ctlog_release_dir: "{{ ctlog_deploy_dir }}/releases/{{ ctlog_version }}"
+ctlog_current_link: "{{ ctlog_deploy_dir }}/current"
+ctlog_env_file: "{{ ctlog_deploy_dir }}/ctlog.env"
+
+# --- Artifact ----------------------------------------------------------------
+# Version deployed to releases/<version>/, pointed at by `current`.
+# Rollback = set the previous version and re-run the playbook.
+ctlog_version: "0.1.2"
+# Where the linux/amd64 binary comes from on the control machine (make build-linux).
+ctlog_binary_src: "../bin/ctlog-linux-amd64"
+
+# --- Drain cadence (systemd OnUnitInactiveSec) --------------------------------
+ctlog_drain_interval: "20min"
+
+# --- Sources -----------------------------------------------------------------
+# Single source of truth: renders sources.json AND decides which
+# ctlog@<name>.timer units get enabled.
+ctlog_sources:
+  - { name: le-sycamore, type: tiled, operator: "Let's Encrypt", log_prefix: "Sycamore" }
+  - { name: le-willow,   type: tiled, operator: "Let's Encrypt", log_prefix: "Willow" }
+
+# --- ClickHouse (data plane) ---------------------------------------------------
+ctlog_clickhouse_addr: "companycollect:9002"
+ctlog_clickhouse_database: "ctlogs"
+ctlog_clickhouse_user: "default"
+# Secret indirection: real value lives encrypted in vault.yml. The vault_ prefix
+# keeps this file greppable while the secret itself is never in plaintext.
+ctlog_clickhouse_password: "{{ vault_ctlog_clickhouse_password }}"
+
+# --- Fetch / write tuning ------------------------------------------------------
+ctlog_batch_size: 256
+ctlog_fetch_parallel: 48
+ctlog_write_batch_size: 5000

@@ -1,0 +1,4 @@
+[
+  {"name": "le-sycamore", "type": "tiled", "operator": "Let's Encrypt", "log_prefix": "Sycamore"},
+  {"name": "le-willow",   "type": "tiled", "operator": "Let's Encrypt", "log_prefix": "Willow"}
+]

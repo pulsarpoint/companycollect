@@ -1,0 +1,33 @@
+# MANAGED BY ANSIBLE (roles/ctlog) — edit the template, not the server copy.
+# Templated CT log drain, one instance per source: ctlog@le-sycamore.service.
+# Type=oneshot: each run drains the source to head and exits; the paired
+# ctlog@.timer re-runs it to pull deltas continuously.
+[Unit]
+Description=CT log drain for source %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ ctlog_service_user }}
+Group={{ ctlog_service_user }}
+WorkingDirectory={{ ctlog_deploy_dir }}
+# All config (incl. the vault-sourced ClickHouse password) comes from this one
+# Ansible-rendered file. Each oneshot run is a fresh process, so changes apply
+# on the next timer fire — no restart choreography needed.
+EnvironmentFile={{ ctlog_env_file }}
+ExecStart={{ ctlog_current_link }}/ctlog process --source %i
+# The first pull drains all frozen shards and can run for hours; never time out.
+TimeoutStartSec=0
+Nice=10
+
+# Hardening. The only writable path is the SQLite control DB under data/.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ReadWritePaths={{ ctlog_data_dir }}

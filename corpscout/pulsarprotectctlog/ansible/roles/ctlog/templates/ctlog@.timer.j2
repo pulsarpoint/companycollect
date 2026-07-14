@@ -1,0 +1,15 @@
+# MANAGED BY ANSIBLE (roles/ctlog) — edit the template, not the server copy.
+# Drives ctlog@%i.service. OnUnitInactiveSec measures from when the previous run
+# FINISHED, so the hours-long first pull is never overlapped and steady-state
+# delta pulls run {{ ctlog_drain_interval }} apart.
+[Unit]
+Description=Periodic CT log drain for source %i
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec={{ ctlog_drain_interval }}
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
