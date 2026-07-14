@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cc-enrich-worker/internal/fetch"
 	"cc-enrich-worker/internal/worker"
-	"cc-raw/fetch"
 )
 
 // startRangeStatsTicker launches the 10-second cumulative-stats goroutine for a range run and returns

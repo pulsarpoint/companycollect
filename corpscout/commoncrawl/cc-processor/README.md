@@ -25,8 +25,7 @@ Common Crawl WARC bodies. The worker reads WARC data directly from Common Crawl.
 | Path | Responsibility |
 |---|---|
 | `cc-warc-index-builder/` | Selects up to N pages per domain from the official URL-index Parquets, builds one WARC-oriented DuckDB catalog, and publishes it to RustFS. |
-| `cc-enrich-worker/` | Runs an inclusive range of catalog WARC indexes (`--parts A-B`) via range reads or a complete WARC download, extracts data, writes Parquet + `.produced`, and loads ClickHouse via `load --scan` (which writes `.loaded`). |
-| `cc-raw/` | Shared Common Crawl range-fetch and WARC/embedded-HTTP parsing code. It has no executable. |
+| `cc-enrich-worker/` | Runs an inclusive range of catalog WARC indexes (`--parts A-B`) via range reads or a complete WARC download, extracts data, writes Parquet + `.produced`, and loads ClickHouse via `load --scan` (which writes `.loaded`). Its `internal/fetch` package owns Common Crawl range-fetch and WARC/embedded-HTTP parsing. |
 | `deploy/` | Builds and atomically deploys the `cc-enrich-worker` Linux binary. |
 | `.env` | The single ignored environment file shared by the builder and worker in this checkout. |
 | `.env.example` | Safe configuration template. |
@@ -113,10 +112,9 @@ The main targets are:
 | `make release` | Produces the Linux runtime artifact under `dist/<os>-<arch>/`. |
 | `make clean` | Removes generated component binaries and processor release artifacts. |
 
-The Go modules can also be checked independently:
+The Go runtime module can also be checked independently:
 
 ```bash
-make -C cc-raw test
 make -C cc-enrich-worker test
 ```
 

@@ -203,6 +203,16 @@ No entity is selected as the page's organization and fields from different entit
 The source record coordinates plus script index and entity path make reprocessing idempotent. The former
 single-profile `metadata.parquet` output is not produced or loaded.
 
+## Internal packages
+
+The former standalone `cc-raw` module is folded into this worker under `internal/`:
+
+- `internal/fetch/` owns exact Common Crawl range retrieval and WARC/embedded-HTTP record parsing (the
+  only package consumed by the runtime).
+- `internal/rawstore/` owns the pack, index, manifest, ready-document, checksum, key, and RustFS
+  persisted contracts. Treat any schema change as a compatibility change: update `schema_version`, the
+  golden JSON fixtures under `internal/rawstore/testdata/`, and its validation together.
+
 ## Build and run
 
 From `commoncrawl/cc-processor/`:

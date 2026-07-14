@@ -9,8 +9,8 @@ import (
 	"github.com/cockroachdb/errors"
 
 	"cc-enrich-worker/internal/catalog"
+	"cc-enrich-worker/internal/fetch"
 	"cc-enrich-worker/internal/model"
-	"cc-raw/fetch"
 )
 
 type Mode string

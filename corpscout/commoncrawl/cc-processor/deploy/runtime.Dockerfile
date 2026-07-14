@@ -9,7 +9,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-COPY cc-raw ./cc-raw
 COPY cc-enrich-worker ./cc-enrich-worker
 
 RUN mkdir /out \

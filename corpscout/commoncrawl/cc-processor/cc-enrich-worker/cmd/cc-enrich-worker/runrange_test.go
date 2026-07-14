@@ -16,10 +16,10 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/parquet-go/parquet-go"
 
+	"cc-enrich-worker/internal/fetch"
 	"cc-enrich-worker/internal/markers"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/tech"
-	"cc-raw/fetch"
 )
 
 // gzWarc wraps an HTTP response string as a gzipped single WARC response record (copied from the

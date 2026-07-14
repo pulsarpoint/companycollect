@@ -29,13 +29,11 @@ builder-test:
 	$(MAKE) -C cc-warc-index-builder test
 
 runtime-test:
-	$(MAKE) -C cc-raw test
 	$(MAKE) -C cc-enrich-worker test
 
 test: builder-test runtime-test
 
 runtime-vet:
-	$(MAKE) -C cc-raw vet
 	$(MAKE) -C cc-enrich-worker vet
 
 vet: runtime-vet

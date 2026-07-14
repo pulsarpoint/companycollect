@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"cc-enrich-worker/internal/fetch"
 	"cc-enrich-worker/internal/worker"
-	"cc-raw/fetch"
 )
 
 func TestFormatRangeStats(t *testing.T) {
