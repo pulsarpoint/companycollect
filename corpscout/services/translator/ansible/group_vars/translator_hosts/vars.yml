@@ -1,0 +1,37 @@
+---
+# Deployment identity and layout.
+translator_service_name: translator-api
+translator_service_user: translator
+translator_service_group: translator
+
+translator_source_dir: "{{ playbook_dir }}/.."
+translator_local_build_dir: "{{ translator_source_dir }}/bin"
+translator_local_binary: "{{ translator_local_build_dir }}/translator-api-linux-amd64"
+
+translator_deploy_dir: /opt/companycollect/corpscout/translator
+translator_binary: "{{ translator_deploy_dir }}/bin/translator-api"
+translator_data_dir: "{{ translator_deploy_dir }}/data/translator"
+translator_config_dir: /etc/corpscout-translator
+translator_config_source: "{{ translator_source_dir }}/config/translator.json"
+translator_config_file: "{{ translator_config_dir }}/translator.json"
+translator_env_file: "{{ translator_config_dir }}/translator.env"
+
+# The default target, `dagster`, is Linux on x86-64.
+translator_target_system: Linux
+translator_target_architecture: x86_64
+translator_target_goos: linux
+translator_target_goarch: amd64
+
+# Deployment-specific overrides. All other non-secret settings stay in the
+# canonical config/translator.json that the role copies verbatim.
+translator_listen_host: 127.0.0.1
+translator_listen_port: 8080
+translator_listen_address: "{{ translator_listen_host }}:{{ translator_listen_port }}"
+translator_temporal_address: companycollect:7233
+translator_clickhouse_password: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_PASSWORD') }}"
+
+translator_health_url: "http://{{ translator_listen_address }}/healthz"
+translator_stats_url: "http://{{ translator_listen_address }}/v1/queue/stats"
+
+# First-deployment cutover from the current manually managed process.
+translator_legacy_tmux_session: translator

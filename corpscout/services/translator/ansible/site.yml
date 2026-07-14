@@ -1,0 +1,7 @@
+---
+- name: Deploy the Corpscout translator API
+  hosts: translator_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - translator

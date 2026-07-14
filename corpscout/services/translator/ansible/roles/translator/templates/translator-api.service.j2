@@ -1,0 +1,43 @@
+# MANAGED BY ANSIBLE (roles/translator).
+[Unit]
+Description=Corpscout translator API and Temporal worker
+Wants=network-online.target
+After=network-online.target
+# Keep retrying when boot ordering leaves ClickHouse or Temporal unavailable.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User={{ translator_service_user }}
+Group={{ translator_service_group }}
+WorkingDirectory={{ translator_deploy_dir }}
+EnvironmentFile={{ translator_env_file }}
+ExecStart={{ translator_binary }}
+
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=60s
+KillMode=control-group
+UMask=0077
+
+# The service needs outbound DNS/network access and write access only to its
+# SQLite queue directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths={{ translator_data_dir }}
+
+[Install]
+WantedBy=multi-user.target

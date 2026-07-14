@@ -1,0 +1,685 @@
+---
+- name: Require a safe ClickHouse password on the control machine
+  ansible.builtin.assert:
+    that:
+      - translator_clickhouse_password | length > 0
+      - (translator_clickhouse_password | regex_search('[\\x00-\\x1f\\x7f]')) is none
+    fail_msg: >-
+      CLICKHOUSE_PASSWORD must be exported and must not contain control
+      characters. Read it from the Dagster .env file or export it directly
+      before running this playbook.
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Require the declared target platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == translator_target_system
+      - ansible_facts.architecture == translator_target_architecture
+    fail_msg: >-
+      This deployment builds for
+      {{ translator_target_system }}/{{ translator_target_architecture }}, but
+      {{ inventory_hostname }} reports
+      {{ ansible_facts.system }}/{{ ansible_facts.architecture }}.
+
+- name: Read the canonical translator queue path
+  ansible.builtin.set_fact:
+    translator_queue_relative_path: >-
+      {{ (lookup('ansible.builtin.file', translator_config_source) | from_json).queue.path }}
+  no_log: true
+
+- name: Validate the canonical queue deployment layout
+  ansible.builtin.assert:
+    that:
+      - translator_queue_relative_path | length > 0
+      - not translator_queue_relative_path.startswith('/')
+      - "'..' not in translator_queue_relative_path.split('/')"
+      - >-
+        ((translator_deploy_dir ~ '/' ~ translator_queue_relative_path) | dirname)
+        == translator_data_dir
+    fail_msg: >-
+      The queue path in config/translator.json must remain below
+      {{ translator_data_dir }} so Ansible can preserve and grant access to the
+      complete SQLite state directory.
+
+- name: Create the local translator build directory
+  ansible.builtin.file:
+    path: "{{ translator_local_build_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+
+- name: Run the translator test suite on the control machine
+  ansible.builtin.command:
+    argv:
+      - go
+      - test
+      - ./...
+    chdir: "{{ translator_source_dir }}"
+  environment:
+    CGO_ENABLED: "0"
+    TRANSLATOR_INTEGRATION_TESTS: "false"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Build the Linux translator API on the control machine
+  ansible.builtin.command:
+    argv:
+      - go
+      - build
+      - -trimpath
+      - -o
+      - "{{ translator_local_binary }}"
+      - ./cmd/translator-api
+    chdir: "{{ translator_source_dir }}"
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: "{{ translator_target_goos }}"
+    GOARCH: "{{ translator_target_goarch }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Check whether the service group already exists
+  ansible.builtin.command:
+    argv:
+      - getent
+      - group
+      - "{{ translator_service_group }}"
+  register: translator_existing_group
+  check_mode: false
+  changed_when: false
+  failed_when: translator_existing_group.rc not in [0, 2]
+
+- name: Inspect artifact directories before check-mode changes
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ translator_deploy_dir }}/bin"
+    - "{{ translator_config_dir }}"
+  register: translator_existing_artifact_directories
+  check_mode: false
+
+- name: Create the translator service group
+  ansible.builtin.group:
+    name: "{{ translator_service_group }}"
+    system: true
+
+- name: Create the translator service user
+  ansible.builtin.user:
+    name: "{{ translator_service_user }}"
+    group: "{{ translator_service_group }}"
+    system: true
+    home: /nonexistent
+    create_home: false
+    shell: /usr/sbin/nologin
+  when:
+    - not ansible_check_mode or translator_existing_group.rc == 0
+
+- name: Create root-owned translator deployment directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ translator_deploy_dir }}"
+    - "{{ translator_deploy_dir }}/bin"
+    - "{{ translator_config_dir }}"
+
+- name: Ensure the translator queue directory exists
+  ansible.builtin.file:
+    path: "{{ translator_data_dir }}"
+    state: directory
+  when: not ansible_check_mode
+
+- name: Install the translator API binary
+  ansible.builtin.copy:
+    src: "{{ translator_local_binary }}"
+    dest: "{{ translator_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart translator API
+  when:
+    - >-
+      not ansible_check_mode
+      or translator_existing_artifact_directories.results[0].stat.isdir | default(false)
+
+- name: Install the canonical translator configuration
+  ansible.builtin.copy:
+    src: "{{ translator_config_source }}"
+    dest: "{{ translator_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart translator API
+  when:
+    - >-
+      not ansible_check_mode
+      or translator_existing_artifact_directories.results[1].stat.isdir | default(false)
+
+- name: Install the translator environment file
+  ansible.builtin.template:
+    src: translator.env.j2
+    dest: "{{ translator_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart translator API
+  when:
+    - >-
+      not ansible_check_mode
+      or translator_existing_artifact_directories.results[1].stat.isdir | default(false)
+
+- name: Install the translator systemd unit
+  ansible.builtin.template:
+    src: translator-api.service.j2
+    dest: "/etc/systemd/system/{{ translator_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart translator API
+
+- name: Verify the installed systemd unit
+  ansible.builtin.command:
+    argv:
+      - systemd-analyze
+      - verify
+      - "/etc/systemd/system/{{ translator_service_name }}.service"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Reload systemd unit metadata before cutover checks
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Read the existing systemd-managed translator PID
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=MainPID
+      - --value
+      - "{{ translator_service_name }}.service"
+  register: translator_existing_systemd_pid
+  changed_when: false
+  failed_when: translator_existing_systemd_pid.rc not in [0, 1]
+  when: not ansible_check_mode
+
+- name: Find translator processes before the tmux cutover
+  ansible.builtin.command:
+    argv:
+      - pgrep
+      - -x
+      - translator-api
+  register: translator_processes_before_cutover
+  changed_when: false
+  failed_when: translator_processes_before_cutover.rc not in [0, 1]
+  when: not ansible_check_mode
+
+- name: Identify translator processes not managed by systemd
+  ansible.builtin.set_fact:
+    translator_legacy_pids: >-
+      {{
+        (translator_processes_before_cutover.stdout_lines | default([]))
+        | difference([(translator_existing_systemd_pid.stdout | default('0') | trim)])
+      }}
+  when: not ansible_check_mode
+
+- name: Check whether tmux is installed
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -c
+      - command -v tmux
+  register: translator_tmux_available
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Check for the dedicated legacy translator tmux session
+  ansible.builtin.command:
+    argv:
+      - tmux
+      - has-session
+      - -t
+      - "={{ translator_legacy_tmux_session }}"
+  register: translator_legacy_tmux
+  changed_when: false
+  failed_when: translator_legacy_tmux.rc not in [0, 1]
+  when:
+    - not ansible_check_mode
+    - translator_tmux_available.rc == 0
+
+- name: Record whether the legacy tmux session is active
+  ansible.builtin.set_fact:
+    translator_legacy_tmux_active: >-
+      {{
+        translator_tmux_available.rc == 0
+        and (translator_legacy_tmux.rc | default(1)) == 0
+      }}
+  when: not ansible_check_mode
+
+- name: Refuse an ambiguous legacy tmux cutover
+  ansible.builtin.assert:
+    that:
+      - translator_legacy_pids | length <= 1
+    fail_msg: >-
+      The {{ translator_legacy_tmux_session }} tmux session exists, but more
+      than one translator-api process is not managed by systemd:
+      {{ translator_legacy_pids | join(', ') }}. Stop the unexpected processes
+      cleanly before rerunning this playbook.
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+
+- name: Read the legacy translator working directory
+  ansible.builtin.command:
+    argv:
+      - readlink
+      - -f
+      - "/proc/{{ translator_legacy_pids[0] }}/cwd"
+  register: translator_legacy_cwd
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Read the legacy translator environment
+  ansible.builtin.slurp:
+    src: "/proc/{{ translator_legacy_pids[0] }}/environ"
+  register: translator_legacy_environment
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Extract the legacy translator config environment entry
+  ansible.builtin.set_fact:
+    translator_legacy_config_environment: >-
+      {{
+        (translator_legacy_environment.content | b64decode).split('\x00')
+        | select('match', '^TRANSLATOR_CONFIG_FILE=')
+        | list
+      }}
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Resolve the legacy translator config path
+  ansible.builtin.set_fact:
+    translator_legacy_config_path: >-
+      {{
+        (
+          translator_legacy_config_environment
+          | first
+          | default('TRANSLATOR_CONFIG_FILE=config/translator.json', true)
+        ).split('=', 1)[1]
+      }}
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Validate the legacy translator runtime location
+  ansible.builtin.assert:
+    that:
+      - translator_legacy_cwd.stdout == translator_deploy_dir
+      - translator_legacy_config_environment | length <= 1
+      - translator_legacy_config_path == 'config/translator.json'
+    fail_msg: >-
+      The legacy translator does not use the expected working directory and
+      config/translator.json. Its SQLite queue cannot be safely assumed to be
+      {{ translator_deploy_dir }}/{{ translator_queue_relative_path }}, so the
+      playbook will not stop it.
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Read the legacy translator configuration
+  ansible.builtin.slurp:
+    src: "{{ translator_deploy_dir }}/config/translator.json"
+  register: translator_legacy_config
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Extract the legacy translator queue path
+  ansible.builtin.set_fact:
+    translator_legacy_queue_relative_path: >-
+      {{ (translator_legacy_config.content | b64decode | from_json).queue.path }}
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Verify the legacy and systemd services share one queue
+  ansible.builtin.assert:
+    that:
+      - translator_legacy_queue_relative_path == translator_queue_relative_path
+    fail_msg: >-
+      The live tmux process uses queue path
+      {{ translator_legacy_queue_relative_path }}, while the systemd deployment
+      would use {{ translator_queue_relative_path }}. The playbook will not stop
+      the legacy process or risk starting with an empty queue.
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Record the live SQLite queue file identity
+  ansible.builtin.stat:
+    path: "{{ translator_deploy_dir }}/{{ translator_queue_relative_path }}"
+    get_checksum: false
+  register: translator_pre_cutover_queue_file
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Require a regular SQLite queue file before cutover
+  ansible.builtin.assert:
+    that:
+      - translator_pre_cutover_queue_file.stat.exists
+      - translator_pre_cutover_queue_file.stat.isreg
+      - not translator_pre_cutover_queue_file.stat.islnk
+    fail_msg: >-
+      The expected SQLite queue file does not exist as a regular file at
+      {{ translator_deploy_dir }}/{{ translator_queue_relative_path }}.
+      The playbook will not stop the legacy process.
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Capture queue state before the first cutover
+  ansible.builtin.uri:
+    url: "{{ translator_stats_url }}"
+    method: GET
+    status_code: 200
+    return_content: true
+    use_proxy: false
+  register: translator_pre_cutover_stats
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Validate the pre-cutover queue response
+  ansible.builtin.assert:
+    that:
+      - translator_pre_cutover_stats.json is mapping
+      - translator_pre_cutover_stats.json.get('input') is number
+      - translator_pre_cutover_stats.json.get('pending') is number
+      - translator_pre_cutover_stats.json.get('output') is number
+      - translator_pre_cutover_stats.json.get('failed') is number
+    fail_msg: >-
+      The legacy process did not return a valid queue-stats document, so its
+      state cannot be checked after cutover.
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Remember the preserved failed-item count
+  ansible.builtin.set_fact:
+    translator_pre_cutover_failed_count: >-
+      {{ translator_pre_cutover_stats.json.failed | int }}
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+    - translator_legacy_pids | length == 1
+
+- name: Gracefully stop the legacy translator tmux process
+  ansible.builtin.command:
+    argv:
+      - tmux
+      - send-keys
+      - -t
+      - "={{ translator_legacy_tmux_session }}:"
+      - C-c
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+
+- name: Wait for complete legacy translator shutdown
+  ansible.builtin.wait_for:
+    path: "/proc/{{ item }}/status"
+    state: absent
+    timeout: 60
+  loop: "{{ translator_legacy_pids }}"
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+
+- name: Remove only the retired translator tmux session
+  ansible.builtin.command:
+    argv:
+      - tmux
+      - kill-session
+      - -t
+      - "={{ translator_legacy_tmux_session }}"
+  register: translator_tmux_removed
+  changed_when: translator_tmux_removed.rc == 0
+  failed_when: translator_tmux_removed.rc not in [0, 1]
+  when:
+    - not ansible_check_mode
+    - translator_legacy_tmux_active
+
+- name: Refresh the systemd-managed translator PID after tmux cleanup
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=MainPID
+      - --value
+      - "{{ translator_service_name }}.service"
+  register: translator_systemd_pid_after_cutover
+  changed_when: false
+  failed_when: translator_systemd_pid_after_cutover.rc not in [0, 1]
+  when: not ansible_check_mode
+
+- name: Find remaining translator processes after tmux cleanup
+  ansible.builtin.command:
+    argv:
+      - pgrep
+      - -x
+      - translator-api
+  register: translator_processes_after_cutover
+  changed_when: false
+  failed_when: translator_processes_after_cutover.rc not in [0, 1]
+  when: not ansible_check_mode
+
+- name: Identify remaining unmanaged translator processes
+  ansible.builtin.set_fact:
+    translator_unmanaged_pids: >-
+      {{
+        (translator_processes_after_cutover.stdout_lines | default([]))
+        | difference([(translator_systemd_pid_after_cutover.stdout | default('0') | trim)])
+      }}
+  when: not ansible_check_mode
+
+- name: Refuse to start alongside an unmanaged translator process
+  ansible.builtin.fail:
+    msg: >-
+      Unmanaged translator-api processes are still running with PIDs
+      {{ translator_unmanaged_pids | join(', ') }}. Stop them cleanly, then
+      rerun this playbook.
+  when:
+    - not ansible_check_mode
+    - translator_unmanaged_pids | length > 0
+
+- name: Give the service account ownership of the preserved queue state
+  ansible.builtin.file:
+    path: "{{ translator_data_dir }}"
+    state: directory
+    owner: "{{ translator_service_user }}"
+    group: "{{ translator_service_group }}"
+    mode: "u=rwX,go="
+    recurse: true
+  when: not ansible_check_mode
+
+- name: Apply the pending translator restart before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the translator API
+  ansible.builtin.systemd_service:
+    name: "{{ translator_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Wait for the translator health endpoint
+  ansible.builtin.uri:
+    url: "{{ translator_health_url }}"
+    method: GET
+    status_code: 200
+    return_content: true
+    use_proxy: false
+  register: translator_health
+  until:
+    - translator_health.status == 200
+    - (translator_health.json | default({})).get('status') == 'ok'
+    - (translator_health.json | default({})).get('service') == 'translator'
+  retries: 15
+  delay: 2
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the translator systemd unit is active
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - "{{ translator_service_name }}.service"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Read the active translator systemd PID
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=MainPID
+      - --value
+      - "{{ translator_service_name }}.service"
+  register: translator_active_systemd_pid
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require a live systemd-managed translator process
+  ansible.builtin.assert:
+    that:
+      - translator_active_systemd_pid.stdout | trim | int > 0
+    fail_msg: >-
+      {{ translator_service_name }}.service has no live MainPID after startup.
+  when: not ansible_check_mode
+
+- name: Inspect the translator API listener owner
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -H
+      - -ltnp
+      - sport
+      - "="
+      - ":{{ translator_listen_port }}"
+  register: translator_listener
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify systemd owns the translator API listener
+  ansible.builtin.assert:
+    that:
+      - translator_listener.stdout_lines | length == 1
+      - translator_listen_address in translator_listener.stdout
+      - "'translator-api' in translator_listener.stdout"
+      - >-
+        ('pid=' ~ (translator_active_systemd_pid.stdout | trim) ~ ',')
+        in translator_listener.stdout
+    fail_msg: >-
+      Port {{ translator_listen_port }} is not bound exclusively to
+      {{ translator_listen_address }} by systemd MainPID
+      {{ translator_active_systemd_pid.stdout | trim }}.
+  when: not ansible_check_mode
+
+- name: Read translator queue state after startup
+  ansible.builtin.uri:
+    url: "{{ translator_stats_url }}"
+    method: GET
+    status_code: 200
+    return_content: true
+    use_proxy: false
+  register: translator_stats
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Read the systemd service SQLite queue file identity
+  ansible.builtin.stat:
+    path: "{{ translator_deploy_dir }}/{{ translator_queue_relative_path }}"
+    get_checksum: false
+  register: translator_systemd_queue_file
+  when: not ansible_check_mode
+
+- name: Verify the systemd service opened the preserved SQLite file
+  ansible.builtin.assert:
+    that:
+      - translator_systemd_queue_file.stat.exists
+      - translator_systemd_queue_file.stat.isreg
+      - translator_systemd_queue_file.stat.dev == translator_pre_cutover_queue_file.stat.dev
+      - translator_systemd_queue_file.stat.inode == translator_pre_cutover_queue_file.stat.inode
+    fail_msg: >-
+      The SQLite file used after cutover is not the same filesystem object
+      that the tmux process used before shutdown.
+  when:
+    - not ansible_check_mode
+    - translator_pre_cutover_queue_file.stat is defined
+
+- name: Verify translator queue access and preserved state
+  ansible.builtin.assert:
+    that:
+      - translator_stats.json is mapping
+      - translator_stats.json.get('input') is number
+      - translator_stats.json.get('pending') is number
+      - translator_stats.json.get('output') is number
+      - translator_stats.json.get('failed') is number
+      - >-
+        translator_pre_cutover_failed_count is not defined
+        or translator_stats.json.failed >= translator_pre_cutover_failed_count
+    fail_msg: >-
+      The systemd service did not expose a valid queue or did not preserve the
+      failed-item state captured before cutover.
+  when: not ansible_check_mode
+
+- name: Remove the obsolete plaintext environment file after verification
+  ansible.builtin.file:
+    path: "{{ translator_deploy_dir }}/.env"
+    state: absent

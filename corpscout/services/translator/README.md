@@ -479,6 +479,10 @@ reads configuration from `config/translator.json` plus the environment
 variables listed above, opens (or creates) the shared SQLite queue, starts
 the Temporal worker, and performs boot-resume before serving HTTP.
 
+For the persistent deployment on `dagster`, use the Ansible package under
+[`ansible/`](ansible/README.md). It installs the compiled API as
+`translator-api.service`; `make run` is only for local development.
+
 ## Direct Temporal Trigger
 
 Use the Go trigger command when you want to signal (or start) the shared
