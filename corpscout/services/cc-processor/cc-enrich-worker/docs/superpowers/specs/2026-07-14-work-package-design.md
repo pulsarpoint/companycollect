@@ -71,9 +71,11 @@ func (r *Run) Plan(part uint32) (warcinput.Plan, error)
 // (run()'s --out flag remains a caller-side override for single-part debug runs.)
 func (r *Run) OutDir(part uint32) string
 
-// EmbedDir is the sibling embedding tree for the part:
-//   <base>/<crawlID>/embedding/warc/<selection>/<basename(OutDir(part))>
-func (r *Run) EmbedDir(part uint32) string
+// EmbedDirFor is the sibling embedding tree for an ACTUAL output directory:
+//   <base>/<crawlID>/embedding/warc/<selection>/<basename(outDir)>
+// It takes the outDir (not the part) because single-part runs can override --out, and the
+// embedding sibling follows the override's basename — exactly today's behavior.
+func (r *Run) EmbedDirFor(outDir string) string
 
 // CompletedEmbedding reports whether dir already holds a complete vector file (embeddings.parquet
 // or embeddings_fp16.parquet, including the .empty-marker and undecodable-fp16 fallbacks). Moved
@@ -96,16 +98,17 @@ func CompletedEmbedding(dir string) (path string, rows int64, complete bool)
 
 ### Caller refactor (no behavior change)
 
-- `runRange`: `work.Open` replaces `requireLocalCatalog` + inline `LoadPartStats` classification;
-  `r.OutDir` replaces the `outDirFor` closure (the closure remains as a thin adapter since
-  `runRangePool`'s signature keeps `outDirFor func(uint32) string` for test injection).
+- `runRange`: `work.Open` replaces `requireLocalCatalog` + inline `LoadPartStats` classification.
+- `runRangePool`/`runPartAttempt`: the `outDirFor func(uint32) string` parameter is REPLACED by the
+  `*work.Run` — one source of truth for paths and status. Tests build a real `work.Run` against
+  their fixture catalogs (they already write them), so injection still works.
 - `runPartAttempt`: marker + preserve checks become `r.Status(part)` (Produced → skip, Preserved →
   skip with today's log line, Pending → wipe-if-dirty then produce).
 - `run()` (single `--part`): preflight via `work.Open`; default outDir via `r.OutDir`; embed
   verify-and-skip via `work.CompletedEmbedding`.
 - `openInput`: `r.Plan(part)` replaces the inline `warcinput.LoadPlan` + `primaryPagesOnly`
   derivation.
-- `processInput`: both duplicated embedding-dir joins become `r.EmbedDir(part)`.
+- `processInput`: both duplicated embedding-dir joins become `r.EmbedDirFor(outDir)`.
 - Deleted from `cmd`: `requireLocalCatalog`, `preserveStaleDir`, `completedEmbedding`,
   `parquetRows` (all moved), plus the duplicated path joins.
 - `partDeps` gains the `*work.Run` so producePart/openInput/processInput reach it.
