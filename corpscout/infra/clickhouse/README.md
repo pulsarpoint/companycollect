@@ -28,6 +28,37 @@ configuration changed, so an unchanged run never restarts ClickHouse.
 
 Data lives on the host at `/opt/clickhouse/data/clickhouse`.
 
+## Backups
+
+A `clickhouse-backup` sidecar (Altinity, watch mode) continuously backs up
+all databases to the Backblaze B2 bucket `main-ch-backup`: a full backup
+every 7 days, an incremental every 24 h, keeping the 28 most recent remote
+backups (~4 weeks of daily restore points). It is enabled by
+`COMPOSE_PROFILES=backup` in the server `.env`; local dev without that
+profile never starts it.
+
+Check backup health:
+
+```bash
+docker exec clickhouse-clickhouse-backup-1 clickhouse-backup list remote
+docker logs --tail 50 clickhouse-clickhouse-backup-1
+```
+
+Restore (incrementals resolve their base chain automatically):
+
+```bash
+# Full restore of everything, e.g. on a fresh host after install.yml:
+docker exec clickhouse-clickhouse-backup-1 clickhouse-backup restore_remote <backup_name>
+
+# Single table into a scratch database (used for periodic restore drills):
+docker exec clickhouse-clickhouse-backup-1 clickhouse-backup restore_remote \
+  --tables="corpscout.<table>" \
+  --restore-database-mapping="corpscout:backup_verify" <backup_name>
+```
+
+Note: backup names carry a literal `shard{shard}-` prefix (the {shard} macro is not set on this host), so names look like `shard{shard}-full-20260714142423` as listed by `list remote`. Watch's backup chain restarts (new full) if the sidecar container is
+recreated; a host reboot therefore triggers an off-schedule full upload.
+
 ## Local development
 
 ```bash
