@@ -17,3 +17,8 @@ backblaze_key_id: "00525ec29e20f3f0000000001"
 backblaze_key_name: backup
 backblaze_app_key: "K005ycAwNLC0meYx8C8hZWIK3jb2E50"
 backblaze_endpoint: s3.us-east-005.backblazeb2.com
+
+# Backups — clickhouse-backup sidecar (watch mode) uploading to Backblaze B2.
+backup_s3_bucket: main-ch-backup
+backup_s3_region: us-east-005
+backups_to_keep_remote: 28
