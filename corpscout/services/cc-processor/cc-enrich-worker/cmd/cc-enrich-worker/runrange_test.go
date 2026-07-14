@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/parquet-go/parquet-go"
@@ -174,6 +175,14 @@ func outDirForTest(base, cmd string) func(uint32) string {
 	}
 }
 
+// shrinkBackoff makes retry backoffs effectively immediate so exhaustion tests run in milliseconds.
+func shrinkBackoff(t *testing.T) {
+	t.Helper()
+	old := partBackoffBase
+	partBackoffBase = time.Microsecond
+	t.Cleanup(func() { partBackoffBase = old })
+}
+
 func domainsFromParquet(t *testing.T, outDir string) []string {
 	t.Helper()
 	rows, err := parquet.ReadFile[output.DomainRow](filepath.Join(outDir, "domains.parquet"))
@@ -241,6 +250,7 @@ func reflectEqualStr(a, b []string) bool {
 }
 
 func TestRunRangePoolFailureAndResume(t *testing.T) {
+	shrinkBackoff(t)
 	base := t.TempDir()
 	getter := writeRangeFixture(t, base, []fixturePart{
 		{index: 0, present: true}, {index: 1, present: true},
@@ -281,8 +291,14 @@ func TestRunRangePoolFailureAndResume(t *testing.T) {
 	if sum2.Skipped != 3 {
 		t.Errorf("run2 skipped = %d, want 3", sum2.Skipped)
 	}
-	if len(producedParts) != 1 || producedParts[2] != 1 {
-		t.Errorf("run2 attempted parts = %v, want only {2:1}", producedParts)
+	// Run 2 never produces (healthy parts all skip, and a skip is not a phase-2 transition), so the
+	// still-cold part 2 trips the phase-1 breaker on its 5th consecutive failure instead of
+	// exhausting all attempts. The part stays unmarked either way.
+	if !sum2.Breaker {
+		t.Error("run2: breaker should trip — only failures and skips, no successes")
+	}
+	if len(producedParts) != 1 || producedParts[2] != consecutiveFailureLimit {
+		t.Errorf("run2 attempted parts = %v, want only {2:%d}", producedParts, consecutiveFailureLimit)
 	}
 }
 
@@ -434,5 +450,177 @@ func TestRunRangePoolPreservesLoadedDir(t *testing.T) {
 	}
 	if !markers.Exists(markers.ProducedPath(outDirFor(0))) {
 		t.Error("healthy sibling part 0 should be produced")
+	}
+}
+
+// TestRunRangePoolRetriesThenSucceeds proves a transiently-failing part is requeued with backoff,
+// its stale output debris is wiped between attempts, and it ends Produced — not Failed.
+func TestRunRangePoolRetriesThenSucceeds(t *testing.T) {
+	shrinkBackoff(t)
+	base := t.TempDir()
+	getter := writeRangeFixture(t, base, []fixturePart{{index: 0, present: true}})
+	deps := techDeps(t, base, getter)
+	outDirFor := outDirForTest(base, "tech")
+
+	var attempts atomic.Int64
+	var junk string
+	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
+		if attempts.Add(1) <= 2 {
+			// Simulate a produce that failed after partial output: the debris must be wiped
+			// by the stale-dir cleanup before the retry attempt.
+			if err := os.MkdirAll(outDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			junk = filepath.Join(outDir, "partial.tmp")
+			if err := os.WriteFile(junk, []byte("debris"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return partResult{}, fmt.Errorf("transient S3 coldness")
+		}
+		return producePart(ctx, deps, part, outDir)
+	}
+
+	sum := runRangePool(context.Background(), []uint32{0}, 1, "tech", "test-run", outDirFor, produce, nil)
+
+	if sum.Produced != 1 || sum.Failed != 0 || sum.Retries != 2 || sum.Breaker {
+		t.Fatalf("summary = %+v, want produced=1 failed=0 retries=2 breaker=false", sum)
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Errorf("attempts = %d, want 3", got)
+	}
+	if !markers.Exists(markers.ProducedPath(outDirFor(0))) {
+		t.Error("part 0 should be marked produced")
+	}
+	if _, err := os.Stat(junk); !os.IsNotExist(err) {
+		t.Errorf("junk from failed attempt survived: err=%v", err)
+	}
+	if got := domainsFromParquet(t, outDirFor(0)); !reflectEqualStr(got, []string{"d0.com"}) {
+		t.Errorf("domains = %v", got)
+	}
+}
+
+// TestRunRangePoolExhaustsPersistentlyFailingPart proves a part whose WARC bytes never appear is
+// attempted exactly maxPartAttempts times, then counted Failed once and left unmarked.
+func TestRunRangePoolExhaustsPersistentlyFailingPart(t *testing.T) {
+	shrinkBackoff(t)
+	base := t.TempDir()
+	getter := writeRangeFixture(t, base, []fixturePart{
+		{index: 0, present: true}, // succeeds first: the run is in phase 2 before the failures
+		{index: 1, present: false},
+	})
+	deps := techDeps(t, base, getter)
+	outDirFor := outDirForTest(base, "tech")
+
+	var attempts1 atomic.Int64
+	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
+		if part == 1 {
+			attempts1.Add(1)
+		}
+		return producePart(ctx, deps, part, outDir)
+	}
+
+	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", outDirFor, produce, nil)
+
+	if sum.Produced != 1 || sum.Failed != 1 || !reflectEqualU32(sum.FailedParts, []uint32{1}) || sum.Breaker {
+		t.Fatalf("summary = %+v, want produced=1 failed=1 failedParts=[1] breaker=false", sum)
+	}
+	if sum.Retries != maxPartAttempts-1 {
+		t.Errorf("retries = %d, want %d", sum.Retries, maxPartAttempts-1)
+	}
+	if got := attempts1.Load(); got != maxPartAttempts {
+		t.Errorf("part 1 attempts = %d, want %d", got, maxPartAttempts)
+	}
+	if markers.Exists(markers.ProducedPath(outDirFor(1))) {
+		t.Error("exhausted part must not be marked produced")
+	}
+}
+
+// TestRunRangePoolTransientFailuresDoNotTripBreakerAfterSuccess: 16 attempt failures (far past the
+// old 5-consecutive limit) from two cold parts must not kill a run that has already produced —
+// phase 2 counts only consecutive EXHAUSTED parts, and 2 < 5.
+func TestRunRangePoolTransientFailuresDoNotTripBreakerAfterSuccess(t *testing.T) {
+	shrinkBackoff(t)
+	base := t.TempDir()
+	getter := writeRangeFixture(t, base, []fixturePart{
+		{index: 0, present: true},
+		{index: 1, present: false}, {index: 2, present: false},
+		{index: 3, present: true}, {index: 4, present: true},
+	})
+	deps := techDeps(t, base, getter)
+	outDirFor := outDirForTest(base, "tech")
+	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
+		return producePart(ctx, deps, part, outDir)
+	}
+
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3, 4}, 1, "tech", "test-run", outDirFor, produce, nil)
+
+	if sum.Breaker {
+		t.Fatal("breaker must not trip on transient failures after a success")
+	}
+	if sum.Produced != 3 || sum.Failed != 2 {
+		t.Fatalf("summary = %+v, want produced=3 failed=2", sum)
+	}
+	if sum.Retries != 2*(maxPartAttempts-1) {
+		t.Errorf("retries = %d, want %d", sum.Retries, 2*(maxPartAttempts-1))
+	}
+}
+
+// TestRunRangePoolExhaustedPartsTripBreaker: in phase 2, 5 consecutive EXHAUSTED parts still trip.
+func TestRunRangePoolExhaustedPartsTripBreaker(t *testing.T) {
+	shrinkBackoff(t)
+	base := t.TempDir()
+	parts := []fixturePart{{index: 0, present: true}}
+	class := []uint32{0}
+	for i := uint32(1); i <= 5; i++ {
+		parts = append(parts, fixturePart{index: i, present: false})
+		class = append(class, i)
+	}
+	getter := writeRangeFixture(t, base, parts)
+	deps := techDeps(t, base, getter)
+	outDirFor := outDirForTest(base, "tech")
+	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
+		return producePart(ctx, deps, part, outDir)
+	}
+
+	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", outDirFor, produce, nil)
+
+	if !sum.Breaker {
+		t.Fatal("5 consecutive exhausted parts must trip the breaker")
+	}
+	if sum.Produced != 1 || sum.Failed != 5 {
+		t.Fatalf("summary = %+v, want produced=1 failed=5", sum)
+	}
+}
+
+// TestRunRangePoolExternalCancelDrains proves an external cancel (operator interrupt) drains the
+// pool promptly — the test would hang past its deadline on a dispatcher/worker deadlock.
+func TestRunRangePoolExternalCancelDrains(t *testing.T) {
+	shrinkBackoff(t)
+	base := t.TempDir()
+	getter := writeRangeFixture(t, base, []fixturePart{
+		{index: 0, present: true}, {index: 1, present: true}, {index: 2, present: true},
+	})
+	deps := techDeps(t, base, getter)
+	outDirFor := outDirForTest(base, "tech")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
+		if part == 0 {
+			cancel()
+			return partResult{}, ctx.Err()
+		}
+		return producePart(ctx, deps, part, outDir)
+	}
+
+	sum := runRangePool(ctx, []uint32{0, 1, 2}, 1, "tech", "test-run", outDirFor, produce, nil)
+
+	if sum.Produced != 0 {
+		t.Errorf("produced = %d, want 0 after immediate cancel", sum.Produced)
+	}
+	for _, part := range []uint32{0, 1, 2} {
+		if markers.Exists(markers.ProducedPath(outDirFor(part))) {
+			t.Errorf("part %d must not be marked produced after cancel", part)
+		}
 	}
 }
