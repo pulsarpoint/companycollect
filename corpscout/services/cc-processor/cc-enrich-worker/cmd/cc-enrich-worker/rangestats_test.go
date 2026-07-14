@@ -82,7 +82,6 @@ func TestRunRangeSinkAggregatesAndSilencesPerChunkLogs(t *testing.T) {
 	runStats := &worker.RunStats{}
 	deps.runStats = runStats
 
-	outDirFor := outDirForTest(base, "tech")
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 		return producePart(ctx, deps, part, outDir)
 	}
@@ -95,7 +94,7 @@ func TestRunRangeSinkAggregatesAndSilencesPerChunkLogs(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(prevOut) })
 
 	prog := &poolProgress{total: 4}
-	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", "test-run", outDirFor, produce, prog)
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", "test-run", deps.work, produce, prog)
 	log.SetOutput(prevOut)
 
 	if sum.Produced != 4 || sum.Failed != 0 {

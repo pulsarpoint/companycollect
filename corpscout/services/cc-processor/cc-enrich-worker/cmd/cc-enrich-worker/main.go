@@ -18,7 +18,6 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/dustin/go-humanize"
 	"github.com/fsnotify/fsnotify"
-	"github.com/parquet-go/parquet-go"
 
 	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/embed"
@@ -28,6 +27,7 @@ import (
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/tech"
 	"cc-enrich-worker/internal/warcinput"
+	"cc-enrich-worker/internal/work"
 	"cc-enrich-worker/internal/worker"
 )
 
@@ -309,50 +309,6 @@ func detectModel(baseURL string) (string, error) {
 	return parsed.Data[0].ID, nil
 }
 
-// parquetRows returns a Parquet file's row count by reading only its footer. It errors if the file is
-// missing or not a valid/complete Parquet (e.g. a write killed mid-flush) — used by embed verify-and-skip.
-func parquetRows(path string) (int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return 0, err
-	}
-	pf, err := parquet.OpenFile(f, st.Size())
-	if err != nil {
-		return 0, err
-	}
-	return pf.NumRows(), nil
-}
-
-func completedEmbedding(outDir string) (string, int64, bool) {
-	for _, name := range []string{"embeddings.parquet", "embeddings_fp16.parquet"} {
-		path := filepath.Join(outDir, name)
-		rows, err := parquetRows(path)
-		if err == nil {
-			if rows > 0 {
-				return path, rows, true
-			}
-			if _, markerErr := os.Stat(path + ".empty"); markerErr == nil {
-				return path, 0, true
-			}
-			continue
-		}
-		// Converted fp16 files from the older toolchain may have a logical type parquet-go cannot
-		// decode. Their conversion step verified the file before removing fp32, so retain that fallback.
-		if name == "embeddings_fp16.parquet" {
-			info, statErr := os.Stat(path)
-			if statErr == nil && info.Size() > 0 {
-				return path, 0, true
-			}
-		}
-	}
-	return "", 0, false
-}
-
 // partDeps are the per-process resources shared by every part in a run: the parsed opts, the
 // embedder + NACE reference (industry/embed/both), and the object getter. Built ONCE and passed to
 // producePart. The range lanes call producePart concurrently over a SINGLE partDeps, so every field
@@ -368,6 +324,10 @@ type partDeps struct {
 	protos *mdl.Prototypes
 
 	objects fetch.ObjectGetter
+
+	// work answers "what remains for this run": catalog plans, part status, output layout.
+	// Immutable after Open, safe for the range lanes' concurrent producePart calls.
+	work *work.Run
 
 	// runStats is the range runner's process-wide sink. Non-nil ONLY on the --parts path: it puts
 	// every part's ShardConfig into range mode (aggregate + suppress per-chunk logs) and gates the
@@ -491,36 +451,22 @@ func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) 
 
 // openInput loads one part's plan, prepares the WARC input as network range reads, and logs "WARC
 // input ready".
-// requireLocalCatalog returns the local catalog path for the run and fails fast when it is absent.
-// Produce runs never sync the catalog themselves — `sync-db` is the explicit, separate step that
-// downloads and validates it.
-func requireLocalCatalog(base, crawlID, selection string) string {
-	path := filepath.Join(base, crawlID, "warc-index", selection, "catalog.duckdb")
-	if _, err := os.Stat(path); err != nil {
-		log.Fatalf("local catalog missing at %s — run `cc-enrich-worker sync-db --crawl-id %s --selection %s --base %s` first (%v)",
-			path, crawlID, selection, base, err)
-	}
-	return path
-}
-
 func openInput(ctx context.Context, d partDeps, part uint32, outDir string) (preparedPart, error) {
 	o := d.o
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return preparedPart{}, fmt.Errorf("create output dir %s: %w", outDir, err)
 	}
-	primaryPagesOnly := d.mode == "industry" || d.mode == "embed"
-	catalogCachePath := filepath.Join(o.base, o.crawlID, "warc-index", o.selection, "catalog.duckdb")
 	catalogStarted := time.Now()
 	log.Printf(
 		"catalog: opening local catalog crawl=%s selection=%s path=%s",
 		o.crawlID,
 		o.selection,
-		catalogCachePath,
+		d.work.CatalogPath(),
 	)
 	// The synced LOCAL catalog is the only source — produce runs never sync from RustFS. `sync-db`
-	// is the explicit step that downloads and validates it; the CLI entries preflight its presence
-	// (requireLocalCatalog) so a missing catalog fails before any part starts.
-	plan, err := warcinput.LoadPlan(o.base, o.crawlID, o.selection, part, primaryPagesOnly)
+	// is the explicit step that downloads and validates it; work.Open preflighted its presence
+	// so a missing catalog fails before any part starts.
+	plan, err := d.work.Plan(part)
 	if err != nil {
 		return preparedPart{}, fmt.Errorf("load WARC catalog: %w", err)
 	}
@@ -690,7 +636,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 		runEmbedChunk := mode == "both" // "both" also emits vectors -> the separate data/embedding tree
 		embedDir := ""
 		if runEmbedChunk {
-			embedDir = filepath.Join(o.base, o.crawlID, "embedding", "warc", o.selection, filepath.Base(outDir))
+			embedDir = d.work.EmbedDirFor(outDir)
 		}
 		streamer, serr := worker.NewShardStreamer(outDir, embedDir, runEmbedChunk, true /*runTech*/)
 		if serr != nil {
@@ -804,7 +750,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 		if len(embeddings) > 0 || mode == "embed" {
 			embedDir := outDir
 			if mode != "embed" {
-				embedDir = filepath.Join(o.base, o.crawlID, "embedding", "warc", o.selection, filepath.Base(outDir))
+				embedDir = d.work.EmbedDirFor(outDir)
 			}
 			if err := os.MkdirAll(embedDir, 0o755); err != nil {
 				return partResult{}, fmt.Errorf("create embedding dir %s: %w", embedDir, err)
@@ -859,7 +805,10 @@ func run(mode string, o opts) {
 		log.Fatalf("resolve base directory %s: %v", o.base, err)
 	}
 	o.base = base
-	requireLocalCatalog(o.base, o.crawlID, o.selection)
+	w, err := work.Open(o.base, o.crawlID, o.selection, mode)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so the
 	// loader knows which file → which table. A single --part run is for ad-hoc/debug produce; it does NOT
@@ -869,7 +818,7 @@ func run(mode string, o opts) {
 	// embedding tree is a sibling under <base>/<crawl>/embedding/ (derived from outDir below).
 	outDir := o.out
 	if outDir == "" {
-		outDir = filepath.Join(o.base, o.crawlID, "warc", o.selection, fmt.Sprintf("out_%s_%d", mode, o.part))
+		outDir = w.OutDir(uint32(o.part))
 	}
 	// embed VERIFY-AND-SKIP: a part is DONE if its embed folder already holds a complete vector file under
 	// EITHER name — embeddings.parquet (fp32, fresh from this pass) or embeddings_fp16.parquet (converted
@@ -879,7 +828,7 @@ func run(mode string, o opts) {
 	// file was verified before its fp32 was pruned). If done, skip the whole part (no re-fetch/re-embed);
 	// else fall through and (over)write embeddings.parquet. embed deliberately reuses the dir (no empty rule).
 	if mode == "embed" {
-		if embPath, rows, complete := completedEmbedding(outDir); complete {
+		if embPath, rows, complete := work.CompletedEmbedding(outDir); complete {
 			log.Printf("skip: embeddings already present (rows=%d) -> %s", rows, embPath)
 			return
 		}
@@ -891,6 +840,7 @@ func run(mode string, o opts) {
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
+	d.work = w
 	if _, err := producePart(ctx, d, uint32(o.part), outDir); err != nil {
 		log.Fatalf("%v", err)
 	}

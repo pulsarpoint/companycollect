@@ -21,6 +21,7 @@ import (
 	"cc-enrich-worker/internal/markers"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/tech"
+	"cc-enrich-worker/internal/work"
 )
 
 // gzWarc wraps an HTTP response string as a gzipped single WARC response record (copied from the
@@ -153,6 +154,10 @@ func techDeps(t *testing.T, base string, getter fetch.ObjectGetter) partDeps {
 	}
 	tech.SetFastMatcher(fm)
 	t.Cleanup(func() { tech.SetFastMatcher(nil) })
+	w, err := work.Open(base, testCrawlID, testSelection, "tech")
+	if err != nil {
+		t.Fatal(err)
+	}
 	return partDeps{
 		mode: "tech",
 		o: opts{
@@ -164,6 +169,7 @@ func techDeps(t *testing.T, base string, getter fetch.ObjectGetter) partDeps {
 			techEngine:  "fast",
 		},
 		objects: getter,
+		work:    w,
 	}
 }
 
@@ -219,7 +225,7 @@ func TestRunRangePoolAllSucceed(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 2, "tech", "test-run", deps.work, produce, nil)
 
 	if sum.Produced != 4 || sum.Failed != 0 || sum.Skipped != 0 || sum.Breaker {
 		t.Fatalf("summary = %+v, want produced=4 failed=0 skipped=0 breaker=false", sum)
@@ -268,7 +274,7 @@ func TestRunRangePoolFailureAndResume(t *testing.T) {
 	}
 
 	// warcParallel=1 keeps failure ordering deterministic.
-	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", deps.work, produce, nil)
 	if sum.Produced != 3 || sum.Failed != 1 || !reflectEqualU32(sum.FailedParts, []uint32{2}) {
 		t.Fatalf("run1 summary = %+v, want produced=3 failed=1 failedParts=[2]", sum)
 	}
@@ -285,7 +291,7 @@ func TestRunRangePoolFailureAndResume(t *testing.T) {
 	for k := range producedParts {
 		delete(producedParts, k)
 	}
-	sum2 := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum2 := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, 1, "tech", "test-run", deps.work, produce, nil)
 	if sum2.Skipped != 3 {
 		t.Errorf("run2 skipped = %d, want 3", sum2.Skipped)
 	}
@@ -313,7 +319,7 @@ func TestRunRangePoolParallelDeterministic(t *testing.T) {
 		produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 			return producePart(ctx, deps, part, outDir)
 		}
-		sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, warcParallel, "tech", "test-run", outDirFor, produce, nil)
+		sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3}, warcParallel, "tech", "test-run", deps.work, produce, nil)
 		if sum.Produced != 4 {
 			t.Fatalf("warcParallel=%d produced=%d, want 4", warcParallel, sum.Produced)
 		}
@@ -344,7 +350,6 @@ func TestRunRangePoolBreaker(t *testing.T) {
 	}
 	getter := writeRangeFixture(t, base, parts)
 	deps := techDeps(t, base, getter)
-	outDirFor := outDirForTest(base, "tech")
 
 	var attempts atomic.Int64
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
@@ -352,7 +357,7 @@ func TestRunRangePoolBreaker(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if !sum.Breaker {
 		t.Error("breaker should have tripped")
@@ -362,44 +367,6 @@ func TestRunRangePoolBreaker(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 5 {
 		t.Errorf("produce attempts = %d, want exactly 5", got)
-	}
-}
-
-// TestPreserveStaleDir unit-tests the predicate that guards the stale-dir wipe: a bare debris dir
-// is wipeable, a sibling .loaded marker or a complete embed file is authoritative and preserved,
-// and the embed check is scoped to the embed command only.
-func TestPreserveStaleDir(t *testing.T) {
-	// Bare non-empty dir, no markers -> wipeable (not preserved).
-	bare := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bare, "junk"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if preserveStaleDir("tech", bare) {
-		t.Error("bare debris dir should not be preserved")
-	}
-
-	// A sibling .loaded marker -> preserved for any command.
-	loaded := filepath.Join(t.TempDir(), "out_tech_0")
-	if err := os.MkdirAll(loaded, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := markers.WriteLoaded(loaded); err != nil {
-		t.Fatal(err)
-	}
-	if !preserveStaleDir("tech", loaded) {
-		t.Error(".loaded dir must be preserved")
-	}
-
-	// A complete embeddings file -> preserved for embed, but NOT for tech (embed check is scoped).
-	emb := t.TempDir()
-	if err := parquet.WriteFile(filepath.Join(emb, "embeddings.parquet"), []embeddingFixture{{Value: 1}}); err != nil {
-		t.Fatal(err)
-	}
-	if !preserveStaleDir("embed", emb) {
-		t.Error("complete embed dir must be preserved for embed")
-	}
-	if preserveStaleDir("tech", emb) {
-		t.Error("an embeddings file must not preserve a tech dir")
 	}
 }
 
@@ -432,7 +399,7 @@ func TestRunRangePoolPreservesLoadedDir(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if sum.Produced != 1 || sum.Skipped != 1 || sum.Failed != 0 {
 		t.Fatalf("summary = %+v, want produced=1 skipped=1 failed=0", sum)
@@ -478,7 +445,7 @@ func TestRunRangePoolRetriesThenSucceeds(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), []uint32{0}, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), []uint32{0}, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if sum.Produced != 1 || sum.Failed != 0 || sum.Retries != 2 || sum.Breaker {
 		t.Fatalf("summary = %+v, want produced=1 failed=0 retries=2 breaker=false", sum)
@@ -517,7 +484,7 @@ func TestRunRangePoolExhaustsPersistentlyFailingPart(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), []uint32{0, 1}, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if sum.Produced != 1 || sum.Failed != 1 || !reflectEqualU32(sum.FailedParts, []uint32{1}) || sum.Breaker {
 		t.Fatalf("summary = %+v, want produced=1 failed=1 failedParts=[1] breaker=false", sum)
@@ -545,12 +512,11 @@ func TestRunRangePoolTransientFailuresDoNotTripBreakerAfterSuccess(t *testing.T)
 		{index: 3, present: true}, {index: 4, present: true},
 	})
 	deps := techDeps(t, base, getter)
-	outDirFor := outDirForTest(base, "tech")
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3, 4}, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), []uint32{0, 1, 2, 3, 4}, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if sum.Breaker {
 		t.Fatal("breaker must not trip on transient failures after a success")
@@ -575,12 +541,11 @@ func TestRunRangePoolExhaustedPartsTripBreaker(t *testing.T) {
 	}
 	getter := writeRangeFixture(t, base, parts)
 	deps := techDeps(t, base, getter)
-	outDirFor := outDirForTest(base, "tech")
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if !sum.Breaker {
 		t.Fatal("5 consecutive exhausted parts must trip the breaker")
@@ -616,7 +581,7 @@ func TestRunRangePoolPhase1TripSurvivesStragglerSuccess(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), class, 2, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(context.Background(), class, 2, "tech", "test-run", deps.work, produce, nil)
 
 	if !sum.Breaker {
 		t.Fatal("phase-1 breaker should have tripped")
@@ -653,7 +618,7 @@ func TestRunRangePoolExternalCancelDrains(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(ctx, []uint32{0, 1, 2}, 1, "tech", "test-run", outDirFor, produce, nil)
+	sum := runRangePool(ctx, []uint32{0, 1, 2}, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if sum.Produced != 0 {
 		t.Errorf("produced = %d, want 0 after immediate cancel", sum.Produced)

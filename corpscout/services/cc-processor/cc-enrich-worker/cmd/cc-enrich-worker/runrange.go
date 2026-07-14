@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"cc-enrich-worker/internal/catalog"
 	"cc-enrich-worker/internal/markers"
+	"cc-enrich-worker/internal/work"
 	"cc-enrich-worker/internal/worker"
 )
 
@@ -37,35 +37,11 @@ type rangeSummary struct {
 // wraps producePart (range reads); tests inject a fixture-backed producer.
 type partProducer func(ctx context.Context, part uint32, outDir string) (partResult, error)
 
-// preserveStaleDir reports whether a NON-EMPTY output dir that lacks a .produced marker must be
-// kept (and its part skipped) instead of wiped as crashed-produce debris:
-//
-//   - a sibling .loaded marker means the retired cc-crawl produce→verify→load lifecycle already
-//     loaded this output into ClickHouse and wrote .loaded (it did not always leave .produced behind).
-//     Historical output on disk still has that shape, and wiping it would delete data the DB still
-//     references — disk would diverge from ClickHouse.
-//   - for embed, an already-complete embeddings file (the single-part verify-and-skip predicate,
-//     completedEmbedding) is the expensive GPU artifact; spec §2 keeps that as the inner safety net.
-//
-// Either way the on-disk output is authoritative, so the caller skips the part rather than
-// reproducing it.
-func preserveStaleDir(cmd, outDir string) bool {
-	if markers.Exists(markers.LoadedPath(outDir)) {
-		return true
-	}
-	if cmd == "embed" {
-		if _, _, complete := completedEmbedding(outDir); complete {
-			return true
-		}
-	}
-	return false
-}
-
 // runRangePool consumes class over min(warcParallel, len(class)) worker goroutines, coordinated by
-// a dispatcher loop (this function) that owns all scheduling state. Per attempt a worker honors the
-// .produced marker (skip), preserves a complete-but-unmarked output (.loaded or a complete embed
-// file) as skipped, removes a stale output dir left by a crashed or failed produce, runs the
-// producer, and on success writes the .produced marker with the row counts.
+// a dispatcher loop (this function) that owns all scheduling state. Per attempt a worker re-checks
+// the part's work.Status (Produced/Preserved → skip), removes a stale Pending output dir left by a
+// crashed or failed produce, runs the producer, and on success writes the .produced marker with the
+// row counts.
 //
 // Failure handling (spec 2026-07-14-part-retry-backoff-design.md): a failed part is requeued with
 // exponential backoff (partBackoff) and counts as Failed only after maxPartAttempts attempts. The
@@ -76,7 +52,7 @@ func runRangePool(
 	class []uint32,
 	warcParallel int,
 	cmd, runID string,
-	outDirFor func(uint32) string,
+	w *work.Run,
 	produce partProducer,
 	prog *poolProgress,
 ) rangeSummary {
@@ -102,7 +78,7 @@ func runRangePool(
 		go func() {
 			defer wg.Done()
 			for pd := range parts {
-				results <- runPartAttempt(ctx, pd, cmd, runID, outDirFor, produce, prog)
+				results <- runPartAttempt(ctx, pd, cmd, runID, w, produce, prog)
 			}
 		}()
 	}
@@ -255,7 +231,7 @@ func runPartAttempt(
 	ctx context.Context,
 	pd pendingPart,
 	cmd, runID string,
-	outDirFor func(uint32) string,
+	w *work.Run,
 	produce partProducer,
 	prog *poolProgress,
 ) partOutcome {
@@ -263,22 +239,22 @@ func runPartAttempt(
 	if ctx.Err() != nil {
 		return partOutcome{pending: pd, aborted: true}
 	}
-	outDir := outDirFor(pd.part)
+	outDir := w.OutDir(pd.part)
 
-	if markers.Exists(markers.ProducedPath(outDir)) {
+	// The dispatch-time authoritative re-check: another host may have produced or loaded this part
+	// after the planning sweep (rsync/NFS marker arrival).
+	switch w.Status(pd.part) {
+	case work.Produced:
+		prog.addSkipped()
+		return partOutcome{pending: pd, skipped: true}
+	case work.Preserved:
+		log.Printf("range: preserving complete-but-unmarked output dir (skip) part=%d %s", pd.part, outDir)
 		prog.addSkipped()
 		return partOutcome{pending: pd, skipped: true}
 	}
-	// A non-empty output dir with no .produced marker is USUALLY debris from an attempt that
-	// crashed or failed mid-write — remove it so producePart starts clean. But a complete-but-
-	// unmarked output (.loaded from the retired cc-crawl lifecycle, or a complete embed file) is
-	// authoritative: preserve it and skip the part rather than destroying loaded data.
+	// Pending with a non-empty output dir is debris from an attempt that crashed or failed
+	// mid-write — remove it so producePart starts clean (output mutation stays in the runner).
 	if info, statErr := os.Stat(outDir); statErr == nil && info.IsDir() {
-		if preserveStaleDir(cmd, outDir) {
-			log.Printf("range: preserving complete-but-unmarked output dir (skip) part=%d %s", pd.part, outDir)
-			prog.addSkipped()
-			return partOutcome{pending: pd, skipped: true}
-		}
 		log.Printf("range: removing stale output dir (crashed produce?) part=%d %s", pd.part, outDir)
 		if rmErr := os.RemoveAll(outDir); rmErr != nil {
 			log.Printf("range: remove stale output dir part=%d: %v", pd.part, rmErr)
@@ -326,32 +302,30 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 
 	lo, hi := ro.parts.lo, ro.parts.hi
 	// Produce runs never sync the catalog themselves — `sync-db` is the explicit, separate step
-	// that downloads and validates it. Fail fast with that command when the local copy is absent.
-	catalogPath := requireLocalCatalog(o.base, o.crawlID, o.selection)
-	stats, err := catalog.LoadPartStats(ctx, catalogPath, lo, hi)
+	// that downloads and validates it; work.Open fails fast with that command when it is absent.
+	w, err := work.Open(o.base, o.crawlID, o.selection, cmd)
 	if err != nil {
-		log.Fatalf("load part stats from %s: %v", catalogPath, err)
+		log.Fatalf("%v", err)
+	}
+	parts, err := w.Parts(ctx, lo, hi)
+	if err != nil {
+		log.Fatalf("%v", err)
 	}
 
-	// Every part with catalog stats is range-read; parts with no stats row are empty and skipped.
-	present := make(map[uint32]struct{}, len(stats))
-	for _, stat := range stats {
-		present[stat.WarcIndex] = struct{}{}
-	}
+	// Every part with catalog pages is range-read; Empty parts are skipped. Produced/Preserved
+	// parts still enter the pool — runPartAttempt's Status re-check is the authoritative skip,
+	// exactly as before.
 	var class []uint32
 	empty := 0
-	for i := lo; ; i++ {
-		if _, ok := present[i]; ok {
-			class = append(class, i)
-		} else {
+	for _, p := range parts {
+		if p.Status == work.Empty {
 			empty++
+			continue
 		}
-		if i == hi {
-			break
-		}
+		class = append(class, p.Index)
 	}
 
-	fmt.Printf("parts=%d selected=%d empty=%d\n", len(class)+empty, len(class), empty)
+	fmt.Printf("parts=%d selected=%d empty=%d\n", len(parts), len(class), empty)
 
 	if len(class) == 0 {
 		log.Printf("range: nothing to do — no parts to process in [%d,%d]", lo, hi)
@@ -365,10 +339,6 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 		log.Fatalf("%v", err)
 	}
 
-	outDirFor := func(part uint32) string {
-		return filepath.Join(o.base, o.crawlID, "warc", o.selection, fmt.Sprintf("out_%s_%d", cmd, part))
-	}
-
 	start := time.Now()
 	// One run id for every .produced marker written by this invocation. No crawl-wide run identity
 	// exists in the CLI, so derive the cheapest truthful one: command + range + start time.
@@ -379,13 +349,14 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	// deps is what puts producePart's ShardConfig into range mode; the single --part path never does.
 	runStats := &worker.RunStats{}
 	deps.runStats = runStats
+	deps.work = w
 	prog := &poolProgress{total: len(class)}
 	stopTicker := startRangeStatsTicker(deps.objects, runStats, prog, start)
 
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 		return producePart(ctx, deps, part, outDir)
 	}
-	sum := runRangePool(ctx, class, ro.warcParallel, cmd, runID, outDirFor, produce, prog)
+	sum := runRangePool(ctx, class, ro.warcParallel, cmd, runID, w, produce, prog)
 	stopTicker() // prints the final cumulative line, before the summary below
 	elapsed := time.Since(start).Round(time.Second)
 
