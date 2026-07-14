@@ -161,12 +161,16 @@ func runRangePool(
 	close(parts)
 	wg.Wait()
 
-	if d.sum.Breaker && !d.producedAny {
-		// Phase-1 trip: nothing succeeded and nothing is exhausted yet (a part cannot reach
-		// maxPartAttempts failures before 5 consecutive failures trip). Report every part that fed
-		// the breaker as failed — the run is being abandoned as systemically broken.
+	if d.phase1Trip {
+		// Phase-1 trip: nothing had succeeded when the breaker tripped — a straggler success may
+		// have drained afterwards (an in-flight produce can finish after cancel and still be
+		// tallied as Produced). Report every part that fed the breaker as failed regardless — the
+		// run is being abandoned as systemically broken.
 		d.sum.Failed = len(d.firstFailed)
 		d.sum.FailedParts = d.firstFailed
+		for range d.firstFailed {
+			d.prog.addFailed()
+		}
 	}
 	return d.sum
 }
@@ -186,7 +190,8 @@ type poolDispatcher struct {
 	firstFailed []uint32 // distinct failed parts in first-failure order (phase-1 breaker report)
 	failedSeen  map[uint32]bool
 	producedAny bool
-	consecutive int // phase 1: consecutive attempt failures; phase 2: consecutive exhausted parts
+	phase1Trip  bool // latched true the instant the phase-1 breaker trips; never cleared
+	consecutive int  // phase 1: consecutive attempt failures; phase 2: consecutive exhausted parts
 	pending     *partQueue
 	prog        *poolProgress
 }
@@ -217,6 +222,7 @@ func (d *poolDispatcher) handle(out partOutcome) (trip bool) {
 		d.consecutive++
 		if d.consecutive >= consecutiveFailureLimit {
 			d.sum.Breaker = true
+			d.phase1Trip = true
 			return true
 		}
 	}
@@ -417,7 +423,7 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 		log.Printf("range: BREAKER tripped after %d consecutive failures — abandoned remaining parts; last failures: %s",
 			consecutiveFailureLimit, joinParts(last))
 	}
-	if sum.Failed > 0 {
+	if sum.Failed > 0 || sum.Breaker {
 		os.Exit(1)
 	}
 }

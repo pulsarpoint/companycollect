@@ -592,6 +592,48 @@ func TestRunRangePoolExhaustedPartsTripBreaker(t *testing.T) {
 	}
 }
 
+// TestRunRangePoolPhase1TripSurvivesStragglerSuccess: with two workers, part 0's produce blocks
+// until the breaker trips (it waits on the pool context), then completes successfully. That
+// straggler success drains AFTER the phase-1 trip and must not erase the trip's failure report:
+// the summary still lists the five distinct parts that fed the breaker, and Breaker stays set.
+// This also exercises the halted-drain path with outstanding work on a second worker.
+func TestRunRangePoolPhase1TripSurvivesStragglerSuccess(t *testing.T) {
+	shrinkBackoff(t)
+	base := t.TempDir()
+	parts := []fixturePart{{index: 0, present: true}}
+	class := []uint32{0}
+	for i := uint32(1); i <= 5; i++ {
+		parts = append(parts, fixturePart{index: i, present: false}) // bytes withheld -> fail
+		class = append(class, i)
+	}
+	getter := writeRangeFixture(t, base, parts)
+	deps := techDeps(t, base, getter)
+	outDirFor := outDirForTest(base, "tech")
+
+	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
+		if part == 0 {
+			<-ctx.Done() // hold this attempt in flight until the breaker cancels the pool
+			return partResult{Rows: map[string]int{"domains": 1}}, nil
+		}
+		return producePart(ctx, deps, part, outDir)
+	}
+
+	sum := runRangePool(context.Background(), class, 2, "tech", "test-run", outDirFor, produce, nil)
+
+	if !sum.Breaker {
+		t.Fatal("phase-1 breaker should have tripped")
+	}
+	if sum.Produced != 1 {
+		t.Errorf("produced = %d, want 1 (the straggler success is still a real produce)", sum.Produced)
+	}
+	if sum.Failed != 5 || !reflectEqualU32(sum.FailedParts, []uint32{1, 2, 3, 4, 5}) {
+		t.Errorf("failed = %d parts %v, want 5 parts [1 2 3 4 5]", sum.Failed, sum.FailedParts)
+	}
+	if !markers.Exists(markers.ProducedPath(outDirFor(0))) {
+		t.Error("straggler success should still write part 0's marker")
+	}
+}
+
 // TestRunRangePoolExternalCancelDrains proves an external cancel (operator interrupt) drains the
 // pool promptly — the test would hang past its deadline on a dispatcher/worker deadlock.
 func TestRunRangePoolExternalCancelDrains(t *testing.T) {
