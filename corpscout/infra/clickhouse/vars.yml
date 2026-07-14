@@ -1,0 +1,19 @@
+---
+# Deployment target
+clickhouse_dir: /opt/clickhouse
+
+# ClickHouse — image version is pinned in docker-compose.yml.
+clickhouse_db: corpscout_sources
+clickhouse_user: default
+clickhouse_password: password123
+# Required so migrations can provision least-privilege service users
+# (see README.md). The default account stays protected by the password.
+clickhouse_default_access_management: 1
+clickhouse_http_port: 8123
+clickhouse_native_port: 9002
+
+# Backblaze B2 — staged for future ClickHouse backups; nothing uses these yet.
+backblaze_key_id: "00525ec29e20f3f0000000001"
+backblaze_key_name: backup
+backblaze_app_key: "K005ycAwNLC0meYx8C8hZWIK3jb2E50"
+backblaze_endpoint: s3.us-east-005.backblazeb2.com

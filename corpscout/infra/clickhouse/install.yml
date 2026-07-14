@@ -1,0 +1,92 @@
+---
+- name: Deploy ClickHouse docker compose stack under systemd
+  hosts: clickhouse_servers
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    # ----------------------------------------------------------- directories
+    - name: Create deployment directory
+      ansible.builtin.file:
+        path: "{{ clickhouse_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Remove stray editor swap file
+      ansible.builtin.file:
+        path: "{{ clickhouse_dir }}/.swp"
+        state: absent
+
+    # ---------------------------------------------------------------- config
+    - name: Copy docker-compose.yml
+      ansible.builtin.copy:
+        src: docker-compose.yml
+        dest: "{{ clickhouse_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Apply compose
+
+    - name: Write .env
+      ansible.builtin.template:
+        src: templates/clickhouse.env.j2
+        dest: "{{ clickhouse_dir }}/.env"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Apply compose
+
+    # --------------------------------------------------------------- systemd
+    - name: Write systemd unit
+      ansible.builtin.template:
+        src: templates/clickhouse-compose.service.j2
+        dest: /etc/systemd/system/clickhouse-compose.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    # `docker compose up -d` is a no-op when the running containers already
+    # match the config, so starting the unit never restarts ClickHouse.
+    - name: Enable and start clickhouse-compose
+      ansible.builtin.systemd_service:
+        name: clickhouse-compose
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Flush handlers before verification
+      ansible.builtin.meta: flush_handlers
+
+    # ---------------------------------------------------------- verification
+    - name: Wait for HTTP endpoint
+      ansible.builtin.wait_for:
+        port: "{{ clickhouse_http_port }}"
+        host: 127.0.0.1
+        timeout: 120
+
+    - name: Probe /ping
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ clickhouse_http_port }}/ping"
+        return_content: true
+      register: ping_probe
+
+    - name: Report service state
+      ansible.builtin.command: systemctl is-active clickhouse-compose
+      changed_when: false
+      register: svc_state
+
+    - name: Show verification result
+      ansible.builtin.debug:
+        msg: "clickhouse-compose {{ svc_state.stdout }}, /ping answered {{ ping_probe.content | trim }}"
+
+  handlers:
+    # Recreates only containers whose effective config changed; deliberately
+    # not `systemctl restart`, which would run compose down + up and always
+    # restart ClickHouse.
+    - name: Apply compose
+      ansible.builtin.command:
+        cmd: docker compose up -d --remove-orphans
+        chdir: "{{ clickhouse_dir }}"
