@@ -36,14 +36,40 @@ func testConn(t *testing.T) driver.Conn {
 	return conn
 }
 
-func insertRegistry(t *testing.T, ctx context.Context, conn driver.Conn, rootDomain, label, source string, lastNotAfter time.Time) {
+func insertObservation(
+	t *testing.T,
+	ctx context.Context,
+	conn driver.Conn,
+	rootDomain string,
+	name string,
+	recordType string,
+	discovery string,
+	scanID string,
+	observedAt time.Time,
+) {
 	t.Helper()
-	now := time.Now().UTC()
-	if err := conn.Exec(ctx, `INSERT INTO corpscout.commoncrawl_domain_hostnames
-		(root_domain, label, discovery_source, first_seen, last_seen, last_resolved, last_not_after)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, rootDomain, label, source, now, now, now, lastNotAfter); err != nil {
-		t.Fatalf("insert registry row for %s/%s: %v", rootDomain, label, err)
+	source := "query"
+	if discovery == "axfr" {
+		source = "axfr"
 	}
+	if err := conn.Exec(ctx, `INSERT INTO corpscout.commoncrawl_domain_dns_record_observations
+		(root_domain, name, record_type, value, source, discovery, scan_id, observed_at, loaded_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rootDomain, name, recordType, "integration-test-value", source, discovery, scanID,
+		observedAt, time.Now().UTC()); err != nil {
+		t.Fatalf("insert DNS observation for %s/%s: %v", rootDomain, name, err)
+	}
+}
+
+func cleanupObservations(t *testing.T, ctx context.Context, conn driver.Conn, roots []string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, rootDomain := range roots {
+			_ = conn.Exec(ctx, `DELETE FROM corpscout.commoncrawl_domain_dns_record_observations
+				WHERE root_domain = ?`, rootDomain)
+		}
+		_ = conn.Close()
+	})
 }
 
 func TestFetchReturnsOnlyRequestedRoots(t *testing.T) {
@@ -53,14 +79,9 @@ func TestFetchReturnsOnlyRequestedRoots(t *testing.T) {
 	requested := []string{"a-" + suffix + ".test", "b-" + suffix + ".test", "c-" + suffix + ".test"}
 	unrequested := "d-" + suffix + ".test"
 	all := append(append([]string{}, requested...), unrequested)
-	t.Cleanup(func() {
-		for _, rootDomain := range all {
-			_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_hostnames WHERE root_domain = ?", rootDomain)
-		}
-		_ = conn.Close()
-	})
+	cleanupObservations(t, ctx, conn, all)
 	for _, rootDomain := range all {
-		insertRegistry(t, ctx, conn, rootDomain, "www", "ct", time.Now().Add(time.Hour))
+		insertObservation(t, ctx, conn, rootDomain, "www."+rootDomain, "A", "ct", suffix, time.Now().UTC())
 	}
 
 	got, err := Fetch(ctx, conn, requested, 100)
@@ -80,16 +101,16 @@ func TestFetchReturnsOnlyRequestedRoots(t *testing.T) {
 func TestFetchCapKeepsAXFRBeforeCT(t *testing.T) {
 	ctx := context.Background()
 	conn := testConn(t)
-	rootDomain := "cap-" + time.Now().UTC().Format("150405000000000") + ".test"
-	t.Cleanup(func() {
-		_ = conn.Exec(ctx, "DELETE FROM corpscout.commoncrawl_domain_hostnames WHERE root_domain = ?", rootDomain)
-		_ = conn.Close()
-	})
+	suffix := time.Now().UTC().Format("150405000000000")
+	rootDomain := "cap-" + suffix + ".test"
+	cleanupObservations(t, ctx, conn, []string{rootDomain})
 	for index := range 3 {
-		insertRegistry(t, ctx, conn, rootDomain, fmt.Sprintf("axfr-%d", index), "axfr", time.Unix(0, 0).UTC())
+		label := fmt.Sprintf("axfr-%d", index)
+		insertObservation(t, ctx, conn, rootDomain, label+"."+rootDomain, "A", "axfr", suffix, time.Now().UTC())
 	}
 	for index := range 20 {
-		insertRegistry(t, ctx, conn, rootDomain, fmt.Sprintf("ct-%d", index), "ct", time.Now().Add(time.Hour))
+		label := fmt.Sprintf("ct-%d", index)
+		insertObservation(t, ctx, conn, rootDomain, label+"."+rootDomain, "A", "ct", suffix, time.Now().UTC())
 	}
 
 	got, err := Fetch(ctx, conn, []string{rootDomain}, 5)
@@ -107,5 +128,53 @@ func TestFetchCapKeepsAXFRBeforeCT(t *testing.T) {
 	}
 	if axfrCount != 3 {
 		t.Errorf("AXFR rows kept = %d, want all 3: %+v", axfrCount, got[rootDomain])
+	}
+}
+
+func TestFetchReturnsOnlyConfirmedAddressAndCNAMEOwners(t *testing.T) {
+	ctx := context.Background()
+	conn := testConn(t)
+	suffix := time.Now().UTC().Format("150405000000000")
+	rootDomain := "types-" + suffix + ".test"
+	cleanupObservations(t, ctx, conn, []string{rootDomain})
+	observedAt := time.Now().UTC()
+
+	fixtures := []struct {
+		name       string
+		recordType string
+		discovery  string
+	}{
+		{name: "www." + rootDomain, recordType: "A", discovery: "static"},
+		{name: "mail." + rootDomain, recordType: "AAAA", discovery: "static"},
+		{name: "alias." + rootDomain, recordType: "CNAME", discovery: "ct"},
+		{name: "multi." + rootDomain, recordType: "A", discovery: "axfr"},
+		{name: "multi." + rootDomain, recordType: "AAAA", discovery: "axfr"},
+		{name: "mx-only." + rootDomain, recordType: "MX", discovery: "axfr"},
+		{name: "txt-only." + rootDomain, recordType: "TXT", discovery: "static"},
+		{name: "*." + rootDomain, recordType: "A", discovery: "axfr"},
+		{name: rootDomain, recordType: "A", discovery: "static"},
+		{name: "outside.example.net", recordType: "A", discovery: "static"},
+	}
+	for index, fixture := range fixtures {
+		insertObservation(t, ctx, conn, rootDomain, fixture.name, fixture.recordType,
+			fixture.discovery, fmt.Sprintf("%s-%d", suffix, index), observedAt)
+	}
+
+	got, err := Fetch(ctx, conn, []string{rootDomain}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	labels := map[string]bool{}
+	for _, hostname := range got[rootDomain] {
+		labels[hostname.Label] = true
+	}
+	want := map[string]bool{"www": true, "mail": true, "alias": true, "multi": true}
+	if len(labels) != len(want) {
+		t.Fatalf("labels = %v, want %v", labels, want)
+	}
+	for label := range want {
+		if !labels[label] {
+			t.Errorf("confirmed label %q missing from %v", label, labels)
+		}
 	}
 }

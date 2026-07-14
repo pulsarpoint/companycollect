@@ -34,7 +34,7 @@ func NewResolverWithStats(ex Exchanger, stats *metrics.Stats) *Resolver {
 
 // Resolve runs every Tier-2 query for a domain directly against its authoritative NS IPs, rotating
 // across them with retry, and assembles a DomainResult. Delegation must already be discovered. extra
-// is the domain's discovered hostnames (CT/registry/axfr), unioned into the plan alongside cfg's
+// is the domain's confirmed hostname labels, unioned into the plan alongside cfg's
 // static hostname list.
 //
 // # Status bar (Task 9)

@@ -297,7 +297,6 @@ type ReadyDNSBatch struct {
 	Results   []model.DomainResult
 	Records   []model.StagedDNSRecord
 	Summaries []model.ScanRow
-	Hostnames []model.HostnameRow
 }
 
 func (s *Store) ReadyDNS(ctx context.Context, scanID string, limit int) (ReadyDNSBatch, error) {
@@ -370,7 +369,6 @@ func (s *Store) populateReadyDNS(ctx context.Context, scanID string, batch Ready
 	}
 	rows.Close()
 	batch.Summaries = scanRows(batch.Results)
-	batch.Hostnames = hostnameRows(batch.Records)
 	return batch, nil
 }
 
@@ -389,41 +387,6 @@ func scanRows(results []model.DomainResult) []model.ScanRow {
 			LastRunID: result.SourceRunID, ResolvedAt: result.ResolvedAt,
 		}
 		setScanRowEndpoints(&row)
-		rows = append(rows, row)
-	}
-	return rows
-}
-
-func hostnameRows(records []model.StagedDNSRecord) []model.HostnameRow {
-	type key struct{ root, label string }
-	byKey := map[key]model.HostnameRow{}
-	for _, record := range records {
-		if record.Discovery != "ct" && record.Discovery != "axfr" {
-			continue
-		}
-		if record.RecordType != "A" && record.RecordType != "AAAA" && record.RecordType != "CNAME" {
-			continue
-		}
-		name := strings.ToLower(record.Name)
-		suffix := "." + strings.ToLower(record.RootDomain)
-		if !strings.HasSuffix(name, suffix) {
-			continue
-		}
-		label := strings.TrimSuffix(name, suffix)
-		if label == "" || strings.Contains(label, "*") {
-			continue
-		}
-		identity := key{record.RootDomain, label}
-		row, exists := byKey[identity]
-		if !exists || record.ObservedAt.After(row.LastSeen) {
-			byKey[identity] = model.HostnameRow{
-				RootDomain: record.RootDomain, Label: label, DiscoverySource: record.Discovery,
-				FirstSeen: record.ObservedAt, LastSeen: record.ObservedAt, LastResolved: record.ObservedAt,
-			}
-		}
-	}
-	rows := make([]model.HostnameRow, 0, len(byKey))
-	for _, row := range byKey {
 		rows = append(rows, row)
 	}
 	return rows

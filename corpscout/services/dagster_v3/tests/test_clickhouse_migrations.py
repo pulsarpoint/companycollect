@@ -14,7 +14,7 @@ from dagster_v3.defs.norway_brreg import resolved_tables as norway_resolved_tabl
 from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 
 EXPECTED_MIGRATIONS = (
     "000001_reference_nace_categories",
@@ -517,9 +517,7 @@ def test_domain_hostnames_view_normalizes_addressable_dns_record_owners() -> Non
     down_sql = _migration_sql("000128_corpscout_domain_hostnames_view.down.sql")
 
     assert "CREATE VIEW IF NOT EXISTS corpscout.domain_hostnames AS" in sql
-    assert (
-        "FROM corpscout.commoncrawl_domain_dns_record_observations" in sql
-    )
+    assert "FROM corpscout.commoncrawl_domain_dns_record_observations" in sql
     assert "record_type IN ('A', 'AAAA', 'CNAME')" in sql
     assert "GROUP BY\n    root_domain,\n    hostname" in sql
     assert "hostname = root_domain" in sql

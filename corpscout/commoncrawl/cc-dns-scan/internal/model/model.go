@@ -47,13 +47,12 @@ type NameserverEndpoint struct {
 	Dialable bool   // true only when Scope is publicly dialable (resolve.Dialable(scope))
 }
 
-// HostLabel is one discovered subdomain label to scan for a domain (from CT, the registry, or a
-// zone transfer). Label is the name minus ".<root_domain>", lowercased. DiscoverySource is how it
-// was found (ct|axfr|static); LiveCert is true when a CT source had a still-valid certificate.
+// HostLabel is one confirmed subdomain label to scan for a domain. Label is the DNS record owner
+// minus ".<root_domain>", lowercased. DiscoverySource records how the owner originally entered DNS
+// scanning (ct|axfr|static).
 type HostLabel struct {
 	Label           string
 	DiscoverySource string
-	LiveCert        bool
 }
 
 const (
@@ -164,18 +163,6 @@ type RecordObservationRow struct {
 	Rcode        string    `ch:"rcode"`
 	ObservedAt   time.Time `ch:"observed_at"` // event time: when this record was actually resolved
 	LoadedAt     time.Time `ch:"loaded_at"`   // ReplacingMergeTree version: when this row was inserted
-}
-
-// HostnameRow mirrors corpscout.commoncrawl_domain_hostnames (AggregatingMergeTree registry). One
-// blind-inserted row per hostname discovered in a cycle; the merge folds first_seen=min, last_seen=max,
-// last_resolved=max, discovery_source=min. Insert a plain string into the SimpleAggregateFunction cols.
-type HostnameRow struct {
-	RootDomain      string    `ch:"root_domain"`
-	Label           string    `ch:"label"`
-	DiscoverySource string    `ch:"discovery_source"`
-	FirstSeen       time.Time `ch:"first_seen"`
-	LastSeen        time.Time `ch:"last_seen"`
-	LastResolved    time.Time `ch:"last_resolved"`
 }
 
 // ScanRow mirrors corpscout.commoncrawl_domain_dns_scan (latest trustworthy state per domain). A

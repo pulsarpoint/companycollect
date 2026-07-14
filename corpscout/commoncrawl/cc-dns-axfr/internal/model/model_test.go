@@ -28,14 +28,3 @@ func TestRecordObservationRowColumns(t *testing.T) {
 		}
 	}
 }
-
-func TestHostnameRowColumns(t *testing.T) {
-	cols := chCols(HostnameRow{})
-	for _, column := range []string{
-		"root_domain", "label", "discovery_source", "first_seen", "last_seen", "last_resolved",
-	} {
-		if !cols[column] {
-			t.Errorf("HostnameRow missing ch column %q", column)
-		}
-	}
-}

@@ -52,13 +52,3 @@ type RecordObservationRow struct {
 	ObservedAt   time.Time `ch:"observed_at"`
 	LoadedAt     time.Time `ch:"loaded_at"`
 }
-
-// HostnameRow adds a hostname learned from an AXFR transfer to the shared hostname registry.
-type HostnameRow struct {
-	RootDomain      string    `ch:"root_domain"`
-	Label           string    `ch:"label"`
-	DiscoverySource string    `ch:"discovery_source"`
-	FirstSeen       time.Time `ch:"first_seen"`
-	LastSeen        time.Time `ch:"last_seen"`
-	LastResolved    time.Time `ch:"last_resolved"`
-}

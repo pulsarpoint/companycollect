@@ -17,7 +17,6 @@ import (
 const (
 	recordObservationsTable = "corpscout.commoncrawl_domain_dns_record_observations"
 	scanTable               = "corpscout.commoncrawl_domain_dns_scan"
-	hostnamesTable          = "corpscout.commoncrawl_domain_hostnames"
 )
 
 func chColumns[T any]() []string {
@@ -67,7 +66,7 @@ func observationRows(records []model.StagedDNSRecord, scanID string, loadedAt ti
 	return rows
 }
 
-// FlushDNS acknowledges local work only after record, summary, and hostname sinks all succeed.
+// FlushDNS acknowledges local work only after its observation and summary sinks succeed.
 func FlushDNS(ctx context.Context, connection driver.Conn, localStore *store.Store, scanID string, batchSize int) (int, error) {
 	if batchSize <= 0 {
 		batchSize = 500
@@ -84,9 +83,6 @@ func FlushDNS(ctx context.Context, connection driver.Conn, localStore *store.Sto
 	}
 	if _, err := insert(ctx, connection, scanTable, ready.Summaries); err != nil {
 		return 0, fmt.Errorf("write DNS summaries: %w", err)
-	}
-	if _, err := insert(ctx, connection, hostnamesTable, ready.Hostnames); err != nil {
-		return 0, fmt.Errorf("write DNS hostnames: %w", err)
 	}
 	if err := localStore.AcknowledgeDNS(ctx, scanID, ready.Roots); err != nil {
 		return 0, fmt.Errorf("acknowledge DNS batch: %w", err)

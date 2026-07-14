@@ -47,8 +47,9 @@ The process reads these environment variables:
 - `CLICKHOUSE_PASSWORD`
 
 Its source is `corpscout.commoncrawl_domain_dns_scan`. AXFR endpoint state is written to
-`corpscout.dns_axfr_latest` and `corpscout.dns_axfr_state_changes`; transferred records and discovered
-hostnames use the shared Common Crawl DNS observation tables.
+`corpscout.dns_axfr_latest` and `corpscout.dns_axfr_state_changes`; transferred records are written to
+`corpscout.commoncrawl_domain_dns_record_observations`. The read-only `corpscout.domain_hostnames`
+view projects owners with observed A, AAAA, or CNAME records from that shared observation history.
 
 ## Deploy
 

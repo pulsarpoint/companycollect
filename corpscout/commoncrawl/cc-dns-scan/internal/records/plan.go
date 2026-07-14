@@ -47,7 +47,7 @@ type Query struct {
 }
 
 // Plan returns every Tier-2 query for a domain (no trailing dot on input), unioning the static
-// hostname/DKIM/SRV lists in cfg with any extra discovered hostnames (from CT/registry/axfr). An
+// hostname/DKIM/SRV lists in cfg with any extra confirmed hostnames. An
 // extra hostname already covered by the static set is skipped so it's never double-queried; the
 // static set wins the overlap, so its Discovery stays "static".
 func Plan(domain string, cfg Config, extra []model.HostLabel) []Query {
@@ -82,7 +82,7 @@ func Plan(domain string, cfg Config, extra []model.HostLabel) []Query {
 		qs[i].Discovery = "static"
 	}
 
-	// Union discovered hosts (CT/registry/axfr), skipping any label already covered by the static set,
+	// Union confirmed hosts, skipping any label already covered by the static set,
 	// so we never double-query. Each gets A+AAAA tagged with its discovery source.
 	staticLabels := map[string]bool{}
 	for _, h := range cfg.Hostnames {

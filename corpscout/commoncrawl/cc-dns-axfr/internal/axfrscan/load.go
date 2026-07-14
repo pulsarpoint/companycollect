@@ -17,7 +17,6 @@ const (
 	axfrLatestTable         = "corpscout.dns_axfr_latest"
 	axfrChangesTable        = "corpscout.dns_axfr_state_changes"
 	recordObservationsTable = "corpscout.commoncrawl_domain_dns_record_observations"
-	hostnamesTable          = "corpscout.commoncrawl_domain_hostnames"
 )
 
 type endpointKey struct {
@@ -104,12 +103,9 @@ func flushReady(ctx context.Context, connection driver.Conn, store *axfrStore, s
 	if _, err := insertRows(ctx, connection, axfrLatestTable, buildLatestRows(endpoints, prior, scanID)); err != nil {
 		return 0, fmt.Errorf("write AXFR latest state: %w", err)
 	}
-	records, hostnames := buildZoneOutputs(domains, scanID)
+	records := buildRecordObservationRows(domains, scanID)
 	if _, err := insertRows(ctx, connection, recordObservationsTable, records); err != nil {
 		return 0, fmt.Errorf("write AXFR observations: %w", err)
-	}
-	if _, err := insertRows(ctx, connection, hostnamesTable, hostnames); err != nil {
-		return 0, fmt.Errorf("write AXFR hostnames: %w", err)
 	}
 	if err := store.acknowledge(ctx, scanID, domains); err != nil {
 		return 0, fmt.Errorf("acknowledge AXFR domains: %w", err)
@@ -244,10 +240,9 @@ func buildStateChanges(endpoints []observedEndpoint, prior map[endpointKey]prior
 	return changes
 }
 
-func buildZoneOutputs(domains []readyDomain, scanID string) ([]model.RecordObservationRow, []model.HostnameRow) {
+func buildRecordObservationRows(domains []readyDomain, scanID string) []model.RecordObservationRow {
 	loadedAt := time.Now().UTC()
 	var records []model.RecordObservationRow
-	hostnames := map[string]model.HostnameRow{}
 	for _, domain := range domains {
 		for _, record := range domain.Zone {
 			observedAt := domain.DelegationObservedAt
@@ -265,26 +260,9 @@ func buildZoneOutputs(domains []readyDomain, scanID string) ([]model.RecordObser
 				TTL: record.TTL, Priority: record.Priority, Rcode: record.Rcode,
 				ObservedAt: observedAt.UTC(), LoadedAt: loadedAt,
 			})
-			name := strings.ToLower(record.Name)
-			suffix := "." + strings.ToLower(domain.RootDomain)
-			if name == strings.ToLower(domain.RootDomain) || !strings.HasSuffix(name, suffix) {
-				continue
-			}
-			label := strings.TrimSuffix(name, suffix)
-			if label == "" || strings.Contains(label, "*") {
-				continue
-			}
-			hostnames[domain.RootDomain+"\x00"+label] = model.HostnameRow{
-				RootDomain: domain.RootDomain, Label: label, DiscoverySource: "axfr",
-				FirstSeen: observedAt, LastSeen: observedAt, LastResolved: observedAt,
-			}
 		}
 	}
-	hostnameRows := make([]model.HostnameRow, 0, len(hostnames))
-	for _, row := range hostnames {
-		hostnameRows = append(hostnameRows, row)
-	}
-	return records, hostnameRows
+	return records
 }
 
 func insertRows[T any](ctx context.Context, connection driver.Conn, table string, rows []T) (int, error) {

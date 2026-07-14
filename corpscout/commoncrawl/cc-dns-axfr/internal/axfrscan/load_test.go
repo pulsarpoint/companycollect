@@ -79,3 +79,31 @@ func TestOnlyInitialOpenCreatesStateChange(t *testing.T) {
 		t.Fatalf("changes = %+v", changes)
 	}
 }
+
+func TestBuildRecordObservationRowsPreservesWholeZone(t *testing.T) {
+	observedAt := time.Unix(40, 0).UTC()
+	rows := buildRecordObservationRows([]readyDomain{{
+		RootDomain: "example.com", DelegationObservedAt: observedAt,
+		Zone: []model.DNSRecord{
+			{Name: "www.example.com", RecordType: "A", TypeCode: 1, Value: "192.0.2.1"},
+			{Name: "mail.example.com", RecordType: "TXT", TypeCode: 16, Value: `"v=spf1 -all"`},
+		},
+	}}, "scan")
+
+	if len(rows) != 2 {
+		t.Fatalf("observation rows = %d, want the complete two-record zone", len(rows))
+	}
+	types := map[string]bool{}
+	for _, row := range rows {
+		types[row.RecordType] = true
+		if row.RootDomain != "example.com" || row.Source != "axfr" || row.Discovery != "axfr" || row.ScanID != "scan" {
+			t.Errorf("row lost AXFR identity: %+v", row)
+		}
+		if !row.ObservedAt.Equal(observedAt) {
+			t.Errorf("row observed_at = %v, want %v", row.ObservedAt, observedAt)
+		}
+	}
+	if !types["A"] || !types["TXT"] {
+		t.Errorf("observation types = %v, want A and TXT", types)
+	}
+}

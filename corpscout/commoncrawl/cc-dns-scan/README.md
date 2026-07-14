@@ -1,8 +1,8 @@
 # Common Crawl DNS scanner
 
 `cc-dns-scan` resolves Common Crawl root domains against authoritative DNS servers and loads durable
-DNS summaries, record observations, and discovered hostnames into ClickHouse. It is a standalone Go
-module, binary, worker pool, retry loop, and resumable SQLite pipeline.
+DNS summaries and record observations into ClickHouse. It is a standalone Go module, binary, worker
+pool, retry loop, and resumable SQLite pipeline.
 
 AXFR probing is owned by the separate [`cc-dns-axfr`](../cc-dns-axfr/) project. The two processes do
 not share Go packages, queues, SQLite databases, or completion conditions. Their only data-flow
@@ -13,18 +13,18 @@ boundary is ClickHouse: AXFR reads the latest DNS delegation summaries written b
 The scanner reads:
 
 - `corpscout.commoncrawl_domains`, keyset-paged by `root_domain`; and
-- `corpscout.commoncrawl_domain_hostnames`, queried for each claimed root-domain batch.
+- `corpscout.domain_hostnames`, queried for each claimed root-domain batch.
 
 It writes:
 
 - `corpscout.commoncrawl_domain_dns_scan`;
 - `corpscout.commoncrawl_domain_dns_record_observations`;
-- `corpscout.commoncrawl_domain_hostnames`; and
 - `corpscout.commoncrawl_ip_addresses` through the corresponding ClickHouse materialized view.
 
 `commoncrawl_domain_dns_record_observations` is the authoritative record history. Every known or
 unknown RR type is retained with its numeric type/class, presentation-format RDATA, and uncompressed
-wire RDATA.
+wire RDATA. `domain_hostnames` is a read-only view of record owners with an observed A, AAAA, or
+CNAME record; neither DNS scanner writes a separate hostname registry.
 
 ## Resolution behavior
 
@@ -75,8 +75,8 @@ Important flags:
 | `--dns-claim-batch` | `2000` | domains claimed per batch |
 | `--dns-flush-batch` | `500` | ready domains per acknowledgement pass |
 | `--dns-flush-interval` | `5s` | output retry/poll interval |
-| `--host-enrich` | `true` | query ranked labels from the hostname registry |
-| `--host-cap` | `100` | registry labels queried per domain |
+| `--host-enrich` | `true` | query ranked labels from the confirmed hostname view |
+| `--host-cap` | `100` | confirmed hostname labels queried per domain |
 
 `scan` also accepts `--scan-id`, `--run-id`, and `--dns-db`. `run` accepts `--dir` and assigns a UTC
 cycle ID. Run either command with `-h` for the complete flag set.

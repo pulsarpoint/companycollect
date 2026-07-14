@@ -3,6 +3,9 @@
 > Historical design record. DNS resolution and AXFR now run as the separate
 > [`cc-dns-scan`](../cc-dns-scan/) and [`cc-dns-axfr`](../cc-dns-axfr/) projects. References below to
 > a combined `cc-dns-worker` describe the architecture when this proposal was written.
+> The physical `commoncrawl_domain_hostnames` registry described below was later superseded by
+> `corpscout.domain_hostnames`, a normal ClickHouse view of in-domain A, AAAA, and CNAME observations.
+> `commoncrawl_domains` remains the root-domain input to the DNS scanner.
 
 Status: **historical proposal, superseded by the split scanners.** Decisions recorded 2026-07-09.
 Supersedes the earlier CT-only draft (this file was renamed from `ct-hostname-enrichment-spec.md`).
