@@ -512,6 +512,32 @@ def test_clickhouse_migrations_have_down_files() -> None:
         )
 
 
+def test_domain_hostnames_view_normalizes_addressable_dns_record_owners() -> None:
+    sql = _migration_sql("000128_corpscout_domain_hostnames_view.up.sql")
+    down_sql = _migration_sql("000128_corpscout_domain_hostnames_view.down.sql")
+
+    assert "CREATE VIEW IF NOT EXISTS corpscout.domain_hostnames AS" in sql
+    assert (
+        "FROM corpscout.commoncrawl_domain_dns_record_observations" in sql
+    )
+    assert "record_type IN ('A', 'AAAA', 'CNAME')" in sql
+    assert "GROUP BY\n    root_domain,\n    hostname" in sql
+    assert "hostname = root_domain" in sql
+    assert "endsWith(hostname, concat('.', root_domain))" in sql
+    assert "position(hostname, '*') = 0" in sql
+    assert "max(record_type = 'A') AS has_ipv4" in sql
+    assert "max(record_type = 'AAAA') AS has_ipv6" in sql
+    assert "max(record_type = 'CNAME') AS has_cname" in sql
+    assert "min(observed_at) AS first_seen" in sql
+    assert "max(observed_at) AS last_seen" in sql
+    assert "max(loaded_at) AS last_loaded_at" in sql
+    assert "ctlogs.hostnames" not in sql
+    assert "commoncrawl_domains" not in sql
+    assert "source = 'axfr'" not in sql
+    assert "DROP TABLE" not in sql
+    assert "DROP VIEW IF EXISTS corpscout.domain_hostnames" in down_sql
+
+
 def test_sweden_company_registry_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000084_corpscout_se_company_registry.up.sql")
     down_sql = _migration_sql("000084_corpscout_se_company_registry.down.sql")
