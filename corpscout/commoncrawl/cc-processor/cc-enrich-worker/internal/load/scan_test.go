@@ -180,6 +180,190 @@ func TestSweepLoaderError(t *testing.T) {
 	}
 }
 
+// writeParquet drops a placeholder parquet file inside an output dir so prune has something to reclaim
+// and tests can assert the DIR (not just markers) is gone.
+func writeParquet(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("parquet-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSweepDeleteLoadedAfterLoad: with --delete-loaded on, a dir that loads+verifies has its output
+// directory removed AFTER .loaded is written; BOTH markers survive (they are siblings, not inside the
+// dir) and Pruned is counted.
+func TestSweepDeleteLoadedAfterLoad(t *testing.T) {
+	root := t.TempDir()
+	ok := producedDir(t, root, "ok", map[string]int{"domains": 2})
+	writeParquet(t, ok, "domains.parquet")
+
+	loadFn := func(_ context.Context, dir string) ([]Result, error) {
+		return []Result{{Path: filepath.Join(dir, "domains.parquet"), Rows: 2}}, nil
+	}
+
+	res, err := sweepPrune(context.Background(), root, 2, true, loadFn)
+	if err != nil {
+		t.Fatalf("sweepPrune: %v", err)
+	}
+	if res.Loaded != 1 || res.Failed != 0 || res.Pruned != 1 {
+		t.Fatalf("res = %+v, want Loaded=1 Failed=0 Pruned=1", res)
+	}
+	if _, statErr := os.Stat(ok); !os.IsNotExist(statErr) {
+		t.Errorf("output dir %s should be removed, stat err=%v", ok, statErr)
+	}
+	if !markers.Exists(markers.ProducedPath(ok)) {
+		t.Errorf(".produced marker must survive prune")
+	}
+	if !markers.Exists(markers.LoadedPath(ok)) {
+		t.Errorf(".loaded marker must survive prune")
+	}
+}
+
+// TestSweepCatchUpPrune: a dir already carrying BOTH .produced and .loaded (a leftover from before the
+// flag, or from a crash between WriteLoaded and delete) is removed on a flagged sweep, markers kept.
+// The same fixture WITHOUT the flag is untouched.
+func TestSweepCatchUpPrune(t *testing.T) {
+	noopLoad := func(_ context.Context, dir string) ([]Result, error) {
+		t.Errorf("loader must not be called for an already-loaded dir: %s", dir)
+		return nil, nil
+	}
+
+	// With the flag: catch-up prune removes the dir, keeps both markers.
+	t.Run("flag_on_prunes", func(t *testing.T) {
+		root := t.TempDir()
+		done := producedDir(t, root, "done", map[string]int{"domains": 1})
+		writeParquet(t, done, "domains.parquet")
+		if err := markers.WriteLoaded(done); err != nil {
+			t.Fatal(err)
+		}
+		res, err := sweepPrune(context.Background(), root, 2, true, noopLoad)
+		if err != nil {
+			t.Fatalf("sweepPrune: %v", err)
+		}
+		if res.Pruned != 1 || res.Loaded != 0 || res.Pending != 0 {
+			t.Fatalf("res = %+v, want Pruned=1 Loaded=0 Pending=0", res)
+		}
+		if _, statErr := os.Stat(done); !os.IsNotExist(statErr) {
+			t.Errorf("dir %s should be pruned", done)
+		}
+		if !markers.Exists(markers.ProducedPath(done)) || !markers.Exists(markers.LoadedPath(done)) {
+			t.Errorf("both markers must survive catch-up prune")
+		}
+		// Second sweep is a no-op: dir already gone, nothing re-pruned.
+		res2, err := sweepPrune(context.Background(), root, 2, true, noopLoad)
+		if err != nil {
+			t.Fatalf("second sweepPrune: %v", err)
+		}
+		if res2.Pruned != 0 {
+			t.Fatalf("second sweep Pruned = %d, want 0 (already reclaimed)", res2.Pruned)
+		}
+	})
+
+	// Without the flag: the already-loaded dir is left in place.
+	t.Run("flag_off_keeps", func(t *testing.T) {
+		root := t.TempDir()
+		done := producedDir(t, root, "done", map[string]int{"domains": 1})
+		writeParquet(t, done, "domains.parquet")
+		if err := markers.WriteLoaded(done); err != nil {
+			t.Fatal(err)
+		}
+		res, err := sweepPrune(context.Background(), root, 2, false, noopLoad)
+		if err != nil {
+			t.Fatalf("sweepPrune: %v", err)
+		}
+		if res.Pruned != 0 {
+			t.Fatalf("Pruned = %d, want 0 when flag off", res.Pruned)
+		}
+		if _, statErr := os.Stat(done); statErr != nil {
+			t.Errorf("dir %s must be untouched when flag off, stat err=%v", done, statErr)
+		}
+	})
+}
+
+// TestSweepDeleteLoadedKeepsShortfall: a verify-shortfall dir keeps its parquet — it is still pending,
+// not loaded, so nothing is pruned even with the flag on.
+func TestSweepDeleteLoadedKeepsShortfall(t *testing.T) {
+	root := t.TempDir()
+	short := producedDir(t, root, "short", map[string]int{"domains": 5})
+	writeParquet(t, short, "domains.parquet")
+
+	loadFn := func(_ context.Context, dir string) ([]Result, error) {
+		return []Result{{Path: filepath.Join(dir, "domains.parquet"), Rows: 2}}, nil // marker wants 5
+	}
+
+	res, err := sweepPrune(context.Background(), root, 2, true, loadFn)
+	if err != nil {
+		t.Fatalf("sweepPrune: %v", err)
+	}
+	if res.Failed != 1 || res.Loaded != 0 || res.Pruned != 0 {
+		t.Fatalf("res = %+v, want Failed=1 Loaded=0 Pruned=0", res)
+	}
+	if _, statErr := os.Stat(short); statErr != nil {
+		t.Errorf("shortfall dir %s must keep its parquet, stat err=%v", short, statErr)
+	}
+	if markers.Exists(markers.LoadedPath(short)) {
+		t.Errorf("shortfall dir must NOT be .loaded")
+	}
+}
+
+// TestSweepDeleteLoadedSkipsEmbed: an embed-only produced dir (Cmd == "embed", never gets .loaded) is
+// untouched by a flagged sweep — its embeddings.parquet is the expensive GPU artifact and is never a
+// prune target because catch-up prune requires .loaded. Also holds with the flag off.
+func TestSweepDeleteLoadedSkipsEmbed(t *testing.T) {
+	for _, deleteLoaded := range []bool{true, false} {
+		deleteLoaded := deleteLoaded
+		t.Run(fmt.Sprintf("delete=%v", deleteLoaded), func(t *testing.T) {
+			root := t.TempDir()
+			embedOut := filepath.Join(root, "emb")
+			if err := os.MkdirAll(embedOut, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeParquet(t, embedOut, "embeddings.parquet")
+			if err := markers.WriteProduced(embedOut, markers.Produced{Cmd: "embed", Rows: map[string]int{}, FinishedAt: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			loadFn := func(_ context.Context, dir string) ([]Result, error) {
+				t.Errorf("loader must never run for embed dir %s", dir)
+				return nil, nil
+			}
+			res, err := sweepPrune(context.Background(), root, 2, deleteLoaded, loadFn)
+			if err != nil {
+				t.Fatalf("sweepPrune: %v", err)
+			}
+			if res.Skipped != 1 || res.Pruned != 0 || res.Loaded != 0 {
+				t.Fatalf("res = %+v, want Skipped=1 Pruned=0 Loaded=0", res)
+			}
+			if _, statErr := os.Stat(embedOut); statErr != nil {
+				t.Errorf("embed dir %s must survive, stat err=%v", embedOut, statErr)
+			}
+			if _, statErr := os.Stat(filepath.Join(embedOut, "embeddings.parquet")); statErr != nil {
+				t.Errorf("embeddings.parquet must survive, stat err=%v", statErr)
+			}
+		})
+	}
+}
+
+// TestSweepMarkersNeverDeleted pins the invariant that RemoveAll(outDir) cannot reach the sibling
+// markers (outDir+".produced"/".loaded"), because they live in the PARENT dir, not inside outDir.
+func TestSweepMarkersNeverDeleted(t *testing.T) {
+	root := t.TempDir()
+	ok := producedDir(t, root, "ok", map[string]int{"domains": 1})
+	writeParquet(t, ok, "domains.parquet")
+	loadFn := func(_ context.Context, dir string) ([]Result, error) {
+		return []Result{{Path: filepath.Join(dir, "domains.parquet"), Rows: 1}}, nil
+	}
+	if _, err := sweepPrune(context.Background(), root, 1, true, loadFn); err != nil {
+		t.Fatalf("sweepPrune: %v", err)
+	}
+	// Markers are literally siblings: prefix of outDir, in the parent dir.
+	if filepath.Dir(markers.ProducedPath(ok)) != filepath.Dir(ok) {
+		t.Fatalf(".produced marker is not a sibling of outDir")
+	}
+	if !markers.Exists(markers.ProducedPath(ok)) || !markers.Exists(markers.LoadedPath(ok)) {
+		t.Errorf("both markers must remain after prune")
+	}
+}
+
 // --- Integration: real ClickHouse when reachable ---
 
 func chTestConn(t *testing.T) driver.Conn {
@@ -265,7 +449,7 @@ func TestSweepIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Sweep(ctx, conn, root, 2)
+	res, err := Sweep(ctx, conn, root, 2, false)
 	if err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
@@ -277,7 +461,7 @@ func TestSweepIntegration(t *testing.T) {
 	}
 
 	// Second sweep: nothing pending.
-	res2, err := Sweep(ctx, conn, root, 2)
+	res2, err := Sweep(ctx, conn, root, 2, false)
 	if err != nil {
 		t.Fatalf("second Sweep: %v", err)
 	}
@@ -310,7 +494,7 @@ func TestSweepIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res3, err := Sweep(ctx, conn, root2, 2)
+	res3, err := Sweep(ctx, conn, root2, 2, false)
 	if err != nil {
 		t.Fatalf("third Sweep: %v", err)
 	}
@@ -322,5 +506,31 @@ func TestSweepIntegration(t *testing.T) {
 	}
 	if !markers.Exists(markers.LoadedPath(good)) {
 		t.Errorf("good should still be .loaded despite bad sibling")
+	}
+
+	// --delete-loaded against real ClickHouse: one flagged sweep loads a fresh part, writes .loaded,
+	// then reclaims the OUTPUT DIR while keeping both markers.
+	root3 := t.TempDir()
+	pd := writeDomains("prune", 2)
+	// writeDomains wrote under root; move the fixture into root3 for an isolated sweep.
+	pruneDir := filepath.Join(root3, "prune")
+	if err := os.Rename(pd, pruneDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := markers.WriteProduced(pruneDir, markers.Produced{Rows: map[string]int{"domains": 2}, FinishedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	res4, err := Sweep(ctx, conn, root3, 1, true)
+	if err != nil {
+		t.Fatalf("flagged Sweep: %v", err)
+	}
+	if res4.Loaded != 1 || res4.Pruned != 1 {
+		t.Fatalf("flagged sweep = %+v, want Loaded=1 Pruned=1", res4)
+	}
+	if _, statErr := os.Stat(pruneDir); !os.IsNotExist(statErr) {
+		t.Errorf("output dir %s should be pruned after flagged load", pruneDir)
+	}
+	if !markers.Exists(markers.ProducedPath(pruneDir)) || !markers.Exists(markers.LoadedPath(pruneDir)) {
+		t.Errorf("both markers must survive the flagged prune")
 	}
 }

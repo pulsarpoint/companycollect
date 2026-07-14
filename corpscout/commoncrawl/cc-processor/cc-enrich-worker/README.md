@@ -165,7 +165,36 @@ ClickHouse error leaves the dir pending; the next sweep retries it.
 
 # Stay running: sweep, then wait for a filesystem event under root or a 5-minute tick, and sweep again.
 ./cc-enrich-worker/bin/cc-enrich-worker load --scan /opt/.../warc/pages25 --parallel 4 --watch
+
+# Reclaim disk as you go: delete each part's local Parquet once it is verified-loaded into ClickHouse.
+./cc-enrich-worker/bin/cc-enrich-worker load --scan /opt/.../warc/pages25 --parallel 4 --watch --delete-loaded
 ```
+
+### `--delete-loaded` — reclaim Parquet after a verified load
+
+Parquet output is roughly 3.2 MB per part; a full crawl of ~100k parts is ~320 GB, which does not fit
+the producer's working disk. Once a part is loaded and verified into ClickHouse — the system of record —
+its local Parquet is redundant. `--delete-loaded` (default **off**) makes the loader self-cleaning:
+
+- **After-load delete** — for each dir the sweep loads and verifies, the output DIRECTORY is removed
+  (`os.RemoveAll`) *strictly after* `.loaded` is written. A crash between the marker write and the delete
+  is harmless: the next sweep sees `.loaded` and reclaims the leftover dir as a catch-up prune.
+- **Catch-up prune** — any still-existing dir that already has *both* `.produced` and `.loaded` (leftovers
+  from before the flag, or from that crash window) is removed on the sweep. This reclaims historical disk
+  on the first flagged run and keeps a `--watch` daemon self-cleaning.
+- **Never deletes markers** — `.produced` / `.loaded` are *siblings* of the dir (`<dir>.produced`,
+  `<dir>.loaded`), so `RemoveAll(<dir>)` cannot touch them. They stay the range runner's resume record and
+  `status`'s ledger; only the Parquet directory is reclaimed.
+- **Never deletes embed output** — embed-only dirs (`embeddings.parquet`, the expensive GPU artifact) are
+  partitioned into *skipped* and never get `.loaded`, and catch-up prune keys purely on `.loaded`, so an
+  embed dir always survives.
+- **Verify-shortfall / failed dirs keep their Parquet** — they stay pending for the next sweep.
+
+A deletion failure (e.g. a permission error) is logged and counted only in the sweep's `pruned=` line by
+*omission* (it does not increment `pruned`); it is **not** a load failure — the data is already in
+ClickHouse and `.loaded` is written, so the load succeeded and the next sweep's catch-up retries the
+delete. The flag defaults off so the plain loader is non-destructive; opt in only where disk pressure
+demands it. The sweep summary always reports `pruned=N` (0 when the flag is off).
 
 `--watch` uses fsnotify (inotify/kqueue) on marker creation for near-instant pickup, PLUS an
 unconditional 5-minute fallback sweep, because inotify events can be dropped on queue overflow and never

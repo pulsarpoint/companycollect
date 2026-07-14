@@ -193,6 +193,7 @@ func runLoad(args []string) {
 	scan := fs.String("scan", "", "a producer output root; sweep it for .produced dirs lacking .loaded and load each (required)")
 	watch := fs.Bool("watch", false, "keep sweeping: after each pass wait for a filesystem event under root or a 5-minute tick")
 	parallel := fs.Int("parallel", 4, "how many output dirs to load concurrently")
+	deleteLoaded := fs.Bool("delete-loaded", false, "after a dir loads+verifies (and .loaded is written), remove its output DIRECTORY to reclaim disk; also prunes pre-existing .produced+.loaded leftovers. Never deletes markers or embed output. Default off")
 	_ = fs.Parse(args)
 
 	if *scan == "" {
@@ -209,14 +210,14 @@ func runLoad(args []string) {
 	defer conn.Close()
 
 	if *watch {
-		watchLoad(ctx, conn, *scan, *parallel)
+		watchLoad(ctx, conn, *scan, *parallel, *deleteLoaded)
 		return
 	}
-	res, err := load.Sweep(ctx, conn, *scan, *parallel)
+	res, err := load.Sweep(ctx, conn, *scan, *parallel, *deleteLoaded)
 	if err != nil {
 		log.Fatalf("scan %s: %v", *scan, err)
 	}
-	log.Printf("sweep %s: loaded=%d failed=%d pending=%d skipped=%d", *scan, res.Loaded, res.Failed, res.Pending, res.Skipped)
+	log.Printf("sweep %s: loaded=%d failed=%d pending=%d skipped=%d pruned=%d", *scan, res.Loaded, res.Failed, res.Pending, res.Skipped, res.Pruned)
 	if res.Failed > 0 {
 		os.Exit(1)
 	}
@@ -225,7 +226,7 @@ func runLoad(args []string) {
 // watchLoad runs Sweep in a loop. The 5-minute ticker is the correctness backstop (a sweep always
 // happens); fsnotify Create/Rename events under root only cut latency. If the watcher can't be set
 // up it logs ONE warning and degrades to pure ticker polling.
-func watchLoad(ctx context.Context, conn driver.Conn, root string, parallel int) {
+func watchLoad(ctx context.Context, conn driver.Conn, root string, parallel int, deleteLoaded bool) {
 	trigger := make(chan struct{}, 1)
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -265,11 +266,11 @@ func watchLoad(ctx context.Context, conn driver.Conn, root string, parallel int)
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for {
-		res, err := load.Sweep(ctx, conn, root, parallel)
+		res, err := load.Sweep(ctx, conn, root, parallel, deleteLoaded)
 		if err != nil {
 			log.Printf("sweep %s: %v", root, err)
 		} else {
-			log.Printf("sweep %s: loaded=%d failed=%d pending=%d skipped=%d", root, res.Loaded, res.Failed, res.Pending, res.Skipped)
+			log.Printf("sweep %s: loaded=%d failed=%d pending=%d skipped=%d pruned=%d", root, res.Loaded, res.Failed, res.Pending, res.Skipped, res.Pruned)
 		}
 		select {
 		case <-ctx.Done():
