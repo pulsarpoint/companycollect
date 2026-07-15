@@ -1,6 +1,7 @@
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from math import ceil
 from random import randint
 from typing import Any, Self
 from urllib.parse import urlencode
@@ -12,7 +13,7 @@ from pydantic import ValidationError, model_validator
 from test_dagster.defs.denmark_cvr.models import SearchResponse
 
 DATACVR_BASE_URL = "https://datacvr.virk.dk"
-DATACVR_PAGE_SIZE = 1_000
+DATACVR_PAGE_SIZE = 3_000
 SAFE_RESPONSE_HEADERS = frozenset(
     {
         "content-type",
@@ -202,34 +203,31 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
         page_size: int,
         sleep: Callable[[float], None],
     ) -> Iterator[DenmarkCvrSearchPage]:
-        expected_total: int | None = None
-        downloaded_count = 0
-        page_index = 0
-        offset = start_page_index
+        expected_page_count: int | None = None
+        page_index = start_page_index
         while True:
             result = page.evaluate(
                 DATACVR_SEARCH_SCRIPT,
                 {
                     "payload": build_search_payload(
                         search_term,
-                        page_index=offset,
+                        page_index=page_index,
                         size=page_size,
                     )
                 },
             )
             search_page = _validated_search_page(result, page_index=page_index)
-            if expected_total is None:
-                expected_total = search_page.response.total
+            if expected_page_count is None:
+                expected_page_count = ceil(search_page.response.total / page_size)
             if not search_page.response.enheder:
                 return
 
             yield search_page
-            downloaded_count += len(search_page.response.enheder)
-            if downloaded_count >= expected_total:
+            processed_page_count = page_index - start_page_index + 1
+            if processed_page_count >= expected_page_count:
                 return
 
             sleep(randint(self.min_delay_ms, self.max_delay_ms) / 1_000)
-            offset += len(search_page.response.enheder)
             page_index += 1
 
 

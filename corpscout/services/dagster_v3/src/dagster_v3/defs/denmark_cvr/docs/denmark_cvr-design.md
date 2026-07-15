@@ -19,7 +19,7 @@
 
 ## 3. Loading and raw storage
 
-- `DenmarkCvrSearchResource` launches CloakBrowser once per partition, opens the public result page, and performs sequential credentialed JSON POST requests in that page. Requests use a fixed size of 1,000 and advance `sideIndex` by the number of entities already downloaded, because the gateway treats `sideIndex` as an absolute result offset.
+- `DenmarkCvrSearchResource` launches CloakBrowser once per partition, opens the public result page, and performs sequential credentialed JSON POST requests in that page. Requests use the prototype's proven fixed size of 3,000 and advance the sequential `sideIndex` page number by one.
 - Each response is validated with the discriminated `SearchResponse` model before its exact UTF-8 body is written to S3-compatible object storage.
 - Page objects use `denmark_cvr/search/search_term=<term>/run_id=<run-id>/page=<index>.json` in bucket `source-denmark-cvr`.
 - `manifest.json` is written last and records page keys, advertised total, aggregate entity-type counts, and byte counts. It is the completion marker for the run-scoped partition capture.
@@ -46,8 +46,8 @@
 ## 7. Issues found
 
 - A bounded live probe proved that a one-character query is substring-based: only 4/5 sampled `a`, 1/5 sampled `æ`, and 3/5 sampled `0` results began with the query term. The source is therefore modeled as overlapping search-term partitions.
-- Large searches can return hundreds of thousands of advertised results. Pagination tracks both the sequential stored-page index and the accumulated result offset, and uses the first response's total as the expected completion count.
-- A bounded probe confirmed that offsets 3,000, 6,000, and 9,000 each return 3,000 results for the `a` partition. Adjacent windows can still contain repeated source identifiers, which are intentionally preserved for later DuckDB deduplication.
+- Large searches can return hundreds of thousands of advertised results. The first response's total determines the expected page count with `ceil(total / 3000)`.
+- A bounded probe in the standalone Cloak project confirmed that `sideIndex` values 0 through 4 each return 3,000 results for the `a` partition. Pages can contain repeated source identifiers, which are intentionally preserved for later DuckDB deduplication.
 - CloakBrowser 0.4.10 resolves, imports, and launches successfully with this project's Python 3.14 runtime.
 
 ## 8. Verification

@@ -340,7 +340,7 @@ def test_search_resource_paginates_and_closes_browser() -> None:
     ]
     assert [
         call["payload"]["fritekstCommand"]["sideIndex"] for call in page.evaluate_calls
-    ] == ["0", "2"]
+    ] == ["0", "1"]
     assert delays == [0.0]
     assert browser.closed is True
 
@@ -377,10 +377,10 @@ def test_search_resource_uses_fixed_page_size_until_empty() -> None:
     assert len(page.evaluate_calls) == 2
     assert {
         call["payload"]["fritekstCommand"]["size"] for call in page.evaluate_calls
-    } == {1_000}
+    } == {3_000}
     assert page.goto_calls == [
         (
-            "https://datacvr.virk.dk/soegeresultater?fritekst=0&sideIndex=0&size=1000",
+            "https://datacvr.virk.dk/soegeresultater?fritekst=0&sideIndex=0&size=3000",
             "networkidle",
         )
     ]
