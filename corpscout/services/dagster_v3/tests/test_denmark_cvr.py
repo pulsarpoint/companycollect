@@ -226,6 +226,18 @@ def test_search_response_models_select_all_entity_types() -> None:
     assert response.enheder[2].ophoers_dato is None
 
 
+def test_company_search_result_accepts_null_city_and_postal_code() -> None:
+    company = _company()
+    company["by"] = None
+    company["postnummer"] = None
+
+    response = SearchResponse.model_validate_json(_response_body([company]))
+
+    assert isinstance(response.enheder[0], CompanySearchResult)
+    assert response.enheder[0].by is None
+    assert response.enheder[0].postnummer is None
+
+
 def test_search_response_rejects_negative_totals_and_unknown_entity_types() -> None:
     negative_total = json.loads(_response_body([]))
     negative_total["total"] = -1
@@ -389,6 +401,9 @@ def test_search_resource_retains_invalid_body_without_exposing_it() -> None:
 
     assert exc_info.value.raw_body == invalid_body
     assert exc_info.value.page_index == 0
+    assert len(exc_info.value.schema_issues) == 5
+    assert (("enheder",), "missing") in exc_info.value.schema_issues
+    assert "enheder:missing" in str(exc_info.value)
     assert invalid_body not in str(exc_info.value)
 
 

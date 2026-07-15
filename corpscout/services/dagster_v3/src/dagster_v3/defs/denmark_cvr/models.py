@@ -8,7 +8,7 @@ class CompanySearchResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     beliggenhedsadresse: str
-    by: str
+    by: str | None
     co_navn: str | None = Field(alias="coNavn")
     cvr: str
     email: str | None
@@ -20,7 +20,7 @@ class CompanySearchResult(BaseModel):
     highlight_historisk_hovednavn: bool = Field(alias="highlightHistoriskHovednavn")
     hovedbranche: str
     ophoers_dato: date | None = Field(alias="ophoersDato")
-    postnummer: str
+    postnummer: str | None
     reg: str | None
     reklame_beskyttet: bool = Field(alias="reklameBeskyttet")
     seneste_navn: str = Field(alias="senesteNavn")

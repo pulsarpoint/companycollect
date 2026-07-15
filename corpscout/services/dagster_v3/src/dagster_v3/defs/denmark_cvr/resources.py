@@ -64,10 +64,24 @@ class DenmarkCvrRequestError(RuntimeError):
 
 
 class DenmarkCvrValidationError(ValueError):
-    def __init__(self, *, page_index: int, raw_body: str) -> None:
-        super().__init__(f"DataCVR returned an invalid response on page {page_index}")
+    def __init__(
+        self,
+        *,
+        page_index: int,
+        raw_body: str,
+        schema_issues: tuple[tuple[tuple[str | int, ...], str], ...] = (),
+    ) -> None:
+        issue_summary = ", ".join(
+            f"{'.'.join(str(part) for part in location)}:{error_type}"
+            for location, error_type in schema_issues[:5]
+        )
+        message = f"DataCVR returned an invalid response on page {page_index}"
+        if issue_summary:
+            message += f"; schema_errors={len(schema_issues)} issues={issue_summary}"
+        super().__init__(message)
         self.page_index = page_index
         self.raw_body = raw_body
+        self.schema_issues = schema_issues
 
 
 def build_search_payload(
@@ -242,10 +256,18 @@ def _validated_search_page(
         )
     try:
         response = SearchResponse.model_validate_json(raw_body)
-    except ValidationError:
+    except ValidationError as exc:
         raise DenmarkCvrValidationError(
             page_index=page_index,
             raw_body=raw_body,
+            schema_issues=tuple(
+                (tuple(error["loc"]), str(error["type"]))
+                for error in exc.errors(
+                    include_url=False,
+                    include_context=False,
+                    include_input=False,
+                )
+            ),
         ) from None
     return DenmarkCvrSearchPage(
         page_index=page_index,
