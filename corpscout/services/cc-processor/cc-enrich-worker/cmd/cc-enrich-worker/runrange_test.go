@@ -343,10 +343,10 @@ func TestRunRangePoolBreaker(t *testing.T) {
 	base := t.TempDir()
 	// Every part is in the catalog but NO bytes are served -> every part fails.
 	var parts []fixturePart
-	var class []uint32
+	var selectedParts []uint32
 	for i := uint32(0); i < 10; i++ {
 		parts = append(parts, fixturePart{index: i, present: false})
-		class = append(class, i)
+		selectedParts = append(selectedParts, i)
 	}
 	getter := writeRangeFixture(t, base, parts)
 	deps := techDeps(t, base, getter)
@@ -357,7 +357,7 @@ func TestRunRangePoolBreaker(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", deps.work, produce, nil)
+	sum := runRangePool(context.Background(), selectedParts, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if !sum.Breaker {
 		t.Error("breaker should have tripped")
@@ -534,10 +534,10 @@ func TestRunRangePoolExhaustedPartsTripBreaker(t *testing.T) {
 	shrinkBackoff(t)
 	base := t.TempDir()
 	parts := []fixturePart{{index: 0, present: true}}
-	class := []uint32{0}
+	selectedParts := []uint32{0}
 	for i := uint32(1); i <= 5; i++ {
 		parts = append(parts, fixturePart{index: i, present: false})
-		class = append(class, i)
+		selectedParts = append(selectedParts, i)
 	}
 	getter := writeRangeFixture(t, base, parts)
 	deps := techDeps(t, base, getter)
@@ -545,7 +545,7 @@ func TestRunRangePoolExhaustedPartsTripBreaker(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), class, 1, "tech", "test-run", deps.work, produce, nil)
+	sum := runRangePool(context.Background(), selectedParts, 1, "tech", "test-run", deps.work, produce, nil)
 
 	if !sum.Breaker {
 		t.Fatal("5 consecutive exhausted parts must trip the breaker")
@@ -564,10 +564,10 @@ func TestRunRangePoolPhase1TripSurvivesStragglerSuccess(t *testing.T) {
 	shrinkBackoff(t)
 	base := t.TempDir()
 	parts := []fixturePart{{index: 0, present: true}}
-	class := []uint32{0}
+	selectedParts := []uint32{0}
 	for i := uint32(1); i <= 5; i++ {
 		parts = append(parts, fixturePart{index: i, present: false}) // bytes withheld -> fail
-		class = append(class, i)
+		selectedParts = append(selectedParts, i)
 	}
 	getter := writeRangeFixture(t, base, parts)
 	deps := techDeps(t, base, getter)
@@ -581,7 +581,7 @@ func TestRunRangePoolPhase1TripSurvivesStragglerSuccess(t *testing.T) {
 		return producePart(ctx, deps, part, outDir)
 	}
 
-	sum := runRangePool(context.Background(), class, 2, "tech", "test-run", deps.work, produce, nil)
+	sum := runRangePool(context.Background(), selectedParts, 2, "tech", "test-run", deps.work, produce, nil)
 
 	if !sum.Breaker {
 		t.Fatal("phase-1 breaker should have tripped")

@@ -823,7 +823,7 @@ func run(mode string, o opts) {
 	// embed VERIFY-AND-SKIP: a part is DONE if its embed folder already holds a complete vector file under
 	// EITHER name — embeddings.parquet (fp32, fresh from this pass) or embeddings_fp16.parquet (converted
 	// offline once the fp32 was pruned). For fp32 the write is atomic (one WriteFile at the end), so
-	// parquetRows>0 proves completeness; parquetRows reads only the footer row count, so it usually works for
+	// a positive footer row count proves completeness; the probe reads only the footer, so it usually works for
 	// fp16 too, and if parquet-go can't read the HALF_FLOAT footer we accept a non-empty file (the converted
 	// file was verified before its fp32 was pruned). If done, skip the whole part (no re-fetch/re-embed);
 	// else fall through and (over)write embeddings.parquet. embed deliberately reuses the dir (no empty rule).

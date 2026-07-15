@@ -37,7 +37,7 @@ type rangeSummary struct {
 // wraps producePart (range reads); tests inject a fixture-backed producer.
 type partProducer func(ctx context.Context, part uint32, outDir string) (partResult, error)
 
-// runRangePool consumes class over min(warcParallel, len(class)) worker goroutines, coordinated by
+// runRangePool consumes selectedParts over min(warcParallel, len(selectedParts)) worker goroutines, coordinated by
 // a dispatcher loop (this function) that owns all scheduling state. Per attempt a worker re-checks
 // the part's work.Status (Produced/Preserved → skip), removes a stale Pending output dir left by a
 // crashed or failed produce, runs the producer, and on success writes the .produced marker with the
@@ -49,7 +49,7 @@ type partProducer func(ctx context.Context, part uint32, outDir string) (partRes
 // everything still pending. It returns the tally — no printing, no os.Exit.
 func runRangePool(
 	ctx context.Context,
-	class []uint32,
+	selectedParts []uint32,
 	warcParallel int,
 	cmd, runID string,
 	w *work.Run,
@@ -57,8 +57,8 @@ func runRangePool(
 	prog *poolProgress,
 ) rangeSummary {
 	workers := warcParallel
-	if workers > len(class) {
-		workers = len(class)
+	if workers > len(selectedParts) {
+		workers = len(selectedParts)
 	}
 	if workers < 1 {
 		workers = 1
@@ -84,7 +84,7 @@ func runRangePool(
 	}
 
 	pending := &partQueue{}
-	for _, part := range class {
+	for _, part := range selectedParts {
 		pending.add(pendingPart{part: part})
 	}
 
@@ -315,19 +315,19 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	// Every part with catalog pages is range-read; Empty parts are skipped. Produced/Preserved
 	// parts still enter the pool — runPartAttempt's Status re-check is the authoritative skip,
 	// exactly as before.
-	var class []uint32
+	var selectedParts []uint32
 	empty := 0
 	for _, p := range parts {
 		if p.Status == work.Empty {
 			empty++
 			continue
 		}
-		class = append(class, p.Index)
+		selectedParts = append(selectedParts, p.Index)
 	}
 
-	fmt.Printf("parts=%d selected=%d empty=%d\n", len(parts), len(class), empty)
+	fmt.Printf("parts=%d selected=%d empty=%d\n", len(parts), len(selectedParts), empty)
 
-	if len(class) == 0 {
+	if len(selectedParts) == 0 {
 		log.Printf("range: nothing to do — no parts to process in [%d,%d]", lo, hi)
 		return
 	}
@@ -350,13 +350,13 @@ func runRange(cmd string, o opts, ro runnerOpts) {
 	runStats := &worker.RunStats{}
 	deps.runStats = runStats
 	deps.work = w
-	prog := &poolProgress{total: len(class)}
+	prog := &poolProgress{total: len(selectedParts)}
 	stopTicker := startRangeStatsTicker(deps.objects, runStats, prog, start)
 
 	produce := func(ctx context.Context, part uint32, outDir string) (partResult, error) {
 		return producePart(ctx, deps, part, outDir)
 	}
-	sum := runRangePool(ctx, class, ro.warcParallel, cmd, runID, w, produce, prog)
+	sum := runRangePool(ctx, selectedParts, ro.warcParallel, cmd, runID, w, produce, prog)
 	stopTicker() // prints the final cumulative line, before the summary below
 	elapsed := time.Since(start).Round(time.Second)
 
