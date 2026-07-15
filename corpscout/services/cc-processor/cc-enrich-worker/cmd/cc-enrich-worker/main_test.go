@@ -11,7 +11,7 @@ import (
 // parts-parallelism scales the whole budget (spec §2: X * concurrency * PageConcurrency).
 func TestFetchConcurrencyFor(t *testing.T) {
 	tests := []struct {
-		mode          string
+		cmd           string
 		concurrency   int
 		partsParallel int
 		want          int
@@ -26,8 +26,8 @@ func TestFetchConcurrencyFor(t *testing.T) {
 		{"tech", 10, 0, 10 * worker.PageConcurrency},     // partsParallel<1 clamps to 1
 	}
 	for _, tc := range tests {
-		if got := fetchConcurrencyFor(tc.mode, tc.concurrency, tc.partsParallel); got != tc.want {
-			t.Errorf("fetchConcurrencyFor(%q, %d, %d) = %d, want %d", tc.mode, tc.concurrency, tc.partsParallel, got, tc.want)
+		if got := fetchConcurrencyFor(tc.cmd, tc.concurrency, tc.partsParallel); got != tc.want {
+			t.Errorf("fetchConcurrencyFor(%q, %d, %d) = %d, want %d", tc.cmd, tc.concurrency, tc.partsParallel, got, tc.want)
 		}
 	}
 }

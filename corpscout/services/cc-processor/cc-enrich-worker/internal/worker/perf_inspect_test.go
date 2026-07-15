@@ -25,7 +25,7 @@ func BenchmarkProcessTechPage(b *testing.B) {
 				raw := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n" + body)
 				getter := multiGetter{"f.warc.gz:0": raw}
 				item := model.WorklistItem{RootDomain: "example.com", URL: "https://example.com/", WarcFilename: "f.warc.gz", Length: int64(len(raw)), Primary: primary}
-				cfg := ShardConfig{Mode: "tech", TechMaxBytes: 128 << 10, Tech: matcher}
+				cfg := ShardConfig{Cmd: "tech", TechMaxBytes: 128 << 10, Tech: matcher}
 				b.ReportAllocs()
 				b.SetBytes(int64(len(body)))
 				b.ResetTimer()

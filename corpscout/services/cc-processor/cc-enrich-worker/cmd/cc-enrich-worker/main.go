@@ -77,8 +77,8 @@ COMMONCRAWL_EMBED_*, CLICKHOUSE_*, and AWS_* for signed Common Crawl S3 access.
 `)
 }
 
-// opts holds the parsed flags for a run. Mode-specific fields are only registered (and meaningful)
-// for the relevant command.
+// opts holds the parsed flags for a run. Command-specific fields are only registered (and
+// meaningful) for the relevant command.
 type opts struct {
 	crawlID, out, base, selection string
 	part                          int
@@ -91,22 +91,22 @@ type opts struct {
 // parse builds a per-command flag set (so tech flags don't show under industry and vice-versa). It
 // serves both the single-part run (--part) and the range runner (--parts). When --parts is set it
 // returns isRange=true and a populated runnerOpts; the two selectors are mutually exclusive.
-func parse(mode string, args []string) (opts, runnerOpts, bool) {
-	fs := flag.NewFlagSet("cc-enrich-worker "+mode, flag.ExitOnError)
+func parse(cmd string, args []string) (opts, runnerOpts, bool) {
+	fs := flag.NewFlagSet("cc-enrich-worker "+cmd, flag.ExitOnError)
 	var o opts
 	// common to every command
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
 	fs.StringVar(&o.selection, "selection", "pages25", "catalog selection identity")
 	fs.IntVar(&o.part, "part", -1, "zero-based WARC index (single-part run; mutually exclusive with --parts)")
-	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/warc/<selection>/out_<mode>_<part>; an explicit dir must be empty)")
+	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default <base>/<crawl-id>/warc/<selection>/out_<cmd>_<part>; an explicit dir must be empty)")
 	fs.StringVar(&o.base, "base", "", "output ROOT (required, explicit — no environment fallback)")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "industry/embed: pages in flight; tech/both: DOMAINS in flight, each fetching up to 8 pages in parallel (total fetches = concurrency x 8)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "catalog pages per process chunk (tech/both)")
-	if mode == "tech" || mode == "both" {
+	if cmd == "tech" || cmd == "both" {
 		fs.StringVar(&o.techEngine, "tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
 		fs.IntVar(&o.techMax, "tech-max-bytes", 0, "maximum page bytes scanned for technologies (0 = full page)")
 	}
-	if mode == "industry" || mode == "both" || mode == "embed" {
+	if cmd == "industry" || cmd == "both" || cmd == "embed" {
 		fs.IntVar(&o.batch, "embed-batch", embed.DefaultBatch, "texts per embed request — keep small (big batches overflow the engine's token budget)")
 		fs.IntVar(&o.embedConc, "embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	}
@@ -312,12 +312,12 @@ func detectModel(baseURL string) (string, error) {
 // partDeps are the per-process resources shared by every part in a run: the parsed opts, the
 // embedder + NACE reference (industry/embed/both), and the object getter. Built ONCE and passed to
 // producePart. The range lanes call producePart concurrently over a SINGLE partDeps, so every field
-// must be safe for concurrent reads: opts/mode are immutable value copies; emb (embed client),
+// must be safe for concurrent reads: opts/cmd are immutable value copies; emb (embed client),
 // ref/protos (read-only reference data), and objects (S3/HTTP getter) are all concurrent-safe.
 // Anything per-part (the opened input, output dir, temp dir, accumulators) stays local to producePart.
 type partDeps struct {
-	mode string
-	o    opts
+	cmd string
+	o   opts
 
 	emb    classify.Embedder
 	ref    *mdl.Reference
@@ -361,12 +361,12 @@ type preparedPart struct {
 // by how many parts share the ONE transport concurrently: 1 for a single --part run; warcParallel
 // for the range runner so that, e.g., --warc-parallel 4 does not squeeze 4 parts through one part's
 // connection budget.
-func fetchConcurrencyFor(mode string, concurrency, partsParallel int) int {
+func fetchConcurrencyFor(cmd string, concurrency, partsParallel int) int {
 	if partsParallel < 1 {
 		partsParallel = 1
 	}
 	c := concurrency
-	if mode == "tech" || mode == "both" {
+	if cmd == "tech" || cmd == "both" {
 		c *= worker.PageConcurrency
 	}
 	return c * partsParallel
@@ -378,10 +378,10 @@ func fetchConcurrencyFor(mode string, concurrency, partsParallel int) int {
 //
 // partsParallel is how many parts will share the single transport concurrently (1 for a single
 // --part run; the range lane's parts-parallelism otherwise) — see fetchConcurrencyFor.
-func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) (partDeps, error) {
-	d := partDeps{mode: mode, o: o}
+func buildPartDeps(ctx context.Context, cmd string, o opts, partsParallel int) (partDeps, error) {
+	d := partDeps{cmd: cmd, o: o}
 
-	if mode == "tech" || mode == "both" { // tech engine only needed when we fingerprint
+	if cmd == "tech" || cmd == "both" { // tech engine only needed when we fingerprint
 		switch o.techEngine {
 		case "fast":
 			fm, err := tech.NewFastMatcher()
@@ -404,7 +404,7 @@ func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) 
 
 	// The embedder is needed whenever we embed pages (industry/both/embed). The NACE reference +
 	// ClickHouse are needed only when we ALSO classify (industry/both) — embed-only skips them.
-	if mode != "tech" {
+	if cmd != "tech" {
 		baseURL := envOr("COMMONCRAWL_EMBED_BASE_URL", "http://localhost:8000/v1")
 		model := envOr("COMMONCRAWL_EMBED_MODEL", "")
 		if model == "" {
@@ -416,8 +416,8 @@ func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) 
 		log.Printf("embed endpoint=%s model=%s", baseURL, model)
 		d.emb = embed.NewEmbedClient(baseURL, model, o.batch, o.embedConc, envInt("COMMONCRAWL_EMBED_MAX_CHARS", 0))
 
-		if mode == "embed" {
-			log.Printf("embed-only mode: no NACE reference, no ClickHouse, no load")
+		if cmd == "embed" {
+			log.Printf("embed-only cmd: no NACE reference, no ClickHouse, no load")
 		} else {
 			conn, err := chConnect(ctx)
 			if err != nil {
@@ -449,7 +449,7 @@ func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) 
 	}
 
 	// Transport sizing = true in-flight range reads across the parts sharing this transport.
-	fetchConcurrency := fetchConcurrencyFor(mode, o.concurrency, partsParallel)
+	fetchConcurrency := fetchConcurrencyFor(cmd, o.concurrency, partsParallel)
 	s3Getter, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"), fetchConcurrency)
 	if err != nil {
 		return partDeps{}, fmt.Errorf("Common Crawl S3 init: %w", err)
@@ -563,7 +563,7 @@ func producePart(ctx context.Context, d partDeps, part uint32, outDir string) (p
 // separate from the process+write remainder.
 func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partResult, error) {
 	o := d.o
-	mode := d.mode
+	cmd := d.cmd
 	input := prepared.input
 	outDir := prepared.outDir
 
@@ -578,7 +578,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 
 	getter := input.Getter
 	items := input.Items
-	if mode == "tech" || mode == "both" {
+	if cmd == "tech" || cmd == "both" {
 		sort.SliceStable(items, func(i, j int) bool {
 			if items[i].RootDomain != items[j].RootDomain {
 				return items[i].RootDomain < items[j].RootDomain
@@ -598,8 +598,8 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 	cfg := worker.ShardConfig{
 		CrawlID: o.crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
 		ResolvedAt: time.Now().UTC(), Concurrency: o.concurrency, TechMaxBytes: o.techMax,
-		EmbedConcurrency: o.embedConc, EmbedBatch: o.batch, Mode: mode,
-		EmbedOnly: mode == "embed",
+		EmbedConcurrency: o.embedConc, EmbedBatch: o.batch, Cmd: cmd,
+		EmbedOnly: cmd == "embed",
 		Tech:      d.tech,
 		RunStats:  d.runStats,
 	}
@@ -618,7 +618,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 
 	// Industry: one continuous fetch→embed stream over the whole shard, so the GPU is fed
 	// non-stop (no per-chunk "embed all then wait" barrier). tech/both keep the chunk pipeline.
-	if mode == "industry" || mode == "embed" {
+	if cmd == "industry" || cmd == "embed" {
 		res, err := worker.ProcessIndustryStream(ctx, items, getter, d.emb, d.ref, d.protos, cfg)
 		if err != nil {
 			return partResult{}, fmt.Errorf("industry stream: %w", err)
@@ -633,7 +633,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 		embeddings = res.Embeddings
 		if !rangeMode {
 			unit, n := "domains", len(domains)
-			if mode == "embed" {
+			if cmd == "embed" {
 				unit, n = "embeddings", len(embeddings)
 			}
 			log.Printf("progress: %d/%d pages, %d %s (%.1f pages/s)",
@@ -643,7 +643,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 		// Streaming write: the chunked tech/both path writes each chunk's rows as ONE parquet row group
 		// immediately (worker.ShardStreamer) instead of buffering the whole shard, so peak memory is
 		// O(chunk) not O(part). A 250k-domain (~2.75M-page) shard would otherwise buffer ~80GB+ of rows.
-		runEmbedChunk := mode == "both" // "both" also emits vectors -> the separate data/embedding tree
+		runEmbedChunk := cmd == "both" // "both" also emits vectors -> the separate data/embedding tree
 		embedDir := ""
 		if runEmbedChunk {
 			embedDir = d.work.EmbedDirFor(outDir)
@@ -727,7 +727,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 	if !streamed {
 		// Failure contract (industry/embed): refuse to write when non-empty catalog input produced nothing.
 		produced := len(domains)
-		if mode == "embed" {
+		if cmd == "embed" {
 			produced = len(embeddings)
 		}
 		if len(items) > 0 && produced == 0 {
@@ -740,7 +740,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 			}
 			return nil
 		}
-		if mode == "industry" { // domains master + classification; embed writes only the vectors below
+		if cmd == "industry" { // domains master + classification; embed writes only the vectors below
 			if err := write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) }); err != nil {
 				return partResult{}, err
 			}
@@ -755,11 +755,11 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 			rows["page_signals"] = len(pageSignals)
 		}
 		// Embeddings are the expensive GPU artifact — kept large, never loaded into ClickHouse. For embed
-		// mode --out IS the embed dir; for industry, write to the SEPARATE sibling tree
+		// cmd --out IS the embed dir; for industry, write to the SEPARATE sibling tree
 		// <crawl>/warc/<selection>/<stem> -> <crawl>/embedding/warc/<selection>/<stem>.
-		if len(embeddings) > 0 || mode == "embed" {
+		if len(embeddings) > 0 || cmd == "embed" {
 			embedDir := outDir
-			if mode != "embed" {
+			if cmd != "embed" {
 				embedDir = d.work.EmbedDirFor(outDir)
 			}
 			if err := os.MkdirAll(embedDir, 0o755); err != nil {
@@ -788,7 +788,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 	}
 
 	dur := time.Since(start).Seconds()
-	if mode == "embed" {
+	if cmd == "embed" {
 		erate := 0.0
 		if dur > 0 {
 			erate = float64(finalEmbeds) / dur
@@ -805,7 +805,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 	return partResult{Rows: rows, Domains: finalDomains, Embeds: finalEmbeds}, nil
 }
 
-func run(mode string, o opts) {
+func run(cmd string, o opts) {
 	ctx := context.Background()
 	if o.base == "" {
 		log.Fatal("--base is required (output root)")
@@ -815,7 +815,7 @@ func run(mode string, o opts) {
 		log.Fatalf("resolve base directory %s: %v", o.base, err)
 	}
 	o.base = base
-	w, err := work.Open(o.base, o.crawlID, o.selection, mode)
+	w, err := work.Open(o.base, o.crawlID, o.selection, cmd)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -824,7 +824,7 @@ func run(mode string, o opts) {
 	// loader knows which file → which table. A single --part run is for ad-hoc/debug produce; it does NOT
 	// write a .produced marker, so its output is for inspection, not the load pipeline. The default is
 	// derived from --base (REQUIRED, explicit — no silent fallback that could scatter data) as
-	// <base>/<crawl>/warc/<selection>/out_<mode>_<part>/, unique per selection and WARC. The
+	// <base>/<crawl>/warc/<selection>/out_<cmd>_<part>/, unique per selection and WARC. The
 	// embedding tree is a sibling under <base>/<crawl>/embedding/ (derived from outDir below).
 	outDir := o.out
 	if outDir == "" {
@@ -837,7 +837,7 @@ func run(mode string, o opts) {
 	// fp16 too, and if parquet-go can't read the HALF_FLOAT footer we accept a non-empty file (the converted
 	// file was verified before its fp32 was pruned). If done, skip the whole part (no re-fetch/re-embed);
 	// else fall through and (over)write embeddings.parquet. embed deliberately reuses the dir (no empty rule).
-	if mode == "embed" {
+	if cmd == "embed" {
 		if embPath, rows, complete := work.CompletedEmbedding(outDir); complete {
 			log.Printf("skip: embeddings already present (rows=%d) -> %s", rows, embPath)
 			return
@@ -846,7 +846,7 @@ func run(mode string, o opts) {
 		log.Fatalf("output dir %s is not empty — point --out at a fresh/empty directory", outDir)
 	}
 
-	d, err := buildPartDeps(ctx, mode, o, 1) // single-part run: one part shares the transport
+	d, err := buildPartDeps(ctx, cmd, o, 1) // single-part run: one part shares the transport
 	if err != nil {
 		log.Fatalf("%v", err)
 	}

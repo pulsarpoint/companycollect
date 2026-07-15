@@ -157,7 +157,7 @@ func techDeps(t *testing.T, base string, getter fetch.ObjectGetter) partDeps {
 		t.Fatal(err)
 	}
 	return partDeps{
-		mode: "tech",
+		cmd: "tech",
 		o: opts{
 			crawlID:     testCrawlID,
 			selection:   testSelection,

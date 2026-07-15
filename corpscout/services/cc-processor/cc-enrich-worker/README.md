@@ -296,7 +296,7 @@ WARC reads always go through signed Common Crawl S3 — an EC2 instance role on 
 | `--crawl-id` | required | Crawl identity, for example `CC-MAIN-2026-25`. |
 | `--selection` | `pages25` | Catalog selection directory. |
 | `--part` | required | Zero-based WARC index. |
-| `--out` | derived | Defaults to `<base>/<crawl>/warc/<selection>/out_<mode>_<part>`. |
+| `--out` | derived | Defaults to `<base>/<crawl>/warc/<selection>/out_<cmd>_<part>`. |
 | `--concurrency` | `32` | Industry/embed pages or tech/both domains in flight. |
 | `--chunk` | `1024` | Catalog pages per tech/both processing chunk. |
 | `--tech-engine` | `fast` | Technology matcher used by tech/both. |

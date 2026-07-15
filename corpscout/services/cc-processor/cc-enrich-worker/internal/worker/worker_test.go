@@ -126,7 +126,7 @@ func TestProcessShardBothModeEmitsEmbeddings(t *testing.T) {
 		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
 	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "C", SourceRunID: "run1", ResolvedAt: time.Unix(1700000000, 0).UTC(),
-		Concurrency: 2, Mode: "both", Tech: upstreamTech}
+		Concurrency: 2, Cmd: "both", Tech: upstreamTech}
 
 	res, err := ProcessShard(context.Background(), items, getter, emb, ref, &model.Prototypes{}, cfg)
 	if err != nil {
@@ -154,7 +154,7 @@ func TestProcessShardIndustryMode(t *testing.T) {
 	ref := &model.Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
 		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
 	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "industry"}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Cmd: "industry"}
 
 	res, err := ProcessShard(context.Background(), items, getter, emb, ref, &model.Prototypes{}, cfg)
 	if err != nil {
@@ -181,7 +181,7 @@ func TestProcessShardTechMode(t *testing.T) {
 	items := []model.WorklistItem{
 		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech", Tech: upstreamTech}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Cmd: "tech", Tech: upstreamTech}
 
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
@@ -224,7 +224,7 @@ func TestProcessIndustryStreamReportsFetchCounts(t *testing.T) {
 	ref := &model.Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
 		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
 	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2, Mode: "industry"}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2, Cmd: "industry"}
 
 	res, err := ProcessIndustryStream(context.Background(), items, getter, emb, ref, &model.Prototypes{}, cfg)
 	if err != nil {
@@ -250,7 +250,7 @@ func TestFinalizePreservesTechnologyConfidence(t *testing.T) {
 		tech: []model.Technology{{Name: "Odoo", Category: "CMS", Confidence: 25}},
 	}}}
 
-	result, err := Finalize(context.Background(), fetched, nil, nil, nil, ShardConfig{Mode: "tech"})
+	result, err := Finalize(context.Background(), fetched, nil, nil, nil, ShardConfig{Cmd: "tech"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestProcessPageFullScanDetectsLateTechnology(t *testing.T) {
 		Offset: 0, Length: int64(len(raw)),
 	}
 
-	full, err := processPage(context.Background(), getter, ShardConfig{Mode: "tech", Tech: matcher}, item, &chunkStats{})
+	full, err := processPage(context.Background(), getter, ShardConfig{Cmd: "tech", Tech: matcher}, item, &chunkStats{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestTechAndJSONLDRowsRetainPageProvenance(t *testing.T) {
 	resolvedAt := time.Unix(1700000000, 0).UTC()
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, ShardConfig{
 		CrawlID: "CC-MAIN-2026-25", SourceRunID: "run-pages", ResolvedAt: resolvedAt,
-		Concurrency: 2, Mode: "tech", Tech: upstreamTech,
+		Concurrency: 2, Cmd: "tech", Tech: upstreamTech,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +351,7 @@ func TestProcessShardKeepsSiblingJSONLDEntities(t *testing.T) {
 	}}
 	cfg := ShardConfig{
 		CrawlID: "C", SourceRunID: "run", ResolvedAt: time.Unix(1700000000, 0).UTC(),
-		Concurrency: 1, Mode: "tech", Tech: upstreamTech,
+		Concurrency: 1, Cmd: "tech", Tech: upstreamTech,
 	}
 
 	first, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
@@ -416,7 +416,7 @@ func TestProcessShardDecodesLatin1(t *testing.T) {
 	items := []model.WorklistItem{
 		{RootDomain: "mueller.de", URL: "https://mueller.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech", Tech: upstreamTech}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Cmd: "tech", Tech: upstreamTech}
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -439,7 +439,7 @@ func TestProcessShardMicrodataProfileFallback(t *testing.T) {
 	items := []model.WorklistItem{
 		{RootDomain: "smile.de", URL: "https://smile.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech", Tech: upstreamTech}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Cmd: "tech", Tech: upstreamTech}
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -473,7 +473,7 @@ func TestProcessShardUnionsMicrodataIdentifiersWithPartialJSONLD(t *testing.T) {
 	items := []model.WorklistItem{
 		{RootDomain: "acme.de", URL: "https://acme.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech", Tech: upstreamTech}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Cmd: "tech", Tech: upstreamTech}
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatal(err)

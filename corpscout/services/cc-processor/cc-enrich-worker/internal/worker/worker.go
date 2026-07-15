@@ -129,11 +129,11 @@ type ShardConfig struct {
 	EmbedConcurrency     int    // industry stream: embed requests kept continuously in flight
 	EmbedBatch           int    // industry stream: texts per embed request
 	TechMaxBytes         int    // body cap fed to the tech engine; 0 => no cap (full body)
-	Mode                 string // "industry" | "tech" | "both" | "embed" (default "both")
-	EmbedOnly            bool   // embed mode: fetch+embed+keep the vector, skip NACE classify & rows
+	Cmd                  string // "industry" | "tech" | "both" | "embed" (default "both")
+	EmbedOnly            bool   // embed cmd: fetch+embed+keep the vector, skip NACE classify & rows
 
 	// Tech is the page fingerprint engine (--tech-engine): *tech.FastMatcher or *tech.Wappalyzer.
-	// REQUIRED for any path that fingerprints pages (FetchChunk/ProcessShard with a runTech mode);
+	// REQUIRED for any path that fingerprints pages (FetchChunk/ProcessShard with a runTech cmd);
 	// the industry/embed stream (ProcessIndustryStream) never fingerprints and may leave it nil.
 	Tech tech.Detector
 
@@ -223,12 +223,12 @@ func contentTypeOf(headers map[string][]string) string {
 	return ""
 }
 
-func modeFlags(cfg ShardConfig) (mode string, runEmbed, runTech bool) {
-	mode = cfg.Mode
-	if mode == "" {
-		mode = "both"
+func cmdFlags(cfg ShardConfig) (cmd string, runEmbed, runTech bool) {
+	cmd = cfg.Cmd
+	if cmd == "" {
+		cmd = "both"
 	}
-	return mode, mode != "tech", mode != "industry"
+	return cmd, cmd != "tech", cmd != "industry"
 }
 
 // PageConcurrency is the per-domain page pool: how many of ONE domain's pages fetch in parallel
@@ -322,12 +322,12 @@ type pageResult struct {
 	jsonldTypes []string          // JSON-LD @types, Primary page only
 }
 
-// processPage fetches ONE page and runs the per-page extraction for the configured mode:
+// processPage fetches ONE page and runs the per-page extraction for the configured cmd:
 // tech detection (body capped at TechMaxBytes) + emails + JSON-LD entities + LEI/VAT (tech/both),
 // and the visible-text parse of the Primary page (embed/both). Pure with respect to the chunk —
 // it returns a pageResult and touches no aggregate.
 func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig, it model.WorklistItem, stats *chunkStats) (pageResult, error) {
-	_, runEmbed, runTech := modeFlags(cfg)
+	_, runEmbed, runTech := cmdFlags(cfg)
 	if it.Offset < 0 || it.Length <= 0 {
 		err := errors.Newf("invalid WARC record coordinates: offset=%d length=%d", it.Offset, it.Length)
 		atomic.AddInt64(&stats.pages, 1)
@@ -504,10 +504,10 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 	} else {
 		if n > 0 {
 			errs := atomic.LoadInt64(&stats.errs)
-			mode, _, _ := modeFlags(cfg)
-			log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  errs=%d/%d  conc=%dx%d mode=%s",
+			cmd, _, _ := cmdFlags(cfg)
+			log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  errs=%d/%d  conc=%dx%d cmd=%s",
 				float64(stats.fetchNs)/float64(n)/1e6, float64(stats.parseNs)/float64(n)/1e6,
-				float64(stats.techNs)/float64(n)/1e6, errs, n, conc, PageConcurrency, mode)
+				float64(stats.techNs)/float64(n)/1e6, errs, n, conc, PageConcurrency, cmd)
 			if errs > 0 {
 				log.Printf("  first fetch error: %s", stats.errSample)
 			}
@@ -520,10 +520,10 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 // Finalize embeds + classifies (industry) and builds the output rows from a fetched chunk. For the
 // industry path this is the GPU-bound phase the driver overlaps with the next chunk's FetchChunk.
 func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *model.Reference, protos *model.Prototypes, cfg ShardConfig) (ShardResult, error) {
-	_, runEmbed, runTech := modeFlags(cfg)
+	_, runEmbed, runTech := cmdFlags(cfg)
 	aggs := fc.aggs
 
-	// Thin domain master: one identity row per fetched domain, written by every mode.
+	// Thin domain master: one identity row per fetched domain, written by every cmd.
 	var domains []output.DomainRow
 	for _, a := range aggs {
 		if a == nil || a.primaryURL == "" {
