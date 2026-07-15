@@ -653,6 +653,38 @@
     - not ansible_check_mode
     - dagster_source_changed or dagster_environment_changed
 
+- name: Install Chromium runtime libraries for CloakBrowser
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_deploy_dir }}/.venv/bin/playwright"
+      - install-deps
+      - chromium
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    HOME: /root
+  register: dagster_chromium_dependencies
+  changed_when: >-
+    '0 upgraded, 0 newly installed' not in
+    (dagster_chromium_dependencies.stdout ~ dagster_chromium_dependencies.stderr)
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+
+- name: Verify Chromium runtime libraries for CloakBrowser
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_deploy_dir }}/.venv/bin/playwright"
+      - install-deps
+      - --dry-run
+      - chromium
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    HOME: /root
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_deployment_required
+
 - name: Validate synchronized Dagster definitions on the target
   ansible.builtin.command:
     argv:

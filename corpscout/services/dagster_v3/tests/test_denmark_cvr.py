@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import dagster as dg
@@ -344,6 +345,27 @@ def test_search_resource_closes_browser_and_hides_failed_response_body() -> None
     assert browser.closed is True
 
 
+def test_search_resource_reports_browser_startup_failure_safely() -> None:
+    browser_state = "private browser launch state"
+
+    def fail_to_launch() -> None:
+        raise RuntimeError(browser_state)
+
+    with pytest.raises(
+        DenmarkCvrRequestError,
+        match="failed to start.*runtime dependencies",
+    ) as exc_info:
+        list(
+            DenmarkCvrSearchResource(page_size=2).iter_search_pages(
+                "a",
+                launcher=fail_to_launch,
+            )
+        )
+
+    assert browser_state not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
 def test_search_resource_retains_invalid_body_without_exposing_it() -> None:
     invalid_body = '{"private":"invalid"}'
     page = FakePage(
@@ -468,15 +490,60 @@ def test_partition_storage_preserves_raw_pages_and_writes_manifest_last() -> Non
         "total_size_bytes": len(first_body.encode()) + len(second_body.encode()),
     }
     assert summary.manifest_key == manifest_key
-    assert summary.entity_count == 3
+    assert summary.advertised_entity_count == 3
+    assert summary.downloaded_entity_count == 3
     assert summary.company_count == 1
     assert summary.person_count == 1
     assert summary.production_unit_count == 1
+    assert summary.downloaded_file_count == 2
+    assert summary.stored_file_count == 3
+    assert summary.downloaded_size_bytes == (
+        len(first_body.encode()) + len(second_body.encode())
+    )
+    assert summary.manifest_size_bytes == len(
+        object_store.objects[(DENMARK_CVR_BUCKET, manifest_key)]
+    )
+    assert summary.stored_size_bytes == (
+        summary.downloaded_size_bytes + summary.manifest_size_bytes
+    )
+    assert [entry[0] for entry in logs] == [
+        "Starting DataCVR download: search_term=%s bucket=%s prefix=%s",
+        (
+            "DataCVR download progress: search_term=%s page=%s object_key=%s "
+            "downloaded_files=%s advertised_entities=%s downloaded_entities=%s "
+            "companies=%s persons=%s production_units=%s downloaded_bytes=%s"
+        ),
+        (
+            "DataCVR download progress: search_term=%s page=%s object_key=%s "
+            "downloaded_files=%s advertised_entities=%s downloaded_entities=%s "
+            "companies=%s persons=%s production_units=%s downloaded_bytes=%s"
+        ),
+        (
+            "DataCVR download complete: search_term=%s downloaded_files=%s "
+            "stored_files=%s advertised_entities=%s downloaded_entities=%s "
+            "companies=%s persons=%s production_units=%s downloaded_bytes=%s "
+            "stored_bytes=%s manifest_key=%s"
+        ),
+    ]
+    assert logs[-1][1:] == (
+        "a",
+        2,
+        3,
+        3,
+        3,
+        1,
+        1,
+        1,
+        summary.downloaded_size_bytes,
+        summary.stored_size_bytes,
+        manifest_key,
+    )
     assert all("Example" not in str(entry) for entry in logs)
 
 
 def test_partition_storage_persists_invalid_body_without_completion_manifest() -> None:
     object_store = FakeObjectStore()
+    logs: list[tuple[Any, ...]] = []
 
     with pytest.raises(DenmarkCvrValidationError):
         write_denmark_cvr_search_partition(
@@ -485,6 +552,7 @@ def test_partition_storage_persists_invalid_body_without_completion_manifest() -
             search_term="a",
             run_id="test-run",
             retrieved_at=datetime(2026, 7, 15, 12, 0, tzinfo=UTC),
+            log_info=lambda *args: logs.append(args),
         )
 
     invalid_key = invalid_page_object_key("a", "test-run", 1)
@@ -495,6 +563,55 @@ def test_partition_storage_persists_invalid_body_without_completion_manifest() -
         DENMARK_CVR_BUCKET,
         manifest_object_key("a", "test-run"),
     ) not in object_store.objects
+    assert logs[-1] == (
+        "DataCVR download stopped after invalid response: search_term=%s page=%s "
+        "invalid_object_key=%s downloaded_files=%s downloaded_entities=%s "
+        "downloaded_bytes=%s",
+        "a",
+        1,
+        invalid_key,
+        0,
+        0,
+        0,
+    )
+
+
+def test_asset_reports_download_and_storage_statistics() -> None:
+    body = _response_body([_company(), _person(), _production_unit()])
+    search = FakeSearchResource([_search_page(0, body)])
+    object_store = FakeObjectStore()
+    context = SimpleNamespace(
+        partition_key="a",
+        run=SimpleNamespace(run_id="stats-run"),
+        log=SimpleNamespace(info=lambda *_args: None),
+    )
+
+    result = denmark_cvr_search_results_s3.node_def.compute_fn.decorated_fn(
+        context,
+        search,
+        object_store,
+    )
+
+    run_id = "stats-run"
+    manifest_key = manifest_object_key("a", run_id)
+    manifest_size = len(object_store.objects[(DENMARK_CVR_BUCKET, manifest_key)])
+    assert result.metadata == {
+        "s3_bucket": DENMARK_CVR_BUCKET,
+        "s3_prefix": f"denmark_cvr/search/search_term=a/run_id={run_id}/",
+        "manifest_key": manifest_key,
+        "source_url": "https://datacvr.virk.dk",
+        "search_term": "a",
+        "advertised_entity_count": 3,
+        "downloaded_entity_count": 3,
+        "downloaded_file_count": 1,
+        "stored_file_count": 2,
+        "company_count": 1,
+        "person_count": 1,
+        "production_unit_count": 1,
+        "downloaded_size_bytes": len(body.encode()),
+        "manifest_size_bytes": manifest_size,
+        "stored_size_bytes": len(body.encode()) + manifest_size,
+    }
 
 
 def test_denmark_cvr_asset_uses_static_search_term_partitions() -> None:

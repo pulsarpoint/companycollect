@@ -108,7 +108,9 @@ Rules (see CLAUDE.md "ClickHouse migrations"):
 
 1. `.env` present with all §2 variables; large disk mounted at `DUCKDB_TEMP_DIRECTORY`.
 2. Postgres + ClickHouse + MinIO + Temporal reachable; ClickHouse migrations applied (§5).
-3. `uv sync --frozen` (Python 3.14; `uv.lock` is authoritative).
+3. `uv sync --frozen` (Python 3.14; `uv.lock` is authoritative). The Ansible
+   deployment also runs the lock-synchronized Playwright `install-deps chromium`
+   command so CloakBrowser's Chromium has its required Linux shared libraries.
 4. `uv run dg check defs && uv run pytest tests -q -m "not integration"` — a broken definition
    load takes the whole code location down.
 5. Run `ansible-playbook site.yml` from `ansible/`. It preserves the remote

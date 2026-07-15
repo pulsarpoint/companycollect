@@ -26,13 +26,18 @@ DENMARK_CVR_SEARCH_PARTITIONS = dg.StaticPartitionsDefinition(
 @dataclass(frozen=True)
 class DenmarkCvrPartitionSummary:
     manifest_key: str
+    object_prefix: str
     search_term: str
-    page_count: int
-    entity_count: int
+    advertised_entity_count: int
+    downloaded_entity_count: int
+    downloaded_file_count: int
+    stored_file_count: int
     company_count: int
     person_count: int
     production_unit_count: int
-    total_size_bytes: int
+    downloaded_size_bytes: int
+    manifest_size_bytes: int
+    stored_size_bytes: int
 
 
 def page_object_key(search_term: str, run_id: str, page_index: int) -> str:
@@ -74,6 +79,14 @@ def write_denmark_cvr_search_partition(
     if retrieved_at.utcoffset() is None:
         raise ValueError("DataCVR retrieval timestamp must include a timezone")
     object_store.ensure_bucket(DENMARK_CVR_BUCKET)
+    prefix = manifest_object_key(search_term, run_id).removesuffix("manifest.json")
+    if log_info is not None:
+        log_info(
+            "Starting DataCVR download: search_term=%s bucket=%s prefix=%s",
+            search_term,
+            DENMARK_CVR_BUCKET,
+            prefix,
+        )
 
     page_keys: list[str] = []
     advertised_total = 0
@@ -105,12 +118,19 @@ def write_denmark_cvr_search_partition(
             )
             if log_info is not None:
                 log_info(
-                    "Stored DataCVR page: search_term=%s page=%s object_key=%s entities=%s bytes=%s",
+                    "DataCVR download progress: search_term=%s page=%s object_key=%s "
+                    "downloaded_files=%s advertised_entities=%s downloaded_entities=%s "
+                    "companies=%s persons=%s production_units=%s downloaded_bytes=%s",
                     search_term,
                     search_page.page_index,
                     key,
-                    len(search_page.response.enheder),
-                    len(body),
+                    len(page_keys),
+                    advertised_total,
+                    company_count + person_count + production_unit_count,
+                    company_count,
+                    person_count,
+                    production_unit_count,
+                    total_size_bytes,
                 )
     except DenmarkCvrValidationError as exc:
         key = invalid_page_object_key(search_term, run_id, exc.page_index)
@@ -121,50 +141,81 @@ def write_denmark_cvr_search_partition(
         )
         if log_info is not None:
             log_info(
-                "Stored invalid DataCVR response: search_term=%s page=%s object_key=%s",
+                "DataCVR download stopped after invalid response: search_term=%s page=%s "
+                "invalid_object_key=%s downloaded_files=%s downloaded_entities=%s "
+                "downloaded_bytes=%s",
                 search_term,
                 exc.page_index,
                 key,
+                len(page_keys),
+                company_count + person_count + production_unit_count,
+                total_size_bytes,
             )
         raise
 
     entity_count = company_count + person_count + production_unit_count
     key = manifest_object_key(search_term, run_id)
+    manifest_body = json.dumps(
+        {
+            "advertised_total": advertised_total,
+            "bucket": DENMARK_CVR_BUCKET,
+            "company_count": company_count,
+            "entity_count": entity_count,
+            "page_count": len(page_keys),
+            "page_keys": page_keys,
+            "person_count": person_count,
+            "production_unit_count": production_unit_count,
+            "retrieved_at": retrieved_at.isoformat(),
+            "run_id": run_id,
+            "search_term": search_term,
+            "source": "denmark_cvr",
+            "source_url": search.search_base_url,
+            "total_size_bytes": total_size_bytes,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     object_store.write_json(
         key,
-        json.dumps(
-            {
-                "advertised_total": advertised_total,
-                "bucket": DENMARK_CVR_BUCKET,
-                "company_count": company_count,
-                "entity_count": entity_count,
-                "page_count": len(page_keys),
-                "page_keys": page_keys,
-                "person_count": person_count,
-                "production_unit_count": production_unit_count,
-                "retrieved_at": retrieved_at.isoformat(),
-                "run_id": run_id,
-                "search_term": search_term,
-                "source": "denmark_cvr",
-                "source_url": search.search_base_url,
-                "total_size_bytes": total_size_bytes,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ),
+        manifest_body,
         bucket=DENMARK_CVR_BUCKET,
     )
-    return DenmarkCvrPartitionSummary(
+    manifest_size_bytes = len(manifest_body.encode("utf-8"))
+    summary = DenmarkCvrPartitionSummary(
         manifest_key=key,
+        object_prefix=prefix,
         search_term=search_term,
-        page_count=len(page_keys),
-        entity_count=entity_count,
+        advertised_entity_count=advertised_total,
+        downloaded_entity_count=entity_count,
+        downloaded_file_count=len(page_keys),
+        stored_file_count=len(page_keys) + 1,
         company_count=company_count,
         person_count=person_count,
         production_unit_count=production_unit_count,
-        total_size_bytes=total_size_bytes,
+        downloaded_size_bytes=total_size_bytes,
+        manifest_size_bytes=manifest_size_bytes,
+        stored_size_bytes=total_size_bytes + manifest_size_bytes,
     )
+    if log_info is not None:
+        log_info(
+            "DataCVR download complete: search_term=%s downloaded_files=%s "
+            "stored_files=%s advertised_entities=%s downloaded_entities=%s "
+            "companies=%s persons=%s production_units=%s downloaded_bytes=%s "
+            "stored_bytes=%s manifest_key=%s",
+            summary.search_term,
+            summary.downloaded_file_count,
+            summary.stored_file_count,
+            summary.advertised_entity_count,
+            summary.downloaded_entity_count,
+            summary.company_count,
+            summary.person_count,
+            summary.production_unit_count,
+            summary.downloaded_size_bytes,
+            summary.stored_size_bytes,
+            summary.manifest_key,
+        )
+    return summary
 
 
 @dg.asset(
@@ -194,21 +245,27 @@ def denmark_cvr_search_results_s3(
         object_store=object_store,
         search=denmark_cvr_search,
         search_term=context.partition_key,
-        run_id=context.run_id,
+        run_id=context.run.run_id,
         retrieved_at=datetime.now(UTC),
         log_info=context.log.info,
     )
     return dg.MaterializeResult(
         metadata={
             "s3_bucket": DENMARK_CVR_BUCKET,
+            "s3_prefix": summary.object_prefix,
             "manifest_key": summary.manifest_key,
+            "source_url": denmark_cvr_search.search_base_url,
             "search_term": summary.search_term,
-            "page_count": summary.page_count,
-            "entity_count": summary.entity_count,
+            "advertised_entity_count": summary.advertised_entity_count,
+            "downloaded_entity_count": summary.downloaded_entity_count,
+            "downloaded_file_count": summary.downloaded_file_count,
+            "stored_file_count": summary.stored_file_count,
             "company_count": summary.company_count,
             "person_count": summary.person_count,
             "production_unit_count": summary.production_unit_count,
-            "total_size_bytes": summary.total_size_bytes,
+            "downloaded_size_bytes": summary.downloaded_size_bytes,
+            "manifest_size_bytes": summary.manifest_size_bytes,
+            "stored_size_bytes": summary.stored_size_bytes,
         }
     )
 

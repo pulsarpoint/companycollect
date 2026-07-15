@@ -151,7 +151,12 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
             page_index=start_page_index,
             size=self.page_size,
         )
-        browser = launcher()
+        try:
+            browser = launcher()
+        except Exception:
+            raise DenmarkCvrRequestError(
+                "DataCVR browser failed to start; verify Chromium runtime dependencies"
+            ) from None
         try:
             page = browser.new_page()
             page.goto(

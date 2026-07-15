@@ -55,9 +55,12 @@ ansible-playbook site.yml
 ```
 
 The controller needs `uv`, Ansible, and rsync. The target needs systemd,
-rsync, `lsof`, `ss`, executable `/root/.local/bin/uv`, and a manually
-provisioned `.env`. The role checks these prerequisites before stopping the
-running process.
+rsync, `lsof`, `ss`, executable `/root/.local/bin/uv`, an APT-compatible Linux
+package manager, and a manually provisioned `.env`. The role checks these
+prerequisites before stopping the running process. After synchronizing the
+Python environment, it installs and verifies the Chromium shared libraries
+required by CloakBrowser; the browser binary itself remains managed by
+CloakBrowser under `/root/.cloakbrowser`.
 
 Before a stopped deployment, the role:
 
@@ -66,8 +69,9 @@ Before a stopped deployment, the role:
 3. applies a best-effort gate for `STARTING` or `STARTED` Dagster runs
    immediately before shutdown;
 4. gracefully retires only the exact root tmux session `dagster`, if present;
-5. rsyncs source without touching runtime state, runs frozen `uv sync`, and
-   validates the synchronized definitions; and
+5. rsyncs source without touching runtime state, runs frozen `uv sync`, installs
+   the CloakBrowser/Chromium system libraries, and validates the synchronized
+   definitions; and
 6. starts systemd and verifies the webserver, `dagster_v3` code location,
    daemon heartbeats, listener address, and service cgroup.
 
