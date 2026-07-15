@@ -226,14 +226,28 @@ def test_search_response_models_select_all_entity_types() -> None:
     assert response.enheder[2].ophoers_dato is None
 
 
-def test_company_search_result_accepts_null_city_and_postal_code() -> None:
+def test_company_search_result_accepts_null_optional_fields() -> None:
     company = _company()
     company["by"] = None
+    company["hovedbranche"] = None
     company["postnummer"] = None
 
     response = SearchResponse.model_validate_json(_response_body([company]))
 
     assert isinstance(response.enheder[0], CompanySearchResult)
+    assert response.enheder[0].by is None
+    assert response.enheder[0].hovedbranche is None
+    assert response.enheder[0].postnummer is None
+
+
+def test_production_unit_search_result_accepts_null_location_fields() -> None:
+    production_unit = _production_unit()
+    production_unit["by"] = None
+    production_unit["postnummer"] = None
+
+    response = SearchResponse.model_validate_json(_response_body([production_unit]))
+
+    assert isinstance(response.enheder[0], ProductionUnitSearchResult)
     assert response.enheder[0].by is None
     assert response.enheder[0].postnummer is None
 
@@ -326,8 +340,50 @@ def test_search_resource_paginates_and_closes_browser() -> None:
     ]
     assert [
         call["payload"]["fritekstCommand"]["sideIndex"] for call in page.evaluate_calls
-    ] == ["0", "1"]
+    ] == ["0", "2"]
     assert delays == [0.0]
+    assert browser.closed is True
+
+
+def test_search_resource_uses_fixed_page_size_until_empty() -> None:
+    body = _response_body([_company()], total=3_574)
+    page = FakePage(
+        [
+            {
+                "ok": True,
+                "status": 200,
+                "headers": {"content-type": "application/json"},
+                "body": body,
+            },
+            {
+                "ok": True,
+                "status": 200,
+                "headers": {"content-type": "application/json"},
+                "body": _response_body([], total=3_574),
+            },
+        ]
+    )
+    browser = FakeBrowser(page)
+    resource = DenmarkCvrSearchResource(min_delay_ms=0, max_delay_ms=0)
+
+    pages = list(
+        resource.iter_search_pages(
+            "0",
+            launcher=lambda: browser,
+        )
+    )
+
+    assert len(pages) == 1
+    assert len(page.evaluate_calls) == 2
+    assert {
+        call["payload"]["fritekstCommand"]["size"] for call in page.evaluate_calls
+    } == {1_000}
+    assert page.goto_calls == [
+        (
+            "https://datacvr.virk.dk/soegeresultater?fritekst=0&sideIndex=0&size=1000",
+            "networkidle",
+        )
+    ]
     assert browser.closed is True
 
 
@@ -407,7 +463,7 @@ def test_search_resource_retains_invalid_body_without_exposing_it() -> None:
     assert invalid_body not in str(exc_info.value)
 
 
-def test_search_resource_rejects_premature_empty_page() -> None:
+def test_search_resource_stops_only_after_empty_page() -> None:
     page = FakePage(
         [
             {
@@ -425,17 +481,20 @@ def test_search_resource_rejects_premature_empty_page() -> None:
         ]
     )
 
-    with pytest.raises(DenmarkCvrRequestError, match="ended before"):
-        list(
-            DenmarkCvrSearchResource(
-                page_size=2,
-                min_delay_ms=0,
-                max_delay_ms=0,
-            ).iter_search_pages(
-                "a",
-                launcher=lambda: FakeBrowser(page),
-            )
+    pages = list(
+        DenmarkCvrSearchResource(
+            page_size=2,
+            min_delay_ms=0,
+            max_delay_ms=0,
+        ).iter_search_pages(
+            "a",
+            launcher=lambda: FakeBrowser(page),
         )
+    )
+
+    assert len(pages) == 1
+    assert pages[0].response.total == 3
+    assert len(pages[0].response.enheder) == 2
 
 
 def test_denmark_cvr_object_keys_are_search_term_scoped() -> None:
@@ -493,6 +552,7 @@ def test_partition_storage_preserves_raw_pages_and_writes_manifest_last() -> Non
         "bucket": DENMARK_CVR_BUCKET,
         "company_count": 1,
         "entity_count": 3,
+        "is_truncated": False,
         "page_count": 2,
         "page_keys": [first_key, second_key],
         "person_count": 1,
@@ -507,6 +567,7 @@ def test_partition_storage_preserves_raw_pages_and_writes_manifest_last() -> Non
     assert summary.manifest_key == manifest_key
     assert summary.advertised_entity_count == 3
     assert summary.downloaded_entity_count == 3
+    assert summary.is_truncated is False
     assert summary.company_count == 1
     assert summary.person_count == 1
     assert summary.production_unit_count == 1
@@ -536,7 +597,7 @@ def test_partition_storage_preserves_raw_pages_and_writes_manifest_last() -> Non
         (
             "DataCVR download complete: search_term=%s downloaded_files=%s "
             "stored_files=%s advertised_entities=%s downloaded_entities=%s "
-            "companies=%s persons=%s production_units=%s downloaded_bytes=%s "
+            "truncated=%s companies=%s persons=%s production_units=%s downloaded_bytes=%s "
             "stored_bytes=%s manifest_key=%s"
         ),
     ]
@@ -546,6 +607,7 @@ def test_partition_storage_preserves_raw_pages_and_writes_manifest_last() -> Non
         3,
         3,
         3,
+        False,
         1,
         1,
         1,
@@ -554,6 +616,30 @@ def test_partition_storage_preserves_raw_pages_and_writes_manifest_last() -> Non
         manifest_key,
     )
     assert all("Example" not in str(entry) for entry in logs)
+
+
+def test_partition_summary_flags_incomplete_capture() -> None:
+    body = _response_body([_company()], total=2)
+    search = FakeSearchResource([_search_page(0, body)])
+    object_store = FakeObjectStore()
+
+    summary = write_denmark_cvr_search_partition(
+        object_store=object_store,
+        search=search,
+        search_term="a",
+        run_id="capped-run",
+        retrieved_at=datetime(2026, 7, 15, 12, 0, tzinfo=UTC),
+    )
+
+    manifest = json.loads(
+        object_store.objects[
+            (DENMARK_CVR_BUCKET, manifest_object_key("a", "capped-run"))
+        ]
+    )
+    assert summary.advertised_entity_count == 2
+    assert summary.downloaded_entity_count == 1
+    assert summary.is_truncated is True
+    assert manifest["is_truncated"] is True
 
 
 def test_partition_storage_persists_invalid_body_without_completion_manifest() -> None:
@@ -618,6 +704,7 @@ def test_asset_reports_download_and_storage_statistics() -> None:
         "search_term": "a",
         "advertised_entity_count": 3,
         "downloaded_entity_count": 3,
+        "is_truncated": False,
         "downloaded_file_count": 1,
         "stored_file_count": 2,
         "company_count": 1,

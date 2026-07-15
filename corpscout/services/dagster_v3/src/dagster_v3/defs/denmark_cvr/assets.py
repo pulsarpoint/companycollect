@@ -30,6 +30,7 @@ class DenmarkCvrPartitionSummary:
     search_term: str
     advertised_entity_count: int
     downloaded_entity_count: int
+    is_truncated: bool
     downloaded_file_count: int
     stored_file_count: int
     company_count: int
@@ -154,6 +155,7 @@ def write_denmark_cvr_search_partition(
         raise
 
     entity_count = company_count + person_count + production_unit_count
+    is_truncated = entity_count < advertised_total
     key = manifest_object_key(search_term, run_id)
     manifest_body = json.dumps(
         {
@@ -161,6 +163,7 @@ def write_denmark_cvr_search_partition(
             "bucket": DENMARK_CVR_BUCKET,
             "company_count": company_count,
             "entity_count": entity_count,
+            "is_truncated": is_truncated,
             "page_count": len(page_keys),
             "page_keys": page_keys,
             "person_count": person_count,
@@ -188,6 +191,7 @@ def write_denmark_cvr_search_partition(
         search_term=search_term,
         advertised_entity_count=advertised_total,
         downloaded_entity_count=entity_count,
+        is_truncated=is_truncated,
         downloaded_file_count=len(page_keys),
         stored_file_count=len(page_keys) + 1,
         company_count=company_count,
@@ -201,13 +205,14 @@ def write_denmark_cvr_search_partition(
         log_info(
             "DataCVR download complete: search_term=%s downloaded_files=%s "
             "stored_files=%s advertised_entities=%s downloaded_entities=%s "
-            "companies=%s persons=%s production_units=%s downloaded_bytes=%s "
+            "truncated=%s companies=%s persons=%s production_units=%s downloaded_bytes=%s "
             "stored_bytes=%s manifest_key=%s",
             summary.search_term,
             summary.downloaded_file_count,
             summary.stored_file_count,
             summary.advertised_entity_count,
             summary.downloaded_entity_count,
+            summary.is_truncated,
             summary.company_count,
             summary.person_count,
             summary.production_unit_count,
@@ -258,6 +263,7 @@ def denmark_cvr_search_results_s3(
             "search_term": summary.search_term,
             "advertised_entity_count": summary.advertised_entity_count,
             "downloaded_entity_count": summary.downloaded_entity_count,
+            "is_truncated": summary.is_truncated,
             "downloaded_file_count": summary.downloaded_file_count,
             "stored_file_count": summary.stored_file_count,
             "company_count": summary.company_count,

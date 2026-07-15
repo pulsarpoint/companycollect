@@ -12,6 +12,7 @@ from pydantic import ValidationError, model_validator
 from dagster_v3.defs.denmark_cvr.models import SearchResponse
 
 DATACVR_BASE_URL = "https://datacvr.virk.dk"
+DATACVR_PAGE_SIZE = 1_000
 SAFE_RESPONSE_HEADERS = frozenset(
     {
         "content-type",
@@ -136,7 +137,7 @@ def search_results_url(
 
 class DenmarkCvrSearchResource(dg.ConfigurableResource):
     search_base_url: str = DATACVR_BASE_URL
-    page_size: int = 100
+    page_size: int = DATACVR_PAGE_SIZE
     min_delay_ms: int = 100
     max_delay_ms: int = 800
 
@@ -200,14 +201,16 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
         sleep: Callable[[float], None],
     ) -> Iterator[DenmarkCvrSearchPage]:
         expected_total: int | None = None
-        page_index = start_page_index
+        downloaded_count = 0
+        page_index = 0
+        offset = start_page_index
         while True:
             result = page.evaluate(
                 DATACVR_SEARCH_SCRIPT,
                 {
                     "payload": build_search_payload(
                         search_term,
-                        page_index=page_index,
+                        page_index=offset,
                         size=self.page_size,
                     )
                 },
@@ -217,17 +220,15 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
                 expected_total = search_page.response.total
 
             if not search_page.response.enheder:
-                if page_index * self.page_size < expected_total:
-                    raise DenmarkCvrRequestError(
-                        "DataCVR pagination ended before the initially advertised total"
-                    )
                 return
 
             yield search_page
-            if (page_index + 1) * self.page_size >= expected_total:
+            downloaded_count += len(search_page.response.enheder)
+            if downloaded_count >= expected_total:
                 return
 
             sleep(randint(self.min_delay_ms, self.max_delay_ms) / 1_000)
+            offset += len(search_page.response.enheder)
             page_index += 1
 
 

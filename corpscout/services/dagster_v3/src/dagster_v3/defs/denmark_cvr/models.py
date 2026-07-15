@@ -18,7 +18,7 @@ class CompanySearchResult(BaseModel):
     highlight_binavn: bool = Field(alias="highlightBinavn")
     highlight_historisk_binavn: bool = Field(alias="highlightHistoriskBinavn")
     highlight_historisk_hovednavn: bool = Field(alias="highlightHistoriskHovednavn")
-    hovedbranche: str
+    hovedbranche: str | None
     ophoers_dato: date | None = Field(alias="ophoersDato")
     postnummer: str | None
     reg: str | None
@@ -58,14 +58,14 @@ class ProductionUnitSearchResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     beliggenhedsadresse: str
-    by: str
+    by: str | None
     co_navn: str | None = Field(alias="coNavn")
     email: str | None
     enhedstype: Literal["produktionsenhed"]
     hovedbranche: str
     ophoers_dato: date | None = Field(alias="ophoersDato")
     p_nummer: str = Field(alias="pNummer")
-    postnummer: str
+    postnummer: str | None
     reklame_beskyttet: bool = Field(alias="reklameBeskyttet")
     seneste_navn: str = Field(alias="senesteNavn")
     start_dato: date = Field(alias="startDato")
