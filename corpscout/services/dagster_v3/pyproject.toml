@@ -5,6 +5,7 @@ version = "0.1.0"
 dependencies = [
     "boto3>=1.42.90,<1.43",
     "clickhouse-connect>=0.10.0",
+    "cloakbrowser>=0.4.10",
     "dagster==1.13.9",
     "dagster-aws>=0.29.9",
     "dagster-clickhouse>=0.29.9",
