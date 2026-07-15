@@ -43,6 +43,19 @@ type partProducer func(ctx context.Context, part uint32, outDir string) (partRes
 // crashed or failed produce, runs the producer, and on success writes the .produced marker with the
 // row counts.
 //
+// Pool anatomy — four pieces, one scheduling owner:
+//
+//   - workers: stateless executor goroutines. A worker's whole life is "receive a part, run
+//     runPartAttempt, report the outcome"; no scheduling state ever lives in a worker.
+//   - parts: the UNBUFFERED hand-off channel dispatcher→workers. Unbuffered is the backpressure:
+//     a send completes only at the instant an idle worker receives it, so work can never pile up
+//     ahead of capacity and every hand-off stays under dispatcher control until the last moment.
+//   - results: the outcome channel workers→dispatcher, buffered to the worker count so a worker
+//     can always deposit its outcome without blocking and immediately take the next part.
+//   - pending: a min-heap of not-in-flight parts ordered by (eligibleAt, seq) — fresh parts are
+//     eligible immediately in FIFO order; failed parts re-enter with a future backoff deadline.
+//     Only this dispatcher loop touches it.
+//
 // Failure handling (spec 2026-07-14-part-retry-backoff-design.md): a failed part is requeued with
 // exponential backoff (partBackoff) and counts as Failed only after maxPartAttempts attempts. The
 // breaker is two-phase (see consecutiveFailureLimit); a trip cancels the context and abandons
@@ -67,11 +80,16 @@ func runRangePool(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Deliberately unbuffered — see "Pool anatomy" above: the send in the dispatch case below is a
+	// rendezvous with an idle worker, which is both the backpressure and the shutdown simplicity
+	// (close() below ends every worker's range loop with nothing stranded in a buffer).
 	parts := make(chan pendingPart)
 	// Buffered to the worker count so a worker never blocks reporting: at most workers attempts are
 	// in flight, hence at most workers unread outcomes.
 	results := make(chan partOutcome, workers)
 
+	// The executor pool. Everything a worker knows arrives in its pendingPart; everything it
+	// learns leaves in its partOutcome. The range ends when the dispatcher closes parts.
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -83,25 +101,37 @@ func runRangePool(
 		}()
 	}
 
+	// Seed the queue: every selected part starts fresh (attempts=0, zero eligibleAt = dispatchable
+	// immediately), and the heap's FIFO tiebreak preserves the caller's part order.
 	pending := &partQueue{}
 	for _, part := range selectedParts {
 		pending.add(pendingPart{part: part})
 	}
 
+	// Dispatcher state. Single-goroutine by design: every scheduling decision (dispatch order,
+	// retry deadlines, breaker, drain) is made here, so none of it needs a lock.
 	d := &poolDispatcher{pending: pending, prog: prog, failedSeen: map[uint32]bool{}}
-	outstanding := 0
-	tripped := false
+	outstanding := 0 // attempts handed to workers whose outcome has not come back yet
+	tripped := false // breaker latched: stop dispatching, drain what is still in flight
 	done := ctx.Done()
-	timer := time.NewTimer(time.Hour)
+	timer := time.NewTimer(time.Hour) // the single backoff alarm, re-armed per pass for the head part
 	timer.Stop()
 
 	for {
+		// Exit only when no worker owes an outcome AND there is nothing left to hand out (queue
+		// empty, or the run is halted and the remaining queue is abandoned). outstanding is what
+		// makes shutdown correct: the pool never closes parts while an attempt is in flight.
 		halted := tripped || ctx.Err() != nil
 		if outstanding == 0 && (halted || pending.Len() == 0) {
 			break
 		}
 		// Arm exactly one of: a dispatch of the eligible head, or a timer for when it becomes
 		// eligible. Halted runs arm neither and only drain outstanding attempts.
+		//
+		// The switch is the nil-channel select idiom: a send on a nil channel can never proceed,
+		// so leaving dispatch nil turns the hand-out case OFF for this pass. Arming is re-decided
+		// from scratch every iteration because the head changes as failures requeue with earlier
+		// or later deadlines.
 		var dispatch chan pendingPart
 		var head pendingPart
 		var timerC <-chan time.Time
@@ -109,21 +139,26 @@ func runRangePool(
 		if !halted && pending.Len() > 0 {
 			head = pending.peek()
 			if wait := time.Until(head.eligibleAt); wait <= 0 {
-				dispatch = parts
+				dispatch = parts // head is eligible NOW -> arm the hand-out case
 			} else {
-				timer.Reset(wait)
+				timer.Reset(wait) // head is a benched retry -> sleep exactly until it is eligible
 				timerC = timer.C
 			}
 		}
+		// The heart of the pool: whichever of these becomes possible first, happens — atomically,
+		// exactly one per pass. While all workers are busy the dispatch send cannot complete, so
+		// the loop naturally sits in "collect outcomes" mode; that is the backpressure.
 		select {
-		case dispatch <- head:
-			pending.next()
+		case dispatch <- head: // an idle worker just received head (unbuffered rendezvous)
+			pending.next() // peek() above only looked; pop only now that a worker holds the part
 			if head.attempts > 0 {
-				prog.endRetryWait()
+				prog.endRetryWait() // it sat out a backoff; its bench time (retrywait gauge) is over
 			}
 			outstanding++
-		case out := <-results:
+		case out := <-results: // a worker finished an attempt: produced, skipped, failed or aborted
 			outstanding--
+			// handle tallies the outcome and requeues transient failures with backoff; true means
+			// the breaker tripped on this outcome — latch it and cancel every in-flight attempt.
 			if d.handle(out) {
 				tripped = true
 				cancel()
@@ -134,6 +169,8 @@ func runRangePool(
 			done = nil // stop dispatching; keep looping to drain outstanding attempts
 		}
 	}
+	// Nothing outstanding and nothing dispatchable. Closing parts ends every worker's range loop;
+	// Wait proves all workers exited before the summary is read (no goroutine leak, no late write).
 	close(parts)
 	wg.Wait()
 
