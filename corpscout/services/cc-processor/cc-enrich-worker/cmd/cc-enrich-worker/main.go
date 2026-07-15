@@ -323,6 +323,10 @@ type partDeps struct {
 	ref    *mdl.Reference
 	protos *mdl.Prototypes
 
+	// tech is the page fingerprint engine (--tech-engine). Set only for modes that fingerprint
+	// (tech/both) — the industry/embed paths never touch it. Immutable after construction.
+	tech tech.Detector
+
 	objects fetch.ObjectGetter
 
 	// work answers "what remains for this run": catalog plans, part status, output layout.
@@ -377,16 +381,21 @@ func fetchConcurrencyFor(mode string, concurrency, partsParallel int) int {
 func buildPartDeps(ctx context.Context, mode string, o opts, partsParallel int) (partDeps, error) {
 	d := partDeps{mode: mode, o: o}
 
-	if mode == "tech" || mode == "both" { // tech matcher only needed when we fingerprint
+	if mode == "tech" || mode == "both" { // tech engine only needed when we fingerprint
 		switch o.techEngine {
 		case "fast":
 			fm, err := tech.NewFastMatcher()
 			if err != nil {
 				return partDeps{}, fmt.Errorf("build fast tech matcher: %w", err)
 			}
-			tech.SetFastMatcher(fm)
+			d.tech = fm
 			log.Printf("tech engine: fast (Aho-Corasick gated)")
 		case "wappalyzer":
+			wz, err := tech.NewWappalyzer()
+			if err != nil {
+				return partDeps{}, fmt.Errorf("build wappalyzer tech engine: %w", err)
+			}
+			d.tech = wz
 			log.Printf("tech engine: wappalyzer (upstream full scan)")
 		default:
 			return partDeps{}, fmt.Errorf("--tech-engine must be fast|wappalyzer, got %q", o.techEngine)
@@ -591,6 +600,7 @@ func processInput(ctx context.Context, d partDeps, prepared preparedPart) (partR
 		ResolvedAt: time.Now().UTC(), Concurrency: o.concurrency, TechMaxBytes: o.techMax,
 		EmbedConcurrency: o.embedConc, EmbedBatch: o.batch, Mode: mode,
 		EmbedOnly: mode == "embed",
+		Tech:      d.tech,
 		RunStats:  d.runStats,
 	}
 	start := time.Now()

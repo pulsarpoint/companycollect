@@ -128,9 +128,14 @@ type ShardConfig struct {
 	Concurrency          int
 	EmbedConcurrency     int    // industry stream: embed requests kept continuously in flight
 	EmbedBatch           int    // industry stream: texts per embed request
-	TechMaxBytes         int    // body cap fed to Wappalyzer; 0 => no cap (full body)
+	TechMaxBytes         int    // body cap fed to the tech engine; 0 => no cap (full body)
 	Mode                 string // "industry" | "tech" | "both" | "embed" (default "both")
 	EmbedOnly            bool   // embed mode: fetch+embed+keep the vector, skip NACE classify & rows
+
+	// Tech is the page fingerprint engine (--tech-engine): *tech.FastMatcher or *tech.Wappalyzer.
+	// REQUIRED for any path that fingerprints pages (FetchChunk/ProcessShard with a runTech mode);
+	// the industry/embed stream (ProcessIndustryStream) never fingerprints and may leave it nil.
+	Tech tech.Detector
 
 	// RunStats, when non-nil, is the process-wide sink the range runner uses to aggregate every
 	// chunk's fetch/tech/page counters into ONE periodic stats line. Setting it also SUPPRESSES the
@@ -351,7 +356,7 @@ func processPage(ctx context.Context, getter fetch.RangeGetter, cfg ShardConfig,
 			techBody = techBody[:limit]
 		}
 		t2 := time.Now()
-		r.tech = tech.DetectTech(headers, techBody)
+		r.tech = cfg.Tech.Detect(headers, techBody)
 		atomic.AddInt64(&stats.techNs, time.Since(t2).Nanoseconds())
 		decodedStr := string(decoded) // one shared copy: Emails + ParseHeadMeta both take strings
 		r.emails = parse.Emails(decodedStr)

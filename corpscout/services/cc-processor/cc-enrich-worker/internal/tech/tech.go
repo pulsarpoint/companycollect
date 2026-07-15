@@ -8,27 +8,41 @@ import (
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 )
 
-var wapp, _ = wappalyzer.New()
+// Detector fingerprints one page (HTTP headers + body) into a list of technologies. The engine is
+// an explicit dependency: buildPartDeps constructs one per --tech-engine and threads it to the page
+// loop via ShardConfig — there is no package-level default.
+//
+// Implementations: *FastMatcher (--tech-engine fast, Aho-Corasick gated) and *Wappalyzer
+// (--tech-engine wappalyzer, upstream full scan). Both are immutable after construction and safe
+// for concurrent Detect calls.
+type Detector interface {
+	Detect(headers map[string][]string, body []byte) []model.Technology
+}
 
-// fastTech, when set (via --tech-engine fast), replaces wappalyzergo's full scan with
-// the Aho-Corasick-gated matcher. nil => upstream wappalyzergo.
-var fastTech *FastMatcher
+var (
+	_ Detector = (*FastMatcher)(nil)
+	_ Detector = (*Wappalyzer)(nil)
+)
 
-// SetFastMatcher wires in the optional Aho-Corasick-gated matcher. Call from main
-// when --tech-engine=fast; nil resets to upstream wappalyzergo.
-func SetFastMatcher(fm *FastMatcher) { fastTech = fm }
+// Wappalyzer is the upstream wappalyzergo full-scan engine.
+type Wappalyzer struct {
+	w *wappalyzer.Wappalyze
+}
 
-// DetectTech fingerprints one page (HTTP headers + body) into a list of technologies.
+// NewWappalyzer builds the upstream engine from wappalyzergo's embedded fingerprints.
+func NewWappalyzer() (*Wappalyzer, error) {
+	w, err := wappalyzer.New()
+	if err != nil {
+		return nil, err
+	}
+	return &Wappalyzer{w: w}, nil
+}
+
+// Detect fingerprints one page with the upstream full scan.
 // wappalyzergo returns keys as "Name" or "Name:version"; categories come from AppInfo.
-func DetectTech(headers map[string][]string, body []byte) []model.Technology {
-	if fastTech != nil {
-		return fastTech.Detect(headers, body)
-	}
+func (wz *Wappalyzer) Detect(headers map[string][]string, body []byte) []model.Technology {
 	out := []model.Technology{}
-	if wapp == nil {
-		return out
-	}
-	for key, app := range wapp.FingerprintWithInfo(headers, body) {
+	for key, app := range wz.w.FingerprintWithInfo(headers, body) {
 		name, version := key, ""
 		for i := 0; i < len(key); i++ {
 			if key[i] == ':' {

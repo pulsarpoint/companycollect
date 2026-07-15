@@ -152,8 +152,6 @@ func techDeps(t *testing.T, base string, getter fetch.ObjectGetter) partDeps {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tech.SetFastMatcher(fm)
-	t.Cleanup(func() { tech.SetFastMatcher(nil) })
 	w, err := work.Open(base, testCrawlID, testSelection, "tech")
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +166,7 @@ func techDeps(t *testing.T, base string, getter fetch.ObjectGetter) partDeps {
 			chunk:       1024,
 			techEngine:  "fast",
 		},
+		tech:    fm,
 		objects: getter,
 		work:    w,
 	}

@@ -45,6 +45,17 @@ func gzWarc(httpResp string) []byte {
 	return buf.Bytes()
 }
 
+// upstreamTech is the shared fingerprint engine for tests that exercise a runTech mode —
+// the upstream full scan, whose fingerprints the assertions below were written against.
+// Immutable after construction, safe to share across parallel tests.
+var upstreamTech = func() *tech.Wappalyzer {
+	wz, err := tech.NewWappalyzer()
+	if err != nil {
+		panic(err)
+	}
+	return wz
+}()
+
 func hasTechRow(rows []output.TechRow, name string) bool {
 	for _, r := range rows {
 		if r.Technology == name {
@@ -68,7 +79,7 @@ func TestProcessShardAndParquet(t *testing.T) {
 	protos := &model.Prototypes{}
 	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "CC-MAIN-2026-25", SourceRunID: "run1",
-		ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2}
+		ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2, Tech: upstreamTech}
 
 	res, err := ProcessShard(context.Background(), items, getter, emb, ref, protos, cfg)
 	if err != nil {
@@ -115,7 +126,7 @@ func TestProcessShardBothModeEmitsEmbeddings(t *testing.T) {
 		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
 	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "C", SourceRunID: "run1", ResolvedAt: time.Unix(1700000000, 0).UTC(),
-		Concurrency: 2, Mode: "both"}
+		Concurrency: 2, Mode: "both", Tech: upstreamTech}
 
 	res, err := ProcessShard(context.Background(), items, getter, emb, ref, &model.Prototypes{}, cfg)
 	if err != nil {
@@ -170,7 +181,7 @@ func TestProcessShardTechMode(t *testing.T) {
 	items := []model.WorklistItem{
 		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech", Tech: upstreamTech}
 
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
@@ -253,8 +264,6 @@ func TestProcessPageFullScanDetectsLateTechnology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tech.SetFastMatcher(matcher)
-	t.Cleanup(func() { tech.SetFastMatcher(nil) })
 
 	body := "<html><body>" + strings.Repeat("x", 160<<10) +
 		`<meta name="generator" content="WordPress 6.4"></body></html>`
@@ -265,7 +274,7 @@ func TestProcessPageFullScanDetectsLateTechnology(t *testing.T) {
 		Offset: 0, Length: int64(len(raw)),
 	}
 
-	full, err := processPage(context.Background(), getter, ShardConfig{Mode: "tech"}, item, &chunkStats{})
+	full, err := processPage(context.Background(), getter, ShardConfig{Mode: "tech", Tech: matcher}, item, &chunkStats{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +303,7 @@ func TestTechAndJSONLDRowsRetainPageProvenance(t *testing.T) {
 	resolvedAt := time.Unix(1700000000, 0).UTC()
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, ShardConfig{
 		CrawlID: "CC-MAIN-2026-25", SourceRunID: "run-pages", ResolvedAt: resolvedAt,
-		Concurrency: 2, Mode: "tech",
+		Concurrency: 2, Mode: "tech", Tech: upstreamTech,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -342,7 +351,7 @@ func TestProcessShardKeepsSiblingJSONLDEntities(t *testing.T) {
 	}}
 	cfg := ShardConfig{
 		CrawlID: "C", SourceRunID: "run", ResolvedAt: time.Unix(1700000000, 0).UTC(),
-		Concurrency: 1, Mode: "tech",
+		Concurrency: 1, Mode: "tech", Tech: upstreamTech,
 	}
 
 	first, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
@@ -407,7 +416,7 @@ func TestProcessShardDecodesLatin1(t *testing.T) {
 	items := []model.WorklistItem{
 		{RootDomain: "mueller.de", URL: "https://mueller.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech", Tech: upstreamTech}
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +439,7 @@ func TestProcessShardMicrodataProfileFallback(t *testing.T) {
 	items := []model.WorklistItem{
 		{RootDomain: "smile.de", URL: "https://smile.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech", Tech: upstreamTech}
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -464,7 +473,7 @@ func TestProcessShardUnionsMicrodataIdentifiersWithPartialJSONLD(t *testing.T) {
 	items := []model.WorklistItem{
 		{RootDomain: "acme.de", URL: "https://acme.de/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech", Tech: upstreamTech}
 	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatal(err)

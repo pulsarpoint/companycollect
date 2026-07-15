@@ -17,9 +17,19 @@ var benchBody = []byte(strings.Repeat(`<div class="row"><p>lorem ipsum dolor sit
 	strings.Repeat(`<script src="https://cdn.example.com/lib-`+`x.js"></script>`, 25))
 var benchHeaders = map[string][]string{"Server": {"nginx"}}
 
+// upstream is the parity oracle: the FastMatcher tests assert equivalence against the
+// upstream wappalyzergo full scan.
+var upstream = func() *Wappalyzer {
+	wz, err := NewWappalyzer()
+	if err != nil {
+		panic(err)
+	}
+	return wz
+}()
+
 func BenchmarkWappalyzer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_ = DetectTech(benchHeaders, benchBody) // fastTech nil in tests -> upstream
+		_ = upstream.Detect(benchHeaders, benchBody)
 	}
 }
 
@@ -112,7 +122,7 @@ func TestFastMatcherParity(t *testing.T) {
 		},
 	}
 	for _, s := range samples {
-		wantTechnologies := DetectTech(s.headers, []byte(s.body))
+		wantTechnologies := upstream.Detect(s.headers, []byte(s.body))
 		gotTechnologies := fast.Detect(s.headers, []byte(s.body))
 		want := techNameSet(wantTechnologies)
 		got := techNameSet(gotTechnologies)
@@ -160,7 +170,7 @@ func TestFastMatcherCookieParity(t *testing.T) {
 	}
 	body := []byte(`<html><body>plain</body></html>`)
 	for _, s := range samples {
-		want := techNameSet(DetectTech(s.headers, body))
+		want := techNameSet(upstream.Detect(s.headers, body))
 		got := techNameSet(fast.Detect(s.headers, body))
 		if !eqStrings(want, got) {
 			t.Errorf("%s:\n  fast = %v\n  want = %v", s.name, got, want)

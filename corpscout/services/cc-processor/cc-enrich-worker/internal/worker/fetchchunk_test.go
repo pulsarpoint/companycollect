@@ -73,7 +73,7 @@ func TestProcessDomainParallelPages(t *testing.T) {
 		{RootDomain: "acme.com", URL: "https://acme.com/gone", WarcFilename: "f.warc.gz", Offset: 1000, Length: 10},
 		{RootDomain: "acme.com", URL: "https://acme.com/about", WarcFilename: "f.warc.gz", Offset: 2000, Length: int64(len(pageAbout))},
 	}
-	cfg := ShardConfig{Mode: "tech", Concurrency: 4}
+	cfg := ShardConfig{Mode: "tech", Concurrency: 4, Tech: upstreamTech}
 
 	for range 20 { // parallel pages: result must be deterministic across runs
 		stats := &chunkStats{}
