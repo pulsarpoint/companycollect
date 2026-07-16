@@ -1,25 +1,14 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import type { CountryConfig } from "~/lib/countries";
+import {
+  getSortColumn,
+  type CountryConfig,
+  type SortDir,
+} from "~/lib/countries";
 
 export interface CountryStats {
   total: number;
   active: number;
 }
-
-export interface CompanyRow {
-  id: string;
-  name: string;
-  active: 0 | 1;
-}
-
-export interface CompanySearchResult {
-  rows: CompanyRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
-
-const MAX_PAGE_SIZE = 100;
 
 function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
@@ -36,38 +25,87 @@ export async function getCountryStats(country: CountryConfig): Promise<CountrySt
   return { total: Number(row.total), active: Number(row.active) };
 }
 
+export const PAGE_SIZES = [25, 50, 100] as const;
+
+export type CompanyListRow = Record<string, string | number | null> & {
+  active: 0 | 1;
+};
+
+export interface CompanySearchResult {
+  rows: CompanyListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sort: string;
+  dir: SortDir;
+}
+
+interface IndustryRow {
+  company_id: string;
+  industry_code: string | null;
+  industry_label: string | null;
+}
+
 export async function searchCompanies(
   country: CountryConfig,
-  opts: { q?: string; page?: number; pageSize?: number },
+  opts: {
+    q?: string;
+    page?: number;
+    pageSize?: number;
+    sort?: string | null;
+    dir?: string | null;
+  },
 ): Promise<CompanySearchResult> {
+  const pageSize = PAGE_SIZES.includes(opts.pageSize as 25 | 50 | 100)
+    ? (opts.pageSize as number)
+    : 50;
   const requestedPage = clampInt(opts.page, 1, Number.MAX_SAFE_INTEGER, 1);
-  const pageSize = clampInt(opts.pageSize, 1, MAX_PAGE_SIZE, 50);
   const q = (opts.q ?? "").trim();
+  const sortColumn = getSortColumn(country, opts.sort ?? null);
+  const dir: SortDir = opts.dir === "desc" ? "desc" : "asc";
 
   const where = q ? `WHERE ${country.nameColumn} ILIKE {pattern:String}` : "";
   const params = q ? { pattern: `%${q}%` } : undefined;
 
-  // Count must complete before the rows query: it determines the last valid
-  // page so we never send ClickHouse an astronomically large OFFSET.
   const countRows = await chQuery<{ total: string }>(
     `SELECT count() AS total FROM ${country.companiesTable} ${where}`,
     params,
   );
   const total = Number(countRows[0].total);
+
+  // Clamp the requested page to the real page range (count runs first on purpose).
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(requestedPage, lastPage);
 
-  const rows = await chQuery<CompanyRow>(
-    `SELECT
-       ${country.idColumn} AS id,
-       ${country.nameColumn} AS name,
-       toUInt8(${country.activeExpr}) AS active
+  const joinKeyExpr = country.industryJoinKeyExpr ?? country.idColumn;
+  const selectList = [
+    ...country.columns.map((c) => `${c.expr} AS ${c.key}`),
+    `toUInt8(${country.activeExpr}) AS active`,
+    ...(country.industryQuery ? [`toString(${joinKeyExpr}) AS __industry_key`] : []),
+  ].join(",\n       ");
+
+  const rows = await chQuery<CompanyListRow & { __industry_key?: string }>(
+    `SELECT ${selectList}
      FROM ${country.companiesTable}
      ${where}
-     ORDER BY ${country.nameColumn}, ${country.idColumn}
+     ORDER BY ${sortColumn.expr} ${dir === "desc" ? "DESC" : "ASC"}, ${country.idColumn}
      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
     params,
   );
 
-  return { rows, total, page, pageSize };
+  if (country.industryQuery) {
+    const ids = rows.map((r) => r.__industry_key ?? "").filter((v) => v !== "");
+    const industries = ids.length
+      ? await chQuery<IndustryRow>(country.industryQuery, { ids })
+      : [];
+    const byId = new Map(industries.map((i) => [i.company_id, i]));
+    for (const row of rows) {
+      const hit = byId.get(row.__industry_key ?? "");
+      row.industry_code = hit?.industry_code ?? null;
+      row.industry_label = hit?.industry_label ?? null;
+      delete row.__industry_key;
+    }
+  }
+
+  return { rows, total, page, pageSize, sort: sortColumn.key, dir };
 }
