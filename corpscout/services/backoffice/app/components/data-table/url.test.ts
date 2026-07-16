@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { clearAllFilters, nextSortDir, tableSearch, toggleFilterValue } from "~/components/data-table/url";
+import {
+  clearAllFilters,
+  nextSortDir,
+  removeFilterValue,
+  tableSearch,
+  toggleFilterValue,
+} from "~/components/data-table/url";
 
 describe("tableSearch", () => {
   it("preserves existing params and patches page", () => {
@@ -46,6 +52,21 @@ describe("toggleFilterValue", () => {
     const s = toggleFilterValue(current, "status", "A");
     expect(s).toContain("f_status=B");
     expect(s).not.toContain("f_status=A");
+  });
+});
+
+describe("removeFilterValue", () => {
+  it("removes the value, keeps siblings, resets page", () => {
+    const current = new URLSearchParams("f_status=A&f_status=B&page=2");
+    const s = removeFilterValue(current, "status", "A");
+    expect(s).toContain("f_status=B");
+    expect(s).not.toContain("f_status=A");
+    expect(s).not.toContain("page=");
+  });
+
+  it("is idempotent: never re-adds an absent value", () => {
+    const current = new URLSearchParams("f_status=B");
+    expect(removeFilterValue(current, "status", "A")).toBe("?f_status=B");
   });
 });
 

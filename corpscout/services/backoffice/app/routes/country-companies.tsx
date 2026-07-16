@@ -1,4 +1,4 @@
-import { Form, Link, useSearchParams } from "react-router";
+import { Form, Link } from "react-router";
 import { X } from "lucide-react";
 import type { Route } from "./+types/country-companies";
 import { getCountry } from "~/lib/countries";
@@ -11,7 +11,8 @@ import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import { buildCompanyColumns } from "~/components/data-table/company-columns";
 import { FilterSidebar, facetLabel } from "~/components/data-table/filter-sidebar";
-import { clearAllFilters, toggleFilterValue } from "~/components/data-table/url";
+import { clearAllFilters, removeFilterValue } from "~/components/data-table/url";
+import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const country = getCountry(params.country);
@@ -34,7 +35,7 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
   const { q, result, filters } = loaderData;
   const country = getCountry(params.country)!;
   const columns = buildCompanyColumns(country, result.sort, result.dir);
-  const [searchParams] = useSearchParams();
+  const searchParams = useEffectiveSearchParams();
 
   return (
     <>
@@ -65,7 +66,7 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
                 <span className="text-muted-foreground">{facetLabel(country, key)}:</span>
                 {value}
                 <Link
-                  to={toggleFilterValue(searchParams, key, value)}
+                  to={removeFilterValue(searchParams, key, value)}
                   preventScrollReset
                   aria-label={`Remove ${value}`}
                 >

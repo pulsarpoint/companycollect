@@ -1,11 +1,12 @@
-import { useRef, useState } from "react";
-import { useFetcher, useNavigate, useSearchParams } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { useFetcher, useNavigate } from "react-router";
 import { Check, ListFilter } from "lucide-react";
 import type { CountryConfig } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
 import { filterableFacetKeys } from "~/lib/filters";
 import type { FacetOption } from "~/lib/facets.server";
 import { toggleFilterValue } from "~/components/data-table/url";
+import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -45,15 +46,20 @@ function FacetCombobox({
 }) {
   const fetcher = useFetcher<{ options: FacetOption[] }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const effectiveParams = useEffectiveSearchParams();
   const [open, setOpen] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
   const base = `/${country.code}/facet-options?column=${facetKey}`;
 
   function onOpenChange(next: boolean) {
+    // Cancel any pending debounced query fetch so a stale `q=` result can't
+    // land after reopen and overwrite the fetch-on-open list.
+    clearTimeout(debounce.current);
     setOpen(next);
     if (next) fetcher.load(base);
   }
+
+  useEffect(() => () => clearTimeout(debounce.current), []);
 
   function onQueryChange(q: string) {
     clearTimeout(debounce.current);
@@ -94,7 +100,7 @@ function FacetCombobox({
                     value={option.value}
                     onSelect={() =>
                       navigate(
-                        toggleFilterValue(searchParams, facetKey, option.value),
+                        toggleFilterValue(effectiveParams, facetKey, option.value),
                         { preventScrollReset: true },
                       )
                     }

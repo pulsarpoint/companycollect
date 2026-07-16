@@ -47,6 +47,26 @@ export function toggleFilterValue(
   return `?${next.toString()}`;
 }
 
+/**
+ * Removes one facet value (idempotent, unlike toggleFilterValue). Badge-X
+ * links must never re-add: during a pending navigation the badge row still
+ * renders from the old loader data, so a toggle link on an already-removed
+ * value would flip into an add link.
+ */
+export function removeFilterValue(
+  current: URLSearchParams,
+  key: string,
+  value: string,
+): string {
+  const next = new URLSearchParams(current);
+  next.delete("page");
+  const param = `${FILTER_PREFIX}${key}`;
+  const remaining = next.getAll(param).filter((v) => v !== value);
+  next.delete(param);
+  for (const v of remaining) next.append(param, v);
+  return `?${next.toString()}`;
+}
+
 export function clearAllFilters(current: URLSearchParams): string {
   const next = new URLSearchParams(current);
   next.delete("page");
