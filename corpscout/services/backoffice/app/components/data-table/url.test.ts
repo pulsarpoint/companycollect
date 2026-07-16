@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextSortDir, tableSearch } from "~/components/data-table/url";
+import { clearAllFilters, nextSortDir, tableSearch, toggleFilterValue } from "~/components/data-table/url";
 
 describe("tableSearch", () => {
   it("preserves existing params and patches page", () => {
@@ -29,5 +29,32 @@ describe("nextSortDir", () => {
   it("toggles on the same column", () => {
     expect(nextSortDir("status", "asc", "status")).toBe("desc");
     expect(nextSortDir("status", "desc", "status")).toBe("asc");
+  });
+});
+
+describe("toggleFilterValue", () => {
+  it("adds a value and resets page", () => {
+    const current = new URLSearchParams("q=grupp&page=3");
+    const s = toggleFilterValue(current, "status", "Registered");
+    expect(s).toContain("f_status=Registered");
+    expect(s).toContain("q=grupp");
+    expect(s).not.toContain("page=");
+  });
+
+  it("removes an already-selected value, keeps siblings", () => {
+    const current = new URLSearchParams("f_status=A&f_status=B");
+    const s = toggleFilterValue(current, "status", "A");
+    expect(s).toContain("f_status=B");
+    expect(s).not.toContain("f_status=A");
+  });
+});
+
+describe("clearAllFilters", () => {
+  it("removes every f_* param and page, keeps the rest", () => {
+    const current = new URLSearchParams(
+      "q=x&sort=status&f_status=A&f_legal_form=B&page=2",
+    );
+    const s = clearAllFilters(current);
+    expect(s).toBe("?q=x&sort=status");
   });
 });

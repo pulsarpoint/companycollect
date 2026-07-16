@@ -1,4 +1,5 @@
 import type { SortDir } from "~/lib/countries";
+import { FILTER_PREFIX } from "~/lib/filters";
 
 export interface TablePatch {
   q?: string;
@@ -27,4 +28,30 @@ export function tableSearch(current: URLSearchParams, patch: TablePatch): string
 export function nextSortDir(currentSort: string, currentDir: SortDir, key: string): SortDir {
   if (currentSort !== key) return "asc";
   return currentDir === "asc" ? "desc" : "asc";
+}
+
+/** Adds or removes one facet value; any filter change resets pagination. */
+export function toggleFilterValue(
+  current: URLSearchParams,
+  key: string,
+  value: string,
+): string {
+  const next = new URLSearchParams(current);
+  next.delete("page");
+  const param = `${FILTER_PREFIX}${key}`;
+  const values = next.getAll(param);
+  next.delete(param);
+  const remaining = values.filter((v) => v !== value);
+  if (remaining.length === values.length) remaining.push(value);
+  for (const v of remaining) next.append(param, v);
+  return `?${next.toString()}`;
+}
+
+export function clearAllFilters(current: URLSearchParams): string {
+  const next = new URLSearchParams(current);
+  next.delete("page");
+  for (const key of [...next.keys()]) {
+    if (key.startsWith(FILTER_PREFIX)) next.delete(key);
+  }
+  return `?${next.toString()}`;
 }

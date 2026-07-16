@@ -1,50 +1,88 @@
-import { Form } from "react-router";
+import { Form, Link, useSearchParams } from "react-router";
+import { X } from "lucide-react";
 import type { Route } from "./+types/country-companies";
 import { getCountry } from "~/lib/countries";
+import { parseFilters } from "~/lib/filters";
 import { searchCompanies } from "~/lib/queries.server";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Badge } from "~/components/ui/badge";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import { buildCompanyColumns } from "~/components/data-table/company-columns";
+import { FilterSidebar, facetLabel } from "~/components/data-table/filter-sidebar";
+import { clearAllFilters, toggleFilterValue } from "~/components/data-table/url";
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const country = getCountry(params.country);
   if (!country) throw new Response("Not found", { status: 404 });
 
   const url = new URL(request.url);
+  const filters = parseFilters(url.searchParams, country);
   const result = await searchCompanies(country, {
     q: url.searchParams.get("q") ?? "",
     page: Number(url.searchParams.get("page") ?? "1") || 1,
     pageSize: Number(url.searchParams.get("pageSize") ?? "50") || 50,
     sort: url.searchParams.get("sort"),
     dir: url.searchParams.get("dir"),
+    filters,
   });
-  return { q: url.searchParams.get("q") ?? "", result };
+  return { q: url.searchParams.get("q") ?? "", result, filters };
 }
 
 export default function CountryCompanies({ loaderData, params }: Route.ComponentProps) {
-  const { q, result } = loaderData;
+  const { q, result, filters } = loaderData;
   const country = getCountry(params.country)!;
   const columns = buildCompanyColumns(country, result.sort, result.dir);
+  const [searchParams] = useSearchParams();
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-xl font-semibold">Companies</h2>
-        <Form method="get" className="flex gap-2">
-          <Input
-            type="search"
-            name="q"
-            defaultValue={q}
-            placeholder="Search by name…"
-            className="w-64"
-          />
-          <Button type="submit" variant="secondary">
-            Search
-          </Button>
-        </Form>
+        <div className="flex gap-2">
+          <Form method="get" className="flex gap-2">
+            <Input
+              type="search"
+              name="q"
+              defaultValue={q}
+              placeholder="Search by name…"
+              className="w-64"
+            />
+            <Button type="submit" variant="secondary">
+              Search
+            </Button>
+          </Form>
+          <FilterSidebar country={country} filters={filters} />
+        </div>
       </div>
+
+      {Object.keys(filters).length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {Object.entries(filters).flatMap(([key, values]) =>
+            values.map((value) => (
+              <Badge key={`${key}:${value}`} variant="secondary" className="gap-1">
+                <span className="text-muted-foreground">{facetLabel(country, key)}:</span>
+                {value}
+                <Link
+                  to={toggleFilterValue(searchParams, key, value)}
+                  preventScrollReset
+                  aria-label={`Remove ${value}`}
+                >
+                  <X className="size-3" />
+                </Link>
+              </Badge>
+            )),
+          )}
+          <Link
+            to={clearAllFilters(searchParams)}
+            preventScrollReset
+            className="text-muted-foreground text-xs underline"
+          >
+            Clear all
+          </Link>
+        </div>
+      ) : null}
 
       <DataTable columns={columns} data={result.rows} />
 
