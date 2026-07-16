@@ -77,6 +77,7 @@ export async function geocodeAddress(
     const response = await throttled(minIntervalMs, () =>
       fetcher(`${NOMINATIM_URL}?format=jsonv2&limit=1&q=${encodeURIComponent(address)}`, {
         headers: { "User-Agent": USER_AGENT },
+        signal: AbortSignal.timeout(10_000),
       }),
     );
     if (!response.ok) return null; // transient upstream failure: no cache entry
@@ -84,10 +85,17 @@ export async function geocodeAddress(
   } catch {
     return null; // network failure: no cache entry, retry next time
   }
+  if (!Array.isArray(results)) return null; // malformed upstream payload: no cache entry
 
   const hit = results[0];
   const point =
-    hit && Number.isFinite(Number(hit.lat)) && Number.isFinite(Number(hit.lon))
+    hit &&
+    (typeof hit.lat === "string" || typeof hit.lat === "number") &&
+    hit.lat !== null &&
+    (typeof hit.lon === "string" || typeof hit.lon === "number") &&
+    hit.lon !== null &&
+    Number.isFinite(Number(hit.lat)) &&
+    Number.isFinite(Number(hit.lon))
       ? { lat: Number(hit.lat), lon: Number(hit.lon) }
       : null;
 

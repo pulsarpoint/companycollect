@@ -281,7 +281,7 @@ LIMIT 100`,
       addressQuery: `SELECT address_type AS address_type,
   arrayStringConcat(arrayFilter(x -> x != '', [
     coalesce(care_of, ''),
-    if(coalesce(street_address, '') != '', street_address, coalesce(raw_address, '')),
+    coalesce(nullIf(street_address, ''), raw_address, ''),
     trim(concat(coalesce(postal_code, ''), ' ', coalesce(post_town, '')))
   ]), ', ') AS full_address
 FROM se_company_addresses
@@ -358,8 +358,8 @@ ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
       addressQuery: `SELECT 'registered' AS address_type,
   arrayStringConcat(arrayFilter(x -> x != '', [
-    coalesce(address, ''),
-    trim(concat(coalesce(postal_code, ''), ' ', coalesce(location, '')))
+    coalesce(nullIf(address, ''), location, ''),
+    coalesce(postal_code, '')
   ]), ', ') AS full_address
 FROM ee_companies
 WHERE reg_code = {id:String}

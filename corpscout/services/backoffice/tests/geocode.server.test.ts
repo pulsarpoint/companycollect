@@ -35,6 +35,15 @@ describe("geocodeAddress", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("does not cache a non-array response body", async () => {
+    clearGeocodeThrottleForTests();
+    const dbPath = tempDb();
+    const fetcher = fakeFetch({ error: "malformed upstream payload" });
+    expect(await geocodeAddress("Bad Payload 1, X", { fetcher, dbPath, minIntervalMs: 0 })).toBeNull();
+    expect(await geocodeAddress("Bad Payload 1, X", { fetcher, dbPath, minIntervalMs: 0 })).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2); // not negative-cached: retried on second call
+  });
+
   it("does not cache fetch failures", async () => {
     clearGeocodeThrottleForTests();
     const dbPath = tempDb();

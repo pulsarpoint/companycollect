@@ -37,10 +37,10 @@ export function ContactLocationCard({
   const requested = useRef(false);
   const stored = storedCoords(record);
   const realAddresses = addresses.filter((a) => a.full_address.trim() !== "");
-  const geocodeTarget =
-    !stored && realAddresses.length > 0
-      ? `${realAddresses[0].full_address}, ${country.name}`
-      : null;
+  const candidateTarget =
+    !stored && realAddresses.length > 0 ? `${realAddresses[0].full_address}, ${country.name}` : null;
+  // Over-long addresses are unresolvable: no fetch, no map — same as no address at all.
+  const geocodeTarget = candidateTarget && candidateTarget.length <= 300 ? candidateTarget : null;
 
   useEffect(() => {
     if (geocodeTarget && !requested.current && fetcher.state === "idle" && fetcher.data === undefined) {
