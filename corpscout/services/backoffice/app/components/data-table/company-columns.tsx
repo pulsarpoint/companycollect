@@ -74,10 +74,14 @@ export function buildCompanyColumns(
         if (!code && !label) return EMPTY;
         return (
           <span className="flex max-w-[20rem] items-baseline gap-1.5">
-            <span className="text-muted-foreground font-mono text-xs">{code}</span>
-            <span className="truncate" title={label ? String(label) : undefined}>
-              {label}
-            </span>
+            {code ? (
+              <span className="text-muted-foreground font-mono text-xs">{code}</span>
+            ) : null}
+            {label ? (
+              <span className="truncate" title={String(label)}>
+                {label}
+              </span>
+            ) : null}
           </span>
         );
       },

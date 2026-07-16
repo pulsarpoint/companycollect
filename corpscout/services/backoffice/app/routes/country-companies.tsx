@@ -20,7 +20,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     sort: url.searchParams.get("sort"),
     dir: url.searchParams.get("dir"),
   });
-  return { q: url.searchParams.get("q") ?? "", result, countryCode: country.code };
+  return { q: url.searchParams.get("q") ?? "", result };
 }
 
 export default function CountryCompanies({ loaderData, params }: Route.ComponentProps) {
