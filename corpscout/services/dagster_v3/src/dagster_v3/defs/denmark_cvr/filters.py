@@ -13,7 +13,7 @@ DATACVR_REGIONS: list[tuple[str, str]] = [
 ]
 
 # DataCVR exposes municipality and region as independent filters. Keeping the valid
-# pair together avoids issuing the full 6 x 105 cross-product for every large month.
+# pair together avoids issuing the full 6 x 105 cross-product for every large range.
 DATACVR_MUNICIPALITIES: list[tuple[str, str, str]] = [
     ("0", "955", "Kujalleq"),
     ("0", "956", "Sermersooq"),
@@ -145,7 +145,7 @@ class DenmarkCvrQueryFilter:
         return f"region-{self.region}-municipality-{self.municipality}"
 
 
-def filters_for_month(
+def filters_for_date_range(
     *,
     start_date: date,
     end_date: date,

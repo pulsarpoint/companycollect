@@ -15,7 +15,7 @@ from pydantic import ValidationError, model_validator
 from dagster_v3.defs.denmark_cvr.filters import (
     DATACVR_RESULT_LIMIT,
     DenmarkCvrQueryFilter,
-    filters_for_month,
+    filters_for_date_range,
 )
 from dagster_v3.defs.denmark_cvr.models import CompanySearchResult, SearchResponse
 
@@ -97,7 +97,7 @@ class DenmarkCvrQueryDownload:
 
 
 @dataclass(frozen=True)
-class DenmarkCvrMonthDownload:
+class DenmarkCvrDateRangeDownload:
     generic_advertised_count: int
     query_downloads: tuple[DenmarkCvrQueryDownload, ...]
     filtered_advertised_count: int = field(init=False)
@@ -111,7 +111,9 @@ class DenmarkCvrMonthDownload:
         if self.generic_advertised_count < 0:
             raise ValueError("DataCVR generic advertised count must not be negative")
         if not self.query_downloads:
-            raise ValueError("DataCVR month download must contain at least one query")
+            raise ValueError(
+                "DataCVR date range download must contain at least one query"
+            )
         filtered_advertised_count = sum(
             query.advertised_count for query in self.query_downloads
         )
@@ -252,7 +254,7 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
             raise ValueError("min_delay_ms must not exceed max_delay_ms")
         return self
 
-    def download_month(
+    def download_date_range(
         self,
         *,
         start_date: date,
@@ -260,7 +262,7 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
         log_info: Callable[..., object] | None = None,
         launcher: Callable[[], Any] = launch,
         sleep: Callable[[float], None] = time.sleep,
-    ) -> DenmarkCvrMonthDownload:
+    ) -> DenmarkCvrDateRangeDownload:
         root_filter = DenmarkCvrQueryFilter(
             start_date=start_date,
             end_date=end_date,
@@ -291,14 +293,14 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
                 size=1,
             )
             _validate_company_only_response(count_page.response, root_filter.filter_id)
-            query_filters = filters_for_month(
+            query_filters = filters_for_date_range(
                 start_date=start_date,
                 end_date=end_date,
                 advertised_count=count_page.response.total,
             )
             if log_info is not None:
                 log_info(
-                    "DataCVR monthly company filters selected: start_date=%s "
+                    "DataCVR company filters selected: start_date=%s "
                     "end_date=%s generic_advertised=%s query_count=%s",
                     start_date,
                     end_date,
@@ -323,7 +325,7 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
                 downloaded_size_bytes += query_download.downloaded_size_bytes
                 if log_info is not None:
                     log_info(
-                        "DataCVR monthly company progress: filter=%s query=%s/%s "
+                        "DataCVR company progress: filter=%s query=%s/%s "
                         "advertised=%s downloaded=%s pages=%s "
                         "total_downloaded=%s total_pages=%s downloaded_bytes=%s",
                         query_filter.filter_id,
@@ -336,7 +338,7 @@ class DenmarkCvrSearchResource(dg.ConfigurableResource):
                         downloaded_page_count,
                         downloaded_size_bytes,
                     )
-            return DenmarkCvrMonthDownload(
+            return DenmarkCvrDateRangeDownload(
                 generic_advertised_count=count_page.response.total,
                 query_downloads=tuple(query_downloads),
             )

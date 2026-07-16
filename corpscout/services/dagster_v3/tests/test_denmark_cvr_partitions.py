@@ -7,10 +7,12 @@ from dagster_v3.defs.denmark_cvr.filters import (
     DATACVR_MUNICIPALITIES,
     DATACVR_REGIONS,
     DenmarkCvrQueryFilter,
-    filters_for_month,
+    filters_for_date_range,
 )
 from dagster_v3.defs.denmark_cvr.partitions import (
+    DENMARK_CVR_ACTIVE_PARTITIONS,
     DENMARK_CVR_BACKFILL_PARTITIONS,
+    active_partition_date,
     backfill_month_date_range,
 )
 
@@ -33,8 +35,8 @@ def test_source_filter_lists_contain_every_region_and_municipality() -> None:
     assert ("0", "960", "Avannaata") in DATACVR_MUNICIPALITIES
 
 
-def test_filters_for_small_month_use_one_generic_query() -> None:
-    filters = filters_for_month(
+def test_filters_for_small_date_range_use_one_generic_query() -> None:
+    filters = filters_for_date_range(
         start_date=date(2025, 1, 1),
         end_date=date(2025, 1, 31),
         advertised_count=3_000,
@@ -51,8 +53,8 @@ def test_filters_for_small_month_use_one_generic_query() -> None:
     assert filters[0].filter_id == "all-companies"
 
 
-def test_filters_for_large_month_use_fixed_region_municipality_queries() -> None:
-    filters = filters_for_month(
+def test_filters_for_large_date_range_use_fixed_region_municipality_queries() -> None:
+    filters = filters_for_date_range(
         start_date=date(2025, 1, 1),
         end_date=date(2025, 1, 31),
         advertised_count=3_001,
@@ -86,3 +88,23 @@ def test_backfill_partitions_cover_january_2015_through_june_2026() -> None:
         backfill_month_date_range("2025-1")
     with pytest.raises(ValueError):
         backfill_month_date_range("2026-07")
+
+
+def test_active_partitions_start_on_july_1_2026_and_include_current_day() -> None:
+    assert isinstance(DENMARK_CVR_ACTIVE_PARTITIONS, dg.DailyPartitionsDefinition)
+    partition_keys = DENMARK_CVR_ACTIVE_PARTITIONS.get_partition_keys(
+        current_time=datetime(2026, 7, 4, 12, 0)
+    )
+
+    assert partition_keys == [
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-04",
+    ]
+    assert active_partition_date("2026-07-01") == date(2026, 7, 1)
+
+    with pytest.raises(ValueError):
+        active_partition_date("2026-06-30")
+    with pytest.raises(ValueError):
+        active_partition_date("2026-7-01")

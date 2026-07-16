@@ -5,11 +5,17 @@ import dagster as dg
 
 DENMARK_CVR_FIRST_MONTH = date(2015, 1, 1)
 DENMARK_CVR_BACKFILL_END_DATE = date(2026, 7, 1)
+DENMARK_CVR_ACTIVE_START_DATE = DENMARK_CVR_BACKFILL_END_DATE
 DENMARK_CVR_BACKFILL_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date="2015-01",
     end_date="2026-07",
     timezone="Europe/Copenhagen",
     fmt="%Y-%m",
+)
+DENMARK_CVR_ACTIVE_PARTITIONS = dg.DailyPartitionsDefinition(
+    start_date=DENMARK_CVR_ACTIVE_START_DATE.isoformat(),
+    timezone="Europe/Copenhagen",
+    end_offset=1,
 )
 
 
@@ -41,3 +47,20 @@ def backfill_month_date_range(partition_key: str) -> tuple[date, date]:
             monthrange(start_date.year, start_date.month)[1],
         ),
     )
+
+
+def active_partition_date(partition_key: str) -> date:
+    try:
+        partition_date = datetime.strptime(partition_key, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(
+            f"Invalid Denmark CVR daily partition key: {partition_key!r}"
+        ) from None
+    if partition_date.isoformat() != partition_key:
+        raise ValueError(f"Invalid Denmark CVR daily partition key: {partition_key!r}")
+    if partition_date < DENMARK_CVR_ACTIVE_START_DATE:
+        raise ValueError(
+            "Denmark CVR active partition must not precede "
+            f"{DENMARK_CVR_ACTIVE_START_DATE:%Y-%m-%d}"
+        )
+    return partition_date

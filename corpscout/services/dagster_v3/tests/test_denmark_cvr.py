@@ -9,9 +9,13 @@ from pydantic import ValidationError
 
 from dagster_v3.defs.denmark_cvr.assets import (
     DENMARK_CVR_BUCKET,
+    active_invalid_response_object_key,
+    active_result_object_key,
     backfill_invalid_response_object_key,
     backfill_result_object_key,
+    denmark_cvr_active_s3,
     denmark_cvr_backfill_s3,
+    write_denmark_cvr_active_date,
     write_denmark_cvr_backfill_month,
 )
 from dagster_v3.defs.denmark_cvr.filters import (
@@ -24,9 +28,12 @@ from dagster_v3.defs.denmark_cvr.models import (
     ProductionUnitSearchResult,
     SearchResponse,
 )
-from dagster_v3.defs.denmark_cvr.partitions import DENMARK_CVR_BACKFILL_PARTITIONS
+from dagster_v3.defs.denmark_cvr.partitions import (
+    DENMARK_CVR_ACTIVE_PARTITIONS,
+    DENMARK_CVR_BACKFILL_PARTITIONS,
+)
 from dagster_v3.defs.denmark_cvr.resources import (
-    DenmarkCvrMonthDownload,
+    DenmarkCvrDateRangeDownload,
     DenmarkCvrQueryDownload,
     DenmarkCvrRequestError,
     DenmarkCvrSearchResource,
@@ -164,7 +171,7 @@ class FakePage:
         return self.results.pop(0)
 
 
-class LargeMonthPage:
+class LargeDateRangePage:
     def __init__(self) -> None:
         self.goto_calls: list[tuple[str, str]] = []
         self.evaluate_calls: list[dict[str, Any]] = []
@@ -185,11 +192,11 @@ class LargeMonthPage:
 
 
 class FakeBrowser:
-    def __init__(self, page: FakePage | LargeMonthPage) -> None:
+    def __init__(self, page: FakePage | LargeDateRangePage) -> None:
         self.page = page
         self.closed = False
 
-    def new_page(self) -> FakePage | LargeMonthPage:
+    def new_page(self) -> FakePage | LargeDateRangePage:
         return self.page
 
     def close(self) -> None:
@@ -236,17 +243,17 @@ class FakeObjectStore:
 class FakeSearchResource:
     search_base_url = "https://datacvr.virk.dk"
 
-    def __init__(self, download: DenmarkCvrMonthDownload) -> None:
+    def __init__(self, download: DenmarkCvrDateRangeDownload) -> None:
         self.download = download
         self.date_ranges: list[tuple[date, date]] = []
 
-    def download_month(
+    def download_date_range(
         self,
         *,
         start_date: date,
         end_date: date,
         log_info: Any = None,
-    ) -> DenmarkCvrMonthDownload:
+    ) -> DenmarkCvrDateRangeDownload:
         self.date_ranges.append((start_date, end_date))
         return self.download
 
@@ -254,13 +261,13 @@ class FakeSearchResource:
 class InvalidSearchResource:
     search_base_url = "https://datacvr.virk.dk"
 
-    def download_month(
+    def download_date_range(
         self,
         *,
         start_date: date,
         end_date: date,
         log_info: Any = None,
-    ) -> DenmarkCvrMonthDownload:
+    ) -> DenmarkCvrDateRangeDownload:
         raise DenmarkCvrValidationError(
             filter_id="all-companies",
             page_index=1,
@@ -284,12 +291,12 @@ def _query_download(
     )
 
 
-def _month_download(
+def _date_range_download(
     *,
     generic_advertised_count: int,
     query_downloads: tuple[DenmarkCvrQueryDownload, ...],
-) -> DenmarkCvrMonthDownload:
-    return DenmarkCvrMonthDownload(
+) -> DenmarkCvrDateRangeDownload:
+    return DenmarkCvrDateRangeDownload(
         generic_advertised_count=generic_advertised_count,
         query_downloads=query_downloads,
     )
@@ -403,7 +410,7 @@ def test_search_resource_counts_then_downloads_all_pages_with_one_browser() -> N
         page_size=2,
         min_delay_ms=0,
         max_delay_ms=0,
-    ).download_month(
+    ).download_date_range(
         start_date=date(2025, 1, 1),
         end_date=date(2025, 1, 31),
         log_info=lambda *args: logs.append(args),
@@ -436,22 +443,22 @@ def test_search_resource_counts_then_downloads_all_pages_with_one_browser() -> N
     assert browser.closed is True
     assert delays == [0.0]
     assert [entry[0] for entry in logs] == [
-        "DataCVR monthly company filters selected: start_date=%s "
+        "DataCVR company filters selected: start_date=%s "
         "end_date=%s generic_advertised=%s query_count=%s",
-        "DataCVR monthly company progress: filter=%s query=%s/%s "
+        "DataCVR company progress: filter=%s query=%s/%s "
         "advertised=%s downloaded=%s pages=%s "
         "total_downloaded=%s total_pages=%s downloaded_bytes=%s",
     ]
 
 
-def test_search_resource_uses_fixed_filters_for_large_month() -> None:
-    page = LargeMonthPage()
+def test_search_resource_uses_fixed_filters_for_large_date_range() -> None:
+    page = LargeDateRangePage()
     browser = FakeBrowser(page)
 
     download = DenmarkCvrSearchResource(
         min_delay_ms=0,
         max_delay_ms=0,
-    ).download_month(
+    ).download_date_range(
         start_date=date(2025, 1, 1),
         end_date=date(2025, 1, 31),
         launcher=lambda: browser,
@@ -476,7 +483,7 @@ def test_search_resource_rejects_non_company_response() -> None:
     )
 
     with pytest.raises(DenmarkCvrRequestError, match="non-company"):
-        DenmarkCvrSearchResource().download_month(
+        DenmarkCvrSearchResource().download_date_range(
             start_date=date(2025, 1, 1),
             end_date=date(2025, 1, 31),
             launcher=lambda: FakeBrowser(page),
@@ -489,7 +496,7 @@ def test_search_resource_closes_browser_and_hides_failed_response_body() -> None
     browser = FakeBrowser(page)
 
     with pytest.raises(DenmarkCvrRequestError) as exc_info:
-        DenmarkCvrSearchResource().download_month(
+        DenmarkCvrSearchResource().download_date_range(
             start_date=date(2025, 1, 1),
             end_date=date(2025, 1, 31),
             launcher=lambda: browser,
@@ -504,7 +511,7 @@ def test_search_resource_retains_invalid_body_without_exposing_it() -> None:
     page = FakePage([_browser_result(invalid_body)])
 
     with pytest.raises(DenmarkCvrValidationError) as exc_info:
-        DenmarkCvrSearchResource().download_month(
+        DenmarkCvrSearchResource().download_date_range(
             start_date=date(2025, 1, 1),
             end_date=date(2025, 1, 31),
             launcher=lambda: FakeBrowser(page),
@@ -533,11 +540,28 @@ def test_backfill_object_keys_are_month_scoped_and_run_independent() -> None:
         backfill_result_object_key("2014-12", is_complete=True)
 
 
+def test_active_object_keys_are_date_scoped_and_run_independent() -> None:
+    assert active_result_object_key("2026-07-01", is_complete=True) == (
+        "denmark_cvr/active/date=2026-07-01/companies.json"
+    )
+    assert active_result_object_key("2026-07-01", is_complete=False) == (
+        "denmark_cvr/active/date=2026-07-01/companies_incomplete.json"
+    )
+    assert active_invalid_response_object_key(
+        "2026-07-01",
+        "all-companies",
+        1,
+    ).endswith("/invalid/filter=all-companies/page=000001.invalid.json")
+
+    with pytest.raises(ValueError):
+        active_result_object_key("2026-06-30", is_complete=True)
+
+
 def test_month_storage_merges_raw_entities_into_one_complete_json() -> None:
     first_company = _company(cvr="12345678")
     second_company = _company(cvr="12345679")
     search = FakeSearchResource(
-        _month_download(
+        _date_range_download(
             generic_advertised_count=2,
             query_downloads=(
                 _query_download(
@@ -572,12 +596,75 @@ def test_month_storage_merges_raw_entities_into_one_complete_json() -> None:
     assert summary.is_skipped is False
 
 
+def test_active_date_storage_downloads_exact_day_into_one_complete_json() -> None:
+    company = _company(cvr="87654321")
+    search = FakeSearchResource(
+        _date_range_download(
+            generic_advertised_count=1,
+            query_downloads=(_query_download(entities=(company,), advertised_count=1),),
+        )
+    )
+    object_store = FakeObjectStore()
+
+    summary = write_denmark_cvr_active_date(
+        object_store=object_store,
+        search=search,
+        partition_key="2026-07-01",
+        run_id="daily-run",
+        retrieved_at=datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
+    )
+
+    key = active_result_object_key("2026-07-01", is_complete=True)
+    stored = json.loads(object_store.objects[(DENMARK_CVR_BUCKET, key)])
+    assert search.date_ranges == [(date(2026, 7, 1), date(2026, 7, 1))]
+    assert stored["partition_key"] == "2026-07-01"
+    assert stored["start_date"] == "2026-07-01"
+    assert stored["end_date"] == "2026-07-01"
+    assert stored["enheder"] == [company]
+    assert summary.result_key == key
+    assert summary.is_complete is True
+
+
+@pytest.mark.parametrize("is_complete", [True, False])
+def test_active_date_skips_when_result_json_already_exists(
+    is_complete: bool,
+) -> None:
+    search = FakeSearchResource(
+        _date_range_download(
+            generic_advertised_count=1,
+            query_downloads=(
+                _query_download(entities=(_company(),), advertised_count=1),
+            ),
+        )
+    )
+    object_store = FakeObjectStore()
+    existing_key = active_result_object_key(
+        "2026-07-01",
+        is_complete=is_complete,
+    )
+    object_store.objects[(DENMARK_CVR_BUCKET, existing_key)] = b"already-loaded"
+
+    summary = write_denmark_cvr_active_date(
+        object_store=object_store,
+        search=search,
+        partition_key="2026-07-01",
+        run_id="daily-retry",
+        retrieved_at=datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
+    )
+
+    assert summary.result_key == existing_key
+    assert summary.is_complete is is_complete
+    assert summary.is_skipped is True
+    assert search.date_ranges == []
+    assert object_store.write_order == []
+
+
 @pytest.mark.parametrize("is_complete", [True, False])
 def test_backfill_skips_partition_when_result_json_already_exists(
     is_complete: bool,
 ) -> None:
     search = FakeSearchResource(
-        _month_download(
+        _date_range_download(
             generic_advertised_count=1,
             query_downloads=(
                 _query_download(entities=(_company(),), advertised_count=1),
@@ -610,7 +697,7 @@ def test_backfill_skips_partition_when_result_json_already_exists(
 def test_incomplete_month_is_stored_logged_and_processed() -> None:
     warnings: list[tuple[Any, ...]] = []
     search = FakeSearchResource(
-        _month_download(
+        _date_range_download(
             generic_advertised_count=3,
             query_downloads=(
                 _query_download(entities=(_company(),), advertised_count=1),
@@ -665,7 +752,7 @@ def test_invalid_response_is_preserved_without_result_json() -> None:
 
 def test_asset_reports_monthly_download_statistics() -> None:
     search = FakeSearchResource(
-        _month_download(
+        _date_range_download(
             generic_advertised_count=1,
             query_downloads=(
                 _query_download(entities=(_company(),), advertised_count=1),
@@ -709,7 +796,19 @@ def test_denmark_cvr_backfill_asset_uses_bounded_monthly_partitions() -> None:
     assert spec.tags["layer"] == "raw"
 
 
-def test_denmark_cvr_definitions_register_one_asset_and_no_schedule() -> None:
+def test_denmark_cvr_active_asset_uses_daily_partitions() -> None:
+    assert denmark_cvr_active_s3.partitions_def is DENMARK_CVR_ACTIVE_PARTITIONS
+    assert denmark_cvr_active_s3.backfill_policy.max_partitions_per_run == 1
+    assert denmark_cvr_active_s3.op.pool == "denmark_cvr_search"
+
+    spec = denmark_cvr_active_s3.get_asset_spec()
+    assert spec.group_name == "denmark_cvr"
+    assert spec.tags["country"] == "denmark"
+    assert spec.tags["source"] == "cvr"
+    assert spec.tags["layer"] == "raw"
+
+
+def test_denmark_cvr_definitions_register_two_assets_and_no_schedule() -> None:
     from dagster_v3.definitions import defs as load_defs
     from dagster_v3.defs.denmark_cvr.assets import defs
 
@@ -718,9 +817,12 @@ def test_denmark_cvr_definitions_register_one_asset_and_no_schedule() -> None:
     assert dg.AssetKey("denmark_cvr_backfill_s3") in (
         repository.asset_graph.get_all_asset_keys()
     )
+    assert dg.AssetKey("denmark_cvr_active_s3") in (
+        repository.asset_graph.get_all_asset_keys()
+    )
     assert dg.AssetKey("denmark_cvr_search_results_s3") not in (
         repository.asset_graph.get_all_asset_keys()
     )
-    assert len(defs.assets) == 1
+    assert len(defs.assets) == 2
     assert defs.schedules is None
     assert set(defs.resources) == {"denmark_cvr_search"}
