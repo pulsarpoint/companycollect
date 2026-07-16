@@ -36,9 +36,10 @@ export function ContactLocationCard({
   const fetcher = useFetcher<{ coords: { lat: number; lon: number } | null }>();
   const requested = useRef(false);
   const stored = storedCoords(record);
+  const realAddresses = addresses.filter((a) => a.full_address.trim() !== "");
   const geocodeTarget =
-    !stored && addresses.length > 0
-      ? `${addresses[0].full_address}, ${country.name}`
+    !stored && realAddresses.length > 0
+      ? `${realAddresses[0].full_address}, ${country.name}`
       : null;
 
   useEffect(() => {
@@ -50,7 +51,7 @@ export function ContactLocationCard({
     }
   }, [geocodeTarget, fetcher, country.code]);
 
-  if (contacts.length === 0 && addresses.length === 0) return null;
+  if (contacts.length === 0 && realAddresses.length === 0) return null;
   const coords = stored ?? fetcher.data?.coords ?? null;
 
   return (
@@ -89,7 +90,7 @@ export function ContactLocationCard({
           </ul>
         ) : null}
 
-        {addresses.map((a, i) => (
+        {realAddresses.map((a, i) => (
           <div key={`${a.address_type}-${i}`} className="text-sm">
             <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
               {humanizeFieldKey(a.address_type)}
