@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { FieldGrid, formatFieldValue, isLineageKey } from "~/components/detail/fields";
 
+const anf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
 const INCOME_KEYS = [
   "operating_revenue_amount_original", "operating_revenue_amount_usd",
   "operating_costs_amount_original", "operating_costs_amount_usd",
@@ -46,6 +48,32 @@ function pick(row: Record<string, unknown>, keys: string[]): [string, unknown][]
   return keys.filter((k) => k in row).map((k) => [k, row[k]]);
 }
 
+export function buildAmountFields(
+  row: Record<string, unknown>,
+  keys: string[],
+): [string, string | null][] {
+  return keys
+    .filter((k) => k in row)
+    .map((k) => {
+      if (k.endsWith("_amount_original")) {
+        const v = row[k];
+        if (typeof v !== "number") return [k, null];
+        return [k, `${anf.format(v)} ${String(row.currency ?? "")}`.trim()];
+      }
+      if (k.endsWith("_amount_usd")) {
+        const stored = row[k];
+        if (typeof stored === "number") return [k, `${anf.format(stored)} USD`];
+        const original = row[k.replace("_amount_usd", "_amount_original")];
+        const fx = row.fx_rate_to_usd;
+        if (typeof original === "number" && typeof fx === "number") {
+          return [k, `≈ ${anf.format(Math.round(original * fx * 100) / 100)} USD`];
+        }
+        return [k, null];
+      }
+      return [k, formatFieldValue(k, row[k])];
+    });
+}
+
 export function NoFinancialsSection({
   statements,
 }: {
@@ -70,11 +98,11 @@ export function NoFinancialsSection({
             </p>
             <div>
               <p className="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wide">Income statement</p>
-              <FieldGrid fields={pick(row, INCOME_KEYS)} />
+              <FieldGrid fields={buildAmountFields(row, INCOME_KEYS)} />
             </div>
             <div>
               <p className="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wide">Balance sheet</p>
-              <FieldGrid fields={pick(row, BALANCE_KEYS)} />
+              <FieldGrid fields={buildAmountFields(row, BALANCE_KEYS)} />
             </div>
             <div>
               <p className="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wide">Filing details</p>
