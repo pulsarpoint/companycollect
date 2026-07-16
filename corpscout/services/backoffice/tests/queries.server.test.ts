@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { COUNTRIES, getCountry } from "~/lib/countries";
 import { getFacetOptions } from "~/lib/facets.server";
+import { filterableFacetKeys } from "~/lib/filters";
 import { PAGE_SIZES, getCountryStats, searchCompanies } from "~/lib/queries.server";
 
 // Integration tests against the real ClickHouse. Estonia is the smallest
@@ -122,6 +123,38 @@ describe("searchCompanies across all countries", () => {
       expect(row).not.toHaveProperty("__industry_key");
     },
     30_000,
+  );
+
+  it.each(COUNTRIES.map((c) => [c.code, c] as const))(
+    "%s: first facet loads and filters companies",
+    async (_code, country) => {
+      const keys = filterableFacetKeys(country).filter((k) => k !== "industry");
+      const facetKey = keys[0];
+      const options = await getFacetOptions(country, facetKey);
+      expect(options.length).toBeGreaterThan(0);
+      const filtered = await searchCompanies(country, {
+        pageSize: 25,
+        filters: { [facetKey]: [options[0].value] },
+      });
+      expect(filtered.total).toBeGreaterThan(0);
+    },
+    60_000,
+  );
+
+  it.each(
+    COUNTRIES.filter((c) => c.industryFilterExpr).map((c) => [c.code, c] as const),
+  )(
+    "%s: industry facet loads and filters companies",
+    async (_code, country) => {
+      const options = await getFacetOptions(country, "industry");
+      expect(options.length).toBeGreaterThan(0);
+      const filtered = await searchCompanies(country, {
+        pageSize: 25,
+        filters: { industry: [options[0].value] },
+      });
+      expect(filtered.total).toBeGreaterThan(0);
+    },
+    120_000,
   );
 });
 

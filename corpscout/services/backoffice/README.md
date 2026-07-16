@@ -37,6 +37,17 @@ design — sorting happens on base-table columns only so the 30–70M-row
 countries stay fast. Add columns per country in `countries.ts` (`columns`),
 never by editing SQL in the route.
 
+### Filters
+
+The Filters sheet offers one searchable multi-select per categorical column
+(`filterable: true` in `countries.ts`) plus Industry (canonical NACE English
+labels via `nace_categories`; `industryFacetQuery`/`industryFilterExpr` per
+country — Latvia has none because `lv_companies_nace` is unpopulated).
+Selected values live in the URL as repeated `f_<key>=` params and are applied
+server-side by the loader. Option lists are cached in-process for 24h
+(`facets.server.ts`) — typeahead searches the cache (diacritic-insensitive,
+prefix-first), never ClickHouse per keystroke.
+
 ## Rules
 
 - Read-only: `SELECT` only, no writes to ClickHouse.
