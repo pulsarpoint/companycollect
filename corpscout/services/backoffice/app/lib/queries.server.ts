@@ -134,3 +134,84 @@ export async function searchCompanies(
 
   return { rows, total, page, pageSize, sort: sortColumn.key, dir };
 }
+
+export interface FinancialYearRow {
+  fiscal_year: string;
+  currency: string;
+  revenue_amount_original: number | null;
+  revenue_amount_usd: number | null;
+  net_result_amount_original: number | null;
+  net_result_amount_usd: number | null;
+  total_assets_amount_usd: number | null;
+  equity_amount_usd: number | null;
+  employees: number | null;
+}
+
+export interface ContactRow {
+  contact_type: string;
+  contact_value: string;
+}
+
+export interface DomainRow {
+  domain: string;
+  website_url: string | null;
+  domain_source: string;
+  confidence: number | null;
+  is_primary: 0 | 1;
+}
+
+export interface CompanyDetail {
+  company: CompanyListRow;
+  financials: FinancialYearRow[];
+  contacts: ContactRow[];
+  domains: DomainRow[];
+}
+
+export async function getCompanyDetail(
+  country: CountryConfig,
+  id: string,
+): Promise<CompanyDetail | null> {
+  const joinKeyExpr = country.industryJoinKeyExpr ?? country.idColumn;
+  const selectList = [
+    ...country.columns.map((c) => `${c.expr} AS ${c.key}`),
+    `toUInt8(${country.activeExpr}) AS active`,
+    ...(country.industryQuery ? [`toString(${joinKeyExpr}) AS __industry_key`] : []),
+  ].join(",\n       ");
+
+  const rows = await chQuery<CompanyListRow & { __industry_key?: string }>(
+    `SELECT ${selectList}
+     FROM ${country.companiesTable}
+     WHERE ${country.idColumn} = {id:String}
+     LIMIT 1`,
+    { id },
+  );
+  if (rows.length === 0) return null;
+  const company = rows[0];
+
+  if (country.industryQuery) {
+    const key = company.__industry_key ?? "";
+    const industries = key
+      ? await chQuery<{ company_id: string; industry_code: string | null; industry_label: string | null }>(
+          country.industryQuery,
+          { ids: [key] },
+        )
+      : [];
+    company.industry_code = industries[0]?.industry_code ?? null;
+    company.industry_label = industries[0]?.industry_label ?? null;
+    delete company.__industry_key;
+  }
+
+  const [financials, contacts, domains] = await Promise.all([
+    country.detail?.financialsQuery
+      ? chQuery<FinancialYearRow>(country.detail.financialsQuery, { id })
+      : Promise.resolve([]),
+    country.detail?.contactsQuery
+      ? chQuery<ContactRow>(country.detail.contactsQuery, { id })
+      : Promise.resolve([]),
+    country.detail?.domainsQuery
+      ? chQuery<DomainRow>(country.detail.domainsQuery, { id })
+      : Promise.resolve([]),
+  ]);
+
+  return { company, financials, contacts, domains };
+}

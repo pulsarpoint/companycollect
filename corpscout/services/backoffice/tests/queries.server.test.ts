@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { chQuery } from "~/lib/clickhouse.server";
 import { COUNTRIES, getCountry } from "~/lib/countries";
 import { getFacetOptions } from "~/lib/facets.server";
 import { filterableFacetKeys } from "~/lib/filters";
-import { PAGE_SIZES, getCountryStats, searchCompanies } from "~/lib/queries.server";
+import { PAGE_SIZES, getCompanyDetail, getCountryStats, searchCompanies } from "~/lib/queries.server";
 
 // Integration tests against the real ClickHouse. Estonia is the smallest
 // dataset (~373k rows), so queries stay fast.
@@ -219,5 +220,54 @@ describe("industry filter (Estonia)", () => {
     for (const row of filtered.rows) {
       expect(row.industry_code).toBe(top.value);
     }
+  });
+});
+
+describe("getCompanyDetail (Estonia)", () => {
+  it("returns null for an unknown id", async () => {
+    const detail = await getCompanyDetail(ee, "does-not-exist-000");
+    expect(detail).toBeNull();
+  });
+
+  it("returns company row with industry for a real id", async () => {
+    const page = await searchCompanies(ee, { pageSize: 1 });
+    const id = String(page.rows[0].id);
+    const detail = await getCompanyDetail(ee, id);
+    expect(detail).not.toBeNull();
+    expect(String(detail!.company.id)).toBe(id);
+    expect(detail!.company).toHaveProperty("name");
+    expect(detail!.company).toHaveProperty("active");
+    expect(detail!.company).toHaveProperty("industry_code");
+    expect(detail!.company).not.toHaveProperty("__industry_key");
+  });
+
+  it("returns canonical financials for a company that has them", async () => {
+    const [row] = await chQuery<{ id: string }>(
+      "SELECT reg_code AS id FROM ee_financial_metrics WHERE revenue_amount_usd IS NOT NULL LIMIT 1",
+    );
+    const detail = await getCompanyDetail(ee, row.id);
+    expect(detail!.financials.length).toBeGreaterThan(0);
+    const year = detail!.financials[0];
+    expect(typeof year.fiscal_year).toBe("string");
+    expect(typeof year.revenue_amount_usd).toBe("number"); // toFloat64 → JSON number, not string
+    const years = detail!.financials.map((f) => f.fiscal_year);
+    expect([...years].sort().reverse()).toEqual(years); // newest first
+  });
+
+  it("returns contacts and domains for companies that have them", async () => {
+    const [c] = await chQuery<{ id: string }>(
+      "SELECT registry_id AS id FROM ee_company_contacts WHERE is_current = 1 LIMIT 1",
+    );
+    const withContacts = await getCompanyDetail(ee, c.id);
+    expect(withContacts!.contacts.length).toBeGreaterThan(0);
+    expect(withContacts!.contacts[0]).toHaveProperty("contact_type");
+    expect(withContacts!.contacts[0]).toHaveProperty("contact_value");
+
+    const [d] = await chQuery<{ id: string }>(
+      "SELECT registry_id AS id FROM ee_company_domains WHERE is_current = 1 LIMIT 1",
+    );
+    const withDomains = await getCompanyDetail(ee, d.id);
+    expect(withDomains!.domains.length).toBeGreaterThan(0);
+    expect(withDomains!.domains[0].domain).toBeTruthy();
   });
 });
