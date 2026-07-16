@@ -58,6 +58,14 @@ financial metrics materialized yet (pipeline gap) and fr has no detail data —
 those pages show identity/overview only. All section queries bind the id as
 `{id:String}` and live in the registry, never in routes.
 
+The Contact & location card shows contacts, addresses (per-country
+`addressQuery` in `countries.ts` — Norway's `no_company_addresses` is wired
+but awaits its first dagster materialization; Finland has no address data
+yet), and a leaflet mini map. Coordinates come from Latvia's stored
+lat/long where present; otherwise the address is geocoded server-side via
+Nominatim (1 req/s, results — including misses — cached permanently in
+`.cache/geocode.sqlite` via node:sqlite).
+
 Fidelity rule: the detail page shows every column of the company row
 ("Company record" card; lineage fields collapsed under "Source & lineage")
 and country-specific sections render full source shapes — Norway shows the
