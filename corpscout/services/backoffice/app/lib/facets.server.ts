@@ -21,7 +21,7 @@ export function clearFacetCache(): void {
 export function normalizeFacetText(s: string): string {
   return s
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
 }
 
