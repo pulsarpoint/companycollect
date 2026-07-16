@@ -117,7 +117,7 @@ export async function searchCompanies(
     `SELECT ${selectList}
      FROM ${country.companiesTable}
      ${where}
-     ORDER BY ${sortColumn.expr} ${dir === "desc" ? "DESC" : "ASC"}, ${country.idColumn}
+     ORDER BY coalesce(toString(${sortColumn.expr}), '') = '' ASC, ${sortColumn.expr} ${dir === "desc" ? "DESC" : "ASC"}, ${country.idColumn}
      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
     params,
   );

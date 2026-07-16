@@ -402,3 +402,26 @@ describe("getCompanyDetail (Brazil)", () => {
     expect(first!.financials.some((f) => typeof f.revenue_amount_usd === "number")).toBe(true);
   }, 120_000);
 });
+
+describe("empties-last sorting (Finland has 1,205 nameless registry stubs)", () => {
+  const fi = getCountry("fi")!;
+
+  it("default name-asc page 1 starts with real names, not empty stubs", async () => {
+    const result = await searchCompanies(fi, { pageSize: 25 });
+    for (const row of result.rows) {
+      expect(String(row.name)).not.toBe("");
+    }
+  });
+
+  it("empties stay last under desc too", async () => {
+    const result = await searchCompanies(fi, { sort: "name", dir: "desc", pageSize: 25 });
+    for (const row of result.rows) {
+      expect(String(row.name)).not.toBe("");
+    }
+  });
+
+  it("total still counts the stubs (ordering only, no filtering)", async () => {
+    const result = await searchCompanies(fi, { pageSize: 25 });
+    expect(result.total).toBeGreaterThan(460_000); // 460,200 incl. the 1,205 stubs
+  });
+});
