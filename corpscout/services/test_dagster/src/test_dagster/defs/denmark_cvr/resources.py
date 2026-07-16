@@ -13,7 +13,7 @@ from pydantic import ValidationError, model_validator
 from test_dagster.defs.denmark_cvr.models import SearchResponse
 
 DATACVR_BASE_URL = "https://datacvr.virk.dk"
-DATACVR_PAGE_SIZE = 3_000
+DATACVR_PAGE_SIZE = 1_000
 SAFE_RESPONSE_HEADERS = frozenset(
     {
         "content-type",

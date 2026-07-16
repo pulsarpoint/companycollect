@@ -1,224 +1,230 @@
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import dagster as dg
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.denmark_cvr.models import (
-    CompanySearchResult,
-    PersonSearchResult,
-    ProductionUnitSearchResult,
+from dagster_v3.defs.denmark_cvr.filters import DATACVR_RESULT_LIMIT
+from dagster_v3.defs.denmark_cvr.partitions import (
+    DENMARK_CVR_MONTHLY_PARTITIONS,
+    month_date_range,
 )
 from dagster_v3.defs.denmark_cvr.resources import (
+    DATACVR_ENTITY_TYPE,
     DenmarkCvrSearchResource,
     DenmarkCvrValidationError,
 )
 
 DENMARK_CVR_BUCKET = "source-denmark-cvr"
-DENMARK_CVR_SEARCH_TERMS = tuple("0123456789abcdefghijklmnopqrstuvwxyzæøå")
-DENMARK_CVR_SEARCH_PARTITIONS = dg.StaticPartitionsDefinition(
-    list(DENMARK_CVR_SEARCH_TERMS)
-)
 
 
 @dataclass(frozen=True)
-class DenmarkCvrPartitionSummary:
-    manifest_key: str
+class DenmarkCvrMonthSummary:
+    result_key: str
     object_prefix: str
-    search_term: str
-    advertised_entity_count: int
+    partition_key: str
+    start_date: date
+    end_date: date
+    generic_advertised_count: int
+    filtered_advertised_count: int
     downloaded_entity_count: int
-    is_truncated: bool
-    downloaded_file_count: int
+    missing_entity_count: int
+    is_complete: bool
+    query_count: int
+    page_count: int
     stored_file_count: int
-    company_count: int
-    person_count: int
-    production_unit_count: int
     downloaded_size_bytes: int
-    manifest_size_bytes: int
     stored_size_bytes: int
 
 
-def page_object_key(search_term: str, run_id: str, page_index: int) -> str:
-    _validate_object_scope(search_term, run_id)
-    if page_index < 0:
-        raise ValueError("DataCVR page index must not be negative")
-    return (
-        f"denmark_cvr/search/search_term={search_term}/run_id={run_id}/"
-        f"page={page_index:06d}.json"
-    )
-
-
-def invalid_page_object_key(
-    search_term: str,
+def result_object_key(
+    partition_key: str,
     run_id: str,
+    *,
+    is_complete: bool,
+) -> str:
+    _validate_object_scope(partition_key, run_id)
+    filename = "companies.json" if is_complete else "companies_incomplete.json"
+    return f"denmark_cvr/search/month={partition_key}/run_id={run_id}/{filename}"
+
+
+def invalid_response_object_key(
+    partition_key: str,
+    run_id: str,
+    filter_id: str,
     page_index: int,
 ) -> str:
+    _validate_object_scope(partition_key, run_id)
+    if page_index < 0:
+        raise ValueError("DataCVR page index must not be negative")
+    if filter_id == "" or any(
+        not (character.isalnum() or character in {"-", "_", "."})
+        for character in filter_id
+    ):
+        raise ValueError("DataCVR filter ID contains unsafe object-key characters")
     return (
-        page_object_key(search_term, run_id, page_index).removesuffix(".json")
-        + ".invalid.json"
+        f"denmark_cvr/search/month={partition_key}/run_id={run_id}/"
+        f"invalid/filter={filter_id}/page={page_index:06d}.invalid.json"
     )
 
 
-def manifest_object_key(search_term: str, run_id: str) -> str:
-    _validate_object_scope(search_term, run_id)
-    return f"denmark_cvr/search/search_term={search_term}/run_id={run_id}/manifest.json"
-
-
-def write_denmark_cvr_search_partition(
+def write_denmark_cvr_month(
     *,
     object_store: ObjectStoreResource,
     search: DenmarkCvrSearchResource,
-    search_term: str,
+    partition_key: str,
     run_id: str,
     retrieved_at: datetime,
     log_info: Callable[..., object] | None = None,
-) -> DenmarkCvrPartitionSummary:
-    _validate_object_scope(search_term, run_id)
+    log_warning: Callable[..., object] | None = None,
+) -> DenmarkCvrMonthSummary:
+    _validate_object_scope(partition_key, run_id)
     if retrieved_at.utcoffset() is None:
         raise ValueError("DataCVR retrieval timestamp must include a timezone")
+    start_date, end_date = month_date_range(partition_key)
     object_store.ensure_bucket(DENMARK_CVR_BUCKET)
-    prefix = manifest_object_key(search_term, run_id).removesuffix("manifest.json")
+    prefix = f"denmark_cvr/search/month={partition_key}/run_id={run_id}/"
     if log_info is not None:
         log_info(
-            "Starting DataCVR download: search_term=%s bucket=%s prefix=%s",
-            search_term,
+            "Starting DataCVR monthly company download: partition=%s "
+            "start_date=%s end_date=%s bucket=%s prefix=%s",
+            partition_key,
+            start_date,
+            end_date,
             DENMARK_CVR_BUCKET,
             prefix,
         )
 
-    page_keys: list[str] = []
-    advertised_total = 0
-    company_count = 0
-    person_count = 0
-    production_unit_count = 0
-    total_size_bytes = 0
     try:
-        for search_page in search.iter_search_pages(search_term):
-            key = page_object_key(search_term, run_id, search_page.page_index)
-            body = search_page.raw_body.encode("utf-8")
-            object_store.write_bytes(key, body, bucket=DENMARK_CVR_BUCKET)
-            page_keys.append(key)
-            total_size_bytes += len(body)
-            if len(page_keys) == 1:
-                advertised_total = search_page.response.total
-
-            company_count += sum(
-                isinstance(unit, CompanySearchResult)
-                for unit in search_page.response.enheder
-            )
-            person_count += sum(
-                isinstance(unit, PersonSearchResult)
-                for unit in search_page.response.enheder
-            )
-            production_unit_count += sum(
-                isinstance(unit, ProductionUnitSearchResult)
-                for unit in search_page.response.enheder
-            )
-            if log_info is not None:
-                log_info(
-                    "DataCVR download progress: search_term=%s page=%s object_key=%s "
-                    "downloaded_files=%s advertised_entities=%s downloaded_entities=%s "
-                    "companies=%s persons=%s production_units=%s downloaded_bytes=%s",
-                    search_term,
-                    search_page.page_index,
-                    key,
-                    len(page_keys),
-                    advertised_total,
-                    company_count + person_count + production_unit_count,
-                    company_count,
-                    person_count,
-                    production_unit_count,
-                    total_size_bytes,
-                )
+        download = search.download_month(
+            start_date=start_date,
+            end_date=end_date,
+            log_info=log_info,
+        )
     except DenmarkCvrValidationError as exc:
-        key = invalid_page_object_key(search_term, run_id, exc.page_index)
+        invalid_key = invalid_response_object_key(
+            partition_key,
+            run_id,
+            exc.filter_id,
+            exc.page_index,
+        )
         object_store.write_bytes(
-            key,
+            invalid_key,
             exc.raw_body.encode("utf-8"),
             bucket=DENMARK_CVR_BUCKET,
         )
-        if log_info is not None:
-            log_info(
-                "DataCVR download stopped after invalid response: search_term=%s page=%s "
-                "invalid_object_key=%s downloaded_files=%s downloaded_entities=%s "
-                "downloaded_bytes=%s",
-                search_term,
+        if log_warning is not None:
+            log_warning(
+                "DataCVR monthly company response failed validation: partition=%s "
+                "filter=%s page=%s invalid_object_key=%s",
+                partition_key,
+                exc.filter_id,
                 exc.page_index,
-                key,
-                len(page_keys),
-                company_count + person_count + production_unit_count,
-                total_size_bytes,
+                invalid_key,
             )
         raise
 
-    entity_count = company_count + person_count + production_unit_count
-    is_truncated = entity_count < advertised_total
-    key = manifest_object_key(search_term, run_id)
-    manifest_body = json.dumps(
+    missing_entity_count = max(
+        download.generic_advertised_count - download.downloaded_entity_count,
+        0,
+    )
+    body = json.dumps(
         {
-            "advertised_total": advertised_total,
-            "bucket": DENMARK_CVR_BUCKET,
-            "company_count": company_count,
-            "entity_count": entity_count,
-            "is_truncated": is_truncated,
-            "page_count": len(page_keys),
-            "page_keys": page_keys,
-            "person_count": person_count,
-            "production_unit_count": production_unit_count,
-            "retrieved_at": retrieved_at.isoformat(),
-            "run_id": run_id,
-            "search_term": search_term,
+            "schema_version": 1,
             "source": "denmark_cvr",
             "source_url": search.search_base_url,
-            "total_size_bytes": total_size_bytes,
+            "entity_type": DATACVR_ENTITY_TYPE,
+            "partition_key": partition_key,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "retrieved_at": retrieved_at.isoformat(),
+            "run_id": run_id,
+            "result_limit": DATACVR_RESULT_LIMIT,
+            "is_complete": download.is_complete,
+            "generic_advertised_count": download.generic_advertised_count,
+            "filtered_advertised_count": download.filtered_advertised_count,
+            "downloaded_entity_count": download.downloaded_entity_count,
+            "missing_entity_count": missing_entity_count,
+            "filtered_count_difference": (
+                download.filtered_advertised_count - download.generic_advertised_count
+            ),
+            "downloaded_count_difference": (
+                download.downloaded_entity_count - download.generic_advertised_count
+            ),
+            "query_count": len(download.query_downloads),
+            "page_count": download.page_count,
+            "downloaded_size_bytes": download.downloaded_size_bytes,
+            "queries": [
+                {
+                    "filter_id": query.query_filter.filter_id,
+                    "region": query.query_filter.region,
+                    "municipality": query.query_filter.municipality,
+                    "advertised_count": query.advertised_count,
+                    "downloaded_count": query.downloaded_entity_count,
+                    "page_count": query.page_count,
+                    "is_complete": query.is_complete,
+                }
+                for query in download.query_downloads
+            ],
+            "enheder": list(download.entities),
         },
         ensure_ascii=False,
         separators=(",", ":"),
-        sort_keys=True,
     )
-    object_store.write_json(
-        key,
-        manifest_body,
-        bucket=DENMARK_CVR_BUCKET,
+    key = result_object_key(
+        partition_key,
+        run_id,
+        is_complete=download.is_complete,
     )
-    manifest_size_bytes = len(manifest_body.encode("utf-8"))
-    summary = DenmarkCvrPartitionSummary(
-        manifest_key=key,
+    object_store.write_json(key, body, bucket=DENMARK_CVR_BUCKET)
+    stored_size_bytes = len(body.encode("utf-8"))
+    summary = DenmarkCvrMonthSummary(
+        result_key=key,
         object_prefix=prefix,
-        search_term=search_term,
-        advertised_entity_count=advertised_total,
-        downloaded_entity_count=entity_count,
-        is_truncated=is_truncated,
-        downloaded_file_count=len(page_keys),
-        stored_file_count=len(page_keys) + 1,
-        company_count=company_count,
-        person_count=person_count,
-        production_unit_count=production_unit_count,
-        downloaded_size_bytes=total_size_bytes,
-        manifest_size_bytes=manifest_size_bytes,
-        stored_size_bytes=total_size_bytes + manifest_size_bytes,
+        partition_key=partition_key,
+        start_date=start_date,
+        end_date=end_date,
+        generic_advertised_count=download.generic_advertised_count,
+        filtered_advertised_count=download.filtered_advertised_count,
+        downloaded_entity_count=download.downloaded_entity_count,
+        missing_entity_count=missing_entity_count,
+        is_complete=download.is_complete,
+        query_count=len(download.query_downloads),
+        page_count=download.page_count,
+        stored_file_count=1,
+        downloaded_size_bytes=download.downloaded_size_bytes,
+        stored_size_bytes=stored_size_bytes,
     )
-    if log_info is not None:
-        log_info(
-            "DataCVR download complete: search_term=%s downloaded_files=%s "
-            "stored_files=%s advertised_entities=%s downloaded_entities=%s "
-            "truncated=%s companies=%s persons=%s production_units=%s downloaded_bytes=%s "
-            "stored_bytes=%s manifest_key=%s",
-            summary.search_term,
-            summary.downloaded_file_count,
-            summary.stored_file_count,
-            summary.advertised_entity_count,
+    if summary.is_complete:
+        if log_info is not None:
+            log_info(
+                "DataCVR monthly company download complete: partition=%s "
+                "queries=%s pages=%s advertised=%s downloaded=%s "
+                "downloaded_bytes=%s stored_bytes=%s result_key=%s",
+                summary.partition_key,
+                summary.query_count,
+                summary.page_count,
+                summary.generic_advertised_count,
+                summary.downloaded_entity_count,
+                summary.downloaded_size_bytes,
+                summary.stored_size_bytes,
+                summary.result_key,
+            )
+    elif log_warning is not None:
+        log_warning(
+            "DataCVR monthly company download incomplete: partition=%s "
+            "generic_advertised=%s filtered_advertised=%s downloaded=%s "
+            "missing=%s queries=%s pages=%s result_key=%s",
+            summary.partition_key,
+            summary.generic_advertised_count,
+            summary.filtered_advertised_count,
             summary.downloaded_entity_count,
-            summary.is_truncated,
-            summary.company_count,
-            summary.person_count,
-            summary.production_unit_count,
-            summary.downloaded_size_bytes,
-            summary.stored_size_bytes,
-            summary.manifest_key,
+            summary.missing_entity_count,
+            summary.query_count,
+            summary.page_count,
+            summary.result_key,
         )
     return summary
 
@@ -232,13 +238,13 @@ def write_denmark_cvr_search_partition(
         "source_name": "denmark_cvr",
         "layer": "raw",
     },
-    partitions_def=DENMARK_CVR_SEARCH_PARTITIONS,
+    partitions_def=DENMARK_CVR_MONTHLY_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool="denmark_cvr_search",
     description=(
-        "Captures validated raw DataCVR search response pages for one search-term "
-        "partition. Search-term results may overlap and are normalized and deduplicated "
-        "in a later DuckDB phase."
+        "Captures one merged DataCVR company JSON object per completed month. "
+        "Months above the 3,000-result ceiling use fixed region and municipality "
+        "filters; count mismatches are stored and materialized as incomplete."
     ),
 )
 def denmark_cvr_search_results_s3(
@@ -246,31 +252,33 @@ def denmark_cvr_search_results_s3(
     denmark_cvr_search: DenmarkCvrSearchResource,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    summary = write_denmark_cvr_search_partition(
+    summary = write_denmark_cvr_month(
         object_store=object_store,
         search=denmark_cvr_search,
-        search_term=context.partition_key,
+        partition_key=context.partition_key,
         run_id=context.run.run_id,
         retrieved_at=datetime.now(UTC),
         log_info=context.log.info,
+        log_warning=context.log.warning,
     )
     return dg.MaterializeResult(
         metadata={
             "s3_bucket": DENMARK_CVR_BUCKET,
             "s3_prefix": summary.object_prefix,
-            "manifest_key": summary.manifest_key,
+            "result_key": summary.result_key,
             "source_url": denmark_cvr_search.search_base_url,
-            "search_term": summary.search_term,
-            "advertised_entity_count": summary.advertised_entity_count,
+            "partition_key": summary.partition_key,
+            "start_date": summary.start_date.isoformat(),
+            "end_date": summary.end_date.isoformat(),
+            "is_complete": summary.is_complete,
+            "generic_advertised_count": summary.generic_advertised_count,
+            "filtered_advertised_count": summary.filtered_advertised_count,
             "downloaded_entity_count": summary.downloaded_entity_count,
-            "is_truncated": summary.is_truncated,
-            "downloaded_file_count": summary.downloaded_file_count,
+            "missing_entity_count": summary.missing_entity_count,
+            "query_count": summary.query_count,
+            "page_count": summary.page_count,
             "stored_file_count": summary.stored_file_count,
-            "company_count": summary.company_count,
-            "person_count": summary.person_count,
-            "production_unit_count": summary.production_unit_count,
             "downloaded_size_bytes": summary.downloaded_size_bytes,
-            "manifest_size_bytes": summary.manifest_size_bytes,
             "stored_size_bytes": summary.stored_size_bytes,
         }
     )
@@ -282,9 +290,8 @@ defs = dg.Definitions(
 )
 
 
-def _validate_object_scope(search_term: str, run_id: str) -> None:
-    if search_term not in DENMARK_CVR_SEARCH_TERMS:
-        raise ValueError(f"Unsupported DataCVR search term: {search_term!r}")
+def _validate_object_scope(partition_key: str, run_id: str) -> None:
+    month_date_range(partition_key)
     if run_id == "" or any(
         not (character.isalnum() or character in {"-", "_", "."})
         for character in run_id

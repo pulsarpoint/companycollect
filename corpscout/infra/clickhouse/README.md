@@ -69,8 +69,7 @@ docker compose up -d
 
 ## Connectivity
 
-Corpscout migrations and imports connect to ClickHouse through
-`CLICKHOUSE_MIGRATE_URL` and `CLICKHOUSE_NATIVE_URL` from
+Corpscout migrations connect to ClickHouse through `CLICKHOUSE_MIGRATE_URL` from
 `companycollect/corpscout/.env`.
 
 `CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` is required because some migrations

@@ -67,6 +67,8 @@ func cleanupObservations(t *testing.T, ctx context.Context, conn driver.Conn, ro
 		for _, rootDomain := range roots {
 			_ = conn.Exec(ctx, `DELETE FROM corpscout.commoncrawl_domain_dns_record_observations
 				WHERE root_domain = ?`, rootDomain)
+			_ = conn.Exec(ctx, `DELETE FROM corpscout.domain_hostnames_state
+				WHERE root_domain = ?`, rootDomain)
 		}
 		_ = conn.Close()
 	})
@@ -176,5 +178,80 @@ func TestFetchReturnsOnlyConfirmedAddressAndCNAMEOwners(t *testing.T) {
 		if !labels[label] {
 			t.Errorf("confirmed label %q missing from %v", label, labels)
 		}
+	}
+}
+
+func TestIncrementalHostnameStateMergesInsertBlocksAndReplays(t *testing.T) {
+	ctx := context.Background()
+	conn := testConn(t)
+	suffix := time.Now().UTC().Format("150405000000000")
+	rootDomain := "state-" + suffix + ".test"
+	hostname := "alias." + rootDomain
+	cleanupObservations(t, ctx, conn, []string{rootDomain})
+
+	firstSeen := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Millisecond)
+	secondSeen := firstSeen.Add(time.Hour)
+	lastSeen := firstSeen.Add(2 * time.Hour)
+	insertObservation(t, ctx, conn, rootDomain, hostname, "A", "static", suffix+"-a", firstSeen)
+	insertObservation(t, ctx, conn, rootDomain, hostname, "AAAA", "ct", suffix+"-aaaa", secondSeen)
+	insertObservation(t, ctx, conn, rootDomain, hostname, "CNAME", "axfr", suffix+"-cname", lastSeen)
+	insertObservation(t, ctx, conn, rootDomain, hostname, "A", "static", suffix+"-a", firstSeen)
+
+	rows, err := conn.Query(ctx, `SELECT
+		has_ipv4,
+		has_ipv6,
+		has_cname,
+		discovery_source,
+		first_seen,
+		last_seen
+	FROM corpscout.domain_hostnames
+	WHERE root_domain = ? AND hostname = ?`, rootDomain, hostname)
+	if err != nil {
+		t.Fatalf("query incremental hostname state: %v", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		t.Fatal("incremental hostname state returned no row")
+	}
+	var hasIPv4, hasIPv6, hasCNAME uint8
+	var discoverySource string
+	var gotFirstSeen, gotLastSeen time.Time
+	if err := rows.Scan(
+		&hasIPv4,
+		&hasIPv6,
+		&hasCNAME,
+		&discoverySource,
+		&gotFirstSeen,
+		&gotLastSeen,
+	); err != nil {
+		t.Fatalf("scan incremental hostname state: %v", err)
+	}
+	if rows.Next() {
+		t.Fatal("incremental hostname state returned duplicate public rows")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read incremental hostname state: %v", err)
+	}
+
+	if hasIPv4 != 1 || hasIPv6 != 1 || hasCNAME != 1 {
+		t.Errorf("record flags = (%d, %d, %d), want all 1", hasIPv4, hasIPv6, hasCNAME)
+	}
+	if discoverySource != "axfr" {
+		t.Errorf("discovery source = %q, want axfr", discoverySource)
+	}
+	if !gotFirstSeen.Equal(firstSeen) {
+		t.Errorf("first seen = %s, want %s", gotFirstSeen, firstSeen)
+	}
+	if !gotLastSeen.Equal(lastSeen) {
+		t.Errorf("last seen = %s, want %s", gotLastSeen, lastSeen)
+	}
+
+	got, err := Fetch(ctx, conn, []string{rootDomain}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got[rootDomain]) != 1 || got[rootDomain][0].Label != "alias" {
+		t.Errorf("fetched labels = %+v, want one alias label", got[rootDomain])
 	}
 }

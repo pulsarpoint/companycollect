@@ -1,4 +1,4 @@
-.PHONY: up down logs rebuild rebuild-local scheduler-local-bin migrate-up migrate-down migrate-test-up migrate-test-down clickhouse-migrate-up clickhouse-migrate-down clickhouse-migrate-force source-fixtures-existing-artifacts source-list sqlc-generate test test-db
+.PHONY: up down logs rebuild rebuild-local scheduler-local-bin migrate-up migrate-down migrate-test-up migrate-test-down clickhouse-migrate-up clickhouse-migrate-up-one clickhouse-migrate-down clickhouse-migrate-force clickhouse-migrate-version source-fixtures-existing-artifacts source-list sqlc-generate test test-db
 
 DATABASE_URL := $(or $(DATABASE_URL),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),postgres://corpscout:change-me@companycollect:5432/corpscout?sslmode=disable)
 CORPSCOUT_TEST_DATABASE_URL := $(or $(CORPSCOUT_TEST_DATABASE_URL),$(shell sed -n 's/^CORPSCOUT_TEST_DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1 | sed 's|/corpscout?|/corpscout_test?|'),postgres://corpscout:change-me@companycollect:5432/corpscout_test?sslmode=disable)
@@ -8,6 +8,8 @@ CLICKHOUSE_MIGRATE_DOCKER_ARGS ?= --add-host companycollect:$(COMPANYCOLLECT_HOS
 POSTGRES_DOCKER_ARGS ?= --add-host companycollect:$(COMPANYCOLLECT_HOST_IP)
 SCHEDULER_GOOS ?= linux
 SCHEDULER_GOARCH ?= $(shell go env GOARCH)
+
+_CLICKHOUSE_MIGRATE_RUN = docker run --rm $(CLICKHOUSE_MIGRATE_DOCKER_ARGS) -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)"
 
 up:
 	docker compose up -d --build
@@ -40,13 +42,19 @@ migrate-test-down:
 	@docker compose run --rm migrate -path=/migrations -database="$(CORPSCOUT_TEST_DATABASE_URL)" down 1
 
 clickhouse-migrate-up:
-	@docker run --rm $(CLICKHOUSE_MIGRATE_DOCKER_ARGS) -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" up
+	@$(_CLICKHOUSE_MIGRATE_RUN) up
+
+clickhouse-migrate-up-one:
+	@$(_CLICKHOUSE_MIGRATE_RUN) up 1
 
 clickhouse-migrate-down:
-	@docker run --rm $(CLICKHOUSE_MIGRATE_DOCKER_ARGS) -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" down 1
+	@$(_CLICKHOUSE_MIGRATE_RUN) down 1
 
 clickhouse-migrate-force:
-	@docker run --rm $(CLICKHOUSE_MIGRATE_DOCKER_ARGS) -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" force $(VERSION)
+	@$(_CLICKHOUSE_MIGRATE_RUN) force $(VERSION)
+
+clickhouse-migrate-version:
+	@$(_CLICKHOUSE_MIGRATE_RUN) version
 
 source-fixtures-existing-artifacts:
 	@docker run --rm $(POSTGRES_DOCKER_ARGS) -v "$(CURDIR)/database/fixtures:/fixtures:ro" postgres:16-alpine psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -f /fixtures/company_source_existing_artifact_runs.sql

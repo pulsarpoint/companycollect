@@ -12,6 +12,8 @@ func TestBatchQueryReadsOnlyConfirmedHostnameView(t *testing.T) {
 	for _, forbidden := range []string{
 		"commoncrawl_domain_hostnames",
 		"commoncrawl_domain_dns_record_observations",
+		"domain_hostnames_state",
+		"domain_hostnames_ingest_mv",
 		"ctlogs.hostnames",
 		"commoncrawl_domains",
 	} {

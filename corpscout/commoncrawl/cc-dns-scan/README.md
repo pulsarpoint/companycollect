@@ -19,12 +19,14 @@ It writes:
 
 - `corpscout.commoncrawl_domain_dns_scan`;
 - `corpscout.commoncrawl_domain_dns_record_observations`;
-- `corpscout.commoncrawl_ip_addresses` through the corresponding ClickHouse materialized view.
+- `corpscout.commoncrawl_ip_addresses` through the corresponding ClickHouse materialized view; and
+- `corpscout.domain_hostnames_state` through `domain_hostnames_ingest_mv`.
 
 `commoncrawl_domain_dns_record_observations` is the authoritative record history. Every known or
 unknown RR type is retained with its numeric type/class, presentation-format RDATA, and uncompressed
 wire RDATA. `domain_hostnames` is a read-only view of record owners with an observed A, AAAA, or
-CNAME record; neither DNS scanner writes a separate hostname registry.
+CNAME record. The scanners write only observation history, while ClickHouse incrementally maintains
+the compact hostname state and exposes its finalized rows through `domain_hostnames`.
 
 ## Resolution behavior
 

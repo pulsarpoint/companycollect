@@ -15,6 +15,7 @@ from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+OPERATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "operations"
 
 EXPECTED_MIGRATIONS = (
     "000001_reference_nace_categories",
@@ -138,6 +139,9 @@ EXPECTED_MIGRATIONS = (
     "000127_corpscout_commoncrawl_page_jsonld",
     "000128_corpscout_domain_hostnames_view",
     "000129_corpscout_drop_commoncrawl_domain_hostnames",
+    "000130_corpscout_domain_hostnames_incremental_storage",
+    "000131_corpscout_domain_hostnames_incremental_cutover",
+    "000132_corpscout_domain_hostnames_final_read",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -549,6 +553,135 @@ def test_legacy_hostname_registry_is_removed_after_view_cutover() -> None:
         "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_hostnames" in down_sql
     )
     assert "last_not_after" in down_sql
+    assert "DROP VIEW" not in down_sql
+
+
+def test_domain_hostnames_incremental_storage_preserves_staged_cutover() -> None:
+    sql = _migration_sql(
+        "000130_corpscout_domain_hostnames_incremental_storage.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000130_corpscout_domain_hostnames_incremental_storage.down.sql"
+    )
+    backfill_sql = (
+        OPERATIONS_DIR / "domain_hostnames_backfill_bucket.sql"
+    ).read_text()
+    validate_sql = (
+        OPERATIONS_DIR / "domain_hostnames_validate_bucket.sql"
+    ).read_text()
+
+    create_state = "CREATE TABLE IF NOT EXISTS corpscout.domain_hostnames_state"
+    create_ingest = (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "corpscout.domain_hostnames_ingest_mv"
+    )
+    assert create_state in sql
+    assert "ENGINE = AggregatingMergeTree()" in sql
+    assert "PARTITION BY cityHash64(root_domain) % 16" in sql
+    assert "ORDER BY (root_domain, hostname)" in sql
+    assert "SimpleAggregateFunction(max, UInt8)" in sql
+    assert "SimpleAggregateFunction(min, DateTime64(3, 'UTC'))" in sql
+    assert "SimpleAggregateFunction(max, DateTime64(3, 'UTC'))" in sql
+
+    assert create_ingest in sql
+    assert "TO corpscout.domain_hostnames_state" in sql
+    assert "FROM corpscout.commoncrawl_domain_dns_record_observations" in sql
+    assert "record_type IN ('A', 'AAAA', 'CNAME')" in sql
+    assert "position(name, '*') = 0" in sql
+    assert "name = root_domain" in sql
+    assert "endsWith(name, concat('.', root_domain))" in sql
+    assert "max(toUInt8(record_type = 'A')) AS has_ipv4" in sql
+    assert "max(toUInt8(record_type = 'AAAA')) AS has_ipv6" in sql
+    assert "max(toUInt8(record_type = 'CNAME')) AS has_cname" in sql
+    assert "discovery = 'axfr', 3" in sql
+    assert "discovery = 'ct', 2" in sql
+    assert "discovery = 'static', 1" in sql
+    assert "min(observed_at) AS first_seen" in sql
+    assert "max(observed_at) AS last_seen" in sql
+    assert "max(loaded_at) AS last_loaded_at" in sql
+    assert "GROUP BY\n    root_domain,\n    hostname" in sql
+    assert sql.index(create_state) < sql.index(create_ingest)
+
+    # Storage creation is safe to apply before the large historical backfill. Readers continue
+    # using migration 128's source-backed view until a later migration performs the cutover.
+    assert "CREATE OR REPLACE VIEW corpscout.domain_hostnames" not in sql
+    assert "POPULATE" not in sql
+    assert "REFRESH EVERY" not in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_observations" not in sql
+    assert "ALTER TABLE corpscout.commoncrawl_domain_dns_record_observations" not in sql
+
+    assert "INSERT INTO corpscout.domain_hostnames_state" in backfill_sql
+    assert "cityHash64(root_domain) % 16 = {bucket:UInt8}" in backfill_sql
+    assert "FROM corpscout.commoncrawl_domain_dns_record_observations" in backfill_sql
+    assert "GROUP BY\n    root_domain,\n    hostname" in backfill_sql
+
+    assert "FROM corpscout.commoncrawl_domain_dns_record_observations" in validate_sql
+    assert "FROM corpscout.domain_hostnames_state" in validate_sql
+    assert "throwIf(" in validate_sql
+    assert "source_count != state_count" in validate_sql
+
+    drop_ingest = "DROP VIEW IF EXISTS corpscout.domain_hostnames_ingest_mv"
+    drop_state = "DROP TABLE IF EXISTS corpscout.domain_hostnames_state"
+    assert drop_ingest in down_sql
+    assert drop_state in down_sql
+    assert down_sql.index(drop_ingest) < down_sql.index(drop_state)
+
+
+def test_domain_hostnames_incremental_cutover_preserves_public_contract() -> None:
+    sql = _migration_sql(
+        "000131_corpscout_domain_hostnames_incremental_cutover.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000131_corpscout_domain_hostnames_incremental_cutover.down.sql"
+    )
+
+    assert "CREATE OR REPLACE VIEW corpscout.domain_hostnames AS" in sql
+    assert "FROM corpscout.domain_hostnames_state" in sql
+    assert "FROM corpscout.commoncrawl_domain_dns_record_observations" not in sql
+    assert "GROUP BY\n    root_domain,\n    hostname" in sql
+    assert "toUInt8(max(has_ipv4)) AS has_ipv4" in sql
+    assert "toUInt8(max(has_ipv6)) AS has_ipv6" in sql
+    assert "toUInt8(max(has_cname)) AS has_cname" in sql
+    assert "toUInt8(max(discovery_rank)) = 3, 'axfr'" in sql
+    assert "toUInt8(max(discovery_rank)) = 2, 'ct'" in sql
+    assert "toUInt8(max(discovery_rank)) = 1, 'static'" in sql
+    assert "toDateTime64(min(first_seen), 3, 'UTC') AS first_seen" in sql
+    assert "toDateTime64(max(last_seen), 3, 'UTC') AS last_seen" in sql
+    assert "toDateTime64(max(last_loaded_at), 3, 'UTC') AS last_loaded_at" in sql
+
+    assert "CREATE OR REPLACE VIEW corpscout.domain_hostnames AS" in down_sql
+    assert "FROM corpscout.commoncrawl_domain_dns_record_observations" in down_sql
+    assert "record_type IN ('A', 'AAAA', 'CNAME')" in down_sql
+    assert "position(hostname, '*') = 0" in down_sql
+    assert "hostname = root_domain" in down_sql
+    assert "endsWith(hostname, concat('.', root_domain))" in down_sql
+    assert "DROP TABLE" not in down_sql
+    assert "DROP VIEW" not in down_sql
+
+
+def test_domain_hostnames_final_read_uses_ordered_state_merge() -> None:
+    sql = _migration_sql("000132_corpscout_domain_hostnames_final_read.up.sql")
+    down_sql = _migration_sql(
+        "000132_corpscout_domain_hostnames_final_read.down.sql"
+    )
+    executable_sql = "\n".join(line.split("--", 1)[0] for line in sql.splitlines())
+
+    assert "CREATE OR REPLACE VIEW corpscout.domain_hostnames AS" in sql
+    assert "FROM corpscout.domain_hostnames_state FINAL" in sql
+    assert "SETTINGS do_not_merge_across_partitions_select_final = 1" in sql
+    assert "GROUP BY" not in executable_sql
+    assert "toUInt8(has_ipv4) AS has_ipv4" in sql
+    assert "toUInt8(has_ipv6) AS has_ipv6" in sql
+    assert "toUInt8(has_cname) AS has_cname" in sql
+    assert "toUInt8(discovery_rank) = 3, 'axfr'" in sql
+    assert "toDateTime64(first_seen, 3, 'UTC') AS first_seen" in sql
+    assert "toDateTime64(last_seen, 3, 'UTC') AS last_seen" in sql
+    assert "toDateTime64(last_loaded_at, 3, 'UTC') AS last_loaded_at" in sql
+
+    assert "CREATE OR REPLACE VIEW corpscout.domain_hostnames AS" in down_sql
+    assert "FROM corpscout.domain_hostnames_state" in down_sql
+    assert "GROUP BY\n    root_domain,\n    hostname" in down_sql
+    assert "DROP TABLE" not in down_sql
     assert "DROP VIEW" not in down_sql
 
 

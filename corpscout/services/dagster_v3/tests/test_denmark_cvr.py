@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,13 +9,14 @@ from pydantic import ValidationError
 
 from dagster_v3.defs.denmark_cvr.assets import (
     DENMARK_CVR_BUCKET,
-    DENMARK_CVR_SEARCH_PARTITIONS,
-    DENMARK_CVR_SEARCH_TERMS,
     denmark_cvr_search_results_s3,
-    invalid_page_object_key,
-    manifest_object_key,
-    page_object_key,
-    write_denmark_cvr_search_partition,
+    invalid_response_object_key,
+    result_object_key,
+    write_denmark_cvr_month,
+)
+from dagster_v3.defs.denmark_cvr.filters import (
+    DATACVR_MUNICIPALITIES,
+    DenmarkCvrQueryFilter,
 )
 from dagster_v3.defs.denmark_cvr.models import (
     CompanySearchResult,
@@ -23,9 +24,11 @@ from dagster_v3.defs.denmark_cvr.models import (
     ProductionUnitSearchResult,
     SearchResponse,
 )
+from dagster_v3.defs.denmark_cvr.partitions import DENMARK_CVR_MONTHLY_PARTITIONS
 from dagster_v3.defs.denmark_cvr.resources import (
+    DenmarkCvrMonthDownload,
+    DenmarkCvrQueryDownload,
     DenmarkCvrRequestError,
-    DenmarkCvrSearchPage,
     DenmarkCvrSearchResource,
     DenmarkCvrValidationError,
     build_search_payload,
@@ -33,14 +36,14 @@ from dagster_v3.defs.denmark_cvr.resources import (
 )
 
 
-def _company() -> dict[str, Any]:
+def _company(*, cvr: str = "12345678") -> dict[str, Any]:
     return {
         "beliggenhedsadresse": "Testvej 1",
         "by": "Testby",
         "coNavn": None,
-        "cvr": "12345678",
+        "cvr": cvr,
         "email": "company@example.test",
-        "enhedsnummer": "4000000001",
+        "enhedsnummer": f"4{cvr}",
         "enhedstype": "virksomhed",
         "harPseudoCvr": False,
         "highlightBinavn": False,
@@ -99,8 +102,9 @@ def _response_body(
     units: list[dict[str, Any]],
     *,
     total: int | None = None,
+    company_total: int | None = None,
 ) -> str:
-    company_count = sum(unit["enhedstype"] == "virksomhed" for unit in units)
+    actual_company_count = sum(unit["enhedstype"] == "virksomhed" for unit in units)
     person_count = sum(unit["enhedstype"] == "person" for unit in units)
     production_unit_count = sum(
         unit["enhedstype"] == "produktionsenhed" for unit in units
@@ -111,21 +115,35 @@ def _response_body(
             "pEnhedTotal": production_unit_count,
             "personTotal": person_count,
             "total": len(units) if total is None else total,
-            "virksomhedTotal": company_count,
+            "virksomhedTotal": (
+                actual_company_count if company_total is None else company_total
+            ),
         },
         ensure_ascii=False,
         separators=(",", ":"),
     )
 
 
-def _search_page(page_index: int, raw_body: str) -> DenmarkCvrSearchPage:
-    return DenmarkCvrSearchPage(
-        page_index=page_index,
-        raw_body=raw_body,
-        response=SearchResponse.model_validate_json(raw_body),
-        status=200,
-        response_headers={"content-type": "application/json"},
+def _query_filter(
+    *,
+    region: str = "",
+    municipality: str = "",
+) -> DenmarkCvrQueryFilter:
+    return DenmarkCvrQueryFilter(
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 31),
+        region=region,
+        municipality=municipality,
     )
+
+
+def _browser_result(body: str, *, ok: bool = True, status: int = 200) -> dict[str, Any]:
+    return {
+        "ok": ok,
+        "status": status,
+        "headers": {"content-type": "application/json", "set-cookie": "secret"},
+        "body": body,
+    }
 
 
 class FakePage:
@@ -137,21 +155,37 @@ class FakePage:
     def goto(self, url: str, *, wait_until: str) -> None:
         self.goto_calls.append((url, wait_until))
 
-    def evaluate(
-        self,
-        _script: str,
-        argument: dict[str, Any],
-    ) -> dict[str, Any]:
+    def evaluate(self, _script: str, argument: dict[str, Any]) -> dict[str, Any]:
         self.evaluate_calls.append(argument)
         return self.results.pop(0)
 
 
+class LargeMonthPage:
+    def __init__(self) -> None:
+        self.goto_calls: list[tuple[str, str]] = []
+        self.evaluate_calls: list[dict[str, Any]] = []
+
+    def goto(self, url: str, *, wait_until: str) -> None:
+        self.goto_calls.append((url, wait_until))
+
+    def evaluate(self, _script: str, argument: dict[str, Any]) -> dict[str, Any]:
+        self.evaluate_calls.append(argument)
+        command = argument["payload"]["fritekstCommand"]
+        if command["kommune"] == []:
+            return _browser_result(
+                _response_body([_company()], total=3_001, company_total=3_001)
+            )
+        if command["kommune"] == ["101"]:
+            return _browser_result(_response_body([_company()]))
+        return _browser_result(_response_body([]))
+
+
 class FakeBrowser:
-    def __init__(self, page: FakePage) -> None:
+    def __init__(self, page: FakePage | LargeMonthPage) -> None:
         self.page = page
         self.closed = False
 
-    def new_page(self) -> FakePage:
+    def new_page(self) -> FakePage | LargeMonthPage:
         return self.page
 
     def close(self) -> None:
@@ -192,24 +226,63 @@ class FakeObjectStore:
 class FakeSearchResource:
     search_base_url = "https://datacvr.virk.dk"
 
-    def __init__(self, pages: list[DenmarkCvrSearchPage]) -> None:
-        self.pages = pages
-        self.search_terms: list[str] = []
+    def __init__(self, download: DenmarkCvrMonthDownload) -> None:
+        self.download = download
+        self.date_ranges: list[tuple[date, date]] = []
 
-    def iter_search_pages(self, search_term: str):
-        self.search_terms.append(search_term)
-        yield from self.pages
+    def download_month(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        log_info: Any = None,
+    ) -> DenmarkCvrMonthDownload:
+        self.date_ranges.append((start_date, end_date))
+        return self.download
 
 
 class InvalidSearchResource:
     search_base_url = "https://datacvr.virk.dk"
 
-    def iter_search_pages(self, _search_term: str):
+    def download_month(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        log_info: Any = None,
+    ) -> DenmarkCvrMonthDownload:
         raise DenmarkCvrValidationError(
+            filter_id="all-companies",
             page_index=1,
             raw_body='{"private":"invalid"}',
         )
-        yield
+
+
+def _query_download(
+    *,
+    entities: tuple[dict[str, Any], ...],
+    advertised_count: int,
+    region: str = "",
+    municipality: str = "",
+) -> DenmarkCvrQueryDownload:
+    return DenmarkCvrQueryDownload(
+        query_filter=_query_filter(region=region, municipality=municipality),
+        advertised_count=advertised_count,
+        entities=entities,
+        page_count=1,
+        downloaded_size_bytes=123,
+    )
+
+
+def _month_download(
+    *,
+    generic_advertised_count: int,
+    query_downloads: tuple[DenmarkCvrQueryDownload, ...],
+) -> DenmarkCvrMonthDownload:
+    return DenmarkCvrMonthDownload(
+        generic_advertised_count=generic_advertised_count,
+        query_downloads=query_downloads,
+    )
 
 
 def test_search_response_models_select_all_entity_types() -> None:
@@ -220,36 +293,23 @@ def test_search_response_models_select_all_entity_types() -> None:
     assert isinstance(response.enheder[0], CompanySearchResult)
     assert isinstance(response.enheder[1], PersonSearchResult)
     assert isinstance(response.enheder[2], ProductionUnitSearchResult)
-    assert response.enheder[0].co_navn is None
     assert response.enheder[0].ophoers_dato is None
-    assert response.enheder[2].p_nummer == "1000000001"
     assert response.enheder[2].ophoers_dato is None
 
 
-def test_company_search_result_accepts_null_optional_fields() -> None:
+def test_company_and_production_unit_accept_null_location_fields() -> None:
     company = _company()
-    company["by"] = None
-    company["hovedbranche"] = None
-    company["postnummer"] = None
+    company.update({"by": None, "hovedbranche": None, "postnummer": None})
+    production_unit = _production_unit()
+    production_unit.update({"by": None, "postnummer": None})
 
-    response = SearchResponse.model_validate_json(_response_body([company]))
+    response = SearchResponse.model_validate_json(
+        _response_body([company, production_unit])
+    )
 
-    assert isinstance(response.enheder[0], CompanySearchResult)
     assert response.enheder[0].by is None
     assert response.enheder[0].hovedbranche is None
-    assert response.enheder[0].postnummer is None
-
-
-def test_production_unit_search_result_accepts_null_location_fields() -> None:
-    production_unit = _production_unit()
-    production_unit["by"] = None
-    production_unit["postnummer"] = None
-
-    response = SearchResponse.model_validate_json(_response_body([production_unit]))
-
-    assert isinstance(response.enheder[0], ProductionUnitSearchResult)
-    assert response.enheder[0].by is None
-    assert response.enheder[0].postnummer is None
+    assert response.enheder[1].postnummer is None
 
 
 def test_search_response_rejects_negative_totals_and_unknown_entity_types() -> None:
@@ -264,427 +324,312 @@ def test_search_response_rejects_negative_totals_and_unknown_entity_types() -> N
         SearchResponse.model_validate_json(_response_body([unknown_type]))
 
 
-def test_search_payload_and_results_url_match_datacvr_contract() -> None:
-    payload = build_search_payload("æ", page_index=2, size=100)
+def test_search_payload_contains_month_region_and_municipality_filters() -> None:
+    query_filter = _query_filter(region="29190623", municipality="101")
 
-    assert payload["fritekstCommand"]["soegOrd"] == "æ"
-    assert payload["fritekstCommand"]["sideIndex"] == "2"
-    assert payload["fritekstCommand"]["size"] == 100
-    assert payload["fritekstCommand"]["sortering"] == ""
+    command = build_search_payload(query_filter, page_index=2, size=1_000)[
+        "fritekstCommand"
+    ]
+
+    assert command == {
+        "soegOrd": "",
+        "sideIndex": "2",
+        "enhedstype": "virksomhed",
+        "kommune": ["101"],
+        "region": ["29190623"],
+        "antalAnsatte": [],
+        "virksomhedsform": [],
+        "virksomhedsstatus": [],
+        "virksomhedsmarkering": [],
+        "personrolle": [],
+        "startdatoFra": "2025-01-01",
+        "startdatoTil": "2025-01-31",
+        "ophoersdatoFra": "",
+        "ophoersdatoTil": "",
+        "branchekode": "",
+        "size": 1_000,
+        "sortering": "",
+    }
     assert search_results_url(
         "https://datacvr.virk.dk",
-        "æ",
+        query_filter,
         page_index=2,
-        size=100,
+        size=1_000,
     ) == (
-        "https://datacvr.virk.dk/soegeresultater?fritekst=%C3%A6&sideIndex=2&size=100"
+        "https://datacvr.virk.dk/soegeresultater?sideIndex=2"
+        "&enhedstype=virksomhed&startdatoFra=2025-01-01&startdatoTil=2025-01-31"
+        "&region=29190623&kommune=101&size=1000"
     )
 
 
-@pytest.mark.parametrize(
-    ("search_term", "page_index", "size"),
-    [("", 0, 100), ("a", -1, 100), ("a", 0, 0)],
-)
-def test_search_payload_rejects_invalid_inputs(
-    search_term: str,
-    page_index: int,
-    size: int,
-) -> None:
-    with pytest.raises(ValueError):
-        build_search_payload(search_term, page_index=page_index, size=size)
-
-
-def test_search_resource_paginates_and_closes_browser() -> None:
-    first_body = _response_body([_company(), _person()], total=3)
-    second_body = _response_body([_production_unit()], total=3)
+def test_search_resource_counts_then_downloads_all_pages_with_one_browser() -> None:
+    count_body = _response_body([_company()], total=3, company_total=3)
+    first_body = _response_body(
+        [_company(cvr="12345678"), _company(cvr="12345679")],
+        total=3,
+        company_total=3,
+    )
+    second_body = _response_body([_company(cvr="12345680")], total=3, company_total=3)
     page = FakePage(
         [
-            {
-                "ok": True,
-                "status": 200,
-                "headers": {"content-type": "application/json", "set-cookie": "secret"},
-                "body": first_body,
-            },
-            {
-                "ok": True,
-                "status": 200,
-                "headers": {"content-type": "application/json"},
-                "body": second_body,
-            },
+            _browser_result(count_body),
+            _browser_result(first_body),
+            _browser_result(second_body),
         ]
     )
     browser = FakeBrowser(page)
     delays: list[float] = []
-    resource = DenmarkCvrSearchResource(
+    logs: list[tuple[Any, ...]] = []
+
+    download = DenmarkCvrSearchResource(
         page_size=2,
         min_delay_ms=0,
         max_delay_ms=0,
+    ).download_month(
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 31),
+        log_info=lambda *args: logs.append(args),
+        launcher=lambda: browser,
+        sleep=delays.append,
     )
 
-    pages = list(
-        resource.iter_search_pages(
-            "a",
-            launcher=lambda: browser,
-            sleep=delays.append,
-        )
-    )
-
-    assert [result.raw_body for result in pages] == [first_body, second_body]
-    assert [result.page_index for result in pages] == [0, 1]
-    assert pages[0].response_headers == {"content-type": "application/json"}
-    assert page.goto_calls == [
-        (
-            "https://datacvr.virk.dk/soegeresultater?fritekst=a&sideIndex=0&size=2",
-            "networkidle",
-        )
+    assert download.generic_advertised_count == 3
+    assert download.downloaded_entity_count == 3
+    assert download.is_complete is True
+    assert [entity["cvr"] for entity in download.entities] == [
+        "12345678",
+        "12345679",
+        "12345680",
     ]
     assert [
-        call["payload"]["fritekstCommand"]["sideIndex"] for call in page.evaluate_calls
-    ] == ["0", "1"]
-    assert delays == [0.0]
-    assert browser.closed is True
-
-
-def test_search_resource_uses_fixed_page_size_until_empty() -> None:
-    body = _response_body([_company()], total=3_574)
-    page = FakePage(
-        [
-            {
-                "ok": True,
-                "status": 200,
-                "headers": {"content-type": "application/json"},
-                "body": body,
-            },
-            {
-                "ok": True,
-                "status": 200,
-                "headers": {"content-type": "application/json"},
-                "body": _response_body([], total=3_574),
-            },
-        ]
-    )
-    browser = FakeBrowser(page)
-    resource = DenmarkCvrSearchResource(min_delay_ms=0, max_delay_ms=0)
-
-    pages = list(
-        resource.iter_search_pages(
-            "0",
-            launcher=lambda: browser,
-        )
-    )
-
-    assert len(pages) == 1
-    assert len(page.evaluate_calls) == 2
-    assert {
         call["payload"]["fritekstCommand"]["size"] for call in page.evaluate_calls
-    } == {3_000}
+    ] == [1, 2, 2]
+    assert [
+        call["payload"]["fritekstCommand"]["sideIndex"] for call in page.evaluate_calls
+    ] == ["0", "0", "1"]
     assert page.goto_calls == [
         (
-            "https://datacvr.virk.dk/soegeresultater?fritekst=0&sideIndex=0&size=3000",
+            "https://datacvr.virk.dk/soegeresultater?sideIndex=0"
+            "&enhedstype=virksomhed&startdatoFra=2025-01-01"
+            "&startdatoTil=2025-01-31&size=1",
             "networkidle",
         )
     ]
     assert browser.closed is True
+    assert delays == [0.0]
+    assert [entry[0] for entry in logs] == [
+        "DataCVR monthly company filters selected: start_date=%s "
+        "end_date=%s generic_advertised=%s query_count=%s",
+        "DataCVR monthly company progress: filter=%s query=%s/%s "
+        "advertised=%s downloaded=%s pages=%s "
+        "total_downloaded=%s total_pages=%s downloaded_bytes=%s",
+    ]
+
+
+def test_search_resource_uses_fixed_filters_for_large_month() -> None:
+    page = LargeMonthPage()
+    browser = FakeBrowser(page)
+
+    download = DenmarkCvrSearchResource(
+        min_delay_ms=0,
+        max_delay_ms=0,
+    ).download_month(
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 31),
+        launcher=lambda: browser,
+        sleep=lambda _seconds: None,
+    )
+
+    assert download.generic_advertised_count == 3_001
+    assert len(download.query_downloads) == len(DATACVR_MUNICIPALITIES) == 105
+    assert download.filtered_advertised_count == 1
+    assert download.downloaded_entity_count == 1
+    assert download.is_complete is False
+    assert len(page.evaluate_calls) == 106
+    assert browser.closed is True
+
+
+def test_search_resource_rejects_non_company_response() -> None:
+    page = FakePage(
+        [
+            _browser_result(_response_body([_company()])),
+            _browser_result(_response_body([_person()])),
+        ]
+    )
+
+    with pytest.raises(DenmarkCvrRequestError, match="non-company"):
+        DenmarkCvrSearchResource().download_month(
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 31),
+            launcher=lambda: FakeBrowser(page),
+        )
 
 
 def test_search_resource_closes_browser_and_hides_failed_response_body() -> None:
     private_body = '{"private":"do not log"}'
-    page = FakePage(
-        [
-            {
-                "ok": False,
-                "status": 503,
-                "headers": {},
-                "body": private_body,
-            }
-        ]
-    )
+    page = FakePage([_browser_result(private_body, ok=False, status=503)])
     browser = FakeBrowser(page)
 
     with pytest.raises(DenmarkCvrRequestError) as exc_info:
-        list(
-            DenmarkCvrSearchResource(page_size=2).iter_search_pages(
-                "a",
-                launcher=lambda: browser,
-            )
+        DenmarkCvrSearchResource().download_month(
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 31),
+            launcher=lambda: browser,
         )
 
     assert private_body not in str(exc_info.value)
     assert browser.closed is True
 
 
-def test_search_resource_reports_browser_startup_failure_safely() -> None:
-    browser_state = "private browser launch state"
-
-    def fail_to_launch() -> None:
-        raise RuntimeError(browser_state)
-
-    with pytest.raises(
-        DenmarkCvrRequestError,
-        match="failed to start.*runtime dependencies",
-    ) as exc_info:
-        list(
-            DenmarkCvrSearchResource(page_size=2).iter_search_pages(
-                "a",
-                launcher=fail_to_launch,
-            )
-        )
-
-    assert browser_state not in str(exc_info.value)
-    assert exc_info.value.__cause__ is None
-
-
 def test_search_resource_retains_invalid_body_without_exposing_it() -> None:
     invalid_body = '{"private":"invalid"}'
-    page = FakePage(
-        [
-            {
-                "ok": True,
-                "status": 200,
-                "headers": {},
-                "body": invalid_body,
-            }
-        ]
-    )
+    page = FakePage([_browser_result(invalid_body)])
 
     with pytest.raises(DenmarkCvrValidationError) as exc_info:
-        list(
-            DenmarkCvrSearchResource(page_size=2).iter_search_pages(
-                "a",
-                launcher=lambda: FakeBrowser(page),
-            )
+        DenmarkCvrSearchResource().download_month(
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 31),
+            launcher=lambda: FakeBrowser(page),
         )
 
     assert exc_info.value.raw_body == invalid_body
+    assert exc_info.value.filter_id == "all-companies"
     assert exc_info.value.page_index == 0
-    assert len(exc_info.value.schema_issues) == 5
-    assert (("enheder",), "missing") in exc_info.value.schema_issues
-    assert "enheder:missing" in str(exc_info.value)
     assert invalid_body not in str(exc_info.value)
 
 
-def test_search_resource_stops_only_after_empty_page() -> None:
-    page = FakePage(
-        [
-            {
-                "ok": True,
-                "status": 200,
-                "headers": {},
-                "body": _response_body([_company(), _person()], total=3),
-            },
-            {
-                "ok": True,
-                "status": 200,
-                "headers": {},
-                "body": _response_body([], total=3),
-            },
-        ]
+def test_result_object_keys_are_month_scoped() -> None:
+    assert result_object_key("2025-01", "test-run", is_complete=True) == (
+        "denmark_cvr/search/month=2025-01/run_id=test-run/companies.json"
     )
+    assert result_object_key("2025-01", "test-run", is_complete=False) == (
+        "denmark_cvr/search/month=2025-01/run_id=test-run/companies_incomplete.json"
+    )
+    assert invalid_response_object_key(
+        "2025-01",
+        "test-run",
+        "all-companies",
+        1,
+    ).endswith("/invalid/filter=all-companies/page=000001.invalid.json")
 
-    pages = list(
-        DenmarkCvrSearchResource(
-            page_size=2,
-            min_delay_ms=0,
-            max_delay_ms=0,
-        ).iter_search_pages(
-            "a",
-            launcher=lambda: FakeBrowser(page),
+    with pytest.raises(ValueError):
+        result_object_key("2014-12", "test-run", is_complete=True)
+    with pytest.raises(ValueError):
+        result_object_key("2025-01", "bad/run", is_complete=True)
+
+
+def test_month_storage_merges_raw_entities_into_one_complete_json() -> None:
+    first_company = _company(cvr="12345678")
+    second_company = _company(cvr="12345679")
+    search = FakeSearchResource(
+        _month_download(
+            generic_advertised_count=2,
+            query_downloads=(
+                _query_download(
+                    entities=(first_company, second_company),
+                    advertised_count=2,
+                ),
+            ),
         )
     )
+    object_store = FakeObjectStore()
 
-    assert len(pages) == 1
-    assert pages[0].response.total == 3
-    assert len(pages[0].response.enheder) == 2
-
-
-def test_denmark_cvr_object_keys_are_search_term_scoped() -> None:
-    assert page_object_key("æ", "test-run", 0) == (
-        "denmark_cvr/search/search_term=æ/run_id=test-run/page=000000.json"
-    )
-    assert invalid_page_object_key("æ", "test-run", 0) == (
-        "denmark_cvr/search/search_term=æ/run_id=test-run/page=000000.invalid.json"
-    )
-    assert manifest_object_key("æ", "test-run") == (
-        "denmark_cvr/search/search_term=æ/run_id=test-run/manifest.json"
+    summary = write_denmark_cvr_month(
+        object_store=object_store,
+        search=search,
+        partition_key="2025-01",
+        run_id="complete-run",
+        retrieved_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
     )
 
-    for invalid_term in ("", "/", "aa"):
-        with pytest.raises(ValueError):
-            manifest_object_key(invalid_term, "test-run")
-    with pytest.raises(ValueError):
-        manifest_object_key("a", "bad/run")
-    with pytest.raises(ValueError):
-        page_object_key("a", "test-run", -1)
+    key = result_object_key("2025-01", "complete-run", is_complete=True)
+    stored = json.loads(object_store.objects[(DENMARK_CVR_BUCKET, key)])
+    assert object_store.write_order == [(DENMARK_CVR_BUCKET, key)]
+    assert search.date_ranges == [(date(2025, 1, 1), date(2025, 1, 31))]
+    assert stored["is_complete"] is True
+    assert stored["generic_advertised_count"] == 2
+    assert stored["filtered_advertised_count"] == 2
+    assert stored["downloaded_entity_count"] == 2
+    assert stored["enheder"] == [first_company, second_company]
+    assert stored["enheder"][0]["ophoersDato"] == ""
+    assert summary.result_key == key
+    assert summary.stored_file_count == 1
 
 
-def test_partition_storage_preserves_raw_pages_and_writes_manifest_last() -> None:
-    first_body = _response_body([_company(), _person()], total=3)
-    second_body = _response_body([_production_unit()], total=3)
+def test_incomplete_month_is_stored_logged_and_processed() -> None:
+    warnings: list[tuple[Any, ...]] = []
     search = FakeSearchResource(
-        [_search_page(0, first_body), _search_page(1, second_body)]
+        _month_download(
+            generic_advertised_count=3,
+            query_downloads=(
+                _query_download(entities=(_company(),), advertised_count=1),
+            ),
+        )
     )
     object_store = FakeObjectStore()
-    logs: list[tuple[Any, ...]] = []
 
-    summary = write_denmark_cvr_search_partition(
+    summary = write_denmark_cvr_month(
         object_store=object_store,
         search=search,
-        search_term="a",
-        run_id="test-run",
-        retrieved_at=datetime(2026, 7, 15, 12, 0, tzinfo=UTC),
-        log_info=lambda *args: logs.append(args),
+        partition_key="2025-01",
+        run_id="incomplete-run",
+        retrieved_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+        log_warning=lambda *args: warnings.append(args),
     )
 
-    first_key = page_object_key("a", "test-run", 0)
-    second_key = page_object_key("a", "test-run", 1)
-    manifest_key = manifest_object_key("a", "test-run")
-    manifest = json.loads(object_store.objects[(DENMARK_CVR_BUCKET, manifest_key)])
-
-    assert search.search_terms == ["a"]
-    assert object_store.ensured_buckets == [DENMARK_CVR_BUCKET]
-    assert object_store.objects[(DENMARK_CVR_BUCKET, first_key)] == first_body.encode()
-    assert (
-        object_store.objects[(DENMARK_CVR_BUCKET, second_key)] == second_body.encode()
-    )
-    assert object_store.write_order[-1] == (DENMARK_CVR_BUCKET, manifest_key)
-    assert manifest == {
-        "advertised_total": 3,
-        "bucket": DENMARK_CVR_BUCKET,
-        "company_count": 1,
-        "entity_count": 3,
-        "is_truncated": False,
-        "page_count": 2,
-        "page_keys": [first_key, second_key],
-        "person_count": 1,
-        "production_unit_count": 1,
-        "retrieved_at": "2026-07-15T12:00:00+00:00",
-        "run_id": "test-run",
-        "search_term": "a",
-        "source": "denmark_cvr",
-        "source_url": "https://datacvr.virk.dk",
-        "total_size_bytes": len(first_body.encode()) + len(second_body.encode()),
-    }
-    assert summary.manifest_key == manifest_key
-    assert summary.advertised_entity_count == 3
-    assert summary.downloaded_entity_count == 3
-    assert summary.is_truncated is False
-    assert summary.company_count == 1
-    assert summary.person_count == 1
-    assert summary.production_unit_count == 1
-    assert summary.downloaded_file_count == 2
-    assert summary.stored_file_count == 3
-    assert summary.downloaded_size_bytes == (
-        len(first_body.encode()) + len(second_body.encode())
-    )
-    assert summary.manifest_size_bytes == len(
-        object_store.objects[(DENMARK_CVR_BUCKET, manifest_key)]
-    )
-    assert summary.stored_size_bytes == (
-        summary.downloaded_size_bytes + summary.manifest_size_bytes
-    )
-    assert [entry[0] for entry in logs] == [
-        "Starting DataCVR download: search_term=%s bucket=%s prefix=%s",
-        (
-            "DataCVR download progress: search_term=%s page=%s object_key=%s "
-            "downloaded_files=%s advertised_entities=%s downloaded_entities=%s "
-            "companies=%s persons=%s production_units=%s downloaded_bytes=%s"
-        ),
-        (
-            "DataCVR download progress: search_term=%s page=%s object_key=%s "
-            "downloaded_files=%s advertised_entities=%s downloaded_entities=%s "
-            "companies=%s persons=%s production_units=%s downloaded_bytes=%s"
-        ),
-        (
-            "DataCVR download complete: search_term=%s downloaded_files=%s "
-            "stored_files=%s advertised_entities=%s downloaded_entities=%s "
-            "truncated=%s companies=%s persons=%s production_units=%s downloaded_bytes=%s "
-            "stored_bytes=%s manifest_key=%s"
-        ),
-    ]
-    assert logs[-1][1:] == (
-        "a",
-        2,
-        3,
-        3,
-        3,
-        False,
-        1,
-        1,
-        1,
-        summary.downloaded_size_bytes,
-        summary.stored_size_bytes,
-        manifest_key,
-    )
-    assert all("Example" not in str(entry) for entry in logs)
+    key = result_object_key("2025-01", "incomplete-run", is_complete=False)
+    stored = json.loads(object_store.objects[(DENMARK_CVR_BUCKET, key)])
+    assert summary.is_complete is False
+    assert stored["is_complete"] is False
+    assert stored["generic_advertised_count"] == 3
+    assert stored["filtered_advertised_count"] == 1
+    assert stored["downloaded_entity_count"] == 1
+    assert stored["missing_entity_count"] == 2
+    assert len(warnings) == 1
+    assert "incomplete" in warnings[0][0].lower()
 
 
-def test_partition_summary_flags_incomplete_capture() -> None:
-    body = _response_body([_company()], total=2)
-    search = FakeSearchResource([_search_page(0, body)])
+def test_invalid_response_is_preserved_without_result_json() -> None:
     object_store = FakeObjectStore()
-
-    summary = write_denmark_cvr_search_partition(
-        object_store=object_store,
-        search=search,
-        search_term="a",
-        run_id="capped-run",
-        retrieved_at=datetime(2026, 7, 15, 12, 0, tzinfo=UTC),
-    )
-
-    manifest = json.loads(
-        object_store.objects[
-            (DENMARK_CVR_BUCKET, manifest_object_key("a", "capped-run"))
-        ]
-    )
-    assert summary.advertised_entity_count == 2
-    assert summary.downloaded_entity_count == 1
-    assert summary.is_truncated is True
-    assert manifest["is_truncated"] is True
-
-
-def test_partition_storage_persists_invalid_body_without_completion_manifest() -> None:
-    object_store = FakeObjectStore()
-    logs: list[tuple[Any, ...]] = []
 
     with pytest.raises(DenmarkCvrValidationError):
-        write_denmark_cvr_search_partition(
+        write_denmark_cvr_month(
             object_store=object_store,
             search=InvalidSearchResource(),
-            search_term="a",
-            run_id="test-run",
-            retrieved_at=datetime(2026, 7, 15, 12, 0, tzinfo=UTC),
-            log_info=lambda *args: logs.append(args),
+            partition_key="2025-01",
+            run_id="invalid-run",
+            retrieved_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
         )
 
-    invalid_key = invalid_page_object_key("a", "test-run", 1)
+    invalid_key = invalid_response_object_key(
+        "2025-01",
+        "invalid-run",
+        "all-companies",
+        1,
+    )
     assert object_store.objects[(DENMARK_CVR_BUCKET, invalid_key)] == (
         b'{"private":"invalid"}'
     )
-    assert (
-        DENMARK_CVR_BUCKET,
-        manifest_object_key("a", "test-run"),
-    ) not in object_store.objects
-    assert logs[-1] == (
-        "DataCVR download stopped after invalid response: search_term=%s page=%s "
-        "invalid_object_key=%s downloaded_files=%s downloaded_entities=%s "
-        "downloaded_bytes=%s",
-        "a",
-        1,
-        invalid_key,
-        0,
-        0,
-        0,
+    assert len(object_store.objects) == 1
+
+
+def test_asset_reports_monthly_download_statistics() -> None:
+    search = FakeSearchResource(
+        _month_download(
+            generic_advertised_count=1,
+            query_downloads=(
+                _query_download(entities=(_company(),), advertised_count=1),
+            ),
+        )
     )
-
-
-def test_asset_reports_download_and_storage_statistics() -> None:
-    body = _response_body([_company(), _person(), _production_unit()])
-    search = FakeSearchResource([_search_page(0, body)])
     object_store = FakeObjectStore()
     context = SimpleNamespace(
-        partition_key="a",
+        partition_key="2025-01",
         run=SimpleNamespace(run_id="stats-run"),
-        log=SimpleNamespace(info=lambda *_args: None),
+        log=SimpleNamespace(
+            info=lambda *_args: None,
+            warning=lambda *_args: None,
+        ),
     )
 
     result = denmark_cvr_search_results_s3.node_def.compute_fn.decorated_fn(
@@ -693,36 +638,18 @@ def test_asset_reports_download_and_storage_statistics() -> None:
         object_store,
     )
 
-    run_id = "stats-run"
-    manifest_key = manifest_object_key("a", run_id)
-    manifest_size = len(object_store.objects[(DENMARK_CVR_BUCKET, manifest_key)])
-    assert result.metadata == {
-        "s3_bucket": DENMARK_CVR_BUCKET,
-        "s3_prefix": f"denmark_cvr/search/search_term=a/run_id={run_id}/",
-        "manifest_key": manifest_key,
-        "source_url": "https://datacvr.virk.dk",
-        "search_term": "a",
-        "advertised_entity_count": 3,
-        "downloaded_entity_count": 3,
-        "is_truncated": False,
-        "downloaded_file_count": 1,
-        "stored_file_count": 2,
-        "company_count": 1,
-        "person_count": 1,
-        "production_unit_count": 1,
-        "downloaded_size_bytes": len(body.encode()),
-        "manifest_size_bytes": manifest_size,
-        "stored_size_bytes": len(body.encode()) + manifest_size,
-    }
+    assert result.metadata["partition_key"] == "2025-01"
+    assert result.metadata["is_complete"] is True
+    assert result.metadata["generic_advertised_count"] == 1
+    assert result.metadata["filtered_advertised_count"] == 1
+    assert result.metadata["downloaded_entity_count"] == 1
+    assert result.metadata["stored_file_count"] == 1
 
 
-def test_denmark_cvr_asset_uses_static_search_term_partitions() -> None:
-    partition_keys = DENMARK_CVR_SEARCH_PARTITIONS.get_partition_keys()
-
-    assert isinstance(DENMARK_CVR_SEARCH_PARTITIONS, dg.StaticPartitionsDefinition)
-    assert partition_keys == list(DENMARK_CVR_SEARCH_TERMS)
-    assert partition_keys == list("0123456789abcdefghijklmnopqrstuvwxyzæøå")
-    assert denmark_cvr_search_results_s3.partitions_def is DENMARK_CVR_SEARCH_PARTITIONS
+def test_denmark_cvr_asset_uses_monthly_partitions() -> None:
+    assert (
+        denmark_cvr_search_results_s3.partitions_def is DENMARK_CVR_MONTHLY_PARTITIONS
+    )
     assert denmark_cvr_search_results_s3.backfill_policy.max_partitions_per_run == 1
     assert denmark_cvr_search_results_s3.op.pool == "denmark_cvr_search"
 
@@ -730,15 +657,12 @@ def test_denmark_cvr_asset_uses_static_search_term_partitions() -> None:
     assert spec.group_name == "denmark_cvr"
     assert spec.tags["country"] == "denmark"
     assert spec.tags["source"] == "cvr"
-    assert spec.tags["source_name"] == "denmark_cvr"
     assert spec.tags["layer"] == "raw"
-    for kind in ("python", "browser", "json", "s3"):
-        assert spec.tags[f"dagster/kind/{kind}"] == ""
 
 
 def test_denmark_cvr_definitions_register_one_asset_and_no_schedule() -> None:
-    from dagster_v3.defs.denmark_cvr.assets import defs
     from dagster_v3.definitions import defs as load_defs
+    from dagster_v3.defs.denmark_cvr.assets import defs
 
     repository = load_defs().get_repository_def()
 

@@ -1,5 +1,7 @@
 # Denmark CVR Cloak Source Implementation Plan
 
+> **Superseded partition design (2026-07-16):** the original one-character substring partitions below were replaced after live testing proved DataCVR caps accessible results at 3,000. The current implementation uses completed monthly partitions from January 2015, a generic monthly count, and a fixed list of region/municipality filters for oversized months. Each run writes one merged complete or incomplete JSON object. The current source contract is documented in `src/dagster_v3/defs/denmark_cvr/docs/denmark_cvr-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Migrate the browser-backed CVR search behavior from the standalone `cloack` prototype into `dagster_v3` as a Denmark source resource and one search-term-partitioned raw asset.
