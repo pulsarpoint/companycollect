@@ -1,4 +1,4 @@
-import type { CompanyListRow, ContactRow, DomainRow } from "~/lib/queries.server";
+import type { CompanyListRow, DomainRow } from "~/lib/queries.server";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -38,29 +38,6 @@ export function CompanyRecordSection({
             </div>
           </details>
         ) : null}
-      </CardContent>
-    </Card>
-  );
-}
-
-export function ContactsSection({ contacts }: { contacts: ContactRow[] }) {
-  if (contacts.length === 0) return null;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Contacts</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ul className="space-y-1.5">
-          {contacts.map((c, i) => (
-            <li key={`${c.contact_type}-${c.contact_value}-${i}`} className="flex items-baseline gap-2 text-sm">
-              <Badge variant="outline" className="w-20 justify-center">
-                {c.contact_type}
-              </Badge>
-              <span className="break-all">{c.contact_value}</span>
-            </li>
-          ))}
-        </ul>
       </CardContent>
     </Card>
   );

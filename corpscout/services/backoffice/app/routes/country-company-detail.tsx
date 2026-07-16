@@ -8,9 +8,9 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
   CompanyRecordSection,
-  ContactsSection,
   DomainsSection,
 } from "~/components/detail/detail-sections";
+import { ContactLocationCard } from "~/components/detail/contact-location-card";
 import { FinancialsSection } from "~/components/detail/financials-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
 import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
@@ -80,7 +80,12 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
         if (detail.statements.length > 0) return <StatementsFallback statements={detail.statements} />;
         return <FinancialsSection financials={detail.financials} />;
       })()}
-      <ContactsSection contacts={detail.contacts} />
+      <ContactLocationCard
+        country={country}
+        contacts={detail.contacts}
+        addresses={detail.addresses}
+        record={detail.record}
+      />
       <DomainsSection domains={detail.domains} />
     </div>
   );
