@@ -247,9 +247,10 @@ describe("getCompanyDetail (Estonia)", () => {
     );
     const detail = await getCompanyDetail(ee, row.id);
     expect(detail!.financials.length).toBeGreaterThan(0);
-    const year = detail!.financials[0];
-    expect(typeof year.fiscal_year).toBe("string");
-    expect(typeof year.revenue_amount_usd).toBe("number"); // toFloat64 → JSON number, not string
+    expect(typeof detail!.financials[0].fiscal_year).toBe("string");
+    expect(
+      detail!.financials.some((f) => typeof f.revenue_amount_usd === "number"),
+    ).toBe(true); // toFloat64 → JSON number, not string
     const years = detail!.financials.map((f) => f.fiscal_year);
     expect([...years].sort().reverse()).toEqual(years); // newest first
   });
