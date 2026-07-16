@@ -40,17 +40,22 @@ export async function searchCompanies(
   country: CountryConfig,
   opts: { q?: string; page?: number; pageSize?: number },
 ): Promise<CompanySearchResult> {
-  const page = clampInt(opts.page, 1, Number.MAX_SAFE_INTEGER, 1);
+  const requestedPage = clampInt(opts.page, 1, Number.MAX_SAFE_INTEGER, 1);
   const pageSize = clampInt(opts.pageSize, 1, MAX_PAGE_SIZE, 50);
   const q = (opts.q ?? "").trim();
 
   const where = q ? `WHERE ${country.nameColumn} ILIKE {pattern:String}` : "";
   const params = q ? { pattern: `%${q}%` } : undefined;
 
+  // Count must complete before the rows query: it determines the last valid
+  // page so we never send ClickHouse an astronomically large OFFSET.
   const countRows = await chQuery<{ total: string }>(
     `SELECT count() AS total FROM ${country.companiesTable} ${where}`,
     params,
   );
+  const total = Number(countRows[0].total);
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, lastPage);
 
   const rows = await chQuery<CompanyRow>(
     `SELECT
@@ -64,5 +69,5 @@ export async function searchCompanies(
     params,
   );
 
-  return { rows, total: Number(countRows[0].total), page, pageSize };
+  return { rows, total, page, pageSize };
 }

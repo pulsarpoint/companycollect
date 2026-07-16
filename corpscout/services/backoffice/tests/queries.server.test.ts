@@ -48,4 +48,11 @@ describe("searchCompanies", () => {
     const ids1 = new Set(p1.rows.map((r) => r.id));
     expect(p2.rows.some((r) => ids1.has(r.id))).toBe(false);
   });
+
+  it("clamps out-of-range pages to the last page", async () => {
+    const result = await searchCompanies(ee, { page: Number.MAX_SAFE_INTEGER, pageSize: 10 });
+    const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
+    expect(result.page).toBe(lastPage);
+    expect(result.rows.length).toBeGreaterThan(0);
+  });
 });
