@@ -203,4 +203,16 @@ describe("detail config", () => {
       expect(c.detail?.industriesQuery, c.code).toContain("{id:String}");
     }
   });
+
+  it("every country except fi declares addressQuery with canonical aliases", () => {
+    for (const c of COUNTRIES) {
+      if (c.code === "fi") {
+        expect(c.detail?.addressQuery).toBeUndefined();
+        continue;
+      }
+      expect(c.detail?.addressQuery, c.code).toContain("AS address_type");
+      expect(c.detail?.addressQuery, c.code).toContain("AS full_address");
+      expect(c.detail?.addressQuery, c.code).toContain("{id:String}");
+    }
+  });
 });

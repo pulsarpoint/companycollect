@@ -41,6 +41,8 @@ export interface CountryDetailConfig {
   recordQuery?: string;
   /** {id:String} → all industry rows: industry_code, description_original, industry_label (canonical NACE English), is_primary. */
   industriesQuery?: string;
+  /** {id:String} → address rows: address_type, full_address (clean comma-joined). */
+  addressQuery?: string;
 }
 
 export interface CountryConfig {
@@ -154,6 +156,16 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = substring(i.nace_normalize
 WHERE i.org_number = {id:String}
 ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
+      addressQuery: `SELECT address_type AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(address_lines, ''),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(city, ''))),
+    coalesce(country, '')
+  ]), ', ') AS full_address
+FROM no_company_addresses
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY address_type
+LIMIT 10`,
     },
   },
   {
@@ -266,6 +278,16 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_rev2_class_code AND
 WHERE i.company_id IN (SELECT company_id FROM se_companies WHERE registration_number = {id:String})
 ORDER BY i.is_primary DESC, i.sequence
 LIMIT 100`,
+      addressQuery: `SELECT address_type AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(care_of, ''),
+    if(coalesce(street_address, '') != '', street_address, coalesce(raw_address, '')),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(post_town, '')))
+  ]), ', ') AS full_address
+FROM se_company_addresses
+WHERE company_id IN (SELECT company_id FROM se_companies WHERE registration_number = {id:String})
+ORDER BY address_type
+LIMIT 10`,
     },
   },
   {
@@ -334,6 +356,14 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND
 WHERE i.reg_code = {id:String}
 ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
+      addressQuery: `SELECT 'registered' AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(address, ''),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(location, '')))
+  ]), ', ') AS full_address
+FROM ee_companies
+WHERE reg_code = {id:String}
+LIMIT 1`,
     },
   },
   {
@@ -382,6 +412,14 @@ LIMIT 50`,
 FROM lv_companies AS c
 LEFT JOIN lv_companies_translated AS t ON t.regcode = c.regcode
 WHERE c.regcode = {id:String}
+LIMIT 1`,
+      addressQuery: `SELECT 'registered' AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(address, ''),
+    coalesce(postal_code, '')
+  ]), ', ') AS full_address
+FROM lv_companies
+WHERE regcode = {id:String}
 LIMIT 1`,
     },
   },
@@ -440,6 +478,17 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND
 WHERE i.company_number = {id:String}
 ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
+      addressQuery: `SELECT 'registered' AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(address, ''),
+    coalesce(address_line_2, ''),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(city, ''))),
+    coalesce(county, ''),
+    coalesce(country, '')
+  ]), ', ') AS full_address
+FROM gb_companies
+WHERE company_number = {id:String}
+LIMIT 1`,
     },
   },
   {
@@ -484,6 +533,15 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND
 WHERE i.siren = {id:String}
 ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
+      addressQuery: `SELECT 'registered' AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(address, ''),
+    coalesce(address_supplement, ''),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(city, '')))
+  ]), ', ') AS full_address
+FROM fr_companies
+WHERE siren = {id:String}
+LIMIT 1`,
     },
   },
   {
@@ -556,6 +614,17 @@ FROM br_establishments AS e
 LEFT JOIN br_cnae_to_nace AS m ON m.cnae_normalized_code = e.primary_cnae_code
 WHERE e.cnpj_basico = {id:String} AND e.is_headquarters = 1 AND e.primary_cnae_code != ''
 LIMIT 100`,
+      addressQuery: `SELECT 'headquarters' AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    trim(concat(coalesce(street_type, ''), ' ', coalesce(street_name, ''), ' ', coalesce(street_number, ''))),
+    coalesce(address_complement, ''),
+    coalesce(district, ''),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(municipality_name, ''))),
+    coalesce(state, '')
+  ]), ', ') AS full_address
+FROM br_companies
+WHERE cnpj_basico = {id:String}
+LIMIT 1`,
     },
   },
   {
@@ -611,6 +680,14 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND
 WHERE i.ico = {id:String}
 ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
+      addressQuery: `SELECT 'registered' AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(address, ''),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(city, '')))
+  ]), ', ') AS full_address
+FROM cz_companies
+WHERE ico = {id:String}
+LIMIT 1`,
     },
   },
   {
@@ -655,6 +732,14 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND
 WHERE i.ico = {id:String}
 ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
+      addressQuery: `SELECT 'registered' AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(address, ''),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(city, '')))
+  ]), ', ') AS full_address
+FROM sk_companies
+WHERE ico = {id:String}
+LIMIT 1`,
     },
   },
 ];

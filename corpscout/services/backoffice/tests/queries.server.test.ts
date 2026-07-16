@@ -211,6 +211,17 @@ describe("searchCompanies across all countries", () => {
     },
     60_000,
   );
+
+  it.each(
+    COUNTRIES.filter((c) => c.detail?.addressQuery).map((c) => [c.code, c] as const),
+  )(
+    "%s: addressQuery SQL is valid against live schema",
+    async (_code, country) => {
+      const rows = await chQuery(country.detail!.addressQuery!, { id: "0" });
+      expect(Array.isArray(rows)).toBe(true);
+    },
+    60_000,
+  );
 });
 
 describe("searchCompanies with filters", () => {
@@ -475,6 +486,39 @@ describe("industries section", () => {
     const page = await searchCompanies(lv, { pageSize: 1 });
     const detail = await getCompanyDetail(lv, String(page.rows[0].id));
     expect(detail!.industries).toEqual([]);
+  });
+});
+
+describe("addresses", () => {
+  it("estonia composes a full address from embedded columns", async () => {
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT reg_code AS id FROM ee_companies
+       WHERE address != '' AND postal_code != ''
+       ORDER BY reg_code LIMIT 1`,
+    );
+    const detail = await getCompanyDetail(ee, row.id);
+    expect(detail!.addresses.length).toBeGreaterThan(0);
+    expect(detail!.addresses[0].full_address).toContain(",");
+    expect(detail!.addresses[0].full_address).not.toMatch(/, ,|^,|,$/);
+  });
+
+  it("sweden reads its addresses table", async () => {
+    const se = getCountry("se")!;
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT registration_number AS id FROM se_companies
+       WHERE company_id IN (SELECT company_id FROM se_company_addresses WHERE street_address != '')
+       ORDER BY registration_number LIMIT 1`,
+    );
+    const detail = await getCompanyDetail(se, row.id);
+    expect(detail!.addresses.length).toBeGreaterThan(0);
+    expect(detail!.addresses[0].full_address).toBeTruthy();
+  });
+
+  it("finland returns an empty addresses array", async () => {
+    const fi = getCountry("fi")!;
+    const page = await searchCompanies(fi, { pageSize: 1 });
+    const detail = await getCompanyDetail(fi, String(page.rows[0].id));
+    expect(detail!.addresses).toEqual([]);
   });
 });
 
