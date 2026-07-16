@@ -58,6 +58,15 @@ financial metrics materialized yet (pipeline gap) and fr has no detail data —
 those pages show identity/overview only. All section queries bind the id as
 `{id:String}` and live in the registry, never in routes.
 
+Fidelity rule: the detail page shows every column of the company row
+("Company record" card; lineage fields collapsed under "Source & lineage")
+and country-specific sections render full source shapes — Norway shows the
+complete Brønnøysund statement (all P&L/balance/filing fields; any column a
+future migration adds lands in "Other fields" automatically). Never trim a
+country's data to fit a generic UI — add a country component instead
+(`app/components/detail/countries/`, wired via COUNTRY_FINANCIALS in the
+detail route).
+
 ## Rules
 
 - Read-only: `SELECT` only, no writes to ClickHouse.
