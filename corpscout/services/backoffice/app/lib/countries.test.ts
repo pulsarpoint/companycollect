@@ -62,4 +62,30 @@ describe("company columns", () => {
     expect(getSortColumn(ee, "id; DROP TABLE x").key).toBe("name");
     expect(getSortColumn(ee, null).key).toBe("name");
   });
+
+  it("every country has a filterable status; only text/status kinds are filterable", () => {
+    for (const c of COUNTRIES) {
+      const filterable = c.columns.filter((col) => col.filterable);
+      expect(filterable.length, c.code).toBeGreaterThan(0);
+      expect(
+        c.columns.find((col) => col.kind === "status")?.filterable,
+        c.code,
+      ).toBe(true);
+      for (const col of filterable) {
+        expect(["text", "status"], `${c.code}:${col.key}`).toContain(col.kind);
+        expect(col.key, `${c.code}:${col.key}`).toMatch(/^[a-z_]+$/);
+      }
+    }
+  });
+
+  it("id, name, registered are never filterable", () => {
+    for (const c of COUNTRIES) {
+      for (const key of ["id", "name", "registered"]) {
+        expect(
+          c.columns.find((col) => col.key === key)?.filterable,
+          `${c.code}:${key}`,
+        ).toBeFalsy();
+      }
+    }
+  });
 });
