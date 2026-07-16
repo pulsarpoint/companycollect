@@ -62,14 +62,22 @@ is required.
   - `eiendeler`: sumEiendeler, omløpsmidler, anleggsmidler
   - `egenkapitalGjeld`: sumEgenkapital, sumGjeld, kort-/langsiktig gjeld
   - `revisjon` (audit), `regnkapsprinsipper` (small-company flag, accounting rules)
-- One organisation number per request. Updated ~5 days/week from Regnskapsregisteret SFTP
-  drops (`yyyyMMddHHmmss-masse.xml`).
-- Coverage: companies that file accounts (~80% of accounting-liable entities — AS, ASA, NUF,
-  savings banks, etc.). Data from roughly 2018 onward in the open API; banks/insurance excluded
-  from standard figures. Returns most-recent filed year(s); historical depth is limited in the
-  open API.
-- License on the open API distribution: **NLOD 2.0**. Full historical figures + scanned image
-  copies (TIF/PDF) are behind the paid **Subscription Service** — not required for figures.
+- One organisation number per request. Updated from Regnskapsregisteret XML import files.
+- The unauthenticated endpoint deliberately returns only the latest approved `SELSKAP` filing.
+  Although OpenAPI exposes `år` and `regnskapstype`, the public repository implementation ignores
+  both unless the caller is an authorized partner. The restricted partner endpoint is limited
+  to public authorities and returns at most the latest three years, including group accounts.
+- Standard open key figures are available only for ordinary layouts; banks, insurers, and group
+  accounts are excluded.
+- A separate public API lists and downloads annual-report copies for the latest 15 years:
+  `.../aarsregnskap/kopi/{orgnr}/aar` and `.../kopi/{orgnr}/{aar}`. Live checks returned valid
+  PDFs for Equinor from 2011 through 2024. The checked PDFs contained no text layer, requiring
+  OCR for extraction.
+- Brreg's paid subscription delivers all registered annual accounts (about 300,000/year) as
+  daily XML over SFTP, including auditor codes and optional TIFF copies. Current published price
+  is NOK 480,000/year per subscriber with five subscribers. The product page describes an
+  ongoing feed, not a guaranteed historical dump; historical initialization must be confirmed
+  contractually with Brreg.
 
 ### data.norge.no (national open data portal) — useful secondary
 
@@ -100,18 +108,23 @@ risk. No reason to use an aggregator.
    entities + 0.84M sub-entities.
 2. **Incremental**: poll `…/api/oppdateringer/enheter?dato=<last_seen>` daily for deltas
    (avoids re-downloading 200 MB).
-3. **Financial enrichment**: for each entity of interest (AS/ASA and other accounting-liable
-   forms), call `…/regnskapsregisteret/regnskap/{orgnr}` and store the latest accounts. Throttle
-   politely; cache by orgnr + last-filed-year (`sisteInnsendteAarsregnskap` from the base record
-   tells you when new accounts exist, so you only re-fetch when it changes).
-4. Map to internal model per `schema_notes.md`; keep `raw_record` for provenance.
+3. **Latest financial enrichment**: call `…/regnskapsregisteret/regnskap/{orgnr}` only as a
+   current-filing source and validation feed.
+4. **Historical financials**: prefer the official XML subscription plus a negotiated initial
+   historical delivery. If Brreg cannot provide backfill, use the public 15-year PDF archive
+   with OCR only after a bounded feasibility test and written confirmation on acceptable bulk
+   access, or procure a licensed historical dataset.
+5. Map to internal model per `schema_notes.md`; keep `raw_record` for provenance.
 
 ## Open questions / risks
 
 - Regnskapsregisteret open API is officially a "temporary/research" distribution — monitor for
   deprecation; the paid Subscription Service is the long-term guaranteed channel for figures.
-- Historical financial depth in the open API is shallow (recent years). For multi-year history,
-  the Subscription Service (fee) or accumulating snapshots over time is needed.
+- The open structured API has no historical depth: it returns one latest filing.
+- The public PDF API has a rolling 15-year limit and verified files are image-only.
+- The subscription page promises a daily XML feed but does not explicitly promise a retroactive
+  dump; confirm backfill years, corrections/withdrawals, licensing, and redistribution before
+  using it as the archive system of record.
 - Rate limits are not formally published for either API — be polite, set a contact User-Agent,
   prefer the bulk file + update feed over crawling `/enheter` page-by-page.
 - Beneficial ownership data is not openly bulk-available.

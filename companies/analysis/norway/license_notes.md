@@ -33,11 +33,15 @@ A short form for UI/footers: **"Kilde: Brønnøysundregistrene (NLOD 2.0)"**.
 
 ## Caveats / uncertainty
 
-- **Regnskapsregisteret open API** is described by Brreg as a *temporary / research* open
-  distribution. The data itself is NLOD 2.0, but the API channel is not guaranteed long-term.
-  The guaranteed long-term channel for full financial history and image copies is the **paid
-  Subscription Service** (XML/TIF), which is **not** open data — do not redistribute that
-  channel's image copies under NLOD.
+- **Regnskapsregisteret open key-figures API** is a preview and returns the latest filing only.
+  Its key-figure data is NLOD 2.0, but the API channel is not guaranteed long-term.
+- **Public annual-report PDF copies** are accessible without authentication for the latest
+  15 years, but the checked API documentation does not establish that the documents themselves
+  inherit NLOD. Obtain legal confirmation before retaining and redistributing report copies or
+  a dataset derived from bulk OCR.
+- **Paid annual-accounts subscription** data is governed by a framework agreement and a specific
+  sub-agreement, not NLOD. The agreement describes daily XML delivery and restricts use of TIFF
+  copies. Confirm historical backfill and downstream redistribution rights contractually.
 - **Personal data**: entity records can contain personal names (e.g. roles — CEO, board,
   auditor). Role data with national identity numbers is only via the authenticated
   `autorisert-api` (Maskinporten) and is **not** open. Handle any personal data per GDPR even
@@ -49,6 +53,6 @@ A short form for UI/footers: **"Kilde: Brønnøysundregistrene (NLOD 2.0)"**.
 
 ## Bottom line
 
-Safe to ingest and redistribute Enhetsregisteret + Regnskapsregisteret open-API data in a
-commercial product **with NLOD attribution**. Keep the paid Subscription Service and the UBO
-register out of scope unless separately licensed.
+Safe to ingest and redistribute Enhetsregisteret + latest Regnskapsregisteret key figures in a
+commercial product **with NLOD attribution**. Treat report PDFs and subscription XML as separate
+legal products until their retention, derivation, and redistribution rights are confirmed.

@@ -100,17 +100,66 @@
       "revisjon", "regnkapsprinsipper.smaaForetak"
     ],
     "data_freshness": "weekly (~5 days/week import); annual filing cycle",
-    "coverage_notes": "~80% of accounting-liable companies (AS, ASA, NUF, savings banks). Banks/insurance excluded from standard figures. Open API ~2018+; recent year(s) depth.",
+    "coverage_notes": "Latest approved SELSKAP filing only for ordinary statement layouts. Banks, insurance, group accounts, and entities without filing obligations are excluded. Public calls ignore the documented year and account-type filters.",
     "example_requests": [
       "https://data.brreg.no/regnskapsregisteret/regnskap/923609016"
     ],
     "downloaded_files": [
       "raw/api/regnskapsregisteret_equinor.json"
     ],
-    "status": "recommended",
+    "status": "recommended_for_latest_only",
     "recommended_source_key": "brregregnskap",
     "recommended_registry_key": "norway/brregregnskap",
-    "notes": "Financial enrichment by organisation number. Income statement + balance sheet as JSON. Open API is a 'temporary/research' distribution; paid Subscription Service holds full history + image copies. GitHub: github.com/brreg/regnskapsregister-api"
+    "notes": "Latest-filing enrichment by organisation number. The open API is a preview and is not a historical source. GitHub: github.com/brreg/regnskapsregister-api"
+  },
+  {
+    "country": "Norway",
+    "country_slug": "norway",
+    "source_name": "Regnskapsregisteret — public annual-report copies",
+    "source_type": "official_registry_document_api",
+    "organization": "Brønnøysund Register Centre (Brreg)",
+    "url": "https://data.brreg.no/regnskapsregisteret/regnskap/swagger-ui/index.html",
+    "bulk_download_url": null,
+    "api_base_url": "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi",
+    "formats": ["pdf"],
+    "license": "public access verified; redistribution and derived-data terms require review",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "not published; obtain confirmation before bulk crawling",
+    "fields_observed": ["annual report document"],
+    "data_freshness": "rolling archive",
+    "coverage_notes": "Lists and downloads available annual-report copies for the latest 15 years per organization. Verified Equinor PDFs were image-only.",
+    "example_requests": [
+      "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/923609016/aar",
+      "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/923609016/2024"
+    ],
+    "downloaded_files": [],
+    "status": "historical_fallback",
+    "notes": "The only verified public historical path, but it requires large-scale PDF storage, OCR, extraction, and quality assurance."
+  },
+  {
+    "country": "Norway",
+    "country_slug": "norway",
+    "source_name": "Regnskapsregisteret — annual-accounts subscription",
+    "source_type": "official_paid_registry_feed",
+    "organization": "Brønnøysund Register Centre (Brreg)",
+    "url": "https://www.brreg.no/en/use-of-data-from-the-bronnoysund-register-centre/subscription/subscription-to-annual-accounts/",
+    "bulk_download_url": null,
+    "api_base_url": null,
+    "formats": ["xml", "tiff"],
+    "license": "standard framework agreement and annual-accounts sub-agreement",
+    "access": "contract subscription",
+    "requires_authentication": true,
+    "requires_payment": true,
+    "rate_limits": null,
+    "fields_observed": ["all registered annual-account figures", "auditor codes", "optional report copy"],
+    "data_freshness": "daily SFTP delivery; approximately 300000 filings/year",
+    "coverage_notes": "Official product page promises the ongoing feed but does not explicitly promise a retroactive structured dump.",
+    "example_requests": [],
+    "downloaded_files": [],
+    "status": "recommended_if_historical_backfill_is_confirmed",
+    "notes": "Published fee was NOK 480000/year per subscriber with five subscribers on 2025-09-11. Confirm initial archive years, correction/withdrawal handling, and redistribution rights before contracting."
   },
   {
     "country": "Norway",

@@ -64,3 +64,30 @@
   distributions; paid Subscription Service (XML/TIF) for full history + image copies;
   open API flagged as temporary/research distribution.
 - Decision: Recorded in `license_notes.md`.
+
+## Attempt 6 — historical annual-accounts verification
+
+- Date/time: 2026-07-16
+- Sources: live BRREG OpenAPI, official `brreg/regnskapsregister-api` repository, live report-copy
+  API, and the official annual-accounts subscription page and agreement.
+- Queries and probes:
+  - `GET /regnskapsregisteret/regnskap/v3/api-docs/regnskapsregisteret`
+  - `GET /regnskapsregisteret/regnskap/923609016?år=2018`
+  - `GET /regnskapsregisteret/regnskap/923609016?regnskapstype=KONSERN`
+  - `GET /regnskapsregisteret/regnskap/aarsregnskap/kopi/923609016/aar`
+  - PDF downloads for Equinor reporting years 2011, 2018, and 2024
+  - `https://www.brreg.no/en/use-of-data-from-the-bronnoysund-register-centre/subscription/subscription-to-annual-accounts/`
+- Result:
+  - Public key-figures calls always returned the latest 2024 `SELSKAP` filing; year and group
+    filters were ignored.
+  - BRREG source confirms public/default queries select the latest company filing. Year/type
+    filtering is implemented only in the authorized partner branch, which is for public
+    authorities and covers the latest three years.
+  - The public report-copy API listed 2011–2024 for Equinor. Downloaded PDFs were valid but had
+    no text layer in the first pages, so extraction requires OCR.
+  - Official file-API documentation states a rolling 15-year availability window.
+  - The paid subscription delivers all registered annual accounts as daily XML over SFTP,
+    approximately 300,000 filings/year. It does not explicitly promise historical backfill.
+- Decision: Do not use the current open JSON bootstrap as a historical archive. Prefer the paid
+  XML feed with a negotiated historical delivery; use PDF/OCR only as a fallback after confirming
+  acceptable bulk access and economics.
