@@ -48,6 +48,16 @@ server-side by the loader. Option lists are cached in-process for 24h
 (`facets.server.ts`) — typeahead searches the cache (diacritic-insensitive,
 prefix-first), never ClickHouse per keystroke.
 
+### Company detail
+
+`/{country}/companies/{id}` — identity header, overview (all list columns +
+industry), and per-country sections declared in `countries.ts` (`detail`):
+financials (no, fi, ee, lv, gb, br — canonical yearly metrics, USD chart via
+recharts), contacts and domains (no, fi, ee, lv, cz, br). se/sk have no
+financial metrics materialized yet (pipeline gap) and fr has no detail data —
+those pages show identity/overview only. All section queries bind the id as
+`{id:String}` and live in the registry, never in routes.
+
 ## Rules
 
 - Read-only: `SELECT` only, no writes to ClickHouse.

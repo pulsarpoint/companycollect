@@ -157,6 +157,47 @@ describe("searchCompanies across all countries", () => {
     },
     120_000,
   );
+
+  it.each(COUNTRIES.map((c) => [c.code, c] as const))(
+    "%s: company detail loads for a first-page id",
+    async (_code, country) => {
+      const page = await searchCompanies(country, { pageSize: 1 });
+      const id = String(page.rows[0].id);
+      const detail = await getCompanyDetail(country, id);
+      expect(detail).not.toBeNull();
+      expect(String(detail!.company.id)).toBe(id);
+    },
+    60_000,
+  );
+
+  it.each(
+    COUNTRIES.filter((c) => c.detail?.financialsQuery).map((c) => [c.code, c] as const),
+  )(
+    "%s: financials registry SQL is valid against live schema",
+    async (_code, country) => {
+      // Execute the registry SQL directly with a synthetic id: zero rows expected,
+      // but a schema/SQL error surfaces as a ClickHouse exception → test failure.
+      const rows = await chQuery(country.detail!.financialsQuery!, { id: "0" });
+      expect(Array.isArray(rows)).toBe(true);
+    },
+    60_000,
+  );
+
+  it.each(
+    COUNTRIES.filter((c) => c.detail?.contactsQuery || c.detail?.domainsQuery).map(
+      (c) => [c.code, c] as const,
+    ),
+  )(
+    "%s: contacts/domains registry SQL is valid against live schema",
+    async (_code, country) => {
+      for (const q of [country.detail?.contactsQuery, country.detail?.domainsQuery]) {
+        if (!q) continue;
+        const rows = await chQuery(q, { id: "0" });
+        expect(Array.isArray(rows)).toBe(true);
+      }
+    },
+    60_000,
+  );
 });
 
 describe("searchCompanies with filters", () => {
@@ -243,7 +284,11 @@ describe("getCompanyDetail (Estonia)", () => {
 
   it("returns canonical financials for a company that has them", async () => {
     const [row] = await chQuery<{ id: string }>(
-      "SELECT reg_code AS id FROM ee_financial_metrics WHERE revenue_amount_usd IS NOT NULL LIMIT 1",
+      `SELECT reg_code AS id FROM ee_financial_metrics
+       WHERE revenue_amount_usd IS NOT NULL
+         AND reg_code IN (SELECT reg_code FROM ee_companies)
+       ORDER BY reg_code
+       LIMIT 1`,
     );
     const detail = await getCompanyDetail(ee, row.id);
     expect(detail!.financials.length).toBeGreaterThan(0);
@@ -257,7 +302,11 @@ describe("getCompanyDetail (Estonia)", () => {
 
   it("returns contacts and domains for companies that have them", async () => {
     const [c] = await chQuery<{ id: string }>(
-      "SELECT registry_id AS id FROM ee_company_contacts WHERE is_current = 1 LIMIT 1",
+      `SELECT registry_id AS id FROM ee_company_contacts
+       WHERE is_current = 1
+         AND registry_id IN (SELECT reg_code FROM ee_companies)
+       ORDER BY registry_id
+       LIMIT 1`,
     );
     const withContacts = await getCompanyDetail(ee, c.id);
     expect(withContacts!.contacts.length).toBeGreaterThan(0);
@@ -265,7 +314,11 @@ describe("getCompanyDetail (Estonia)", () => {
     expect(withContacts!.contacts[0]).toHaveProperty("contact_value");
 
     const [d] = await chQuery<{ id: string }>(
-      "SELECT registry_id AS id FROM ee_company_domains WHERE is_current = 1 LIMIT 1",
+      `SELECT registry_id AS id FROM ee_company_domains
+       WHERE is_current = 1
+         AND registry_id IN (SELECT reg_code FROM ee_companies)
+       ORDER BY registry_id
+       LIMIT 1`,
     );
     const withDomains = await getCompanyDetail(ee, d.id);
     expect(withDomains!.domains.length).toBeGreaterThan(0);
