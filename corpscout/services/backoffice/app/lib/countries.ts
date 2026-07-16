@@ -33,6 +33,12 @@ export interface CountryDetailConfig {
    * component when one exists, else by the auto field-grid fallback.
    */
   statementsQuery?: string;
+  /**
+   * Optional override for the detail record fetch: {id:String} → ONE row.
+   * MUST select the base table's full row (c.*) — used to join translated
+   * columns without dropping base-only fields (fidelity rule).
+   */
+  recordQuery?: string;
 }
 
 export interface CountryConfig {
@@ -132,6 +138,11 @@ LIMIT 50`,
 WHERE org_number = {id:String}
 ORDER BY fiscal_year DESC, resolved_at DESC
 LIMIT 40`,
+      recordQuery: `SELECT c.*, t.articles_purpose_en, t.activity_text_en, t.legal_form_description_en
+FROM no_companies AS c
+LEFT JOIN no_companies_translated AS t ON t.org_number = c.org_number
+WHERE c.org_number = {id:String}
+LIMIT 1`,
     },
   },
   {
@@ -327,6 +338,11 @@ FROM lv_company_domains
 WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY is_primary DESC, confidence DESC
 LIMIT 50`,
+      recordQuery: `SELECT c.*, t.activity_text_en
+FROM lv_companies AS c
+LEFT JOIN lv_companies_translated AS t ON t.regcode = c.regcode
+WHERE c.regcode = {id:String}
+LIMIT 1`,
     },
   },
   {

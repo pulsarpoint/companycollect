@@ -193,7 +193,8 @@ export async function getCompanyDetail(
   // `id` — so they run concurrently with the industry round-trip below
   // instead of after it.
   const recordPromise = chQuery<Record<string, unknown>>(
-    `SELECT * FROM ${country.companiesTable} WHERE ${country.idColumn} = {id:String} LIMIT 1`,
+    country.detail?.recordQuery ??
+      `SELECT * FROM ${country.companiesTable} WHERE ${country.idColumn} = {id:String} LIMIT 1`,
     { id },
   );
   const sectionsPromise = Promise.all([

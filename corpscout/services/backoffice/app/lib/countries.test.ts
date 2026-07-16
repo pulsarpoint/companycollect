@@ -170,4 +170,20 @@ describe("detail config", () => {
       }
     }
   });
+
+  it("no and lv join their translated tables in recordQuery", () => {
+    for (const c of COUNTRIES) {
+      if (c.code === "no") {
+        expect(c.detail?.recordQuery).toContain("no_companies_translated");
+        expect(c.detail?.recordQuery).toContain("{id:String}");
+        expect(c.detail?.recordQuery).toContain("c.*");
+      } else if (c.code === "lv") {
+        expect(c.detail?.recordQuery).toContain("lv_companies_translated");
+        expect(c.detail?.recordQuery).toContain("{id:String}");
+        expect(c.detail?.recordQuery).toContain("c.*");
+      } else {
+        expect(c.detail?.recordQuery, c.code).toBeUndefined();
+      }
+    }
+  });
 });

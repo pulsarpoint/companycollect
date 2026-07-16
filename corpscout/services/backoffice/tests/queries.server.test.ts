@@ -416,6 +416,31 @@ describe("getCompanyDetail (Brazil)", () => {
   }, 120_000);
 });
 
+describe("translated record cards", () => {
+  it("norway record carries _en fields AND base-only fields (fidelity both ways)", async () => {
+    const no = getCountry("no")!;
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT org_number AS id FROM no_companies_translated
+       WHERE articles_purpose_en IS NOT NULL AND articles_purpose_en != ''
+       ORDER BY org_number LIMIT 1`,
+    );
+    const detail = await getCompanyDetail(no, row.id);
+    expect(detail!.record).toHaveProperty("articles_purpose_en");
+    expect(detail!.record).toHaveProperty("activity_text_en");
+    expect(detail!.record).toHaveProperty("legal_form_description_en");
+    expect(detail!.record).toHaveProperty("last_submitted_accounts_year"); // base-only column survives
+    expect(String(detail!.record.articles_purpose_en)).not.toBe("");
+  });
+
+  it("latvia record carries activity_text_en AND base-only address fields", async () => {
+    const lv = getCountry("lv")!;
+    const page = await searchCompanies(lv, { pageSize: 1 });
+    const detail = await getCompanyDetail(lv, String(page.rows[0].id));
+    expect(detail!.record).toHaveProperty("activity_text_en");
+    expect(detail!.record).toHaveProperty("address_city_name"); // base-only column survives
+  });
+});
+
 describe("empties-last sorting (Finland has 1,205 nameless registry stubs)", () => {
   const fi = getCountry("fi")!;
 
