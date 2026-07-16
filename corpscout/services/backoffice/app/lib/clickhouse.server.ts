@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 
 let client: ClickHouseClient | undefined;
