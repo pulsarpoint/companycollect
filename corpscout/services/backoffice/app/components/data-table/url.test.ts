@@ -1,0 +1,33 @@
+import { describe, expect, it } from "vitest";
+import { nextSortDir, tableSearch } from "~/components/data-table/url";
+
+describe("tableSearch", () => {
+  it("preserves existing params and patches page", () => {
+    const current = new URLSearchParams("q=grupp&sort=status&dir=desc&page=3");
+    expect(tableSearch(current, { page: 4 })).toBe("?q=grupp&sort=status&dir=desc&page=4");
+  });
+
+  it("resets page when sort changes", () => {
+    const current = new URLSearchParams("q=grupp&page=3");
+    const s = tableSearch(current, { sort: "status", dir: "asc" });
+    expect(s).toContain("sort=status");
+    expect(s).toContain("dir=asc");
+    expect(s).not.toContain("page=");
+    expect(s).toContain("q=grupp");
+  });
+
+  it("resets page when pageSize changes", () => {
+    const current = new URLSearchParams("page=9");
+    expect(tableSearch(current, { pageSize: 100 })).toBe("?pageSize=100");
+  });
+});
+
+describe("nextSortDir", () => {
+  it("starts asc on a new column", () => {
+    expect(nextSortDir("name", "asc", "status")).toBe("asc");
+  });
+  it("toggles on the same column", () => {
+    expect(nextSortDir("status", "asc", "status")).toBe("desc");
+    expect(nextSortDir("status", "desc", "status")).toBe("asc");
+  });
+});

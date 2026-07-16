@@ -3,6 +3,8 @@ export type CountryFeature = "financials" | "industries" | "contacts" | "domains
 export type ColumnKind = "id" | "text" | "date" | "status";
 export type SortDir = "asc" | "desc";
 
+export const PAGE_SIZES = [25, 50, 100] as const;
+
 export interface CompanyColumn {
   /** Stable key: row field name, ?sort= value, and SQL alias. [a-z_]+ only. */
   key: string;

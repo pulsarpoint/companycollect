@@ -1,6 +1,7 @@
 import { chQuery } from "~/lib/clickhouse.server";
 import {
   getSortColumn,
+  PAGE_SIZES,
   type CountryConfig,
   type SortDir,
 } from "~/lib/countries";
@@ -25,7 +26,11 @@ export async function getCountryStats(country: CountryConfig): Promise<CountrySt
   return { total: Number(row.total), active: Number(row.active) };
 }
 
-export const PAGE_SIZES = [25, 50, 100] as const;
+// Re-exported for callers that historically imported PAGE_SIZES from here
+// (e.g. Task 2's tests). Source of truth moved to ~/lib/countries so
+// client-bundled code (data-table/pagination.tsx) doesn't import a .server
+// module.
+export { PAGE_SIZES };
 
 export type CompanyListRow = Record<string, string | number | null> & {
   active: 0 | 1;
