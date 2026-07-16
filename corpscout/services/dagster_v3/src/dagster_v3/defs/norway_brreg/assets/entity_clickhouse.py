@@ -28,9 +28,18 @@ from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 ENTITY_CLICKHOUSE_TABLES = (
     no_tables.NO_COMPANIES_TABLE,
+    no_tables.NO_COMPANY_CONTACTS_TABLE,
+    no_tables.NO_COMPANY_ADDRESSES_TABLE,
     no_tables.NO_WEBSITES_TABLE,
     no_tables.NO_INDUSTRIES_TABLE,
 )
+ENTITY_CLICKHOUSE_REGISTRY_ID_COLUMNS = {
+    no_tables.NO_COMPANIES_TABLE: "org_number",
+    no_tables.NO_COMPANY_CONTACTS_TABLE: "registry_id",
+    no_tables.NO_COMPANY_ADDRESSES_TABLE: "registry_id",
+    no_tables.NO_WEBSITES_TABLE: "org_number",
+    no_tables.NO_INDUSTRIES_TABLE: "org_number",
+}
 ENTITY_CLICKHOUSE_DUCKDB_SCHEMA = "norway_brreg_entity_publish"
 
 
@@ -38,6 +47,8 @@ ENTITY_CLICKHOUSE_DUCKDB_SCHEMA = "norway_brreg_entity_publish"
     name="norway_brreg_entities_snapshot_clickhouse",
     deps=[
         dg.AssetKey("norway_brreg_entities_snapshot_no_companies_parquet"),
+        dg.AssetKey("norway_brreg_entities_snapshot_no_company_contacts_parquet"),
+        dg.AssetKey("norway_brreg_entities_snapshot_no_company_addresses_parquet"),
         dg.AssetKey("norway_brreg_entities_snapshot_no_websites_parquet"),
         dg.AssetKey("norway_brreg_entities_snapshot_no_industries_parquet"),
     ],
@@ -84,6 +95,8 @@ def norway_brreg_entities_snapshot_clickhouse(
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     deps=[
         dg.AssetKey("norway_brreg_entity_updates_no_companies_parquet"),
+        dg.AssetKey("norway_brreg_entity_updates_no_company_contacts_parquet"),
+        dg.AssetKey("norway_brreg_entity_updates_no_company_addresses_parquet"),
         dg.AssetKey("norway_brreg_entity_updates_no_websites_parquet"),
         dg.AssetKey("norway_brreg_entity_updates_no_industries_parquet"),
         dg.AssetKey("norway_brreg_entity_updates_affected_orgs_parquet"),
@@ -140,7 +153,12 @@ def replace_entity_snapshot_parquets_in_clickhouse(
         table_name: storage.read_normalized_snapshot_table(table_name)
         for table_name in ENTITY_CLICKHOUSE_TABLES
     }
-    _log(log, "Loaded Norway Brreg snapshot parquet frames: run_id=%s rows=%s", run_id, _row_counts(frames))
+    _log(
+        log,
+        "Loaded Norway Brreg snapshot parquet frames: run_id=%s rows=%s",
+        run_id,
+        _row_counts(frames),
+    )
     with duckdb.connect(":memory:") as connection:
         _load_frames_into_duckdb(connection, frames)
         return replace_duckdb_connection_tables_in_clickhouse(
@@ -201,24 +219,40 @@ def apply_entity_update_parquets_to_clickhouse(
     )
     clickhouse_client.execute(
         f"CREATE TABLE {affected_stage_qualified} "
-        f"({_quote_clickhouse_identifier('org_number')} String) ENGINE = Memory"
+        f"({_quote_clickhouse_identifier('org_number')} String, "
+        f"{_quote_clickhouse_identifier('delete_email')} UInt8) ENGINE = Memory"
     )
     primary_error: Exception | None = None
     try:
-        affected_org_rows = _affected_org_rows(affected_orgs)
+        affected_org_rows = _affected_org_rows(
+            affected_orgs,
+            contact_replacements=frames[no_tables.NO_COMPANY_CONTACTS_TABLE],
+            removed_orgs=removed_orgs,
+        )
         _insert_clickhouse_rows(
             clickhouse_client,
             database=RESOLVED_DATABASE,
             table=affected_stage_table,
             qualified_table=affected_stage_qualified,
-            columns=("org_number",),
+            columns=("org_number", "delete_email"),
             rows=affected_org_rows,
         )
         for table_name in ENTITY_CLICKHOUSE_TABLES:
+            registry_id_column = ENTITY_CLICKHOUSE_REGISTRY_ID_COLUMNS[table_name]
+            email_preservation_predicate = ""
+            if table_name == no_tables.NO_COMPANY_CONTACTS_TABLE:
+                email_preservation_predicate = (
+                    f" AND ({_quote_clickhouse_identifier('contact_type')} != 'email' OR "
+                    f"{_quote_clickhouse_identifier('registry_id')} IN "
+                    f"(SELECT {_quote_clickhouse_identifier('org_number')} "
+                    f"FROM {affected_stage_qualified} WHERE "
+                    f"{_quote_clickhouse_identifier('delete_email')} = 1))"
+                )
             clickhouse_client.execute(
                 f"ALTER TABLE {_quote_clickhouse_qualified_table(RESOLVED_DATABASE, table_name)} "
-                f"DELETE WHERE {_quote_clickhouse_identifier('org_number')} IN "
+                f"DELETE WHERE {_quote_clickhouse_identifier(registry_id_column)} IN "
                 f"(SELECT {_quote_clickhouse_identifier('org_number')} FROM {affected_stage_qualified}) "
+                f"{email_preservation_predicate} "
                 "SETTINGS mutations_sync = 1"
             )
 
@@ -251,7 +285,9 @@ def _load_frames_into_duckdb(
     connection: duckdb.DuckDBPyConnection,
     frames: dict[str, pl.DataFrame],
 ) -> None:
-    connection.execute(f"create schema {_quote_duckdb_identifier(ENTITY_CLICKHOUSE_DUCKDB_SCHEMA)}")
+    connection.execute(
+        f"create schema {_quote_duckdb_identifier(ENTITY_CLICKHOUSE_DUCKDB_SCHEMA)}"
+    )
     for table_name, frame in frames.items():
         _validate_frame_columns(table_name, frame)
         registered_name = f"_frame_{table_name}"
@@ -279,12 +315,33 @@ def _validate_frame_columns(table_name: str, frame: pl.DataFrame) -> None:
         )
 
 
-def _affected_org_rows(affected_orgs: pl.DataFrame) -> list[tuple[str]]:
-    return [
-        (str(org_number),)
-        for org_number in affected_orgs.get_column("org_number").drop_nulls().unique(
-            maintain_order=True
+def _affected_org_rows(
+    affected_orgs: pl.DataFrame,
+    *,
+    contact_replacements: pl.DataFrame,
+    removed_orgs: pl.DataFrame,
+) -> list[tuple[str, int]]:
+    email_delete_org_numbers = {
+        str(org_number)
+        for org_number in removed_orgs.get_column("org_number").drop_nulls()
+    }
+    if contact_replacements.height > 0:
+        email_delete_org_numbers.update(
+            str(registry_id)
+            for registry_id in contact_replacements.filter(
+                pl.col("contact_type") == "email"
+            )
+            .get_column("registry_id")
+            .drop_nulls()
         )
+    return [
+        (
+            str(org_number),
+            int(str(org_number) in email_delete_org_numbers),
+        )
+        for org_number in affected_orgs.get_column("org_number")
+        .drop_nulls()
+        .unique(maintain_order=True)
     ]
 
 
@@ -297,6 +354,8 @@ def _insert_clickhouse_rows(
     columns: tuple[str, ...],
     rows: list[tuple[object, ...]],
 ) -> None:
+    if not rows:
+        return
     insert_rows = getattr(clickhouse_client, "insert_rows", None)
     if callable(insert_rows):
         insert_rows(table, rows, columns=columns, database=database)
@@ -308,7 +367,9 @@ def _insert_clickhouse_rows(
     )
 
 
-def _validate_no_replacements_without_affected_orgs(frames: dict[str, pl.DataFrame]) -> None:
+def _validate_no_replacements_without_affected_orgs(
+    frames: dict[str, pl.DataFrame],
+) -> None:
     replacement_counts = _row_counts(frames)
     if any(count > 0 for count in replacement_counts.values()):
         raise ValueError(

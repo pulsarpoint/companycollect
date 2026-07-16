@@ -28,14 +28,19 @@ def test_norway_brreg_all_assets_registered() -> None:
     asset_names = {key.path[-1] for key in repo.asset_graph.get_all_asset_keys()}
 
     assert "norway_brreg_entries_snapshot_raw_s3" in asset_names
+    assert "norway_brreg_entries_snapshot_csv_raw_s3" in asset_names
     assert "norway_brreg_entities_snapshot_s3" in asset_names
     assert "norway_brreg_entity_updates_s3" in asset_names
     assert "norway_brreg_entities_snapshot_no_companies_parquet" in asset_names
+    assert "norway_brreg_entities_snapshot_no_company_contacts_parquet" in asset_names
+    assert "norway_brreg_entities_snapshot_no_company_addresses_parquet" in asset_names
     assert "norway_brreg_entities_snapshot_no_websites_parquet" in asset_names
     assert "norway_brreg_entities_snapshot_no_industries_parquet" in asset_names
     assert "norway_brreg_entities_snapshot_affected_orgs_parquet" in asset_names
     assert "norway_brreg_entities_snapshot_removed_orgs_parquet" in asset_names
     assert "norway_brreg_entity_updates_no_companies_parquet" in asset_names
+    assert "norway_brreg_entity_updates_no_company_contacts_parquet" in asset_names
+    assert "norway_brreg_entity_updates_no_company_addresses_parquet" in asset_names
     assert "norway_brreg_entity_updates_no_websites_parquet" in asset_names
     assert "norway_brreg_entity_updates_no_industries_parquet" in asset_names
     assert "norway_brreg_entity_updates_affected_orgs_parquet" in asset_names
@@ -85,7 +90,18 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     canonical_contacts_node = asset_graph.get(
         dg.AssetKey("norway_brreg_clickhouse_canonical_contacts")
     )
-    snapshot_raw_node = asset_graph.get(dg.AssetKey("norway_brreg_entries_snapshot_raw_s3"))
+    snapshot_raw_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_entries_snapshot_raw_s3")
+    )
+    snapshot_csv_raw_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_entries_snapshot_csv_raw_s3")
+    )
+    snapshot_contacts_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_entities_snapshot_no_company_contacts_parquet")
+    )
+    snapshot_addresses_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_entities_snapshot_no_company_addresses_parquet")
+    )
     snapshot_s3_node = asset_graph.get(dg.AssetKey("norway_brreg_entities_snapshot_s3"))
     snapshot_fetches_node = asset_graph.get(
         brreg_financial_assets.norway_brreg_financial_fetches_snapshot_parquet.key
@@ -114,11 +130,15 @@ def test_norway_brreg_asset_dependency_edges() -> None:
 
     assert {k.path[-1] for k in snapshot_clickhouse_node.parent_keys} == {
         "norway_brreg_entities_snapshot_no_companies_parquet",
+        "norway_brreg_entities_snapshot_no_company_contacts_parquet",
+        "norway_brreg_entities_snapshot_no_company_addresses_parquet",
         "norway_brreg_entities_snapshot_no_websites_parquet",
         "norway_brreg_entities_snapshot_no_industries_parquet",
     }
     assert {k.path[-1] for k in update_clickhouse_node.parent_keys} == {
         "norway_brreg_entity_updates_no_companies_parquet",
+        "norway_brreg_entity_updates_no_company_contacts_parquet",
+        "norway_brreg_entity_updates_no_company_addresses_parquet",
         "norway_brreg_entity_updates_no_websites_parquet",
         "norway_brreg_entity_updates_no_industries_parquet",
         "norway_brreg_entity_updates_affected_orgs_parquet",
@@ -138,6 +158,13 @@ def test_norway_brreg_asset_dependency_edges() -> None:
         "norway_brreg_entity_updates_clickhouse",
     }
     assert {k.path[-1] for k in snapshot_raw_node.parent_keys} == set()
+    assert {k.path[-1] for k in snapshot_csv_raw_node.parent_keys} == set()
+    assert {k.path[-1] for k in snapshot_contacts_node.parent_keys} == {
+        "norway_brreg_entries_snapshot_csv_raw_s3"
+    }
+    assert {k.path[-1] for k in snapshot_addresses_node.parent_keys} == {
+        "norway_brreg_entries_snapshot_csv_raw_s3"
+    }
     assert {k.path[-1] for k in snapshot_s3_node.parent_keys} == {
         "norway_brreg_entries_snapshot_raw_s3"
     }
@@ -188,8 +215,11 @@ def test_norway_brreg_entities_full_snapshot_job_membership() -> None:
     # parquet-backed full snapshot publish.
     assert refresh == {
         "norway_brreg_entries_snapshot_raw_s3",
+        "norway_brreg_entries_snapshot_csv_raw_s3",
         "norway_brreg_entities_snapshot_s3",
         "norway_brreg_entities_snapshot_no_companies_parquet",
+        "norway_brreg_entities_snapshot_no_company_contacts_parquet",
+        "norway_brreg_entities_snapshot_no_company_addresses_parquet",
         "norway_brreg_entities_snapshot_no_websites_parquet",
         "norway_brreg_entities_snapshot_no_industries_parquet",
         "norway_brreg_entities_snapshot_affected_orgs_parquet",
@@ -214,12 +244,16 @@ def test_norway_brreg_entity_updates_job_membership() -> None:
 
     update = {
         k.path[-1]
-        for k in repo.get_job("norway_brreg_entity_updates_job").asset_layer.executable_asset_keys
+        for k in repo.get_job(
+            "norway_brreg_entity_updates_job"
+        ).asset_layer.executable_asset_keys
     }
 
     assert update == {
         "norway_brreg_entity_updates_s3",
         "norway_brreg_entity_updates_no_companies_parquet",
+        "norway_brreg_entity_updates_no_company_contacts_parquet",
+        "norway_brreg_entity_updates_no_company_addresses_parquet",
         "norway_brreg_entity_updates_no_websites_parquet",
         "norway_brreg_entity_updates_no_industries_parquet",
         "norway_brreg_entity_updates_affected_orgs_parquet",
@@ -274,7 +308,9 @@ def test_norway_brreg_financial_updates_job_membership() -> None:
 
 def test_norway_brreg_resources_are_wired() -> None:
     """Norway Brreg uses API and parquet storage resources, not the old DuckDB resource."""
-    top_level_resources = load_project_defs().get_repository_def().get_top_level_resources()
+    top_level_resources = (
+        load_project_defs().get_repository_def().get_top_level_resources()
+    )
 
     assert "norway_brreg_duckdb" not in top_level_resources
     assert "norway_brreg_api" in top_level_resources
@@ -283,7 +319,10 @@ def test_norway_brreg_resources_are_wired() -> None:
         is NorwayBrregApiResource
     )
     assert "object_store" in top_level_resources
-    assert top_level_resources["object_store"].configurable_resource_cls is ObjectStoreResource
+    assert (
+        top_level_resources["object_store"].configurable_resource_cls
+        is ObjectStoreResource
+    )
     assert "norway_brreg_entity_storage" in top_level_resources
     assert (
         top_level_resources["norway_brreg_entity_storage"].configurable_resource_cls

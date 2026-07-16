@@ -5,6 +5,8 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource
 
+from dagster_v3.defs.translator_load.resource import TranslatorResource
+
 
 @dg.definitions
 def defs() -> dg.Definitions:
@@ -21,6 +23,12 @@ def defs() -> dg.Definitions:
                     secure=_bool_env("CLICKHOUSE_SECURE", False),
                 ),
                 "dlt": DagsterDltResource(),
+                "translator": TranslatorResource(
+                    base_url=os.getenv(
+                        "TRANSLATOR_API_URL",
+                        "http://localhost:8080",
+                    )
+                ),
             },
         ),
     )

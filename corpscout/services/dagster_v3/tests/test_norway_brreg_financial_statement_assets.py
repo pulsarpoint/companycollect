@@ -440,9 +440,7 @@ def test_snapshot_clickhouse_publish_exports_date_columns_as_arrow_dates() -> No
     assert pa.types.is_date(arrow_table.schema.field("fx_rate_date").type)
 
 
-def test_update_clickhouse_publish_deletes_affected_orgs_then_inserts_replacements() -> (
-    None
-):
+def test_update_clickhouse_publish_replaces_only_matching_statement_keys() -> None:
     storage = FakeFinancialStorage(
         update_usd_statements={
             "2026-06-30": _financial_frame(
@@ -481,13 +479,20 @@ def test_update_clickhouse_publish_deletes_affected_orgs_then_inserts_replacemen
     assert len(delete_positions) == 1
     assert len(insert_positions) == 1
     assert max(delete_positions) < min(insert_positions)
+    delete_sql = client.events[delete_positions[0]][0]
+    assert "(`source_system`, `source_record_id`) IN" in delete_sql
+    assert "`org_number`" not in delete_sql
+    assert len(client.row_insert_calls) == 1
+    _database, stage_table, key_rows, key_columns = client.row_insert_calls[0]
+    assert stage_table.startswith("_tmp_no_financial_statement_keys_")
+    assert key_rows == [(financial_normalize.FINANCIAL_SOURCE_SLUG, "5667197")]
+    assert key_columns == ("source_system", "source_record_id")
     assert result.metadata["affected_org_count"] == 1
+    assert result.metadata["replacement_statement_key_count"] == 1
     assert result.metadata["row_count"] == 1
 
 
-def test_update_clickhouse_publish_deletes_affected_orgs_even_without_replacements() -> (
-    None
-):
+def test_update_clickhouse_publish_preserves_statements_without_replacements() -> None:
     storage = FakeFinancialStorage(
         update_usd_statements={"2026-06-30": _empty_financial_frame()}
     )
@@ -505,7 +510,7 @@ def test_update_clickhouse_publish_deletes_affected_orgs_even_without_replacemen
         norway_brreg_financial_storage=storage,
     )
 
-    assert any(
+    assert not any(
         sql.startswith("ALTER TABLE `corpscout`.`no_financial_statements`")
         for sql, _params in client.events
     )
@@ -514,6 +519,7 @@ def test_update_clickhouse_publish_deletes_affected_orgs_even_without_replacemen
         for sql, _params in client.events
     )
     assert result.metadata["affected_org_count"] == 1
+    assert result.metadata["replacement_statement_key_count"] == 0
     assert result.metadata["row_count"] == 0
 
 
@@ -540,6 +546,7 @@ def test_update_clickhouse_publish_skips_empty_affected_org_partitions() -> None
         for sql, _params in client.events
     )
     assert result.metadata["affected_org_count"] == 0
+    assert result.metadata["replacement_statement_key_count"] == 0
     assert result.metadata["row_count"] == 0
 
 

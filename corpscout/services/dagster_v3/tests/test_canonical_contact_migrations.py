@@ -5,7 +5,7 @@ from tests.canonical_contact_tables import (
     assert_canonical_domains_ddl,
 )
 
-_MIGRATIONS = Path(__file__).joinpath("../../../clickhouse/migrations").resolve()
+_MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 
 
 def _read(pattern: str) -> str:

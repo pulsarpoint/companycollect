@@ -11,6 +11,8 @@ from dagster_v3.defs.norway_brreg.assets.entity_normalized import (
     norway_brreg_entities_snapshot_normalized_parquets,
     norway_brreg_entity_updates_normalized_parquets,
     normalize_entity_records_to_no_companies,
+    normalize_entity_records_to_no_company_addresses,
+    normalize_entity_records_to_no_company_contacts,
     normalize_entity_records_to_no_industries,
     normalize_entity_records_to_no_websites,
 )
@@ -22,6 +24,8 @@ from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
 from dagster_v3.defs.norway_brreg.entity_storage import (
     ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
     ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
+    ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES,
+    ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS,
     ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES,
     ENTITY_NORMALIZED_TABLE_NO_WEBSITES,
     ENTITY_NORMALIZED_TABLE_REMOVED_ORGS,
@@ -78,7 +82,9 @@ class FakeEntityStorage:
         return f"updates/{partition_date}/{table_name}.parquet"
 
 
-def test_storage_resource_reads_raw_snapshot_and_writes_named_normalized_table() -> None:
+def test_storage_resource_reads_raw_snapshot_and_writes_named_normalized_table() -> (
+    None
+):
     object_store = FakeObjectStore()
     raw_frame = _raw_snapshot_frame()
     object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())] = (
@@ -93,9 +99,7 @@ def test_storage_resource_reads_raw_snapshot_and_writes_named_normalized_table()
         pl.DataFrame([{"org_number": "1000"}]),
     )
 
-    assert key == (
-        "norway_brreg/entities/normalized/snapshot/no_companies.parquet"
-    )
+    assert key == ("norway_brreg/entities/normalized/snapshot/no_companies.parquet")
     assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
     assert pl.read_parquet(
         BytesIO(object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, key)])
@@ -105,7 +109,9 @@ def test_storage_resource_reads_raw_snapshot_and_writes_named_normalized_table()
     ).to_dicts() == [{"org_number": "1000"}]
 
 
-def test_update_storage_resource_writes_named_normalized_table_against_object_store() -> None:
+def test_update_storage_resource_writes_named_normalized_table_against_object_store() -> (
+    None
+):
     object_store = FakeObjectStore()
     storage = NorwayBrregEntityParquetStorageResource(object_store=object_store)
 
@@ -196,6 +202,116 @@ def test_normalize_entity_records_to_no_tables_matches_clickhouse_shapes() -> No
             "source_system": "norway_brregenhet",
             "source_run_id": "run-1",
             "source_record_id": "2000",
+        },
+    ]
+
+    no_company_contacts = normalize_entity_records_to_no_company_contacts(
+        raw_frame,
+        source_run_id="run-1",
+        resolved_at=resolved_at,
+    )
+    assert no_company_contacts.columns == list(
+        no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_COMPANY_CONTACTS_TABLE]
+    )
+    assert no_company_contacts.select(
+        [
+            "registry_id",
+            "contact_type",
+            "contact_type_raw",
+            "contact_value",
+            "source_field",
+            "source_slug",
+            "source_url",
+            "is_current",
+        ]
+    ).to_dicts() == [
+        {
+            "registry_id": "1000",
+            "contact_type": "website",
+            "contact_type_raw": "hjemmeside",
+            "contact_value": "WWW.ActiveOne.NO/about",
+            "source_field": "hjemmeside",
+            "source_slug": "norway_brreg",
+            "source_url": "https://data.brreg.no/enheter/1000",
+            "is_current": True,
+        },
+        {
+            "registry_id": "1000",
+            "contact_type": "email",
+            "contact_type_raw": "epostadresse",
+            "contact_value": "post@activeone.no",
+            "source_field": "epostadresse",
+            "source_slug": "norway_brreg",
+            "source_url": "https://data.brreg.no/enheter/1000",
+            "is_current": True,
+        },
+        {
+            "registry_id": "1000",
+            "contact_type": "phone",
+            "contact_type_raw": "telefon",
+            "contact_value": "51 68 57 00",
+            "source_field": "telefon",
+            "source_slug": "norway_brreg",
+            "source_url": "https://data.brreg.no/enheter/1000",
+            "is_current": True,
+        },
+        {
+            "registry_id": "1000",
+            "contact_type": "mobile",
+            "contact_type_raw": "mobil",
+            "contact_value": "900 00 001",
+            "source_field": "mobil",
+            "source_slug": "norway_brreg",
+            "source_url": "https://data.brreg.no/enheter/1000",
+            "is_current": True,
+        },
+    ]
+
+    no_company_addresses = normalize_entity_records_to_no_company_addresses(
+        raw_frame,
+        source_run_id="run-1",
+        resolved_at=resolved_at,
+    )
+    assert no_company_addresses.columns == list(
+        no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_COMPANY_ADDRESSES_TABLE]
+    )
+    assert no_company_addresses.select(
+        [
+            "registry_id",
+            "address_type",
+            "address_lines",
+            "postal_code",
+            "city",
+            "municipality",
+            "municipality_code",
+            "country",
+            "country_code",
+            "source_field",
+        ]
+    ).to_dicts() == [
+        {
+            "registry_id": "1000",
+            "address_type": "business",
+            "address_lines": "Forusbeen 50\nBuilding B",
+            "postal_code": "4035",
+            "city": "STAVANGER",
+            "municipality": "STAVANGER",
+            "municipality_code": "1103",
+            "country": "Norge",
+            "country_code": "NO",
+            "source_field": "forretningsadresse",
+        },
+        {
+            "registry_id": "1000",
+            "address_type": "postal",
+            "address_lines": "Postboks 100",
+            "postal_code": "4001",
+            "city": "STAVANGER",
+            "municipality": None,
+            "municipality_code": None,
+            "country": "Norge",
+            "country_code": "NO",
+            "source_field": "postadresse",
         },
     ]
 
@@ -297,7 +413,9 @@ def test_normalize_entity_records_nulls_dates_outside_clickhouse_range() -> None
         resolved_at=datetime(2026, 6, 30, tzinfo=UTC),
     )
 
-    assert no_companies.select(["registration_date", "incorporation_date"]).to_dicts() == [
+    assert no_companies.select(
+        ["registration_date", "incorporation_date"]
+    ).to_dicts() == [
         {
             "registration_date": None,
             "incorporation_date": None,
@@ -305,7 +423,9 @@ def test_normalize_entity_records_nulls_dates_outside_clickhouse_range() -> None
     ]
 
 
-def test_snapshot_multi_asset_reads_raw_once_and_materializes_all_table_parquets() -> None:
+def test_snapshot_multi_asset_reads_raw_once_and_materializes_all_table_parquets() -> (
+    None
+):
     storage = FakeEntityStorage(_raw_snapshot_frame())
     context = dg.build_asset_context()
 
@@ -332,7 +452,8 @@ def test_snapshot_multi_asset_reads_raw_once_and_materializes_all_table_parquets
         ENTITY_NORMALIZED_TABLE_REMOVED_ORGS,
     }
     assert {
-        result.metadata["table_name"]: result.metadata["row_count"] for result in results
+        result.metadata["table_name"]: result.metadata["row_count"]
+        for result in results
     } == {
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES: 2,
         ENTITY_NORMALIZED_TABLE_NO_WEBSITES: 1,
@@ -342,7 +463,9 @@ def test_snapshot_multi_asset_reads_raw_once_and_materializes_all_table_parquets
     }
 
 
-def test_update_multi_asset_reads_raw_once_and_materializes_replacements_and_removed_orgs() -> None:
+def test_update_multi_asset_reads_raw_once_and_materializes_replacements_and_removed_orgs() -> (
+    None
+):
     storage = FakeEntityStorage(_raw_update_frame())
     context = dg.build_asset_context(partition_key="2026-06-29")
 
@@ -356,15 +479,21 @@ def test_update_multi_asset_reads_raw_once_and_materializes_replacements_and_rem
     assert storage.update_read_calls == ["2026-06-29"]
     assert {result.asset_key.path[-1] for result in results} == {
         "norway_brreg_entity_updates_no_companies_parquet",
+        "norway_brreg_entity_updates_no_company_contacts_parquet",
+        "norway_brreg_entity_updates_no_company_addresses_parquet",
         "norway_brreg_entity_updates_no_websites_parquet",
         "norway_brreg_entity_updates_no_industries_parquet",
         "norway_brreg_entity_updates_affected_orgs_parquet",
         "norway_brreg_entity_updates_removed_orgs_parquet",
     }
-    assert storage.update_writes[("2026-06-29", ENTITY_NORMALIZED_TABLE_NO_COMPANIES)].select(
-        ["org_number", "name"]
-    ).to_dicts() == [{"org_number": "1000", "name": "Active One AS"}]
-    assert storage.update_writes[("2026-06-29", ENTITY_NORMALIZED_TABLE_REMOVED_ORGS)].to_dicts() == [
+    assert storage.update_writes[
+        ("2026-06-29", ENTITY_NORMALIZED_TABLE_NO_COMPANIES)
+    ].select(["org_number", "name"]).to_dicts() == [
+        {"org_number": "1000", "name": "Active One AS"}
+    ]
+    assert storage.update_writes[
+        ("2026-06-29", ENTITY_NORMALIZED_TABLE_REMOVED_ORGS)
+    ].to_dicts() == [
         {
             "org_number": "3000",
             "change_type": "removed",
@@ -374,9 +503,12 @@ def test_update_multi_asset_reads_raw_once_and_materializes_replacements_and_rem
         }
     ]
     assert {
-        result.metadata["table_name"]: result.metadata["row_count"] for result in results
+        result.metadata["table_name"]: result.metadata["row_count"]
+        for result in results
     } == {
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES: 1,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS: 4,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES: 2,
         ENTITY_NORMALIZED_TABLE_NO_WEBSITES: 1,
         ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES: 2,
         ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS: 2,
@@ -426,7 +558,10 @@ def _raw_update_frame() -> pl.DataFrame:
                     "update_id": 10,
                     "entity_url": "https://data.brreg.no/enhetsregisteret/api/enheter/1000",
                     "entity": _active_entity(),
-                    "raw_update": {"organisasjonsnummer": "1000", "endringstype": "Endring"},
+                    "raw_update": {
+                        "organisasjonsnummer": "1000",
+                        "endringstype": "Endring",
+                    },
                 },
                 {
                     "org_number": "3000",
@@ -436,7 +571,10 @@ def _raw_update_frame() -> pl.DataFrame:
                     "update_id": 11,
                     "entity_url": "https://data.brreg.no/enhetsregisteret/api/enheter/3000",
                     "entity": None,
-                    "raw_update": {"organisasjonsnummer": "3000", "endringstype": "Fjernet"},
+                    "raw_update": {
+                        "organisasjonsnummer": "3000",
+                        "endringstype": "Fjernet",
+                    },
                 },
             ],
             allow_empty=True,
@@ -461,6 +599,25 @@ def _active_entity() -> dict[str, object]:
         "registreringsdatoEnhetsregisteret": "2020-01-02",
         "stiftelsesdato": "2020-01-01",
         "hjemmeside": "WWW.ActiveOne.NO/about",
+        "epostadresse": "post@activeone.no",
+        "telefon": "51 68 57 00",
+        "mobil": "900 00 001",
+        "forretningsadresse": {
+            "adresse": ["Forusbeen 50", "Building B"],
+            "postnummer": "4035",
+            "poststed": "STAVANGER",
+            "kommune": "STAVANGER",
+            "kommunenummer": "1103",
+            "land": "Norge",
+            "landkode": "NO",
+        },
+        "postadresse": {
+            "adresse": ["Postboks 100"],
+            "postnummer": "4001",
+            "poststed": "STAVANGER",
+            "land": "Norge",
+            "landkode": "NO",
+        },
         "organisasjonsform": {"kode": "AS", "beskrivelse": "Aksjeselskap"},
         "naeringskode1": {"kode": "62.010", "beskrivelse": "Programmeringstjenester"},
         "naeringskode2": {"kode": "70.100", "beskrivelse": "Hovedkontortjenester"},

@@ -17,7 +17,6 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 from dagster_v3.defs.norway_brreg_financial import financial_normalize
 from dagster_v3.defs.norway_brreg.assets.entity_clickhouse import (
-    _affected_org_rows,
     _drop_affected_stage_table,
     _insert_clickhouse_rows,
     _quote_clickhouse_identifier,
@@ -53,6 +52,10 @@ FINANCIAL_STATEMENT_COLUMNS = no_tables.RESOLVED_EXPORT_COLUMNS[
     FINANCIAL_STATEMENTS_TABLE
 ]
 FINANCIAL_STATEMENTS_DUCKDB_SCHEMA = "norway_brreg_financial_publish"
+FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS = (
+    "source_system",
+    "source_record_id",
+)
 
 FINANCIAL_STATEMENT_SCHEMA = {
     "country_iso2": pl.Utf8,
@@ -354,8 +357,8 @@ def norway_brreg_financial_statements_snapshot_clickhouse(
     partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description=(
-        "Deletes affected Norway org financial rows from ClickHouse and appends "
-        "replacement rows from one update USD parquet partition."
+        "Replaces only the Norway financial statement records present in one "
+        "update USD parquet partition and preserves all other filings."
     ),
 )
 def norway_brreg_financial_statements_updates_clickhouse(
@@ -384,15 +387,17 @@ def norway_brreg_financial_statements_updates_clickhouse(
         )
     context.log.info(
         "Completed Norway Brreg update financial statements ClickHouse publish: "
-        "partition=%s affected_orgs=%d rows=%d",
+        "partition=%s affected_orgs=%d replacement_keys=%d rows=%d",
         partition_date,
         counts["affected_orgs"],
+        counts["replacement_statement_keys"],
         counts[FINANCIAL_STATEMENTS_TABLE],
     )
     return dg.MaterializeResult(
         metadata={
             "partition_date": partition_date,
             "affected_org_count": counts["affected_orgs"],
+            "replacement_statement_key_count": counts["replacement_statement_keys"],
             "row_count": counts[FINANCIAL_STATEMENTS_TABLE],
         }
     )
@@ -458,43 +463,56 @@ def apply_financial_statement_update_parquet_to_clickhouse(
         ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
     )
     frame = financial_storage.read_update_usd_statements(partition_date)
+    _validate_financial_frame_columns(frame)
+    replacement_key_rows = _financial_statement_replacement_key_rows(frame)
     row_counts = {
         "affected_orgs": affected_orgs.height,
+        "replacement_statement_keys": len(replacement_key_rows),
         FINANCIAL_STATEMENTS_TABLE: frame.height,
     }
-    if affected_orgs.height < 1:
-        _validate_no_financial_replacements_without_affected_orgs(frame)
+    if not replacement_key_rows:
         _log(
             log,
-            "Norway Brreg financial update partition %s has no affected orgs; "
-            "skipping ClickHouse changes",
+            "Norway Brreg financial update partition %s has no replacement "
+            "statements; preserving existing ClickHouse rows",
             partition_date,
         )
         return row_counts
 
-    affected_stage_table = f"_tmp_no_financial_affected_orgs_{uuid.uuid4().hex}"
-    affected_stage_qualified = _quote_clickhouse_qualified_table(
+    if affected_orgs.height < 1:
+        _validate_no_financial_replacements_without_affected_orgs(frame)
+
+    replacement_stage_table = f"_tmp_no_financial_statement_keys_{uuid.uuid4().hex}"
+    replacement_stage_qualified = _quote_clickhouse_qualified_table(
         RESOLVED_DATABASE,
-        affected_stage_table,
+        replacement_stage_table,
+    )
+    quoted_key_columns = ", ".join(
+        _quote_clickhouse_identifier(column)
+        for column in FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS
+    )
+    replacement_key_columns_ddl = ", ".join(
+        f"{_quote_clickhouse_identifier(column)} String"
+        for column in FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS
     )
     clickhouse_client.execute(
-        f"CREATE TABLE {affected_stage_qualified} "
-        f"({_quote_clickhouse_identifier('org_number')} String) ENGINE = Memory"
+        f"CREATE TABLE {replacement_stage_qualified} "
+        f"({replacement_key_columns_ddl}) ENGINE = Memory"
     )
     primary_error: Exception | None = None
     try:
         _insert_clickhouse_rows(
             clickhouse_client,
             database=RESOLVED_DATABASE,
-            table=affected_stage_table,
-            qualified_table=affected_stage_qualified,
-            columns=("org_number",),
-            rows=_affected_org_rows(affected_orgs),
+            table=replacement_stage_table,
+            qualified_table=replacement_stage_qualified,
+            columns=FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS,
+            rows=replacement_key_rows,
         )
         clickhouse_client.execute(
             f"ALTER TABLE {_quote_clickhouse_qualified_table(RESOLVED_DATABASE, FINANCIAL_STATEMENTS_TABLE)} "
-            f"DELETE WHERE {_quote_clickhouse_identifier('org_number')} IN "
-            f"(SELECT {_quote_clickhouse_identifier('org_number')} FROM {affected_stage_qualified}) "
+            f"DELETE WHERE ({quoted_key_columns}) IN "
+            f"(SELECT {quoted_key_columns} FROM {replacement_stage_qualified}) "
             "SETTINGS mutations_sync = 1"
         )
 
@@ -518,7 +536,7 @@ def apply_financial_statement_update_parquet_to_clickhouse(
     finally:
         _drop_affected_stage_table(
             clickhouse_client,
-            affected_stage_qualified,
+            replacement_stage_qualified,
             suppress_errors=primary_error is not None,
         )
     return row_counts
@@ -619,6 +637,28 @@ def _validate_financial_frame_columns(frame: pl.DataFrame) -> None:
             "Norway Brreg financial statement parquet is missing columns: "
             + ", ".join(missing_columns)
         )
+
+
+def _financial_statement_replacement_key_rows(
+    frame: pl.DataFrame,
+) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    unique_keys = frame.select(FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS).unique(
+        maintain_order=True
+    )
+    for source_system, source_record_id in unique_keys.iter_rows():
+        if (
+            not isinstance(source_system, str)
+            or source_system.strip() == ""
+            or not isinstance(source_record_id, str)
+            or source_record_id.strip() == ""
+        ):
+            raise ValueError(
+                "Norway Brreg financial statement replacement keys must contain "
+                "non-empty source_system and source_record_id values"
+            )
+        rows.append((source_system, source_record_id))
+    return rows
 
 
 def _validate_no_financial_replacements_without_affected_orgs(

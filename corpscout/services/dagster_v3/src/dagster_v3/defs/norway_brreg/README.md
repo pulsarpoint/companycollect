@@ -24,6 +24,7 @@ Full company bootstrap uses:
 
 ```text
 GET /enheter/lastned
+GET /enheter/lastned/csv
 ```
 
 In code this is `NorwayBrregApiResource.entries_snapshot()`. The method checks
@@ -46,10 +47,16 @@ entity
 raw_update = null
 ```
 
+The CSV archive is retained separately because it contains `epostadresse`, which
+is not exposed by the entity JSON endpoint. DuckDB reads the compressed CSV and
+produces the complete contact and address snapshot without loading the archive
+into Python memory.
+
 Raw backup Dagster asset:
 
 ```text
 norway_brreg_entries_snapshot_raw_s3
+norway_brreg_entries_snapshot_csv_raw_s3
 ```
 
 Raw backup object:
@@ -57,6 +64,7 @@ Raw backup object:
 ```text
 bucket: source-norway-brreg
 key: norway_brreg/entities/raw/snapshot/entities.json.gz
+key: norway_brreg/entities/raw/snapshot/entities.csv.gz
 ```
 
 Parquet Dagster asset:
@@ -163,6 +171,8 @@ shapes:
 
 ```text
 no_companies
+no_company_contacts
+no_company_addresses
 no_websites
 no_industries
 affected_orgs
@@ -173,6 +183,8 @@ Snapshot normalized outputs:
 
 ```text
 norway_brreg/entities/normalized/snapshot/no_companies.parquet
+norway_brreg/entities/normalized/snapshot/no_company_contacts.parquet
+norway_brreg/entities/normalized/snapshot/no_company_addresses.parquet
 norway_brreg/entities/normalized/snapshot/no_websites.parquet
 norway_brreg/entities/normalized/snapshot/no_industries.parquet
 norway_brreg/entities/normalized/snapshot/affected_orgs.parquet
@@ -183,6 +195,8 @@ Daily update normalized outputs:
 
 ```text
 norway_brreg/entities/normalized/updates/date=YYYY-MM-DD/no_companies.parquet
+norway_brreg/entities/normalized/updates/date=YYYY-MM-DD/no_company_contacts.parquet
+norway_brreg/entities/normalized/updates/date=YYYY-MM-DD/no_company_addresses.parquet
 norway_brreg/entities/normalized/updates/date=YYYY-MM-DD/no_websites.parquet
 norway_brreg/entities/normalized/updates/date=YYYY-MM-DD/no_industries.parquet
 norway_brreg/entities/normalized/updates/date=YYYY-MM-DD/affected_orgs.parquet
@@ -193,6 +207,8 @@ The normalized company tables are then published to ClickHouse:
 
 ```text
 corpscout.no_companies
+corpscout.no_company_contacts
+corpscout.no_company_addresses
 corpscout.no_websites
 corpscout.no_industries
 ```
@@ -200,6 +216,13 @@ corpscout.no_industries
 The full snapshot path replaces those tables. The daily update path deletes
 affected org numbers from ClickHouse and inserts replacement rows from the
 partition parquet files.
+
+`no_company_contacts` stores one row per nonblank `hjemmeside`, `epostadresse`,
+`telefon`, or `mobil`. `no_company_addresses` stores separate `business`
+(`forretningsadresse`) and `postal` (`postadresse`) rows with address lines,
+postal town/code, municipality name/code, and country name/code. Daily JSON
+updates preserve bulk-only email rows unless the company is removed or the
+update source supplies a replacement email.
 
 ## Dagster Jobs
 
@@ -212,7 +235,8 @@ norway_brreg_entities_full_snapshot_job
 This job pulls/reuses the full company snapshot, normalizes it, publishes the
 company tables to ClickHouse, and runs the translation loader
 (`norway_brreg_translation_load`), which enqueues untranslated text to the Go
-translator service.
+translator service and waits until translated output is flushed. Queue failures
+or a processing timeout fail the Dagster job.
 
 Daily update job:
 

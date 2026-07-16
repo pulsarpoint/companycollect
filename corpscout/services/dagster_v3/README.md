@@ -36,10 +36,13 @@ every ClickHouse export does — a re-export only creates work for genuinely new
 
 ## The loader pattern
 
-Shared loader helpers live in `src/dagster_v3/defs/translator_load/loader.py`;
-each source defines its own translation asset in `defs/<source>/translation.py`
+The explicit translator HTTP resource lives in
+`src/dagster_v3/defs/translator_load/resource.py`; ClickHouse scan/static-insert
+helpers live in `translator_load/loader.py`. Each source defines its own translation asset in
+`defs/<source>/translation.py`
 (`norway_brreg_translation_load`, `latvia_ur_translation_load`), each downstream of that source's
-ClickHouse publish asset. The shared contract (`loader.py`):
+ClickHouse publish asset. The asset body visibly performs the scan, API enqueue, and optional
+static insert. The contract is:
 
 1. **Anti-join scan** — `SELECT DISTINCT` untranslated texts for one `(table, column)` by
    LEFT ANTI JOIN against `corpscout.text_translations`. **Loaders own dedup**: the service's queue
@@ -51,7 +54,11 @@ ClickHouse publish asset. The shared contract (`loader.py`):
    pair declared once per request and `source_text_hash` sent as a **decimal string** (uint64
    exceeds JSON's safe integer range). The first successful enqueue signal-with-starts the
    service's Temporal workflow; no separate trigger is needed.
-4. **Static maps direct-insert** — statically mapped columns (e.g. Norway legal forms) skip the
+4. **Completion gate** — after enqueueing, the asset polls `/v1/queue/stats` until the queue is
+   fully drained and flushed. Any failed item, workflow-start warning, or completion timeout fails
+   the Dagster step, so a green materialization means translation completed rather than merely
+   being accepted by the API.
+5. **Static maps direct-insert** — statically mapped columns (e.g. Norway legal forms) skip the
    queue: the loader joins the key column against an in-loader code→EN dict and inserts the rows
    straight into `text_translations` with `provider='static'`.
 
@@ -62,9 +69,11 @@ trusted, developer-authored code and must never be built from untrusted input.
 
 1. Ensure the base table carries `<field>_original` columns and a `<source>_translated` join view
    exists (mirror `corpscout.no_companies_translated`; migrations own the schema).
-2. Add a `LoaderSource` (and any static map) to
-   `defs/<source>/translation.py`, plus a loader asset downstream of the source's
-   ClickHouse publish asset.
+2. Add the source language constants, translated fields, and optional static map to
+   `defs/<source>/translation.py`. The asset must accept `translator: TranslatorResource`, call
+   `translator.enqueue_translation_rows(...)`, wait with
+   `translator.wait_for_queue_completion()`, and be downstream of the source's ClickHouse publish
+   asset.
 3. Wire the loader into the source's full-refresh job selection if it should run per refresh
    (see `norway_brreg_entities_full_snapshot_job`).
 
@@ -80,7 +89,8 @@ The service needs no per-source configuration — it only ever sees
   `{"input": N, "pending": N, "output": N, "failed": N}`.
 - **Manual kick**: `curl -s -X POST http://localhost:8080/v1/queue/process` (normally unnecessary —
   enqueue and boot-resume start the workflow automatically).
-- **Environment**: the loader assets read `TRANSLATOR_API_URL` (default `http://localhost:8080`).
+- **Environment**: the shared Dagster resource reads `TRANSLATOR_API_URL` (default
+  `http://localhost:8080`).
 
 ## Monitoring the cache
 

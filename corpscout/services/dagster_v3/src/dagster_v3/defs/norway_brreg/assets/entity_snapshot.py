@@ -22,6 +22,9 @@ from dagster_v3.defs.norway_brreg.entity_parquet import entity_record_parquet_ro
 from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 
 ENTRIES_SNAPSHOT_RAW_OBJECT_KEY = "norway_brreg/entities/raw/snapshot/entities.json.gz"
+ENTRIES_SNAPSHOT_CSV_RAW_OBJECT_KEY = (
+    "norway_brreg/entities/raw/snapshot/entities.csv.gz"
+)
 ENTITY_SNAPSHOT_OBJECT_KEY = "norway_brreg/entities/snapshot/entities.parquet"
 EMPTY_SNAPSHOT_ERROR_MESSAGE = "Norway Brreg entity snapshot produced no rows"
 PARQUET_BATCH_SIZE = 10_000
@@ -55,6 +58,29 @@ def norway_brreg_entries_snapshot_raw_s3(
         s3=s3,
         bucket=NORWAY_BRREG_ENTITY_BUCKET,
         key=entries_snapshot_raw_object_key(),
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=metadata)
+
+
+@dg.asset(
+    name="norway_brreg_entries_snapshot_csv_raw_s3",
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "csv", "gzip", "brreg"},
+    description=(
+        "Backs up the BRREG entity CSV snapshot containing bulk-only contact fields, "
+        "including epostadresse, to S3."
+    ),
+)
+def norway_brreg_entries_snapshot_csv_raw_s3(
+    context,
+    norway_brreg_api: NorwayBrregApiResource,
+    s3: S3Resource,
+) -> dg.MaterializeResult:
+    metadata = norway_brreg_api.entries_snapshot_csv(
+        s3=s3,
+        bucket=NORWAY_BRREG_ENTITY_BUCKET,
+        key=entries_snapshot_csv_raw_object_key(),
         log=context.log.info,
     )
     return dg.MaterializeResult(metadata=metadata)
@@ -98,7 +124,9 @@ def norway_brreg_entities_snapshot_s3(
             raise ValueError(EMPTY_SNAPSHOT_ERROR_MESSAGE)
 
         object_store.ensure_bucket(NORWAY_BRREG_ENTITY_BUCKET)
-        object_store.upload_file(parquet_key, parquet_path, bucket=NORWAY_BRREG_ENTITY_BUCKET)
+        object_store.upload_file(
+            parquet_key, parquet_path, bucket=NORWAY_BRREG_ENTITY_BUCKET
+        )
         parquet_size_bytes = parquet_path.stat().st_size
 
     context.log.info(
@@ -121,6 +149,10 @@ def norway_brreg_entities_snapshot_s3(
 
 def entries_snapshot_raw_object_key() -> str:
     return ENTRIES_SNAPSHOT_RAW_OBJECT_KEY
+
+
+def entries_snapshot_csv_raw_object_key() -> str:
+    return ENTRIES_SNAPSHOT_CSV_RAW_OBJECT_KEY
 
 
 def entity_snapshot_object_key() -> str:

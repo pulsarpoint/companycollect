@@ -24,7 +24,9 @@ BRREG_ENTITIES_COLUMNS: dict[str, dict[str, Any]] = {
     "registration_date": {"data_type": "text"},
     "incorporation_date": {"data_type": "text"},
     "website": {"data_type": "text"},
+    "email": {"data_type": "text"},
     "phone": {"data_type": "text"},
+    "mobile": {"data_type": "text"},
     "nace1_code": {"data_type": "text"},
     "nace1_description_original": {"data_type": "text"},
     "nace1_description_en": {"data_type": "text"},
@@ -45,7 +47,15 @@ BRREG_ENTITIES_COLUMNS: dict[str, dict[str, Any]] = {
     "business_city": {"data_type": "text"},
     "business_municipality": {"data_type": "text"},
     "business_municipality_code": {"data_type": "text"},
+    "business_country": {"data_type": "text"},
     "business_country_code": {"data_type": "text"},
+    "postal_address_lines": {"data_type": "text"},
+    "postal_postal_code": {"data_type": "text"},
+    "postal_city": {"data_type": "text"},
+    "postal_municipality": {"data_type": "text"},
+    "postal_municipality_code": {"data_type": "text"},
+    "postal_country": {"data_type": "text"},
+    "postal_country_code": {"data_type": "text"},
     "is_vat_registered": {"data_type": "bool"},
     "is_enterprise_register_registered": {"data_type": "bool"},
     "is_group_member": {"data_type": "bool"},
@@ -74,7 +84,9 @@ COMPANIES_COLUMNS = (
     "registration_date",
     "incorporation_date",
     "website",
+    "email",
     "phone",
+    "mobile",
     "nace1_code",
     "nace1_description_original",
     "nace1_description_en",
@@ -95,7 +107,15 @@ COMPANIES_COLUMNS = (
     "business_city",
     "business_municipality",
     "business_municipality_code",
+    "business_country",
     "business_country_code",
+    "postal_address_lines",
+    "postal_postal_code",
+    "postal_city",
+    "postal_municipality",
+    "postal_municipality_code",
+    "postal_country",
+    "postal_country_code",
     "is_vat_registered",
     "is_enterprise_register_registered",
     "is_group_member",
@@ -177,16 +197,16 @@ CLICKHOUSE_EXCLUDED_COLUMNS = frozenset(
 
 
 def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(column for column in columns if column not in CLICKHOUSE_EXCLUDED_COLUMNS)
+    return tuple(
+        column for column in columns if column not in CLICKHOUSE_EXCLUDED_COLUMNS
+    )
 
 
 # Free-text _en columns are supplied by the translator service via the
 # corpscout.norway_companies_translated view (migration 000058 drops them from the
 # base companies table). They are no longer exported from DuckDB. The 4 reference
 # _en columns (legal_form/nace) stay — they are populated by reference-data joins.
-COMPANIES_TRANSLATED_EN_COLUMNS = frozenset(
-    {"articles_purpose_en", "activity_text_en"}
-)
+COMPANIES_TRANSLATED_EN_COLUMNS = frozenset({"articles_purpose_en", "activity_text_en"})
 
 COMPANIES_EXPORT_COLUMNS = tuple(
     column
@@ -213,7 +233,9 @@ CREATE TABLE IF NOT EXISTS {QUALIFIED_COMPANIES_TABLE}
     registration_date String,
     incorporation_date String,
     website String,
+    email String,
     phone String,
+    mobile String,
     nace1_code String,
     nace1_description_original String,
     nace1_description_en String,
@@ -234,7 +256,15 @@ CREATE TABLE IF NOT EXISTS {QUALIFIED_COMPANIES_TABLE}
     business_city String,
     business_municipality String,
     business_municipality_code String,
+    business_country String,
     business_country_code String,
+    postal_address_lines String,
+    postal_postal_code String,
+    postal_city String,
+    postal_municipality String,
+    postal_municipality_code String,
+    postal_country String,
+    postal_country_code String,
     is_vat_registered UInt8,
     is_enterprise_register_registered UInt8,
     is_group_member UInt8,

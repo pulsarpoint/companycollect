@@ -1,42 +1,27 @@
-"""Shared loader helpers: anti-join scans + bulk enqueue to the Go translator.
+"""ClickHouse scan and static-insert helpers for translation loader assets.
 
 Loader contract (the system's dedup economics live here):
 - Scan ONLY distinct texts not yet in corpscout.text_translations (anti-join).
 - Compute cityHash64 in ClickHouse SQL — never in Python — so hashes always
   agree with past runs.
-- POST chunks of at most 10k items; hashes are decimal STRINGS (uint64 does
-  not fit JSON numbers).
 - Static-map columns never touch the LLM: insert straight into
   text_translations with provider='static'.
 Table/column values are interpolated into SQL — loader configs are trusted,
 developer-authored code.
 """
 
-import os
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
-import dagster as dg
-from dagster import AssetExecutionContext
-from dagster_clickhouse import ClickhouseResource
-from dlt.sources.helpers import requests as dlt_requests
-
-MAX_ITEMS_PER_REQUEST = 10_000
+type StaticTranslationRows = Sequence[tuple[str, int, str]]
 
 
 @dataclass(frozen=True)
-class LoaderField:
+class TranslationField:
     table: str
     column: str
-
-
-@dataclass(frozen=True)
-class LoaderSource:
-    source_lang: str
-    target_lang: str
-    source_language_name: str
-    target_language_name: str
-    fields: tuple[LoaderField, ...]
 
 
 def build_scan_sql(table: str, column: str) -> str:
@@ -70,35 +55,15 @@ LEFT ANTI JOIN (
 WHERE c.{column} <> ''"""
 
 
-def enqueue_items(session, api_url, source, field, rows, chunk_size=MAX_ITEMS_PER_REQUEST):
-    """POST (text, hash) rows in chunks; returns summed {'received','inserted'}."""
-    totals = {"received": 0, "inserted": 0}
-    for start in range(0, len(rows), chunk_size):
-        chunk = rows[start : start + chunk_size]
-        payload = {
-            "source_lang": source.source_lang,
-            "target_lang": source.target_lang,
-            "source_language_name": source.source_language_name,
-            "target_language_name": source.target_language_name,
-            "items": [
-                {
-                    "source_table": field.table,
-                    "source_column": field.column,
-                    "source_text": text,
-                    "source_text_hash": str(hash_),
-                }
-                for text, hash_ in chunk
-            ],
-        }
-        response = session.post(f"{api_url}/v1/queue/items", json=payload, timeout=60)
-        response.raise_for_status()
-        body = response.json()
-        totals["received"] += body["received"]
-        totals["inserted"] += body["inserted"]
-    return totals
-
-
-def insert_static_translations(client, table, column, source_lang, target_lang, rows, mapping):
+def insert_static_translations(
+    client: Any,
+    table: str,
+    column: str,
+    source_lang: str,
+    target_lang: str,
+    rows: StaticTranslationRows,
+    mapping: Mapping[str, str],
+) -> int:
     """Insert map-translated rows straight into text_translations; unknown keys skipped."""
     version = int(time.time())
     values = []
@@ -107,7 +72,17 @@ def insert_static_translations(client, table, column, source_lang, target_lang, 
         if not text or not translated:
             continue
         values.append(
-            (table, column, hash_, source_lang, target_lang, translated, "static", "static", version)
+            (
+                table,
+                column,
+                hash_,
+                source_lang,
+                target_lang,
+                translated,
+                "static",
+                "static",
+                version,
+            )
         )
     if not values:
         return 0
@@ -121,53 +96,3 @@ def insert_static_translations(client, table, column, source_lang, target_lang, 
         values,
     )
     return len(values)
-
-
-def api_url() -> str:
-    """Translator service base URL from TRANSLATOR_API_URL (default localhost)."""
-    return os.environ.get("TRANSLATOR_API_URL", "http://localhost:8080").rstrip("/")
-
-
-def load_source(
-    context: AssetExecutionContext, clickhouse: ClickhouseResource, source: LoaderSource
-) -> dict:
-    """Scan every LLM field of a source and enqueue untranslated texts.
-
-    The shared body of every per-source translation asset: anti-join scan per
-    field, chunked POST to the translator, summed {'received','inserted'}.
-    """
-    session = dlt_requests.Session()
-    totals = {"received": 0, "inserted": 0}
-    with clickhouse.get_connection() as client:
-        for field in source.fields:
-            rows = client.execute(build_scan_sql(field.table, field.column))
-            context.log.info(
-                "scanned %d untranslated texts for %s.%s", len(rows), field.table, field.column
-            )
-            field_totals = enqueue_items(session, api_url(), source, field, rows)
-            totals["received"] += field_totals["received"]
-            totals["inserted"] += field_totals["inserted"]
-    return totals
-
-
-def stats_check(session=None) -> dg.AssetCheckResult:
-    """Assert /v1/queue/stats is reachable and report queue counts.
-
-    Shared body of every per-source ``translator_stats_reachable`` asset check.
-    """
-    session = session or dlt_requests.Session()
-    try:
-        response = session.get(f"{api_url()}/v1/queue/stats", timeout=10)
-        response.raise_for_status()
-        stats = response.json()
-    except Exception as error:  # noqa: BLE001 - reachability check reports any failure
-        return dg.AssetCheckResult(passed=False, metadata={"error": str(error)})
-    return dg.AssetCheckResult(
-        passed=True,
-        metadata={
-            "input": stats.get("input", 0),
-            "pending": stats.get("pending", 0),
-            "output": stats.get("output", 0),
-            "failed": stats.get("failed", 0),
-        },
-    )

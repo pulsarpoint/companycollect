@@ -1,4 +1,8 @@
+from dagster_v3.contact_extraction import COMPANY_CONTACTS_COLUMNS
+
 NO_COMPANIES_TABLE = "no_companies"
+NO_COMPANY_CONTACTS_TABLE = "no_company_contacts"
+NO_COMPANY_ADDRESSES_TABLE = "no_company_addresses"
 NO_WEBSITES_TABLE = "no_websites"
 NO_INDUSTRIES_TABLE = "no_industries"
 NO_FINANCIAL_STATEMENTS_TABLE = "no_financial_statements"
@@ -37,6 +41,26 @@ RESOLVED_TABLE_COLUMNS = {
         "source_run_id",
         "source_record_id",
         "source_payload_hash",
+        "resolved_at",
+    ),
+    NO_COMPANY_CONTACTS_TABLE: COMPANY_CONTACTS_COLUMNS,
+    NO_COMPANY_ADDRESSES_TABLE: (
+        "country_iso2",
+        "source_slug",
+        "source_run_id",
+        "source_record_id",
+        "registry_id",
+        "address_type",
+        "address_lines",
+        "postal_code",
+        "city",
+        "municipality",
+        "municipality_code",
+        "country",
+        "country_code",
+        "source_field",
+        "is_current",
+        "source_url",
         "resolved_at",
     ),
     NO_WEBSITES_TABLE: (

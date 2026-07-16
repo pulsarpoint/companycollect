@@ -6,12 +6,15 @@ from datetime import datetime
 import polars as pl
 
 from dagster_v3.defs.norway_brreg.assets.entity_clickhouse import (
+    _affected_org_rows,
     apply_entity_update_parquets_to_clickhouse,
     replace_entity_snapshot_parquets_in_clickhouse,
 )
 from dagster_v3.defs.norway_brreg.entity_storage import (
     ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
     ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
+    ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES,
+    ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS,
     ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES,
     ENTITY_NORMALIZED_TABLE_NO_WEBSITES,
     ENTITY_NORMALIZED_TABLE_REMOVED_ORGS,
@@ -23,6 +26,12 @@ def test_replace_entity_snapshot_parquets_replaces_clickhouse_entity_tables() ->
     storage = FakeEntityStorage(
         snapshot_tables={
             ENTITY_NORMALIZED_TABLE_NO_COMPANIES: _no_companies_frame("1000", "2000"),
+            ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS: _no_company_contacts_frame(
+                "1000"
+            ),
+            ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES: _no_company_addresses_frame(
+                "1000"
+            ),
             ENTITY_NORMALIZED_TABLE_NO_WEBSITES: _no_websites_frame("1000"),
             ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES: _no_industries_frame("1000"),
         }
@@ -37,23 +46,58 @@ def test_replace_entity_snapshot_parquets_replaces_clickhouse_entity_tables() ->
 
     assert storage.snapshot_read_calls == [
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES,
         ENTITY_NORMALIZED_TABLE_NO_WEBSITES,
         ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES,
     ]
     assert row_counts == {
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES: 2,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS: 1,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES: 1,
         ENTITY_NORMALIZED_TABLE_NO_WEBSITES: 1,
         ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES: 1,
     }
     assert _statement_count(client, "CREATE TABLE `corpscout`.`_tmp_no_companies_") == 1
+    assert (
+        _statement_count(client, "CREATE TABLE `corpscout`.`_tmp_no_company_contacts_")
+        == 1
+    )
+    assert (
+        _statement_count(client, "CREATE TABLE `corpscout`.`_tmp_no_company_addresses_")
+        == 1
+    )
     assert _statement_count(client, "CREATE TABLE `corpscout`.`_tmp_no_websites_") == 1
-    assert _statement_count(client, "CREATE TABLE `corpscout`.`_tmp_no_industries_") == 1
-    assert _statement_count(client, "EXCHANGE TABLES `corpscout`.`_tmp_no_companies_") == 1
-    assert _statement_count(client, "EXCHANGE TABLES `corpscout`.`_tmp_no_websites_") == 1
-    assert _statement_count(client, "EXCHANGE TABLES `corpscout`.`_tmp_no_industries_") == 1
+    assert (
+        _statement_count(client, "CREATE TABLE `corpscout`.`_tmp_no_industries_") == 1
+    )
+    assert (
+        _statement_count(client, "EXCHANGE TABLES `corpscout`.`_tmp_no_companies_") == 1
+    )
+    assert (
+        _statement_count(
+            client, "EXCHANGE TABLES `corpscout`.`_tmp_no_company_contacts_"
+        )
+        == 1
+    )
+    assert (
+        _statement_count(
+            client, "EXCHANGE TABLES `corpscout`.`_tmp_no_company_addresses_"
+        )
+        == 1
+    )
+    assert (
+        _statement_count(client, "EXCHANGE TABLES `corpscout`.`_tmp_no_websites_") == 1
+    )
+    assert (
+        _statement_count(client, "EXCHANGE TABLES `corpscout`.`_tmp_no_industries_")
+        == 1
+    )
 
 
-def test_apply_entity_update_parquets_deletes_affected_orgs_then_inserts_replacements() -> None:
+def test_apply_entity_update_parquets_deletes_affected_orgs_then_inserts_replacements() -> (
+    None
+):
     storage = FakeEntityStorage(
         update_tables={
             ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS: _org_list_frame(
@@ -62,6 +106,12 @@ def test_apply_entity_update_parquets_deletes_affected_orgs_then_inserts_replace
             ),
             ENTITY_NORMALIZED_TABLE_REMOVED_ORGS: _org_list_frame(("3000", "removed")),
             ENTITY_NORMALIZED_TABLE_NO_COMPANIES: _no_companies_frame("1000"),
+            ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS: _no_company_contacts_frame(
+                "1000"
+            ),
+            ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES: _no_company_addresses_frame(
+                "1000"
+            ),
             ENTITY_NORMALIZED_TABLE_NO_WEBSITES: _no_websites_frame("1000"),
             ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES: _no_industries_frame("1000"),
         }
@@ -78,6 +128,8 @@ def test_apply_entity_update_parquets_deletes_affected_orgs_then_inserts_replace
         ("2026-06-29", ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS),
         ("2026-06-29", ENTITY_NORMALIZED_TABLE_REMOVED_ORGS),
         ("2026-06-29", ENTITY_NORMALIZED_TABLE_NO_COMPANIES),
+        ("2026-06-29", ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS),
+        ("2026-06-29", ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES),
         ("2026-06-29", ENTITY_NORMALIZED_TABLE_NO_WEBSITES),
         ("2026-06-29", ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES),
     ]
@@ -85,6 +137,8 @@ def test_apply_entity_update_parquets_deletes_affected_orgs_then_inserts_replace
         ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS: 2,
         ENTITY_NORMALIZED_TABLE_REMOVED_ORGS: 1,
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES: 1,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS: 1,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES: 1,
         ENTITY_NORMALIZED_TABLE_NO_WEBSITES: 1,
         ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES: 1,
     }
@@ -96,15 +150,15 @@ def test_apply_entity_update_parquets_deletes_affected_orgs_then_inserts_replace
     assert any(
         database == "corpscout"
         and table.startswith("_tmp_no_affected_orgs_")
-        and rows == [("1000",), ("3000",)]
-        and columns == ("org_number",)
+        and rows == [("1000", 1), ("3000", 1)]
+        and columns == ("org_number", "delete_email")
         for database, table, rows, columns in client.row_insert_calls
     )
     delete_positions = [
         index
         for index, (sql, _params) in enumerate(client.events)
         if sql.startswith("ALTER TABLE `corpscout`.`no_")
-        and " DELETE WHERE `org_number` IN " in sql
+        and " DELETE WHERE " in sql
         and "SETTINGS mutations_sync = 1" in sql
     ]
     target_insert_positions = [
@@ -112,10 +166,40 @@ def test_apply_entity_update_parquets_deletes_affected_orgs_then_inserts_replace
         for index, (sql, _params) in enumerate(client.events)
         if sql.startswith("INSERT INTO `corpscout`.`no_")
     ]
-    assert len(delete_positions) == 3
-    assert len(target_insert_positions) == 3
+    assert len(delete_positions) == 5
+    assert len(target_insert_positions) == 5
     assert max(delete_positions) < min(target_insert_positions)
-    assert any(sql.startswith("DROP TABLE IF EXISTS `corpscout`.`_tmp_no_affected_orgs_") for sql, _ in client.events)
+    assert (
+        sum(" DELETE WHERE `registry_id` IN " in sql for sql, _params in client.events)
+        == 2
+    )
+    assert (
+        sum(" DELETE WHERE `org_number` IN " in sql for sql, _params in client.events)
+        == 3
+    )
+    assert any(
+        sql.startswith("ALTER TABLE `corpscout`.`no_company_contacts`")
+        and "`contact_type` != 'email'" in sql
+        and "FROM `corpscout`.`_tmp_no_affected_orgs_" in sql
+        and "WHERE `delete_email` = 1" in sql
+        for sql, _params in client.events
+    )
+    assert any(
+        sql.startswith("DROP TABLE IF EXISTS `corpscout`.`_tmp_no_affected_orgs_")
+        for sql, _ in client.events
+    )
+
+
+def test_affected_org_stage_preserves_bulk_email_without_api_replacement() -> None:
+    contact_replacements = _no_company_contacts_frame("1000").with_columns(
+        pl.lit("phone").alias("contact_type")
+    )
+
+    assert _affected_org_rows(
+        _org_list_frame(("1000", "changed")),
+        contact_replacements=contact_replacements,
+        removed_orgs=_org_list_frame(),
+    ) == [("1000", 0)]
 
 
 class FakeEntityStorage:
@@ -134,7 +218,9 @@ class FakeEntityStorage:
         self.snapshot_read_calls.append(table_name)
         return self.snapshot_tables[table_name]
 
-    def read_normalized_update_table(self, partition_date: str, table_name: str) -> pl.DataFrame:
+    def read_normalized_update_table(
+        self, partition_date: str, table_name: str
+    ) -> pl.DataFrame:
         self.update_read_calls.append((partition_date, table_name))
         return self.update_tables[table_name]
 
@@ -218,6 +304,58 @@ def _no_websites_frame(*org_numbers: str) -> pl.DataFrame:
     )
 
 
+def _no_company_contacts_frame(*org_numbers: str) -> pl.DataFrame:
+    return _frame(
+        no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_COMPANY_CONTACTS_TABLE],
+        [
+            {
+                "country_iso2": "NO",
+                "source_slug": "norway_brreg",
+                "source_run_id": "run-1",
+                "source_record_id": org_number,
+                "registry_id": org_number,
+                "contact_type": "email",
+                "contact_type_raw": "epostadresse",
+                "contact_value": f"post@{org_number}.example.no",
+                "source_field": "epostadresse",
+                "is_current": True,
+                "valid_to": None,
+                "source_url": f"https://data.brreg.no/enheter/{org_number}",
+                "resolved_at": datetime(2026, 6, 29, 12, 0, 0),
+            }
+            for org_number in org_numbers
+        ],
+    )
+
+
+def _no_company_addresses_frame(*org_numbers: str) -> pl.DataFrame:
+    return _frame(
+        no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_COMPANY_ADDRESSES_TABLE],
+        [
+            {
+                "country_iso2": "NO",
+                "source_slug": "norway_brreg",
+                "source_run_id": "run-1",
+                "source_record_id": org_number,
+                "registry_id": org_number,
+                "address_type": "business",
+                "address_lines": "Exampleveien 1",
+                "postal_code": "0123",
+                "city": "OSLO",
+                "municipality": "OSLO",
+                "municipality_code": "0301",
+                "country": "Norge",
+                "country_code": "NO",
+                "source_field": "forretningsadresse",
+                "is_current": True,
+                "source_url": f"https://data.brreg.no/enheter/{org_number}",
+                "resolved_at": datetime(2026, 6, 29, 12, 0, 0),
+            }
+            for org_number in org_numbers
+        ],
+    )
+
+
 def _no_industries_frame(*org_numbers: str) -> pl.DataFrame:
     return _frame(
         no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_INDUSTRIES_TABLE],
@@ -271,4 +409,6 @@ def _org_list_frame(*rows: tuple[str, str]) -> pl.DataFrame:
 
 
 def _frame(columns: tuple[str, ...], rows: list[dict[str, object]]) -> pl.DataFrame:
-    return pl.DataFrame([{column: row.get(column) for column in columns} for row in rows])
+    return pl.DataFrame(
+        [{column: row.get(column) for column in columns} for row in rows]
+    )

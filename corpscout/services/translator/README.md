@@ -228,7 +228,10 @@ this repository. Each loader:
    what the translator stores.
 2. Chunks the result to at most 10,000 items and POSTs each chunk to
    `/v1/queue/items` with the language pair for that source.
-3. For statically-mapped columns (e.g. legal-form codes), skips the queue
+3. Polls `/v1/queue/stats` until the shared queue is drained and flushed. A
+   non-zero failed count, workflow-start warning, or loader timeout fails the
+   Dagster asset; HTTP 202 alone is not considered completed translation.
+4. For statically-mapped columns (e.g. legal-form codes), skips the queue
    entirely and inserts translated rows straight into
    `corpscout.text_translations` with `provider = 'static'`.
 

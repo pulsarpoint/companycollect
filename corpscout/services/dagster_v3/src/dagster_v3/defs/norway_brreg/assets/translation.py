@@ -3,8 +3,9 @@
 Source-specific translation knowledge lives here, next to the ingest assets:
 the LLM-translated free-text columns, the statically-mapped legal-form column
 with its code→English dictionary, and the loader asset that runs after either
-ClickHouse landing path. The generic scan/enqueue/static-insert machinery is
-imported from ``dagster_v3.defs.translator_load.loader``.
+ClickHouse landing path. The asset keeps its scan, translator enqueue, and
+static-insert steps visible; shared modules only own the SQL builders and the
+translator HTTP resource.
 """
 
 import dagster as dg
@@ -12,12 +13,14 @@ from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.translator_load.loader import (
-    LoaderField,
-    LoaderSource,
+    TranslationField,
+    build_scan_sql,
     build_static_scan_sql,
     insert_static_translations,
-    load_source,
-    stats_check,
+)
+from dagster_v3.defs.translator_load.resource import (
+    TranslatorResource,
+    translator_queue_health_check,
 )
 
 # Moved verbatim from the retired translator configs (Go config/sources JSON
@@ -65,17 +68,18 @@ LEGAL_FORM_DESCRIPTION_EN_BY_CODE: dict[str, str] = {
     "VPFO": "Securities fund",
 }
 
-_NORWAY = LoaderSource(
-    source_lang="no",
-    target_lang="en",
-    source_language_name="Norwegian",
-    target_language_name="English",
-    fields=(
-        LoaderField("corpscout.no_companies", "articles_purpose_original"),
-        LoaderField("corpscout.no_companies", "activity_text_original"),
-    ),
+SOURCE_LANG = "no"
+TARGET_LANG = "en"
+SOURCE_LANGUAGE_NAME = "Norwegian"
+TARGET_LANGUAGE_NAME = "English"
+TRANSLATION_FIELDS = (
+    TranslationField("corpscout.no_companies", "articles_purpose_original"),
+    TranslationField("corpscout.no_companies", "activity_text_original"),
 )
-_NORWAY_STATIC = LoaderField("corpscout.no_companies", "legal_form_description_original")
+LEGAL_FORM_FIELD = TranslationField(
+    "corpscout.no_companies",
+    "legal_form_description_original",
+)
 
 
 @dg.asset(
@@ -89,37 +93,99 @@ _NORWAY_STATIC = LoaderField("corpscout.no_companies", "legal_form_description_o
     kinds={"python", "clickhouse"},
     description=(
         "Scan corpscout.no_companies for untranslated texts (anti-join vs "
-        "text_translations), enqueue them to the translator service, and insert "
-        "static legal-form translations directly."
+        "text_translations), enqueue them to the translator service, wait for "
+        "queue completion, and insert static legal-form translations directly."
     ),
 )
 def norway_brreg_translation_load(
-    context: AssetExecutionContext, clickhouse: ClickhouseResource
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+    translator: TranslatorResource,
 ) -> dg.MaterializeResult:
-    totals = load_source(context, clickhouse, _NORWAY)
+    enqueued_received = 0
+    enqueued_inserted = 0
+    workflow_start_warnings: list[str] = []
+
     with clickhouse.get_connection() as client:
+        for field in TRANSLATION_FIELDS:
+            untranslated_rows = client.execute(
+                build_scan_sql(field.table, field.column)
+            )
+            context.log.info(
+                "scanned %d untranslated texts for %s.%s",
+                len(untranslated_rows),
+                field.table,
+                field.column,
+            )
+            enqueue_result = translator.enqueue_translation_rows(
+                source_table=field.table,
+                source_column=field.column,
+                source_lang=SOURCE_LANG,
+                target_lang=TARGET_LANG,
+                source_language_name=SOURCE_LANGUAGE_NAME,
+                target_language_name=TARGET_LANGUAGE_NAME,
+                rows=untranslated_rows,
+            )
+            enqueued_received += enqueue_result.received
+            enqueued_inserted += enqueue_result.inserted
+            workflow_start_warnings.extend(enqueue_result.workflow_start_warnings)
+            for warning in enqueue_result.workflow_start_warnings:
+                context.log.warning("translator workflow start warning: %s", warning)
+
         static_rows = client.execute(
-            build_static_scan_sql(_NORWAY_STATIC.table, _NORWAY_STATIC.column, "legal_form_code")
+            build_static_scan_sql(
+                LEGAL_FORM_FIELD.table,
+                LEGAL_FORM_FIELD.column,
+                "legal_form_code",
+            )
         )
         static_inserted = insert_static_translations(
             client,
-            _NORWAY_STATIC.table,
-            _NORWAY_STATIC.column,
-            _NORWAY.source_lang,
-            _NORWAY.target_lang,
+            LEGAL_FORM_FIELD.table,
+            LEGAL_FORM_FIELD.column,
+            SOURCE_LANG,
+            TARGET_LANG,
             static_rows,
             LEGAL_FORM_DESCRIPTION_EN_BY_CODE,
         )
+
+    if workflow_start_warnings:
+        raise dg.Failure(
+            description="translator accepted rows but failed to start its workflow",
+            metadata={
+                "warning_count": len(workflow_start_warnings),
+                "warnings": dg.MetadataValue.json(workflow_start_warnings),
+            },
+        )
+
+    if enqueued_received > 0:
+        context.log.info(
+            "waiting for translator queue completion: received=%d inserted=%d",
+            enqueued_received,
+            enqueued_inserted,
+        )
+        completion_stats = translator.wait_for_queue_completion()
+        context.log.info(
+            "translator queue completed: input=%d pending=%d output=%d failed=%d",
+            completion_stats.input,
+            completion_stats.pending,
+            completion_stats.output,
+            completion_stats.failed,
+        )
+
     context.log.info("static legal forms inserted: %d", static_inserted)
     return dg.MaterializeResult(
         metadata={
-            "enqueued_received": totals["received"],
-            "enqueued_inserted": totals["inserted"],
+            "enqueued_received": enqueued_received,
+            "enqueued_inserted": enqueued_inserted,
             "static_inserted": static_inserted,
+            "translation_completed": True,
         }
     )
 
 
-@dg.asset_check(asset=norway_brreg_translation_load, name="translator_stats_reachable")
-def norway_brreg_translator_stats_check() -> dg.AssetCheckResult:
-    return stats_check()
+@dg.asset_check(asset=norway_brreg_translation_load, name="translator_queue_healthy")
+def norway_brreg_translator_queue_health_check(
+    translator: TranslatorResource,
+) -> dg.AssetCheckResult:
+    return translator_queue_health_check(translator)

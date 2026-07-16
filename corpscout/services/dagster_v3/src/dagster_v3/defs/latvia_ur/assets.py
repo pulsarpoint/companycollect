@@ -20,7 +20,7 @@ from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_com
 from dagster_v3.defs.latvia_ur.contacts import latvia_ur_clickhouse_company_contacts
 from dagster_v3.defs.latvia_ur.translation import (
     latvia_ur_translation_load,
-    latvia_ur_translator_stats_check,
+    latvia_ur_translator_queue_health_check,
 )
 
 GROUP_NAME = "latvia"
@@ -389,7 +389,9 @@ def latvia_address_municipalities_duckdb(
             table_name=tables.ADDRESS_MUNICIPALITIES_TABLE,
             download_url=VZD_ADDRESS_MUNICIPALITIES_DOWNLOAD_URL,
         )
-    context.log.info("Completed Latvia VZD municipality address CSV load: rows=%s", rows)
+    context.log.info(
+        "Completed Latvia VZD municipality address CSV load: rows=%s", rows
+    )
     return dg.MaterializeResult(
         metadata={
             "rows": rows,
@@ -436,7 +438,9 @@ def latvia_ur_clickhouse_companies(
 
 
 def _duckdb_table_count(*, duckdb_connection: Any, table_name: str) -> int:
-    value = duckdb_connection.execute(f"select count(*) from {table_name}").fetchone()[0]
+    value = duckdb_connection.execute(f"select count(*) from {table_name}").fetchone()[
+        0
+    ]
     return int(value)
 
 
@@ -476,7 +480,7 @@ defs = dg.Definitions(
         latvia_ur_clickhouse_company_contacts,
     ],
     asset_checks=[
-        latvia_ur_translator_stats_check,
+        latvia_ur_translator_queue_health_check,
     ],
     jobs=[
         latvia_ur_register_job,

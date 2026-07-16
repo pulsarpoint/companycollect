@@ -13,10 +13,14 @@ import dagster as dg
 import polars as pl
 
 from dagster_v3.defs.norway_brreg.assets.entity_snapshot import GROUP_NAME
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import NORWAY_BRREG_ENTITY_BUCKET
+from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
+    NORWAY_BRREG_ENTITY_BUCKET,
+)
 from dagster_v3.defs.norway_brreg.entity_storage import (
     ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
     ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
+    ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES,
+    ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS,
     ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES,
     ENTITY_NORMALIZED_TABLE_NO_WEBSITES,
     ENTITY_NORMALIZED_TABLE_REMOVED_ORGS,
@@ -50,6 +54,42 @@ NO_COMPANIES_SCHEMA = {
     "source_system": pl.Utf8,
     "source_run_id": pl.Utf8,
     "source_record_id": pl.Utf8,
+    "resolved_at": pl.Datetime(time_unit="ms", time_zone="UTC"),
+}
+
+NO_COMPANY_CONTACTS_SCHEMA = {
+    "country_iso2": pl.Utf8,
+    "source_slug": pl.Utf8,
+    "source_run_id": pl.Utf8,
+    "source_record_id": pl.Utf8,
+    "registry_id": pl.Utf8,
+    "contact_type": pl.Utf8,
+    "contact_type_raw": pl.Utf8,
+    "contact_value": pl.Utf8,
+    "source_field": pl.Utf8,
+    "is_current": pl.Boolean,
+    "valid_to": pl.Date,
+    "source_url": pl.Utf8,
+    "resolved_at": pl.Datetime(time_unit="ms", time_zone="UTC"),
+}
+
+NO_COMPANY_ADDRESSES_SCHEMA = {
+    "country_iso2": pl.Utf8,
+    "source_slug": pl.Utf8,
+    "source_run_id": pl.Utf8,
+    "source_record_id": pl.Utf8,
+    "registry_id": pl.Utf8,
+    "address_type": pl.Utf8,
+    "address_lines": pl.Utf8,
+    "postal_code": pl.Utf8,
+    "city": pl.Utf8,
+    "municipality": pl.Utf8,
+    "municipality_code": pl.Utf8,
+    "country": pl.Utf8,
+    "country_code": pl.Utf8,
+    "source_field": pl.Utf8,
+    "is_current": pl.Boolean,
+    "source_url": pl.Utf8,
     "resolved_at": pl.Datetime(time_unit="ms", time_zone="UTC"),
 }
 
@@ -103,8 +143,21 @@ ORG_LIST_SCHEMA = {
 NormalizeFn = Callable[[pl.DataFrame, str, datetime], pl.DataFrame]
 
 NORMALIZED_PARQUET_KINDS = {"python", "s3", "parquet", "brreg"}
+CANONICAL_SOURCE_SLUG = "norway_brreg"
 CLICKHOUSE_DATE_MIN = date(1900, 1, 1)
 CLICKHOUSE_DATE_MAX = date(2300, 1, 1)
+
+CONTACT_FIELDS = (
+    ("website", "website", "hjemmeside"),
+    ("email", "email", "epostadresse"),
+    ("phone", "phone", "telefon"),
+    ("mobile", "mobile", "mobil"),
+)
+
+ADDRESS_FIELDS = (
+    ("business", "business", "forretningsadresse"),
+    ("postal", "postal", "postadresse"),
+)
 
 SNAPSHOT_NORMALIZED_ASSETS = (
     (
@@ -139,6 +192,16 @@ UPDATE_NORMALIZED_ASSETS = (
         "norway_brreg_entity_updates_no_companies_parquet",
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
         "Normalizes one day of Norway Brreg entity updates into no_companies parquet.",
+    ),
+    (
+        "norway_brreg_entity_updates_no_company_contacts_parquet",
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS,
+        "Preserves contact details from one day of Norway Brreg entity updates.",
+    ),
+    (
+        "norway_brreg_entity_updates_no_company_addresses_parquet",
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES,
+        "Preserves addresses from one day of Norway Brreg entity updates.",
     ),
     (
         "norway_brreg_entity_updates_no_websites_parquet",
@@ -191,7 +254,9 @@ def norway_brreg_entities_snapshot_normalized_parquets(
     norway_brreg_entity_storage: NorwayBrregEntityParquetStorageResource,
 ) -> Iterator[dg.MaterializeResult]:
     run_id = context.op_execution_context.run_id
-    context.log.info("Normalizing Norway Brreg entity snapshot parquets for run_id=%s", run_id)
+    context.log.info(
+        "Normalizing Norway Brreg entity snapshot parquets for run_id=%s", run_id
+    )
     raw_frame = norway_brreg_entity_storage.read_raw_snapshot_frame()
     resolved_at = datetime.now(UTC)
     context.log.info(
@@ -201,7 +266,9 @@ def norway_brreg_entities_snapshot_normalized_parquets(
         len(SNAPSHOT_NORMALIZED_ASSETS),
     )
     for asset_name, table_name, _description in SNAPSHOT_NORMALIZED_ASSETS:
-        frame = _normalize_table(table_name, raw_frame, source_run_id=run_id, resolved_at=resolved_at)
+        frame = _normalize_table(
+            table_name, raw_frame, source_run_id=run_id, resolved_at=resolved_at
+        )
         s3_key = norway_brreg_entity_storage.write_snapshot_table(table_name, frame)
         context.log.info(
             "Norway Brreg snapshot table %s written: rows=%d key=%s",
@@ -245,7 +312,9 @@ def norway_brreg_entity_updates_normalized_parquets(
         len(UPDATE_NORMALIZED_ASSETS),
     )
     for asset_name, table_name, _description in UPDATE_NORMALIZED_ASSETS:
-        frame = _normalize_table(table_name, raw_frame, source_run_id=run_id, resolved_at=resolved_at)
+        frame = _normalize_table(
+            table_name, raw_frame, source_run_id=run_id, resolved_at=resolved_at
+        )
         s3_key = norway_brreg_entity_storage.write_update_table(
             partition_date,
             table_name,
@@ -279,6 +348,38 @@ def normalize_entity_records_to_no_companies(
     )
 
 
+def normalize_entity_records_to_no_company_contacts(
+    raw_frame: pl.DataFrame,
+    source_run_id: str,
+    resolved_at: datetime,
+) -> pl.DataFrame:
+    entity_rows = _entity_rows(raw_frame, source_run_id=source_run_id)
+    return _frame(
+        [
+            contact_row
+            for row in entity_rows
+            for contact_row in _no_company_contact_rows(row, resolved_at=resolved_at)
+        ],
+        schema=NO_COMPANY_CONTACTS_SCHEMA,
+    )
+
+
+def normalize_entity_records_to_no_company_addresses(
+    raw_frame: pl.DataFrame,
+    source_run_id: str,
+    resolved_at: datetime,
+) -> pl.DataFrame:
+    entity_rows = _entity_rows(raw_frame, source_run_id=source_run_id)
+    return _frame(
+        [
+            address_row
+            for row in entity_rows
+            for address_row in _no_company_address_rows(row, resolved_at=resolved_at)
+        ],
+        schema=NO_COMPANY_ADDRESSES_SCHEMA,
+    )
+
+
 def normalize_entity_records_to_no_websites(
     raw_frame: pl.DataFrame,
     source_run_id: str,
@@ -289,7 +390,8 @@ def normalize_entity_records_to_no_websites(
         [
             website_row
             for row in entity_rows
-            if (website_row := _no_websites_row(row, resolved_at=resolved_at)) is not None
+            if (website_row := _no_websites_row(row, resolved_at=resolved_at))
+            is not None
         ],
         schema=NO_WEBSITES_SCHEMA,
     )
@@ -317,7 +419,11 @@ def normalize_entity_records_to_affected_orgs(
     resolved_at: datetime,
 ) -> pl.DataFrame:
     return _frame(
-        [_org_list_row(row) for row in raw_frame.to_dicts() if _string(row.get("org_number"))],
+        [
+            _org_list_row(row)
+            for row in raw_frame.to_dicts()
+            if _string(row.get("org_number"))
+        ],
         schema=ORG_LIST_SCHEMA,
     )
 
@@ -346,6 +452,12 @@ def _normalize_table(
 ) -> pl.DataFrame:
     normalizers: dict[str, NormalizeFn] = {
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES: normalize_entity_records_to_no_companies,
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS: (
+            normalize_entity_records_to_no_company_contacts
+        ),
+        ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES: (
+            normalize_entity_records_to_no_company_addresses
+        ),
         ENTITY_NORMALIZED_TABLE_NO_WEBSITES: normalize_entity_records_to_no_websites,
         ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES: normalize_entity_records_to_no_industries,
         ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS: normalize_entity_records_to_affected_orgs,
@@ -373,9 +485,15 @@ def _materialize_result(
     return dg.MaterializeResult(asset_key=asset_key, metadata=metadata)
 
 
-def _entity_rows(raw_frame: pl.DataFrame, *, source_run_id: str) -> list[dict[str, Any]]:
+def _entity_rows(
+    raw_frame: pl.DataFrame, *, source_run_id: str
+) -> list[dict[str, Any]]:
     return build_entity_rows(
-        [_entity_from_raw_row(row) for row in raw_frame.to_dicts() if _row_has_entity(row)],
+        [
+            _entity_from_raw_row(row)
+            for row in raw_frame.to_dicts()
+            if _row_has_entity(row)
+        ],
         run_id=source_run_id,
     )
 
@@ -420,7 +538,9 @@ def _no_companies_row(row: dict[str, Any], *, resolved_at: datetime) -> dict[str
         "legal_form_description_original": _none_if_empty(
             row.get("legal_form_description_original")
         ),
-        "articles_purpose_original": _none_if_empty(row.get("articles_purpose_original")),
+        "articles_purpose_original": _none_if_empty(
+            row.get("articles_purpose_original")
+        ),
         "activity_text_original": _none_if_empty(row.get("activity_text_original")),
         "primary_website_url": _none_if_empty(normalized_url(website)),
         "primary_website_host": _none_if_empty(website_host(website)),
@@ -432,6 +552,74 @@ def _no_companies_row(row: dict[str, Any], *, resolved_at: datetime) -> dict[str
         "source_record_id": _string(row.get("source_record_id")),
         "resolved_at": resolved_at,
     }
+
+
+def _no_company_contact_rows(
+    row: dict[str, Any],
+    *,
+    resolved_at: datetime,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row_field, contact_type, source_field in CONTACT_FIELDS:
+        contact_value = _trimmed_string(row.get(row_field))
+        if not contact_value:
+            continue
+        rows.append(
+            {
+                "country_iso2": _string(row.get("country_iso2")),
+                "source_slug": CANONICAL_SOURCE_SLUG,
+                "source_run_id": _string(row.get("source_run_id")),
+                "source_record_id": _string(row.get("source_record_id")),
+                "registry_id": _string(row.get("org_number")),
+                "contact_type": contact_type,
+                "contact_type_raw": source_field,
+                "contact_value": contact_value,
+                "source_field": source_field,
+                "is_current": True,
+                "valid_to": None,
+                "source_url": _string(row.get("source_url")),
+                "resolved_at": resolved_at,
+            }
+        )
+    return rows
+
+
+def _no_company_address_rows(
+    row: dict[str, Any],
+    *,
+    resolved_at: datetime,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for field_prefix, address_type, source_field in ADDRESS_FIELDS:
+        address = {
+            "address_lines": _trimmed_string(row.get(f"{field_prefix}_address_lines")),
+            "postal_code": _trimmed_string(row.get(f"{field_prefix}_postal_code")),
+            "city": _trimmed_string(row.get(f"{field_prefix}_city")),
+            "municipality": _trimmed_string(row.get(f"{field_prefix}_municipality")),
+            "municipality_code": _trimmed_string(
+                row.get(f"{field_prefix}_municipality_code")
+            ),
+            "country": _trimmed_string(row.get(f"{field_prefix}_country")),
+            "country_code": _trimmed_string(row.get(f"{field_prefix}_country_code")),
+        }
+        if not any(address.values()):
+            continue
+        rows.append(
+            {
+                "country_iso2": _string(row.get("country_iso2")),
+                "source_slug": CANONICAL_SOURCE_SLUG,
+                "source_run_id": _string(row.get("source_run_id")),
+                "source_record_id": _string(row.get("source_record_id")),
+                "registry_id": _string(row.get("org_number")),
+                "address_type": address_type,
+                **{column: value or None for column, value in address.items()},
+                "source_field": source_field,
+                "is_current": True,
+                "source_url": _string(row.get("source_url")),
+                "resolved_at": resolved_at,
+            }
+        )
+    return rows
 
 
 def _no_websites_row(
@@ -485,13 +673,17 @@ def _no_industries_rows(
                     row.get(f"nace{index}_description_original")
                 ),
                 "description_language": "no",
-                "description_en": _none_if_empty(row.get(f"nace{index}_description_en")),
+                "description_en": _none_if_empty(
+                    row.get(f"nace{index}_description_en")
+                ),
                 "description_translated_at": None,
                 "description_translation_provider": None,
                 "description_translation_model": None,
                 "nace_revision": "NACE_REV_2",
                 "nace_code": source_industry_code,
-                "nace_normalized_code": re.sub(r"[^0-9A-Za-z]", "", source_industry_code),
+                "nace_normalized_code": re.sub(
+                    r"[^0-9A-Za-z]", "", source_industry_code
+                ),
                 "nace_mapping_method": "direct_code",
                 "nace_mapping_status": "mapped",
                 "is_primary": index == 1,
@@ -504,7 +696,9 @@ def _no_industries_rows(
     return rows
 
 
-def _frame(rows: list[dict[str, Any]], *, schema: dict[str, pl.DataType]) -> pl.DataFrame:
+def _frame(
+    rows: list[dict[str, Any]], *, schema: dict[str, pl.DataType]
+) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=schema).select(list(schema))
 
 
@@ -525,3 +719,7 @@ def _none_if_empty(value: Any) -> str | None:
 
 def _string(value: Any) -> str:
     return "" if value is None else str(value)
+
+
+def _trimmed_string(value: Any) -> str:
+    return _string(value).strip()

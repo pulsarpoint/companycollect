@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import dagster as dg
@@ -11,6 +12,8 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
 
 ENTITY_NORMALIZED_TABLE_NO_COMPANIES = "no_companies"
+ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS = "no_company_contacts"
+ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES = "no_company_addresses"
 ENTITY_NORMALIZED_TABLE_NO_WEBSITES = "no_websites"
 ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES = "no_industries"
 ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS = "affected_orgs"
@@ -18,6 +21,8 @@ ENTITY_NORMALIZED_TABLE_REMOVED_ORGS = "removed_orgs"
 
 ENTITY_NORMALIZED_TABLES = (
     ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
+    ENTITY_NORMALIZED_TABLE_NO_COMPANY_CONTACTS,
+    ENTITY_NORMALIZED_TABLE_NO_COMPANY_ADDRESSES,
     ENTITY_NORMALIZED_TABLE_NO_WEBSITES,
     ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES,
     ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
@@ -52,6 +57,16 @@ class NorwayBrregEntityParquetStorageResource(dg.ConfigurableResource):
                 bucket=NORWAY_BRREG_ENTITY_BUCKET,
             )
         )
+
+    def upload_snapshot_table_file(self, table_name: str, source_path: Path) -> str:
+        key = normalized_snapshot_table_object_key(table_name)
+        self.object_store.ensure_bucket(NORWAY_BRREG_ENTITY_BUCKET)
+        self.object_store.upload_file(
+            key,
+            source_path,
+            bucket=NORWAY_BRREG_ENTITY_BUCKET,
+        )
+        return key
 
     def write_snapshot_table(self, table_name: str, frame: pl.DataFrame) -> str:
         key = normalized_snapshot_table_object_key(table_name)
@@ -122,7 +137,9 @@ def entity_updates_object_key(partition_date: str) -> str:
 
 def _validate_normalized_table_name(table_name: str) -> None:
     if table_name not in ENTITY_NORMALIZED_TABLES:
-        raise ValueError(f"Unsupported Norway Brreg normalized entity table: {table_name}")
+        raise ValueError(
+            f"Unsupported Norway Brreg normalized entity table: {table_name}"
+        )
 
 
 def _read_parquet_bytes(body: bytes) -> pl.DataFrame:

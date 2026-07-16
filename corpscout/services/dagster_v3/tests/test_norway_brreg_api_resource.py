@@ -23,11 +23,17 @@ EXPECTED_ENTITY_RECORD_KEYS = {
 
 
 class FakeResponse:
-    def __init__(self, *, status_code: int = 200, payload: Any = None, content: bytes = b"") -> None:
+    def __init__(
+        self, *, status_code: int = 200, payload: Any = None, content: bytes = b""
+    ) -> None:
         self.status_code = status_code
         self._payload = payload
         self.content = content
-        self.text = json.dumps(payload) if payload is not None else content.decode("utf-8", "ignore")
+        self.text = (
+            json.dumps(payload)
+            if payload is not None
+            else content.decode("utf-8", "ignore")
+        )
         self.raw = BytesIO(content)
 
     def raise_for_status(self) -> None:
@@ -61,7 +67,9 @@ class FakeHttpSession:
 
 
 class ParamAwareFakeHttpSession:
-    def __init__(self, responses: dict[tuple[str, str, str, int], FakeResponse]) -> None:
+    def __init__(
+        self, responses: dict[tuple[str, str, str, int], FakeResponse]
+    ) -> None:
         self.responses = responses
         self.calls: list[tuple[str, dict[str, Any] | None, int, bool]] = []
         self.headers: dict[str, str] = {}
@@ -121,7 +129,12 @@ def test_resource_does_not_expose_direct_snapshot_download_helpers() -> None:
 
 def test_entries_snapshot_reuses_existing_s3_object_without_http_download() -> None:
     s3_client = FakeS3Client(
-        {("source-norway-brreg", "norway_brreg/entities/raw/snapshot/entities.json.gz"): b"existing"}
+        {
+            (
+                "source-norway-brreg",
+                "norway_brreg/entities/raw/snapshot/entities.json.gz",
+            ): b"existing"
+        }
     )
     session = FakeHttpSession({})
     resource = NorwayBrregApiResource(session=session)
@@ -179,13 +192,58 @@ def test_entries_snapshot_streams_missing_snapshot_to_s3() -> None:
     ]
     assert (
         s3_client.objects[
-            ("source-norway-brreg", "norway_brreg/entities/raw/snapshot/entities.json.gz")
+            (
+                "source-norway-brreg",
+                "norway_brreg/entities/raw/snapshot/entities.json.gz",
+            )
         ]
         == snapshot_body
     )
 
 
-def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities() -> None:
+def test_entries_snapshot_csv_uses_bulk_csv_endpoint() -> None:
+    snapshot_body = gzip.compress(
+        b"organisasjonsnummer,epostadresse\n1000,post@example.no\n"
+    )
+    s3_client = FakeS3Client()
+    session = FakeHttpSession(
+        {
+            "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv": FakeResponse(
+                content=snapshot_body
+            )
+        }
+    )
+    resource = NorwayBrregApiResource(session=session)
+
+    metadata = resource.entries_snapshot_csv(
+        s3=FakeDagsterS3Resource(s3_client),
+        bucket="source-norway-brreg",
+        key="norway_brreg/entities/raw/snapshot/entities.csv.gz",
+    )
+
+    assert metadata["downloaded"] is True
+    assert session.calls == [
+        (
+            "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv",
+            None,
+            120,
+            True,
+        )
+    ]
+    assert (
+        s3_client.objects[
+            (
+                "source-norway-brreg",
+                "norway_brreg/entities/raw/snapshot/entities.csv.gz",
+            )
+        ]
+        == snapshot_body
+    )
+
+
+def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities() -> (
+    None
+):
     entity = _load_entity_fixture()
     update = {
         "oppdateringsid": 24720423,
@@ -204,7 +262,12 @@ def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities(
             "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter": FakeResponse(
                 payload={
                     "_embedded": {"oppdaterteEnheter": [update]},
-                    "page": {"size": 10000, "totalElements": 1, "totalPages": 1, "number": 0},
+                    "page": {
+                        "size": 10000,
+                        "totalElements": 1,
+                        "totalPages": 1,
+                        "number": 0,
+                    },
                 }
             ),
             "https://data.brreg.no/enhetsregisteret/api/enheter/923609016": FakeResponse(
@@ -229,7 +292,10 @@ def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities(
     assert records[0]["source_change_type"] == "Endring"
     assert records[0]["updated_at"] == "2026-06-28T00:20:10.625Z"
     assert records[0]["update_id"] == 24720423
-    assert records[0]["entity_url"] == "https://data.brreg.no/enhetsregisteret/api/enheter/923609016"
+    assert (
+        records[0]["entity_url"]
+        == "https://data.brreg.no/enhetsregisteret/api/enheter/923609016"
+    )
     assert records[0]["entity"] == entity
     assert records[0]["raw_update"] == update
     assert session.calls[0][1] == {
@@ -261,7 +327,12 @@ def test_iter_updated_entities_emits_page_and_hydration_progress_logs() -> None:
             "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter": FakeResponse(
                 payload={
                     "_embedded": {"oppdaterteEnheter": [update]},
-                    "page": {"size": 10000, "totalElements": 1, "totalPages": 1, "number": 0},
+                    "page": {
+                        "size": 10000,
+                        "totalElements": 1,
+                        "totalPages": 1,
+                        "number": 0,
+                    },
                 }
             ),
             "https://data.brreg.no/enhetsregisteret/api/enheter/923609016": FakeResponse(
@@ -285,7 +356,9 @@ def test_iter_updated_entities_emits_page_and_hydration_progress_logs() -> None:
     assert len(log_calls) >= 5
 
 
-def test_iter_updated_entities_splits_large_update_windows_instead_of_requesting_page_past_limit() -> None:
+def test_iter_updated_entities_splits_large_update_windows_instead_of_requesting_page_past_limit() -> (
+    None
+):
     base_url = "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter"
     start = "2026-06-11T00:00:00.000Z"
     midpoint = "2026-06-11T00:00:05.000Z"
@@ -306,7 +379,9 @@ def test_iter_updated_entities_splits_large_update_windows_instead_of_requesting
                 payload=_updates_payload([left_update], total_elements=1, total_pages=1)
             ),
             (base_url, midpoint, end, 0): FakeResponse(
-                payload=_updates_payload([right_update], total_elements=1, total_pages=1)
+                payload=_updates_payload(
+                    [right_update], total_elements=1, total_pages=1
+                )
             ),
         }
     )
@@ -315,7 +390,11 @@ def test_iter_updated_entities_splits_large_update_windows_instead_of_requesting
     records = list(resource.iter_updated_entities(start=start, end=end))
 
     assert [record["org_number"] for record in records] == ["111111111", "222222222"]
-    assert [call[1]["page"] for call in session.calls if call[1] is not None] == [0, 0, 0]
+    assert [call[1]["page"] for call in session.calls if call[1] is not None] == [
+        0,
+        0,
+        0,
+    ]
     assert [call[1]["dato"] for call in session.calls if call[1] is not None] == [
         start,
         start,
@@ -335,7 +414,12 @@ def test_iter_updated_entities_returns_removed_tombstone_without_entity_fetch() 
             "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter": FakeResponse(
                 payload={
                     "_embedded": {"oppdaterteEnheter": [update]},
-                    "page": {"size": 10000, "totalElements": 1, "totalPages": 1, "number": 0},
+                    "page": {
+                        "size": 10000,
+                        "totalElements": 1,
+                        "totalPages": 1,
+                        "number": 0,
+                    },
                 }
             )
         }
@@ -377,7 +461,12 @@ def test_iter_updated_entities_treats_410_hydration_as_removed_tombstone() -> No
             "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter": FakeResponse(
                 payload={
                     "_embedded": {"oppdaterteEnheter": [update]},
-                    "page": {"size": 10000, "totalElements": 1, "totalPages": 1, "number": 0},
+                    "page": {
+                        "size": 10000,
+                        "totalElements": 1,
+                        "totalPages": 1,
+                        "number": 0,
+                    },
                 }
             ),
             "https://data.brreg.no/enhetsregisteret/api/enheter/937798849": FakeResponse(
@@ -416,7 +505,7 @@ def test_resource_is_company_api_only() -> None:
 
 def _load_entity_fixture() -> dict[str, Any]:
     fixture_path = (
-        Path(__file__).parents[3]
+        Path(__file__).parents[4]
         / "companies/analysis/norway/data_model/sources/brregenhet/sample_record.json"
     )
     return json.loads(fixture_path.read_text())

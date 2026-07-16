@@ -162,22 +162,28 @@ The base ClickHouse table carries only `<field>_original` — **do not add `<fie
 cache row names its exact table and column. Results are exposed by a per-source `<source>_translated` join
 view. The cache survives the wipe-and-replace export, so a refresh only translates genuinely new/changed text.
 
-The loader pattern contract (shared helpers in `src/dagster_v3/defs/translator_load/loader.py`;
-per-source assets in `defs/<source>/translation.py`):
+The loader pattern contract (translator HTTP resource in
+`src/dagster_v3/defs/translator_load/resource.py`, ClickHouse SQL helpers in
+`translator_load/loader.py`, and explicit per-source assets in `defs/<source>/translation.py`):
 - **Anti-join scan**: `SELECT DISTINCT` untranslated texts per `(table, column)` by LEFT ANTI JOIN
   against `text_translations` — **loaders own dedup**, the service does not.
 - **Hash in SQL**: `cityHash64(col)` computed in ClickHouse, never in Python, so hashes always
   agree with past runs and the join view.
 - **Chunked POST**: at most 10k items per request to the service's `POST /v1/queue/items`, hashes
   as decimal strings; the first successful enqueue starts the service's Temporal workflow.
+- **Completion gate**: after enqueueing, call `translator.wait_for_queue_completion()`. Failed
+  queue items, workflow-start warnings, and timeouts must fail the Dagster asset; successful
+  materialization means translated output was flushed to ClickHouse.
 - **Static maps direct-insert**: closed enumerations skip the queue — the loader resolves them from
   an in-loader code→EN dict and inserts rows with `provider='static'`.
 
 To make a source's fields translatable:
-1. **Loader**: add a `LoaderSource` and loader asset in
-   `defs/<source>/translation.py` (mirror `defs/latvia_ur/translation.py`, or
-   `defs/norway_brreg/assets/translation.py` for a source with static maps),
-   downstream of the source's ClickHouse export.
+1. **Loader**: add source language constants, translated fields, and a loader asset accepting
+   `translator: TranslatorResource` in `defs/<source>/translation.py` (mirror
+   `defs/latvia_ur/translation.py`, or `defs/norway_brreg/assets/translation.py` for a source with
+   static maps), downstream of the source's ClickHouse export. Keep the ClickHouse scan and
+   `translator.enqueue_translation_rows(...)` / `translator.wait_for_queue_completion()` calls
+   visible in the asset body.
    Pick the mechanism by field kind:
    - **Free text** (company description, activity text) → LLM (enqueue to the service).
    - **Finite enumeration** (legal form, status, size category) → static map + key column,
@@ -185,8 +191,9 @@ To make a source's fields translatable:
    - **Proper nouns** (company name, address) → not translated.
 2. **View**: add a `<source>_translated` join view (mirror `corpscout.no_companies_translated`).
 3. **Job wiring**: include the loader asset in the source's refresh job selection (mirror
-   `norway_brreg_entities_full_snapshot_job`). No completion sensor, no gating; a translation
-   failure can never block ingestion.
+   `norway_brreg_entities_full_snapshot_job`). No completion sensor is required: the loader itself
+   waits. A translation failure fails the job after the upstream ingestion assets have already
+   materialized; it does not roll back their ClickHouse writes.
 - The design doc lists every translated field and its mechanism (LLM vs static dict).
 
 Sources **without official industry codes** (see §8c) classify their free-text activity

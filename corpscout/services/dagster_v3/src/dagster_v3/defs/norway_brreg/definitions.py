@@ -3,9 +3,11 @@ from dagster_aws.s3 import S3Resource
 
 from dagster_v3.defs.norway_brreg.assets import (
     norway_brreg_clickhouse_canonical_contacts,
+    norway_brreg_entries_snapshot_csv_raw_s3,
     norway_brreg_entries_snapshot_raw_s3,
     norway_brreg_entities_full_snapshot_job,
     norway_brreg_entities_snapshot_clickhouse,
+    norway_brreg_entities_snapshot_contact_parquets,
     norway_brreg_entities_snapshot_normalized_parquets,
     norway_brreg_entities_snapshot_s3,
     norway_brreg_entity_updates_job,
@@ -14,7 +16,7 @@ from dagster_v3.defs.norway_brreg.assets import (
     norway_brreg_entity_updates_s3,
     norway_brreg_entity_updates_schedule,
     norway_brreg_translation_load,
-    norway_brreg_translator_stats_check,
+    norway_brreg_translator_queue_health_check,
 )
 from dagster_v3.defs.norway_brreg.entity_storage import (
     NorwayBrregEntityParquetStorageResource,
@@ -25,9 +27,11 @@ from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 defs = dg.Definitions(
     assets=[
         norway_brreg_entries_snapshot_raw_s3,
+        norway_brreg_entries_snapshot_csv_raw_s3,
         norway_brreg_entities_snapshot_s3,
         norway_brreg_entity_updates_s3,
         norway_brreg_entities_snapshot_normalized_parquets,
+        norway_brreg_entities_snapshot_contact_parquets,
         norway_brreg_entity_updates_normalized_parquets,
         norway_brreg_entities_snapshot_clickhouse,
         norway_brreg_entity_updates_clickhouse,
@@ -35,7 +39,7 @@ defs = dg.Definitions(
         norway_brreg_clickhouse_canonical_contacts,
     ],
     asset_checks=[
-        norway_brreg_translator_stats_check,
+        norway_brreg_translator_queue_health_check,
     ],
     jobs=[
         norway_brreg_entities_full_snapshot_job,

@@ -142,6 +142,7 @@ EXPECTED_MIGRATIONS = (
     "000130_corpscout_domain_hostnames_incremental_storage",
     "000131_corpscout_domain_hostnames_incremental_cutover",
     "000132_corpscout_domain_hostnames_final_read",
+    "000133_corpscout_no_company_addresses",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -543,7 +544,9 @@ def test_domain_hostnames_view_normalizes_addressable_dns_record_owners() -> Non
 
 def test_legacy_hostname_registry_is_removed_after_view_cutover() -> None:
     sql = _migration_sql("000129_corpscout_drop_commoncrawl_domain_hostnames.up.sql")
-    down_sql = _migration_sql("000129_corpscout_drop_commoncrawl_domain_hostnames.down.sql")
+    down_sql = _migration_sql(
+        "000129_corpscout_drop_commoncrawl_domain_hostnames.down.sql"
+    )
 
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_hostnames;" in sql
     assert "domain_hostnames" in sql
@@ -557,23 +560,16 @@ def test_legacy_hostname_registry_is_removed_after_view_cutover() -> None:
 
 
 def test_domain_hostnames_incremental_storage_preserves_staged_cutover() -> None:
-    sql = _migration_sql(
-        "000130_corpscout_domain_hostnames_incremental_storage.up.sql"
-    )
+    sql = _migration_sql("000130_corpscout_domain_hostnames_incremental_storage.up.sql")
     down_sql = _migration_sql(
         "000130_corpscout_domain_hostnames_incremental_storage.down.sql"
     )
-    backfill_sql = (
-        OPERATIONS_DIR / "domain_hostnames_backfill_bucket.sql"
-    ).read_text()
-    validate_sql = (
-        OPERATIONS_DIR / "domain_hostnames_validate_bucket.sql"
-    ).read_text()
+    backfill_sql = (OPERATIONS_DIR / "domain_hostnames_backfill_bucket.sql").read_text()
+    validate_sql = (OPERATIONS_DIR / "domain_hostnames_validate_bucket.sql").read_text()
 
     create_state = "CREATE TABLE IF NOT EXISTS corpscout.domain_hostnames_state"
     create_ingest = (
-        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
-        "corpscout.domain_hostnames_ingest_mv"
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS corpscout.domain_hostnames_ingest_mv"
     )
     assert create_state in sql
     assert "ENGINE = AggregatingMergeTree()" in sql
@@ -607,7 +603,10 @@ def test_domain_hostnames_incremental_storage_preserves_staged_cutover() -> None
     assert "CREATE OR REPLACE VIEW corpscout.domain_hostnames" not in sql
     assert "POPULATE" not in sql
     assert "REFRESH EVERY" not in sql
-    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_observations" not in sql
+    assert (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_observations"
+        not in sql
+    )
     assert "ALTER TABLE corpscout.commoncrawl_domain_dns_record_observations" not in sql
 
     assert "INSERT INTO corpscout.domain_hostnames_state" in backfill_sql
@@ -628,9 +627,7 @@ def test_domain_hostnames_incremental_storage_preserves_staged_cutover() -> None
 
 
 def test_domain_hostnames_incremental_cutover_preserves_public_contract() -> None:
-    sql = _migration_sql(
-        "000131_corpscout_domain_hostnames_incremental_cutover.up.sql"
-    )
+    sql = _migration_sql("000131_corpscout_domain_hostnames_incremental_cutover.up.sql")
     down_sql = _migration_sql(
         "000131_corpscout_domain_hostnames_incremental_cutover.down.sql"
     )
@@ -661,9 +658,7 @@ def test_domain_hostnames_incremental_cutover_preserves_public_contract() -> Non
 
 def test_domain_hostnames_final_read_uses_ordered_state_merge() -> None:
     sql = _migration_sql("000132_corpscout_domain_hostnames_final_read.up.sql")
-    down_sql = _migration_sql(
-        "000132_corpscout_domain_hostnames_final_read.down.sql"
-    )
+    down_sql = _migration_sql("000132_corpscout_domain_hostnames_final_read.down.sql")
     executable_sql = "\n".join(line.split("--", 1)[0] for line in sql.splitlines())
 
     assert "CREATE OR REPLACE VIEW corpscout.domain_hostnames AS" in sql
@@ -897,6 +892,23 @@ def test_norway_resolved_migration_covers_exported_columns() -> None:
     for column_name, migration_file in NO_COMPANIES_ALTER_COLUMN_MIGRATIONS.items():
         alter_sql = _migration_sql(migration_file)
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in alter_sql
+
+
+def test_norway_contact_and_address_migrations_cover_exported_columns() -> None:
+    migration_file_by_table = {
+        norway_resolved_tables.NO_COMPANY_CONTACTS_TABLE: (
+            "000097_corpscout_no_canonical_contacts.up.sql"
+        ),
+        norway_resolved_tables.NO_COMPANY_ADDRESSES_TABLE: (
+            "000133_corpscout_no_company_addresses.up.sql"
+        ),
+    }
+
+    for table_name, migration_file in migration_file_by_table.items():
+        sql = _migration_sql(migration_file)
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        for column_name in norway_resolved_tables.RESOLVED_EXPORT_COLUMNS[table_name]:
+            assert f"    {column_name} " in sql
 
 
 def test_norway_financial_statements_sort_key_avoids_nullable_fiscal_year() -> None:

@@ -1,16 +1,22 @@
 """Tests for the translator_load loader helpers and assets."""
 
 import os
+from contextlib import contextmanager
 
+import dagster as dg
 import pytest
 
+from dagster_v3.defs.translator_load import resource as translator_resource
 from dagster_v3.defs.translator_load.loader import (
-    LoaderField,
-    LoaderSource,
     build_scan_sql,
     build_static_scan_sql,
-    enqueue_items,
     insert_static_translations,
+)
+from dagster_v3.defs.translator_load.resource import (
+    TranslationQueueFailedError,
+    TranslationQueueTimeoutError,
+    TranslatorResource,
+    translator_queue_health_check,
 )
 
 
@@ -38,13 +44,32 @@ def test_build_static_scan_sql_selects_key_column():
 
 
 class _FakeSession:
-    def __init__(self, inserted_per_call: int = 1) -> None:
+    def __init__(
+        self,
+        *,
+        inserted_per_call: int = 1,
+        stats: dict[str, int] | list[dict[str, int]] | None = None,
+        error: Exception | None = None,
+        warning: str | None = None,
+    ) -> None:
         self.posts: list[tuple[str, dict]] = []
         self._inserted = inserted_per_call
+        self._stats = list(stats) if isinstance(stats, list) else [stats]
+        self._error = error
+        self._warning = warning
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
 
     def post(self, url: str, json: dict, timeout: int = 60):
         self.posts.append((url, json))
         received = len(json["items"])
+        response_body = {"received": received, "inserted": self._inserted}
+        if self._warning is not None:
+            response_body["warning"] = self._warning
 
         class _Resp:
             status_code = 202
@@ -58,34 +83,53 @@ class _FakeSession:
             def json(self):
                 return self._payload
 
-        return _Resp({"received": received, "inserted": self._inserted})
+        return _Resp(response_body)
+
+    def get(self, url: str, timeout: int = 10):
+        if self._error is not None:
+            raise self._error
+
+        class _Resp:
+            def raise_for_status(self_inner):
+                return None
+
+            def json(self_inner):
+                if len(self._stats) > 1:
+                    return self._stats.pop(0)
+                return self._stats[0]
+
+        return _Resp()
 
 
-def _norway_source() -> LoaderSource:
-    return LoaderSource(
+def test_translator_resource_chunks_enqueues_and_surfaces_warnings(monkeypatch):
+    session = _FakeSession(
+        inserted_per_call=2,
+        warning="items queued but workflow start failed",
+    )
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
+    monkeypatch.setattr(translator_resource, "MAX_ITEMS_PER_REQUEST", 10)
+    rows = [(f"text {i}", i) for i in range(25)]
+
+    result = TranslatorResource(
+        base_url="http://translator:8080"
+    ).enqueue_translation_rows(
+        source_table="corpscout.no_companies",
+        source_column="activity_text_original",
         source_lang="no",
         target_lang="en",
         source_language_name="Norwegian",
         target_language_name="English",
-        fields=(LoaderField("corpscout.no_companies", "activity_text_original"),),
-    )
-
-
-def test_enqueue_items_chunks_and_sums():
-    session = _FakeSession(inserted_per_call=2)
-    rows = [(f"text {i}", i) for i in range(25)]
-
-    totals = enqueue_items(
-        session,
-        "http://translator:8080",
-        _norway_source(),
-        _norway_source().fields[0],
-        rows,
-        chunk_size=10,
+        rows=rows,
     )
 
     assert len(session.posts) == 3  # 10 + 10 + 5
-    assert totals == {"received": 25, "inserted": 6}
+    assert result.received == 25
+    assert result.inserted == 6
+    assert result.workflow_start_warnings == (
+        "items queued but workflow start failed",
+        "items queued but workflow start failed",
+        "items queued but workflow start failed",
+    )
     url, payload = session.posts[0]
     assert url == "http://translator:8080/v1/queue/items"
     assert payload["source_lang"] == "no"
@@ -123,67 +167,149 @@ def test_insert_static_translations_maps_and_skips_unknown_keys():
     sql, params = client.executed[-1]
     assert "text_translations" in sql
     (row,) = params
-    assert row[:3] == ("corpscout.no_companies", "legal_form_description_original", 9001)
+    assert row[:3] == (
+        "corpscout.no_companies",
+        "legal_form_description_original",
+        9001,
+    )
     assert row[6:8] == ("static", "static")
 
 
-class _FakeStatsSession:
-    def __init__(self, payload: dict | None = None, error: Exception | None = None) -> None:
-        self._payload = payload
-        self._error = error
+def test_stats_check_passes_and_reports_counts(monkeypatch):
+    session = _FakeSession(stats={"input": 1, "pending": 1, "output": 0, "failed": 0})
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
 
-    def get(self, url: str, timeout: int = 10):
-        if self._error is not None:
-            raise self._error
-
-        class _Resp:
-            def raise_for_status(self_inner):
-                return None
-
-            def json(self_inner):
-                return self._payload
-
-        return _Resp()
-
-
-def test_stats_check_passes_and_reports_counts():
-    from dagster_v3.defs.translator_load.loader import stats_check as _stats_check
-
-    session = _FakeStatsSession(payload={"input": 1, "pending": 2, "output": 3, "failed": 4})
-    result = _stats_check(session=session)
+    result = translator_queue_health_check(
+        TranslatorResource(base_url="http://translator:8080")
+    )
 
     assert result.passed is True
     assert result.metadata["input"].value == 1
-    assert result.metadata["pending"].value == 2
-    assert result.metadata["output"].value == 3
+    assert result.metadata["pending"].value == 1
+    assert result.metadata["output"].value == 0
+    assert result.metadata["failed"].value == 0
+
+
+def test_stats_check_fails_when_queue_contains_failed_items(monkeypatch):
+    session = _FakeSession(stats={"input": 4, "pending": 0, "output": 0, "failed": 4})
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
+
+    result = translator_queue_health_check(
+        TranslatorResource(base_url="http://translator:8080")
+    )
+
+    assert result.passed is False
     assert result.metadata["failed"].value == 4
 
 
-def test_stats_check_fails_when_unreachable():
-    from dagster_v3.defs.translator_load.loader import stats_check as _stats_check
+def test_stats_check_fails_when_unreachable(monkeypatch):
+    session = _FakeSession(error=RuntimeError("connection refused"))
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
 
-    session = _FakeStatsSession(error=RuntimeError("connection refused"))
-    result = _stats_check(session=session)
+    result = translator_queue_health_check(
+        TranslatorResource(base_url="http://translator:8080")
+    )
 
     assert result.passed is False
     assert "connection refused" in result.metadata["error"].value
+
+
+def test_wait_for_queue_completion_returns_only_after_flush(monkeypatch):
+    session = _FakeSession(
+        stats=[
+            {"input": 2, "pending": 2, "output": 0, "failed": 0},
+            {"input": 2, "pending": 0, "output": 2, "failed": 0},
+            {"input": 0, "pending": 0, "output": 0, "failed": 0},
+        ]
+    )
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
+    monkeypatch.setattr(translator_resource.time, "sleep", lambda _seconds: None)
+
+    stats = TranslatorResource(
+        base_url="http://translator:8080",
+        completion_timeout_seconds=10,
+        completion_poll_interval_seconds=0.01,
+    ).wait_for_queue_completion()
+
+    assert stats.is_idle()
+    assert stats.failed == 0
+
+
+def test_wait_for_queue_completion_raises_for_failed_items(monkeypatch):
+    session = _FakeSession(stats={"input": 19, "pending": 0, "output": 0, "failed": 19})
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
+
+    with pytest.raises(
+        TranslationQueueFailedError, match="19 failed translation items"
+    ):
+        TranslatorResource(
+            base_url="http://translator:8080"
+        ).wait_for_queue_completion()
+
+
+def test_wait_for_queue_completion_times_out_when_processing_stalls(monkeypatch):
+    session = _FakeSession(stats={"input": 1, "pending": 1, "output": 0, "failed": 0})
+    monotonic_values = iter((0.0, 2.0))
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
+    monkeypatch.setattr(
+        translator_resource.time,
+        "monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    with pytest.raises(
+        TranslationQueueTimeoutError, match="did not finish within 1 seconds"
+    ):
+        TranslatorResource(
+            base_url="http://translator:8080",
+            completion_timeout_seconds=1,
+        ).wait_for_queue_completion()
+
+
+class _FakeTranslationClickHouseClient:
+    def execute(self, sql, params=None):
+        if "articles_purpose_original" in sql:
+            return [("Utvikling av programvare", 123)]
+        return []
+
+
+class _FakeTranslationClickHouseResource:
+    @contextmanager
+    def get_connection(self):
+        yield _FakeTranslationClickHouseClient()
+
+
+def test_norway_asset_does_not_materialize_when_translation_fails(monkeypatch):
+    from dagster_v3.defs.norway_brreg.assets.translation import (
+        norway_brreg_translation_load,
+    )
+
+    session = _FakeSession(stats={"input": 1, "pending": 0, "output": 0, "failed": 1})
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
+
+    with pytest.raises(TranslationQueueFailedError, match="1 failed translation items"):
+        norway_brreg_translation_load.node_def.compute_fn.decorated_fn(
+            dg.build_asset_context(),
+            _FakeTranslationClickHouseResource(),
+            TranslatorResource(base_url="http://translator:8080"),
+        )
 
 
 def test_assets_are_defined_with_expected_deps():
     from dagster_v3.defs.latvia_ur import translation as latvia_translation
     from dagster_v3.defs.norway_brreg.assets import translation as norway_translation
 
-    import dagster as dg
-
     norway = norway_translation.norway_brreg_translation_load
     assert dg.AssetKey("norway_brreg_entities_snapshot_clickhouse") in {
         dep.asset_key for dep in norway.specs_by_key[norway.key].deps
     }
+    assert norway.op.required_resource_keys == {"clickhouse", "translator"}
 
     latvia = latvia_translation.latvia_ur_translation_load
     assert dg.AssetKey("latvia_ur_clickhouse_companies") in {
         dep.asset_key for dep in latvia.specs_by_key[latvia.key].deps
     }
+    assert latvia.op.required_resource_keys == {"clickhouse", "translator"}
 
 
 @pytest.mark.integration

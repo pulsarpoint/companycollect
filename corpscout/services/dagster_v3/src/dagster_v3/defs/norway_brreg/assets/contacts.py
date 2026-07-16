@@ -1,13 +1,8 @@
-"""Norway Brreg canonical-pair derivation: reshapes ``corpscout.no_websites`` into
-the canonical ``corpscout.no_company_contacts`` / ``corpscout.no_company_domains``
-pair via a ClickHouse-native INSERT-SELECT
-(``dagster_v3.contact_extraction.replace_table_from_select``).
+"""Norway Brreg canonical domain derivation.
 
-``build_contacts_select()``/``build_domains_select()`` are pinned in lock-step with
-the Task 2 backfill migration
-(``clickhouse/migrations/000097_corpscout_no_canonical_contacts.up.sql``) by
-``tests/test_canonical_derivation_assets.py`` — a change to either SELECT body must
-be mirrored in the other.
+``no_company_contacts`` is populated directly from BRREG entity records by the
+snapshot and daily-update publishers. This asset keeps its stable Dagster key for
+downstream consumers and derives ``no_company_domains`` from ``no_websites``.
 """
 
 import dagster as dg
@@ -15,7 +10,6 @@ from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.contact_extraction import (
-    COMPANY_CONTACTS_COLUMNS,
     COMPANY_DOMAINS_COLUMNS,
     replace_table_from_select,
 )
@@ -28,19 +22,8 @@ from dagster_v3.defs.norway_brreg.resolved_tables import NO_WEBSITES_TABLE
 
 NO_COMPANY_CONTACTS_TABLE = "no_company_contacts"
 NO_COMPANY_DOMAINS_TABLE = "no_company_domains"
-QUALIFIED_NO_COMPANY_CONTACTS_TABLE = f"{RESOLVED_DATABASE}.{NO_COMPANY_CONTACTS_TABLE}"
 QUALIFIED_NO_COMPANY_DOMAINS_TABLE = f"{RESOLVED_DATABASE}.{NO_COMPANY_DOMAINS_TABLE}"
 QUALIFIED_NO_WEBSITES_TABLE = f"{RESOLVED_DATABASE}.{NO_WEBSITES_TABLE}"
-
-
-def build_contacts_select() -> str:
-    """no_websites -> no_company_contacts. no_websites.root_domain is a non-nullable
-    String, so (unlike Finland) no ifNull guard is needed."""
-    return (
-        "SELECT 'NO', 'norway_brreg', source_run_id, source_record_id, org_number, "
-        "'website', '', website_url, 'hjemmeside', is_current, ended_on, '', "
-        f"now64(3, 'UTC') FROM {QUALIFIED_NO_WEBSITES_TABLE}"
-    )
 
 
 def build_domains_select() -> str:
@@ -67,9 +50,8 @@ def build_domains_select() -> str:
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse"},
     description=(
-        "Derives corpscout.no_company_contacts/no_company_domains from "
-        "corpscout.no_websites via a ClickHouse-native INSERT-SELECT, in lock-step "
-        "with the Task 2 backfill migration."
+        "Verifies the directly published corpscout.no_company_contacts table and "
+        "derives corpscout.no_company_domains from corpscout.no_websites."
     ),
 )
 def norway_brreg_clickhouse_canonical_contacts(
@@ -81,14 +63,6 @@ def norway_brreg_clickhouse_canonical_contacts(
         tables=(NO_COMPANY_CONTACTS_TABLE, NO_COMPANY_DOMAINS_TABLE),
     )
     with clickhouse.get_connection() as client:
-        # Contacts first, domains second — write order matters for Phase E.
-        contacts_written = replace_table_from_select(
-            client,
-            qualified_table=QUALIFIED_NO_COMPANY_CONTACTS_TABLE,
-            columns=COMPANY_CONTACTS_COLUMNS,
-            select_sql=build_contacts_select(),
-            log=context.log.info,
-        )
         domains_written = replace_table_from_select(
             client,
             qualified_table=QUALIFIED_NO_COMPANY_DOMAINS_TABLE,
@@ -96,6 +70,4 @@ def norway_brreg_clickhouse_canonical_contacts(
             select_sql=build_domains_select(),
             log=context.log.info,
         )
-    return dg.MaterializeResult(
-        metadata={"contacts": contacts_written, "domains": domains_written}
-    )
+    return dg.MaterializeResult(metadata={"domains": domains_written})

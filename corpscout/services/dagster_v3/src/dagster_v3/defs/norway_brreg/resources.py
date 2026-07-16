@@ -89,6 +89,39 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         key: str,
         log: Callable[..., None] | None = None,
     ) -> dict[str, Any]:
+        return self._download_entries_snapshot(
+            url=f"{self.base_url}/enheter/lastned",
+            s3=s3,
+            bucket=bucket,
+            key=key,
+            log=log,
+        )
+
+    def entries_snapshot_csv(
+        self,
+        *,
+        s3: S3Resource,
+        bucket: str,
+        key: str,
+        log: Callable[..., None] | None = None,
+    ) -> dict[str, Any]:
+        return self._download_entries_snapshot(
+            url=f"{self.base_url}/enheter/lastned/csv",
+            s3=s3,
+            bucket=bucket,
+            key=key,
+            log=log,
+        )
+
+    def _download_entries_snapshot(
+        self,
+        *,
+        url: str,
+        s3: S3Resource,
+        bucket: str,
+        key: str,
+        log: Callable[..., None] | None,
+    ) -> dict[str, Any]:
         s3_client = s3.get_client()
         progress_log = log or LOGGER.info
         try:
@@ -121,7 +154,7 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             key,
         )
         response = self.session().get(
-            f"{self.base_url}/enheter/lastned",
+            url,
             timeout=self.timeout_seconds,
             stream=True,
         )
@@ -182,7 +215,10 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
                 try:
                     entity = self.get_entity(org_number)
                     hydrated_row_count += 1
-                    if progress_every_rows > 0 and hydrated_row_count % progress_every_rows == 0:
+                    if (
+                        progress_every_rows > 0
+                        and hydrated_row_count % progress_every_rows == 0
+                    ):
                         progress_log(
                             "Hydrated Norway Brreg entity update rows: rows=%s",
                             hydrated_row_count,
@@ -201,7 +237,9 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
                 entity = None
             row_count += 1
             if progress_every_rows > 0 and row_count % progress_every_rows == 0:
-                progress_log("Processed Norway Brreg entity update rows: rows=%s", row_count)
+                progress_log(
+                    "Processed Norway Brreg entity update rows: rows=%s", row_count
+                )
             yield entity_records.updated_entity_record(
                 update,
                 entity=entity,
@@ -248,7 +286,9 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             )
             total_elements = _update_payload_total_elements(payload)
             if page_number == 0 and total_elements > UPDATE_MAX_RESULT_WINDOW:
-                left_start, left_end, right_start, right_end = _split_update_window(start, end)
+                left_start, left_end, right_start, right_end = _split_update_window(
+                    start, end
+                )
                 log(
                     "Splitting Norway Brreg entity updates window: window=%s..%s "
                     "total_elements=%s max_result_window=%s left=%s..%s right=%s..%s",
@@ -303,7 +343,9 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
     def get_entity(self, org_number: str) -> dict[str, Any]:
         payload = self._get_json(f"{self.base_url}/enheter/{org_number}")
         if not isinstance(payload, dict):
-            raise ValueError(f"Expected Brreg entity payload to be an object: {org_number}")
+            raise ValueError(
+                f"Expected Brreg entity payload to be an object: {org_number}"
+            )
         return payload
 
     def _get_json(
@@ -321,7 +363,9 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         return response.json()
 
 
-def build_entity_rows(entities: list[dict[str, Any]], *, run_id: str) -> list[dict[str, Any]]:
+def build_entity_rows(
+    entities: list[dict[str, Any]], *, run_id: str
+) -> list[dict[str, Any]]:
     return [
         _entity_row(entity, line_number=index, run_id=run_id)
         for index, entity in enumerate(entities, start=1)
@@ -337,10 +381,13 @@ def norway_legal_form_description_en(code: str) -> str:
     return BRREG_LEGAL_FORM_DESCRIPTION_EN_BY_CODE.get(code.upper(), "")
 
 
-def _entity_row(entity: dict[str, Any], *, line_number: int, run_id: str) -> dict[str, Any]:
+def _entity_row(
+    entity: dict[str, Any], *, line_number: int, run_id: str
+) -> dict[str, Any]:
     org_number = _string(entity.get("organisasjonsnummer"))
     vat_registered = _bool(entity.get("registrertIMvaregisteret"))
     business_address = _dict(entity.get("forretningsadresse"))
+    postal_address = _dict(entity.get("postadresse"))
     legal_form = _dict(entity.get("organisasjonsform"))
     nace1 = _dict(entity.get("naeringskode1"))
     nace2 = _dict(entity.get("naeringskode2"))
@@ -369,7 +416,9 @@ def _entity_row(entity: dict[str, Any], *, line_number: int, run_id: str) -> dic
         "registration_date": _string(entity.get("registreringsdatoEnhetsregisteret")),
         "incorporation_date": _string(entity.get("stiftelsesdato")),
         "website": _string(entity.get("hjemmeside")),
+        "email": _string(entity.get("epostadresse")),
         "phone": _string(entity.get("telefon")),
+        "mobile": _string(entity.get("mobil")),
         "nace1_code": _string(nace1.get("kode")),
         "nace1_description_original": nace1_description_original,
         "nace1_description_en": "",
@@ -384,18 +433,32 @@ def _entity_row(entity: dict[str, Any], *, line_number: int, run_id: str) -> dic
         "activity_text_original": activity_text_original,
         "activity_text_en": "",
         "employee_count": _int_or_none(entity.get("antallAnsatte")),
-        "has_registered_employee_count": _bool(entity.get("harRegistrertAntallAnsatte")),
+        "has_registered_employee_count": _bool(
+            entity.get("harRegistrertAntallAnsatte")
+        ),
         "business_address_lines": _address_lines(business_address),
         "business_postal_code": _string(business_address.get("postnummer")),
         "business_city": _string(business_address.get("poststed")),
         "business_municipality": _string(business_address.get("kommune")),
         "business_municipality_code": _string(business_address.get("kommunenummer")),
+        "business_country": _string(business_address.get("land")),
         "business_country_code": _string(business_address.get("landkode")),
+        "postal_address_lines": _address_lines(postal_address),
+        "postal_postal_code": _string(postal_address.get("postnummer")),
+        "postal_city": _string(postal_address.get("poststed")),
+        "postal_municipality": _string(postal_address.get("kommune")),
+        "postal_municipality_code": _string(postal_address.get("kommunenummer")),
+        "postal_country": _string(postal_address.get("land")),
+        "postal_country_code": _string(postal_address.get("landkode")),
         "is_vat_registered": vat_registered,
-        "is_enterprise_register_registered": _bool(entity.get("registrertIForetaksregisteret")),
+        "is_enterprise_register_registered": _bool(
+            entity.get("registrertIForetaksregisteret")
+        ),
         "is_group_member": _bool(entity.get("erIKonsern")),
         "parent_org_number": _string(entity.get("overordnetEnhet")),
-        "last_submitted_accounts_year": _string(entity.get("sisteInnsendteAarsregnskap")),
+        "last_submitted_accounts_year": _string(
+            entity.get("sisteInnsendteAarsregnskap")
+        ),
         "status": status,
         "is_active": status == "active",
         "source_url": _source_url(entity),
@@ -440,7 +503,9 @@ def _split_update_window(start: str, end: str) -> tuple[str, str, str, str]:
     start_time = _parse_brreg_timestamp(start)
     end_time = _parse_brreg_timestamp(end)
     if end_time <= start_time:
-        raise ValueError(f"Cannot split empty Norway Brreg update window: {start}..{end}")
+        raise ValueError(
+            f"Cannot split empty Norway Brreg update window: {start}..{end}"
+        )
     if end_time - start_time <= timedelta(milliseconds=1):
         raise ValueError(
             "Cannot split Norway Brreg update window below 1 millisecond while "
@@ -460,7 +525,9 @@ def _parse_brreg_timestamp(value: str) -> datetime:
 
 
 def _format_brreg_timestamp(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return (
+        value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    )
 
 
 def _entity_update_key(update: dict[str, Any]) -> str:
@@ -510,7 +577,9 @@ def _json_default(value: Any) -> Any:
 
 
 def _address_lines(address: dict[str, Any]) -> str:
-    return "\n".join(_string(line) for line in _list(address.get("adresse")) if _string(line))
+    return "\n".join(
+        _string(line) for line in _list(address.get("adresse")) if _string(line)
+    )
 
 
 def _joined_text_lines(value: Any) -> str:

@@ -12,8 +12,10 @@ import pytest
 import dagster_v3.defs.norway_brreg.assets.entity_snapshot as entity_snapshot_module
 from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
     NORWAY_BRREG_ENTITY_BUCKET,
+    entries_snapshot_csv_raw_object_key,
     entries_snapshot_raw_object_key,
     entity_snapshot_object_key,
+    norway_brreg_entries_snapshot_csv_raw_s3,
     norway_brreg_entries_snapshot_raw_s3,
     norway_brreg_entities_snapshot_s3,
 )
@@ -26,6 +28,7 @@ from dagster_v3.defs.norway_brreg.assets.entity_updates import (
 class FakeNorwayBrregApi:
     def __init__(self) -> None:
         self.entries_snapshot_kwargs = None
+        self.entries_snapshot_csv_kwargs = None
 
     def entries_snapshot(self, **kwargs):
         self.entries_snapshot_kwargs = kwargs
@@ -34,6 +37,15 @@ class FakeNorwayBrregApi:
             "s3_key": kwargs["key"],
             "downloaded": True,
             "bytes_downloaded": 123,
+        }
+
+    def entries_snapshot_csv(self, **kwargs):
+        self.entries_snapshot_csv_kwargs = kwargs
+        return {
+            "s3_bucket": kwargs["bucket"],
+            "s3_key": kwargs["key"],
+            "downloaded": True,
+            "bytes_downloaded": 456,
         }
 
 
@@ -108,6 +120,31 @@ def test_entries_snapshot_raw_asset_delegates_to_api_resource() -> None:
     }
 
 
+def test_entries_snapshot_csv_raw_asset_delegates_to_api_resource() -> None:
+    api = FakeNorwayBrregApi()
+    s3 = FakeDagsterS3Resource(FakeS3Client())
+
+    result = norway_brreg_entries_snapshot_csv_raw_s3(
+        context=dg.build_asset_context(),
+        norway_brreg_api=api,
+        s3=s3,
+    )
+
+    assert api.entries_snapshot_csv_kwargs is not None
+    assert api.entries_snapshot_csv_kwargs["s3"] is s3
+    assert api.entries_snapshot_csv_kwargs["bucket"] == NORWAY_BRREG_ENTITY_BUCKET
+    assert (
+        api.entries_snapshot_csv_kwargs["key"] == entries_snapshot_csv_raw_object_key()
+    )
+    assert callable(api.entries_snapshot_csv_kwargs["log"])
+    assert result.metadata == {
+        "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+        "s3_key": entries_snapshot_csv_raw_object_key(),
+        "downloaded": True,
+        "bytes_downloaded": 456,
+    }
+
+
 def test_entities_snapshot_module_has_no_pipeline_wrapper() -> None:
     assert not hasattr(
         entity_snapshot_module,
@@ -119,14 +156,16 @@ def test_entities_snapshot_module_has_only_two_snapshot_assets() -> None:
     assert not hasattr(entity_snapshot_module, "norway_brreg_entries_snapshot_jsonl_s3")
     assert not hasattr(entity_snapshot_module, "entries_snapshot_jsonl_object_key")
     assert not hasattr(entity_snapshot_module, "norway_brreg_entities_snapshot_source")
-    assert not hasattr(entity_snapshot_module, "norway_brreg_entities_snapshot_pipeline")
+    assert not hasattr(
+        entity_snapshot_module, "norway_brreg_entities_snapshot_pipeline"
+    )
 
 
 def test_entities_snapshot_asset_converts_raw_json_gzip_directly_to_parquet() -> None:
     object_store = FakeObjectStore()
-    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())] = (
-        _raw_snapshot_body()
-    )
+    object_store.objects[
+        (NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())
+    ] = _raw_snapshot_body()
 
     result = norway_brreg_entities_snapshot_s3(
         context=dg.build_asset_context(),
@@ -140,7 +179,11 @@ def test_entities_snapshot_asset_converts_raw_json_gzip_directly_to_parquet() ->
     assert result.metadata["parquet_size_bytes"] > 0
 
     frame = pl.read_parquet(
-        BytesIO(object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())])
+        BytesIO(
+            object_store.objects[
+                (NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())
+            ]
+        )
     )
 
     assert frame.select(
@@ -191,18 +234,18 @@ def test_entities_snapshot_asset_converts_raw_json_gzip_directly_to_parquet() ->
                 sort_keys=True,
             ),
             "raw_update_json": "",
-        }
+        },
     ]
 
 
 def test_entities_snapshot_asset_overwrites_existing_parquet() -> None:
     object_store = FakeObjectStore()
-    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())] = (
-        _raw_snapshot_body()
-    )
     object_store.objects[
-        (NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())
-    ] = b"old parquet bytes"
+        (NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())
+    ] = _raw_snapshot_body()
+    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())] = (
+        b"old parquet bytes"
+    )
 
     result = norway_brreg_entities_snapshot_s3(
         context=dg.build_asset_context(),
@@ -210,18 +253,21 @@ def test_entities_snapshot_asset_overwrites_existing_parquet() -> None:
     )
 
     assert result.metadata["row_count"] == 2
-    assert object_store.objects[
-        (NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())
-    ] != b"old parquet bytes"
+    assert (
+        object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())]
+        != b"old parquet bytes"
+    )
 
 
 def test_entities_snapshot_asset_refuses_empty_raw_snapshot() -> None:
     object_store = FakeObjectStore()
-    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())] = (
-        gzip.compress(b"[]")
-    )
+    object_store.objects[
+        (NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())
+    ] = gzip.compress(b"[]")
 
-    with pytest.raises(ValueError, match="Norway Brreg entity snapshot produced no rows"):
+    with pytest.raises(
+        ValueError, match="Norway Brreg entity snapshot produced no rows"
+    ):
         norway_brreg_entities_snapshot_s3(
             context=dg.build_asset_context(),
             object_store=object_store,
@@ -296,9 +342,7 @@ def test_entity_updates_asset_writes_changed_records_as_daily_parquet_to_s3() ->
         object_store=object_store,
     )
 
-    assert api.calls == [
-        ("2026-06-28T00:00:00.000Z", "2026-06-28T23:59:59.999Z")
-    ]
+    assert api.calls == [("2026-06-28T00:00:00.000Z", "2026-06-28T23:59:59.999Z")]
     assert api.kwargs is not None
     assert callable(api.kwargs["log"])
     assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]

@@ -12,6 +12,9 @@ def _entity_record(**overrides: Any) -> dict[str, Any]:
         "navn": "EQUINOR ASA",
         "organisasjonsform": {"kode": "ASA", "beskrivelse": "Allmennaksjeselskap"},
         "hjemmeside": "www.equinor.com",
+        "epostadresse": "post@equinor.com",
+        "telefon": "51 99 00 00",
+        "mobil": "900 00 000",
         "registreringsdatoEnhetsregisteret": "1995-03-12",
         "registrertIMvaregisteret": True,
         "naeringskode1": {"kode": "06.100", "beskrivelse": "Utvinning av raolje"},
@@ -36,6 +39,14 @@ def _entity_record(**overrides: Any) -> dict[str, Any]:
             "poststed": "STAVANGER",
             "kommune": "STAVANGER",
             "kommunenummer": "1103",
+            "land": "Norge",
+            "landkode": "NO",
+        },
+        "postadresse": {
+            "adresse": ["Postboks 8500"],
+            "postnummer": "4035",
+            "poststed": "STAVANGER",
+            "land": "Norge",
             "landkode": "NO",
         },
         "stiftelsesdato": "1972-09-18",
@@ -89,9 +100,14 @@ def test_norway_brreg_resources_do_not_expose_dlt_source_helpers() -> None:
 
 def test_norway_brreg_assets_do_not_expose_pipeline_helpers() -> None:
     assert "run_norway_brreg_entities_dlt_pipeline" not in brreg_assets.__dict__
-    assert "run_norway_brreg_financial_fetches_dlt_pipeline" not in brreg_assets.__dict__
+    assert (
+        "run_norway_brreg_financial_fetches_dlt_pipeline" not in brreg_assets.__dict__
+    )
     assert "run_norway_brreg_entities_dlt_pipeline" not in brreg_resources.__dict__
-    assert "run_norway_brreg_financial_fetches_dlt_pipeline" not in brreg_resources.__dict__
+    assert (
+        "run_norway_brreg_financial_fetches_dlt_pipeline"
+        not in brreg_resources.__dict__
+    )
 
 
 def test_entity_rows_extract_company_spine_fields() -> None:
@@ -108,6 +124,10 @@ def test_entity_rows_extract_company_spine_fields() -> None:
     assert rows[0]["legal_form_code"] == "ASA"
     assert rows[0]["legal_form_description_original"] == "Allmennaksjeselskap"
     assert rows[0]["legal_form_description_en"] == "Public limited company"
+    assert rows[0]["website"] == "www.equinor.com"
+    assert rows[0]["email"] == "post@equinor.com"
+    assert rows[0]["phone"] == "51 99 00 00"
+    assert rows[0]["mobile"] == "900 00 000"
     assert rows[0]["nace1_code"] == "06.100"
     assert rows[0]["nace1_description_original"] == "Utvinning av raolje"
     assert rows[0]["nace1_description_en"] == ""
@@ -132,6 +152,13 @@ def test_entity_rows_extract_company_spine_fields() -> None:
     )
     assert rows[0]["activity_text_en"] == ""
     assert rows[0]["employee_count"] == 21467
+    assert rows[0]["business_address_lines"] == "Forusbeen 50"
+    assert rows[0]["business_country"] == "Norge"
+    assert rows[0]["postal_address_lines"] == "Postboks 8500"
+    assert rows[0]["postal_postal_code"] == "4035"
+    assert rows[0]["postal_city"] == "STAVANGER"
+    assert rows[0]["postal_country"] == "Norge"
+    assert rows[0]["postal_country_code"] == "NO"
     assert rows[0]["status"] == "active"
     assert rows[0]["is_active"] is True
     assert rows[0]["last_submitted_accounts_year"] == "2024"
@@ -199,4 +226,3 @@ def test_entity_status_derivation_handles_liquidation_and_bankruptcy() -> None:
         "compulsory_liquidation",
     ]
     assert [row["is_active"] for row in rows] == [False, False, False]
-
