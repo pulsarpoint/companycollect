@@ -26,6 +26,17 @@ pnpm dev               # http://localhost:5183
 - `app/lib/queries.server.ts` — per-country stats and company search.
 - `app/routes.ts` — `/` picker → `/:country` layout → overview, companies.
 
+## Companies table
+
+URL-driven state on `/{country}/companies`:
+`?q=` name search, `?sort=` column key + `?dir=asc|desc` (whitelisted against
+`countries.ts` column config; unknown values fall back to name asc),
+`?page=`, `?pageSize=25|50|100`. The industry column is populated by a second
+per-page lookup (`industryQuery` in `countries.ts`) and is not sortable by
+design — sorting happens on base-table columns only so the 30–70M-row
+countries stay fast. Add columns per country in `countries.ts` (`columns`),
+never by editing SQL in the route.
+
 ## Rules
 
 - Read-only: `SELECT` only, no writes to ClickHouse.
