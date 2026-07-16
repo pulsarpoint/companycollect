@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COUNTRIES, getCountry } from "~/lib/countries";
+import { COUNTRIES, getCountry, getSortColumn } from "~/lib/countries";
 
 describe("country registry", () => {
   it("contains all ten countries with unique lowercase ISO2 codes", () => {
@@ -22,5 +22,44 @@ describe("country registry", () => {
     expect(se?.companiesTable).toBe("se_companies");
     expect(se?.nameColumn).toBe("legal_name");
     expect(se?.activeExpr).toBe("status = 'active'");
+  });
+});
+
+describe("company columns", () => {
+  it("every country declares id and name columns with unique keys", () => {
+    for (const c of COUNTRIES) {
+      const keys = c.columns.map((col) => col.key);
+      expect(keys, c.code).toEqual([...new Set(keys)]);
+      expect(keys, c.code).toContain("id");
+      expect(keys, c.code).toContain("name");
+      expect(keys, c.code).not.toContain("industry"); // industry is virtual, merged post-query
+      expect(keys, c.code).not.toContain("active"); // reserved, always selected
+    }
+  });
+
+  it("every country has a sortable status column and a sortable name", () => {
+    for (const c of COUNTRIES) {
+      const status = c.columns.find((col) => col.kind === "status");
+      expect(status, c.code).toBeDefined();
+      expect(status?.sortable, c.code).toBe(true);
+      expect(c.columns.find((col) => col.key === "name")?.sortable, c.code).toBe(true);
+    }
+  });
+
+  it("every industry query is parameterized and returns the merge contract", () => {
+    for (const c of COUNTRIES) {
+      expect(c.industryQuery, c.code).toBeDefined();
+      expect(c.industryQuery, c.code).toContain("{ids:Array(String)}");
+      expect(c.industryQuery, c.code).toContain("AS company_id");
+      expect(c.industryQuery, c.code).toContain("AS industry_code");
+      expect(c.industryQuery, c.code).toContain("AS industry_label");
+    }
+  });
+
+  it("getSortColumn whitelists: unknown or unsortable keys fall back to name", () => {
+    const ee = getCountry("ee")!;
+    expect(getSortColumn(ee, "status").key).toBe("status");
+    expect(getSortColumn(ee, "id; DROP TABLE x").key).toBe("name");
+    expect(getSortColumn(ee, null).key).toBe("name");
   });
 });
