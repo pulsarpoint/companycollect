@@ -12,6 +12,7 @@ import {
   DomainsSection,
 } from "~/components/detail/detail-sections";
 import { FinancialsSection } from "~/components/detail/financials-section";
+import { IndustriesSection } from "~/components/detail/industries-section";
 import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
 
 const COUNTRY_FINANCIALS: Record<
@@ -72,6 +73,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
       </div>
 
       <CompanyRecordSection company={company} record={detail.record} />
+      <IndustriesSection industries={detail.industries} />
       {(() => {
         const Specific = COUNTRY_FINANCIALS[country.code];
         if (Specific) return <Specific statements={detail.statements} />;

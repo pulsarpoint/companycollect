@@ -39,6 +39,8 @@ export interface CountryDetailConfig {
    * columns without dropping base-only fields (fidelity rule).
    */
   recordQuery?: string;
+  /** {id:String} → all industry rows: industry_code, description_original, industry_label (canonical NACE English), is_primary. */
+  industriesQuery?: string;
 }
 
 export interface CountryConfig {
@@ -143,6 +145,15 @@ FROM no_companies AS c
 LEFT JOIN no_companies_translated AS t ON t.org_number = c.org_number
 WHERE c.org_number = {id:String}
 LIMIT 1`,
+      industriesQuery: `SELECT i.nace_normalized_code AS industry_code,
+  coalesce(i.description_original, '') AS description_original,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label,
+  i.is_primary AS is_primary
+FROM no_industries AS i
+LEFT JOIN nace_categories AS n ON n.normalized_code = substring(i.nace_normalized_code, 1, 4) AND n.is_current = 1
+WHERE i.org_number = {id:String}
+ORDER BY i.is_primary DESC, industry_code
+LIMIT 100`,
     },
   },
   {
@@ -202,6 +213,15 @@ FROM fi_company_domains
 WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY is_primary DESC, confidence DESC
 LIMIT 50`,
+      industriesQuery: `SELECT coalesce(i.source_industry_code, '') AS industry_code,
+  coalesce(i.description_original, '') AS description_original,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.source_industry_code, '') AS industry_label,
+  i.is_primary AS is_primary
+FROM fi_industries AS i
+LEFT JOIN nace_categories AS n ON n.normalized_code = substring(coalesce(i.source_industry_code, ''), 1, 4) AND n.is_current = 1
+WHERE i.business_id = {id:String}
+ORDER BY i.is_primary DESC, industry_code
+LIMIT 100`,
     },
   },
   {
@@ -236,6 +256,17 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `company_id IN (SELECT company_id FROM se_industries WHERE is_primary = 1 AND nace_rev2_class_code IN {f_industry:Array(String)})`,
+    detail: {
+      industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
+  '' AS description_original,
+  coalesce(nullIf(n.description_en, ''), i.nace_rev2_class_code) AS industry_label,
+  i.is_primary AS is_primary
+FROM se_industries AS i
+LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_rev2_class_code AND n.is_current = 1
+WHERE i.company_id IN (SELECT company_id FROM se_companies WHERE registration_number = {id:String})
+ORDER BY i.is_primary DESC, i.sequence
+LIMIT 100`,
+    },
   },
   {
     code: "ee", name: "Estonia", flag: "🇪🇪", companiesTable: "ee_companies",
@@ -294,6 +325,15 @@ FROM ee_company_domains
 WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY is_primary DESC, confidence DESC
 LIMIT 50`,
+      industriesQuery: `SELECT i.nace_normalized_code AS industry_code,
+  coalesce(i.description_original, '') AS description_original,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label,
+  i.is_primary AS is_primary
+FROM ee_industries AS i
+LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.reg_code = {id:String}
+ORDER BY i.is_primary DESC, industry_code
+LIMIT 100`,
     },
   },
   {
@@ -391,6 +431,15 @@ WHERE company_number = {id:String}
 ORDER BY fiscal_year DESC, resolved_at DESC
 LIMIT 1 BY fiscal_year
 LIMIT 20`,
+      industriesQuery: `SELECT i.nace_normalized_code AS industry_code,
+  coalesce(i.description_original, '') AS description_original,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label,
+  i.is_primary AS is_primary
+FROM gb_industries AS i
+LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.company_number = {id:String}
+ORDER BY i.is_primary DESC, industry_code
+LIMIT 100`,
     },
   },
   {
@@ -425,6 +474,17 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `siren IN (SELECT siren FROM fr_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
+    detail: {
+      industriesQuery: `SELECT i.nace_normalized_code AS industry_code,
+  coalesce(i.description_original, '') AS description_original,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label,
+  i.is_primary AS is_primary
+FROM fr_industries AS i
+LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.siren = {id:String}
+ORDER BY i.is_primary DESC, industry_code
+LIMIT 100`,
+    },
   },
   {
     code: "br", name: "Brazil", flag: "🇧🇷", companiesTable: "br_companies",
@@ -488,6 +548,14 @@ FROM br_company_domains
 WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY is_primary DESC, confidence DESC
 LIMIT 50`,
+      industriesQuery: `SELECT e.primary_cnae_code AS industry_code,
+  '' AS description_original,
+  coalesce(nullIf(m.nace_description_en, ''), e.primary_cnae_code) AS industry_label,
+  1 AS is_primary
+FROM br_establishments AS e
+LEFT JOIN br_cnae_to_nace AS m ON m.cnae_normalized_code = e.primary_cnae_code
+WHERE e.cnpj_basico = {id:String} AND e.is_headquarters = 1 AND e.primary_cnae_code != ''
+LIMIT 100`,
     },
   },
   {
@@ -534,6 +602,15 @@ FROM cz_company_domains
 WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY is_primary DESC, confidence DESC
 LIMIT 50`,
+      industriesQuery: `SELECT i.nace_normalized_code AS industry_code,
+  coalesce(i.description_original, '') AS description_original,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label,
+  i.is_primary AS is_primary
+FROM cz_industries AS i
+LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.ico = {id:String}
+ORDER BY i.is_primary DESC, industry_code
+LIMIT 100`,
     },
   },
   {
@@ -568,6 +645,17 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `ico IN (SELECT ico FROM sk_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
+    detail: {
+      industriesQuery: `SELECT i.nace_normalized_code AS industry_code,
+  coalesce(i.description_original, '') AS description_original,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label,
+  i.is_primary AS is_primary
+FROM sk_industries AS i
+LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.ico = {id:String}
+ORDER BY i.is_primary DESC, industry_code
+LIMIT 100`,
+    },
   },
 ];
 

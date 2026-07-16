@@ -200,6 +200,17 @@ describe("searchCompanies across all countries", () => {
     },
     60_000,
   );
+
+  it.each(
+    COUNTRIES.filter((c) => c.detail?.industriesQuery).map((c) => [c.code, c] as const),
+  )(
+    "%s: industriesQuery SQL is valid against live schema",
+    async (_code, country) => {
+      const rows = await chQuery(country.detail!.industriesQuery!, { id: "0" });
+      expect(Array.isArray(rows)).toBe(true);
+    },
+    60_000,
+  );
 });
 
 describe("searchCompanies with filters", () => {
@@ -438,6 +449,27 @@ describe("translated record cards", () => {
     const detail = await getCompanyDetail(lv, String(page.rows[0].id));
     expect(detail!.record).toHaveProperty("activity_text_en");
     expect(detail!.record).toHaveProperty("address_city_name"); // base-only column survives
+  });
+});
+
+describe("industries section", () => {
+  it("estonia returns all industry rows with english labels, primary first", async () => {
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT reg_code AS id FROM ee_industries
+       WHERE is_primary = 1 AND reg_code IN (SELECT reg_code FROM ee_companies)
+       ORDER BY reg_code LIMIT 1`,
+    );
+    const detail = await getCompanyDetail(ee, row.id);
+    expect(detail!.industries.length).toBeGreaterThan(0);
+    expect(detail!.industries[0].is_primary).toBe(1);
+    expect(detail!.industries[0].industry_label).toBeTruthy();
+  });
+
+  it("latvia returns an empty industries array", async () => {
+    const lv = getCountry("lv")!;
+    const page = await searchCompanies(lv, { pageSize: 1 });
+    const detail = await getCompanyDetail(lv, String(page.rows[0].id));
+    expect(detail!.industries).toEqual([]);
   });
 });
 

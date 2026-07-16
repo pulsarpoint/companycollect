@@ -123,7 +123,11 @@ describe("detail config", () => {
   it("declares detail sections exactly per data availability", () => {
     for (const c of COUNTRIES) {
       if (NONE.includes(c.code)) {
-        expect(c.detail, c.code).toBeUndefined();
+        // These countries now carry a `detail` block for industriesQuery
+        // (Task 2), but still have no financials/contacts/domains sections.
+        expect(c.detail?.financialsQuery, c.code).toBeUndefined();
+        expect(c.detail?.contactsQuery, c.code).toBeUndefined();
+        expect(c.detail?.domainsQuery, c.code).toBeUndefined();
         continue;
       }
       expect(!!c.detail?.financialsQuery, c.code).toBe(FIN.includes(c.code));
@@ -184,6 +188,19 @@ describe("detail config", () => {
       } else {
         expect(c.detail?.recordQuery, c.code).toBeUndefined();
       }
+    }
+  });
+
+  it("every country except lv declares industriesQuery with the canonical aliases", () => {
+    for (const c of COUNTRIES) {
+      if (c.code === "lv") {
+        expect(c.detail?.industriesQuery).toBeUndefined();
+        continue;
+      }
+      for (const alias of ["AS industry_code", "AS description_original", "AS industry_label", "AS is_primary"]) {
+        expect(c.detail?.industriesQuery, `${c.code}: ${alias}`).toContain(alias);
+      }
+      expect(c.detail?.industriesQuery, c.code).toContain("{id:String}");
     }
   });
 });
