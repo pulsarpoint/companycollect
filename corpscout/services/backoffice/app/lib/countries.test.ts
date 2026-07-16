@@ -113,3 +113,50 @@ describe("industry facet and filter", () => {
     }
   });
 });
+
+describe("detail config", () => {
+  const FIN = ["no", "fi", "ee", "lv", "gb", "br"];
+  const CONTACTS = ["no", "fi", "ee", "lv", "cz", "br"];
+  const DOMAINS = ["no", "fi", "ee", "lv", "cz", "br"];
+  const NONE = ["se", "sk", "fr"];
+
+  it("declares detail sections exactly per data availability", () => {
+    for (const c of COUNTRIES) {
+      if (NONE.includes(c.code)) {
+        expect(c.detail, c.code).toBeUndefined();
+        continue;
+      }
+      expect(!!c.detail?.financialsQuery, c.code).toBe(FIN.includes(c.code));
+      expect(!!c.detail?.contactsQuery, c.code).toBe(CONTACTS.includes(c.code));
+      expect(!!c.detail?.domainsQuery, c.code).toBe(DOMAINS.includes(c.code));
+    }
+  });
+
+  it("every detail query is parameterized and canonical", () => {
+    for (const c of COUNTRIES) {
+      for (const q of [c.detail?.financialsQuery, c.detail?.contactsQuery, c.detail?.domainsQuery]) {
+        if (!q) continue;
+        expect(q, c.code).toContain("{id:String}");
+      }
+      if (c.detail?.financialsQuery) {
+        for (const col of [
+          "AS fiscal_year", "AS currency",
+          "AS revenue_amount_original", "AS revenue_amount_usd",
+          "AS net_result_amount_original", "AS net_result_amount_usd",
+          "AS total_assets_amount_usd", "AS equity_amount_usd", "AS employees",
+        ]) {
+          expect(c.detail.financialsQuery, `${c.code}: ${col}`).toContain(col);
+        }
+      }
+      if (c.detail?.contactsQuery) {
+        expect(c.detail.contactsQuery, c.code).toContain("AS contact_type");
+        expect(c.detail.contactsQuery, c.code).toContain("AS contact_value");
+      }
+      if (c.detail?.domainsQuery) {
+        for (const col of ["AS domain", "AS website_url", "AS domain_source", "AS confidence", "AS is_primary"]) {
+          expect(c.detail.domainsQuery, `${c.code}: ${col}`).toContain(col);
+        }
+      }
+    }
+  });
+});

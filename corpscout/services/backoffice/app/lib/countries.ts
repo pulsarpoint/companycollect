@@ -20,6 +20,15 @@ export interface CompanyColumn {
   filterable?: boolean;
 }
 
+export interface CountryDetailConfig {
+  /** {id:String} → canonical financial rows (see FinancialYearRow in queries.server). */
+  financialsQuery?: string;
+  /** {id:String} → { contact_type, contact_value } rows. */
+  contactsQuery?: string;
+  /** {id:String} → { domain, website_url, domain_source, confidence, is_primary } rows. */
+  domainsQuery?: string;
+}
+
 export interface CountryConfig {
   /** Lowercase ISO2 code, used as the URL segment /:country. */
   code: string;
@@ -51,6 +60,8 @@ export interface CountryConfig {
   industryFacetQuery?: string;
   /** Boolean WHERE expr filtering companies by industry; binds {f_industry:Array(String)}. */
   industryFilterExpr?: string;
+  /** Company-detail page queries (financials/contacts/domains), where the data exists. */
+  detail?: CountryDetailConfig;
 }
 
 export const COUNTRIES: CountryConfig[] = [
@@ -86,6 +97,32 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `org_number IN (SELECT org_number FROM no_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
+    detail: {
+      financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
+  toFloat64(operating_revenue_amount_original) AS revenue_amount_original,
+  toFloat64(operating_revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(net_result_amount_original) AS net_result_amount_original,
+  toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  NULL AS employees
+FROM no_financial_statements
+WHERE org_number = {id:String}
+ORDER BY fiscal_year DESC, resolved_at DESC
+LIMIT 1 BY fiscal_year
+LIMIT 20`,
+      contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
+FROM no_company_contacts
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY contact_type, contact_value
+LIMIT 100`,
+      domainsQuery: `SELECT domain AS domain, website_url AS website_url, domain_source AS domain_source,
+  toFloat64(confidence) AS confidence, is_primary AS is_primary
+FROM no_company_domains
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY is_primary DESC, confidence DESC
+LIMIT 50`,
+    },
   },
   {
     code: "fi", name: "Finland", flag: "🇫🇮", companiesTable: "fi_companies",
@@ -119,6 +156,32 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `business_id IN (SELECT business_id FROM fi_industries WHERE is_primary = 1 AND coalesce(source_industry_code, '') IN {f_industry:Array(String)})`,
+    detail: {
+      financialsQuery: `SELECT toString(toYear(period_end)) AS fiscal_year, currency_original AS currency,
+  toFloat64(revenue_amount_original) AS revenue_amount_original,
+  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(profit_loss_amount_original) AS net_result_amount_original,
+  toFloat64(profit_loss_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  toFloat64(employees) AS employees
+FROM fi_financial_metrics
+WHERE business_id = {id:String}
+ORDER BY fiscal_year DESC, resolved_at DESC
+LIMIT 1 BY fiscal_year
+LIMIT 20`,
+      contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
+FROM fi_company_contacts
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY contact_type, contact_value
+LIMIT 100`,
+      domainsQuery: `SELECT domain AS domain, website_url AS website_url, domain_source AS domain_source,
+  toFloat64(confidence) AS confidence, is_primary AS is_primary
+FROM fi_company_domains
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY is_primary DESC, confidence DESC
+LIMIT 50`,
+    },
   },
   {
     code: "se", name: "Sweden", flag: "🇸🇪", companiesTable: "se_companies",
@@ -185,6 +248,32 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `reg_code IN (SELECT reg_code FROM ee_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
+    detail: {
+      financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
+  toFloat64(revenue_amount_original) AS revenue_amount_original,
+  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(net_result_amount_original) AS net_result_amount_original,
+  toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  NULL AS employees
+FROM ee_financial_metrics
+WHERE reg_code = {id:String}
+ORDER BY fiscal_year DESC
+LIMIT 1 BY fiscal_year
+LIMIT 20`,
+      contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
+FROM ee_company_contacts
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY contact_type, contact_value
+LIMIT 100`,
+      domainsQuery: `SELECT domain AS domain, website_url AS website_url, domain_source AS domain_source,
+  toFloat64(confidence) AS confidence, is_primary AS is_primary
+FROM ee_company_domains
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY is_primary DESC, confidence DESC
+LIMIT 50`,
+    },
   },
   {
     code: "lv", name: "Latvia", flag: "🇱🇻", companiesTable: "lv_companies",
@@ -203,6 +292,32 @@ LIMIT 50000`,
   coalesce(nullIf(nace_label, ''), nace_code) AS industry_label
 FROM lv_companies_nace
 WHERE regcode IN {ids:Array(String)}`,
+    detail: {
+      financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
+  toFloat64(revenue_amount_original) AS revenue_amount_original,
+  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(net_result_amount_original) AS net_result_amount_original,
+  toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  toFloat64(employees) AS employees
+FROM lv_financial_metrics
+WHERE regcode = {id:String}
+ORDER BY fiscal_year DESC
+LIMIT 1 BY fiscal_year
+LIMIT 20`,
+      contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
+FROM lv_company_contacts
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY contact_type, contact_value
+LIMIT 100`,
+      domainsQuery: `SELECT domain AS domain, website_url AS website_url, domain_source AS domain_source,
+  toFloat64(confidence) AS confidence, is_primary AS is_primary
+FROM lv_company_domains
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY is_primary DESC, confidence DESC
+LIMIT 50`,
+    },
   },
   {
     code: "gb", name: "United Kingdom", flag: "🇬🇧", companiesTable: "gb_companies",
@@ -236,6 +351,21 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `company_number IN (SELECT company_number FROM gb_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
+    detail: {
+      financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
+  toFloat64(revenue_amount_original) AS revenue_amount_original,
+  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(net_result_amount_original) AS net_result_amount_original,
+  toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  NULL AS employees
+FROM gb_financial_metrics
+WHERE company_number = {id:String}
+ORDER BY fiscal_year DESC
+LIMIT 1 BY fiscal_year
+LIMIT 20`,
+    },
   },
   {
     code: "fr", name: "France", flag: "🇫🇷", companiesTable: "fr_companies",
@@ -301,6 +431,38 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `cnpj_basico IN (SELECT cnpj_basico FROM br_establishments WHERE is_headquarters = 1 AND primary_cnae_code IN {f_industry:Array(String)})`,
+    detail: {
+      financialsQuery: `SELECT toString(fy) AS fiscal_year, any(cur) AS currency,
+  anyIf(orig, metric = 'revenue') AS revenue_amount_original,
+  anyIf(usd, metric = 'revenue') AS revenue_amount_usd,
+  anyIf(orig, metric = 'net_income') AS net_result_amount_original,
+  anyIf(usd, metric = 'net_income') AS net_result_amount_usd,
+  anyIf(usd, metric = 'total_assets') AS total_assets_amount_usd,
+  anyIf(usd, metric = 'equity') AS equity_amount_usd,
+  NULL AS employees
+FROM (
+  SELECT toYear(period_end_date) AS fy, metric_name AS metric,
+    toFloat64(amount_original) AS orig, toFloat64(amount_usd) AS usd, currency AS cur
+  FROM br_cvm_financial_metrics
+  WHERE cnpj_basico = {id:String} AND period_type = 'annual'
+  ORDER BY consolidation_type = 'consolidated' DESC
+  LIMIT 1 BY fy, metric
+)
+GROUP BY fy
+ORDER BY fy DESC
+LIMIT 20`,
+      contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
+FROM br_company_contacts
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY contact_type, contact_value
+LIMIT 100`,
+      domainsQuery: `SELECT domain AS domain, website_url AS website_url, domain_source AS domain_source,
+  toFloat64(confidence) AS confidence, is_primary AS is_primary
+FROM br_company_domains
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY is_primary DESC, confidence DESC
+LIMIT 50`,
+    },
   },
   {
     code: "cz", name: "Czechia", flag: "🇨🇿", companiesTable: "cz_companies",
@@ -334,6 +496,19 @@ GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `ico IN (SELECT ico FROM cz_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
+    detail: {
+      contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
+FROM cz_company_contacts
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY contact_type, contact_value
+LIMIT 100`,
+      domainsQuery: `SELECT domain AS domain, website_url AS website_url, domain_source AS domain_source,
+  toFloat64(confidence) AS confidence, is_primary AS is_primary
+FROM cz_company_domains
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY is_primary DESC, confidence DESC
+LIMIT 50`,
+    },
   },
   {
     code: "sk", name: "Slovakia", flag: "🇸🇰", companiesTable: "sk_companies",
