@@ -52,6 +52,15 @@ interface IndustryRow {
   industry_label: string | null;
 }
 
+function buildCompanySelectList(country: CountryConfig): string {
+  const joinKeyExpr = country.industryJoinKeyExpr ?? country.idColumn;
+  return [
+    ...country.columns.map((c) => `${c.expr} AS ${c.key}`),
+    `toUInt8(${country.activeExpr}) AS active`,
+    ...(country.industryQuery ? [`toString(${joinKeyExpr}) AS __industry_key`] : []),
+  ].join(",\n       ");
+}
+
 export async function searchCompanies(
   country: CountryConfig,
   opts: {
@@ -102,12 +111,7 @@ export async function searchCompanies(
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(requestedPage, lastPage);
 
-  const joinKeyExpr = country.industryJoinKeyExpr ?? country.idColumn;
-  const selectList = [
-    ...country.columns.map((c) => `${c.expr} AS ${c.key}`),
-    `toUInt8(${country.activeExpr}) AS active`,
-    ...(country.industryQuery ? [`toString(${joinKeyExpr}) AS __industry_key`] : []),
-  ].join(",\n       ");
+  const selectList = buildCompanySelectList(country);
 
   const rows = await chQuery<CompanyListRow & { __industry_key?: string }>(
     `SELECT ${selectList}
@@ -171,12 +175,7 @@ export async function getCompanyDetail(
   country: CountryConfig,
   id: string,
 ): Promise<CompanyDetail | null> {
-  const joinKeyExpr = country.industryJoinKeyExpr ?? country.idColumn;
-  const selectList = [
-    ...country.columns.map((c) => `${c.expr} AS ${c.key}`),
-    `toUInt8(${country.activeExpr}) AS active`,
-    ...(country.industryQuery ? [`toString(${joinKeyExpr}) AS __industry_key`] : []),
-  ].join(",\n       ");
+  const selectList = buildCompanySelectList(country);
 
   const rows = await chQuery<CompanyListRow & { __industry_key?: string }>(
     `SELECT ${selectList}
@@ -188,20 +187,9 @@ export async function getCompanyDetail(
   if (rows.length === 0) return null;
   const company = rows[0];
 
-  if (country.industryQuery) {
-    const key = company.__industry_key ?? "";
-    const industries = key
-      ? await chQuery<{ company_id: string; industry_code: string | null; industry_label: string | null }>(
-          country.industryQuery,
-          { ids: [key] },
-        )
-      : [];
-    company.industry_code = industries[0]?.industry_code ?? null;
-    company.industry_label = industries[0]?.industry_label ?? null;
-    delete company.__industry_key;
-  }
-
-  const [financials, contacts, domains] = await Promise.all([
+  // Kick off the section queries immediately — they only depend on `id` — so
+  // they run concurrently with the industry round-trip below instead of after it.
+  const sectionsPromise = Promise.all([
     country.detail?.financialsQuery
       ? chQuery<FinancialYearRow>(country.detail.financialsQuery, { id })
       : Promise.resolve([]),
@@ -212,6 +200,18 @@ export async function getCompanyDetail(
       ? chQuery<DomainRow>(country.detail.domainsQuery, { id })
       : Promise.resolve([]),
   ]);
+
+  if (country.industryQuery) {
+    const key = company.__industry_key ?? "";
+    const industries = key
+      ? await chQuery<IndustryRow>(country.industryQuery, { ids: [key] })
+      : [];
+    company.industry_code = industries[0]?.industry_code ?? null;
+    company.industry_label = industries[0]?.industry_label ?? null;
+    delete company.__industry_key;
+  }
+
+  const [financials, contacts, domains] = await sectionsPromise;
 
   return { company, financials, contacts, domains };
 }

@@ -325,3 +325,27 @@ describe("getCompanyDetail (Estonia)", () => {
     expect(withDomains!.domains[0].domain).toBeTruthy();
   });
 });
+
+describe("getCompanyDetail (Brazil)", () => {
+  it("returns deterministic pivoted financials for a BR CVM company", async () => {
+    const br = getCountry("br")!;
+    // Note: joined in this direction (br_companies outer, financials subquery
+    // inner) so ClickHouse hashes the smaller ~900k-row financials view
+    // instead of the 68.6M-row br_companies table — the other direction
+    // reliably takes ~38s against live data and trips the client's 30s
+    // per-request HTTP timeout. Same semantics, same result set.
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT cnpj_basico AS id FROM br_companies
+       WHERE cnpj_basico IN (
+         SELECT cnpj_basico FROM br_cvm_financial_metrics
+         WHERE metric_name = 'revenue' AND amount_usd IS NOT NULL AND period_type = 'annual'
+       )
+       ORDER BY cnpj_basico LIMIT 1`,
+    );
+    const first = await getCompanyDetail(br, row.id);
+    const second = await getCompanyDetail(br, row.id);
+    expect(first!.financials.length).toBeGreaterThan(0);
+    expect(first!.financials).toEqual(second!.financials); // deterministic across calls
+    expect(first!.financials.some((f) => typeof f.revenue_amount_usd === "number")).toBe(true);
+  }, 120_000);
+});

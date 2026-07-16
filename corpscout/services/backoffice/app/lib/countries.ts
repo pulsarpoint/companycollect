@@ -259,7 +259,7 @@ LIMIT 50000`,
   NULL AS employees
 FROM ee_financial_metrics
 WHERE reg_code = {id:String}
-ORDER BY fiscal_year DESC
+ORDER BY fiscal_year DESC, resolved_at DESC
 LIMIT 1 BY fiscal_year
 LIMIT 20`,
       contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
@@ -303,7 +303,7 @@ WHERE regcode IN {ids:Array(String)}`,
   toFloat64(employees) AS employees
 FROM lv_financial_metrics
 WHERE regcode = {id:String}
-ORDER BY fiscal_year DESC
+ORDER BY fiscal_year DESC, resolved_at DESC
 LIMIT 1 BY fiscal_year
 LIMIT 20`,
       contactsQuery: `SELECT contact_type AS contact_type, contact_value AS contact_value
@@ -362,7 +362,7 @@ LIMIT 50000`,
   NULL AS employees
 FROM gb_financial_metrics
 WHERE company_number = {id:String}
-ORDER BY fiscal_year DESC
+ORDER BY fiscal_year DESC, resolved_at DESC
 LIMIT 1 BY fiscal_year
 LIMIT 20`,
     },
@@ -445,7 +445,7 @@ FROM (
     toFloat64(amount_original) AS orig, toFloat64(amount_usd) AS usd, currency AS cur
   FROM br_cvm_financial_metrics
   WHERE cnpj_basico = {id:String} AND period_type = 'annual'
-  ORDER BY consolidation_type = 'consolidated' DESC
+  ORDER BY consolidation_type = 'consolidated' DESC, reference_date DESC, version DESC
   LIMIT 1 BY fy, metric
 )
 GROUP BY fy

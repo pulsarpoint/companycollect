@@ -50,7 +50,11 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
         <h2 className="text-2xl font-semibold">{String(company.name ?? "")}</h2>
         {status ? (
           <Badge variant={company.active ? "default" : "outline"}>
-            {String(company[status.key] ?? (company.active ? "active" : "inactive"))}
+            {(() => {
+              const v = company[status.key];
+              const s = v == null ? "" : String(v);
+              return s !== "" ? s : company.active ? "active" : "inactive";
+            })()}
           </Badge>
         ) : null}
         <span className="text-muted-foreground font-mono text-sm">
