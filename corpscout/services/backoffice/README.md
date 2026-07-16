@@ -1,87 +1,33 @@
-# Welcome to React Router!
+# backoffice
 
-A modern, production-ready template for building full-stack React applications using React Router.
+Internal explorer for CompanyCollect data. React Router v8 (SSR) + shadcn/ui,
+reading directly from ClickHouse (read-only).
 
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/remix-run/react-router-templates/tree/main/default)
-
-## Features
-
-- 🚀 Server-side rendering
-- ⚡️ Hot Module Replacement (HMR)
-- 📦 Asset bundling and optimization
-- 🔄 Data loading and mutations
-- 🔒 TypeScript by default
-- 🎉 TailwindCSS for styling
-- 📖 [React Router docs](https://reactrouter.com/)
-
-## Getting Started
-
-### Installation
-
-Install the dependencies:
+## Setup
 
 ```bash
-npm install
+pnpm install
+cp .env.example .env   # fill CLICKHOUSE_PASSWORD from corpscout/.env
+pnpm dev               # http://localhost:5183
 ```
 
-### Development
+## Commands
 
-Start the development server with HMR:
+- `pnpm dev` — dev server (port 5183)
+- `pnpm build` / `pnpm start` — production build / serve (port 3000)
+- `pnpm typecheck` — react-router typegen + tsc
+- `pnpm test` — vitest (integration tests hit the real ClickHouse from .env)
 
-```bash
-npm run dev
-```
+## Structure
 
-Your application will be available at `http://localhost:5173`.
+- `app/lib/countries.ts` — static registry: one entry per country, maps URL
+  code → ClickHouse table/columns/features. Add new countries here.
+- `app/lib/clickhouse.server.ts` — server-only ClickHouse client (`chQuery`).
+- `app/lib/queries.server.ts` — per-country stats and company search.
+- `app/routes.ts` — `/` picker → `/:country` layout → overview, companies.
 
-## Building for Production
+## Rules
 
-Create a production build:
-
-```bash
-npm run build
-```
-
-## Deployment
-
-### Docker Deployment
-
-To build and run using Docker:
-
-```bash
-docker build -t my-app .
-
-# Run the container
-docker run -p 3000:3000 my-app
-```
-
-The containerized application can be deployed to any platform that supports Docker, including:
-
-- AWS ECS
-- Google Cloud Run
-- Azure Container Apps
-- Digital Ocean App Platform
-- Fly.io
-- Railway
-
-### DIY Deployment
-
-If you're familiar with deploying Node applications, the built-in app server is production-ready.
-
-Make sure to deploy the output of `npm run build`
-
-```
-├── package.json
-├── package-lock.json (or pnpm-lock.yaml, or bun.lockb)
-├── build/
-│   ├── client/    # Static assets
-│   └── server/    # Server-side code
-```
-
-## Styling
-
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever CSS framework you prefer.
-
----
-
-Built with ❤️ using React Router.
+- Read-only: `SELECT` only, no writes to ClickHouse.
+- User input goes through ClickHouse query params (`{name:String}`), never
+  string interpolation. Identifiers may only come from `countries.ts`.
