@@ -35,6 +35,10 @@ function normalizeAddress(address: string): string {
   return address.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function cacheKey(address: string, countryCode: string | undefined): string {
+  return `${countryCode ?? ""}|${normalizeAddress(address)}`;
+}
+
 // Global 1 req/s politeness throttle (Nominatim usage policy).
 let lastRequestAt = 0;
 let queue: Promise<unknown> = Promise.resolve();
@@ -57,10 +61,10 @@ async function throttled<T>(minIntervalMs: number, fn: () => Promise<T>): Promis
 
 export async function geocodeAddress(
   address: string,
-  opts?: { fetcher?: typeof fetch; minIntervalMs?: number; dbPath?: string },
+  opts?: { fetcher?: typeof fetch; minIntervalMs?: number; dbPath?: string; countryCode?: string },
 ): Promise<GeoPoint | null> {
-  const key = normalizeAddress(address);
-  if (key === "") return null;
+  if (normalizeAddress(address) === "") return null;
+  const key = cacheKey(address, opts?.countryCode);
   const db = getDb(opts?.dbPath ?? DEFAULT_DB_PATH);
 
   const cached = db
@@ -74,8 +78,11 @@ export async function geocodeAddress(
   const minIntervalMs = opts?.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
   let results: Array<{ lat: string; lon: string }>;
   try {
+    const countryParam = opts?.countryCode
+      ? `&countrycodes=${encodeURIComponent(opts.countryCode)}`
+      : "";
     const response = await throttled(minIntervalMs, () =>
-      fetcher(`${NOMINATIM_URL}?format=jsonv2&limit=1&q=${encodeURIComponent(address)}`, {
+      fetcher(`${NOMINATIM_URL}?format=jsonv2&limit=1&q=${encodeURIComponent(address)}${countryParam}`, {
         headers: { "User-Agent": USER_AGENT },
         signal: AbortSignal.timeout(10_000),
       }),

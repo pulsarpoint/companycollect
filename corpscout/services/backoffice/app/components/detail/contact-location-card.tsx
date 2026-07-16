@@ -38,7 +38,7 @@ export function ContactLocationCard({
   const stored = storedCoords(record);
   const realAddresses = addresses.filter((a) => a.full_address.trim() !== "");
   const candidateTarget =
-    !stored && realAddresses.length > 0 ? `${realAddresses[0].full_address}, ${country.name}` : null;
+    !stored && realAddresses.length > 0 ? realAddresses[0].full_address : null;
   // Over-long addresses are unresolvable: no fetch, no map — same as no address at all.
   const geocodeTarget = candidateTarget && candidateTarget.length <= 300 ? candidateTarget : null;
 

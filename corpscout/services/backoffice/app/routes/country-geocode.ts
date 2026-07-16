@@ -13,5 +13,5 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     // Data-driven length problem, not a client error — never error-boundary the page.
     return { coords: null };
   }
-  return { coords: await geocodeAddress(address) };
+  return { coords: await geocodeAddress(address, { countryCode: country.code }) };
 }

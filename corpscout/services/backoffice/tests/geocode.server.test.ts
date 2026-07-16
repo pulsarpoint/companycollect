@@ -53,6 +53,26 @@ describe("geocodeAddress", () => {
     expect(failing).toHaveBeenCalledTimes(2); // second call retried, not negative-cached
   });
 
+  it("scopes the cache and Nominatim query by country code", async () => {
+    clearGeocodeThrottleForTests();
+    const dbPath = tempDb();
+    const fetcher = fakeFetch([{ lat: "59.911", lon: "10.752" }]);
+    const address = "Bekkeliveien 5, 3470 SLEMMESTAD, Norge";
+
+    const first = await geocodeAddress(address, { fetcher, dbPath, minIntervalMs: 0, countryCode: "no" });
+    expect(first).toEqual({ lat: 59.911, lon: 10.752 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const firstUrl = fetcher.mock.calls[0][0] as string;
+    expect(firstUrl).toContain("countrycodes=no");
+
+    // Same address, different country code → different cache key → second fetch.
+    const second = await geocodeAddress(address, { fetcher, dbPath, minIntervalMs: 0, countryCode: "se" });
+    expect(second).toEqual({ lat: 59.911, lon: 10.752 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const secondUrl = fetcher.mock.calls[1][0] as string;
+    expect(secondUrl).toContain("countrycodes=se");
+  });
+
   it("throttles consecutive misses", async () => {
     clearGeocodeThrottleForTests();
     const dbPath = tempDb();
