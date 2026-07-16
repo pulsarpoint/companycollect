@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chQuery } from "~/lib/clickhouse.server";
+import { restKeys } from "~/components/detail/countries/no-financials";
 import { COUNTRIES, getCountry } from "~/lib/countries";
 import { getFacetOptions } from "~/lib/facets.server";
 import { filterableFacetKeys } from "~/lib/filters";
@@ -336,6 +337,45 @@ describe("getCompanyDetail (Estonia)", () => {
     expect(keys).toContain("company_url");
     expect(keys).toContain("source_url");
     expect(detail!.record.reg_code).toBe(String(page.rows[0].id));
+  });
+});
+
+describe("getCompanyDetail statements (Norway)", () => {
+  it("returns full statement rows for a company with filings", async () => {
+    const no = getCountry("no")!;
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT org_number AS id FROM no_financial_statements
+       WHERE operating_costs_amount_original IS NOT NULL
+         AND org_number IN (SELECT org_number FROM no_companies)
+       ORDER BY org_number LIMIT 1`,
+    );
+    const detail = await getCompanyDetail(no, row.id);
+    expect(detail!.statements.length).toBeGreaterThan(0);
+    const stmt = detail!.statements[0];
+    // full-fidelity: raw table columns present, not the canonical subset
+    expect(stmt).toHaveProperty("operating_costs_amount_original");
+    expect(stmt).toHaveProperty("accounts_type");
+    expect(stmt).toHaveProperty("is_parent_company");
+  });
+
+  it("countries without statementsQuery return an empty array", async () => {
+    const page = await searchCompanies(ee, { pageSize: 1 });
+    const detail = await getCompanyDetail(ee, String(page.rows[0].id));
+    expect(detail!.statements).toEqual([]);
+  });
+
+  it("every statement column is placed in a group, lineage, or rest (fidelity guarantee)", async () => {
+    const no = getCountry("no")!;
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT org_number AS id FROM no_financial_statements
+       WHERE org_number IN (SELECT org_number FROM no_companies)
+       ORDER BY org_number LIMIT 1`,
+    );
+    const detail = await getCompanyDetail(no, row.id);
+    const rest = restKeys(detail!.statements[0]);
+    // Today every column is explicitly grouped; a future migration adding a
+    // column makes it appear in "Other fields" automatically — never dropped.
+    expect(rest).toEqual([]);
   });
 });
 

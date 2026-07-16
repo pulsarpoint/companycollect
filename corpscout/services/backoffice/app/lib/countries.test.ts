@@ -159,4 +159,15 @@ describe("detail config", () => {
       }
     }
   });
+
+  it("norway declares a full statements query; others do not yet", () => {
+    for (const c of COUNTRIES) {
+      if (c.code === "no") {
+        expect(c.detail?.statementsQuery).toContain("{id:String}");
+        expect(c.detail?.statementsQuery).toContain("no_financial_statements");
+      } else {
+        expect(c.detail?.statementsQuery, c.code).toBeUndefined();
+      }
+    }
+  });
 });

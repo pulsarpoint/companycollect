@@ -170,6 +170,7 @@ export interface CompanyDetail {
   financials: FinancialYearRow[];
   contacts: ContactRow[];
   domains: DomainRow[];
+  statements: Record<string, unknown>[];
 }
 
 export async function getCompanyDetail(
@@ -206,10 +207,14 @@ export async function getCompanyDetail(
       ? chQuery<DomainRow>(country.detail.domainsQuery, { id })
       : Promise.resolve([]),
   ]);
+  const statementsPromise = country.detail?.statementsQuery
+    ? chQuery<Record<string, unknown>>(country.detail.statementsQuery, { id })
+    : Promise.resolve([]);
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
   recordPromise.catch(() => {});
   sectionsPromise.catch(() => {});
+  statementsPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -221,10 +226,11 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains]] = await Promise.all([
+  const [records, [financials, contacts, domains], statements] = await Promise.all([
     recordPromise,
     sectionsPromise,
+    statementsPromise,
   ]);
 
-  return { company, record: records[0] ?? {}, financials, contacts, domains };
+  return { company, record: records[0] ?? {}, financials, contacts, domains, statements };
 }

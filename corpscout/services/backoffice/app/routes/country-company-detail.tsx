@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import { Link } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import type { Route } from "./+types/country-company-detail";
@@ -11,6 +12,14 @@ import {
   DomainsSection,
 } from "~/components/detail/detail-sections";
 import { FinancialsSection } from "~/components/detail/financials-section";
+import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
+
+const COUNTRY_FINANCIALS: Record<
+  string,
+  ComponentType<{ statements: Record<string, unknown>[] }>
+> = {
+  no: NoFinancialsSection,
+};
 
 export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
@@ -63,7 +72,12 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
       </div>
 
       <CompanyRecordSection company={company} record={detail.record} />
-      <FinancialsSection financials={detail.financials} />
+      {(() => {
+        const Specific = COUNTRY_FINANCIALS[country.code];
+        if (Specific) return <Specific statements={detail.statements} />;
+        if (detail.statements.length > 0) return <StatementsFallback statements={detail.statements} />;
+        return <FinancialsSection financials={detail.financials} />;
+      })()}
       <ContactsSection contacts={detail.contacts} />
       <DomainsSection domains={detail.domains} />
     </div>

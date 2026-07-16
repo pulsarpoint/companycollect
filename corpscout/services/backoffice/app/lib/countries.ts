@@ -27,6 +27,12 @@ export interface CountryDetailConfig {
   contactsQuery?: string;
   /** {id:String} → { domain, website_url, domain_source, confidence, is_primary } rows. */
   domainsQuery?: string;
+  /**
+   * {id:String} → FULL country-shaped statement rows (SELECT *), newest
+   * first, ALL filings (no per-year dedup). Rendered by a country-specific
+   * component when one exists, else by the auto field-grid fallback.
+   */
+  statementsQuery?: string;
 }
 
 export interface CountryConfig {
@@ -122,6 +128,10 @@ FROM no_company_domains
 WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY is_primary DESC, confidence DESC
 LIMIT 50`,
+      statementsQuery: `SELECT * FROM no_financial_statements
+WHERE org_number = {id:String}
+ORDER BY fiscal_year DESC, resolved_at DESC
+LIMIT 40`,
     },
   },
   {
