@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COUNTRIES, getCountry } from "~/lib/countries";
+import { getFacetOptions } from "~/lib/facets.server";
 import { PAGE_SIZES, getCountryStats, searchCompanies } from "~/lib/queries.server";
 
 // Integration tests against the real ClickHouse. Estonia is the smallest
@@ -122,4 +123,53 @@ describe("searchCompanies across all countries", () => {
     },
     30_000,
   );
+});
+
+describe("searchCompanies with filters", () => {
+  it("applies a single-value filter to rows and total", async () => {
+    const unfiltered = await searchCompanies(ee, { pageSize: 25 });
+    const statusOptions = await getFacetOptions(ee, "status");
+    const top = statusOptions[0].value;
+    const filtered = await searchCompanies(ee, {
+      pageSize: 25,
+      filters: { status: [top] },
+    });
+    expect(filtered.total).toBeGreaterThan(0);
+    expect(filtered.total).toBeLessThanOrEqual(unfiltered.total);
+    for (const row of filtered.rows) {
+      expect(String(row.status)).toBe(top);
+    }
+  });
+
+  it("multi-value filter is a union (IN)", async () => {
+    const statusOptions = await getFacetOptions(ee, "status");
+    if (statusOptions.length < 2) return; // data-dependent guard
+    const [a, b] = statusOptions;
+    const fa = await searchCompanies(ee, { filters: { status: [a.value] } });
+    const fb = await searchCompanies(ee, { filters: { status: [b.value] } });
+    const both = await searchCompanies(ee, {
+      filters: { status: [a.value, b.value] },
+    });
+    expect(both.total).toBe(fa.total + fb.total);
+  });
+
+  it("filters compose with q search", async () => {
+    const statusOptions = await getFacetOptions(ee, "status");
+    const result = await searchCompanies(ee, {
+      q: "grupp",
+      filters: { status: [statusOptions[0].value] },
+    });
+    for (const row of result.rows) {
+      expect(String(row.name).toLowerCase()).toContain("grupp");
+      expect(String(row.status)).toBe(statusOptions[0].value);
+    }
+  });
+
+  it("ignores filter keys not in the registry whitelist", async () => {
+    const result = await searchCompanies(ee, {
+      pageSize: 25,
+      filters: { "bogus; DROP": ["x"], name: ["y"] } as never,
+    });
+    expect(result.rows.length).toBe(25); // filters silently ignored
+  });
 });

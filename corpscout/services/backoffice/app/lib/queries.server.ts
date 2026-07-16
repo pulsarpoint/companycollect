@@ -5,6 +5,7 @@ import {
   type CountryConfig,
   type SortDir,
 } from "~/lib/countries";
+import type { CompanyFilters } from "~/lib/filters";
 
 export interface CountryStats {
   total: number;
@@ -59,6 +60,7 @@ export async function searchCompanies(
     pageSize?: number;
     sort?: string | null;
     dir?: string | null;
+    filters?: CompanyFilters;
   },
 ): Promise<CompanySearchResult> {
   const pageSize = PAGE_SIZES.includes(opts.pageSize as 25 | 50 | 100)
@@ -69,8 +71,21 @@ export async function searchCompanies(
   const sortColumn = getSortColumn(country, opts.sort ?? null);
   const dir: SortDir = opts.dir === "desc" ? "desc" : "asc";
 
-  const where = q ? `WHERE ${country.nameColumn} ILIKE {pattern:String}` : "";
-  const params = q ? { pattern: `%${q}%` } : undefined;
+  const conds: string[] = [];
+  const params: Record<string, unknown> = {};
+  if (q) {
+    conds.push(`${country.nameColumn} ILIKE {pattern:String}`);
+    params.pattern = `%${q}%`;
+  }
+  for (const column of country.columns) {
+    if (!column.filterable) continue;
+    const values = opts.filters?.[column.key];
+    if (!values || values.length === 0) continue;
+    // Column expr from registry; values bound as an Array(String) param.
+    conds.push(`${column.expr} IN {f_${column.key}:Array(String)}`);
+    params[`f_${column.key}`] = values;
+  }
+  const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
 
   const countRows = await chQuery<{ total: string }>(
     `SELECT count() AS total FROM ${country.companiesTable} ${where}`,
