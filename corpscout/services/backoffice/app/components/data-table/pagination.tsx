@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import {
   ChevronLeft,
   ChevronRight,
@@ -15,7 +15,6 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { tableSearch } from "~/components/data-table/url";
-import { useNavigate } from "react-router";
 
 const nf = new Intl.NumberFormat("en-US");
 

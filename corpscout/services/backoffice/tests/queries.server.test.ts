@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCountry } from "~/lib/countries";
+import { COUNTRIES, getCountry } from "~/lib/countries";
 import { PAGE_SIZES, getCountryStats, searchCompanies } from "~/lib/queries.server";
 
 // Integration tests against the real ClickHouse. Estonia is the smallest
@@ -68,6 +68,7 @@ describe("searchCompanies sorting and columns", () => {
     expect(row).toHaveProperty("active");
     expect(row).toHaveProperty("industry_code");
     expect(row).toHaveProperty("industry_label");
+    expect(row).not.toHaveProperty("__industry_key");
   });
 
   it("merges a primary industry for most companies on a page", async () => {
@@ -78,8 +79,8 @@ describe("searchCompanies sorting and columns", () => {
   });
 
   it("sorts by a whitelisted column in both directions", async () => {
-    const asc = await searchCompanies(ee, { sort: "id", dir: "asc", pageSize: 5 });
-    const desc = await searchCompanies(ee, { sort: "id", dir: "desc", pageSize: 5 });
+    const asc = await searchCompanies(ee, { sort: "id", dir: "asc", pageSize: 25 });
+    const desc = await searchCompanies(ee, { sort: "id", dir: "desc", pageSize: 25 });
     expect(asc.sort).toBe("id");
     expect(asc.dir).toBe("asc");
     expect(desc.dir).toBe("desc");
@@ -104,4 +105,21 @@ describe("searchCompanies sorting and columns", () => {
     expect(result.pageSize).toBe(50);
     expect(PAGE_SIZES).toEqual([25, 50, 100]);
   });
+});
+
+describe("searchCompanies across all countries", () => {
+  it.each(COUNTRIES.map((c) => [c.code, c] as const))(
+    "%s: default first page executes registry SQL and merges industry",
+    async (_code, country) => {
+      const result = await searchCompanies(country, { pageSize: 25 });
+      expect(result.rows.length).toBeGreaterThan(0);
+      expect(result.total).toBeGreaterThan(0);
+      const row = result.rows[0];
+      expect(row).toHaveProperty("id");
+      expect(row).toHaveProperty("name");
+      expect(row).toHaveProperty("industry_code");
+      expect(row).not.toHaveProperty("__industry_key");
+    },
+    30_000,
+  );
 });
