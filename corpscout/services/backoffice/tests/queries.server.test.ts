@@ -324,6 +324,19 @@ describe("getCompanyDetail (Estonia)", () => {
     expect(withDomains!.domains.length).toBeGreaterThan(0);
     expect(withDomains!.domains[0].domain).toBeTruthy();
   });
+
+  it("returns the full company record with every table column", async () => {
+    const page = await searchCompanies(ee, { pageSize: 1 });
+    const detail = await getCompanyDetail(ee, String(page.rows[0].id));
+    const keys = Object.keys(detail!.record);
+    // ee_companies has 24 columns — the record must carry them all,
+    // including columns the list config never shows:
+    expect(keys.length).toBeGreaterThanOrEqual(20);
+    expect(keys).toContain("address");
+    expect(keys).toContain("company_url");
+    expect(keys).toContain("source_url");
+    expect(detail!.record.reg_code).toBe(String(page.rows[0].id));
+  });
 });
 
 describe("getCompanyDetail (Brazil)", () => {

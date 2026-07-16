@@ -1,5 +1,4 @@
 import type { CompanyListRow, ContactRow, DomainRow } from "~/lib/queries.server";
-import type { CountryConfig } from "~/lib/countries";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -7,59 +6,38 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import { FieldGrid, splitFields } from "~/components/detail/fields";
 
-export const EMPTY = <span className="text-muted-foreground">—</span>;
-
-function value(v: unknown) {
-  const s = v == null ? "" : String(v);
-  return s === "" ? EMPTY : s;
-}
-
-export function OverviewSection({
-  country,
+export function CompanyRecordSection({
   company,
+  record,
 }: {
-  country: CountryConfig;
   company: CompanyListRow;
+  record: Record<string, unknown>;
 }) {
-  const fields = country.columns.filter((c) => c.key !== "name");
+  const { visible, lineage } = splitFields(record);
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Overview</CardTitle>
+        <CardTitle className="text-base">Company record</CardTitle>
       </CardHeader>
-      <CardContent>
-        <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
-          {fields.map((col) => (
-            <div key={col.key} className="flex flex-col gap-0.5">
-              <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                {col.label}
-              </dt>
-              <dd className={col.kind === "id" ? "font-mono text-sm" : "text-sm"}>
-                {value(company[col.key])}
-              </dd>
+      <CardContent className="space-y-4">
+        <FieldGrid
+          fields={[
+            ...visible,
+            ["industry", [company.industry_code, company.industry_label].filter(Boolean).join(" ") || null],
+          ]}
+        />
+        {lineage.length > 0 ? (
+          <details>
+            <summary className="text-muted-foreground cursor-pointer text-xs font-medium uppercase tracking-wide">
+              Source &amp; lineage
+            </summary>
+            <div className="pt-3">
+              <FieldGrid fields={lineage} />
             </div>
-          ))}
-          <div className="flex flex-col gap-0.5">
-            <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-              Industry
-            </dt>
-            <dd className="text-sm">
-              {company.industry_code || company.industry_label ? (
-                <span className="flex items-baseline gap-1.5">
-                  {company.industry_code ? (
-                    <span className="text-muted-foreground font-mono text-xs">
-                      {company.industry_code}
-                    </span>
-                  ) : null}
-                  {company.industry_label ? <span>{company.industry_label}</span> : null}
-                </span>
-              ) : (
-                EMPTY
-              )}
-            </dd>
-          </div>
-        </dl>
+          </details>
+        ) : null}
       </CardContent>
     </Card>
   );

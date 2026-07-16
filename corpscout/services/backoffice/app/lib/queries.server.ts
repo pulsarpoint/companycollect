@@ -166,6 +166,7 @@ export interface DomainRow {
 
 export interface CompanyDetail {
   company: CompanyListRow;
+  record: Record<string, unknown>;
   financials: FinancialYearRow[];
   contacts: ContactRow[];
   domains: DomainRow[];
@@ -187,8 +188,13 @@ export async function getCompanyDetail(
   if (rows.length === 0) return null;
   const company = rows[0];
 
-  // Kick off the section queries immediately — they only depend on `id` — so
-  // they run concurrently with the industry round-trip below instead of after it.
+  // Kick off the record + section queries immediately — they only depend on
+  // `id` — so they run concurrently with the industry round-trip below
+  // instead of after it.
+  const recordPromise = chQuery<Record<string, unknown>>(
+    `SELECT * FROM ${country.companiesTable} WHERE ${country.idColumn} = {id:String} LIMIT 1`,
+    { id },
+  );
   const sectionsPromise = Promise.all([
     country.detail?.financialsQuery
       ? chQuery<FinancialYearRow>(country.detail.financialsQuery, { id })
@@ -200,6 +206,10 @@ export async function getCompanyDetail(
       ? chQuery<DomainRow>(country.detail.domainsQuery, { id })
       : Promise.resolve([]),
   ]);
+  // No-op guards close the unhandled-rejection window between promise
+  // construction and the `await` below — the await still surfaces real errors.
+  recordPromise.catch(() => {});
+  sectionsPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -211,7 +221,10 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [financials, contacts, domains] = await sectionsPromise;
+  const [records, [financials, contacts, domains]] = await Promise.all([
+    recordPromise,
+    sectionsPromise,
+  ]);
 
-  return { company, financials, contacts, domains };
+  return { company, record: records[0] ?? {}, financials, contacts, domains };
 }

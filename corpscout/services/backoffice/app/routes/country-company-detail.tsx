@@ -6,9 +6,9 @@ import { getCompanyDetail } from "~/lib/queries.server";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
+  CompanyRecordSection,
   ContactsSection,
   DomainsSection,
-  OverviewSection,
 } from "~/components/detail/detail-sections";
 import { FinancialsSection } from "~/components/detail/financials-section";
 
@@ -62,7 +62,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
         </span>
       </div>
 
-      <OverviewSection country={country} company={company} />
+      <CompanyRecordSection company={company} record={detail.record} />
       <FinancialsSection financials={detail.financials} />
       <ContactsSection contacts={detail.contacts} />
       <DomainsSection domains={detail.domains} />
