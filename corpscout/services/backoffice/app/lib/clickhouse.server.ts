@@ -10,6 +10,10 @@ function getClient(): ClickHouseClient {
       password: process.env.CLICKHOUSE_PASSWORD ?? "",
       database: process.env.CLICKHOUSE_DATABASE ?? "corpscout",
       request_timeout: 30_000,
+      // readonly=2: server rejects INSERT/ALTER/DDL/any write, while still
+      // allowing named query params over HTTP (readonly=1 would reject them,
+      // as query params count as settings changes).
+      clickhouse_settings: { readonly: "2" },
     });
   }
   return client;
@@ -19,6 +23,10 @@ function getClient(): ClickHouseClient {
  * Runs a read-only SELECT against ClickHouse and returns rows as objects.
  * User-supplied values MUST be passed via `params` (ClickHouse named query
  * params, e.g. `{q:String}` in the SQL) — never interpolated into `sql`.
+ *
+ * Read-only access is enforced server-side: the client sends
+ * `readonly=2`, so ClickHouse rejects INSERT/ALTER/DDL and any other
+ * write statement regardless of what SQL is passed in.
  */
 export async function chQuery<T>(
   sql: string,

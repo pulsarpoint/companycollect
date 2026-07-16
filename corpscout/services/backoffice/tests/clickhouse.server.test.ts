@@ -15,4 +15,10 @@ describe("chQuery", () => {
     const rows = await chQuery<{ db: string }>("SELECT currentDatabase() AS db");
     expect(rows).toEqual([{ db: "corpscout" }]);
   });
+
+  it("rejects write statements (read-only enforcement)", async () => {
+    await expect(
+      chQuery("CREATE TABLE _backoffice_readonly_probe (x UInt8) ENGINE = Null"),
+    ).rejects.toThrow(/readonly|Cannot execute/i);
+  });
 });
