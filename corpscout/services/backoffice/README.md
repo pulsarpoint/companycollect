@@ -67,6 +67,13 @@ country's data to fit a generic UI — add a country component instead
 (`app/components/detail/countries/`, wired via COUNTRY_FINANCIALS in the
 detail route).
 
+NO/LV record cards join their `*_companies_translated` tables (LEFT JOIN —
+never a table switch; the translated tables are missing base columns).
+Industries render as a shared section (all rows, canonical NACE English).
+Norway statement amounts carry their currency code; USD values shown with a
+leading `≈` are derived in the UI as `original × fx_rate_to_usd` where the
+pipeline left the stored USD NULL.
+
 ## Rules
 
 - Read-only: `SELECT` only, no writes to ClickHouse.
