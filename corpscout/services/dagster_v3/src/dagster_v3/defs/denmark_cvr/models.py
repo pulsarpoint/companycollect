@@ -27,7 +27,7 @@ class CompanySearchResult(BaseModel):
     start_dato: date = Field(alias="startDato")
     status: str
     telefonnummer: str | None
-    virksomhedsform: str
+    virksomhedsform: str | None
     vis_navn_postfix: bool = Field(alias="visNavnPostfix")
 
     @field_validator("ophoers_dato", mode="before")

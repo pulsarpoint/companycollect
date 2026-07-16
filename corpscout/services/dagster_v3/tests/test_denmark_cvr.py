@@ -9,10 +9,10 @@ from pydantic import ValidationError
 
 from dagster_v3.defs.denmark_cvr.assets import (
     DENMARK_CVR_BUCKET,
-    denmark_cvr_search_results_s3,
-    invalid_response_object_key,
-    result_object_key,
-    write_denmark_cvr_month,
+    backfill_invalid_response_object_key,
+    backfill_result_object_key,
+    denmark_cvr_backfill_s3,
+    write_denmark_cvr_backfill_month,
 )
 from dagster_v3.defs.denmark_cvr.filters import (
     DATACVR_MUNICIPALITIES,
@@ -24,7 +24,7 @@ from dagster_v3.defs.denmark_cvr.models import (
     ProductionUnitSearchResult,
     SearchResponse,
 )
-from dagster_v3.defs.denmark_cvr.partitions import DENMARK_CVR_MONTHLY_PARTITIONS
+from dagster_v3.defs.denmark_cvr.partitions import DENMARK_CVR_BACKFILL_PARTITIONS
 from dagster_v3.defs.denmark_cvr.resources import (
     DenmarkCvrMonthDownload,
     DenmarkCvrQueryDownload,
@@ -36,7 +36,11 @@ from dagster_v3.defs.denmark_cvr.resources import (
 )
 
 
-def _company(*, cvr: str = "12345678") -> dict[str, Any]:
+def _company(
+    *,
+    cvr: str = "12345678",
+    company_form: str | None = "Anpartsselskab",
+) -> dict[str, Any]:
     return {
         "beliggenhedsadresse": "Testvej 1",
         "by": "Testby",
@@ -58,7 +62,7 @@ def _company(*, cvr: str = "12345678") -> dict[str, Any]:
         "startDato": "2020-01-02",
         "status": "NORMAL",
         "telefonnummer": "+45 00000000",
-        "virksomhedsform": "Anpartsselskab",
+        "virksomhedsform": company_form,
         "visNavnPostfix": False,
     }
 
@@ -197,6 +201,7 @@ class FakeObjectStore:
         self.ensured_buckets: list[str] = []
         self.objects: dict[tuple[str, str], bytes] = {}
         self.write_order: list[tuple[str, str]] = []
+        self.exists_calls: list[tuple[str, str]] = []
 
     def ensure_bucket(self, bucket: str | None = None) -> None:
         assert bucket is not None
@@ -221,6 +226,11 @@ class FakeObjectStore:
         assert bucket is not None
         self.objects[(bucket, key)] = body.encode("utf-8")
         self.write_order.append((bucket, key))
+
+    def exists(self, key: str, bucket: str | None = None) -> bool:
+        assert bucket is not None
+        self.exists_calls.append((bucket, key))
+        return (bucket, key) in self.objects
 
 
 class FakeSearchResource:
@@ -310,6 +320,14 @@ def test_company_and_production_unit_accept_null_location_fields() -> None:
     assert response.enheder[0].by is None
     assert response.enheder[0].hovedbranche is None
     assert response.enheder[1].postnummer is None
+
+
+def test_company_accepts_null_company_form_from_datacvr() -> None:
+    response = SearchResponse.model_validate_json(
+        _response_body([_company(company_form=None)])
+    )
+
+    assert response.enheder[0].virksomhedsform is None
 
 
 def test_search_response_rejects_negative_totals_and_unknown_entity_types() -> None:
@@ -498,24 +516,21 @@ def test_search_resource_retains_invalid_body_without_exposing_it() -> None:
     assert invalid_body not in str(exc_info.value)
 
 
-def test_result_object_keys_are_month_scoped() -> None:
-    assert result_object_key("2025-01", "test-run", is_complete=True) == (
-        "denmark_cvr/search/month=2025-01/run_id=test-run/companies.json"
+def test_backfill_object_keys_are_month_scoped_and_run_independent() -> None:
+    assert backfill_result_object_key("2025-01", is_complete=True) == (
+        "denmark_cvr/backfill/month=2025-01/companies.json"
     )
-    assert result_object_key("2025-01", "test-run", is_complete=False) == (
-        "denmark_cvr/search/month=2025-01/run_id=test-run/companies_incomplete.json"
+    assert backfill_result_object_key("2025-01", is_complete=False) == (
+        "denmark_cvr/backfill/month=2025-01/companies_incomplete.json"
     )
-    assert invalid_response_object_key(
+    assert backfill_invalid_response_object_key(
         "2025-01",
-        "test-run",
         "all-companies",
         1,
     ).endswith("/invalid/filter=all-companies/page=000001.invalid.json")
 
     with pytest.raises(ValueError):
-        result_object_key("2014-12", "test-run", is_complete=True)
-    with pytest.raises(ValueError):
-        result_object_key("2025-01", "bad/run", is_complete=True)
+        backfill_result_object_key("2014-12", is_complete=True)
 
 
 def test_month_storage_merges_raw_entities_into_one_complete_json() -> None:
@@ -534,7 +549,7 @@ def test_month_storage_merges_raw_entities_into_one_complete_json() -> None:
     )
     object_store = FakeObjectStore()
 
-    summary = write_denmark_cvr_month(
+    summary = write_denmark_cvr_backfill_month(
         object_store=object_store,
         search=search,
         partition_key="2025-01",
@@ -542,7 +557,7 @@ def test_month_storage_merges_raw_entities_into_one_complete_json() -> None:
         retrieved_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
     )
 
-    key = result_object_key("2025-01", "complete-run", is_complete=True)
+    key = backfill_result_object_key("2025-01", is_complete=True)
     stored = json.loads(object_store.objects[(DENMARK_CVR_BUCKET, key)])
     assert object_store.write_order == [(DENMARK_CVR_BUCKET, key)]
     assert search.date_ranges == [(date(2025, 1, 1), date(2025, 1, 31))]
@@ -554,6 +569,42 @@ def test_month_storage_merges_raw_entities_into_one_complete_json() -> None:
     assert stored["enheder"][0]["ophoersDato"] == ""
     assert summary.result_key == key
     assert summary.stored_file_count == 1
+    assert summary.is_skipped is False
+
+
+@pytest.mark.parametrize("is_complete", [True, False])
+def test_backfill_skips_partition_when_result_json_already_exists(
+    is_complete: bool,
+) -> None:
+    search = FakeSearchResource(
+        _month_download(
+            generic_advertised_count=1,
+            query_downloads=(
+                _query_download(entities=(_company(),), advertised_count=1),
+            ),
+        )
+    )
+    object_store = FakeObjectStore()
+    existing_key = backfill_result_object_key(
+        "2025-01",
+        is_complete=is_complete,
+    )
+    object_store.objects[(DENMARK_CVR_BUCKET, existing_key)] = b"already-loaded"
+
+    summary = write_denmark_cvr_backfill_month(
+        object_store=object_store,
+        search=search,
+        partition_key="2025-01",
+        run_id="retry-run",
+        retrieved_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+    )
+
+    assert summary.result_key == existing_key
+    assert summary.is_complete is is_complete
+    assert summary.is_skipped is True
+    assert summary.stored_file_count == 0
+    assert search.date_ranges == []
+    assert object_store.write_order == []
 
 
 def test_incomplete_month_is_stored_logged_and_processed() -> None:
@@ -568,7 +619,7 @@ def test_incomplete_month_is_stored_logged_and_processed() -> None:
     )
     object_store = FakeObjectStore()
 
-    summary = write_denmark_cvr_month(
+    summary = write_denmark_cvr_backfill_month(
         object_store=object_store,
         search=search,
         partition_key="2025-01",
@@ -577,7 +628,7 @@ def test_incomplete_month_is_stored_logged_and_processed() -> None:
         log_warning=lambda *args: warnings.append(args),
     )
 
-    key = result_object_key("2025-01", "incomplete-run", is_complete=False)
+    key = backfill_result_object_key("2025-01", is_complete=False)
     stored = json.loads(object_store.objects[(DENMARK_CVR_BUCKET, key)])
     assert summary.is_complete is False
     assert stored["is_complete"] is False
@@ -593,7 +644,7 @@ def test_invalid_response_is_preserved_without_result_json() -> None:
     object_store = FakeObjectStore()
 
     with pytest.raises(DenmarkCvrValidationError):
-        write_denmark_cvr_month(
+        write_denmark_cvr_backfill_month(
             object_store=object_store,
             search=InvalidSearchResource(),
             partition_key="2025-01",
@@ -601,9 +652,8 @@ def test_invalid_response_is_preserved_without_result_json() -> None:
             retrieved_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
         )
 
-    invalid_key = invalid_response_object_key(
+    invalid_key = backfill_invalid_response_object_key(
         "2025-01",
-        "invalid-run",
         "all-companies",
         1,
     )
@@ -632,7 +682,7 @@ def test_asset_reports_monthly_download_statistics() -> None:
         ),
     )
 
-    result = denmark_cvr_search_results_s3.node_def.compute_fn.decorated_fn(
+    result = denmark_cvr_backfill_s3.node_def.compute_fn.decorated_fn(
         context,
         search,
         object_store,
@@ -644,16 +694,15 @@ def test_asset_reports_monthly_download_statistics() -> None:
     assert result.metadata["filtered_advertised_count"] == 1
     assert result.metadata["downloaded_entity_count"] == 1
     assert result.metadata["stored_file_count"] == 1
+    assert result.metadata["is_skipped"] is False
 
 
-def test_denmark_cvr_asset_uses_monthly_partitions() -> None:
-    assert (
-        denmark_cvr_search_results_s3.partitions_def is DENMARK_CVR_MONTHLY_PARTITIONS
-    )
-    assert denmark_cvr_search_results_s3.backfill_policy.max_partitions_per_run == 1
-    assert denmark_cvr_search_results_s3.op.pool == "denmark_cvr_search"
+def test_denmark_cvr_backfill_asset_uses_bounded_monthly_partitions() -> None:
+    assert denmark_cvr_backfill_s3.partitions_def is DENMARK_CVR_BACKFILL_PARTITIONS
+    assert denmark_cvr_backfill_s3.backfill_policy.max_partitions_per_run == 1
+    assert denmark_cvr_backfill_s3.op.pool == "denmark_cvr_search"
 
-    spec = denmark_cvr_search_results_s3.get_asset_spec()
+    spec = denmark_cvr_backfill_s3.get_asset_spec()
     assert spec.group_name == "denmark_cvr"
     assert spec.tags["country"] == "denmark"
     assert spec.tags["source"] == "cvr"
@@ -666,7 +715,10 @@ def test_denmark_cvr_definitions_register_one_asset_and_no_schedule() -> None:
 
     repository = load_defs().get_repository_def()
 
-    assert dg.AssetKey("denmark_cvr_search_results_s3") in (
+    assert dg.AssetKey("denmark_cvr_backfill_s3") in (
+        repository.asset_graph.get_all_asset_keys()
+    )
+    assert dg.AssetKey("denmark_cvr_search_results_s3") not in (
         repository.asset_graph.get_all_asset_keys()
     )
     assert len(defs.assets) == 1

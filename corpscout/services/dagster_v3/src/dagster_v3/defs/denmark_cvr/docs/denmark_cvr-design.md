@@ -1,4 +1,4 @@
-# Denmark DataCVR monthly company source
+# Denmark DataCVR company backfill
 
 ## Source boundary
 
@@ -11,10 +11,11 @@
 - DuckDB normalization and CVR-level deduplication are deferred to a downstream
   asset.
 
-## Monthly partitions and filters
+## Bounded backfill partitions and filters
 
-- `denmark_cvr_search_results_s3` uses completed calendar-month partitions from
-  `2015-01`, in the `Europe/Copenhagen` timezone.
+- `denmark_cvr_backfill_s3` contains 138 calendar-month partitions from `2015-01`
+  through `2026-06`, in the `Europe/Copenhagen` timezone. The end boundary is
+  `2026-07-01`; later dates belong to the future daily active asset.
 - A materialization first sends one count request covering the first through last
   day of the month.
 - When the generic count is at most 3,000, the same generic filter is downloaded.
@@ -39,15 +40,21 @@
   object, a warning log, and `is_complete=false` materialization metadata so the
   evidence remains available for later analysis.
 
-## Object storage
+## Immutable object storage
 
-Each successful materialization writes exactly one merged JSON object in bucket
-`source-denmark-cvr`:
+Each partition writes at most one merged JSON object in bucket
+`source-denmark-cvr`. Object keys are stable across Dagster runs and deliberately
+exclude `run_id`:
 
 - complete:
-  `denmark_cvr/search/month=<YYYY-MM>/run_id=<run-id>/companies.json`
+  `denmark_cvr/backfill/month=<YYYY-MM>/companies.json`
 - incomplete:
-  `denmark_cvr/search/month=<YYYY-MM>/run_id=<run-id>/companies_incomplete.json`
+  `denmark_cvr/backfill/month=<YYYY-MM>/companies_incomplete.json`
+
+Before launching the browser, the asset checks both possible result keys. If
+either already exists, the partition performs no download and no write, logs the
+existing key, and materializes with `is_skipped=true`. Incomplete files are also
+immutable evidence and therefore skip later retries.
 
 The object contains month and run metadata, generic/filtered/downloaded counts,
 one audit entry per query, and a flat `enheder` list. Entity dictionaries retain
@@ -57,12 +64,17 @@ Schema-invalid source responses are stored separately as `.invalid.json`, and th
 materialization fails without writing a monthly result object. Logs never contain
 response bodies, company fields, cookies, or browser state.
 
+The source model accepts a nullable `virksomhedsform`, matching the DataCVR value
+observed in the March 2015 Middelfart response. The raw `null` value remains
+unchanged in the merged object.
+
 ## Operations and verification
 
 - `BackfillPolicy.multi_run(max_partitions_per_run=1)` and the
   `denmark_cvr_search` pool serialize browser-heavy work.
 - Materialization metadata reports completeness, query/page/file counts, entity
-  counts, source bytes, stored bytes, and the exact result key.
+  counts, source bytes, stored bytes, the exact result key, and whether the
+  partition was skipped.
 - No schedule, job, DuckDB asset, or ClickHouse asset is registered in this slice.
 - Validate with `uv run pytest tests/test_denmark_cvr.py
   tests/test_denmark_cvr_partitions.py -v`, `uv run ruff check`, and
