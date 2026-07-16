@@ -74,9 +74,14 @@ export async function getFacetOptions(
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.loadedAt < TTL_MS) return hit.options;
 
-  const rows = await chQuery<{ value: string; label: string; cnt: string }>(
-    facetSql(country, facetKey),
-  );
+  let sql: string;
+  if (facetKey === "industry") {
+    if (!country.industryFacetQuery) throw new Error(`unknown facet: ${facetKey}`);
+    sql = country.industryFacetQuery;
+  } else {
+    sql = facetSql(country, facetKey);
+  }
+  const rows = await chQuery<{ value: string; label: string; cnt: string }>(sql);
   const options: FacetOption[] = rows.map((r) => ({
     value: r.value,
     label: r.label,

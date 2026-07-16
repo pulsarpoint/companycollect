@@ -32,6 +32,7 @@ import {
 const nf = new Intl.NumberFormat("en-US");
 
 export function facetLabel(country: CountryConfig, key: string): string {
+  if (key === "industry") return "Industry";
   return country.columns.find((c) => c.key === key)?.label ?? key;
 }
 

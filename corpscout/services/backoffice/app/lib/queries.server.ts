@@ -85,6 +85,11 @@ export async function searchCompanies(
     conds.push(`${column.expr} IN {f_${column.key}:Array(String)}`);
     params[`f_${column.key}`] = values;
   }
+  const industryValues = opts.filters?.industry;
+  if (industryValues?.length && country.industryFilterExpr) {
+    conds.push(country.industryFilterExpr);
+    params.f_industry = industryValues;
+  }
   const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
 
   const countRows = await chQuery<{ total: string }>(

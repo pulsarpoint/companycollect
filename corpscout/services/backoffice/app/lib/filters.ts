@@ -7,7 +7,9 @@ export type CompanyFilters = Record<string, string[]>;
 
 /** Facet keys this country supports. Task 5 appends "industry". */
 export function filterableFacetKeys(country: CountryConfig): string[] {
-  return country.columns.filter((c) => c.filterable).map((c) => c.key);
+  const keys = country.columns.filter((c) => c.filterable).map((c) => c.key);
+  if (country.industryFilterExpr) keys.push("industry");
+  return keys;
 }
 
 /** Extracts whitelisted f_<key> params. Unknown keys are ignored, never errors. */

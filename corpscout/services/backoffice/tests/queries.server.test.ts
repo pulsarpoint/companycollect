@@ -173,3 +173,18 @@ describe("searchCompanies with filters", () => {
     expect(result.rows.length).toBe(25); // filters silently ignored
   });
 });
+
+describe("industry filter (Estonia)", () => {
+  it("filters companies by primary industry code", async () => {
+    const options = await getFacetOptions(ee, "industry");
+    const top = options[0];
+    const filtered = await searchCompanies(ee, {
+      filters: { industry: [top.value] },
+    });
+    expect(filtered.total).toBeGreaterThan(0);
+    expect(filtered.total).toBeLessThan(400_000);
+    for (const row of filtered.rows) {
+      expect(row.industry_code).toBe(top.value);
+    }
+  });
+});

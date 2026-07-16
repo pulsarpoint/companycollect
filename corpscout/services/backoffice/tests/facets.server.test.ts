@@ -90,3 +90,13 @@ describe("facet cache against live ClickHouse (Estonia)", () => {
     expect(typed.length).toBeLessThanOrEqual(50);
   });
 });
+
+describe("industry facet (Estonia)", () => {
+  it("serves industry options with canonical english labels", async () => {
+    const options = await getFacetOptions(ee, "industry");
+    expect(options.length).toBeGreaterThan(0);
+    const labeled = options.filter((o) => o.label !== o.value);
+    // Most 4-digit EE codes resolve in nace_categories → english label
+    expect(labeled.length).toBeGreaterThan(options.length / 2);
+  });
+});

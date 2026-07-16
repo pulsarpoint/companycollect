@@ -47,6 +47,10 @@ export interface CountryConfig {
   industryQuery?: string;
   /** Company-table expression producing the industry join key. Defaults to idColumn. */
   industryJoinKeyExpr?: string;
+  /** Facet options SQL: value, label (canonical NACE English), cnt. No params. */
+  industryFacetQuery?: string;
+  /** Boolean WHERE expr filtering companies by industry; binds {f_industry:Array(String)}. */
+  industryFilterExpr?: string;
 }
 
 export const COUNTRIES: CountryConfig[] = [
@@ -62,13 +66,26 @@ export const COUNTRIES: CountryConfig[] = [
       { key: "registered", label: "Registered", expr: "toString(registration_date)", sortable: true, kind: "date" },
       { key: "website", label: "Website", expr: "primary_website_host", sortable: false, kind: "text" },
     ],
-    industryQuery: `SELECT org_number AS company_id,
-  nace_normalized_code AS industry_code,
-  coalesce(description_en, description_original, nace_normalized_code) AS industry_label
-FROM no_industries
-WHERE org_number IN {ids:Array(String)}
-ORDER BY is_primary DESC
-LIMIT 1 BY org_number`,
+    industryQuery: `SELECT i.org_number AS company_id,
+  i.nace_normalized_code AS industry_code,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label
+FROM no_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = substring(i.nace_normalized_code, 1, 4) AND n.is_current = 1
+WHERE i.org_number IN {ids:Array(String)}
+ORDER BY i.is_primary DESC
+LIMIT 1 BY i.org_number`,
+    industryFacetQuery: `SELECT i.nace_normalized_code AS value,
+  coalesce(nullIf(any(n.description_en), ''), any(coalesce(i.description_en, i.description_original)), value) AS label,
+  count() AS cnt
+FROM no_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = substring(i.nace_normalized_code, 1, 4) AND n.is_current = 1
+WHERE i.is_primary = 1 AND i.nace_normalized_code != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `org_number IN (SELECT org_number FROM no_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
   },
   {
     code: "fi", name: "Finland", flag: "🇫🇮", companiesTable: "fi_companies",
@@ -82,13 +99,26 @@ LIMIT 1 BY org_number`,
       { key: "registered", label: "Registered", expr: "toString(registration_date)", sortable: true, kind: "date" },
       { key: "website", label: "Website", expr: "primary_website_url", sortable: false, kind: "text" },
     ],
-    industryQuery: `SELECT business_id AS company_id,
-  nace_normalized_code AS industry_code,
-  coalesce(description_en, description_original, nace_normalized_code) AS industry_label
-FROM fi_industries
-WHERE business_id IN {ids:Array(String)}
-ORDER BY is_primary DESC
-LIMIT 1 BY business_id`,
+    industryQuery: `SELECT i.business_id AS company_id,
+  coalesce(i.source_industry_code, '') AS industry_code,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.source_industry_code, '') AS industry_label
+FROM fi_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = substring(coalesce(i.source_industry_code, ''), 1, 4) AND n.is_current = 1
+WHERE i.business_id IN {ids:Array(String)}
+ORDER BY i.is_primary DESC
+LIMIT 1 BY i.business_id`,
+    industryFacetQuery: `SELECT coalesce(i.source_industry_code, '') AS value,
+  coalesce(nullIf(any(n.description_en), ''), any(coalesce(i.description_en, i.description_original)), value) AS label,
+  count() AS cnt
+FROM fi_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = substring(coalesce(i.source_industry_code, ''), 1, 4) AND n.is_current = 1
+WHERE i.is_primary = 1 AND coalesce(i.source_industry_code, '') != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `business_id IN (SELECT business_id FROM fi_industries WHERE is_primary = 1 AND coalesce(source_industry_code, '') IN {f_industry:Array(String)})`,
   },
   {
     code: "se", name: "Sweden", flag: "🇸🇪", companiesTable: "se_companies",
@@ -111,6 +141,17 @@ LEFT JOIN nace_categories AS n
 WHERE i.company_id IN {ids:Array(String)}
 ORDER BY i.is_primary DESC, i.sequence ASC
 LIMIT 1 BY i.company_id`,
+    industryFacetQuery: `SELECT i.nace_rev2_class_code AS value,
+  coalesce(nullIf(any(n.description_en), ''), value) AS label,
+  count() AS cnt
+FROM se_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_rev2_class_code AND n.is_current = 1
+WHERE i.is_primary = 1 AND i.nace_rev2_class_code != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `company_id IN (SELECT company_id FROM se_industries WHERE is_primary = 1 AND nace_rev2_class_code IN {f_industry:Array(String)})`,
   },
   {
     code: "ee", name: "Estonia", flag: "🇪🇪", companiesTable: "ee_companies",
@@ -124,13 +165,26 @@ LIMIT 1 BY i.company_id`,
       { key: "registered", label: "First entry", expr: "toString(first_entry_date)", sortable: true, kind: "date" },
       { key: "place", label: "Location", expr: "location", sortable: false, kind: "text", filterable: true },
     ],
-    industryQuery: `SELECT reg_code AS company_id,
-  nace_normalized_code AS industry_code,
-  coalesce(description_en, description_original, nace_normalized_code) AS industry_label
-FROM ee_industries
-WHERE reg_code IN {ids:Array(String)}
-ORDER BY is_primary DESC
-LIMIT 1 BY reg_code`,
+    industryQuery: `SELECT i.reg_code AS company_id,
+  i.nace_normalized_code AS industry_code,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label
+FROM ee_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.reg_code IN {ids:Array(String)}
+ORDER BY i.is_primary DESC
+LIMIT 1 BY i.reg_code`,
+    industryFacetQuery: `SELECT i.nace_normalized_code AS value,
+  coalesce(nullIf(any(n.description_en), ''), any(coalesce(i.description_en, i.description_original)), value) AS label,
+  count() AS cnt
+FROM ee_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.is_primary = 1 AND i.nace_normalized_code != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `reg_code IN (SELECT reg_code FROM ee_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
   },
   {
     code: "lv", name: "Latvia", flag: "🇱🇻", companiesTable: "lv_companies",
@@ -162,13 +216,26 @@ WHERE regcode IN {ids:Array(String)}`,
       { key: "registered", label: "Incorporated", expr: "toString(incorporation_date)", sortable: true, kind: "date" },
       { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
     ],
-    industryQuery: `SELECT company_number AS company_id,
-  nace_normalized_code AS industry_code,
-  coalesce(description_en, description_original, nace_normalized_code) AS industry_label
-FROM gb_industries
-WHERE company_number IN {ids:Array(String)}
-ORDER BY is_primary DESC
-LIMIT 1 BY company_number`,
+    industryQuery: `SELECT i.company_number AS company_id,
+  i.nace_normalized_code AS industry_code,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label
+FROM gb_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.company_number IN {ids:Array(String)}
+ORDER BY i.is_primary DESC
+LIMIT 1 BY i.company_number`,
+    industryFacetQuery: `SELECT i.nace_normalized_code AS value,
+  coalesce(nullIf(any(n.description_en), ''), any(coalesce(i.description_en, i.description_original)), value) AS label,
+  count() AS cnt
+FROM gb_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.is_primary = 1 AND i.nace_normalized_code != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `company_number IN (SELECT company_number FROM gb_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
   },
   {
     code: "fr", name: "France", flag: "🇫🇷", companiesTable: "fr_companies",
@@ -182,13 +249,26 @@ LIMIT 1 BY company_number`,
       { key: "registered", label: "Created", expr: "toString(creation_date)", sortable: true, kind: "date" },
       { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
     ],
-    industryQuery: `SELECT siren AS company_id,
-  nace_normalized_code AS industry_code,
-  coalesce(description_en, description_original, nace_normalized_code) AS industry_label
-FROM fr_industries
-WHERE siren IN {ids:Array(String)}
-ORDER BY is_primary DESC
-LIMIT 1 BY siren`,
+    industryQuery: `SELECT i.siren AS company_id,
+  i.nace_normalized_code AS industry_code,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label
+FROM fr_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.siren IN {ids:Array(String)}
+ORDER BY i.is_primary DESC
+LIMIT 1 BY i.siren`,
+    industryFacetQuery: `SELECT i.nace_normalized_code AS value,
+  coalesce(nullIf(any(n.description_en), ''), any(coalesce(i.description_en, i.description_original)), value) AS label,
+  count() AS cnt
+FROM fr_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.is_primary = 1 AND i.nace_normalized_code != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `siren IN (SELECT siren FROM fr_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
   },
   {
     code: "br", name: "Brazil", flag: "🇧🇷", companiesTable: "br_companies",
@@ -211,6 +291,16 @@ LEFT JOIN br_cnae_to_nace AS m ON m.cnae_normalized_code = e.primary_cnae_code
 WHERE e.cnpj_basico IN {ids:Array(String)} AND e.is_headquarters = 1
 ORDER BY e.primary_cnae_code != '' DESC
 LIMIT 1 BY e.cnpj_basico`,
+    industryFacetQuery: `SELECT e.primary_cnae_code AS value,
+  coalesce(nullIf(any(m.nace_description_en), ''), value) AS label,
+  count() AS cnt
+FROM br_establishments AS e
+LEFT JOIN br_cnae_to_nace AS m ON m.cnae_normalized_code = e.primary_cnae_code
+WHERE e.is_headquarters = 1 AND e.primary_cnae_code != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `cnpj_basico IN (SELECT cnpj_basico FROM br_establishments WHERE is_headquarters = 1 AND primary_cnae_code IN {f_industry:Array(String)})`,
   },
   {
     code: "cz", name: "Czechia", flag: "🇨🇿", companiesTable: "cz_companies",
@@ -224,13 +314,26 @@ LIMIT 1 BY e.cnpj_basico`,
       { key: "registered", label: "Established", expr: "toString(established_date)", sortable: true, kind: "date" },
       { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
     ],
-    industryQuery: `SELECT ico AS company_id,
-  nace_normalized_code AS industry_code,
-  coalesce(description_en, description_original, nace_normalized_code) AS industry_label
-FROM cz_industries
-WHERE ico IN {ids:Array(String)}
-ORDER BY is_primary DESC
-LIMIT 1 BY ico`,
+    industryQuery: `SELECT i.ico AS company_id,
+  i.nace_normalized_code AS industry_code,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label
+FROM cz_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.ico IN {ids:Array(String)}
+ORDER BY i.is_primary DESC
+LIMIT 1 BY i.ico`,
+    industryFacetQuery: `SELECT i.nace_normalized_code AS value,
+  coalesce(nullIf(any(n.description_en), ''), any(coalesce(i.description_en, i.description_original)), value) AS label,
+  count() AS cnt
+FROM cz_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.is_primary = 1 AND i.nace_normalized_code != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `ico IN (SELECT ico FROM cz_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
   },
   {
     code: "sk", name: "Slovakia", flag: "🇸🇰", companiesTable: "sk_companies",
@@ -244,13 +347,26 @@ LIMIT 1 BY ico`,
       { key: "registered", label: "Established", expr: "toString(established_date)", sortable: true, kind: "date" },
       { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
     ],
-    industryQuery: `SELECT ico AS company_id,
-  nace_normalized_code AS industry_code,
-  coalesce(description_en, description_original, nace_normalized_code) AS industry_label
-FROM sk_industries
-WHERE ico IN {ids:Array(String)}
-ORDER BY is_primary DESC
-LIMIT 1 BY ico`,
+    industryQuery: `SELECT i.ico AS company_id,
+  i.nace_normalized_code AS industry_code,
+  coalesce(nullIf(n.description_en, ''), i.description_en, i.description_original, i.nace_normalized_code) AS industry_label
+FROM sk_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.ico IN {ids:Array(String)}
+ORDER BY i.is_primary DESC
+LIMIT 1 BY i.ico`,
+    industryFacetQuery: `SELECT i.nace_normalized_code AS value,
+  coalesce(nullIf(any(n.description_en), ''), any(coalesce(i.description_en, i.description_original)), value) AS label,
+  count() AS cnt
+FROM sk_industries AS i
+LEFT JOIN nace_categories AS n
+  ON n.normalized_code = i.nace_normalized_code AND n.is_current = 1
+WHERE i.is_primary = 1 AND i.nace_normalized_code != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`,
+    industryFilterExpr: `ico IN (SELECT ico FROM sk_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
   },
 ];
 

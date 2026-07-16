@@ -89,3 +89,27 @@ describe("company columns", () => {
     }
   });
 });
+
+describe("industry facet and filter", () => {
+  it("every country except lv has industryFacetQuery and industryFilterExpr", () => {
+    for (const c of COUNTRIES) {
+      if (c.code === "lv") {
+        expect(c.industryFacetQuery, c.code).toBeUndefined();
+        expect(c.industryFilterExpr, c.code).toBeUndefined();
+        continue;
+      }
+      expect(c.industryFacetQuery, c.code).toContain(" AS value");
+      expect(c.industryFacetQuery, c.code).toContain(" AS label");
+      expect(c.industryFacetQuery, c.code).toContain(" AS cnt");
+      expect(c.industryFilterExpr, c.code).toContain("{f_industry:Array(String)}");
+    }
+  });
+
+  it("display industryQuery prefers canonical nace english labels", () => {
+    // Every non-lv, non-br industryQuery joins nace_categories for the label.
+    for (const c of COUNTRIES) {
+      if (c.code === "lv" || c.code === "br") continue;
+      expect(c.industryQuery, c.code).toContain("nace_categories");
+    }
+  });
+});
