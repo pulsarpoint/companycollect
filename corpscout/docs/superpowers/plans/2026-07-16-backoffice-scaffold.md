@@ -11,14 +11,14 @@
 ## Global Constraints
 
 - App lives at `corpscout/services/backoffice` (all paths below are relative to that unless absolute).
-- React Router v7 framework mode with SSR enabled (`ssr: true`, the default) — do not switch to SPA mode.
+- React Router framework mode with SSR enabled (`ssr: true`, the default) — do not switch to SPA mode. **Decision 2026-07-16:** `create-react-router@latest` scaffolds React Router **8.0.0**; user chose to keep v8 rather than pin v7. All "v7" mentions in this plan read as "v8 framework mode" — the route/loader APIs used here are unchanged.
 - shadcn/ui latest with Tailwind CSS v4; dashboard shell comes from the `dashboard-01` block.
 - No authentication of any kind for now.
 - The app connects **directly to ClickHouse** (HTTP interface, `http://companycollect:8123`, database `corpscout`) and is **strictly read-only** — only `SELECT` statements, ever.
 - ClickHouse access only from server code (`*.server.ts` modules and loaders). Never import the ClickHouse client into client-rendered code.
 - All user-supplied values go through ClickHouse **query params** (`{name:String}` syntax) — never string-interpolate user input into SQL. Table/column names may be interpolated only from the static country registry.
 - Countries are a static object array in code (no countries table lookup).
-- Package manager: pnpm. Node.js 20+.
+- Package manager: pnpm. Node.js 22.22+ (React Router 8 engine floor; dev machine runs Node 26).
 - Path alias `~/*` → `./app/*` (matches the repo's frontend convention).
 - Dev server on port **5183** (5173 is taken by pulsarprotectproweb).
 - Integration tests run against the real ClickHouse instance (repo convention — no SQL-string-assertion fakes).
