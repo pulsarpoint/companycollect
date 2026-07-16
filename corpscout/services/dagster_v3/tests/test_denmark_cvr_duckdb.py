@@ -1,0 +1,302 @@
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import dagster as dg
+import pytest
+from dagster_duckdb import DuckDBResource
+
+from dagster_v3.defs.denmark_cvr.duckdb_asset import (
+    DENMARK_CVR_COMPANIES_TABLE,
+    DENMARK_CVR_DUCKDB_SCHEMA,
+    DENMARK_CVR_INGESTED_OBJECTS_TABLE,
+    DenmarkCvrStoredObjectError,
+    denmark_cvr_companies_duckdb,
+    defs,
+    source_result_object_keys,
+    update_denmark_cvr_companies_duckdb,
+)
+
+DENMARK_CVR_BUCKET = "source-denmark-cvr"
+
+
+class FakeObjectStore:
+    def __init__(self, objects: dict[str, bytes]) -> None:
+        self.objects = objects
+        self.read_keys: list[str] = []
+        self.list_prefixes: list[str] = []
+
+    def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        assert bucket == DENMARK_CVR_BUCKET
+        self.list_prefixes.append(prefix)
+        return sorted(key for key in self.objects if key.startswith(prefix))
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        assert bucket == DENMARK_CVR_BUCKET
+        self.read_keys.append(key)
+        return self.objects[key]
+
+
+def _company(
+    cvr: str,
+    *,
+    name: str | None,
+    start_date: str,
+) -> dict[str, Any]:
+    return {
+        "beliggenhedsadresse": "Testvej 1",
+        "by": "Testby",
+        "coNavn": None,
+        "cvr": cvr,
+        "email": "company@example.test",
+        "enhedsnummer": f"4{cvr}",
+        "enhedstype": "virksomhed",
+        "harPseudoCvr": False,
+        "highlightBinavn": False,
+        "highlightHistoriskBinavn": False,
+        "highlightHistoriskHovednavn": False,
+        "hovedbranche": "Test industry",
+        "ophoersDato": "",
+        "postnummer": "1000",
+        "reg": None,
+        "reklameBeskyttet": False,
+        "senesteNavn": name,
+        "startDato": start_date,
+        "status": "NORMAL",
+        "telefonnummer": "+45 00000000",
+        "virksomhedsform": "Anpartsselskab",
+        "visNavnPostfix": False,
+    }
+
+
+def _capture(
+    partition_key: str,
+    companies: list[dict[str, Any]],
+    *,
+    is_complete: bool = True,
+) -> bytes:
+    if len(partition_key) == 7:
+        start_date = f"{partition_key}-01"
+        end_date = f"{partition_key}-28"
+    else:
+        start_date = partition_key
+        end_date = partition_key
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "source": "denmark_cvr",
+            "source_url": "https://datacvr.virk.dk",
+            "entity_type": "virksomhed",
+            "partition_key": partition_key,
+            "start_date": start_date,
+            "end_date": end_date,
+            "retrieved_at": "2026-07-16T12:00:00+00:00",
+            "run_id": f"run-{partition_key}",
+            "is_complete": is_complete,
+            "generic_advertised_count": len(companies),
+            "filtered_advertised_count": len(companies),
+            "downloaded_entity_count": len(companies),
+            "enheder": companies,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _duckdb_resource(path: Path) -> DuckDBResource:
+    return DuckDBResource(database=str(path))
+
+
+def test_source_result_keys_include_backfill_and_active_results_only() -> None:
+    object_store = FakeObjectStore(
+        {
+            "denmark_cvr/backfill/month=2025-01/companies.json": b"{}",
+            "denmark_cvr/backfill/month=2025-02/companies_incomplete.json": b"{}",
+            "denmark_cvr/backfill/month=2025-02/invalid/filter=x/page=0.invalid.json": b"{}",
+            "denmark_cvr/active/date=2026-07-01/companies.json": b"{}",
+            "denmark_cvr/active/date=2026-07-01/other.json": b"{}",
+        }
+    )
+
+    keys = source_result_object_keys(object_store)
+
+    assert keys == (
+        "denmark_cvr/backfill/month=2025-01/companies.json",
+        "denmark_cvr/backfill/month=2025-02/companies_incomplete.json",
+        "denmark_cvr/active/date=2026-07-01/companies.json",
+    )
+
+
+def test_duckdb_initial_load_normalizes_deduplicates_and_records_state(
+    tmp_path: Path,
+) -> None:
+    backfill_key = "denmark_cvr/backfill/month=2026-06/companies.json"
+    active_key = "denmark_cvr/active/date=2026-07-01/companies.json"
+    object_store = FakeObjectStore(
+        {
+            backfill_key: _capture(
+                "2026-06",
+                [_company("12345678", name="Older name", start_date="2026-06-15")],
+            ),
+            active_key: _capture(
+                "2026-07-01",
+                [
+                    _company("12345678", name="Latest name", start_date="2026-06-15"),
+                    _company("87654321", name=None, start_date="2026-07-01"),
+                ],
+            ),
+        }
+    )
+    database_path = tmp_path / "denmark.duckdb"
+    duckdb_resource = _duckdb_resource(database_path)
+
+    summary = update_denmark_cvr_companies_duckdb(
+        object_store=object_store,
+        denmark_cvr_duckdb=duckdb_resource,
+        ingestion_run_id="ingestion-run",
+        processed_at=datetime(2026, 7, 16, 13, 0, tzinfo=UTC),
+    )
+
+    assert summary.discovered_object_count == 2
+    assert summary.processed_object_count == 2
+    assert summary.processed_row_count == 3
+    assert summary.company_count == 2
+    assert summary.incomplete_object_count == 0
+    assert object_store.read_keys == [backfill_key, active_key]
+    with duckdb_resource.get_connection() as connection:
+        companies = connection.execute(
+            f"""
+            select cvr, name, source_capture_type, source_object_key, raw_record
+            from {DENMARK_CVR_DUCKDB_SCHEMA}.{DENMARK_CVR_COMPANIES_TABLE}
+            order by cvr
+            """
+        ).fetchall()
+        ingested_objects = connection.execute(
+            f"""
+            select object_key, source_row_count
+            from {DENMARK_CVR_DUCKDB_SCHEMA}.{DENMARK_CVR_INGESTED_OBJECTS_TABLE}
+            order by object_key
+            """
+        ).fetchall()
+
+    assert companies[0][:4] == (
+        "12345678",
+        "Latest name",
+        "active",
+        active_key,
+    )
+    assert json.loads(companies[1][4])["senesteNavn"] is None
+    assert ingested_objects == [(active_key, 2), (backfill_key, 1)]
+
+
+def test_duckdb_repeated_run_reads_only_new_source_objects(tmp_path: Path) -> None:
+    first_key = "denmark_cvr/active/date=2026-07-01/companies.json"
+    second_key = "denmark_cvr/active/date=2026-07-02/companies_incomplete.json"
+    object_store = FakeObjectStore(
+        {
+            first_key: _capture(
+                "2026-07-01",
+                [_company("12345678", name="First", start_date="2026-07-01")],
+            )
+        }
+    )
+    duckdb_resource = _duckdb_resource(tmp_path / "denmark.duckdb")
+
+    update_denmark_cvr_companies_duckdb(
+        object_store=object_store,
+        denmark_cvr_duckdb=duckdb_resource,
+        ingestion_run_id="first-run",
+        processed_at=datetime(2026, 7, 16, 13, 0, tzinfo=UTC),
+    )
+    repeated = update_denmark_cvr_companies_duckdb(
+        object_store=object_store,
+        denmark_cvr_duckdb=duckdb_resource,
+        ingestion_run_id="repeated-run",
+        processed_at=datetime(2026, 7, 16, 13, 5, tzinfo=UTC),
+    )
+    object_store.objects[second_key] = _capture(
+        "2026-07-02",
+        [_company("87654321", name="Second", start_date="2026-07-02")],
+        is_complete=False,
+    )
+    incremental = update_denmark_cvr_companies_duckdb(
+        object_store=object_store,
+        denmark_cvr_duckdb=duckdb_resource,
+        ingestion_run_id="incremental-run",
+        processed_at=datetime(2026, 7, 16, 13, 10, tzinfo=UTC),
+    )
+
+    assert repeated.processed_object_count == 0
+    assert repeated.processed_row_count == 0
+    assert incremental.processed_object_count == 1
+    assert incremental.processed_row_count == 1
+    assert incremental.company_count == 2
+    assert incremental.incomplete_object_count == 1
+    assert object_store.read_keys == [first_key, second_key]
+
+
+def test_invalid_stored_object_rolls_back_the_run_without_logging_payload(
+    tmp_path: Path,
+) -> None:
+    valid_key = "denmark_cvr/backfill/month=2026-06/companies.json"
+    invalid_key = "denmark_cvr/active/date=2026-07-01/companies.json"
+    private_value = "private company value"
+    object_store = FakeObjectStore(
+        {
+            valid_key: _capture(
+                "2026-06",
+                [_company("12345678", name="Valid", start_date="2026-06-01")],
+            ),
+            invalid_key: json.dumps({"private": private_value}).encode("utf-8"),
+        }
+    )
+    duckdb_resource = _duckdb_resource(tmp_path / "denmark.duckdb")
+
+    with pytest.raises(DenmarkCvrStoredObjectError) as exc_info:
+        update_denmark_cvr_companies_duckdb(
+            object_store=object_store,
+            denmark_cvr_duckdb=duckdb_resource,
+            ingestion_run_id="failed-run",
+            processed_at=datetime(2026, 7, 16, 13, 0, tzinfo=UTC),
+        )
+
+    assert invalid_key in str(exc_info.value)
+    assert private_value not in str(exc_info.value)
+    with duckdb_resource.get_connection() as connection:
+        assert (
+            connection.execute(
+                f"select count(*) from {DENMARK_CVR_DUCKDB_SCHEMA}.{DENMARK_CVR_COMPANIES_TABLE}"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                f"select count(*) from {DENMARK_CVR_DUCKDB_SCHEMA}.{DENMARK_CVR_INGESTED_OBJECTS_TABLE}"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_denmark_cvr_duckdb_asset_has_both_raw_dependencies() -> None:
+    spec = denmark_cvr_companies_duckdb.get_asset_spec()
+
+    assert {dependency.asset_key for dependency in spec.deps} == {
+        dg.AssetKey("denmark_cvr_backfill_s3"),
+        dg.AssetKey("denmark_cvr_active_s3"),
+    }
+    assert denmark_cvr_companies_duckdb.partitions_def is None
+    assert denmark_cvr_companies_duckdb.op.pool == "denmark_cvr_duckdb"
+    assert spec.tags["layer"] == "normalized"
+
+
+def test_denmark_cvr_duckdb_definitions_register_asset_and_resource() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repository = load_defs().get_repository_def()
+
+    assert dg.AssetKey("denmark_cvr_companies_duckdb") in (
+        repository.asset_graph.get_all_asset_keys()
+    )
+    assert set(defs.resources) == {"denmark_cvr_duckdb"}
+    assert defs.schedules is None

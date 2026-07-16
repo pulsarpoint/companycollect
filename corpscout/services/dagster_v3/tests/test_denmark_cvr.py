@@ -337,6 +337,15 @@ def test_company_accepts_null_company_form_from_datacvr() -> None:
     assert response.enheder[0].virksomhedsform is None
 
 
+def test_company_accepts_null_latest_name_from_datacvr() -> None:
+    company = _company()
+    company["senesteNavn"] = None
+
+    response = SearchResponse.model_validate_json(_response_body([company]))
+
+    assert response.enheder[0].seneste_navn is None
+
+
 def test_search_response_rejects_negative_totals_and_unknown_entity_types() -> None:
     negative_total = json.loads(_response_body([]))
     negative_total["total"] = -1

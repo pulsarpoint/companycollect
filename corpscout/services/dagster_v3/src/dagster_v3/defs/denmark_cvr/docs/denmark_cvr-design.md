@@ -8,8 +8,8 @@
   production units remain outside this source slice.
 - Company status is not fixed. Results contain both active and ceased companies
   whose `startDato` falls inside the requested date range.
-- DuckDB normalization and CVR-level deduplication are deferred to a downstream
-  asset.
+- `denmark_cvr_companies_duckdb` normalizes both raw asset families into one
+  persistent DuckDB file. ClickHouse export remains deferred.
 
 ## Partitions and filters
 
@@ -74,9 +74,33 @@ Schema-invalid source responses are stored separately as `.invalid.json`, and th
 materialization fails without writing a result object. Logs never contain
 response bodies, company fields, cookies, or browser state.
 
-The source model accepts a nullable `virksomhedsform`, matching the DataCVR value
-observed in the March 2015 Middelfart response. The raw `null` value remains
+The source model accepts nullable `virksomhedsform` and `senesteNavn` company
+fields, matching values observed in DataCVR responses. Raw `null` values remain
 unchanged in the merged object.
+
+## Incremental DuckDB normalization
+
+`denmark_cvr_companies_duckdb` depends on both raw S3 assets and writes one local
+database at `data/denmark_cvr_source.duckdb`. The database contains:
+
+- `denmark_cvr.companies`: one normalized row per CVR number, including every
+  company response field, source object/partition/run audit columns, a payload
+  hash, and the source entity as JSON in `raw_record`.
+- `denmark_cvr.ingested_objects`: one state row per processed S3 result object,
+  including completeness, source counts, hashes, sizes, and ingestion timestamps.
+
+Every materialization lists result objects below both `denmark_cvr/backfill/` and
+`denmark_cvr/active/`. Invalid-response evidence and unrelated JSON files are
+ignored. Object keys already present in `ingested_objects` are not downloaded or
+parsed, so after the initial load a daily update processes only newly materialized
+date objects.
+
+New rows are loaded through an explicit Arrow schema and upserted by CVR. Backfill
+objects are processed before active objects, and later rows replace earlier rows
+for the same CVR. All pending objects in a materialization are committed in one
+transaction; a malformed stored object rolls back company rows and ingestion
+state for the complete run. Validation errors identify only the object key and
+schema issue locations, never response values.
 
 ## Operations and verification
 
@@ -85,7 +109,8 @@ unchanged in the merged object.
 - Materialization metadata reports completeness, query/page/file counts, entity
   counts, source bytes, stored bytes, the exact result key, and whether the
   partition was skipped.
-- No schedule, job, DuckDB asset, or ClickHouse asset is registered in this slice.
+- No schedule, job, or ClickHouse asset is registered in this slice.
 - Validate with `uv run pytest tests/test_denmark_cvr.py
-  tests/test_denmark_cvr_partitions.py -v`, `uv run ruff check`, and
+  tests/test_denmark_cvr_partitions.py tests/test_denmark_cvr_duckdb.py -v`,
+  `uv run ruff check`, and
   `uv run dg check defs`.

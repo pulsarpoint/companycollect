@@ -1,0 +1,28 @@
+[     334ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5183/node_modules/.vite/deps/react-dom_client.js?v=f7235aa1:14335
+[     413ms] [ERROR] Base UI: A component that acts as a button expected a native <button> because the `nativeButton` prop is true. Rendering a non-<button> removes native button semantics, which can impact forms and accessibility. Use a real <button> in the `render` prop, or set `nativeButton` to `false`.
+    at Button (http://localhost:5183/app/components/ui/button.tsx:38:25)
+    at DataTableColumnHeader (http://localhost:5183/app/components/data-table/column-header.tsx:32:25)
+    at header (http://localhost:5183/app/components/data-table/company-columns.tsx:78:34)
+    at flexRender (http://localhost:5183/node_modules/.vite/deps/@tanstack_react-table.js?v=f7235aa1:2771:76)
+    at http://localhost:5183/app/components/data-table/data-table.tsx:27:53
+    at Array.map (<anonymous>)
+    at http://localhost:5183/app/components/data-table/data-table.tsx:25:41
+    at Array.map (<anonymous>)
+    at DataTable (http://localhost:5183/app/components/data-table/data-table.tsx:24:43)
+    at CountryCompanies (http://localhost:5183/app/routes/country-companies.tsx:131:37)
+    at WithComponentProps (http://localhost:5183/node_modules/.vite/deps/development-CGpOlLDm.js?v=f7235aa1:6650:23) @ http://localhost:5183/@vite/client:524
+[     413ms] [ERROR] Base UI: A component that acts as a button expected a native <button> because the `nativeButton` prop is true. Rendering a non-<button> removes native button semantics, which can impact forms and accessibility. Use a real <button> in the `render` prop, or set `nativeButton` to `false`.
+    at Button (http://localhost:5183/app/components/ui/button.tsx:38:25)
+    at nav (http://localhost:5183/app/components/data-table/pagination.tsx:34:27)
+    at DataTablePagination (http://localhost:5183/app/components/data-table/pagination.tsx:141:37)
+    at CountryCompanies (http://localhost:5183/app/routes/country-companies.tsx:138:30)
+    at WithComponentProps (http://localhost:5183/node_modules/.vite/deps/development-CGpOlLDm.js?v=f7235aa1:6650:23) @ http://localhost:5183/@vite/client:524
+[     413ms] [ERROR] Base UI: A component that acts as a button expected a native <button> because the `nativeButton` prop is true. Rendering a non-<button> removes native button semantics, which can impact forms and accessibility. Use a real <button> in the `render` prop, or set `nativeButton` to `false`.
+    at Button (http://localhost:5183/app/components/ui/button.tsx:38:25)
+    at nav (http://localhost:5183/app/components/data-table/pagination.tsx:34:27)
+    at DataTablePagination (http://localhost:5183/app/components/data-table/pagination.tsx:147:33)
+    at CountryCompanies (http://localhost:5183/app/routes/country-companies.tsx:138:30)
+    at WithComponentProps (http://localhost:5183/node_modules/.vite/deps/development-CGpOlLDm.js?v=f7235aa1:6650:23) @ http://localhost:5183/@vite/client:524
+[   10041ms] [ERROR] Base UI: A component that acts as a button expected a native <button> because the `nativeButton` prop is true. Rendering a non-<button> removes native button semantics, which can impact forms and accessibility. Use a real <button> in the `render` prop, or set `nativeButton` to `false`.
+    at CountryCompanies (http://localhost:5183/app/routes/country-companies.tsx:131:37)
+    at WithComponentProps (http://localhost:5183/node_modules/.vite/deps/development-CGpOlLDm.js?v=f7235aa1:6650:23) @ http://localhost:5183/@vite/client:524

@@ -23,7 +23,7 @@ class CompanySearchResult(BaseModel):
     postnummer: str | None
     reg: str | None
     reklame_beskyttet: bool = Field(alias="reklameBeskyttet")
-    seneste_navn: str = Field(alias="senesteNavn")
+    seneste_navn: str | None = Field(alias="senesteNavn")
     start_dato: date = Field(alias="startDato")
     status: str
     telefonnummer: str | None
