@@ -19,6 +19,7 @@
 - All user-supplied values go through ClickHouse **query params** (`{name:String}` syntax) — never string-interpolate user input into SQL. Table/column names may be interpolated only from the static country registry.
 - Countries are a static object array in code (no countries table lookup).
 - Package manager: pnpm. Node.js 22.22+ (React Router 8 engine floor; dev machine runs Node 26).
+- **Deviation record (2026-07-16):** tsconfig path aliases are resolved with Vite 8's native `resolve: { tsconfigPaths: true }` (vite.config.ts and vitest.config.ts) instead of the `vite-tsconfig-paths` plugin shown in Task 1/3 snippets — one less dependency, verified by all gates. shadcn v4.13 generates Base UI primitives (not Radix), so `asChild` snippets in Tasks 7/8 were adapted to `render={...}` props.
 - Path alias `~/*` → `./app/*` (matches the repo's frontend convention).
 - Dev server on port **5183** (5173 is taken by pulsarprotectproweb).
 - Integration tests run against the real ClickHouse instance (repo convention — no SQL-string-assertion fakes).
