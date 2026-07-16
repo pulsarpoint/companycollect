@@ -445,9 +445,14 @@ describe("translated record cards", () => {
 
   it("latvia record carries activity_text_en AND base-only address fields", async () => {
     const lv = getCountry("lv")!;
-    const page = await searchCompanies(lv, { pageSize: 1 });
-    const detail = await getCompanyDetail(lv, String(page.rows[0].id));
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT regcode AS id FROM lv_companies_translated
+       WHERE activity_text_en IS NOT NULL AND activity_text_en != ''
+       ORDER BY regcode LIMIT 1`,
+    );
+    const detail = await getCompanyDetail(lv, row.id);
     expect(detail!.record).toHaveProperty("activity_text_en");
+    expect(String(detail!.record.activity_text_en)).not.toBe("");
     expect(detail!.record).toHaveProperty("address_city_name"); // base-only column survives
   });
 });
