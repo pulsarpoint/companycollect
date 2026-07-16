@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { CompanyColumn, CountryConfig, SortDir } from "~/lib/countries";
 import type { CompanyListRow } from "~/lib/queries.server";
@@ -12,7 +13,7 @@ function text(value: unknown) {
   return s;
 }
 
-function cellFor(col: CompanyColumn) {
+function cellFor(col: CompanyColumn, country: CountryConfig) {
   return ({ row }: { row: { original: CompanyListRow } }) => {
     const value = row.original[col.key];
     switch (col.kind) {
@@ -33,10 +34,15 @@ function cellFor(col: CompanyColumn) {
       default:
         if (col.key === "name") {
           const s = value == null ? "" : String(value);
+          if (s === "") return EMPTY;
           return (
-            <span className="block max-w-[22rem] truncate font-medium" title={s}>
-              {s === "" ? EMPTY : s}
-            </span>
+            <Link
+              to={`/${country.code}/companies/${encodeURIComponent(String(row.original.id))}`}
+              className="block max-w-[22rem] truncate font-medium underline-offset-2 hover:underline"
+              title={s}
+            >
+              {s}
+            </Link>
           );
         }
         return <span className="block max-w-[14rem] truncate">{text(value)}</span>;
@@ -59,7 +65,7 @@ export function buildCompanyColumns(
         currentDir={dir}
       />
     ),
-    cell: cellFor(col),
+    cell: cellFor(col, country),
   }));
 
   if (country.industryQuery) {

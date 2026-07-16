@@ -5,6 +5,7 @@ export default [
   route(":country", "routes/country.tsx", [
     index("routes/country-overview.tsx"),
     route("companies", "routes/country-companies.tsx"),
+    route("companies/:id", "routes/country-company-detail.tsx"),
     route("facet-options", "routes/country-facet-options.ts"),
   ]),
 ] satisfies RouteConfig;
