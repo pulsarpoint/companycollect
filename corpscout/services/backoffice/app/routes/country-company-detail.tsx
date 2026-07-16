@@ -10,6 +10,7 @@ import {
   DomainsSection,
   OverviewSection,
 } from "~/components/detail/detail-sections";
+import { FinancialsSection } from "~/components/detail/financials-section";
 
 export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
@@ -58,6 +59,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
       </div>
 
       <OverviewSection country={country} company={company} />
+      <FinancialsSection financials={detail.financials} />
       <ContactsSection contacts={detail.contacts} />
       <DomainsSection domains={detail.domains} />
     </div>
