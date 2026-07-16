@@ -1,4 +1,4 @@
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   ChevronLeft,
   ChevronRight,
@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { tableSearch } from "~/components/data-table/url";
+import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
 
 const nf = new Intl.NumberFormat("en-US");
 
@@ -27,7 +28,7 @@ export function DataTablePagination({
   page: number;
   pageSize: number;
 }) {
-  const [searchParams] = useSearchParams();
+  const searchParams = useEffectiveSearchParams();
   const navigate = useNavigate();
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
 
@@ -45,6 +46,7 @@ export function DataTablePagination({
         size="icon-sm"
         aria-label={label}
         render={<Link to={tableSearch(searchParams, { page: target })} preventScrollReset />}
+        nativeButton={false}
       >
         {icon}
       </Button>
