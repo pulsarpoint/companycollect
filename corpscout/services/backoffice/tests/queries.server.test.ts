@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { chQuery } from "~/lib/clickhouse.server";
-import { restKeys } from "~/components/detail/countries/no-financials";
+import { placedKeys, restKeys } from "~/components/detail/countries/no-financials";
+import { isLineageKey } from "~/components/detail/fields";
 import { COUNTRIES, getCountry } from "~/lib/countries";
 import { getFacetOptions } from "~/lib/facets.server";
 import { filterableFacetKeys } from "~/lib/filters";
@@ -372,10 +373,22 @@ describe("getCompanyDetail statements (Norway)", () => {
        ORDER BY org_number LIMIT 1`,
     );
     const detail = await getCompanyDetail(no, row.id);
-    const rest = restKeys(detail!.statements[0]);
+    const row0 = detail!.statements[0];
+    const rest = restKeys(row0);
     // Today every column is explicitly grouped; a future migration adding a
     // column makes it appear in "Other fields" automatically — never dropped.
     expect(rest).toEqual([]);
+
+    // Every fetched column must be accounted for: placed in a visible group,
+    // rendered as lineage, or surfaced in "Other fields" — nothing silently
+    // dropped from rendering.
+    const placed = new Set(placedKeys());
+    for (const key of Object.keys(row0)) {
+      expect(
+        placed.has(key) || isLineageKey(key) || rest.includes(key),
+        `column ${key} must be placed, lineage, or rest`,
+      ).toBe(true);
+    }
   });
 });
 

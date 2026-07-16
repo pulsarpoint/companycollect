@@ -35,6 +35,13 @@ export function restKeys(row: Record<string, unknown>): string[] {
   return Object.keys(row).filter((k) => !PLACED.has(k) && !isLineageKey(k));
 }
 
+/** Exported for the fidelity test: the keys explicitly grouped into a
+ * visible section (income/balance/meta/header), as opposed to lineage
+ * or "Other fields". */
+export function placedKeys(): string[] {
+  return [...PLACED];
+}
+
 function pick(row: Record<string, unknown>, keys: string[]): [string, unknown][] {
   return keys.filter((k) => k in row).map((k) => [k, row[k]]);
 }
@@ -52,7 +59,7 @@ export function NoFinancialsSection({
       </CardHeader>
       <CardContent className="space-y-6">
         {statements.map((row, i) => (
-          <div key={`${row.fiscal_year}-${row.filing_id ?? i}`} className="space-y-4">
+          <div key={`${row.fiscal_year}-${row.filing_id ?? ""}-${i}`} className="space-y-4">
             <p className="text-sm font-semibold">
               {formatFieldValue("fiscal_year", row.fiscal_year) ?? "?"}
               {" · "}
@@ -79,6 +86,20 @@ export function NoFinancialsSection({
                 <FieldGrid fields={pick(row, restKeys(row))} />
               </div>
             ) : null}
+            {(() => {
+              const lineageFields = Object.entries(row).filter(([k]) => isLineageKey(k));
+              if (lineageFields.length === 0) return null;
+              return (
+                <details>
+                  <summary className="text-muted-foreground cursor-pointer text-xs font-medium uppercase tracking-wide">
+                    Source &amp; lineage
+                  </summary>
+                  <div className="pt-3">
+                    <FieldGrid fields={lineageFields} />
+                  </div>
+                </details>
+              );
+            })()}
           </div>
         ))}
       </CardContent>
@@ -99,9 +120,25 @@ export function StatementsFallback({
         <CardTitle className="text-base">Financial statements</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        {statements.map((row, i) => (
-          <FieldGrid key={i} fields={Object.entries(row).filter(([k]) => !isLineageKey(k))} />
-        ))}
+        {statements.map((row, i) => {
+          const visible = Object.entries(row).filter(([k]) => !isLineageKey(k));
+          const lineage = Object.entries(row).filter(([k]) => isLineageKey(k));
+          return (
+            <div key={i} className="space-y-4">
+              <FieldGrid fields={visible} />
+              {lineage.length > 0 ? (
+                <details>
+                  <summary className="text-muted-foreground cursor-pointer text-xs font-medium uppercase tracking-wide">
+                    Source &amp; lineage
+                  </summary>
+                  <div className="pt-3">
+                    <FieldGrid fields={lineage} />
+                  </div>
+                </details>
+              ) : null}
+            </div>
+          );
+        })}
       </CardContent>
     </Card>
   );
