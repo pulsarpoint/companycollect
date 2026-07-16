@@ -21,6 +21,11 @@ export interface CompanySearchResult {
 
 const MAX_PAGE_SIZE = 100;
 
+function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
 export async function getCountryStats(country: CountryConfig): Promise<CountryStats> {
   // Table/column identifiers come from the static registry, never from users.
   const rows = await chQuery<{ total: string; active: string }>(
@@ -35,8 +40,8 @@ export async function searchCompanies(
   country: CountryConfig,
   opts: { q?: string; page?: number; pageSize?: number },
 ): Promise<CompanySearchResult> {
-  const page = Math.max(1, Math.trunc(opts.page ?? 1));
-  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(opts.pageSize ?? 50)));
+  const page = clampInt(opts.page, 1, Number.MAX_SAFE_INTEGER, 1);
+  const pageSize = clampInt(opts.pageSize, 1, MAX_PAGE_SIZE, 50);
   const q = (opts.q ?? "").trim();
 
   const where = q ? `WHERE ${country.nameColumn} ILIKE {pattern:String}` : "";
@@ -54,7 +59,7 @@ export async function searchCompanies(
        toUInt8(${country.activeExpr}) AS active
      FROM ${country.companiesTable}
      ${where}
-     ORDER BY ${country.nameColumn}
+     ORDER BY ${country.nameColumn}, ${country.idColumn}
      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
     params,
   );

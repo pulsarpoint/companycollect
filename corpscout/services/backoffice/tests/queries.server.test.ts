@@ -35,6 +35,13 @@ describe("searchCompanies", () => {
     }
   });
 
+  it("falls back to sane defaults on non-finite page inputs", async () => {
+    const result = await searchCompanies(ee, { page: Number("abc"), pageSize: Number.POSITIVE_INFINITY });
+    expect(result.page).toBe(1);
+    expect(result.pageSize).toBe(50);
+    expect(result.rows.length).toBeGreaterThan(0);
+  });
+
   it("paginates without overlap", async () => {
     const p1 = await searchCompanies(ee, { page: 1, pageSize: 5 });
     const p2 = await searchCompanies(ee, { page: 2, pageSize: 5 });
