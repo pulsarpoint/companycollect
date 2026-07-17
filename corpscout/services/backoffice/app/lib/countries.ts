@@ -81,6 +81,8 @@ export interface CountryConfig {
   industryFilterExpr?: string;
   /** Company-detail page queries (financials/contacts/domains), where the data exists. */
   detail?: CountryDetailConfig;
+  /** Latest-financials summary table (one row per company). companyKeyExpr is the expression on companiesTable matching summary.company_id. */
+  financialsLatest?: { table: string; companyKeyExpr: string };
 }
 
 export const COUNTRIES: CountryConfig[] = [
@@ -170,6 +172,7 @@ WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY address_type
 LIMIT 10`,
     },
+    financialsLatest: { table: "no_company_financials_latest", companyKeyExpr: "org_number" },
   },
   {
     code: "fi", name: "Finland", flag: "🇫🇮", companiesTable: "fi_companies",
@@ -238,6 +241,7 @@ WHERE i.business_id = {id:String}
 ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
     },
+    financialsLatest: { table: "fi_company_financials_latest", companyKeyExpr: "business_id" },
   },
   {
     code: "se", name: "Sweden", flag: "🇸🇪", companiesTable: "se_companies",
@@ -292,6 +296,7 @@ WHERE company_id IN (SELECT company_id FROM se_companies WHERE registration_numb
 ORDER BY address_type
 LIMIT 10`,
     },
+    financialsLatest: { table: "se_company_financials_latest", companyKeyExpr: "company_id" },
   },
   {
     code: "ee", name: "Estonia", flag: "🇪🇪", companiesTable: "ee_companies",
@@ -368,6 +373,7 @@ FROM ee_companies
 WHERE reg_code = {id:String}
 LIMIT 1`,
     },
+    financialsLatest: { table: "ee_company_financials_latest", companyKeyExpr: "reg_code" },
   },
   {
     code: "lv", name: "Latvia", flag: "🇱🇻", companiesTable: "lv_companies",
@@ -425,6 +431,7 @@ FROM lv_companies
 WHERE regcode = {id:String}
 LIMIT 1`,
     },
+    financialsLatest: { table: "lv_company_financials_latest", companyKeyExpr: "regcode" },
   },
   {
     code: "gb", name: "United Kingdom", flag: "🇬🇧", companiesTable: "gb_companies",
@@ -493,6 +500,7 @@ FROM gb_companies
 WHERE company_number = {id:String}
 LIMIT 1`,
     },
+    financialsLatest: { table: "gb_company_financials_latest", companyKeyExpr: "company_number" },
   },
   {
     code: "fr", name: "France", flag: "🇫🇷", companiesTable: "fr_companies",
@@ -629,6 +637,7 @@ FROM br_companies
 WHERE cnpj_basico = {id:String}
 LIMIT 1`,
     },
+    financialsLatest: { table: "br_company_financials_latest", companyKeyExpr: "cnpj_basico" },
   },
   {
     code: "cz", name: "Czechia", flag: "🇨🇿", companiesTable: "cz_companies",
@@ -744,6 +753,7 @@ FROM sk_companies
 WHERE ico = {id:String}
 LIMIT 1`,
     },
+    financialsLatest: { table: "sk_company_financials_latest", companyKeyExpr: "ico" },
   },
 ];
 

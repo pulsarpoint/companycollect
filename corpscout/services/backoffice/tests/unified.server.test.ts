@@ -53,6 +53,34 @@ describe("searchUnifiedCompanies", () => {
     expect(result.rows).toEqual([]);
     expect(result.total).toBe(0);
   });
+
+  it("revenue sort surfaces real USD revenues descending, empties last", async () => {
+    const result = await searchUnifiedCompanies({ sort: "revenue", dir: "desc", pageSize: 25 });
+    expect(result.rows.length).toBe(25);
+    const revs = result.rows.map((r) => r.revenue_usd);
+    expect(revs[0]).toBeGreaterThan(1_000_000);
+    for (let i = 1; i < revs.length; i++) {
+      if (revs[i] != null && revs[i - 1] != null) expect(revs[i - 1]! >= revs[i]!).toBe(true);
+    }
+  }, 60_000);
+
+  it("has_financials filter restricts to companies with summary rows", async () => {
+    const result = await searchUnifiedCompanies({ filters: { has_financials: ["true"], country: ["no"] } });
+    expect(result.total).toBeGreaterThan(400_000);
+    expect(result.total).toBeLessThan(500_000);
+  }, 30_000);
+
+  it("has_financials excludes countries without a summary table", async () => {
+    const result = await searchUnifiedCompanies({ filters: { has_financials: ["true"], country: ["fr"] } });
+    expect(result.total).toBe(0);
+  });
+
+  it("default sort still returns revenue fields on rows", async () => {
+    const result = await searchUnifiedCompanies({ pageSize: 25 });
+    for (const row of result.rows) {
+      expect(row).toHaveProperty("revenue_usd");
+    }
+  }, 30_000);
 });
 
 describe("unified facets", () => {

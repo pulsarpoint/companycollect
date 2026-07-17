@@ -35,10 +35,11 @@ export function parseFilters(
 const COLUMN_FACET_KEYS = [
   ...new Set(COUNTRIES.flatMap((c) => c.columns.filter((col) => col.filterable).map((col) => col.key))),
 ];
-export const UNIFIED_FACET_KEYS = ["country", ...COLUMN_FACET_KEYS, "industry"];
+export const UNIFIED_FACET_KEYS = ["country", "has_financials", ...COLUMN_FACET_KEYS, "industry"];
 
 export const UNIFIED_FACET_LABELS: Record<string, string> = {
   country: "Country",
+  has_financials: "Has financials",
   status: "Status",
   legal_form: "Legal form",
   place: "Place",
@@ -57,6 +58,7 @@ export function parseUnifiedFilters(searchParams: URLSearchParams): CompanyFilte
       ),
     ].slice(0, MAX_VALUES_PER_FILTER);
     if (key === "country") values = values.filter((v) => COUNTRY_CODES.has(v));
+    if (key === "has_financials") values = values.filter((v) => v === "true");
     if (values.length > 0) filters[key] = values;
   }
   return filters;

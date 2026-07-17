@@ -19,6 +19,8 @@ export interface UnifiedRow {
   active: 0 | 1;
   industry_code?: string | null;
   industry_label?: string | null;
+  revenue_usd: number | null;
+  fiscal_year: number | null;
 }
 
 export interface UnifiedSearchResult {
@@ -30,10 +32,11 @@ export interface UnifiedSearchResult {
   dir: SortDir;
 }
 
-const UNIFIED_SORTS = new Set(["country", "name"]);
+const UNIFIED_SORTS = new Set(["country", "name", "revenue"]);
 
 function canAnswer(c: CountryConfig, key: string): boolean {
   if (key === "industry") return Boolean(c.industryFilterExpr);
+  if (key === "has_financials") return Boolean(c.financialsLatest);
   return c.columns.some((col) => col.filterable && col.key === key);
 }
 
@@ -72,6 +75,9 @@ function branchWhere(
   if (industry?.length && c.industryFilterExpr) {
     conds.push(c.industryFilterExpr);
     params.f_industry = industry;
+  }
+  if (filters.has_financials?.length && c.financialsLatest) {
+    conds.push(`${c.financialsLatest.companyKeyExpr} IN (SELECT company_id FROM ${c.financialsLatest.table})`);
   }
   return conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
 }
@@ -117,20 +123,38 @@ export async function searchUnifiedCompanies(opts: {
   // the live-schema sweep).
   const branchSql = (c: CountryConfig) => {
     const ik = c.industryJoinKeyExpr ?? c.idColumn;
-    const sortExpr = sort === "name" ? c.nameColumn : c.idColumn;
+    const fin = c.financialsLatest;
+    // Every branch emits identically-typed revenue_usd/fiscal_year columns —
+    // countries without a financialsLatest summary table emit typed NULL
+    // literals so the UNION ALL columns line up.
+    const finSelect = fin
+      ? `toNullable(fin.revenue_amount_usd) AS revenue_usd, toNullable(fin.fiscal_year) AS fiscal_year`
+      : `CAST(NULL AS Nullable(Float64)) AS revenue_usd, CAST(NULL AS Nullable(Int32)) AS fiscal_year`;
+    const finJoin = fin
+      ? `LEFT JOIN ${fin.table} AS fin ON fin.company_id = toString(${fin.companyKeyExpr})`
+      : "";
+    const orderBy =
+      sort === "revenue"
+        ? `isNull(revenue_usd) ASC, revenue_usd ${dirSql}, ${c.idColumn}`
+        : (() => {
+            const sortExpr = sort === "name" ? c.nameColumn : c.idColumn;
+            return `coalesce(toString(${sortExpr}), '') = '' ASC, ${sortExpr} ${dirSql}, ${c.idColumn}`;
+          })();
     return `SELECT '${c.code}' AS country_code, toString(${c.idColumn}) AS id, ${c.nameColumn} AS name,
-      toUInt8(${c.activeExpr}) AS active, toString(${ik}) AS __ik
-    FROM ${c.companiesTable} ${whereByCode.get(c.code)}
-    ORDER BY coalesce(toString(${sortExpr}), '') = '' ASC, ${sortExpr} ${dirSql}, ${c.idColumn}
+      toUInt8(${c.activeExpr}) AS active, toString(${ik}) AS __ik, ${finSelect}
+    FROM ${c.companiesTable} ${finJoin} ${whereByCode.get(c.code)}
+    ORDER BY ${orderBy}
     LIMIT ${page * pageSize}`;
   };
   const outerSort =
     sort === "name"
       ? `coalesce(name, '') = '' ASC, name ${dirSql}, country_code, id`
-      : `country_code ${dirSql}, id ${dirSql}`;
+      : sort === "revenue"
+        ? `isNull(revenue_usd) ASC, revenue_usd ${dirSql}, country_code, id`
+        : `country_code ${dirSql}, id ${dirSql}`;
 
   const rows = await chQuery<UnifiedRow & { __ik?: string }>(
-    `SELECT country_code, id, name, active, __ik
+    `SELECT country_code, id, name, active, __ik, revenue_usd, fiscal_year
      FROM (${branches.map(branchSql).join(" UNION ALL ")})
      ORDER BY ${outerSort}
      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
