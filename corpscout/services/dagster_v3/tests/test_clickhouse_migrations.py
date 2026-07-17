@@ -750,32 +750,42 @@ def test_exchange_rate_migration_defines_reference_table_schema() -> None:
         assert column in sql
 
 
+def _alter_table_block(sql: str, table_name: str) -> str:
+    """Extract only the ALTER TABLE block for a specific table from migration SQL."""
+    marker = f"ALTER TABLE corpscout.{table_name}"
+    start = sql.index(marker)
+    return sql[start : sql.index(";", start) + 1]
+
+
 def test_finland_resolved_migrations_cover_exported_columns() -> None:
-    migration_files_by_table = {
-        finland_resolved_tables.FI_COMPANIES_TABLE: (
-            "000005_corpscout_fi_companies.up.sql",
-            "000010_corpscout_finland_ytj_registry_tables.up.sql",
+    fi_companies_sqls = [
+        _migration_sql("000005_corpscout_fi_companies.up.sql"),
+        _alter_table_block(
+            _migration_sql("000010_corpscout_finland_ytj_registry_tables.up.sql"),
+            finland_resolved_tables.FI_COMPANIES_TABLE,
         ),
-        finland_resolved_tables.FI_WEBSITES_TABLE: (
-            "000006_corpscout_fi_websites.up.sql",
-        ),
-        finland_resolved_tables.FI_INDUSTRIES_TABLE: (
-            "000007_corpscout_fi_industries.up.sql",
-        ),
-        finland_resolved_tables.FI_NAMES_TABLE: (
-            "000010_corpscout_finland_ytj_registry_tables.up.sql",
-        ),
+    ]
+    sqls_by_table = {
+        finland_resolved_tables.FI_COMPANIES_TABLE: fi_companies_sqls,
+        finland_resolved_tables.FI_WEBSITES_TABLE: [
+            _migration_sql("000006_corpscout_fi_websites.up.sql")
+        ],
+        finland_resolved_tables.FI_INDUSTRIES_TABLE: [
+            _migration_sql("000007_corpscout_fi_industries.up.sql")
+        ],
+        finland_resolved_tables.FI_NAMES_TABLE: [
+            _migration_sql("000010_corpscout_finland_ytj_registry_tables.up.sql")
+        ],
     }
 
-    assert set(migration_files_by_table) == set(
+    assert set(sqls_by_table) == set(
         finland_resolved_tables.FINLAND_YTJ_RESOLVED_TABLES
     )
 
-    for table_name, migration_files in migration_files_by_table.items():
-        sqls = [_migration_sql(name) for name in migration_files]
+    for table_name, sqls in sqls_by_table.items():
         for column_name in finland_resolved_tables.RESOLVED_TABLE_COLUMNS[table_name]:
             assert any(f" {column_name} " in sql for sql in sqls), (
-                f"{table_name}.{column_name} not found in {migration_files}"
+                f"{table_name}.{column_name} not found in scoped migration SQL"
             )
 
 
