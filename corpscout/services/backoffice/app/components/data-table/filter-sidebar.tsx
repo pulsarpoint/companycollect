@@ -8,6 +8,7 @@ import { toggleFilterValue } from "~/components/data-table/url";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import {
   Command,
   CommandEmpty,
@@ -129,8 +130,36 @@ function FacetCombobox({
   );
 }
 
+function FacetToggle({
+  label,
+  active,
+  onToggle,
+}: {
+  label: string;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-accent"
+    >
+      <span>{label}</span>
+      <Checkbox checked={active} className="pointer-events-none" />
+    </button>
+  );
+}
+
+// has_financials is a synthetic semi-join filter, not a categorical column
+// with a value list — it renders as a single on/off FacetToggle above,
+// never as a value-search FacetCombobox.
+const COMBOBOX_FACET_KEYS = UNIFIED_FACET_KEYS.filter((key) => key !== "has_financials");
+
 export function FilterSidebar({ filters }: { filters: CompanyFilters }) {
   const activeCount = Object.values(filters).reduce((n, v) => n + v.length, 0);
+  const navigate = useNavigate();
+  const searchParams = useEffectiveSearchParams();
   return (
     <Sheet>
       <SheetTrigger render={<Button variant="outline" size="sm" />}>
@@ -143,7 +172,16 @@ export function FilterSidebar({ filters }: { filters: CompanyFilters }) {
           <SheetTitle>Filter companies</SheetTitle>
         </SheetHeader>
         <div className="space-y-4 px-4 pb-6">
-          {UNIFIED_FACET_KEYS.map((key) => (
+          <FacetToggle
+            label="Has financials"
+            active={filters.has_financials?.includes("true") ?? false}
+            onToggle={() =>
+              navigate(toggleFilterValue(searchParams, "has_financials", "true"), {
+                preventScrollReset: true,
+              })
+            }
+          />
+          {COMBOBOX_FACET_KEYS.map((key) => (
             <FacetCombobox
               key={key}
               facetKey={key}

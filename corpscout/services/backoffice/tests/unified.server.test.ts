@@ -107,4 +107,12 @@ describe("unified facets", () => {
   it("rejects unknown facet keys", async () => {
     await expect(getUnifiedFacetOptions("name")).rejects.toThrow(/unknown facet/i);
   });
+
+  it("has_financials resolves to a static option instead of throwing", async () => {
+    // has_financials is in UNIFIED_FACET_KEYS but isn't a categorical column
+    // on any country's registry — regression guard for the reachable
+    // "unknown facet: has_financials" 500 from the generic per-column path.
+    const options = await getUnifiedFacetOptions("has_financials");
+    expect(options).toEqual([{ value: "true", label: "yes", count: 0 }]);
+  });
 });

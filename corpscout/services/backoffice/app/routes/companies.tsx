@@ -61,7 +61,11 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
             values.map((value) => (
               <Badge key={`${key}:${value}`} variant="secondary" className="gap-1">
                 <span className="text-muted-foreground">{facetLabel(key)}:</span>
-                {key === "country" ? (getCountry(value)?.name ?? value) : value}
+                {key === "country"
+                  ? (getCountry(value)?.name ?? value)
+                  : key === "has_financials"
+                    ? (value === "true" ? "yes" : value)
+                    : value}
                 <Link
                   to={removeFilterValue(searchParams, key, value)}
                   preventScrollReset

@@ -36,6 +36,14 @@ describe("nextSortDir", () => {
     expect(nextSortDir("status", "asc", "status")).toBe("desc");
     expect(nextSortDir("status", "desc", "status")).toBe("asc");
   });
+  it("starts desc-first for revenue (biggest first is the useful default)", () => {
+    expect(nextSortDir("name", "asc", "revenue")).toBe("desc");
+    expect(nextSortDir("country", "desc", "revenue")).toBe("desc");
+  });
+  it("still toggles normally once revenue is already the active sort", () => {
+    expect(nextSortDir("revenue", "desc", "revenue")).toBe("asc");
+    expect(nextSortDir("revenue", "asc", "revenue")).toBe("desc");
+  });
 });
 
 describe("toggleFilterValue", () => {

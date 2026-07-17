@@ -25,8 +25,11 @@ export function tableSearch(current: URLSearchParams, patch: TablePatch): string
   return `?${next.toString()}`;
 }
 
+/** Sort keys whose most useful first click is descending (biggest first). */
+const DESC_FIRST = new Set(["revenue"]);
+
 export function nextSortDir(currentSort: string, currentDir: SortDir, key: string): SortDir {
-  if (currentSort !== key) return "asc";
+  if (currentSort !== key) return DESC_FIRST.has(key) ? "desc" : "asc";
   return currentDir === "asc" ? "desc" : "asc";
 }
 

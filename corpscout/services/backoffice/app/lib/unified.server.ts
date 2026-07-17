@@ -224,6 +224,15 @@ async function countryFacet(): Promise<FacetOption[]> {
 export async function getUnifiedFacetOptions(facetKey: string): Promise<FacetOption[]> {
   if (!UNIFIED_FACET_KEYS.includes(facetKey)) throw new Error(`unknown facet: ${facetKey}`);
   if (facetKey === "country") return countryFacet();
+  // has_financials is a synthetic semi-join filter key, not a categorical
+  // column backed by any country's `columns` registry, so the generic
+  // per-column path below (getFacetOptions → facetSql) would throw "unknown
+  // facet" for every country and bubble up as a 500 from /facet-options. The
+  // UI never opens a value-search combobox for this key (FilterSidebar
+  // renders it as a single on/off FacetToggle instead), so no caller needs
+  // real per-value counts here — this stub only guards the endpoint from
+  // 500ing if ever hit directly with ?column=has_financials.
+  if (facetKey === "has_financials") return [{ value: "true", label: "yes", count: 0 }];
 
   const countries = COUNTRIES.filter((c) => canAnswer(c, facetKey));
   const lists = await Promise.all(countries.map((c) => getFacetOptions(c, facetKey)));

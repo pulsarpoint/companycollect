@@ -6,6 +6,16 @@ import { DataTableColumnHeader } from "~/components/data-table/column-header";
 
 const EMPTY = <span className="text-muted-foreground">—</span>;
 
+const compactUsd = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+export function formatRevenueUsd(
+  value: number | null | undefined,
+  fiscalYear: number | null | undefined,
+): string {
+  if (value == null) return "—";
+  return `$${compactUsd.format(value)}${fiscalYear != null ? ` (${fiscalYear})` : ""}`;
+}
+
 export function buildUnifiedColumns(sort: string, dir: SortDir): ColumnDef<UnifiedRow, unknown>[] {
   return [
     {
@@ -45,6 +55,19 @@ export function buildUnifiedColumns(sort: string, dir: SortDir): ColumnDef<Unifi
           </span>
         );
       },
+    },
+    {
+      id: "revenue",
+      header: () => (
+        <div className="text-right">
+          <DataTableColumnHeader label="Revenue (USD)" sortKey="revenue" currentSort={sort} currentDir={dir} />
+        </div>
+      ),
+      cell: ({ row }) => (
+        <div className="text-right tabular-nums text-sm">
+          {formatRevenueUsd(row.original.revenue_usd, row.original.fiscal_year)}
+        </div>
+      ),
     },
     {
       id: "country",
