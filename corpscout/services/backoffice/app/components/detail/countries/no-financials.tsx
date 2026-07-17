@@ -1,3 +1,4 @@
+import { Badge } from "~/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { FieldGrid, formatFieldValue, isLineageKey } from "~/components/detail/fields";
 
@@ -28,7 +29,18 @@ const META_KEYS = [
   "legal_name", "legal_form_code",
   "fx_rate_to_usd", "fx_rate_date", "fx_source", "source_url",
 ];
-const HEADER_KEYS = ["fiscal_year", "currency", "org_number"];
+const HEADER_KEYS = ["fiscal_year", "currency", "org_number", "quality_flag"];
+
+/** Human wording for pipeline quality flags on a statement row. Exported for
+ * tests. Unknown flag values fall back to the raw flag text. */
+export function qualityFlagLabel(row: Record<string, unknown>): string | null {
+  const flag = row.quality_flag == null ? "" : String(row.quality_flag);
+  if (flag === "") return null;
+  if (flag === "implausible_magnitude") {
+    return "implausible values — likely source filing error";
+  }
+  return flag;
+}
 const PLACED = new Set([...INCOME_KEYS, ...BALANCE_KEYS, ...META_KEYS, ...HEADER_KEYS]);
 
 /** Exported for the fidelity test: keys a statement row may contain that are
@@ -95,6 +107,11 @@ export function NoFinancialsSection({
               {Number(row.is_parent_company) === 1 ? " (parent/group accounts)" : ""}
               {" · "}
               {String(row.currency ?? "")}
+              {qualityFlagLabel(row) ? (
+                <Badge variant="destructive" className="ml-2 align-middle">
+                  {qualityFlagLabel(row)}
+                </Badge>
+              ) : null}
             </p>
             <div>
               <p className="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wide">Income statement</p>

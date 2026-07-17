@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAmountFields } from "~/components/detail/countries/no-financials";
+import { qualityFlagLabel, buildAmountFields } from "~/components/detail/countries/no-financials";
 
 const row = {
   currency: "NOK",
@@ -37,5 +37,22 @@ describe("buildAmountFields", () => {
     const noFx = { ...row, fx_rate_to_usd: null };
     const fields = new Map(buildAmountFields(noFx, ["total_assets_amount_usd"]));
     expect(fields.get("total_assets_amount_usd")).toBeNull();
+  });
+});
+
+describe("qualityFlagLabel", () => {
+  it("returns null for clean statements", () => {
+    expect(qualityFlagLabel({ quality_flag: "" })).toBeNull();
+    expect(qualityFlagLabel({})).toBeNull();
+  });
+
+  it("humanizes the implausible-magnitude flag", () => {
+    expect(qualityFlagLabel({ quality_flag: "implausible_magnitude" })).toBe(
+      "implausible values — likely source filing error",
+    );
+  });
+
+  it("passes unknown flags through raw", () => {
+    expect(qualityFlagLabel({ quality_flag: "some_future_flag" })).toBe("some_future_flag");
   });
 });
