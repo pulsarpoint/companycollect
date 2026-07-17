@@ -24,6 +24,8 @@ export type TopCompany = {
   name: string;
   revenue_usd: number | null;
   fiscal_year: number | null;
+  // Reserved for a future industry column — no route renders it yet, and for
+  // SE `industryQuery` needs a prefixed-id expr when wired (see review 2026-07-18).
   industry_label: string | null;
   excluded_from_sums: boolean;
 };
@@ -103,6 +105,22 @@ function parseTotals(row: RawTotalsRow): CountryTotals {
     revenue_usd: row.revenue_usd == null ? null : Number(row.revenue_usd),
     latest_fiscal_year: row.latest_fiscal_year == null ? null : Number(row.latest_fiscal_year),
   };
+}
+
+/**
+ * Per-country UNION ALL results come back in whatever order ClickHouse
+ * happens to schedule the branches — not user visible ordering. Sort by
+ * revenue_usd desc (nulls last), with country_code asc as a stable tiebreak,
+ * so "Revenue by country" charts/tables render identically on every load.
+ */
+function sortCountryTotals(rows: CountryTotals[]): CountryTotals[] {
+  return [...rows].sort((a, b) => {
+    if (a.revenue_usd == null && b.revenue_usd == null) return a.country_code.localeCompare(b.country_code);
+    if (a.revenue_usd == null) return 1;
+    if (b.revenue_usd == null) return -1;
+    if (b.revenue_usd !== a.revenue_usd) return b.revenue_usd - a.revenue_usd;
+    return a.country_code.localeCompare(b.country_code);
+  });
 }
 
 function toDivisionRevenue(row: RawDivisionRow, labels: Map<string, string>): DivisionRevenue {
@@ -187,14 +205,11 @@ async function enrichTopCompanies(rows: RawTopCompanyRow[]): Promise<TopCompany[
       const country = getCountry(code);
       if (!country) return [];
       const ids = group.map((r) => r.company_id);
-      const [nameRows, industryRows] = await Promise.all([
-        chQuery<{ id: string; name: string }>(nameLookupSql(country), { ids }),
-        country.industryQuery
-          ? chQuery<{ company_id: string; industry_label: string | null }>(country.industryQuery, { ids })
-          : Promise.resolve([]),
-      ]);
+      // industry_label enrichment removed: no route rendered it, and for SE
+      // it silently matched zero rows anyway (id-prefix mismatch). See the
+      // TopCompany.industry_label field comment.
+      const nameRows = await chQuery<{ id: string; name: string }>(nameLookupSql(country), { ids });
       const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
-      const industryById = new Map(industryRows.map((r) => [r.company_id, r.industry_label]));
       return group.map(
         (r): TopCompany => ({
           country_code: r.country_code,
@@ -202,7 +217,7 @@ async function enrichTopCompanies(rows: RawTopCompanyRow[]): Promise<TopCompany[
           name: nameById.get(r.company_id) ?? r.company_id,
           revenue_usd: r.revenue_usd == null ? null : Number(r.revenue_usd),
           fiscal_year: r.fiscal_year == null ? null : Number(r.fiscal_year),
-          industry_label: industryById.get(r.company_id) ?? null,
+          industry_label: null,
           excluded_from_sums: Boolean(Number(r.excluded_from_sums)),
         }),
       );
@@ -249,7 +264,7 @@ export async function getGlobalFinancialOverview(): Promise<{
   ]);
   const topCompanies = await enrichTopCompanies(topRows);
   return {
-    countries: totalsRows.map(parseTotals),
+    countries: sortCountryTotals(totalsRows.map(parseTotals)),
     topDivisions: divisionRows.map((r) => toDivisionRevenue(r, labels)),
     topCompanies,
   };
@@ -325,5 +340,9 @@ export async function getIndustryFinancials(division: string): Promise<null | {
   ]);
 
   const topCompanies = await enrichTopCompanies(rawTop);
-  return { division, label, countries: totalsRows.map(parseTotals), topCompanies };
+  // Countries with zero companies in this division add nothing but noise
+  // ("0 / —" rows) to the country table and chart — drop them here so every
+  // consumer of getIndustryFinancials sees only countries actually present.
+  const presentCountries = sortCountryTotals(totalsRows.map(parseTotals)).filter((c) => c.companies > 0);
+  return { division, label, countries: presentCountries, topCompanies };
 }

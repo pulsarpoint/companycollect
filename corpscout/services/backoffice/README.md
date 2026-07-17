@@ -114,7 +114,7 @@ Three routes power financial analytics:
 Norwegian foreign-branch companies (legal form NUF) file the foreign parent's full
 accounts — real corporate data, but not Norway-earned. Revenue sums and company
 counts **exclude** NUF rows via `financialsAggregates.sumExclusionExpr`, but **lists**
-(top companies table, top divisions) **keep** them badged with `excluded_from_sums: true`
+(top companies table) **keep** them badged with `excluded_from_sums: true`
 so editors can see the data exists and understand why it's absent from aggregates.
 
 ### Unmapped bucket

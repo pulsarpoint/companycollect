@@ -102,7 +102,7 @@ export default function FinancialsCountry({ loaderData, params }: Route.Componen
                     revenue_usd: d.revenue_usd,
                     href: `/financials/industry/${d.division}`,
                   })),
-                  ...(unmapped
+                  ...(unmapped && unmapped.companies > 0
                     ? [{ key: "unmapped", label: unmapped.label, revenue_usd: unmapped.revenue_usd }]
                     : []),
                 ]}
@@ -132,7 +132,7 @@ export default function FinancialsCountry({ loaderData, params }: Route.Componen
                       </TableCell>
                     </TableRow>
                   ))}
-                  {unmapped ? (
+                  {unmapped && unmapped.companies > 0 ? (
                     <TableRow className="text-muted-foreground">
                       <TableCell>{unmapped.label}</TableCell>
                       <TableCell className="text-right tabular-nums">{nf.format(unmapped.companies)}</TableCell>
