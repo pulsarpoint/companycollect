@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router";
-import { Building2 } from "lucide-react";
+import { Building2, ChartColumn } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -11,7 +11,20 @@ import {
   SidebarMenuItem,
 } from "~/components/ui/sidebar";
 
-const NAV_ITEMS = [{ title: "Companies", to: "/companies", icon: Building2 }];
+const NAV_ITEMS = [
+  { title: "Companies", to: "/companies", icon: Building2 },
+  { title: "Financials", to: "/financials", icon: ChartColumn },
+];
+
+/**
+ * An item is active on an exact match or any of its sub-paths. Companies
+ * additionally activates for `/company/:country/:id` detail pages, which
+ * live outside the `/companies` prefix.
+ */
+function isNavItemActive(pathname: string, to: string): boolean {
+  if (pathname === to || pathname.startsWith(`${to}/`)) return true;
+  return to === "/companies" && pathname.startsWith("/company/");
+}
 
 export function AppSidebar() {
   const { pathname } = useLocation();
@@ -33,7 +46,7 @@ export function AppSidebar() {
               {NAV_ITEMS.map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
-                    isActive={pathname === item.to || pathname.startsWith("/company/")}
+                    isActive={isNavItemActive(pathname, item.to)}
                     render={<Link to={item.to} />}
                   >
                     <item.icon />

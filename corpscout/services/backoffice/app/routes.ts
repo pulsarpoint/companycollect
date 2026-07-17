@@ -7,5 +7,8 @@ export default [
     route("company/:country/:id", "routes/country-company-detail.tsx"),
     route("company/:country/geocode", "routes/country-geocode.ts"),
     route("facet-options", "routes/facet-options.ts"),
+    route("financials", "routes/financials.tsx"),
+    route("financials/country/:country", "routes/financials-country.tsx"),
+    route("financials/industry/:division", "routes/financials-industry.tsx"),
   ]),
 ] satisfies RouteConfig;
