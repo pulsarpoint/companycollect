@@ -9,6 +9,16 @@
       {{ inventory_hostname }} reports
       {{ ansible_facts.system }}/{{ ansible_facts.architecture }}.
 
+- name: Install Norway annual-account OCR runtime
+  ansible.builtin.apt:
+    name:
+      - tesseract-ocr
+      - tesseract-ocr-eng
+      - tesseract-ocr-nor
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Inspect the local Dagster source tree
   ansible.builtin.stat:
     path: "{{ item }}"

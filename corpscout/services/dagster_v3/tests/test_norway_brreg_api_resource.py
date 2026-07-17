@@ -241,6 +241,42 @@ def test_entries_snapshot_csv_uses_bulk_csv_endpoint() -> None:
     )
 
 
+def test_annual_account_pdf_returns_one_pdf_for_company_year() -> None:
+    source_url = (
+        "https://data.brreg.no/regnskapsregisteret/regnskap/"
+        "aarsregnskap/kopi/923609016/2025"
+    )
+    session = FakeHttpSession(
+        {source_url: FakeResponse(content=b"%PDF-1.7 annual account")}
+    )
+    resource = NorwayBrregApiResource(session=session)
+
+    result = resource.annual_account_pdf(
+        org_number="923609016",
+        filing_year=2025,
+    )
+
+    assert result is not None
+    assert result.source_url == source_url
+    assert result.body == b"%PDF-1.7 annual account"
+    assert session.calls == [(source_url, None, 120, False)]
+
+
+def test_annual_account_pdf_returns_none_when_company_year_is_unavailable() -> None:
+    source_url = (
+        "https://data.brreg.no/regnskapsregisteret/regnskap/"
+        "aarsregnskap/kopi/923609016/2025"
+    )
+    resource = NorwayBrregApiResource(
+        session=FakeHttpSession({source_url: FakeResponse(status_code=404)})
+    )
+
+    assert (
+        resource.annual_account_pdf(org_number="923609016", filing_year=2025)
+        is None
+    )
+
+
 def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities() -> (
     None
 ):

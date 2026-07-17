@@ -20,6 +20,7 @@ from dagster_v3.defs.norway_brreg_financial.financial_fetches import (
 
 FINANCIAL_RESPONSE_PREFIX = "norway_brreg/financial/responses/"
 FINANCIAL_RESPONSE_INDEX_PREFIX = "norway_brreg/financial/response_index/"
+ANNUAL_ACCOUNT_DOCUMENT_PREFIX = "norway_brreg/annual_accounts/documents/"
 READ_PROGRESS_INTERVAL = 100
 
 
@@ -65,18 +66,60 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
 
     def write_json_object(self, key: str, value: dict[str, Any]) -> str:
         self.object_store.ensure_bucket(NORWAY_BRREG_FINANCIAL_BUCKET)
-        body = json.dumps(
-            value,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        body = _json_object_bytes(value)
         self.object_store.write_bytes(
             key,
             body,
             bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
         )
         return key
+
+    def annual_account_document_exists(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+    ) -> bool:
+        return self.response_exists(
+            annual_account_document_object_key(
+                filing_year,
+                chunk_key,
+                org_number,
+            )
+        )
+
+    def write_annual_account_document(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+        document: dict[str, Any],
+    ) -> tuple[str, int]:
+        key = annual_account_document_object_key(
+            filing_year,
+            chunk_key,
+            org_number,
+        )
+        body = _json_object_bytes(document)
+        self.write_response(key, body)
+        return key, len(body)
+
+    def read_annual_account_document(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+    ) -> dict[str, Any]:
+        return self.read_json_object(
+            annual_account_document_object_key(
+                filing_year,
+                chunk_key,
+                org_number,
+            )
+        )
 
     def read_json_object(self, key: str) -> dict[str, Any]:
         value = json.loads(self.read_response(key))
@@ -339,6 +382,20 @@ def financial_bootstrap_response_partition_prefix(bucket_key: str) -> str:
     )
 
 
+def annual_account_document_object_key(
+    filing_year: int,
+    chunk_key: str,
+    org_number: str,
+) -> str:
+    if filing_year < 1900 or filing_year > 9999:
+        raise ValueError(f"Invalid Norway annual-account filing year: {filing_year}")
+    return (
+        f"{ANNUAL_ACCOUNT_DOCUMENT_PREFIX}year={filing_year}/"
+        f"chunk={_safe_key_component(chunk_key)}/"
+        f"org={_safe_key_component(org_number)}/document.json"
+    )
+
+
 def financial_update_response_partition_prefix(partition_date: str) -> str:
     return (
         f"{FINANCIAL_RESPONSE_PREFIX}updates/"
@@ -427,6 +484,15 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
+
+
+def _json_object_bytes(value: dict[str, Any]) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 def _should_log_progress(index: int, total: int, interval: int) -> bool:

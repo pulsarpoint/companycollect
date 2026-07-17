@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
@@ -26,6 +27,9 @@ if TYPE_CHECKING:
 COUNTRY = "NO"
 ENTITY_SOURCE_SLUG = "norway_brregenhet"
 BRREG_BASE_URL = "https://data.brreg.no/enhetsregisteret/api"
+BRREG_ANNUAL_ACCOUNTS_BASE_URL = (
+    "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap"
+)
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
 ENTITY_PROGRESS_LOG_EVERY_ROWS = 1000
@@ -33,6 +37,12 @@ UPDATE_MAX_RESULT_WINDOW = 10_000
 LOGGER = logging.getLogger(__name__)
 
 BRREG_ENTITIES_COLUMNS = tables.BRREG_ENTITIES_COLUMNS
+
+
+@dataclass(frozen=True)
+class BrregAnnualAccountPdf:
+    source_url: str
+    body: bytes
 
 BRREG_LEGAL_FORM_DESCRIPTION_EN_BY_CODE = {
     "ANS": "General partnership",
@@ -112,6 +122,30 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             key=key,
             log=log,
         )
+
+    def annual_account_pdf(
+        self,
+        *,
+        org_number: str,
+        filing_year: int,
+    ) -> BrregAnnualAccountPdf | None:
+        source_url = (
+            f"{BRREG_ANNUAL_ACCOUNTS_BASE_URL}/kopi/{org_number}/{filing_year}"
+        )
+        response = self.session().get(
+            source_url,
+            timeout=self.timeout_seconds,
+        )
+        if response.status_code == 404:
+            return None
+        _raise_for_status(response)
+        body = bytes(response.content)
+        if not body.startswith(b"%PDF-"):
+            raise RuntimeError(
+                "Norway BRREG annual-account response is not a PDF: "
+                f"org={org_number} year={filing_year}"
+            )
+        return BrregAnnualAccountPdf(source_url=source_url, body=body)
 
     def _download_entries_snapshot(
         self,
