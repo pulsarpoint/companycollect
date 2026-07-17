@@ -76,3 +76,9 @@ def test_legal_form_survives_non_numeric_version():
     )
     payload = json.loads(legal_form_json(raw))
     assert payload["code"] == "16"
+
+
+def test_legal_form_survives_infinity_version():
+    raw = '{"companyForms": [{"type": "16", "registrationDate": "2020-01-01", "version": Infinity}]}'
+    payload = json.loads(legal_form_json(raw))
+    assert payload["code"] == "16"

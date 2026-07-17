@@ -1,4 +1,11 @@
-"""dbt-duckdb plugin: registers the fi_primary_industry_json UDF on each connection."""
+"""dbt-duckdb plugin: registers the finland_ytj DuckDB UDFs on each connection.
+
+Registers UDFs for:
+- fi_primary_industry_json: extract primary industry data
+- fi_legal_form_json: extract legal form data
+- fi_registration_flags_json: extract registration flags
+- root_domain: extract root domain from URL
+"""
 
 from typing import Any
 

@@ -20,7 +20,7 @@ def _int_or_zero(value: Any) -> int:
     """Safely coerce a value to int, returning 0 on failure."""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
