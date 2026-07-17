@@ -235,6 +235,32 @@ describe("searchCompanies across all countries", () => {
     },
     30_000,
   );
+
+  it.each(
+    COUNTRIES.filter((c) => c.financialsLatest).map((c) => [c.code, c] as const),
+  )(
+    "%s: financialsLatest summary table exists and companyKeyExpr joins to it",
+    async (_code, country) => {
+      const { table, companyKeyExpr } = country.financialsLatest!;
+      // Summary table exists and company_id is queryable.
+      const rows = await chQuery(`SELECT company_id FROM ${table} LIMIT 1`);
+      expect(Array.isArray(rows)).toBe(true);
+
+      // companyKeyExpr on companiesTable is queryable and semi-joins against
+      // the summary table's company_id — mirrors the real join in
+      // unified.server.ts (`LEFT JOIN ... ON fin.company_id =
+      // toString(${companyKeyExpr})`), so this catches a stale/renamed
+      // companyKeyExpr the plain LIMIT 1 alone would miss.
+      const joined = await chQuery(
+        `SELECT ${companyKeyExpr} AS key
+         FROM ${country.companiesTable}
+         WHERE toString(${companyKeyExpr}) IN (SELECT company_id FROM ${table})
+         LIMIT 1`,
+      );
+      expect(Array.isArray(joined)).toBe(true);
+    },
+    30_000,
+  );
 });
 
 describe("searchCompanies with filters", () => {
