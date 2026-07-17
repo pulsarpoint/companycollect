@@ -68,20 +68,21 @@ from dagster_v3.defs.finland_xbrl.assets.data_snapshot_xml_duckdb import (
     materialize_data_snapshot_xml_duckdb,
     read_xml_parse_duckdb_rows,
     read_xml_snapshot_manifest_rows,
+    run_finland_xbrl_parse,
     xml_daily_parse_duckdb_path,
     xml_daily_parse_temp_dir,
     xml_snapshot_parse_duckdb_path,
     xml_snapshot_parse_temp_dir,
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_metrics import (
+    build_finland_financial_metrics_insert_sql,
     build_financial_metric_rows,
     build_financial_metric_usd_rows,
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_publish import (
     fi_financial_metrics_ch,
-    fi_financial_metrics_parquet,
-    fi_financial_metrics_usd_parquet,
-    fi_financial_statements_ch,
+    fi_xbrl_parsed_clickhouse,
+    fi_xbrl_taxonomy_codes_ch,
 )
 from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_data_snapshot_job,
@@ -126,6 +127,7 @@ __all__ = [
     "FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA",
     "FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE",
     "build_financial_data_snapshot_csv",
+    "build_finland_financial_metrics_insert_sql",
     "build_financial_metric_rows",
     "build_financial_metric_usd_rows",
     "data_snapshot",
@@ -144,9 +146,8 @@ __all__ = [
     "export_data_snapshot_duckdb_to_clickhouse",
     "fetch_xml_snapshot_report_rows",
     "fi_financial_metrics_ch",
-    "fi_financial_metrics_parquet",
-    "fi_financial_metrics_usd_parquet",
-    "fi_financial_statements_ch",
+    "fi_xbrl_parsed_clickhouse",
+    "fi_xbrl_taxonomy_codes_ch",
     "finland_xbrl_data_snapshot_job",
     "finland_xbrl_incremental_job",
     "finland_xbrl_incremental_schedule",
@@ -161,6 +162,7 @@ __all__ = [
     "materialize_data_snapshot_duckdb",
     "read_xml_snapshot_manifest_rows",
     "read_xml_parse_duckdb_rows",
+    "run_finland_xbrl_parse",
     "tables",
     "write_financial_data_snapshot_csv",
     "write_financial_data_daily_csv",
@@ -186,9 +188,8 @@ defs = dg.Definitions(
         data_snapshot_duckdb_ch,
         data_snapshot_xml,
         data_snapshot_xml_duckdb,
-        fi_financial_statements_ch,
-        fi_financial_metrics_parquet,
-        fi_financial_metrics_usd_parquet,
+        fi_xbrl_parsed_clickhouse,
+        fi_xbrl_taxonomy_codes_ch,
         fi_financial_metrics_ch,
     ],
     jobs=[
@@ -200,7 +201,6 @@ defs = dg.Definitions(
     schedules=[finland_xbrl_incremental_schedule],
     resources={
         "xbrl_api": XbrlApiResource(),
-        "xbrl_parquet_storage": XbrlParquetStorageResource(),
         "object_store": ObjectStoreResource(),
         "xbrl_financial_data_snapshot_duckdb": duckdb_resource(
             FINLAND_XBRL_FINANCIAL_DATA_SNAPSHOT_DUCKDB_PATH

@@ -79,15 +79,19 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         ("fi_company_contacts", "fi_company_domains"),
         DAILY,
     ),
-    # finland_xbrl — incremental daily 06:00; snapshot/publish jobs unscheduled
+    # finland_xbrl — incremental download, parse, and publish daily 06:00
     ClickhouseLeaf(
         "data_daily_duckdb_ch", ("fi_xbrl_financial_statement_listings",), DAILY
     ),
     ClickhouseLeaf(
         "data_snapshot_duckdb_ch", ("fi_xbrl_financial_statement_listings",), None
     ),
-    ClickhouseLeaf("fi_financial_statements_ch", ("fi_financial_statements",), None),
-    ClickhouseLeaf("fi_financial_metrics_ch", ("fi_financial_metrics",), None),
+    ClickhouseLeaf("fi_financial_statements_ch", ("fi_financial_statements",), DAILY),
+    ClickhouseLeaf("fi_xbrl_contexts_ch", ("fi_xbrl_contexts",), DAILY),
+    ClickhouseLeaf("fi_xbrl_units_ch", ("fi_xbrl_units",), DAILY),
+    ClickhouseLeaf("fi_xbrl_facts_ch", ("fi_xbrl_facts_raw",), DAILY),
+    ClickhouseLeaf("fi_xbrl_taxonomy_codes_ch", ("fi_xbrl_taxonomy_codes",), DAILY),
+    ClickhouseLeaf("fi_financial_metrics_ch", ("fi_financial_metrics",), DAILY),
     # france_sirene — monthly 6th
     ClickhouseLeaf("france_sirene_clickhouse_companies", ("fr_companies",), MONTHLY),
     ClickhouseLeaf("france_sirene_clickhouse_industries", ("fr_industries",), MONTHLY),
@@ -146,6 +150,9 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "sweden_financial_reports_clickhouse", ("se_financial_reports",), None
     ),
     ClickhouseLeaf("sweden_financial_facts_clickhouse", ("se_financial_facts",), None),
+    ClickhouseLeaf(
+        "sweden_financial_metrics_clickhouse", ("se_financial_metrics",), None
+    ),
     # uk_companies_house — register monthly 7th, financials monthly 8th, daily 09:00
     ClickhouseLeaf("uk_companies_house_clickhouse_companies", ("gb_companies",), MONTHLY),
     ClickhouseLeaf(

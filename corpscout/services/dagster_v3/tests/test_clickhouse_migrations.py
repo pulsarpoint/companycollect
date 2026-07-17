@@ -143,6 +143,9 @@ EXPECTED_MIGRATIONS = (
     "000131_corpscout_domain_hostnames_incremental_cutover",
     "000132_corpscout_domain_hostnames_final_read",
     "000133_corpscout_no_company_addresses",
+    "000134_corpscout_se_financial_metrics_provenance",
+    "000135_corpscout_finland_xbrl_comprehensive",
+    "000136_corpscout_finland_xbrl_provenance_view_columns",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

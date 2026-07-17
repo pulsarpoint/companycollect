@@ -1,6 +1,6 @@
 from pathlib import Path
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 
 REPORT_COLUMNS = (
     "country_iso2",

@@ -37,6 +37,7 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "slovakia_rpo_clickhouse_companies",
         "sweden_company_companies_clickhouse",
         "sweden_financial_reports_clickhouse",
+        "sweden_financial_metrics_clickhouse",
         "uk_companies_house_clickhouse_companies",
         "wikidata_company_seed_clickhouse",
     ):

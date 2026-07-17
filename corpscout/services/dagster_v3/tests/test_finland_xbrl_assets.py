@@ -335,6 +335,12 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         "data_daily_duckdb_ch",
         "data_daily_xml",
         "data_daily_xml_duckdb",
+        "fi_financial_statements_ch",
+        "fi_xbrl_contexts_ch",
+        "fi_xbrl_units_ch",
+        "fi_xbrl_facts_ch",
+        "fi_xbrl_taxonomy_codes_ch",
+        "fi_financial_metrics_ch",
     }
     assert type(repo.get_job("finland_xbrl_incremental_job").partitions_def).__name__ == (
         "DailyPartitionsDefinition"
@@ -369,8 +375,10 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
     }
     assert publish == {
         "fi_financial_statements_ch",
-        "fi_financial_metrics_parquet",
-        "fi_financial_metrics_usd_parquet",
+        "fi_xbrl_contexts_ch",
+        "fi_xbrl_units_ch",
+        "fi_xbrl_facts_ch",
+        "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
     }
     assert repo.get_job("finland_xbrl_publish_job").partitions_def is None
@@ -1123,7 +1131,7 @@ def test_xml_snapshot_parse_missing_xml_object_fails_partition(tmp_path: Path) -
     assert not (tmp_path / "data.duckdb").exists()
 
 
-def test_xml_snapshot_parse_records_parser_failures_and_continues(tmp_path: Path) -> None:
+def test_xml_snapshot_parse_fails_incomplete_partition(tmp_path: Path) -> None:
     object_store, s3_client = _object_store()
     good_key = xml_snapshot_document_key(
         "2023-07-01",
@@ -1161,24 +1169,19 @@ def test_xml_snapshot_parse_records_parser_failures_and_continues(tmp_path: Path
         ],
     )
 
-    result = materialize_data_snapshot_xml_duckdb(
-        partition_key="2023-07-01",
-        registered_date_start="2023-07-01",
-        registered_date_end="2023-07-31",
-        object_store=object_store,
-        duckdb_path=tmp_path / "data.duckdb",
-        temp_dir=tmp_path / "tmp",
-        run_id="run-1",
-        parser=RecordingStatementParser(fail_business_id="0202020-2"),
-    )
+    with pytest.raises(ValueError, match="partition is incomplete"):
+        materialize_data_snapshot_xml_duckdb(
+            partition_key="2023-07-01",
+            registered_date_start="2023-07-01",
+            registered_date_end="2023-07-31",
+            object_store=object_store,
+            duckdb_path=tmp_path / "data.duckdb",
+            temp_dir=tmp_path / "tmp",
+            run_id="run-1",
+            parser=RecordingStatementParser(fail_business_id="0202020-2"),
+        )
 
-    with duckdb.connect(str(tmp_path / "data.duckdb"), read_only=True) as connection:
-        assert connection.execute("select business_id from statement_documents").fetchall() == [
-            ("0100123-2",)
-        ]
-    assert result.metadata["documents_in_manifest"] == 2
-    assert result.metadata["documents_parsed_this_run"] == 1
-    assert result.metadata["documents_failed_this_run"] == 1
+    assert not (tmp_path / "data.duckdb").exists()
 
 
 def test_xml_snapshot_existing_success_marker_skips_clickhouse_and_prh() -> None:
@@ -1678,7 +1681,7 @@ def test_build_financial_metric_rows_maps_current_numeric_facts() -> None:
             "mapped_fact_count": 2,
             "unmapped_numeric_fact_count": 1,
             "metric_warnings": "[\"unmapped numeric facts: 1\"]",
-            "mapping_version": "finland-prh-xbrl-metrics-v1",
+            "mapping_version": "finland-prh-xbrl-metrics-v2",
             "built_at": "2026-06-01T00:00:00+00:00",
         }
     ]
@@ -1781,7 +1784,7 @@ def test_xbrl_asset_graph_keeps_quality_and_concept_profile_as_metadata_not_asse
     assert dg.AssetKey("fi_prh_xbrl_concept_profile") not in asset_graph.get_all_asset_keys()
 
 
-def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parse_parquet_assets() -> None:
+def test_xbrl_asset_graph_models_financial_metrics_downstream_of_raw_clickhouse() -> None:
     asset_graph = load_project_defs().resolve_asset_graph()
 
     parsed_duckdb_assets = {
@@ -1791,14 +1794,12 @@ def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parse_parquet_a
     assert asset_graph.get(dg.AssetKey("fi_financial_statements_ch")).parent_keys == {
         *parsed_duckdb_assets,
     }
-    assert asset_graph.get(dg.AssetKey("fi_financial_metrics_parquet")).parent_keys == {
-        *parsed_duckdb_assets,
-    }
-    assert asset_graph.get(dg.AssetKey("fi_financial_metrics_usd_parquet")).parent_keys == {
-        dg.AssetKey("fi_financial_metrics_parquet"),
-    }
-    assert asset_graph.get(dg.AssetKey("fi_financial_metrics_ch")).parent_keys == {
-        dg.AssetKey("fi_financial_metrics_usd_parquet"),
+    for key in ("fi_xbrl_contexts_ch", "fi_xbrl_units_ch", "fi_xbrl_facts_ch"):
+        assert asset_graph.get(dg.AssetKey(key)).parent_keys == parsed_duckdb_assets
+    assert asset_graph.get(dg.AssetKey("fi_financial_metrics_ch")).parent_keys >= {
+        dg.AssetKey("fi_financial_statements_ch"),
+        dg.AssetKey("fi_xbrl_contexts_ch"),
+        dg.AssetKey("fi_xbrl_facts_ch"),
     }
 
 
@@ -2097,7 +2098,9 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
         "data_snapshot_xml_duckdb",
         "data_daily_xml_duckdb",
         "fi_financial_statements_ch",
-        "fi_financial_metrics_parquet",
+        "fi_xbrl_contexts_ch",
+        "fi_xbrl_units_ch",
+        "fi_xbrl_facts_ch",
     ):
         node = graph.get(AssetKey([key]))
         assert "finland_ytj_duckdb" not in node.pools, f"{key} should not use YTJ pool"
@@ -2109,7 +2112,7 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
         "data_daily",
         "data_snapshot_xml",
         "data_daily_xml",
-        "fi_financial_metrics_usd_parquet",
+        "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
     ):
         node = graph.get(AssetKey([key]))

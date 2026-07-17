@@ -3,6 +3,8 @@
 import polars as pl
 
 STATEMENT_DOCUMENTS_TABLE = "fi_prh_xbrl_statement_documents"
+CONTEXTS_TABLE = "fi_prh_xbrl_contexts"
+UNITS_TABLE = "fi_prh_xbrl_units"
 FACTS_TABLE = "fi_prh_xbrl_facts_raw"
 
 STATEMENT_DOCUMENTS_POLARS_SCHEMA = {
@@ -31,6 +33,40 @@ STATEMENT_DOCUMENTS_POLARS_SCHEMA = {
 }
 STATEMENT_DOCUMENTS_COLUMNS = list(STATEMENT_DOCUMENTS_POLARS_SCHEMA)
 
+CONTEXTS_POLARS_SCHEMA = {
+    "statement_key": pl.Utf8,
+    "context_id": pl.Utf8,
+    "entity_identifier": pl.Utf8,
+    "entity_scheme": pl.Utf8,
+    "period_type": pl.Utf8,
+    "instant_date": pl.Utf8,
+    "period_start": pl.Utf8,
+    "period_end": pl.Utf8,
+    "dimensions": pl.Utf8,
+    "mcy_member_code": pl.Utf8,
+    "mcy_member_label_fi": pl.Utf8,
+    "ref_member_code": pl.Utf8,
+    "ref_member_label_fi": pl.Utf8,
+    "is_comparative": pl.Boolean,
+    "raw_xml": pl.Utf8,
+    "parser_version": pl.Utf8,
+    "parsed_at": pl.Utf8,
+}
+CONTEXTS_COLUMNS = list(CONTEXTS_POLARS_SCHEMA)
+
+UNITS_POLARS_SCHEMA = {
+    "statement_key": pl.Utf8,
+    "unit_id": pl.Utf8,
+    "measures": pl.Utf8,
+    "numerator_measures": pl.Utf8,
+    "denominator_measures": pl.Utf8,
+    "is_divide": pl.Boolean,
+    "raw_xml": pl.Utf8,
+    "parser_version": pl.Utf8,
+    "parsed_at": pl.Utf8,
+}
+UNITS_COLUMNS = list(UNITS_POLARS_SCHEMA)
+
 FACTS_POLARS_SCHEMA = {
     "statement_key": pl.Utf8,
     "business_id": pl.Utf8,
@@ -41,8 +77,11 @@ FACTS_POLARS_SCHEMA = {
     "concept_local_name": pl.Utf8,
     "context_id": pl.Utf8,
     "unit_id": pl.Utf8,
+    "currency": pl.Utf8,
     "decimals": pl.Utf8,
     "precision": pl.Utf8,
+    "is_nil": pl.Boolean,
+    "xml_lang": pl.Utf8,
     "value_kind": pl.Utf8,
     "raw_value": pl.Utf8,
     "numeric_value": pl.Utf8,

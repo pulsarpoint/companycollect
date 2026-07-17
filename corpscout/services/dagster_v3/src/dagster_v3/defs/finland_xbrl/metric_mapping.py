@@ -32,7 +32,7 @@ METRIC_CODES: Final[tuple[str, ...]] = (
     "wages_and_salaries",
     "employees",
 )
-MAPPING_VERSION: Final = "finland-prh-xbrl-metrics-v1"
+MAPPING_VERSION: Final = "finland-prh-xbrl-metrics-v2"
 
 
 def xbrl_metric_mapping_rows() -> list[dict[str, str]]:

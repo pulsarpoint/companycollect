@@ -13,6 +13,10 @@ from dagster_v3.defs.finland_xbrl.resources import XbrlParquetStorageResource
 CLICKHOUSE_DATABASE = "corpscout"
 FINANCIAL_STATEMENTS_CLICKHOUSE_TABLE = "fi_financial_statements"
 FINANCIAL_METRICS_CLICKHOUSE_TABLE = "fi_financial_metrics"
+XBRL_CONTEXTS_CLICKHOUSE_TABLE = "fi_xbrl_contexts"
+XBRL_UNITS_CLICKHOUSE_TABLE = "fi_xbrl_units"
+XBRL_FACTS_CLICKHOUSE_TABLE = "fi_xbrl_facts_raw"
+XBRL_TAXONOMY_CLICKHOUSE_TABLE = "fi_xbrl_taxonomy_codes"
 SOURCE_SYSTEM = "finland_prh_xbrl"
 EUR_CURRENCY = "EUR"
 DECIMAL_SCALE = Decimal("0.000001")
@@ -99,6 +103,82 @@ FINANCIAL_METRICS_CLICKHOUSE_COLUMNS = (
     "source_record_id",
     "source_payload_hash",
     "resolved_at",
+)
+
+XBRL_CONTEXTS_CLICKHOUSE_COLUMNS = (
+    "statement_key",
+    "context_id",
+    "entity_identifier",
+    "entity_scheme",
+    "period_type",
+    "instant_date",
+    "period_start",
+    "period_end",
+    "dimensions",
+    "mcy_member_code",
+    "mcy_member_label_fi",
+    "ref_member_code",
+    "ref_member_label_fi",
+    "is_comparative",
+    "raw_xml",
+    "parser_version",
+    "parsed_at",
+)
+
+XBRL_UNITS_CLICKHOUSE_COLUMNS = (
+    "statement_key",
+    "unit_id",
+    "measures",
+    "numerator_measures",
+    "denominator_measures",
+    "is_divide",
+    "raw_xml",
+    "parser_version",
+    "parsed_at",
+)
+
+XBRL_FACTS_CLICKHOUSE_COLUMNS = (
+    "statement_key",
+    "business_id",
+    "financial_date",
+    "fact_ordinal",
+    "concept_qname",
+    "concept_namespace",
+    "concept_local_name",
+    "context_id",
+    "unit_id",
+    "currency",
+    "decimals",
+    "precision",
+    "is_nil",
+    "xml_lang",
+    "value_kind",
+    "raw_value",
+    "numeric_value",
+    "date_value",
+    "text_value",
+    "mcy_member_code",
+    "mcy_member_label_fi",
+    "ref_member_code",
+    "ref_member_label_fi",
+    "is_comparative",
+    "dimensions",
+    "parser_version",
+    "parsed_at",
+)
+
+XBRL_TAXONOMY_CLICKHOUSE_COLUMNS = (
+    "taxonomy_version",
+    "code",
+    "code_kind",
+    "namespace_hint",
+    "label_fi",
+    "label_en",
+    "label_sv",
+    "metric_name_hint",
+    "source_artifact",
+    "source_url",
+    "loaded_at",
 )
 
 FINANCIAL_METRICS_ARROW_SCHEMA = pa.schema(
@@ -241,6 +321,78 @@ def _clickhouse_financial_statement_row(row: dict[str, Any]) -> dict[str, Any]:
         "source_record_id": statement_key,
         "source_payload_hash": xml_sha256,
         "resolved_at": parsed_at,
+    }
+
+
+def clickhouse_financial_statement_row(row: dict[str, Any]) -> dict[str, Any]:
+    return _clickhouse_financial_statement_row(row)
+
+
+def clickhouse_context_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "statement_key": str(row.get("statement_key") or ""),
+        "context_id": str(row.get("context_id") or ""),
+        "entity_identifier": _optional_string(row.get("entity_identifier")),
+        "entity_scheme": _optional_string(row.get("entity_scheme")),
+        "period_type": str(row.get("period_type") or "none"),
+        "instant_date": _date_value(row.get("instant_date")),
+        "period_start": _date_value(row.get("period_start")),
+        "period_end": _date_value(row.get("period_end")),
+        "dimensions": _json_dimensions(row.get("dimensions")),
+        "mcy_member_code": _optional_string(row.get("mcy_member_code")),
+        "mcy_member_label_fi": _optional_string(row.get("mcy_member_label_fi")),
+        "ref_member_code": _optional_string(row.get("ref_member_code")),
+        "ref_member_label_fi": _optional_string(row.get("ref_member_label_fi")),
+        "is_comparative": int(bool(row.get("is_comparative"))),
+        "raw_xml": str(row.get("raw_xml") or ""),
+        "parser_version": str(row.get("parser_version") or ""),
+        "parsed_at": _datetime_value(row.get("parsed_at")) or datetime.now(UTC),
+    }
+
+
+def clickhouse_unit_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "statement_key": str(row.get("statement_key") or ""),
+        "unit_id": str(row.get("unit_id") or ""),
+        "measures": _json_string_list(row.get("measures")),
+        "numerator_measures": _json_string_list(row.get("numerator_measures")),
+        "denominator_measures": _json_string_list(row.get("denominator_measures")),
+        "is_divide": int(bool(row.get("is_divide"))),
+        "raw_xml": str(row.get("raw_xml") or ""),
+        "parser_version": str(row.get("parser_version") or ""),
+        "parsed_at": _datetime_value(row.get("parsed_at")) or datetime.now(UTC),
+    }
+
+
+def clickhouse_fact_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "statement_key": str(row.get("statement_key") or ""),
+        "business_id": str(row.get("business_id") or ""),
+        "financial_date": _date_value(row.get("financial_date")),
+        "fact_ordinal": _uint_value(row.get("fact_ordinal")) or 0,
+        "concept_qname": str(row.get("concept_qname") or ""),
+        "concept_namespace": str(row.get("concept_namespace") or ""),
+        "concept_local_name": str(row.get("concept_local_name") or ""),
+        "context_id": str(row.get("context_id") or ""),
+        "unit_id": _optional_string(row.get("unit_id")),
+        "currency": _optional_string(row.get("currency")),
+        "decimals": _optional_string(row.get("decimals")),
+        "precision": _optional_string(row.get("precision")),
+        "is_nil": int(bool(row.get("is_nil"))),
+        "xml_lang": _optional_string(row.get("xml_lang")),
+        "value_kind": str(row.get("value_kind") or "empty"),
+        "raw_value": str(row.get("raw_value") or ""),
+        "numeric_value": _unscaled_decimal_value(row.get("numeric_value")),
+        "date_value": _date_value(row.get("date_value")),
+        "text_value": _optional_string(row.get("text_value")),
+        "mcy_member_code": _optional_string(row.get("mcy_member_code")),
+        "mcy_member_label_fi": _optional_string(row.get("mcy_member_label_fi")),
+        "ref_member_code": _optional_string(row.get("ref_member_code")),
+        "ref_member_label_fi": _optional_string(row.get("ref_member_label_fi")),
+        "is_comparative": int(bool(row.get("is_comparative"))),
+        "dimensions": _json_dimensions(row.get("dimensions")),
+        "parser_version": str(row.get("parser_version") or ""),
+        "parsed_at": _datetime_value(row.get("parsed_at")) or datetime.now(UTC),
     }
 
 
@@ -533,6 +685,12 @@ def _decimal_value(value: object) -> Decimal | None:
     return Decimal(str(value)).quantize(DECIMAL_SCALE)
 
 
+def _unscaled_decimal_value(value: object) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    return Decimal(str(value))
+
+
 def _rate_decimal_value(value: object) -> Decimal | None:
     if value is None or value == "":
         return None
@@ -592,3 +750,20 @@ def _json_string_list(value: object) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [str(item) for item in parsed]
+
+
+def _json_dimensions(value: object) -> list[tuple[str, str, str | None]]:
+    if value is None or value == "":
+        return []
+    parsed = value if isinstance(value, list) else json.loads(str(value))
+    if not isinstance(parsed, list):
+        return []
+    return [
+        (
+            str(item[0]),
+            str(item[1]),
+            _optional_string(item[2]) if len(item) > 2 else None,
+        )
+        for item in parsed
+        if isinstance(item, (list, tuple)) and len(item) >= 2
+    ]

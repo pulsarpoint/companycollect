@@ -23,6 +23,10 @@ from dagster_v3.defs.sweden_financial.parsing import (
     parse_sweden_financial_report_xhtml_catalog,
     sweden_financial_source_duckdb_path,
 )
+from dagster_v3.defs.sweden_financial.metrics import (
+    QUALIFIED_SE_FINANCIAL_METRICS_TABLE,
+    replace_sweden_financial_metrics_clickhouse,
+)
 from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsResource
 from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.sweden_financial.storage import (
@@ -374,6 +378,36 @@ def sweden_financial_facts_clickhouse(
     )
 
 
+@dg.asset(
+    deps=[
+        "sweden_financial_reports_clickhouse",
+        "sweden_financial_facts_clickhouse",
+        dg.AssetDep(
+            dg.AssetKey("exchange_rates_v2_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        ),
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse", "xbrl", "fx"},
+    metadata={"table": QUALIFIED_SE_FINANCIAL_METRICS_TABLE},
+    description=(
+        "Builds canonical Sweden filing-level metrics from every published XBRL "
+        "fact, converts SEK to USD, and preserves exact source-document links."
+    ),
+)
+def sweden_financial_metrics_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    counts = replace_sweden_financial_metrics_clickhouse(
+        clickhouse=clickhouse,
+        source_run_id=context.run_id,
+        resolved_at=datetime.now(UTC),
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
 SWEDEN_FINANCIAL_BACKFILL_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_backfill_raw_archives_s3",
     "sweden_financial_backfill_report_xhtml_catalog_duckdb",
@@ -387,6 +421,7 @@ SWEDEN_FINANCIAL_CURRENT_SELECTION = dg.AssetSelection.assets(
 SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_reports_clickhouse",
     "sweden_financial_facts_clickhouse",
+    "sweden_financial_metrics_clickhouse",
 )
 
 
@@ -445,6 +480,7 @@ defs = dg.Definitions(
         sweden_financial_current_parsed_reports_duckdb,
         sweden_financial_reports_clickhouse,
         sweden_financial_facts_clickhouse,
+        sweden_financial_metrics_clickhouse,
     ],
     jobs=[
         sweden_financial_backfill_job,

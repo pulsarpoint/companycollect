@@ -15,7 +15,9 @@ FINLAND_XBRL_DUCKDB_ASSETS = (
     "data_snapshot_xml_duckdb",
     "data_daily_xml_duckdb",
     "fi_financial_statements_ch",
-    "fi_financial_metrics_parquet",
+    "fi_xbrl_contexts_ch",
+    "fi_xbrl_units_ch",
+    "fi_xbrl_facts_ch",
 )
 
 NACE_DUCKDB_ASSETS = (

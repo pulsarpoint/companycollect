@@ -1,5 +1,7 @@
+import json
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from datetime import datetime
 from typing import Any
@@ -15,7 +17,10 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
 )
-from dagster_v3.defs.norway_brreg_financial import financial_normalize
+from dagster_v3.defs.norway_brreg_financial import (
+    financial_fetches,
+    financial_normalize,
+)
 from dagster_v3.defs.norway_brreg.assets.entity_clickhouse import (
     _drop_affected_stage_table,
     _insert_clickhouse_rows,
@@ -56,6 +61,8 @@ FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS = (
     "source_system",
     "source_record_id",
 )
+RESPONSE_READ_BATCH_SIZE = 1_000
+RESPONSE_READ_WORKERS = 8
 
 FINANCIAL_STATEMENT_SCHEMA = {
     "country_iso2": pl.Utf8,
@@ -116,12 +123,12 @@ FINANCIAL_STATEMENT_SCHEMA = {
 
 @dg.asset(
     name="norway_brreg_financial_statements_snapshot_parquet",
-    deps=[dg.AssetKey("norway_brreg_financial_fetches_snapshot_parquet")],
+    deps=[dg.AssetKey("norway_brreg_financial_bootstrap_responses_parquet")],
     group_name=GROUP_NAME,
     kinds=FINANCIAL_STATEMENTS_PARQUET_KINDS,
     description=(
         "Builds native-currency Norway Brreg resolved financial statement parquet "
-        "from successful historical raw fetch rows."
+        "from the verified historical response index and source JSON objects."
     ),
 )
 def norway_brreg_financial_statements_snapshot_parquet(
@@ -129,19 +136,26 @@ def norway_brreg_financial_statements_snapshot_parquet(
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
     context.log.info(
-        "Building Norway Brreg snapshot financial statements parquet from historical raw fetches"
+        "Building Norway Brreg snapshot financial statements parquet from the "
+        "historical response index"
     )
-    fetch_frame = norway_brreg_financial_storage.read_consolidated_historical_fetches(
-        log=context.log.info,
+    response_index = (
+        norway_brreg_financial_storage.read_consolidated_historical_response_index(
+            log=context.log.info,
+        )
     )
-    successful_fetch_count = _successful_fetch_count(fetch_frame)
+    successful_fetch_count = _successful_fetch_count(response_index)
     context.log.info(
-        "Loaded Norway Brreg historical raw fetches for statement normalization: "
-        "fetch_rows=%d successful_fetches=%d",
-        fetch_frame.height,
+        "Loaded Norway Brreg historical response index for statement normalization: "
+        "response_rows=%d successful_responses=%d",
+        response_index.height,
         successful_fetch_count,
     )
-    statement_frame = _original_statement_frame(fetch_frame, log=context.log.info)
+    statement_frame = _original_statement_frame(
+        response_index,
+        storage=norway_brreg_financial_storage,
+        log=context.log.info,
+    )
     context.log.info(
         "Writing Norway Brreg snapshot financial statements parquet: "
         "statement_rows=%d bucket=%s",
@@ -154,15 +168,15 @@ def norway_brreg_financial_statements_snapshot_parquet(
     )
     context.log.info(
         "Completed Norway Brreg snapshot financial statements parquet: "
-        "historical_raw_fetch_rows=%d successful_fetches=%d statement_rows=%d s3_key=%s",
-        fetch_frame.height,
+        "response_index_rows=%d successful_responses=%d statement_rows=%d s3_key=%s",
+        response_index.height,
         successful_fetch_count,
         statement_frame.height,
         output_key,
     )
     return dg.MaterializeResult(
         metadata={
-            "fetch_row_count": fetch_frame.height,
+            "fetch_row_count": response_index.height,
             "successful_fetch_count": successful_fetch_count,
             "statement_row_count": statement_frame.height,
             "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
@@ -173,7 +187,7 @@ def norway_brreg_financial_statements_snapshot_parquet(
 
 @dg.asset(
     name="norway_brreg_financial_statements_updates_parquet",
-    deps=[dg.AssetKey("norway_brreg_financial_fetches_updates_parquet")],
+    deps=[dg.AssetKey("norway_brreg_financial_responses_updates_parquet")],
     group_name=GROUP_NAME,
     kinds=FINANCIAL_STATEMENTS_PARQUET_KINDS,
     partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
@@ -192,8 +206,14 @@ def norway_brreg_financial_statements_updates_parquet(
         "Building Norway Brreg update financial statements parquet: partition=%s",
         partition_date,
     )
-    fetch_frame = norway_brreg_financial_storage.read_update_fetches(partition_date)
-    statement_frame = _original_statement_frame(fetch_frame)
+    fetch_frame = norway_brreg_financial_storage.read_update_response_index(
+        partition_date
+    )
+    statement_frame = _original_statement_frame(
+        fetch_frame,
+        storage=norway_brreg_financial_storage,
+        log=context.log.info,
+    )
     output_key = norway_brreg_financial_storage.write_update_statements(
         partition_date,
         statement_frame,
@@ -403,27 +423,6 @@ def norway_brreg_financial_statements_updates_clickhouse(
     )
 
 
-norway_brreg_financial_snapshot_job = dg.define_asset_job(
-    "norway_brreg_financial_snapshot_job",
-    selection=dg.AssetSelection.assets(
-        "norway_brreg_financial_fetches_snapshot_parquet",
-        "norway_brreg_financial_statements_snapshot_parquet",
-        "norway_brreg_financial_statements_snapshot_usd_parquet",
-        "norway_brreg_financial_statements_snapshot_clickhouse",
-    ),
-)
-
-norway_brreg_financial_updates_job = dg.define_asset_job(
-    "norway_brreg_financial_updates_job",
-    selection=dg.AssetSelection.assets(
-        "norway_brreg_financial_fetches_updates_parquet",
-        "norway_brreg_financial_statements_updates_parquet",
-        "norway_brreg_financial_statements_updates_usd_parquet",
-        "norway_brreg_financial_statements_updates_clickhouse",
-    ),
-)
-
-
 def replace_financial_statement_snapshot_parquet_in_clickhouse(
     *,
     storage: NorwayBrregFinancialParquetStorageResource,
@@ -543,27 +542,53 @@ def apply_financial_statement_update_parquet_to_clickhouse(
 
 
 def _original_statement_frame(
-    fetch_frame: pl.DataFrame,
+    response_index: pl.DataFrame,
     *,
+    storage: NorwayBrregFinancialParquetStorageResource,
     log: Callable[..., object] | None = None,
 ) -> pl.DataFrame:
     _log(
         log,
-        "Converting Norway Brreg snapshot financial fetch frame to Python rows: "
-        "fetch_rows=%d",
-        fetch_frame.height,
+        "Converting Norway Brreg response index to Python rows: response_rows=%d",
+        response_index.height,
     )
-    fetch_rows = fetch_frame.to_dicts()
+    if response_index.is_empty():
+        return _financial_statement_frame([])
+    successful_fetch_rows = response_index.filter(
+        pl.col("fetch_status") == financial_fetches.FINANCIAL_FETCH_STATUS_SUCCESS
+    ).to_dicts()
     _log(
         log,
-        "Normalizing Norway Brreg snapshot financial statement rows: fetch_rows=%d",
-        len(fetch_rows),
+        "Reading verified Norway Brreg financial response JSON: successful_fetches=%d "
+        "batch_size=%d workers=%d",
+        len(successful_fetch_rows),
+        RESPONSE_READ_BATCH_SIZE,
+        RESPONSE_READ_WORKERS,
     )
-    rows = financial_normalize.build_resolved_financial_statement_original_rows_from_fetch_rows(
-        fetch_rows,
-        resolved_at=datetime.now(UTC),
-        log=log,
-    )
+    resolved_at = datetime.now(UTC)
+    rows: list[dict[str, Any]] = []
+    for batch_start in range(0, len(successful_fetch_rows), RESPONSE_READ_BATCH_SIZE):
+        response_rows = _response_rows_with_verified_payloads(
+            successful_fetch_rows[
+                batch_start : batch_start + RESPONSE_READ_BATCH_SIZE
+            ],
+            storage=storage,
+        )
+        rows.extend(
+            financial_normalize.build_resolved_financial_statement_original_rows_from_fetch_rows(
+                response_rows,
+                resolved_at=resolved_at,
+                log=log,
+            )
+        )
+        _log(
+            log,
+            "Parsed Norway Brreg financial response JSON batch: processed=%d "
+            "total=%d statement_rows=%d",
+            min(batch_start + RESPONSE_READ_BATCH_SIZE, len(successful_fetch_rows)),
+            len(successful_fetch_rows),
+            len(rows),
+        )
     _log(
         log,
         "Coercing Norway Brreg snapshot financial statement rows to parquet schema: "
@@ -571,7 +596,58 @@ def _original_statement_frame(
         len(rows),
         len(FINANCIAL_STATEMENT_SCHEMA),
     )
-    return _financial_statement_frame(rows)
+    statement_frame = _financial_statement_frame(rows)
+    if statement_frame.is_empty():
+        return statement_frame
+    return statement_frame.unique(
+        subset=["source_system", "source_record_id"],
+        keep="last",
+        maintain_order=True,
+    )
+
+
+def _response_rows_with_verified_payloads(
+    response_index_rows: list[dict[str, Any]],
+    *,
+    storage: NorwayBrregFinancialParquetStorageResource,
+) -> list[dict[str, Any]]:
+    def load(index_row: dict[str, Any]) -> dict[str, Any]:
+        response_key = _string(index_row.get("source_object_key"))
+        expected_hash = _string(index_row.get("source_payload_hash"))
+        if response_key == "" or expected_hash == "":
+            raise RuntimeError(
+                "Successful Norway BRREG response index row has no object key or "
+                f"hash: org={index_row.get('org_number')}"
+            )
+        try:
+            response_body = storage.read_response(response_key)
+        except Exception as error:
+            raise RuntimeError(
+                f"Norway BRREG response JSON object is missing: {response_key}"
+            ) from error
+        actual_hash = financial_fetches.sha256_hex(response_body)
+        if actual_hash != expected_hash:
+            raise RuntimeError(
+                "Norway BRREG response JSON hash mismatch while parsing statements: "
+                f"key={response_key} expected={expected_hash} actual={actual_hash}"
+            )
+        try:
+            payload = json.loads(response_body)
+        except Exception as error:
+            raise RuntimeError(
+                f"Norway BRREG response object is invalid JSON: {response_key}"
+            ) from error
+        if not isinstance(payload, list) or not all(
+            isinstance(record, dict) for record in payload
+        ):
+            raise RuntimeError(
+                "Norway BRREG response object must contain a list of objects: "
+                f"{response_key}"
+            )
+        return {**index_row, "response_payload": payload}
+
+    with ThreadPoolExecutor(max_workers=RESPONSE_READ_WORKERS) as executor:
+        return list(executor.map(load, response_index_rows))
 
 
 def _usd_statement_frame(original_frame: pl.DataFrame) -> pl.DataFrame:
@@ -685,3 +761,7 @@ def _rate_date_count(frame: pl.DataFrame) -> int:
 def _log(log: Callable[..., None] | None, message: str, *args: Any) -> None:
     if log is not None:
         log(message, *args)
+
+
+def _string(value: Any) -> str:
+    return "" if value is None else str(value)

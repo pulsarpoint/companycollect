@@ -13,7 +13,10 @@ import pyarrow as pa
 import polars as pl
 import pytest
 
-from dagster_v3.defs.norway_brreg_financial import financial_normalize
+from dagster_v3.defs.norway_brreg_financial import (
+    financial_fetches,
+    financial_normalize,
+)
 from dagster_v3.defs.norway_brreg_financial.assets import financial_statements
 from dagster_v3.defs.norway_brreg_financial.constants import (
     NORWAY_BRREG_FINANCIAL_BUCKET,
@@ -75,6 +78,7 @@ class FakeFinancialStorage:
         update_statements: dict[str, pl.DataFrame] | None = None,
         snapshot_usd_statements: pl.DataFrame | None = None,
         update_usd_statements: dict[str, pl.DataFrame] | None = None,
+        responses: dict[str, bytes] | None = None,
     ) -> None:
         self.historical_raw_fetches_frame = historical_raw_fetches_frame
         self.snapshot_fetches = snapshot_fetches
@@ -83,6 +87,7 @@ class FakeFinancialStorage:
         self.update_statements = update_statements or {}
         self.snapshot_usd_statements = snapshot_usd_statements
         self.update_usd_statements = update_usd_statements or {}
+        self.responses = responses or {}
         self.historical_raw_fetch_reads = 0
         self.snapshot_fetch_reads = 0
         self.update_fetch_reads: list[str] = []
@@ -93,7 +98,7 @@ class FakeFinancialStorage:
         self.consolidated_fetch_log_calls = 0
         self.snapshot_statement_write_log_calls = 0
 
-    def read_consolidated_historical_fetches(self, *, log=None) -> pl.DataFrame:
+    def read_consolidated_historical_response_index(self, *, log=None) -> pl.DataFrame:
         self.historical_raw_fetch_reads += 1
         assert self.historical_raw_fetches_frame is not None
         if log is not None:
@@ -112,6 +117,16 @@ class FakeFinancialStorage:
     def read_update_fetches(self, partition_date: str) -> pl.DataFrame:
         self.update_fetch_reads.append(partition_date)
         return self.update_fetches[partition_date]
+
+    def read_update_response_index(self, partition_date: str) -> pl.DataFrame:
+        self.update_fetch_reads.append(partition_date)
+        return self.update_fetches[partition_date]
+
+    def response_exists(self, key: str) -> bool:
+        return key in self.responses
+
+    def read_response(self, key: str) -> bytes:
+        return self.responses[key]
 
     def write_snapshot_statements(self, frame: pl.DataFrame, *, log=None) -> str:
         self.snapshot_statements = frame
@@ -230,7 +245,10 @@ def test_snapshot_statement_asset_reads_historical_raw_fetches_without_fetching_
                 _success_fetch_row("923609016", [_financial_record()]),
                 _failure_fetch_row("811685852"),
             ]
-        )
+        ),
+        responses={
+            _response_key("923609016"): _response_body([_financial_record()])
+        },
     )
 
     result = norway_brreg_financial_statements_snapshot_parquet(
@@ -265,7 +283,10 @@ def test_snapshot_statement_asset_logs_historical_read_and_normalization_progres
                 _success_fetch_row("923609016", [_financial_record()]),
                 _failure_fetch_row("811685852"),
             ]
-        )
+        ),
+        responses={
+            _response_key("923609016"): _response_body([_financial_record()])
+        },
     )
 
     norway_brreg_financial_statements_snapshot_parquet(
@@ -288,13 +309,46 @@ def test_original_statement_frame_logs_normalization_progress() -> None:
 
     financial_statements._original_statement_frame(
         fetch_frame,
+        storage=FakeFinancialStorage(
+            responses={
+                _response_key("923609016"): _response_body([_financial_record()])
+            }
+        ),
         log=log.info,
     )
 
     assert any(
-        "Normalizing Norway Brreg snapshot financial statement rows" in message
+        "Reading verified Norway Brreg financial response JSON" in message
         for message in log.messages
     )
+
+
+def test_original_statement_frame_preserves_history_across_response_objects() -> None:
+    older_record = _financial_record()
+    older_record["id"] = 1001
+    older_record["regnskapsperiode"] = {
+        "fraDato": "2023-01-01",
+        "tilDato": "2023-12-31",
+    }
+    latest_record = _financial_record()
+    latest_record["id"] = 1002
+    first_row = _success_fetch_row("923609016", [older_record])
+    second_row = _success_fetch_row("923609016", [older_record, latest_record])
+    second_row["source_object_key"] = _response_key("923609016-later")
+    second_body = _response_body([older_record, latest_record])
+    second_row["source_payload_hash"] = financial_fetches.sha256_hex(second_body)
+
+    frame = financial_statements._original_statement_frame(
+        pl.DataFrame([first_row, second_row]),
+        storage=FakeFinancialStorage(
+            responses={
+                _response_key("923609016"): _response_body([older_record]),
+                _response_key("923609016-later"): second_body,
+            }
+        ),
+    )
+
+    assert sorted(frame.get_column("filing_id").to_list()) == [1001, 1002]
 
 
 def test_update_statements_asset_writes_empty_partition_with_resolved_columns() -> None:
@@ -578,6 +632,7 @@ def test_update_clickhouse_publish_rejects_replacements_without_affected_orgs() 
 def _success_fetch_row(
     org_number: str, records: list[dict[str, Any]]
 ) -> dict[str, Any]:
+    response_body = _response_body(records)
     return {
         "org_number": org_number,
         "legal_name": f"{org_number} AS",
@@ -586,7 +641,8 @@ def _success_fetch_row(
         "source_run_id": "run-1",
         "source_url": f"https://data.brreg.no/regnskapsregisteret/regnskap/{org_number}",
         "fetch_status": "success",
-        "raw_response": json.dumps(records),
+        "source_object_key": _response_key(org_number),
+        "source_payload_hash": financial_fetches.sha256_hex(response_body),
     }
 
 
@@ -599,23 +655,19 @@ def _failure_fetch_row(org_number: str) -> dict[str, Any]:
         "source_run_id": "run-1",
         "source_url": f"https://data.brreg.no/regnskapsregisteret/regnskap/{org_number}",
         "fetch_status": "not_found",
-        "raw_response": "",
     }
 
 
 def _empty_fetch_frame() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={
-            "org_number": pl.Utf8,
-            "legal_name": pl.Utf8,
-            "website": pl.Utf8,
-            "last_submitted_accounts_year": pl.Utf8,
-            "source_run_id": pl.Utf8,
-            "source_url": pl.Utf8,
-            "fetch_status": pl.Utf8,
-            "raw_response": pl.Utf8,
-        }
-    )
+    return financial_fetches.financial_fetches_frame([])
+
+
+def _response_key(org_number: str) -> str:
+    return f"norway_brreg/financial/responses/test/org={org_number}/response.json"
+
+
+def _response_body(records: list[dict[str, Any]]) -> bytes:
+    return json.dumps(records, separators=(",", ":")).encode("utf-8")
 
 
 def _financial_record() -> dict[str, Any]:

@@ -117,6 +117,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     assert clickhouse_job_asset_keys == {
         "sweden_financial_reports_clickhouse",
         "sweden_financial_facts_clickhouse",
+        "sweden_financial_metrics_clickhouse",
     }
 
     for asset_key in (
@@ -131,6 +132,17 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
             dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb"),
             dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),
         }
+
+    metrics_node = repo.asset_graph.get(
+        dg.AssetKey("sweden_financial_metrics_clickhouse")
+    )
+    assert metrics_node.group_name == "sweden_financial"
+    assert metrics_node.partitions_def is None
+    assert metrics_node.parent_keys == {
+        dg.AssetKey("exchange_rates_v2_clickhouse"),
+        dg.AssetKey("sweden_financial_reports_clickhouse"),
+        dg.AssetKey("sweden_financial_facts_clickhouse"),
+    }
 
 
 def test_sweden_financial_raw_assets_do_not_require_duckdb_resource() -> None:
@@ -185,3 +197,5 @@ def test_sweden_financial_docs_describe_raw_archive_scope() -> None:
     assert "outer ZIP" in text
     assert "archive sync manifest" in text
     assert "XHTML extraction" in text
+    assert "se_financial_facts_with_source" in text
+    assert "se_financial_metrics" in text

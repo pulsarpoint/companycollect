@@ -24,6 +24,12 @@ finland_xbrl_incremental_job = dg.define_asset_job(
         "data_daily_duckdb_ch",
         "data_daily_xml",
         "data_daily_xml_duckdb",
+        "fi_financial_statements_ch",
+        "fi_xbrl_contexts_ch",
+        "fi_xbrl_units_ch",
+        "fi_xbrl_facts_ch",
+        "fi_xbrl_taxonomy_codes_ch",
+        "fi_financial_metrics_ch",
     ),
     partitions_def=DAILY_PARTITIONS,
 )
@@ -31,8 +37,10 @@ finland_xbrl_publish_job = dg.define_asset_job(
     "finland_xbrl_publish_job",
     selection=dg.AssetSelection.assets(
         "fi_financial_statements_ch",
-        "fi_financial_metrics_parquet",
-        "fi_financial_metrics_usd_parquet",
+        "fi_xbrl_contexts_ch",
+        "fi_xbrl_units_ch",
+        "fi_xbrl_facts_ch",
+        "fi_xbrl_taxonomy_codes_ch",
         "fi_financial_metrics_ch",
     ),
 )

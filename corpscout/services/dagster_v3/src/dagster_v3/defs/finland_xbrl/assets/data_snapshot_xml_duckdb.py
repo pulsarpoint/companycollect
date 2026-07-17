@@ -49,6 +49,8 @@ REQUIRED_XML_SNAPSHOT_MANIFEST_FIELDS = (
 @dataclass(frozen=True)
 class ParsedXmlDuckdbRows:
     statement_documents: list[dict[str, Any]]
+    contexts: list[dict[str, Any]]
+    units: list[dict[str, Any]]
     facts: list[dict[str, Any]]
     duckdb_path_count: int
 
@@ -59,6 +61,76 @@ class ParsedXmlDuckdbRows:
     @property
     def facts_count(self) -> int:
         return len(self.facts)
+
+    @property
+    def contexts_count(self) -> int:
+        return len(self.contexts)
+
+    @property
+    def units_count(self) -> int:
+        return len(self.units)
+
+
+@dataclass(frozen=True)
+class FinlandXbrlParseRun:
+    statement_rows: list[dict[str, Any]]
+    context_rows: list[dict[str, Any]]
+    unit_rows: list[dict[str, Any]]
+    fact_rows: list[dict[str, Any]]
+    failed_rows: list[dict[str, str]]
+
+
+def run_finland_xbrl_parse(
+    *,
+    object_store: ObjectStoreResource,
+    documents: list[dict[str, Any]],
+    run_id: str,
+    parsed_at: datetime | None = None,
+    parser: StatementParser = parse_statement_xml,
+) -> FinlandXbrlParseRun:
+    statement_rows: list[dict[str, Any]] = []
+    context_rows: list[dict[str, Any]] = []
+    unit_rows: list[dict[str, Any]] = []
+    fact_rows: list[dict[str, Any]] = []
+    failed_rows: list[dict[str, str]] = []
+    parse_time = parsed_at or datetime.now(UTC)
+    for document in documents:
+        try:
+            body = object_store.read_bytes(
+                str(document["xml_object_key"]),
+                bucket=XBRL_BUCKET,
+            )
+            parsed = parser(
+                business_id=str(document["business_id"]),
+                financial_date=str(document["financial_date"]),
+                registration_date=str(document.get("registration_date") or ""),
+                source_url=str(document.get("source_url") or ""),
+                xml_object_key=str(document["xml_object_key"]),
+                source_run_id=run_id,
+                body=body,
+                parsed_at=parse_time,
+            )
+        except Exception as exc:  # noqa: BLE001 - caller decides whether failures are fatal
+            failed_rows.append(
+                {
+                    "business_id": str(document.get("business_id") or ""),
+                    "financial_date": str(document.get("financial_date") or ""),
+                    "xml_object_key": str(document.get("xml_object_key") or ""),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+        statement_rows.extend(parsed.rows_by_table[tables.STATEMENT_DOCUMENTS_TABLE])
+        context_rows.extend(parsed.rows_by_table[tables.CONTEXTS_TABLE])
+        unit_rows.extend(parsed.rows_by_table[tables.UNITS_TABLE])
+        fact_rows.extend(parsed.rows_by_table[tables.FACTS_TABLE])
+    return FinlandXbrlParseRun(
+        statement_rows=statement_rows,
+        context_rows=context_rows,
+        unit_rows=unit_rows,
+        fact_rows=fact_rows,
+        failed_rows=failed_rows,
+    )
 
 
 def xml_snapshot_parse_duckdb_path(partition_key: str) -> Path:
@@ -98,6 +170,8 @@ def list_xml_parse_duckdb_paths(
 
 def read_xml_parse_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRows:
     statement_documents: list[dict[str, Any]] = []
+    contexts: list[dict[str, Any]] = []
+    units: list[dict[str, Any]] = []
     facts: list[dict[str, Any]] = []
     for path in duckdb_paths:
         if not path.exists():
@@ -109,6 +183,20 @@ def read_xml_parse_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRo
                 columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
             )
         )
+        contexts.extend(
+            _read_optional_duckdb_table_rows(
+                path=path,
+                table_name="contexts",
+                columns=tables.CONTEXTS_COLUMNS,
+            )
+        )
+        units.extend(
+            _read_optional_duckdb_table_rows(
+                path=path,
+                table_name="units",
+                columns=tables.UNITS_COLUMNS,
+            )
+        )
         facts.extend(
             _read_duckdb_table_rows(
                 path=path,
@@ -118,6 +206,8 @@ def read_xml_parse_duckdb_rows(*, duckdb_paths: list[Path]) -> ParsedXmlDuckdbRo
         )
     return ParsedXmlDuckdbRows(
         statement_documents=statement_documents,
+        contexts=contexts,
+        units=units,
         facts=facts,
         duckdb_path_count=len(duckdb_paths),
     )
@@ -136,6 +226,22 @@ def _read_duckdb_table_rows(
         {column: value for column, value in zip(columns, row, strict=True)}
         for row in rows
     ]
+
+
+def _read_optional_duckdb_table_rows(
+    *,
+    path: Path,
+    table_name: str,
+    columns: list[str],
+) -> list[dict[str, Any]]:
+    with duckdb.connect(str(path), read_only=True) as connection:
+        exists = connection.execute(
+            "select count(*) from information_schema.tables where table_name = ?",
+            [table_name],
+        ).fetchone()[0]
+    if not exists:
+        return []
+    return _read_duckdb_table_rows(path=path, table_name=table_name, columns=columns)
 
 
 def read_xml_snapshot_manifest_rows(
@@ -176,6 +282,14 @@ def _statement_document_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _fact_row(row: dict[str, Any]) -> dict[str, Any]:
     return {column: row.get(column) for column in tables.FACTS_COLUMNS}
+
+
+def _context_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {column: row.get(column) for column in tables.CONTEXTS_COLUMNS}
+
+
+def _unit_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {column: row.get(column) for column in tables.UNITS_COLUMNS}
 
 
 def _write_partition_parquet(
@@ -261,8 +375,12 @@ def materialize_data_snapshot_xml_duckdb(
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
     statement_dir = temp_dir / "statement_documents"
+    contexts_dir = temp_dir / "contexts"
+    units_dir = temp_dir / "units"
     facts_dir = temp_dir / "facts"
     statement_parquet_count = 0
+    contexts_parquet_count = 0
+    units_parquet_count = 0
     facts_parquet_count = 0
     documents_parsed = 0
     failed_rows: list[dict[str, str]] = []
@@ -307,6 +425,14 @@ def materialize_data_snapshot_xml_duckdb(
             _fact_row(fact)
             for fact in parsed.rows_by_table[tables.FACTS_TABLE]
         ]
+        context_rows = [
+            _context_row(item)
+            for item in parsed.rows_by_table.get(tables.CONTEXTS_TABLE, [])
+        ]
+        unit_rows = [
+            _unit_row(item)
+            for item in parsed.rows_by_table.get(tables.UNITS_TABLE, [])
+        ]
         if statement_rows:
             statement_parquet_count += 1
             _write_partition_parquet(
@@ -323,6 +449,22 @@ def materialize_data_snapshot_xml_duckdb(
                 columns=tables.FACTS_COLUMNS,
                 schema=tables.FACTS_POLARS_SCHEMA,
             )
+        if context_rows:
+            contexts_parquet_count += 1
+            _write_partition_parquet(
+                path=contexts_dir / f"part-{index:06d}.parquet",
+                rows=context_rows,
+                columns=tables.CONTEXTS_COLUMNS,
+                schema=tables.CONTEXTS_POLARS_SCHEMA,
+            )
+        if unit_rows:
+            units_parquet_count += 1
+            _write_partition_parquet(
+                path=units_dir / f"part-{index:06d}.parquet",
+                rows=unit_rows,
+                columns=tables.UNITS_COLUMNS,
+                schema=tables.UNITS_POLARS_SCHEMA,
+            )
         documents_parsed += 1
         if log_info is not None and (
             index == 1 or index == len(rows) or index % 25 == 0
@@ -333,6 +475,15 @@ def materialize_data_snapshot_xml_duckdb(
                 f"business_id={row['business_id']} financial_date={row['financial_date']}"
             )
 
+    if failed_rows:
+        first_failure = failed_rows[0]
+        raise ValueError(
+            "Finland XBRL partition is incomplete: "
+            f"partition={partition_key} failed={len(failed_rows)} "
+            f"first_business_id={first_failure['business_id']} "
+            f"first_error={first_failure['error']}"
+        )
+
     duckdb_path.parent.mkdir(parents=True, exist_ok=True)
     with duckdb.connect(str(duckdb_path)) as connection:
         statement_count = _create_duckdb_table_from_parquet(
@@ -341,6 +492,20 @@ def materialize_data_snapshot_xml_duckdb(
             parquet_dir=statement_dir,
             columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
             schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
+        )
+        contexts_count = _create_duckdb_table_from_parquet(
+            connection=connection,
+            table_name="contexts",
+            parquet_dir=contexts_dir,
+            columns=tables.CONTEXTS_COLUMNS,
+            schema=tables.CONTEXTS_POLARS_SCHEMA,
+        )
+        units_count = _create_duckdb_table_from_parquet(
+            connection=connection,
+            table_name="units",
+            parquet_dir=units_dir,
+            columns=tables.UNITS_COLUMNS,
+            schema=tables.UNITS_POLARS_SCHEMA,
         )
         facts_count = _create_duckdb_table_from_parquet(
             connection=connection,
@@ -369,9 +534,13 @@ def materialize_data_snapshot_xml_duckdb(
             "documents_parsed_this_run": documents_parsed,
             "documents_failed_this_run": len(failed_rows),
             "statement_documents_row_count": statement_count,
+            "contexts_row_count": contexts_count,
+            "units_row_count": units_count,
             "facts_row_count": facts_count,
             "temporary_statement_parquet_count": statement_parquet_count,
             "temporary_facts_parquet_count": facts_parquet_count,
+            "temporary_contexts_parquet_count": contexts_parquet_count,
+            "temporary_units_parquet_count": units_parquet_count,
             "temporary_directory_removed": temporary_directory_removed,
         }
     )

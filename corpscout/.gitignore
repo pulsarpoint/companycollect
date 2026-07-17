@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 bin/
 data/
+!services/dagster_v3/src/dagster_v3/defs/finland_xbrl/data/
+!services/dagster_v3/src/dagster_v3/defs/finland_xbrl/data/finland_sbr_taxonomy_catalog.csv
 ui/.react-router/
 ui/build/
 ui/node_modules/

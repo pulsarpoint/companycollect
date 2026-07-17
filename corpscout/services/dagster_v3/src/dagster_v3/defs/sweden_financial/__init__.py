@@ -11,6 +11,7 @@ from dagster_v3.defs.sweden_financial.assets import (
     sweden_financial_current_year_weekly,
     sweden_financial_current_report_xhtml_catalog_duckdb,
     sweden_financial_facts_clickhouse,
+    sweden_financial_metrics_clickhouse,
     sweden_financial_reports_clickhouse,
 )
 from dagster_v3.defs.sweden_financial.resources import (
@@ -41,5 +42,6 @@ __all__ = [
     "sweden_financial_current_year_weekly",
     "sweden_financial_current_report_xhtml_catalog_duckdb",
     "sweden_financial_facts_clickhouse",
+    "sweden_financial_metrics_clickhouse",
     "sweden_financial_reports_clickhouse",
 ]

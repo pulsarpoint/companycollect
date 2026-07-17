@@ -156,6 +156,26 @@ ClickHouse asset represents one physical ClickHouse table. The assets build a
 read-only union view across existing per-year DuckDB files and replace the full
 ClickHouse table from that combined parsed dataset.
 
+`corpscout.se_financial_facts` is the lossless long-form layer: every parsed
+inline-XBRL numeric, date, text, context, unit, currency, and dimensional value
+is retained. `corpscout.se_financial_facts_with_source` joins each fact to its
+filing provenance and exposes both the official Bolagsverket outer-archive URL
+and the exact extracted XHTML URI under
+`s3://source-sweden-financial/...`. This keeps every unmapped taxonomy concept
+queryable and traceable without duplicating long document paths across hundreds
+of millions of physical fact rows.
+
+`sweden_financial_metrics_clickhouse` builds one canonical row per filing in
+`corpscout.se_financial_metrics`. It selects undimensioned current-period facts,
+prefers the highest declared XBRL precision when a document repeats rounded and
+exact values, maps the standard Swedish concepts, derives total liabilities from
+the balance-sheet equation, and converts every monetary metric from SEK to USD
+using the shared `corpscout.exchange_rates` history. The metrics row includes the
+official archive URL, exact XHTML S3 URI, taxonomy entrypoint, mapping version,
+source/mapped/unmapped fact counts, and native and USD values. The full fact
+table remains the comprehensive representation for concepts that do not belong
+in the stable cross-country metric projection.
+
 ## Job And Schedule
 
 `sweden_financial_backfill_job` selects both
@@ -175,11 +195,6 @@ default. Each weekly run can discover upstream `LastModified` changes and add
 new raw archive versions while reusing unchanged archive objects.
 
 `sweden_financial_clickhouse_job` selects
-`sweden_financial_reports_clickhouse` and `sweden_financial_facts_clickhouse`.
+`sweden_financial_reports_clickhouse`, `sweden_financial_facts_clickhouse`, and
+`sweden_financial_metrics_clickhouse`.
 Run it after the relevant parsed DuckDB partitions are materialized.
-
-## Out Of Scope
-
-Financial metric mapping and USD conversion are downstream layers. The parsed
-report assets preserve report and fact-level XBRL data in DuckDB so those
-metric layers can be built separately.

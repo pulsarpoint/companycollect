@@ -57,8 +57,13 @@ def test_norway_brreg_all_assets_registered() -> None:
     assert "norway_resolved_no_industries" not in asset_names
     assert "norway_resolved_no_financial_statements" not in asset_names
     assert "norway_resolved_clickhouse" not in asset_names
-    assert "norway_brreg_financial_fetches_snapshot_parquet" in asset_names
-    assert "norway_brreg_financial_fetches_updates_parquet" in asset_names
+    assert "norway_brreg_financial_bootstrap_responses_json" in asset_names
+    assert "norway_brreg_financial_bootstrap_responses_parquet" in asset_names
+    assert "norway_brreg_financial_responses_updates_json" in asset_names
+    assert "norway_brreg_financial_responses_updates_parquet" in asset_names
+    assert "norway_brreg_financial_bootstrap_fetches_parquet" not in asset_names
+    assert "norway_brreg_financial_fetches_updates_parquet" not in asset_names
+    assert "norway_brreg_financial_fetches_snapshot_parquet" not in asset_names
     assert "norway_brreg_financial_statements_snapshot_parquet" in asset_names
     assert "norway_brreg_financial_statements_updates_parquet" in asset_names
     assert "norway_brreg_financial_statements_snapshot_usd_parquet" in asset_names
@@ -103,11 +108,17 @@ def test_norway_brreg_asset_dependency_edges() -> None:
         dg.AssetKey("norway_brreg_entities_snapshot_no_company_addresses_parquet")
     )
     snapshot_s3_node = asset_graph.get(dg.AssetKey("norway_brreg_entities_snapshot_s3"))
-    snapshot_fetches_node = asset_graph.get(
-        brreg_financial_assets.norway_brreg_financial_fetches_snapshot_parquet.key
+    bootstrap_json_node = asset_graph.get(
+        brreg_financial_assets.norway_brreg_financial_bootstrap_responses_json.key
     )
-    update_fetches_node = asset_graph.get(
-        brreg_financial_assets.norway_brreg_financial_fetches_updates_parquet.key
+    bootstrap_parquet_node = asset_graph.get(
+        brreg_financial_assets.norway_brreg_financial_bootstrap_responses_parquet.key
+    )
+    update_json_node = asset_graph.get(
+        brreg_financial_assets.norway_brreg_financial_responses_updates_json.key
+    )
+    update_parquet_node = asset_graph.get(
+        brreg_financial_assets.norway_brreg_financial_responses_updates_parquet.key
     )
     snapshot_statements_node = asset_graph.get(
         brreg_financial_assets.norway_brreg_financial_statements_snapshot_parquet.key
@@ -168,17 +179,19 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     assert {k.path[-1] for k in snapshot_s3_node.parent_keys} == {
         "norway_brreg_entries_snapshot_raw_s3"
     }
-    assert {k.path[-1] for k in snapshot_fetches_node.parent_keys} == {
-        "norway_brreg_financial_bootstrap_fetches_parquet"
+    assert {k.path[-1] for k in bootstrap_json_node.parent_keys} == set()
+    assert {k.path[-1] for k in bootstrap_parquet_node.parent_keys} == {
+        "norway_brreg_financial_bootstrap_responses_json"
     }
-    assert {k.path[-1] for k in update_fetches_node.parent_keys} == {
-        "norway_brreg_entity_updates_no_companies_parquet"
+    assert {k.path[-1] for k in update_json_node.parent_keys} == set()
+    assert {k.path[-1] for k in update_parquet_node.parent_keys} == {
+        "norway_brreg_financial_responses_updates_json"
     }
     assert {k.path[-1] for k in snapshot_statements_node.parent_keys} == {
-        "norway_brreg_financial_fetches_snapshot_parquet"
+        "norway_brreg_financial_bootstrap_responses_parquet"
     }
     assert {k.path[-1] for k in update_statements_node.parent_keys} == {
-        "norway_brreg_financial_fetches_updates_parquet"
+        "norway_brreg_financial_responses_updates_parquet"
     }
     assert {k.path[-1] for k in snapshot_usd_node.parent_keys} == {
         "norway_brreg_financial_statements_snapshot_parquet"
@@ -268,42 +281,10 @@ def test_norway_brreg_entity_updates_job_membership() -> None:
     }
 
 
-def test_norway_brreg_financial_snapshot_job_membership() -> None:
+def test_norway_brreg_financial_asset_jobs_are_removed() -> None:
     repo = load_project_defs().get_repository_def()
-    assert "norway_brreg_financial_snapshot_job" in repo.job_names
-
-    snapshot = {
-        k.path[-1]
-        for k in repo.get_job(
-            "norway_brreg_financial_snapshot_job"
-        ).asset_layer.executable_asset_keys
-    }
-
-    assert snapshot == {
-        "norway_brreg_financial_fetches_snapshot_parquet",
-        "norway_brreg_financial_statements_snapshot_parquet",
-        "norway_brreg_financial_statements_snapshot_usd_parquet",
-        "norway_brreg_financial_statements_snapshot_clickhouse",
-    }
-
-
-def test_norway_brreg_financial_updates_job_membership() -> None:
-    repo = load_project_defs().get_repository_def()
-    assert "norway_brreg_financial_updates_job" in repo.job_names
-
-    update = {
-        k.path[-1]
-        for k in repo.get_job(
-            "norway_brreg_financial_updates_job"
-        ).asset_layer.executable_asset_keys
-    }
-
-    assert update == {
-        "norway_brreg_financial_fetches_updates_parquet",
-        "norway_brreg_financial_statements_updates_parquet",
-        "norway_brreg_financial_statements_updates_usd_parquet",
-        "norway_brreg_financial_statements_updates_clickhouse",
-    }
+    assert "norway_brreg_financial_snapshot_job" not in repo.job_names
+    assert "norway_brreg_financial_updates_job" not in repo.job_names
 
 
 def test_norway_brreg_resources_are_wired() -> None:

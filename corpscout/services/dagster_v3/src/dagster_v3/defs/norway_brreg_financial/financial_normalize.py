@@ -93,7 +93,9 @@ def build_resolved_financial_statement_original_rows_from_fetch_rows(
     for index, fetch_row in enumerate(fetch_rows, start=1):
         if fetch_row.get("fetch_status") == "success":
             successful_fetches += 1
-            payload = json.loads(_string(fetch_row.get("raw_response")) or "[]")
+            payload = fetch_row.get("response_payload")
+            if payload is None:
+                payload = json.loads(_string(fetch_row.get("raw_response")) or "[]")
             if isinstance(payload, list):
                 for line_number, record in enumerate(payload, start=1):
                     if not isinstance(record, dict):

@@ -73,7 +73,7 @@ def test_lxml_parser_extracts_statement_and_facts_from_prh_instance_xml() -> Non
     assert statement["business_id"] == "0176460-0"
     assert statement["reported_company_name"] == "Testi Oy"
     assert statement["facts_count"] == 6
-    assert statement["parser_version"] == "1.0.0"
+    assert statement["parser_version"] == "2.0.0"
 
     revenue_facts = [fact for fact in facts if fact["concept_qname"] == "fi_met:md103"]
     assert [fact["numeric_value"] for fact in revenue_facts] == ["125000", "110000"]

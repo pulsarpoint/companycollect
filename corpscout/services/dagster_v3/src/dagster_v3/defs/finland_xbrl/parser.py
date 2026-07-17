@@ -15,7 +15,9 @@ XBRLI_NS = "http://www.xbrl.org/2003/instance"
 LINK_NS = "http://www.xbrl.org/2003/linkbase"
 XLINK_NS = "http://www.w3.org/1999/xlink"
 XBRLDI_NS = "http://xbrl.org/2006/xbrldi"
-PARSER_VERSION = "1.0.0"
+XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+XML_NS = "http://www.w3.org/XML/1998/namespace"
+PARSER_VERSION = "2.0.0"
 
 CANONICAL_PREFIXES = {
     "http://www.suomi.fi/xbrl/crr/dict/met": "fi_met",
@@ -54,15 +56,32 @@ def parse_statement_xml(
 ) -> ParsedStatement:
     root = etree.fromstring(body, parser=XML_PARSER)
     xml_sha256 = hashlib.sha256(body).hexdigest()
-    statement_key = statement_key_for(business_id, financial_date, xml_sha256)
+    statement_key = statement_key_for(
+        business_id,
+        financial_date,
+        registration_date or "",
+        xml_sha256,
+    )
     warnings: list[str] = []
 
     contexts = [
-        _context_row(element)
+        _context_row(
+            statement_key=statement_key,
+            element=element,
+            parsed_at=parsed_at,
+        )
         for element in root.findall(f"{{{XBRLI_NS}}}context")
     ]
     contexts_by_id = {context["context_id"]: context for context in contexts}
-    units_count = len(root.findall(f"{{{XBRLI_NS}}}unit"))
+    units = [
+        _unit_row(
+            statement_key=statement_key,
+            element=element,
+            parsed_at=parsed_at,
+        )
+        for element in root.findall(f"{{{XBRLI_NS}}}unit")
+    ]
+    units_by_id = {unit["unit_id"]: unit for unit in units}
     prefix_by_namespace = {
         namespace: prefix for prefix, namespace in (root.nsmap or {}).items() if prefix
     }
@@ -85,6 +104,7 @@ def parse_statement_xml(
             qname=qname,
             prefix_by_namespace=prefix_by_namespace,
             contexts_by_id=contexts_by_id,
+            units_by_id=units_by_id,
             warnings=warnings,
             parsed_at=parsed_at,
         )
@@ -99,6 +119,16 @@ def parse_statement_xml(
         )
     if not fact_rows:
         warnings.append("statement contains no facts")
+
+    reported_period_end = reported.get("reported_period_end") or financial_date
+    for context in contexts:
+        effective_date = context["instant_date"] or context["period_end"]
+        context["is_comparative"] = bool(
+            effective_date and reported_period_end and effective_date != reported_period_end
+        )
+    for fact in fact_rows:
+        context = contexts_by_id.get(fact["context_id"])
+        fact["is_comparative"] = bool(context and context["is_comparative"])
 
     schema_refs = [
         element.get(f"{{{XLINK_NS}}}href") or ""
@@ -122,7 +152,7 @@ def parse_statement_xml(
         "reported_period_start": reported.get("reported_period_start", ""),
         "reported_period_end": reported.get("reported_period_end", ""),
         "contexts_count": len(contexts),
-        "units_count": units_count,
+        "units_count": len(units),
         "facts_count": len(fact_rows),
         "validation_warnings": json.dumps(warnings, ensure_ascii=False),
         "parser_version": PARSER_VERSION,
@@ -132,17 +162,31 @@ def parse_statement_xml(
         statement_key=statement_key,
         rows_by_table={
             tables.STATEMENT_DOCUMENTS_TABLE: [document],
+            tables.CONTEXTS_TABLE: contexts,
+            tables.UNITS_TABLE: units,
             tables.FACTS_TABLE: fact_rows,
         },
         warnings=warnings,
     )
 
 
-def statement_key_for(business_id: str, financial_date: str, xml_sha256: str) -> str:
-    return hashlib.sha256(f"{business_id}:{financial_date}:{xml_sha256}".encode()).hexdigest()
+def statement_key_for(
+    business_id: str,
+    financial_date: str,
+    registration_date: str,
+    xml_sha256: str,
+) -> str:
+    identity = f"{business_id}:{financial_date}:{registration_date}:{xml_sha256}"
+    return hashlib.sha256(identity.encode()).hexdigest()
 
 
-def _context_row(element: etree._Element) -> dict[str, Any]:
+def _context_row(
+    *,
+    statement_key: str,
+    element: etree._Element,
+    parsed_at: datetime,
+) -> dict[str, Any]:
+    identifier = element.find(f"{{{XBRLI_NS}}}entity/{{{XBRLI_NS}}}identifier")
     period = element.find(f"{{{XBRLI_NS}}}period")
     instant = period.findtext(f"{{{XBRLI_NS}}}instant") if period is not None else None
     period_start = period.findtext(f"{{{XBRLI_NS}}}startDate") if period is not None else None
@@ -157,15 +201,56 @@ def _context_row(element: etree._Element) -> dict[str, Any]:
     ]
     ref_member = _member_for(dimensions, "REF")
     return {
+        "statement_key": statement_key,
         "context_id": element.get("id", ""),
+        "entity_identifier": (identifier.text or "").strip() if identifier is not None else "",
+        "entity_scheme": identifier.get("scheme", "") if identifier is not None else "",
         "period_type": "instant" if instant else "duration" if period_start or period_end else "none",
         "instant_date": instant or "",
         "period_start": period_start or "",
         "period_end": period_end or "",
-        "dimensions": dimensions,
+        "dimensions": json.dumps(dimensions, ensure_ascii=False),
         "mcy_member_code": _member_for(dimensions, "MCY") or "",
         "ref_member_code": ref_member or "",
         "is_comparative": ref_member is not None,
+        "raw_xml": etree.tostring(element, encoding="unicode"),
+        "parser_version": PARSER_VERSION,
+        "parsed_at": parsed_at.isoformat(),
+    }
+
+
+def _unit_row(
+    *,
+    statement_key: str,
+    element: etree._Element,
+    parsed_at: datetime,
+) -> dict[str, Any]:
+    direct_measures = [
+        _canonical_qname_text((measure.text or "").strip(), measure)
+        for measure in element.findall(f"{{{XBRLI_NS}}}measure")
+    ]
+    numerator_measures = [
+        _canonical_qname_text((measure.text or "").strip(), measure)
+        for measure in element.findall(
+            f"{{{XBRLI_NS}}}divide/{{{XBRLI_NS}}}unitNumerator/{{{XBRLI_NS}}}measure"
+        )
+    ]
+    denominator_measures = [
+        _canonical_qname_text((measure.text or "").strip(), measure)
+        for measure in element.findall(
+            f"{{{XBRLI_NS}}}divide/{{{XBRLI_NS}}}unitDenominator/{{{XBRLI_NS}}}measure"
+        )
+    ]
+    return {
+        "statement_key": statement_key,
+        "unit_id": element.get("id", ""),
+        "measures": json.dumps(direct_measures, ensure_ascii=False),
+        "numerator_measures": json.dumps(numerator_measures, ensure_ascii=False),
+        "denominator_measures": json.dumps(denominator_measures, ensure_ascii=False),
+        "is_divide": bool(numerator_measures or denominator_measures),
+        "raw_xml": etree.tostring(element, encoding="unicode"),
+        "parser_version": PARSER_VERSION,
+        "parsed_at": parsed_at.isoformat(),
     }
 
 
@@ -179,15 +264,17 @@ def _fact_row(
     qname: etree.QName,
     prefix_by_namespace: dict[str, str],
     contexts_by_id: dict[str, dict[str, Any]],
+    units_by_id: dict[str, dict[str, Any]],
     warnings: list[str],
     parsed_at: datetime,
 ) -> dict[str, Any]:
-    raw_value = (element.text or "").strip()
+    raw_value = "".join(element.itertext()).strip()
     unit_id = element.get("unitRef") or ""
+    is_nil = (element.get(f"{{{XSI_NS}}}nil") or "").lower() in {"1", "true"}
     numeric_value = ""
     date_value = ""
     text_value = ""
-    if not raw_value:
+    if is_nil or not raw_value:
         value_kind = "empty"
     elif unit_id:
         parsed_decimal = _decimal_or_none(raw_value)
@@ -197,7 +284,7 @@ def _fact_row(
         else:
             value_kind = "text"
             text_value = raw_value
-            warnings.append(f"fact value {raw_value!r} is not representable as Decimal(38,6)")
+            warnings.append(f"fact value {raw_value!r} is not a finite decimal")
     else:
         if _date_or_none(raw_value) is not None:
             value_kind = "date"
@@ -211,8 +298,9 @@ def _fact_row(
     context_id = element.get("contextRef", "")
     context = contexts_by_id.get(
         context_id,
-        {"dimensions": [], "mcy_member_code": "", "ref_member_code": "", "is_comparative": False},
+        {"dimensions": "[]", "mcy_member_code": "", "ref_member_code": "", "is_comparative": False},
     )
+    unit = units_by_id.get(unit_id)
     return {
         "statement_key": statement_key,
         "business_id": business_id,
@@ -223,8 +311,11 @@ def _fact_row(
         "concept_local_name": qname.localname,
         "context_id": context_id,
         "unit_id": unit_id,
+        "currency": _currency_for_unit(unit),
         "decimals": element.get("decimals") or "",
         "precision": element.get("precision") or "",
+        "is_nil": is_nil,
+        "xml_lang": element.get(f"{{{XML_NS}}}lang") or "",
         "value_kind": value_kind,
         "raw_value": raw_value,
         "numeric_value": numeric_value,
@@ -235,10 +326,22 @@ def _fact_row(
         "ref_member_code": context["ref_member_code"],
         "ref_member_label_fi": "",
         "is_comparative": context["is_comparative"],
-        "dimensions": json.dumps(context["dimensions"], ensure_ascii=False),
+        "dimensions": context["dimensions"],
         "parser_version": PARSER_VERSION,
         "parsed_at": parsed_at.isoformat(),
     }
+
+
+def _currency_for_unit(unit: dict[str, Any] | None) -> str:
+    if unit is None:
+        return ""
+    measures = json.loads(unit["measures"])
+    if len(measures) != 1:
+        return ""
+    prefix, separator, currency = measures[0].partition(":")
+    if separator and prefix.lower() == "iso4217":
+        return currency.upper()
+    return ""
 
 
 def _decimal_or_none(raw_value: str) -> Decimal | None:

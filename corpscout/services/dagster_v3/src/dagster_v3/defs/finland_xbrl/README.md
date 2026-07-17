@@ -1,9 +1,9 @@
 # Finland PRH XBRL
 
-Finland XBRL loads financial statements from the PRH open XBRL API into a
-partitioned parquet/S3 pipeline, parses the XML with the local lxml parser, builds
-mapped financial metrics, converts EUR amounts to USD, and publishes the final
-metrics to ClickHouse.
+Finland XBRL archives financial statements from the PRH open XBRL API in S3,
+parses every statement, context, unit, and fact into partition DuckDB files, and
+publishes the complete model to ClickHouse. Financial metrics and EUR-to-USD
+amounts are derived directly in ClickHouse with Decimal arithmetic.
 
 This pipeline does not depend on Finland YTJ eligibility. It pulls report listings
 directly from PRH by statement registration date and then downloads every listed
@@ -165,10 +165,12 @@ The DuckDB contains:
 
 ```text
 statement_documents
+contexts
+units
 facts
 ```
 
-Both tables use the parser contracts from `tables.py`. Temporary parquet files
+All four tables use the parser contracts from `tables.py`. Temporary parquet files
 are written while parsing and removed after the DuckDB tables are created.
 
 Current partitioned flow:
@@ -180,7 +182,7 @@ Current partitioned flow:
 4. `data_snapshot_xml` uses that ClickHouse listing table to download historical
    XML files into monthly S3 folders with `manifest.jsonl` and `_SUCCESS.json`.
 5. `data_snapshot_xml_duckdb` parses those monthly XML folders into local DuckDB
-   files with `statement_documents` and `facts` tables.
+   files with `statement_documents`, `contexts`, `units`, and `facts` tables.
 6. `data_daily` through `data_daily_xml_duckdb` runs the same flow for daily
    statement-registration partitions starting at `2026-06-01`.
 
@@ -237,15 +239,17 @@ data_daily
 -> data_daily_duckdb_ch
 -> data_daily_xml
 -> data_daily_xml_duckdb
+-> fi_financial_statements_ch + fi_xbrl_contexts_ch + fi_xbrl_units_ch + fi_xbrl_facts_ch
+-> fi_financial_metrics_ch
 ```
 
-Unpartitioned publish chain:
+Complete publish chain:
 
 ```text
-fi_financial_statements_ch
-fi_financial_metrics_parquet
--> fi_financial_metrics_usd_parquet
+data_snapshot_xml_duckdb + data_daily_xml_duckdb
+-> fi_financial_statements_ch + fi_xbrl_contexts_ch + fi_xbrl_units_ch + fi_xbrl_facts_ch
 -> fi_financial_metrics_ch
+fi_xbrl_taxonomy_codes_ch
 ```
 
 ## Jobs And Schedule
@@ -274,8 +278,9 @@ Daily incremental job:
 finland_xbrl_incremental_job
 ```
 
-Runs the daily listing, DuckDB, ClickHouse listing, XML download, and XML parse
-assets.
+Runs the daily listing, XML download, parse, complete ClickHouse publish, and
+metrics rebuild. The scheduled path therefore cannot leave parsed daily filings
+unpublished.
 
 Publish job:
 
@@ -288,18 +293,17 @@ Publishes from all parsed historical and daily XML DuckDB partitions:
 ```text
 data_snapshot_xml_duckdb
 data_daily_xml_duckdb
--> fi_financial_statements_ch
--> fi_financial_metrics_parquet
--> fi_financial_metrics_usd_parquet
+-> fi_financial_statements_ch + fi_xbrl_contexts_ch + fi_xbrl_units_ch + fi_xbrl_facts_ch
 -> fi_financial_metrics_ch
 ```
 
-`fi_financial_statements_ch` replaces `corpscout.fi_financial_statements` from
-the parsed `statement_documents` tables. `fi_financial_metrics_parquet` joins
-parsed statements to parsed facts and writes original-currency metrics parquet.
-`fi_financial_metrics_usd_parquet` performs EUR to USD conversion through the
-shared exchange-rate client. `fi_financial_metrics_ch` replaces
-`corpscout.fi_financial_metrics` from that USD parquet.
+The four parsed assets share one non-subsettable operation. It streams partition
+DuckDB rows into four staging tables, validates declared fact counts, context and
+unit parent integrity, and exact coverage of the PRH listing table, then exchanges
+the stages with the live tables. `fi_financial_metrics_ch` selects facts that the
+parser classified as current-period rather than comparative, resolves duplicate
+facts using XBRL precision plus fact order, and performs EUR-to-USD conversion in
+the same SQL statement. It refuses rows with missing FX rates or source links.
 
 Schedule:
 
@@ -322,16 +326,13 @@ key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredD
 key:    financial_data/xml_snapshot/registeredDateStart=<YYYY-MM-DD>/registeredDateEnd=<YYYY-MM-DD>/_SUCCESS.json
 ```
 
-Local DuckDB and parquet outputs:
+Local DuckDB outputs:
 
 ```text
 data/finland_xbrl/financial_data_snapshot.duckdb
 data/finland_xbrl/financial_data_daily.duckdb
 data/finland_xbrl/duckdb/xml_snapshot_parse/partition_key=<month>/data.duckdb
 data/finland_xbrl/duckdb/xml_daily_parse/partition_key=<day>/data.duckdb
-data/finland_xbrl/parquet/
-  financial_metrics/data.parquet
-  financial_metrics_usd/data.parquet
 ```
 
 ## Parser And Metrics
@@ -341,20 +342,17 @@ parse them with `parse_statement_xml` in `parser.py`. The parser emits:
 
 ```text
 statement_documents
+contexts
+units
 facts
 ```
 
-`fi_financial_metrics_parquet` joins parsed statement rows to numeric,
-non-comparative facts and maps XBRL concepts through
-`metric_mapping.xbrl_metric_mapping_rows()`. The mapping lives in Python code, not
-in a CSV file.
-
-`fi_financial_metrics_usd_parquet` uses EUR as the original currency and converts
-money columns to USD using the shared `exchange_rates` client. Missing rates raise
-and fail the asset.
-
-`fi_financial_metrics_ch` replaces `corpscout.fi_financial_metrics` from the USD
-parquet.
+The raw facts retain the original value, typed numeric/date/text values, context
+and unit references, dimensions, precision, language, nil status, document hash,
+S3 key, and PRH URL. `corpscout.fi_financial_facts_with_source` exposes those
+fields together with full `s3://source-finland-prh-xbrl/...` provenance and
+taxonomy labels. The bundled official SBR catalog contains Finnish, English, and
+Swedish labels for 6,638 concepts, dimensions, and members.
 
 ## Operational Notes
 
@@ -365,7 +363,7 @@ parquet.
 - The XML S3 key uses only `business_id` and `financial_date`. If PRH ever exposes
   multiple distinct statements for the same company and financial date, this
   storage contract would need a report identifier in the key.
-- Parse failures are logged and skipped for that run; failed documents are retried
-  on the next parse materialization because no failure marker is persisted.
+- Any parse failure fails the partition materialization. The previous DuckDB and
+  live ClickHouse tables remain untouched, so an incomplete run cannot appear green.
 - XBRL downloads are intentionally not filtered by YTJ active status, website, or
   company seed data.

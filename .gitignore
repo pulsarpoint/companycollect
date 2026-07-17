@@ -16,6 +16,10 @@ data/
 companies/data/
 companies/data/*/countrydata/
 **/nats-data/
+
+# Bundled, versioned source data required by the Finland XBRL parser.
+!corpscout/services/dagster_v3/src/dagster_v3/defs/finland_xbrl/data/
+!corpscout/services/dagster_v3/src/dagster_v3/defs/finland_xbrl/data/finland_sbr_taxonomy_catalog.csv
 **/node_modules/
 **/.venv/
 **/__pycache__/

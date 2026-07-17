@@ -13,6 +13,223 @@ from dagster_v3.defs.finland_xbrl.clickhouse import (
 DECIMAL_SCALE = Decimal("0.000001")
 
 
+def build_finland_financial_metrics_insert_sql(target_table: str) -> str:
+    """Build metrics directly from the complete ClickHouse XBRL model."""
+    metric_expression = _metric_code_sql()
+    money_columns = {
+        "revenue": "revenue_amount_original",
+        "operating_profit_loss": "operating_profit_loss_amount_original",
+        "profit_loss": "profit_loss_amount_original",
+        "total_assets": "total_assets_amount_original",
+        "equity": "equity_amount_original",
+        "liabilities": "liabilities_amount_original",
+        "cash_and_bank": "cash_and_bank_amount_original",
+        "current_assets": "current_assets_amount_original",
+        "current_receivables": "current_receivables_amount_original",
+        "current_liabilities": "current_liabilities_amount_original",
+        "personnel_expenses": "personnel_expenses_amount_original",
+        "wages_and_salaries": "wages_and_salaries_amount_original",
+    }
+    aggregations = ",\n".join(
+        "        argMaxIf(facts.numeric_value, "
+        "tuple(facts.precision_rank, facts.fact_ordinal), "
+        f"facts.metric_code = '{metric_code}') AS {column}"
+        for metric_code, column in money_columns.items()
+    )
+    original_columns = ",\n".join(
+        f"    CAST(metrics.{column}, 'Nullable(Decimal(38, 6))') AS {column}"
+        for column in money_columns.values()
+    )
+    usd_columns = ",\n".join(
+        "    CAST(metrics."
+        f"{column} * fx.rate, 'Nullable(Decimal(38, 6))') AS "
+        f"{column.replace('_original', '_usd')}"
+        for column in money_columns.values()
+    )
+    selected_fact_metrics = ",\n".join(
+        f"        mapped_facts.{column} AS {column}"
+        for column in (*money_columns.values(), "employees")
+    )
+    insert_columns = (
+        "statement_key",
+        "business_id",
+        "financial_date",
+        "registration_date",
+        "period_start",
+        "period_end",
+        "fiscal_year",
+        "reported_company_name",
+        "source_url",
+        "xml_object_key",
+        "xml_source_uri",
+        "xml_sha256",
+        "xml_size_bytes",
+        "taxonomy_entrypoint",
+        "currency_original",
+        *money_columns.values(),
+        *(column.replace("_original", "_usd") for column in money_columns.values()),
+        "employees",
+        "source_fact_count",
+        "mapped_fact_count",
+        "unmapped_numeric_fact_count",
+        "metric_warnings",
+        "mapping_version",
+        "fx_rate_to_usd",
+        "fx_rate_date",
+        "fx_source",
+        "fx_converted_at",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    )
+    insert_column_sql = ",\n    ".join(insert_columns)
+    return f"""
+INSERT INTO {target_table} (
+    {insert_column_sql}
+)
+WITH reports AS (
+    SELECT *
+    FROM corpscout.fi_financial_statements FINAL
+),
+current_numeric_facts AS (
+    SELECT
+        facts.statement_key AS statement_key,
+        facts.fact_ordinal,
+        facts.numeric_value,
+        {metric_expression} AS metric_code,
+        multiIf(
+            upper(ifNull(facts.precision, '')) = 'INF', 3000000,
+            match(ifNull(facts.precision, ''), '^-?[0-9]+$'),
+                2000000 + toInt32OrZero(facts.precision),
+            upper(ifNull(facts.decimals, '')) = 'INF', 1500000,
+            match(ifNull(facts.decimals, ''), '^-?[0-9]+$'),
+                1000000 + toInt32OrZero(facts.decimals),
+            0
+        ) AS precision_rank
+    FROM corpscout.fi_xbrl_facts_raw AS facts
+    WHERE facts.value_kind = 'numeric'
+      AND facts.numeric_value IS NOT NULL
+      AND facts.is_nil = 0
+      AND facts.is_comparative = 0
+),
+fact_counts AS (
+    SELECT statement_key, count() AS source_fact_count
+    FROM corpscout.fi_xbrl_facts_raw
+    GROUP BY statement_key
+),
+fact_metrics AS (
+    SELECT
+        facts.statement_key AS statement_key,
+        countIf(facts.metric_code != '') AS mapped_fact_count,
+        countIf(facts.metric_code = '') AS unmapped_numeric_fact_count,
+{aggregations},
+        argMaxIf(
+            toUInt64OrNull(toString(toInt256(facts.numeric_value))),
+            tuple(facts.precision_rank, facts.fact_ordinal),
+            facts.metric_code = 'employees'
+                AND facts.numeric_value = trunc(facts.numeric_value)
+        ) AS employees
+    FROM current_numeric_facts AS facts
+    GROUP BY facts.statement_key
+),
+metrics AS (
+    SELECT
+        reports.statement_key AS statement_key,
+        reports.business_id AS business_id,
+        reports.financial_date AS financial_date,
+        reports.registration_date AS registration_date,
+        reports.period_start AS period_start,
+        reports.period_end AS period_end,
+        reports.reported_company_name AS reported_company_name,
+        reports.source_url AS source_url,
+        reports.xml_object_key AS xml_object_key,
+        reports.xml_sha256 AS xml_sha256,
+        reports.xml_size_bytes AS xml_size_bytes,
+        reports.taxonomy_entrypoint AS taxonomy_entrypoint,
+        reports.source_run_id AS source_run_id,
+        'EUR' AS currency_code,
+        ifNull(fact_counts.source_fact_count, 0) AS source_fact_count,
+        ifNull(mapped_facts.mapped_fact_count, 0) AS mapped_fact_count,
+        ifNull(mapped_facts.unmapped_numeric_fact_count, 0) AS unmapped_numeric_fact_count,
+{selected_fact_metrics}
+    FROM reports
+    LEFT JOIN fact_counts ON fact_counts.statement_key = reports.statement_key
+    LEFT JOIN fact_metrics AS mapped_facts
+        ON mapped_facts.statement_key = reports.statement_key
+),
+usd_rates AS (
+    SELECT
+        'EUR' AS base_currency,
+        rate_date,
+        argMax(rate, pulled_at) AS rate,
+        argMax(source, pulled_at) AS source
+    FROM corpscout.exchange_rates
+    WHERE base_currency = 'EUR' AND quote_currency = 'USD'
+    GROUP BY rate_date
+    ORDER BY base_currency, rate_date
+)
+SELECT
+    metrics.statement_key,
+    metrics.business_id,
+    metrics.financial_date,
+    metrics.registration_date,
+    metrics.period_start,
+    metrics.period_end,
+    toUInt16(toYear(metrics.period_end)) AS fiscal_year,
+    metrics.reported_company_name,
+    metrics.source_url,
+    metrics.xml_object_key,
+    concat('s3://source-finland-prh-xbrl/', metrics.xml_object_key) AS xml_source_uri,
+    metrics.xml_sha256,
+    metrics.xml_size_bytes,
+    metrics.taxonomy_entrypoint,
+    'EUR' AS currency_original,
+{original_columns},
+{usd_columns},
+    metrics.employees,
+    metrics.source_fact_count,
+    metrics.mapped_fact_count,
+    metrics.unmapped_numeric_fact_count,
+    multiIf(
+        metrics.mapped_fact_count = 0, '["no mapped metrics"]',
+        metrics.unmapped_numeric_fact_count > 0,
+            concat('["unmapped current-period numeric facts: ',
+                   toString(metrics.unmapped_numeric_fact_count), '"]'),
+        '[]'
+    ) AS metric_warnings,
+    '{metric_mapping.MAPPING_VERSION}' AS mapping_version,
+    fx.rate AS fx_rate_to_usd,
+    fx.rate_date AS fx_rate_date,
+    fx.source AS fx_source,
+    now64(3, 'UTC') AS fx_converted_at,
+    '{SOURCE_SYSTEM}' AS source_system,
+    metrics.source_run_id,
+    metrics.statement_key AS source_record_id,
+    metrics.xml_sha256 AS source_payload_hash,
+    now64(3, 'UTC') AS resolved_at
+FROM metrics
+ASOF LEFT JOIN usd_rates AS fx
+    ON fx.base_currency = metrics.currency_code
+    AND fx.rate_date <= coalesce(metrics.period_end, metrics.financial_date)
+""".strip()
+
+
+def _metric_code_sql() -> str:
+    conditions = []
+    for concept_qname, member_code, metric_code in metric_mapping.XBRL_METRIC_MAPPINGS:
+        conditions.extend(
+            [
+                "(facts.concept_qname = "
+                f"'{concept_qname}' AND ifNull(facts.mcy_member_code, '') = "
+                f"'{member_code}')",
+                f"'{metric_code}'",
+            ]
+        )
+    return f"multiIf({', '.join(conditions)}, '')"
+
+
 def build_financial_metric_rows(
     *,
     statement_documents: list[dict[str, Any]],
