@@ -1,10 +1,17 @@
 import { Link } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import type { Route } from "./+types/financials-country";
-import { getCountryFinancials } from "~/lib/financial-aggregates.server";
+import { getCountryFinancials, TOP_DIVISIONS_LIMIT } from "~/lib/financial-aggregates.server";
+// NOTE: TOP_DIVISIONS_LIMIT is only read inside `loader` below (server-only).
+// Do not reference it from the component — `financial-aggregates.server`
+// pulls in server-only deps (e.g. the ClickHouse client), and React Router's
+// route-module splitting only strips `loader`/`action`; any OTHER export that
+// touches a `.server` import drags the whole module into the client bundle,
+// which then 500s when the browser tries to load this route.
 import { getCountry } from "~/lib/countries";
 import { formatRevenueUsd } from "~/components/data-table/unified-columns";
 import { MethodologyNote } from "~/components/financials/methodology-note";
+import { RevenueBarChart } from "~/components/financials/revenue-bar-chart";
 import { TopCompaniesTable } from "~/components/financials/top-companies-table";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
@@ -20,7 +27,9 @@ import {
 export async function loader({ params }: Route.LoaderArgs) {
   const data = await getCountryFinancials(params.country);
   if (!data) throw new Response("Not found", { status: 404 });
-  return data;
+  // Chart shows top 15 + unmapped; the table below keeps the full list.
+  const chartDivisions = data.divisions ? data.divisions.slice(0, TOP_DIVISIONS_LIMIT) : null;
+  return { ...data, chartDivisions };
 }
 
 export function meta({ params }: Route.MetaArgs) {
@@ -32,7 +41,7 @@ export function meta({ params }: Route.MetaArgs) {
 const nf = new Intl.NumberFormat("en-US");
 
 export default function FinancialsCountry({ loaderData, params }: Route.ComponentProps) {
-  const { totals, divisions, unmapped, topCompanies } = loaderData;
+  const { totals, divisions, chartDivisions, unmapped, topCompanies } = loaderData;
   const country = getCountry(params.country)!;
 
   return (
@@ -82,44 +91,59 @@ export default function FinancialsCountry({ loaderData, params }: Route.Componen
         <CardHeader>
           <CardTitle className="text-base">Industries</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {divisions ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Industry</TableHead>
-                  <TableHead className="text-right">Companies</TableHead>
-                  <TableHead className="text-right">Revenue (USD)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {divisions.map((d) => (
-                  <TableRow key={d.division}>
-                    <TableCell>
-                      <Link
-                        to={`/financials/industry/${d.division}`}
-                        className="font-medium underline-offset-2 hover:underline"
-                      >
-                        {d.label}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{nf.format(d.companies)}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatRevenueUsd(d.revenue_usd, null)}
-                    </TableCell>
+            <>
+              <RevenueBarChart
+                items={[
+                  ...(chartDivisions ?? []).map((d) => ({
+                    key: d.division,
+                    label: d.label,
+                    revenue_usd: d.revenue_usd,
+                    href: `/financials/industry/${d.division}`,
+                  })),
+                  ...(unmapped
+                    ? [{ key: "unmapped", label: unmapped.label, revenue_usd: unmapped.revenue_usd }]
+                    : []),
+                ]}
+              />
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Industry</TableHead>
+                    <TableHead className="text-right">Companies</TableHead>
+                    <TableHead className="text-right">Revenue (USD)</TableHead>
                   </TableRow>
-                ))}
-                {unmapped ? (
-                  <TableRow className="text-muted-foreground">
-                    <TableCell>{unmapped.label}</TableCell>
-                    <TableCell className="text-right tabular-nums">{nf.format(unmapped.companies)}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatRevenueUsd(unmapped.revenue_usd, null)}
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {divisions.map((d) => (
+                    <TableRow key={d.division}>
+                      <TableCell>
+                        <Link
+                          to={`/financials/industry/${d.division}`}
+                          className="font-medium underline-offset-2 hover:underline"
+                        >
+                          {d.label}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{nf.format(d.companies)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatRevenueUsd(d.revenue_usd, null)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {unmapped ? (
+                    <TableRow className="text-muted-foreground">
+                      <TableCell>{unmapped.label}</TableCell>
+                      <TableCell className="text-right tabular-nums">{nf.format(unmapped.companies)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatRevenueUsd(unmapped.revenue_usd, null)}
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </>
           ) : (
             <p className="text-muted-foreground text-sm">
               Industry breakdown unavailable — no NACE mapping for this source yet.

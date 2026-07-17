@@ -5,6 +5,7 @@ import { getIndustryFinancials } from "~/lib/financial-aggregates.server";
 import { getCountry } from "~/lib/countries";
 import { formatRevenueUsd } from "~/components/data-table/unified-columns";
 import { MethodologyNote } from "~/components/financials/methodology-note";
+import { RevenueBarChart } from "~/components/financials/revenue-bar-chart";
 import { TopCompaniesTable } from "~/components/financials/top-companies-table";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
@@ -52,7 +53,15 @@ export default function FinancialsIndustry({ loaderData }: Route.ComponentProps)
         <CardHeader>
           <CardTitle className="text-base">Revenue by country</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <RevenueBarChart
+            items={countries.map((c) => ({
+              key: c.country_code,
+              label: getCountry(c.country_code)?.name ?? c.country_code,
+              revenue_usd: c.revenue_usd,
+              href: `/financials/country/${c.country_code}`,
+            }))}
+          />
           <Table>
             <TableHeader>
               <TableRow>
