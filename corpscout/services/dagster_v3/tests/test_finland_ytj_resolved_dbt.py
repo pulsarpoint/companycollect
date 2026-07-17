@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import duckdb
@@ -34,14 +34,20 @@ def _seed_all_companies(db_path: Path) -> None:
     conn.execute(
         """
         create table finland_prhytj.all_companies as select * from (values
-          ('fi-1','FI','Active One Oy','2024-01-01','', 'active', true,
+          ('fi-1','FI','Active One Oy','2024-01-01','',
+           '2024-06-01 00:00:00','REGISTERED','',
+           'active', true,
            'https://example.fi/path','https://example.fi/path','example.fi','/path','2024-01-02','',
            'finland_prhytj','run-1','fi-1','hash1',
-           '{"names":[{"name":"Active One Oy","type":"1","registrationDate":"2024-01-01","endDate":null,"version":1,"source":"1"},{"name":"Active One old Oy","type":"1","registrationDate":"2020-01-01","endDate":"2023-12-31","version":2,"source":"1"}],"mainBusinessLine":{"code":"62010","codeSet":"NACE_REV_2","descriptions":[{"languageCode":"1","description":"Ohjelmistot"}]}}'),
-          ('fi-2','FI','Ceased Two Oy','2020-01-01','2025-01-01','ceased', false,
+           '{"businessId":{"value":"fi-1","registrationDate":"2024-01-01"},"names":[{"name":"Active One Oy","type":"1","registrationDate":"2024-01-01","endDate":null,"version":1,"source":"1"},{"name":"Active One old Oy","type":"1","registrationDate":"2020-01-01","endDate":"2023-12-31","version":2,"source":"1"}],"mainBusinessLine":{"code":"62010","codeSet":"NACE_REV_2","descriptions":[{"languageCode":"1","description":"Ohjelmistot"}]},"companyForms":[{"type":"16","registrationDate":"2024-01-01","version":1,"descriptions":[{"languageCode":"1","description":"Osakeyhtiö"},{"languageCode":"3","description":"Limited company"}]}],"registeredEntries":[{"register":"6","registrationDate":"2024-01-01"}]}'),
+          ('fi-2','FI','Ceased Two Oy','2020-01-01','2025-01-01',
+           '','','',
+           'ceased', false,
            '','','','','','',
            'finland_prhytj','run-1','fi-2','hash2','{}')
-        ) as t(business_id,country_iso2,primary_name,registration_date,end_date,lifecycle_status,is_active,
+        ) as t(business_id,country_iso2,primary_name,registration_date,end_date,
+                last_modified,trade_register_status,status,
+                lifecycle_status,is_active,
                 website_url,website_normalized_url,website_host,website_path,website_registered_on,website_ended_on,
                 source_slug,source_run_id,source_record_id,source_payload_hash,raw_company)
         """
@@ -70,6 +76,36 @@ def test_fi_companies_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         ("fi-1", "Active One Oy", "active one oy", True, "example.fi"),
         ("fi-2", "Ceased Two Oy", "ceased two oy", False, None),
     ]
+
+    extracted = conn.execute(
+        "select business_id_registration_date, eu_id, vat_id, trade_register_status, "
+        "raw_status_code, last_modified, is_vat_registered, is_employer_registered, "
+        "is_prepayment_registered, legal_form_code, legal_form_description_original, "
+        "legal_form_description_language, legal_form_description_en "
+        "from finland_resolved.fi_companies where business_id = 'fi-1'"
+    ).fetchone()
+    assert extracted == (
+        date(2024, 1, 1),
+        None,
+        None,
+        "REGISTERED",
+        None,
+        datetime(2024, 6, 1, 0, 0, 0),
+        True,
+        False,
+        False,
+        "16",
+        "Osakeyhtiö",
+        "fi",
+        "Limited company",
+    )
+
+    ceased = conn.execute(
+        "select business_id_registration_date, trade_register_status, raw_status_code, "
+        "last_modified, is_vat_registered, legal_form_code "
+        "from finland_resolved.fi_companies where business_id = 'fi-2'"
+    ).fetchone()
+    assert ceased == (None, "", None, None, False, None)
 
 
 def test_fi_websites_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -27,6 +27,9 @@ CLICKHOUSE_EXCLUDED_COLUMNS = frozenset({"source_payload_hash"})
 RESOLVED_TABLE_COLUMNS = {
     FI_COMPANIES_TABLE: (
         "business_id",
+        "business_id_registration_date",
+        "eu_id",
+        "vat_id",
         "country_iso2",
         "name",
         "name_normalized",
@@ -34,6 +37,12 @@ RESOLVED_TABLE_COLUMNS = {
         "end_date",
         "lifecycle_status",
         "is_active",
+        "trade_register_status",
+        "raw_status_code",
+        "last_modified",
+        "is_vat_registered",
+        "is_employer_registered",
+        "is_prepayment_registered",
         "legal_form_code",
         "legal_form_description_original",
         "legal_form_description_language",

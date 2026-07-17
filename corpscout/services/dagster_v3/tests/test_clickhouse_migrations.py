@@ -751,30 +751,32 @@ def test_exchange_rate_migration_defines_reference_table_schema() -> None:
 
 
 def test_finland_resolved_migrations_cover_exported_columns() -> None:
-    migration_file_by_table = {
+    migration_files_by_table = {
         finland_resolved_tables.FI_COMPANIES_TABLE: (
-            "000005_corpscout_fi_companies.up.sql"
+            "000005_corpscout_fi_companies.up.sql",
+            "000010_corpscout_finland_ytj_registry_tables.up.sql",
         ),
         finland_resolved_tables.FI_WEBSITES_TABLE: (
-            "000006_corpscout_fi_websites.up.sql"
+            "000006_corpscout_fi_websites.up.sql",
         ),
         finland_resolved_tables.FI_INDUSTRIES_TABLE: (
-            "000007_corpscout_fi_industries.up.sql"
+            "000007_corpscout_fi_industries.up.sql",
         ),
         finland_resolved_tables.FI_NAMES_TABLE: (
-            "000010_corpscout_finland_ytj_registry_tables.up.sql"
+            "000010_corpscout_finland_ytj_registry_tables.up.sql",
         ),
     }
 
-    assert set(migration_file_by_table) == set(
+    assert set(migration_files_by_table) == set(
         finland_resolved_tables.FINLAND_YTJ_RESOLVED_TABLES
     )
 
-    for table_name, migration_file in migration_file_by_table.items():
-        sql = _migration_sql(migration_file)
-
+    for table_name, migration_files in migration_files_by_table.items():
+        sqls = [_migration_sql(name) for name in migration_files]
         for column_name in finland_resolved_tables.RESOLVED_TABLE_COLUMNS[table_name]:
-            assert f"    {column_name} " in sql
+            assert any(f" {column_name} " in sql for sql in sqls), (
+                f"{table_name}.{column_name} not found in {migration_files}"
+            )
 
 
 def test_finland_financial_migrations_cover_statements_and_usd_metrics() -> None:
