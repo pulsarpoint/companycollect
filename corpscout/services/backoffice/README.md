@@ -97,6 +97,78 @@ Norway statement amounts carry their currency code; USD values shown with a
 leading `≈` are derived in the UI as `original × fx_rate_to_usd` where the
 pipeline left the stored USD NULL.
 
+## Financials section
+
+Three routes power financial analytics:
+
+- **`/financials`** — Global overview: total revenue by country (bar chart + table),
+  top 15 NACE divisions (across all NACE-enabled countries), and top 25 companies.
+- **`/financials/country/{code}`** — Country page (no/fi/ee/lv/gb/br/se/sk): total
+  companies, revenue, and latest fiscal year; industry breakdown (NACE divisions
+  for countries with mapping, or unmapped bucket); top companies for the country.
+- **`/financials/industry/{division}`** — Division (2-digit NACE) page: revenue and
+  company count by country, top companies across all countries in that industry.
+
+### Sums vs. lists: Norwegian NUF exclusion
+
+Norwegian foreign-branch companies (legal form NUF) file the foreign parent's full
+accounts — real corporate data, but not Norway-earned. Revenue sums and company
+counts **exclude** NUF rows via `financialsAggregates.sumExclusionExpr`, but **lists**
+(top companies table, top divisions) **keep** them badged with `excluded_from_sums: true`
+so editors can see the data exists and understand why it's absent from aggregates.
+
+### Unmapped bucket
+
+Companies with financial data but no NACE mapping are explicitly counted as "Unmapped"
+and included in country pages (for countries with NACE support). The unmapped count is
+computed as total companies minus sum of all mapped divisions; revenue is the residual
+(totals minus mapped). Unmapped is never dropped — if a company has financials, it
+contributes to the country's total revenue, appearing either in a named division or
+in the Unmapped bucket.
+
+### NACE-breakdown countries vs. totals-only
+
+**NACE-breakdown countries** (no/se/ee/gb/sk) have a registry `financialsAggregates.nace`
+entry joining their industries table, yielding division (2-digit) breakdowns and feeding
+the global industry view:
+
+- **NO** (Norway): `no_industries` + `nace_normalized_code` + primary filter.
+- **SE** (Sweden): `se_industries` + `nace_rev2_class_code` (REV2 to current via category fallback).
+- **EE** (Estonia): `ee_industries` + `nace_normalized_code` + primary filter.
+- **GB** (United Kingdom): `gb_industries` + `nace_normalized_code` + primary filter.
+- **SK** (Slovakia): `sk_industries` + `nace_normalized_code` + primary filter.
+
+**Totals-only countries** (fi/lv/br) have `financialsLatest` tables but no nace config:
+
+- **FI** (Finland): TOL2008 source codes exist in `fi_industries`; mapping to
+  canonical NACE not yet built. Once added, add a `financialsAggregates.nace` entry
+  to unlock industry breakdown (both country page and global industry routes).
+- **LV** (Latvia): NACE classifier not yet run; `lv_companies_nace` remains unpopulated.
+  Once classifier lands, add `financialsAggregates.nace` to enable breakdowns.
+- **BR** (Brazil): CNAE→NACE mapping stub exists (`br_cnae_to_nace` table) for industry
+  labels, but no aggregates config. Once aggregates logic is added, instantiate
+  `financialsAggregates.nace` to activate divisions (estimated ~100 NACE classes;
+  layout fits existing charts).
+
+Each country auto-upgrades when its mapping arrives — simply add the registry entry
+in `countries.ts` and the division view activates without UI changes.
+
+### Methodology & caveats
+
+- **Latest filed year per company**: Financial aggregates use each company's most
+  recent filing (`max(fiscal_year)` in `financialsLatest` tables), not a snapshot
+  year. A company filing FY 2024 in June 2026 contributes at the 2024 rate; another
+  filing FY 2023 contributes at its own 2023 rate. `latest_fiscal_year` shown in UI
+  is the max across all companies in scope (country/division/global).
+- **USD at period-end rates**: Revenue converted via period-end FX rates stored during
+  pipeline materialization. Aggregates sum the already-converted USD values; no
+  secondary normalization occurs. Rates vary by company filing date — sums are not
+  anchored to a single rate.
+- **Standalone vs. group accounts**: Some filings include standalone company results
+  (and group results separately). Aggregates sum whichever metric is recorded in the
+  `revenue_amount_usd` column; no deduplication across group/standalone occurs at this
+  layer. Group-level double-counting is possible if a parent and subsidiary both file.
+
 ## Rules
 
 - Read-only: `SELECT` only, no writes to ClickHouse.
