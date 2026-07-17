@@ -2,10 +2,13 @@ import { chQuery } from "~/lib/clickhouse.server";
 import {
   COUNTRIES,
   getCountry,
+  MAX_UNIFIED_PAGE,
   PAGE_SIZES,
   type CountryConfig,
   type SortDir,
 } from "~/lib/countries";
+
+export { MAX_UNIFIED_PAGE };
 import { UNIFIED_FACET_KEYS, type CompanyFilters } from "~/lib/filters";
 import { getFacetOptions, rankFacetOptions, type FacetOption } from "~/lib/facets.server";
 
@@ -28,8 +31,6 @@ export interface UnifiedSearchResult {
 }
 
 const UNIFIED_SORTS = new Set(["country", "name"]);
-/** Per-branch merge bound: each branch returns at most page*pageSize rows. */
-const MAX_UNIFIED_PAGE = 400;
 
 function canAnswer(c: CountryConfig, key: string): boolean {
   if (key === "industry") return Boolean(c.industryFilterExpr);
@@ -111,6 +112,9 @@ export async function searchUnifiedCompanies(opts: {
   const page = Math.min(Math.max(1, requestedRaw), lastPage, MAX_UNIFIED_PAGE);
 
   const dirSql = dir === "desc" ? "DESC" : "ASC";
+  // Merge-order invariant: branch ORDER BY native idColumn == outer ORDER BY
+  // toString(id) ONLY because every registry idColumn is String (asserted in
+  // the live-schema sweep).
   const branchSql = (c: CountryConfig) => {
     const ik = c.industryJoinKeyExpr ?? c.idColumn;
     const sortExpr = sort === "name" ? c.nameColumn : c.idColumn;

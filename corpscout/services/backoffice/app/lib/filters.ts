@@ -55,7 +55,7 @@ export function parseUnifiedFilters(searchParams: URLSearchParams): CompanyFilte
       ...new Set(
         searchParams.getAll(`${FILTER_PREFIX}${key}`).map((v) => v.trim()).filter((v) => v !== ""),
       ),
-    ].slice(0, 50);
+    ].slice(0, MAX_VALUES_PER_FILTER);
     if (key === "country") values = values.filter((v) => COUNTRY_CODES.has(v));
     if (values.length > 0) filters[key] = values;
   }

@@ -147,7 +147,7 @@ export function FilterSidebar({ filters }: { filters: CompanyFilters }) {
             <FacetCombobox
               key={key}
               facetKey={key}
-              label={UNIFIED_FACET_LABELS[key] ?? key}
+              label={facetLabel(key)}
               selected={filters[key] ?? []}
             />
           ))}

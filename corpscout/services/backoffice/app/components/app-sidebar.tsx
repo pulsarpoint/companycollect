@@ -33,7 +33,7 @@ export function AppSidebar() {
               {NAV_ITEMS.map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
-                    isActive={pathname === item.to || pathname.startsWith(`${item.to}/`)}
+                    isActive={pathname === item.to || pathname.startsWith("/company/")}
                     render={<Link to={item.to} />}
                   >
                     <item.icon />

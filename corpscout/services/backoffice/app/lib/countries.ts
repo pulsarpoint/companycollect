@@ -5,6 +5,9 @@ export type SortDir = "asc" | "desc";
 
 export const PAGE_SIZES = [25, 50, 100] as const;
 
+/** Per-branch merge bound: each branch returns at most page*pageSize rows. */
+export const MAX_UNIFIED_PAGE = 400;
+
 export interface CompanyColumn {
   /** Stable key: row field name, ?sort= value, and SQL alias. [a-z_]+ only. */
   key: string;

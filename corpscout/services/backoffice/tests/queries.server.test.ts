@@ -222,6 +222,19 @@ describe("searchCompanies across all countries", () => {
     },
     60_000,
   );
+
+  it.each(COUNTRIES.map((c) => [c.code, c] as const))(
+    "%s: idColumn is a String column (unified merge-order invariant)",
+    async (_code, country) => {
+      const [row] = await chQuery<{ type: string }>(
+        `SELECT type FROM system.columns
+         WHERE database = 'corpscout' AND table = {table:String} AND name = {name:String}`,
+        { table: country.companiesTable, name: country.idColumn },
+      );
+      expect(row.type).toBe("String");
+    },
+    30_000,
+  );
 });
 
 describe("searchCompanies with filters", () => {
