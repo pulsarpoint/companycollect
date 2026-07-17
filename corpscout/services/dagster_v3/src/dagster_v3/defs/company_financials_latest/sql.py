@@ -32,6 +32,13 @@ confirmed live against a Norwegian company with 3 filed years (result: 3, not
 # toFloat64() cannot accept. Casting the *_usd column to Float64 before the
 # coalesce (so both arms are Float64) avoids the Variant and was verified
 # live against all seven wide sources.
+#
+# NOTE on the ORDER BY tiebreak: the SELECT list also has `now64(3) AS
+# resolved_at` (a constant, evaluated once per query). A bare `resolved_at`
+# in ORDER BY resolves to that constant alias, not the source column, making
+# the tiebreak a no-op -- confirmed live against ClickHouse (2026-07-17).
+# Qualifying with the source table name (`{table}`.resolved_at) forces
+# resolution to the real per-row column instead of the alias.
 _WIDE_TEMPLATE = """
 SELECT
   toString({id}) AS company_id,
@@ -50,7 +57,7 @@ SELECT
   toUInt32(uniqExact(fiscal_year) OVER (PARTITION BY {id})) AS years_count,
   now64(3) AS resolved_at
 FROM corpscout.{table}
-ORDER BY fiscal_year DESC NULLS LAST, {tiebreak}, isNull({rev}_amount_original) ASC, source_record_id DESC
+ORDER BY fiscal_year DESC NULLS LAST, `{table}`.resolved_at DESC, isNull({rev}_amount_original) ASC, source_record_id DESC
 LIMIT 1 BY {id}
 """
 
@@ -67,7 +74,6 @@ SOURCES = {
         "net": "net_result",
         "employees": "CAST(NULL AS Nullable(Float64))",
         "period_end": "period_end_date",
-        "tiebreak": "resolved_at DESC",
     },
     "fi": {
         "table": "fi_financial_metrics",
@@ -79,7 +85,6 @@ SOURCES = {
         # fi.period_end is already Nullable(Date) (verified live 2026-07-17) --
         # no toDate() wrapper needed.
         "period_end": "period_end",
-        "tiebreak": "resolved_at DESC",
     },
     "se": {
         "table": "se_financial_metrics",
@@ -91,7 +96,6 @@ SOURCES = {
         # se.report_period_end is Nullable(Date32) (verified live 2026-07-17),
         # not Date like the migration column -- toDate() normalizes it.
         "period_end": "toDate(report_period_end)",
-        "tiebreak": "resolved_at DESC",
     },
     "ee": {
         "table": "ee_financial_metrics",
@@ -101,7 +105,6 @@ SOURCES = {
         "net": "net_result",
         "employees": "CAST(NULL AS Nullable(Float64))",
         "period_end": "period_end_date",
-        "tiebreak": "resolved_at DESC",
     },
     "lv": {
         "table": "lv_financial_metrics",
@@ -111,7 +114,6 @@ SOURCES = {
         "net": "net_result",
         "employees": "toFloat64(employees)",
         "period_end": "period_end_date",
-        "tiebreak": "resolved_at DESC",
     },
     "gb": {
         "table": "gb_financial_metrics",
@@ -121,7 +123,6 @@ SOURCES = {
         "net": "net_result",
         "employees": "CAST(NULL AS Nullable(Float64))",
         "period_end": "period_end_date",
-        "tiebreak": "resolved_at DESC",
     },
     "sk": {
         "table": "sk_financial_metrics",
@@ -131,7 +132,6 @@ SOURCES = {
         "net": "net_result",
         "employees": "CAST(NULL AS Nullable(Float64))",
         "period_end": "period_end_date",
-        "tiebreak": "resolved_at DESC",
     },
     "br": {
         "table": "br_cvm_financial_metrics",

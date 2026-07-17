@@ -47,6 +47,33 @@ def test_build_latest_insert_sql_covers_every_country() -> None:
             )
 
 
+def test_build_latest_insert_sql_qualifies_resolved_at_tiebreak() -> None:
+    """The wide template's ORDER BY must reference the source-table
+    ``resolved_at`` column, not the constant ``now64(3) AS resolved_at``
+    alias in the SELECT list. ClickHouse resolves a bare ``resolved_at`` in
+    ORDER BY to that alias (shadowing the source column), silently making the
+    tiebreak a no-op. Qualifying with the source table name forces resolution
+    to the real per-row column -- derived here from ``SOURCES`` so all seven
+    wide countries are covered without hand-listing table names.
+    """
+    from dagster_v3.defs.company_financials_latest.sql import SOURCES, build_latest_insert_sql
+
+    for code in COMPANY_FINANCIALS_LATEST_COUNTRIES:
+        if code == "br":
+            continue  # BR's hand-built SELECT has no {tiebreak}-style placeholder
+        source_table = SOURCES[code]["table"]
+        select_sql = build_latest_insert_sql(code)
+        expected = f"`{source_table}`.resolved_at DESC"
+        assert expected in select_sql, (
+            f"{code}: expected qualified tiebreak {expected!r} in generated SQL"
+        )
+        # And the bare, shadowable form must not appear anywhere in ORDER BY.
+        order_by_line = next(
+            line for line in select_sql.splitlines() if line.strip().startswith("ORDER BY")
+        )
+        assert "ORDER BY fiscal_year DESC NULLS LAST, resolved_at DESC" not in order_by_line
+
+
 def test_build_latest_insert_sql_rejects_unknown_code() -> None:
     from dagster_v3.defs.company_financials_latest.sql import build_latest_insert_sql
 

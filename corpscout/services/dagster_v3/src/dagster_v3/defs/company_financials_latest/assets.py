@@ -74,6 +74,11 @@ def _build_asset(code: str) -> dg.AssetsDefinition:
         name=f"{code}_company_financials_latest_clickhouse",
         group_name=GROUP_NAME,
         deps=[dg.AssetKey(key) for key in UPSTREAM_KEYS[code]],
+        # eager() only fires once the default automation-condition sensor is
+        # turned on in the Dagster UI -- not enabled by default in this repo.
+        # Until then, the RUNNING daily schedule below is the actual refresh
+        # trigger; eager() stays declared so it activates for free if/when
+        # that sensor is enabled.
         automation_condition=dg.AutomationCondition.eager(),
         kinds={"clickhouse"},
         metadata={"table": f"{RESOLVED_DATABASE}.{target_table}"},
@@ -116,10 +121,13 @@ company_financials_latest_job = dg.define_asset_job(
 company_financials_latest_schedule = dg.ScheduleDefinition(
     name="company_financials_latest_schedule",
     job=company_financials_latest_job,
-    # Daily fallback; automation_condition=eager() on each asset should
-    # normally fire first once an upstream export completes.
+    # Daily fallback. The per-asset automation_condition=eager() only fires
+    # once the default automation-condition sensor is enabled in the Dagster
+    # UI (not enabled by default in this repo) -- until then this RUNNING
+    # schedule is the actual refresh trigger.
     cron_schedule="30 6 * * *",
     execution_timezone="Europe/Oslo",
+    default_status=dg.DefaultScheduleStatus.RUNNING,
 )
 
 defs = dg.Definitions(
