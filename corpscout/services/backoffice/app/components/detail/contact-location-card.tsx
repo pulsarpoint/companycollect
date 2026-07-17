@@ -46,7 +46,7 @@ export function ContactLocationCard({
     if (geocodeTarget && !requested.current && fetcher.state === "idle" && fetcher.data === undefined) {
       requested.current = true;
       fetcher.load(
-        `/${country.code}/geocode?address=${encodeURIComponent(geocodeTarget)}`,
+        `/company/${country.code}/geocode?address=${encodeURIComponent(geocodeTarget)}`,
       );
     }
   }, [geocodeTarget, fetcher, country.code]);

@@ -1,12 +1,11 @@
-import { type RouteConfig, index, route } from "@react-router/dev/routes";
+import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
 
 export default [
-  index("routes/home.tsx"),
-  route(":country", "routes/country.tsx", [
-    index("routes/country-overview.tsx"),
-    route("companies", "routes/country-companies.tsx"),
-    route("companies/:id", "routes/country-company-detail.tsx"),
-    route("facet-options", "routes/country-facet-options.ts"),
-    route("geocode", "routes/country-geocode.ts"),
+  layout("routes/shell.tsx", [
+    index("routes/home.tsx"),
+    route("companies", "routes/companies.tsx"),
+    route("company/:country/:id", "routes/country-company-detail.tsx"),
+    route("company/:country/geocode", "routes/country-geocode.ts"),
+    route("facet-options", "routes/facet-options.ts"),
   ]),
 ] satisfies RouteConfig;

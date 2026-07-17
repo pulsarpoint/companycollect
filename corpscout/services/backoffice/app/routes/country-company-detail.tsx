@@ -49,7 +49,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
           size="sm"
           className="-ml-2"
           nativeButton={false}
-          render={<Link to={`/${country.code}/companies`} />}
+          render={<Link to="/companies" />}
         >
           <ArrowLeft className="size-4" />
           Companies
