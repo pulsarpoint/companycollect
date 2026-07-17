@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useFetcher, useNavigate } from "react-router";
 import { Check, ListFilter } from "lucide-react";
-import type { CountryConfig } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
-import { filterableFacetKeys } from "~/lib/filters";
+import { UNIFIED_FACET_KEYS, UNIFIED_FACET_LABELS } from "~/lib/filters";
 import type { FacetOption } from "~/lib/facets.server";
 import { toggleFilterValue } from "~/components/data-table/url";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
@@ -31,18 +30,17 @@ import {
 
 const nf = new Intl.NumberFormat("en-US");
 
-export function facetLabel(country: CountryConfig, key: string): string {
-  if (key === "industry") return "Industry";
-  return country.columns.find((c) => c.key === key)?.label ?? key;
+export function facetLabel(key: string): string {
+  return UNIFIED_FACET_LABELS[key] ?? key;
 }
 
 function FacetCombobox({
-  country,
   facetKey,
+  label,
   selected,
 }: {
-  country: CountryConfig;
   facetKey: string;
+  label: string;
   selected: string[];
 }) {
   const fetcher = useFetcher<{ options: FacetOption[] }>();
@@ -50,7 +48,7 @@ function FacetCombobox({
   const effectiveParams = useEffectiveSearchParams();
   const [open, setOpen] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const base = `/${country.code}/facet-options?column=${facetKey}`;
+  const base = `/facet-options?column=${facetKey}`;
 
   function onOpenChange(next: boolean) {
     // Cancel any pending debounced query fetch so a stale `q=` result can't
@@ -73,7 +71,7 @@ function FacetCombobox({
 
   return (
     <div className="space-y-1.5">
-      <p className="text-sm font-medium">{facetLabel(country, facetKey)}</p>
+      <p className="text-sm font-medium">{label}</p>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger
           render={
@@ -131,13 +129,7 @@ function FacetCombobox({
   );
 }
 
-export function FilterSidebar({
-  country,
-  filters,
-}: {
-  country: CountryConfig;
-  filters: CompanyFilters;
-}) {
+export function FilterSidebar({ filters }: { filters: CompanyFilters }) {
   const activeCount = Object.values(filters).reduce((n, v) => n + v.length, 0);
   return (
     <Sheet>
@@ -151,11 +143,11 @@ export function FilterSidebar({
           <SheetTitle>Filter companies</SheetTitle>
         </SheetHeader>
         <div className="space-y-4 px-4 pb-6">
-          {filterableFacetKeys(country).map((key) => (
+          {UNIFIED_FACET_KEYS.map((key) => (
             <FacetCombobox
               key={key}
-              country={country}
               facetKey={key}
+              label={UNIFIED_FACET_LABELS[key] ?? key}
               selected={filters[key] ?? []}
             />
           ))}
