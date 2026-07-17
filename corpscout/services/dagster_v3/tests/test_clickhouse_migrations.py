@@ -146,6 +146,7 @@ EXPECTED_MIGRATIONS = (
     "000134_corpscout_se_financial_metrics_provenance",
     "000135_corpscout_finland_xbrl_comprehensive",
     "000136_corpscout_finland_xbrl_provenance_view_columns",
+    "000137_corpscout_company_financials_latest",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
