@@ -16,6 +16,14 @@ _FLAG_REGISTERS = {
 }
 
 
+def _int_or_zero(value: Any) -> int:
+    """Safely coerce a value to int, returning 0 on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _loads(raw: str | None) -> dict[str, Any] | None:
     if not raw:
         return None
@@ -41,7 +49,7 @@ def legal_form_json(raw: str | None) -> str | None:
         return None
     picked = max(
         candidates,
-        key=lambda f: (str(f.get("registrationDate") or ""), int(f.get("version") or 0)),
+        key=lambda f: (str(f.get("registrationDate") or ""), _int_or_zero(f.get("version"))),
     )
     result: dict[str, Any] = {
         "code": picked.get("type"),

@@ -68,3 +68,11 @@ def test_null_and_garbage_inputs():
     assert registration_flags_json("not json") is None
     assert legal_form_json("{}") is None  # no companyForms
     assert json.loads(registration_flags_json("{}"))["is_vat_registered"] == 0
+
+
+def test_legal_form_survives_non_numeric_version():
+    raw = json.dumps(
+        {"companyForms": [{"type": "16", "registrationDate": "2020-01-01", "version": "not-an-int"}]}
+    )
+    payload = json.loads(legal_form_json(raw))
+    assert payload["code"] == "16"
