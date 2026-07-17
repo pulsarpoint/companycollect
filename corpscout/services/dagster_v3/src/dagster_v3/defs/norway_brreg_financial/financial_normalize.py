@@ -12,6 +12,13 @@ from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 COUNTRY = "NO"
 FINANCIAL_SOURCE_SLUG = "norway_brregregnskap"
+# Small-enterprise filings above this magnitude (in the filing currency) are
+# treated as source data errors, not real accounts. Live case: org 983096077,
+# a small nonprofit whose 2022 filing Brreg serves inflated x1e6 (13.9 trillion
+# NOK revenue). Norway's largest small-flagged filer is ~32bn NOK; the largest
+# legitimate filer of any kind is ~108bn NOK.
+IMPLAUSIBLE_MAGNITUDE_THRESHOLD = Decimal("500000000000")
+QUALITY_FLAG_IMPLAUSIBLE_MAGNITUDE = "implausible_magnitude"
 NO_FINANCIAL_STATEMENT_COLUMNS = no_tables.RESOLVED_EXPORT_COLUMNS[
     no_tables.NO_FINANCIAL_STATEMENTS_TABLE
 ]
@@ -160,6 +167,8 @@ def build_resolved_financial_statement_usd_rows(
         period_end_date = _string(row.get("period_end_date"))
         fx_rate = rates.get((currency, period_end_date))
         usd_row = {column: row.get(column) for column in NO_FINANCIAL_STATEMENT_COLUMNS}
+        # Non-nullable String in ClickHouse; input rows may predate the column.
+        usd_row["quality_flag"] = _string(row.get("quality_flag"))
         usd_row["fx_rate_to_usd"] = None if fx_rate is None else fx_rate.rate
         usd_row["fx_rate_date"] = None if fx_rate is None else fx_rate.rate_date
         usd_row["fx_source"] = None if fx_rate is None else fx_rate.source
@@ -232,12 +241,23 @@ def _successful_financial_records_from_fetch_rows(
     return successful_records
 
 
+def _quality_flag(staging_row: dict[str, Any]) -> str:
+    if not staging_row.get("is_small_enterprise"):
+        return ""
+    for amount_name in ("operating_revenue", "total_assets"):
+        amount = _decimal_or_none(staging_row.get(f"{amount_name}_amount_original"))
+        if amount is not None and amount > IMPLAUSIBLE_MAGNITUDE_THRESHOLD:
+            return QUALITY_FLAG_IMPLAUSIBLE_MAGNITUDE
+    return ""
+
+
 def _resolved_financial_statement_row(
     staging_row: dict[str, Any],
     *,
     resolved_at: Any,
 ) -> dict[str, Any]:
     row = {
+        "quality_flag": _quality_flag(staging_row),
         "country_iso2": staging_row["country_iso2"],
         "source_system": staging_row["source_slug"],
         "source_run_id": staging_row["source_run_id"],

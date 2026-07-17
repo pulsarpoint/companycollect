@@ -114,3 +114,14 @@ def test_company_financials_latest_defs_include_job_and_schedule() -> None:
 
     schedule_names = {schedule.name for schedule in defs.schedules}
     assert "company_financials_latest_schedule" in schedule_names
+
+
+def test_norway_select_excludes_quality_flagged_statements() -> None:
+    sql = build_latest_insert_sql("no")
+    assert "WHERE quality_flag = ''" in sql
+
+    # The plausibility filter is Norway-specific; other sources carry no
+    # quality_flag column and must not reference it.
+    for code in COMPANY_FINANCIALS_LATEST_COUNTRIES:
+        if code != "no":
+            assert "quality_flag" not in build_latest_insert_sql(code)

@@ -147,6 +147,7 @@ EXPECTED_MIGRATIONS = (
     "000135_corpscout_finland_xbrl_comprehensive",
     "000136_corpscout_finland_xbrl_provenance_view_columns",
     "000137_corpscout_company_financials_latest",
+    "000138_corpscout_no_financial_statements_quality_flag",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -890,6 +891,12 @@ NO_COMPANIES_ALTER_COLUMN_MIGRATIONS = {
     ),
 }
 
+NO_FINANCIAL_STATEMENTS_ALTER_COLUMN_MIGRATIONS = {
+    "quality_flag": (
+        "000138_corpscout_no_financial_statements_quality_flag.up.sql"
+    ),
+}
+
 
 def test_norway_resolved_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
@@ -903,9 +910,20 @@ def test_norway_resolved_migration_covers_exported_columns() -> None:
             ):
                 # Added by a later ALTER migration; not in the base DDL.
                 continue
+            if (
+                table_name == norway_resolved_tables.NO_FINANCIAL_STATEMENTS_TABLE
+                and column_name in NO_FINANCIAL_STATEMENTS_ALTER_COLUMN_MIGRATIONS
+            ):
+                continue
             assert f"    {column_name} " in sql
 
     for column_name, migration_file in NO_COMPANIES_ALTER_COLUMN_MIGRATIONS.items():
+        alter_sql = _migration_sql(migration_file)
+        assert f"ADD COLUMN IF NOT EXISTS {column_name} " in alter_sql
+
+    for column_name, migration_file in (
+        NO_FINANCIAL_STATEMENTS_ALTER_COLUMN_MIGRATIONS.items()
+    ):
         alter_sql = _migration_sql(migration_file)
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in alter_sql
 

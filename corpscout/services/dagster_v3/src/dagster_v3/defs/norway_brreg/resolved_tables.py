@@ -126,6 +126,7 @@ RESOLVED_TABLE_COLUMNS = {
         "opted_out_audit",
         "is_small_enterprise",
         "accounting_rules",
+        "quality_flag",
         "operating_revenue_amount_original",
         "operating_revenue_amount_usd",
         "operating_costs_amount_original",

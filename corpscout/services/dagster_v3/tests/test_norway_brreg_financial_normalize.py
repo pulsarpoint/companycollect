@@ -255,3 +255,68 @@ def _financial_record() -> dict:
             "aarsresultat": 8141000000,
         },
     }
+
+
+def _resolved_row_for(record: dict) -> dict:
+    rows = financial_normalize.build_resolved_financial_statement_original_rows_from_fetch_rows(
+        [
+            {
+                "org_number": "983096077",
+                "legal_name": "RIO",
+                "website": "",
+                "last_submitted_accounts_year": "2022",
+                "source_run_id": "run-1",
+                "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/983096077",
+                "fetch_status": "success",
+                "raw_response": json.dumps([record]),
+            }
+        ],
+        resolved_at=datetime(2026, 7, 17, 12, 0, 0, tzinfo=UTC),
+    )
+    assert len(rows) == 1
+    return rows[0]
+
+
+def test_quality_flag_marks_small_enterprise_with_implausible_magnitudes() -> None:
+    # Live source data error: Brreg serves org 983096077's 2022 filing x1e6.
+    record = _financial_record()
+    record["regnkapsprinsipper"]["smaaForetak"] = True
+    record["resultatregnskapResultat"]["driftsresultat"]["driftsinntekter"][
+        "sumDriftsinntekter"
+    ] = 13919223000000
+    row = _resolved_row_for(record)
+    assert row["quality_flag"] == "implausible_magnitude"
+    # Fidelity: the implausible values are exported verbatim, only flagged.
+    assert row["operating_revenue_amount_original"] == Decimal("13919223000000")
+
+
+def test_quality_flag_marks_small_enterprise_on_assets_alone() -> None:
+    record = _financial_record()
+    record["regnkapsprinsipper"]["smaaForetak"] = True
+    record["eiendeler"]["sumEiendeler"] = 5244930000000
+    row = _resolved_row_for(record)
+    assert row["quality_flag"] == "implausible_magnitude"
+
+
+def test_quality_flag_empty_for_large_non_small_filer() -> None:
+    record = _financial_record()  # smaaForetak False
+    record["resultatregnskapResultat"]["driftsresultat"]["driftsinntekter"][
+        "sumDriftsinntekter"
+    ] = 600000000000  # above threshold, but not a small enterprise
+    row = _resolved_row_for(record)
+    assert row["quality_flag"] == ""
+
+
+def test_quality_flag_empty_for_ordinary_small_enterprise() -> None:
+    record = _financial_record()
+    record["regnkapsprinsipper"]["smaaForetak"] = True
+    row = _resolved_row_for(record)  # Equinor-sized amounts stay under 500bn
+    assert row["quality_flag"] == ""
+
+
+def test_usd_rows_coalesce_missing_quality_flag_to_empty_string() -> None:
+    statement = {"currency": "NOK", "period_end_date": "2024-12-31"}
+    [usd_row] = financial_normalize.build_resolved_financial_statement_usd_rows(
+        [statement], exchange_rates=FakeExchangeRates()
+    )
+    assert usd_row["quality_flag"] == ""

@@ -57,7 +57,7 @@ SELECT
   toUInt32(uniqExact(fiscal_year) OVER (PARTITION BY {id})) AS years_count,
   now64(3) AS resolved_at
 FROM corpscout.{table}
-ORDER BY fiscal_year DESC NULLS LAST, `{table}`.resolved_at DESC, isNull({rev}_amount_original) ASC, source_record_id DESC
+{where}ORDER BY fiscal_year DESC NULLS LAST, `{table}`.resolved_at DESC, isNull({rev}_amount_original) ASC, source_record_id DESC
 LIMIT 1 BY {id}
 """
 
@@ -74,6 +74,11 @@ SOURCES = {
         "net": "net_result",
         "employees": "CAST(NULL AS Nullable(Float64))",
         "period_end": "period_end_date",
+        # Statements flagged by the normalize-step plausibility rule (source
+        # data errors, e.g. org 983096077's x1e6-inflated 2022 filing) stay in
+        # no_financial_statements for detail-page fidelity but are excluded
+        # from the latest-summary aggregate.
+        "where": "WHERE quality_flag = ''\n",
     },
     "fi": {
         "table": "fi_financial_metrics",
@@ -208,4 +213,4 @@ def build_latest_insert_sql(code: str) -> str:
         )
     if code == "br":
         return _BR_SELECT
-    return _WIDE_TEMPLATE.format(**SOURCES[code])
+    return _WIDE_TEMPLATE.format(**{"where": "", **SOURCES[code]})
