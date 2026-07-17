@@ -21,7 +21,7 @@ select
   coalesce(is_active, false) as is_active,
   coalesce(trade_register_status, '') as trade_register_status,
   nullif(status, '') as raw_status_code,
-  try_cast(nullif(last_modified, '') as timestamp) as last_modified,
+  cast(last_modified at time zone 'UTC' as timestamp) as last_modified,
   coalesce(json_extract_string(registration_flags, '$.is_vat_registered') = '1', false) as is_vat_registered,
   coalesce(json_extract_string(registration_flags, '$.is_employer_registered') = '1', false) as is_employer_registered,
   coalesce(json_extract_string(registration_flags, '$.is_prepayment_registered') = '1', false) as is_prepayment_registered,

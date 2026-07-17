@@ -33,15 +33,17 @@ def _seed_all_companies(db_path: Path) -> None:
     conn.execute("create schema if not exists finland_prhytj")
     conn.execute(
         """
-        create table finland_prhytj.all_companies as select * from (values
+        create table finland_prhytj.all_companies as
+        select * replace (cast(last_modified as timestamptz) as last_modified)
+        from (values
           ('fi-1','FI','Active One Oy','2024-01-01','',
-           '2024-06-01 00:00:00','REGISTERED','',
+           '2024-06-01 10:30:00+02','REGISTERED','',
            'active', true,
            'https://example.fi/path','https://example.fi/path','example.fi','/path','2024-01-02','',
            'finland_prhytj','run-1','fi-1','hash1',
            '{"businessId":{"value":"fi-1","registrationDate":"2024-01-01"},"names":[{"name":"Active One Oy","type":"1","registrationDate":"2024-01-01","endDate":null,"version":1,"source":"1"},{"name":"Active One old Oy","type":"1","registrationDate":"2020-01-01","endDate":"2023-12-31","version":2,"source":"1"}],"mainBusinessLine":{"code":"62010","codeSet":"NACE_REV_2","descriptions":[{"languageCode":"1","description":"Ohjelmistot"}]},"companyForms":[{"type":"16","registrationDate":"2024-01-01","version":1,"descriptions":[{"languageCode":"1","description":"Osakeyhtiö"},{"languageCode":"3","description":"Limited company"}]}],"registeredEntries":[{"register":"6","registrationDate":"2024-01-01"}]}'),
           ('fi-2','FI','Ceased Two Oy','2020-01-01','2025-01-01',
-           '','','',
+           NULL,'','',
            'ceased', false,
            '','','','','','',
            'finland_prhytj','run-1','fi-2','hash2','{}')
@@ -90,7 +92,7 @@ def test_fi_companies_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         None,
         "REGISTERED",
         None,
-        datetime(2024, 6, 1, 0, 0, 0),
+        datetime(2024, 6, 1, 8, 30, 0),
         True,
         False,
         False,
