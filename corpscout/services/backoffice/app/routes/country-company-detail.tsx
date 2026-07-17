@@ -14,6 +14,7 @@ import { ContactLocationCard } from "~/components/detail/contact-location-card";
 import { FinancialsSection } from "~/components/detail/financials-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
 import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
+import { decorateFiRecord, FiRegistryBadges } from "~/components/detail/countries/fi-registry";
 
 const COUNTRY_FINANCIALS: Record<
   string,
@@ -70,9 +71,13 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
         <span className="text-muted-foreground font-mono text-sm">
           {String(company.id)}
         </span>
+        {country.code === "fi" ? <FiRegistryBadges record={detail.record} /> : null}
       </div>
 
-      <CompanyRecordSection company={company} record={detail.record} />
+      <CompanyRecordSection
+        company={company}
+        record={country.code === "fi" ? decorateFiRecord(detail.record) : detail.record}
+      />
       <IndustriesSection industries={detail.industries} />
       {(() => {
         const Specific = COUNTRY_FINANCIALS[country.code];
