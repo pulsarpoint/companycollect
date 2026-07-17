@@ -178,7 +178,7 @@ LIMIT 10`,
     columns: [
       { key: "id", label: "Business ID", expr: "business_id", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Legal form", expr: "coalesce(legal_form_description_en, legal_form_description_original, legal_form_code)", sortable: true, kind: "text" }, // legal_form_* columns are NULL for all fi_companies rows (pipeline gap, 2026-07-16) — re-flag when populated
+      { key: "legal_form", label: "Legal form", expr: "coalesce(legal_form_description_en, legal_form_description_original, legal_form_code)", sortable: true, kind: "text", filterable: true }, // populated from YTJ companyForms since 2026-07-17
       { key: "status", label: "Status", expr: "lifecycle_status", sortable: true, kind: "status", filterable: true },
       { key: "registered", label: "Registered", expr: "toString(registration_date)", sortable: true, kind: "date" },
       { key: "website", label: "Website", expr: "primary_website_url", sortable: false, kind: "text" },
