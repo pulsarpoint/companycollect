@@ -1,4 +1,4 @@
-import { Link, NavLink } from "react-router";
+import { Link, useLocation } from "react-router";
 import { Building2 } from "lucide-react";
 import {
   Sidebar,
@@ -14,6 +14,7 @@ import {
 const NAV_ITEMS = [{ title: "Companies", to: "/companies", icon: Building2 }];
 
 export function AppSidebar() {
+  const { pathname } = useLocation();
   return (
     <Sidebar collapsible="offcanvas">
       <SidebarHeader>
@@ -31,14 +32,13 @@ export function AppSidebar() {
             <SidebarMenu>
               {NAV_ITEMS.map((item) => (
                 <SidebarMenuItem key={item.to}>
-                  <NavLink to={item.to}>
-                    {({ isActive }) => (
-                      <SidebarMenuButton isActive={isActive}>
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </SidebarMenuButton>
-                    )}
-                  </NavLink>
+                  <SidebarMenuButton
+                    isActive={pathname === item.to || pathname.startsWith(`${item.to}/`)}
+                    render={<Link to={item.to} />}
+                  >
+                    <item.icon />
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
