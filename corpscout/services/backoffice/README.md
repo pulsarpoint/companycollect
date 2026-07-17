@@ -26,14 +26,29 @@ pnpm dev               # http://localhost:5183
 - `app/lib/queries.server.ts` — per-country stats and company search.
 - `app/routes.ts` — `/` picker → `/:country` layout → overview, companies.
 
-## Companies table
+## Structure
 
-URL-driven state on `/{country}/companies`:
-`?q=` name search, `?sort=` column key + `?dir=asc|desc` (whitelisted against
-`countries.ts` column config; unknown values fall back to name asc),
-`?page=`, `?pageSize=25|50|100`. The industry column is populated by a second
-per-page lookup (`industryQuery` in `countries.ts`) and is not sortable by
-design — sorting happens on base-table columns only so the 30–70M-row
+- `/companies` — ALL countries in one list (name, industry, country).
+  Default order is registry order (fast); sorting by name does a cross-
+  country top-N merge and takes ~10s over 116M rows (a materialized
+  `companies_all` table in dagster is the planned fix). Country is a filter
+  (`f_country=ee`), alongside status/legal form/place/size/industry —
+  a filter only includes countries that can answer it (e.g. size → Brazil).
+- `/company/{country_code}/{id}` — the company detail page.
+- `app/lib/unified.server.ts` — cross-country UNION search + merged facets.
+- `app/lib/countries.ts` — the per-country registry: list columns, filters,
+  detail queries. The per-country query layer (`queries.server.ts`) remains
+  the engine for detail pages and the live-schema test sweeps.
+
+## Companies table (Legacy: per-country layer)
+
+The per-country layer powers the detail page and test sweeps. URL-driven state
+on `/{country}/companies` (no longer in the unified dashboard but available
+if needed): `?q=` name search, `?sort=` column key + `?dir=asc|desc`
+(whitelisted against `countries.ts` column config; unknown values fall back to
+name asc), `?page=`, `?pageSize=25|50|100`. The industry column is populated
+by a second per-page lookup (`industryQuery` in `countries.ts`) and is not
+sortable by design — sorting happens on base-table columns only so the 30–70M-row
 countries stay fast. Add columns per country in `countries.ts` (`columns`),
 never by editing SQL in the route.
 
@@ -50,7 +65,7 @@ prefix-first), never ClickHouse per keystroke.
 
 ### Company detail
 
-`/{country}/companies/{id}` — identity header, overview (all list columns +
+`/company/{country_code}/{id}` — identity header, overview (all list columns +
 industry), and per-country sections declared in `countries.ts` (`detail`):
 financials (no, fi, ee, lv, gb, br — canonical yearly metrics, USD chart via
 recharts), contacts and domains (no, fi, ee, lv, cz, br). se/sk have no
