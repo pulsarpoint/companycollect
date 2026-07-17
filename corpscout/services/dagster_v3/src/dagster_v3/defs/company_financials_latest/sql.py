@@ -50,7 +50,7 @@ SELECT
   toUInt32(uniqExact(fiscal_year) OVER (PARTITION BY {id})) AS years_count,
   now64(3) AS resolved_at
 FROM corpscout.{table}
-ORDER BY fiscal_year DESC NULLS LAST, {tiebreak}
+ORDER BY fiscal_year DESC NULLS LAST, {tiebreak}, isNull({rev}_amount_original) ASC, source_record_id DESC
 LIMIT 1 BY {id}
 """
 
@@ -184,7 +184,7 @@ FROM (
     currency AS cur
   FROM corpscout.br_cvm_financial_metrics
   WHERE period_type = 'annual'
-  ORDER BY consolidation_type = 'consolidated' DESC, reference_date DESC, version DESC
+  ORDER BY consolidation_type = 'consolidated' DESC, reference_date DESC, version DESC, source_record_id DESC
   LIMIT 1 BY cnpj_basico, fy, metric
 )
 GROUP BY cnpj_basico, fy
