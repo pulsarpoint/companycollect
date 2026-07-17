@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import date
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import dagster as dg
-from dagster_clickhouse import ClickhouseResource
+from cloakbrowser import launch
+from lxml import html as lxml_html
 
 from dagster_v3.defs.norway_brreg_financial import financial_fetches
 from dagster_v3.defs.norway_brreg_financial.constants import (
@@ -25,51 +29,78 @@ NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS = dg.DailyPartitionsDefinition(
     start_date="2026-06-01",
     end_offset=1,
 )
+BRREG_ANNOUNCEMENT_SEARCH_URL = "https://w2.brreg.no/kunngjoring/kombisok.jsp"
 
-UPDATE_CANDIDATES_SQL = """
-SELECT
-    toString(company.org_number) AS org_number,
-    company.name,
-    company.primary_website_url,
-    company.last_submitted_accounts_year
-FROM no_companies AS company
-LEFT JOIN
-(
-    SELECT
-        org_number,
-        max(fiscal_year) AS latest_financial_year
-    FROM no_financial_statements
-    GROUP BY org_number
-) AS financials USING (org_number)
-WHERE company.is_active
-  AND notEmpty(company.last_submitted_accounts_year)
-  AND toInt32OrZero(company.last_submitted_accounts_year)
-      > coalesce(financials.latest_financial_year, 0)
-ORDER BY company.org_number
-"""
+
+def daily_financial_report_candidates(
+    partition_date: str,
+    *,
+    launcher: Callable[[], Any] = launch,
+) -> list[dict[str, str]]:
+    """Find companies with approved annual-account announcements on one day."""
+    # Convert the Dagster partition key to the date format used by BRREG search.
+    search_date = date.fromisoformat(partition_date).strftime("%d.%m.%Y")
+    search_url = (
+        f"{BRREG_ANNOUNCEMENT_SEARCH_URL}?datoFra={search_date}"
+        f"&datoTil={search_date}&id_region=0&id_niva1=70"
+        "&id_niva2=-+-+-&id_bransje1=0"
+    )
+
+    # Open exactly one search result page for the partition date.
+    browser = launcher()
+    try:
+        page = browser.new_page()
+        page.goto(search_url, wait_until="networkidle")
+        page_html = page.evaluate("() => document.documentElement.outerHTML")
+    finally:
+        browser.close()
+
+    # Turn announcement links into the organization numbers used by the downloader.
+    return parse_daily_financial_report_candidates(page_html)
+
+
+def parse_daily_financial_report_candidates(
+    page_html: str,
+) -> list[dict[str, str]]:
+    """Parse and deduplicate organization numbers from BRREG result HTML."""
+    document = lxml_html.fromstring(page_html)
+    announcement_links = document.xpath(
+        "//a[contains(@href, 'hent_en.jsp?kid=')]/@href"
+    )
+    org_numbers: set[str] = set()
+
+    for link in announcement_links:
+        query = parse_qs(urlparse(str(link)).query)
+        org_number = query.get("sokeverdi", [""])[0]
+        if len(org_number) != 9 or not org_number.isdigit():
+            raise RuntimeError(
+                f"Invalid organization number in BRREG announcement link: {link}"
+            )
+        org_numbers.add(org_number)
+
+    return [{"org_number": org_number} for org_number in sorted(org_numbers)]
 
 
 @dg.asset(
     name="norway_brreg_financial_responses_updates_json",
     group_name=GROUP_NAME,
-    kinds={"python", "s3", "json", "clickhouse", "brreg"},
+    kinds={"python", "browser", "s3", "json", "brreg"},
     partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool="norway_brreg_financial_api",
     description=(
-        "Reads active companies with an uncovered latest accounts year from "
-        "canonical ClickHouse tables, then downloads only missing Norway BRREG "
-        "responses as immutable JSON and checkpoints every batch."
+        "Searches approved annual-account announcements for one day, then downloads "
+        "the announced companies' Norway BRREG responses as immutable JSON."
     ),
 )
 def norway_brreg_financial_responses_updates_json(
     context,
-    clickhouse: ClickhouseResource,
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
     partition_date = context.partition_key
-    with clickhouse.get_connection() as client:
-        candidates = _update_candidates(client)
+    # Search only the date represented by this Dagster partition.
+    candidates = daily_financial_report_candidates(partition_date)
+    # Download and checkpoint one BRREG response for every announced company.
     metadata = materialize_response_json_partition(
         candidates=candidates,
         partition_prefix=financial_update_response_partition_prefix(partition_date),
@@ -84,23 +115,6 @@ def norway_brreg_financial_responses_updates_json(
             **metadata,
         }
     )
-
-
-def _update_candidates(client: Any) -> list[dict[str, str]]:
-    rows = client.execute(UPDATE_CANDIDATES_SQL)
-    return [
-        {
-            "org_number": _string(org_number),
-            "legal_name": _string(name),
-            "website": _string(website),
-            "last_submitted_accounts_year": _string(accounts_year),
-        }
-        for org_number, name, website, accounts_year in rows
-    ]
-
-
-def _string(value: Any) -> str:
-    return "" if value is None else str(value)
 
 
 @dg.asset(

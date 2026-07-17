@@ -36,13 +36,17 @@ def materialize_response_json_partition(
     max_workers: int = RESPONSE_DOWNLOAD_WORKERS,
 ) -> dict[str, Any]:
     """Download only unresolved BRREG responses and checkpoint each completed batch."""
+    # Reject invalid execution settings before reading storage or making HTTP requests.
     if batch_size < 1:
         raise ValueError("Norway response download batch_size must be greater than zero")
     if max_workers < 1:
         raise ValueError("Norway response max_workers must be greater than zero")
 
+    # Build the object key used to mark a fully completed partition.
     success_key = financial_response_success_object_key(partition_prefix)
+    # Skip all processing when the partition already has a success manifest.
     if storage.response_exists(success_key):
+        # Verify the completed partition and summarize its persisted response index.
         _frame, completed = verified_response_index_frame(
             partition_prefix=partition_prefix,
             storage=storage,
@@ -55,6 +59,7 @@ def materialize_response_json_partition(
             "partition_prefix": partition_prefix,
             "success_manifest_key": success_key,
         }
+        # Report that the immutable partition was reused without new downloads.
         _log(
             log,
             "Verified completed immutable Norway BRREG response JSON partition: %s",
@@ -62,16 +67,21 @@ def materialize_response_json_partition(
         )
         return metadata
 
+    # Deduplicate requested organizations while preserving their candidate metadata.
     requested_candidates = _unique_candidates(candidates)
+    # Load checkpointed outcomes from earlier attempts at this partition.
     existing_records = storage.read_response_records(partition_prefix)
+    # Merge existing terminal outcomes into the current candidate list.
     normalized_candidates = _candidates_with_preserved_outcomes(
         requested_candidates,
         existing_records,
     )
+    # Index candidates by normalized organization number for final reconciliation.
     candidates_by_org = {
         _string(candidate.get("org_number")): candidate
         for candidate in normalized_candidates
     }
+    # Reduce checkpoint history to the latest outcome for each organization.
     latest_by_org = {
         _string(record.get("org_number")): record
         for record in financial_fetches.latest_response_records(existing_records)
@@ -80,40 +90,62 @@ def materialize_response_json_partition(
     def classify_candidate(
         candidate: Mapping[str, Any],
     ) -> tuple[str, Mapping[str, Any] | dict[str, Any]]:
+        # Normalize the candidate identifier before storage and checkpoint lookups.
         org_number = _string(candidate.get("org_number"))
+        # Build the expected object key for this organization's raw response JSON.
         response_key = financial_response_object_key(partition_prefix, org_number)
+        # Look up the latest checkpointed outcome for the organization.
         current = latest_by_org.get(org_number)
+        # Validate and reuse an already successful checkpoint record.
         if current is not None and _string(current.get("fetch_status")) == (
             financial_fetches.FINANCIAL_FETCH_STATUS_SUCCESS
         ):
+            # Confirm that the successful record still matches its stored response object.
             _verify_success_record(storage, current)
             return "reused", candidate
+        # Reuse terminal non-success outcomes that should not be downloaded again.
         if current is not None and _is_terminal_record(current):
             return "reused", candidate
+        # Recover a successful outcome when JSON exists but its checkpoint is missing.
         if storage.response_exists(response_key):
+            # Read the existing raw response so a replacement success record can be built.
+            response_body = storage.read_response(response_key)
+            # Reconstruct the missing success record from the persisted response JSON.
             return (
                 "recovered",
                 _recovered_success_record(
                     candidate=candidate,
                     response_key=response_key,
-                    response_body=storage.read_response(response_key),
+                    response_body=response_body,
                     source_run_id=source_run_id,
                 ),
             )
         return "pending", candidate
 
+    # Create a bounded worker pool for parallel storage verification.
     with ThreadPoolExecutor(max_workers=RESPONSE_VERIFY_WORKERS) as executor:
-        classifications = list(executor.map(classify_candidate, normalized_candidates))
+        # Classify each candidate as reusable, recoverable, or pending.
+        classification_results = executor.map(
+            classify_candidate,
+            normalized_candidates,
+        )
+        # Materialize all classification results before the worker pool closes.
+        classifications = list(classification_results)
+    # Convert recovered mappings into mutable records for checkpoint persistence.
     recovered_records = [
         dict(value) for state, value in classifications if state == "recovered"
     ]
+    # Collect candidates that still require an HTTP request.
     pending = [value for state, value in classifications if state == "pending"]
+    # Count outcomes satisfied by either a checkpoint or recovered response JSON.
     reused_count = sum(
         1 for state, _value in classifications if state in {"reused", "recovered"}
     )
 
+    # Find the next unused checkpoint number for this partition and run.
     checkpoint_index = _next_checkpoint_index(storage, partition_prefix, source_run_id)
     if recovered_records:
+        # Persist records reconstructed from response JSON before starting downloads.
         _write_checkpoint(
             storage=storage,
             partition_prefix=partition_prefix,
@@ -124,6 +156,7 @@ def materialize_response_json_partition(
         )
         checkpoint_index += 1
 
+    # Report the resolved and pending workload before downloading begins.
     _log(
         log,
         "Starting Norway BRREG response JSON partition: candidates=%d reused=%d "
@@ -135,10 +168,13 @@ def materialize_response_json_partition(
         max_workers,
         partition_prefix,
     )
+    # Create an HTTP client only when at least one candidate needs downloading.
     client = client_factory() if pending else None
     downloaded_count = 0
+    # Generate offsets that divide pending candidates into bounded download batches.
     for batch_start in range(0, len(pending), batch_size):
         batch_candidates = pending[batch_start : batch_start + batch_size]
+        # Download one batch concurrently and return an outcome record per candidate.
         batch_records = downloader(
             orgs=batch_candidates,
             source_run_id=source_run_id,
@@ -146,11 +182,13 @@ def materialize_response_json_partition(
             max_workers=max_workers,
             log=log,
         )
+        # Ensure the downloader did not omit or add candidate outcomes.
         if len(batch_records) != len(batch_candidates):
             raise RuntimeError(
                 "Norway BRREG downloader returned an unexpected record count: "
                 f"expected={len(batch_candidates)} actual={len(batch_records)}"
             )
+        # Persist response bodies and normalize their corresponding outcome records.
         persisted_records = [
             _persist_download_result(
                 storage=storage,
@@ -160,6 +198,7 @@ def materialize_response_json_partition(
             )
             for record in batch_records
         ]
+        # Checkpoint the completed batch so a later retry can resume without redownloading it.
         _write_checkpoint(
             storage=storage,
             partition_prefix=partition_prefix,
@@ -170,6 +209,7 @@ def materialize_response_json_partition(
         )
         checkpoint_index += 1
         downloaded_count += len(persisted_records)
+        # Report cumulative progress and the statuses produced by this batch.
         _log(
             log,
             "Checkpointed Norway BRREG response JSON batch: completed=%d total=%d "
@@ -179,10 +219,14 @@ def materialize_response_json_partition(
             financial_fetches.status_counts(persisted_records),
         )
 
+    # Reload all response records so final validation includes newly written checkpoints.
+    completed_records = storage.read_response_records(partition_prefix)
+    # Select one final outcome for every candidate requested by this partition.
     final_records = _records_for_candidates(
-        storage.read_response_records(partition_prefix),
+        completed_records,
         candidates_by_org,
     )
+    # Collect retryable statuses that prevent the partition from being marked complete.
     retryable_statuses = sorted(
         {
             _string(record.get("fetch_status"))
@@ -192,6 +236,7 @@ def materialize_response_json_partition(
             )
         }
     )
+    # Aggregate final outcome counts for metadata and the success manifest.
     final_counts = financial_fetches.status_counts(final_records)
     metadata = {
         "candidate_count": len(normalized_candidates),
@@ -206,19 +251,25 @@ def materialize_response_json_partition(
             f"checkpointing: statuses={retryable_statuses} prefix={partition_prefix}"
         )
 
+    # Capture the completion timestamp recorded in the immutable success manifest.
+    completed_at = financial_fetches.utc_now_iso()
+    # Build a deterministic manifest describing the successfully completed partition.
+    success_manifest = {
+        "schema_version": RESPONSE_MANIFEST_SCHEMA_VERSION,
+        "source_run_id": source_run_id,
+        "partition_prefix": partition_prefix,
+        "candidate_count": len(normalized_candidates),
+        "candidate_org_numbers": sorted(candidates_by_org),
+        "status_counts": final_counts,
+        "completed_at": completed_at,
+    }
+    # Persist the manifest last so its presence guarantees all prior work completed.
     storage.write_json_object(
         success_key,
-        {
-            "schema_version": RESPONSE_MANIFEST_SCHEMA_VERSION,
-            "source_run_id": source_run_id,
-            "partition_prefix": partition_prefix,
-            "candidate_count": len(normalized_candidates),
-            "candidate_org_numbers": sorted(candidates_by_org),
-            "status_counts": final_counts,
-            "completed_at": financial_fetches.utc_now_iso(),
-        },
+        success_manifest,
     )
     metadata["success_manifest_key"] = success_key
+    # Report successful completion with the metadata returned to the Dagster asset.
     _log(log, "Completed Norway BRREG response JSON partition: %s", metadata)
     return metadata
 

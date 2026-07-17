@@ -83,7 +83,24 @@ export interface CountryConfig {
   detail?: CountryDetailConfig;
   /** Latest-financials summary table (one row per company). companyKeyExpr is the expression on companiesTable matching summary.company_id. */
   financialsLatest?: { table: string; companyKeyExpr: string };
+  /** NACE join + sum-exclusion rules for the financial aggregates layer. */
+  financialsAggregates?: CountryFinancialsAggregates;
 }
+
+export type CountryFinancialsAggregates = {
+  /** Primary-NACE join for the summary table; omit when no usable mapping. */
+  nace?: {
+    industriesTable: string;
+    /** Expression on industriesTable yielding summary.company_id values. */
+    companyKeyExpr: string;
+    /** Expression yielding normalized NACE digits (class level). */
+    naceCodeExpr: string;
+    /** WHERE conjunct scoping to usable primary rows. */
+    filterExpr: string;
+  };
+  /** Conjunct on summary alias `f` excluding rows from SUMS (lists keep them). */
+  sumExclusionExpr?: string;
+};
 
 export const COUNTRIES: CountryConfig[] = [
   {
@@ -173,6 +190,17 @@ ORDER BY address_type
 LIMIT 10`,
     },
     financialsLatest: { table: "no_company_financials_latest", companyKeyExpr: "org_number" },
+    financialsAggregates: {
+      nace: {
+        industriesTable: "no_industries",
+        companyKeyExpr: "toString(org_number)",
+        naceCodeExpr: "nace_normalized_code",
+        filterExpr: "is_primary = 1 AND nace_normalized_code != ''",
+      },
+      // NUF branches file the foreign parent's full accounts (AWS EMEA €19.4bn);
+      // real data, not Norway-earned — excluded from sums, kept in lists.
+      sumExclusionExpr: "f.company_id NOT IN (SELECT toString(org_number) FROM no_companies WHERE legal_form_code = 'NUF')",
+    },
   },
   {
     code: "fi", name: "Finland", flag: "🇫🇮", companiesTable: "fi_companies",
@@ -297,6 +325,14 @@ ORDER BY address_type
 LIMIT 10`,
     },
     financialsLatest: { table: "se_company_financials_latest", companyKeyExpr: "company_id" },
+    financialsAggregates: {
+      nace: {
+        industriesTable: "se_industries",
+        companyKeyExpr: "substring(toString(company_id), 3)",
+        naceCodeExpr: "nace_rev2_class_code",
+        filterExpr: "is_primary = 1 AND nace_rev2_class_code != '' AND startsWith(toString(company_id), '16')",
+      },
+    },
   },
   {
     code: "ee", name: "Estonia", flag: "🇪🇪", companiesTable: "ee_companies",
@@ -374,6 +410,14 @@ WHERE reg_code = {id:String}
 LIMIT 1`,
     },
     financialsLatest: { table: "ee_company_financials_latest", companyKeyExpr: "reg_code" },
+    financialsAggregates: {
+      nace: {
+        industriesTable: "ee_industries",
+        companyKeyExpr: "toString(reg_code)",
+        naceCodeExpr: "nace_normalized_code",
+        filterExpr: "is_primary = 1 AND nace_normalized_code != ''",
+      },
+    },
   },
   {
     code: "lv", name: "Latvia", flag: "🇱🇻", companiesTable: "lv_companies",
@@ -501,6 +545,14 @@ WHERE company_number = {id:String}
 LIMIT 1`,
     },
     financialsLatest: { table: "gb_company_financials_latest", companyKeyExpr: "company_number" },
+    financialsAggregates: {
+      nace: {
+        industriesTable: "gb_industries",
+        companyKeyExpr: "toString(company_number)",
+        naceCodeExpr: "nace_normalized_code",
+        filterExpr: "is_primary = 1 AND nace_normalized_code != ''",
+      },
+    },
   },
   {
     code: "fr", name: "France", flag: "🇫🇷", companiesTable: "fr_companies",
@@ -754,6 +806,14 @@ WHERE ico = {id:String}
 LIMIT 1`,
     },
     financialsLatest: { table: "sk_company_financials_latest", companyKeyExpr: "ico" },
+    financialsAggregates: {
+      nace: {
+        industriesTable: "sk_industries",
+        companyKeyExpr: "toString(ico)",
+        naceCodeExpr: "nace_normalized_code",
+        filterExpr: "is_primary = 1 AND nace_normalized_code != ''",
+      },
+    },
   },
 ];
 

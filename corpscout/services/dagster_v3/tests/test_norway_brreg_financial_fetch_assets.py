@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 import dagster as dg
 import polars as pl
@@ -9,8 +10,10 @@ import pytest
 from dagster_v3.defs.norway_brreg_financial import financial_fetches
 from dagster_v3.defs.norway_brreg_financial.assets import financial_fetches as assets
 from dagster_v3.defs.norway_brreg_financial.assets.financial_fetches import (
+    daily_financial_report_candidates,
     norway_brreg_financial_responses_updates_json,
     norway_brreg_financial_responses_updates_parquet,
+    parse_daily_financial_report_candidates,
 )
 from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     financial_update_response_index_object_key,
@@ -18,33 +21,30 @@ from dagster_v3.defs.norway_brreg_financial.financial_storage import (
 )
 
 
-class FakeClickhouseClient:
-    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
-        self.rows = rows
-        self.queries: list[str] = []
+class FakeAnnouncementPage:
+    def __init__(self, page_html: str) -> None:
+        self.page_html = page_html
+        self.goto_calls: list[tuple[str, str]] = []
+        self.evaluate_calls: list[str] = []
 
-    def execute(self, query: str) -> list[tuple[Any, ...]]:
-        self.queries.append(query)
-        return self.rows
+    def goto(self, url: str, *, wait_until: str) -> None:
+        self.goto_calls.append((url, wait_until))
 
-
-class FakeClickhouseConnection:
-    def __init__(self, client: FakeClickhouseClient) -> None:
-        self.client = client
-
-    def __enter__(self) -> FakeClickhouseClient:
-        return self.client
-
-    def __exit__(self, *args: Any) -> None:
-        return None
+    def evaluate(self, script: str) -> str:
+        self.evaluate_calls.append(script)
+        return self.page_html
 
 
-class FakeClickhouseResource:
-    def __init__(self, client: FakeClickhouseClient) -> None:
-        self.client = client
+class FakeAnnouncementBrowser:
+    def __init__(self, page: FakeAnnouncementPage) -> None:
+        self.page = page
+        self.closed = False
 
-    def get_connection(self) -> FakeClickhouseConnection:
-        return FakeClickhouseConnection(self.client)
+    def new_page(self) -> FakeAnnouncementPage:
+        return self.page
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakeFinancialStorage:
@@ -65,18 +65,66 @@ def test_update_asset_dependencies_form_json_then_parquet_graph() -> None:
     parquet_key = dg.AssetKey("norway_brreg_financial_responses_updates_parquet")
 
     assert norway_brreg_financial_responses_updates_json.asset_deps[json_key] == set()
-    assert json_key in (
-        norway_brreg_financial_responses_updates_parquet.asset_deps[parquet_key]
+    assert (
+        json_key
+        in (norway_brreg_financial_responses_updates_parquet.asset_deps[parquet_key])
     )
 
 
-def test_update_json_reads_candidates_and_calls_json_pipeline(
+def test_parse_daily_financial_report_candidates_deduplicates_companies() -> None:
+    page_html = """
+        <html><body>
+          <a href="hent_en.jsp?kid=20260000000002&amp;sokeverdi=923609016&amp;spraak=nb">
+            Godkjente årsregnskap
+          </a>
+          <a href="hent_en.jsp?kid=20260000000001&amp;sokeverdi=918572805&amp;spraak=nb">
+            Godkjente årsregnskap
+          </a>
+          <a href="hent_en.jsp?kid=20260000000003&amp;sokeverdi=923609016&amp;spraak=nb">
+            Godkjente årsregnskap
+          </a>
+          <a href="another-page.jsp?sokeverdi=999999999">Unrelated link</a>
+        </body></html>
+    """
+
+    assert parse_daily_financial_report_candidates(page_html) == [
+        {"org_number": "918572805"},
+        {"org_number": "923609016"},
+    ]
+
+
+def test_daily_financial_report_candidates_searches_only_partition_date() -> None:
+    page = FakeAnnouncementPage(
+        '<a href="hent_en.jsp?kid=20260000000001&amp;sokeverdi=923609016">report</a>'
+    )
+    browser = FakeAnnouncementBrowser(page)
+
+    candidates = daily_financial_report_candidates(
+        "2026-07-16",
+        launcher=lambda: browser,
+    )
+
+    [(url, wait_until)] = page.goto_calls
+    assert url == (
+        "https://w2.brreg.no/kunngjoring/kombisok.jsp?"
+        "datoFra=16.07.2026&datoTil=16.07.2026&id_region=0"
+        "&id_niva1=70&id_niva2=-+-+-&id_bransje1=0"
+    )
+    assert urlparse(url).path == "/kunngjoring/kombisok.jsp"
+    assert wait_until == "networkidle"
+    assert page.evaluate_calls == ["() => document.documentElement.outerHTML"]
+    assert browser.closed
+    assert candidates == [{"org_number": "923609016"}]
+
+
+def test_update_json_uses_daily_announcements_and_calls_json_pipeline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    clickhouse_client = FakeClickhouseClient(
-        [("923609016", "EQUINOR ASA", "https://www.equinor.com", "2024")]
-    )
     captured: dict[str, Any] = {}
+
+    def fake_daily_candidates(partition_date: str) -> list[dict[str, str]]:
+        captured["searched_partition_date"] = partition_date
+        return [{"org_number": "923609016"}]
 
     def fake_materialize(**kwargs: Any) -> dict[str, Any]:
         captured.update(kwargs)
@@ -88,38 +136,22 @@ def test_update_json_reads_candidates_and_calls_json_pipeline(
             "partition_prefix": kwargs["partition_prefix"],
         }
 
+    monkeypatch.setattr(
+        assets, "daily_financial_report_candidates", fake_daily_candidates
+    )
     monkeypatch.setattr(assets, "materialize_response_json_partition", fake_materialize)
 
     result = norway_brreg_financial_responses_updates_json(
         context=dg.build_asset_context(partition_key="2026-07-16"),
-        clickhouse=FakeClickhouseResource(clickhouse_client),
         norway_brreg_financial_storage=object(),
     )
 
-    [query] = clickhouse_client.queries
-    assert "FROM no_companies AS company" in query
-    assert "FROM no_financial_statements" in query
-    assert "latest_financial_year" in query
-    assert captured["candidates"] == [
-        {
-            "org_number": "923609016",
-            "legal_name": "EQUINOR ASA",
-            "website": "https://www.equinor.com",
-            "last_submitted_accounts_year": "2024",
-        }
-    ]
+    assert captured["searched_partition_date"] == "2026-07-16"
+    assert captured["candidates"] == [{"org_number": "923609016"}]
     assert captured["partition_prefix"] == (
         "norway_brreg/financial/responses/updates/date=2026-07-16/"
     )
     assert result.metadata["downloaded_count"] == 1
-
-
-def test_update_candidate_query_uses_canonical_company_state() -> None:
-    assert "norway_brreg_entity_updates_no_companies_parquet" not in (
-        assets.UPDATE_CANDIDATES_SQL
-    )
-    assert "company.is_active" in assets.UPDATE_CANDIDATES_SQL
-    assert "company.last_submitted_accounts_year" in assets.UPDATE_CANDIDATES_SQL
 
 
 def test_update_parquet_writes_verified_metadata_without_raw_response(

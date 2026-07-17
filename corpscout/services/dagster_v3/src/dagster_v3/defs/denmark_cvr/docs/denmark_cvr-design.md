@@ -1,11 +1,13 @@
-# Denmark DataCVR company captures
+# Denmark DataCVR entity captures
 
 ## Source boundary
 
 - DataCVR at `https://datacvr.virk.dk` is accessed through CloakBrowser because
   the JSON gateway requires a browser session.
-- The raw asset includes companies only (`enhedstype="virksomhed"`). Persons and
-  production units remain outside this source slice.
+- The raw layer downloads companies (`enhedstype="virksomhed"`), production units
+  (`enhedstype="produktionsenhed"`), and persons (`enhedstype="person"`) as
+  independent assets and objects. A response is rejected if its totals or rows
+  include any entity type other than the one requested by that asset.
 - Company status is not fixed. Results contain both active and ceased companies
   whose `startDato` falls inside the requested date range.
 - `denmark_cvr_companies_duckdb` normalizes both raw asset families into one
@@ -13,12 +15,15 @@
 
 ## Partitions and filters
 
-- `denmark_cvr_backfill_s3` contains 138 calendar-month partitions from `2015-01`
+- Each entity type has one backfill and one active asset. The company assets retain
+  their original names; production units and persons use
+  `denmark_cvr_production_units_*_s3` and `denmark_cvr_persons_*_s3`.
+- Every backfill asset contains 138 calendar-month partitions from `2015-01`
   through `2026-06`, in the `Europe/Copenhagen` timezone. The end boundary is
   `2026-07-01`.
-- `denmark_cvr_active_s3` contains daily partitions from `2026-07-01` onward in
-  the same timezone. Each partition queries one exact registration date by using
-  the partition date for both `startdatoFra` and `startdatoTil`.
+- Every active asset contains daily partitions from `2026-07-01` onward in the
+  same timezone. Each partition queries one exact registration date by using the
+  partition date for both `startdatoFra` and `startdatoTil`.
 - The daily asset captures newly registered companies by `startDato`. DataCVR's
   current search contract does not expose a record-update timestamp, so this is
   not a feed of later changes to already registered companies.
@@ -48,9 +53,11 @@
 
 ## Immutable object storage
 
-Each partition writes at most one merged JSON object in bucket
+Each entity asset writes at most one merged JSON object per partition in bucket
 `source-denmark-cvr`. Object keys are stable across Dagster runs and deliberately
-exclude `run_id`:
+exclude `run_id`. Companies use `companies.json`, production units use
+`production_units.json`, and persons use `persons.json`; incomplete captures add
+`_incomplete` before `.json`:
 
 - complete:
   `denmark_cvr/backfill/month=<YYYY-MM>/companies.json`
@@ -60,6 +67,9 @@ exclude `run_id`:
   `denmark_cvr/active/date=<YYYY-MM-DD>/companies.json`
 - daily incomplete:
   `denmark_cvr/active/date=<YYYY-MM-DD>/companies_incomplete.json`
+
+The production-unit and person objects use the same directory layout with their
+own filenames, so the three assets can be retried and materialized independently.
 
 Before launching the browser, each asset checks both possible result keys. If
 either already exists, the partition performs no download and no write, logs the
@@ -80,8 +90,10 @@ unchanged in the merged object.
 
 ## Incremental DuckDB normalization
 
-`denmark_cvr_companies_duckdb` depends on both raw S3 assets and writes one local
-database at `data/denmark_cvr_source.duckdb`. The database contains:
+`denmark_cvr_companies_duckdb` continues to depend only on the two company raw S3
+assets and ignores the production-unit and person filenames. Normalization for
+those entity types is outside this download-only change. The company asset writes
+one local database at `data/denmark_cvr_source.duckdb`. The database contains:
 
 - `denmark_cvr.companies`: one normalized row per CVR number, including every
   company response field, source object/partition/run audit columns, a payload
@@ -104,8 +116,8 @@ schema issue locations, never response values.
 
 ## Operations and verification
 
-- `BackfillPolicy.multi_run(max_partitions_per_run=1)` and the
-  `denmark_cvr_search` pool serialize browser-heavy work.
+- All six raw assets use `BackfillPolicy.multi_run(max_partitions_per_run=1)` and
+  the shared `denmark_cvr_search` pool to serialize browser-heavy work.
 - Materialization metadata reports completeness, query/page/file counts, entity
   counts, source bytes, stored bytes, the exact result key, and whether the
   partition was skipped.

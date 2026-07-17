@@ -15,6 +15,10 @@ from dagster_v3.defs.denmark_cvr.assets import (
     backfill_result_object_key,
     denmark_cvr_active_s3,
     denmark_cvr_backfill_s3,
+    denmark_cvr_persons_active_s3,
+    denmark_cvr_persons_backfill_s3,
+    denmark_cvr_production_units_active_s3,
+    denmark_cvr_production_units_backfill_s3,
     write_denmark_cvr_active_date,
     write_denmark_cvr_backfill_month,
 )
@@ -33,7 +37,11 @@ from dagster_v3.defs.denmark_cvr.partitions import (
     DENMARK_CVR_BACKFILL_PARTITIONS,
 )
 from dagster_v3.defs.denmark_cvr.resources import (
+    DATACVR_COMPANY_ENTITY_TYPE,
+    DATACVR_PERSON_ENTITY_TYPE,
+    DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
     DenmarkCvrDateRangeDownload,
+    DenmarkCvrEntityType,
     DenmarkCvrQueryDownload,
     DenmarkCvrRequestError,
     DenmarkCvrSearchResource,
@@ -246,15 +254,18 @@ class FakeSearchResource:
     def __init__(self, download: DenmarkCvrDateRangeDownload) -> None:
         self.download = download
         self.date_ranges: list[tuple[date, date]] = []
+        self.entity_types: list[DenmarkCvrEntityType] = []
 
     def download_date_range(
         self,
         *,
         start_date: date,
         end_date: date,
+        entity_type: DenmarkCvrEntityType = DATACVR_COMPANY_ENTITY_TYPE,
         log_info: Any = None,
     ) -> DenmarkCvrDateRangeDownload:
         self.date_ranges.append((start_date, end_date))
+        self.entity_types.append(entity_type)
         return self.download
 
 
@@ -266,6 +277,7 @@ class InvalidSearchResource:
         *,
         start_date: date,
         end_date: date,
+        entity_type: DenmarkCvrEntityType = DATACVR_COMPANY_ENTITY_TYPE,
         log_info: Any = None,
     ) -> DenmarkCvrDateRangeDownload:
         raise DenmarkCvrValidationError(
@@ -396,6 +408,75 @@ def test_search_payload_contains_month_region_and_municipality_filters() -> None
     )
 
 
+@pytest.mark.parametrize(
+    ("entity_type", "expected_query_value"),
+    [
+        (DATACVR_COMPANY_ENTITY_TYPE, "virksomhed"),
+        (DATACVR_PRODUCTION_UNIT_ENTITY_TYPE, "produktionsenhed"),
+        (DATACVR_PERSON_ENTITY_TYPE, "person"),
+    ],
+)
+def test_search_request_selects_one_entity_type(
+    entity_type: DenmarkCvrEntityType,
+    expected_query_value: str,
+) -> None:
+    query_filter = _query_filter()
+
+    command = build_search_payload(
+        query_filter,
+        page_index=0,
+        size=1,
+        entity_type=entity_type,
+    )["fritekstCommand"]
+    url = search_results_url(
+        "https://datacvr.virk.dk",
+        query_filter,
+        page_index=0,
+        size=1,
+        entity_type=entity_type,
+    )
+
+    assert command["enhedstype"] == expected_query_value
+    assert f"enhedstype={expected_query_value}" in url
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "entity"),
+    [
+        (DATACVR_PRODUCTION_UNIT_ENTITY_TYPE, _production_unit()),
+        (DATACVR_PERSON_ENTITY_TYPE, _person()),
+    ],
+)
+def test_search_resource_downloads_non_company_entity_type(
+    entity_type: DenmarkCvrEntityType,
+    entity: dict[str, Any],
+) -> None:
+    page = FakePage(
+        [
+            _browser_result(_response_body([entity])),
+            _browser_result(_response_body([entity])),
+        ]
+    )
+
+    download = DenmarkCvrSearchResource(
+        min_delay_ms=0,
+        max_delay_ms=0,
+    ).download_date_range(
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 31),
+        entity_type=entity_type,
+        launcher=lambda: FakeBrowser(page),
+        sleep=lambda _seconds: None,
+    )
+
+    assert download.generic_advertised_count == 1
+    assert download.entities == (entity,)
+    assert download.is_complete is True
+    assert {
+        call["payload"]["fritekstCommand"]["enhedstype"] for call in page.evaluate_calls
+    } == {entity_type}
+
+
 def test_search_resource_counts_then_downloads_all_pages_with_one_browser() -> None:
     count_body = _response_body([_company()], total=3, company_total=3)
     first_body = _response_body(
@@ -452,12 +533,13 @@ def test_search_resource_counts_then_downloads_all_pages_with_one_browser() -> N
     assert browser.closed is True
     assert delays == [0.0]
     assert [entry[0] for entry in logs] == [
-        "DataCVR company filters selected: start_date=%s "
+        "DataCVR %s filters selected: start_date=%s "
         "end_date=%s generic_advertised=%s query_count=%s",
-        "DataCVR company progress: filter=%s query=%s/%s "
+        "DataCVR %s progress: filter=%s query=%s/%s "
         "advertised=%s downloaded=%s pages=%s "
         "total_downloaded=%s total_pages=%s downloaded_bytes=%s",
     ]
+    assert [entry[1] for entry in logs] == ["company", "company"]
 
 
 def test_search_resource_uses_fixed_filters_for_large_date_range() -> None:
@@ -483,7 +565,7 @@ def test_search_resource_uses_fixed_filters_for_large_date_range() -> None:
     assert browser.closed is True
 
 
-def test_search_resource_rejects_non_company_response() -> None:
+def test_search_resource_rejects_results_outside_requested_entity_type() -> None:
     page = FakePage(
         [
             _browser_result(_response_body([_company()])),
@@ -491,7 +573,9 @@ def test_search_resource_rejects_non_company_response() -> None:
         ]
     )
 
-    with pytest.raises(DenmarkCvrRequestError, match="non-company"):
+    with pytest.raises(
+        DenmarkCvrRequestError, match="outside the requested entity type"
+    ):
         DenmarkCvrSearchResource().download_date_range(
             start_date=date(2025, 1, 1),
             end_date=date(2025, 1, 31),
@@ -564,6 +648,95 @@ def test_active_object_keys_are_date_scoped_and_run_independent() -> None:
 
     with pytest.raises(ValueError):
         active_result_object_key("2026-06-30", is_complete=True)
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "filename"),
+    [
+        (DATACVR_COMPANY_ENTITY_TYPE, "companies.json"),
+        (DATACVR_PRODUCTION_UNIT_ENTITY_TYPE, "production_units.json"),
+        (DATACVR_PERSON_ENTITY_TYPE, "persons.json"),
+    ],
+)
+def test_each_entity_type_has_an_independent_result_object(
+    entity_type: DenmarkCvrEntityType,
+    filename: str,
+) -> None:
+    assert (
+        backfill_result_object_key(
+            "2025-01",
+            is_complete=True,
+            entity_type=entity_type,
+        )
+        == f"denmark_cvr/backfill/month=2025-01/{filename}"
+    )
+    assert (
+        active_result_object_key(
+            "2026-07-01",
+            is_complete=True,
+            entity_type=entity_type,
+        )
+        == f"denmark_cvr/active/date=2026-07-01/{filename}"
+    )
+
+
+def test_non_company_invalid_responses_have_independent_object_scopes() -> None:
+    assert backfill_invalid_response_object_key(
+        "2025-01",
+        "all-production-units",
+        1,
+        entity_type=DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
+    ).endswith(
+        "/invalid/entity=produktionsenhed/filter=all-production-units/"
+        "page=000001.invalid.json"
+    )
+    assert active_invalid_response_object_key(
+        "2026-07-01",
+        "all-persons",
+        1,
+        entity_type=DATACVR_PERSON_ENTITY_TYPE,
+    ).endswith("/invalid/entity=person/filter=all-persons/page=000001.invalid.json")
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "entity", "filename"),
+    [
+        (
+            DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
+            _production_unit(),
+            "production_units.json",
+        ),
+        (DATACVR_PERSON_ENTITY_TYPE, _person(), "persons.json"),
+    ],
+)
+def test_non_company_backfill_storage_uses_its_own_object(
+    entity_type: DenmarkCvrEntityType,
+    entity: dict[str, Any],
+    filename: str,
+) -> None:
+    search = FakeSearchResource(
+        _date_range_download(
+            generic_advertised_count=1,
+            query_downloads=(_query_download(entities=(entity,), advertised_count=1),),
+        )
+    )
+    object_store = FakeObjectStore()
+
+    summary = write_denmark_cvr_backfill_month(
+        object_store=object_store,
+        search=search,
+        entity_type=entity_type,
+        partition_key="2025-01",
+        run_id="entity-run",
+        retrieved_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+    )
+
+    key = f"denmark_cvr/backfill/month=2025-01/{filename}"
+    stored = json.loads(object_store.objects[(DENMARK_CVR_BUCKET, key)])
+    assert summary.result_key == key
+    assert stored["entity_type"] == entity_type
+    assert stored["enheder"] == [entity]
+    assert search.entity_types == [entity_type]
 
 
 def test_month_storage_merges_raw_entities_into_one_complete_json() -> None:
@@ -817,7 +990,9 @@ def test_denmark_cvr_active_asset_uses_daily_partitions() -> None:
     assert spec.tags["layer"] == "raw"
 
 
-def test_denmark_cvr_definitions_register_two_assets_and_no_schedule() -> None:
+def test_denmark_cvr_definitions_register_separate_assets_for_each_entity_type() -> (
+    None
+):
     from dagster_v3.definitions import defs as load_defs
     from dagster_v3.defs.denmark_cvr.assets import defs
 
@@ -829,9 +1004,95 @@ def test_denmark_cvr_definitions_register_two_assets_and_no_schedule() -> None:
     assert dg.AssetKey("denmark_cvr_active_s3") in (
         repository.asset_graph.get_all_asset_keys()
     )
+    assert dg.AssetKey("denmark_cvr_production_units_backfill_s3") in (
+        repository.asset_graph.get_all_asset_keys()
+    )
+    assert dg.AssetKey("denmark_cvr_production_units_active_s3") in (
+        repository.asset_graph.get_all_asset_keys()
+    )
+    assert dg.AssetKey("denmark_cvr_persons_backfill_s3") in (
+        repository.asset_graph.get_all_asset_keys()
+    )
+    assert dg.AssetKey("denmark_cvr_persons_active_s3") in (
+        repository.asset_graph.get_all_asset_keys()
+    )
     assert dg.AssetKey("denmark_cvr_search_results_s3") not in (
         repository.asset_graph.get_all_asset_keys()
     )
-    assert len(defs.assets) == 2
+    assert len(defs.assets) == 6
     assert defs.schedules is None
     assert set(defs.resources) == {"denmark_cvr_search"}
+
+
+@pytest.mark.parametrize(
+    "asset",
+    [
+        denmark_cvr_production_units_backfill_s3,
+        denmark_cvr_persons_backfill_s3,
+    ],
+)
+def test_non_company_backfill_assets_use_smart_monthly_partitions(asset: Any) -> None:
+    assert asset.partitions_def is DENMARK_CVR_BACKFILL_PARTITIONS
+    assert asset.backfill_policy.max_partitions_per_run == 1
+    assert asset.op.pool == "denmark_cvr_search"
+
+
+@pytest.mark.parametrize(
+    "asset",
+    [
+        denmark_cvr_production_units_active_s3,
+        denmark_cvr_persons_active_s3,
+    ],
+)
+def test_non_company_active_assets_use_daily_partitions(asset: Any) -> None:
+    assert asset.partitions_def is DENMARK_CVR_ACTIVE_PARTITIONS
+    assert asset.backfill_policy.max_partitions_per_run == 1
+    assert asset.op.pool == "denmark_cvr_search"
+
+
+@pytest.mark.parametrize(
+    ("asset", "entity_type", "entity", "partition_key"),
+    [
+        (
+            denmark_cvr_production_units_backfill_s3,
+            DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
+            _production_unit(),
+            "2025-01",
+        ),
+        (
+            denmark_cvr_persons_active_s3,
+            DATACVR_PERSON_ENTITY_TYPE,
+            _person(),
+            "2026-07-01",
+        ),
+    ],
+)
+def test_non_company_assets_download_their_configured_entity_type(
+    asset: Any,
+    entity_type: DenmarkCvrEntityType,
+    entity: dict[str, Any],
+    partition_key: str,
+) -> None:
+    search = FakeSearchResource(
+        _date_range_download(
+            generic_advertised_count=1,
+            query_downloads=(_query_download(entities=(entity,), advertised_count=1),),
+        )
+    )
+    context = SimpleNamespace(
+        partition_key=partition_key,
+        run=SimpleNamespace(run_id="asset-entity-run"),
+        log=SimpleNamespace(
+            info=lambda *_args: None,
+            warning=lambda *_args: None,
+        ),
+    )
+
+    result = asset.node_def.compute_fn.decorated_fn(
+        context,
+        search,
+        FakeObjectStore(),
+    )
+
+    assert search.entity_types == [entity_type]
+    assert result.metadata["entity_type"] == entity_type

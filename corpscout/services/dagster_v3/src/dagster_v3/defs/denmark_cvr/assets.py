@@ -14,9 +14,14 @@ from dagster_v3.defs.denmark_cvr.partitions import (
     backfill_month_date_range,
 )
 from dagster_v3.defs.denmark_cvr.resources import (
-    DATACVR_ENTITY_TYPE,
+    DATACVR_COMPANY_ENTITY_TYPE,
+    DATACVR_PERSON_ENTITY_TYPE,
+    DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
+    DenmarkCvrEntityType,
     DenmarkCvrSearchResource,
     DenmarkCvrValidationError,
+    entity_filter_id,
+    entity_label,
 )
 
 DENMARK_CVR_BUCKET = "source-denmark-cvr"
@@ -24,6 +29,7 @@ DENMARK_CVR_BUCKET = "source-denmark-cvr"
 
 @dataclass(frozen=True)
 class DenmarkCvrDateRangeSummary:
+    entity_type: DenmarkCvrEntityType
     result_key: str
     object_prefix: str
     partition_key: str
@@ -44,6 +50,7 @@ class DenmarkCvrDateRangeSummary:
 
 @dataclass(frozen=True)
 class DenmarkCvrStorageScope:
+    entity_type: DenmarkCvrEntityType
     capture_name: str
     partition_key: str
     start_date: date
@@ -53,13 +60,28 @@ class DenmarkCvrStorageScope:
     incomplete_result_key: str
 
 
+def _result_filename(
+    entity_type: DenmarkCvrEntityType,
+    *,
+    is_complete: bool,
+) -> str:
+    stem = {
+        DATACVR_COMPANY_ENTITY_TYPE: "companies",
+        DATACVR_PRODUCTION_UNIT_ENTITY_TYPE: "production_units",
+        DATACVR_PERSON_ENTITY_TYPE: "persons",
+    }[entity_type]
+    completeness_suffix = "" if is_complete else "_incomplete"
+    return f"{stem}{completeness_suffix}.json"
+
+
 def backfill_result_object_key(
     partition_key: str,
     *,
     is_complete: bool,
+    entity_type: DenmarkCvrEntityType = DATACVR_COMPANY_ENTITY_TYPE,
 ) -> str:
     backfill_month_date_range(partition_key)
-    filename = "companies.json" if is_complete else "companies_incomplete.json"
+    filename = _result_filename(entity_type, is_complete=is_complete)
     return f"denmark_cvr/backfill/month={partition_key}/{filename}"
 
 
@@ -67,12 +89,15 @@ def backfill_invalid_response_object_key(
     partition_key: str,
     filter_id: str,
     page_index: int,
+    *,
+    entity_type: DenmarkCvrEntityType = DATACVR_COMPANY_ENTITY_TYPE,
 ) -> str:
     backfill_month_date_range(partition_key)
     return _invalid_response_object_key(
         f"denmark_cvr/backfill/month={partition_key}/",
         filter_id,
         page_index,
+        entity_type=entity_type,
     )
 
 
@@ -80,9 +105,10 @@ def active_result_object_key(
     partition_key: str,
     *,
     is_complete: bool,
+    entity_type: DenmarkCvrEntityType = DATACVR_COMPANY_ENTITY_TYPE,
 ) -> str:
     active_partition_date(partition_key)
-    filename = "companies.json" if is_complete else "companies_incomplete.json"
+    filename = _result_filename(entity_type, is_complete=is_complete)
     return f"denmark_cvr/active/date={partition_key}/{filename}"
 
 
@@ -90,12 +116,15 @@ def active_invalid_response_object_key(
     partition_key: str,
     filter_id: str,
     page_index: int,
+    *,
+    entity_type: DenmarkCvrEntityType = DATACVR_COMPANY_ENTITY_TYPE,
 ) -> str:
     active_partition_date(partition_key)
     return _invalid_response_object_key(
         f"denmark_cvr/active/date={partition_key}/",
         filter_id,
         page_index,
+        entity_type=entity_type,
     )
 
 
@@ -103,6 +132,8 @@ def _invalid_response_object_key(
     object_prefix: str,
     filter_id: str,
     page_index: int,
+    *,
+    entity_type: DenmarkCvrEntityType,
 ) -> str:
     if page_index < 0:
         raise ValueError("DataCVR page index must not be negative")
@@ -111,15 +142,17 @@ def _invalid_response_object_key(
         for character in filter_id
     ):
         raise ValueError("DataCVR filter ID contains unsafe object-key characters")
-    return (
-        f"{object_prefix}invalid/filter={filter_id}/page={page_index:06d}.invalid.json"
+    entity_scope = (
+        "" if entity_type == DATACVR_COMPANY_ENTITY_TYPE else f"entity={entity_type}/"
     )
+    return f"{object_prefix}invalid/{entity_scope}filter={filter_id}/page={page_index:06d}.invalid.json"
 
 
 def write_denmark_cvr_backfill_month(
     *,
     object_store: ObjectStoreResource,
     search: DenmarkCvrSearchResource,
+    entity_type: DenmarkCvrEntityType = DATACVR_COMPANY_ENTITY_TYPE,
     partition_key: str,
     run_id: str,
     retrieved_at: datetime,
@@ -132,6 +165,7 @@ def write_denmark_cvr_backfill_month(
         object_store=object_store,
         search=search,
         scope=DenmarkCvrStorageScope(
+            entity_type=entity_type,
             capture_name="backfill month",
             partition_key=partition_key,
             start_date=start_date,
@@ -140,10 +174,12 @@ def write_denmark_cvr_backfill_month(
             complete_result_key=backfill_result_object_key(
                 partition_key,
                 is_complete=True,
+                entity_type=entity_type,
             ),
             incomplete_result_key=backfill_result_object_key(
                 partition_key,
                 is_complete=False,
+                entity_type=entity_type,
             ),
         ),
         invalid_response_key=lambda filter_id, page_index: (
@@ -151,6 +187,7 @@ def write_denmark_cvr_backfill_month(
                 partition_key,
                 filter_id,
                 page_index,
+                entity_type=entity_type,
             )
         ),
         run_id=run_id,
@@ -164,6 +201,7 @@ def write_denmark_cvr_active_date(
     *,
     object_store: ObjectStoreResource,
     search: DenmarkCvrSearchResource,
+    entity_type: DenmarkCvrEntityType = DATACVR_COMPANY_ENTITY_TYPE,
     partition_key: str,
     run_id: str,
     retrieved_at: datetime,
@@ -176,6 +214,7 @@ def write_denmark_cvr_active_date(
         object_store=object_store,
         search=search,
         scope=DenmarkCvrStorageScope(
+            entity_type=entity_type,
             capture_name="active date",
             partition_key=partition_key,
             start_date=partition_date,
@@ -184,10 +223,12 @@ def write_denmark_cvr_active_date(
             complete_result_key=active_result_object_key(
                 partition_key,
                 is_complete=True,
+                entity_type=entity_type,
             ),
             incomplete_result_key=active_result_object_key(
                 partition_key,
                 is_complete=False,
+                entity_type=entity_type,
             ),
         ),
         invalid_response_key=lambda filter_id, page_index: (
@@ -195,6 +236,7 @@ def write_denmark_cvr_active_date(
                 partition_key,
                 filter_id,
                 page_index,
+                entity_type=entity_type,
             )
         ),
         run_id=run_id,
@@ -216,6 +258,7 @@ def _write_denmark_cvr_date_range(
     log_warning: Callable[..., object] | None,
 ) -> DenmarkCvrDateRangeSummary:
     _validate_object_scope(run_id)
+    selected_entity_label = entity_label(scope.entity_type)
     if retrieved_at.utcoffset() is None:
         raise ValueError("DataCVR retrieval timestamp must include a timezone")
     object_store.ensure_bucket(DENMARK_CVR_BUCKET)
@@ -235,6 +278,7 @@ def _write_denmark_cvr_date_range(
                 existing_key,
             )
         return DenmarkCvrDateRangeSummary(
+            entity_type=scope.entity_type,
             result_key=existing_key,
             object_prefix=scope.object_prefix,
             partition_key=scope.partition_key,
@@ -254,8 +298,9 @@ def _write_denmark_cvr_date_range(
         )
     if log_info is not None:
         log_info(
-            "Starting DataCVR company %s: partition=%s "
+            "Starting DataCVR %s %s: partition=%s "
             "start_date=%s end_date=%s bucket=%s prefix=%s",
+            selected_entity_label,
             scope.capture_name,
             scope.partition_key,
             scope.start_date,
@@ -268,6 +313,7 @@ def _write_denmark_cvr_date_range(
         download = search.download_date_range(
             start_date=scope.start_date,
             end_date=scope.end_date,
+            entity_type=scope.entity_type,
             log_info=log_info,
         )
     except DenmarkCvrValidationError as exc:
@@ -279,8 +325,9 @@ def _write_denmark_cvr_date_range(
         )
         if log_warning is not None:
             log_warning(
-                "DataCVR %s company response failed validation: partition=%s "
+                "DataCVR %s %s response failed validation: partition=%s "
                 "filter=%s page=%s invalid_object_key=%s",
+                selected_entity_label,
                 scope.capture_name,
                 scope.partition_key,
                 exc.filter_id,
@@ -298,7 +345,7 @@ def _write_denmark_cvr_date_range(
             "schema_version": 1,
             "source": "denmark_cvr",
             "source_url": search.search_base_url,
-            "entity_type": DATACVR_ENTITY_TYPE,
+            "entity_type": scope.entity_type,
             "partition_key": scope.partition_key,
             "start_date": scope.start_date.isoformat(),
             "end_date": scope.end_date.isoformat(),
@@ -321,7 +368,10 @@ def _write_denmark_cvr_date_range(
             "downloaded_size_bytes": download.downloaded_size_bytes,
             "queries": [
                 {
-                    "filter_id": query.query_filter.filter_id,
+                    "filter_id": entity_filter_id(
+                        query.query_filter,
+                        scope.entity_type,
+                    ),
                     "region": query.query_filter.region,
                     "municipality": query.query_filter.municipality,
                     "advertised_count": query.advertised_count,
@@ -344,6 +394,7 @@ def _write_denmark_cvr_date_range(
     object_store.write_json(key, body, bucket=DENMARK_CVR_BUCKET)
     stored_size_bytes = len(body.encode("utf-8"))
     summary = DenmarkCvrDateRangeSummary(
+        entity_type=scope.entity_type,
         result_key=key,
         object_prefix=scope.object_prefix,
         partition_key=scope.partition_key,
@@ -364,9 +415,10 @@ def _write_denmark_cvr_date_range(
     if summary.is_complete:
         if log_info is not None:
             log_info(
-                "DataCVR company %s complete: partition=%s "
+                "DataCVR %s %s complete: partition=%s "
                 "queries=%s pages=%s advertised=%s downloaded=%s "
                 "downloaded_bytes=%s stored_bytes=%s result_key=%s",
+                selected_entity_label,
                 scope.capture_name,
                 summary.partition_key,
                 summary.query_count,
@@ -379,9 +431,10 @@ def _write_denmark_cvr_date_range(
             )
     elif log_warning is not None:
         log_warning(
-            "DataCVR company %s incomplete: partition=%s "
+            "DataCVR %s %s incomplete: partition=%s "
             "generic_advertised=%s filtered_advertised=%s downloaded=%s "
             "missing=%s queries=%s pages=%s result_key=%s",
+            selected_entity_label,
             scope.capture_name,
             summary.partition_key,
             summary.generic_advertised_count,
@@ -395,85 +448,118 @@ def _write_denmark_cvr_date_range(
     return summary
 
 
-@dg.asset(
-    group_name="denmark_cvr",
-    kinds={"python", "browser", "json", "s3"},
-    tags={
-        "country": "denmark",
-        "source": "cvr",
-        "source_name": "denmark_cvr",
-        "layer": "raw",
-    },
-    partitions_def=DENMARK_CVR_BACKFILL_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="denmark_cvr_search",
-    description=(
-        "Captures one immutable DataCVR company JSON object per backfill month "
-        "from January 2015 through June 2026. Existing partition objects are skipped. "
-        "Months above the 3,000-result ceiling use fixed region and municipality "
-        "filters; count mismatches are stored and materialized as incomplete."
-    ),
-)
-def denmark_cvr_backfill_s3(
-    context: dg.AssetExecutionContext,
-    denmark_cvr_search: DenmarkCvrSearchResource,
-    object_store: ObjectStoreResource,
-) -> dg.MaterializeResult:
-    summary = write_denmark_cvr_backfill_month(
-        object_store=object_store,
-        search=denmark_cvr_search,
-        partition_key=context.partition_key,
-        run_id=context.run.run_id,
-        retrieved_at=datetime.now(UTC),
-        log_info=context.log.info,
-        log_warning=context.log.warning,
+def _build_denmark_cvr_s3_asset(
+    *,
+    name: str,
+    entity_type: DenmarkCvrEntityType,
+    is_backfill: bool,
+) -> dg.AssetsDefinition:
+    selected_entity_label = entity_label(entity_type)
+    partitions_def = (
+        DENMARK_CVR_BACKFILL_PARTITIONS
+        if is_backfill
+        else DENMARK_CVR_ACTIVE_PARTITIONS
     )
-    return _materialize_result(
-        summary,
-        source_url=denmark_cvr_search.search_base_url,
+    description = (
+        f"Captures one immutable DataCVR {selected_entity_label} JSON object per backfill "
+        "month from January 2015 through June 2026. Existing partition objects "
+        "are skipped. Months above the 3,000-result ceiling use fixed region and "
+        "municipality filters; count mismatches are stored and materialized as "
+        "incomplete."
+        if is_backfill
+        else (
+            f"Captures one DataCVR {selected_entity_label} JSON object for each registration "
+            "date from July 1, 2026 onward. Dates above the 3,000-result ceiling use "
+            "fixed region and municipality filters; count mismatches are stored as "
+            "incomplete."
+        )
     )
 
+    @dg.asset(
+        name=name,
+        group_name="denmark_cvr",
+        kinds={"python", "browser", "json", "s3"},
+        tags={
+            "country": "denmark",
+            "source": "cvr",
+            "source_name": "denmark_cvr",
+            "entity_type": entity_type,
+            "layer": "raw",
+        },
+        partitions_def=partitions_def,
+        backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+        pool="denmark_cvr_search",
+        description=description,
+    )
+    def denmark_cvr_entity_s3(
+        context: dg.AssetExecutionContext,
+        denmark_cvr_search: DenmarkCvrSearchResource,
+        object_store: ObjectStoreResource,
+    ) -> dg.MaterializeResult:
+        writer = (
+            write_denmark_cvr_backfill_month
+            if is_backfill
+            else write_denmark_cvr_active_date
+        )
+        summary = writer(
+            object_store=object_store,
+            search=denmark_cvr_search,
+            entity_type=entity_type,
+            partition_key=context.partition_key,
+            run_id=context.run.run_id,
+            retrieved_at=datetime.now(UTC),
+            log_info=context.log.info,
+            log_warning=context.log.warning,
+        )
+        return _materialize_result(
+            summary,
+            source_url=denmark_cvr_search.search_base_url,
+        )
 
-@dg.asset(
-    group_name="denmark_cvr",
-    kinds={"python", "browser", "json", "s3"},
-    tags={
-        "country": "denmark",
-        "source": "cvr",
-        "source_name": "denmark_cvr",
-        "layer": "raw",
-    },
-    partitions_def=DENMARK_CVR_ACTIVE_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="denmark_cvr_search",
-    description=(
-        "Captures one DataCVR company JSON object for each registration date from "
-        "July 1, 2026 onward. Dates above the 3,000-result ceiling use fixed region "
-        "and municipality filters; count mismatches are stored as incomplete."
-    ),
+    return denmark_cvr_entity_s3
+
+
+denmark_cvr_backfill_s3 = _build_denmark_cvr_s3_asset(
+    name="denmark_cvr_backfill_s3",
+    entity_type=DATACVR_COMPANY_ENTITY_TYPE,
+    is_backfill=True,
 )
-def denmark_cvr_active_s3(
-    context: dg.AssetExecutionContext,
-    denmark_cvr_search: DenmarkCvrSearchResource,
-    object_store: ObjectStoreResource,
-) -> dg.MaterializeResult:
-    summary = write_denmark_cvr_active_date(
-        object_store=object_store,
-        search=denmark_cvr_search,
-        partition_key=context.partition_key,
-        run_id=context.run.run_id,
-        retrieved_at=datetime.now(UTC),
-        log_info=context.log.info,
-        log_warning=context.log.warning,
-    )
-    return _materialize_result(
-        summary,
-        source_url=denmark_cvr_search.search_base_url,
-    )
+denmark_cvr_active_s3 = _build_denmark_cvr_s3_asset(
+    name="denmark_cvr_active_s3",
+    entity_type=DATACVR_COMPANY_ENTITY_TYPE,
+    is_backfill=False,
+)
+denmark_cvr_production_units_backfill_s3 = _build_denmark_cvr_s3_asset(
+    name="denmark_cvr_production_units_backfill_s3",
+    entity_type=DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
+    is_backfill=True,
+)
+denmark_cvr_production_units_active_s3 = _build_denmark_cvr_s3_asset(
+    name="denmark_cvr_production_units_active_s3",
+    entity_type=DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
+    is_backfill=False,
+)
+denmark_cvr_persons_backfill_s3 = _build_denmark_cvr_s3_asset(
+    name="denmark_cvr_persons_backfill_s3",
+    entity_type=DATACVR_PERSON_ENTITY_TYPE,
+    is_backfill=True,
+)
+denmark_cvr_persons_active_s3 = _build_denmark_cvr_s3_asset(
+    name="denmark_cvr_persons_active_s3",
+    entity_type=DATACVR_PERSON_ENTITY_TYPE,
+    is_backfill=False,
+)
 
 
 defs = dg.Definitions(
-    assets=[denmark_cvr_backfill_s3, denmark_cvr_active_s3],
+    assets=[
+        denmark_cvr_backfill_s3,
+        denmark_cvr_active_s3,
+        denmark_cvr_production_units_backfill_s3,
+        denmark_cvr_production_units_active_s3,
+        denmark_cvr_persons_backfill_s3,
+        denmark_cvr_persons_active_s3,
+    ],
     resources={"denmark_cvr_search": DenmarkCvrSearchResource()},
 )
 
@@ -485,6 +571,7 @@ def _materialize_result(
 ) -> dg.MaterializeResult:
     return dg.MaterializeResult(
         metadata={
+            "entity_type": summary.entity_type,
             "s3_bucket": DENMARK_CVR_BUCKET,
             "s3_prefix": summary.object_prefix,
             "result_key": summary.result_key,
