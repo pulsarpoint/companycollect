@@ -59,12 +59,15 @@ export async function getDivisionLabels(): Promise<Map<string, string>> {
   if (divisionLabelsCache && Date.now() - divisionLabelsCache.loadedAt < DIVISION_LABELS_TTL_MS) {
     return divisionLabelsCache.labels;
   }
+  // argMax(description_en, is_current) is a contractual pick-the-current-row
+  // reduction (unlike relying on ORDER BY-then-any() collapsing groups in
+  // scan order); verified to return identical labels for all ~84 divisions,
+  // including code '45' (REV_2-only, is_current always 0 — argMax still
+  // deterministically picks a row when values tie).
   const rows = await chQuery<{ code: string; label: string }>(`
-SELECT code, any(label) AS label FROM (
-  SELECT normalized_code AS code, description_en AS label
-  FROM nace_categories WHERE level = 'division'
-  ORDER BY is_current DESC
-) GROUP BY code`);
+SELECT normalized_code AS code, argMax(description_en, is_current) AS label
+FROM nace_categories WHERE level = 'division'
+GROUP BY code`);
   const labels = new Map(rows.map((r) => [r.code, stripLeadingCode(r.label)]));
   divisionLabelsCache = { loadedAt: Date.now(), labels };
   return labels;
@@ -122,12 +125,19 @@ ${sumWhere(c, extra)}`;
 
 function countryDivisionsSql(c: CountryConfig): string {
   const nace = c.financialsAggregates!.nace!;
+  const table = c.financialsLatest!.table;
+  // Pre-filter the industries table to companies present in the (much
+  // smaller) summary table BEFORE the GROUP BY, instead of grouping the
+  // entire industries table and only narrowing it down at the join. Cuts
+  // GB (7.3M industries rows) from ~0.6s to ~0.2s for this branch.
   return `SELECT substring(i.code, 1, 2) AS division, toUInt32(count()) AS companies,
   sum(f.revenue_amount_usd) AS revenue_usd
-FROM ${c.financialsLatest!.table} f
+FROM ${table} f
 INNER JOIN (
   SELECT ${nace.companyKeyExpr} AS cid, any(${nace.naceCodeExpr}) AS code
-  FROM ${nace.industriesTable} WHERE ${nace.filterExpr} GROUP BY cid
+  FROM ${nace.industriesTable}
+  WHERE ${nace.filterExpr} AND ${nace.companyKeyExpr} IN (SELECT company_id FROM ${table})
+  GROUP BY cid
 ) i ON i.cid = f.company_id
 ${sumWhere(c)}
 GROUP BY division ORDER BY revenue_usd DESC`;
