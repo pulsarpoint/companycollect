@@ -148,7 +148,8 @@ describe("detail config", () => {
           "AS fiscal_year", "AS currency",
           "AS revenue_amount_original", "AS revenue_amount_usd",
           "AS net_result_amount_original", "AS net_result_amount_usd",
-          "AS total_assets_amount_usd", "AS equity_amount_usd", "AS employees",
+          "AS total_assets_amount_original", "AS total_assets_amount_usd",
+          "AS equity_amount_original", "AS equity_amount_usd", "AS employees",
         ]) {
           expect(c.detail.financialsQuery, `${c.code}: ${col}`).toContain(col);
         }

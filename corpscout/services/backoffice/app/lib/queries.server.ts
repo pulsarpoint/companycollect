@@ -146,7 +146,9 @@ export interface FinancialYearRow {
   revenue_amount_usd: number | null;
   net_result_amount_original: number | null;
   net_result_amount_usd: number | null;
+  total_assets_amount_original: number | null;
   total_assets_amount_usd: number | null;
+  equity_amount_original: number | null;
   equity_amount_usd: number | null;
   employees: number | null;
 }

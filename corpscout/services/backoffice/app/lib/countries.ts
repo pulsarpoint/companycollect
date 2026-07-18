@@ -138,7 +138,9 @@ LIMIT 50000`,
   toFloat64(operating_revenue_amount_usd) AS revenue_amount_usd,
   toFloat64(net_result_amount_original) AS net_result_amount_original,
   toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
   toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
   toFloat64(equity_amount_usd) AS equity_amount_usd,
   NULL AS employees
 FROM no_financial_statements
@@ -237,7 +239,9 @@ LIMIT 50000`,
   toFloat64(revenue_amount_usd) AS revenue_amount_usd,
   toFloat64(profit_loss_amount_original) AS net_result_amount_original,
   toFloat64(profit_loss_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
   toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
   toFloat64(equity_amount_usd) AS equity_amount_usd,
   toFloat64(employees) AS employees
 FROM fi_financial_metrics
@@ -311,7 +315,9 @@ LIMIT 50000`,
   toFloat64(revenue_amount_usd) AS revenue_amount_usd,
   toFloat64(profit_loss_amount_original) AS net_result_amount_original,
   toFloat64(profit_loss_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
   toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
   toFloat64(equity_amount_usd) AS equity_amount_usd,
   toFloat64(employees) AS employees
 FROM se_financial_metrics
@@ -388,7 +394,9 @@ LIMIT 50000`,
   toFloat64(revenue_amount_usd) AS revenue_amount_usd,
   toFloat64(net_result_amount_original) AS net_result_amount_original,
   toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
   toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
   toFloat64(equity_amount_usd) AS equity_amount_usd,
   NULL AS employees
 FROM ee_financial_metrics
@@ -458,7 +466,9 @@ WHERE regcode IN {ids:Array(String)}`,
   toFloat64(revenue_amount_usd) AS revenue_amount_usd,
   toFloat64(net_result_amount_original) AS net_result_amount_original,
   toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
   toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
   toFloat64(equity_amount_usd) AS equity_amount_usd,
   toFloat64(employees) AS employees
 FROM lv_financial_metrics
@@ -531,7 +541,9 @@ LIMIT 50000`,
   toFloat64(revenue_amount_usd) AS revenue_amount_usd,
   toFloat64(net_result_amount_original) AS net_result_amount_original,
   toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
   toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
   toFloat64(equity_amount_usd) AS equity_amount_usd,
   NULL AS employees
 FROM gb_financial_metrics
@@ -660,7 +672,9 @@ LIMIT 50000`,
   anyIf(usd, metric = 'revenue') AS revenue_amount_usd,
   anyIf(orig, metric = 'net_income') AS net_result_amount_original,
   anyIf(usd, metric = 'net_income') AS net_result_amount_usd,
+  anyIf(orig, metric = 'total_assets') AS total_assets_amount_original,
   anyIf(usd, metric = 'total_assets') AS total_assets_amount_usd,
+  anyIf(orig, metric = 'equity') AS equity_amount_original,
   anyIf(usd, metric = 'equity') AS equity_amount_usd,
   NULL AS employees
 FROM (

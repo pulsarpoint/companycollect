@@ -373,6 +373,9 @@ describe("getCompanyDetail (Estonia)", () => {
     expect(y2023).toBeDefined();
     expect(y2023!.revenue_amount_usd).toBeGreaterThan(1e9); // ≈ $4.16bn
     expect(y2023!.employees).toBeGreaterThan(1000);
+    // Dual-currency contract: original AND usd both present for money fields.
+    expect(y2023!.total_assets_amount_original).toBeGreaterThan(1e9); // SEK
+    expect(y2023!.equity_amount_original).not.toBeNull();
   });
 
   it("returns contacts and domains for companies that have them", async () => {
