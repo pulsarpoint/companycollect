@@ -195,6 +195,33 @@ def sweden_company_industries_clickhouse(
     )
 
 
+@dg.asset_check(
+    asset="sweden_company_companies_clickhouse",
+    name="identities_normalized",
+)
+def identities_normalized(clickhouse: ClickhouseResource) -> dg.AssetCheckResult:
+    """Guard against re-publishing 16-prefixed duplicate identities.
+
+    A dagster deploy running pre-2026-07-18 code would re-export SCB rows
+    keyed as 12-digit '16'+orgnr, silently re-splitting ~745k companies and
+    breaking every downstream join. Fails loudly instead.
+    """
+    with clickhouse.get_connection() as client:
+        [(prefixed, total, distinct)] = client.execute(
+            "SELECT countIf(length(company_id) = 12 AND startsWith(company_id, '16')), "
+            "count(), uniqExact(company_id) "
+            f"FROM {tables.QUALIFIED_COMPANIES_TABLE}"
+        )
+    return dg.AssetCheckResult(
+        passed=prefixed == 0 and total == distinct,
+        metadata={
+            "prefixed_16_ids": int(prefixed),
+            "rows": int(total),
+            "distinct_company_ids": int(distinct),
+        },
+    )
+
+
 sweden_company_refresh_job = dg.define_asset_job(
     "sweden_company_refresh_job",
     tags=HEAVY_BULK_RUN_TAGS,
@@ -223,6 +250,7 @@ defs = dg.Definitions(
         sweden_company_addresses_clickhouse,
         sweden_company_industries_clickhouse,
     ],
+    asset_checks=[identities_normalized],
     jobs=[sweden_company_refresh_job],
     schedules=[sweden_company_refresh_weekly],
     resources={

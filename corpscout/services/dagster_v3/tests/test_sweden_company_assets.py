@@ -62,3 +62,15 @@ def test_sweden_company_docs_describe_registry_pipeline_scope() -> None:
     assert "raw ZIP" in text
     assert "ClickHouse" in text
     assert "weekly" in text
+
+
+def test_identities_normalized_check_registered() -> None:
+    from dagster_v3.defs.sweden_company.assets import defs
+
+    check_specs = [
+        spec
+        for checks_def in defs.asset_checks or []
+        for spec in checks_def.check_specs
+    ]
+    names = {(spec.asset_key.to_user_string(), spec.name) for spec in check_specs}
+    assert ("sweden_company_companies_clickhouse", "identities_normalized") in names

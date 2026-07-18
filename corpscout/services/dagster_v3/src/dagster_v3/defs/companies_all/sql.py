@@ -135,11 +135,11 @@ SOURCES = {
             "ON n.normalized_code = i.nace_rev2_class_code AND n.is_current = 1 "
             "ORDER BY i.is_primary DESC, i.sequence ASC LIMIT 1 BY i.company_id"
         ),
-        # se_companies has its OWN `company_id` column, distinct from
-        # `registration_number` (the id exported as companies_all.company_id).
-        # Industries/financials are keyed on that internal company_id, so the
-        # join key must be qualified `c.company_id` -- an unqualified
-        # `company_id` would be ambiguous against `ind.company_id`/`fin.company_id`.
+        # se_companies has its OWN `company_id` column (same normalized id
+        # space as `registration_number` since the 2026-07-18 identity fix).
+        # Industries/financials are keyed on company_id, so the join key must
+        # be qualified `c.company_id` -- an unqualified `company_id` would be
+        # ambiguous against `ind.company_id`/`fin.company_id`.
         "industry_join_key": "c.company_id",
         "financials_table": "se_company_financials_latest",
         "financials_join_key": "c.company_id",

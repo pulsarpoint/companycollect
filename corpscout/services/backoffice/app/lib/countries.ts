@@ -271,7 +271,7 @@ LIMIT 100`,
   {
     code: "se", name: "Sweden", flag: "🇸🇪", companiesTable: "se_companies",
     idColumn: "registration_number", nameColumn: "legal_name", activeExpr: "status = 'active'",
-    approxCompanies: "4.1M", features: ["financials", "industries"],
+    approxCompanies: "3.4M", features: ["financials", "industries"],
     industryJoinKeyExpr: "company_id",
     columns: [
       { key: "id", label: "Reg. number", expr: "registration_number", sortable: true, kind: "id" },
