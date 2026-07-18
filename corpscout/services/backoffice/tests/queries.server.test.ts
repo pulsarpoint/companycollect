@@ -363,6 +363,18 @@ describe("getCompanyDetail (Estonia)", () => {
     expect([...years].sort().reverse()).toEqual(years); // newest first
   });
 
+  it("sweden returns canonical financials preferring the complete duplicate row", async () => {
+    const se = getCountry("se")!;
+    // Known large filer with a duplicate all-NULL 2023 metrics row alongside
+    // the complete one — the isNull tiebreak must surface the complete row.
+    const detail = await getCompanyDetail(se, "5561632232");
+    expect(detail).not.toBeNull();
+    const y2023 = detail!.financials.find((f) => f.fiscal_year === "2023");
+    expect(y2023).toBeDefined();
+    expect(y2023!.revenue_amount_usd).toBeGreaterThan(1e9); // ≈ $4.16bn
+    expect(y2023!.employees).toBeGreaterThan(1000);
+  });
+
   it("returns contacts and domains for companies that have them", async () => {
     const [c] = await chQuery<{ id: string }>(
       `SELECT registry_id AS id FROM ee_company_contacts

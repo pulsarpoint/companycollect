@@ -301,6 +301,24 @@ ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `company_id IN (SELECT company_id FROM se_industries WHERE is_primary = 1 AND nace_rev2_class_code IN {f_industry:Array(String)})`,
     detail: {
+      // se_financial_metrics is keyed on the normalized 10-digit orgnr
+      // (= registration_number since the 2026-07-18 identity fix). Some
+      // companies carry duplicate per-year rows where one is all-NULL —
+      // the isNull tiebreak prefers the complete row (same rule as the
+      // company_financials_latest summary build).
+      financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
+  toFloat64(revenue_amount_original) AS revenue_amount_original,
+  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(profit_loss_amount_original) AS net_result_amount_original,
+  toFloat64(profit_loss_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  toFloat64(employees) AS employees
+FROM se_financial_metrics
+WHERE company_id = {id:String}
+ORDER BY fiscal_year DESC, isNull(revenue_amount_original) ASC, source_record_id DESC
+LIMIT 1 BY fiscal_year
+LIMIT 20`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
   '' AS description_original,
   coalesce(nullIf(n.description_en, ''), i.nace_rev2_class_code) AS industry_label,

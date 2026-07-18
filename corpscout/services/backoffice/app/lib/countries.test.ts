@@ -115,10 +115,11 @@ describe("industry facet and filter", () => {
 });
 
 describe("detail config", () => {
-  const FIN = ["no", "fi", "ee", "lv", "gb", "br"];
+  // se joined 2026-07-18: sweden_financial (XBRL) landed after the detail pages were built.
+  const FIN = ["no", "fi", "ee", "lv", "gb", "br", "se"];
   const CONTACTS = ["no", "fi", "ee", "lv", "cz", "br"];
   const DOMAINS = ["no", "fi", "ee", "lv", "cz", "br"];
-  const NONE = ["se", "sk", "fr"];
+  const NONE = ["sk", "fr"];
 
   it("declares detail sections exactly per data availability", () => {
     for (const c of COUNTRIES) {
