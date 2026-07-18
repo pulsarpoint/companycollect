@@ -225,6 +225,41 @@ Norway statement amounts carry their currency code; USD values shown with a
 leading `≈` are derived in the UI as `original × fx_rate_to_usd` where the
 pipeline left the stored USD NULL.
 
+### Language toggle
+
+The detail page supports a `?lang=original` URL parameter to switch between
+English and original-language variants of multi-language fields (GB, SE).
+Default is English; omitting `?lang` or setting `?lang=en` both show English.
+The toggle is a two-option segmented control ("English" / "Original") in the
+detail header, hidden entirely when a record has zero language pairs
+(`pairCount === 0`).
+
+**Pair rule:** A base key is collapsed into a single selectable pair iff BOTH
+`<base>_en` and `<base>_original` are present in the record (regardless of
+whether their values are empty). Unpaired one-siders (e.g., a single
+`status_en` with no `status_original`, or `share_capital_amount_original`
+with no `_en`) always pass through under their own literal key name. Currency
+fields (suffixed `_amount_original`) are never treated as pairs and always
+show both variants.
+
+**Fallback markers:** When the selected language variant is empty, the detail
+page falls back to the other one and appends a muted fallback marker:
+`(original)` when showing English's fallback, `(english)` when showing
+original's fallback. These markers appear in the key-facts strip (at the top),
+in prose sections (articles purpose / activity text / any >240-char text), in
+the field grid, and in lineage details (translation provenance keys).
+
+**Rendering structure:**
+1. Key-facts strip — identity facts (legal form, status, registered date,
+   website), each with fallback markers if applicable.
+2. Prose sections — articles purpose, activity text, and any field >240 chars,
+   each with fallback markers.
+3. Field grid — all other visible fields, collapsed pairs showing selected
+   language with fallback markers as needed, one-siders and currency fields
+   rendering at full fidelity.
+4. Lineage details — translation provenance keys ("Source & lineage" section),
+   rendered under the field grid.
+
 ## Financials section
 
 Three routes power financial analytics:
