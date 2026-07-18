@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -92,6 +93,23 @@ class FakeClickHouseResource:
 
     def get_connection(self) -> FakeClickHouseClient:
         return self.client
+
+
+def test_duckdb_schema_does_not_collide_with_file_catalog(tmp_path: Path) -> None:
+    database_path = tmp_path / "norway_brreg_annual_accounts.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        ensure_annual_account_duckdb_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "select table_name from information_schema.tables "
+                "where table_schema = ?",
+                [ANNUAL_ACCOUNT_DATASET],
+            ).fetchall()
+        }
+
+    assert tables == {"concept_mappings", "documents", "facts", "metrics"}
 
 
 def test_financial_fact_parser_uses_geometry_and_never_invents_comparatives() -> None:

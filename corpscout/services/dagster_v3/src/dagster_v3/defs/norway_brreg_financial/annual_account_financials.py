@@ -23,7 +23,7 @@ from dagster_v3.defs.norway_brreg_financial.models import (
     ExtractedAnnualAccountFact,
 )
 
-ANNUAL_ACCOUNT_DATASET = "norway_brreg_annual_accounts"
+ANNUAL_ACCOUNT_DATASET = "annual_accounts"
 PARSER_VERSION = "norway-annual-account-geometry-v1"
 MAPPING_VERSION = "norway-annual-account-concepts-v1"
 LLM_PROMPT_VERSION = "norway-annual-account-label-map-v1"
