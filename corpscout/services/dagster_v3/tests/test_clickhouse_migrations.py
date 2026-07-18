@@ -5,6 +5,7 @@ from dagster_v3.defs.brazil_companies.cgu import tables as brazil_cgu_tables
 from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
+from dagster_v3.defs.companies_all import tables as companies_all_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.finland_ytj import resolved_tables as finland_resolved_tables
@@ -148,6 +149,7 @@ EXPECTED_MIGRATIONS = (
     "000136_corpscout_finland_xbrl_provenance_view_columns",
     "000137_corpscout_company_financials_latest",
     "000138_corpscout_no_financial_statements_quality_flag",
+    "000139_corpscout_companies_all",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1701,6 +1703,23 @@ def test_commoncrawl_jsonld_keeps_each_page_entity() -> None:
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_metadata" in sql
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_page_metadata" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_jsonld" in down_sql
+
+
+def test_companies_all_migration_covers_columns() -> None:
+    sql = _migration_sql("000139_corpscout_companies_all.up.sql")
+    down_sql = _migration_sql("000139_corpscout_companies_all.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.companies_all" in sql
+    for column_name in companies_all_tables.COMPANIES_ALL_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert (
+        "INDEX idx_name_ngram name_normalized TYPE ngrambf_v1(3, 262144, 3, 0) GRANULARITY 4"
+        in sql
+    )
+    assert "ORDER BY (country_code, company_id)" in sql
+    assert "ENGINE = MergeTree" in sql
+    assert "DROP TABLE IF EXISTS corpscout.companies_all" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:
