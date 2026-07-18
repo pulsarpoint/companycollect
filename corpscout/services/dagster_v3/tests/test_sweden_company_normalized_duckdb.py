@@ -102,15 +102,32 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
         ).fetchone()
 
     assert counts == {
-        "companies": 3,
-        "company_addresses": 4,
-        "company_industry_codes": 4,
-        "bolagsverket_company_count": 2,
-        "scb_company_count": 2,
-        "companies_with_sni_count": 2,
-        "unknown_sni_count": 2,
+        # Old -> new pins after adding the twin pair (5565257747), the
+        # 19-prefixed sole trader (195001011234), and the BV-internal
+        # 12-digit '16' collision pair (5565258888) to the fixtures:
+        "companies": 6,  # old 3
+        "company_addresses": 8,  # old 4
+        "company_industry_codes": 6,  # old 4
+        "bolagsverket_company_count": 4,  # old 2
+        "scb_company_count": 4,  # old 2
+        "companies_with_sni_count": 4,  # old 2
+        "unknown_sni_count": 2,  # unchanged -- new SCB rows add no invalid SNI codes
     }
     assert companies == [
+        (
+            "195001011234",
+            "195001011234",
+            None,
+            "195001011234",
+            "ENSKILD FIRMA ANDERSSON",
+            None,
+            "00",
+            "active",
+            None,
+            "2010-01-01",
+            None,
+            None,
+        ),
         (
             "5560000000",
             "5560000000",
@@ -140,6 +157,45 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             "Closed activity",
         ),
         (
+            # Twin: SCB's PeOrgNr is '165565257747' (12-digit, '16'-prefixed);
+            # Bolagsverket's organisationsidentitet is the bare 10-digit
+            # '5565257747$ORGNR-IDORG'. Pre-fix these normalized to two
+            # different keys ('165565257747' and '5565257747') and produced
+            # two companies rows for the same real-world company -- this is
+            # the RED this fixture proves.
+            "5565257747",
+            "5565257747",
+            "5565257747$ORGNR-IDORG",
+            "165565257747",
+            "Twin AB med firma Twin AB",
+            "Twin AB med firma Twin AB$FORETAGSNAMN-ORGNAM$2021-01-01",
+            "AB-ORGFO",
+            "active",
+            None,
+            "2021-01-01",
+            None,
+            "Twin activity",
+        ),
+        (
+            # BV-internal collision: the same Bolagsverket org appears once as
+            # a bare 10-digit id ('5565258888$ORGNR-IDORG') and once as a
+            # 12-digit '16'-prefixed id ('165565258888'). Pre-fix these are
+            # two distinct dedup partitions (two companies rows); post-fix
+            # they collapse into one '5565258888' row.
+            "5565258888",
+            "5565258888",
+            "165565258888",
+            None,
+            "Bv8888 AB",
+            "Bv8888 AB$FORETAGSNAMN-ORGNAM$2017-07-01",
+            "AB-ORGFO",
+            "active",
+            None,
+            "2017-07-01",
+            None,
+            "Bv8888 activity",
+        ),
+        (
             "9999999999",
             "9999999999",
             None,
@@ -155,6 +211,17 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
         ),
     ]
     assert addresses == [
+        (
+            "195001011234",
+            "visiting_or_postal",
+            "scb",
+            "Solo Street 1, 44444 SOLOCITY",
+            "Solo Street 1",
+            None,
+            "44444",
+            "SOLOCITY",
+            "SE",
+        ),
         (
             "5560000000",
             "postal",
@@ -189,6 +256,42 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
             "SE",
         ),
         (
+            "5565257747",
+            "postal",
+            "bolagsverket",
+            "Twin Street 1$$TWINTOWN$33333$SE-LAND",
+            "Twin Street 1",
+            None,
+            "33333",
+            "TWINTOWN",
+            "SE",
+        ),
+        (
+            "5565257747",
+            "visiting_or_postal",
+            "scb",
+            "Twin Visit Street 1, 33333 TWINTOWN",
+            "Twin Visit Street 1",
+            "c/o TWIN",
+            "33333",
+            "TWINTOWN",
+            "SE",
+        ),
+        (
+            # BV-internal collision's losing raw row has a blank postadress
+            # so it can't contribute a second (ambiguous-order) address row
+            # for the same collapsed company_id/source pair.
+            "5565258888",
+            "postal",
+            "bolagsverket",
+            "Bv8888 Street 5$$SIBLINGTOWN$55555$SE-LAND",
+            "Bv8888 Street 5",
+            None,
+            "55555",
+            "SIBLINGTOWN",
+            "SE",
+        ),
+        (
             "9999999999",
             "visiting_or_postal",
             "scb",
@@ -201,8 +304,10 @@ def test_replace_sweden_company_normalized_tables_creates_company_address_and_in
         ),
     ]
     assert industries == [
+        ("195001011234", 1, True, "47110", "4711", "Ng1"),
         ("5560000000", 1, True, "62010", "6201", "Ng1"),
         ("5560000000", 2, False, "70220", "7022", "Ng2"),
+        ("5565257747", 1, True, "62020", "6202", "Ng1"),
         ("9999999999", 1, True, "01110", "0111", "Ng1"),
         ("9999999999", 3, False, "55202", "5520", "Ng3"),
     ]
@@ -447,6 +552,63 @@ def _create_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:
             '2019-01-01',
             'Closed activity',
             'Closed Street 2$$GOTEBORG$41111$SE-LAND'
+        ),
+        (
+            'run-1',
+            3,
+            '5565257747$ORGNR-IDORG',
+            'bolag-hash-twin',
+            'bolag-key',
+            '{{}}',
+            '5565257747$ORGNR-IDORG',
+            '1',
+            'SE-LAND',
+            'Twin AB med firma Twin AB$FORETAGSNAMN-ORGNAM$2021-01-01',
+            'AB-ORGFO',
+            '',
+            '',
+            '',
+            '2021-01-01',
+            'Twin activity',
+            'Twin Street 1$$TWINTOWN$33333$SE-LAND'
+        ),
+        (
+            'run-1',
+            4,
+            '165565258888',
+            'bolag-hash-8888-12',
+            'bolag-key',
+            '{{}}',
+            '165565258888',
+            '1',
+            'SE-LAND',
+            'Bv8888 AB$FORETAGSNAMN-ORGNAM$2017-07-01',
+            'AB-ORGFO',
+            '',
+            '',
+            '',
+            '2017-07-01',
+            'Bv8888 activity',
+            'Bv8888 Street 5$$SIBLINGTOWN$55555$SE-LAND'
+        ),
+        (
+            'run-1',
+            5,
+            '5565258888$ORGNR-IDORG',
+            'bolag-hash-8888-10',
+            'bolag-key',
+            '{{}}',
+            '5565258888$ORGNR-IDORG',
+            '1',
+            'SE-LAND',
+            'Bv8888 Old AB$FORETAGSNAMN-ORGNAM$2016-06-01',
+            'AB-ORGFO-OLD',
+            '',
+            '',
+            '',
+            '2016-06-01',
+            'Bv8888 old activity',
+            ''
         )
         """
     )
@@ -534,6 +696,58 @@ def _create_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:
             '22222',
             'MALMO',
             '20230405',
+            '1'
+        ),
+        (
+            'run-1',
+            3,
+            '165565257747',
+            'scb-hash-twin',
+            'scb-key',
+            '{{}}',
+            '1',
+            'c/o TWIN',
+            '',
+            '0',
+            'Twin Visit Street 1',
+            '1',
+            '49',
+            'TWIN AB',
+            '62020',
+            '',
+            '',
+            '',
+            '',
+            '165565257747',
+            '33333',
+            'TWINTOWN',
+            '20210101',
+            '1'
+        ),
+        (
+            'run-1',
+            4,
+            '195001011234',
+            'scb-hash-sole',
+            'scb-key',
+            '{{}}',
+            '1',
+            '',
+            '',
+            '0',
+            'Solo Street 1',
+            '1',
+            '00',
+            'ENSKILD FIRMA ANDERSSON',
+            '47110',
+            '',
+            '',
+            '',
+            '',
+            '195001011234',
+            '44444',
+            'SOLOCITY',
+            '20100101',
             '1'
         )
         """

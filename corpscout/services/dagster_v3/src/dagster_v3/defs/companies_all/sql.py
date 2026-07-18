@@ -22,10 +22,17 @@ module:
     binds against the companies table itself, not ``br_establishments``.
   - ``se_companies`` has BOTH a ``registration_number`` column (the
     public-facing id exported as ``company_id`` in companies_all) and its
-    own internal ``company_id`` column (distinct synthetic id used to join
-    ``se_industries``/``se_company_financials_latest``) -- hence the
-    explicit ``c.company_id`` qualification for SE's join keys, required to
-    disambiguate against ``ind.company_id``/``fin.company_id``. No other
+    own internal ``company_id`` column, used to join
+    ``se_industries``/``se_company_financials_latest``. Since the
+    2026-07-18 Swedish identity-normalization fix (dagster_v3
+    ``sweden_company/normalized_duckdb.py``), that internal ``company_id``
+    is no longer a distinct synthetic id -- it shares
+    ``registration_number``'s id space (10-digit orgnr for legal entities,
+    12-digit person ids for sole traders), because both columns are now
+    derived from the same normalized identity. The explicit
+    ``c.company_id`` qualification for SE's join keys is still required to
+    disambiguate against ``ind.company_id``/``fin.company_id`` (a SQL
+    column-naming collision, unrelated to the identity fix). No other
     country's companies table has a column literally named ``company_id``.
   - ``se_industries`` has ``sequence`` (UInt8) and ``is_primary`` (UInt8) and
     no ``description_en``/``description_original`` columns -- its industry

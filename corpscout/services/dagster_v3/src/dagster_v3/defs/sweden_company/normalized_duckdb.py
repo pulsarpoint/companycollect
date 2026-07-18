@@ -18,6 +18,24 @@ BOLAGSVERKET_REQUIRED_COLUMNS = (
     "postadress",
 )
 
+
+def _identity_sql(raw_column: str) -> str:
+    """Normalized Swedish organization identity from a raw source id column.
+
+    Strips non-digits, then removes the '16' century prefix SCB (and some
+    Bolagsverket rows) put in front of a 10-digit organisationsnummer in
+    12-digit PeOrgNr form. 12-digit person-keyed ids (19/20 birth-century
+    prefixes, sole traders) pass through unchanged -- '16' can never prefix
+    a real personnummer. Without this, the same company appears once per
+    source (~745k phantom duplicates measured 2026-07-18).
+    """
+    digits = f"regexp_replace(coalesce({raw_column}, ''), '[^0-9]', '', 'g')"
+    return (
+        f"case when length({digits}) = 12 and {digits} like '16%' "
+        f"then substring({digits}, 3) else {digits} end"
+    )
+
+
 SCB_REQUIRED_COLUMNS = (
     "source_run_id",
     "source_record_id",
@@ -71,37 +89,24 @@ def replace_sweden_company_normalized_tables(
 
 
 def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
+    bolagsverket_identity = _identity_sql("organisationsidentitet")
+    scb_identity = _identity_sql("PeOrgNr")
     connection.execute(
-        """
+        f"""
         create or replace table sweden_company.companies as
         with bolagsverket_source as (
             select
                 *,
-                regexp_replace(
-                    coalesce(organisationsidentitet, ''),
-                    '[^0-9]',
-                    '',
-                    'g'
-                ) as company_id,
+                {bolagsverket_identity} as company_id,
                 row_number() over (
-                    partition by regexp_replace(
-                        coalesce(organisationsidentitet, ''),
-                        '[^0-9]',
-                        '',
-                        'g'
-                    )
+                    partition by {bolagsverket_identity}
                     order by
                         source_record_id,
                         source_line_number,
                         source_payload_hash
                 ) as company_rank
             from sweden_company.bolagsverket_raw
-            where regexp_replace(
-                coalesce(organisationsidentitet, ''),
-                '[^0-9]',
-                '',
-                'g'
-            ) != ''
+            where {bolagsverket_identity} != ''
         ),
         bolagsverket as (
             select * exclude (company_rank)
@@ -111,16 +116,16 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
         scb_source as (
             select
                 *,
-                regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
+                {scb_identity} as company_id,
                 row_number() over (
-                    partition by regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g')
+                    partition by {scb_identity}
                     order by
                         source_record_id,
                         source_line_number,
                         source_payload_hash
                 ) as company_rank
             from sweden_company.scb_raw
-            where regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') != ''
+            where {scb_identity} != ''
         ),
         scb as (
             select * exclude (company_rank)
@@ -181,17 +186,14 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
 
 
 def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) -> None:
+    bolagsverket_identity = _identity_sql("organisationsidentitet")
+    scb_identity = _identity_sql("PeOrgNr")
     connection.execute(
-        """
+        f"""
         create or replace table sweden_company.company_addresses as
         with bolagsverket_addresses as (
             select
-                regexp_replace(
-                    coalesce(organisationsidentitet, ''),
-                    '[^0-9]',
-                    '',
-                    'g'
-                ) as company_id,
+                {bolagsverket_identity} as company_id,
                 'postal' as address_type,
                 'bolagsverket' as source,
                 postadress as raw_address,
@@ -209,16 +211,11 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
                 ? as updated_from_raw_at
             from sweden_company.bolagsverket_raw
             where nullif(trim(postadress), '') is not null
-                and regexp_replace(
-                    coalesce(organisationsidentitet, ''),
-                    '[^0-9]',
-                    '',
-                    'g'
-                ) != ''
+                and {bolagsverket_identity} != ''
         ),
         scb_addresses as (
             select
-                regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
+                {scb_identity} as company_id,
                 'visiting_or_postal' as address_type,
                 'scb' as source,
                 case
@@ -249,7 +246,7 @@ def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) ->
                 source_payload_hash,
                 ? as updated_from_raw_at
             from sweden_company.scb_raw
-            where regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') != ''
+            where {scb_identity} != ''
                 and (
                     nullif(trim(COAdress), '') is not null
                     or nullif(trim(Gatuadress), '') is not null
@@ -270,12 +267,13 @@ def _replace_company_industry_codes_table(
     connection: Any,
     loaded_at: datetime,
 ) -> None:
+    scb_identity = _identity_sql("PeOrgNr")
     connection.execute(
-        """
+        f"""
         create or replace table sweden_company.company_industry_codes as
         with candidates as (
             select
-                regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
+                {scb_identity} as company_id,
                 1 as sequence,
                 true as is_primary,
                 nullif(trim(Ng1), '') as sni_code,
@@ -286,7 +284,7 @@ def _replace_company_industry_codes_table(
             from sweden_company.scb_raw
             union all
             select
-                regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
+                {scb_identity} as company_id,
                 2 as sequence,
                 false as is_primary,
                 nullif(trim(Ng2), '') as sni_code,
@@ -297,7 +295,7 @@ def _replace_company_industry_codes_table(
             from sweden_company.scb_raw
             union all
             select
-                regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
+                {scb_identity} as company_id,
                 3 as sequence,
                 false as is_primary,
                 nullif(trim(Ng3), '') as sni_code,
@@ -308,7 +306,7 @@ def _replace_company_industry_codes_table(
             from sweden_company.scb_raw
             union all
             select
-                regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
+                {scb_identity} as company_id,
                 4 as sequence,
                 false as is_primary,
                 nullif(trim(Ng4), '') as sni_code,
@@ -319,7 +317,7 @@ def _replace_company_industry_codes_table(
             from sweden_company.scb_raw
             union all
             select
-                regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') as company_id,
+                {scb_identity} as company_id,
                 5 as sequence,
                 false as is_primary,
                 nullif(trim(Ng5), '') as sni_code,
@@ -342,7 +340,7 @@ def _replace_company_industry_codes_table(
             ? as updated_from_raw_at
         from candidates
         where company_id != ''
-            and sni_code ~ '^[0-9]{5}$'
+            and sni_code ~ '^[0-9]{{5}}$'
             and sni_code != '00000'
         """,
         [loaded_at],
@@ -415,28 +413,25 @@ def _table_count(connection: Any, table_name: str) -> int:
 
 
 def _bolagsverket_company_count(connection: Any) -> int:
+    bolagsverket_identity = _identity_sql("organisationsidentitet")
     return _scalar_count(
         connection,
-        """
-        select count(distinct regexp_replace(
-            coalesce(organisationsidentitet, ''),
-            '[^0-9]',
-            '',
-            'g'
-        ))
+        f"""
+        select count(distinct {bolagsverket_identity})
         from sweden_company.bolagsverket_raw
-        where regexp_replace(coalesce(organisationsidentitet, ''), '[^0-9]', '', 'g') != ''
+        where {bolagsverket_identity} != ''
         """,
     )
 
 
 def _scb_company_count(connection: Any) -> int:
+    scb_identity = _identity_sql("PeOrgNr")
     return _scalar_count(
         connection,
-        """
-        select count(distinct regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g'))
+        f"""
+        select count(distinct {scb_identity})
         from sweden_company.scb_raw
-        where regexp_replace(coalesce(PeOrgNr, ''), '[^0-9]', '', 'g') != ''
+        where {scb_identity} != ''
         """,
     )
 
