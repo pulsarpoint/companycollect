@@ -23,28 +23,112 @@ pnpm dev               # http://localhost:5183
 - `app/lib/countries.ts` — static registry: one entry per country, maps URL
   code → ClickHouse table/columns/features. Add new countries here.
 - `app/lib/clickhouse.server.ts` — server-only ClickHouse client (`chQuery`).
-- `app/lib/queries.server.ts` — per-country stats and company search.
-- `app/routes.ts` — `/` picker → `/:country` layout → overview, companies.
+- `app/lib/queries.server.ts` — per-country stats, company search, and the
+  company detail query. Still the engine for `/company/{country_code}/{id}`
+  and the live-schema test sweeps (see below).
+- `app/lib/unified.server.ts` — `/companies` search + facets, backed by the
+  `companies_all` table (see below), not a per-country UNION merge.
+- `app/lib/facets.server.ts` — per-country facet options, also backed by
+  `companies_all`.
+- `app/routes.ts` — `/` redirects to `/companies` (unified list); the
+  company detail page is `/company/{country_code}/{id}`.
 
-## Structure
+## companies_all
 
-- `/companies` — ALL countries in one list (name, industry, country).
-  Default order is registry order (fast); sorting by name does a cross-
-  country top-N merge and takes ~10s over 116M rows (a materialized
-  `companies_all` table in dagster is the planned fix). Country is a filter
-  (`f_country=ee`), alongside status/legal form/place/size/industry —
-  a filter only includes countries that can answer it (e.g. size → Brazil).
-- `/company/{country_code}/{id}` — the company detail page.
-- `app/lib/unified.server.ts` — cross-country UNION search + merged facets.
-- `app/lib/countries.ts` — the per-country registry: list columns, filters,
-  detail queries. The per-country query layer (`queries.server.ts`) remains
-  the engine for detail pages and the live-schema test sweeps.
+`corpscout.companies_all` is a ClickHouse table with one uniform row per
+company across all 10 countries (116,333,029 rows as of the last verified
+count): `country_code`, `company_id`, `name`/`name_normalized`, `is_active`,
+`status`, `legal_form`, `place`, `size`, `industry_code`/`industry_label`,
+`revenue_usd`, `fiscal_year`, `employees`, `has_financials`, `resolved_at`.
+It's what `/companies` (`unified.server.ts`) and per-country facet options
+(`facets.server.ts`) query directly — a single flat table, no more
+per-country UNION branching.
+
+**Build**: `dagster_v3/src/dagster_v3/defs/companies_all/` — one per-country
+`INSERT INTO <stage> SELECT ...` leg (`sql.py`), a count-parity guard per
+leg against the source `*_companies` table, then an atomic
+`EXCHANGE TABLES` swap (`assets.py`). Scheduled **daily at 07:15
+Europe/Oslo** (after the 06:30 `company_financials_latest` run). The asset
+also declares `automation_condition=eager()`, so it will additionally
+rebuild on every upstream change for free if the default automation-
+condition sensor is ever turned on in the Dagster UI — until then the cron
+schedule is the actual trigger.
+
+### The duplicated-spec parity contract
+
+The build's per-country SQL (`sql.py`) DUPLICATES this repo's
+`app/lib/countries.ts` registry expressions by design — the dagster
+(Python) side can't import the backoffice's TypeScript registry. The same
+per-country logic (status/legal_form/place/size exprs, industry joins,
+financials joins) is therefore maintained in two places, and nothing
+mechanically stops them from drifting apart on a future edit to either
+side.
+
+**`tests/companies-all-parity.test.ts` is the permanent guard against that
+drift.** It runs against the live ClickHouse for all 10 countries and
+derives every comparison FROM the registry — never a hand-listed
+expression — so drift on either side of the duplication fails a test:
+row-count parity per country against its `companiesTable`; sampled
+status/legal_form/place/size values against the registry's own column
+exprs for keys a country defines, and `''` for keys it doesn't; financials
+parity for Norway against `no_company_financials_latest`; and industry-label
+parity for Estonia against the registry's `industryQuery`. A failure here
+means the two specs have drifted apart — treat it as a real bug, not
+something to retry away.
+
+### Intentional semantic changes from the switch
+
+Moving `/companies` and per-country facets onto `companies_all` changed a
+few behaviors on purpose:
+
+- **The old 400-page cap is gone.** The prior per-branch UNION merge
+  bounded pagination depth (`MAX_UNIFIED_PAGE = 400`); a single flat table
+  has no such limit.
+- **`has_financials` facet counts are real.** It's a live
+  `countIf(has_financials = 1)` over `companies_all`, not the zero-count
+  stub the old per-branch merge returned for a key with no fixed facet
+  column.
+- **Per-country facet capability gaps return empty, not a thrown error.**
+  The old `facets.server.ts` threw `unknown facet: <key>` when a country's
+  registry had no column for that facet key (e.g. Brazil has no
+  `legal_form`). `companies_all` always carries all four filter columns,
+  defaulting the ones a country doesn't define to `''`, so the same
+  request now just returns zero options for that country/key combo instead
+  of throwing.
+- **Latvia's industry columns will auto-populate.** `lv`'s `industry_code`/
+  `industry_label` are `''` today because `lv_companies_nace` is
+  unpopulated (its NACE classifier hasn't run yet) — once it lands, the
+  next daily `companies_all` build picks it up with no registry or code
+  change, the same auto-upgrade pattern as the financials-aggregates
+  NACE breakdowns described further below.
+
+`app/lib/queries.server.ts` remains the engine for the company detail page
+(`getCompanyDetail`, used by `/company/{country_code}/{id}`) and the
+live-schema test sweeps in `tests/queries.server.test.ts` — it isn't a
+legacy leftover, just scoped to detail-page/per-row lookups rather than
+list search, which now lives in `unified.server.ts`.
+
+### SK duplicate ICO quirk
+
+Slovakia has ~53k `ico` values shared by two source registers, so a single
+`ico` can legitimately correspond to 2 rows in both `sk_companies` and
+`companies_all` (the build does no per-id dedup — every source row becomes
+exactly one `companies_all` row). The parity test tolerates this for sk
+specifically, comparing the SORTED MULTISET of values per sampled id rather
+than a strict 1:1 row zip; every other country's id groups are always
+singletons, so the tolerance doesn't weaken the check for them.
 
 ## Companies table (Legacy: per-country layer)
 
-The per-country layer powers the detail page and test sweeps. URL-driven state
-on `/{country}/companies` (no longer in the unified dashboard but available
-if needed): `?q=` name search, `?sort=` column key + `?dir=asc|desc`
+The per-country layer (`app/lib/queries.server.ts`) powers the company
+detail page (`getCompanyDetail`) and the live-schema test sweeps
+(`searchCompanies`/`getCountryStats`, exercised from
+`tests/queries.server.test.ts`). There is no longer a routed
+`/{country}/companies` list page — list search moved to `/companies`
+(`unified.server.ts`, backed by `companies_all`); the description below of
+`?q=`/`?sort=`/`?page=` URL-driven state describes `searchCompanies`'s own
+contract, still validated by the test sweep even though nothing routes to
+it directly: `?q=` name search, `?sort=` column key + `?dir=asc|desc`
 (whitelisted against `countries.ts` column config; unknown values fall back to
 name asc), `?page=`, `?pageSize=25|50|100`. The industry column is populated
 by a second per-page lookup (`industryQuery` in `countries.ts`) and is not
