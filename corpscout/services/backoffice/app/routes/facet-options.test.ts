@@ -29,13 +29,14 @@ describe("facet-options loader", () => {
     expect((caught as Response).status).toBe(400);
   });
 
-  it("has_financials is whitelisted but must not 500: resolves with a static yes option", async () => {
+  it("has_financials is whitelisted and resolves with a real live count", async () => {
     // Regression guard: has_financials passes the UNIFIED_FACET_KEYS
-    // whitelist here, but previously fell through to the generic per-column
-    // facet lookup and threw "unknown facet: has_financials" (reachable
-    // as a real 500 if the endpoint were ever hit directly with this column,
-    // e.g. before the FilterSidebar excluded it from the combobox loop).
+    // whitelist here, and now resolves via a real countIf() over
+    // companies_all rather than a zero-count stub.
     const result = await loader(request("http://test/facet-options?column=has_financials"));
-    expect(result).toEqual({ options: [{ value: "true", label: "yes", count: 0 }] });
+    const { options } = result as { options: { value: string; label: string; count: number }[] };
+    expect(options).toHaveLength(1);
+    expect(options[0]).toMatchObject({ value: "true", label: "yes" });
+    expect(options[0].count).toBeGreaterThan(1_000_000);
   });
 });

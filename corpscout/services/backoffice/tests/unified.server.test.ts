@@ -108,11 +108,13 @@ describe("unified facets", () => {
     await expect(getUnifiedFacetOptions("name")).rejects.toThrow(/unknown facet/i);
   });
 
-  it("has_financials resolves to a static option instead of throwing", async () => {
+  it("has_financials resolves to a real live count", async () => {
     // has_financials is in UNIFIED_FACET_KEYS but isn't a categorical column
-    // on any country's registry — regression guard for the reachable
-    // "unknown facet: has_financials" 500 from the generic per-column path.
+    // in the fixed facet column map — it's now backed by a real countIf()
+    // over companies_all rather than a zero-count stub.
     const options = await getUnifiedFacetOptions("has_financials");
-    expect(options).toEqual([{ value: "true", label: "yes", count: 0 }]);
-  });
+    expect(options).toHaveLength(1);
+    expect(options[0]).toMatchObject({ value: "true", label: "yes" });
+    expect(options[0].count).toBeGreaterThan(1_000_000);
+  }, 30_000);
 });

@@ -1,16 +1,7 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import {
-  COUNTRIES,
-  getCountry,
-  MAX_UNIFIED_PAGE,
-  PAGE_SIZES,
-  type CountryConfig,
-  type SortDir,
-} from "~/lib/countries";
-
-export { MAX_UNIFIED_PAGE };
-import { UNIFIED_FACET_KEYS, type CompanyFilters } from "~/lib/filters";
-import { getFacetOptions, rankFacetOptions, type FacetOption } from "~/lib/facets.server";
+import { getCountry, PAGE_SIZES, type SortDir } from "~/lib/countries";
+import { FACET_COLUMN, UNIFIED_FACET_KEYS, type CompanyFilters } from "~/lib/filters";
+import { rankFacetOptions, type FacetOption } from "~/lib/facets.server";
 
 export interface UnifiedRow {
   country_code: string;
@@ -33,53 +24,57 @@ export interface UnifiedSearchResult {
 }
 
 const UNIFIED_SORTS = new Set(["country", "name", "revenue"]);
+const COMPANIES_ALL = "companies_all";
 
-function canAnswer(c: CountryConfig, key: string): boolean {
-  if (key === "industry") return Boolean(c.industryFilterExpr);
-  if (key === "has_financials") return Boolean(c.financialsLatest);
-  return c.columns.some((col) => col.filterable && col.key === key);
-}
-
-function branchCountries(filters: CompanyFilters): CountryConfig[] {
-  let list = COUNTRIES;
-  const wanted = filters.country;
-  if (wanted?.length) {
-    const set = new Set(wanted);
-    list = list.filter((c) => set.has(c.code));
-  }
-  const activeKeys = Object.keys(filters).filter(
-    (k) => k !== "country" && (filters[k]?.length ?? 0) > 0,
-  );
-  return list.filter((c) => activeKeys.every((k) => canAnswer(c, k)));
-}
-
-function branchWhere(
-  c: CountryConfig,
+/**
+ * Builds the WHERE clause for companies_all from parseUnifiedFilters'
+ * output. Column NAMES only ever come from the fixed FACET_COLUMN map (or
+ * literal column references below) — never from a user-supplied key.
+ * User VALUES are always bound via named params.
+ */
+function buildWhere(
   q: string,
   filters: CompanyFilters,
   params: Record<string, unknown>,
 ): string {
   const conds: string[] = [];
-  if (q) {
-    conds.push(`${c.nameColumn} ILIKE {pattern:String}`);
-    params.pattern = `%${q}%`;
+
+  const country = filters.country;
+  if (country?.length) {
+    conds.push(`country_code IN {f_country:Array(String)}`);
+    params.f_country = country;
   }
-  for (const col of c.columns) {
-    if (!col.filterable) continue;
-    const values = filters[col.key];
-    if (!values || values.length === 0) continue;
-    conds.push(`${col.expr} IN {f_${col.key}:Array(String)}`);
-    params[`f_${col.key}`] = values;
+  if (filters.has_financials?.length) {
+    conds.push(`has_financials = 1`);
   }
   const industry = filters.industry;
-  if (industry?.length && c.industryFilterExpr) {
-    conds.push(c.industryFilterExpr);
+  if (industry?.length) {
+    conds.push(`industry_code IN {f_industry:Array(String)}`);
     params.f_industry = industry;
   }
-  if (filters.has_financials?.length && c.financialsLatest) {
-    conds.push(`${c.financialsLatest.companyKeyExpr} IN (SELECT company_id FROM ${c.financialsLatest.table})`);
+  for (const [key, column] of Object.entries(FACET_COLUMN)) {
+    const values = filters[key];
+    if (!values?.length) continue;
+    conds.push(`${column} IN {f_${key}:Array(String)}`);
+    params[`f_${key}`] = values;
   }
+  if (q) {
+    conds.push(`name_normalized LIKE {pattern:String}`);
+    params.pattern = `%${q.toLowerCase()}%`;
+  }
+
   return conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+}
+
+interface CompaniesAllRow {
+  country_code: string;
+  id: string;
+  name: string;
+  active: 0 | 1;
+  industry_code: string;
+  industry_label: string;
+  revenue_usd: number | null;
+  fiscal_year: number | null;
 }
 
 export async function searchUnifiedCompanies(opts: {
@@ -97,160 +92,135 @@ export async function searchUnifiedCompanies(opts: {
   const filters = opts.filters ?? {};
   const sort = UNIFIED_SORTS.has(opts.sort ?? "") ? (opts.sort as string) : "country";
   const dir: SortDir = opts.dir === "desc" ? "desc" : "asc";
-  const branches = branchCountries(filters);
-  if (branches.length === 0) {
-    return { rows: [], total: 0, page: 1, pageSize, sort, dir };
-  }
 
   const params: Record<string, unknown> = {};
-  const whereByCode = new Map(branches.map((c) => [c.code, branchWhere(c, q, filters, params)]));
+  const where = buildWhere(q, filters, params);
 
-  const countSql = branches
-    .map((c) => `SELECT count() AS c FROM ${c.companiesTable} ${whereByCode.get(c.code)}`)
-    .join(" UNION ALL ");
   const countRows = await chQuery<{ total: string }>(
-    `SELECT sum(c) AS total FROM (${countSql})`,
+    `SELECT count() AS total FROM ${COMPANIES_ALL} ${where}`,
     params,
   );
   const total = Number(countRows[0].total);
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
   const requestedRaw = Number.isFinite(opts.page as number) ? Math.trunc(opts.page as number) : 1;
-  const page = Math.min(Math.max(1, requestedRaw), lastPage, MAX_UNIFIED_PAGE);
+  const page = Math.min(Math.max(1, requestedRaw), lastPage);
 
   const dirSql = dir === "desc" ? "DESC" : "ASC";
-  // Merge-order invariant: branch ORDER BY native idColumn == outer ORDER BY
-  // toString(id) ONLY because every registry idColumn is String (asserted in
-  // the live-schema sweep).
-  const branchSql = (c: CountryConfig) => {
-    const ik = c.industryJoinKeyExpr ?? c.idColumn;
-    const fin = c.financialsLatest;
-    // Every branch emits identically-typed revenue_usd/fiscal_year columns —
-    // countries without a financialsLatest summary table emit typed NULL
-    // literals so the UNION ALL columns line up.
-    const finSelect = fin
-      ? `toNullable(fin.revenue_amount_usd) AS revenue_usd, toNullable(fin.fiscal_year) AS fiscal_year`
-      : `CAST(NULL AS Nullable(Float64)) AS revenue_usd, CAST(NULL AS Nullable(Int32)) AS fiscal_year`;
-    const finJoin = fin
-      ? `LEFT JOIN ${fin.table} AS fin ON fin.company_id = toString(${fin.companyKeyExpr})`
-      : "";
-    const orderBy =
-      sort === "revenue"
-        ? `isNull(revenue_usd) ASC, revenue_usd ${dirSql}, ${c.idColumn}`
-        : (() => {
-            const sortExpr = sort === "name" ? c.nameColumn : c.idColumn;
-            return `coalesce(toString(${sortExpr}), '') = '' ASC, ${sortExpr} ${dirSql}, ${c.idColumn}`;
-          })();
-    return `SELECT '${c.code}' AS country_code, toString(${c.idColumn}) AS id, ${c.nameColumn} AS name,
-      toUInt8(${c.activeExpr}) AS active, toString(${ik}) AS __ik, ${finSelect}
-    FROM ${c.companiesTable} ${finJoin} ${whereByCode.get(c.code)}
-    ORDER BY ${orderBy}
-    LIMIT ${page * pageSize}`;
-  };
-  const outerSort =
+  const orderBy =
     sort === "name"
-      ? `coalesce(name, '') = '' ASC, name ${dirSql}, country_code, id`
+      ? `name_normalized = '' ASC, name_normalized ${dirSql}, country_code, company_id`
       : sort === "revenue"
-        ? `isNull(revenue_usd) ASC, revenue_usd ${dirSql}, country_code, id`
-        : `country_code ${dirSql}, id ${dirSql}`;
+        ? `isNull(revenue_usd) ASC, revenue_usd ${dirSql}, country_code, company_id`
+        : `country_code ${dirSql}, company_id ${dirSql}`;
 
-  const rows = await chQuery<UnifiedRow & { __ik?: string }>(
-    `SELECT country_code, id, name, active, __ik, revenue_usd, fiscal_year
-     FROM (${branches.map(branchSql).join(" UNION ALL ")})
-     ORDER BY ${outerSort}
+  const rows = await chQuery<CompaniesAllRow>(
+    `SELECT country_code, company_id AS id, name, is_active AS active,
+       industry_code, industry_label, revenue_usd, fiscal_year
+     FROM ${COMPANIES_ALL}
+     ${where}
+     ORDER BY ${orderBy}
      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
     params,
   );
 
-  // Per-country industry merge for just the visible page.
-  const byCountry = new Map<string, (UnifiedRow & { __ik?: string })[]>();
-  for (const row of rows) {
-    const group = byCountry.get(row.country_code) ?? [];
-    group.push(row);
-    byCountry.set(row.country_code, group);
-  }
-  await Promise.all(
-    [...byCountry.entries()].map(async ([code, group]) => {
-      const country = getCountry(code)!;
-      if (!country.industryQuery) {
-        for (const row of group) {
-          row.industry_code = null;
-          row.industry_label = null;
-          delete row.__ik;
-        }
-        return;
-      }
-      const ids = group.map((r) => r.__ik ?? "").filter((v) => v !== "");
-      const industries = ids.length
-        ? await chQuery<{ company_id: string; industry_code: string | null; industry_label: string | null }>(
-            country.industryQuery,
-            { ids },
-          )
-        : [];
-      const byId = new Map(industries.map((i) => [i.company_id, i]));
-      for (const row of group) {
-        const hit = byId.get(row.__ik ?? "");
-        row.industry_code = hit?.industry_code ?? null;
-        row.industry_label = hit?.industry_label ?? null;
-        delete row.__ik;
-      }
-    }),
-  );
+  const mapped: UnifiedRow[] = rows.map((row) => ({
+    country_code: row.country_code,
+    id: row.id,
+    name: row.name,
+    active: row.active,
+    industry_code: row.industry_code === "" ? null : row.industry_code,
+    industry_label: row.industry_label === "" ? null : row.industry_label,
+    revenue_usd: row.revenue_usd,
+    fiscal_year: row.fiscal_year,
+  }));
 
-  return { rows, total, page, pageSize, sort, dir };
+  return { rows: mapped, total, page, pageSize, sort, dir };
 }
 
 // ---------- Unified facets ----------
+// One table, one query path: every facet below is a single GROUP BY (or
+// aggregate) over companies_all — no per-country branching or merge.
 
-let countryFacetCache: { loadedAt: number; options: FacetOption[] } | null = null;
-const COUNTRY_FACET_TTL_MS = 24 * 60 * 60 * 1000;
+const FACET_TTL_MS = 24 * 60 * 60 * 1000;
+const facetCache = new Map<string, { loadedAt: number; options: FacetOption[] }>();
+
+function cached(key: string): FacetOption[] | undefined {
+  const hit = facetCache.get(key);
+  if (hit && Date.now() - hit.loadedAt < FACET_TTL_MS) return hit.options;
+  return undefined;
+}
+
+function store(key: string, options: FacetOption[]): FacetOption[] {
+  facetCache.set(key, { loadedAt: Date.now(), options });
+  return options;
+}
 
 async function countryFacet(): Promise<FacetOption[]> {
-  if (countryFacetCache && Date.now() - countryFacetCache.loadedAt < COUNTRY_FACET_TTL_MS) {
-    return countryFacetCache.options;
-  }
-  const sql = COUNTRIES.map(
-    (c) => `SELECT '${c.code}' AS value, count() AS cnt FROM ${c.companiesTable}`,
-  ).join(" UNION ALL ");
-  const rows = await chQuery<{ value: string; cnt: string }>(`SELECT value, cnt FROM (${sql}) ORDER BY cnt DESC`);
+  const hit = cached("country");
+  if (hit) return hit;
+  const rows = await chQuery<{ value: string; cnt: string }>(
+    `SELECT country_code AS value, count() AS cnt FROM ${COMPANIES_ALL} GROUP BY value ORDER BY cnt DESC`,
+  );
   const options = rows.map((r) => ({
     value: r.value,
     label: getCountry(r.value)?.name ?? r.value,
     count: Number(r.cnt),
   }));
-  countryFacetCache = { loadedAt: Date.now(), options };
-  return options;
+  return store("country", options);
+}
+
+async function hasFinancialsFacet(): Promise<FacetOption[]> {
+  const hit = cached("has_financials");
+  if (hit) return hit;
+  const rows = await chQuery<{ value: string; label: string; cnt: string }>(
+    `SELECT 'true' AS value, 'yes' AS label, countIf(has_financials = 1) AS cnt FROM ${COMPANIES_ALL}`,
+  );
+  const options = rows.map((r) => ({ value: r.value, label: r.label, count: Number(r.cnt) }));
+  return store("has_financials", options);
+}
+
+async function industryFacet(): Promise<FacetOption[]> {
+  const hit = cached("industry");
+  if (hit) return hit;
+  const rows = await chQuery<{ value: string; label: string; cnt: string }>(
+    `SELECT industry_code AS value, any(industry_label) AS label, count() AS cnt
+     FROM ${COMPANIES_ALL}
+     WHERE industry_code != ''
+     GROUP BY value
+     ORDER BY cnt DESC
+     LIMIT 50000`,
+  );
+  const options = rows.map((r) => ({
+    value: r.value,
+    label: r.label || r.value,
+    count: Number(r.cnt),
+  }));
+  return store("industry", options);
+}
+
+async function columnFacet(facetKey: string, column: string): Promise<FacetOption[]> {
+  const hit = cached(facetKey);
+  if (hit) return hit;
+  const rows = await chQuery<{ value: string; cnt: string }>(
+    `SELECT ${column} AS value, count() AS cnt
+     FROM ${COMPANIES_ALL}
+     WHERE ${column} != ''
+     GROUP BY value
+     ORDER BY cnt DESC
+     LIMIT 50000`,
+  );
+  const options = rows.map((r) => ({ value: r.value, label: r.value, count: Number(r.cnt) }));
+  return store(facetKey, options);
 }
 
 export async function getUnifiedFacetOptions(facetKey: string): Promise<FacetOption[]> {
   if (!UNIFIED_FACET_KEYS.includes(facetKey)) throw new Error(`unknown facet: ${facetKey}`);
   if (facetKey === "country") return countryFacet();
-  // has_financials is a synthetic semi-join filter key, not a categorical
-  // column backed by any country's `columns` registry, so the generic
-  // per-column path below (getFacetOptions → facetSql) would throw "unknown
-  // facet" for every country and bubble up as a 500 from /facet-options. The
-  // UI never opens a value-search combobox for this key (FilterSidebar
-  // renders it as a single on/off FacetToggle instead), so no caller needs
-  // real per-value counts here — this stub only guards the endpoint from
-  // 500ing if ever hit directly with ?column=has_financials.
-  if (facetKey === "has_financials") return [{ value: "true", label: "yes", count: 0 }];
-
-  const countries = COUNTRIES.filter((c) => canAnswer(c, facetKey));
-  const lists = await Promise.all(countries.map((c) => getFacetOptions(c, facetKey)));
-  const merged = new Map<string, FacetOption>();
-  for (const list of lists) {
-    for (const option of list) {
-      const existing = merged.get(option.value);
-      if (existing) {
-        existing.count += option.count;
-        if (existing.label === existing.value && option.label !== option.value) {
-          existing.label = option.label;
-        }
-      } else {
-        merged.set(option.value, { ...option });
-      }
-    }
-  }
-  return [...merged.values()].sort((a, b) => b.count - a.count);
+  if (facetKey === "has_financials") return hasFinancialsFacet();
+  if (facetKey === "industry") return industryFacet();
+  const column = FACET_COLUMN[facetKey];
+  if (!column) throw new Error(`unknown facet: ${facetKey}`);
+  return columnFacet(facetKey, column);
 }
 
 export async function searchUnifiedFacetOptions(facetKey: string, q: string): Promise<FacetOption[]> {

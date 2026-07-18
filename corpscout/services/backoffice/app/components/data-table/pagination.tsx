@@ -23,18 +23,14 @@ export function DataTablePagination({
   total,
   page,
   pageSize,
-  maxPage,
 }: {
   total: number;
   page: number;
   pageSize: number;
-  maxPage?: number;
 }) {
   const searchParams = useEffectiveSearchParams();
   const navigate = useNavigate();
-  const rawLast = Math.max(1, Math.ceil(total / pageSize));
-  const lastPage = maxPage ? Math.min(rawLast, maxPage) : rawLast;
-  const capped = maxPage ? rawLast > maxPage : false;
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
 
   function nav(target: number, disabled: boolean, icon: React.ReactNode, label: string) {
     if (disabled) {
@@ -88,7 +84,6 @@ export function DataTablePagination({
         </div>
         <span className="text-sm tabular-nums">
           Page {nf.format(page)} of {nf.format(lastPage)}
-          {capped ? " (capped)" : ""}
         </span>
         <div className="flex items-center gap-1.5">
           {nav(1, page <= 1, <ChevronsLeft className="size-4" />, "First page")}

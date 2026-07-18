@@ -1,7 +1,7 @@
 import { Form, Link } from "react-router";
 import { X } from "lucide-react";
 import type { Route } from "./+types/companies";
-import { getCountry, MAX_UNIFIED_PAGE } from "~/lib/countries";
+import { getCountry } from "~/lib/countries";
 import { parseUnifiedFilters } from "~/lib/filters";
 import { searchUnifiedCompanies } from "~/lib/unified.server";
 import { Button } from "~/components/ui/button";
@@ -94,7 +94,6 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
         total={result.total}
         page={result.page}
         pageSize={result.pageSize}
-        maxPage={MAX_UNIFIED_PAGE}
       />
     </>
   );

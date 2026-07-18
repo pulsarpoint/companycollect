@@ -37,6 +37,18 @@ const COLUMN_FACET_KEYS = [
 ];
 export const UNIFIED_FACET_KEYS = ["country", "has_financials", ...COLUMN_FACET_KEYS, "industry"];
 
+/**
+ * Facet key → companies_all column name. SQL identifiers in WHERE/GROUP BY
+ * clauses come ONLY from this fixed map, never from a user-supplied facet
+ * key — the map's keys double as the whitelist.
+ */
+export const FACET_COLUMN: Record<string, string> = {
+  status: "status",
+  legal_form: "legal_form",
+  place: "place",
+  size: "size",
+};
+
 export const UNIFIED_FACET_LABELS: Record<string, string> = {
   country: "Country",
   has_financials: "Has financials",
