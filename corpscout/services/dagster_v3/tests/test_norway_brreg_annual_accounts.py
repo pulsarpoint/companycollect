@@ -100,6 +100,25 @@ class FakeAnnualAccountApi:
         return self.pdf
 
 
+class FailingSecondAnnualAccountApi:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def annual_account_pdf(
+        self,
+        *,
+        org_number: str,
+        filing_year: int,
+    ) -> BrregAnnualAccountPdf | None:
+        self.calls.append((org_number, filing_year))
+        if len(self.calls) == 2:
+            raise RuntimeError("rate limited")
+        return BrregAnnualAccountPdf(
+            source_url=f"https://example.test/{org_number}/{filing_year}",
+            body=f"%PDF-1.7 {org_number}".encode(),
+        )
+
+
 def test_annual_account_partitions_are_year_by_64_stable_chunks() -> None:
     keys = NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS.get_partition_keys(
         current_time=datetime(2026, 7, 18, tzinfo=UTC)
@@ -293,6 +312,55 @@ def test_pdf_download_reuses_staged_pdf_without_http_request() -> None:
     assert api.calls == []
     assert metadata["staged_reused_count"] == 1
     assert metadata["downloaded_count"] == 0
+
+
+def test_pdf_download_resumes_after_failure_without_redownloading_completed_pdf() -> (
+    None
+):
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    candidates = [
+        {"org_number": "111111111", "legal_name": "FIRST AS"},
+        {"org_number": "222222222", "legal_name": "SECOND AS"},
+    ]
+    first_api = FailingSecondAnnualAccountApi()
+
+    with pytest.raises(RuntimeError, match="org=222222222"):
+        download_annual_account_pdfs(
+            candidates=candidates,
+            filing_year=2025,
+            chunk_key="bucket_00",
+            source_run_id="failed-run",
+            api=first_api,
+            storage=storage,
+            log=None,
+        )
+
+    assert storage.annual_account_pdf_exists(
+        filing_year=2025,
+        chunk_key="bucket_00",
+        org_number="111111111",
+    )
+
+    resumed_api = FakeAnnualAccountApi(
+        BrregAnnualAccountPdf(
+            source_url="https://example.test/222222222/2025",
+            body=b"%PDF-1.7 second",
+        )
+    )
+    metadata = download_annual_account_pdfs(
+        candidates=candidates,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="resumed-run",
+        api=resumed_api,
+        storage=storage,
+        log=None,
+    )
+
+    assert resumed_api.calls == [("222222222", 2025)]
+    assert metadata["staged_reused_count"] == 1
+    assert metadata["downloaded_count"] == 1
 
 
 def test_document_processing_reads_staged_pdf_and_skips_existing_json(

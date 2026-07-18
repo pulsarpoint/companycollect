@@ -24,11 +24,17 @@ EXPECTED_ENTITY_RECORD_KEYS = {
 
 class FakeResponse:
     def __init__(
-        self, *, status_code: int = 200, payload: Any = None, content: bytes = b""
+        self,
+        *,
+        status_code: int = 200,
+        payload: Any = None,
+        content: bytes = b"",
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.status_code = status_code
         self._payload = payload
         self.content = content
+        self.headers = headers or {}
         self.text = (
             json.dumps(payload)
             if payload is not None
@@ -91,6 +97,24 @@ class ParamAwareFakeHttpSession:
             int(params.get("page", 0)),
         )
         return self.responses[key]
+
+
+class SequentialFakeHttpSession:
+    def __init__(self, responses: list[FakeResponse]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, dict[str, Any] | None, int, bool]] = []
+        self.headers: dict[str, str] = {}
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        timeout: int = 120,
+        stream: bool = False,
+    ) -> FakeResponse:
+        self.calls.append((url, params, timeout, stream))
+        return self.responses.pop(0)
 
 
 class FakeDagsterS3Resource:
@@ -271,10 +295,33 @@ def test_annual_account_pdf_returns_none_when_company_year_is_unavailable() -> N
         session=FakeHttpSession({source_url: FakeResponse(status_code=404)})
     )
 
-    assert (
-        resource.annual_account_pdf(org_number="923609016", filing_year=2025)
-        is None
+    assert resource.annual_account_pdf(org_number="923609016", filing_year=2025) is None
+
+
+def test_annual_account_pdf_slows_requests_and_retries_rate_limit(
+    monkeypatch,
+) -> None:
+    session = SequentialFakeHttpSession(
+        [
+            FakeResponse(status_code=429, headers={"Retry-After": "7"}),
+            FakeResponse(content=b"%PDF-1.7 annual account"),
+        ]
     )
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "dagster_v3.defs.norway_brreg.resources.time.sleep", sleeps.append
+    )
+    resource = NorwayBrregApiResource(session=session)
+
+    result = resource.annual_account_pdf(
+        org_number="923609016",
+        filing_year=2025,
+    )
+
+    assert result is not None
+    assert result.body == b"%PDF-1.7 annual account"
+    assert len(session.calls) == 2
+    assert sleeps == [1.0, 7.0, 1.0]
 
 
 def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities() -> (

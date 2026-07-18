@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Mapping
@@ -34,6 +35,11 @@ DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
 ENTITY_PROGRESS_LOG_EVERY_ROWS = 1000
 UPDATE_MAX_RESULT_WINDOW = 10_000
+ANNUAL_ACCOUNT_PDF_REQUEST_DELAY_SECONDS = 1.0
+ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS = 8
+ANNUAL_ACCOUNT_PDF_RETRY_INITIAL_SECONDS = 5.0
+ANNUAL_ACCOUNT_PDF_RETRY_MAX_SECONDS = 60.0
+ANNUAL_ACCOUNT_PDF_RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 LOGGER = logging.getLogger(__name__)
 
 BRREG_ENTITIES_COLUMNS = tables.BRREG_ENTITIES_COLUMNS
@@ -43,6 +49,7 @@ BRREG_ENTITIES_COLUMNS = tables.BRREG_ENTITIES_COLUMNS
 class BrregAnnualAccountPdf:
     source_url: str
     body: bytes
+
 
 BRREG_LEGAL_FORM_DESCRIPTION_EN_BY_CODE = {
     "ANS": "General partnership",
@@ -129,23 +136,44 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         org_number: str,
         filing_year: int,
     ) -> BrregAnnualAccountPdf | None:
-        source_url = (
-            f"{BRREG_ANNUAL_ACCOUNTS_BASE_URL}/kopi/{org_number}/{filing_year}"
-        )
-        response = self.session().get(
-            source_url,
-            timeout=self.timeout_seconds,
-        )
-        if response.status_code == 404:
-            return None
-        _raise_for_status(response)
-        body = bytes(response.content)
-        if not body.startswith(b"%PDF-"):
-            raise RuntimeError(
-                "Norway BRREG annual-account response is not a PDF: "
-                f"org={org_number} year={filing_year}"
+        source_url = f"{BRREG_ANNUAL_ACCOUNTS_BASE_URL}/kopi/{org_number}/{filing_year}"
+        for attempt in range(1, ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS + 1):
+            time.sleep(ANNUAL_ACCOUNT_PDF_REQUEST_DELAY_SECONDS)
+            response = self.session().get(
+                source_url,
+                timeout=self.timeout_seconds,
             )
-        return BrregAnnualAccountPdf(source_url=source_url, body=body)
+            if response.status_code == 404:
+                return None
+            if (
+                response.status_code in ANNUAL_ACCOUNT_PDF_RETRY_STATUS_CODES
+                and attempt < ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS
+            ):
+                wait_seconds = _annual_account_pdf_retry_seconds(response, attempt)
+                LOGGER.warning(
+                    "Norway BRREG annual-account PDF request was throttled or "
+                    "temporarily unavailable; retrying: org=%s year=%s "
+                    "status=%s attempt=%s/%s wait_seconds=%s",
+                    org_number,
+                    filing_year,
+                    response.status_code,
+                    attempt,
+                    ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+                continue
+
+            _raise_for_status(response)
+            body = bytes(response.content)
+            if not body.startswith(b"%PDF-"):
+                raise RuntimeError(
+                    "Norway BRREG annual-account response is not a PDF: "
+                    f"org={org_number} year={filing_year}"
+                )
+            return BrregAnnualAccountPdf(source_url=source_url, body=body)
+
+        raise AssertionError("annual-account PDF retry loop completed without a result")
 
     def _download_entries_snapshot(
         self,
@@ -508,6 +536,20 @@ def _raise_for_status(response: Any) -> None:
     status_code = getattr(response, "status_code", 200)
     if status_code >= 400:
         raise RuntimeError(f"HTTP {status_code}")
+
+
+def _annual_account_pdf_retry_seconds(response: Any, attempt: int) -> float:
+    headers = getattr(response, "headers", {})
+    retry_after = headers.get("Retry-After") if isinstance(headers, Mapping) else None
+    if retry_after is not None:
+        try:
+            return max(0.0, float(retry_after))
+        except TypeError, ValueError:
+            pass
+    return min(
+        ANNUAL_ACCOUNT_PDF_RETRY_INITIAL_SECONDS * (2 ** (attempt - 1)),
+        ANNUAL_ACCOUNT_PDF_RETRY_MAX_SECONDS,
+    )
 
 
 def _exception_has_http_status(exc: Exception, status_code: int) -> bool:

@@ -21,7 +21,7 @@ from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     annual_account_pdf_object_key,
 )
 
-ANNUAL_ACCOUNT_DOWNLOAD_WORKERS = 8
+ANNUAL_ACCOUNT_DOWNLOAD_WORKERS = 1
 ANNUAL_ACCOUNT_DOWNLOAD_BATCH_SIZE = 250
 ANNUAL_ACCOUNT_DOCUMENT_WORKERS = 6
 ANNUAL_ACCOUNT_PROGRESS_INTERVAL = 100
@@ -71,30 +71,24 @@ def download_annual_account_pdfs(
         batch = unique_candidates[
             batch_start : batch_start + ANNUAL_ACCOUNT_DOWNLOAD_BATCH_SIZE
         ]
-        with ThreadPoolExecutor(
-            max_workers=ANNUAL_ACCOUNT_DOWNLOAD_WORKERS
-        ) as executor:
-            futures = {
-                executor.submit(
-                    _stage_pdf,
-                    candidate,
-                    filing_year=filing_year,
-                    chunk_key=chunk_key,
-                    source_run_id=source_run_id,
-                    api=api,
-                    storage=storage,
-                ): _string(candidate.get("org_number"))
-                for candidate in batch
-            }
-            for future in as_completed(futures):
-                org_number = futures[future]
-                try:
-                    records.append(future.result())
-                except Exception as error:
-                    raise RuntimeError(
-                        "Norway BRREG annual-account PDF download failed: "
-                        f"org={org_number} year={filing_year} chunk={chunk_key}"
-                    ) from error
+        for candidate in batch:
+            org_number = _string(candidate.get("org_number"))
+            try:
+                records.append(
+                    _stage_pdf(
+                        candidate,
+                        filing_year=filing_year,
+                        chunk_key=chunk_key,
+                        source_run_id=source_run_id,
+                        api=api,
+                        storage=storage,
+                    )
+                )
+            except Exception as error:
+                raise RuntimeError(
+                    "Norway BRREG annual-account PDF download failed: "
+                    f"org={org_number} year={filing_year} chunk={chunk_key}"
+                ) from error
 
         catalog_key = storage.write_annual_account_pdf_catalog(
             filing_year=filing_year,
