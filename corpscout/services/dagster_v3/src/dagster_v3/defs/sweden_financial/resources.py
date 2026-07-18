@@ -183,6 +183,23 @@ class SwedenFinancialReportsResource(dg.ConfigurableResource):
             if marker is None or marker == "":
                 break
 
+    def count_archives_by_year(
+        self,
+        *,
+        session: Any | None = None,
+    ) -> dict[str, int]:
+        """Count every upstream archive per year via a single listing walk.
+
+        Reuses ``iter_archives`` (the existing listing capability) rather than
+        hand-rolling HTTP; used by the ``archive_ingest_complete`` asset check
+        to detect a silently stalled/gapped ingest for a given year.
+        """
+        http_session = session or self._session()
+        counts: dict[str, int] = {}
+        for archive in self.iter_archives(session=http_session):
+            counts[archive.year] = counts.get(archive.year, 0) + 1
+        return counts
+
     def listing_url(
         self,
         *,

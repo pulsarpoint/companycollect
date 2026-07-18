@@ -379,6 +379,20 @@ native_metrics AS (
         ON facts.statement_key = reports.statement_key
     LEFT JOIN rates_for_reports AS rates
         ON rates.requested_rate_date = reports.report_period_end
+    -- 2026-07-18: exclude non-statement documents from the metrics table.
+    -- rar/rarc ('se/fr/ar/rar', 'se/fr/ar/rarc') are figure-less registration
+    -- envelopes, never real statements -- always excluded. race
+    -- ('se/fr/misc/race') is a mixed bag: ~110k company-years have NO other
+    -- source of figures, so a race row is kept ONLY when it carries at least
+    -- one mapped monetary metric; figure-less race rows are excluded.
+    -- gaap/coa bank filings (e.g. rcplcs credit institutions) are real
+    -- statements whose figures live in an external package, so they are
+    -- deliberately NOT excluded here even when figure-less.
+    WHERE ifNull(reports.taxonomy_entrypoint, '') NOT LIKE '%/ar/rar%'
+      AND NOT (
+          ifNull(reports.taxonomy_entrypoint, '') LIKE '%/misc/race/%'
+          AND ifNull(facts.mapped_fact_count, 0) = 0
+      )
 )
 SELECT
     country_iso2,

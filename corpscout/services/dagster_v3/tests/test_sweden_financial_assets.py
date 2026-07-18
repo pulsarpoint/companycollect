@@ -1,5 +1,6 @@
 import inspect
 from pathlib import Path
+from typing import Any
 
 import dagster as dg
 
@@ -199,3 +200,129 @@ def test_sweden_financial_docs_describe_raw_archive_scope() -> None:
     assert "XHTML extraction" in text
     assert "se_financial_facts_with_source" in text
     assert "se_financial_metrics" in text
+
+
+def test_archive_ingest_complete_check_registered() -> None:
+    from dagster_v3.defs.sweden_financial.assets import defs
+
+    check_specs = [
+        spec
+        for checks_def in defs.asset_checks or []
+        for spec in checks_def.check_specs
+    ]
+    names = {(spec.asset_key.to_user_string(), spec.name) for spec in check_specs}
+    assert ("sweden_financial_reports_clickhouse", "archive_ingest_complete") in names
+
+
+def test_sweden_financial_archive_ingest_gap_result_passes_within_tolerance() -> None:
+    from dagster_v3.defs.sweden_financial.assets import (
+        sweden_financial_archive_ingest_gap_result,
+    )
+
+    result = sweden_financial_archive_ingest_gap_result(
+        upstream_counts={"2025": 100, "2026": 241},
+        processed_counts={"2025": 100, "2026": 235},
+    )
+
+    assert result.passed is True
+    assert result.metadata["max_gap"].value == 6
+    assert result.metadata["per_year"].data["2026"] == {
+        "upstream": 241,
+        "processed": 235,
+        "gap": 6,
+    }
+
+
+def test_sweden_financial_archive_ingest_gap_result_fails_when_gap_exceeds_tolerance() -> (
+    None
+):
+    from dagster_v3.defs.sweden_financial.assets import (
+        sweden_financial_archive_ingest_gap_result,
+    )
+
+    # 2026-07-18: reproduces the discovered seam -- 216 of 241 upstream 2026
+    # archives were silently never ingested (only the yearly backfill ran,
+    # and the weekly "current" partitions only start 2026-07-04).
+    result = sweden_financial_archive_ingest_gap_result(
+        upstream_counts={"2026": 241},
+        processed_counts={"2026": 25},
+    )
+
+    assert result.passed is False
+    assert result.metadata["max_gap"].value == 216
+    assert result.metadata["per_year"].data["2026"] == {
+        "upstream": 241,
+        "processed": 25,
+        "gap": 216,
+    }
+
+
+def test_sweden_financial_archive_ingest_gap_result_treats_missing_years_as_zero() -> (
+    None
+):
+    from dagster_v3.defs.sweden_financial.assets import (
+        sweden_financial_archive_ingest_gap_result,
+    )
+
+    result = sweden_financial_archive_ingest_gap_result(
+        upstream_counts={"2020": 50, "2027": 10},
+        processed_counts={"2020": 50},
+    )
+
+    assert result.passed is False
+    assert result.metadata["per_year"].data["2027"] == {
+        "upstream": 10,
+        "processed": 0,
+        "gap": 10,
+    }
+    assert result.metadata["max_gap"].value == 10
+
+
+class _FakeArchiveCheckClickHouseClient:
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        self.rows = rows
+        self.statements: list[str] = []
+
+    def execute(
+        self,
+        sql: str,
+        params: dict[str, object] | None = None,
+    ) -> list[tuple[Any, ...]]:
+        del params
+        self.statements.append(sql)
+        return self.rows
+
+
+class _FakeArchiveCheckClickHouseResource:
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        self.client = _FakeArchiveCheckClickHouseClient(rows)
+
+    def get_connection(self) -> "_FakeArchiveCheckConnection":
+        return _FakeArchiveCheckConnection(self.client)
+
+
+class _FakeArchiveCheckConnection:
+    def __init__(self, client: _FakeArchiveCheckClickHouseClient) -> None:
+        self.client = client
+
+    def __enter__(self) -> _FakeArchiveCheckClickHouseClient:
+        return self.client
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+
+def test_sweden_financial_processed_archive_counts_by_year_groups_rows() -> None:
+    from dagster_v3.defs.sweden_financial.assets import (
+        sweden_financial_processed_archive_counts_by_year,
+    )
+
+    clickhouse = _FakeArchiveCheckClickHouseResource(
+        [("2020", 12), ("2026", 25)]
+    )
+
+    counts = sweden_financial_processed_archive_counts_by_year(clickhouse)
+
+    assert counts == {"2020": 12, "2026": 25}
+    assert "GROUP BY archive_year" in clickhouse.client.statements[0]
+    assert "corpscout.se_financial_reports" in clickhouse.client.statements[0]

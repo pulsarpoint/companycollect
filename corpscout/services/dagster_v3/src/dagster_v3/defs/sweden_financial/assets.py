@@ -408,6 +408,84 @@ def sweden_financial_metrics_clickhouse(
     return dg.MaterializeResult(metadata=counts)
 
 
+SWEDEN_FINANCIAL_ARCHIVE_INGEST_GAP_TOLERANCE = 6
+
+
+def sweden_financial_processed_archive_counts_by_year(
+    clickhouse: ClickhouseResource,
+) -> dict[str, int]:
+    """Count distinct processed source archives per year in ClickHouse."""
+    with clickhouse.get_connection() as client:
+        rows = client.execute(
+            f"""
+            SELECT
+                extract(source_archive_key, 'year=([^/]+)') AS archive_year,
+                uniqExact(source_archive_key) AS processed_count
+            FROM {QUALIFIED_SE_FINANCIAL_REPORTS_TABLE}
+            GROUP BY archive_year
+            """
+        )
+    return {str(year): int(count) for year, count in rows}
+
+
+def sweden_financial_archive_ingest_gap_result(
+    *,
+    upstream_counts: dict[str, int],
+    processed_counts: dict[str, int],
+    gap_tolerance: int = SWEDEN_FINANCIAL_ARCHIVE_INGEST_GAP_TOLERANCE,
+) -> dg.AssetCheckResult:
+    """Build the check result comparing upstream vs. processed archives per year.
+
+    2026-07-18: the yearly backfill partitions ran once and the "current"
+    weekly partitions only start 2026-07-04, so 216 of 241 upstream 2026
+    archives were silently never ingested -- a seam with no guard. Fails
+    when any year's processed count lags the upstream listing by more than
+    ``gap_tolerance`` archives (tolerance for weekly cadence + in-flight
+    syncs).
+    """
+    years = sorted(set(upstream_counts) | set(processed_counts))
+    per_year = {
+        year: {
+            "upstream": upstream_counts.get(year, 0),
+            "processed": processed_counts.get(year, 0),
+            "gap": upstream_counts.get(year, 0) - processed_counts.get(year, 0),
+        }
+        for year in years
+    }
+    max_gap = max((entry["gap"] for entry in per_year.values()), default=0)
+    return dg.AssetCheckResult(
+        passed=max_gap <= gap_tolerance,
+        metadata={
+            "per_year": dg.MetadataValue.json(per_year),
+            "max_gap": dg.MetadataValue.int(max_gap),
+            "gap_tolerance": dg.MetadataValue.int(gap_tolerance),
+        },
+    )
+
+
+@dg.asset_check(
+    asset="sweden_financial_reports_clickhouse",
+    name="archive_ingest_complete",
+)
+def archive_ingest_complete(
+    sweden_financial_reports: SwedenFinancialReportsResource,
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    """Guard against a silent upstream-archive ingest gap (see module docs).
+
+    Lists upstream archives per year via
+    ``SwedenFinancialReportsResource.count_archives_by_year`` (which reuses
+    the existing paginated listing capability) and compares against distinct
+    processed ``source_archive_key`` values per year in ClickHouse.
+    """
+    upstream_counts = sweden_financial_reports.count_archives_by_year()
+    processed_counts = sweden_financial_processed_archive_counts_by_year(clickhouse)
+    return sweden_financial_archive_ingest_gap_result(
+        upstream_counts=upstream_counts,
+        processed_counts=processed_counts,
+    )
+
+
 SWEDEN_FINANCIAL_BACKFILL_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_backfill_raw_archives_s3",
     "sweden_financial_backfill_report_xhtml_catalog_duckdb",
@@ -482,6 +560,7 @@ defs = dg.Definitions(
         sweden_financial_facts_clickhouse,
         sweden_financial_metrics_clickhouse,
     ],
+    asset_checks=[archive_ingest_complete],
     jobs=[
         sweden_financial_backfill_job,
         sweden_financial_current_year_job,

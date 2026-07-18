@@ -315,6 +315,44 @@ def test_sweden_financial_reports_follows_listing_pagination() -> None:
     assert result.metadata["downloaded_archive_count"] == 2
 
 
+def test_sweden_financial_reports_count_archives_by_year_groups_across_pages() -> None:
+    resource = SwedenFinancialReportsResource()
+    first_url = resource.listing_url()
+    second_url = resource.listing_url(marker="arsredovisningar/2020/08_2.zip")
+    session = ListingOnlySession(
+        {
+            first_url: _listing_xml_many(
+                [
+                    {
+                        "key": "arsredovisningar/2020/08_2.zip",
+                        "last_modified": "2025-02-07T09:13:53.713Z",
+                        "etag": '"a"',
+                        "size": 6,
+                    },
+                    {
+                        "key": "arsredovisningar/2020/09_1.zip",
+                        "last_modified": "2025-02-08T09:13:53.713Z",
+                        "etag": '"b"',
+                        "size": 6,
+                    },
+                ],
+                next_marker="arsredovisningar/2020/08_2.zip",
+            ),
+            second_url: _listing_xml(
+                key="arsredovisningar/2021/01_1.zip",
+                last_modified="2025-02-10T10:00:00.000Z",
+                etag='"c"',
+                size=9,
+            ),
+        }
+    )
+
+    counts = resource.count_archives_by_year(session=session)
+
+    assert session.requested_urls == [first_url, second_url]
+    assert counts == {"2020": 2, "2021": 1}
+
+
 def test_sweden_financial_reports_filters_listing_by_year_partition() -> None:
     resource = SwedenFinancialReportsResource()
     listing_url = resource.listing_url(marker="arsredovisningar/2020/")

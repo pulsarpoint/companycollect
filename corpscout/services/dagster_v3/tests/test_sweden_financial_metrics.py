@@ -61,6 +61,25 @@ def test_sweden_financial_metrics_sql_uses_current_precise_undimensioned_facts()
     assert "corpscout.exchange_rates" in sql
 
 
+def test_sweden_financial_metrics_sql_excludes_non_statement_documents() -> None:
+    # 2026-07-18: rar/rarc registration envelopes and figure-less race
+    # documents must never surface in se_financial_metrics; see
+    # build_sweden_financial_metrics_insert_sql's inline comment for the
+    # full contract (gaap/coa bank filings are deliberately kept).
+    sql = build_sweden_financial_metrics_insert_sql(
+        "`corpscout`.`_tmp_se_financial_metrics_test`"
+    )
+
+    assert "NOT LIKE '%/ar/rar%'" in sql
+    assert "LIKE '%/misc/race/%'" in sql
+    assert "ifNull(facts.mapped_fact_count, 0) = 0" in sql
+    # gaap/coa is never mentioned in the exclusion clause: bank filings are
+    # kept even when figure-less.
+    where_clause_start = sql.index("WHERE ifNull(reports.taxonomy_entrypoint")
+    where_clause = sql[where_clause_start : where_clause_start + 400]
+    assert "gaap" not in where_clause
+
+
 def test_replace_sweden_financial_metrics_is_atomic_and_reports_coverage(
     monkeypatch,
 ) -> None:
