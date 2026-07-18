@@ -20,6 +20,7 @@ from dagster_v3.defs.norway_brreg_financial.financial_fetches import (
 
 FINANCIAL_RESPONSE_PREFIX = "norway_brreg/financial/responses/"
 FINANCIAL_RESPONSE_INDEX_PREFIX = "norway_brreg/financial/response_index/"
+ANNUAL_ACCOUNT_PDF_PREFIX = "norway_brreg/annual_accounts/pdfs/"
 ANNUAL_ACCOUNT_DOCUMENT_PREFIX = "norway_brreg/annual_accounts/documents/"
 READ_PROGRESS_INTERVAL = 100
 
@@ -87,6 +88,86 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
                 chunk_key,
                 org_number,
             )
+        )
+
+    def annual_account_pdf_exists(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+    ) -> bool:
+        return self.response_exists(
+            annual_account_pdf_object_key(
+                filing_year,
+                chunk_key,
+                org_number,
+            )
+        )
+
+    def write_annual_account_pdf(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+        body: bytes,
+    ) -> str:
+        if not body.startswith(b"%PDF-"):
+            raise RuntimeError(
+                "Norway BRREG annual-account object is not a PDF: "
+                f"org={org_number} year={filing_year}"
+            )
+        return self.write_response(
+            annual_account_pdf_object_key(
+                filing_year,
+                chunk_key,
+                org_number,
+            ),
+            body,
+        )
+
+    def read_annual_account_pdf(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+    ) -> bytes:
+        return self.read_response(
+            annual_account_pdf_object_key(
+                filing_year,
+                chunk_key,
+                org_number,
+            )
+        )
+
+    def delete_annual_account_pdfs(self, object_keys: list[str]) -> int:
+        return self.object_store.delete_keys(
+            object_keys,
+            bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
+        )
+
+    def write_annual_account_pdf_catalog(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        frame: pl.DataFrame,
+    ) -> str:
+        return self._write_frame(
+            annual_account_pdf_catalog_object_key(filing_year, chunk_key),
+            frame,
+        )
+
+    def read_annual_account_pdf_catalog(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+    ) -> pl.DataFrame:
+        return self._read_frame(
+            annual_account_pdf_catalog_object_key(filing_year, chunk_key)
         )
 
     def write_annual_account_document(
@@ -179,7 +260,9 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         )
 
     def read_bootstrap_response_index(self, bucket_key: str) -> pl.DataFrame:
-        return self._read_frame(financial_bootstrap_response_index_object_key(bucket_key))
+        return self._read_frame(
+            financial_bootstrap_response_index_object_key(bucket_key)
+        )
 
     def write_update_response_index(
         self,
@@ -192,7 +275,9 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         )
 
     def read_update_response_index(self, partition_date: str) -> pl.DataFrame:
-        return self._read_frame(financial_update_response_index_object_key(partition_date))
+        return self._read_frame(
+            financial_update_response_index_object_key(partition_date)
+        )
 
     def list_all_response_index_keys(self) -> list[str]:
         return sorted(
@@ -396,6 +481,38 @@ def annual_account_document_object_key(
     )
 
 
+def annual_account_pdf_partition_prefix(
+    filing_year: int,
+    chunk_key: str,
+) -> str:
+    if filing_year < 1900 or filing_year > 9999:
+        raise ValueError(f"Invalid Norway annual-account filing year: {filing_year}")
+    return (
+        f"{ANNUAL_ACCOUNT_PDF_PREFIX}year={filing_year}/"
+        f"chunk={_safe_key_component(chunk_key)}/"
+    )
+
+
+def annual_account_pdf_object_key(
+    filing_year: int,
+    chunk_key: str,
+    org_number: str,
+) -> str:
+    return (
+        f"{annual_account_pdf_partition_prefix(filing_year, chunk_key)}"
+        f"org={_safe_key_component(org_number)}/annual-account.pdf"
+    )
+
+
+def annual_account_pdf_catalog_object_key(
+    filing_year: int,
+    chunk_key: str,
+) -> str:
+    return (
+        f"{annual_account_pdf_partition_prefix(filing_year, chunk_key)}catalog.parquet"
+    )
+
+
 def financial_update_response_partition_prefix(partition_date: str) -> str:
     return (
         f"{FINANCIAL_RESPONSE_PREFIX}updates/"
@@ -407,9 +524,7 @@ def financial_response_object_key(
     partition_prefix: str,
     org_number: str,
 ) -> str:
-    return (
-        f"{partition_prefix}org={_safe_key_component(org_number)}/response.json"
-    )
+    return f"{partition_prefix}org={_safe_key_component(org_number)}/response.json"
 
 
 def financial_response_checkpoint_prefix(partition_prefix: str) -> str:

@@ -1,6 +1,8 @@
 from dagster_v3.defs.norway_brreg_financial.assets.annual_accounts import (
     NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS,
     norway_brreg_annual_account_documents_json,
+    norway_brreg_annual_account_pdf_cleanup,
+    norway_brreg_annual_account_pdfs,
 )
 from dagster_v3.defs.norway_brreg_financial.assets.financial_bootstrap import (
     NORWAY_BRREG_FINANCIAL_BOOTSTRAP_PARTITIONS,
@@ -32,6 +34,8 @@ __all__ = [
     "NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS",
     "NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS",
     "norway_brreg_annual_account_documents_json",
+    "norway_brreg_annual_account_pdf_cleanup",
+    "norway_brreg_annual_account_pdfs",
     "norway_brreg_financial_bootstrap_responses_json",
     "norway_brreg_financial_bootstrap_responses_parquet",
     "norway_brreg_financial_responses_updates_json",

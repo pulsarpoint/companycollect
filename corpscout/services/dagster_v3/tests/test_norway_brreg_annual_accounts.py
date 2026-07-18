@@ -2,29 +2,38 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import UTC, datetime
+import hashlib
 import json
 from typing import Any
 
 import dagster as dg
 import pymupdf
+import pytest
 
+from dagster_v3.defs.norway_brreg.resources import BrregAnnualAccountPdf
+from dagster_v3.defs.norway_brreg_financial import annual_account_pipeline
 from dagster_v3.defs.norway_brreg_financial.annual_account_pdf import (
     extract_annual_account_pdf,
 )
 from dagster_v3.defs.norway_brreg_financial.annual_account_pipeline import (
+    download_annual_account_pdfs,
     materialize_annual_account_documents,
+    remove_processed_annual_account_pdfs,
 )
 from dagster_v3.defs.norway_brreg_financial.assets import annual_accounts
 from dagster_v3.defs.norway_brreg_financial.assets.annual_accounts import (
     NORWAY_BRREG_ANNUAL_ACCOUNT_CHUNK_COUNT,
     NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS,
     norway_brreg_annual_account_documents_json,
+    norway_brreg_annual_account_pdf_cleanup,
+    norway_brreg_annual_account_pdfs,
 )
 from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
     annual_account_document_object_key,
+    annual_account_pdf_catalog_object_key,
+    annual_account_pdf_object_key,
 )
-from dagster_v3.defs.norway_brreg.resources import BrregAnnualAccountPdf
 
 
 class FakeClickhouseClient:
@@ -66,6 +75,15 @@ class FakeObjectStore:
     def write_bytes(self, key: str, body: bytes, bucket: str | None = None) -> None:
         self.objects[(str(bucket), key)] = body
 
+    def delete_keys(
+        self,
+        keys: list[str] | tuple[str, ...],
+        bucket: str | None = None,
+    ) -> int:
+        for key in keys:
+            self.objects.pop((str(bucket), key), None)
+        return len(keys)
+
 
 class FakeAnnualAccountApi:
     def __init__(self, pdf: BrregAnnualAccountPdf | None) -> None:
@@ -84,50 +102,52 @@ class FakeAnnualAccountApi:
 
 def test_annual_account_partitions_are_year_by_64_stable_chunks() -> None:
     keys = NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS.get_partition_keys(
-        current_time=datetime(2026, 7, 17, tzinfo=UTC)
+        current_time=datetime(2026, 7, 18, tzinfo=UTC)
     )
 
     assert NORWAY_BRREG_ANNUAL_ACCOUNT_CHUNK_COUNT == 64
     assert len(keys) == 15 * 64
-    assert dg.MultiPartitionKey(
-        {"year": "2011", "chunk": "bucket_00"}
-    ) in keys
-    assert dg.MultiPartitionKey(
-        {"year": "2025", "chunk": "bucket_63"}
-    ) in keys
+    assert dg.MultiPartitionKey({"year": "2011", "chunk": "bucket_00"}) in keys
+    assert dg.MultiPartitionKey({"year": "2025", "chunk": "bucket_63"}) in keys
 
 
-def test_annual_account_asset_queries_requested_year_and_chunk(
+def test_annual_account_asset_graph_separates_download_processing_and_cleanup() -> None:
+    pdf_key = dg.AssetKey("norway_brreg_annual_account_pdfs")
+    document_key = dg.AssetKey("norway_brreg_annual_account_documents_json")
+    cleanup_key = dg.AssetKey("norway_brreg_annual_account_pdf_cleanup")
+
+    assert norway_brreg_annual_account_pdfs.asset_deps[pdf_key] == set()
+    assert norway_brreg_annual_account_documents_json.asset_deps[document_key] == {
+        pdf_key
+    }
+    assert norway_brreg_annual_account_pdf_cleanup.asset_deps[cleanup_key] == {
+        document_key
+    }
+
+
+def test_pdf_asset_queries_requested_year_and_chunk_without_processing(
     monkeypatch,
 ) -> None:
     clickhouse = FakeClickhouseResource([("923609016", "EQUINOR ASA")])
     captured: dict[str, Any] = {}
 
-    def fake_materialize(**kwargs: Any) -> dict[str, int]:
+    def fake_download(**kwargs: Any) -> dict[str, Any]:
         captured.update(kwargs)
         return {
             "candidate_count": 1,
             "downloaded_count": 1,
-            "reused_count": 0,
+            "staged_reused_count": 0,
+            "already_parsed_count": 0,
             "not_found_count": 0,
-            "pdf_bytes": 100,
-            "json_bytes": 200,
-            "page_count": 3,
-            "native_text_page_count": 0,
-            "ocr_page_count": 3,
+            "pdf_bytes_downloaded": 100,
+            "catalog_key": "catalog.parquet",
         }
 
-    monkeypatch.setattr(
-        annual_accounts,
-        "materialize_annual_account_documents",
-        fake_materialize,
-    )
+    monkeypatch.setattr(annual_accounts, "download_annual_account_pdfs", fake_download)
 
-    result = norway_brreg_annual_account_documents_json(
+    result = norway_brreg_annual_account_pdfs(
         context=dg.build_asset_context(
-            partition_key=dg.MultiPartitionKey(
-                {"year": "2025", "chunk": "bucket_07"}
-            )
+            partition_key=dg.MultiPartitionKey({"year": "2025", "chunk": "bucket_07"})
         ),
         clickhouse=clickhouse,
         norway_brreg_api=object(),
@@ -147,7 +167,297 @@ def test_annual_account_asset_queries_requested_year_and_chunk(
     ]
     assert captured["filing_year"] == 2025
     assert captured["chunk_key"] == "bucket_07"
-    assert result.metadata["ocr_page_count"] == 3
+    assert result.metadata["downloaded_count"] == 1
+    assert "ocr_page_count" not in result.metadata
+
+
+def test_pdf_download_stages_pdf_and_catalog_without_processing(monkeypatch) -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    pdf_body = b"%PDF-1.7 staged annual account"
+    monkeypatch.setattr(
+        annual_account_pipeline,
+        "extract_annual_account_pdf",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("PDF download asset must not parse or OCR")
+        ),
+    )
+    api = FakeAnnualAccountApi(
+        BrregAnnualAccountPdf(
+            source_url="https://example.test/923609016/2025",
+            body=pdf_body,
+        )
+    )
+
+    metadata = download_annual_account_pdfs(
+        candidates=[{"org_number": "923609016", "legal_name": "EQUINOR ASA"}],
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="run-1",
+        api=api,
+        storage=storage,
+        log=None,
+    )
+
+    pdf_key = annual_account_pdf_object_key(2025, "bucket_07", "923609016")
+    assert storage.read_response(pdf_key) == pdf_body
+    assert not storage.annual_account_document_exists(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        org_number="923609016",
+    )
+    catalog = storage.read_annual_account_pdf_catalog(
+        filing_year=2025,
+        chunk_key="bucket_07",
+    )
+    assert catalog.to_dicts() == [
+        {
+            "source_run_id": "run-1",
+            "org_number": "923609016",
+            "legal_name": "EQUINOR ASA",
+            "filing_year": 2025,
+            "source_url": "https://example.test/923609016/2025",
+            "source_object_key": pdf_key,
+            "source_payload_hash": hashlib.sha256(pdf_body).hexdigest(),
+            "pdf_size_bytes": len(pdf_body),
+            "fetch_status": "success",
+            "capture_method": "http_download",
+            "fetched_at": catalog["fetched_at"][0],
+        }
+    ]
+    assert metadata["downloaded_count"] == 1
+    assert metadata["already_parsed_count"] == 0
+    assert metadata["catalog_key"] == annual_account_pdf_catalog_object_key(
+        2025, "bucket_07"
+    )
+
+
+def test_pdf_download_skips_company_with_existing_parsed_json() -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    storage.write_annual_account_document(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        org_number="923609016",
+        document={
+            "org_number": "923609016",
+            "filing_year": 2025,
+            "source_pdf_url": "https://example.test/923609016/2025",
+            "source_pdf_sha256": "parsed-hash",
+            "source_pdf_size_bytes": 321,
+        },
+    )
+    api = FakeAnnualAccountApi(None)
+
+    metadata = download_annual_account_pdfs(
+        candidates=[{"org_number": "923609016", "legal_name": "EQUINOR ASA"}],
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="run-2",
+        api=api,
+        storage=storage,
+        log=None,
+    )
+
+    assert api.calls == []
+    assert metadata["already_parsed_count"] == 1
+    assert metadata["downloaded_count"] == 0
+    assert storage.read_annual_account_pdf_catalog(
+        filing_year=2025,
+        chunk_key="bucket_07",
+    )["fetch_status"].to_list() == ["already_parsed"]
+
+
+def test_pdf_download_reuses_staged_pdf_without_http_request() -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    pdf_body = b"%PDF-1.7 already staged"
+    storage.write_annual_account_pdf(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        org_number="923609016",
+        body=pdf_body,
+    )
+    api = FakeAnnualAccountApi(None)
+
+    metadata = download_annual_account_pdfs(
+        candidates=[{"org_number": "923609016", "legal_name": "EQUINOR ASA"}],
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="run-2",
+        api=api,
+        storage=storage,
+        log=None,
+    )
+
+    assert api.calls == []
+    assert metadata["staged_reused_count"] == 1
+    assert metadata["downloaded_count"] == 0
+
+
+def test_document_processing_reads_staged_pdf_and_skips_existing_json(
+    monkeypatch,
+) -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    pdf_body = b"%PDF-1.7 staged annual account"
+    download_annual_account_pdfs(
+        candidates=[{"org_number": "923609016", "legal_name": "EQUINOR ASA"}],
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="download-run",
+        api=FakeAnnualAccountApi(
+            BrregAnnualAccountPdf(
+                source_url="https://example.test/923609016/2025",
+                body=pdf_body,
+            )
+        ),
+        storage=storage,
+        log=None,
+    )
+    extract_calls: list[bytes] = []
+
+    def fake_extract(body: bytes, **kwargs: Any) -> dict[str, Any]:
+        extract_calls.append(body)
+        return {
+            "org_number": kwargs["org_number"],
+            "filing_year": kwargs["filing_year"],
+            "source_pdf_url": kwargs["source_pdf_url"],
+            "source_pdf_sha256": hashlib.sha256(body).hexdigest(),
+            "source_pdf_size_bytes": len(body),
+            "pdf_page_count": 2,
+            "native_text_page_count": 0,
+            "ocr_page_count": 2,
+        }
+
+    monkeypatch.setattr(
+        annual_account_pipeline, "extract_annual_account_pdf", fake_extract
+    )
+
+    first = materialize_annual_account_documents(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="process-run-1",
+        storage=storage,
+        log=None,
+    )
+    second = materialize_annual_account_documents(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="process-run-2",
+        storage=storage,
+        log=None,
+    )
+
+    assert extract_calls == [pdf_body]
+    assert first["processed_count"] == 1
+    assert first["ocr_page_count"] == 2
+    assert second["reused_count"] == 1
+    assert second["processed_count"] == 0
+
+
+def test_cleanup_deletes_pdf_only_after_matching_json_exists(monkeypatch) -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    pdf_body = b"%PDF-1.7 staged annual account"
+    download_annual_account_pdfs(
+        candidates=[{"org_number": "923609016", "legal_name": "EQUINOR ASA"}],
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="download-run",
+        api=FakeAnnualAccountApi(
+            BrregAnnualAccountPdf(
+                source_url="https://example.test/923609016/2025",
+                body=pdf_body,
+            )
+        ),
+        storage=storage,
+        log=None,
+    )
+    monkeypatch.setattr(
+        annual_account_pipeline,
+        "extract_annual_account_pdf",
+        lambda body, **kwargs: {
+            "org_number": kwargs["org_number"],
+            "filing_year": kwargs["filing_year"],
+            "source_pdf_url": kwargs["source_pdf_url"],
+            "source_pdf_sha256": hashlib.sha256(body).hexdigest(),
+            "source_pdf_size_bytes": len(body),
+            "pdf_page_count": 1,
+            "native_text_page_count": 1,
+            "ocr_page_count": 0,
+        },
+    )
+    materialize_annual_account_documents(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="process-run",
+        storage=storage,
+        log=None,
+    )
+    resumed_download = download_annual_account_pdfs(
+        candidates=[{"org_number": "923609016", "legal_name": "EQUINOR ASA"}],
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="resumed-download-run",
+        api=FakeAnnualAccountApi(None),
+        storage=storage,
+        log=None,
+    )
+
+    metadata = remove_processed_annual_account_pdfs(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        storage=storage,
+        log=None,
+    )
+
+    assert resumed_download["staged_reused_count"] == 1
+    assert resumed_download["already_parsed_count"] == 0
+    assert metadata["deleted_count"] == 1
+    assert not storage.annual_account_pdf_exists(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        org_number="923609016",
+    )
+    assert storage.annual_account_document_exists(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        org_number="923609016",
+    )
+
+
+def test_cleanup_keeps_every_pdf_when_any_json_is_missing() -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    download_annual_account_pdfs(
+        candidates=[{"org_number": "923609016", "legal_name": "EQUINOR ASA"}],
+        filing_year=2025,
+        chunk_key="bucket_07",
+        source_run_id="download-run",
+        api=FakeAnnualAccountApi(
+            BrregAnnualAccountPdf(
+                source_url="https://example.test/923609016/2025",
+                body=b"%PDF-1.7 not processed",
+            )
+        ),
+        storage=storage,
+        log=None,
+    )
+
+    with pytest.raises(RuntimeError, match="has no processed JSON"):
+        remove_processed_annual_account_pdfs(
+            filing_year=2025,
+            chunk_key="bucket_07",
+            storage=storage,
+            log=None,
+        )
+
+    assert storage.annual_account_pdf_exists(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        org_number="923609016",
+    )
 
 
 def test_annual_account_document_key_and_json_are_immutable() -> None:
@@ -176,61 +486,6 @@ def test_annual_account_document_key_and_json_are_immutable() -> None:
     assert first_key == second_key == key
     assert first_size == second_size
     assert json.loads(object_store.objects[("source-norway-brreg", key)]) == document
-
-
-def test_materialization_reuses_existing_document_without_redownloading() -> None:
-    object_store = FakeObjectStore()
-    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
-    api = FakeAnnualAccountApi(
-        BrregAnnualAccountPdf(
-            source_url="https://example.test/923609016/2025",
-            body=_native_text_pdf(),
-        )
-    )
-    candidates = [{"org_number": "923609016", "legal_name": "EQUINOR ASA"}]
-
-    first = materialize_annual_account_documents(
-        candidates=candidates,
-        filing_year=2025,
-        chunk_key="bucket_07",
-        source_run_id="run-1",
-        api=api,
-        storage=storage,
-        log=None,
-    )
-    second = materialize_annual_account_documents(
-        candidates=candidates,
-        filing_year=2025,
-        chunk_key="bucket_07",
-        source_run_id="run-2",
-        api=api,
-        storage=storage,
-        log=None,
-    )
-
-    assert first["downloaded_count"] == 1
-    assert first["page_count"] == 1
-    assert second["reused_count"] == 1
-    assert second["downloaded_count"] == 0
-    assert api.calls == [("923609016", 2025)]
-
-
-def test_materialization_counts_company_year_without_a_pdf() -> None:
-    result = materialize_annual_account_documents(
-        candidates=[{"org_number": "923609016", "legal_name": "EQUINOR ASA"}],
-        filing_year=2025,
-        chunk_key="bucket_07",
-        source_run_id="run-1",
-        api=FakeAnnualAccountApi(None),
-        storage=NorwayBrregFinancialParquetStorageResource(
-            object_store=FakeObjectStore()
-        ),
-        log=None,
-    )
-
-    assert result["candidate_count"] == 1
-    assert result["not_found_count"] == 1
-    assert result["downloaded_count"] == 0
 
 
 def test_native_text_pdf_does_not_invoke_ocr() -> None:

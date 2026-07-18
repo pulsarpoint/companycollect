@@ -7,7 +7,9 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 from dagster_v3.defs.norway_brreg_financial.annual_account_pipeline import (
+    download_annual_account_pdfs,
     materialize_annual_account_documents,
+    remove_processed_annual_account_pdfs,
 )
 from dagster_v3.defs.norway_brreg_financial.constants import (
     GROUP_NAME,
@@ -55,19 +57,19 @@ ORDER BY org_number
 
 
 @dg.asset(
-    name="norway_brreg_annual_account_documents_json",
+    name="norway_brreg_annual_account_pdfs",
     group_name=GROUP_NAME,
-    kinds={"python", "clickhouse", "brreg", "pdf", "ocr", "json", "s3"},
+    kinds={"python", "clickhouse", "brreg", "pdf", "s3"},
     partitions_def=NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="norway_brreg_annual_account_ocr",
+    pool="norway_brreg_annual_account_api",
     description=(
-        "For one accounting year and stable company bucket, downloads each BRREG "
-        "annual-account PDF, extracts native text or PyMuPDF/Tesseract OCR into one "
-        "immutable JSON object per document, and retains no local PDF."
+        "For one accounting year and stable company bucket, downloads only "
+        "unprocessed BRREG annual-account PDFs to S3 and writes a Parquet catalog. "
+        "This asset performs no PDF parsing or OCR."
     ),
 )
-def norway_brreg_annual_account_documents_json(
+def norway_brreg_annual_account_pdfs(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
     norway_brreg_api: NorwayBrregApiResource,
@@ -81,12 +83,80 @@ def norway_brreg_annual_account_documents_json(
             filing_year=filing_year,
             chunk_index=chunk_index,
         )
-    metadata = materialize_annual_account_documents(
+    metadata = download_annual_account_pdfs(
         candidates=candidates,
         filing_year=filing_year,
         chunk_key=chunk_key,
         source_run_id=context.op_execution_context.run_id,
         api=norway_brreg_api,
+        storage=norway_brreg_financial_storage,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "filing_year": filing_year,
+            "chunk_key": chunk_key,
+            "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
+            **metadata,
+        }
+    )
+
+
+@dg.asset(
+    name="norway_brreg_annual_account_documents_json",
+    deps=[dg.AssetKey("norway_brreg_annual_account_pdfs")],
+    group_name=GROUP_NAME,
+    kinds={"python", "pdf", "ocr", "json", "s3"},
+    partitions_def=NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="norway_brreg_annual_account_ocr",
+    description=(
+        "Reads staged BRREG annual-account PDFs from S3, extracts native text or "
+        "PyMuPDF/Tesseract OCR, and writes one immutable JSON object per document."
+    ),
+)
+def norway_brreg_annual_account_documents_json(
+    context: AssetExecutionContext,
+    norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
+) -> dg.MaterializeResult:
+    filing_year, chunk_key = _partition_values(context.partition_key)
+    metadata = materialize_annual_account_documents(
+        filing_year=filing_year,
+        chunk_key=chunk_key,
+        source_run_id=context.op_execution_context.run_id,
+        storage=norway_brreg_financial_storage,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "filing_year": filing_year,
+            "chunk_key": chunk_key,
+            "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
+            **metadata,
+        }
+    )
+
+
+@dg.asset(
+    name="norway_brreg_annual_account_pdf_cleanup",
+    deps=[dg.AssetKey("norway_brreg_annual_account_documents_json")],
+    group_name=GROUP_NAME,
+    kinds={"python", "pdf", "s3"},
+    partitions_def=NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    description=(
+        "Verifies every staged PDF has matching processed JSON, then removes only "
+        "those verified PDFs from S3."
+    ),
+)
+def norway_brreg_annual_account_pdf_cleanup(
+    context: AssetExecutionContext,
+    norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
+) -> dg.MaterializeResult:
+    filing_year, chunk_key = _partition_values(context.partition_key)
+    metadata = remove_processed_annual_account_pdfs(
+        filing_year=filing_year,
+        chunk_key=chunk_key,
         storage=norway_brreg_financial_storage,
         log=context.log.info,
     )
