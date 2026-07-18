@@ -134,6 +134,13 @@ def _replace_companies_all_table(client, *, log) -> dict:
                 f"SELECT count() FROM corpscout.{companies_table}"
             )
             source_count = int(source_count)
+            if source_count == 0:
+                raise ValueError(
+                    f"{code}: corpscout.{companies_table} has 0 rows; refusing to "
+                    "build companies_all (an empty source register is never a "
+                    "legitimate publish -- upstream exports refuse empty "
+                    "publishes, so companies_all must too)"
+                )
             if country_rows != source_count:
                 raise ValueError(
                     f"{code}: staged {country_rows} companies_all rows but "

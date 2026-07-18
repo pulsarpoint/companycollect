@@ -211,3 +211,90 @@ def test_companies_all_defs_include_job_and_schedule() -> None:
 
     schedule_names = {schedule.name for schedule in defs.schedules}
     assert "companies_all_schedule" in schedule_names
+
+
+_COMPANIES_TABLE_TO_CODE = {
+    SOURCES[code]["companies_table"]: code for code in COMPANIES_ALL_COUNTRIES
+}
+
+
+class _FakeReplaceClient:
+    """Fakes just enough of the ClickHouse client for
+    ``_replace_companies_all_table``: stage create/drop/exchange are no-ops,
+    the per-leg INSERT is a no-op, and the two ``SELECT count()`` queries
+    (staged rows for the leg, source-table rows) are answered from canned
+    per-country counts.
+    """
+
+    def __init__(
+        self, *, source_counts: dict[str, int], stage_counts: dict[str, int]
+    ) -> None:
+        self.source_counts = source_counts
+        self.stage_counts = stage_counts
+        self.statements: list[str] = []
+
+    def execute(
+        self, sql: str, params: dict[str, object] | None = None
+    ) -> list[tuple[int]]:
+        self.statements.append(sql)
+        if sql.startswith("CREATE TABLE") or sql.startswith("INSERT INTO"):
+            return []
+        if sql.startswith("EXCHANGE TABLES") or sql.startswith("DROP TABLE"):
+            return []
+        if "WHERE country_code = %(code)s" in sql:
+            code = str(params["code"])  # type: ignore[index]
+            return [(self.stage_counts[code],)]
+        if sql.startswith("SELECT count() FROM corpscout."):
+            table = sql.removeprefix("SELECT count() FROM corpscout.")
+            code = _COMPANIES_TABLE_TO_CODE[table]
+            return [(self.source_counts[code],)]
+        raise AssertionError(sql)
+
+
+class _NoOpLog:
+    def info(self, *args: object, **kwargs: object) -> None:
+        pass
+
+
+@pytest.mark.parametrize("empty_code", ["no", "sk"])
+def test_replace_companies_all_table_refuses_empty_source_country(
+    empty_code: str,
+) -> None:
+    from dagster_v3.defs.companies_all.assets import _replace_companies_all_table
+
+    # Every leg staged as many rows as its source has -- except the source
+    # register for `empty_code`, which has gone to 0 rows. Staging then also
+    # produces 0 rows for that leg, so the OLD exact-equality guard
+    # (country_rows != source_count) sees 0 == 0 and passes silently,
+    # letting the country vanish from companies_all with no error. The new
+    # guard must refuse the whole build instead, naming the empty country.
+    source_counts = {code: 100 for code in COMPANIES_ALL_COUNTRIES}
+    source_counts[empty_code] = 0
+    stage_counts = dict(source_counts)
+
+    client = _FakeReplaceClient(source_counts=source_counts, stage_counts=stage_counts)
+
+    try:
+        _replace_companies_all_table(client, log=_NoOpLog())
+    except ValueError as exc:
+        message = str(exc)
+        assert empty_code in message
+        assert "0 rows" in message
+    else:
+        raise AssertionError("expected ValueError for empty source country")
+
+    # The stage table must still be cleaned up even though the build was
+    # refused (the `finally: DROP TABLE IF EXISTS` path).
+    assert any(
+        stmt.startswith("DROP TABLE IF EXISTS") for stmt in client.statements
+    )
+    # The build must refuse BEFORE reaching a later country's leg.
+    later_codes = COMPANIES_ALL_COUNTRIES[
+        COMPANIES_ALL_COUNTRIES.index(empty_code) + 1 :
+    ]
+    for later_code in later_codes:
+        companies_table = SOURCES[later_code]["companies_table"]
+        assert not any(
+            stmt == f"SELECT count() FROM corpscout.{companies_table}"
+            for stmt in client.statements
+        )
