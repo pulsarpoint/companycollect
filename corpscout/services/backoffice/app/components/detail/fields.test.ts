@@ -41,6 +41,13 @@ describe("isLineageKey / splitFields", () => {
     expect(isLineageKey("name_normalized")).toBe(true);
     expect(isLineageKey("name")).toBe(false);
   });
+  it("classifies translation-lineage suffixes as lineage", () => {
+    expect(isLineageKey("activity_text_language")).toBe(true);
+    expect(isLineageKey("activity_text_translated_at")).toBe(true);
+    expect(isLineageKey("activity_text_translation_provider")).toBe(true);
+    expect(isLineageKey("activity_text_translation_model")).toBe(true);
+    expect(isLineageKey("legal_form")).toBe(false);
+  });
   it("splits a record preserving order", () => {
     const { visible, lineage } = splitFields({
       name: "X", source_run_id: "r1", source_url: "https://a", resolved_at: "t",

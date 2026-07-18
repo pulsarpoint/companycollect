@@ -26,10 +26,19 @@ const LINEAGE_EXACT = new Set([
   "name_normalized", "xml_object_key", "xml_sha256", "xml_size_bytes",
 ]);
 
+// Translation-lineage suffixes: `<base>_language` records which language a
+// paired field was translated from, and the `_translated_at`/`_translation_*`
+// trio records how the translation was produced. Neither is content — both
+// belong in the lineage bucket alongside `source_*`.
+const LINEAGE_SUFFIXES = [
+  "_language", "_translated_at", "_translation_provider", "_translation_model",
+];
+
 export function isLineageKey(key: string): boolean {
   if (key === "source_url") return false;
   if (key.startsWith("source_")) return true;
-  return LINEAGE_EXACT.has(key);
+  if (LINEAGE_EXACT.has(key)) return true;
+  return LINEAGE_SUFFIXES.some((suffix) => key.endsWith(suffix));
 }
 
 export function splitFields(record: Record<string, unknown>): {
