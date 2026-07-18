@@ -13,6 +13,7 @@ from dagster_v3.defs.nace import tables as nace_tables
 from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
 from dagster_v3.defs.norway_brreg import resolved_tables as norway_resolved_tables
 from dagster_v3.defs.sweden_company import tables as sweden_company_tables
+from dagster_v3.defs.sweden_financial import history as sweden_financial_history
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
@@ -151,6 +152,7 @@ EXPECTED_MIGRATIONS = (
     "000138_corpscout_no_financial_statements_quality_flag",
     "000139_corpscout_companies_all",
     "000140_corpscout_no_pdf_financials",
+    "000141_corpscout_se_financial_history",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1738,6 +1740,24 @@ def test_companies_all_migration_covers_columns() -> None:
     assert "ORDER BY (country_code, company_id)" in sql
     assert "ENGINE = MergeTree" in sql
     assert "DROP TABLE IF EXISTS corpscout.companies_all" in down_sql
+
+
+def test_sweden_financial_history_migration_covers_columns() -> None:
+    sql = _migration_sql("000141_corpscout_se_financial_history.up.sql")
+    down_sql = _migration_sql("000141_corpscout_se_financial_history.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_financial_history" in sql
+    for column_name in sweden_financial_history.SE_FINANCIAL_HISTORY_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "observation LowCardinality(String)" in sql
+    assert "fiscal_year Int32" in sql
+    assert "source_fiscal_year Int32" in sql
+    assert "revenue_amount_original Nullable(Float64)" in sql
+    assert "solidity_pct Nullable(Float64)" in sql
+    assert "ENGINE = MergeTree" in sql
+    assert "ORDER BY (company_id, fiscal_year)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.se_financial_history" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:
