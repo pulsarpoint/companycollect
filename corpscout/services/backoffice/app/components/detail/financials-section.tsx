@@ -47,8 +47,22 @@ function MoneyPair({ original, usd }: { original: number | null; usd: number | n
   );
 }
 
+/** True when no year carries a single money value (e.g. Swedish credit
+ * institutions, whose digital filings are metadata envelopes referencing an
+ * external statements package — the figures are not in the source). */
+function allMoneyNull(financials: FinancialYearRow[]): boolean {
+  return financials.every(
+    (f) =>
+      f.revenue_amount_original == null && f.revenue_amount_usd == null &&
+      f.net_result_amount_original == null && f.net_result_amount_usd == null &&
+      f.total_assets_amount_original == null && f.total_assets_amount_usd == null &&
+      f.equity_amount_original == null && f.equity_amount_usd == null,
+  );
+}
+
 export function FinancialsSection({ financials }: { financials: FinancialYearRow[] }) {
   if (financials.length === 0) return null;
+  const noFigures = allMoneyNull(financials);
   // Chart wants oldest → newest, left to right.
   const chartData = [...financials]
     .reverse()
@@ -60,6 +74,15 @@ export function FinancialsSection({ financials }: { financials: FinancialYearRow
         <CardTitle className="text-base">Financials</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {noFigures ? (
+          <p className="text-muted-foreground text-sm">
+            Filings exist for the years below, but the digital submissions carry
+            no machine-readable figures (the statements live in an external
+            package the source does not inline — common for banks and other
+            credit institutions).
+          </p>
+        ) : null}
+        {noFigures ? null : (
         <ChartContainer config={chartConfig} className="h-56 w-full">
           <BarChart data={chartData}>
             <CartesianGrid vertical={false} />
@@ -69,6 +92,7 @@ export function FinancialsSection({ financials }: { financials: FinancialYearRow
             <Bar dataKey="result" fill="var(--color-result)" radius={3} />
           </BarChart>
         </ChartContainer>
+        )}
 
         <div className="overflow-x-auto">
           <Table className="min-w-[40rem]">
