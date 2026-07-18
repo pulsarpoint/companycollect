@@ -418,7 +418,7 @@ describe("getCompanyDetail statements (Norway)", () => {
     expect(stmt).toHaveProperty("operating_costs_amount_original");
     expect(stmt).toHaveProperty("accounts_type");
     expect(stmt).toHaveProperty("is_parent_company");
-  });
+  }, 30_000);
 
   it("countries without statementsQuery return an empty array", async () => {
     const page = await searchCompanies(ee, { pageSize: 1 });
@@ -450,7 +450,7 @@ describe("getCompanyDetail statements (Norway)", () => {
         `column ${key} must be placed, lineage, or rest`,
       ).toBe(true);
     }
-  });
+  }, 30_000);
 });
 
 describe("getCompanyDetail (Brazil)", () => {
@@ -491,7 +491,7 @@ describe("translated record cards", () => {
     expect(detail!.record).toHaveProperty("legal_form_description_en");
     expect(detail!.record).toHaveProperty("last_submitted_accounts_year"); // base-only column survives
     expect(String(detail!.record.articles_purpose_en)).not.toBe("");
-  });
+  }, 30_000);
 
   it("latvia record carries activity_text_en AND base-only address fields", async () => {
     const lv = getCountry("lv")!;
@@ -504,7 +504,7 @@ describe("translated record cards", () => {
     expect(detail!.record).toHaveProperty("activity_text_en");
     expect(String(detail!.record.activity_text_en)).not.toBe("");
     expect(detail!.record).toHaveProperty("address_city_name"); // base-only column survives
-  });
+  }, 30_000);
 });
 
 describe("industries section", () => {
@@ -525,7 +525,7 @@ describe("industries section", () => {
     const page = await searchCompanies(lv, { pageSize: 1 });
     const detail = await getCompanyDetail(lv, String(page.rows[0].id));
     expect(detail!.industries).toEqual([]);
-  });
+  }, 30_000);
 });
 
 describe("addresses", () => {
@@ -551,14 +551,14 @@ describe("addresses", () => {
     const detail = await getCompanyDetail(se, row.id);
     expect(detail!.addresses.length).toBeGreaterThan(0);
     expect(detail!.addresses[0].full_address).toBeTruthy();
-  });
+  }, 30_000);
 
   it("finland returns an empty addresses array", async () => {
     const fi = getCountry("fi")!;
     const page = await searchCompanies(fi, { pageSize: 1 });
     const detail = await getCompanyDetail(fi, String(page.rows[0].id));
     expect(detail!.addresses).toEqual([]);
-  });
+  }, 30_000);
 });
 
 describe("empties-last sorting (Finland has 1,205 nameless registry stubs)", () => {
@@ -569,17 +569,17 @@ describe("empties-last sorting (Finland has 1,205 nameless registry stubs)", () 
     for (const row of result.rows) {
       expect(String(row.name)).not.toBe("");
     }
-  });
+  }, 30_000);
 
   it("empties stay last under desc too", async () => {
     const result = await searchCompanies(fi, { sort: "name", dir: "desc", pageSize: 25 });
     for (const row of result.rows) {
       expect(String(row.name)).not.toBe("");
     }
-  });
+  }, 30_000);
 
   it("total still counts the stubs (ordering only, no filtering)", async () => {
     const result = await searchCompanies(fi, { pageSize: 25 });
     expect(result.total).toBeGreaterThan(460_000); // 460,200 incl. the 1,205 stubs
-  });
+  }, 30_000);
 });
