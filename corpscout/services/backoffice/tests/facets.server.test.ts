@@ -81,6 +81,12 @@ describe("facet cache against live ClickHouse (Estonia)", () => {
     await expect(getFacetOptions(ee, "id; DROP")).rejects.toThrow(/unknown facet/i);
   });
 
+  it("rejects prototype-chain keys as unknown facets", async () => {
+    for (const key of ["constructor", "toString", "hasOwnProperty"]) {
+      await expect(getFacetOptions(ee, key)).rejects.toThrow(/unknown facet/i);
+    }
+  });
+
   it("searchFacetOptions: empty q caps at 200, typed q ranks matches", async () => {
     const top = await searchFacetOptions(ee, "legal_form", "");
     expect(top.length).toBeGreaterThan(0);

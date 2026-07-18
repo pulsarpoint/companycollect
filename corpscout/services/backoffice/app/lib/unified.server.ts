@@ -218,7 +218,7 @@ export async function getUnifiedFacetOptions(facetKey: string): Promise<FacetOpt
   if (facetKey === "country") return countryFacet();
   if (facetKey === "has_financials") return hasFinancialsFacet();
   if (facetKey === "industry") return industryFacet();
-  const column = FACET_COLUMN[facetKey];
+  const column = Object.hasOwn(FACET_COLUMN, facetKey) ? FACET_COLUMN[facetKey] : undefined;
   if (!column) throw new Error(`unknown facet: ${facetKey}`);
   return columnFacet(facetKey, column);
 }

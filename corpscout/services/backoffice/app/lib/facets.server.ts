@@ -84,7 +84,7 @@ export async function getFacetOptions(
   if (facetKey === "industry") {
     sql = INDUSTRY_SQL;
   } else {
-    const column = FACET_COLUMN[facetKey];
+    const column = Object.hasOwn(FACET_COLUMN, facetKey) ? FACET_COLUMN[facetKey] : undefined;
     if (!column) throw new Error(`unknown facet: ${facetKey}`);
     sql = facetSql(column);
   }
