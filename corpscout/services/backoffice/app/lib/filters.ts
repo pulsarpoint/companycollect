@@ -41,6 +41,17 @@ export const UNIFIED_FACET_KEYS = ["country", "has_financials", ...COLUMN_FACET_
  * Facet key → companies_all column name. SQL identifiers in WHERE/GROUP BY
  * clauses come ONLY from this fixed map, never from a user-supplied facet
  * key — the map's keys double as the whitelist.
+ *
+ * Adding a key here requires THREE other updates in lockstep: a matching
+ * `companies_all` column (`dagster_v3/defs/companies_all/tables.py` +
+ * `sql.py`), the dagster build's per-country SQL (`sql.py`) populating it,
+ * and the parity sweep (`tests/companies-all-parity.test.ts`) asserting it.
+ * `tests/companies-all-parity.test.ts`'s "FACET_COLUMN registry invariant"
+ * test enforces the reverse direction (every `filterable: true` column in
+ * `countries.ts` has a FACET_COLUMN entry) so a registry facet key can't
+ * silently no-op the unified WHERE clause -- but it can't catch a
+ * FACET_COLUMN key added without the companies_all/sql.py side, so do all
+ * three together.
  */
 export const FACET_COLUMN: Record<string, string> = {
   status: "status",

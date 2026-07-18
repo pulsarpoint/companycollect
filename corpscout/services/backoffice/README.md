@@ -71,10 +71,39 @@ expression — so drift on either side of the duplication fails a test:
 row-count parity per country against its `companiesTable`; sampled
 status/legal_form/place/size values against the registry's own column
 exprs for keys a country defines, and `''` for keys it doesn't; financials
-parity for Norway against `no_company_financials_latest`; and industry-label
+parity for every country with a `financialsLatest` table (no/fi/se/ee/lv/gb/br/sk)
+against its own `<code>_company_financials_latest`; and industry-label
 parity for Estonia against the registry's `industryQuery`. A failure here
 means the two specs have drifted apart — treat it as a real bug, not
 something to retry away.
+
+### Benign failure mode: source refreshed after today's build
+
+Several source registers rebuild on a schedule that can land AFTER the
+companies_all 07:15 Europe/Oslo cron — sk's Monday 07:00 swap landing
+later, se's Monday 06:15 overrunning, fr's 6th 07:15, gb's 7th 07:30, cz's
+17th 07:45. When that happens, today's `companies_all` leg for that
+country was built from *yesterday's* source snapshot, so the source table
+has since grown/changed while `companies_all` hasn't caught up yet —
+exact-count and field parity then fail with **zero spec drift**, purely
+from the calendar race between the two schedules.
+
+The parity sweep runs a **per-country freshness preflight** before its
+count/field checks: it compares `companies_all`'s per-country build
+timestamp (`max(resolved_at)` for that `country_code` — set to `now64(3)`
+at INSERT time in `sql.py`) against the source `companiesTable`'s own
+`max(resolved_at)`. If the source is newer, the preflight **skips** that
+country's count+field parity with a loud `console.warn` naming both
+timestamps, instead of failing. Only `no_companies`/`fi_companies`/
+`br_companies` carry a `resolved_at` column today — for the other seven
+countries (including all five named above) there's no per-table freshness
+signal available, so the preflight logs which table lacks it and runs
+parity normally (unprotected) for those.
+
+**A parity failure WITHOUT the freshness-skip warning in the log is real
+drift** — treat it as a bug. A skip with the warning is benign and
+self-resolving: re-run the sweep after the next 07:15 `companies_all`
+build.
 
 ### Intentional semantic changes from the switch
 
@@ -101,6 +130,15 @@ few behaviors on purpose:
   next daily `companies_all` build picks it up with no registry or code
   change, the same auto-upgrade pattern as the financials-aggregates
   NACE breakdowns described further below.
+- **The industry filter now matches the displayed primary-industry pick.**
+  `companies_all`'s per-country `industry_subquery` picks one row per
+  company (`LIMIT 1 BY`, preferring the primary row but falling back to a
+  non-primary one), so filtering by industry now selects exactly the
+  companies whose *displayed* `industry_code`/`industry_label` matches —
+  instead of the old per-country `industryFilterExpr` semi-join, which
+  matched on ANY primary industry row for the company, independent of what
+  the list actually showed. Measured impact: single-digit companies per
+  country.
 
 `app/lib/queries.server.ts` remains the engine for the company detail page
 (`getCompanyDetail`, used by `/company/{country_code}/{id}`) and the
