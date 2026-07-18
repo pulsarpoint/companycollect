@@ -23,7 +23,7 @@ from dagster_v3.defs.norway_brreg_financial.financial_storage import (
 
 ANNUAL_ACCOUNT_DOWNLOAD_WORKERS = 1
 ANNUAL_ACCOUNT_DOWNLOAD_BATCH_SIZE = 250
-ANNUAL_ACCOUNT_DOCUMENT_WORKERS = 6
+ANNUAL_ACCOUNT_DOCUMENT_WORKERS = 4
 ANNUAL_ACCOUNT_PROGRESS_INTERVAL = 100
 
 ANNUAL_ACCOUNT_PDF_CATALOG_SCHEMA = {
@@ -132,10 +132,15 @@ def materialize_annual_account_documents(
     filing_year: int,
     chunk_key: str,
     source_run_id: str,
+    max_documents: int,
     storage: NorwayBrregFinancialParquetStorageResource,
     log: Callable[..., None] | None,
 ) -> dict[str, int]:
     """Process staged PDFs into immutable JSON without downloading source files."""
+    if max_documents < 1:
+        raise ValueError(
+            "Norway annual-account max_documents must be greater than zero"
+        )
     records = storage.read_annual_account_pdf_catalog(
         filing_year=filing_year,
         chunk_key=chunk_key,
@@ -162,12 +167,18 @@ def materialize_annual_account_documents(
         else:
             pending.append(record)
 
+    selected = pending[:max_documents]
     totals = {
         "candidate_count": len(records),
         "available_pdf_count": len(available_records),
         "not_found_count": sum(
             record["fetch_status"] == "not_found" for record in records
         ),
+        "pending_before_count": len(pending),
+        "max_documents_per_run": max_documents,
+        "worker_count": ANNUAL_ACCOUNT_DOCUMENT_WORKERS,
+        "selected_count": len(selected),
+        "remaining_count": len(pending) - len(selected),
         "processed_count": 0,
         "reused_count": reused_count,
         "json_bytes": 0,
@@ -178,17 +189,20 @@ def materialize_annual_account_documents(
     _log(
         log,
         "Starting Norway BRREG annual-account JSON processing: year=%d chunk=%s "
-        "available_pdfs=%d already_parsed=%d pending=%d workers=%d",
+        "available_pdfs=%d already_parsed=%d pending=%d selected=%d "
+        "remaining_after_batch=%d workers=%d",
         filing_year,
         chunk_key,
         len(available_records),
         reused_count,
         len(pending),
+        len(selected),
+        totals["remaining_count"],
         ANNUAL_ACCOUNT_DOCUMENT_WORKERS,
     )
     completed_count = 0
-    for batch_start in range(0, len(pending), ANNUAL_ACCOUNT_DOCUMENT_WORKERS):
-        batch = pending[batch_start : batch_start + ANNUAL_ACCOUNT_DOCUMENT_WORKERS]
+    for batch_start in range(0, len(selected), ANNUAL_ACCOUNT_DOCUMENT_WORKERS):
+        batch = selected[batch_start : batch_start + ANNUAL_ACCOUNT_DOCUMENT_WORKERS]
         with ThreadPoolExecutor(
             max_workers=ANNUAL_ACCOUNT_DOCUMENT_WORKERS
         ) as executor:
@@ -218,15 +232,15 @@ def materialize_annual_account_documents(
                 totals["page_count"] += result["page_count"]
                 totals["native_text_page_count"] += result["native_text_page_count"]
                 totals["ocr_page_count"] += result["ocr_page_count"]
-                if _should_log_progress(completed_count, len(pending)):
+                if _should_log_progress(completed_count, len(selected)):
                     _log(
                         log,
                         "Norway BRREG annual-account JSON progress: year=%d "
-                        "chunk=%s processed=%d pending_total=%d",
+                        "chunk=%s processed=%d selected_total=%d",
                         filing_year,
                         chunk_key,
                         completed_count,
-                        len(pending),
+                        len(selected),
                     )
 
     _log(
@@ -247,7 +261,7 @@ def remove_processed_annual_account_pdfs(
     storage: NorwayBrregFinancialParquetStorageResource,
     log: Callable[..., None] | None,
 ) -> dict[str, int]:
-    """Delete staged PDFs only after every catalogued PDF has verified JSON."""
+    """Delete each staged PDF after its matching processed JSON is verified."""
     records = storage.read_annual_account_pdf_catalog(
         filing_year=filing_year,
         chunk_key=chunk_key,
@@ -256,6 +270,8 @@ def remove_processed_annual_account_pdfs(
         record for record in records if record["fetch_status"] == "success"
     ]
 
+    verified_records: list[dict[str, Any]] = []
+    pending_json_count = 0
     for record in staged_records:
         org_number = _string(record.get("org_number"))
         if not storage.annual_account_document_exists(
@@ -263,23 +279,23 @@ def remove_processed_annual_account_pdfs(
             chunk_key=chunk_key,
             org_number=org_number,
         ):
-            raise RuntimeError(
-                "Norway BRREG staged annual-account PDF has no processed JSON: "
-                f"org={org_number} year={filing_year} chunk={chunk_key}"
-            )
+            pending_json_count += 1
+            continue
         _verify_existing_document(storage, record, chunk_key=chunk_key)
+        verified_records.append(record)
 
     existing_keys = [
         _string(record.get("source_object_key"))
-        for record in staged_records
+        for record in verified_records
         if storage.response_exists(_string(record.get("source_object_key")))
     ]
     deleted_count = storage.delete_annual_account_pdfs(existing_keys)
     metadata = {
         "catalog_pdf_count": len(staged_records),
-        "verified_json_count": len(staged_records),
+        "verified_json_count": len(verified_records),
+        "pending_json_count": pending_json_count,
         "deleted_count": deleted_count,
-        "already_removed_count": len(staged_records) - deleted_count,
+        "already_removed_count": len(verified_records) - deleted_count,
     }
     _log(
         log,

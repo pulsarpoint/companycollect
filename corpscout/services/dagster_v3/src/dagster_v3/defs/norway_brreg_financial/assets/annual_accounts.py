@@ -39,6 +39,11 @@ NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS = dg.MultiPartitionsDefinition(
     }
 )
 
+
+class NorwayBrregAnnualAccountDocumentConfig(dg.Config):
+    max_documents_per_run: int = 25
+
+
 ANNUAL_ACCOUNT_CANDIDATES_SQL = """
 SELECT
     toString(org_number) AS org_number,
@@ -112,11 +117,13 @@ def norway_brreg_annual_account_pdfs(
     pool="norway_brreg_annual_account_ocr",
     description=(
         "Reads staged BRREG annual-account PDFs from S3, extracts native text or "
-        "PyMuPDF/Tesseract OCR, and writes one immutable JSON object per document."
+        "PyMuPDF/Tesseract OCR, and writes one immutable JSON object per document. "
+        "Each materialization processes a bounded, resumable document batch."
     ),
 )
 def norway_brreg_annual_account_documents_json(
     context: AssetExecutionContext,
+    config: NorwayBrregAnnualAccountDocumentConfig,
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
     filing_year, chunk_key = _partition_values(context.partition_key)
@@ -124,6 +131,7 @@ def norway_brreg_annual_account_documents_json(
         filing_year=filing_year,
         chunk_key=chunk_key,
         source_run_id=context.op_execution_context.run_id,
+        max_documents=config.max_documents_per_run,
         storage=norway_brreg_financial_storage,
         log=context.log.info,
     )
@@ -132,6 +140,7 @@ def norway_brreg_annual_account_documents_json(
             "filing_year": filing_year,
             "chunk_key": chunk_key,
             "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
+            "partition_complete": metadata["remaining_count"] == 0,
             **metadata,
         }
     )

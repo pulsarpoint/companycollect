@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 import hashlib
 import json
+import threading
+import time
 from typing import Any
 
 import dagster as dg
@@ -11,6 +13,7 @@ import pymupdf
 import pytest
 
 from dagster_v3.defs.norway_brreg.resources import BrregAnnualAccountPdf
+from dagster_v3.defs.norway_brreg_financial import annual_account_pdf
 from dagster_v3.defs.norway_brreg_financial import annual_account_pipeline
 from dagster_v3.defs.norway_brreg_financial.annual_account_pdf import (
     extract_annual_account_pdf,
@@ -406,6 +409,7 @@ def test_document_processing_reads_staged_pdf_and_skips_existing_json(
         filing_year=2025,
         chunk_key="bucket_07",
         source_run_id="process-run-1",
+        max_documents=25,
         storage=storage,
         log=None,
     )
@@ -413,6 +417,7 @@ def test_document_processing_reads_staged_pdf_and_skips_existing_json(
         filing_year=2025,
         chunk_key="bucket_07",
         source_run_id="process-run-2",
+        max_documents=25,
         storage=storage,
         log=None,
     )
@@ -422,6 +427,158 @@ def test_document_processing_reads_staged_pdf_and_skips_existing_json(
     assert first["ocr_page_count"] == 2
     assert second["reused_count"] == 1
     assert second["processed_count"] == 0
+
+
+def test_document_processing_uses_bounded_resumable_batches(monkeypatch) -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    candidates = [
+        {"org_number": "111111111", "legal_name": "FIRST AS"},
+        {"org_number": "222222222", "legal_name": "SECOND AS"},
+        {"org_number": "333333333", "legal_name": "THIRD AS"},
+    ]
+    download_annual_account_pdfs(
+        candidates=candidates,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="download-run",
+        api=FakeAnnualAccountApi(
+            BrregAnnualAccountPdf(
+                source_url="https://example.test/annual-account.pdf",
+                body=b"%PDF-1.7 staged annual account",
+            )
+        ),
+        storage=storage,
+        log=None,
+    )
+    processed_org_numbers: list[str] = []
+
+    def fake_extract(body: bytes, **kwargs: Any) -> dict[str, Any]:
+        processed_org_numbers.append(kwargs["org_number"])
+        return {
+            "org_number": kwargs["org_number"],
+            "filing_year": kwargs["filing_year"],
+            "source_pdf_url": kwargs["source_pdf_url"],
+            "source_pdf_sha256": hashlib.sha256(body).hexdigest(),
+            "source_pdf_size_bytes": len(body),
+            "pdf_page_count": 1,
+            "native_text_page_count": 0,
+            "ocr_page_count": 1,
+        }
+
+    monkeypatch.setattr(
+        annual_account_pipeline, "extract_annual_account_pdf", fake_extract
+    )
+
+    first = materialize_annual_account_documents(
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="process-run-1",
+        max_documents=2,
+        storage=storage,
+        log=None,
+    )
+
+    assert processed_org_numbers == ["111111111", "222222222"]
+    assert first["pending_before_count"] == 3
+    assert first["max_documents_per_run"] == 2
+    assert first["worker_count"] == 4
+    assert first["selected_count"] == 2
+    assert first["processed_count"] == 2
+    assert first["remaining_count"] == 1
+
+    first_cleanup = remove_processed_annual_account_pdfs(
+        filing_year=2025,
+        chunk_key="bucket_00",
+        storage=storage,
+        log=None,
+    )
+
+    assert first_cleanup["deleted_count"] == 2
+    assert first_cleanup["pending_json_count"] == 1
+    assert storage.annual_account_pdf_exists(
+        filing_year=2025,
+        chunk_key="bucket_00",
+        org_number="333333333",
+    )
+
+    second = materialize_annual_account_documents(
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="process-run-2",
+        max_documents=2,
+        storage=storage,
+        log=None,
+    )
+
+    assert processed_org_numbers == ["111111111", "222222222", "333333333"]
+    assert second["reused_count"] == 2
+    assert second["selected_count"] == 1
+    assert second["processed_count"] == 1
+    assert second["remaining_count"] == 0
+
+
+def test_document_processing_runs_at_most_four_documents_in_parallel(
+    monkeypatch,
+) -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    candidates = [
+        {"org_number": str(100_000_000 + index), "legal_name": f"COMPANY {index}"}
+        for index in range(8)
+    ]
+    download_annual_account_pdfs(
+        candidates=candidates,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="download-run",
+        api=FakeAnnualAccountApi(
+            BrregAnnualAccountPdf(
+                source_url="https://example.test/annual-account.pdf",
+                body=b"%PDF-1.7 staged annual account",
+            )
+        ),
+        storage=storage,
+        log=None,
+    )
+    lock = threading.Lock()
+    active_count = 0
+    max_active_count = 0
+
+    def fake_extract(body: bytes, **kwargs: Any) -> dict[str, Any]:
+        nonlocal active_count, max_active_count
+        with lock:
+            active_count += 1
+            max_active_count = max(max_active_count, active_count)
+        time.sleep(0.02)
+        with lock:
+            active_count -= 1
+        return {
+            "org_number": kwargs["org_number"],
+            "filing_year": kwargs["filing_year"],
+            "source_pdf_url": kwargs["source_pdf_url"],
+            "source_pdf_sha256": hashlib.sha256(body).hexdigest(),
+            "source_pdf_size_bytes": len(body),
+            "pdf_page_count": 1,
+            "native_text_page_count": 0,
+            "ocr_page_count": 1,
+        }
+
+    monkeypatch.setattr(
+        annual_account_pipeline, "extract_annual_account_pdf", fake_extract
+    )
+
+    metadata = materialize_annual_account_documents(
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="process-run",
+        max_documents=8,
+        storage=storage,
+        log=None,
+    )
+
+    assert metadata["processed_count"] == 8
+    assert max_active_count == 4
 
 
 def test_cleanup_deletes_pdf_only_after_matching_json_exists(monkeypatch) -> None:
@@ -460,6 +617,7 @@ def test_cleanup_deletes_pdf_only_after_matching_json_exists(monkeypatch) -> Non
         filing_year=2025,
         chunk_key="bucket_07",
         source_run_id="process-run",
+        max_documents=25,
         storage=storage,
         log=None,
     )
@@ -495,7 +653,7 @@ def test_cleanup_deletes_pdf_only_after_matching_json_exists(monkeypatch) -> Non
     )
 
 
-def test_cleanup_keeps_every_pdf_when_any_json_is_missing() -> None:
+def test_cleanup_keeps_pdf_when_its_json_is_missing() -> None:
     object_store = FakeObjectStore()
     storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
     download_annual_account_pdfs(
@@ -513,14 +671,15 @@ def test_cleanup_keeps_every_pdf_when_any_json_is_missing() -> None:
         log=None,
     )
 
-    with pytest.raises(RuntimeError, match="has no processed JSON"):
-        remove_processed_annual_account_pdfs(
-            filing_year=2025,
-            chunk_key="bucket_07",
-            storage=storage,
-            log=None,
-        )
+    metadata = remove_processed_annual_account_pdfs(
+        filing_year=2025,
+        chunk_key="bucket_07",
+        storage=storage,
+        log=None,
+    )
 
+    assert metadata["deleted_count"] == 0
+    assert metadata["pending_json_count"] == 1
     assert storage.annual_account_pdf_exists(
         filing_year=2025,
         chunk_key="bucket_07",
@@ -605,6 +764,26 @@ def test_scanned_pdf_preserves_ocr_words_coordinates_and_confidence() -> None:
     ]
     assert page["words"][2]["confidence"] == 96.0
     assert page["words"][2]["bbox"] == [0.5, 0.1, 0.6, 0.15]
+
+
+def test_tesseract_allows_twenty_minutes_per_page(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(command: list[str], **kwargs: Any):
+        captured["command"] = command
+        captured.update(kwargs)
+        return annual_account_pdf.subprocess.CompletedProcess(
+            command,
+            returncode=0,
+            stdout=b"",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(annual_account_pdf.subprocess, "run", fake_run)
+
+    assert annual_account_pdf.tesseract_ocr_image(b"image") == ""
+    assert captured["timeout"] == 1_200
+    assert captured["check"] is True
 
 
 def _native_text_pdf() -> bytes:

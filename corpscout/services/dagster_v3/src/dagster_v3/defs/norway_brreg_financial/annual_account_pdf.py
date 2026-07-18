@@ -11,7 +11,7 @@ import pymupdf
 
 OCR_LANGUAGES = "nor+eng"
 OCR_PAGE_SEGMENTATION_MODE = 4
-OCR_TIMEOUT_SECONDS = 300
+OCR_TIMEOUT_SECONDS = 1_200
 RENDER_DPI = 200
 NATIVE_TEXT_MIN_CHARACTERS = 20
 
@@ -228,9 +228,7 @@ def _ocr_page(
                 "word_number": int(row["word_num"]),
             }
         )
-        lines.setdefault(
-            (block_number, paragraph_number, line_number), []
-        ).append(text)
+        lines.setdefault((block_number, paragraph_number, line_number), []).append(text)
 
     confidences = [word["confidence"] for word in words if word["confidence"] >= 0]
     return {
