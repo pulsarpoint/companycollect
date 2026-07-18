@@ -87,6 +87,7 @@ FINANCIAL_STATEMENT_SCHEMA = {
     "opted_out_audit": pl.Boolean,
     "is_small_enterprise": pl.Boolean,
     "accounting_rules": pl.Utf8,
+    "quality_flag": pl.Utf8,
     "operating_revenue_amount_original": pl.Decimal(38, 6),
     "operating_revenue_amount_usd": pl.Decimal(38, 6),
     "operating_costs_amount_original": pl.Decimal(38, 6),
@@ -569,9 +570,7 @@ def _original_statement_frame(
     rows: list[dict[str, Any]] = []
     for batch_start in range(0, len(successful_fetch_rows), RESPONSE_READ_BATCH_SIZE):
         response_rows = _response_rows_with_verified_payloads(
-            successful_fetch_rows[
-                batch_start : batch_start + RESPONSE_READ_BATCH_SIZE
-            ],
+            successful_fetch_rows[batch_start : batch_start + RESPONSE_READ_BATCH_SIZE],
             storage=storage,
         )
         rows.extend(

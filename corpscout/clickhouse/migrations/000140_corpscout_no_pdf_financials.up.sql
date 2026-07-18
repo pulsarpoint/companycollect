@@ -1,0 +1,168 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+CREATE TABLE IF NOT EXISTS corpscout.no_financial_reports
+(
+    document_id String,
+    country_iso2 LowCardinality(String),
+    source_slug LowCardinality(String),
+    source_run_id String,
+    org_number String,
+    legal_name String,
+    source_filing_year UInt16,
+    source_chunk LowCardinality(String),
+    source_json_object_key String,
+    source_json_uri String,
+    source_json_sha256 FixedString(64),
+    source_pdf_url String,
+    source_pdf_sha256 FixedString(64),
+    source_pdf_size_bytes UInt64,
+    retrieved_at Nullable(DateTime64(3, 'UTC')),
+    pdf_page_count UInt32,
+    native_text_page_count UInt32,
+    ocr_page_count UInt32,
+    parse_status LowCardinality(String),
+    parse_warnings String,
+    fact_count UInt64,
+    parser_version LowCardinality(String),
+    resolved_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+PARTITION BY (source_filing_year, source_chunk)
+ORDER BY (org_number, source_filing_year, document_id);
+
+CREATE TABLE IF NOT EXISTS corpscout.no_financial_facts
+(
+    fact_id String,
+    document_id String,
+    country_iso2 LowCardinality(String),
+    source_slug LowCardinality(String),
+    source_run_id String,
+    org_number String,
+    source_filing_year UInt16,
+    source_chunk LowCardinality(String),
+    fact_ordinal UInt64,
+    page_number UInt32,
+    line_number UInt32,
+    statement_type LowCardinality(String),
+    table_title String,
+    raw_label String,
+    normalized_label String,
+    canonical_concept Nullable(String),
+    column_label String,
+    fiscal_year Nullable(UInt16),
+    period_end_date Nullable(Date),
+    is_comparative UInt8,
+    value_kind LowCardinality(String),
+    raw_value String,
+    numeric_value Decimal(38, 10),
+    currency LowCardinality(String),
+    unit_scale Decimal(38, 6),
+    amount_original Nullable(Decimal(38, 10)),
+    amount_usd Nullable(Decimal(38, 10)),
+    fx_rate_to_usd Nullable(Decimal(38, 12)),
+    fx_rate_date Nullable(Date),
+    fx_source Nullable(String),
+    bbox String,
+    evidence String,
+    ocr_confidence Float64,
+    extraction_method LowCardinality(String),
+    mapping_method LowCardinality(String),
+    mapping_confidence Nullable(Float64),
+    quality_flags String,
+    source_json_sha256 FixedString(64),
+    parser_version LowCardinality(String),
+    resolved_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+PARTITION BY (source_filing_year, source_chunk)
+ORDER BY (org_number, document_id, fact_ordinal);
+
+CREATE TABLE IF NOT EXISTS corpscout.no_financial_metrics
+(
+    metric_id String,
+    document_id String,
+    country_iso2 LowCardinality(String),
+    source_slug LowCardinality(String),
+    source_run_id String,
+    org_number String,
+    legal_name String,
+    source_filing_year UInt16,
+    source_chunk LowCardinality(String),
+    fiscal_year UInt16,
+    period_end_date Nullable(Date),
+    is_comparative UInt8,
+    currency LowCardinality(String),
+    operating_revenue_amount_original Nullable(Decimal(38, 6)),
+    operating_revenue_amount_usd Nullable(Decimal(38, 6)),
+    operating_costs_amount_original Nullable(Decimal(38, 6)),
+    operating_costs_amount_usd Nullable(Decimal(38, 6)),
+    operating_result_amount_original Nullable(Decimal(38, 6)),
+    operating_result_amount_usd Nullable(Decimal(38, 6)),
+    net_financial_items_amount_original Nullable(Decimal(38, 6)),
+    net_financial_items_amount_usd Nullable(Decimal(38, 6)),
+    pretax_result_amount_original Nullable(Decimal(38, 6)),
+    pretax_result_amount_usd Nullable(Decimal(38, 6)),
+    tax_expense_amount_original Nullable(Decimal(38, 6)),
+    tax_expense_amount_usd Nullable(Decimal(38, 6)),
+    net_result_amount_original Nullable(Decimal(38, 6)),
+    net_result_amount_usd Nullable(Decimal(38, 6)),
+    fixed_assets_amount_original Nullable(Decimal(38, 6)),
+    fixed_assets_amount_usd Nullable(Decimal(38, 6)),
+    current_assets_amount_original Nullable(Decimal(38, 6)),
+    current_assets_amount_usd Nullable(Decimal(38, 6)),
+    inventory_amount_original Nullable(Decimal(38, 6)),
+    inventory_amount_usd Nullable(Decimal(38, 6)),
+    current_receivables_amount_original Nullable(Decimal(38, 6)),
+    current_receivables_amount_usd Nullable(Decimal(38, 6)),
+    cash_and_bank_amount_original Nullable(Decimal(38, 6)),
+    cash_and_bank_amount_usd Nullable(Decimal(38, 6)),
+    total_assets_amount_original Nullable(Decimal(38, 6)),
+    total_assets_amount_usd Nullable(Decimal(38, 6)),
+    equity_amount_original Nullable(Decimal(38, 6)),
+    equity_amount_usd Nullable(Decimal(38, 6)),
+    current_liabilities_amount_original Nullable(Decimal(38, 6)),
+    current_liabilities_amount_usd Nullable(Decimal(38, 6)),
+    long_term_liabilities_amount_original Nullable(Decimal(38, 6)),
+    long_term_liabilities_amount_usd Nullable(Decimal(38, 6)),
+    total_liabilities_amount_original Nullable(Decimal(38, 6)),
+    total_liabilities_amount_usd Nullable(Decimal(38, 6)),
+    personnel_expenses_amount_original Nullable(Decimal(38, 6)),
+    personnel_expenses_amount_usd Nullable(Decimal(38, 6)),
+    wages_and_salaries_amount_original Nullable(Decimal(38, 6)),
+    wages_and_salaries_amount_usd Nullable(Decimal(38, 6)),
+    depreciation_amount_original Nullable(Decimal(38, 6)),
+    depreciation_amount_usd Nullable(Decimal(38, 6)),
+    employees_amount_original Nullable(Decimal(38, 6)),
+    employees_amount_usd Nullable(Decimal(38, 6)),
+    source_fact_count UInt64,
+    mapped_fact_count UInt64,
+    unmapped_numeric_fact_count UInt64,
+    validation_status LowCardinality(String),
+    metric_warnings String,
+    source_fact_ids String,
+    mapping_version LowCardinality(String),
+    fx_rate_to_usd Nullable(Decimal(38, 12)),
+    fx_rate_date Nullable(Date),
+    fx_source Nullable(String),
+    source_pdf_url String,
+    source_json_uri String,
+    source_json_sha256 FixedString(64),
+    resolved_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+PARTITION BY (source_filing_year, source_chunk)
+ORDER BY (org_number, fiscal_year, document_id);
+
+CREATE OR REPLACE VIEW corpscout.no_financial_facts_with_source AS
+SELECT
+    facts.*,
+    reports.legal_name,
+    reports.source_pdf_url,
+    reports.source_pdf_sha256,
+    reports.source_pdf_size_bytes,
+    reports.source_json_object_key,
+    reports.source_json_uri,
+    reports.retrieved_at
+FROM corpscout.no_financial_facts AS facts
+INNER JOIN corpscout.no_financial_reports AS reports
+    ON reports.document_id = facts.document_id;

@@ -202,6 +202,21 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             )
         )
 
+    def list_annual_account_document_keys(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+    ) -> list[str]:
+        return sorted(
+            key
+            for key in self.object_store.list_keys(
+                annual_account_document_partition_prefix(filing_year, chunk_key),
+                bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
+            )
+            if key.endswith("/document.json")
+        )
+
     def read_json_object(self, key: str) -> dict[str, Any]:
         value = json.loads(self.read_response(key))
         if not isinstance(value, dict):
@@ -475,9 +490,20 @@ def annual_account_document_object_key(
     if filing_year < 1900 or filing_year > 9999:
         raise ValueError(f"Invalid Norway annual-account filing year: {filing_year}")
     return (
+        f"{annual_account_document_partition_prefix(filing_year, chunk_key)}"
+        f"org={_safe_key_component(org_number)}/document.json"
+    )
+
+
+def annual_account_document_partition_prefix(
+    filing_year: int,
+    chunk_key: str,
+) -> str:
+    if filing_year < 1900 or filing_year > 9999:
+        raise ValueError(f"Invalid Norway annual-account filing year: {filing_year}")
+    return (
         f"{ANNUAL_ACCOUNT_DOCUMENT_PREFIX}year={filing_year}/"
         f"chunk={_safe_key_component(chunk_key)}/"
-        f"org={_safe_key_component(org_number)}/document.json"
     )
 
 

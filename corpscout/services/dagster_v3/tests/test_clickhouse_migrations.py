@@ -150,6 +150,7 @@ EXPECTED_MIGRATIONS = (
     "000137_corpscout_company_financials_latest",
     "000138_corpscout_no_financial_statements_quality_flag",
     "000139_corpscout_companies_all",
+    "000140_corpscout_no_pdf_financials",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -525,6 +526,24 @@ def test_clickhouse_migrations_have_down_files() -> None:
         )
 
 
+def test_norway_pdf_financial_tables_preserve_source_provenance() -> None:
+    sql = _migration_sql("000140_corpscout_no_pdf_financials.up.sql")
+    down_sql = _migration_sql("000140_corpscout_no_pdf_financials.down.sql")
+
+    for table in (
+        "corpscout.no_financial_reports",
+        "corpscout.no_financial_facts",
+        "corpscout.no_financial_metrics",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
+        assert f"DROP TABLE IF EXISTS {table}" in down_sql
+    assert "source_pdf_url String" in sql
+    assert "source_json_uri String" in sql
+    assert "source_json_sha256 FixedString(64)" in sql
+    assert "PARTITION BY (source_filing_year, source_chunk)" in sql
+    assert "CREATE OR REPLACE VIEW corpscout.no_financial_facts_with_source" in sql
+
+
 def test_domain_hostnames_view_normalizes_addressable_dns_record_owners() -> None:
     sql = _migration_sql("000128_corpscout_domain_hostnames_view.up.sql")
     down_sql = _migration_sql("000128_corpscout_domain_hostnames_view.down.sql")
@@ -894,9 +913,7 @@ NO_COMPANIES_ALTER_COLUMN_MIGRATIONS = {
 }
 
 NO_FINANCIAL_STATEMENTS_ALTER_COLUMN_MIGRATIONS = {
-    "quality_flag": (
-        "000138_corpscout_no_financial_statements_quality_flag.up.sql"
-    ),
+    "quality_flag": ("000138_corpscout_no_financial_statements_quality_flag.up.sql"),
 }
 
 
@@ -923,9 +940,10 @@ def test_norway_resolved_migration_covers_exported_columns() -> None:
         alter_sql = _migration_sql(migration_file)
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in alter_sql
 
-    for column_name, migration_file in (
-        NO_FINANCIAL_STATEMENTS_ALTER_COLUMN_MIGRATIONS.items()
-    ):
+    for (
+        column_name,
+        migration_file,
+    ) in NO_FINANCIAL_STATEMENTS_ALTER_COLUMN_MIGRATIONS.items():
         alter_sql = _migration_sql(migration_file)
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in alter_sql
 
