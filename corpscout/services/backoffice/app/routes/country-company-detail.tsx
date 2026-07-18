@@ -15,6 +15,9 @@ import { FinancialsSection } from "~/components/detail/financials-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
 import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
 import { decorateFiRecord, FiRegistryBadges } from "~/components/detail/countries/fi-registry";
+import { LangToggle } from "~/components/detail/lang-toggle";
+import { resolveRecordFields, type Lang } from "~/components/detail/language";
+import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
 
 const COUNTRY_FINANCIALS: Record<
   string,
@@ -41,6 +44,10 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
   const country = getCountry(params.country)!;
   const { company } = detail;
   const status = country.columns.find((c) => c.kind === "status");
+  const searchParams = useEffectiveSearchParams();
+  const lang: Lang = searchParams.get("lang") === "original" ? "original" : "en";
+  const record = country.code === "fi" ? decorateFiRecord(detail.record) : detail.record;
+  const { pairCount } = resolveRecordFields(record, lang);
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
@@ -72,12 +79,10 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
           {String(company.id)}
         </span>
         {country.code === "fi" ? <FiRegistryBadges record={detail.record} /> : null}
+        <LangToggle lang={lang} pairCount={pairCount} />
       </div>
 
-      <CompanyRecordSection
-        company={company}
-        record={country.code === "fi" ? decorateFiRecord(detail.record) : detail.record}
-      />
+      <CompanyRecordSection company={company} record={record} lang={lang} />
       <IndustriesSection industries={detail.industries} />
       {(() => {
         const Specific = COUNTRY_FINANCIALS[country.code];

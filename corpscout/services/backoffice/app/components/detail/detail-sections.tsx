@@ -6,28 +6,97 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
-import { FieldGrid, splitFields } from "~/components/detail/fields";
+import { Separator } from "~/components/ui/separator";
+import { FieldGrid, formatFieldValue, splitFields } from "~/components/detail/fields";
+import { keyFacts, keyFactKeys, resolveRecordFields, type Lang } from "~/components/detail/language";
+
+function KeyFactsStrip({ facts }: { facts: ReturnType<typeof keyFacts> }) {
+  if (facts.length === 0) return null;
+  return (
+    <dl className="flex flex-wrap gap-x-6 gap-y-3">
+      {facts.map((fact) => (
+        <div key={fact.label} className="flex flex-col gap-0.5">
+          <dt className="text-muted-foreground text-[0.7rem] font-medium uppercase tracking-wide">
+            {fact.label}
+          </dt>
+          <dd className="text-sm font-medium tabular-nums">
+            {fact.href?.startsWith("http") ? (
+              <a
+                href={fact.href}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                {fact.value}
+              </a>
+            ) : (
+              fact.value
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function ProseSections({
+  longTexts,
+  lang,
+}: {
+  longTexts: ReturnType<typeof resolveRecordFields>["longTexts"];
+  lang: Lang;
+}) {
+  const sections = longTexts
+    .map((field) => ({ field, text: formatFieldValue(field.key, field.value) }))
+    .filter((s): s is { field: (typeof longTexts)[number]; text: string } => s.text !== null);
+  if (sections.length === 0) return null;
+  return (
+    <div className="space-y-4">
+      {sections.map(({ field, text }) => (
+        <div key={field.key} className="space-y-1">
+          <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+            {field.label}
+            {field.fromOtherLang ? (
+              <span className="text-muted-foreground/70 ml-1.5 font-normal normal-case">
+                ({lang === "en" ? "original" : "english"})
+              </span>
+            ) : null}
+          </h4>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function CompanyRecordSection({
   company,
   record,
+  lang,
 }: {
   company: CompanyListRow;
   record: Record<string, unknown>;
+  lang: Lang;
 }) {
-  const { visible, lineage } = splitFields(record);
+  const { fields, longTexts } = resolveRecordFields(record, lang);
+  const { lineage } = splitFields(record);
+  const facts = keyFacts(record, lang);
+  const usedKeys = keyFactKeys(record, lang);
+  const gridFields: [string, unknown][] = [
+    ...fields.filter((f) => !usedKeys.has(f.key)).map((f): [string, unknown] => [f.key, f.value]),
+    ["industry", [company.industry_code, company.industry_label].filter(Boolean).join(" ") || null],
+  ];
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Company record</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <FieldGrid
-          fields={[
-            ...visible,
-            ["industry", [company.industry_code, company.industry_label].filter(Boolean).join(" ") || null],
-          ]}
-        />
+        <KeyFactsStrip facts={facts} />
+        {facts.length > 0 ? <Separator /> : null}
+        <ProseSections longTexts={longTexts} lang={lang} />
+        <FieldGrid fields={gridFields} />
         {lineage.length > 0 ? (
           <details>
             <summary className="text-muted-foreground cursor-pointer text-xs font-medium uppercase tracking-wide">

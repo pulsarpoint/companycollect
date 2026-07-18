@@ -157,6 +157,44 @@ function firstPresentValue(
   return null;
 }
 
+type KeyFact = { key: string; label: string; value: string; href?: string };
+
+/**
+ * Shared computation behind `keyFacts`/`keyFactKeys`: picks the small set of
+ * "at a glance" facts for a company detail card — legal form, status,
+ * registered date, and website (as an href) — each carrying the resolved
+ * field `key` it was sourced from so callers can dedupe the fact against the
+ * general field grid. Each fact has its own candidate key list; the first
+ * present (non-empty) candidate wins, and absent facts are skipped rather
+ * than rendered empty.
+ */
+function computeKeyFacts(record: Record<string, unknown>, lang: Lang): KeyFact[] {
+  const { fields, longTexts } = resolveRecordFields(record, lang);
+  const resolvedByKey = new Map<string, ResolvedField>();
+  for (const field of fields) resolvedByKey.set(field.key, field);
+  for (const field of longTexts) resolvedByKey.set(field.key, field);
+
+  const facts: KeyFact[] = [];
+
+  const legalForm = firstPresentValue(resolvedByKey, LEGAL_FORM_CANDIDATES);
+  if (legalForm) facts.push({ key: legalForm.key, label: "Legal form", value: legalForm.text });
+
+  const status = firstPresentValue(resolvedByKey, STATUS_CANDIDATES);
+  if (status) facts.push({ key: status.key, label: "Status", value: status.text });
+
+  const registeredDate = firstPresentValue(resolvedByKey, REGISTERED_DATE_CANDIDATES);
+  if (registeredDate) {
+    facts.push({ key: registeredDate.key, label: "Registered", value: registeredDate.text });
+  }
+
+  const website = firstPresentValue(resolvedByKey, WEBSITE_CANDIDATES);
+  if (website) {
+    facts.push({ key: website.key, label: "Website", value: website.text, href: website.text });
+  }
+
+  return facts;
+}
+
 /**
  * Picks the small set of "at a glance" facts for a company detail card:
  * legal form, status, registered date, and website (as an href). Each fact
@@ -167,24 +205,14 @@ export function keyFacts(
   record: Record<string, unknown>,
   lang: Lang,
 ): { label: string; value: string; href?: string }[] {
-  const { fields, longTexts } = resolveRecordFields(record, lang);
-  const resolvedByKey = new Map<string, ResolvedField>();
-  for (const field of fields) resolvedByKey.set(field.key, field);
-  for (const field of longTexts) resolvedByKey.set(field.key, field);
+  return computeKeyFacts(record, lang).map(({ key: _key, ...fact }) => fact);
+}
 
-  const facts: { label: string; value: string; href?: string }[] = [];
-
-  const legalForm = firstPresentValue(resolvedByKey, LEGAL_FORM_CANDIDATES);
-  if (legalForm) facts.push({ label: "Legal form", value: legalForm.text });
-
-  const status = firstPresentValue(resolvedByKey, STATUS_CANDIDATES);
-  if (status) facts.push({ label: "Status", value: status.text });
-
-  const registeredDate = firstPresentValue(resolvedByKey, REGISTERED_DATE_CANDIDATES);
-  if (registeredDate) facts.push({ label: "Registered", value: registeredDate.text });
-
-  const website = firstPresentValue(resolvedByKey, WEBSITE_CANDIDATES);
-  if (website) facts.push({ label: "Website", value: website.text, href: website.text });
-
-  return facts;
+/**
+ * The resolved field `key`s consumed by `keyFacts` for this record/lang, so
+ * the detail-page field grid can exclude them and avoid rendering the same
+ * pair twice (once in the key-facts strip, once in the grid).
+ */
+export function keyFactKeys(record: Record<string, unknown>, lang: Lang): Set<string> {
+  return new Set(computeKeyFacts(record, lang).map((fact) => fact.key));
 }
