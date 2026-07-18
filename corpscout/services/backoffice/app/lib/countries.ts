@@ -323,11 +323,12 @@ LIMIT 10`,
     },
     financialsLatest: { table: "se_company_financials_latest", companyKeyExpr: "company_id" },
     financialsAggregates: {
+      // Company ids normalized at the dagster layer since 2026-07-18 (16-prefix stripped); no workaround needed.
       nace: {
         industriesTable: "se_industries",
-        companyKeyExpr: "substring(toString(company_id), 3)",
+        companyKeyExpr: "toString(company_id)",
         naceCodeExpr: "nace_rev2_class_code",
-        filterExpr: "is_primary = 1 AND nace_rev2_class_code != '' AND startsWith(toString(company_id), '16')",
+        filterExpr: "is_primary = 1 AND nace_rev2_class_code != ''",
       },
     },
   },

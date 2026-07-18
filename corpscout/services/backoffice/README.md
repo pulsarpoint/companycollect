@@ -36,7 +36,7 @@ pnpm dev               # http://localhost:5183
 ## companies_all
 
 `corpscout.companies_all` is a ClickHouse table with one uniform row per
-company across all 10 countries (116,333,029 rows as of the last verified
+company across all 10 countries (115,605,146 rows as of the last verified
 count): `country_code`, `company_id`, `name`/`name_normalized`, `is_active`,
 `status`, `legal_form`, `place`, `size`, `industry_code`/`industry_label`,
 `revenue_usd`, `fiscal_year`, `employees`, `has_financials`, `resolved_at`.
@@ -145,6 +145,12 @@ few behaviors on purpose:
   matched on ANY primary industry row for the company, independent of what
   the list actually showed. Measured impact: single-digit companies per
   country.
+- **Swedish identities normalized (2026-07-18).** `se_companies` 16-prefixed
+  organization-number duplicates were collapsed at the dagster layer
+  (~728k phantom duplicates removed: 4,135,692 → 3,407,809 rows); SE counts
+  across `companies_all` and the per-country registry dropped accordingly,
+  and the `financialsAggregates.nace` entry for se no longer needs the old
+  substring/prefix workaround (see below).
 
 `app/lib/queries.server.ts` remains the engine for the company detail page
 (`getCompanyDetail`, used by `/company/{country_code}/{id}`) and the
