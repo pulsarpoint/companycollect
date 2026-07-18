@@ -77,6 +77,13 @@ removes every statement with a surviving disagreement.
 ``result_after_financial_items``/``total_assets`` are still populated in
 every row (best-effort, ungated); only the guard's pass/fail signal is
 revenue-only.
+
+Comparative result_after_financial_items disagreement risk (measured live,
+2026-07-18, post-guard overlap pairs): 2,040,284 pairs, 1,858,144 agree within
+0.5% tolerance (91.07% agreement). Unlike revenue comparatives (100% post-guard),
+``result_after_financial_items`` values carry ~9% residual disagreement risk.
+Task 4 (backoffice) must decide whether to display, mark, or suppress
+comparative ``result_after_financial_items`` values given this measurable risk.
 """
 
 SWEDEN_FINANCIAL_DATABASE = "corpscout"
@@ -292,6 +299,10 @@ history_rows AS (
         facts.solidity_pct AS solidity_pct,
         coalesce(facts.total_assets, facts.total_assets_fallback) AS total_assets_amount_original,
         rates.fx_rate_to_usd AS fx_rate_to_usd,
+        -- Trust guard's ground-truth pick uses argMinIf (smallest statement_key);
+        -- final SELECT's reported-row pick uses source_statement_key DESC (largest).
+        -- Divergence is intentional/immaterial: guard needs *a* stable direct reference,
+        -- not necessarily the canonical row; edge case of amended filings is rare.
         argMinIf(facts.revenue, facts.statement_key, facts.n = 0)
             OVER (PARTITION BY eligible_reports.company_id, eligible_reports.fiscal_year - facts.n)
             AS direct_revenue
@@ -336,13 +347,13 @@ ranked_history_rows AS (
         source_statement_key,
         source_fiscal_year,
         currency,
-        revenue_amount_original,
+        cast(revenue_amount_original AS Nullable(Float64)) AS revenue_amount_original,
         cast(revenue_amount_original * fx_rate_to_usd AS Nullable(Float64)) AS revenue_amount_usd,
-        result_after_financial_items_amount_original,
+        cast(result_after_financial_items_amount_original AS Nullable(Float64)) AS result_after_financial_items_amount_original,
         cast(result_after_financial_items_amount_original * fx_rate_to_usd AS Nullable(Float64))
             AS result_after_financial_items_amount_usd,
-        solidity_pct,
-        total_assets_amount_original,
+        cast(solidity_pct AS Nullable(Float64)) AS solidity_pct,
+        cast(total_assets_amount_original AS Nullable(Float64)) AS total_assets_amount_original,
         cast(total_assets_amount_original * fx_rate_to_usd AS Nullable(Float64)) AS total_assets_amount_usd
     FROM history_rows
     WHERE observation = 'reported'
