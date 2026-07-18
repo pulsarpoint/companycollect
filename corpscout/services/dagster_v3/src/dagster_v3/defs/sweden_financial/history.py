@@ -11,10 +11,17 @@ new downloads -- a single filing can yield up to 5 years of figures.
 
 Mirrors ``sweden_financial/metrics.py``'s CH-to-CH SQL-builder style
 (explicit CTEs, the ``exchange_rates`` nearest-rate join pattern, the
-post-49fb7fb8 document-scope exclusions) but is a pure SQL-string builder
-with no ClickHouse I/O -- the asset (a later task) wraps
-``build_history_insert_sql`` the same way ``company_financials_latest/sql.py``
-and ``companies_all/sql.py`` are wrapped by their callers.
+post-49fb7fb8 document-scope exclusions) end to end: the atomic
+stage-table-then-``EXCHANGE TABLES`` rebuild helper
+(``replace_se_financial_history_clickhouse``) lives in this module right
+alongside its SQL builders -- the same placement as
+``metrics.py``'s ``replace_sweden_financial_metrics_clickhouse`` next to
+``build_sweden_financial_metrics_insert_sql`` -- and the ``@dg.asset`` in
+``assets.py`` is a thin wrapper that just calls it and returns a
+``MaterializeResult``. ``build_history_guard_metadata_sql`` reuses the
+exact same trust-guard CTEs as ``build_history_insert_sql`` (via the
+shared ``_history_guard_ctes`` helper) so the per-run quality metadata can
+never silently drift from what the INSERT itself actually did.
 
 Concept discovery (read-only ClickHouse, 2026-07-18): frequency of
 ``concept_local_name`` over ``n >= 1`` (``period{n}``/``balans{n}``, matched
@@ -86,6 +93,15 @@ Task 4 (backoffice) must decide whether to display, mark, or suppress
 comparative ``result_after_financial_items`` values given this measurable risk.
 """
 
+import uuid
+from collections.abc import Callable
+from typing import Any
+
+from dagster_clickhouse import ClickhouseResource
+
+from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.sweden_financial.metrics import SE_FINANCIAL_METRICS_TABLE
+
 SWEDEN_FINANCIAL_DATABASE = "corpscout"
 SE_FINANCIAL_REPORTS_TABLE = "se_financial_reports"
 SE_FINANCIAL_FACTS_TABLE = "se_financial_facts"
@@ -149,21 +165,17 @@ _CONTEXT_YEAR_PATTERN = r"(?i)^(period|balans)([0-9]+)$"
 _CONTEXT_YEAR_EXTRACT_PATTERN = r"^(?:period|balans)([0-9]+)$"
 
 
-def build_history_insert_sql(qualified_stage_table: str) -> str:
-    """Return the full ``INSERT INTO <stage> (<columns>) ...`` history SQL.
+def _history_guard_ctes() -> str:
+    """Return the WITH-body CTEs shared, verbatim, by ``build_history_insert_sql``
+    and ``build_history_guard_metadata_sql``: FX-rate resolution through the
+    trust guard's ``disqualified_statements`` result (no trailing comma --
+    callers append their own next CTE or a bare ``SELECT``).
 
-    The caller (a later task's asset) creates ``qualified_stage_table`` as
-    ``CREATE TABLE ... AS corpscout.se_financial_history`` first, executes
-    this INSERT, validates row counts, then ``EXCHANGE TABLES`` with the
-    live table -- the same stage-then-swap pattern as
-    ``build_sweden_financial_metrics_insert_sql``.
+    Kept as a single source of truth so the read-only guard-metadata query
+    can never silently drift from the INSERT's own eligibility/overlap
+    logic -- see the module docstring's "Trust guard empirical grounding".
     """
-    columns = ",\n    ".join(SE_FINANCIAL_HISTORY_COLUMNS)
-    return f"""INSERT INTO {qualified_stage_table} (
-    {columns}
-)
-WITH
-latest_exchange_rates AS (
+    return f"""latest_exchange_rates AS (
     SELECT
         rate_date,
         quote_currency,
@@ -338,7 +350,24 @@ disqualified_statements AS (
     SELECT DISTINCT statement_key
     FROM overlap_checks
     WHERE max_relative_diff > {OVERLAP_AGREEMENT_TOLERANCE}
-),
+)"""
+
+
+def build_history_insert_sql(qualified_stage_table: str) -> str:
+    """Return the full ``INSERT INTO <stage> (<columns>) ...`` history SQL.
+
+    The caller (``replace_se_financial_history_clickhouse``, below) creates
+    ``qualified_stage_table`` as ``CREATE TABLE ... AS corpscout.se_financial_history``
+    first, executes this INSERT, validates row counts, then
+    ``EXCHANGE TABLES`` with the live table -- the same stage-then-swap
+    pattern as ``build_sweden_financial_metrics_insert_sql``.
+    """
+    columns = ",\n    ".join(SE_FINANCIAL_HISTORY_COLUMNS)
+    return f"""INSERT INTO {qualified_stage_table} (
+    {columns}
+)
+WITH
+{_history_guard_ctes()},
 ranked_history_rows AS (
     SELECT
         company_id,
@@ -377,3 +406,187 @@ SELECT
 FROM ranked_history_rows
 ORDER BY observation = 'reported' DESC, source_fiscal_year DESC, source_statement_key DESC
 LIMIT 1 BY company_id, fiscal_year"""
+
+
+def build_history_guard_metadata_sql() -> str:
+    """Return a read-only aggregate over the trust-guard CTEs, for per-run
+    ``MaterializeResult`` metadata.
+
+    Reuses ``_history_guard_ctes`` verbatim -- the same eligibility, overlap,
+    and disqualification logic ``build_history_insert_sql`` actually applied
+    -- so these numbers can never silently drift from what the INSERT did.
+    Not part of the INSERT's own execution: the caller issues this as a
+    SEPARATE statement after the INSERT, at the same cost order (it rescans
+    the same ~244.7M-row facts table) -- acceptable for a weekly asset, per
+    the module docstring's ~3 minute agreement-query baseline.
+
+    Post-guard agreement is 100% *by construction* (a statement is
+    disqualified iff at least one of its own overlap pairs disagrees, so
+    every surviving pair -- by definition -- agrees): computing it live
+    rather than hard-coding 100% turns this into a standing invariant
+    check. A materialized value below 100% here would itself indicate a
+    guard-logic bug, not merely a data-quality signal.
+    """
+    return f"""WITH
+{_history_guard_ctes()}
+SELECT
+    (SELECT count() FROM overlap_checks) AS overlap_pair_count,
+    (SELECT countIf(max_relative_diff <= {OVERLAP_AGREEMENT_TOLERANCE}) FROM overlap_checks)
+        AS overlap_agree_count,
+    (SELECT uniqExact(statement_key) FROM disqualified_statements)
+        AS disqualified_statement_count,
+    (
+        SELECT count()
+        FROM overlap_checks
+        WHERE statement_key NOT IN (SELECT statement_key FROM disqualified_statements)
+    ) AS post_guard_overlap_pair_count,
+    (
+        SELECT countIf(max_relative_diff <= {OVERLAP_AGREEMENT_TOLERANCE})
+        FROM overlap_checks
+        WHERE statement_key NOT IN (SELECT statement_key FROM disqualified_statements)
+    ) AS post_guard_overlap_agree_count"""
+
+
+def build_history_quality_sql(qualified_stage_table: str) -> str:
+    """Cheap post-INSERT quality SELECT against the stage table itself
+    (mirrors ``metrics.py``'s ``_sweden_financial_metrics_quality_sql``):
+    total rows, reported vs. comparative counts, and distinct companies.
+    """
+    return f"""SELECT
+    count() AS row_count,
+    countIf(observation = 'reported') AS reported_count,
+    countIf(observation = 'comparative') AS comparative_count,
+    uniqExact(company_id) AS company_count
+FROM {qualified_stage_table}"""
+
+
+_QUALITY_COLUMNS = ("row_count", "reported_count", "comparative_count", "company_count")
+
+_GUARD_COLUMNS = (
+    "overlap_pair_count",
+    "overlap_agree_count",
+    "disqualified_statement_count",
+    "post_guard_overlap_pair_count",
+    "post_guard_overlap_agree_count",
+)
+
+
+def _history_quality_metadata(row: tuple[Any, ...]) -> dict[str, int]:
+    return {
+        column: int(value)
+        for column, value in zip(_QUALITY_COLUMNS, row, strict=True)
+    }
+
+
+def _validate_history_quality(quality: dict[str, int]) -> None:
+    if quality["row_count"] == 0:
+        raise ValueError(
+            "Sweden financial history build produced no rows; refusing to "
+            f"replace {QUALIFIED_SE_FINANCIAL_HISTORY_TABLE}"
+        )
+
+
+def _agreement_rate(agree_count: int, pair_count: int) -> float | None:
+    return agree_count / pair_count if pair_count > 0 else None
+
+
+def _history_guard_metadata(row: tuple[Any, ...]) -> dict[str, int | float | None]:
+    raw = {
+        column: int(value)
+        for column, value in zip(_GUARD_COLUMNS, row, strict=True)
+    }
+    return {
+        "overlap_pair_count": raw["overlap_pair_count"],
+        "overlap_agreement_rate": _agreement_rate(
+            raw["overlap_agree_count"], raw["overlap_pair_count"]
+        ),
+        "disqualified_statement_count": raw["disqualified_statement_count"],
+        "post_guard_overlap_pair_count": raw["post_guard_overlap_pair_count"],
+        "post_guard_overlap_agreement_rate": _agreement_rate(
+            raw["post_guard_overlap_agree_count"], raw["post_guard_overlap_pair_count"]
+        ),
+    }
+
+
+def replace_se_financial_history_clickhouse(
+    *,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> dict[str, int | str | float | None]:
+    """Atomically rebuild ``se_financial_history`` in ClickHouse.
+
+    Mirrors ``replace_sweden_financial_metrics_clickhouse``'s stage +
+    ``EXCHANGE TABLES`` pattern: a uuid-suffixed stage table is created as a
+    schema-only copy of the live target, the built history rows are
+    INSERTed into it, a non-empty guard runs BEFORE the swap (refusing to
+    ever replace a populated table with an empty one), guard/quality
+    metadata is collected from the stage table and from a read-only rerun
+    of the trust-guard CTEs, then ``EXCHANGE TABLES`` swaps the stage and
+    target atomically. The stage table (whichever name ends up holding the
+    stale data post-swap) is dropped in a ``finally`` block so a mid-run
+    failure never leaves an orphaned stage table behind.
+    """
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=SWEDEN_FINANCIAL_DATABASE,
+        tables=(
+            SE_FINANCIAL_HISTORY_TABLE,
+            SE_FINANCIAL_REPORTS_TABLE,
+            SE_FINANCIAL_FACTS_TABLE,
+            SE_FINANCIAL_METRICS_TABLE,
+            EXCHANGE_RATES_TABLE,
+        ),
+    )
+    stage_table = f"_tmp_{SE_FINANCIAL_HISTORY_TABLE}_{uuid.uuid4().hex}"
+    qualified_stage_table = f"`{SWEDEN_FINANCIAL_DATABASE}`.`{stage_table}`"
+    qualified_target_table = (
+        f"`{SWEDEN_FINANCIAL_DATABASE}`.`{SE_FINANCIAL_HISTORY_TABLE}`"
+    )
+    if log is not None:
+        log(
+            "Building Sweden financial history in ClickHouse: target=%s",
+            QUALIFIED_SE_FINANCIAL_HISTORY_TABLE,
+        )
+
+    with clickhouse.get_connection() as client:
+        client.execute(
+            f"CREATE TABLE {qualified_stage_table} AS {qualified_target_table}"
+        )
+        primary_error: Exception | None = None
+        try:
+            client.execute(build_history_insert_sql(qualified_stage_table))
+            quality_row = client.execute(
+                build_history_quality_sql(qualified_stage_table)
+            )[0]
+            metadata: dict[str, int | str | float | None] = dict(
+                _history_quality_metadata(quality_row)
+            )
+            _validate_history_quality(metadata)
+            guard_row = client.execute(build_history_guard_metadata_sql())[0]
+            metadata.update(_history_guard_metadata(guard_row))
+            client.execute(
+                f"EXCHANGE TABLES {qualified_stage_table} AND {qualified_target_table}"
+            )
+        except Exception as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                client.execute(f"DROP TABLE IF EXISTS {qualified_stage_table}")
+            except Exception:
+                if primary_error is None:
+                    raise
+
+    metadata["table"] = QUALIFIED_SE_FINANCIAL_HISTORY_TABLE
+    if log is not None:
+        log(
+            "Finished Sweden financial history: rows=%s reported=%s comparative=%s "
+            "companies=%s disqualified=%s post_guard_agreement_rate=%s",
+            metadata["row_count"],
+            metadata["reported_count"],
+            metadata["comparative_count"],
+            metadata["company_count"],
+            metadata["disqualified_statement_count"],
+            metadata["post_guard_overlap_agreement_rate"],
+        )
+    return metadata

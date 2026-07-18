@@ -119,6 +119,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_reports_clickhouse",
         "sweden_financial_facts_clickhouse",
         "sweden_financial_metrics_clickhouse",
+        "se_financial_history_clickhouse",
     }
 
     for asset_key in (
@@ -144,6 +145,33 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_reports_clickhouse"),
         dg.AssetKey("sweden_financial_facts_clickhouse"),
     }
+
+
+def test_se_financial_history_clickhouse_asset_is_wired_correctly() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+
+    history_node = repo.asset_graph.get(dg.AssetKey("se_financial_history_clickhouse"))
+    assert history_node.group_name == "sweden_financial"
+    assert history_node.pools == set()
+    assert history_node.partitions_def is None
+    assert history_node.parent_keys == {
+        dg.AssetKey("sweden_financial_reports_clickhouse"),
+        dg.AssetKey("sweden_financial_facts_clickhouse"),
+        dg.AssetKey("sweden_financial_metrics_clickhouse"),
+    }
+
+    # The history asset should refresh whenever metrics refreshes: it lives
+    # in the same (currently unscheduled, manually/backfill-triggered)
+    # clickhouse job selection as reports/facts/metrics.
+    clickhouse_job_asset_keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "sweden_financial_clickhouse_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert "se_financial_history_clickhouse" in clickhouse_job_asset_keys
 
 
 def test_sweden_financial_raw_assets_do_not_require_duckdb_resource() -> None:

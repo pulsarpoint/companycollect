@@ -1,3 +1,8 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+from dagster_clickhouse import ClickhouseResource
+
 from dagster_v3.defs.sweden_financial.history import (
     HISTORY_CONCEPTS,
     MAX_COMPARATIVE_YEARS_BACK,
@@ -5,7 +10,10 @@ from dagster_v3.defs.sweden_financial.history import (
     QUALIFIED_SE_FINANCIAL_HISTORY_TABLE,
     SE_FINANCIAL_HISTORY_COLUMNS,
     SE_FINANCIAL_HISTORY_TABLE,
+    build_history_guard_metadata_sql,
     build_history_insert_sql,
+    build_history_quality_sql,
+    replace_se_financial_history_clickhouse,
 )
 
 _STAGE_TABLE = "`corpscout`.`_tmp_se_financial_history_test`"
@@ -179,3 +187,180 @@ def test_history_sql_total_assets_coalesces_fallback_concept() -> None:
     sql = _built_sql()
 
     assert "coalesce(facts.total_assets, facts.total_assets_fallback)" in sql
+
+
+def test_build_history_quality_sql_counts_stage_rows_by_observation() -> None:
+    sql = build_history_quality_sql(_STAGE_TABLE)
+
+    assert sql.startswith("SELECT")
+    assert f"FROM {_STAGE_TABLE}" in sql
+    assert "count() AS row_count" in sql
+    assert "countIf(observation = 'reported') AS reported_count" in sql
+    assert "countIf(observation = 'comparative') AS comparative_count" in sql
+    assert "uniqExact(company_id) AS company_count" in sql
+
+
+def test_build_history_guard_metadata_sql_reuses_the_insert_sqls_shared_ctes() -> None:
+    # The guard-metadata query must reuse the EXACT same eligibility/overlap
+    # CTEs as the INSERT (via the shared _history_guard_ctes helper) so the
+    # reported numbers can never silently drift from what the INSERT itself
+    # did -- confirm by checking both SQL strings share the disqualifying
+    # trust-guard clause verbatim.
+    insert_sql = _built_sql()
+    guard_sql = build_history_guard_metadata_sql()
+
+    assert "disqualified_statements AS (" in guard_sql
+    assert "overlap_checks AS (" in guard_sql
+    assert (
+        "argMinIf(facts.revenue, facts.statement_key, facts.n = 0)" in guard_sql
+    )
+    assert f"WHERE max_relative_diff > {OVERLAP_AGREEMENT_TOLERANCE}" in guard_sql
+
+    # The guard query is read-only aggregation, not the INSERT: no stage
+    # table, no ranked_history_rows/final SELECT columns.
+    assert "INSERT INTO" not in guard_sql
+    assert "ranked_history_rows" not in guard_sql
+    assert "resolved_at" not in guard_sql
+
+    # Both queries build their shared CTE chain from the identical helper,
+    # so the disqualification predicate text is byte-identical between them.
+    shared_fragment = (
+        "disqualified_statements AS (\n"
+        "    -- Trust guard: a statement with ANY overlap-year revenue disagreement"
+    )
+    assert shared_fragment in insert_sql
+    assert shared_fragment in guard_sql
+
+    assert "overlap_pair_count" in guard_sql
+    assert "disqualified_statement_count" in guard_sql
+    assert "post_guard_overlap_pair_count" in guard_sql
+    assert "post_guard_overlap_agree_count" in guard_sql
+
+
+class _FakeHistoryClickHouseClient:
+    def __init__(
+        self,
+        *,
+        quality_row: tuple[object, ...],
+        guard_row: tuple[object, ...],
+    ) -> None:
+        self.statements: list[str] = []
+        self.table_checks: list[tuple[str, ...]] = []
+        self._quality_row = quality_row
+        self._guard_row = guard_row
+
+    def execute(
+        self,
+        sql: str,
+        params: dict[str, object] | None = None,
+    ) -> list[tuple[object, ...]]:
+        self.statements.append(sql)
+        if "system.tables" in sql:
+            requested = tuple(params["tables"]) if params is not None else ()
+            self.table_checks.append(requested)
+            return [(table,) for table in requested]
+        if sql.startswith("CREATE TABLE"):
+            return []
+        if sql.startswith("INSERT INTO"):
+            return []
+        if "overlap_pair_count" in sql:
+            return [self._guard_row]
+        if "AS row_count" in sql:
+            return [self._quality_row]
+        if sql.startswith("EXCHANGE TABLES") or sql.startswith("DROP TABLE"):
+            return []
+        raise AssertionError(sql)
+
+
+def _patch_clickhouse(monkeypatch, client: _FakeHistoryClickHouseClient) -> ClickhouseResource:
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(
+        self: ClickhouseResource,
+    ) -> Iterator[_FakeHistoryClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+    return resource
+
+
+def test_replace_se_financial_history_is_atomic_and_reports_guard_metadata(
+    monkeypatch,
+) -> None:
+    client = _FakeHistoryClickHouseClient(
+        quality_row=(1_897_390 + 131_057, 1_500_000, 397_390, 900_000),
+        guard_row=(2_028_447, 1_964_449, 54_618, 1_897_390, 1_897_390),
+    )
+    resource = _patch_clickhouse(monkeypatch, client)
+
+    metadata = replace_se_financial_history_clickhouse(clickhouse=resource)
+
+    assert client.table_checks == [
+        (
+            "se_financial_history",
+            "se_financial_reports",
+            "se_financial_facts",
+            "se_financial_metrics",
+            "exchange_rates",
+        )
+    ]
+    assert any(statement.startswith("CREATE TABLE") for statement in client.statements)
+    assert any(statement.startswith("INSERT INTO") for statement in client.statements)
+    assert any(
+        statement.startswith("EXCHANGE TABLES") for statement in client.statements
+    )
+    assert client.statements[-1].startswith("DROP TABLE")
+
+    assert metadata["row_count"] == 2_028_447
+    assert metadata["reported_count"] == 1_500_000
+    assert metadata["comparative_count"] == 397_390
+    assert metadata["company_count"] == 900_000
+    assert metadata["overlap_pair_count"] == 2_028_447
+    assert metadata["overlap_agreement_rate"] == 1_964_449 / 2_028_447
+    assert metadata["disqualified_statement_count"] == 54_618
+    assert metadata["post_guard_overlap_pair_count"] == 1_897_390
+    assert metadata["post_guard_overlap_agreement_rate"] == 1.0
+    assert metadata["table"] == QUALIFIED_SE_FINANCIAL_HISTORY_TABLE
+
+
+def test_replace_se_financial_history_refuses_to_swap_an_empty_stage(
+    monkeypatch,
+) -> None:
+    client = _FakeHistoryClickHouseClient(
+        quality_row=(0, 0, 0, 0),
+        guard_row=(0, 0, 0, 0, 0),
+    )
+    resource = _patch_clickhouse(monkeypatch, client)
+
+    try:
+        replace_se_financial_history_clickhouse(clickhouse=resource)
+        raised = False
+    except ValueError:
+        raised = True
+
+    assert raised
+    # The guard fires BEFORE the swap: no EXCHANGE TABLES statement ever
+    # runs, but the stage table is still dropped (cleanup in `finally`).
+    assert not any(
+        statement.startswith("EXCHANGE TABLES") for statement in client.statements
+    )
+    assert client.statements[-1].startswith("DROP TABLE")
+
+
+def test_replace_se_financial_history_agreement_rate_is_none_with_no_overlap_pairs(
+    monkeypatch,
+) -> None:
+    # A statement set with zero comparative-year overlap (e.g. every
+    # company's first filing year) has nothing to agree/disagree on --
+    # 0/0 must not raise or silently report 100%.
+    client = _FakeHistoryClickHouseClient(
+        quality_row=(10, 10, 0, 8),
+        guard_row=(0, 0, 0, 0, 0),
+    )
+    resource = _patch_clickhouse(monkeypatch, client)
+
+    metadata = replace_se_financial_history_clickhouse(clickhouse=resource)
+
+    assert metadata["overlap_agreement_rate"] is None
+    assert metadata["post_guard_overlap_agreement_rate"] is None

@@ -1,5 +1,6 @@
 from dagster_v3.defs.sweden_financial.assets import (
     defs,
+    se_financial_history_clickhouse,
     sweden_financial_clickhouse_job,
     sweden_financial_backfill_parsed_reports_duckdb,
     sweden_financial_backfill_raw_archives_s3,
@@ -31,6 +32,7 @@ __all__ = [
     "SwedenFinancialStoredArchive",
     "archive_object_key",
     "defs",
+    "se_financial_history_clickhouse",
     "sweden_financial_backfill_job",
     "sweden_financial_backfill_parsed_reports_duckdb",
     "sweden_financial_backfill_raw_archives_s3",

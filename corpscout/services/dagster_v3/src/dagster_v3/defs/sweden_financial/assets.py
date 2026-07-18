@@ -18,6 +18,10 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     export_sweden_financial_facts_clickhouse,
     export_sweden_financial_reports_clickhouse,
 )
+from dagster_v3.defs.sweden_financial.history import (
+    QUALIFIED_SE_FINANCIAL_HISTORY_TABLE,
+    replace_se_financial_history_clickhouse,
+)
 from dagster_v3.defs.sweden_financial.parsing import (
     extract_sweden_financial_report_xhtml_catalog,
     parse_sweden_financial_report_xhtml_catalog,
@@ -408,6 +412,38 @@ def sweden_financial_metrics_clickhouse(
     return dg.MaterializeResult(metadata=counts)
 
 
+@dg.asset(
+    deps=[
+        "sweden_financial_reports_clickhouse",
+        "sweden_financial_facts_clickhouse",
+        # Not a data dependency (the history build reads reports/facts/
+        # exchange_rates directly, not se_financial_metrics) -- an ordering
+        # dependency so history rebuilds land in the same wave as metrics
+        # (both derive from the same reports+facts and are consumed
+        # together downstream).
+        "sweden_financial_metrics_clickhouse",
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse", "xbrl", "fx"},
+    metadata={"table": QUALIFIED_SE_FINANCIAL_HISTORY_TABLE},
+    description=(
+        "Builds per-(company, fiscal_year) Sweden financial history rows -- "
+        "each filing's own reported figures plus its flerarsoversikt "
+        "comparative-year figures, trust-guarded on revenue overlap "
+        "agreement -- from se_financial_reports and se_financial_facts."
+    ),
+)
+def se_financial_history_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    metadata = replace_se_financial_history_clickhouse(
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=metadata)
+
+
 SWEDEN_FINANCIAL_ARCHIVE_INGEST_GAP_TOLERANCE = 6
 
 
@@ -500,6 +536,7 @@ SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_reports_clickhouse",
     "sweden_financial_facts_clickhouse",
     "sweden_financial_metrics_clickhouse",
+    "se_financial_history_clickhouse",
 )
 
 
@@ -559,6 +596,7 @@ defs = dg.Definitions(
         sweden_financial_reports_clickhouse,
         sweden_financial_facts_clickhouse,
         sweden_financial_metrics_clickhouse,
+        se_financial_history_clickhouse,
     ],
     asset_checks=[archive_ingest_complete],
     jobs=[
