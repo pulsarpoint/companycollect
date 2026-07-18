@@ -10,7 +10,7 @@ import { Separator } from "~/components/ui/separator";
 import { FieldGrid, formatFieldValue, splitFields } from "~/components/detail/fields";
 import { keyFacts, keyFactKeys, resolveRecordFields, type Lang } from "~/components/detail/language";
 
-function KeyFactsStrip({ facts }: { facts: ReturnType<typeof keyFacts> }) {
+function KeyFactsStrip({ facts, lang }: { facts: ReturnType<typeof keyFacts>; lang: Lang }) {
   if (facts.length === 0) return null;
   return (
     <dl className="flex flex-wrap gap-x-6 gap-y-3">
@@ -18,6 +18,11 @@ function KeyFactsStrip({ facts }: { facts: ReturnType<typeof keyFacts> }) {
         <div key={fact.label} className="flex flex-col gap-0.5">
           <dt className="text-muted-foreground text-[0.7rem] font-medium uppercase tracking-wide">
             {fact.label}
+            {fact.fromOtherLang ? (
+              <span className="text-muted-foreground/70 ml-1.5 font-normal normal-case">
+                ({lang === "en" ? "original" : "english"})
+              </span>
+            ) : null}
           </dt>
           <dd className="text-sm font-medium tabular-nums">
             {fact.href?.startsWith("http") ? (
@@ -82,10 +87,15 @@ export function CompanyRecordSection({
   const { lineage } = splitFields(record);
   const facts = keyFacts(record, lang);
   const usedKeys = keyFactKeys(record, lang);
+  const markerSuffix = lang === "en" ? "(original)" : "(english)";
+  const gridFieldEntries = fields.filter((f) => !usedKeys.has(f.key));
   const gridFields: [string, unknown][] = [
-    ...fields.filter((f) => !usedKeys.has(f.key)).map((f): [string, unknown] => [f.key, f.value]),
+    ...gridFieldEntries.map((f): [string, unknown] => [f.key, f.value]),
     ["industry", [company.industry_code, company.industry_label].filter(Boolean).join(" ") || null],
   ];
+  const gridMarkers = new Map<string, string>(
+    gridFieldEntries.filter((f) => f.fromOtherLang).map((f): [string, string] => [f.key, markerSuffix]),
+  );
 
   return (
     <Card>
@@ -93,10 +103,10 @@ export function CompanyRecordSection({
         <CardTitle className="text-base">Company record</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <KeyFactsStrip facts={facts} />
+        <KeyFactsStrip facts={facts} lang={lang} />
         {facts.length > 0 ? <Separator /> : null}
-        <ProseSections longTexts={longTexts} lang={lang} />
-        <FieldGrid fields={gridFields} />
+        <ProseSections longTexts={longTexts.filter((f) => !usedKeys.has(f.key))} lang={lang} />
+        <FieldGrid fields={gridFields} markers={gridMarkers} />
         {lineage.length > 0 ? (
           <details>
             <summary className="text-muted-foreground cursor-pointer text-xs font-medium uppercase tracking-wide">

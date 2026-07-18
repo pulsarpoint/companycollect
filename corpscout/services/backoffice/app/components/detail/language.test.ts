@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { keyFacts, resolveRecordFields } from "~/components/detail/language";
+import { keyFacts, keyFactKeys, resolveRecordFields } from "~/components/detail/language";
 
 // Realistic per-country fixtures, matching the live-audited paired-field
 // landscape: NO (articles_purpose/activity_text/legal_form_description
@@ -174,6 +174,15 @@ describe("resolveRecordFields — BR record (unpaired singles, currency field mu
     expect(shareCapital?.value).toBe("R$ 100.000,00");
     // Must NOT have been collapsed into a base "share_capital_amount" key.
     expect(fields.some((f) => f.key === "share_capital_amount")).toBe(false);
+  });
+});
+
+describe("resolveRecordFields — pairing requires both variants present", () => {
+  it("does not collapse a bare base key plus an _en sibling when no _original variant exists", () => {
+    const record: Record<string, unknown> = { status: "Aktiv", status_en: "Active" };
+    const { fields, pairCount } = resolveRecordFields(record, "en");
+    expect(pairCount).toBe(0);
+    expect(fields.map((f) => f.key)).toEqual(["status", "status_en"]);
   });
 });
 
@@ -363,5 +372,56 @@ describe("keyFacts", () => {
 
   it("skips a fact whose only candidate value is an empty string", () => {
     expect(keyFacts({ status: "", website: "" }, "en")).toEqual([]);
+  });
+
+  it("marks a fact fromOtherLang when its resolved field fell back to the other language", () => {
+    const record: Record<string, unknown> = {
+      status_original: "Aktivt",
+      status_en: "", // empty -> falls back to original even in en mode
+    };
+    expect(keyFacts(record, "en")).toEqual([
+      { label: "Status", value: "Aktivt", fromOtherLang: true },
+    ]);
+  });
+
+  it("does not set fromOtherLang when the selected language's value is present", () => {
+    const record: Record<string, unknown> = {
+      status_original: "Aktivt",
+      status_en: "Active",
+    };
+    const facts = keyFacts(record, "en");
+    expect(facts).toEqual([{ label: "Status", value: "Active" }]);
+    expect(facts[0]?.fromOtherLang).toBeUndefined();
+  });
+
+  it("excludes long-text fields from key-fact candidacy (a 240+-char legal form must not surface as a fact)", () => {
+    const longLegalForm = "C".repeat(250);
+    const record: Record<string, unknown> = {
+      legal_form: longLegalForm,
+      status: "Active",
+    };
+    expect(keyFacts(record, "en")).toEqual([{ label: "Status", value: "Active" }]);
+  });
+});
+
+describe("keyFactKeys", () => {
+  it("pins the exact resolved-field keys the key-facts strip consumed for a full NO-style record", () => {
+    const record: Record<string, unknown> = {
+      legal_form_description_original: "Aksjeselskap",
+      legal_form_description_en: "Private limited company",
+      legal_form_original: "AS",
+      legal_form_en: "PLC",
+      status_original: "Aktivt",
+      status_en: "Active",
+      registration_date: "2015-03-02",
+      primary_website_url: "https://example.no",
+    };
+    expect(keyFactKeys(record, "en")).toEqual(
+      new Set(["legal_form_description", "status", "registration_date", "primary_website_url"]),
+    );
+  });
+
+  it("returns an empty set when no key facts are present", () => {
+    expect(keyFactKeys({ name: "X" }, "en")).toEqual(new Set());
   });
 });

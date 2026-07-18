@@ -147,17 +147,24 @@ const WEBSITE_CANDIDATES = ["primary_website_url", "website"];
 function firstPresentValue(
   resolvedByKey: Map<string, ResolvedField>,
   candidates: string[],
-): { key: string; text: string } | null {
+): { key: string; text: string; fromOtherLang: boolean } | null {
   for (const candidate of candidates) {
     const resolved = resolvedByKey.get(candidate);
     if (!resolved) continue;
     const text = formatFieldValue(resolved.key, resolved.value);
-    if (text !== null) return { key: resolved.key, text };
+    if (text !== null) return { key: resolved.key, text, fromOtherLang: resolved.fromOtherLang };
   }
   return null;
 }
 
-type KeyFact = { key: string; label: string; value: string; href?: string };
+type KeyFact = {
+  key: string;
+  label: string;
+  value: string;
+  href?: string;
+  /** True when this fact's value came from the other language (fallback). */
+  fromOtherLang?: boolean;
+};
 
 /**
  * Shared computation behind `keyFacts`/`keyFactKeys`: picks the small set of
@@ -169,27 +176,57 @@ type KeyFact = { key: string; label: string; value: string; href?: string };
  * than rendered empty.
  */
 function computeKeyFacts(record: Record<string, unknown>, lang: Lang): KeyFact[] {
-  const { fields, longTexts } = resolveRecordFields(record, lang);
+  // Long-text fields (e.g. a 240+-char legal_form value) are excluded from
+  // key-fact candidacy entirely — a compact "at a glance" strip is the wrong
+  // place for prose-length text, so only the short `fields` bucket is
+  // eligible. The detail-sections dedup filter is kept anyway as a
+  // belt-and-braces guard in case some other path ever surfaces a long-text
+  // key here.
+  const { fields } = resolveRecordFields(record, lang);
   const resolvedByKey = new Map<string, ResolvedField>();
   for (const field of fields) resolvedByKey.set(field.key, field);
-  for (const field of longTexts) resolvedByKey.set(field.key, field);
 
   const facts: KeyFact[] = [];
 
   const legalForm = firstPresentValue(resolvedByKey, LEGAL_FORM_CANDIDATES);
-  if (legalForm) facts.push({ key: legalForm.key, label: "Legal form", value: legalForm.text });
+  if (legalForm) {
+    facts.push({
+      key: legalForm.key,
+      label: "Legal form",
+      value: legalForm.text,
+      ...(legalForm.fromOtherLang ? { fromOtherLang: true } : {}),
+    });
+  }
 
   const status = firstPresentValue(resolvedByKey, STATUS_CANDIDATES);
-  if (status) facts.push({ key: status.key, label: "Status", value: status.text });
+  if (status) {
+    facts.push({
+      key: status.key,
+      label: "Status",
+      value: status.text,
+      ...(status.fromOtherLang ? { fromOtherLang: true } : {}),
+    });
+  }
 
   const registeredDate = firstPresentValue(resolvedByKey, REGISTERED_DATE_CANDIDATES);
   if (registeredDate) {
-    facts.push({ key: registeredDate.key, label: "Registered", value: registeredDate.text });
+    facts.push({
+      key: registeredDate.key,
+      label: "Registered",
+      value: registeredDate.text,
+      ...(registeredDate.fromOtherLang ? { fromOtherLang: true } : {}),
+    });
   }
 
   const website = firstPresentValue(resolvedByKey, WEBSITE_CANDIDATES);
   if (website) {
-    facts.push({ key: website.key, label: "Website", value: website.text, href: website.text });
+    facts.push({
+      key: website.key,
+      label: "Website",
+      value: website.text,
+      href: website.text,
+      ...(website.fromOtherLang ? { fromOtherLang: true } : {}),
+    });
   }
 
   return facts;
@@ -204,7 +241,7 @@ function computeKeyFacts(record: Record<string, unknown>, lang: Lang): KeyFact[]
 export function keyFacts(
   record: Record<string, unknown>,
   lang: Lang,
-): { label: string; value: string; href?: string }[] {
+): { label: string; value: string; href?: string; fromOtherLang?: boolean }[] {
   return computeKeyFacts(record, lang).map(({ key: _key, ...fact }) => fact);
 }
 

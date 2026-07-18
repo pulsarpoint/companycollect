@@ -55,7 +55,20 @@ export function splitFields(record: Record<string, unknown>): {
 
 const EMPTY = <span className="text-muted-foreground">—</span>;
 
-export function FieldGrid({ fields }: { fields: [string, unknown][] }) {
+export function FieldGrid({
+  fields,
+  markers,
+}: {
+  fields: [string, unknown][];
+  /**
+   * Optional per-key muted suffix text (e.g. "(original)"/"(english)"),
+   * rendered next to a field's label — mirrors the fallback marker
+   * ProseSections shows for long-text fields, extended to the grid. Callers
+   * that don't need markers omit the prop entirely; existing call sites are
+   * unaffected.
+   */
+  markers?: Map<string, string>;
+}) {
   if (fields.length === 0) return null;
   return (
     <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
@@ -64,10 +77,16 @@ export function FieldGrid({ fields }: { fields: [string, unknown][] }) {
         const isLink =
           typeof formatted === "string" &&
           (formatted.startsWith("http://") || formatted.startsWith("https://"));
+        const marker = markers?.get(key);
         return (
           <div key={key} className="flex flex-col gap-0.5">
             <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
               {humanizeFieldKey(key)}
+              {marker ? (
+                <span className="text-muted-foreground/70 ml-1.5 font-normal normal-case">
+                  {marker}
+                </span>
+              ) : null}
             </dt>
             <dd className="text-sm break-words tabular-nums">
               {formatted === null ? (
