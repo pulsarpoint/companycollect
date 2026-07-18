@@ -100,10 +100,16 @@ countries (including all five named above) there's no per-table freshness
 signal available, so the preflight logs which table lacks it and runs
 parity normally (unprotected) for those.
 
-**A parity failure WITHOUT the freshness-skip warning in the log is real
-drift** — treat it as a bug. A skip with the warning is benign and
-self-resolving: re-run the sweep after the next 07:15 `companies_all`
-build.
+**For no/fi/br (the countries with a freshness signal): a parity failure
+WITHOUT the freshness-skip warning is real drift** — treat it as a bug. A
+skip with the warning is benign and self-resolving: re-run the sweep after
+the next 07:15 `companies_all` build. **For the seven no-signal countries a
+benign calendar failure produces NO skip warning** — before treating their
+failure as drift, check whether that source's register schedule fired since
+the last 07:15 build (sk Mon 07:00, se Mon 06:15, fr 6th, gb 7th, cz 17th).
+Adding `resolved_at` to those seven company exports auto-upgrades the
+preflight per country (it detects the column at runtime) and closes this
+gap for good.
 
 ### Intentional semantic changes from the switch
 

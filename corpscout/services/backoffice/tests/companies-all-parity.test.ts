@@ -24,9 +24,12 @@ import { FACET_COLUMN, filterableFacetKeys } from "~/lib/filters";
  * per-country `resolved_at` (set to `now64(3)` at INSERT time — i.e. the
  * leg's build timestamp) against the source `companiesTable`'s own
  * `max(resolved_at)`, and SKIPS (with a loud `console.warn` naming both
- * timestamps) when the source is newer. A parity failure WITHOUT that
- * warning in the log is real drift — treat it as a bug, not something to
- * retry away.
+ * timestamps) when the source is newer. For no/fi/br (the countries whose
+ * companies table carries resolved_at) a parity failure WITHOUT that
+ * warning is real drift — treat it as a bug. The other seven countries
+ * have no freshness signal, so a benign post-build source refresh fails
+ * WITHOUT any warning there: check the source's register schedule (see
+ * README "companies_all") before treating those as drift.
  */
 
 const COMPANIES_ALL = "companies_all";
