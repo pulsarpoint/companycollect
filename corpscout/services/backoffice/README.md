@@ -228,8 +228,10 @@ pipeline left the stored USD NULL.
 ### Language toggle
 
 The detail page supports a `?lang=original` URL parameter to switch between
-English and original-language variants of multi-language fields (GB, SE).
-Default is English; omitting `?lang` or setting `?lang=en` both show English.
+English and original-language variants of multi-language fields (present for
+NO, EE, LV, FI, SK today; GB and SE have no language pairs, so the toggle is
+hidden there). Default is English; omitting `?lang` or setting `?lang=en`
+both show English.
 The toggle is a two-option segmented control ("English" / "Original") in the
 detail header, hidden entirely when a record has zero language pairs
 (`pairCount === 0`).
@@ -239,15 +241,18 @@ detail header, hidden entirely when a record has zero language pairs
 whether their values are empty). Unpaired one-siders (e.g., a single
 `status_en` with no `status_original`, or `share_capital_amount_original`
 with no `_en`) always pass through under their own literal key name. Currency
-fields (suffixed `_amount_original`) are never treated as pairs and always
-show both variants.
+fields (suffixed `_amount_original`) are therefore never treated as language
+pairs — no `_amount_en` counterpart exists, so the both-sides rule excludes
+them automatically (pinned by test with BR's `share_capital_amount_original`).
 
 **Fallback markers:** When the selected language variant is empty, the detail
 page falls back to the other one and appends a muted fallback marker:
 `(original)` when showing English's fallback, `(english)` when showing
 original's fallback. These markers appear in the key-facts strip (at the top),
-in prose sections (articles purpose / activity text / any >240-char text), in
-the field grid, and in lineage details (translation provenance keys).
+in prose sections (articles purpose / activity text / any >240-char text), and
+in the field grid. Translation provenance keys (`_language`, `_translated_at`,
+`_translation_provider`, `_translation_model`) live in the collapsible
+"Source & lineage" details block, which carries no markers.
 
 **Rendering structure:**
 1. Key-facts strip — identity facts (legal form, status, registered date,
