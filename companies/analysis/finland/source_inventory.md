@@ -59,3 +59,13 @@ Current Virre prices checked on 2026-06-10:
 
 See `financials_and_virre_pricing.md` for endpoints, pricing details, break-even
 math, and implementation notes.
+
+## Added 2026-07-19 — financial data gap follow-up
+
+| Source | Type | Access | Format | License | Status |
+|---|---|---|---|---|---|
+| Verohallinto public corporate income tax data (2020–2024) | official tax open data | bulk CSV on vero.fi | CSV (latin-1, `;`) | CC-BY-4.0 | recommended |
+| filings.xbrl.org ESEF index (country=FI) | official ESEF repository | free JSON:API + iXBRL zips | JSON / iXBRL | public regulated info (verify redistribution) | recommended |
+| Nasdaq Helsinki OAM | official OAM | web only | xHTML/zip | public regulated info | useful_secondary_source |
+
+Details and verified counts in `financial_data_gap_analysis.md`.

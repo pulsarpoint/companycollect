@@ -66,3 +66,41 @@
   - `resource_show?id=ac409ad1-...` (legacy full_prh_data.csv) → **HTTP 404** (removed).
   - Human portal pages (`/data/en_GB/...`) return HTTP 403 to fetchers; use CKAN API instead.
 - Decision: Drop the legacy CSV; standardize on the PRH JSON API. License confirmed CC-BY-4.0.
+
+## Attempt 6 (financial coverage gap follow-up: tax administration open data)
+
+- Date/time: 2026-07-19T15:00Z
+- Search engine or source: web search + avoindata.suomi.fi CKAN API + vero.fi
+- Query: `Verohallinto yhteisöjen tuloverotuksen julkiset tiedot CSV avoindata corporate income tax public data Finland download`
+- Language: Finnish + English
+- Why this query was tried: PRH digital XBRL covers only ~5% of statements; looking for a universal-coverage financial signal for all Finnish corporate entities.
+- Top relevant URLs:
+  - https://www.vero.fi/tietoa-verohallinnosta/tilastot/avoin_dat/
+  - https://avoindata.suomi.fi/data/fi/dataset/yhteisojen-tuloverotuksen-julkiset-tiedot
+- Result: Confirmed annual CSV bulk files (2020-2024 on vero.fi, 2011-2014 on CKAN; CKAN dataset is stale for recent years). License CC-BY-4.0. Downloaded 2024 file: 384,627 rows, 8 columns (tax year, business ID, name, municipality, taxable income, taxes assessed, refund, residual tax). Latin-1, semicolon-delimited, decimal comma. Also found a tax-amendments CSV (2022-2024 corrections).
+- Decision: Recommend as new source `finland/verotax`. Overlap with `fi_companies`: 274,355 of 460,988 (60%); 124,650 rows with taxable income > 0.
+
+## Attempt 7 (listed-company financial statements: ESEF)
+
+- Date/time: 2026-07-19T15:05Z
+- Search engine or source: web search + filings.xbrl.org JSON:API
+- Query: `Finland ESEF financial statements listed companies XBRL filings download Finanssivalvonta`
+- Language: English
+- Why this query was tried: ClickHouse showed 0 of 298 public limited companies have financials via PRH XBRL; listed issuers file ESEF annual reports to the Nasdaq Helsinki OAM instead.
+- Top relevant URLs:
+  - https://www.finanssivalvonta.fi/en/capital-markets/issuers-and-investors/esef-xbrl/
+  - https://filings.xbrl.org/api/filings?filter=[{"name":"country","op":"eq","val":"FI"}]
+- Result: filings.xbrl.org has 1,168 Finnish ESEF filings (FY2020 onward) with free API and direct zip package URLs. Entities identified by LEI (join to Y-tunnus via GLEIF). Nasdaq OAM itself has no obvious bulk interface; filings.xbrl.org is the practical machine-readable path.
+- Decision: Recommend as new source `finland/esef` for listed-company IFRS consolidated financials; reuse the existing `gleif` module for LEI -> business ID mapping.
+
+## Attempt 8 (future coverage: mandatory structured filing)
+
+- Date/time: 2026-07-19T15:10Z
+- Search engine or source: web search + xbrl.org news
+- Query: `Finland mandatory XBRL reporting company accounts trade register 2027`
+- Language: English
+- Why this query was tried: assess whether the 5% digital-filing limitation of the current `finland_xbrl` source is permanent.
+- Top relevant URLs:
+  - https://www.xbrl.org/news/finland-moves-to-mandatory-xbrl-reporting-for-company-accounts/
+- Result: iXBRL filing to PRH becomes mandatory in 2027 for companies required to appoint an auditor, expanding 2028 to most limited companies and partnerships; PRH targets all trade-register accounts in structured form by 2028.
+- Decision: No new pipeline needed for this; the existing `finland_xbrl` source will organically approach full coverage in 2027-2028. Keep Virre as the only paid backfill option for pre-2027 non-digital filers.

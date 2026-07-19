@@ -8,16 +8,27 @@
     "url": "https://avoindata.prh.fi/en",
     "bulk_download_url": null,
     "api_base_url": "https://avoindata.prh.fi/opendata-ytj-api/v3/companies",
-    "formats": ["json"],
+    "formats": [
+      "json"
+    ],
     "license": "CC-BY-4.0",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": "not published; be polite (100 records/page, throttle between pages)",
     "fields_observed": [
-      "businessId.value", "businessId.registrationDate", "names[]", "mainBusinessLine",
-      "companyForms[]", "companySituations[]", "registeredEntries[]", "addresses[]",
-      "tradeRegisterStatus", "status", "registrationDate", "endDate"
+      "businessId.value",
+      "businessId.registrationDate",
+      "names[]",
+      "mainBusinessLine",
+      "companyForms[]",
+      "companySituations[]",
+      "registeredEntries[]",
+      "addresses[]",
+      "tradeRegisterStatus",
+      "status",
+      "registrationDate",
+      "endDate"
     ],
     "data_freshness": "daily",
     "total_records": 819096,
@@ -43,13 +54,17 @@
     "url": "https://avoindata.suomi.fi/data/en_GB/dataset/yritykset",
     "bulk_download_url": null,
     "api_base_url": "https://avoindata.suomi.fi/data/api/3/action/package_show?id=yritykset",
-    "formats": ["json"],
+    "formats": [
+      "json"
+    ],
     "license": "CC-BY-4.0",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": null,
-    "fields_observed": ["dataset metadata only — points to PRH API"],
+    "fields_observed": [
+      "dataset metadata only — points to PRH API"
+    ],
     "data_freshness": "daily",
     "downloaded_files": [],
     "status": "useful_secondary_source",
@@ -64,13 +79,17 @@
     "url": "https://avoindata.suomi.fi/data/en_GB/dataset/prh-avoin-data",
     "bulk_download_url": null,
     "api_base_url": "https://avoindata.suomi.fi/data/api/3/action/package_show?id=prh-avoin-data",
-    "formats": ["json"],
+    "formats": [
+      "json"
+    ],
     "license": "CC-BY-4.0",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": null,
-    "fields_observed": ["dataset metadata only"],
+    "fields_observed": [
+      "dataset metadata only"
+    ],
     "data_freshness": "daily",
     "downloaded_files": [],
     "status": "useful_secondary_source",
@@ -85,7 +104,11 @@
     "url": "https://avoindata.prh.fi/en",
     "bulk_download_url": null,
     "api_base_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3",
-    "formats": ["json", "xml", "ixbrl"],
+    "formats": [
+      "json",
+      "xml",
+      "ixbrl"
+    ],
     "license": "CC-BY-4.0",
     "access": "public",
     "requires_authentication": false,
@@ -120,13 +143,18 @@
     "url": "https://www.prh.fi/en/companiesandorganisations/tietopalvelut/virre.html",
     "bulk_download_url": null,
     "api_base_url": null,
-    "formats": ["pdf", "document"],
+    "formats": [
+      "pdf",
+      "document"
+    ],
     "license": "PRH terms",
     "access": "paid",
     "requires_authentication": true,
     "requires_payment": true,
     "rate_limits": null,
-    "fields_observed": ["financial statement documents"],
+    "fields_observed": [
+      "financial statement documents"
+    ],
     "data_freshness": "on_demand",
     "downloaded_files": [],
     "status": "paid_fallback_source",
@@ -141,14 +169,14 @@
         "electronic_financial_statement_eur": 4.02
       },
       "contract_client": {
-        "startup_fee_eur": 125.50,
+        "startup_fee_eur": 125.5,
         "annual_fee_per_username_eur": 27.61,
         "invoicing_charge_eur": 8.16,
         "electronic_financial_statement_eur": 2.01
       },
       "selections": {
-        "portal_basic_fee_eur": 150.60,
-        "ordered_basic_fee_eur": 301.20,
+        "portal_basic_fee_eur": 150.6,
+        "ordered_basic_fee_eur": 301.2,
         "per_information_unit_eur": 0.15
       },
       "vat_rate_percent_for_chargeable_electronic_products": 25.5
@@ -164,7 +192,9 @@
     "url": "https://www.avoindata.fi/data/en_GB/dataset/yritykset/resource/ac409ad1-3183-4174-9317-a13c16511ab1",
     "bulk_download_url": null,
     "api_base_url": null,
-    "formats": ["csv"],
+    "formats": [
+      "csv"
+    ],
     "license": "CC-BY-4.0",
     "access": "public",
     "requires_authentication": false,
@@ -175,5 +205,97 @@
     "downloaded_files": [],
     "status": "unavailable",
     "notes": "resource_show returns HTTP 404 after portal migration. Documented for history; do not use. Replaced by the paginated API."
+  },
+  {
+    "country": "Finland",
+    "country_slug": "finland",
+    "source_name": "Verohallinto public corporate income tax data (yhteisöjen tuloverotuksen julkiset tiedot)",
+    "source_type": "official_tax_open_data",
+    "organization": "Finnish Tax Administration (Verohallinto)",
+    "url": "https://www.vero.fi/tietoa-verohallinnosta/tilastot/avoin_dat/",
+    "bulk_download_url": "https://www.vero.fi/contentassets/a7b04897ccd44feda446bd1894c1fd74/yhteis%C3%B6_tuloverotus_julk_2024.csv",
+    "api_base_url": null,
+    "formats": [
+      "csv"
+    ],
+    "license": "CC-BY-4.0",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": null,
+    "fields_observed": [
+      "tax_year",
+      "business_id",
+      "taxpayer_name",
+      "municipality_of_taxation",
+      "taxable_income",
+      "total_taxes_assessed",
+      "tax_refund",
+      "residual_tax"
+    ],
+    "data_freshness": "annual; published early November for the preceding tax year; years 2020-2024 on vero.fi, 2011-2014 on avoindata.suomi.fi CKAN (stale)",
+    "downloaded_files": [
+      "raw/bulk/vero_yhteiso_tuloverotus_julk_2024.csv"
+    ],
+    "status": "recommended",
+    "notes": "384,627 entities for tax year 2024; universal coverage of corporate taxpayers (incl. associations/foundations absent from YTJ open data). Latin-1, semicolon-delimited, decimal comma. Not full financial statements - taxable income and assessed tax only. Separate amendments CSV covers 2022-2024 reassessments."
+  },
+  {
+    "country": "Finland",
+    "country_slug": "finland",
+    "source_name": "filings.xbrl.org ESEF filings index (country=FI)",
+    "source_type": "official_esef_repository",
+    "organization": "XBRL International (aggregating OAM-published ESEF filings)",
+    "url": "https://filings.xbrl.org/",
+    "bulk_download_url": null,
+    "api_base_url": "https://filings.xbrl.org/api/filings",
+    "formats": [
+      "json_api_index",
+      "ixbrl_zip_packages",
+      "parsed_json"
+    ],
+    "license": "filings are public regulated information; index freely accessible; verify redistribution terms",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "unknown; be polite",
+    "fields_observed": [
+      "fxo_id",
+      "country",
+      "period_end",
+      "package_url",
+      "entity.name",
+      "entity.identifier (LEI)"
+    ],
+    "data_freshness": "continuous; FY2020 onward",
+    "downloaded_files": [
+      "raw/api/filings_xbrl_org_fi_page_1.json"
+    ],
+    "status": "recommended",
+    "notes": "1,168 Finnish ESEF filings at 2026-07-19. IFRS consolidated statements of listed issuers as iXBRL zips. Entities keyed by LEI - map to Y-tunnus via GLEIF. Fills the gap: 0 of 298 Finnish public limited companies currently have financials via PRH XBRL."
+  },
+  {
+    "country": "Finland",
+    "country_slug": "finland",
+    "source_name": "Nasdaq Helsinki OAM (officially appointed mechanism)",
+    "source_type": "official_oam",
+    "organization": "Nasdaq Helsinki / Finanssivalvonta oversight",
+    "url": "https://www.finanssivalvonta.fi/en/capital-markets/issuers-and-investors/esef-xbrl/",
+    "bulk_download_url": null,
+    "api_base_url": null,
+    "formats": [
+      "xhtml",
+      "zip"
+    ],
+    "license": "regulated public information",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": null,
+    "fields_observed": [],
+    "data_freshness": "continuous",
+    "downloaded_files": [],
+    "status": "useful_secondary_source",
+    "notes": "Primary legal repository for Finnish issuers' ESEF reports, but no obvious machine-readable bulk interface; use filings.xbrl.org instead."
   }
 ]

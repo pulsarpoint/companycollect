@@ -46,3 +46,10 @@ company model (see `schema_notes.md`). Add "Source: PRH, CC-BY 4.0" attribution.
 For financial statements, see `financials_and_virre_pricing.md`. The recommended
 path is to add `finland/prhxbrl` for the free PRH digital financial statement API,
 then keep Virre as a paid fallback for missing PDF/document coverage.
+
+**Update 2026-07-19:** `finland_xbrl` is implemented but covers only ~5-6.5% of
+companies (digital filers). See `financial_data_gap_analysis.md` for the coverage
+analysis and two new recommended free sources: Verohallinto public corporate
+income tax CSVs (384k entities/year, CC-BY-4.0) and ESEF listed-company filings
+via filings.xbrl.org (1,168 FI filings). Mandatory iXBRL filing to PRH in
+2027/2028 will close the long-tail gap automatically.
