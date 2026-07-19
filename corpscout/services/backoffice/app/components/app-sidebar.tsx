@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router";
-import { Building2, ChartColumn } from "lucide-react";
+import { Building2, ChartColumn, Users } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -13,17 +13,19 @@ import {
 
 const NAV_ITEMS = [
   { title: "Companies", to: "/companies", icon: Building2 },
+  { title: "People", to: "/people", icon: Users },
   { title: "Financials", to: "/financials", icon: ChartColumn },
 ];
 
 /**
  * An item is active on an exact match or any of its sub-paths. Companies
- * additionally activates for `/company/:country/:id` detail pages, which
- * live outside the `/companies` prefix.
+ * additionally activates for `/company/:country/:id` detail pages, and
+ * People for `/person/:name` pages — both live outside their list prefix.
  */
 function isNavItemActive(pathname: string, to: string): boolean {
   if (pathname === to || pathname.startsWith(`${to}/`)) return true;
-  return to === "/companies" && pathname.startsWith("/company/");
+  if (to === "/companies" && pathname.startsWith("/company/")) return true;
+  return to === "/people" && pathname.startsWith("/person/");
 }
 
 export function AppSidebar() {
