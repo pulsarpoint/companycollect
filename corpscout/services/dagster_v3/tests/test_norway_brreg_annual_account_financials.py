@@ -593,7 +593,7 @@ def test_annual_account_financial_asset_graph_keeps_each_stage_separate() -> Non
     ] == {documents_duckdb}
     assert norway_brreg_annual_account_facts_clickhouse.asset_deps[
         dg.AssetKey("norway_brreg_annual_account_facts_clickhouse")
-    ] == {facts_duckdb}
+    ] == {mappings_duckdb, facts_usd}
     assert norway_brreg_annual_account_metrics_clickhouse.asset_deps[
         dg.AssetKey("norway_brreg_annual_account_metrics_clickhouse")
     ] == {metrics_duckdb}

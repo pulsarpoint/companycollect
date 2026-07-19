@@ -240,15 +240,18 @@ def norway_brreg_annual_account_reports_clickhouse(
 
 @dg.asset(
     name="norway_brreg_annual_account_facts_clickhouse",
-    deps=[dg.AssetKey("norway_brreg_annual_account_facts_duckdb")],
+    deps=[
+        dg.AssetKey("norway_brreg_annual_account_fact_mappings_duckdb"),
+        dg.AssetKey("norway_brreg_annual_account_facts_usd_duckdb"),
+    ],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=ANNUAL_ACCOUNT_DUCKDB_POOL,
     description=(
-        "Atomically replaces one Norway annual-account year/chunk partition in "
-        "corpscout.no_financial_facts."
+        "Atomically replaces one mapped and USD-enriched Norway annual-account "
+        "year/chunk partition in corpscout.no_financial_facts."
     ),
 )
 def norway_brreg_annual_account_facts_clickhouse(
