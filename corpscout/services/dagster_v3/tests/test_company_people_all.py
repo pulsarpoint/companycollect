@@ -146,7 +146,10 @@ def test_se_xbrl_signatures_select_dedupes_one_row_per_person_and_signatory_kind
     """Locks in the plan's dedupe contract: one row per (company_id,
     fiscal_year, first_name, last_name, signatory_kind), preferring a
     resolved role_kind over 'unknown' via argMax -- the same preference
-    shape as the plan's Task 4 backoffice officers query.
+    shape as the plan's Task 4 backoffice officers query -- with
+    statement_key appended as an explicit tuple tiebreak (Finding 1) so two
+    grouped rows that both have a known role_kind still resolve to one
+    deterministic winning row instead of an arbitrary ClickHouse pick.
     """
     sql = PEOPLE_SOURCES["se_xbrl_signatures"]
 
@@ -154,12 +157,72 @@ def test_se_xbrl_signatures_select_dedupes_one_row_per_person_and_signatory_kind
         "GROUP BY o.company_id, o.fiscal_year, o.first_name, o.last_name, "
         "o.signatory_kind" in sql
     )
-    assert "argMax(o.role_original, o.role_kind != 'unknown') AS role_original" in sql
-    assert "argMax(o.role_kind, o.role_kind != 'unknown') AS role_kind" in sql
-    assert (
-        "argMax(o.statement_key, o.role_kind != 'unknown') AS source_statement_key"
-        in sql
+    tiebreak = "(o.role_kind != 'unknown', o.statement_key)"
+    assert f"argMax(o.role_original, {tiebreak}) AS role_original" in sql
+    assert f"argMax(o.role_kind, {tiebreak}) AS role_kind" in sql
+    assert f"argMax(o.statement_key, {tiebreak}) AS source_statement_key" in sql
+
+
+def _simulate_role_argmax(rows: list[dict[str, str]]) -> dict[str, str]:
+    """Pure-Python mirror of the SE source SELECT's
+    ``argMax(x, (role_kind != 'unknown', statement_key))`` tiebreak (Finding
+    1) -- reimplemented here, not imported, because this module's tests are
+    string-level with no live ClickHouse to execute the real SQL against.
+    Rows are assumed to already share one (company_id, fiscal_year,
+    first_name, last_name, signatory_kind) GROUP BY key, exactly the
+    scenario the module docstring's tiebreak note reasons about. ClickHouse
+    ``argMax`` picks the row with the greatest comparator value (ties broken
+    lexicographically for a tuple), which is exactly what ``max(..., key=)``
+    does here.
+    """
+    winner = max(
+        rows,
+        key=lambda row: (row["role_kind"] != "unknown", row["statement_key"]),
     )
+    return {
+        "role_original": winner["role_original"],
+        "role_kind": winner["role_kind"],
+        "source_statement_key": winner["statement_key"],
+    }
+
+
+def test_role_argmax_simulation_breaks_known_role_ties_deterministically() -> None:
+    """Locks in Finding 1's fix: two rows in the same (company, fiscal_year,
+    person, signatory_kind) GROUP BY group can both carry a known role_kind
+    (e.g. the same person signing under an original filing and again under a
+    later-amended filing within the same fiscal year) -- a bare
+    ``argMax(x, role_kind != 'unknown')`` condition ties on both rows and
+    ClickHouse gives no deterministic winner among ties on a plain boolean.
+    The ``(role_kind != 'unknown', statement_key)`` tuple breaks that tie
+    deterministically by preferring the greater statement_key, and
+    role_original/role_kind/source_statement_key must all come from that
+    SAME winning row rather than being resolved independently.
+    """
+    rows = [
+        {
+            "statement_key": "se-2023-stmt-v1",
+            "role_original": "Styrelseledamot",
+            "role_kind": "board_member",
+        },
+        {
+            "statement_key": "se-2023-stmt-v2",
+            "role_original": "Verkställande direktör",
+            "role_kind": "ceo",
+        },
+    ]
+    assert rows[1]["statement_key"] > rows[0]["statement_key"]
+
+    result = _simulate_role_argmax(rows)
+
+    assert result == {
+        "role_original": "Verkställande direktör",
+        "role_kind": "ceo",
+        "source_statement_key": "se-2023-stmt-v2",
+    }
+
+    # Order-independence: the winner must not depend on input row order,
+    # since ClickHouse's argMax does not guarantee scan order either.
+    assert _simulate_role_argmax(list(reversed(rows))) == result
 
 
 def test_company_people_all_quality_sql_counts_countries_companies_sources() -> None:
@@ -271,7 +334,7 @@ def test_replace_company_people_all_is_atomic_and_reports_counts(monkeypatch) ->
     )
 
     assert client.table_checks == [
-        ("company_people_all", "se_company_officers"),
+        ("company_people_all", "se_company_officers", "se_companies"),
     ]
     assert any(statement.startswith("CREATE TABLE") for statement in client.statements)
     assert any(statement.startswith("INSERT INTO") for statement in client.statements)

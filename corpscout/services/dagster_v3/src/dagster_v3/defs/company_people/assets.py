@@ -49,8 +49,12 @@ GROUP_NAME = "company_people_all"
 # starts (mirrors officers.py's assert_clickhouse_tables_exist call). Kept
 # as a tuple rather than derived from PEOPLE_SOURCES because a source's
 # underlying table names aren't parseable out of its SELECT text -- add the
-# new source's table(s) here alongside its PEOPLE_SOURCES entry.
-_REQUIRED_SOURCE_TABLES = ("se_company_officers",)
+# new source's table(s) here alongside its PEOPLE_SOURCES entry. Includes
+# both tables the se_xbrl_signatures SELECT reads from -- se_company_officers
+# (the FROM) and se_companies (the LEFT JOIN for company_name) -- so a
+# missing join table fails this module's own clear pre-flight error instead
+# of a raw ClickHouse "table doesn't exist" error surfacing mid-INSERT.
+_REQUIRED_SOURCE_TABLES = ("se_company_officers", "se_companies")
 
 _QUALITY_COLUMNS = (
     "row_count",

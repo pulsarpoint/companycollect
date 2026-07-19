@@ -27,10 +27,19 @@ block, or across multiple concept triples, can appear more than once for
 the same (company, fiscal_year, signatory_kind) before this dedupe). This
 SELECT collapses those down to one row per
 ``(company_id, fiscal_year, first_name, last_name, signatory_kind)`` via
-``GROUP BY``, picking the row-set's best role via ``argMax(..., role_kind !=
-'unknown')`` -- the same "prefer a resolved role over the 'unknown'
-fallback" preference used by the plan's Task 4 backoffice officers query
-(``argMax(role_original, role_kind != 'unknown')``). ``company_name`` is
+``GROUP BY``, picking the row-set's best role via ``argMax(..., (role_kind
+!= 'unknown', statement_key))`` -- the same "prefer a resolved role over
+the 'unknown' fallback" preference used by the plan's Task 4 backoffice
+officers query (``argMax(role_original, role_kind != 'unknown')``), with
+``statement_key`` appended as an explicit tuple tiebreak: a bare boolean
+condition ties whenever two grouped rows both carry a known role (e.g. the
+same person signing under both an original and an amended filing in one
+fiscal year, or under two concept families within one statement), and
+ClickHouse picks no deterministic winner among ties on a plain boolean.
+``role_original``, ``role_kind``, and ``source_statement_key`` all share
+this identical ``(role_kind != 'unknown', statement_key)`` tuple condition,
+so the three are guaranteed to come from one single winning row rather than
+being resolved independently. ``company_name`` is
 joined from ``se_companies`` on ``registration_number`` (== ``company_id``
 in officer rows per the plan's identity note) and wrapped in ``any(...)``
 rather than added to the ``GROUP BY`` key: ``se_companies`` is a
@@ -84,14 +93,14 @@ _SE_XBRL_SIGNATURES_SELECT = """SELECT
     o.first_name AS first_name,
     o.last_name AS last_name,
     lowerUTF8(trim(concat(o.first_name, ' ', o.last_name))) AS full_name_normalized,
-    argMax(o.role_original, o.role_kind != 'unknown') AS role_original,
-    argMax(o.role_kind, o.role_kind != 'unknown') AS role_kind,
+    argMax(o.role_original, (o.role_kind != 'unknown', o.statement_key)) AS role_original,
+    argMax(o.role_kind, (o.role_kind != 'unknown', o.statement_key)) AS role_kind,
     o.signatory_kind AS signatory_kind,
     o.fiscal_year AS fiscal_year,
     '' AS identifier_kind,
     '' AS identifier_value,
     'se_xbrl_signatures' AS source,
-    argMax(o.statement_key, o.role_kind != 'unknown') AS source_statement_key,
+    argMax(o.statement_key, (o.role_kind != 'unknown', o.statement_key)) AS source_statement_key,
     %(resolved_at)s AS resolved_at
 FROM corpscout.se_company_officers AS o
 LEFT JOIN corpscout.se_companies AS c ON c.registration_number = o.company_id
