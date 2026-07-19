@@ -15,8 +15,8 @@ from dagster_v3.defs.sweden_financial.archive_state import (
 from dagster_v3.defs.sweden_financial.clickhouse import (
     QUALIFIED_SE_FINANCIAL_FACTS_TABLE,
     QUALIFIED_SE_FINANCIAL_REPORTS_TABLE,
-    export_sweden_financial_facts_clickhouse,
-    export_sweden_financial_reports_clickhouse,
+    upsert_sweden_financial_facts_partition,
+    upsert_sweden_financial_reports_partition,
 )
 from dagster_v3.defs.sweden_financial.history import (
     QUALIFIED_SE_FINANCIAL_HISTORY_TABLE,
@@ -42,8 +42,7 @@ from dagster_v3.defs.sweden_financial.audits import (
 from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsResource
 from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.sweden_financial.storage import (
-    existing_sweden_financial_source_duckdb_paths,
-    sweden_financial_read_only_partitioned_connection,
+    sweden_financial_year_duckdb_connection,
 )
 
 GROUP_NAME = "sweden_financial"
@@ -312,101 +311,191 @@ def sweden_financial_current_parsed_reports_duckdb(
     )
 
 
-SWEDEN_FINANCIAL_CLICKHOUSE_DEPENDENCIES = [
-    dg.AssetDep(
-        dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb"),
-        partition_mapping=dg.AllPartitionMapping(),
-    ),
-    dg.AssetDep(
-        dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),
-        partition_mapping=dg.AllPartitionMapping(),
-    ),
-]
-
-
 class SwedenFinancialClickhouseExportConfig(dg.Config):
     # Shrink-guard override (see clickhouse.py's
     # guard_against_clickhouse_table_shrink) -- MUST stay False by default.
     # Only set True via explicit run config for a confirmed-intentional
-    # shrink of a populated se_financial_reports/facts/metrics table (e.g. a
-    # deliberate upstream data retirement), never as a standing default.
+    # shrink of a populated se_financial_metrics/officers/audits table (e.g.
+    # a deliberate upstream data retirement), never as a standing default.
+    # The reports/facts exports no longer take it: they are partition-scoped
+    # upserts that structurally cannot shrink the table beyond their own
+    # partition's scope.
     allow_shrink: bool = False
 
 
-@dg.asset(
-    deps=SWEDEN_FINANCIAL_CLICKHOUSE_DEPENDENCIES,
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "xbrl"},
-    metadata={"table": QUALIFIED_SE_FINANCIAL_REPORTS_TABLE},
-    description="Exports parsed Sweden financial report documents to ClickHouse.",
-)
-def sweden_financial_reports_clickhouse(
+def _upsert_reports_partition_result(
+    *,
     context: dg.AssetExecutionContext,
-    config: SwedenFinancialClickhouseExportConfig,
     clickhouse: ClickhouseResource,
+    year: str,
 ) -> dg.MaterializeResult:
-    years = SWEDEN_FINANCIAL_BACKFILL_PARTITIONS.get_partition_keys()
-    duckdb_paths = existing_sweden_financial_source_duckdb_paths(years=years)
-    with sweden_financial_read_only_partitioned_connection(
-        years=years,
-        table_names=("reports",),
-    ) as connection:
-        rows = export_sweden_financial_reports_clickhouse(
+    duckdb_path = sweden_financial_source_duckdb_path(year)
+    with sweden_financial_year_duckdb_connection(year) as connection:
+        metadata = upsert_sweden_financial_reports_partition(
             duckdb_connection=connection,
             clickhouse=clickhouse,
+            partition_key=context.partition_key,
             log=context.log.info,
-            allow_shrink=config.allow_shrink,
         )
     return dg.MaterializeResult(
         metadata={
-            "row_count": rows,
-            "se_financial_reports_row_count": rows,
+            **metadata,
             "duckdb_table": "sweden_financial.reports",
-            "duckdb_paths": [str(path) for path in duckdb_paths],
+            "duckdb_path": str(duckdb_path),
             "clickhouse_table": QUALIFIED_SE_FINANCIAL_REPORTS_TABLE,
         }
     )
 
 
-@dg.asset(
-    deps=SWEDEN_FINANCIAL_CLICKHOUSE_DEPENDENCIES,
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "xbrl"},
-    metadata={"table": QUALIFIED_SE_FINANCIAL_FACTS_TABLE},
-    description="Exports parsed Sweden financial inline-XBRL facts to ClickHouse.",
-)
-def sweden_financial_facts_clickhouse(
+def _upsert_facts_partition_result(
+    *,
     context: dg.AssetExecutionContext,
-    config: SwedenFinancialClickhouseExportConfig,
     clickhouse: ClickhouseResource,
+    year: str,
 ) -> dg.MaterializeResult:
-    years = SWEDEN_FINANCIAL_BACKFILL_PARTITIONS.get_partition_keys()
-    duckdb_paths = existing_sweden_financial_source_duckdb_paths(years=years)
-    with sweden_financial_read_only_partitioned_connection(
-        years=years,
-        table_names=("facts",),
-    ) as connection:
-        rows = export_sweden_financial_facts_clickhouse(
+    duckdb_path = sweden_financial_source_duckdb_path(year)
+    with sweden_financial_year_duckdb_connection(year) as connection:
+        metadata = upsert_sweden_financial_facts_partition(
             duckdb_connection=connection,
             clickhouse=clickhouse,
+            partition_key=context.partition_key,
             log=context.log.info,
-            allow_shrink=config.allow_shrink,
         )
     return dg.MaterializeResult(
         metadata={
-            "row_count": rows,
-            "se_financial_facts_row_count": rows,
+            **metadata,
             "duckdb_table": "sweden_financial.facts",
-            "duckdb_paths": [str(path) for path in duckdb_paths],
+            "duckdb_path": str(duckdb_path),
             "clickhouse_table": QUALIFIED_SE_FINANCIAL_FACTS_TABLE,
         }
     )
 
 
 @dg.asset(
+    deps=["sweden_financial_backfill_parsed_reports_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "xbrl"},
+    partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    metadata={"table": QUALIFIED_SE_FINANCIAL_REPORTS_TABLE},
+    description=(
+        "Upserts one backfill year of parsed Sweden financial report "
+        "documents into ClickHouse: deletes exactly its own partition's "
+        "source_archive_key scope, then inserts -- never a full-table "
+        "replace, so a host can never delete years it does not hold."
+    ),
+)
+def sweden_financial_backfill_reports_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _upsert_reports_partition_result(
+        context=context,
+        clickhouse=clickhouse,
+        year=context.partition_key,
+    )
+
+
+@dg.asset(
+    deps=["sweden_financial_current_parsed_reports_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "xbrl"},
+    partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
+    metadata={"table": QUALIFIED_SE_FINANCIAL_REPORTS_TABLE},
+    description=(
+        "Upserts one current-week partition of parsed Sweden financial "
+        "report documents into ClickHouse: deletes exactly the archives "
+        "synced for that week, then inserts -- never a full-table replace."
+    ),
+)
+def sweden_financial_current_reports_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _upsert_reports_partition_result(
+        context=context,
+        clickhouse=clickhouse,
+        year=SWEDEN_FINANCIAL_CURRENT_YEAR,
+    )
+
+
+@dg.asset(
+    deps=["sweden_financial_backfill_parsed_reports_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "xbrl"},
+    partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    metadata={"table": QUALIFIED_SE_FINANCIAL_FACTS_TABLE},
+    description=(
+        "Upserts one backfill year of parsed Sweden financial inline-XBRL "
+        "facts into ClickHouse, scoped by the partition's statement keys -- "
+        "never a full-table replace."
+    ),
+)
+def sweden_financial_backfill_facts_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _upsert_facts_partition_result(
+        context=context,
+        clickhouse=clickhouse,
+        year=context.partition_key,
+    )
+
+
+@dg.asset(
+    deps=["sweden_financial_current_parsed_reports_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "xbrl"},
+    partitions_def=SWEDEN_FINANCIAL_CURRENT_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
+    metadata={"table": QUALIFIED_SE_FINANCIAL_FACTS_TABLE},
+    description=(
+        "Upserts one current-week partition of parsed Sweden financial "
+        "inline-XBRL facts into ClickHouse, scoped by that week's statement "
+        "keys -- never a full-table replace."
+    ),
+)
+def sweden_financial_current_facts_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _upsert_facts_partition_result(
+        context=context,
+        clickhouse=clickhouse,
+        year=SWEDEN_FINANCIAL_CURRENT_YEAR,
+    )
+
+
+SWEDEN_FINANCIAL_EXPORT_ASSET_KEYS = (
+    "sweden_financial_backfill_reports_clickhouse",
+    "sweden_financial_current_reports_clickhouse",
+    "sweden_financial_backfill_facts_clickhouse",
+    "sweden_financial_current_facts_clickhouse",
+)
+SWEDEN_FINANCIAL_FACTS_EXPORT_ASSET_KEYS = (
+    "sweden_financial_backfill_facts_clickhouse",
+    "sweden_financial_current_facts_clickhouse",
+)
+
+
+def _all_partition_deps(*asset_keys: str) -> list[dg.AssetDep]:
+    """Deps of an unpartitioned derived asset on partitioned exports."""
+    return [
+        dg.AssetDep(
+            dg.AssetKey(asset_key),
+            partition_mapping=dg.AllPartitionMapping(),
+        )
+        for asset_key in asset_keys
+    ]
+
+
+@dg.asset(
     deps=[
-        "sweden_financial_reports_clickhouse",
-        "sweden_financial_facts_clickhouse",
+        *_all_partition_deps(*SWEDEN_FINANCIAL_EXPORT_ASSET_KEYS),
         dg.AssetDep(
             dg.AssetKey("exchange_rates_v2_clickhouse"),
             partition_mapping=dg.AllPartitionMapping(),
@@ -437,8 +526,7 @@ def sweden_financial_metrics_clickhouse(
 
 @dg.asset(
     deps=[
-        "sweden_financial_reports_clickhouse",
-        "sweden_financial_facts_clickhouse",
+        *_all_partition_deps(*SWEDEN_FINANCIAL_EXPORT_ASSET_KEYS),
         # Not a data dependency (the history build reads reports/facts/
         # exchange_rates directly, not se_financial_metrics) -- an ordering
         # dependency so history rebuilds land in the same wave as metrics
@@ -468,7 +556,7 @@ def se_financial_history_clickhouse(
 
 
 @dg.asset(
-    deps=["sweden_financial_facts_clickhouse"],
+    deps=_all_partition_deps(*SWEDEN_FINANCIAL_FACTS_EXPORT_ASSET_KEYS),
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "xbrl"},
     metadata={"table": QUALIFIED_SE_COMPANY_OFFICERS_TABLE},
@@ -493,7 +581,7 @@ def se_company_officers_clickhouse(
 
 
 @dg.asset(
-    deps=["sweden_financial_facts_clickhouse"],
+    deps=_all_partition_deps(*SWEDEN_FINANCIAL_FACTS_EXPORT_ASSET_KEYS),
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse", "xbrl"},
     metadata={"table": QUALIFIED_SE_COMPANY_AUDITS_TABLE},
@@ -573,7 +661,7 @@ def sweden_financial_archive_ingest_gap_result(
 
 
 @dg.asset_check(
-    asset="sweden_financial_reports_clickhouse",
+    asset="sweden_financial_metrics_clickhouse",
     name="archive_ingest_complete",
 )
 def archive_ingest_complete(
@@ -586,6 +674,14 @@ def archive_ingest_complete(
     ``SwedenFinancialReportsResource.count_archives_by_year`` (which reuses
     the existing paginated listing capability) and compares against distinct
     processed ``source_archive_key`` values per year in ClickHouse.
+
+    Attached to ``sweden_financial_metrics_clickhouse`` (not the
+    reports exports) because its semantics are whole-table completeness
+    across ALL years: the reports exports are now partition-scoped, and a
+    single-partition run must not be failed for years that simply have not
+    been exported yet. The metrics rebuild is the unpartitioned derived
+    asset that runs after every export wave, so the completeness question
+    is well-posed there.
     """
     upstream_counts = sweden_financial_reports.count_archives_by_year()
     processed_counts = sweden_financial_processed_archive_counts_by_year(clickhouse)
@@ -605,9 +701,19 @@ SWEDEN_FINANCIAL_CURRENT_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_current_report_xhtml_catalog_duckdb",
     "sweden_financial_current_parsed_reports_duckdb",
 )
+# A single asset job cannot mix the two export partition families (yearly
+# backfill vs weekly current StaticPartitionsDefinitions), so the ClickHouse
+# layer is three jobs: one per partitioned export pair, plus the derived
+# (unpartitioned) rebuild wave which keeps the historical job name.
+SWEDEN_FINANCIAL_BACKFILL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
+    "sweden_financial_backfill_reports_clickhouse",
+    "sweden_financial_backfill_facts_clickhouse",
+)
+SWEDEN_FINANCIAL_CURRENT_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
+    "sweden_financial_current_reports_clickhouse",
+    "sweden_financial_current_facts_clickhouse",
+)
 SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
-    "sweden_financial_reports_clickhouse",
-    "sweden_financial_facts_clickhouse",
     "sweden_financial_metrics_clickhouse",
     "se_financial_history_clickhouse",
     "se_company_officers_clickhouse",
@@ -625,6 +731,16 @@ sweden_financial_current_year_job = dg.define_asset_job(
     "sweden_financial_current_year_job",
     tags=HEAVY_BULK_RUN_TAGS,
     selection=SWEDEN_FINANCIAL_CURRENT_SELECTION,
+)
+
+sweden_financial_backfill_clickhouse_job = dg.define_asset_job(
+    "sweden_financial_backfill_clickhouse_job",
+    selection=SWEDEN_FINANCIAL_BACKFILL_CLICKHOUSE_SELECTION,
+)
+
+sweden_financial_current_clickhouse_job = dg.define_asset_job(
+    "sweden_financial_current_clickhouse_job",
+    selection=SWEDEN_FINANCIAL_CURRENT_CLICKHOUSE_SELECTION,
 )
 
 sweden_financial_clickhouse_job = dg.define_asset_job(
@@ -668,8 +784,10 @@ defs = dg.Definitions(
         sweden_financial_current_raw_archives_s3,
         sweden_financial_current_report_xhtml_catalog_duckdb,
         sweden_financial_current_parsed_reports_duckdb,
-        sweden_financial_reports_clickhouse,
-        sweden_financial_facts_clickhouse,
+        sweden_financial_backfill_reports_clickhouse,
+        sweden_financial_current_reports_clickhouse,
+        sweden_financial_backfill_facts_clickhouse,
+        sweden_financial_current_facts_clickhouse,
         sweden_financial_metrics_clickhouse,
         se_financial_history_clickhouse,
         se_company_officers_clickhouse,
@@ -679,6 +797,8 @@ defs = dg.Definitions(
     jobs=[
         sweden_financial_backfill_job,
         sweden_financial_current_year_job,
+        sweden_financial_backfill_clickhouse_job,
+        sweden_financial_current_clickhouse_job,
         sweden_financial_clickhouse_job,
     ],
     schedules=[sweden_financial_current_year_weekly],

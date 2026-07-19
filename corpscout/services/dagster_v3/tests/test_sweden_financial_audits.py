@@ -555,7 +555,10 @@ def test_se_company_audits_clickhouse_asset_is_wired_correctly() -> None:
     assert node.group_name == "sweden_financial"
     assert node.pools == set()
     assert node.partitions_def is None
-    assert node.parent_keys == {dg.AssetKey("sweden_financial_facts_clickhouse")}
+    assert node.parent_keys == {
+        dg.AssetKey("sweden_financial_backfill_facts_clickhouse"),
+        dg.AssetKey("sweden_financial_current_facts_clickhouse"),
+    }
 
     # The audits table should refresh whenever metrics/history/officers
     # refresh: it lives in the same (currently unscheduled,

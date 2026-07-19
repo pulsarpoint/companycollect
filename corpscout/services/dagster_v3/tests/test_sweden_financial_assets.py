@@ -116,24 +116,57 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert clickhouse_job_asset_keys == {
-        "sweden_financial_reports_clickhouse",
-        "sweden_financial_facts_clickhouse",
         "sweden_financial_metrics_clickhouse",
         "se_financial_history_clickhouse",
         "se_company_officers_clickhouse",
         "se_company_audits_clickhouse",
     }
 
+    backfill_clickhouse_job_asset_keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "sweden_financial_backfill_clickhouse_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert backfill_clickhouse_job_asset_keys == {
+        "sweden_financial_backfill_reports_clickhouse",
+        "sweden_financial_backfill_facts_clickhouse",
+    }
+
+    current_clickhouse_job_asset_keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "sweden_financial_current_clickhouse_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert current_clickhouse_job_asset_keys == {
+        "sweden_financial_current_reports_clickhouse",
+        "sweden_financial_current_facts_clickhouse",
+    }
+
+    # The exports are partition-scoped upserts mirroring their parse
+    # counterparts' partition layout -- one backfill/current pair per table.
     for asset_key in (
-        "sweden_financial_reports_clickhouse",
-        "sweden_financial_facts_clickhouse",
+        "sweden_financial_backfill_reports_clickhouse",
+        "sweden_financial_backfill_facts_clickhouse",
     ):
         clickhouse_node = repo.asset_graph.get(dg.AssetKey(asset_key))
         assert clickhouse_node.group_name == "sweden_financial"
         assert clickhouse_node.pools == set()
-        assert clickhouse_node.partitions_def is None
+        assert clickhouse_node.partitions_def is backfill_raw_node.partitions_def
         assert clickhouse_node.parent_keys == {
             dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb"),
+        }
+
+    for asset_key in (
+        "sweden_financial_current_reports_clickhouse",
+        "sweden_financial_current_facts_clickhouse",
+    ):
+        clickhouse_node = repo.asset_graph.get(dg.AssetKey(asset_key))
+        assert clickhouse_node.group_name == "sweden_financial"
+        assert clickhouse_node.pools == {"sweden_financial_current_2026_duckdb"}
+        assert clickhouse_node.partitions_def is current_raw_node.partitions_def
+        assert clickhouse_node.parent_keys == {
             dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),
         }
 
@@ -144,8 +177,10 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     assert metrics_node.partitions_def is None
     assert metrics_node.parent_keys == {
         dg.AssetKey("exchange_rates_v2_clickhouse"),
-        dg.AssetKey("sweden_financial_reports_clickhouse"),
-        dg.AssetKey("sweden_financial_facts_clickhouse"),
+        dg.AssetKey("sweden_financial_backfill_reports_clickhouse"),
+        dg.AssetKey("sweden_financial_current_reports_clickhouse"),
+        dg.AssetKey("sweden_financial_backfill_facts_clickhouse"),
+        dg.AssetKey("sweden_financial_current_facts_clickhouse"),
     }
 
 
@@ -159,8 +194,10 @@ def test_se_financial_history_clickhouse_asset_is_wired_correctly() -> None:
     assert history_node.pools == set()
     assert history_node.partitions_def is None
     assert history_node.parent_keys == {
-        dg.AssetKey("sweden_financial_reports_clickhouse"),
-        dg.AssetKey("sweden_financial_facts_clickhouse"),
+        dg.AssetKey("sweden_financial_backfill_reports_clickhouse"),
+        dg.AssetKey("sweden_financial_current_reports_clickhouse"),
+        dg.AssetKey("sweden_financial_backfill_facts_clickhouse"),
+        dg.AssetKey("sweden_financial_current_facts_clickhouse"),
         dg.AssetKey("sweden_financial_metrics_clickhouse"),
     }
 
@@ -241,7 +278,10 @@ def test_archive_ingest_complete_check_registered() -> None:
         for spec in checks_def.check_specs
     ]
     names = {(spec.asset_key.to_user_string(), spec.name) for spec in check_specs}
-    assert ("sweden_financial_reports_clickhouse", "archive_ingest_complete") in names
+    # Attached to the unpartitioned derived metrics rebuild: the check's
+    # semantics are whole-table (all years) completeness, which must not
+    # fail a single-partition export run.
+    assert ("sweden_financial_metrics_clickhouse", "archive_ingest_complete") in names
 
 
 def test_sweden_financial_archive_ingest_gap_result_passes_within_tolerance() -> None:

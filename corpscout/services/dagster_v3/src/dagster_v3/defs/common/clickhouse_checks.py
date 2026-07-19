@@ -153,11 +153,25 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ),
     ClickhouseLeaf("sweden_company_industries_clickhouse", ("se_industries",), WEEKLY),
     # sweden_financial — the weekly schedule refreshes only the DuckDB stages;
-    # the ClickHouse export job is unscheduled.
+    # the ClickHouse export jobs are unscheduled. The reports/facts exports
+    # are partition-scoped backfill/current pairs (never a full replace);
+    # each partition run still verifies the shared table is non-empty.
     ClickhouseLeaf(
-        "sweden_financial_reports_clickhouse", ("se_financial_reports",), None
+        "sweden_financial_backfill_reports_clickhouse",
+        ("se_financial_reports",),
+        None,
     ),
-    ClickhouseLeaf("sweden_financial_facts_clickhouse", ("se_financial_facts",), None),
+    ClickhouseLeaf(
+        "sweden_financial_current_reports_clickhouse",
+        ("se_financial_reports",),
+        None,
+    ),
+    ClickhouseLeaf(
+        "sweden_financial_backfill_facts_clickhouse", ("se_financial_facts",), None
+    ),
+    ClickhouseLeaf(
+        "sweden_financial_current_facts_clickhouse", ("se_financial_facts",), None
+    ),
     ClickhouseLeaf(
         "sweden_financial_metrics_clickhouse", ("se_financial_metrics",), None
     ),
