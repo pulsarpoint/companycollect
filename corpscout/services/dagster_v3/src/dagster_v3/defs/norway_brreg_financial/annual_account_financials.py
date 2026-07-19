@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 import hashlib
 import json
@@ -24,7 +24,7 @@ from dagster_v3.defs.norway_brreg_financial.models import (
 )
 
 ANNUAL_ACCOUNT_DATASET = "annual_accounts"
-PARSER_VERSION = "norway-annual-account-geometry-v1"
+PARSER_VERSION = "norway-annual-account-geometry-v2"
 MAPPING_VERSION = "norway-annual-account-concepts-v1"
 LLM_PROMPT_VERSION = "norway-annual-account-label-map-v1"
 LLM_MAX_TOKENS = 4_096
@@ -90,6 +90,18 @@ BUILTIN_CONCEPTS: dict[str, str] = {
 }
 
 _YEAR_PATTERN = re.compile(r"^(?:19|20)\d{2}$")
+_DAY_FIRST_DATE_PATTERN = re.compile(
+    r"^(?P<day>\d{1,2})[./-](?P<month>\d{1,2})[./-]"
+    r"(?P<year>(?:19|20)\d{2})\.?$"
+)
+_YEAR_FIRST_DATE_PATTERN = re.compile(
+    r"^(?P<year>(?:19|20)\d{2})[./-](?P<month>\d{1,2})[./-]"
+    r"(?P<day>\d{1,2})$"
+)
+_ACCOUNT_SCOPE_PATTERN = re.compile(
+    r"\b(?:konsern|morselskap|morforetak|group|parent)\b",
+    re.IGNORECASE,
+)
 _NUMBER_TOKEN_PATTERN = re.compile(
     r"^(?:[-+]?\d+(?:[.,]\d+)?|[-+]?\(\d+(?:[.,]\d+)?\)|[-+]?\[\d+(?:[.,]\d+)?\])$"
 )
@@ -841,9 +853,13 @@ def _page_facts(
     document_unit_scale: Decimal,
 ) -> list[ExtractedAnnualAccountFact]:
     lines = _page_lines(page)
-    year_columns = _year_columns(lines)
-    if len(year_columns) < 1:
+    year_header = _select_year_header(lines, filing_year=document.filing_year)
+    if year_header is None:
         return []
+    header_line_number, year_columns = year_header
+    duplicate_period_columns = len({year for year, _center in year_columns}) < len(
+        year_columns
+    )
     statement_type, table_title = _statement_type(page.text)
     page_currency, page_unit_scale = _currency_and_scale(page.text)
     currency = page_currency or document_currency
@@ -853,7 +869,11 @@ def _page_facts(
     fact_ordinal = first_ordinal
     facts: list[ExtractedAnnualAccountFact] = []
     for line_number, words in lines:
-        values = _line_values(words, year_columns=year_columns)
+        values = _line_values(
+            words,
+            year_columns=year_columns,
+            is_header_line=line_number == header_line_number,
+        )
         if not values:
             continue
         label_words = _label_words(words, year_columns=year_columns)
@@ -862,15 +882,17 @@ def _page_facts(
         if len(normalized_label) < 2 or _ignore_label(normalized_label):
             continue
         evidence = " ".join(word.text for word in words)
-        for column_index, (year, value_words, numeric_value) in enumerate(values):
+        for column_index, year, value_words, numeric_value in values:
             quality_flags = ["period_end_inferred_from_year"]
+            if duplicate_period_columns:
+                quality_flags.append("ambiguous_duplicate_period_columns")
             confidence = sum(word.confidence for word in value_words) / len(value_words)
             if confidence < 80:
                 quality_flags.append("low_ocr_confidence")
             raw_value = " ".join(word.text for word in value_words)
             fact_key = (
                 f"{document.document_id}:{page.page_number}:{line_number}:"
-                f"{year}:{raw_label}:{raw_value}"
+                f"{column_index}:{year}:{raw_label}:{raw_value}"
             )
             bbox = _union_bbox(value_words)
             facts.append(
@@ -886,10 +908,14 @@ def _page_facts(
                     table_title=table_title,
                     raw_label=raw_label,
                     normalized_label=normalized_label,
-                    column_label=str(year),
+                    column_label=(
+                        f"{year}:column_{column_index + 1}"
+                        if duplicate_period_columns
+                        else str(year)
+                    ),
                     fiscal_year=year,
                     period_end_date=f"{year}-12-31",
-                    is_comparative=column_index > 0,
+                    is_comparative=year != year_columns[0][0],
                     value_kind="monetary" if currency else "numeric",
                     raw_value=raw_value,
                     numeric_value=numeric_value,
@@ -931,42 +957,86 @@ def _page_lines(page: AnnualAccountPage) -> list[tuple[int, list[AnnualAccountWo
     ]
 
 
-def _year_columns(
+def _select_year_header(
     lines: Sequence[tuple[int, Sequence[AnnualAccountWord]]],
-) -> list[tuple[int, float]]:
-    candidates: list[list[tuple[int, float]]] = []
-    for _line_number, words in lines:
-        years = [
-            (int(word.text), (word.bbox[0] + word.bbox[2]) / 2)
-            for word in words
-            if _YEAR_PATTERN.fullmatch(word.text.strip())
-        ]
-        if years:
-            candidates.append(sorted(years, key=lambda value: value[1]))
+    *,
+    filing_year: int,
+) -> tuple[int, list[tuple[int, float]]] | None:
+    candidates: list[
+        tuple[tuple[int, int, int, int], int, list[tuple[int, float]]]
+    ] = []
+    for line_index, (line_number, words) in enumerate(lines):
+        columns: list[tuple[int, float]] = []
+        full_date_count = 0
+        for word in words:
+            period = _accounting_period_year(word.text)
+            if period is None:
+                continue
+            year, is_full_date = period
+            if not is_full_date and not filing_year - 5 <= year <= filing_year + 1:
+                continue
+            columns.append((year, (word.bbox[0] + word.bbox[2]) / 2))
+            full_date_count += int(is_full_date)
+        if columns:
+            ordered_columns = sorted(columns, key=lambda value: value[1])
+            distinct_years = {year for year, _center in ordered_columns}
+            if len(ordered_columns) > 1 and len(distinct_years) == 1:
+                previous_words = lines[line_index - 1][1] if line_index > 0 else ()
+                scope_text = " ".join(word.text for word in (*previous_words, *words))
+                if _ACCOUNT_SCOPE_PATTERN.search(scope_text) is None:
+                    continue
+            score = (
+                len(distinct_years),
+                len(ordered_columns),
+                full_date_count,
+                -line_number,
+            )
+            candidates.append((score, line_number, ordered_columns))
     if not candidates:
-        return []
-    return max(candidates, key=len)[-2:]
+        return None
+    _score, line_number, columns = max(candidates, key=lambda candidate: candidate[0])
+    return line_number, columns
+
+
+def _accounting_period_year(text: str) -> tuple[int, bool] | None:
+    token = text.strip()
+    if _YEAR_PATTERN.fullmatch(token):
+        return int(token), False
+    for pattern in (_DAY_FIRST_DATE_PATTERN, _YEAR_FIRST_DATE_PATTERN):
+        match = pattern.fullmatch(token)
+        if match is None:
+            continue
+        year = int(match.group("year"))
+        month = int(match.group("month"))
+        day = int(match.group("day"))
+        try:
+            date(year, month, day)
+        except ValueError:
+            return None
+        return year, True
+    return None
 
 
 def _line_values(
     words: Sequence[AnnualAccountWord],
     *,
     year_columns: Sequence[tuple[int, float]],
-) -> list[tuple[int, list[AnnualAccountWord], Decimal]]:
-    if any(_YEAR_PATTERN.fullmatch(word.text.strip()) for word in words):
+    is_header_line: bool,
+) -> list[tuple[int, int, list[AnnualAccountWord], Decimal]]:
+    if is_header_line:
         return []
     centers = [center for _year, center in year_columns]
     if len(centers) == 1:
         gap = 0.18
         boundaries = [centers[0] - gap * 0.5, centers[0] + gap * 0.5]
     else:
-        gap = centers[1] - centers[0]
-        boundaries = [
-            centers[0] - gap * 0.5,
-            (centers[0] + centers[1]) / 2,
-            centers[1] + gap * 0.5,
-        ]
-    values: list[tuple[int, list[AnnualAccountWord], Decimal]] = []
+        boundaries = [centers[0] - (centers[1] - centers[0]) * 0.5]
+        boundaries.extend(
+            (left_center + right_center) / 2
+            for left_center, right_center in zip(centers, centers[1:])
+        )
+        boundaries.append(centers[-1] + (centers[-1] - centers[-2]) * 0.5)
+    values: list[tuple[int, int, list[AnnualAccountWord], Decimal]] = []
     for index, (year, _center) in enumerate(year_columns):
         selected = [
             word
@@ -980,7 +1050,7 @@ def _line_values(
             continue
         numeric_value = _parse_numeric_words(selected)
         if numeric_value is not None:
-            values.append((year, selected, numeric_value))
+            values.append((index, year, selected, numeric_value))
     return values
 
 

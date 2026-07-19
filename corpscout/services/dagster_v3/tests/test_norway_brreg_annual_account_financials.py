@@ -128,6 +128,135 @@ def test_financial_fact_parser_uses_geometry_and_never_invents_comparatives() ->
     assert all(fact.source_json_sha256 == "a" * 64 for fact in facts)
 
 
+def test_financial_fact_parser_uses_full_date_headers_not_amounts_as_years() -> None:
+    document_data = _sample_document()
+    document_data["legal_name"] = "SS-BYGG AS"
+    document_data["org_number"] = "814269132"
+    document_data["document_id"] = "no-brreg-annual-account:814269132:2025"
+    document_data["pages"] = [
+        {
+            "page_number": 10,
+            "extraction_method": "tesseract_ocr",
+            "width": 1000.0,
+            "height": 1400.0,
+            "text": (
+                "BALANSE Note 31.12.2025 31.12.2024 "
+                "Aksjekapital 30 000 30 000 "
+                "Annen kortsiktig gjeld 2000 2000"
+            ),
+            "mean_word_confidence": 95.0,
+            "words": [
+                _word("Note", 0.52, 0.58, line=1, word=1),
+                _word("31.12.2025", 0.67, 0.77, line=1, word=2),
+                _word("31.12.2024", 0.81, 0.93, line=1, word=3),
+                _word("Aksjekapital", 0.08, 0.21, line=2, word=1),
+                _word("30", 0.72, 0.74, line=2, word=2),
+                _word("000", 0.75, 0.78, line=2, word=3),
+                _word("30", 0.86, 0.88, line=2, word=4),
+                _word("000", 0.89, 0.92, line=2, word=5),
+                _word("Annen", 0.08, 0.13, line=3, word=1),
+                _word("kortsiktig", 0.14, 0.21, line=3, word=2),
+                _word("gjeld", 0.22, 0.27, line=3, word=3),
+                _word("2000", 0.72, 0.78, line=3, word=4),
+                _word("2000", 0.86, 0.92, line=3, word=5),
+            ],
+        }
+    ]
+
+    facts = extract_annual_account_facts(
+        AnnualAccountDocument.model_validate(document_data),
+        source_json_sha256="a" * 64,
+    )
+    amounts = {(fact.raw_label, fact.fiscal_year): fact.numeric_value for fact in facts}
+
+    assert {fact.fiscal_year for fact in facts} == {2024, 2025}
+    assert amounts[("Aksjekapital", 2025)] == Decimal("30000")
+    assert amounts[("Aksjekapital", 2024)] == Decimal("30000")
+    assert amounts[("Annen kortsiktig gjeld", 2025)] == Decimal("2000")
+    assert amounts[("Annen kortsiktig gjeld", 2024)] == Decimal("2000")
+    assert len({fact.fact_id for fact in facts}) == len(facts)
+
+
+def test_financial_fact_parser_preserves_repeated_year_columns() -> None:
+    document_data = _sample_document()
+    document_data["pages"] = [
+        {
+            "page_number": 1,
+            "extraction_method": "native_text",
+            "width": 1000.0,
+            "height": 1400.0,
+            "text": (
+                "BALANSE Konsern Morselskap 31.12.2025 31.12.2025 "
+                "Kortsiktig gjeld 2000 2000"
+            ),
+            "mean_word_confidence": 100.0,
+            "words": [
+                _word("Konsern", 0.67, 0.75, line=1, word=1),
+                _word("Morselskap", 0.81, 0.92, line=1, word=2),
+                _word("31.12.2025", 0.67, 0.77, line=2, word=1),
+                _word("31.12.2025", 0.81, 0.93, line=2, word=2),
+                _word("Kortsiktig", 0.08, 0.17, line=3, word=1),
+                _word("gjeld", 0.18, 0.24, line=3, word=2),
+                _word("2000", 0.72, 0.78, line=3, word=3),
+                _word("2000", 0.86, 0.92, line=3, word=4),
+            ],
+        }
+    ]
+
+    facts = extract_annual_account_facts(
+        AnnualAccountDocument.model_validate(document_data),
+        source_json_sha256="a" * 64,
+    )
+    debt_facts = [fact for fact in facts if fact.raw_label == "Kortsiktig gjeld"]
+
+    assert len(debt_facts) == 2
+    assert {fact.fiscal_year for fact in debt_facts} == {2025}
+    assert {fact.numeric_value for fact in debt_facts} == {Decimal("2000")}
+    assert len({fact.fact_id for fact in debt_facts}) == 2
+    assert {fact.column_label for fact in debt_facts} == {
+        "2025:column_1",
+        "2025:column_2",
+    }
+    assert not any(fact.is_comparative for fact in debt_facts)
+    assert all(
+        "ambiguous_duplicate_period_columns" in fact.quality_flags
+        for fact in debt_facts
+    )
+
+
+def test_financial_fact_parser_rejects_accounting_period_range_as_header() -> None:
+    document_data = _sample_document()
+    document_data["pages"] = [
+        {
+            "page_number": 1,
+            "extraction_method": "native_text",
+            "width": 1000.0,
+            "height": 1400.0,
+            "text": (
+                "Årsregnskapets periode 01.01.2025 - 31.12.2025 Aksjekapital 2000 2000"
+            ),
+            "mean_word_confidence": 100.0,
+            "words": [
+                _word("Årsregnskapets", 0.08, 0.20, line=1, word=1),
+                _word("periode", 0.21, 0.27, line=1, word=2),
+                _word("01.01.2025", 0.55, 0.65, line=1, word=3),
+                _word("-", 0.66, 0.67, line=1, word=4),
+                _word("31.12.2025", 0.70, 0.80, line=1, word=5),
+                _word("Aksjekapital", 0.08, 0.21, line=2, word=1),
+                _word("2000", 0.58, 0.64, line=2, word=2),
+                _word("2000", 0.72, 0.78, line=2, word=3),
+            ],
+        }
+    ]
+
+    facts = extract_annual_account_facts(
+        AnnualAccountDocument.model_validate(document_data),
+        source_json_sha256="a" * 64,
+    )
+
+    assert facts == []
+
+
 def test_financial_fact_parser_inherits_document_currency_and_ignores_identity_rows() -> (
     None
 ):
