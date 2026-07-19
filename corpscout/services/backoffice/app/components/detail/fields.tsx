@@ -30,8 +30,12 @@ const LINEAGE_EXACT = new Set([
 // paired field was translated from, and the `_translated_at`/`_translation_*`
 // trio records how the translation was produced. Neither is content — both
 // belong in the lineage bucket alongside `source_*`.
+// `_raw` fields are verbatim source values kept for provenance (e.g. SE
+// legal_name_raw is Bolagsverket's packed multi-name string) — every one has
+// a parsed counterpart in the main grid, so readers never need them inline.
 const LINEAGE_SUFFIXES = [
   "_language", "_translated_at", "_translation_provider", "_translation_model",
+  "_raw", "_payload_hash", "_source_record_id", "_sha256",
 ];
 
 export function isLineageKey(key: string): boolean {
