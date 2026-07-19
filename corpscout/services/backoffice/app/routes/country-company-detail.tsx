@@ -17,6 +17,7 @@ import { FinancialsSection } from "~/components/detail/financials-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
 import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
 import { decorateFiRecord, FiRegistryBadges } from "~/components/detail/countries/fi-registry";
+import { FiTaxRecordsSection } from "~/components/detail/countries/fi-tax-records";
 import { LangToggle } from "~/components/detail/lang-toggle";
 import { resolveRecordFields, type Lang } from "~/components/detail/language";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
@@ -103,6 +104,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
           />
         );
       })()}
+      <FiTaxRecordsSection taxRecords={detail.taxRecords} />
       <ContactLocationCard
         country={country}
         contacts={detail.contacts}

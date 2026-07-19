@@ -158,6 +158,25 @@ export interface FinancialYearRow {
   source_fiscal_year?: string;
 }
 
+/** Public corporate income tax data (tax base + assessed taxes), one row per
+ * tax year. Semantically distinct from FinancialYearRow: taxable income is a
+ * tax-base figure, not accounting profit — never merge the two sections. */
+export interface TaxRecordRow {
+  tax_year: string;
+  currency: string;
+  municipality_name: string;
+  taxable_income_amount_original: number | null;
+  taxable_income_amount_usd: number | null;
+  taxes_total_amount_original: number | null;
+  taxes_total_amount_usd: number | null;
+  prepayments_total_amount_original: number | null;
+  prepayments_total_amount_usd: number | null;
+  tax_refund_amount_original: number | null;
+  tax_refund_amount_usd: number | null;
+  residual_tax_amount_original: number | null;
+  residual_tax_amount_usd: number | null;
+}
+
 export interface FactRow {
   concept: string;
   value_kind: string;
@@ -260,6 +279,7 @@ export interface CompanyDetail {
   statements: Record<string, unknown>[];
   industries: IndustryDetailRow[];
   addresses: AddressRow[];
+  taxRecords: TaxRecordRow[];
   secondaryNames: SecondaryNameRow[];
   officers: OfficerRow[];
   /** Same-name matches for the officers above, in OTHER companies. Fetched
@@ -311,6 +331,9 @@ export async function getCompanyDetail(
   const addressesPromise = country.detail?.addressQuery
     ? chQuery<AddressRow>(country.detail.addressQuery, { id })
     : Promise.resolve([]);
+  const taxRecordsPromise = country.detail?.taxRecordsQuery
+    ? chQuery<TaxRecordRow>(country.detail.taxRecordsQuery, { id })
+    : Promise.resolve([]);
   const secondaryNamesPromise = country.detail?.secondaryNamesQuery
     ? chQuery<SecondaryNameRow>(country.detail.secondaryNamesQuery, { id })
     : Promise.resolve([]);
@@ -324,6 +347,7 @@ export async function getCompanyDetail(
   statementsPromise.catch(() => {});
   industriesPromise.catch(() => {});
   addressesPromise.catch(() => {});
+  taxRecordsPromise.catch(() => {});
   secondaryNamesPromise.catch(() => {});
   officersPromise.catch(() => {});
 
@@ -337,12 +361,13 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, secondaryNames, officers] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, secondaryNames, officers] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
     industriesPromise,
     addressesPromise,
+    taxRecordsPromise,
     secondaryNamesPromise,
     officersPromise,
   ]);
@@ -372,6 +397,7 @@ export async function getCompanyDetail(
     statements,
     industries,
     addresses,
+    taxRecords,
     secondaryNames,
     officers,
     peopleMatches,

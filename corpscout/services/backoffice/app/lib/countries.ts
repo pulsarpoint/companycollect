@@ -44,6 +44,13 @@ export interface CountryDetailConfig {
   /** {id:String} → address rows: address_type, full_address (clean comma-joined). */
   addressQuery?: string;
   /**
+   * {id:String} → public tax records (see TaxRecordRow in queries.server),
+   * one row per tax year, newest first. Tax-base figures (taxable income,
+   * assessed taxes) — NOT financial statements; rendered as a separate
+   * section, never merged into Financials.
+   */
+  taxRecordsQuery?: string;
+  /**
    * {id:String} + {year:UInt16} → raw source facts for ONE fiscal year's
    * filing (see FactRow in queries.server), in source document order.
    * Presence of this query makes the Financials year column link to
@@ -316,6 +323,23 @@ FROM fi_company_addresses
 WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY address_type
 LIMIT 10`,
+      taxRecordsQuery: `SELECT toString(tax_year) AS tax_year, currency AS currency,
+  municipality_name AS municipality_name,
+  toFloat64(taxable_income_amount_original) AS taxable_income_amount_original,
+  toFloat64(taxable_income_amount_usd) AS taxable_income_amount_usd,
+  toFloat64(taxes_total_amount_original) AS taxes_total_amount_original,
+  toFloat64(taxes_total_amount_usd) AS taxes_total_amount_usd,
+  toFloat64(prepayments_total_amount_original) AS prepayments_total_amount_original,
+  toFloat64(prepayments_total_amount_usd) AS prepayments_total_amount_usd,
+  toFloat64(tax_refund_amount_original) AS tax_refund_amount_original,
+  toFloat64(tax_refund_amount_usd) AS tax_refund_amount_usd,
+  toFloat64(residual_tax_amount_original) AS residual_tax_amount_original,
+  toFloat64(residual_tax_amount_usd) AS residual_tax_amount_usd
+FROM fi_tax_records
+WHERE business_id = {id:String}
+ORDER BY tax_year DESC
+LIMIT 1 BY tax_year
+LIMIT 20`,
     },
     financialsLatest: { table: "fi_company_financials_latest", companyKeyExpr: "business_id" },
   },
