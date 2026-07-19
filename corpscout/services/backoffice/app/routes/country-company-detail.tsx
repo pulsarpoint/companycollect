@@ -12,6 +12,7 @@ import {
 } from "~/components/detail/detail-sections";
 import { ContactLocationCard } from "~/components/detail/contact-location-card";
 import { SecondaryNamesSection } from "~/components/detail/secondary-names-section";
+import { ManagementSection } from "~/components/detail/management-section";
 import { FinancialsSection } from "~/components/detail/financials-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
 import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
@@ -85,6 +86,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
 
       <CompanyRecordSection company={company} record={record} lang={lang} />
       <SecondaryNamesSection names={detail.secondaryNames} />
+      <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} />
       <IndustriesSection industries={detail.industries} />
       {(() => {
         const Specific = COUNTRY_FINANCIALS[country.code];

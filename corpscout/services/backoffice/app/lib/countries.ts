@@ -57,6 +57,23 @@ export interface CountryDetailConfig {
    */
   secondaryNamesQuery?: string;
   /**
+   * {id:String} → officer/signatory rows for the latest fiscal year that
+   * has people: first_name, last_name, role_original, role_kind,
+   * signatory_kind, fiscal_year. Board and certification signatures for
+   * the same person are pre-merged per signatory_kind server-side; the UI
+   * does a final merge across signatory kinds (see ManagementSection).
+   */
+  officersQuery?: string;
+  /**
+   * {names:Array(String)} + {id:String} → same-name matches for the
+   * displayed officers, from the cross-country people table, excluding the
+   * current company: full_name_normalized, country_iso2, company_id,
+   * company_name, role_kind, fiscal_year. Names are lowercase trimmed
+   * "first last" pairs matching full_name_normalized. Run once per page
+   * load (batched), after officersQuery resolves.
+   */
+  peopleMatchesQuery?: string;
+  /**
    * {id:String} + {year:UInt16} → ONE row locating the original source
    * document behind that fiscal year's facts: object_key + source_uri
    * (s3://bucket/key in the corpscout object store, proxied to the browser)
@@ -428,6 +445,42 @@ FROM (
 )
 WHERE entry[2] IN ('SARS_FORNAMN-ORGNAM', 'FORNAMN_FRSPRAK-ORGNAM')
 ORDER BY registered, name
+LIMIT 200`,
+      // Latest fiscal year's signatories. Note: the two argMax()/max()
+      // aggregates below can't be aliased to their own input column name
+      // (e.g. `argMax(role_kind, ...) AS role_kind`) — ClickHouse's alias
+      // resolution treats that as a self-referential expansion and throws
+      // ILLEGAL_AGGREGATION, so the inner subquery uses `_out` aliases and
+      // the outer SELECT renames them back to the plan's field names.
+      officersQuery: `SELECT first_name, last_name, role_original, role_kind_out AS role_kind, signatory_kind, fiscal_year
+FROM (
+  SELECT first_name, last_name,
+    argMax(role_original, role_kind != 'unknown') AS role_original,
+    argMax(role_kind, role_kind != 'unknown') AS role_kind_out,
+    signatory_kind, fiscal_year
+  FROM se_company_officers
+  WHERE company_id = {id:String}
+    AND fiscal_year = (SELECT max(fiscal_year) FROM se_company_officers WHERE company_id = {id:String})
+  GROUP BY first_name, last_name, signatory_kind, fiscal_year
+)
+ORDER BY signatory_kind = 'auditor', role_kind != 'chairman', role_kind != 'ceo', last_name
+LIMIT 100`,
+      // Same-name matches across all companies for the officers shown above
+      // (batched: {names} carries every displayed person in one round trip).
+      // Same self-alias pitfall as officersQuery — max(fiscal_year) can't be
+      // AS fiscal_year — hence the inner _out alias.
+      peopleMatchesQuery: `SELECT full_name_normalized, country_iso2, company_id, company_name, role_kind, fiscal_year_out AS fiscal_year
+FROM (
+  SELECT full_name_normalized, country_iso2, company_id,
+    any(company_name) AS company_name,
+    argMax(role_kind, fiscal_year) AS role_kind,
+    max(fiscal_year) AS fiscal_year_out
+  FROM company_people_all
+  WHERE full_name_normalized IN {names:Array(String)}
+    AND NOT (country_iso2 = 'SE' AND company_id = {id:String})
+  GROUP BY full_name_normalized, country_iso2, company_id
+)
+ORDER BY full_name_normalized, fiscal_year DESC
 LIMIT 200`,
       factsDocumentQuery: `SELECT xhtml_object_key AS object_key,
   xhtml_source_uri AS source_uri,

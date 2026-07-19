@@ -233,6 +233,24 @@ export interface SecondaryNameRow {
   scope: string;
 }
 
+export interface OfficerRow {
+  first_name: string;
+  last_name: string;
+  role_original: string;
+  role_kind: string;
+  signatory_kind: string;
+  fiscal_year: number;
+}
+
+export interface PeopleMatchRow {
+  full_name_normalized: string;
+  country_iso2: string;
+  company_id: string;
+  company_name: string;
+  role_kind: string;
+  fiscal_year: number;
+}
+
 export interface CompanyDetail {
   company: CompanyListRow;
   record: Record<string, unknown>;
@@ -243,6 +261,10 @@ export interface CompanyDetail {
   industries: IndustryDetailRow[];
   addresses: AddressRow[];
   secondaryNames: SecondaryNameRow[];
+  officers: OfficerRow[];
+  /** Same-name matches for the officers above, in OTHER companies. Fetched
+   * after officers resolves — the query needs their names. */
+  peopleMatches: PeopleMatchRow[];
 }
 
 export async function getCompanyDetail(
@@ -292,6 +314,9 @@ export async function getCompanyDetail(
   const secondaryNamesPromise = country.detail?.secondaryNamesQuery
     ? chQuery<SecondaryNameRow>(country.detail.secondaryNamesQuery, { id })
     : Promise.resolve([]);
+  const officersPromise = country.detail?.officersQuery
+    ? chQuery<OfficerRow>(country.detail.officersQuery, { id })
+    : Promise.resolve([]);
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
   recordPromise.catch(() => {});
@@ -300,6 +325,7 @@ export async function getCompanyDetail(
   industriesPromise.catch(() => {});
   addressesPromise.catch(() => {});
   secondaryNamesPromise.catch(() => {});
+  officersPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -311,14 +337,43 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, secondaryNames] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, secondaryNames, officers] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
     industriesPromise,
     addressesPromise,
     secondaryNamesPromise,
+    officersPromise,
   ]);
 
-  return { company, record: records[0] ?? {}, financials, contacts, domains, statements, industries, addresses, secondaryNames };
+  // Same-name matches need the officers' names, so this can only start once
+  // officersPromise has resolved — one batched query, not per-person fetches.
+  let peopleMatches: PeopleMatchRow[] = [];
+  if (country.detail?.peopleMatchesQuery && officers.length > 0) {
+    const names = Array.from(
+      new Set(
+        officers
+          .map((o) => `${o.first_name} ${o.last_name}`.trim().toLowerCase())
+          .filter((name) => name !== ""),
+      ),
+    );
+    if (names.length > 0) {
+      peopleMatches = await chQuery<PeopleMatchRow>(country.detail.peopleMatchesQuery, { id, names });
+    }
+  }
+
+  return {
+    company,
+    record: records[0] ?? {},
+    financials,
+    contacts,
+    domains,
+    statements,
+    industries,
+    addresses,
+    secondaryNames,
+    officers,
+    peopleMatches,
+  };
 }
