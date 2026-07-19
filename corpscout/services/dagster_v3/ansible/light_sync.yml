@@ -1,0 +1,11 @@
+---
+- name: Hot-sync Corpscout Dagster definitions without restarting active runs
+  hosts: dagster_hosts
+  become: true
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Run the Dagster content hot-sync
+      ansible.builtin.import_role:
+        name: dagster_dev
+        tasks_from: sync

@@ -70,3 +70,27 @@ dagster_health_query: |
       }
     }
   }
+
+dagster_reload_location_query: |
+  mutation HotSyncReload($repositoryLocationName: String!) {
+    reloadRepositoryLocation(repositoryLocationName: $repositoryLocationName) {
+      __typename
+      ... on WorkspaceLocationEntry {
+        name
+        loadStatus
+        updatedTimestamp
+      }
+      ... on ReloadNotSupported {
+        message
+      }
+      ... on RepositoryLocationNotFound {
+        message
+      }
+      ... on UnauthorizedError {
+        message
+      }
+      ... on PythonError {
+        message
+      }
+    }
+  }

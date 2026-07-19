@@ -1,0 +1,7 @@
+---
+- name: Deploy the Corpscout Dagster development instance
+  hosts: dagster_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - dagster_dev

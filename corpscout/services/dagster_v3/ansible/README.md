@@ -50,9 +50,12 @@ cd services/dagster_v3/ansible
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
-ansible-playbook site.yml --check --diff
-ansible-playbook site.yml
+ansible-playbook sync.yml --check --diff
+ansible-playbook sync.yml
 ```
+
+`sync.yml` is the canonical full deployment playbook. The previous `site.yml`
+entry point remains as a compatibility alias and runs the same full deployment.
 
 The controller needs `uv`, Ansible, and rsync. The target needs systemd,
 rsync, `lsof`, `ss`, executable `/root/.local/bin/uv`, an APT-compatible Linux
@@ -61,6 +64,36 @@ prerequisites before stopping the running process. After synchronizing the
 Python environment, it installs and verifies the Chromium shared libraries
 required by CloakBrowser; the browser binary itself remains managed by
 CloakBrowser under `/root/.cloakbrowser`.
+
+## Hot-sync asset code without restarting active runs
+
+For Python asset and definition changes that do not modify dependencies, the
+lockfile, the systemd unit, scripts, or deployment configuration, use the
+content-only playbook:
+
+```bash
+cd services/dagster_v3/ansible
+export LC_ALL=en_US.UTF-8
+export LANG=en_US.UTF-8
+
+ansible-playbook light_sync.yml --check --diff
+ansible-playbook light_sync.yml
+```
+
+`light_sync.yml` validates the local definitions, rsyncs only
+`src/dagster_v3/`, and validates the synchronized definitions on the host. It
+does not run `uv sync`,
+touch the systemd unit, query or block active runs, or stop/restart Dagster. The
+running `dg dev` supervisor observes the source changes and reloads its code
+location. The playbook explicitly reloads only the `dagster_v3` code location,
+waits for it to become healthy, and asserts that the systemd `MainPID` and
+restart count stayed unchanged.
+
+Use the full `sync.yml` deployment whenever `pyproject.toml`, `uv.lock`, `.env`,
+the Ansible role, service configuration, or non-package runtime files changed.
+The hot-sync preserves already-running processes, but code loaded by a future
+step or subprocess may use the new implementation; avoid changing the contract
+of an in-flight multi-step job.
 
 Before a stopped deployment, the role:
 
@@ -82,7 +115,7 @@ does not stop or restart Dagster.
 The remote `.env` checksum is embedded in the rendered unit, so rerunning
 Ansible after a server-side environment edit validates and restarts the
 service. For a restart with unchanged files, use
-`ansible-playbook site.yml -e dagster_force_restart=true`.
+`ansible-playbook sync.yml -e dagster_force_restart=true`.
 
 For a busy deployment, pause new launches or schedules before running the
 playbook; the GraphQL run check and process shutdown cannot be one atomic
