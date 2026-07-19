@@ -1,0 +1,445 @@
+---
+- name: Inspect the local Dagster content tree
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ dagster_source_dir }}/pyproject.toml"
+    - "{{ dagster_source_dir }}/uv.lock"
+    - "{{ dagster_source_dir }}/src/dagster_v3/definitions.py"
+    - "{{ dagster_source_dir }}/src/dagster_v3/defs"
+    - "{{ dagster_source_dir }}/exchange_rates"
+  register: dagster_sync_local_content
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Require a complete local Dagster content tree
+  ansible.builtin.assert:
+    that:
+      - dagster_sync_local_content.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      Run this playbook from services/dagster_v3/ansible; pyproject.toml,
+      definitions.py, or the definitions directory is missing.
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Verify hot-sync tools on the control machine
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -c
+      - command -v uv >/dev/null && command -v rsync >/dev/null
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Validate local Dagster definitions before hot-sync
+  ansible.builtin.command:
+    argv:
+      - uv
+      - run
+      - --frozen
+      - --no-sync
+      - dg
+      - check
+      - defs
+    chdir: "{{ dagster_source_dir }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+  environment:
+    DAGSTER_DISABLE_TELEMETRY: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
+
+- name: Require the running Dagster development service
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - "{{ dagster_service_name }}.service"
+  changed_when: false
+  check_mode: false
+
+- name: Inspect the target Dagster executable
+  ansible.builtin.stat:
+    path: "{{ dagster_dg_binary }}"
+  register: dagster_sync_target_executable
+
+- name: Require the existing target Dagster environment
+  ansible.builtin.assert:
+    that:
+      - dagster_sync_target_executable.stat.exists
+      - dagster_sync_target_executable.stat.executable
+    fail_msg: >-
+      {{ dagster_dg_binary }} is missing or not executable. Run the full
+      sync.yml deployment before using the content-only hot-sync.
+
+- name: Verify rsync on the Dagster host
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -c
+      - command -v rsync >/dev/null
+  changed_when: false
+  check_mode: false
+
+- name: Capture the Dagster supervisor before hot-sync
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=MainPID
+      - --property=NRestarts
+      - "{{ dagster_service_name }}.service"
+  register: dagster_sync_runtime_before
+  changed_when: false
+  check_mode: false
+
+- name: Preview the Dagster content hot-sync
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - --dry-run
+      - --exclude=__pycache__/
+      - --exclude=*.pyc
+      - --exclude=*.pyo
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/src/dagster_v3/"
+      - >-
+        {{ ansible_user }}@{{ ansible_host }}:{{
+        dagster_deploy_dir }}/src/dagster_v3/
+  register: dagster_content_rsync_preview
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: >-
+    dagster_content_rsync_preview.stdout_lines
+    | reject('equalto', '')
+    | list
+    | length > 0
+
+- name: Preview the exchange_rates package hot-sync
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - --dry-run
+      - --exclude=__pycache__/
+      - --exclude=*.pyc
+      - --exclude=*.pyo
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/exchange_rates/"
+      - >-
+        {{ ansible_user }}@{{ ansible_host }}:{{
+        dagster_deploy_dir }}/exchange_rates/
+  register: dagster_exchange_rsync_preview
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: >-
+    dagster_exchange_rsync_preview.stdout_lines
+    | reject('equalto', '')
+    | list
+    | length > 0
+
+- name: Preview the dependency manifest hot-sync
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --itemize-changes
+      - --dry-run
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/pyproject.toml"
+      - "{{ dagster_source_dir }}/uv.lock"
+      - "{{ ansible_user }}@{{ ansible_host }}:{{ dagster_deploy_dir }}/"
+  register: dagster_env_rsync_preview
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: >-
+    dagster_env_rsync_preview.stdout_lines
+    | reject('equalto', '')
+    | list
+    | length > 0
+
+- name: Record the Dagster hot-sync decision
+  ansible.builtin.set_fact:
+    dagster_content_changed: >-
+      {{
+        dagster_content_rsync_preview.stdout_lines
+        | reject('equalto', '')
+        | list
+        | length > 0
+      }}
+    dagster_exchange_changed: >-
+      {{
+        dagster_exchange_rsync_preview.stdout_lines
+        | reject('equalto', '')
+        | list
+        | length > 0
+      }}
+    dagster_env_files_changed: >-
+      {{
+        dagster_env_rsync_preview.stdout_lines
+        | reject('equalto', '')
+        | list
+        | length > 0
+      }}
+
+- name: Record the combined Dagster hot-sync decision
+  ansible.builtin.set_fact:
+    dagster_hot_sync_changed: >-
+      {{
+        dagster_content_changed
+        or dagster_exchange_changed
+        or dagster_env_files_changed
+      }}
+
+- name: Report the Dagster hot-sync preview
+  ansible.builtin.debug:
+    msg:
+      content_changed: "{{ dagster_content_changed }}"
+      dependency_manifests_changed: "{{ dagster_env_files_changed }}"
+      exchange_rates_changed: "{{ dagster_exchange_changed }}"
+      service_restart_requested: false
+      synchronized_trees: [src/dagster_v3, exchange_rates, pyproject.toml+uv.lock]
+
+- name: Synchronize Dagster content without restarting the service
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - --exclude=__pycache__/
+      - --exclude=*.pyc
+      - --exclude=*.pyo
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/src/dagster_v3/"
+      - >-
+        {{ ansible_user }}@{{ ansible_host }}:{{
+        dagster_deploy_dir }}/src/dagster_v3/
+  register: dagster_content_rsync
+  delegate_to: localhost
+  become: false
+  changed_when: >-
+    dagster_content_rsync.stdout_lines
+    | reject('equalto', '')
+    | list
+    | length > 0
+  when:
+    - not ansible_check_mode
+    - dagster_content_changed
+
+- name: Synchronize the exchange_rates package without restarting the service
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - --exclude=__pycache__/
+      - --exclude=*.pyc
+      - --exclude=*.pyo
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/exchange_rates/"
+      - >-
+        {{ ansible_user }}@{{ ansible_host }}:{{
+        dagster_deploy_dir }}/exchange_rates/
+  register: dagster_exchange_rsync
+  delegate_to: localhost
+  become: false
+  changed_when: >-
+    dagster_exchange_rsync.stdout_lines
+    | reject('equalto', '')
+    | list
+    | length > 0
+  when:
+    - not ansible_check_mode
+    - dagster_exchange_changed
+
+- name: Synchronize the dependency manifests without restarting the service
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --itemize-changes
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/pyproject.toml"
+      - "{{ dagster_source_dir }}/uv.lock"
+      - "{{ ansible_user }}@{{ ansible_host }}:{{ dagster_deploy_dir }}/"
+  register: dagster_env_rsync
+  delegate_to: localhost
+  become: false
+  changed_when: >-
+    dagster_env_rsync.stdout_lines
+    | reject('equalto', '')
+    | list
+    | length > 0
+  when:
+    - not ansible_check_mode
+    - dagster_env_files_changed
+
+- name: Install changed dependencies into the running environment
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_uv_binary }}"
+      - sync
+      - --frozen
+    chdir: "{{ dagster_deploy_dir }}"
+  environment:
+    HOME: /root
+  # Installing into .venv while the service runs is safe: live run worker
+  # processes keep their already-imported modules; the code-location reload
+  # below starts a fresh code server that picks up the new packages. System
+  # packages and playwright browser installs are NOT covered -- those still
+  # need the full sync.yml deployment.
+  register: dagster_env_sync
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - dagster_env_files_changed
+
+- name: Validate hot-synchronized Dagster definitions on the target
+  ansible.builtin.command:
+    argv:
+      - "{{ dagster_uv_binary }}"
+      - run
+      - --frozen
+      - --no-sync
+      - dg
+      - check
+      - defs
+    chdir: "{{ dagster_deploy_dir }}"
+  environment:
+    DAGSTER_HOME: "{{ dagster_deploy_dir }}"
+    DAGSTER_DISABLE_TELEMETRY: "1"
+    HOME: /root
+    PYTHONDONTWRITEBYTECODE: "1"
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Reload only the synchronized Dagster code location
+  ansible.builtin.uri:
+    url: "{{ dagster_probe_url }}"
+    method: POST
+    body_format: json
+    body:
+      query: "{{ dagster_reload_location_query }}"
+      variables:
+        repositoryLocationName: dagster_v3
+    status_code: 200
+    return_content: true
+    use_proxy: false
+    # Reloading re-imports the full definitions tree (dozens of source
+    # modules plus dbt manifests) -- routinely longer than the uri module's
+    # 30-second default, which surfaced as a bogus "Connection failure:
+    # timed out" while the reload kept completing server-side.
+    timeout: 600
+  register: dagster_sync_reload
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Require the Dagster code-location reload to succeed
+  ansible.builtin.assert:
+    that:
+      - dagster_sync_reload.json.errors is not defined
+      - >-
+        dagster_sync_reload.json.data.reloadRepositoryLocation.__typename
+        == 'WorkspaceLocationEntry'
+      - >-
+        dagster_sync_reload.json.data.reloadRepositoryLocation.name
+        == 'dagster_v3'
+      - >-
+        dagster_sync_reload.json.data.reloadRepositoryLocation.loadStatus
+        == 'LOADED'
+    fail_msg: >-
+      Dagster rejected the hot-sync code-location reload:
+      {{ dagster_sync_reload.json | default({}) }}
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Wait for the hot-reloaded Dagster code location
+  ansible.builtin.uri:
+    url: "{{ dagster_probe_url }}"
+    method: POST
+    body_format: json
+    body:
+      query: "{{ dagster_health_query }}"
+    status_code: 200
+    return_content: true
+    use_proxy: false
+  register: dagster_sync_health
+  until:
+    - dagster_sync_health.status == 200
+    - dagster_sync_health.json.errors is not defined
+    - >-
+      (dagster_sync_health.json.data.repositoriesOrError.__typename | default(''))
+      == 'RepositoryConnection'
+    - >-
+      'dagster_v3' in
+      ((dagster_sync_health.json.data.repositoriesOrError.nodes | default([]))
+       | map(attribute='location.name') | list)
+  retries: 90
+  delay: 2
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - dagster_hot_sync_changed
+
+- name: Re-read the Dagster supervisor after hot-sync
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=MainPID
+      - --property=NRestarts
+      - "{{ dagster_service_name }}.service"
+  register: dagster_sync_runtime_after
+  changed_when: false
+  check_mode: false
+
+- name: Require hot-sync to preserve the running Dagster supervisor
+  ansible.builtin.assert:
+    that:
+      - dagster_sync_runtime_after.stdout == dagster_sync_runtime_before.stdout
+    fail_msg: >-
+      {{ dagster_service_name }}.service restarted during the content hot-sync.
+      Active runs may have been interrupted; inspect the systemd journal.
