@@ -149,12 +149,27 @@ The parsed DuckDB tables are:
 - `sweden_financial.parse_errors` - one row per XHTML document that failed
   parsing, so a bad report does not block the rest of the partition.
 
-`sweden_financial_reports_clickhouse` and
-`sweden_financial_facts_clickhouse` publish those parsed DuckDB tables into
-`corpscout.se_financial_reports` and `corpscout.se_financial_facts`. Each
-ClickHouse asset represents one physical ClickHouse table. The assets build a
-read-only union view across existing per-year DuckDB files and replace the full
-ClickHouse table from that combined parsed dataset.
+The ClickHouse exports are **partition-scoped incremental upserts**, never
+full-table replaces (architecture decision after the 2026-07-19 incident, where
+a host holding only one year's DuckDB file full-replaced the seven-year
+`se_financial_facts` table — see the incident entry in the repo SDD ledger).
+Four partitioned assets mirror the parse assets' partition layout:
+`sweden_financial_backfill_reports_clickhouse` /
+`sweden_financial_current_reports_clickhouse` and their facts twins. Each
+partition run resolves its own archive scope from the LOCAL DuckDB catalog
+(fail-loud `ValueError` when the local file or scope is missing/empty), deletes
+exactly its own scope in ClickHouse — reports by `source_archive_key` (small
+Array param), facts by `statement_key` staged through a per-run Memory table so
+hundreds of thousands of keys travel as data blocks, never query text — with
+`mutations_sync = 1` (skipped entirely when the pre-count is 0, the steady-state
+new-archive case), then inserts that partition's rows with explicit columns. A
+run structurally cannot touch rows outside its own partition, so no host ever
+needs the full history locally. The source is append-shaped (immutable weekly
+archives), which is what makes delete-own-scope + insert exact.
+
+Operational note: a backfill `2026` export and the weekly current writer share
+the 2026 DuckDB file; running both concurrently fails loudly on the DuckDB
+cross-process lock — sequence them.
 
 `corpscout.se_financial_facts` is the lossless long-form layer: every parsed
 inline-XBRL numeric, date, text, context, unit, currency, and dimensional value
@@ -194,7 +209,12 @@ materialize the 2020-2026 partitions.
 default. Each weekly run can discover upstream `LastModified` changes and add
 new raw archive versions while reusing unchanged archive objects.
 
-`sweden_financial_clickhouse_job` selects
-`sweden_financial_reports_clickhouse`, `sweden_financial_facts_clickhouse`, and
-`sweden_financial_metrics_clickhouse`.
-Run it after the relevant parsed DuckDB partitions are materialized.
+The ClickHouse layer is three jobs:
+`sweden_financial_backfill_clickhouse_job` (the backfill-partitioned
+reports/facts export pair), `sweden_financial_current_clickhouse_job` (the
+current-weekly export pair), and `sweden_financial_clickhouse_job` (the derived
+wave: `sweden_financial_metrics_clickhouse`, `se_financial_history_clickhouse`,
+`se_company_officers_clickhouse`, `se_company_audits_clickhouse` — full
+rebuilds from ClickHouse facts, which stays correct for derivations and keeps
+the shrink guard). Run exports after the matching parsed DuckDB partitions are
+materialized, then the derived wave.
