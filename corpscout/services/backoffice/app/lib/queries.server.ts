@@ -163,6 +163,7 @@ export interface FactRow {
   date_value: string | null;
   text_value: string | null;
   dimensions: string;
+  context_id: string;
 }
 
 /** Raw source facts for one fiscal year's filing; empty when the country has
@@ -174,6 +175,25 @@ export async function getCompanyFacts(
 ): Promise<FactRow[]> {
   if (!country.detail?.factsQuery) return [];
   return chQuery<FactRow>(country.detail.factsQuery, { id, year });
+}
+
+export interface FactsDocument {
+  object_key: string;
+  source_uri: string;
+  archive_url: string;
+  archive_name: string;
+  nested_zip_name: string;
+}
+
+/** Locates the original source document for one fiscal year's filing. */
+export async function getFactsDocument(
+  country: CountryConfig,
+  id: string,
+  year: number,
+): Promise<FactsDocument | null> {
+  if (!country.detail?.factsDocumentQuery) return null;
+  const rows = await chQuery<FactsDocument>(country.detail.factsDocumentQuery, { id, year });
+  return rows[0] ?? null;
 }
 
 export interface ContactRow {

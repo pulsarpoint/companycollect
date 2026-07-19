@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText } from "lucide-react";
 import type { Route } from "./+types/company-facts";
 import { getCountry } from "~/lib/countries";
 import { chQuery } from "~/lib/clickhouse.server";
-import { getCompanyFacts, type FactRow } from "~/lib/queries.server";
+import { getCompanyFacts, getFactsDocument, type FactRow } from "~/lib/queries.server";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
@@ -25,16 +25,29 @@ export async function loader({ params }: Route.LoaderArgs) {
   if (!Number.isInteger(year) || year < 1900 || year > 2200) {
     throw new Response("Not found", { status: 404 });
   }
-  const [names, facts] = await Promise.all([
+  const [names, facts, doc] = await Promise.all([
     chQuery<{ name: string }>(
       `SELECT ${country.nameColumn} AS name FROM ${country.companiesTable}
        WHERE ${country.idColumn} = {id:String} LIMIT 1`,
       { id: params.id },
     ),
     getCompanyFacts(country, params.id, year),
+    getFactsDocument(country, params.id, year),
   ]);
   if (names.length === 0) throw new Response("Company not found", { status: 404 });
-  return { name: names[0].name, facts, year };
+  return {
+    name: names[0].name,
+    facts,
+    year,
+    doc: doc
+      ? {
+          hasObject: doc.object_key !== "" && doc.source_uri.startsWith("s3://"),
+          archiveUrl: doc.archive_url,
+          archiveName: doc.archive_name,
+          nestedZipName: doc.nested_zip_name,
+        }
+      : null,
+  };
 }
 
 export function meta({ loaderData, params }: Route.MetaArgs) {
@@ -65,6 +78,15 @@ function FactValue({ fact }: { fact: FactRow }) {
   return <span className="break-words whitespace-pre-wrap">{text}</span>;
 }
 
+/** period0/balans0 is the filing's own year; periodN/balansN is N years back. */
+function contextLabel(contextId: string, year: number): string {
+  const m = /^(period|balans)(\d+)$/.exec(contextId.toLowerCase());
+  if (!m) return contextId;
+  const offset = Number(m[2]);
+  const point = m[1] === "balans" ? "balance" : "period";
+  return offset === 0 ? `${year} ${point}` : `${year - offset} ${point}`;
+}
+
 /** Compact rendering of the XBRL dimensions JSON: member local names only. */
 function dimensionSummary(dimensions: string): string {
   if (!dimensions || dimensions === "{}") return "";
@@ -79,7 +101,7 @@ function dimensionSummary(dimensions: string): string {
 }
 
 export default function CompanyFacts({ loaderData, params }: Route.ComponentProps) {
-  const { name, facts, year } = loaderData;
+  const { name, facts, year, doc } = loaderData;
   const [filter, setFilter] = useState("");
   const needle = filter.trim().toLowerCase();
   const visible = needle
@@ -91,6 +113,9 @@ export default function CompanyFacts({ loaderData, params }: Route.ComponentProp
       )
     : facts;
   const moneyCount = facts.filter((f) => f.amount_original != null || f.amount_usd != null).length;
+  // Almost all K2/K3 filings carry no dimensioned facts — drop the column
+  // entirely instead of rendering an all-empty one.
+  const hasDimensions = facts.some((f) => dimensionSummary(f.dimensions) !== "");
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
@@ -111,7 +136,43 @@ export default function CompanyFacts({ loaderData, params }: Route.ComponentProp
         <h2 className="text-2xl font-semibold">Filing facts · {year}</h2>
         <Badge variant="outline">{facts.length} facts</Badge>
         {facts.length > 0 ? <Badge variant="outline">{moneyCount} monetary</Badge> : null}
+        <div className="ml-auto flex items-center gap-2">
+          {doc?.hasObject ? (
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={
+                <a
+                  href={`/company/${params.country}/${params.id}/facts/${year}/document`}
+                  target="_blank"
+                  rel="noreferrer"
+                />
+              }
+            >
+              <FileText className="size-4" />
+              Original document
+            </Button>
+          ) : null}
+          {doc?.archiveUrl ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              nativeButton={false}
+              render={<a href={doc.archiveUrl} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLink className="size-4" />
+              Source archive
+            </Button>
+          ) : null}
+        </div>
       </div>
+      {doc ? (
+        <p className="text-muted-foreground -mt-2 text-xs">
+          Extracted from {doc.nestedZipName || "the filing package"} inside{" "}
+          {doc.archiveName || "the upstream bulk archive"}.
+        </p>
+      ) : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
@@ -140,7 +201,8 @@ export default function CompanyFacts({ loaderData, params }: Route.ComponentProp
                     <TableHead>Concept</TableHead>
                     <TableHead>Kind</TableHead>
                     <TableHead className="text-right">Value</TableHead>
-                    <TableHead>Dimensions</TableHead>
+                    <TableHead>Context</TableHead>
+                    {hasDimensions ? <TableHead>Dimensions</TableHead> : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -155,9 +217,14 @@ export default function CompanyFacts({ loaderData, params }: Route.ComponentProp
                       <TableCell className="max-w-96 text-right align-top">
                         <FactValue fact={f} />
                       </TableCell>
-                      <TableCell className="text-muted-foreground max-w-56 break-words align-top text-xs">
-                        {dimensionSummary(f.dimensions)}
+                      <TableCell className="text-muted-foreground align-top text-xs whitespace-nowrap">
+                        {contextLabel(f.context_id, year)}
                       </TableCell>
+                      {hasDimensions ? (
+                        <TableCell className="text-muted-foreground max-w-56 break-words align-top text-xs">
+                          {dimensionSummary(f.dimensions)}
+                        </TableCell>
+                      ) : null}
                     </TableRow>
                   ))}
                 </TableBody>

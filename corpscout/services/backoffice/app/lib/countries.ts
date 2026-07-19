@@ -50,6 +50,13 @@ export interface CountryDetailConfig {
    * /company/:country/:id/facts/:year.
    */
   factsQuery?: string;
+  /**
+   * {id:String} + {year:UInt16} → ONE row locating the original source
+   * document behind that fiscal year's facts: object_key + source_uri
+   * (s3://bucket/key in the corpscout object store, proxied to the browser)
+   * and archive_url/archive_name/nested_zip_name (public upstream archive).
+   */
+  factsDocumentQuery?: string;
 }
 
 export interface CountryConfig {
@@ -276,6 +283,16 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = substring(coalesce(i.sourc
 WHERE i.business_id = {id:String}
 ORDER BY i.is_primary DESC, industry_code
 LIMIT 100`,
+      addressQuery: `SELECT address_type AS address_type,
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    coalesce(address_lines, ''),
+    trim(concat(coalesce(postal_code, ''), ' ', coalesce(city, ''))),
+    coalesce(country, country_code, '')
+  ]), ', ') AS full_address
+FROM fi_company_addresses
+WHERE registry_id = {id:String} AND is_current = 1
+ORDER BY address_type
+LIMIT 10`,
     },
     financialsLatest: { table: "fi_company_financials_latest", companyKeyExpr: "business_id" },
   },
@@ -341,7 +358,8 @@ LIMIT 20`,
   currency AS currency,
   toString(date_value) AS date_value,
   text_value AS text_value,
-  dimensions AS dimensions
+  dimensions AS dimensions,
+  context_id AS context_id
 FROM se_financial_facts
 WHERE company_id = {id:String} AND statement_key IN (
   SELECT statement_key FROM (
@@ -361,6 +379,15 @@ WHERE company_id = {id:String} AND statement_key IN (
 )
 ORDER BY fact_ordinal
 LIMIT 3000`,
+      factsDocumentQuery: `SELECT xhtml_object_key AS object_key,
+  xhtml_source_uri AS source_uri,
+  source_archive_url AS archive_url,
+  source_archive_name AS archive_name,
+  nested_zip_name AS nested_zip_name
+FROM se_financial_metrics
+WHERE company_id = {id:String} AND fiscal_year = {year:UInt16}
+ORDER BY isNull(revenue_amount_original) ASC, source_record_id DESC
+LIMIT 1`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
   '' AS description_original,
   coalesce(nullIf(n.description_en, ''), i.nace_rev2_class_code) AS industry_label,
