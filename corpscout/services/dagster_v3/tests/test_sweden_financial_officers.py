@@ -12,6 +12,7 @@ from dagster_v3.defs.sweden_financial.officers import (
     QUALIFIED_SE_COMPANY_OFFICERS_TABLE,
     SE_COMPANY_OFFICERS_COLUMNS,
     SE_COMPANY_OFFICERS_TABLE,
+    _officers_quality_sql,
     build_officers_insert_sql,
     replace_se_company_officers_clickhouse,
 )
@@ -134,6 +135,110 @@ def test_officers_sql_running_sum_person_grouping() -> None:
     )
 
 
+def _simulate_person_grouping(rows: list[dict[str, object]]) -> list[dict[str, str]]:
+    """Pure-Python mirror of ``build_officers_insert_sql``'s running-sum
+    person grouping (``sum(is_first_name) OVER (PARTITION BY statement_key,
+    signatory_kind ORDER BY fact_ordinal ...) AS person_seq``, then
+    ``GROUP BY ... person_seq`` collapsing via ``anyIf``), reimplemented
+    here -- not imported -- because this module's tests are string-level
+    with no live ClickHouse to execute the real SQL against. Rows are
+    assumed to already share one (statement_key, signatory_kind) partition,
+    which is exactly the scenario the module docstring's "Grouping-window
+    safety" section reasons about.
+    """
+    groups: dict[int, dict[str, str]] = {}
+    person_seq = 0
+    for row in sorted(rows, key=lambda r: r["fact_ordinal"]):
+        if row["is_first_name"]:
+            person_seq += 1
+        if person_seq == 0:
+            continue
+        group = groups.setdefault(
+            person_seq, {"first_name": "", "last_name": "", "role_original": ""}
+        )
+        if row["is_first_name"]:
+            group["first_name"] = row["value"]
+        if row["is_last_name"]:
+            group["last_name"] = row["value"]
+        if row["is_role"]:
+            group["role_original"] = row["value"]
+    return [groups[seq] for seq in sorted(groups)]
+
+
+def test_person_grouping_simulation_separates_board_signature_blocks_cleanly() -> None:
+    """Locks in the reasoning in the module docstring's "Grouping-window
+    safety" section: ``UnderskriftHandling*`` and
+    ``UnderskriftArsredovisningForetradare*`` both classify to
+    ``signatory_kind = 'board_signature'`` and therefore share ONE window
+    partition, but ``fact_ordinal`` is genuine document order and iXBRL
+    renders each signature block as a contiguous run of facts -- so a
+    Handling-block person immediately followed by a DIFFERENT
+    Arsredovisning-block person still collapses into two distinct person
+    groups with no cross-attribution of names/roles between them.
+    """
+    fact_rows: list[dict[str, object]] = [
+        # UnderskriftHandling* triple -- person "Anna Andersson".
+        {
+            "fact_ordinal": 1,
+            "is_first_name": True,
+            "is_last_name": False,
+            "is_role": False,
+            "value": "Anna",
+        },
+        {
+            "fact_ordinal": 2,
+            "is_first_name": False,
+            "is_last_name": True,
+            "is_role": False,
+            "value": "Andersson",
+        },
+        {
+            "fact_ordinal": 3,
+            "is_first_name": False,
+            "is_last_name": False,
+            "is_role": True,
+            "value": "Styrelseledamot",
+        },
+        # UnderskriftArsredovisningForetradare* triple -- a DIFFERENT
+        # person, "Bo Bergqvist", in the same statement/signatory_kind.
+        {
+            "fact_ordinal": 4,
+            "is_first_name": True,
+            "is_last_name": False,
+            "is_role": False,
+            "value": "Bo",
+        },
+        {
+            "fact_ordinal": 5,
+            "is_first_name": False,
+            "is_last_name": True,
+            "is_role": False,
+            "value": "Bergqvist",
+        },
+        {
+            "fact_ordinal": 6,
+            "is_first_name": False,
+            "is_last_name": False,
+            "is_role": True,
+            "value": "Verkställande direktör",
+        },
+    ]
+
+    groups = _simulate_person_grouping(fact_rows)
+
+    assert len(groups) == 2
+    assert groups[0] == {
+        "first_name": "Anna",
+        "last_name": "Andersson",
+        "role_original": "Styrelseledamot",
+    }
+    assert groups[1] == {
+        "first_name": "Bo",
+        "last_name": "Bergqvist",
+        "role_original": "Verkställande direktör",
+    }
+
+
 def test_officers_sql_signatory_kind_classification() -> None:
     sql = _built_sql()
 
@@ -163,6 +268,21 @@ def test_officers_sql_role_kind_mapping_covers_expected_vocabulary() -> None:
     assert "ILIKE '%%verkställande direktör%%'" in sql
     assert "ILIKE 'VD%%'" in sql
     assert "role_original = ''" in sql
+
+
+def test_officers_quality_sql_counts_null_fiscal_year_rows() -> None:
+    """Locks in the module docstring's "Null fiscal year handling" section:
+    rows with no resolved ``report_period_end`` get ``fiscal_year = 0`` and
+    are KEPT (not filtered, unlike ``history.py``), so the quality metadata
+    must surface how many rows carry that placeholder -- alongside
+    ``unknown_role_count``, following the exact same ``countIf`` pattern.
+    """
+    sql = _officers_quality_sql(_STAGE_TABLE)
+
+    assert sql.startswith("SELECT")
+    assert f"FROM {_STAGE_TABLE}" in sql
+    assert "countIf(role_kind = 'unknown') AS unknown_role_count" in sql
+    assert "countIf(fiscal_year = 0) AS null_fiscal_year_count" in sql
 
 
 def test_officers_sql_empty_role_rows_are_kept_not_dropped() -> None:
@@ -260,7 +380,7 @@ def _patch_clickhouse(
     return resource
 
 
-_DEFAULT_QUALITY_ROW = (500, 300, 250, 350, 100, 50, 20)
+_DEFAULT_QUALITY_ROW = (500, 300, 250, 350, 100, 50, 20, 15)
 
 
 def test_replace_se_company_officers_is_atomic_and_reports_counts(monkeypatch) -> None:
@@ -295,6 +415,7 @@ def test_replace_se_company_officers_is_atomic_and_reports_counts(monkeypatch) -
     assert metadata["certification_count"] == 100
     assert metadata["auditor_signatory_count"] == 50
     assert metadata["unknown_role_count"] == 20
+    assert metadata["null_fiscal_year_count"] == 15
     assert metadata["table"] == QUALIFIED_SE_COMPANY_OFFICERS_TABLE
     assert metadata["source_run_id"] == "officers-run"
 
@@ -302,7 +423,7 @@ def test_replace_se_company_officers_is_atomic_and_reports_counts(monkeypatch) -
 def test_replace_se_company_officers_refuses_to_swap_an_empty_stage(
     monkeypatch,
 ) -> None:
-    client = _FakeOfficersClickHouseClient(quality_row=(0, 0, 0, 0, 0, 0, 0))
+    client = _FakeOfficersClickHouseClient(quality_row=(0, 0, 0, 0, 0, 0, 0, 0))
     resource = _patch_clickhouse(monkeypatch, client)
 
     with pytest.raises(ValueError, match="produced no rows"):

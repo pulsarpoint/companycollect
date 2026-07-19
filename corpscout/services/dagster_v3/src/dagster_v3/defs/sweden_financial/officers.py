@@ -52,6 +52,54 @@ Python-%-formats the whole query text against that dict before sending it.
 Every literal ``%`` in the ``LIKE``/``ILIKE`` patterns below is therefore
 doubled to ``%%`` -- the same reason ``metrics.py``'s LIKE patterns are
 doubled while ``history.py``'s (executed with NO params dict) are not.
+
+Grouping-window safety (why sharing one partition is safe): ``UnderskriftHandling*``
+and ``UnderskriftArsredovisningForetradare*`` BOTH classify to
+``signatory_kind = 'board_signature'`` (see the ``multiIf`` in
+``build_officers_insert_sql``), so they share a single window partition --
+``PARTITION BY statement_key, signatory_kind ORDER BY fact_ordinal`` folds
+both families' facts into one running-sum sequence per statement.
+``fact_ordinal`` is genuine document order (``parsing.py`` enumerates facts
+via ``enumerate(facts, start=1)`` over the parsed DOM, not a synthetic
+per-concept counter), so the running sum over ``is_first_name`` only
+misattributes a last-name/role fact to the wrong person if the two families'
+fact triples ever INTERLEAVED within a single person's own triple (e.g. an
+``UnderskriftHandlingTilltalsnamn`` immediately followed by an
+``UnderskriftArsredovisningForetradareEfternamn`` before that same person's
+own ``UnderskriftHandlingEfternamn``). In the normal case each family
+occupies its own contiguous block in the source document -- iXBRL renders
+one signature block at a time as a contiguous run of facts, never splicing
+two blocks fact-by-fact -- so the running sum transitions cleanly from one
+family's last person to the next family's first person at the block
+boundary. A person who signs in BOTH blocks (e.g. a board member who is also
+the annual-report representative) therefore yields TWO separate
+``person_seq`` groups, one per family: this is an ACCEPTED duplicate (two
+rows for one physical person), not a correctness bug -- a consumer that
+wants a deduplicated person list groups on (first_name, last_name) itself.
+Cross-family interleaving mid-triple is considered structurally impossible
+given how iXBRL renders these blocks and is NOT something this SQL defends
+against; the running sum has no way to tell which family a row belongs to
+within the shared partition, so if interleaving were ever observed it would
+misattribute a name/role from one family onto a person from the other. See
+``test_person_grouping_simulation_separates_board_signature_blocks_cleanly``
+in ``tests/test_sweden_financial_officers.py`` for a pure-Python simulation
+of this exact running-sum + collapse semantics against a fabricated
+cross-family (but block-separated) fact sequence.
+
+Null fiscal year handling (rows are KEPT, not filtered): ``fiscal_year`` is
+``toInt32(coalesce(toYear(report_period_end), 0))`` -- a statement with no
+resolved ``report_period_end`` gets ``fiscal_year = 0`` and its officer rows
+are still inserted. This is a deliberate divergence from ``history.py``,
+which filters ``reports.fiscal_year IS NOT NULL`` in its ``eligible_reports``
+CTE: history rows are inherently year-keyed (a comparative-year figure with
+no year is meaningless), but a signature is provenance about a REAL person
+regardless of whether the filing's period end resolved -- dropping the row
+would silently discard a name/role that a consumer might still want (e.g.
+"who has ever signed for this company", independent of year). Downstream
+consumers that need a real fiscal year filter ``fiscal_year > 0`` themselves;
+the ``null_fiscal_year_count`` quality-metadata column (see
+``_officers_quality_sql``) surfaces how many rows carry the placeholder
+``0`` so a materialization can be monitored for an unexpected spike.
 """
 
 import uuid
@@ -129,6 +177,7 @@ _QUALITY_COLUMNS = (
     "certification_count",
     "auditor_signatory_count",
     "unknown_role_count",
+    "null_fiscal_year_count",
 )
 
 
@@ -223,8 +272,11 @@ HAVING first_name != '' OR last_name != ''"""
 def _officers_quality_sql(qualified_stage_table: str) -> str:
     """Cheap post-INSERT quality SELECT against the stage table itself
     (mirrors ``history.py``'s ``build_history_quality_sql``): total rows,
-    distinct companies/statements, and a per-signatory-kind breakdown plus
-    the count of rows that fell back to the ``'unknown'`` role.
+    distinct companies/statements, a per-signatory-kind breakdown, the count
+    of rows that fell back to the ``'unknown'`` role, and the count of rows
+    carrying the placeholder ``fiscal_year = 0`` (see the module docstring's
+    "Null fiscal year handling" section for why those rows are kept rather
+    than filtered).
     """
     return f"""SELECT
     count() AS row_count,
@@ -233,7 +285,8 @@ def _officers_quality_sql(qualified_stage_table: str) -> str:
     countIf(signatory_kind = 'board_signature') AS board_signature_count,
     countIf(signatory_kind = 'certification') AS certification_count,
     countIf(signatory_kind = 'auditor') AS auditor_signatory_count,
-    countIf(role_kind = 'unknown') AS unknown_role_count
+    countIf(role_kind = 'unknown') AS unknown_role_count,
+    countIf(fiscal_year = 0) AS null_fiscal_year_count
 FROM {qualified_stage_table}"""
 
 
@@ -334,10 +387,11 @@ def replace_se_company_officers_clickhouse(
     if log is not None:
         log(
             "Finished Sweden company officers: rows=%s companies=%s statements=%s "
-            "unknown_role=%s",
+            "unknown_role=%s null_fiscal_year=%s",
             quality["row_count"],
             quality["company_count"],
             quality["statement_count"],
             quality["unknown_role_count"],
+            quality["null_fiscal_year_count"],
         )
     return quality
