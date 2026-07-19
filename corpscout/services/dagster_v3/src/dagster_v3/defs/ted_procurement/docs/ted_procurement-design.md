@@ -1,8 +1,9 @@
 # TED procurement source — design (pre-implementation)
 
-Status: **design agreed 2026-07-19, implementation next.** When the module is built this
-becomes `defs/ted_procurement/docs/ted_procurement-design.md` per §10 of
-`docs/data-source-guidelines.md`.
+Status: **implemented 2026-07-19** (`defs/ted_procurement/`). Countries configured:
+FIN. First verified partition: 2026-06 — 578 notices, 1,873 winner rows (100% with
+national ids, 91% joining `fi_companies`), published to `corpscout.ted_notices` +
+`corpscout.ted_notice_winners` (migration 000148).
 
 ## Why
 
@@ -95,7 +96,24 @@ search index (monthly partition, per country)
 - **Schedule (§9)**: monthly, after month close (e.g. 3rd, 05:35 staggered), current
   month refreshable via `end_offset=1`. Backfill 2024-01→now from the UI.
 
-## Risks / open items for implementation
+## Issues found during implementation
+
+- **ted.europa.eu rate-limits the XML endpoint** sporadically (429 on ~13/578 fetches
+  even throttled), and the dlt session *raises* the 429 as HTTPError after its own
+  internal retries — the client catches both the returned-response and raised forms,
+  honours `Retry-After`, and backs off up to 6 attempts (plus a 0.2s politeness
+  throttle between downloads).
+- **A LotResult can reference several winning tenders** (multi-supplier framework
+  awards, e.g. the Swedish grocery framework fixture) — all referenced tenders are
+  winners; do not assume one winner per lot.
+- **ContractingParty carries two org refs** when a procurement platform files on the
+  buyer's behalf: the buyer under `cac:Party` directly and the platform under
+  `ServiceProviderParty/cac:Party` — take only the direct child, or the platform
+  becomes the buyer.
+- DuckDB has no `generate_subscripts`; list explosion uses
+  `generate_series(1, len(parts))`.
+
+## Risks / open items
 
 - eForms winner-linkage (LotResult→LotTender→TenderingParty→Company) must be built
   test-first against several real notices incl. multi-lot, multi-winner, and
