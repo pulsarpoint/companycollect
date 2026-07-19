@@ -481,7 +481,9 @@ FROM (
   GROUP BY full_name_normalized, country_iso2, company_id
 )
 ORDER BY full_name_normalized, fiscal_year DESC
+LIMIT 10 BY full_name_normalized
 LIMIT 200`,
+      // LIMIT BY caps matches per name at 10 so common surnames don't starve others`,
       factsDocumentQuery: `SELECT xhtml_object_key AS object_key,
   xhtml_source_uri AS source_uri,
   source_archive_url AS archive_url,

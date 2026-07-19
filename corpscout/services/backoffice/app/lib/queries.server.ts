@@ -359,7 +359,7 @@ export async function getCompanyDetail(
       ),
     );
     if (names.length > 0) {
-      peopleMatches = await chQuery<PeopleMatchRow>(country.detail.peopleMatchesQuery, { id, names });
+      peopleMatches = await chQuery<PeopleMatchRow>(country.detail.peopleMatchesQuery, { id, names }).catch(() => [] as PeopleMatchRow[]);
     }
   }
 
