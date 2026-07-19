@@ -154,6 +154,8 @@ EXPECTED_MIGRATIONS = (
     "000140_corpscout_no_pdf_financials",
     "000141_corpscout_se_financial_history",
     "000143_corpscout_se_company_officers",
+    "000144_corpscout_fi_tax_records",
+    "000145_corpscout_company_people_all",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
