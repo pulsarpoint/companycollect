@@ -3,6 +3,7 @@ import {
   decorateFiRecord,
   fiRegistrationFlags,
   fiTradeRegisterStatusText,
+  fiVatId,
 } from "~/components/detail/countries/fi-registry";
 
 describe("fiTradeRegisterStatusText", () => {
@@ -33,9 +34,44 @@ describe("decorateFiRecord", () => {
     expect(record.trade_register_status).toBe("1"); // input not mutated
   });
 
-  it("returns the record unchanged when the status is empty", () => {
+  it("returns the record unchanged when there is nothing to decorate", () => {
     const record = { trade_register_status: "", name: "X" };
     expect(decorateFiRecord(record)).toBe(record);
+  });
+
+  it("fills the derived VAT id for VAT-registered companies", () => {
+    const record = {
+      business_id: "2858394-9",
+      vat_id: null,
+      is_vat_registered: 1,
+      trade_register_status: "",
+    };
+    const decorated = decorateFiRecord(record);
+    expect(decorated.vat_id).toBe("FI28583949");
+    expect(record.vat_id).toBeNull(); // input not mutated
+  });
+});
+
+describe("fiVatId", () => {
+  it("derives FI + digits from the business id when VAT-registered", () => {
+    expect(fiVatId({ business_id: "2858394-9", is_vat_registered: 1 })).toBe("FI28583949");
+    expect(fiVatId({ business_id: "0104539-0", is_vat_registered: true })).toBe("FI01045390");
+  });
+
+  it("returns null when not VAT-registered", () => {
+    expect(fiVatId({ business_id: "2858394-9", is_vat_registered: 0 })).toBeNull();
+    expect(fiVatId({ business_id: "2858394-9" })).toBeNull();
+  });
+
+  it("prefers a source-provided vat_id over the derivation", () => {
+    expect(fiVatId({ business_id: "2858394-9", vat_id: "FI99999999", is_vat_registered: 1 })).toBe(
+      "FI99999999",
+    );
+  });
+
+  it("refuses malformed business ids", () => {
+    expect(fiVatId({ business_id: "not-an-id", is_vat_registered: 1 })).toBeNull();
+    expect(fiVatId({ is_vat_registered: 1 })).toBeNull();
   });
 });
 
