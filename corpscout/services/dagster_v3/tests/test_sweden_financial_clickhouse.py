@@ -23,8 +23,6 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
 )
 from dagster_v3.defs.sweden_financial.parsing import SWEDEN_FINANCIAL_DATASET_NAME
 from dagster_v3.defs.sweden_financial.storage import (
-    existing_sweden_financial_source_duckdb_paths,
-    sweden_financial_read_only_partitioned_connection,
     sweden_financial_year_duckdb_connection,
 )
 
@@ -42,29 +40,75 @@ _DELETE_SQL_RE = re.compile(
     r"^ALTER TABLE (\S+) DELETE WHERE (\w+) IN %\(keys\)s "
     r"SETTINGS mutations_sync = 1$"
 )
+_STAGE_CREATE_SQL_RE = re.compile(
+    r"^CREATE TABLE (corpscout\._tmp_\S+) \((\w+) String\) ENGINE = Memory$"
+)
+_STAGE_INSERT_SQL_RE = re.compile(
+    r"^INSERT INTO (corpscout\._tmp_\S+) \((\w+)\) VALUES$"
+)
+_STAGE_COUNT_SQL_RE = re.compile(
+    r"^SELECT count\(\) FROM (\S+) WHERE (\w+) IN "
+    r"\(SELECT (\w+) FROM (corpscout\._tmp_\S+)\)$"
+)
+_STAGE_DELETE_SQL_RE = re.compile(
+    r"^ALTER TABLE (\S+) DELETE WHERE (\w+) IN "
+    r"\(SELECT (\w+) FROM (corpscout\._tmp_\S+)\) "
+    r"SETTINGS mutations_sync = 1$"
+)
+_DROP_TABLE_SQL_RE = re.compile(r"^DROP TABLE IF EXISTS (corpscout\._tmp_\S+)$")
+
+_STAGE_TABLE_NAME_RE = re.compile(
+    r"^corpscout\._tmp_se_facts_scope_[0-9a-f]{32}$"
+)
 
 
 class StatefulFakeClickHouseClient:
     """A fake clickhouse-driver client that keeps real per-table row state.
 
-    Supports exactly the operations the scoped upsert performs: the
-    ``system.tables`` existence probe, ``SELECT count() ... WHERE col IN
-    %(keys)s``, ``ALTER TABLE ... DELETE WHERE col IN %(keys)s SETTINGS
-    mutations_sync = 1`` and explicit-column ``INSERT INTO ... VALUES`` --
-    so idempotency and scope-isolation tests assert on the resulting row
-    state, not on echoed SQL strings.
+    Supports exactly the operations the scoped upserts perform: the
+    ``system.tables`` existence probe; the reports path's ``SELECT count()
+    ... WHERE col IN %(keys)s`` / ``ALTER TABLE ... DELETE WHERE col IN
+    %(keys)s``; the facts path's stage-table flow (``CREATE TABLE ...
+    ENGINE = Memory``, data-block ``INSERT`` into the stage, count/delete
+    via ``IN (SELECT ... FROM <stage>)`` resolved against the stage's
+    actual row contents, ``DROP TABLE IF EXISTS``); and explicit-column
+    ``INSERT INTO ... VALUES`` -- so idempotency and scope-isolation tests
+    assert on the resulting row state, not on echoed SQL strings. The
+    stage-subquery count/delete branches assert ``params is None``: the
+    scope must live in the stage table's rows, never in query params.
     """
 
     def __init__(self, tables: dict[str, tuple[str, ...]]) -> None:
         self.columns = {name: tuple(columns) for name, columns in tables.items()}
         self.rows: dict[str, list[tuple[Any, ...]]] = {name: [] for name in tables}
         self.operations: list[tuple[str, Any]] = []
+        self.created_stage_tables: list[str] = []
 
     def execute(self, sql: str, params: Any = None) -> list[tuple[Any, ...]]:
         normalized = " ".join(sql.split())
         self.operations.append((normalized, params))
         if "system.tables" in normalized:
             return [(table,) for table in params["tables"]]
+        stage_create_match = _STAGE_CREATE_SQL_RE.match(normalized)
+        if stage_create_match is not None:
+            table, column = stage_create_match.groups()
+            assert table not in self.columns, f"stage table already exists: {table}"
+            self.columns[table] = (column,)
+            self.rows[table] = []
+            self.created_stage_tables.append(table)
+            return []
+        stage_insert_match = _STAGE_INSERT_SQL_RE.match(normalized)
+        if stage_insert_match is not None:
+            table, column = stage_insert_match.groups()
+            assert self.columns[table] == (column,)
+            self.rows[table].extend(params)
+            return []
+        drop_match = _DROP_TABLE_SQL_RE.match(normalized)
+        if drop_match is not None:
+            table = drop_match.group(1)
+            self.columns.pop(table, None)
+            self.rows.pop(table, None)
+            return []
         count_match = _COUNT_SQL_RE.match(normalized)
         if count_match is not None:
             table, column = count_match.groups()
@@ -82,14 +126,40 @@ class StatefulFakeClickHouseClient:
                 row for row in self.rows[table] if row[index] not in keys
             ]
             return []
+        stage_count_match = _STAGE_COUNT_SQL_RE.match(normalized)
+        if stage_count_match is not None:
+            table, column, stage_column, stage_table = stage_count_match.groups()
+            assert params is None, "stage-scoped count must not carry params"
+            keys = self._stage_keys(stage_table, stage_column)
+            index = self.columns[table].index(column)
+            return [
+                (sum(1 for row in self.rows[table] if row[index] in keys),)
+            ]
+        stage_delete_match = _STAGE_DELETE_SQL_RE.match(normalized)
+        if stage_delete_match is not None:
+            table, column, stage_column, stage_table = stage_delete_match.groups()
+            assert params is None, "stage-scoped delete must not carry params"
+            keys = self._stage_keys(stage_table, stage_column)
+            index = self.columns[table].index(column)
+            self.rows[table] = [
+                row for row in self.rows[table] if row[index] not in keys
+            ]
+            return []
         if normalized.startswith("INSERT INTO `corpscout`.`"):
             table_name = normalized.split("`")[3]
             self.rows[f"corpscout.{table_name}"].extend(params)
             return []
         raise AssertionError(normalized)
 
+    def _stage_keys(self, stage_table: str, stage_column: str) -> set[Any]:
+        index = self.columns[stage_table].index(stage_column)
+        return {row[index] for row in self.rows[stage_table]}
+
     def statements(self) -> list[str]:
         return [sql for sql, _ in self.operations]
+
+    def remaining_stage_tables(self) -> list[str]:
+        return [name for name in self.columns if "._tmp_" in name]
 
 
 def _reports_facts_fake_client() -> StatefulFakeClickHouseClient:
@@ -211,6 +281,14 @@ def test_upsert_reports_partition_deletes_own_scope_then_inserts(
         ),
     )
     client = _reports_facts_fake_client()
+    # A stale row from a previous export of this same partition -- the
+    # pre-count is therefore 1, so the delete mutation must be issued.
+    stale_row = _clickhouse_report_row(
+        company_id="5560000001",
+        year="2025",
+        archive_key=_ARCHIVE_KEY_2025_A,
+    )
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(stale_row)
 
     with _patched_clickhouse(monkeypatch, client) as resource:
         with sweden_financial_year_duckdb_connection(
@@ -225,10 +303,11 @@ def test_upsert_reports_partition_deletes_own_scope_then_inserts(
     assert metadata == {
         "partition": "2025",
         "archives": 2,
-        "deleted": 0,
+        "deleted": 1,
         "inserted": 2,
     }
     assert len(client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE]) == 2
+    assert stale_row not in client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE]
 
     statements = client.statements()
     delete_index = next(
@@ -259,6 +338,68 @@ def test_upsert_reports_partition_deletes_own_scope_then_inserts(
     )
     for archive_key in (_ARCHIVE_KEY_2025_A, _ARCHIVE_KEY_2025_B):
         assert not any(archive_key in sql for sql in statements)
+
+
+def test_upsert_reports_partition_skips_delete_mutation_when_precount_zero(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # The steady-state new-archive case: nothing in scope exists in
+    # ClickHouse yet, so no ALTER DELETE mutation is issued at all -- the
+    # run is a pure insert, still reporting deleted=0.
+    _seed_year_file(
+        tmp_path, "2025", reports=(("5560000001", _ARCHIVE_KEY_2025_A),)
+    )
+    client = _reports_facts_fake_client()
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2025", root=tmp_path
+        ) as connection:
+            metadata = upsert_sweden_financial_reports_partition(
+                duckdb_connection=connection,
+                clickhouse=resource,
+                partition_key="2025",
+            )
+
+    assert metadata["deleted"] == 0
+    assert metadata["inserted"] == 1
+    assert not any(
+        sql.startswith("ALTER TABLE") for sql in client.statements()
+    )
+
+
+def test_upsert_reports_partition_fails_loudly_when_scope_has_zero_source_rows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # The archive scope itself is NON-empty (the catalog says this weekly
+    # partition downloaded an archive) but the local reports table holds
+    # zero rows for it -- parse never ran / is out of sync. Exporting
+    # nothing silently is forbidden.
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(),
+        catalog_rows=(("2026-07-11", "current", _ARCHIVE_KEY_2026_W1, True),),
+    )
+    client = _reports_facts_fake_client()
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            with pytest.raises(ValueError, match="ZERO local report rows"):
+                upsert_sweden_financial_reports_partition(
+                    duckdb_connection=connection,
+                    clickhouse=resource,
+                    partition_key="2026-07-11",
+                )
+
+    assert not any(
+        sql.startswith(("ALTER TABLE", "INSERT INTO", "CREATE TABLE"))
+        for sql in client.statements()
+    )
 
 
 def test_upsert_reports_partition_insert_uses_explicit_export_columns(
@@ -398,7 +539,7 @@ def test_upsert_reports_partition_fails_loudly_before_any_clickhouse_write(
 # --- facts upsert -----------------------------------------------------------
 
 
-def test_upsert_facts_partition_scopes_by_statement_key(
+def test_upsert_facts_partition_scopes_by_statement_key_via_stage_table(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -412,6 +553,10 @@ def test_upsert_facts_partition_scopes_by_statement_key(
         facts=("5560000001", "5560000002"),
     )
     client = _reports_facts_fake_client()
+    statement_keys = [
+        _statement_key("5560000001", "2025"),
+        _statement_key("5560000002", "2025"),
+    ]
 
     with _patched_clickhouse(monkeypatch, client) as resource:
         with sweden_financial_year_duckdb_connection(
@@ -431,25 +576,57 @@ def test_upsert_facts_partition_scopes_by_statement_key(
     }
     assert len(client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]) == 2
 
-    delete_sql, delete_params = next(
+    statements = client.statements()
+    # se_financial_facts has no source_archive_key column (migration 000090):
+    # the facts scope is the partition's statement_key set, staged in a
+    # per-run Memory table (a backfill year holds up to ~500k keys, which
+    # would blow max_query_size if bound as a client-substituted param).
+    create_sql = next(
+        sql for sql in statements if sql.startswith("CREATE TABLE")
+    )
+    create_match = _STAGE_CREATE_SQL_RE.match(create_sql)
+    assert create_match is not None
+    stage_table = create_match.group(1)
+    assert _STAGE_TABLE_NAME_RE.match(stage_table)
+
+    # The scope travels as INSERT data blocks into the stage, never as SQL
+    # text or query params.
+    stage_insert_ops = [
         (sql, params)
         for sql, params in client.operations
-        if sql.startswith("ALTER TABLE")
-    )
-    # se_financial_facts has no source_archive_key column (migration 000090):
-    # the facts scope is the partition's statement_key set.
-    assert delete_sql == (
-        f"ALTER TABLE {QUALIFIED_SE_FINANCIAL_FACTS_TABLE} DELETE "
-        "WHERE statement_key IN %(keys)s SETTINGS mutations_sync = 1"
-    )
-    assert isinstance(delete_params, dict)
-    assert sorted(delete_params["keys"]) == [
-        _statement_key("5560000001", "2025"),
-        _statement_key("5560000002", "2025"),
+        if sql == f"INSERT INTO {stage_table} (statement_key) VALUES"
     ]
+    assert len(stage_insert_ops) == 1
+    assert sorted(stage_insert_ops[0][1]) == [(key,) for key in statement_keys]
+
+    count_sql, count_params = next(
+        (sql, params)
+        for sql, params in client.operations
+        if sql.startswith("SELECT count()")
+        and QUALIFIED_SE_FINANCIAL_FACTS_TABLE in sql
+    )
+    assert count_sql == (
+        f"SELECT count() FROM {QUALIFIED_SE_FINANCIAL_FACTS_TABLE} "
+        f"WHERE statement_key IN (SELECT statement_key FROM {stage_table})"
+    )
+    assert count_params is None
+
+    # Pre-count was 0 (nothing in scope existed yet): the delete mutation is
+    # skipped entirely -- pure insert.
+    assert not any(sql.startswith("ALTER TABLE") for sql in statements)
+
+    # The stage table is dropped, and no statement_key literal ever appears
+    # in any query text (the reports-scale archive keys are the only
+    # scope values allowed inline anywhere).
+    assert f"DROP TABLE IF EXISTS {stage_table}" in statements
+    assert client.remaining_stage_tables() == []
+    for key in statement_keys:
+        assert not any(key in sql for sql in statements)
 
     insert_sql = next(
-        sql for sql in client.statements() if sql.startswith("INSERT INTO")
+        sql
+        for sql in statements
+        if sql.startswith("INSERT INTO `corpscout`.`")
     )
     expected_columns = ", ".join(
         f"`{column}`" for column in SE_FINANCIAL_FACTS_EXPORT_COLUMNS
@@ -457,6 +634,90 @@ def test_upsert_facts_partition_scopes_by_statement_key(
     assert insert_sql == (
         f"INSERT INTO `corpscout`.`se_financial_facts` "
         f"({expected_columns}) VALUES"
+    )
+
+
+def test_upsert_facts_weekly_partition_filters_facts_through_reports_join(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # A weekly current partition exports only the facts belonging to ITS
+    # downloaded archives, resolved through the local reports table inside
+    # DuckDB -- the other archive's facts stay out of scope entirely.
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(
+            ("5560000001", _ARCHIVE_KEY_2026_W1),
+            ("5560000002", _ARCHIVE_KEY_2026_W2),
+        ),
+        facts=("5560000001", "5560000002"),
+        catalog_rows=(
+            ("2026-07-11", "current", _ARCHIVE_KEY_2026_W2, True),
+            ("2026-07-11", "current", _ARCHIVE_KEY_2026_W1, False),
+        ),
+    )
+    client = _reports_facts_fake_client()
+    in_scope_key = _statement_key("5560000002", "2026")
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            metadata = upsert_sweden_financial_facts_partition(
+                duckdb_connection=connection,
+                clickhouse=resource,
+                partition_key="2026-07-11",
+            )
+
+    assert metadata == {
+        "partition": "2026-07-11",
+        "archives": 1,
+        "deleted": 0,
+        "inserted": 1,
+    }
+    inserted_rows = client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]
+    key_index = SE_FINANCIAL_FACTS_EXPORT_COLUMNS.index("statement_key")
+    assert [row[key_index] for row in inserted_rows] == [in_scope_key]
+
+    # The stage delete scope is exactly the in-scope statement key.
+    stage_insert_params = next(
+        params
+        for sql, params in client.operations
+        if _STAGE_INSERT_SQL_RE.match(sql)
+    )
+    assert stage_insert_params == [(in_scope_key,)]
+
+
+def test_upsert_facts_partition_fails_loudly_when_scope_has_zero_statement_keys(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # Archive scope non-empty (catalog says downloaded) but the local
+    # reports table resolves it to zero statement keys -- fail loud, never
+    # silently export nothing.
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(),
+        catalog_rows=(("2026-07-11", "current", _ARCHIVE_KEY_2026_W1, True),),
+    )
+    client = _reports_facts_fake_client()
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            with pytest.raises(ValueError, match="ZERO statement keys"):
+                upsert_sweden_financial_facts_partition(
+                    duckdb_connection=connection,
+                    clickhouse=resource,
+                    partition_key="2026-07-11",
+                )
+
+    assert not any(
+        sql.startswith(("ALTER TABLE", "INSERT INTO", "CREATE TABLE"))
+        for sql in client.statements()
     )
 
 
@@ -501,6 +762,24 @@ def test_upsert_facts_partition_is_idempotent_and_leaves_other_partitions(
         == rows_after_first
     )
     assert foreign_row in client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]
+
+    # Exactly one delete mutation was issued (the re-run, whose pre-count
+    # was 1), and it is the stage-subquery form with no params -- the
+    # statement_key never appears in any query text.
+    delete_ops = [
+        (sql, params)
+        for sql, params in client.operations
+        if sql.startswith("ALTER TABLE")
+    ]
+    assert len(delete_ops) == 1
+    delete_sql, delete_params = delete_ops[0]
+    assert _STAGE_DELETE_SQL_RE.match(delete_sql)
+    assert delete_params is None
+    assert not any(
+        _statement_key("5560000001", "2025") in sql
+        for sql in client.statements()
+    )
+    assert client.remaining_stage_tables() == []
 
 
 # --- shrink guard (metrics-only full replace keeps it) ----------------------
@@ -606,44 +885,6 @@ def test_sweden_financial_year_duckdb_connection_is_read_only(
             connection.execute(
                 f"delete from {SWEDEN_FINANCIAL_DATASET_NAME}.reports"
             )
-
-
-def test_sweden_financial_partitioned_connection_unions_year_files(
-    tmp_path: Path,
-) -> None:
-    _seed_year_file(
-        tmp_path, "2025", reports=(("5560000000", _ARCHIVE_KEY_2025_A),)
-    )
-    _seed_year_file(
-        tmp_path, "2026", reports=(("5560000000", _ARCHIVE_KEY_2026_W1),)
-    )
-
-    paths = existing_sweden_financial_source_duckdb_paths(
-        years=("2024", "2025", "2026"),
-        root=tmp_path,
-    )
-    assert [path.name for path in paths] == [
-        "sweden_financial_source_2025.duckdb",
-        "sweden_financial_source_2026.duckdb",
-    ]
-
-    with sweden_financial_read_only_partitioned_connection(
-        years=("2024", "2025", "2026"),
-        table_names=("reports",),
-        root=tmp_path,
-    ) as connection:
-        rows = connection.execute(
-            f"""
-            select source_record_id
-            from {SWEDEN_FINANCIAL_DATASET_NAME}.reports
-            order by source_record_id
-            """
-        ).fetchall()
-
-    assert rows == [
-        ("5560000000:2025-12-31:report.xhtml",),
-        ("5560000000:2026-12-31:report.xhtml",),
-    ]
 
 
 # --- fixtures ---------------------------------------------------------------

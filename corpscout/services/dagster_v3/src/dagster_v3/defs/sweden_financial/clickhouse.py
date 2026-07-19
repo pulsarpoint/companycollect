@@ -232,12 +232,11 @@ def _statement_keys_for_archive_keys(
     ``se_financial_reports`` and the derived ``se_financial_metrics`` do --
     see migrations 000090/000134); facts link back to their report via
     ``statement_key`` only (``se_financial_facts_with_source`` joins on it).
-    So the facts export's delete/insert scope is expressed in
+    So the facts export's ClickHouse delete scope is expressed in
     ``statement_key``, derived here from the same local ``reports`` table
-    used to resolve the archive scope.
+    used to resolve the archive scope. ``archive_keys`` is never empty
+    (``resolve_sweden_financial_partition_archive_keys`` raises first).
     """
-    if not archive_keys:
-        return []
     placeholders = ", ".join("?" for _ in archive_keys)
     rows = duckdb_connection.execute(
         f"""
@@ -250,6 +249,22 @@ def _statement_keys_for_archive_keys(
     return sorted({str(row[0]) for row in rows})
 
 
+def _reports_row_count_for_archive_keys(
+    duckdb_connection: Any,
+    archive_keys: Sequence[str],
+) -> int:
+    placeholders = ", ".join("?" for _ in archive_keys)
+    row = duckdb_connection.execute(
+        f"""
+        select count(*)
+        from {SWEDEN_FINANCIAL_DATASET_NAME}.reports
+        where source_archive_key in ({placeholders})
+        """,
+        list(archive_keys),
+    ).fetchone()
+    return int(row[0])
+
+
 def _count_and_delete_clickhouse_rows_by_key(
     client: Any,
     *,
@@ -259,29 +274,100 @@ def _count_and_delete_clickhouse_rows_by_key(
 ) -> int:
     """Delete every row in ``qualified_table`` whose ``column`` is in ``keys``.
 
-    Binds ``keys`` as a single ClickHouse ``Array(String)`` parameter
-    (``IN %(keys)s``) -- never interpolated into the SQL text, per the
-    Norway precedent (``financial_statements.py`` delete-by-key-set) and the
-    ClickHouse ``IN``-list-size constraint. Uses ``mutations_sync = 1`` so
-    the delete is visible before the subsequent insert. Returns the
-    pre-delete row count in scope (the "deleted" metadata field) -- always
-    0 for a brand-new archive, which is what makes re-running a partition
-    idempotent.
+    Reports-scale scopes ONLY (a partition's archive keys, at most a few
+    hundred strings): binds ``keys`` as a single ClickHouse
+    ``Array(String)`` parameter (``IN %(keys)s``) -- never interpolated into
+    the SQL text by us. Note clickhouse-driver substitutes params
+    CLIENT-side, so the key set still travels inside the query text and is
+    subject to the server's ``max_query_size`` (256 KiB default) -- fine for
+    archive-key scopes (~20 KB), which is exactly why the facts path uses
+    the stage-table mechanism instead
+    (``_count_and_delete_facts_rows_via_scope_stage``).
+
+    Skips the ALTER DELETE mutation entirely when the pre-count is 0 (the
+    steady-state brand-new-archive case: a pure insert). Uses
+    ``mutations_sync = 1`` so the delete is visible before the subsequent
+    insert. Returns the pre-delete row count in scope (the "deleted"
+    metadata field), which is what makes re-running a partition idempotent.
     """
-    if not keys:
-        return 0
     key_array = tuple(keys)
     pre_count_rows = client.execute(
         f"SELECT count() FROM {qualified_table} WHERE {column} IN %(keys)s",
         {"keys": key_array},
     )
     pre_count = int(pre_count_rows[0][0])
-    client.execute(
-        f"ALTER TABLE {qualified_table} DELETE WHERE {column} IN %(keys)s "
-        "SETTINGS mutations_sync = 1",
-        {"keys": key_array},
-    )
+    if pre_count > 0:
+        client.execute(
+            f"ALTER TABLE {qualified_table} DELETE WHERE {column} IN %(keys)s "
+            "SETTINGS mutations_sync = 1",
+            {"keys": key_array},
+        )
     return pre_count
+
+
+SCOPE_STAGE_INSERT_BATCH_SIZE = 50_000
+
+
+def _count_and_delete_facts_rows_via_scope_stage(
+    client: Any,
+    statement_keys: Sequence[str],
+) -> int:
+    """Delete this partition's ``corpscout.se_financial_facts`` rows by
+    staging the ``statement_key`` scope in a per-run Memory table.
+
+    A backfill year's facts scope is ~98k-498k 64-char statement keys.
+    Binding that as an ``Array(String)`` param (the reports approach) does
+    NOT keep it out of the query text -- clickhouse-driver substitutes
+    params client-side, producing 6-33 MB of SQL vs the server's default
+    ``max_query_size`` of 262,144 bytes. So, per the Norway precedent
+    (``norway_brreg_financial/assets/financial_statements.py`` update
+    path), the keys are batch-INSERTed into a per-run ``ENGINE = Memory``
+    stage table as native-protocol data blocks (data blocks bypass
+    ``max_query_size`` entirely), and the pre-count and DELETE run as
+    ``statement_key IN (SELECT statement_key FROM <stage>)``.
+
+    Skips the ALTER DELETE mutation entirely when the pre-count is 0 (the
+    steady-state brand-new-archive case: a pure insert). Uses
+    ``mutations_sync = 1`` so the delete is visible before the subsequent
+    insert. The stage table is dropped in all cases. Returns the pre-delete
+    in-scope row count (the "deleted" metadata field).
+    """
+    stage_table = f"_tmp_se_facts_scope_{uuid.uuid4().hex}"
+    qualified_stage_table = f"{SWEDEN_FINANCIAL_DATABASE}.{stage_table}"
+    client.execute(
+        f"CREATE TABLE {qualified_stage_table} (statement_key String) "
+        "ENGINE = Memory"
+    )
+    primary_error: Exception | None = None
+    try:
+        rows = [(key,) for key in statement_keys]
+        for start in range(0, len(rows), SCOPE_STAGE_INSERT_BATCH_SIZE):
+            client.execute(
+                f"INSERT INTO {qualified_stage_table} (statement_key) VALUES",
+                rows[start : start + SCOPE_STAGE_INSERT_BATCH_SIZE],
+            )
+        scope_subquery = f"(SELECT statement_key FROM {qualified_stage_table})"
+        pre_count_rows = client.execute(
+            f"SELECT count() FROM {QUALIFIED_SE_FINANCIAL_FACTS_TABLE} "
+            f"WHERE statement_key IN {scope_subquery}"
+        )
+        pre_count = int(pre_count_rows[0][0])
+        if pre_count > 0:
+            client.execute(
+                f"ALTER TABLE {QUALIFIED_SE_FINANCIAL_FACTS_TABLE} "
+                f"DELETE WHERE statement_key IN {scope_subquery} "
+                "SETTINGS mutations_sync = 1"
+            )
+        return pre_count
+    except Exception as exc:
+        primary_error = exc
+        raise
+    finally:
+        try:
+            client.execute(f"DROP TABLE IF EXISTS {qualified_stage_table}")
+        except Exception:
+            if primary_error is None:
+                raise
 
 
 def _quote_duckdb_identifier(identifier: str) -> str:
@@ -294,39 +380,80 @@ def _duckdb_string_literal(value: str) -> str:
     return f"'{escaped}'"
 
 
+def _archive_keys_in_sql(archive_keys: Sequence[str]) -> str:
+    return ", ".join(_duckdb_string_literal(key) for key in archive_keys)
+
+
+def _reports_scope_where_sql(archive_keys: Sequence[str]) -> str:
+    return f"source_archive_key in ({_archive_keys_in_sql(archive_keys)})"
+
+
+def _facts_scope_where_sql(
+    partition_key: str,
+    archive_keys: Sequence[str],
+) -> str | None:
+    """DuckDB-side row filter for the facts insert.
+
+    - **Backfill partition**: the parse layer replaces the ENTIRE year file
+      for these, so the facts scope IS the whole local ``facts`` table -- no
+      filter at all (``None``). Inlining the year's ~98k-498k statement
+      keys as literals here would recreate the oversized-query problem on
+      the DuckDB side for nothing.
+    - **Weekly current partition**: filter facts through the local
+      ``reports`` table by this partition's archive keys (at most a few
+      hundred inlined literals) -- never by inlined statement keys.
+    """
+    if _is_backfill_partition_key(partition_key):
+        return None
+    return (
+        "statement_key in (select statement_key "
+        f"from {SWEDEN_FINANCIAL_DATASET_NAME}.reports "
+        f"where source_archive_key in ({_archive_keys_in_sql(archive_keys)}))"
+    )
+
+
 def _insert_partition_scope_rows(
     *,
     duckdb_connection: Any,
     clickhouse_client: Any,
     duckdb_table: str,
-    key_column: str,
-    keys: Sequence[str],
+    where_sql: str | None,
     clickhouse_table: str,
     columns: Sequence[str],
     log: Callable[..., object] | None,
 ) -> int:
-    """Insert only the rows of ``duckdb_table`` whose ``key_column`` is in
-    ``keys`` into ``clickhouse_table``, reusing the shared batched-insert
-    machinery (Arrow fast path with a row-based fallback) via a scoped
-    DuckDB view rather than duplicating that logic.
+    """Insert the rows of ``duckdb_table`` matching ``where_sql`` (the whole
+    table when ``None``) into ``clickhouse_table``, reusing the shared
+    batched-insert machinery (Arrow fast path with a row-based fallback) via
+    a scoped DuckDB view rather than duplicating that logic.
 
     The view is created in DuckDB's ``temp`` schema so this works against a
     READ-ONLY connection (DuckDB's temporary catalog is independent of the
     on-disk file's access mode). ``CREATE VIEW`` cannot be prepared with
-    bound parameters, so the key list is inlined as escaped SQL string
-    literals -- safe here because the values are our own S3-object-key /
-    hash strings, not external input.
+    bound parameters, so ``where_sql`` inlines its archive keys as escaped
+    SQL string literals -- safe here because the values are our own
+    S3-object-key strings, not external input, and archive-key-scale only
+    (statement keys are never inlined; see ``_facts_scope_where_sql``).
     """
-    if not keys:
-        return 0
+    if where_sql is None:
+        return export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=clickhouse_client,
+            duckdb_schema=SWEDEN_FINANCIAL_DATASET_NAME,
+            duckdb_table=duckdb_table,
+            clickhouse_database=SWEDEN_FINANCIAL_DATABASE,
+            clickhouse_table=clickhouse_table,
+            columns=columns,
+            truncate=False,
+            log=log,
+        )
     view_name = f"_sweden_financial_export_scope_{uuid.uuid4().hex}"
     quoted_view_name = _quote_duckdb_identifier(view_name)
-    values_sql = ", ".join(_duckdb_string_literal(key) for key in keys)
     duckdb_connection.execute(
         f"""
         create temp view {quoted_view_name} as
         select * from {SWEDEN_FINANCIAL_DATASET_NAME}.{duckdb_table}
-        where {key_column} in ({values_sql})
+        where {where_sql}
         """
     )
     try:
@@ -367,6 +494,17 @@ def upsert_sweden_financial_reports_partition(
     archive_keys = resolve_sweden_financial_partition_archive_keys(
         duckdb_connection, partition_key
     )
+    source_row_count = _reports_row_count_for_archive_keys(
+        duckdb_connection, archive_keys
+    )
+    if source_row_count == 0:
+        raise ValueError(
+            f"Sweden financial reports partition {partition_key!r} resolved "
+            f"{len(archive_keys)} archive keys but ZERO local report rows in "
+            "their scope; refusing to export nothing. The local DuckDB "
+            "reports table is out of sync with archive_sync_catalog -- "
+            "re-materialize this partition's parse asset on this host first."
+        )
     if log is not None:
         log(
             "Upserting Sweden financial reports partition: partition=%s archives=%s",
@@ -384,8 +522,7 @@ def upsert_sweden_financial_reports_partition(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_table="reports",
-            key_column="source_archive_key",
-            keys=archive_keys,
+            where_sql=_reports_scope_where_sql(archive_keys),
             clickhouse_table=SE_FINANCIAL_REPORTS_TABLE,
             columns=SE_FINANCIAL_REPORTS_EXPORT_COLUMNS,
             log=log,
@@ -430,6 +567,14 @@ def upsert_sweden_financial_facts_partition(
         duckdb_connection, partition_key
     )
     statement_keys = _statement_keys_for_archive_keys(duckdb_connection, archive_keys)
+    if not statement_keys:
+        raise ValueError(
+            f"Sweden financial facts partition {partition_key!r} resolved "
+            f"{len(archive_keys)} archive keys but ZERO statement keys in "
+            "their scope; refusing to export nothing. The local DuckDB "
+            "reports table is out of sync with archive_sync_catalog -- "
+            "re-materialize this partition's parse asset on this host first."
+        )
     if log is not None:
         log(
             "Upserting Sweden financial facts partition: partition=%s archives=%s "
@@ -439,18 +584,15 @@ def upsert_sweden_financial_facts_partition(
             len(statement_keys),
         )
     with clickhouse.get_connection() as client:
-        deleted = _count_and_delete_clickhouse_rows_by_key(
+        deleted = _count_and_delete_facts_rows_via_scope_stage(
             client,
-            qualified_table=QUALIFIED_SE_FINANCIAL_FACTS_TABLE,
-            column="statement_key",
-            keys=statement_keys,
+            statement_keys,
         )
         inserted = _insert_partition_scope_rows(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_table="facts",
-            key_column="statement_key",
-            keys=statement_keys,
+            where_sql=_facts_scope_where_sql(partition_key, archive_keys),
             clickhouse_table=SE_FINANCIAL_FACTS_TABLE,
             columns=SE_FINANCIAL_FACTS_EXPORT_COLUMNS,
             log=log,
