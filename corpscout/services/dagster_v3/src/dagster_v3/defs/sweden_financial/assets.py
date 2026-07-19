@@ -316,6 +316,15 @@ SWEDEN_FINANCIAL_CLICKHOUSE_DEPENDENCIES = [
 ]
 
 
+class SwedenFinancialClickhouseExportConfig(dg.Config):
+    # Shrink-guard override (see clickhouse.py's
+    # guard_against_clickhouse_table_shrink) -- MUST stay False by default.
+    # Only set True via explicit run config for a confirmed-intentional
+    # shrink of a populated se_financial_reports/facts/metrics table (e.g. a
+    # deliberate upstream data retirement), never as a standing default.
+    allow_shrink: bool = False
+
+
 @dg.asset(
     deps=SWEDEN_FINANCIAL_CLICKHOUSE_DEPENDENCIES,
     group_name=GROUP_NAME,
@@ -325,6 +334,7 @@ SWEDEN_FINANCIAL_CLICKHOUSE_DEPENDENCIES = [
 )
 def sweden_financial_reports_clickhouse(
     context: dg.AssetExecutionContext,
+    config: SwedenFinancialClickhouseExportConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     years = SWEDEN_FINANCIAL_BACKFILL_PARTITIONS.get_partition_keys()
@@ -337,6 +347,7 @@ def sweden_financial_reports_clickhouse(
             duckdb_connection=connection,
             clickhouse=clickhouse,
             log=context.log.info,
+            allow_shrink=config.allow_shrink,
         )
     return dg.MaterializeResult(
         metadata={
@@ -358,6 +369,7 @@ def sweden_financial_reports_clickhouse(
 )
 def sweden_financial_facts_clickhouse(
     context: dg.AssetExecutionContext,
+    config: SwedenFinancialClickhouseExportConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     years = SWEDEN_FINANCIAL_BACKFILL_PARTITIONS.get_partition_keys()
@@ -370,6 +382,7 @@ def sweden_financial_facts_clickhouse(
             duckdb_connection=connection,
             clickhouse=clickhouse,
             log=context.log.info,
+            allow_shrink=config.allow_shrink,
         )
     return dg.MaterializeResult(
         metadata={
@@ -401,6 +414,7 @@ def sweden_financial_facts_clickhouse(
 )
 def sweden_financial_metrics_clickhouse(
     context: dg.AssetExecutionContext,
+    config: SwedenFinancialClickhouseExportConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     counts = replace_sweden_financial_metrics_clickhouse(
@@ -408,6 +422,7 @@ def sweden_financial_metrics_clickhouse(
         source_run_id=context.run_id,
         resolved_at=datetime.now(UTC),
         log=context.log.info,
+        allow_shrink=config.allow_shrink,
     )
     return dg.MaterializeResult(metadata=counts)
 

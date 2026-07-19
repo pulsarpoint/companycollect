@@ -279,6 +279,17 @@ eligible_reports AS (
     -- only when they carry zero mapped history facts in their OWN (n=0,
     -- i.e. reported-year) contexts -- a race document that is the sole
     -- source of a company-year's figures is kept.
+    -- This SQL (build_history_insert_sql) is executed via
+    -- `client.execute(sql)` in replace_se_financial_history_clickhouse with
+    -- NO params dict, so clickhouse_driver never applies Python string
+    -- formatting to it -- a single percent sign here is correct and
+    -- required. Contrast with metrics.py's
+    -- build_sweden_financial_metrics_insert_sql, whose identical-looking
+    -- LIKE patterns double the percent sign: that INSERT IS executed with
+    -- a params dict, so clickhouse_driver formats the whole query there and
+    -- a lone percent sign would raise `TypeError: not enough arguments for
+    -- format string`. Do NOT double the percent sign here -- that would
+    -- silently change the wildcard and break the match.
     WHERE reports.fiscal_year IS NOT NULL
       AND ifNull(reports.taxonomy_entrypoint, '') NOT LIKE '%/ar/rar%'
       AND NOT (

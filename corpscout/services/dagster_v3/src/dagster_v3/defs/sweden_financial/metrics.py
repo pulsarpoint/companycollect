@@ -6,6 +6,10 @@ from typing import Any
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.sweden_financial.clickhouse import (
+    clickhouse_table_row_count,
+    guard_against_clickhouse_table_shrink,
+)
 from dagster_v3.defs.sweden_financial.resources import (
     DEFAULT_ARCHIVE_BASE_URL,
     SWEDEN_FINANCIAL_RAW_BUCKET,
@@ -95,6 +99,7 @@ def replace_sweden_financial_metrics_clickhouse(
     source_run_id: str,
     resolved_at: datetime,
     log: Callable[..., object] | None = None,
+    allow_shrink: bool = False,
 ) -> dict[str, int | str | None]:
     """Atomically rebuild the canonical Sweden metrics table from all XBRL facts."""
     assert_clickhouse_tables_exist(
@@ -140,6 +145,15 @@ def replace_sweden_financial_metrics_clickhouse(
             )[0]
             quality = _quality_metadata(quality_row)
             _validate_quality(quality)
+            existing_row_count = clickhouse_table_row_count(
+                client, qualified_target_table
+            )
+            guard_against_clickhouse_table_shrink(
+                qualified_table=QUALIFIED_SE_FINANCIAL_METRICS_TABLE,
+                existing_row_count=existing_row_count,
+                staged_row_count=int(quality["row_count"]),
+                allow_shrink=allow_shrink,
+            )
             client.execute(
                 f"EXCHANGE TABLES {qualified_stage_table} AND {qualified_target_table}"
             )
@@ -388,9 +402,22 @@ native_metrics AS (
     -- gaap/coa bank filings (e.g. rcplcs credit institutions) are real
     -- statements whose figures live in an external package, so they are
     -- deliberately NOT excluded here even when figure-less.
-    WHERE ifNull(reports.taxonomy_entrypoint, '') NOT LIKE '%/ar/rar%'
+    -- This SQL is executed via `client.execute(sql, {...})` in
+    -- replace_sweden_financial_metrics_clickhouse (a params dict is passed),
+    -- and clickhouse_driver applies Python string formatting to the ENTIRE
+    -- query text against that dict before sending it -- so a lone percent
+    -- sign here is not data, it is a format placeholder start, and must be
+    -- doubled (see the LIKE clauses below) or execution raises
+    -- `TypeError: not enough arguments for format string`. Contrast with
+    -- history.py's build_history_insert_sql, whose identical-looking LIKE
+    -- patterns keep a single percent sign: that INSERT is executed with NO
+    -- params dict, so clickhouse_driver skips this formatting step there.
+    -- NOTE: this comment block is itself part of the formatted string --
+    -- do not put a lone percent sign anywhere in this file's SQL text,
+    -- comments included, or the same failure recurs.
+    WHERE ifNull(reports.taxonomy_entrypoint, '') NOT LIKE '%%/ar/rar%%'
       AND NOT (
-          ifNull(reports.taxonomy_entrypoint, '') LIKE '%/misc/race/%'
+          ifNull(reports.taxonomy_entrypoint, '') LIKE '%%/misc/race/%%'
           AND ifNull(facts.mapped_fact_count, 0) = 0
       )
 )

@@ -1,3 +1,4 @@
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -93,6 +94,27 @@ def test_history_sql_excludes_registration_envelopes_and_figureless_race_docs() 
     assert "NOT LIKE '%/ar/rar%'" in sql
     assert "LIKE '%/misc/race/%'" in sql
     assert "ifNull(reported_facts.mapped_fact_count, 0) = 0" in sql
+
+
+def test_history_sql_like_patterns_are_unescaped_single_percent_no_params_contract() -> (
+    None
+):
+    """Regression/contrast test for the metrics.py %-format bug: unlike
+    build_sweden_financial_metrics_insert_sql (executed with a params dict,
+    so its LIKE literals are escaped to `%%`), build_history_insert_sql is
+    executed via `client.execute(sql)` with NO params
+    (replace_se_financial_history_clickhouse) -- clickhouse_driver never
+    %-formats it, so bare single-`%` LIKE literals are correct here and
+    `%%` would be WRONG (it would silently double the wildcard and break
+    the match). Pin both: single-% patterns present, and no
+    `%(name)s`-style placeholders anywhere (the no-params contract).
+    """
+    sql = _built_sql()
+
+    assert "LIKE '%/ar/rar%'" in sql
+    assert "LIKE '%/misc/race/%'" in sql
+    assert "%%" not in sql
+    assert not re.search(r"%\([a-zA-Z_]+\)s", sql)
 
 
 def test_history_sql_trust_guard_disqualifies_on_revenue_overlap_disagreement() -> (
