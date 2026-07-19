@@ -16,8 +16,12 @@ files and S3 raw snapshots are rebuildable cache).
 
 ## Commands
 - Always use **`uv run`** for `dg`/`pytest`/`dagster` (e.g. `uv run dg check defs`, `uv run pytest tests/...`).
-- Start the dev instance with **`./scripts/dagster-dev.sh`** — it exports `DAGSTER_HOME`, `DAGSTER_PG_URL`
-  (from `.env`), and the connection-pool overflow. Don't run bare `uv run dg dev` (misses the env).
+- Start the dev instance with **`./scripts/dagster-dev.sh`**. It starts the
+  loopback-only PostgreSQL service from `docker-compose.local.yml`, forces
+  `DAGSTER_PG_URL` to its dedicated `dagster_local` database, and exports
+  `DAGSTER_HOME` plus the connection-pool overflow. Never point a local daemon
+  at the deployed server's metadata database: two daemons sharing that run
+  queue can execute server-submitted runs on the workstation.
 - `dg` is **project-aware** (finds defs + instance automatically). The raw **`dagster`** CLI is not — it needs
   `DAGSTER_HOME` and `DAGSTER_PG_URL` exported and `-m dagster_v3.definitions`. Prefer `dg` for dev commands.
 - Validate before done: **`uv run dg check defs`** and the relevant `uv run pytest tests/...`.

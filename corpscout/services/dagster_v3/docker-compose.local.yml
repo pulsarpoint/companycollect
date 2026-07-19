@@ -1,0 +1,21 @@
+services:
+  dagster-local-postgres:
+    image: postgres:17
+    container_name: corpscout-dagster-local-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dagster_local
+      POSTGRES_USER: dagster_local
+      POSTGRES_PASSWORD: dagster_local
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - dagster-local-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dagster_local -d dagster_local"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  dagster-local-postgres-data:

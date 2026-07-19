@@ -21,14 +21,13 @@ from dagster_v3.defs.denmark_cvr.assets import DENMARK_CVR_BUCKET
 from dagster_v3.defs.denmark_cvr.models import (
     CompanySearchResult,
     PersonSearchResult,
-    ProductionUnitSearchResult,
 )
 from dagster_v3.defs.denmark_cvr.resources import (
     DATACVR_COMPANY_ENTITY_TYPE,
     DATACVR_PERSON_ENTITY_TYPE,
-    DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
-    DenmarkCvrEntityType,
 )
+
+type DenmarkCvrSearchEntityType = Literal["virksomhed", "person"]
 
 DENMARK_CVR_DUCKDB_PATH = Path("data/denmark_cvr_source.duckdb")
 DENMARK_CVR_DUCKDB_SCHEMA = "denmark_cvr"
@@ -41,12 +40,9 @@ DENMARK_CVR_SOURCE_PREFIXES = (
     "denmark_cvr/backfill/",
     "denmark_cvr/active/",
 )
-DENMARK_CVR_RESULT_FILENAMES: dict[DenmarkCvrEntityType, frozenset[str]] = {
+DENMARK_CVR_RESULT_FILENAMES: dict[DenmarkCvrSearchEntityType, frozenset[str]] = {
     DATACVR_COMPANY_ENTITY_TYPE: frozenset(
         {"companies.json", "companies_incomplete.json"}
-    ),
-    DATACVR_PRODUCTION_UNIT_ENTITY_TYPE: frozenset(
-        {"production_units.json", "production_units_incomplete.json"}
     ),
     DATACVR_PERSON_ENTITY_TYPE: frozenset({"persons.json", "persons_incomplete.json"}),
 }
@@ -129,42 +125,6 @@ _COMPANY_ARROW_SCHEMA = pa.schema(
     ]
 )
 
-_PRODUCTION_UNIT_COLUMNS = (
-    "p_number",
-    "name",
-    "address",
-    "city",
-    "co_name",
-    "postal_code",
-    "email",
-    "phone",
-    "industry",
-    "status",
-    "start_date",
-    "cessation_date",
-    "advertising_protected",
-    *_SOURCE_COLUMNS,
-)
-
-_PRODUCTION_UNIT_ARROW_SCHEMA = pa.schema(
-    [
-        pa.field("p_number", pa.string(), nullable=False),
-        pa.field("name", pa.string(), nullable=False),
-        pa.field("address", pa.string(), nullable=False),
-        pa.field("city", pa.string()),
-        pa.field("co_name", pa.string()),
-        pa.field("postal_code", pa.string()),
-        pa.field("email", pa.string()),
-        pa.field("phone", pa.string()),
-        pa.field("industry", pa.string(), nullable=False),
-        pa.field("status", pa.string(), nullable=False),
-        pa.field("start_date", pa.date32(), nullable=False),
-        pa.field("cessation_date", pa.date32()),
-        pa.field("advertising_protected", pa.bool_(), nullable=False),
-        *_SOURCE_ARROW_FIELDS,
-    ]
-)
-
 _PERSON_COLUMNS = (
     "entity_number",
     "name",
@@ -238,23 +198,6 @@ class ParsedDenmarkCvrCompanyCapture:
     raw_entities: tuple[dict[str, Any], ...]
 
 
-class DenmarkCvrStoredProductionUnitCapture(DenmarkCvrStoredCaptureMetadata):
-    entity_type: Literal["produktionsenhed"]
-    enheder: list[ProductionUnitSearchResult]
-
-    @model_validator(mode="after")
-    def validate_entity_count(self) -> Self:
-        if self.downloaded_entity_count != len(self.enheder):
-            raise ValueError("capture downloaded count must match production-unit rows")
-        return self
-
-
-@dataclass(frozen=True)
-class ParsedDenmarkCvrProductionUnitCapture:
-    capture: DenmarkCvrStoredProductionUnitCapture
-    raw_entities: tuple[dict[str, Any], ...]
-
-
 class DenmarkCvrStoredPersonCapture(DenmarkCvrStoredCaptureMetadata):
     entity_type: Literal["person"]
     enheder: list[PersonSearchResult]
@@ -273,9 +216,7 @@ class ParsedDenmarkCvrPersonCapture:
 
 
 type ParsedDenmarkCvrCapture = (
-    ParsedDenmarkCvrCompanyCapture
-    | ParsedDenmarkCvrProductionUnitCapture
-    | ParsedDenmarkCvrPersonCapture
+    ParsedDenmarkCvrCompanyCapture | ParsedDenmarkCvrPersonCapture
 )
 
 
@@ -307,7 +248,7 @@ class DenmarkCvrStoredObjectError(ValueError):
 def source_result_object_keys(
     object_store: ObjectStoreResource,
     *,
-    entity_type: DenmarkCvrEntityType,
+    entity_type: DenmarkCvrSearchEntityType,
 ) -> tuple[str, ...]:
     result_filenames = DENMARK_CVR_RESULT_FILENAMES[entity_type]
     keys: list[str] = []
@@ -339,24 +280,6 @@ def update_denmark_cvr_companies_duckdb(
     )
 
 
-def update_denmark_cvr_production_units_duckdb(
-    *,
-    object_store: ObjectStoreResource,
-    denmark_cvr_duckdb: DuckDBResource,
-    ingestion_run_id: str,
-    processed_at: datetime,
-    log_info: Callable[..., object] | None = None,
-) -> DenmarkCvrDuckdbSummary:
-    return _update_denmark_cvr_entity_duckdb(
-        object_store=object_store,
-        denmark_cvr_duckdb=denmark_cvr_duckdb,
-        entity_type=DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
-        ingestion_run_id=ingestion_run_id,
-        processed_at=processed_at,
-        log_info=log_info,
-    )
-
-
 def update_denmark_cvr_persons_duckdb(
     *,
     object_store: ObjectStoreResource,
@@ -379,7 +302,7 @@ def _update_denmark_cvr_entity_duckdb(
     *,
     object_store: ObjectStoreResource,
     denmark_cvr_duckdb: DuckDBResource,
-    entity_type: DenmarkCvrEntityType,
+    entity_type: DenmarkCvrSearchEntityType,
     ingestion_run_id: str,
     processed_at: datetime,
     log_info: Callable[..., object] | None,
@@ -549,36 +472,6 @@ def _ensure_denmark_cvr_tables(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
         f"""
         create table if not exists
-          {DENMARK_CVR_DUCKDB_SCHEMA}.{DENMARK_CVR_PRODUCTION_UNITS_TABLE} (
-            p_number varchar primary key,
-            name varchar not null,
-            address varchar not null,
-            city varchar,
-            co_name varchar,
-            postal_code varchar,
-            email varchar,
-            phone varchar,
-            industry varchar not null,
-            status varchar not null,
-            start_date date not null,
-            cessation_date date,
-            advertising_protected boolean not null,
-            source_capture_type varchar not null,
-            source_partition_key varchar not null,
-            source_object_key varchar not null,
-            source_run_id varchar not null,
-            source_retrieved_at timestamptz not null,
-            source_row_number bigint not null,
-            source_payload_hash varchar not null,
-            raw_record json not null,
-            ingestion_run_id varchar not null,
-            ingested_at timestamptz not null
-          )
-        """
-    )
-    connection.execute(
-        f"""
-        create table if not exists
           {DENMARK_CVR_DUCKDB_SCHEMA}.{DENMARK_CVR_PERSONS_TABLE} (
             entity_number varchar primary key,
             name varchar not null,
@@ -629,7 +522,7 @@ def _parse_stored_capture(
     raw_body: bytes,
     *,
     object_key: str,
-    entity_type: DenmarkCvrEntityType,
+    entity_type: DenmarkCvrSearchEntityType,
 ) -> ParsedDenmarkCvrCapture:
     try:
         payload = json.loads(raw_body)
@@ -638,8 +531,6 @@ def _parse_stored_capture(
     try:
         if entity_type == DATACVR_COMPANY_ENTITY_TYPE:
             capture = DenmarkCvrStoredCompanyCapture.model_validate(payload)
-        elif entity_type == DATACVR_PRODUCTION_UNIT_ENTITY_TYPE:
-            capture = DenmarkCvrStoredProductionUnitCapture.model_validate(payload)
         else:
             capture = DenmarkCvrStoredPersonCapture.model_validate(payload)
     except ValidationError as exc:
@@ -661,11 +552,6 @@ def _parse_stored_capture(
             capture=capture,
             raw_entities=tuple(raw_entities),
         )
-    if isinstance(capture, DenmarkCvrStoredProductionUnitCapture):
-        return ParsedDenmarkCvrProductionUnitCapture(
-            capture=capture,
-            raw_entities=tuple(raw_entities),
-        )
     return ParsedDenmarkCvrPersonCapture(
         capture=capture,
         raw_entities=tuple(raw_entities),
@@ -681,13 +567,6 @@ def _normalized_entity_rows(
 ) -> list[dict[str, Any]]:
     if isinstance(parsed, ParsedDenmarkCvrCompanyCapture):
         return _normalized_company_rows(
-            parsed,
-            object_key=object_key,
-            ingestion_run_id=ingestion_run_id,
-            processed_at=processed_at,
-        )
-    if isinstance(parsed, ParsedDenmarkCvrProductionUnitCapture):
-        return _normalized_production_unit_rows(
             parsed,
             object_key=object_key,
             ingestion_run_id=ingestion_run_id,
@@ -739,45 +618,6 @@ def _normalized_company_rows(
                 "highlight_historical_primary_name": (
                     company.highlight_historisk_hovednavn
                 ),
-                **_source_row_metadata(
-                    capture=parsed.capture,
-                    raw_entity=raw_entity,
-                    object_key=object_key,
-                    row_number=row_number,
-                    ingestion_run_id=ingestion_run_id,
-                    processed_at=processed_at,
-                ),
-            }
-        )
-    return rows
-
-
-def _normalized_production_unit_rows(
-    parsed: ParsedDenmarkCvrProductionUnitCapture,
-    *,
-    object_key: str,
-    ingestion_run_id: str,
-    processed_at: datetime,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for row_number, (production_unit, raw_entity) in enumerate(
-        zip(parsed.capture.enheder, parsed.raw_entities, strict=True)
-    ):
-        rows.append(
-            {
-                "p_number": production_unit.p_nummer,
-                "name": production_unit.seneste_navn,
-                "address": production_unit.beliggenhedsadresse,
-                "city": production_unit.by,
-                "co_name": production_unit.co_navn,
-                "postal_code": production_unit.postnummer,
-                "email": production_unit.email,
-                "phone": production_unit.telefonnummer,
-                "industry": production_unit.hovedbranche,
-                "status": production_unit.status,
-                "start_date": production_unit.start_dato,
-                "cessation_date": production_unit.ophoers_dato,
-                "advertising_protected": production_unit.reklame_beskyttet,
                 **_source_row_metadata(
                     capture=parsed.capture,
                     raw_entity=raw_entity,
@@ -870,7 +710,7 @@ def _upsert_entity_rows(
     connection: duckdb.DuckDBPyConnection,
     rows: list[dict[str, Any]],
     *,
-    entity_type: DenmarkCvrEntityType,
+    entity_type: DenmarkCvrSearchEntityType,
 ) -> None:
     if not rows:
         return
@@ -880,12 +720,6 @@ def _upsert_entity_rows(
         entity_columns = _COMPANY_COLUMNS
         arrow_schema = _COMPANY_ARROW_SCHEMA
         primary_key = "cvr"
-    elif entity_type == DATACVR_PRODUCTION_UNIT_ENTITY_TYPE:
-        table_name = DENMARK_CVR_PRODUCTION_UNITS_TABLE
-        registered_table_name = "denmark_cvr_production_unit_rows"
-        entity_columns = _PRODUCTION_UNIT_COLUMNS
-        arrow_schema = _PRODUCTION_UNIT_ARROW_SCHEMA
-        primary_key = "p_number"
     else:
         table_name = DENMARK_CVR_PERSONS_TABLE
         registered_table_name = "denmark_cvr_person_rows"
@@ -916,12 +750,10 @@ def _upsert_entity_rows(
 def _entity_table_statistics(
     connection: duckdb.DuckDBPyConnection,
     *,
-    entity_type: DenmarkCvrEntityType,
+    entity_type: DenmarkCvrSearchEntityType,
 ) -> tuple[int, date | None, date | None]:
     if entity_type == DATACVR_COMPANY_ENTITY_TYPE:
         table_name = DENMARK_CVR_COMPANIES_TABLE
-    elif entity_type == DATACVR_PRODUCTION_UNIT_ENTITY_TYPE:
-        table_name = DENMARK_CVR_PRODUCTION_UNITS_TABLE
     else:
         person_count = connection.execute(
             f"select count(*) from {DENMARK_CVR_DUCKDB_SCHEMA}."
@@ -1063,65 +895,6 @@ def denmark_cvr_companies_duckdb(
 
 @dg.asset(
     deps=[
-        dg.AssetKey("denmark_cvr_production_units_backfill_s3"),
-        dg.AssetKey("denmark_cvr_production_units_active_s3"),
-    ],
-    group_name="denmark_cvr",
-    kinds={"python", "s3", "json", "duckdb"},
-    tags={
-        "country": "denmark",
-        "source": "cvr",
-        "source_name": "denmark_cvr",
-        "entity_type": DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
-        "layer": "normalized",
-    },
-    pool=DENMARK_CVR_DUCKDB_POOL,
-    metadata={
-        "duckdb_schema": DENMARK_CVR_DUCKDB_SCHEMA,
-        "duckdb_table": DENMARK_CVR_PRODUCTION_UNITS_TABLE,
-    },
-    description=(
-        "Incrementally normalizes Denmark CVR backfill and daily production-unit "
-        "JSON objects into one P-number-deduplicated DuckDB table."
-    ),
-)
-def denmark_cvr_production_units_duckdb(
-    context: dg.AssetExecutionContext,
-    object_store: ObjectStoreResource,
-    denmark_cvr_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    summary = update_denmark_cvr_production_units_duckdb(
-        object_store=object_store,
-        denmark_cvr_duckdb=denmark_cvr_duckdb,
-        ingestion_run_id=context.run_id,
-        processed_at=datetime.now(UTC),
-        log_info=context.log.info,
-    )
-    context.log.info(
-        "Denmark CVR production-unit DuckDB complete: discovered_objects=%s "
-        "existing_objects=%s processed_objects=%s processed_rows=%s "
-        "production_units=%s incomplete_objects=%s database_bytes=%s",
-        summary.discovered_object_count,
-        summary.already_ingested_object_count,
-        summary.processed_object_count,
-        summary.processed_row_count,
-        summary.entity_count,
-        summary.incomplete_object_count,
-        summary.database_size_bytes,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            **_duckdb_materialization_metadata(
-                summary,
-                table_name=DENMARK_CVR_PRODUCTION_UNITS_TABLE,
-            ),
-            "production_unit_count": summary.entity_count,
-        }
-    )
-
-
-@dg.asset(
-    deps=[
         dg.AssetKey("denmark_cvr_persons_backfill_s3"),
         dg.AssetKey("denmark_cvr_persons_active_s3"),
     ],
@@ -1180,11 +953,7 @@ def denmark_cvr_persons_duckdb(
 
 
 defs = dg.Definitions(
-    assets=[
-        denmark_cvr_companies_duckdb,
-        denmark_cvr_production_units_duckdb,
-        denmark_cvr_persons_duckdb,
-    ],
+    assets=[denmark_cvr_companies_duckdb],
     resources={
         "denmark_cvr_duckdb": duckdb_resource(DENMARK_CVR_DUCKDB_PATH),
     },

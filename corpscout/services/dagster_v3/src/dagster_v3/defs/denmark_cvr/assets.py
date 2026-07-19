@@ -529,36 +529,10 @@ denmark_cvr_active_s3 = _build_denmark_cvr_s3_asset(
     entity_type=DATACVR_COMPANY_ENTITY_TYPE,
     is_backfill=False,
 )
-denmark_cvr_production_units_backfill_s3 = _build_denmark_cvr_s3_asset(
-    name="denmark_cvr_production_units_backfill_s3",
-    entity_type=DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
-    is_backfill=True,
-)
-denmark_cvr_production_units_active_s3 = _build_denmark_cvr_s3_asset(
-    name="denmark_cvr_production_units_active_s3",
-    entity_type=DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
-    is_backfill=False,
-)
-denmark_cvr_persons_backfill_s3 = _build_denmark_cvr_s3_asset(
-    name="denmark_cvr_persons_backfill_s3",
-    entity_type=DATACVR_PERSON_ENTITY_TYPE,
-    is_backfill=True,
-)
-denmark_cvr_persons_active_s3 = _build_denmark_cvr_s3_asset(
-    name="denmark_cvr_persons_active_s3",
-    entity_type=DATACVR_PERSON_ENTITY_TYPE,
-    is_backfill=False,
-)
-
-
 defs = dg.Definitions(
     assets=[
         denmark_cvr_backfill_s3,
         denmark_cvr_active_s3,
-        denmark_cvr_production_units_backfill_s3,
-        denmark_cvr_production_units_active_s3,
-        denmark_cvr_persons_backfill_s3,
-        denmark_cvr_persons_active_s3,
     ],
     resources={"denmark_cvr_search": DenmarkCvrSearchResource()},
 )

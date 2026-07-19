@@ -42,11 +42,31 @@ External services a host must reach (credentials via `.env`, see §2):
 
 ## 2. Environment contract
 
-`.env` in the repo root (gitignored) is the single env source; `.env.example` documents every
-variable with placeholders. Dagster loads it from the systemd working directory;
-`scripts/dagster-dev.sh` and `scripts/dagster-health-check.py` also bootstrap
-`DAGSTER_HOME`/`DAGSTER_PG_URL` from it. Anything secret (ClickHouse password,
-S3 keys, HF token, API keys) lives only in `.env` — never in code or migrations.
+`.env` in each runtime's repo root is gitignored; `.env.example` documents every
+variable with placeholders. The deployed server loads its host-only `.env` from
+the systemd working directory. Local `dg` commands load the checkout's `.env`,
+while `scripts/dagster-dev.sh` forcibly replaces its metadata URL with the
+isolated loopback database described below. Anything secret (ClickHouse
+password, S3 keys, HF token, API keys) lives only in `.env` — never in code or
+migrations.
+
+Local `dg dev` metadata is deliberately isolated from the deployed server.
+`scripts/dagster-dev.sh` starts `docker-compose.local.yml`, whose PostgreSQL 17
+service listens only on `127.0.0.1:55432`, and overrides `DAGSTER_PG_URL` with
+the dedicated `dagster_local` database. The server keeps the PgBouncer-backed
+URL in its host-only `.env`. Do not run a local daemon with the server URL: both
+daemons would consume the same run queue, allowing a server-submitted run to be
+launched with workstation code and filesystem paths.
+
+Start and stop the local development stack with:
+
+```bash
+./scripts/dagster-dev.sh
+docker compose -f docker-compose.local.yml down
+```
+
+The named PostgreSQL volume is retained by `down`; use `down --volumes` only
+when intentionally discarding all local Dagster run history.
 
 Gotchas:
 - **DuckDB paths are CWD-relative** (`data/...`), so every process must start with the repo root

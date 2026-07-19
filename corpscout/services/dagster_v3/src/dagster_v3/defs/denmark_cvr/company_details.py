@@ -3,6 +3,7 @@ import json
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from random import randint
 from typing import Any, Self
 from urllib.parse import urlencode, urlparse
@@ -21,6 +22,7 @@ from dagster_v3.defs.denmark_cvr.duckdb_asset import (
     DENMARK_CVR_DUCKDB_PATH,
     DENMARK_CVR_DUCKDB_SCHEMA,
 )
+from dagster_v3.defs.denmark_cvr.partitions import DENMARK_CVR_ACTIVE_PARTITIONS
 from dagster_v3.defs.denmark_cvr.resources import (
     DATACVR_BASE_URL,
     SAFE_RESPONSE_HEADERS,
@@ -34,7 +36,7 @@ DENMARK_CVR_COMPANY_DETAIL_PARTITIONS = dg.StaticPartitionsDefinition(
     ]
 )
 DENMARK_CVR_COMPANY_DETAIL_PREFIX = "denmark_cvr/company_details"
-DENMARK_CVR_COMPANY_DETAIL_MAPPING_VERSION = 1
+DENMARK_CVR_COMPANY_DETAIL_MAPPING_VERSION = 8
 DENMARK_CVR_COMPANY_DETAIL_POOL = "denmark_cvr_company_details"
 
 DATACVR_COMPANY_DETAIL_SCRIPT = """
@@ -103,6 +105,7 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "ekstraData": "extraData",
     "ekstraDataList": "extraDataList",
     "email": "email",
+    "enhedsNummer": "entityNumber",
     "enhedsnummer": "entityNumber",
     "enhedstype": "entityType",
     "fax": "fax",
@@ -119,6 +122,7 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "harPseudoCvr": "hasPseudoCvr",
     "helligdagsaabent": "openOnPublicHolidays",
     "historiskStamdata": "historicalMasterData",
+    "hjemsted": "registeredOffice",
     "hovedbranche": "primaryIndustry",
     "hovednavn": "primaryName",
     "hovedselskab": "parentCompany",
@@ -126,6 +130,7 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "id": "id",
     "indberetningstype": "filingType",
     "indholdstype": "contentType",
+    "indtraadtDato": "joinedDate",
     "intervalKodeAntalAarsvaerk": "fullTimeEquivalentCountIntervalCode",
     "intervalKodeAntalAnsatte": "employeeCountIntervalCode",
     "kanHaveLegaleEjere": "canHaveLegalOwners",
@@ -134,6 +139,7 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "kommune": "municipality",
     "kommunekode": "municipalityCode",
     "koncessionsdato": "concessionDate",
+    "kontaktperson": "contactPerson",
     "kreditoplysningskode": "creditInformationCode",
     "kvartal": "quarter",
     "kvartalsbeskaeftigelse": "quarterlyEmployment",
@@ -141,8 +147,10 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "maaned": "month",
     "maanedsbeskaeftigelse": "monthlyEmployment",
     "modervirksomhederVedFranchise": "parentCompaniesByFranchise",
+    "mneNummer": "mneNumber",
     "name": "name",
     "navn": "name",
+    "netvaerk": "network",
     "offentliggoerelseId": "publicationId",
     "offentliggoerelseTidsstempel": "publicationTimestamp",
     "offentliggoerelseTidsstempelFormateret": "formattedPublicationTimestamp",
@@ -173,6 +181,8 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "regnummer": "registrationNumber",
     "registreretIHvidvaskregistret": "registeredInAntiMoneyLaunderingRegister",
     "registreretKapital": "registeredCapital",
+    "registreretMyndighed": "registrationAuthority",
+    "registreringsnummer": "registrationNumber",
     "registreringstype": "registrationType",
     "registreringsTekst": "registrationText",
     "regnskaber": "financialStatements",
@@ -189,6 +199,7 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "rolleTekstnogle": "roleTextKey",
     "sagsnummer": "caseNumber",
     "sammenhaengendeRegnskaber": "consecutiveFinancialStatements",
+    "samledeStemmeandel": "totalVotingShare",
     "senesteNavn": "latestName",
     "senesteVedtaegtsdato": "latestArticlesOfAssociationDate",
     "senesteVedtaegtsdatoFoer1900": "latestArticlesOfAssociationDateBefore1900",
@@ -204,6 +215,8 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "statsligVirksomhed": "stateOwnedCompany",
     "status": "status",
     "stiftetFor1900Tekstnogle": "foundedBefore1900TextKey",
+    "tegnetKapital": "subscribedCapital",
+    "tegningsberettiget": "authorizedSignatories",
     "tegningsregel": "signingRule",
     "tekstMedLink": "textWithLink",
     "tekstnogle": "textKey",
@@ -211,6 +224,7 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "telefon": "phone",
     "telefonSekundaert": "secondaryPhone",
     "tilbagetrukket": "withdrawn",
+    "tilknytning": "affiliation",
     "tilknyttedeRevisorer": "affiliatedAuditors",
     "titel": "title",
     "titelTekstnogler": "titleTextKeys",
@@ -239,7 +253,9 @@ DENMARK_CVR_COMPANY_DETAIL_KEY_MAP: dict[str, str] = {
     "virksomhedsformKode": "legalFormCode",
     "virksomhedsMeddelelser": "companyNotices",
     "virksomhedsnavn": "companyName",
+    "virksomhedstype": "companyType",
     "visNavnPostfix": "showNamePostfix",
+    "webadresse": "webAddress",
 }
 
 
@@ -403,6 +419,34 @@ def company_detail_partition_cvrs(
     return tuple(str(row[0]) for row in rows)
 
 
+def company_detail_update_cvrs(
+    denmark_cvr_duckdb: DuckDBResource,
+    update_date: str,
+) -> tuple[str, ...]:
+    _validate_update_date(update_date)
+    try:
+        with denmark_cvr_duckdb.get_connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT DISTINCT cvr
+                FROM {DENMARK_CVR_DUCKDB_SCHEMA}.{DENMARK_CVR_COMPANIES_TABLE}
+                WHERE source_capture_type = 'active'
+                  AND source_partition_key = ?
+                ORDER BY cvr
+                """,
+                [update_date],
+            ).fetchall()
+    except duckdb.CatalogException:
+        raise RuntimeError(
+            "Denmark CVR company-detail updates require the "
+            "denmark_cvr_companies_duckdb asset; materialize it first"
+        ) from None
+    cvrs = tuple(str(row[0]) for row in rows)
+    for cvr in cvrs:
+        _validate_cvr(cvr)
+    return cvrs
+
+
 def company_detail_object_key(
     partition_key: str,
     cvr: str,
@@ -417,11 +461,38 @@ def company_detail_object_key(
     return f"{DENMARK_CVR_COMPANY_DETAIL_PREFIX}/{partition_key}/cvr={cvr}/{filename}"
 
 
+def company_detail_update_object_key(
+    update_date: str,
+    cvr: str,
+    *,
+    english_keys: bool,
+) -> str:
+    _validate_update_date(update_date)
+    _validate_cvr(cvr)
+    filename = "company_en.json" if english_keys else "company.json"
+    return (
+        f"{DENMARK_CVR_COMPANY_DETAIL_PREFIX}/updates/date={update_date}/"
+        f"{company_detail_bucket_key(cvr)}/cvr={cvr}/{filename}"
+    )
+
+
 def translate_company_detail_keys(payload: Mapping[str, Any]) -> dict[str, Any]:
+    unmapped_paths = company_detail_unmapped_key_paths(payload)
+    if unmapped_paths:
+        raise DenmarkCvrCompanyDetailKeyError(
+            "Unmapped DataCVR company-detail keys at " + ", ".join(unmapped_paths)
+        )
     translated = _translate_value(payload, path=())
     if not isinstance(translated, dict):
         raise TypeError("Translated DataCVR company detail must be an object")
     return translated
+
+
+def company_detail_unmapped_key_paths(
+    payload: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Return every source-key path that has no English mapping."""
+    return tuple(_unmapped_key_paths(payload, path=()))
 
 
 def write_company_detail_partition(
@@ -438,27 +509,81 @@ def write_company_detail_partition(
         if company_detail_bucket_key(cvr) != partition_key:
             raise ValueError(f"CVR {cvr} does not belong to partition {partition_key}")
 
-    object_store.ensure_bucket(DENMARK_CVR_BUCKET)
     partition_prefix = f"{DENMARK_CVR_COMPANY_DETAIL_PREFIX}/{partition_key}/"
+    object_keys = {
+        cvr: (
+            company_detail_object_key(partition_key, cvr, english_keys=False),
+            company_detail_object_key(partition_key, cvr, english_keys=True),
+        )
+        for cvr in selected_cvrs
+    }
+    return _write_company_details(
+        object_store=object_store,
+        details=details,
+        result_partition_key=partition_key,
+        object_prefix=partition_prefix,
+        object_keys=object_keys,
+        log_info=log_info,
+    )
+
+
+def write_company_detail_updates(
+    *,
+    object_store: ObjectStoreResource,
+    details: DenmarkCvrCompanyDetailResource,
+    update_date: str,
+    cvrs: Sequence[str],
+    log_info: Callable[..., object] | None = None,
+) -> DenmarkCvrCompanyDetailSummary:
+    _validate_update_date(update_date)
+    selected_cvrs = tuple(cvrs)
+    for cvr in selected_cvrs:
+        _validate_cvr(cvr)
+    object_prefix = f"{DENMARK_CVR_COMPANY_DETAIL_PREFIX}/updates/date={update_date}/"
+    object_keys = {
+        cvr: (
+            company_detail_update_object_key(
+                update_date,
+                cvr,
+                english_keys=False,
+            ),
+            company_detail_update_object_key(
+                update_date,
+                cvr,
+                english_keys=True,
+            ),
+        )
+        for cvr in selected_cvrs
+    }
+    return _write_company_details(
+        object_store=object_store,
+        details=details,
+        result_partition_key=update_date,
+        object_prefix=object_prefix,
+        object_keys=object_keys,
+        log_info=log_info,
+    )
+
+
+def _write_company_details(
+    *,
+    object_store: ObjectStoreResource,
+    details: DenmarkCvrCompanyDetailResource,
+    result_partition_key: str,
+    object_prefix: str,
+    object_keys: Mapping[str, tuple[str, str]],
+    log_info: Callable[..., object] | None,
+) -> DenmarkCvrCompanyDetailSummary:
+    object_store.ensure_bucket(DENMARK_CVR_BUCKET)
     existing_keys = set(
-        object_store.list_keys(partition_prefix, bucket=DENMARK_CVR_BUCKET)
+        object_store.list_keys(object_prefix, bucket=DENMARK_CVR_BUCKET)
     )
 
     already_complete_count = 0
     translated_existing_count = 0
     written_object_count = 0
     cvrs_to_download: list[str] = []
-    for cvr in selected_cvrs:
-        original_key = company_detail_object_key(
-            partition_key,
-            cvr,
-            english_keys=False,
-        )
-        english_key = company_detail_object_key(
-            partition_key,
-            cvr,
-            english_keys=True,
-        )
+    for cvr, (original_key, english_key) in object_keys.items():
         if original_key in existing_keys and english_key in existing_keys:
             already_complete_count += 1
             continue
@@ -482,16 +607,7 @@ def write_company_detail_partition(
     downloaded_count = 0
     downloaded_size_bytes = 0
     for download in details.iter_company_details(tuple(cvrs_to_download)):
-        original_key = company_detail_object_key(
-            partition_key,
-            download.cvr,
-            english_keys=False,
-        )
-        english_key = company_detail_object_key(
-            partition_key,
-            download.cvr,
-            english_keys=True,
-        )
+        original_key, english_key = object_keys[download.cvr]
         object_store.write_bytes(
             original_key,
             download.raw_body.encode("utf-8"),
@@ -513,7 +629,7 @@ def write_company_detail_partition(
             log_info(
                 "DataCVR company-detail progress: partition=%s downloaded=%s/%s "
                 "downloaded_bytes=%s",
-                partition_key,
+                result_partition_key,
                 downloaded_count,
                 len(cvrs_to_download),
                 downloaded_size_bytes,
@@ -523,8 +639,8 @@ def write_company_detail_partition(
         already_complete_count + translated_existing_count + downloaded_count
     )
     return DenmarkCvrCompanyDetailSummary(
-        partition_key=partition_key,
-        selected_company_count=len(selected_cvrs),
+        partition_key=result_partition_key,
+        selected_company_count=len(object_keys),
         complete_company_count=complete_company_count,
         already_complete_company_count=already_complete_count,
         translated_existing_company_count=translated_existing_count,
@@ -581,7 +697,7 @@ def denmark_cvr_company_details_s3(
             "hash_bucket_count": DENMARK_CVR_COMPANY_DETAIL_BUCKET_COUNT,
             "selected_company_count": summary.selected_company_count,
             "complete_company_count": summary.complete_company_count,
-            "already_complete_company_count": (summary.already_complete_company_count),
+            "already_complete_company_count": summary.already_complete_company_count,
             "translated_existing_company_count": (
                 summary.translated_existing_company_count
             ),
@@ -599,6 +715,62 @@ def denmark_cvr_company_details_s3(
     )
 
 
+@dg.asset(
+    deps=[dg.AssetKey("denmark_cvr_companies_duckdb")],
+    group_name="denmark_cvr_company_details",
+    kinds={"python", "browser", "duckdb", "json", "s3"},
+    tags={
+        "country": "denmark",
+        "source": "cvr",
+        "source_name": "denmark_cvr",
+        "entity_type": "virksomhed",
+        "layer": "raw_detail_update",
+    },
+    partitions_def=DENMARK_CVR_ACTIVE_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=DENMARK_CVR_COMPANY_DETAIL_POOL,
+    description=(
+        "Reads companies assigned to one active DuckDB source date, downloads "
+        "their current HTTPS DataCVR details in one browser session, and writes "
+        "date-versioned original and English-key JSON objects."
+    ),
+)
+def denmark_cvr_company_detail_updates_s3(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+    denmark_cvr_company_details: DenmarkCvrCompanyDetailResource,
+    denmark_cvr_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    update_date = context.partition_key
+    cvrs = company_detail_update_cvrs(denmark_cvr_duckdb, update_date)
+    summary = write_company_detail_updates(
+        object_store=object_store,
+        details=denmark_cvr_company_details,
+        update_date=update_date,
+        cvrs=cvrs,
+        log_info=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "partition_key": summary.partition_key,
+            "selected_company_count": summary.selected_company_count,
+            "complete_company_count": summary.complete_company_count,
+            "already_complete_company_count": (summary.already_complete_company_count),
+            "translated_existing_company_count": (
+                summary.translated_existing_company_count
+            ),
+            "downloaded_company_count": summary.downloaded_company_count,
+            "written_object_count": summary.written_object_count,
+            "downloaded_size_bytes": summary.downloaded_size_bytes,
+            "key_mapping_version": DENMARK_CVR_COMPANY_DETAIL_MAPPING_VERSION,
+            "s3_bucket": DENMARK_CVR_BUCKET,
+            "s3_prefix": (
+                f"{DENMARK_CVR_COMPANY_DETAIL_PREFIX}/updates/date={update_date}/"
+            ),
+        }
+    )
+
+
 def _validate_https_base_url(base_url: str) -> str:
     normalized = base_url.strip().rstrip("/")
     parsed = urlparse(normalized)
@@ -610,6 +782,17 @@ def _validate_https_base_url(base_url: str) -> str:
 def _validate_cvr(cvr: str) -> None:
     if len(cvr) != 8 or not cvr.isascii() or not cvr.isdigit():
         raise ValueError("DataCVR company-detail CVR number must contain eight digits")
+
+
+def _validate_update_date(value: str) -> None:
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise ValueError(
+            f"Invalid DataCVR company-detail update date: {value!r}"
+        ) from None
+    if parsed.isoformat() != value:
+        raise ValueError(f"Invalid DataCVR company-detail update date: {value!r}")
 
 
 def _company_detail_bucket_index(partition_key: str) -> int:
@@ -706,13 +889,12 @@ def _translate_value(value: Any, *, path: tuple[str, ...]) -> Any:
                 raise DenmarkCvrCompanyDetailKeyError(
                     f"DataCVR company-detail key at {_display_path(path)} is not text"
                 )
-            try:
-                target_key = DENMARK_CVR_COMPANY_DETAIL_KEY_MAP[source_key]
-            except KeyError:
+            if source_key not in DENMARK_CVR_COMPANY_DETAIL_KEY_MAP:
                 raise DenmarkCvrCompanyDetailKeyError(
                     "Unmapped DataCVR company-detail key "
                     f"{source_key!r} at {_display_path((*path, source_key))}"
-                ) from None
+                )
+            target_key = DENMARK_CVR_COMPANY_DETAIL_KEY_MAP[source_key]
             if target_key in translated:
                 raise DenmarkCvrCompanyDetailKeyError(
                     "DataCVR company-detail key mapping collision at "
@@ -731,12 +913,31 @@ def _translate_value(value: Any, *, path: tuple[str, ...]) -> Any:
     return value
 
 
+def _unmapped_key_paths(value: Any, *, path: tuple[str, ...]) -> Iterator[str]:
+    if isinstance(value, Mapping):
+        for source_key, child in value.items():
+            child_path = (*path, str(source_key))
+            if (
+                not isinstance(source_key, str)
+                or source_key not in DENMARK_CVR_COMPANY_DETAIL_KEY_MAP
+            ):
+                yield _display_path(child_path)
+            yield from _unmapped_key_paths(child, path=child_path)
+        return
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _unmapped_key_paths(child, path=(*path, f"[{index}]"))
+
+
 def _display_path(path: tuple[str, ...]) -> str:
     return ".".join(path) if path else "<root>"
 
 
 defs = dg.Definitions(
-    assets=[denmark_cvr_company_details_s3],
+    assets=[
+        denmark_cvr_company_details_s3,
+        denmark_cvr_company_detail_updates_s3,
+    ],
     resources={
         "denmark_cvr_company_details": DenmarkCvrCompanyDetailResource(),
         "denmark_cvr_duckdb": duckdb_resource(DENMARK_CVR_DUCKDB_PATH),

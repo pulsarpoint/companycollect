@@ -15,10 +15,6 @@ from dagster_v3.defs.denmark_cvr.assets import (
     backfill_result_object_key,
     denmark_cvr_active_s3,
     denmark_cvr_backfill_s3,
-    denmark_cvr_persons_active_s3,
-    denmark_cvr_persons_backfill_s3,
-    denmark_cvr_production_units_active_s3,
-    denmark_cvr_production_units_backfill_s3,
     write_denmark_cvr_active_date,
     write_denmark_cvr_backfill_month,
 )
@@ -990,9 +986,7 @@ def test_denmark_cvr_active_asset_uses_daily_partitions() -> None:
     assert spec.tags["layer"] == "raw"
 
 
-def test_denmark_cvr_definitions_register_separate_assets_for_each_entity_type() -> (
-    None
-):
+def test_denmark_cvr_definitions_register_supported_search_assets() -> None:
     from dagster_v3.definitions import defs as load_defs
     from dagster_v3.defs.denmark_cvr.assets import defs
 
@@ -1004,95 +998,27 @@ def test_denmark_cvr_definitions_register_separate_assets_for_each_entity_type()
     assert dg.AssetKey("denmark_cvr_active_s3") in (
         repository.asset_graph.get_all_asset_keys()
     )
-    assert dg.AssetKey("denmark_cvr_production_units_backfill_s3") in (
+    assert dg.AssetKey("denmark_cvr_production_units_backfill_s3") not in (
         repository.asset_graph.get_all_asset_keys()
     )
-    assert dg.AssetKey("denmark_cvr_production_units_active_s3") in (
+    assert dg.AssetKey("denmark_cvr_production_units_active_s3") not in (
         repository.asset_graph.get_all_asset_keys()
     )
-    assert dg.AssetKey("denmark_cvr_persons_backfill_s3") in (
+    assert dg.AssetKey("denmark_cvr_persons_backfill_s3") not in (
         repository.asset_graph.get_all_asset_keys()
     )
-    assert dg.AssetKey("denmark_cvr_persons_active_s3") in (
+    assert dg.AssetKey("denmark_cvr_persons_active_s3") not in (
+        repository.asset_graph.get_all_asset_keys()
+    )
+    assert dg.AssetKey("denmark_cvr_company_detail_person_ids_duckdb") in (
+        repository.asset_graph.get_all_asset_keys()
+    )
+    assert dg.AssetKey("denmark_cvr_person_details_s3") in (
         repository.asset_graph.get_all_asset_keys()
     )
     assert dg.AssetKey("denmark_cvr_search_results_s3") not in (
         repository.asset_graph.get_all_asset_keys()
     )
-    assert len(defs.assets) == 6
+    assert len(defs.assets) == 2
     assert defs.schedules is None
     assert set(defs.resources) == {"denmark_cvr_search"}
-
-
-@pytest.mark.parametrize(
-    "asset",
-    [
-        denmark_cvr_production_units_backfill_s3,
-        denmark_cvr_persons_backfill_s3,
-    ],
-)
-def test_non_company_backfill_assets_use_smart_monthly_partitions(asset: Any) -> None:
-    assert asset.partitions_def is DENMARK_CVR_BACKFILL_PARTITIONS
-    assert asset.backfill_policy.max_partitions_per_run == 1
-    assert asset.op.pool == "denmark_cvr_search"
-
-
-@pytest.mark.parametrize(
-    "asset",
-    [
-        denmark_cvr_production_units_active_s3,
-        denmark_cvr_persons_active_s3,
-    ],
-)
-def test_non_company_active_assets_use_daily_partitions(asset: Any) -> None:
-    assert asset.partitions_def is DENMARK_CVR_ACTIVE_PARTITIONS
-    assert asset.backfill_policy.max_partitions_per_run == 1
-    assert asset.op.pool == "denmark_cvr_search"
-
-
-@pytest.mark.parametrize(
-    ("asset", "entity_type", "entity", "partition_key"),
-    [
-        (
-            denmark_cvr_production_units_backfill_s3,
-            DATACVR_PRODUCTION_UNIT_ENTITY_TYPE,
-            _production_unit(),
-            "2025-01",
-        ),
-        (
-            denmark_cvr_persons_active_s3,
-            DATACVR_PERSON_ENTITY_TYPE,
-            _person(),
-            "2026-07-01",
-        ),
-    ],
-)
-def test_non_company_assets_download_their_configured_entity_type(
-    asset: Any,
-    entity_type: DenmarkCvrEntityType,
-    entity: dict[str, Any],
-    partition_key: str,
-) -> None:
-    search = FakeSearchResource(
-        _date_range_download(
-            generic_advertised_count=1,
-            query_downloads=(_query_download(entities=(entity,), advertised_count=1),),
-        )
-    )
-    context = SimpleNamespace(
-        partition_key=partition_key,
-        run=SimpleNamespace(run_id="asset-entity-run"),
-        log=SimpleNamespace(
-            info=lambda *_args: None,
-            warning=lambda *_args: None,
-        ),
-    )
-
-    result = asset.node_def.compute_fn.decorated_fn(
-        context,
-        search,
-        FakeObjectStore(),
-    )
-
-    assert search.entity_types == [entity_type]
-    assert result.metadata["entity_type"] == entity_type

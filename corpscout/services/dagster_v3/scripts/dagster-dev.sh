@@ -3,21 +3,20 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-if [[ -z "${DAGSTER_PG_URL:-}" && -f ".env" ]]; then
-  DAGSTER_PG_URL="$(grep -m 1 '^DAGSTER_PG_URL=' .env | cut -d '=' -f 2- || true)"
-  export DAGSTER_PG_URL
-fi
+readonly DAGSTER_LOCAL_POSTGRES_COMPOSE="$PWD/docker-compose.local.yml"
+readonly DAGSTER_LOCAL_PG_URL="postgresql://dagster_local:dagster_local@127.0.0.1:55432/dagster_local"
 
-if [[ -z "${DAGSTER_PG_URL:-}" ]]; then
-  cat >&2 <<'EOF'
-DAGSTER_PG_URL is required.
-
-Example:
-  export DAGSTER_PG_URL='postgresql://DAGSTER_USER:DAGSTER_PASSWORD@companycollect:6432/dagster'
-  ./scripts/dagster-dev.sh
-EOF
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required for the isolated local Dagster metadata database." >&2
   exit 1
 fi
+
+docker compose -f "$DAGSTER_LOCAL_POSTGRES_COMPOSE" up -d --wait
+
+# Never inherit the server metadata URL into a local daemon. A local dg dev
+# process attached to the server queue can claim and execute server-submitted
+# runs with workstation paths and local DuckDB files.
+export DAGSTER_PG_URL="$DAGSTER_LOCAL_PG_URL"
 
 export DAGSTER_HOME="${DAGSTER_HOME:-$PWD}"
 
