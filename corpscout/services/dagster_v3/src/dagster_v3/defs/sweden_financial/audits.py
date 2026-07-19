@@ -5,7 +5,22 @@ Swedish annual reports carry two audit-related iXBRL fact families:
 * ``ValtRevisionsbolagNamn`` / ``ValtRevisionsbolagsnamn`` -- the chosen
   audit firm's name (the taxonomy carries BOTH a capital-N ``Namn`` and a
   lowercase-n ``namn`` spelling across filing years/taxonomy revisions; a
-  correct extraction must match either).
+  correct extraction must match either). Verified live against
+  ``corpscout.se_financial_facts`` (2026-07-19): 12,697 statements carry
+  facts under BOTH spellings, and 608 of those carry a DIFFERENT
+  ``audit_firm`` value across the two spellings (e.g. "Ernst & Young AB"
+  under ``ValtRevisionsbolagNamn`` vs "Ernst & Young Aktiebolag" under
+  ``ValtRevisionsbolagsnamn`` for the SAME statement) -- a plain ``anyIf``
+  over both concepts has no deterministic winner for those 608 groups,
+  relying on undocumented ClickHouse row-scan order. ``audit_firm`` is
+  therefore resolved with ``argMaxIf`` and an explicit tuple comparator key,
+  ``(concept_local_name = 'ValtRevisionsbolagsnamn', fact_ordinal)`` -- the
+  same boolean-guard-plus-ordinal tiebreak pattern as
+  ``company_people/tables.py``'s ``_SE_XBRL_SIGNATURES_SELECT``
+  (``argMax(x, (role_kind != 'unknown', statement_key))``): deterministic
+  preference is ``ValtRevisionsbolagsnamn`` (the newer-taxonomy spelling)
+  first, then the highest ``fact_ordinal`` (the latest fact in document
+  order) breaks ties within one spelling.
 * ``RevisorspateckningRevisionsberattelseEnligtStandardutformning`` /
   ``RevisorspateckningRevisionsberattelseAvvikerStandardutformning`` --
   boolean-ish "signed" facts marking whether the auditor's report follows
@@ -22,12 +37,45 @@ Swedish annual reports carry two audit-related iXBRL fact families:
   ``'unknown'``.
 
 This module extracts one row per (company, fiscal_year, statement_key): the
-audit firm's name (``anyIf`` over the two firm-name concepts, coalesced to
-``''`` when absent) and the opinion classification (``'modified'`` |
-``'standard'`` | ``'unknown'``) plus the opinion date (``maxIf`` over
-whichever of the two pateckning facts is present -- at most one is expected,
-so ``maxIf`` is just "the one date if any, else NULL", not a real
-aggregation choice).
+audit firm's name (``argMaxIf`` over the two firm-name concepts, tiebroken
+deterministically -- see the dual-spelling bullet above -- coalesced to
+``''`` when absent), the opinion classification (``'modified'`` |
+``'standard'`` | ``'unknown'``), and the opinion date. ``opinion_date`` is a
+``coalesce`` of two sources: (a) ``maxIf(date_value, ...)`` over whichever of
+the two pateckning facts is a ``date``-kind fact (at most one is expected, so
+this ``maxIf`` is just "the one date if any, else NULL", not a real
+aggregation choice), and (b) a best-effort recovery for ``text``-kind
+pateckning facts -- see "Text-typed opinion date recovery" below.
+
+Text-typed opinion date recovery: the two pateckning concepts are usually
+``date``-kind (``date_value`` populated), but ``value_kind`` is sometimes
+``text`` instead, with the date only present as Swedish prose in
+``text_value``/``raw_value`` (e.g. ``"15 maj 2024"``) -- ``date_value`` is
+NULL for those rows, so a plain ``maxIf(date_value, ...)`` silently drops
+them. Verified live against ``corpscout.se_financial_facts`` (2026-07-19):
+50,412 of the 305,560 total pateckning facts (255,148 ``date``-kind +
+50,412 ``text``-kind) are ``text``-kind -- roughly 50k of ~305k resolved
+rows losing their opinion date entirely under the old ``maxIf``-only logic.
+``opinion_date``'s second ``coalesce`` branch recovers these:
+``extractGroups(lowerUTF8(v), '(\\d{1,2})\\s+(<swedish months>)\\s+(\\d{4})')``
+(``v`` = ``trim(coalesce(text_value, raw_value))``) captures the
+day/month-name/year, a ``multiIf`` maps the (already-lowercased) Swedish
+month name to its two-digit number, and
+``toDate32OrNull(concat(year, '-', month, '-', leftPad(day, 2, '0')))``
+builds the date. ``toDate32OrNull`` (not ``makeDate32``) is used
+deliberately: a non-matching/garbled capture makes every ``extractGroups``
+group default to ``''`` (a failed match returns an empty array, and
+indexing past its end returns the empty-string default rather than
+raising), which yields a nonsense ``'--00-00'``-shaped date string --
+``toDate32OrNull`` degrades that to NULL rather than raising, whereas
+``makeDate32`` with an invalid month/day argument is not guaranteed to.
+Verified live against all 50,412 real ``text``-kind pateckning facts
+(2026-07-19): 100% parse successfully (e.g. "15 maj 2024" ->
+``2024-05-15``), confirming the pattern and month mapping are correct
+against real data, not just synthetic examples. ClickHouse string literals
+need a backslash escaped to itself to reliably yield one literal backslash
+for the regex engine, so every backslash in the pattern above is doubled
+(``\\d``, ``\\s``) -- verified live to parse correctly.
 
 Mirrors ``officers.py``'s module shape (qualified table constants, a
 columns-tuple contract pinned to the migration file, a ``build_..._sql``
@@ -44,7 +92,12 @@ placeholder-year rows: audit-firm/opinion provenance is a real filing fact
 regardless of whether the period end resolved. Downstream consumers that
 need a real fiscal year filter ``fiscal_year > 0`` themselves; the
 ``null_fiscal_year_count`` quality-metadata column surfaces how many rows
-carry the placeholder ``0``.
+carry the placeholder ``0``. Similarly, ``null_opinion_date_count`` (rows
+with a resolved ``opinion_kind != 'unknown'`` but a NULL ``opinion_date`` --
+i.e. neither the ``date``-kind ``maxIf`` nor the ``text``-kind recovery
+above resolved a date) surfaces how many rows still lose their opinion date
+despite a known opinion kind, so a materialization can be monitored for an
+unexpected spike.
 
 Row-keep rule: the ``HAVING audit_firm != '' OR opinion_kind != 'unknown'``
 clause references ``audit_firm`` and ``opinion_kind``, both aggregate
@@ -70,7 +123,10 @@ the same discipline ``officers.py`` documents. Unlike ``officers.py``
 ``LIKE``/``ILIKE`` literal at all, so there is nothing to double: the only
 ``%`` in the whole query is the single driver placeholder
 ``%(resolved_at)s``, and a regression test locks in that no bare/undoubled
-``%`` sneaks in some other way.
+``%`` sneaks in some other way. The text-date recovery regex added for
+Finding 2 was checked against this same discipline: ``\d``, ``\s`` and the
+digit-count quantifiers it uses contain no ``%`` character at all, so it
+introduces nothing new to double.
 """
 
 import uuid
@@ -113,6 +169,12 @@ _AUDIT_FIRM_CONCEPTS = (
     "ValtRevisionsbolagsnamn",
 )
 
+# The newer-taxonomy spelling -- preferred by the audit_firm argMaxIf
+# tiebreak below whenever a statement carries a DIFFERENT value under both
+# spellings (608 real statements, verified live; see the module docstring's
+# dual-spelling bullet).
+_AUDIT_FIRM_PREFERRED_CONCEPT = _AUDIT_FIRM_CONCEPTS[1]
+
 # The two mutually-exclusive (in well-formed filings) audit-opinion-form
 # concepts -- see the module docstring's "Avviker-wins" reasoning for why
 # the modified concept is checked FIRST in the opinion_kind multiIf below.
@@ -126,12 +188,43 @@ _OPINION_CONCEPTS = (_OPINION_STANDARD_CONCEPT, _OPINION_MODIFIED_CONCEPT)
 
 _ALL_AUDIT_CONCEPTS = _AUDIT_FIRM_CONCEPTS + _OPINION_CONCEPTS
 
+# Swedish month names in calendar order -- index+1 is the month number.
+# Shared by the text-date regex below (the alternation) and the
+# month-name-to-number multiIf built from this same tuple in
+# build_audits_insert_sql, so the two can never drift apart.
+_SWEDISH_MONTH_NAMES = (
+    "januari",
+    "februari",
+    "mars",
+    "april",
+    "maj",
+    "juni",
+    "juli",
+    "augusti",
+    "september",
+    "oktober",
+    "november",
+    "december",
+)
+
+# Matches Swedish prose opinion dates like "15 maj 2024" -- day (1-2
+# digits), a lowercase Swedish month name, and a 4-digit year -- applied to
+# lowerUTF8(...) of the fact's text. See the module docstring's "Text-typed
+# opinion date recovery" section for why every backslash here is doubled
+# (ClickHouse string literals need a backslash escaped to itself to
+# reliably yield one literal backslash for the regex engine; verified
+# live).
+_OPINION_DATE_TEXT_PATTERN = (
+    r"(\\d{1,2})\\s+(" + "|".join(_SWEDISH_MONTH_NAMES) + r")\\s+(\\d{4})"
+)
+
 _QUALITY_COLUMNS = (
     "row_count",
     "company_count",
     "modified_opinion_count",
     "unknown_opinion_count",
     "null_fiscal_year_count",
+    "null_opinion_date_count",
 )
 
 
@@ -153,6 +246,19 @@ def build_audits_insert_sql(qualified_stage_table: str) -> str:
         f"'{concept}'" for concept in _OPINION_CONCEPTS
     )
     all_concepts = ",\n    ".join(f"'{concept}'" for concept in _ALL_AUDIT_CONCEPTS)
+    # The text-date extraction is referenced multiple times below (once per
+    # captured group); kept as a single Python-level expression string so
+    # the regex literal itself (built from _OPINION_DATE_TEXT_PATTERN) is
+    # not duplicated in this source file even though it appears repeated in
+    # the generated SQL text.
+    text_date_groups = (
+        "extractGroups(lowerUTF8(trim(coalesce(text_value, raw_value))), "
+        f"'{_OPINION_DATE_TEXT_PATTERN}')"
+    )
+    month_number_multiif = ",\n                        ".join(
+        f"{text_date_groups}[2] = '{month}', '{month_number:02d}'"
+        for month_number, month in enumerate(_SWEDISH_MONTH_NAMES, start=1)
+    )
     return f"""INSERT INTO {qualified_stage_table} (
     {columns}
 )
@@ -161,8 +267,9 @@ SELECT
     toInt32(coalesce(toYear(report_period_end), 0)) AS fiscal_year,
     statement_key,
     coalesce(
-        anyIf(trim(coalesce(text_value, raw_value)),
-              concept_local_name IN ({audit_firm_concepts})),
+        argMaxIf(trim(coalesce(text_value, raw_value)),
+                 (concept_local_name = '{_AUDIT_FIRM_PREFERRED_CONCEPT}', fact_ordinal),
+                 concept_local_name IN ({audit_firm_concepts})),
         ''
     ) AS audit_firm,
     multiIf(
@@ -170,8 +277,25 @@ SELECT
         countIf(concept_local_name = '{_OPINION_STANDARD_CONCEPT}') > 0, 'standard',
         'unknown'
     ) AS opinion_kind,
-    maxIf(date_value,
-          concept_local_name IN ({opinion_concepts})) AS opinion_date,
+    coalesce(
+        maxIf(date_value,
+              concept_local_name IN ({opinion_concepts})),
+        maxIf(
+            toDate32OrNull(
+                concat(
+                    {text_date_groups}[3],
+                    '-',
+                    multiIf(
+                        {month_number_multiif},
+                        '00'
+                    ),
+                    '-',
+                    leftPad({text_date_groups}[1], 2, '0')
+                )
+            ),
+            concept_local_name IN ({opinion_concepts})
+        )
+    ) AS opinion_date,
     %(resolved_at)s AS resolved_at
 FROM corpscout.se_financial_facts
 WHERE concept_local_name IN (
@@ -185,16 +309,19 @@ def _audits_quality_sql(qualified_stage_table: str) -> str:
     """Cheap post-INSERT quality SELECT against the stage table itself
     (mirrors ``officers.py``'s ``_officers_quality_sql``): total rows,
     distinct companies, the count of rows resolved to a 'modified' opinion,
-    the count that fell back to 'unknown' (no pateckning fact matched), and
-    the count carrying the placeholder ``fiscal_year = 0`` (see the module
-    docstring's "Null fiscal year handling" section).
+    the count that fell back to 'unknown' (no pateckning fact matched), the
+    count carrying the placeholder ``fiscal_year = 0`` (see the module
+    docstring's "Null fiscal year handling" section), and the count of rows
+    with a resolved opinion kind but still no opinion date (see "Text-typed
+    opinion date recovery").
     """
     return f"""SELECT
     count() AS row_count,
     uniqExact(company_id) AS company_count,
     countIf(opinion_kind = 'modified') AS modified_opinion_count,
     countIf(opinion_kind = 'unknown') AS unknown_opinion_count,
-    countIf(fiscal_year = 0) AS null_fiscal_year_count
+    countIf(fiscal_year = 0) AS null_fiscal_year_count,
+    countIf(opinion_kind != 'unknown' AND opinion_date IS NULL) AS null_opinion_date_count
 FROM {qualified_stage_table}"""
 
 
@@ -295,11 +422,13 @@ def replace_se_company_audits_clickhouse(
     if log is not None:
         log(
             "Finished Sweden company audits: rows=%s companies=%s "
-            "modified_opinion=%s unknown_opinion=%s null_fiscal_year=%s",
+            "modified_opinion=%s unknown_opinion=%s null_fiscal_year=%s "
+            "null_opinion_date=%s",
             quality["row_count"],
             quality["company_count"],
             quality["modified_opinion_count"],
             quality["unknown_opinion_count"],
             quality["null_fiscal_year_count"],
+            quality["null_opinion_date_count"],
         )
     return quality

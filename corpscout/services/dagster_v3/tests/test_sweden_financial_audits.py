@@ -1,7 +1,7 @@
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import dagster as dg
@@ -12,6 +12,9 @@ from dagster_v3.defs.sweden_financial.audits import (
     QUALIFIED_SE_COMPANY_AUDITS_TABLE,
     SE_COMPANY_AUDITS_COLUMNS,
     SE_COMPANY_AUDITS_TABLE,
+    _AUDIT_FIRM_CONCEPTS,
+    _AUDIT_FIRM_PREFERRED_CONCEPT,
+    _SWEDISH_MONTH_NAMES,
     _audits_quality_sql,
     build_audits_insert_sql,
     replace_se_company_audits_clickhouse,
@@ -90,6 +93,32 @@ def test_audits_sql_contains_both_audit_firm_name_spellings() -> None:
     assert "'ValtRevisionsbolagsnamn'" in sql
 
 
+def test_audits_sql_audit_firm_uses_deterministic_argmaxif_tiebreak() -> None:
+    """Locks in Finding 1's fix: 608 real statements (verified live) carry a
+    DIFFERENT audit_firm value under the two taxonomy spellings, so a plain
+    anyIf has no deterministic winner (undocumented ClickHouse row-scan
+    order). audit_firm must use argMaxIf with an explicit tuple comparator
+    key -- (concept_local_name = 'ValtRevisionsbolagsnamn', fact_ordinal) --
+    that deterministically prefers the newer ValtRevisionsbolagsnamn
+    spelling, then the highest fact_ordinal.
+    """
+    sql = _built_sql()
+
+    assert "anyIf(trim(coalesce(text_value, raw_value))" not in sql
+    assert "argMaxIf(trim(coalesce(text_value, raw_value))," in sql
+    assert (
+        f"(concept_local_name = '{_AUDIT_FIRM_PREFERRED_CONCEPT}', fact_ordinal)" in sql
+    )
+    assert _AUDIT_FIRM_PREFERRED_CONCEPT == "ValtRevisionsbolagsnamn"
+
+    # Both concepts must still be present as the argMaxIf's IF-condition set.
+    argmaxif_index = sql.index("argMaxIf(trim(coalesce(text_value, raw_value))")
+    condition_end = sql.index(")),\n        ''\n    ) AS audit_firm", argmaxif_index)
+    condition_block = sql[argmaxif_index:condition_end]
+    for concept in _AUDIT_FIRM_CONCEPTS:
+        assert f"'{concept}'" in condition_block
+
+
 def test_audits_sql_contains_both_opinion_concepts() -> None:
     sql = _built_sql()
 
@@ -139,6 +168,63 @@ def test_audits_sql_keeps_rows_with_known_firm_or_opinion() -> None:
     assert "HAVING audit_firm != '' OR opinion_kind != 'unknown'" in sql
 
 
+def test_audits_sql_opinion_date_recovers_text_typed_pateckning_facts() -> None:
+    """Locks in Finding 2's fix: ~50k of ~305k resolved rows carry the
+    pateckning date only as Swedish prose (date_value NULL, value_kind =
+    'text'). opinion_date must coalesce the original maxIf(date_value, ...)
+    with a second maxIf over a toDate32OrNull(...)-built date parsed from
+    extractGroups(...) applied to the fact's text.
+    """
+    sql = _built_sql()
+
+    assert "maxIf(date_value,\n" in sql
+    assert "extractGroups(lowerUTF8(trim(coalesce(text_value, raw_value)))," in sql
+    assert "toDate32OrNull(" in sql
+    assert "leftPad(" in sql
+    # The two maxIf branches must be combined via coalesce, and both must be
+    # restricted to the same two pateckning concepts (not the firm concepts).
+    coalesce_index = sql.index("coalesce(\n        maxIf(date_value,")
+    opinion_date_index = sql.index("AS opinion_date", coalesce_index)
+    opinion_date_block = sql[coalesce_index:opinion_date_index]
+    assert (
+        opinion_date_block.count(
+            "'RevisorspateckningRevisionsberattelseEnligtStandardutformning'"
+        )
+        == 2
+    )
+    assert (
+        opinion_date_block.count(
+            "'RevisorspateckningRevisionsberattelseAvvikerStandardutformning'"
+        )
+        == 2
+    )
+
+
+def test_audits_sql_contains_all_twelve_swedish_month_names() -> None:
+    """Locks in Finding 2's month-name-to-number multiIf mapping: all 12
+    Swedish month names must appear in the built SQL, each mapped to its
+    two-digit month number.
+    """
+    sql = _built_sql()
+
+    assert len(_SWEDISH_MONTH_NAMES) == 12
+    for month_number, month in enumerate(_SWEDISH_MONTH_NAMES, start=1):
+        assert f"'{month}'" in sql
+        assert f"'{month_number:02d}'" in sql
+
+
+def test_audits_sql_text_date_regex_backslashes_are_doubled() -> None:
+    """The regex sent to ClickHouse must double every backslash (``\\\\d``,
+    ``\\\\s``) -- see the module docstring's "Text-typed opinion date
+    recovery" section for why a single backslash is not reliably preserved
+    by ClickHouse's string-literal escaping.
+    """
+    sql = _built_sql()
+
+    assert "'(\\\\d{1,2})\\\\s+(" in sql
+    assert ")\\\\s+(\\\\d{4})'" in sql
+
+
 def test_audits_quality_sql_counts_expected_metrics() -> None:
     sql = _audits_quality_sql(_STAGE_TABLE)
 
@@ -149,6 +235,10 @@ def test_audits_quality_sql_counts_expected_metrics() -> None:
     assert "countIf(opinion_kind = 'modified') AS modified_opinion_count" in sql
     assert "countIf(opinion_kind = 'unknown') AS unknown_opinion_count" in sql
     assert "countIf(fiscal_year = 0) AS null_fiscal_year_count" in sql
+    assert (
+        "countIf(opinion_kind != 'unknown' AND opinion_date IS NULL) "
+        "AS null_opinion_date_count" in sql
+    )
 
 
 def test_audits_sql_survives_percent_formatting_with_driver_params() -> None:
@@ -179,6 +269,129 @@ def test_audits_sql_has_no_bare_percent_placeholder_leaks() -> None:
     placeholders = set(re.findall(r"%\([a-zA-Z_]+\)s", sql))
     assert placeholders == {"%(resolved_at)s"}
     assert "%%" not in sql
+
+
+def _simulate_audit_firm_argmaxif(rows: list[dict[str, object]]) -> str:
+    """Pure-Python mirror of build_audits_insert_sql's audit_firm
+    ``argMaxIf(v, (concept_local_name = 'ValtRevisionsbolagsnamn',
+    fact_ordinal), concept_local_name IN (...))`` tiebreak (Finding 1) --
+    reimplemented here, not imported, because this module's tests are
+    string-level with no live ClickHouse to execute the real SQL against.
+    Rows are assumed to already share one (company_id, fiscal_year,
+    statement_key) GROUP BY key. ClickHouse argMaxIf picks the row (among
+    those passing the If condition) with the greatest comparator tuple
+    value, which is exactly what ``max(..., key=)`` does here.
+    """
+    candidates = [
+        row for row in rows if row["concept_local_name"] in _AUDIT_FIRM_CONCEPTS
+    ]
+    if not candidates:
+        return ""
+    winner = max(
+        candidates,
+        key=lambda row: (
+            row["concept_local_name"] == _AUDIT_FIRM_PREFERRED_CONCEPT,
+            row["fact_ordinal"],
+        ),
+    )
+    return winner["value"]
+
+
+def test_audit_firm_argmaxif_prefers_new_spelling_when_values_differ() -> None:
+    """Locks in Finding 1's fix: 608 real statements (verified live) carry a
+    DIFFERENT audit_firm value under the two taxonomy spellings -- a bare
+    anyIf has no deterministic winner. The (concept_local_name =
+    'ValtRevisionsbolagsnamn', fact_ordinal) tuple deterministically prefers
+    the newer ValtRevisionsbolagsnamn spelling even when its fact_ordinal is
+    LOWER (the spelling guard dominates the tuple comparison), mirroring a
+    real differing pair observed live: "Ernst & Young AB" (old spelling) vs
+    "Ernst & Young Aktiebolag" (new spelling) for the same statement.
+    """
+    rows = [
+        {
+            "concept_local_name": "ValtRevisionsbolagNamn",
+            "fact_ordinal": 10,
+            "value": "Ernst & Young AB",
+        },
+        {
+            "concept_local_name": "ValtRevisionsbolagsnamn",
+            "fact_ordinal": 5,
+            "value": "Ernst & Young Aktiebolag",
+        },
+    ]
+
+    result = _simulate_audit_firm_argmaxif(rows)
+
+    assert result == "Ernst & Young Aktiebolag"
+    # Order-independence: ClickHouse's argMaxIf does not guarantee scan
+    # order either.
+    assert _simulate_audit_firm_argmaxif(list(reversed(rows))) == result
+
+
+def test_audit_firm_argmaxif_breaks_ties_by_fact_ordinal() -> None:
+    """When both facts share the SAME (preferred) spelling, the tuple's
+    second element -- fact_ordinal -- breaks the tie: the later fact in
+    document order wins.
+    """
+    rows = [
+        {
+            "concept_local_name": "ValtRevisionsbolagsnamn",
+            "fact_ordinal": 3,
+            "value": "Old Firm Name AB",
+        },
+        {
+            "concept_local_name": "ValtRevisionsbolagsnamn",
+            "fact_ordinal": 9,
+            "value": "New Firm Name AB",
+        },
+    ]
+
+    result = _simulate_audit_firm_argmaxif(rows)
+
+    assert result == "New Firm Name AB"
+    assert _simulate_audit_firm_argmaxif(list(reversed(rows))) == result
+
+
+_SWEDISH_MONTH_NUMBERS = {
+    month: month_number
+    for month_number, month in enumerate(_SWEDISH_MONTH_NAMES, start=1)
+}
+
+
+def _simulate_swedish_text_date_parse(text: str) -> date | None:
+    """Pure-Python mirror of build_audits_insert_sql's text-typed opinion
+    date recovery (Finding 2): ``extractGroups(lowerUTF8(v), '(\\d{1,2})\\s+
+    (<swedish months>)\\s+(\\d{4})')`` then a month-name multiIf then
+    ``toDate32OrNull(...)`` -- reimplemented here, not imported, because
+    this module's tests are string-level with no live ClickHouse to execute
+    the real SQL against. Returns ``None`` (mirroring NULL) when the text
+    doesn't match or the captured numbers don't form a valid date.
+    """
+    pattern = r"(\d{1,2})\s+(" + "|".join(_SWEDISH_MONTH_NUMBERS) + r")\s+(\d{4})"
+    match = re.fullmatch(pattern, text.strip().lower())
+    if match is None:
+        return None
+    day_str, month_name, year_str = match.groups()
+    try:
+        return date(int(year_str), _SWEDISH_MONTH_NUMBERS[month_name], int(day_str))
+    except ValueError:
+        return None
+
+
+def test_swedish_text_date_parse_simulation_recovers_real_prose_dates() -> None:
+    """Locks in Finding 2's fix against real examples observed live
+    (2026-07-19), including whitespace/casing variance the SQL's
+    ``lowerUTF8``/``trim`` handle: "15 maj 2024" -> 2024-05-15, and garbage
+    text (no pateckning date present) rejected as None rather than raising.
+    """
+    assert _simulate_swedish_text_date_parse("15 maj 2024") == date(2024, 5, 15)
+    assert _simulate_swedish_text_date_parse("7 juli 2023") == date(2023, 7, 7)
+    assert _simulate_swedish_text_date_parse("  12 November 2025  ") == date(
+        2025, 11, 12
+    )
+    assert _simulate_swedish_text_date_parse("garbage text") is None
+    assert _simulate_swedish_text_date_parse("") is None
+    assert _simulate_swedish_text_date_parse("32 maj 2024") is None  # invalid day
 
 
 class _FakeAuditsClickHouseClient:
@@ -235,7 +448,7 @@ def _patch_clickhouse(
     return resource
 
 
-_DEFAULT_QUALITY_ROW = (500, 300, 40, 60, 15)
+_DEFAULT_QUALITY_ROW = (500, 300, 40, 60, 15, 8)
 
 
 def test_replace_se_company_audits_is_atomic_and_reports_counts(monkeypatch) -> None:
@@ -268,6 +481,7 @@ def test_replace_se_company_audits_is_atomic_and_reports_counts(monkeypatch) -> 
     assert metadata["modified_opinion_count"] == 40
     assert metadata["unknown_opinion_count"] == 60
     assert metadata["null_fiscal_year_count"] == 15
+    assert metadata["null_opinion_date_count"] == 8
     assert metadata["table"] == QUALIFIED_SE_COMPANY_AUDITS_TABLE
     assert metadata["source_run_id"] == "audits-run"
 
@@ -275,7 +489,7 @@ def test_replace_se_company_audits_is_atomic_and_reports_counts(monkeypatch) -> 
 def test_replace_se_company_audits_refuses_to_swap_an_empty_stage(
     monkeypatch,
 ) -> None:
-    client = _FakeAuditsClickHouseClient(quality_row=(0, 0, 0, 0, 0))
+    client = _FakeAuditsClickHouseClient(quality_row=(0, 0, 0, 0, 0, 0))
     resource = _patch_clickhouse(monkeypatch, client)
 
     with pytest.raises(ValueError, match="produced no rows"):
