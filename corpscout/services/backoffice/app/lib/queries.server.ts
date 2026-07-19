@@ -151,6 +151,11 @@ export interface FinancialYearRow {
   equity_amount_original: number | null;
   equity_amount_usd: number | null;
   employees: number | null;
+  /** "filed" (actual filing) vs "comparative" (recovered from a later
+   * filing's multi-year overview). Absent for countries without history. */
+  observation?: "filed" | "comparative";
+  /** For comparative rows: fiscal year of the filing that carried the figures. */
+  source_fiscal_year?: string;
 }
 
 export interface FactRow {

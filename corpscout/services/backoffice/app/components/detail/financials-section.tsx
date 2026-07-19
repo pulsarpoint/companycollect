@@ -119,7 +119,7 @@ export function FinancialsSection({
               {financials.map((f) => (
                 <TableRow key={f.fiscal_year}>
                   <TableCell className="tabular-nums align-top">
-                    {factsHref ? (
+                    {factsHref && f.observation !== "comparative" ? (
                       <Link
                         to={factsHref(f.fiscal_year)}
                         className="text-primary underline-offset-4 hover:underline"
@@ -129,6 +129,11 @@ export function FinancialsSection({
                     ) : (
                       f.fiscal_year
                     )}
+                    {f.observation === "comparative" ? (
+                      <div className="text-muted-foreground text-xs whitespace-nowrap">
+                        from {f.source_fiscal_year} filing
+                      </div>
+                    ) : null}
                   </TableCell>
                   <TableCell className="align-top">{f.currency}</TableCell>
                   <TableCell className="text-right tabular-nums">

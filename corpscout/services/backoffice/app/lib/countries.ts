@@ -334,21 +334,48 @@ LIMIT 50000`,
       // companies carry duplicate per-year rows where one is all-NULL —
       // the isNull tiebreak prefers the complete row (same rule as the
       // company_financials_latest summary build).
-      financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
-  toFloat64(revenue_amount_original) AS revenue_amount_original,
-  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
-  toFloat64(profit_loss_amount_original) AS net_result_amount_original,
-  toFloat64(profit_loss_amount_usd) AS net_result_amount_usd,
-  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
-  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
-  toFloat64(equity_amount_original) AS equity_amount_original,
-  toFloat64(equity_amount_usd) AS equity_amount_usd,
-  toFloat64(employees) AS employees
-FROM se_financial_metrics
-WHERE company_id = {id:String}
-ORDER BY fiscal_year DESC, isNull(revenue_amount_original) ASC, source_record_id DESC
-LIMIT 1 BY fiscal_year
-LIMIT 20`,
+      // Filed years come from metrics (full column set). Years the company
+      // never filed digitally are backfilled from the flerårsöversikt
+      // comparatives in se_financial_history — revenue and total assets
+      // only: result_after_financial_items is NOT net result (91% concept
+      // agreement measured), and solidity's scale is ambiguous, so neither
+      // is surfaced in these shared columns.
+      financialsQuery: `SELECT * FROM (
+  SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
+    toFloat64(revenue_amount_original) AS revenue_amount_original,
+    toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+    toFloat64(profit_loss_amount_original) AS net_result_amount_original,
+    toFloat64(profit_loss_amount_usd) AS net_result_amount_usd,
+    toFloat64(total_assets_amount_original) AS total_assets_amount_original,
+    toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+    toFloat64(equity_amount_original) AS equity_amount_original,
+    toFloat64(equity_amount_usd) AS equity_amount_usd,
+    toFloat64(employees) AS employees,
+    'filed' AS observation,
+    '' AS source_fiscal_year
+  FROM se_financial_metrics
+  WHERE company_id = {id:String}
+  ORDER BY fiscal_year DESC, isNull(revenue_amount_original) ASC, source_record_id DESC
+  LIMIT 1 BY fiscal_year
+  UNION ALL
+  SELECT toString(fiscal_year), currency,
+    toFloat64(revenue_amount_original),
+    toFloat64(revenue_amount_usd),
+    NULL, NULL,
+    toFloat64(total_assets_amount_original),
+    toFloat64(total_assets_amount_usd),
+    NULL, NULL,
+    NULL,
+    'comparative',
+    toString(source_fiscal_year)
+  FROM se_financial_history
+  WHERE company_id = {id:String} AND observation = 'comparative'
+    AND fiscal_year NOT IN (
+      SELECT fiscal_year FROM se_financial_metrics WHERE company_id = {id:String}
+    )
+)
+ORDER BY fiscal_year DESC
+LIMIT 25`,
       // Same filing the metrics row shows (metrics statement_key first);
       // falls back to the newest filing seen in facts for years whose
       // metrics row hasn't been rebuilt yet.
