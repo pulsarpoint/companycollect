@@ -162,6 +162,7 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "sweden_financial_metrics_clickhouse", ("se_financial_metrics",), None
     ),
     ClickhouseLeaf("se_company_officers_clickhouse", ("se_company_officers",), None),
+    ClickhouseLeaf("se_company_audits_clickhouse", ("se_company_audits",), None),
     # uk_companies_house — register monthly 7th, financials monthly 8th, daily 09:00
     ClickhouseLeaf("uk_companies_house_clickhouse_companies", ("gb_companies",), MONTHLY),
     ClickhouseLeaf(

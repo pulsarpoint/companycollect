@@ -156,6 +156,7 @@ EXPECTED_MIGRATIONS = (
     "000143_corpscout_se_company_officers",
     "000144_corpscout_fi_tax_records",
     "000145_corpscout_company_people_all",
+    "000146_corpscout_se_company_audits",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
