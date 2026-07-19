@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 import type { FinancialYearRow } from "~/lib/queries.server";
 import {
@@ -60,7 +61,14 @@ function allMoneyNull(financials: FinancialYearRow[]): boolean {
   );
 }
 
-export function FinancialsSection({ financials }: { financials: FinancialYearRow[] }) {
+export function FinancialsSection({
+  financials,
+  factsHref,
+}: {
+  financials: FinancialYearRow[];
+  /** When set, year cells link to the raw source facts for that filing. */
+  factsHref?: (fiscalYear: string) => string;
+}) {
   if (financials.length === 0) return null;
   const noFigures = allMoneyNull(financials);
   // Chart wants oldest → newest, left to right.
@@ -110,7 +118,18 @@ export function FinancialsSection({ financials }: { financials: FinancialYearRow
             <TableBody>
               {financials.map((f) => (
                 <TableRow key={f.fiscal_year}>
-                  <TableCell className="tabular-nums align-top">{f.fiscal_year}</TableCell>
+                  <TableCell className="tabular-nums align-top">
+                    {factsHref ? (
+                      <Link
+                        to={factsHref(f.fiscal_year)}
+                        className="text-primary underline-offset-4 hover:underline"
+                      >
+                        {f.fiscal_year}
+                      </Link>
+                    ) : (
+                      f.fiscal_year
+                    )}
+                  </TableCell>
                   <TableCell className="align-top">{f.currency}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     <MoneyPair original={f.revenue_amount_original} usd={f.revenue_amount_usd} />

@@ -43,6 +43,13 @@ export interface CountryDetailConfig {
   industriesQuery?: string;
   /** {id:String} → address rows: address_type, full_address (clean comma-joined). */
   addressQuery?: string;
+  /**
+   * {id:String} + {year:UInt16} → raw source facts for ONE fiscal year's
+   * filing (see FactRow in queries.server), in source document order.
+   * Presence of this query makes the Financials year column link to
+   * /company/:country/:id/facts/:year.
+   */
+  factsQuery?: string;
 }
 
 export interface CountryConfig {
@@ -325,6 +332,35 @@ WHERE company_id = {id:String}
 ORDER BY fiscal_year DESC, isNull(revenue_amount_original) ASC, source_record_id DESC
 LIMIT 1 BY fiscal_year
 LIMIT 20`,
+      // Same filing the metrics row shows (metrics statement_key first);
+      // falls back to the newest filing seen in facts for years whose
+      // metrics row hasn't been rebuilt yet.
+      factsQuery: `SELECT concept_local_name AS concept, value_kind AS value_kind, raw_value AS raw_value,
+  toFloat64(amount_original) AS amount_original,
+  toFloat64(amount_usd) AS amount_usd,
+  currency AS currency,
+  toString(date_value) AS date_value,
+  text_value AS text_value,
+  dimensions AS dimensions
+FROM se_financial_facts
+WHERE company_id = {id:String} AND statement_key IN (
+  SELECT statement_key FROM (
+    SELECT statement_key, 0 AS pri
+    FROM se_financial_metrics
+    WHERE company_id = {id:String} AND fiscal_year = {year:UInt16}
+    ORDER BY isNull(revenue_amount_original) ASC, source_record_id DESC
+    LIMIT 1
+    UNION ALL
+    SELECT argMax(statement_key, resolved_at) AS statement_key, 1 AS pri
+    FROM se_financial_facts
+    WHERE company_id = {id:String} AND toYear(report_period_end) = {year:UInt16}
+    HAVING count() > 0
+  )
+  ORDER BY pri
+  LIMIT 1
+)
+ORDER BY fact_ordinal
+LIMIT 3000`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
   '' AS description_original,
   coalesce(nullIf(n.description_en, ''), i.nace_rev2_class_code) AS industry_label,

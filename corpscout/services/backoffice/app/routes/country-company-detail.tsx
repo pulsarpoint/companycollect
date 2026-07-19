@@ -88,7 +88,16 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
         const Specific = COUNTRY_FINANCIALS[country.code];
         if (Specific) return <Specific statements={detail.statements} />;
         if (detail.statements.length > 0) return <StatementsFallback statements={detail.statements} />;
-        return <FinancialsSection financials={detail.financials} />;
+        return (
+          <FinancialsSection
+            financials={detail.financials}
+            factsHref={
+              country.detail?.factsQuery
+                ? (year) => `/company/${country.code}/${params.id}/facts/${year}`
+                : undefined
+            }
+          />
+        );
       })()}
       <ContactLocationCard
         country={country}

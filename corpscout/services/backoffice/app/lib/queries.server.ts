@@ -153,6 +153,29 @@ export interface FinancialYearRow {
   employees: number | null;
 }
 
+export interface FactRow {
+  concept: string;
+  value_kind: string;
+  raw_value: string;
+  amount_original: number | null;
+  amount_usd: number | null;
+  currency: string | null;
+  date_value: string | null;
+  text_value: string | null;
+  dimensions: string;
+}
+
+/** Raw source facts for one fiscal year's filing; empty when the country has
+ * no factsQuery or the year's facts aren't loaded. */
+export async function getCompanyFacts(
+  country: CountryConfig,
+  id: string,
+  year: number,
+): Promise<FactRow[]> {
+  if (!country.detail?.factsQuery) return [];
+  return chQuery<FactRow>(country.detail.factsQuery, { id, year });
+}
+
 export interface ContactRow {
   contact_type: string;
   contact_value: string;

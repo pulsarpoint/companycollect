@@ -5,6 +5,7 @@ export default [
     index("routes/home.tsx"),
     route("companies", "routes/companies.tsx"),
     route("company/:country/:id", "routes/country-company-detail.tsx"),
+    route("company/:country/:id/facts/:year", "routes/company-facts.tsx"),
     route("company/:country/geocode", "routes/country-geocode.ts"),
     route("facet-options", "routes/facet-options.ts"),
     route("financials", "routes/financials.tsx"),
