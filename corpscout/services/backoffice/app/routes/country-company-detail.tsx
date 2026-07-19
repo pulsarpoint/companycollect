@@ -87,7 +87,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
 
       <CompanyRecordSection company={company} record={record} lang={lang} />
       <SecondaryNamesSection names={detail.secondaryNames} />
-      <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} />
+      <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} audit={detail.audit} />
       <IndustriesSection industries={detail.industries} />
       {(() => {
         const Specific = COUNTRY_FINANCIALS[country.code];

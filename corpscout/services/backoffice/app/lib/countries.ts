@@ -81,6 +81,12 @@ export interface CountryDetailConfig {
    */
   peopleMatchesQuery?: string;
   /**
+   * {id:String} → ONE latest-filing audit row: audit_firm, opinion_kind
+   * ('standard' | 'modified' | 'unknown'), opinion_date, fiscal_year.
+   * Rendered inside the Management card's auditor block.
+   */
+  auditQuery?: string;
+  /**
    * {id:String} + {year:UInt16} → ONE row locating the original source
    * document behind that fiscal year's facts: object_key + source_uri
    * (s3://bucket/key in the corpscout object store, proxied to the browser)
@@ -508,6 +514,14 @@ ORDER BY full_name_normalized, fiscal_year DESC
 LIMIT 10 BY full_name_normalized
 LIMIT 200`,
       // LIMIT BY caps matches per name at 10 so common surnames don't starve others
+      // A filing year can yield two audit rows (annual report + separate
+      // audit-report document) — prefer the one carrying an opinion and date.
+      auditQuery: `SELECT audit_firm AS audit_firm, opinion_kind AS opinion_kind,
+  coalesce(toString(opinion_date), '') AS opinion_date, fiscal_year AS fiscal_year
+FROM se_company_audits
+WHERE company_id = {id:String}
+ORDER BY fiscal_year DESC, opinion_kind = 'unknown' ASC, isNull(opinion_date) ASC, statement_key DESC
+LIMIT 1`,
       factsDocumentQuery: `SELECT xhtml_object_key AS object_key,
   xhtml_source_uri AS source_uri,
   source_archive_url AS archive_url,

@@ -261,6 +261,13 @@ export interface OfficerRow {
   fiscal_year: number;
 }
 
+export interface AuditRow {
+  audit_firm: string;
+  opinion_kind: "standard" | "modified" | "unknown";
+  opinion_date: string;
+  fiscal_year: number;
+}
+
 export interface PeopleMatchRow {
   full_name_normalized: string;
   country_iso2: string;
@@ -285,6 +292,8 @@ export interface CompanyDetail {
   /** Same-name matches for the officers above, in OTHER companies. Fetched
    * after officers resolves — the query needs their names. */
   peopleMatches: PeopleMatchRow[];
+  /** Latest filing's audit firm + opinion form; null when unavailable. */
+  audit: AuditRow | null;
 }
 
 export async function getCompanyDetail(
@@ -340,6 +349,9 @@ export async function getCompanyDetail(
   const officersPromise = country.detail?.officersQuery
     ? chQuery<OfficerRow>(country.detail.officersQuery, { id })
     : Promise.resolve([]);
+  const auditPromise = country.detail?.auditQuery
+    ? chQuery<AuditRow>(country.detail.auditQuery, { id })
+    : Promise.resolve([]);
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
   recordPromise.catch(() => {});
@@ -350,6 +362,7 @@ export async function getCompanyDetail(
   taxRecordsPromise.catch(() => {});
   secondaryNamesPromise.catch(() => {});
   officersPromise.catch(() => {});
+  auditPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -361,7 +374,7 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, secondaryNames, officers] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, secondaryNames, officers, auditRows] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
@@ -370,6 +383,7 @@ export async function getCompanyDetail(
     taxRecordsPromise,
     secondaryNamesPromise,
     officersPromise,
+    auditPromise,
   ]);
 
   // Same-name matches need the officers' names, so this can only start once
@@ -401,5 +415,6 @@ export async function getCompanyDetail(
     secondaryNames,
     officers,
     peopleMatches,
+    audit: auditRows[0] ?? null,
   };
 }
