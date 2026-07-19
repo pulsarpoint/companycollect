@@ -8,9 +8,15 @@
 
 **Tech Stack:** dagster_v3 (partitioned assets, clickhouse-driver mutations + inserts, pytest). NO ClickHouse migration — engines/schemas unchanged.
 
-## Sequencing gate (controller-enforced)
+## Sequencing gate — SATISFIED (2026-07-19, late)
 
-The 2020–2025 restore driver is in flight, followed by ONE final full-replace export + metrics/summary/companies_all/history chain under the CURRENT code. **This plan's Tasks 1–2 (code) may run in parallel with the restore, but its Task 3 (validation materialization) runs only AFTER the restore chain has fully completed and been verified.** Until this plan deploys to prod, the Sweden chain must not be run on prod (prod's DuckDB lacks 2026; an ~18% shrink passes the 50% guard).
+The restore chain completed and was verified: `se_financial_reports` 2,206,788 (all years incl. complete 2026), `se_financial_facts` 290,754,496, metrics/history/summary/companies_all rebuilt on the server (runs 9690ef2b + a54186f8). The per-year DuckDB files (2020–2026) live on the prod dagster host. Task 3 is UNGATED.
+
+## Post-plan module changes to account for (2026-07-19, late)
+
+- New downstream assets `se_company_officers_clickhouse` (officers.py) and `se_company_audits_clickhouse` (audits.py) both declare `deps=["sweden_financial_facts_clickhouse"]` and are members of `SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION` (which now holds reports/facts/metrics/history/officers/audits). Task 2's dep-alignment scope includes them.
+- `CLICKHOUSE_LEAVES` in `common/clickhouse_checks.py` now lists se_company_officers/se_company_audits alongside the originals.
+- A PARTIAL Task 1 implementation exists as REFERENCE ONLY (from an interrupted earlier attempt; superseded by module evolution — officers/audits/etc. landed since): stashed working copies extracted to the session scratchpad `si_stash_reference/clickhouse.stashed.py` (upsert_sweden_financial_reports_partition/facts twin, ~lines 344+: scope resolution, delete-by-archive-keys with mutations_sync, explicit-column insert) and `storage.stashed.py` (sweden_financial_year_duckdb_connection single-year read-only helper). Read them, reuse what is correct, but the CURRENT committed files are the base — do not apply the stash wholesale.
 
 ## Global Constraints
 
