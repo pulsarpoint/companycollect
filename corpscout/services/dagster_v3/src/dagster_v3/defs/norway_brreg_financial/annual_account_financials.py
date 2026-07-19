@@ -614,8 +614,12 @@ def apply_annual_account_usd_conversion(
         connection.execute(
             f"""
             update {ANNUAL_ACCOUNT_DATASET}.facts
-            set amount_usd = cast(amount_original * ? as decimal(38, 10)),
-                fx_rate_to_usd = ?, fx_rate_date = ?, fx_source = ?
+            set amount_usd = cast(
+                    amount_original * cast(? as decimal(38, 12))
+                    as decimal(38, 10)
+                ),
+                fx_rate_to_usd = cast(? as decimal(38, 12)),
+                fx_rate_date = ?, fx_source = ?
             where source_filing_year = ? and source_chunk = ?
               and upper(currency) = ? and period_end_date = cast(? as date)
               and amount_original is not null and amount_usd is null

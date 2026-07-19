@@ -61,10 +61,13 @@ class FakeAnnualAccountStorage:
 
 
 class FakeExchangeRates:
+    def __init__(self, rate: Decimal = Decimal("0.1")) -> None:
+        self.rate = rate
+
     def usd_rates(self, requests: list[Any]) -> dict[tuple[str, str], Any]:
         return {
             (request.currency, request.rate_date): SimpleNamespace(
-                rate=Decimal("0.1"),
+                rate=self.rate,
                 rate_date=request.rate_date,
                 source="test-rates",
             )
@@ -381,6 +384,32 @@ def test_usd_conversion_only_updates_missing_amounts() -> None:
     ).fetchone()
     assert amount_usd == amount_original * Decimal("0.1")
     assert fx_source == "test-rates"
+
+
+def test_usd_conversion_limits_rate_scale_before_multiplication() -> None:
+    connection, _storage = _loaded_sample_partition()
+    high_scale_rate = Decimal("0.09512345678901234567890123456")
+    connection.execute(
+        f"update {ANNUAL_ACCOUNT_DATASET}.facts "
+        "set amount_original = 2000, amount_usd = null "
+        "where raw_label = 'Driftsresultat'"
+    )
+
+    counts = apply_annual_account_usd_conversion(
+        connection=connection,
+        exchange_rates=FakeExchangeRates(high_scale_rate),
+        filing_year=2025,
+        chunk_key="bucket_00",
+    )
+
+    amount_usd, stored_rate = connection.execute(
+        f"select amount_usd, fx_rate_to_usd "
+        f"from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "where raw_label = 'Driftsresultat' limit 1"
+    ).fetchone()
+    assert counts["unconverted_fact_count"] == 0
+    assert amount_usd == Decimal("190.2469135780")
+    assert stored_rate == Decimal("0.095123456789")
 
 
 def test_metric_validation_keeps_ambiguous_facts_and_marks_review() -> None:
