@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Derived tables rebuild with the module's standard stage + `EXCHANGE TABLES` atomic replace, refuse-empty guard, and `guard_against_clickhouse_table_shrink` (`SHRINK_GUARD_MIN_RATIO = 0.5`, `allow_shrink` config override defaulting to `False`) — identical wiring to `se_financial_history`.
-- Migration owns all CH schema; next free numbers: **000143** (`se_company_officers`), **000144** (`company_people_all`). Column order in Python schema constants MUST match the migration's column order (contract-test pattern used by history.py).
+- Migration owns all CH schema; next free numbers: **000143** (`se_company_officers`), **000145** (`company_people_all`). Column order in Python schema constants MUST match the migration's column order (contract-test pattern used by history.py).
 - `company_id` in officers rows = normalized 10-digit orgnr = `se_companies.registration_number`.
 - No `from __future__ import annotations` in asset modules. `uv run` for every command. `uv run dg check defs` green before any commit. Commits by explicit path (shared tree).
 - Backoffice: registry-driven queries in `countries.ts` only; named CH params; readonly client untouched.
@@ -23,7 +23,7 @@
 
 **Files:**
 - Create: `corpscout/clickhouse/migrations/000143_corpscout_se_company_officers.up.sql` / `.down.sql`
-- Create: `corpscout/clickhouse/migrations/000144_corpscout_company_people_all.up.sql` / `.down.sql`
+- Create: `corpscout/clickhouse/migrations/000145_corpscout_company_people_all.up.sql` / `.down.sql`
 - Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_financial/officers.py`
 - Modify: `corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_financial/assets.py` (new asset at the end, after `se_financial_history_clickhouse`)
 - Test: `corpscout/services/dagster_v3/tests/test_sweden_financial_officers.py`
@@ -151,7 +151,7 @@ Note: `multiIf` on `role_original` references the aggregate alias — ClickHouse
 - Consumes: `corpscout.se_company_officers` (Task 1).
 - Produces: table `corpscout.company_people_all`; asset `company_people_all_clickhouse` (deps: `se_company_officers_clickhouse`); per-source SELECT registry `PEOPLE_SOURCES: dict[str, str]` in tables.py so future sources (NO roles, EE officers, BR sócios) are added as one SELECT each.
 
-- [ ] **Step 1: Migration 000144**
+- [ ] **Step 1: Migration 000145**
 
 ```sql
 CREATE TABLE IF NOT EXISTS corpscout.company_people_all
@@ -177,14 +177,14 @@ ENGINE = MergeTree
 ORDER BY (full_name_normalized, country_iso2, company_id, fiscal_year);
 ```
 
-- [ ] **Step 2: failing tests** — contract test vs migration 000144; test that the SE source SELECT dedupes to one row per (company, fiscal_year, person, signatory_kind) and joins `se_companies` for `company_name`.
+- [ ] **Step 2: failing tests** — contract test vs migration 000145; test that the SE source SELECT dedupes to one row per (company, fiscal_year, person, signatory_kind) and joins `se_companies` for `company_name`.
 - [ ] **Step 3: build SQL** — SE source SELECT joins `se_company_officers o LEFT JOIN se_companies c ON c.registration_number = o.company_id` (take `c.legal_name`), `full_name_normalized = lowerUTF8(trim(concat(first_name, ' ', last_name)))`, `identifier_kind=''`, `source='se_xbrl_signatures'`. Stage + exchange + refuse-empty + shrink guard, same as Task 1.
 - [ ] **Step 4:** asset + `dg check defs` + tests PASS.
 - [ ] **Step 5: Commit** — `feat(dagster): company_people_all cross-country people search table`.
 
 ### Task 3: Materialize on the server + verify
 
-- [ ] Deploy via `cd corpscout/services/dagster_v3/ansible && ansible-playbook -i inventory.ini light_sync.yml` (migrations run per the module's standard migration path — follow however 000141/000142 were applied; if manual, apply 000143+000144 the same way before launching).
+- [ ] Deploy via `cd corpscout/services/dagster_v3/ansible && ansible-playbook -i inventory.ini light_sync.yml` (migrations run per the module's standard migration path — follow however 000141/000142 were applied; if manual, apply 000143+000145 the same way before launching).
 - [ ] Launch `se_company_officers_clickhouse,company_people_all_clickhouse` on the server via the Dagster GraphQL launchRun (established pattern). Runtime expectation: minutes (window scan over ~10M signature facts).
 - [ ] Verify: `SELECT count() FROM corpscout.se_company_officers` — expect roughly 2.0–2.5M board-signature persons + ~2M certifications + ~0.3M auditors ≈ **4–5M rows**; spot-check `company_id='5560003575' AND fiscal_year=2023` reproduces the known people (Balkow chairman, Pettersson CEO certification, Roos auditor); `company_people_all` count ≈ officers count; name search `full_name_normalized LIKE '%klas balkow%'` returns Axfood Snabbgross.
 
