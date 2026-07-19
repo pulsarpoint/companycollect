@@ -226,6 +226,13 @@ export interface AddressRow {
   full_address: string;
 }
 
+export interface SecondaryNameRow {
+  name: string;
+  name_kind: "secondary" | "foreign";
+  registered: string;
+  scope: string;
+}
+
 export interface CompanyDetail {
   company: CompanyListRow;
   record: Record<string, unknown>;
@@ -235,6 +242,7 @@ export interface CompanyDetail {
   statements: Record<string, unknown>[];
   industries: IndustryDetailRow[];
   addresses: AddressRow[];
+  secondaryNames: SecondaryNameRow[];
 }
 
 export async function getCompanyDetail(
@@ -281,6 +289,9 @@ export async function getCompanyDetail(
   const addressesPromise = country.detail?.addressQuery
     ? chQuery<AddressRow>(country.detail.addressQuery, { id })
     : Promise.resolve([]);
+  const secondaryNamesPromise = country.detail?.secondaryNamesQuery
+    ? chQuery<SecondaryNameRow>(country.detail.secondaryNamesQuery, { id })
+    : Promise.resolve([]);
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
   recordPromise.catch(() => {});
@@ -288,6 +299,7 @@ export async function getCompanyDetail(
   statementsPromise.catch(() => {});
   industriesPromise.catch(() => {});
   addressesPromise.catch(() => {});
+  secondaryNamesPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -299,13 +311,14 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, secondaryNames] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
     industriesPromise,
     addressesPromise,
+    secondaryNamesPromise,
   ]);
 
-  return { company, record: records[0] ?? {}, financials, contacts, domains, statements, industries, addresses };
+  return { company, record: records[0] ?? {}, financials, contacts, domains, statements, industries, addresses, secondaryNames };
 }

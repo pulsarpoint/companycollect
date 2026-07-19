@@ -51,6 +51,12 @@ export interface CountryDetailConfig {
    */
   factsQuery?: string;
   /**
+   * {id:String} → registered alternative names: name, name_kind
+   * ("secondary" scoped trade names / "foreign" foreign-language names),
+   * registered (date string), scope (original-language clause, may be '').
+   */
+  secondaryNamesQuery?: string;
+  /**
    * {id:String} + {year:UInt16} → ONE row locating the original source
    * document behind that fiscal year's facts: object_key + source_uri
    * (s3://bucket/key in the corpscout object store, proxied to the browser)
@@ -406,6 +412,23 @@ WHERE company_id = {id:String} AND statement_key IN (
 )
 ORDER BY fact_ordinal
 LIMIT 3000`,
+      // Bolagsverket packs all registered names into legal_name_raw as
+      // Name$TYPE$Date[$Scope] entries joined by '|'. SARS_FORNAMN are
+      // scoped secondary trade names, FORNAMN_FRSPRAK foreign-language
+      // names. Parsed at query time; a handful of malformed source entries
+      // fail the type filter and drop out harmlessly.
+      secondaryNamesQuery: `SELECT entry[1] AS name,
+  if(entry[2] = 'FORNAMN_FRSPRAK-ORGNAM', 'foreign', 'secondary') AS name_kind,
+  entry[3] AS registered,
+  entry[4] AS scope
+FROM (
+  SELECT splitByChar('\$', arrayJoin(splitByChar('|', assumeNotNull(legal_name_raw)))) AS entry
+  FROM se_companies
+  WHERE registration_number = {id:String} AND legal_name_raw IS NOT NULL
+)
+WHERE entry[2] IN ('SARS_FORNAMN-ORGNAM', 'FORNAMN_FRSPRAK-ORGNAM')
+ORDER BY registered, name
+LIMIT 200`,
       factsDocumentQuery: `SELECT xhtml_object_key AS object_key,
   xhtml_source_uri AS source_uri,
   source_archive_url AS archive_url,
