@@ -40,6 +40,8 @@ class ClickhouseLeaf:
 
 
 CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
+    # company_people_all — daily 07:45 UTC
+    ClickhouseLeaf("company_people_all_clickhouse", ("company_people_all",), DAILY),
     # czech_ares — monthly 17th
     ClickhouseLeaf("czech_ares_clickhouse_companies", ("cz_companies",), MONTHLY),
     ClickhouseLeaf(
@@ -71,7 +73,13 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     # finland_ytj — daily 04:45
     ClickhouseLeaf(
         "finland_ytj_resolved_clickhouse",
-        ("fi_companies", "fi_names", "fi_websites", "fi_industries"),
+        (
+            "fi_companies",
+            "fi_company_addresses",
+            "fi_names",
+            "fi_websites",
+            "fi_industries",
+        ),
         DAILY,
     ),
     ClickhouseLeaf(
@@ -153,6 +161,7 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ClickhouseLeaf(
         "sweden_financial_metrics_clickhouse", ("se_financial_metrics",), None
     ),
+    ClickhouseLeaf("se_company_officers_clickhouse", ("se_company_officers",), None),
     # uk_companies_house — register monthly 7th, financials monthly 8th, daily 09:00
     ClickhouseLeaf("uk_companies_house_clickhouse_companies", ("gb_companies",), MONTHLY),
     ClickhouseLeaf(

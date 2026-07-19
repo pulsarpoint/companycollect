@@ -120,6 +120,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_facts_clickhouse",
         "sweden_financial_metrics_clickhouse",
         "se_financial_history_clickhouse",
+        "se_company_officers_clickhouse",
     }
 
     for asset_key in (

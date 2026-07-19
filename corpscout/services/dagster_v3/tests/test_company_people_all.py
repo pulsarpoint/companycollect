@@ -431,3 +431,25 @@ def test_company_people_all_clickhouse_asset_is_wired_correctly() -> None:
     assert node.pools == set()
     assert node.partitions_def is None
     assert node.parent_keys == {dg.AssetKey("se_company_officers_clickhouse")}
+
+
+def test_company_people_all_schedule_running_daily_cron() -> None:
+    from dagster_v3.defs.company_people.assets import company_people_all_schedule
+
+    # Daily at 07:45 UTC -- offset from companies_all_schedule's 07:15
+    # (Europe/Oslo) to avoid contention.
+    assert company_people_all_schedule.cron_schedule == "45 7 * * *"
+    assert company_people_all_schedule.execution_timezone == "UTC"
+    assert (
+        company_people_all_schedule.default_status == dg.DefaultScheduleStatus.RUNNING
+    )
+
+
+def test_company_people_all_defs_include_job_and_schedule() -> None:
+    from dagster_v3.defs.company_people.assets import defs
+
+    job_names = {job.name for job in defs.jobs}
+    assert "company_people_all_job" in job_names
+
+    schedule_names = {schedule.name for schedule in defs.schedules}
+    assert "company_people_all_schedule" in schedule_names

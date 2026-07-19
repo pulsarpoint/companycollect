@@ -490,3 +490,14 @@ def test_se_company_officers_clickhouse_asset_is_wired_correctly() -> None:
     assert node.pools == set()
     assert node.partitions_def is None
     assert node.parent_keys == {dg.AssetKey("sweden_financial_facts_clickhouse")}
+
+    # The officers table should refresh whenever metrics/history refresh: it
+    # lives in the same (currently unscheduled, manually/backfill-triggered)
+    # clickhouse job selection as reports/facts/metrics/history.
+    clickhouse_job_asset_keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "sweden_financial_clickhouse_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert "se_company_officers_clickhouse" in clickhouse_job_asset_keys

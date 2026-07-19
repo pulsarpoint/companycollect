@@ -581,6 +581,7 @@ SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_facts_clickhouse",
     "sweden_financial_metrics_clickhouse",
     "se_financial_history_clickhouse",
+    "se_company_officers_clickhouse",
 )
 
 

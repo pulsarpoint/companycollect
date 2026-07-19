@@ -205,6 +205,12 @@ class CompanyPeopleClickhouseExportConfig(dg.Config):
     name="company_people_all_clickhouse",
     deps=["se_company_officers_clickhouse"],
     group_name=GROUP_NAME,
+    # eager() only fires once the default automation-condition sensor is
+    # turned on in the Dagster UI -- not enabled by default in this repo.
+    # Until then, the RUNNING daily schedule below is the actual refresh
+    # trigger; eager() stays declared so it activates for free if/when that
+    # sensor is enabled. Mirrors companies_all_clickhouse's convention.
+    automation_condition=dg.AutomationCondition.eager(),
     kinds={"clickhouse"},
     metadata={"table": QUALIFIED_COMPANY_PEOPLE_ALL_TABLE},
     description=(
@@ -230,4 +236,27 @@ def company_people_all_clickhouse(
     return dg.MaterializeResult(metadata=metadata)
 
 
-defs = dg.Definitions(assets=[company_people_all_clickhouse])
+company_people_all_job = dg.define_asset_job(
+    "company_people_all_job",
+    selection=dg.AssetSelection.assets("company_people_all_clickhouse"),
+)
+
+company_people_all_schedule = dg.ScheduleDefinition(
+    name="company_people_all_schedule",
+    job=company_people_all_job,
+    # Daily at 07:45 UTC -- offset from companies_all_schedule's 07:15
+    # (Europe/Oslo) to avoid contention. The per-asset
+    # automation_condition=eager() only fires once the default automation-
+    # condition sensor is enabled in the Dagster UI (not enabled by default
+    # in this repo) -- until then this RUNNING schedule is the actual
+    # refresh trigger.
+    cron_schedule="45 7 * * *",
+    execution_timezone="UTC",
+    default_status=dg.DefaultScheduleStatus.RUNNING,
+)
+
+defs = dg.Definitions(
+    assets=[company_people_all_clickhouse],
+    jobs=[company_people_all_job],
+    schedules=[company_people_all_schedule],
+)
