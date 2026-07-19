@@ -161,6 +161,19 @@ export interface FinancialYearRow {
 /** Public corporate income tax data (tax base + assessed taxes), one row per
  * tax year. Semantically distinct from FinancialYearRow: taxable income is a
  * tax-base figure, not accounting profit — never merge the two sections. */
+/** One public procurement contract win, in the CANONICAL cross-country shape
+ * produced by every publicContractsQuery (source portal + TED union). */
+export interface PublicContractRow {
+  source: string;
+  notice_ref: string;
+  contract_date: string;
+  buyer_name: string;
+  title: string;
+  amount_original: number | null;
+  amount_usd: number | null;
+  currency: string;
+}
+
 export interface TaxRecordRow {
   tax_year: string;
   currency: string;
@@ -287,6 +300,7 @@ export interface CompanyDetail {
   industries: IndustryDetailRow[];
   addresses: AddressRow[];
   taxRecords: TaxRecordRow[];
+  publicContracts: PublicContractRow[];
   secondaryNames: SecondaryNameRow[];
   officers: OfficerRow[];
   /** Same-name matches for the officers above, in OTHER companies. Fetched
@@ -343,6 +357,9 @@ export async function getCompanyDetail(
   const taxRecordsPromise = country.detail?.taxRecordsQuery
     ? chQuery<TaxRecordRow>(country.detail.taxRecordsQuery, { id })
     : Promise.resolve([]);
+  const publicContractsPromise = country.detail?.publicContractsQuery
+    ? chQuery<PublicContractRow>(country.detail.publicContractsQuery, { id })
+    : Promise.resolve([]);
   const secondaryNamesPromise = country.detail?.secondaryNamesQuery
     ? chQuery<SecondaryNameRow>(country.detail.secondaryNamesQuery, { id })
     : Promise.resolve([]);
@@ -360,6 +377,7 @@ export async function getCompanyDetail(
   industriesPromise.catch(() => {});
   addressesPromise.catch(() => {});
   taxRecordsPromise.catch(() => {});
+  publicContractsPromise.catch(() => {});
   secondaryNamesPromise.catch(() => {});
   officersPromise.catch(() => {});
   auditPromise.catch(() => {});
@@ -374,13 +392,14 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, secondaryNames, officers, auditRows] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
     industriesPromise,
     addressesPromise,
     taxRecordsPromise,
+    publicContractsPromise,
     secondaryNamesPromise,
     officersPromise,
     auditPromise,
@@ -412,6 +431,7 @@ export async function getCompanyDetail(
     industries,
     addresses,
     taxRecords,
+    publicContracts,
     secondaryNames,
     officers,
     peopleMatches,

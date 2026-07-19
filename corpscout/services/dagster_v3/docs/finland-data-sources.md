@@ -16,6 +16,7 @@ Discovery trail (searches, samples, licenses, rejected sources):
 | `finland_xbrl` | PRH — digital financial statements (XBRL API) | automated, partitioned by registration date | daily 06:00 | `fi_financial_statements` / `fi_financial_metrics` 46k, `fi_xbrl_facts_raw` 3.5M, `fi_company_financials_latest` 21k | CC-BY-4.0 |
 | `finland_verotax` | Verohallinto — public corporate income tax CSVs | automated bulk (URL discovery from vero.fi page) | yearly, Nov 12 | `fi_tax_records` 1.79M (tax years 2020–2024, 385k entities/yr) | CC-BY-4.0 |
 | `finland_hilma` | Hilma (hankintailmoitukset.fi) — public procurement notices | **manual portal export → S3** | manual, per upload | `fi_hilma_notices` 12.5k, `fi_hilma_notice_winners` 11.3k | free incl. commercial (portal ToS) |
+| `ted_procurement` | TED (EU) — EU-threshold award notices, country-agnostic (FIN configured) | automated, monthly publication-date partitions from 2024-01 | monthly 3rd 05:35 | `ted_notices` / `ted_notice_winners` (backfill in progress; 100% winner ids, 91% join `fi_companies`) | EU open data |
 
 All four share the standard shape (`docs/data-source-guidelines.md`): download →
 per-source DuckDB staging → set-based SQL transform → migration-owned ClickHouse
@@ -115,8 +116,6 @@ unchanged (design doc §8).
   `docs/esef-filings-research.md` — filings.xbrl.org, keyless, xBRL-JSON facts,
   LEI→business id via `gleif`, consolidated-vs-standalone scope flag. Not built.
 - **YTJ company situations / registered entries**: see §1 gap — next in line.
-- **TED procurement** (EU-threshold, cross-country, keyless — 37,946 FIN award
-  notices verified): documented in the discovery trail; would complement Hilma.
 - **Not freely available** (documented, not chased): officers/board (paid Virre
   only; Finnish XBRL filings carry no signature facts), beneficial owners
   (access restricted), employee headcount (no open per-company source).
@@ -126,6 +125,8 @@ unchanged (design doc §8).
 Finland company detail renders: register record (with derived VAT id and
 trade-register status decoration, `fi-registry.tsx`), industries, financials
 (`fi_financial_metrics`), **tax records** (`fi-tax-records.tsx`, CC-BY
-attribution), contacts/addresses/domains. Hilma contracts are not surfaced yet —
-a "Public contracts" section over `fi_hilma_notice_winners` would follow the same
-config-driven `taxRecordsQuery` pattern.
+attribution), contacts/addresses/domains. **Public contracts** is a
+generic cross-country section (`public-contracts-section.tsx` + canonical
+`PublicContractRow`): each country's `publicContractsQuery` unions its portals —
+Finland unions Hilma + TED, deduping EU-threshold notices that appear in both
+via the Hilma `ted_number` reference.
