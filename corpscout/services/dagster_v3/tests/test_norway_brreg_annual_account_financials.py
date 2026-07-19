@@ -9,13 +9,16 @@ from typing import Any
 
 import dagster as dg
 import duckdb
+from pytest import MonkeyPatch
 
+from dagster_v3.defs.norway_brreg_financial import annual_account_financials
 from dagster_v3.defs.norway_brreg_financial.annual_account_financials import (
     ANNUAL_ACCOUNT_DATASET,
     MAPPING_VERSION,
     PARSER_VERSION,
     apply_annual_account_usd_conversion,
     apply_builtin_concept_mappings,
+    apply_llm_concept_mappings,
     build_annual_account_metrics,
     ensure_annual_account_duckdb_schema,
     extract_annual_account_facts,
@@ -37,7 +40,10 @@ from dagster_v3.defs.norway_brreg_financial.assets.annual_account_financials imp
     norway_brreg_annual_account_metrics_duckdb,
     norway_brreg_annual_account_reports_clickhouse,
 )
-from dagster_v3.defs.norway_brreg_financial.models import AnnualAccountDocument
+from dagster_v3.defs.norway_brreg_financial.models import (
+    AnnualAccountConceptMappingResponse,
+    AnnualAccountDocument,
+)
 
 
 class FakeAnnualAccountStorage:
@@ -410,6 +416,92 @@ def test_usd_conversion_limits_rate_scale_before_multiplication() -> None:
     assert counts["unconverted_fact_count"] == 0
     assert amount_usd == Decimal("190.2469135780")
     assert stored_rate == Decimal("0.095123456789")
+
+
+def test_llm_mapping_preserves_extended_concepts(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    connection, _storage = _loaded_sample_partition()
+
+    def extended_concept_response(
+        _client: object,
+        *,
+        batch: list[tuple[str, str]],
+        model: str,
+    ) -> tuple[AnnualAccountConceptMappingResponse, str]:
+        response_data = {
+            "mappings": [
+                {
+                    "input_id": input_id,
+                    "canonical_concept": "share_capital",
+                    "confidence": 0.99,
+                }
+                for input_id, _item in enumerate(batch)
+            ]
+        }
+        raw_response = json.dumps(response_data)
+        return (
+            AnnualAccountConceptMappingResponse.model_validate(response_data),
+            raw_response,
+        )
+
+    monkeypatch.setattr(
+        annual_account_financials,
+        "OpenAI",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        annual_account_financials,
+        "_request_llm_mappings",
+        extended_concept_response,
+    )
+
+    counts = apply_llm_concept_mappings(
+        connection=connection,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        base_url="http://llm.invalid/v1",
+        api_key="test",
+        model="test-model",
+        batch_size=2,
+        workers=2,
+        timeout_seconds=30,
+    )
+
+    extended_count, raw_response_count = connection.execute(
+        f"select count(*), count(raw_response) "
+        f"from {ANNUAL_ACCOUNT_DATASET}.concept_mappings "
+        "where mapping_method = 'llm_extended' "
+        "and canonical_concept = 'share_capital'"
+    ).fetchone()
+    mapped_fact_count = connection.execute(
+        f"select count(*) from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "where mapping_method = 'llm_extended' "
+        "and canonical_concept = 'share_capital'"
+    ).fetchone()[0]
+    metric_counts = build_annual_account_metrics(
+        connection=connection,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="mapping-test",
+    )
+    projected_concepts = {
+        source_fact["concept"]
+        for (source_fact_ids,) in connection.execute(
+            f"select source_fact_ids from {ANNUAL_ACCOUNT_DATASET}.metrics"
+        ).fetchall()
+        for source_fact in json.loads(source_fact_ids)
+    }
+    assert counts["requested_mapping_count"] > 0
+    assert counts["llm_mapping_count"] == 0
+    assert counts["extended_mapping_count"] == counts["requested_mapping_count"]
+    assert counts["unmapped_mapping_count"] == 0
+    assert counts["invalid_mapping_count"] == 0
+    assert extended_count == counts["extended_mapping_count"]
+    assert mapped_fact_count > 0
+    assert raw_response_count == extended_count
+    assert metric_counts["metric_row_count"] > 0
+    assert "share_capital" not in projected_concepts
 
 
 def test_metric_validation_keeps_ambiguous_facts_and_marks_review() -> None:

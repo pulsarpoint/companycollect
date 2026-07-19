@@ -25,8 +25,8 @@ from dagster_v3.defs.norway_brreg_financial.models import (
 
 ANNUAL_ACCOUNT_DATASET = "annual_accounts"
 PARSER_VERSION = "norway-annual-account-geometry-v2"
-MAPPING_VERSION = "norway-annual-account-concepts-v1"
-LLM_PROMPT_VERSION = "norway-annual-account-label-map-v1"
+MAPPING_VERSION = "norway-annual-account-concepts-v2"
+LLM_PROMPT_VERSION = "norway-annual-account-label-map-v2"
 LLM_MAX_TOKENS = 4_096
 LLM_MAX_BATCH_SIZE = 2
 SOURCE_SLUG = "norway_brreg_annual_accounts_pdf"
@@ -55,6 +55,7 @@ METRIC_NAMES = (
     "depreciation",
     "employees",
 )
+_METRIC_NAMES_SQL = ", ".join(f"'{name}'" for name in METRIC_NAMES)
 
 BUILTIN_CONCEPTS: dict[str, str] = {
     "sum inntekter": "operating_revenue",
@@ -102,6 +103,7 @@ _ACCOUNT_SCOPE_PATTERN = re.compile(
     r"\b(?:konsern|morselskap|morforetak|group|parent)\b",
     re.IGNORECASE,
 )
+_CANONICAL_CONCEPT_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,127}$")
 _NUMBER_TOKEN_PATTERN = re.compile(
     r"^(?:[-+]?\d+(?:[.,]\d+)?|[-+]?\(\d+(?:[.,]\d+)?\)|[-+]?\[\d+(?:[.,]\d+)?\])$"
 )
@@ -482,13 +484,27 @@ def apply_llm_concept_mappings(
           on mappings.normalized_label = facts.normalized_label
          and mappings.statement_type = facts.statement_type
         where facts.source_filing_year = ? and facts.source_chunk = ?
-          and mappings.normalized_label is null
+          and (
+                mappings.normalized_label is null
+                or (
+                    mappings.prompt_version <> ?
+                    and mappings.mapping_method in (
+                        'unmapped', 'llm_unsupported', 'llm_invalid'
+                    )
+                )
+              )
         order by facts.statement_type, facts.normalized_label
         """,
-        [filing_year, chunk_key],
+        [filing_year, chunk_key, LLM_PROMPT_VERSION],
     ).fetchall()
     if not pending:
-        return {"requested_mapping_count": 0, "llm_mapping_count": 0}
+        return {
+            "requested_mapping_count": 0,
+            "llm_mapping_count": 0,
+            "extended_mapping_count": 0,
+            "unmapped_mapping_count": 0,
+            "invalid_mapping_count": 0,
+        }
     if not 1 <= batch_size <= LLM_MAX_BATCH_SIZE:
         raise ValueError(
             f"LLM mapping batch size must be between 1 and {LLM_MAX_BATCH_SIZE}"
@@ -522,6 +538,10 @@ def apply_llm_concept_mappings(
 
     mapped_at = datetime.now(UTC)
     rows: list[tuple[Any, ...]] = []
+    llm_mapping_count = 0
+    extended_mapping_count = 0
+    unmapped_mapping_count = 0
+    invalid_mapping_count = 0
     for batch, response, raw_response in completed:
         by_id = {mapping.input_id: mapping for mapping in response.mappings}
         if set(by_id) != set(range(len(batch))):
@@ -531,16 +551,25 @@ def apply_llm_concept_mappings(
         for input_id, (normalized_label, statement_type) in enumerate(batch):
             mapping = by_id[input_id]
             canonical_concept = mapping.canonical_concept
-            if canonical_concept is not None and canonical_concept not in METRIC_NAMES:
-                raise RuntimeError(
-                    f"LLM returned unsupported canonical concept: {canonical_concept}"
-                )
+            if canonical_concept is None:
+                mapping_method = "unmapped"
+                unmapped_mapping_count += 1
+            elif canonical_concept in METRIC_NAMES:
+                mapping_method = "llm"
+                llm_mapping_count += 1
+            elif _CANONICAL_CONCEPT_PATTERN.fullmatch(canonical_concept):
+                mapping_method = "llm_extended"
+                extended_mapping_count += 1
+            else:
+                canonical_concept = None
+                mapping_method = "llm_invalid"
+                invalid_mapping_count += 1
             rows.append(
                 (
                     normalized_label,
                     statement_type,
                     canonical_concept,
-                    "llm" if canonical_concept is not None else "unmapped",
+                    mapping_method,
                     mapping.confidence,
                     model,
                     LLM_PROMPT_VERSION,
@@ -558,7 +587,13 @@ def apply_llm_concept_mappings(
         filing_year=filing_year,
         chunk_key=chunk_key,
     )
-    return {"requested_mapping_count": len(pending), "llm_mapping_count": len(rows)}
+    return {
+        "requested_mapping_count": len(pending),
+        "llm_mapping_count": llm_mapping_count,
+        "extended_mapping_count": extended_mapping_count,
+        "unmapped_mapping_count": unmapped_mapping_count,
+        "invalid_mapping_count": invalid_mapping_count,
+    }
 
 
 def apply_annual_account_usd_conversion(
@@ -724,15 +759,23 @@ def build_annual_account_metrics(
             {original_columns},
             {usd_columns},
             count(*) as source_fact_count,
-            count(*) filter (where canonical_concept is not null) as mapped_fact_count,
-            count(*) filter (where canonical_concept is null) as unmapped_numeric_fact_count,
+            count(*) filter (
+                where canonical_concept in ({_METRIC_NAMES_SQL})
+            ) as mapped_fact_count,
+            count(*) filter (
+                where canonical_concept is null
+                   or canonical_concept not in ({_METRIC_NAMES_SQL})
+            ) as unmapped_numeric_fact_count,
             'validated' as validation_status,
             '[]' as metric_warnings,
             to_json(
                 list(
                     struct_pack(concept := canonical_concept, fact_id := fact_id)
                     order by fact_ordinal
-                ) filter (where canonical_concept is not null and concept_rank = 1)
+                ) filter (
+                    where canonical_concept in ({_METRIC_NAMES_SQL})
+                      and concept_rank = 1
+                )
             ) as source_fact_ids,
             '{MAPPING_VERSION}' as mapping_version,
             max(facts.fx_rate_to_usd) as fx_rate_to_usd,
@@ -750,7 +793,7 @@ def build_annual_account_metrics(
             facts.source_filing_year, facts.source_chunk, facts.fiscal_year,
             documents.source_pdf_url, documents.source_json_uri, documents.source_json_sha256
         having count(*) filter (
-            where canonical_concept is not null
+            where canonical_concept in ({_METRIC_NAMES_SQL})
               and mapping_confidence >= 0.95 and ocr_confidence >= 80
         ) > 0
         """,
@@ -785,7 +828,7 @@ def _mark_metrics_requiring_review(
             select document_id, fiscal_year, canonical_concept
             from {ANNUAL_ACCOUNT_DATASET}.facts
             where source_filing_year = ? and source_chunk = ?
-              and canonical_concept is not null
+              and canonical_concept in ({_METRIC_NAMES_SQL})
               and mapping_confidence >= 0.95 and ocr_confidence >= 80
             group by document_id, fiscal_year, canonical_concept
             having count(distinct numeric_value) > 1
@@ -1234,19 +1277,21 @@ def _request_llm_mappings(
             {
                 "role": "system",
                 "content": (
-                    "Map Norwegian accounting labels to the supplied canonical allowlist. "
-                    "Map only when the label itself is an exact equivalent of the canonical "
-                    "measure. Never roll a component into a broader total: share capital is "
-                    "not total equity, an individual receivable is not total receivables, "
-                    "tax payable is not tax expense, and an individual liability is not "
-                    "total liabilities. Use null whenever the label is a component, note, "
-                    "heading, company name, or has no exact semantic mapping."
+                    "Map every meaningful Norwegian accounting label to a precise, stable "
+                    "English snake_case concept. Prefer a supplied core metric concept only "
+                    "when it is an exact semantic equivalent. Preserve components outside "
+                    "the core list with a precise extended concept, for example share capital "
+                    "as share_capital. Never roll a component into a broader total: share "
+                    "capital is not total equity, an individual receivable is not total "
+                    "receivables, tax payable is not tax expense, and an individual liability "
+                    "is not total liabilities. Use null only for headings, notes, company "
+                    "names, or text that is not a financial concept."
                 ),
             },
             {
                 "role": "user",
                 "content": json.dumps(
-                    {"allowlist": METRIC_NAMES, "inputs": inputs},
+                    {"core_metric_concepts": METRIC_NAMES, "inputs": inputs},
                     ensure_ascii=False,
                 ),
             },

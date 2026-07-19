@@ -115,7 +115,7 @@ def norway_brreg_annual_account_facts_duckdb(
     pool=ANNUAL_ACCOUNT_DUCKDB_POOL,
     description=(
         "Applies deterministic Norwegian accounting mappings, then asks the local "
-        "Qwen model only to classify remaining labels against a fixed allowlist."
+        "Qwen model to preserve remaining meaningful labels as core or extended concepts."
     ),
 )
 def norway_brreg_annual_account_fact_mappings_duckdb(
