@@ -9,6 +9,7 @@ export default [
     route("company/:country/:id/facts/:year/document", "routes/company-facts-document.ts"),
     route("company/:country/geocode", "routes/country-geocode.ts"),
     route("facet-options", "routes/facet-options.ts"),
+    route("person/:name", "routes/person.tsx"),
     route("financials", "routes/financials.tsx"),
     route("financials/country/:country", "routes/financials-country.tsx"),
     route("financials/industry/:division", "routes/financials-industry.tsx"),
