@@ -297,5 +297,64 @@
     "downloaded_files": [],
     "status": "useful_secondary_source",
     "notes": "Primary legal repository for Finnish issuers' ESEF reports, but no obvious machine-readable bulk interface; use filings.xbrl.org instead."
+  },
+  {
+    "country": "Finland",
+    "country_slug": "finland",
+    "source_name": "Hilma (hankintailmoitukset.fi) AVP open data API",
+    "source_type": "official_procurement_portal",
+    "organization": "Hansel Oy / Ministry of Finance",
+    "url": "https://www.hankintailmoitukset.fi/en/",
+    "bulk_download_url": null,
+    "api_base_url": "https://hns-hilma-prod-apim.azure-api.net",
+    "formats": [
+      "json",
+      "eforms_xml_base64"
+    ],
+    "license": "free incl. commercial use; ToS PDF on portal",
+    "access": "public_with_free_key",
+    "requires_authentication": true,
+    "requires_payment": false,
+    "rate_limits": "per API key",
+    "fields_observed": [
+      "notice types incl. contract award",
+      "eForms XML"
+    ],
+    "data_freshness": "continuous; ~18-20k notices/year",
+    "downloaded_files": [],
+    "status": "blocked_by_authentication",
+    "notes": "Free self-registration on developer portal issues an Ocp-Apim-Subscription-Key immediately (avp-read product). Covers national below-EU-threshold notices TED does not."
+  },
+  {
+    "country": "Finland",
+    "country_slug": "finland",
+    "source_name": "TED v3 Search API (EU Tenders Electronic Daily)",
+    "source_type": "official_eu_procurement",
+    "organization": "EU Publications Office",
+    "url": "https://ted.europa.eu/",
+    "bulk_download_url": "https://ted.europa.eu/en/simap/daily-packages",
+    "api_base_url": "https://api.ted.europa.eu/v3",
+    "formats": [
+      "json",
+      "eforms_xml"
+    ],
+    "license": "EU open data (free reuse)",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "unspecified; be polite",
+    "fields_observed": [
+      "publication-number",
+      "publication-date",
+      "notice-title",
+      "buyer-name",
+      "winner-name"
+    ],
+    "data_freshness": "daily",
+    "downloaded_files": [
+      "raw/api/ted_fi_award_notices_sample.json"
+    ],
+    "status": "recommended",
+    "notes": "37,946 FIN contract-award notices at 2026-07-19, keyless. Winner org identifiers in per-notice eForms XML. Cross-country: same pipeline serves every EU member state. EU-threshold notices only."
   }
 ]

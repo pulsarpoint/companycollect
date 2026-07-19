@@ -104,3 +104,26 @@
   - https://www.xbrl.org/news/finland-moves-to-mandatory-xbrl-reporting-for-company-accounts/
 - Result: iXBRL filing to PRH becomes mandatory in 2027 for companies required to appoint an auditor, expanding 2028 to most limited companies and partnerships; PRH targets all trade-register accounts in structured form by 2028.
 - Decision: No new pipeline needed for this; the existing `finland_xbrl` source will organically approach full coverage in 2027-2028. Keep Virre as the only paid backfill option for pre-2027 non-digital filers.
+
+## Attempt 9 (public procurement: Hilma AVP API)
+
+- Date/time: 2026-07-19T18:30Z
+- Search engine or source: web search + Hilma developer portal + GitHub Hankintailmoitukset/hilma-api
+- Query: `Hilma hankintailmoitukset.fi open data API public procurement Finland winners suppliers`
+- Language: English/Finnish
+- Why this query was tried: connect Finnish companies to public-contract awards (revenue signal, government-customer graph).
+- Top relevant URLs:
+  - https://hns-hilma-prod-apim.developer.azure-api.net/
+  - https://github.com/Hankintailmoitukset/hilma-api (endpoints/avpendpoints.md)
+- Result: AVP (read) API is free, commercial use allowed, ~18-20k notices/year incl. contract award notices. BUT requires an `Ocp-Apim-Subscription-Key` obtained by self-registering on the developer portal (immediate for the avp-read product). Notices delivered as Base64 eForms XML; `/eform-search` (Azure Search syntax) + batch read endpoints. Rate-limited per key.
+- Decision: classify `blocked_by_authentication` (free registration) until a key exists. Registration is an account action for the data owner, not the agent.
+
+## Attempt 10 (public procurement: TED keyless alternative)
+
+- Date/time: 2026-07-19T18:40Z
+- Search engine or source: direct probe of TED v3 API
+- Query: POST https://api.ted.europa.eu/v3/notices/search with `place-of-performance IN (FIN) AND notice-type IN (can-standard)`
+- Language: English
+- Why this query was tried: EU-threshold Finnish notices are mirrored to TED, whose API might not need a key.
+- Result: Works with NO authentication. 37,946 Finnish contract-award notices, winner names in the search response, structured winner org identifiers (incl. national registration numbers) in the per-notice eForms XML. Cross-country by construction (any `place-of-performance`).
+- Decision: `recommended` as the first procurement source (EU-threshold, all countries); Hilma remains the add-on for Finnish national below-threshold notices once a key exists. Sample saved to `raw/api/ted_fi_award_notices_sample.json`.
