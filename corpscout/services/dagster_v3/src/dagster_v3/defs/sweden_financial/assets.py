@@ -31,6 +31,10 @@ from dagster_v3.defs.sweden_financial.metrics import (
     QUALIFIED_SE_FINANCIAL_METRICS_TABLE,
     replace_sweden_financial_metrics_clickhouse,
 )
+from dagster_v3.defs.sweden_financial.officers import (
+    QUALIFIED_SE_COMPANY_OFFICERS_TABLE,
+    replace_se_company_officers_clickhouse,
+)
 from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsResource
 from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.sweden_financial.storage import (
@@ -459,6 +463,31 @@ def se_financial_history_clickhouse(
     return dg.MaterializeResult(metadata=metadata)
 
 
+@dg.asset(
+    deps=["sweden_financial_facts_clickhouse"],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse", "xbrl"},
+    metadata={"table": QUALIFIED_SE_COMPANY_OFFICERS_TABLE},
+    description=(
+        "Extracts Swedish company officers (board members, CEO, auditors) "
+        "from XBRL signature-block facts in se_financial_facts."
+    ),
+)
+def se_company_officers_clickhouse(
+    context: dg.AssetExecutionContext,
+    config: SwedenFinancialClickhouseExportConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    metadata = replace_se_company_officers_clickhouse(
+        clickhouse=clickhouse,
+        source_run_id=context.run_id,
+        resolved_at=datetime.now(UTC),
+        log=context.log.info,
+        allow_shrink=config.allow_shrink,
+    )
+    return dg.MaterializeResult(metadata=metadata)
+
+
 SWEDEN_FINANCIAL_ARCHIVE_INGEST_GAP_TOLERANCE = 6
 
 
@@ -612,6 +641,7 @@ defs = dg.Definitions(
         sweden_financial_facts_clickhouse,
         sweden_financial_metrics_clickhouse,
         se_financial_history_clickhouse,
+        se_company_officers_clickhouse,
     ],
     asset_checks=[archive_ingest_complete],
     jobs=[
