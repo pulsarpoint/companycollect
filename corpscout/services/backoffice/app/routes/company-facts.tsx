@@ -75,7 +75,19 @@ function FactValue({ fact }: { fact: FactRow }) {
     return <span className="tabular-nums">{fact.date_value}</span>;
   }
   const text = fact.text_value ?? fact.raw_value;
-  return <span className="break-words whitespace-pre-wrap">{text}</span>;
+  // Narrative facts (accounting-principle notes etc.) run to a few KB —
+  // collapse them so they don't dominate the table.
+  if (text.length > 200) {
+    return (
+      <details className="text-left">
+        <summary className="text-muted-foreground cursor-pointer select-none">
+          {text.slice(0, 160)}… <span className="text-primary">more</span>
+        </summary>
+        <p className="mt-1 break-words whitespace-pre-wrap">{text}</p>
+      </details>
+    );
+  }
+  return <span className="block break-words whitespace-pre-wrap text-left">{text}</span>;
 }
 
 /** period0/balans0 is the filing's own year; periodN/balansN is N years back. */
@@ -195,33 +207,35 @@ export default function CompanyFacts({ loaderData, params }: Route.ComponentProp
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <Table className="min-w-[48rem]">
+              <Table className="min-w-[48rem] table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Concept</TableHead>
-                    <TableHead>Kind</TableHead>
-                    <TableHead className="text-right">Value</TableHead>
-                    <TableHead>Context</TableHead>
-                    {hasDimensions ? <TableHead>Dimensions</TableHead> : null}
+                    <TableHead className="w-[26%]">Concept</TableHead>
+                    <TableHead className="w-[8%]">Kind</TableHead>
+                    <TableHead className={hasDimensions ? "w-[36%] text-right" : "w-[52%] text-right"}>
+                      Value
+                    </TableHead>
+                    <TableHead className="w-[14%]">Context</TableHead>
+                    {hasDimensions ? <TableHead className="w-[16%]">Dimensions</TableHead> : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {visible.map((f, i) => (
                     <TableRow key={i}>
-                      <TableCell className="max-w-72 break-words font-mono text-xs align-top">
+                      <TableCell className="break-words font-mono text-xs align-top whitespace-normal">
                         {f.concept}
                       </TableCell>
                       <TableCell className="text-muted-foreground align-top text-xs">
                         {f.value_kind}
                       </TableCell>
-                      <TableCell className="max-w-96 text-right align-top">
+                      <TableCell className="text-right align-top break-words whitespace-normal">
                         <FactValue fact={f} />
                       </TableCell>
-                      <TableCell className="text-muted-foreground align-top text-xs whitespace-nowrap">
+                      <TableCell className="text-muted-foreground align-top text-xs">
                         {contextLabel(f.context_id, year)}
                       </TableCell>
                       {hasDimensions ? (
-                        <TableCell className="text-muted-foreground max-w-56 break-words align-top text-xs">
+                        <TableCell className="text-muted-foreground break-words align-top text-xs whitespace-normal">
                           {dimensionSummary(f.dimensions)}
                         </TableCell>
                       ) : null}
