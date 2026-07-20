@@ -80,7 +80,7 @@ nested ZIP holds one company's report as inline-XBRL XHTML. Archive years run
 2020–2026 (report periods inside reach back to 2017 — a filing lands in the
 archive year it was *published*, not the fiscal year it covers).
 
-Chain (year-partitioned backfill + 7-day-partitioned current refresh):
+Chain (year-partitioned backfill + non-partitioned weekly current refresh):
 
 1. **Raw archives → S3** (`sweden_financial_backfill_raw_archives_s3` /
    `…_current_raw_archives_s3`): outer ZIPs stored under deterministic keys in
@@ -98,19 +98,24 @@ Chain (year-partitioned backfill + 7-day-partitioned current refresh):
    (one row per inline-XBRL fact — lossless: numeric, date, text, context,
    unit, currency, dimensions), and `sweden_financial.parse_errors` (a bad
    document never blocks its partition).
-4. **Export → ClickHouse** — **partition-scoped incremental upserts, never
-   full-table replaces** (architecture decision after the 2026-07-19 incident,
-   when a host holding only one year's DuckDB file full-replaced the seven-year
-   facts table). Four partitioned assets mirror the parse partitions
-   (`sweden_financial_backfill_reports_clickhouse` /
-   `…_current_reports_clickhouse` + facts twins). Each run resolves its own
-   archive scope from the local DuckDB catalog (fail-loud when missing/empty),
-   deletes exactly its own scope — reports by `source_archive_key` array param,
-   facts by `statement_key` staged through a per-run Memory table so hundreds
-   of thousands of keys travel as data blocks, never query text — with
-   `mutations_sync = 1` (skipped when the pre-count is 0, the steady-state
-   new-archive case), then inserts that partition's rows. A run structurally
-   cannot touch rows outside its own partition.
+4. **Export → ClickHouse** — **scoped incremental upserts, never full-table
+   replaces** (architecture decision after the 2026-07-19 incident, when a
+   host holding only one year's DuckDB file full-replaced the seven-year
+   facts table). The backfill pair
+   (`sweden_financial_backfill_reports_clickhouse` + facts twin) is
+   year-partitioned and upserts its year file's full archive scope. The
+   current pair (`…_current_reports_clickhouse` + facts twin) is
+   non-partitioned and **reconciling** (2026-07-20 design): it diffs the
+   local active-year file against ClickHouse per `source_archive_key` (row
+   counts; facts via the `statement_key` join) and upserts exactly the
+   missing/mismatched archives — an empty diff is a clean no-op, so weekly
+   and yearly materializations are order-independent by construction. Both
+   delete exactly their own scope — reports by `source_archive_key` array
+   param, facts by `statement_key` staged through a per-run Memory table so
+   hundreds of thousands of keys travel as data blocks, never query text —
+   with `mutations_sync = 1` (skipped when the pre-count is 0, the
+   steady-state new-archive case), then insert. A run structurally cannot
+   touch rows outside its own scope.
 5. **Derived wave** (full rebuilds from ClickHouse facts, stage + exchange with
    shrink guard):
    - **`se_financial_metrics`** — one canonical row per filing: undimensioned
@@ -147,9 +152,9 @@ the backoffice facts drill-down.
 | job | contents | trigger |
 |---|---|---|
 | `sweden_financial_backfill_job` | raw + catalog + parse, year partitions | manual backfill |
-| `sweden_financial_current_year_job` | full weekly chain: raw + catalog + parse + reports/facts exports, 7-day partitions | `sweden_financial_current_year_weekly`, Sat 06:45 Europe/Belgrade, RUNNING |
+| `sweden_financial_current_year_job` | full weekly chain: sync + catalog + parse + reconciling reports/facts exports (non-partitioned) | `sweden_financial_current_year_weekly`, Sat 06:45 Europe/Belgrade, RUNNING |
 | `sweden_financial_backfill_clickhouse_job` | backfill reports+facts export pair | manual, after parse |
-| `sweden_financial_current_clickhouse_job` | current reports+facts export pair (manual re-export; the weekly job already exports) | manual |
+| `sweden_financial_current_clickhouse_job` | reconciling current export pair (manual; safe any time -- stateless diff vs ClickHouse) | manual |
 | `sweden_financial_clickhouse_job` | derived wave: metrics, history, officers, audits | after exports |
 
 Operational notes:

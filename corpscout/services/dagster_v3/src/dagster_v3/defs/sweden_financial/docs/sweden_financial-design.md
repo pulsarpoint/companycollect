@@ -200,26 +200,41 @@ in the stable cross-country metric projection.
 materialize the 2020-2026 partitions.
 
 `sweden_financial_current_year_job` selects the full weekly chain as separate
-assets in one run: `sweden_financial_current_raw_archives_s3`,
+non-partitioned assets in one run: `sweden_financial_current_raw_archives_s3`,
 `sweden_financial_current_report_xhtml_catalog_duckdb`,
 `sweden_financial_current_parsed_reports_duckdb`, then the
 `sweden_financial_current_reports_clickhouse` /
-`sweden_financial_current_facts_clickhouse` export pair. Running the export in
-the same run that records the weekly sync means its archive scope can never be
-orphaned by a later year-file rebuild (the yearly backfill parse replaces the
-entire year DuckDB file, wiping weekly `archive_sync_catalog` bookkeeping —
-the 2026-07-18 incident). A quiet week (sync ran, zero archives changed
-upstream) is a clean no-op export with `skipped_reason` metadata, not a
-failure; a missing sync for the partition still fails loudly.
+`sweden_financial_current_facts_clickhouse` export pair.
+
+The weekly chain is deliberately unpartitioned (2026-07-20 design): weekly
+partition identities existed only to give each week's export a bookkeeping
+scope (`archive_sync_catalog.load_partition_key`), and that bookkeeping was
+exactly what a yearly re-parse destroyed (the 2026-07-18 incident -- the
+backfill replaces the entire year DuckDB file). Instead, the weekly exports
+are **reconcilers**: they diff the local year file against ClickHouse per
+`source_archive_key` (row counts on both sides; facts counted through the
+`statement_key` -> reports join) and upsert exactly the missing/mismatched
+archives. No state can be lost because no state is kept.
+
+**Order-independence invariant:** the weekly job and the yearly backfill
+(parse + export) may be materialized in ANY order, any number of times, and
+every run succeeds -- yearly-after-weekly is an idempotent superset upsert;
+weekly-after-yearly reconciles to a no-op (metadata `skipped_reason`) or
+fills exactly the remaining gap. The only remaining export error is the
+corruption guard: a local year file with zero report rows refuses to export.
 
 `sweden_financial_current_year_weekly` runs at `45 6 * * 6` in
-`Europe/Belgrade`, targets the matching 7-day partition date, and is enabled by
-default. Each weekly run can discover upstream `LastModified` changes and add
-new raw archive versions while reusing unchanged archive objects.
+`Europe/Belgrade` and is enabled by default. Each weekly run discovers
+upstream `LastModified` changes, downloads only changed archives, parses
+them, and reconciles ClickHouse.
 
-A completed year backfill plus its backfill export subsumes every earlier
-weekly partition of that year: after a year rebuild, failed weekly export
-partitions dated before the rebuild need no re-run.
+**Deploy note (one-time, 2026-07-20):** before deploying the de-partitioned
+current chain, cancel any in-flight/queued backfills or runs targeting the
+old weekly partitions (`bulk_actions` / `run_tags key='dagster/backfill'`);
+a queued partition run that starts after the partitions are gone fails with
+`RUN_EXCEPTION` and can leak its `sweden_financial_current_2026_duckdb` pool
+slot (see CLAUDE.md Troubleshooting). Historical weekly-partition
+materializations remain in the event log as orphans; that is cosmetic.
 
 The ClickHouse layer is three jobs:
 `sweden_financial_backfill_clickhouse_job` (the backfill-partitioned
