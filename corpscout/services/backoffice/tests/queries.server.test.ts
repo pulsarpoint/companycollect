@@ -568,11 +568,16 @@ describe("addresses", () => {
     expect(detail!.addresses[0].full_address).toBeTruthy();
   }, 30_000);
 
-  it("finland returns an empty addresses array", async () => {
+  it("finland reads its YTJ address table", async () => {
     const fi = getCountry("fi")!;
-    const page = await searchCompanies(fi, { pageSize: 1 });
-    const detail = await getCompanyDetail(fi, String(page.rows[0].id));
-    expect(detail!.addresses).toEqual([]);
+    const [row] = await chQuery<{ id: string }>(
+      `SELECT business_id AS id FROM fi_companies
+       WHERE business_id IN (SELECT registry_id FROM fi_company_addresses WHERE address_lines IS NOT NULL)
+       ORDER BY business_id LIMIT 1`,
+    );
+    const detail = await getCompanyDetail(fi, row.id);
+    expect(detail!.addresses.length).toBeGreaterThan(0);
+    expect(detail!.addresses[0].full_address).toBeTruthy();
   }, 30_000);
 });
 

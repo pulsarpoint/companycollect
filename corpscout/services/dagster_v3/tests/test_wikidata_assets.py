@@ -8,6 +8,7 @@ from typing import Any
 
 import dagster as dg
 import duckdb
+import pytest
 from dagster import AssetKey
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
@@ -195,6 +196,7 @@ def test_wikidata_listed_companies_source_reads_raw_s3_pages() -> None:
         {
             "source": "wikidata",
             "query_mode": "exchange",
+            "run_id": "run-1",
             "exchange_id": "QEX1",
             "exchange_name": "Test Exchange One",
             "listed_company_count_on_exchange": 1,
@@ -209,7 +211,7 @@ def test_wikidata_listed_companies_source_reads_raw_s3_pages() -> None:
 
     source = wikidata_source.wikidata_listed_companies_source(
         object_store=object_store,
-        source_run_id="run-1",
+        source_run_id="downstream-only-run",
     )
     rows = list(source.resources[wikidata_source.WIKIDATA_LISTED_COMPANIES_TABLE])
 
@@ -254,6 +256,64 @@ def test_wikidata_listed_companies_source_reads_raw_s3_pages() -> None:
     assert rows[0]["source_record_id"] == "QEX1:000001:000001:Q1:Q1-L1"
     assert len(rows[0]["source_payload_hash"]) == 64
     assert len(rows[0]["query_hash"]) == 64
+
+
+def test_wikidata_listed_companies_source_keeps_explicit_raw_run_id_strict() -> None:
+    from dagster_v3.defs.wikidata import source as wikidata_source
+
+    object_store, s3_client = _object_store()
+    manifest_key = (
+        "raw/run_id=available-run/retrieved_date=2026-06-19/"
+        "exchange_id=QEX1/manifest.json"
+    )
+    s3_client.objects[("source-wikidata-company-seed", manifest_key)] = json.dumps(
+        {
+            "run_id": "available-run",
+            "started_at": "2026-06-19T10:00:00+00:00",
+            "exchange_id": "QEX1",
+            "objects": [],
+        }
+    ).encode("utf-8")
+
+    with pytest.raises(ValueError, match="run_id=missing-run"):
+        list(
+            wikidata_source.iter_wikidata_listed_company_rows(
+                object_store=object_store,
+                raw_run_id="missing-run",
+                source_run_id="downstream-only-run",
+            )
+        )
+
+
+def test_wikidata_raw_manifest_keys_prefers_same_run_then_latest_snapshot() -> None:
+    from dagster_v3.defs.wikidata import source as wikidata_source
+
+    object_store, s3_client = _object_store()
+    old_manifest_key = (
+        "raw/run_id=old-run/retrieved_date=2026-06-18/"
+        "exchange_id=QEX1/manifest.json"
+    )
+    new_manifest_key = (
+        "raw/run_id=new-run/retrieved_date=2026-06-19/"
+        "exchange_id=QEX1/manifest.json"
+    )
+    s3_client.objects[("source-wikidata-company-seed", old_manifest_key)] = json.dumps(
+        {"run_id": "old-run", "started_at": "2026-06-18T10:00:00+00:00"}
+    ).encode("utf-8")
+    s3_client.objects[("source-wikidata-company-seed", new_manifest_key)] = json.dumps(
+        {"run_id": "new-run", "started_at": "2026-06-19T10:00:00+00:00"}
+    ).encode("utf-8")
+
+    assert wikidata_source.wikidata_raw_manifest_keys(
+        object_store=object_store,
+        run_id="old-run",
+        fallback_to_latest=True,
+    ) == [old_manifest_key]
+    assert wikidata_source.wikidata_raw_manifest_keys(
+        object_store=object_store,
+        run_id="downstream-only-run",
+        fallback_to_latest=True,
+    ) == [new_manifest_key]
 
 
 def test_wikidata_listed_companies_source_merges_manifest_augmentation_objects() -> None:

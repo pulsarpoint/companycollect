@@ -338,6 +338,10 @@ def rebuild_company_detail_person_ids(
                 "Denmark CVR person IDs require the "
                 "denmark_cvr_companies_duckdb asset; materialize it first"
             ) from None
+        if company_count == 0:
+            raise RuntimeError(
+                "Denmark CVR person IDs require a non-empty company DuckDB table"
+            )
 
         _require_complete_company_details(object_store, connection)
         connection.execute(
@@ -436,6 +440,10 @@ def rebuild_company_detail_person_ids(
                     f"{DENMARK_CVR_PERSON_IDS_TABLE}"
                 ).fetchone()[0]
             )
+            if person_count == 0:
+                raise DenmarkCvrPersonIdCatalogError(
+                    "DataCVR company details produced no person IDs"
+                )
             connection.execute("commit")
         except Exception:
             connection.execute("rollback")

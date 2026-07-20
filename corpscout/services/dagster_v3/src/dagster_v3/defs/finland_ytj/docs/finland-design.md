@@ -43,6 +43,7 @@ Resolved dbt models:
 
 ```text
 finland_ytj_resolved_fi_companies
+finland_ytj_resolved_fi_company_addresses
 finland_ytj_resolved_fi_names
 finland_ytj_resolved_fi_websites
 finland_ytj_resolved_fi_industries
@@ -58,10 +59,19 @@ Target ClickHouse tables:
 
 ```text
 corpscout.fi_companies
+corpscout.fi_company_addresses
 corpscout.fi_names
 corpscout.fi_websites
 corpscout.fi_industries
 ```
+
+`fi_company_addresses` contains one current row per `(business_id, address_type)`
+from the YTJ bulk payload's `addresses[]` array. PRH address type `1` maps to
+`street` and type `2` to `postal`. The model composes the structured street,
+building, entrance, apartment, c/o, PO box, and free-format fields into
+`address_lines`; it selects the Finnish post-office name when available and
+retains postal code, municipality code, country code, and source provenance.
+Address registration date and the PRH address source code are retained explicitly.
 
 Job and schedule:
 

@@ -1,10 +1,12 @@
 FI_COMPANIES_TABLE = "fi_companies"
+FI_COMPANY_ADDRESSES_TABLE = "fi_company_addresses"
 FI_NAMES_TABLE = "fi_names"
 FI_WEBSITES_TABLE = "fi_websites"
 FI_INDUSTRIES_TABLE = "fi_industries"
 
 FINLAND_YTJ_RESOLVED_TABLES = (
     FI_COMPANIES_TABLE,
+    FI_COMPANY_ADDRESSES_TABLE,
     FI_NAMES_TABLE,
     FI_WEBSITES_TABLE,
     FI_INDUSTRIES_TABLE,
@@ -55,6 +57,28 @@ RESOLVED_TABLE_COLUMNS = {
         "source_system",
         "source_run_id",
         "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    FI_COMPANY_ADDRESSES_TABLE: (
+        "country_iso2",
+        "source_slug",
+        "source_run_id",
+        "source_record_id",
+        "registry_id",
+        "address_type",
+        "address_lines",
+        "postal_code",
+        "city",
+        "municipality",
+        "municipality_code",
+        "country",
+        "country_code",
+        "registered_on",
+        "source_code",
+        "source_field",
+        "is_current",
+        "source_url",
         "source_payload_hash",
         "resolved_at",
     ),

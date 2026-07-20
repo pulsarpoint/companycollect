@@ -7,6 +7,7 @@ def test_dbt_models_and_clickhouse_registered() -> None:
     repo = load_project_defs().get_repository_def()
     keys = {k.path[-1] for k in repo.asset_graph.get_all_asset_keys()}
     assert "finland_ytj_resolved_fi_companies" in keys
+    assert "finland_ytj_resolved_fi_company_addresses" in keys
     assert "finland_ytj_resolved_fi_names" in keys
     assert "finland_ytj_resolved_fi_websites" in keys
     assert "finland_ytj_resolved_fi_industries" in keys
@@ -21,6 +22,7 @@ def test_clickhouse_depends_on_dbt_models() -> None:
     dep_names = {k.path[-1] for k in deps}
     assert {
         "finland_ytj_resolved_fi_companies",
+        "finland_ytj_resolved_fi_company_addresses",
         "finland_ytj_resolved_fi_names",
         "finland_ytj_resolved_fi_websites",
         "finland_ytj_resolved_fi_industries",
@@ -45,6 +47,7 @@ def test_ytj_register_and_resolved_assets_share_dagster_group() -> None:
     for asset_name in (
         "finland_ytj_all_companies_duckdb",
         "finland_ytj_resolved_fi_companies",
+        "finland_ytj_resolved_fi_company_addresses",
         "finland_ytj_resolved_fi_names",
         "finland_ytj_resolved_fi_websites",
         "finland_ytj_resolved_fi_industries",
@@ -70,6 +73,7 @@ def test_resolved_schedule_covers_register_dbt_and_export() -> None:
     assert "finland_ytj_clickhouse_canonical_contacts" in keys
     assert {
         "finland_ytj_resolved_fi_companies",
+        "finland_ytj_resolved_fi_company_addresses",
         "finland_ytj_resolved_fi_names",
         "finland_ytj_resolved_fi_websites",
         "finland_ytj_resolved_fi_industries",

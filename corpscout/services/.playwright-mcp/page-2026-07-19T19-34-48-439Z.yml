@@ -1,0 +1,274 @@
+- generic [ref=f15e2]:
+  - generic [ref=f15e5]:
+    - list [ref=f15e7]:
+      - listitem [ref=f15e8]:
+        - link "CompanyCollect" [ref=f15e9] [cursor=pointer]:
+          - /url: /companies
+    - list [ref=f15e14]:
+      - listitem [ref=f15e15]:
+        - link "Companies" [ref=f15e16] [cursor=pointer]:
+          - /url: /companies
+      - listitem [ref=f15e22]:
+        - link "People" [ref=f15e23] [cursor=pointer]:
+          - /url: /people
+      - listitem [ref=f15e30]:
+        - link "Financials" [ref=f15e31] [cursor=pointer]:
+          - /url: /financials
+  - main [ref=f15e35]:
+    - generic [ref=f15e36]:
+      - button "Toggle Sidebar" [ref=f15e37]
+      - separator [ref=f15e39]
+      - generic [ref=f15e40]: CompanyCollect Backoffice
+    - generic [ref=f15e42]:
+      - button "Companies" [ref=f15e44] [cursor=pointer]
+      - generic [ref=f15e45]:
+        - heading "Tjugonde Hälsa AB" [level=2] [ref=f15e46]
+        - generic [ref=f15e47]: active
+        - generic [ref=f15e48]: "5565141719"
+      - generic [ref=f15e49]:
+        - generic [ref=f15e50]: Company record
+        - generic [ref=f15e52]:
+          - generic [ref=f15e53]:
+            - generic [ref=f15e54]:
+              - term [ref=f15e55]: Status
+              - definition [ref=f15e56]: active
+            - generic [ref=f15e57]:
+              - term [ref=f15e58]: Registered
+              - definition [ref=f15e59]: 1995-05-31
+          - separator [ref=f15e60]
+          - generic [ref=f15e61]:
+            - generic [ref=f15e62]:
+              - term [ref=f15e63]: Company ID
+              - definition [ref=f15e64]: "5565141719"
+            - generic [ref=f15e65]:
+              - term [ref=f15e66]: Registration number
+              - definition [ref=f15e67]: "5565141719"
+            - generic [ref=f15e68]:
+              - term [ref=f15e69]: Legal name
+              - definition [ref=f15e70]: Tjugonde Hälsa AB
+            - generic [ref=f15e71]:
+              - term [ref=f15e72]: Legal form code
+              - definition [ref=f15e73]: AB-ORGFO
+            - generic [ref=f15e74]:
+              - term [ref=f15e75]: Status reason
+              - definition [ref=f15e76]: —
+            - generic [ref=f15e77]:
+              - term [ref=f15e78]: Dissolution date
+              - definition [ref=f15e79]: —
+            - generic [ref=f15e80]:
+              - term [ref=f15e81]: Activity description
+              - definition [ref=f15e82]: Bolaget skall bedriva företagshälsovård, privat sjukvård, frisk- vård såsom träningsgym och rehabilitering och naprapatverksamhet samt därmed förenlig verksamhet.
+            - generic [ref=f15e83]:
+              - term [ref=f15e84]: Industry
+              - definition [ref=f15e85]: 9623 96.23 Day spa, sauna and steam bath activities
+          - group [ref=f15e86]:
+            - generic "Source & lineage" [ref=f15e87] [cursor=pointer]
+      - generic [ref=f15e88]:
+        - generic [ref=f15e90]:
+          - text: Also trades as
+          - generic [ref=f15e91]: 2 registered names
+        - list [ref=f15e93]:
+          - listitem [ref=f15e94]:
+            - generic [ref=f15e95]: Tjugonde Företagshälsovård
+            - generic [ref=f15e96]: since 1997-02-05
+            - generic [ref=f15e97]: För den del av verksamheten som avser företagshälsovård bedriven direkt gentemot företag.
+          - listitem [ref=f15e98]:
+            - generic [ref=f15e99]: Naprapaterna i Malmö
+            - generic [ref=f15e100]: since 2014-05-26
+            - generic [ref=f15e101]: För den del av verksamheten som avser naprapatverksamhet.
+      - generic [ref=f15e102]:
+        - generic [ref=f15e103]: Management · fiscal 2025
+        - generic [ref=f15e105]:
+          - list [ref=f15e106]:
+            - listitem [ref=f15e107]:
+              - generic [ref=f15e108]:
+                - link "Jonna Restin" [ref=f15e109] [cursor=pointer]:
+                  - /url: /person/jonna%20restin
+                - generic [ref=f15e110]: CEO
+                - generic [ref=f15e111]: Verkställande direktör
+            - listitem [ref=f15e112]:
+              - generic [ref=f15e113]:
+                - link "Ulrika Lanner" [ref=f15e114] [cursor=pointer]:
+                  - /url: /person/ulrika%20lanner
+                - generic [ref=f15e115]: Signatory
+              - group [ref=f15e116]:
+                - generic "10 companies with the same name — may be a different person" [ref=f15e117] [cursor=pointer]
+            - listitem [ref=f15e118]:
+              - generic [ref=f15e119]:
+                - link "Andreas Säfstrand" [ref=f15e120] [cursor=pointer]:
+                  - /url: /person/andreas%20s%C3%A4fstrand
+                - generic [ref=f15e121]: Signatory
+              - group [ref=f15e122]:
+                - generic "10 companies with the same name — may be a different person" [ref=f15e123] [cursor=pointer]
+          - generic [ref=f15e124]:
+            - paragraph [ref=f15e125]: Auditor
+            - list [ref=f15e126]:
+              - listitem [ref=f15e127]:
+                - generic [ref=f15e128]:
+                  - link "Fanny Govén" [ref=f15e129] [cursor=pointer]:
+                    - /url: /person/fanny%20gov%C3%A9n
+                  - generic [ref=f15e130]: Auditor
+                  - generic [ref=f15e131]: Auktoriserad revisor
+                - group [ref=f15e132]:
+                  - generic "10 companies with the same name — may be a different person" [ref=f15e133] [cursor=pointer]
+            - generic [ref=f15e134]:
+              - generic [ref=f15e135]: Audited by Öhrlings PricewaterhouseCoopers AB
+              - generic [ref=f15e136]: modified opinion
+              - generic [ref=f15e137]: 2026-05-04
+      - generic [ref=f15e138]:
+        - generic [ref=f15e139]: Industries
+        - list [ref=f15e142]:
+          - listitem [ref=f15e143]:
+            - generic [ref=f15e144]: "9623"
+            - generic [ref=f15e145]: 96.23 Day spa, sauna and steam bath activities
+            - generic [ref=f15e146]: primary
+          - listitem [ref=f15e147]:
+            - generic [ref=f15e148]: "8621"
+            - generic [ref=f15e149]: 86.21 General medical practice activities
+      - generic [ref=f15e150]:
+        - generic [ref=f15e151]: Financials
+        - table [ref=f15e159]:
+          - rowgroup [ref=f15e160]:
+            - row [ref=f15e161]:
+              - columnheader "Year" [ref=f15e162]
+              - columnheader "Currency" [ref=f15e163]
+              - columnheader "Revenue" [ref=f15e164]
+              - columnheader "Net result" [ref=f15e165]
+              - columnheader "Total assets" [ref=f15e166]
+              - columnheader "Equity" [ref=f15e167]
+              - columnheader "Employees" [ref=f15e168]
+          - rowgroup [ref=f15e169]:
+            - row [ref=f15e170]:
+              - cell [ref=f15e171]:
+                - link "2025" [ref=f15e172] [cursor=pointer]:
+                  - /url: /company/se/5565141719/facts/2025
+              - cell "SEK" [ref=f15e173]
+              - cell "19,026,673 $2,065,919" [ref=f15e174]:
+                - generic [ref=f15e175]:
+                  - generic [ref=f15e176]: 19,026,673
+                  - generic [ref=f15e177]: $2,065,919
+              - cell "213,602 $23,193" [ref=f15e178]:
+                - generic [ref=f15e179]:
+                  - generic [ref=f15e180]: 213,602
+                  - generic [ref=f15e181]: $23,193
+              - cell "6,894,981 $748,658" [ref=f15e182]:
+                - generic [ref=f15e183]:
+                  - generic [ref=f15e184]: 6,894,981
+                  - generic [ref=f15e185]: $748,658
+              - cell "1,975,472 $214,497" [ref=f15e186]:
+                - generic [ref=f15e187]:
+                  - generic [ref=f15e188]: 1,975,472
+                  - generic [ref=f15e189]: $214,497
+              - cell "1,500" [ref=f15e190]
+            - row [ref=f15e191]:
+              - cell "2024 from 2025 filing" [ref=f15e192]:
+                - text: "2024"
+                - generic [ref=f15e193]: from 2025 filing
+              - cell "SEK" [ref=f15e194]
+              - cell "20,047,265 $1,817,532" [ref=f15e195]:
+                - generic [ref=f15e196]:
+                  - generic [ref=f15e197]: 20,047,265
+                  - generic [ref=f15e198]: $1,817,532
+              - cell "—" [ref=f15e199]
+              - cell "7,938,170 $719,693" [ref=f15e200]:
+                - generic [ref=f15e201]:
+                  - generic [ref=f15e202]: 7,938,170
+                  - generic [ref=f15e203]: $719,693
+              - cell "—" [ref=f15e204]
+              - cell "—" [ref=f15e205]
+            - row [ref=f15e206]:
+              - cell "2023 from 2025 filing" [ref=f15e207]:
+                - text: "2023"
+                - generic [ref=f15e208]: from 2025 filing
+              - cell "SEK" [ref=f15e209]
+              - cell "17,389,000 $1,731,691" [ref=f15e210]:
+                - generic [ref=f15e211]:
+                  - generic [ref=f15e212]: 17,389,000
+                  - generic [ref=f15e213]: $1,731,691
+              - cell "—" [ref=f15e214]
+              - cell "—" [ref=f15e215]
+              - cell "—" [ref=f15e216]
+              - cell "—" [ref=f15e217]
+            - row [ref=f15e218]:
+              - cell [ref=f15e219]:
+                - link "2022" [ref=f15e220] [cursor=pointer]:
+                  - /url: /company/se/5565141719/facts/2022
+              - cell "SEK" [ref=f15e221]
+              - cell "17,628,535 $1,690,607" [ref=f15e222]:
+                - generic [ref=f15e223]:
+                  - generic [ref=f15e224]: 17,628,535
+                  - generic [ref=f15e225]: $1,690,607
+              - cell "233,300 $22,374" [ref=f15e226]:
+                - generic [ref=f15e227]:
+                  - generic [ref=f15e228]: 233,300
+                  - generic [ref=f15e229]: $22,374
+              - cell "6,645,848 $637,348" [ref=f15e230]:
+                - generic [ref=f15e231]:
+                  - generic [ref=f15e232]: 6,645,848
+                  - generic [ref=f15e233]: $637,348
+              - cell "729,578 $69,968" [ref=f15e234]:
+                - generic [ref=f15e235]:
+                  - generic [ref=f15e236]: 729,578
+                  - generic [ref=f15e237]: $69,968
+              - cell "1,500" [ref=f15e238]
+            - row [ref=f15e239]:
+              - cell "2021 from 2025 filing" [ref=f15e240]:
+                - text: "2021"
+                - generic [ref=f15e241]: from 2025 filing
+              - cell "SEK" [ref=f15e242]
+              - cell "17,776,000 $1,964,147" [ref=f15e243]:
+                - generic [ref=f15e244]:
+                  - generic [ref=f15e245]: 17,776,000
+                  - generic [ref=f15e246]: $1,964,147
+              - cell "—" [ref=f15e247]
+              - cell "—" [ref=f15e248]
+              - cell "—" [ref=f15e249]
+              - cell "—" [ref=f15e250]
+            - row [ref=f15e251]:
+              - cell "2020 from 2022 filing" [ref=f15e252]:
+                - text: "2020"
+                - generic [ref=f15e253]: from 2022 filing
+              - cell "SEK" [ref=f15e254]
+              - cell "14,528,000 $1,776,637" [ref=f15e255]:
+                - generic [ref=f15e256]:
+                  - generic [ref=f15e257]: 14,528,000
+                  - generic [ref=f15e258]: $1,776,637
+              - cell "—" [ref=f15e259]
+              - cell "—" [ref=f15e260]
+              - cell "—" [ref=f15e261]
+              - cell "—" [ref=f15e262]
+            - row [ref=f15e263]:
+              - cell "2019 from 2022 filing" [ref=f15e264]:
+                - text: "2019"
+                - generic [ref=f15e265]: from 2022 filing
+              - cell "SEK" [ref=f15e266]
+              - cell "14,053,000 $1,511,194" [ref=f15e267]:
+                - generic [ref=f15e268]:
+                  - generic [ref=f15e269]: 14,053,000
+                  - generic [ref=f15e270]: $1,511,194
+              - cell "—" [ref=f15e271]
+              - cell "—" [ref=f15e272]
+              - cell "—" [ref=f15e273]
+              - cell "—" [ref=f15e274]
+            - row [ref=f15e275]:
+              - cell "2018 from 2022 filing" [ref=f15e276]:
+                - text: "2018"
+                - generic [ref=f15e277]: from 2022 filing
+              - cell "SEK" [ref=f15e278]
+              - cell "13,610,000 $1,519,625" [ref=f15e279]:
+                - generic [ref=f15e280]:
+                  - generic [ref=f15e281]: 13,610,000
+                  - generic [ref=f15e282]: $1,519,625
+              - cell "—" [ref=f15e283]
+              - cell "—" [ref=f15e284]
+              - cell "—" [ref=f15e285]
+              - cell "—" [ref=f15e286]
+      - generic [ref=f15e287]:
+        - generic [ref=f15e288]: Contact & location
+        - generic [ref=f15e290]:
+          - generic [ref=f15e291]:
+            - paragraph [ref=f15e292]: Postal
+            - paragraph [ref=f15e293]: Stortorget 8 (Lejonetpassagen), 21134 MALMÖ
+          - generic [ref=f15e294]:
+            - paragraph [ref=f15e295]: Visiting or postal
+            - paragraph [ref=f15e296]: STORTORGET 8 LEJONETPASSAGEN, 21134 MALMÖ

@@ -101,15 +101,15 @@ def wikidata_listed_companies_duckdb_asset(
     dlt: DagsterDltResource,
     object_store: ObjectStoreResource,
 ) -> Iterator[Any]:
-    raw_run_id = config.raw_run_id or context.run.run_id
+    source_run_id = config.raw_run_id or context.run.run_id
     yield from dlt.run(
         context=context,
         dlt_source=wikidata_listed_companies_source(
             object_store=object_store,
-            raw_run_id=raw_run_id,
+            raw_run_id=config.raw_run_id,
             max_pages=config.max_pages,
             max_exchanges=config.max_exchanges,
-            source_run_id=raw_run_id,
+            source_run_id=source_run_id,
         ),
         dlt_pipeline=wikidata_listed_companies_pipeline(WIKIDATA_DUCKDB_PATH),
     )

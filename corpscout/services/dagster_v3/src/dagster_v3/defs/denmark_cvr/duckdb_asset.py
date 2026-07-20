@@ -893,65 +893,6 @@ def denmark_cvr_companies_duckdb(
     )
 
 
-@dg.asset(
-    deps=[
-        dg.AssetKey("denmark_cvr_persons_backfill_s3"),
-        dg.AssetKey("denmark_cvr_persons_active_s3"),
-    ],
-    group_name="denmark_cvr",
-    kinds={"python", "s3", "json", "duckdb"},
-    tags={
-        "country": "denmark",
-        "source": "cvr",
-        "source_name": "denmark_cvr",
-        "entity_type": DATACVR_PERSON_ENTITY_TYPE,
-        "layer": "normalized",
-    },
-    pool=DENMARK_CVR_DUCKDB_POOL,
-    metadata={
-        "duckdb_schema": DENMARK_CVR_DUCKDB_SCHEMA,
-        "duckdb_table": DENMARK_CVR_PERSONS_TABLE,
-    },
-    description=(
-        "Incrementally normalizes Denmark CVR backfill and daily person JSON "
-        "objects into one entity-number-deduplicated DuckDB table."
-    ),
-)
-def denmark_cvr_persons_duckdb(
-    context: dg.AssetExecutionContext,
-    object_store: ObjectStoreResource,
-    denmark_cvr_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    summary = update_denmark_cvr_persons_duckdb(
-        object_store=object_store,
-        denmark_cvr_duckdb=denmark_cvr_duckdb,
-        ingestion_run_id=context.run_id,
-        processed_at=datetime.now(UTC),
-        log_info=context.log.info,
-    )
-    context.log.info(
-        "Denmark CVR person DuckDB complete: discovered_objects=%s "
-        "existing_objects=%s processed_objects=%s processed_rows=%s persons=%s "
-        "incomplete_objects=%s database_bytes=%s",
-        summary.discovered_object_count,
-        summary.already_ingested_object_count,
-        summary.processed_object_count,
-        summary.processed_row_count,
-        summary.entity_count,
-        summary.incomplete_object_count,
-        summary.database_size_bytes,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            **_duckdb_materialization_metadata(
-                summary,
-                table_name=DENMARK_CVR_PERSONS_TABLE,
-            ),
-            "person_count": summary.entity_count,
-        }
-    )
-
-
 defs = dg.Definitions(
     assets=[denmark_cvr_companies_duckdb],
     resources={

@@ -12,6 +12,9 @@ from dagster_v3.defs.finland_ytj import resolved_tables as finland_resolved_tabl
 from dagster_v3.defs.nace import tables as nace_tables
 from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
 from dagster_v3.defs.norway_brreg import resolved_tables as norway_resolved_tables
+from dagster_v3.defs.finland_hilma import tables as finland_hilma_tables
+from dagster_v3.defs.ted_procurement import tables as ted_procurement_tables
+from dagster_v3.defs.finland_verotax import tables as finland_verotax_tables
 from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 from dagster_v3.defs.sweden_financial import history as sweden_financial_history
 
@@ -153,10 +156,13 @@ EXPECTED_MIGRATIONS = (
     "000139_corpscout_companies_all",
     "000140_corpscout_no_pdf_financials",
     "000141_corpscout_se_financial_history",
+    "000142_corpscout_fi_company_addresses",
     "000143_corpscout_se_company_officers",
     "000144_corpscout_fi_tax_records",
     "000145_corpscout_company_people_all",
     "000146_corpscout_se_company_audits",
+    "000147_corpscout_fi_hilma_notices",
+    "000148_corpscout_ted_procurement",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -799,6 +805,9 @@ def test_finland_resolved_migrations_cover_exported_columns() -> None:
     ]
     sqls_by_table = {
         finland_resolved_tables.FI_COMPANIES_TABLE: fi_companies_sqls,
+        finland_resolved_tables.FI_COMPANY_ADDRESSES_TABLE: [
+            _migration_sql("000142_corpscout_fi_company_addresses.up.sql")
+        ],
         finland_resolved_tables.FI_WEBSITES_TABLE: [
             _migration_sql("000006_corpscout_fi_websites.up.sql")
         ],
@@ -815,7 +824,7 @@ def test_finland_resolved_migrations_cover_exported_columns() -> None:
     )
 
     for table_name, sqls in sqls_by_table.items():
-        for column_name in finland_resolved_tables.RESOLVED_TABLE_COLUMNS[table_name]:
+        for column_name in finland_resolved_tables.RESOLVED_EXPORT_COLUMNS[table_name]:
             assert any(f" {column_name} " in sql for sql in sqls), (
                 f"{table_name}.{column_name} not found in scoped migration SQL"
             )
@@ -1744,6 +1753,69 @@ def test_companies_all_migration_covers_columns() -> None:
     assert "ORDER BY (country_code, company_id)" in sql
     assert "ENGINE = MergeTree" in sql
     assert "DROP TABLE IF EXISTS corpscout.companies_all" in down_sql
+
+
+def test_ted_procurement_migration_covers_export_columns() -> None:
+    sql = _migration_sql("000148_corpscout_ted_procurement.up.sql")
+    down_sql = _migration_sql("000148_corpscout_ted_procurement.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.ted_notices" in sql
+    for column_name in ted_procurement_tables.TED_NOTICES_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.ted_notice_winners" in sql
+    for column_name in ted_procurement_tables.TED_NOTICE_WINNERS_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "ORDER BY (publication_number)" in sql
+    assert (
+        "ORDER BY (winner_national_id, publication_number, lot_id, tender_id, winner_ordinal)"
+        in sql
+    )
+    assert "ENGINE = ReplacingMergeTree" in sql
+    assert "DROP TABLE IF EXISTS corpscout.ted_notices" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.ted_notice_winners" in down_sql
+
+
+def test_finland_hilma_migration_covers_export_columns() -> None:
+    sql = _migration_sql("000147_corpscout_fi_hilma_notices.up.sql")
+    down_sql = _migration_sql("000147_corpscout_fi_hilma_notices.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.fi_hilma_notices" in sql
+    for column_name in finland_hilma_tables.FI_HILMA_NOTICES_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.fi_hilma_notice_winners" in sql
+    for column_name in finland_hilma_tables.FI_HILMA_NOTICE_WINNERS_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "ORDER BY (notice_number, lot_id)" in sql
+    assert "ORDER BY (winner_business_id, notice_number, lot_id, winner_ordinal)" in sql
+    assert "ENGINE = ReplacingMergeTree" in sql
+    assert "DROP TABLE IF EXISTS corpscout.fi_hilma_notices" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.fi_hilma_notice_winners" in down_sql
+
+
+def test_finland_verotax_migration_covers_export_columns() -> None:
+    sql = _migration_sql("000144_corpscout_fi_tax_records.up.sql")
+    down_sql = _migration_sql("000144_corpscout_fi_tax_records.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.fi_tax_records" in sql
+    for column_name in finland_verotax_tables.FI_TAX_RECORDS_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    # Provenance columns stay in DuckDB staging only.
+    for excluded in finland_verotax_tables.CLICKHOUSE_EXCLUDED_COLUMNS:
+        assert f"    {excluded} " not in sql
+
+    assert "tax_year Int32" in sql
+    assert "period_end_date Date" in sql
+    assert "taxable_income_amount_original Nullable(Decimal(38, 2))" in sql
+    assert "prepayments_total_amount_usd Nullable(Decimal(38, 2))" in sql
+    assert "fx_rate_to_usd Nullable(Decimal(38, 12))" in sql
+    assert "ENGINE = ReplacingMergeTree" in sql
+    assert "ORDER BY (business_id, tax_year)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.fi_tax_records" in down_sql
 
 
 def test_sweden_financial_history_migration_covers_columns() -> None:

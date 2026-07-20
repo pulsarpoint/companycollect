@@ -206,12 +206,8 @@ describe("detail config", () => {
     }
   });
 
-  it("every country except fi declares addressQuery with canonical aliases", () => {
+  it("every country declares addressQuery with canonical aliases", () => {
     for (const c of COUNTRIES) {
-      if (c.code === "fi") {
-        expect(c.detail?.addressQuery).toBeUndefined();
-        continue;
-      }
       expect(c.detail?.addressQuery, c.code).toContain("AS address_type");
       expect(c.detail?.addressQuery, c.code).toContain("AS full_address");
       expect(c.detail?.addressQuery, c.code).toContain("{id:String}");

@@ -4,9 +4,13 @@
 
 - DataCVR at `https://datacvr.virk.dk` is accessed through CloakBrowser because
   its JSON gateways require a browser session.
-- Search assets download companies (`enhedstype="virksomhed"`) and persons
-  (`enhedstype="person"`). Responses are rejected when totals or rows contain a
-  different entity type.
+- Search assets download companies (`enhedstype="virksomhed"`). Responses are
+  rejected when totals or rows contain a different entity type.
+- Person search is intentionally not an asset. DataCVR returns zero persons when
+  `startdatoFra`/`startdatoTil` are present, while the same request without dates
+  advertises more than 1.8 million results and cannot be enumerated through the
+  3,000-result search ceiling. Person IDs instead come from complete company
+  details.
 - Production units are not downloaded through date-filtered search. DataCVR
   returns empty production-unit results when the search request includes the
   `startdatoFra` and `startdatoTil` filters used by the smart list partitions.
@@ -16,11 +20,11 @@
   `/gateway/virksomhed/hentVirksomhed?cvrnummer=<CVR>&locale=en` through one
   reusable CloakBrowser session per materialized partition.
 
-## Company and person search partitions
+## Company search partitions
 
-- Company and person backfills contain calendar-month partitions from `2015-01`
-  through `2026-06` in `Europe/Copenhagen`. Active assets contain daily
-  partitions from `2026-07-01` onward.
+- Company backfills contain calendar-month partitions from `2015-01` through
+  `2026-06` in `Europe/Copenhagen`. Active assets contain daily partitions from
+  `2026-07-01` onward.
 - Each active partition uses its date for both `startdatoFra` and `startdatoTil`.
   It therefore captures companies registered on that date. The DataCVR search
   contract does not expose a record-update timestamp, so this is not independently
@@ -39,22 +43,18 @@ Search captures are immutable objects in `source-denmark-cvr`, for example:
 
 - `denmark_cvr/backfill/month=<YYYY-MM>/companies.json`
 - `denmark_cvr/active/date=<YYYY-MM-DD>/companies.json`
-- `denmark_cvr/backfill/month=<YYYY-MM>/persons.json`
-- `denmark_cvr/active/date=<YYYY-MM-DD>/persons.json`
 
 Incomplete objects add `_incomplete` before `.json`. Existing complete or
 incomplete result objects cause a retry to skip the browser request. Invalid
 responses are stored separately as `.invalid.json`; logs do not include response
 bodies, company data, cookies, or browser state.
 
-Two non-partitioned assets normalize these search objects into the shared
+One non-partitioned asset normalizes these search objects into the shared
 `data/denmark_cvr_source.duckdb` database:
 
 - `denmark_cvr_companies_duckdb` upserts one row per CVR.
-- `denmark_cvr_persons_duckdb` upserts one row per person entity number.
-
-Both use explicit Arrow schemas, preserve the original row in `raw_record`, and
-record processed object keys in `denmark_cvr.ingested_objects`. All pending
+It uses an explicit Arrow schema, preserves the original row in `raw_record`,
+and records processed object keys in `denmark_cvr.ingested_objects`. All pending
 objects in one materialization are committed in one transaction.
 
 ## Company detail backfill
@@ -114,6 +114,38 @@ the daily set represents companies registered on `X`; if the company-list asset
 is extended to capture other updates into the same audit columns, those CVRs flow
 through without changing the detail assets.
 
+## Person-ID catalog and person-detail backfill
+
+The retired `denmark_cvr_persons_backfill_s3` and
+`denmark_cvr_persons_active_s3` search assets are not registered because date
+filters always produce zero person rows. Person details instead start only after
+the complete company-detail snapshot:
+
+1. `denmark_cvr_company_detail_person_ids_duckdb` depends on both
+   `denmark_cvr_companies_duckdb` and `denmark_cvr_company_details_s3`.
+2. Before replacing its catalog, it verifies that every expected company CVR has
+   both `company.json` and `company_en.json` in the correct one of all 128
+   company-detail buckets.
+3. It extracts IDs from
+   `personkreds.personkredser[].personRoller[]` and
+   `personkreds.ophoerteFad[]`, keeps only records whose `enhedstype` is
+   `person` case-insensitively, and stores the required `id` plus `personType` in
+   `denmark_cvr.person_ids`.
+4. `denmark_cvr_person_details_s3` reads that DuckDB catalog through 128 stable
+   `md5_number_lower(person_id) % 128` partitions.
+
+One person bucket opens one reusable browser session. Each request uses the
+HTTPS endpoint
+`/gateway/person/hentPerson?enhedsnummer=<ID>&persontype=<TYPE>&locale=en`.
+HTTP 429 and transient 5xx responses use bounded `Retry-After`/exponential
+backoff. Successful responses are checkpointed as:
+
+- `denmark_cvr/person_details/bucket_NNN/enhedsnummer=<ID>/person.json`
+- `denmark_cvr/person_details/bucket_NNN/enhedsnummer=<ID>/person_en.json`
+
+The original object preserves Danish keys and values. The companion object uses
+a versioned static English-key mapping and leaves every value unchanged.
+
 ## Independent production-unit capture and normalization
 
 Production-unit capture assets are peers of the company-detail assets. They
@@ -157,6 +189,9 @@ parent-aware schema.
   shared `denmark_cvr_search` pool.
 - Company-detail assets use one partition per run and the dedicated
   `denmark_cvr_company_details` pool, giving one browser session per partition.
+- Person-detail downloads use one ID bucket per run and the dedicated
+  `denmark_cvr_person_details` pool. The global per-pool limit serializes those
+  browser sessions.
 - Production-unit capture assets use one partition per run and their own
   `denmark_cvr_production_units` browser pool.
 - All DuckDB writers use the `denmark_cvr_duckdb` single-writer pool.

@@ -80,7 +80,7 @@ source_payload_hash
 ```
 
 `raw_company` preserves the original PRH company JSON for dbt models that need
-nested arrays such as names and business lines.
+nested arrays such as names, addresses, and business lines.
 
 ## Asset And Pooling
 
@@ -118,6 +118,7 @@ dbt models:
 
 ```text
 finland_ytj_resolved_fi_companies
+finland_ytj_resolved_fi_company_addresses
 finland_ytj_resolved_fi_names
 finland_ytj_resolved_fi_websites
 finland_ytj_resolved_fi_industries
@@ -128,6 +129,7 @@ ClickHouse tables:
 
 ```text
 corpscout.fi_companies
+corpscout.fi_company_addresses
 corpscout.fi_names
 corpscout.fi_websites
 corpscout.fi_industries
@@ -149,6 +151,7 @@ The job selects `finland_ytj_resolved_clickhouse.upstream()`, so it includes:
 ```text
 finland_ytj_all_companies_duckdb
 finland_ytj_resolved_fi_companies
+finland_ytj_resolved_fi_company_addresses
 finland_ytj_resolved_fi_names
 finland_ytj_resolved_fi_websites
 finland_ytj_resolved_fi_industries

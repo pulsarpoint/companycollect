@@ -534,6 +534,7 @@ def iter_wikidata_listed_company_rows(
     manifest_keys = wikidata_raw_manifest_keys(
         object_store=object_store,
         run_id=effective_raw_run_id,
+        fallback_to_latest=raw_run_id is None,
     )
     if not manifest_keys:
         raise ValueError(
@@ -557,14 +558,48 @@ def wikidata_raw_manifest_keys(
     *,
     object_store: Any,
     run_id: str,
+    fallback_to_latest: bool,
 ) -> list[str]:
-    return [
+    all_manifest_keys = [
         key
-        for key in sorted(
-            object_store.list_keys(f"raw/run_id={run_id}/", bucket=WIKIDATA_RAW_BUCKET)
-        )
+        for key in sorted(object_store.list_keys("raw/", bucket=WIKIDATA_RAW_BUCKET))
         if key.endswith("/manifest.json")
     ]
+    run_prefix = f"raw/run_id={run_id}/"
+    run_manifest_keys = [key for key in all_manifest_keys if key.startswith(run_prefix)]
+    if run_manifest_keys or not fallback_to_latest or not all_manifest_keys:
+        return run_manifest_keys
+
+    return latest_wikidata_raw_manifest_keys(
+        object_store=object_store,
+        manifest_keys=all_manifest_keys,
+    )
+
+
+def latest_wikidata_raw_manifest_keys(
+    *,
+    object_store: Any,
+    manifest_keys: list[str],
+) -> list[str]:
+    manifest_keys_by_run: dict[str, list[str]] = {}
+    for manifest_key in manifest_keys:
+        run_prefix, separator, _ = manifest_key.partition("retrieved_date=")
+        if separator:
+            manifest_keys_by_run.setdefault(run_prefix, []).append(manifest_key)
+
+    if not manifest_keys_by_run:
+        return []
+
+    return max(
+        manifest_keys_by_run.values(),
+        key=lambda keys: str(
+            read_wikidata_raw_json(
+                object_store=object_store,
+                object_key=keys[0],
+            ).get("started_at")
+            or ""
+        ),
+    )
 
 
 def iter_wikidata_listed_company_rows_from_manifest(

@@ -41,7 +41,7 @@ def _seed_all_companies(db_path: Path) -> None:
            'active', true,
            'https://example.fi/path','https://example.fi/path','example.fi','/path','2024-01-02','',
            'finland_prhytj','run-1','fi-1','hash1',
-           '{"businessId":{"value":"fi-1","registrationDate":"2024-01-01"},"euId":{"value":"FIFPRO.0000000-0","source":"1"},"names":[{"name":"Active One Oy","type":"1","registrationDate":"2024-01-01","endDate":null,"version":1,"source":"1"},{"name":"Active One old Oy","type":"1","registrationDate":"2020-01-01","endDate":"2023-12-31","version":2,"source":"1"}],"mainBusinessLine":{"code":"62010","codeSet":"NACE_REV_2","descriptions":[{"languageCode":"1","description":"Ohjelmistot"}]},"companyForms":[{"type":"16","registrationDate":"2024-01-01","version":1,"descriptions":[{"languageCode":"1","description":"Osakeyhtiö"},{"languageCode":"3","description":"Limited company"}]}],"registeredEntries":[{"register":"6","registrationDate":"2024-01-01"}]}'),
+           '{"businessId":{"value":"fi-1","registrationDate":"2024-01-01"},"euId":{"value":"FIFPRO.0000000-0","source":"1"},"names":[{"name":"Active One Oy","type":"1","registrationDate":"2024-01-01","endDate":null,"version":1,"source":"1"},{"name":"Active One old Oy","type":"1","registrationDate":"2020-01-01","endDate":"2023-12-31","version":2,"source":"1"}],"addresses":[{"type":1,"street":"Rantakatu","postCode":"65100","postOffices":[{"city":"VAASA","languageCode":"1","municipalityCode":"905"},{"city":"VASA","languageCode":"2","municipalityCode":"905"}],"postOfficeBox":null,"buildingNumber":"13","entrance":"V","apartmentNumber":"4","apartmentIdSuffix":"A","co":"c/o Example","country":null,"freeAddressLine":null,"registrationDate":"2024-02-03","source":"0"},{"type":2,"street":"","postCode":"67101","postOffices":[{"city":"KOKKOLA","languageCode":"1","municipalityCode":"272"},{"city":"KARLEBY","languageCode":"2","municipalityCode":"272"}],"postOfficeBox":"516","buildingNumber":"","entrance":"","apartmentNumber":"","apartmentIdSuffix":"","co":"","country":null,"freeAddressLine":null,"registrationDate":"2024-02-04","source":"0"}],"mainBusinessLine":{"code":"62010","codeSet":"NACE_REV_2","descriptions":[{"languageCode":"1","description":"Ohjelmistot"}]},"companyForms":[{"type":"16","registrationDate":"2024-01-01","version":1,"descriptions":[{"languageCode":"1","description":"Osakeyhtiö"},{"languageCode":"3","description":"Limited company"}]}],"registeredEntries":[{"register":"6","registrationDate":"2024-01-01"}]}'),
           ('fi-2','FI','Ceased Two Oy','2020-01-01','2025-01-01',
            NULL,'','',
            'ceased', false,
@@ -122,6 +122,53 @@ def test_fi_websites_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     ).fetchall()
     # Only fi-1 has a website; fi-2 is filtered out (empty normalized url)
     assert rows == [("fi-1", "https://example.fi/path", "example.fi", "example.fi", True, True)]
+
+
+def test_fi_company_addresses_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = tmp_path / "finland_ytj.duckdb"
+    _seed_all_companies(db)
+    _dbt_build(db, monkeypatch)
+    conn = duckdb.connect(str(db), read_only=True)
+    rows = conn.execute(
+        "select registry_id, address_type, address_lines, postal_code, city, "
+        "municipality_code, country_code, registered_on, source_code, source_field, "
+        "is_current, source_record_id "
+        "from finland_resolved.fi_company_addresses "
+        "order by registry_id, address_type"
+    ).fetchall()
+    assert rows == [
+        (
+            "fi-1",
+            "postal",
+            "PL 516",
+            "67101",
+            "KOKKOLA",
+            "272",
+            "FI",
+            date(2024, 2, 4),
+            "0",
+            "addresses",
+            True,
+            "fi-1:address:1",
+        ),
+        (
+            "fi-1",
+            "street",
+            "c/o Example, Rantakatu 13 V 4A",
+            "65100",
+            "VAASA",
+            "905",
+            "FI",
+            date(2024, 2, 3),
+            "0",
+            "addresses",
+            True,
+            "fi-1:address:0",
+        ),
+    ]
 
 
 def test_fi_names_model_extracts_name_history(

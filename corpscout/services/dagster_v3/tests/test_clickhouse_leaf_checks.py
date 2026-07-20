@@ -44,6 +44,13 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
     ):
         assert expected in keys, expected
 
+    finland = next(
+        leaf
+        for leaf in chk.CLICKHOUSE_LEAVES
+        if leaf.asset_key == "finland_ytj_resolved_clickhouse"
+    )
+    assert "fi_company_addresses" in finland.tables
+
 
 def test_every_leaf_has_a_row_count_check_and_scheduled_leaves_freshness() -> None:
     repo = _repo()

@@ -68,6 +68,9 @@ def finland_resolved_dbt_assets(
 @dg.asset(
     deps=[
         get_asset_key_for_model([finland_resolved_dbt_assets], "fi_companies"),
+        get_asset_key_for_model(
+            [finland_resolved_dbt_assets], "fi_company_addresses"
+        ),
         get_asset_key_for_model([finland_resolved_dbt_assets], "fi_names"),
         get_asset_key_for_model([finland_resolved_dbt_assets], "fi_websites"),
         get_asset_key_for_model([finland_resolved_dbt_assets], "fi_industries"),
