@@ -1,0 +1,13 @@
+{
+  "data": [],
+  "links": {
+    "self": "https://filings.xbrl.org/api/filings?page%5Bsize%5D=3&include=entity&page%5Bnumber%5D=3",
+    "first": "https://filings.xbrl.org/api/filings?page%5Bsize%5D=3&include=entity",
+    "last": "https://filings.xbrl.org/api/filings?page%5Bsize%5D=3&include=entity&page%5Bnumber%5D=8354"
+  },
+  "included": [],
+  "meta": {},
+  "jsonapi": {
+    "version": "1.0"
+  }
+}

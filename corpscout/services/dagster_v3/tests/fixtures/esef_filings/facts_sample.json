@@ -1,0 +1,80 @@
+{
+  "documentInfo": {
+    "documentType": "https://xbrl.org/2021/xbrl-json",
+    "features": {
+      "xbrl:canonicalValues": true
+    },
+    "namespaces": {
+      "ext": "http://www.instalkrakow.pl/xbrl/2022",
+      "ifrs-full": "http://xbrl.ifrs.org/taxonomy/2021-03-24/ifrs-full",
+      "iso4217": "http://www.xbrl.org/2003/iso4217",
+      "scheme": "http://standards.iso.org/iso/17442",
+      "xbrl": "https://xbrl.org/2021",
+      "xbrli": "http://www.xbrl.org/2003/instance"
+    },
+    "taxonomy": [
+      "http://www.instalkrakow.pl/xbrl/2022/259400OOMJ31L0SWCY70-2022-12-31.xsd"
+    ]
+  },
+  "facts": {
+    "caTagID398": {
+      "value": "438395039.49",
+      "decimals": 2,
+      "dimensions": {
+        "concept": "ifrs-full:Assets",
+        "entity": "scheme:259400OOMJ31L0SWCY70",
+        "period": "2022-01-01T00:00:00",
+        "unit": "iso4217:PLN"
+      }
+    },
+    "caTagID399": {
+      "value": "464681115.92",
+      "decimals": 2,
+      "dimensions": {
+        "concept": "ifrs-full:Assets",
+        "entity": "scheme:259400OOMJ31L0SWCY70",
+        "period": "2023-01-01T00:00:00",
+        "unit": "iso4217:PLN"
+      }
+    },
+    "caTagID1463": {
+      "value": "380466541.53",
+      "decimals": 2,
+      "dimensions": {
+        "concept": "ifrs-full:Revenue",
+        "entity": "scheme:259400OOMJ31L0SWCY70",
+        "period": "2021-01-01T00:00:00/2022-01-01T00:00:00",
+        "unit": "iso4217:PLN"
+      }
+    },
+    "caTagID1963": {
+      "value": "7285500",
+      "decimals": 2,
+      "dimensions": {
+        "concept": "ifrs-full:Equity",
+        "entity": "scheme:259400OOMJ31L0SWCY70",
+        "period": "2022-01-01T00:00:00",
+        "ifrs-full:ComponentsOfEquityAxis": "ifrs-full:IssuedCapitalMember",
+        "unit": "iso4217:PLN"
+      }
+    },
+    "caTagID1647": {
+      "value": "Formą prawną jednostki jest Spółka Akcyjna.",
+      "dimensions": {
+        "concept": "ifrs-full:LegalFormOfEntity",
+        "language": "pl",
+        "entity": "scheme:259400OOMJ31L0SWCY70",
+        "period": "2022-01-01T00:00:00/2023-01-01T00:00:00"
+      }
+    },
+    "caTagID1648": {
+      "value": "Państwem rejestracji jest Polska. ",
+      "dimensions": {
+        "concept": "ifrs-full:CountryOfIncorporation",
+        "language": "pl",
+        "entity": "scheme:259400OOMJ31L0SWCY70",
+        "period": "2022-01-01T00:00:00/2023-01-01T00:00:00"
+      }
+    }
+  }
+}

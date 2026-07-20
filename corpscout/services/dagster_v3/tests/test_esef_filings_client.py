@@ -1,0 +1,360 @@
+"""Tests for the ESEF filings index client, streamed fact download, and the
+export-column contract against migration 000149.
+
+All fixtures are committed files under tests/fixtures/esef_filings/ (captured
+once via curl against the live filings.xbrl.org API — see that directory).
+No test here hits the network.
+"""
+
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from dagster_v3.defs.esef_filings import client as esef_client
+from dagster_v3.defs.esef_filings import tables
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "esef_filings"
+
+# Same parents[] depth as the working MIGRATIONS_DIR in test_clickhouse_migrations.py
+# (this file lives in the same tests/ directory): tests -> dagster_v3 -> services -> corpscout.
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+MIGRATION_FILE = MIGRATIONS_DIR / "000149_corpscout_esef_filings.up.sql"
+assert MIGRATION_FILE.exists(), (
+    f"migration file not found at {MIGRATION_FILE} — check the parents[] depth "
+    "(tests/ -> dagster_v3 -> services -> corpscout -> clickhouse/migrations)"
+)
+
+
+def _fixture_json(name: str) -> dict[str, Any]:
+    return json.loads((FIXTURES_DIR / name).read_text())
+
+
+# --------------------------------------------------------------------------
+# iter_filings: fake JSON:API index session
+# --------------------------------------------------------------------------
+
+
+class _FakeIndexResponse:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class _FakeIndexSession:
+    """Serves canned pages keyed by page[number]; asserts the query shape."""
+
+    def __init__(self, pages: dict[int, dict[str, Any]]) -> None:
+        self._pages = pages
+        self.requested_pages: list[int] = []
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        timeout: int | None = None,
+        stream: bool = False,
+    ) -> _FakeIndexResponse:
+        assert url == esef_client.ESEF_INDEX_URL
+        assert params is not None
+        assert params["page[size]"] == esef_client.PAGE_SIZE
+        assert params["include"] == "entity"
+        page_number = params["page[number]"]
+        self.requested_pages.append(page_number)
+        return _FakeIndexResponse(self._pages[page_number])
+
+
+def _three_page_session() -> _FakeIndexSession:
+    return _FakeIndexSession(
+        {
+            1: _fixture_json("index_page1.json"),
+            2: _fixture_json("index_page2.json"),
+            3: _fixture_json("index_page_empty.json"),
+        }
+    )
+
+
+def test_iter_filings_paginates_across_pages_then_stops_on_empty_page() -> None:
+    session = _three_page_session()
+    client = esef_client.EsefFilingsClient(session=session)
+
+    records = list(client.iter_filings())
+
+    assert session.requested_pages == [1, 2, 3]
+    # 3 filings on page1 + 3 on page2; the empty page3 yields nothing.
+    assert len(records) == 6
+    assert [r.fxo_id for r in records] == [
+        "EDRPOU-32033791-2020-12-31-UAIFRS-UA-0",
+        "EDRPOU-31729918-2020-12-31-UAIFRS-UA-0",
+        "549300CSLHPO6Y1AZN37-2021-12-31-ESEF-SE-1",
+        "259400OOMJ31L0SWCY70-2022-12-31-ESEF-PL-0",
+        "259400NFU8A8SBP6VC21-2022-12-31-ESEF-PL-0",
+        "259400G1XM5GQU4K4G26-2022-12-31-ESEF-PL-0",
+    ]
+
+
+def test_iter_filings_stops_immediately_on_empty_first_page() -> None:
+    session = _FakeIndexSession({1: _fixture_json("index_page_empty.json")})
+
+    records = list(esef_client.EsefFilingsClient(session=session).iter_filings())
+
+    assert records == []
+    assert session.requested_pages == [1]
+
+
+def _one_real_page_then_empty(fixture_name: str) -> _FakeIndexSession:
+    return _FakeIndexSession(
+        {1: _fixture_json(fixture_name), 2: _fixture_json("index_page_empty.json")}
+    )
+
+
+def test_iter_filings_joins_entity_by_relationship_id_for_lei_and_name() -> None:
+    session = _one_real_page_then_empty("index_page1.json")
+
+    records = list(esef_client.EsefFilingsClient(session=session).iter_filings())
+
+    by_fxo = {r.fxo_id: r for r in records}
+    cloetta = by_fxo["549300CSLHPO6Y1AZN37-2021-12-31-ESEF-SE-1"]
+    assert cloetta.lei == "549300CSLHPO6Y1AZN37"
+    assert cloetta.entity_name == "Cloetta AB"
+    assert cloetta.country == "SE"
+
+
+def test_iter_filings_absolutizes_relative_urls() -> None:
+    session = _one_real_page_then_empty("index_page1.json")
+
+    records = list(esef_client.EsefFilingsClient(session=session).iter_filings())
+
+    cloetta = next(
+        r for r in records if r.fxo_id == "549300CSLHPO6Y1AZN37-2021-12-31-ESEF-SE-1"
+    )
+    assert cloetta.package_url == (
+        "https://filings.xbrl.org/549300CSLHPO6Y1AZN37/2021-12-31/ESEF/SE/1/"
+        "549300CSLHPO6Y1AZN37-2021-12-31.zip"
+    )
+
+
+def test_iter_filings_missing_json_url_is_none() -> None:
+    session = _one_real_page_then_empty("index_page1.json")
+
+    records = list(esef_client.EsefFilingsClient(session=session).iter_filings())
+
+    cloetta = next(
+        r for r in records if r.fxo_id == "549300CSLHPO6Y1AZN37-2021-12-31-ESEF-SE-1"
+    )
+    assert cloetta.json_url is None
+    # ...and viewer_url/report_url, also null on this filing, stay None too.
+    assert cloetta.viewer_url is None
+    assert cloetta.report_url is None
+
+
+def test_iter_filings_present_json_url_is_absolutized_on_second_page() -> None:
+    session = _one_real_page_then_empty("index_page2.json")
+
+    records = list(esef_client.EsefFilingsClient(session=session).iter_filings())
+
+    instal_krakow = next(
+        r for r in records if r.fxo_id == "259400OOMJ31L0SWCY70-2022-12-31-ESEF-PL-0"
+    )
+    assert instal_krakow.json_url == (
+        "https://filings.xbrl.org/259400OOMJ31L0SWCY70/2022-12-31/ESEF/PL/0/"
+        "259400OOMJ31L0SWCY70-2022-12-31.json"
+    )
+    assert instal_krakow.lei == "259400OOMJ31L0SWCY70"
+    assert instal_krakow.entity_name == "Instal Kraków S.A."
+
+
+def test_absolute_leaves_already_absolute_urls_unchanged() -> None:
+    assert esef_client._absolute("https://example.test/x.json") == (
+        "https://example.test/x.json"
+    )
+
+
+def test_absolute_treats_empty_string_as_none() -> None:
+    assert esef_client._absolute("") is None
+    assert esef_client._absolute(None) is None
+
+
+# --------------------------------------------------------------------------
+# download_json_facts: whole-download retry loop
+# --------------------------------------------------------------------------
+
+
+class _FakeDownloadResponse:
+    def __init__(
+        self,
+        *,
+        body: bytes,
+        fail: bool = False,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self._body = body
+        self._fail = fail
+        self.headers = headers or {}
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_content(self, chunk_size: int = 0):
+        if self._fail:
+            raise esef_client.dlt_requests.ChunkedEncodingError(
+                "connection broken mid-stream"
+            )
+        yield self._body
+
+
+class _FlakyDownloadSession:
+    def __init__(self, body: bytes, fail_times: int) -> None:
+        self._body = body
+        self._fail_times = fail_times
+        self.calls = 0
+
+    def get(self, url: str, *, timeout: int, stream: bool = False):
+        self.calls += 1
+        return _FakeDownloadResponse(body=self._body, fail=self.calls <= self._fail_times)
+
+
+def test_download_json_facts_writes_real_fixture_bytes(tmp_path: Path) -> None:
+    facts_path = FIXTURES_DIR / "facts_sample.json"
+    body = facts_path.read_bytes()
+    session = _FlakyDownloadSession(body, fail_times=0)
+    client = esef_client.EsefFilingsClient(session=session)
+    target = tmp_path / "facts.json"
+
+    client.download_json_facts(
+        "https://filings.xbrl.org/x/facts.json", target, retry_base_seconds=0
+    )
+
+    assert target.read_bytes() == body
+    assert session.calls == 1
+
+
+def test_download_json_facts_retries_transient_failure_then_succeeds(
+    tmp_path: Path,
+) -> None:
+    body = b'{"facts": {}}'
+    session = _FlakyDownloadSession(body, fail_times=2)
+    client = esef_client.EsefFilingsClient(session=session)
+    target = tmp_path / "facts.json"
+
+    client.download_json_facts(
+        "https://filings.xbrl.org/x/facts.json", target, retry_base_seconds=0
+    )
+
+    assert target.read_bytes() == body
+    assert session.calls == 3  # 2 transient failures + 1 success
+
+
+def test_download_json_facts_raises_after_exhausting_retries(tmp_path: Path) -> None:
+    session = _FlakyDownloadSession(b"x", fail_times=99)
+    client = esef_client.EsefFilingsClient(session=session)
+    target = tmp_path / "facts.json"
+
+    with pytest.raises(esef_client.dlt_requests.ChunkedEncodingError):
+        client.download_json_facts(
+            "https://filings.xbrl.org/x/facts.json",
+            target,
+            max_attempts=3,
+            retry_base_seconds=0,
+        )
+    assert session.calls == 3
+
+
+def test_download_json_facts_truncates_target_on_each_attempt(tmp_path: Path) -> None:
+    # A short first attempt must not leave stale bytes behind once retried.
+    target = tmp_path / "facts.json"
+    target.write_bytes(b"stale-partial-content-from-a-previous-run")
+
+    session = _FlakyDownloadSession(b"ok", fail_times=1)
+    client = esef_client.EsefFilingsClient(session=session)
+
+    client.download_json_facts(
+        "https://filings.xbrl.org/x/facts.json", target, retry_base_seconds=0
+    )
+
+    assert target.read_bytes() == b"ok"
+
+
+def test_download_json_facts_short_read_vs_content_length_is_retried(
+    tmp_path: Path,
+) -> None:
+    # Server advertises more bytes than it delivers -> treat as retryable.
+    class _ShortThenOkSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, url: str, *, timeout: int, stream: bool = False):
+            self.calls += 1
+            if self.calls == 1:
+                return _FakeDownloadResponse(
+                    body=b"only-ten!!", headers={"Content-Length": "100"}
+                )
+            return _FakeDownloadResponse(body=b"x" * 100)
+
+    session = _ShortThenOkSession()
+    client = esef_client.EsefFilingsClient(session=session)
+    target = tmp_path / "facts.json"
+
+    client.download_json_facts(
+        "https://filings.xbrl.org/x/facts.json", target, retry_base_seconds=0
+    )
+
+    assert session.calls == 2
+    assert len(target.read_bytes()) == 100
+
+
+# --------------------------------------------------------------------------
+# Contract test: export-column tuples vs migration 000149's column order
+# --------------------------------------------------------------------------
+
+
+def _migration_table_columns(sql: str, table: str) -> list[str]:
+    """Extract a CREATE TABLE's column names in declared order.
+
+    Mirrors the parsing approach in tests/canonical_contact_tables.py
+    (_extract_create/_assert_ddl): grab the parenthesized column block up to
+    `ENGINE = `, split into lines, strip trailing commas, and take the first
+    whitespace-separated token of each line as the column name.
+    """
+    match = re.search(
+        rf"CREATE TABLE IF NOT EXISTS corpscout\.{re.escape(table)}\s*\((.*?)\)\s*"
+        rf"ENGINE\s*=",
+        sql,
+        re.DOTALL,
+    )
+    assert match, f"no CREATE TABLE found for corpscout.{table} in migration SQL"
+    body = match.group(1)
+    lines = [
+        line.strip().rstrip(",") for line in body.strip().splitlines() if line.strip()
+    ]
+    return [line.split()[0] for line in lines]
+
+
+def test_export_columns_match_migration_000149_column_order() -> None:
+    sql = MIGRATION_FILE.read_text()
+    expected_by_table = {
+        tables.ESEF_FILINGS_TABLE: tables.ESEF_FILINGS_EXPORT_COLUMNS,
+        tables.ESEF_FACTS_TABLE: tables.ESEF_FACTS_EXPORT_COLUMNS,
+        tables.ESEF_ENTITY_REGISTRY_MAP_TABLE: tables.ESEF_ENTITY_MAP_EXPORT_COLUMNS,
+    }
+
+    for table_name, export_columns in expected_by_table.items():
+        migration_columns = _migration_table_columns(sql, table_name)
+        # resolved_at is CH-defaulted (DEFAULT now64(3)) and deliberately excluded
+        # from every *_EXPORT_COLUMNS tuple.
+        assert migration_columns[-1] == "resolved_at", (
+            f"{table_name}: expected trailing resolved_at column, got "
+            f"{migration_columns}"
+        )
+        assert tuple(migration_columns[:-1]) == export_columns, (
+            f"{table_name}: export columns {export_columns} do not match "
+            f"migration column order {migration_columns[:-1]}"
+        )

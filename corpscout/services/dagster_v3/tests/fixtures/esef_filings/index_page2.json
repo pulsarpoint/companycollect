@@ -1,0 +1,187 @@
+{
+  "data": [
+    {
+      "type": "filing",
+      "attributes": {
+        "viewer_url": "/259400OOMJ31L0SWCY70/2022-12-31/ESEF/PL/0/259400OOMJ31L0SWCY70-31-12-2022-PL/reports/ixbrlviewer.html",
+        "inconsistency_count": 0,
+        "package_url": "/259400OOMJ31L0SWCY70/2022-12-31/ESEF/PL/0/259400OOMJ31L0SWCY70-31-12-2022-PL.zip",
+        "warning_count": 1,
+        "period_end": "2022-12-31",
+        "report_url": "/259400OOMJ31L0SWCY70/2022-12-31/ESEF/PL/0/259400OOMJ31L0SWCY70-31-12-2022-PL/reports/259400OOMJ31L0SWCY70-2022-12-31.xhtml",
+        "processed": "2023-05-09 10:56:56.463392",
+        "fxo_id": "259400OOMJ31L0SWCY70-2022-12-31-ESEF-PL-0",
+        "country": "PL",
+        "date_added": "2023-05-09 10:51:45.266800",
+        "sha256": "c6bd20a9aa5d520303e625185e8e69a30bed10e758661b73476e6058b23dbca2",
+        "json_url": "/259400OOMJ31L0SWCY70/2022-12-31/ESEF/PL/0/259400OOMJ31L0SWCY70-2022-12-31.json",
+        "error_count": 0
+      },
+      "relationships": {
+        "entity": {
+          "links": {
+            "related": "/api/entities/259400OOMJ31L0SWCY70"
+          },
+          "data": {
+            "type": "entity",
+            "id": "390"
+          }
+        },
+        "validation_messages": {
+          "links": {
+            "related": "/api/filings/5738/validation_messages"
+          }
+        }
+      },
+      "id": "5738",
+      "links": {
+        "self": "/api/filings/5738"
+      }
+    },
+    {
+      "type": "filing",
+      "attributes": {
+        "viewer_url": "/259400NFU8A8SBP6VC21/2022-12-31/ESEF/PL/0/izs_2022-12-31_pl/reports/ixbrlviewer.html",
+        "inconsistency_count": 0,
+        "package_url": "/259400NFU8A8SBP6VC21/2022-12-31/ESEF/PL/0/izs_2022-12-31_pl.zip",
+        "warning_count": 1,
+        "period_end": "2022-12-31",
+        "report_url": "/259400NFU8A8SBP6VC21/2022-12-31/ESEF/PL/0/izs_2022-12-31_pl/reports/izs_2022-12-31_pl.xhtml",
+        "processed": "2023-05-09 10:58:05.652400",
+        "fxo_id": "259400NFU8A8SBP6VC21-2022-12-31-ESEF-PL-0",
+        "country": "PL",
+        "date_added": "2023-05-09 10:51:50.382633",
+        "sha256": "07b8ad3797278529b661bba88463715b93cc341096ef8e0889388c00b3d14a94",
+        "json_url": "/259400NFU8A8SBP6VC21/2022-12-31/ESEF/PL/0/izs_2022-12-31_pl.json",
+        "error_count": 0
+      },
+      "relationships": {
+        "entity": {
+          "links": {
+            "related": "/api/entities/259400NFU8A8SBP6VC21"
+          },
+          "data": {
+            "type": "entity",
+            "id": "1162"
+          }
+        },
+        "validation_messages": {
+          "links": {
+            "related": "/api/filings/5740/validation_messages"
+          }
+        }
+      },
+      "id": "5740",
+      "links": {
+        "self": "/api/filings/5740"
+      }
+    },
+    {
+      "type": "filing",
+      "attributes": {
+        "viewer_url": "/259400G1XM5GQU4K4G26/2022-12-31/ESEF/PL/0/mlsystem_2022-12-31_pl/reports/ixbrlviewer.html",
+        "inconsistency_count": 0,
+        "package_url": "/259400G1XM5GQU4K4G26/2022-12-31/ESEF/PL/0/mlsystem_2022-12-31_pl.zip",
+        "warning_count": 0,
+        "period_end": "2022-12-31",
+        "report_url": "/259400G1XM5GQU4K4G26/2022-12-31/ESEF/PL/0/mlsystem_2022-12-31_pl/reports/mlsystem_2022-12-31_pl.xhtml",
+        "processed": "2023-05-09 10:58:29.366849",
+        "fxo_id": "259400G1XM5GQU4K4G26-2022-12-31-ESEF-PL-0",
+        "country": "PL",
+        "date_added": "2023-05-09 10:51:51.571357",
+        "sha256": "b659283de1ca9928d36ac44e2fdaa445befa33450efafc27fcbbc4e947a27a5f",
+        "json_url": "/259400G1XM5GQU4K4G26/2022-12-31/ESEF/PL/0/mlsystem_2022-12-31_pl.json",
+        "error_count": 0
+      },
+      "relationships": {
+        "entity": {
+          "links": {
+            "related": "/api/entities/259400G1XM5GQU4K4G26"
+          },
+          "data": {
+            "type": "entity",
+            "id": "211"
+          }
+        },
+        "validation_messages": {
+          "links": {
+            "related": "/api/filings/5741/validation_messages"
+          }
+        }
+      },
+      "id": "5741",
+      "links": {
+        "self": "/api/filings/5741"
+      }
+    }
+  ],
+  "links": {
+    "self": "https://filings.xbrl.org/api/filings?page%5Bsize%5D=3&page%5Bnumber%5D=2&include=entity",
+    "first": "https://filings.xbrl.org/api/filings?page%5Bsize%5D=3&include=entity",
+    "last": "https://filings.xbrl.org/api/filings?page%5Bsize%5D=3&include=entity&page%5Bnumber%5D=8354",
+    "prev": "https://filings.xbrl.org/api/filings?page%5Bsize%5D=3&include=entity&page%5Bnumber%5D=1",
+    "next": "https://filings.xbrl.org/api/filings?page%5Bsize%5D=3&include=entity&page%5Bnumber%5D=3"
+  },
+  "included": [
+    {
+      "type": "entity",
+      "id": "390",
+      "relationships": {
+        "filings": {
+          "links": {
+            "related": "/api/entities/259400OOMJ31L0SWCY70/filings"
+          }
+        }
+      },
+      "attributes": {
+        "name": "Instal Kraków S.A.",
+        "identifier": "259400OOMJ31L0SWCY70"
+      },
+      "links": {
+        "self": "/api/entities/259400OOMJ31L0SWCY70"
+      }
+    },
+    {
+      "type": "entity",
+      "id": "1162",
+      "relationships": {
+        "filings": {
+          "links": {
+            "related": "/api/entities/259400NFU8A8SBP6VC21/filings"
+          }
+        }
+      },
+      "attributes": {
+        "name": "IZOSTAL Spółka Akcyjna",
+        "identifier": "259400NFU8A8SBP6VC21"
+      },
+      "links": {
+        "self": "/api/entities/259400NFU8A8SBP6VC21"
+      }
+    },
+    {
+      "type": "entity",
+      "id": "211",
+      "relationships": {
+        "filings": {
+          "links": {
+            "related": "/api/entities/259400G1XM5GQU4K4G26/filings"
+          }
+        }
+      },
+      "attributes": {
+        "name": "ML System Spółka Akcyjna",
+        "identifier": "259400G1XM5GQU4K4G26"
+      },
+      "links": {
+        "self": "/api/entities/259400G1XM5GQU4K4G26"
+      }
+    }
+  ],
+  "meta": {
+    "count": 25061
+  },
+  "jsonapi": {
+    "version": "1.0"
+  }
+}
