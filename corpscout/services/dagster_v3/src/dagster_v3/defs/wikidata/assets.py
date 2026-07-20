@@ -442,12 +442,32 @@ def _create_wikidata_company_listings_table(
     )
 
 
+REGISTRY_NUMBER_IDENTIFIER_COLUMNS = (
+    "se_orgnr",
+    "no_orgnr",
+    "dk_cvr",
+    "fi_business_id",
+    "uk_company_number",
+    "fr_siren",
+    "cz_ico",
+    "lv_regcode",
+    "br_cnpj",
+)
+
+
 def _create_wikidata_company_identifiers_table(
     connection: duckdb.DuckDBPyConnection,
     *,
     source_table: str,
     target_schema: str,
 ) -> None:
+    # A registry-number column only exists in the raw augmentation table
+    # once some seed row carried the property; guard so the pivot below
+    # never binds against a missing column.
+    for column in REGISTRY_NUMBER_IDENTIFIER_COLUMNS:
+        connection.execute(
+            f"alter table {source_table} add column if not exists {column} varchar"
+        )
     connection.execute(
         f"""
         create or replace table {target_schema}.{tables.WIKIDATA_COMPANY_IDENTIFIERS_TABLE} as
@@ -593,6 +613,150 @@ def _create_wikidata_company_identifiers_table(
             from {source_table}
             where nullif(company_wikidata_id, '') is not null
               and nullif(linkedin_company_id, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'se_orgnr' as identifier_type,
+                'P6460' as wikidata_property_id,
+                se_orgnr as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(se_orgnr, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'no_orgnr' as identifier_type,
+                'P2333' as wikidata_property_id,
+                no_orgnr as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(no_orgnr, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'dk_cvr' as identifier_type,
+                'P1059' as wikidata_property_id,
+                dk_cvr as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(dk_cvr, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'fi_business_id' as identifier_type,
+                'P12980' as wikidata_property_id,
+                fi_business_id as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(fi_business_id, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'uk_company_number' as identifier_type,
+                'P2622' as wikidata_property_id,
+                uk_company_number as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(uk_company_number, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'fr_siren' as identifier_type,
+                'P1616' as wikidata_property_id,
+                fr_siren as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(fr_siren, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'cz_ico' as identifier_type,
+                'P4156' as wikidata_property_id,
+                cz_ico as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(cz_ico, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'lv_regcode' as identifier_type,
+                'P8053' as wikidata_property_id,
+                lv_regcode as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(lv_regcode, '') is not null
+
+            union all
+
+            select
+                company_wikidata_id as wikidata_id,
+                'br_cnpj' as identifier_type,
+                'P6204' as wikidata_property_id,
+                br_cnpj as identifier_value,
+                cast(null as varchar) as identifier_scope,
+                cast(1 as integer) as is_primary,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(br_cnpj, '') is not null
         )
         select
             wikidata_id,

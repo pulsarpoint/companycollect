@@ -65,6 +65,15 @@ WIKIDATA_LISTED_COMPANIES_COLUMNS: dict[str, dict[str, Any]] = {
     "permid": {"data_type": "text"},
     "bloomberg_company_id": {"data_type": "text"},
     "linkedin_company_id": {"data_type": "text"},
+    "se_orgnr": {"data_type": "text"},
+    "no_orgnr": {"data_type": "text"},
+    "dk_cvr": {"data_type": "text"},
+    "fi_business_id": {"data_type": "text"},
+    "uk_company_number": {"data_type": "text"},
+    "fr_siren": {"data_type": "text"},
+    "cz_ico": {"data_type": "text"},
+    "lv_regcode": {"data_type": "text"},
+    "br_cnpj": {"data_type": "text"},
     "parent_organization_statement_id": {"data_type": "text"},
     "parent_organization_wikidata_id": {"data_type": "text"},
     "parent_organization_label": {"data_type": "text"},
@@ -105,6 +114,15 @@ WIKIDATA_AUGMENTATION_FIELD_NAMES = (
     "permid",
     "bloomberg_company_id",
     "linkedin_company_id",
+    "se_orgnr",
+    "no_orgnr",
+    "dk_cvr",
+    "fi_business_id",
+    "uk_company_number",
+    "fr_siren",
+    "cz_ico",
+    "lv_regcode",
+    "br_cnpj",
     "parent_organization_statement_id",
     "parent_organization_wikidata_id",
     "parent_organization_label",
@@ -349,6 +367,15 @@ SELECT DISTINCT
   ?permId
   ?bloombergCompanyId
   ?linkedinCompanyId
+  ?seOrgnr
+  ?noOrgnr
+  ?dkCvr
+  ?fiBusinessId
+  ?ukCompanyNumber
+  ?frSiren
+  ?czIco
+  ?lvRegcode
+  ?brCnpj
 WHERE {{
   VALUES ?company {{ {values} }}
 
@@ -375,8 +402,44 @@ WHERE {{
   {{
     ?company wdt:P4264 ?linkedinCompanyId .
   }}
+  UNION
+  {{
+    ?company wdt:P6460 ?seOrgnr .
+  }}
+  UNION
+  {{
+    ?company wdt:P2333 ?noOrgnr .
+  }}
+  UNION
+  {{
+    ?company wdt:P1059 ?dkCvr .
+  }}
+  UNION
+  {{
+    ?company wdt:P12980 ?fiBusinessId .
+  }}
+  UNION
+  {{
+    ?company wdt:P2622 ?ukCompanyNumber .
+  }}
+  UNION
+  {{
+    ?company wdt:P1616 ?frSiren .
+  }}
+  UNION
+  {{
+    ?company wdt:P4156 ?czIco .
+  }}
+  UNION
+  {{
+    ?company wdt:P8053 ?lvRegcode .
+  }}
+  UNION
+  {{
+    ?company wdt:P6204 ?brCnpj .
+  }}
 }}
-ORDER BY ?company ?openCorporatesId ?euVatNumber ?dunsNumber ?permId ?bloombergCompanyId ?linkedinCompanyId
+ORDER BY ?company ?openCorporatesId ?euVatNumber ?dunsNumber ?permId ?bloombergCompanyId ?linkedinCompanyId ?seOrgnr ?noOrgnr ?dkCvr ?fiBusinessId ?ukCompanyNumber ?frSiren ?czIco ?lvRegcode ?brCnpj
 """.strip()
 
 
@@ -823,6 +886,15 @@ def listed_company_row_from_binding(
         "permid": binding_value(binding, "permId"),
         "bloomberg_company_id": binding_value(binding, "bloombergCompanyId"),
         "linkedin_company_id": binding_value(binding, "linkedinCompanyId"),
+        "se_orgnr": binding_value(binding, "seOrgnr"),
+        "no_orgnr": binding_value(binding, "noOrgnr"),
+        "dk_cvr": binding_value(binding, "dkCvr"),
+        "fi_business_id": binding_value(binding, "fiBusinessId"),
+        "uk_company_number": binding_value(binding, "ukCompanyNumber"),
+        "fr_siren": binding_value(binding, "frSiren"),
+        "cz_ico": binding_value(binding, "czIco"),
+        "lv_regcode": binding_value(binding, "lvRegcode"),
+        "br_cnpj": binding_value(binding, "brCnpj"),
         "parent_organization_statement_id": wikidata_id_from_url(
             binding_value(binding, "parentOrganizationStatement")
         ),
@@ -881,6 +953,15 @@ def company_augmentation_row_from_binding(binding: dict[str, Any]) -> dict[str, 
         "permid": binding_value(binding, "permId"),
         "bloomberg_company_id": binding_value(binding, "bloombergCompanyId"),
         "linkedin_company_id": binding_value(binding, "linkedinCompanyId"),
+        "se_orgnr": binding_value(binding, "seOrgnr"),
+        "no_orgnr": binding_value(binding, "noOrgnr"),
+        "dk_cvr": binding_value(binding, "dkCvr"),
+        "fi_business_id": binding_value(binding, "fiBusinessId"),
+        "uk_company_number": binding_value(binding, "ukCompanyNumber"),
+        "fr_siren": binding_value(binding, "frSiren"),
+        "cz_ico": binding_value(binding, "czIco"),
+        "lv_regcode": binding_value(binding, "lvRegcode"),
+        "br_cnpj": binding_value(binding, "brCnpj"),
         "parent_organization_statement_id": wikidata_id_from_url(
             binding_value(binding, "parentOrganizationStatement")
         ),
