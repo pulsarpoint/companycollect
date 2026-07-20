@@ -1,3 +1,5 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
 -- 000150's se_financial_concept_labels yielded one row per
 -- (concept_local_name, concept_namespace) pair -- Nettoomsattning appears
 -- under 4 taxonomy namespaces, so a backoffice join on concept_local_name
