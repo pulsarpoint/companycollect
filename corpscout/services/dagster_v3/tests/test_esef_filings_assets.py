@@ -1,14 +1,24 @@
-"""Tests for the ESEF filings index crawl asset.
+"""Tests for the ESEF filings index crawl asset and the year-partitioned
+fact download/parse asset.
 
-No network: EsefFilingsClient is monkeypatched on the assets module to a stub
-returning canned EsefFilingRecord instances -- mirroring the class-monkeypatch
-pattern used for ExchangeRateClient in
+Index-crawl tests: no network -- EsefFilingsClient is monkeypatched on the
+assets module to a stub returning canned EsefFilingRecord instances,
+mirroring the class-monkeypatch pattern used for ExchangeRateClient in
 tests/test_norway_brreg_financial_statement_assets.py. Each test materializes
 into a fresh tmp_path DuckDB file via dg.materialize's resource override.
+
+Facts-download tests: call `assets.run_esef_filing_facts_partition` (the
+plain function the `esef_filing_facts_duckdb` asset delegates to) directly
+with a duck-typed FakeObjectStore/stub client, rather than through
+`dg.materialize` -- see the long comment at the top of that test section for
+why (a real, confirmed Dagster resource-reconstruction behavior that drops
+an injected fake S3 client).
 """
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import dagster as dg
 import pytest
@@ -20,6 +30,8 @@ from dagster_v3.defs.common.duckdb_resources import (
 from dagster_v3.defs.esef_filings import assets
 from dagster_v3.defs.esef_filings.client import EsefFilingRecord
 
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "esef_filings"
+
 
 def _record(
     *,
@@ -28,13 +40,14 @@ def _record(
     lei: str = "549300CSLHPO6Y1AZN37",
     entity_name: str = "Example AB",
     json_url: str | None = "https://filings.xbrl.org/x/facts.json",
+    period_end: str | None = "2022-12-31",
 ) -> EsefFilingRecord:
     return EsefFilingRecord(
         lei=lei,
         entity_name=entity_name,
         fxo_id=fxo_id,
         country=country,
-        period_end="2022-12-31",
+        period_end=period_end,
         date_added="2023-01-01 00:00:00",
         processed_at="2023-01-02 00:00:00",
         json_url=json_url,
@@ -181,3 +194,381 @@ def test_esef_filings_source_duckdb_path_defaults_under_data_root() -> None:
     assert assets.esef_filings_source_duckdb_path(root="custom") == Path(
         "custom/esef_filings_source.duckdb"
     )
+
+
+# ==========================================================================
+# esef_filing_facts_duckdb: year-partitioned download + OIM parse
+#
+# `run_esef_filing_facts_partition` (the plain function the asset delegates
+# to) is called DIRECTLY here rather than through `dg.materialize` -- a
+# `ConfigurableResource` built with an injected private attribute (e.g.
+# `ObjectStoreResource(s3_client=fake)`) does NOT survive
+# `dg.materialize`/`execute_in_process`: Dagster reconstructs the resource
+# from its resolved pydantic config fields alone, silently dropping the
+# fake client and hitting real boto3/network instead (confirmed by tracing
+# `ObjectStoreResource.__init__` -- it's invoked again with `s3_client=None`
+# right before the asset body runs). Calling the plain function directly
+# mirrors the codebase's established pattern for this exact situation (e.g.
+# `extract_sweden_financial_report_xhtml_catalog` in
+# tests/test_sweden_financial_resources.py, `source_result_object_keys` in
+# tests/test_denmark_cvr_duckdb.py) -- a duck-typed FakeObjectStore, no
+# pydantic/Dagster resource machinery involved at all.
+# ==========================================================================
+
+_FIXTURE_FACTS_BYTES = (FIXTURES_DIR / "facts_sample.json").read_bytes()  # 6 facts
+
+_SMALL_PAYLOAD_BYTES = json.dumps(
+    {
+        "facts": {
+            "f1": {
+                "value": "100.00",
+                "decimals": 2,
+                "dimensions": {
+                    "concept": "ifrs-full:Revenue",
+                    "period": "2022-01-01T00:00:00/2022-06-30T00:00:00",
+                    "unit": "iso4217:EUR",
+                },
+            },
+            "f2": {
+                "value": "A small company.",
+                "dimensions": {
+                    "concept": "ifrs-full:LegalFormOfEntity",
+                    "period": "2022-06-30T00:00:00",
+                    "language": "en",
+                },
+            },
+        }
+    }
+).encode()
+
+
+class FakeObjectStore:
+    """Duck-types the ObjectStoreResource methods the asset calls -- no
+    pydantic/boto3 involved (see module-section docstring above)."""
+
+    def __init__(self) -> None:
+        self.objects: dict[tuple[str, str], bytes] = {}
+        self.created_buckets: list[str] = []
+        self.uploaded_keys: list[tuple[str, str]] = []
+        self.downloaded_keys: list[tuple[str, str]] = []
+
+    def ensure_bucket(self, bucket: str | None = None) -> None:
+        assert bucket is not None
+        self.created_buckets.append(bucket)
+
+    def exists(self, key: str, bucket: str | None = None) -> bool:
+        assert bucket is not None
+        return (bucket, key) in self.objects
+
+    def upload_file(
+        self, key: str, source_path: str | Path, bucket: str | None = None
+    ) -> None:
+        assert bucket is not None
+        self.uploaded_keys.append((bucket, key))
+        self.objects[(bucket, key)] = Path(source_path).read_bytes()
+
+    def download_file(
+        self, key: str, target_path: str | Path, bucket: str | None = None
+    ) -> None:
+        assert bucket is not None
+        self.downloaded_keys.append((bucket, key))
+        Path(target_path).write_bytes(self.objects[(bucket, key)])
+
+
+def _facts_json_url(fxo_id: str) -> str:
+    return f"https://filings.xbrl.org/{fxo_id}/facts.json"
+
+
+class _StubFactsDownloadClient:
+    """Stand-in for EsefFilingsClient() -- serves canned bytes keyed by
+    fxo_id (parsed back out of the json_url path `.../<fxo_id>/facts.json`),
+    or writes malformed text for fxo_ids in `malformed_fxo_ids`."""
+
+    def __init__(
+        self,
+        payload_by_fxo_id: dict[str, bytes],
+        *,
+        malformed_fxo_ids: frozenset[str] = frozenset(),
+    ) -> None:
+        self._payload_by_fxo_id = payload_by_fxo_id
+        self._malformed_fxo_ids = malformed_fxo_ids
+        self.download_calls: list[str] = []
+
+    def download_json_facts(self, json_url: str, target: Path, **_: Any) -> None:
+        self.download_calls.append(json_url)
+        fxo_id = json_url.split("/")[-2]
+        if fxo_id in self._malformed_fxo_ids:
+            target.write_text("{this is not valid json")
+            return
+        target.write_bytes(self._payload_by_fxo_id[fxo_id])
+
+
+def _seed_filings_index(tmp_path: Path, records: list[EsefFilingRecord]) -> None:
+    with _db_resource(tmp_path).get_connection() as connection:
+        assets.replace_esef_filings_index(
+            connection=connection,
+            records=records,
+            source_url=assets.ESEF_INDEX_URL,
+            source_run_id="seed-run",
+        )
+
+
+def _fetch_facts_rows(tmp_path: Path) -> list[tuple[Any, ...]]:
+    with read_only_duckdb_connection(_db_resource(tmp_path)) as connection:
+        return connection.execute(
+            "select fxo_id, fact_id, period_end_year, source_run_id "
+            "from esef_filings.facts order by fxo_id, fact_id"
+        ).fetchall()
+
+
+def _run_facts_partition(
+    tmp_path: Path,
+    object_store: FakeObjectStore,
+    client: _StubFactsDownloadClient,
+    *,
+    partition_year: int,
+    source_run_id: str = "run-1",
+) -> dict[str, int]:
+    return assets.run_esef_filing_facts_partition(
+        esef_filings_duckdb=_db_resource(tmp_path),
+        object_store=object_store,
+        client=client,
+        partition_year=partition_year,
+        source_run_id=source_run_id,
+        log_info=lambda *a, **k: None,
+        log_warning=lambda *a, **k: None,
+    )
+
+
+def test_facts_asset_wiring_partitions_deps_backfill_policy_and_pool() -> None:
+    asset_def = assets.esef_filing_facts_duckdb
+    assert asset_def.partitions_def is not None
+    assert sorted(asset_def.partitions_def.get_partition_keys()) == [
+        str(year) for year in range(2019, 2028)
+    ]
+    dep_keys = {dep.asset_key for spec in asset_def.specs for dep in spec.deps}
+    assert dg.AssetKey("esef_filings_index_duckdb") in dep_keys
+    assert asset_def.backfill_policy == dg.BackfillPolicy.multi_run(
+        max_partitions_per_run=1
+    )
+    assert asset_def.op.pool == assets.ESEF_FILINGS_DUCKDB_POOL
+
+
+def test_facts_partition_downloads_and_parses_filings_in_scope_for_year(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
+            ),
+            _record(
+                fxo_id="B-1", period_end="2022-06-30", json_url=_facts_json_url("B-1")
+            ),
+            # Different year -- out of scope for the "2022" partition.
+            _record(
+                fxo_id="G-1", period_end="2021-12-31", json_url=_facts_json_url("G-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient(
+        {"A-1": _FIXTURE_FACTS_BYTES, "B-1": _SMALL_PAYLOAD_BYTES}
+    )
+
+    metadata = _run_facts_partition(
+        tmp_path, object_store, client, partition_year=2022, source_run_id="run-A"
+    )
+
+    assert metadata["filings_in_scope"] == 2
+    assert metadata["downloaded_count"] == 2
+    assert metadata["reused_count"] == 0
+    assert metadata["skipped_no_json"] == 0
+    assert metadata["skipped_out_of_range"] == 0
+    assert metadata["parse_failed_count"] == 0
+    assert metadata["fact_row_count"] == 8  # 6 (fixture) + 2 (small payload)
+    assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
+
+    # G-1 (period_end 2021) was never even attempted.
+    assert sorted(client.download_calls) == [
+        _facts_json_url("A-1"),
+        _facts_json_url("B-1"),
+    ]
+
+    rows = _fetch_facts_rows(tmp_path)
+    assert {row[0] for row in rows} == {"A-1", "B-1"}
+    assert all(row[2] == 2022 for row in rows)
+    assert all(row[3] == "run-A" for row in rows)
+
+
+def test_second_run_reuses_s3_object_and_keeps_row_count_stable(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
+            )
+        ],
+    )
+    object_store = FakeObjectStore()
+
+    first_metadata = _run_facts_partition(
+        tmp_path,
+        object_store,
+        _StubFactsDownloadClient({"A-1": _FIXTURE_FACTS_BYTES}),
+        partition_year=2022,
+        source_run_id="run-1",
+    )
+    assert first_metadata["downloaded_count"] == 1
+    assert first_metadata["reused_count"] == 0
+    assert first_metadata["fact_row_count"] == 6
+
+    # New client instance for the second run -- if download_json_facts were
+    # called again it would KeyError (no payload registered), proving reuse.
+    second_client = _StubFactsDownloadClient({})
+    second_metadata = _run_facts_partition(
+        tmp_path,
+        object_store,
+        second_client,
+        partition_year=2022,
+        source_run_id="run-2",
+    )
+    assert second_metadata["downloaded_count"] == 0
+    assert second_metadata["reused_count"] == 1
+    assert second_metadata["fact_row_count"] == 6
+    assert second_client.download_calls == []
+
+    rows = _fetch_facts_rows(tmp_path)
+    assert len(rows) == 6
+    assert all(row[3] == "run-2" for row in rows)  # scoped replace, no dupes
+
+
+def test_filing_without_json_url_increments_skipped_no_json(tmp_path: Path) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(fxo_id="A-1", period_end="2022-12-31", json_url=None),
+            _record(
+                fxo_id="B-1", period_end="2022-06-30", json_url=_facts_json_url("B-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient({"B-1": _SMALL_PAYLOAD_BYTES})
+
+    metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+
+    assert metadata["filings_in_scope"] == 2
+    assert metadata["skipped_no_json"] == 1
+    assert metadata["downloaded_count"] == 1
+    assert metadata["fact_row_count"] == 2
+    assert client.download_calls == [_facts_json_url("B-1")]
+
+
+def test_null_and_out_of_range_period_end_are_skipped_without_crashing(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
+            ),
+            _record(fxo_id="D-1", period_end=None, json_url=_facts_json_url("D-1")),
+            _record(
+                fxo_id="E-1", period_end="2030-01-01", json_url=_facts_json_url("E-1")
+            ),
+            _record(
+                fxo_id="F-1", period_end="garbage", json_url=_facts_json_url("F-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient({"A-1": _FIXTURE_FACTS_BYTES})
+
+    metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+
+    assert metadata["filings_in_scope"] == 1
+    assert metadata["skipped_out_of_range"] == 3
+    assert metadata["fact_row_count"] == 6
+    # None of the out-of-range filings were ever downloaded.
+    assert client.download_calls == [_facts_json_url("A-1")]
+
+
+def test_malformed_json_increments_parse_failed_count_without_crashing(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
+            ),
+            _record(
+                fxo_id="F-1", period_end="2022-03-01", json_url=_facts_json_url("F-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient(
+        {"A-1": _FIXTURE_FACTS_BYTES}, malformed_fxo_ids=frozenset({"F-1"})
+    )
+
+    metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+
+    assert metadata["filings_in_scope"] == 2
+    assert metadata["parse_failed_count"] == 1
+    assert metadata["downloaded_count"] == 2  # both bytes were fetched/uploaded
+    assert metadata["fact_row_count"] == 6  # only A-1's facts landed
+
+    rows = _fetch_facts_rows(tmp_path)
+    assert {row[0] for row in rows} == {"A-1"}
+
+
+def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
+            ),
+            _record(
+                fxo_id="G-1", period_end="2021-12-31", json_url=_facts_json_url("G-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient(
+        {"A-1": _FIXTURE_FACTS_BYTES, "G-1": _SMALL_PAYLOAD_BYTES}
+    )
+
+    _run_facts_partition(tmp_path, object_store, client, partition_year=2021)
+    _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+
+    rows = _fetch_facts_rows(tmp_path)
+    assert {row[0] for row in rows} == {"A-1", "G-1"}
+    by_fxo = {row[0]: row[2] for row in rows}
+    assert by_fxo["A-1"] == 2022
+    assert by_fxo["G-1"] == 2021
+
+    # Re-materializing "2022" with a filing set that no longer includes A-1
+    # (index full-replace can never be empty, so keep G-1) must delete ONLY
+    # period_end_year=2022 rows -- 2021's G-1 rows survive.
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="G-1", period_end="2021-12-31", json_url=_facts_json_url("G-1")
+            )
+        ],
+    )
+    empty_metadata = _run_facts_partition(
+        tmp_path, object_store, _StubFactsDownloadClient({}), partition_year=2022
+    )
+    assert empty_metadata["fact_row_count"] == 0
+
+    rows_after = _fetch_facts_rows(tmp_path)
+    assert {row[0] for row in rows_after} == {"G-1"}
