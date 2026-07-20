@@ -41,12 +41,20 @@ GLEIF_LEI_RECORDS_QUALIFIED_TABLE = f"{RESOLVED_DATABASE}.{GLEIF_LEI_RECORDS_TAB
 # staged as raw API strings (see assets.py's _FILINGS_INDEX_COLUMN_TYPES) but
 # migration 000149's corpscout.esef_filings columns are
 # Date32/Date32/Nullable(DateTime64(6)) -- cast at export time.
+# period_end/date_added are declared NON-nullable Date32 in the migration
+# (period_end is in the ORDER BY, so it can never become Nullable) -- a
+# missing/malformed source date must never reach clickhouse_driver as Python
+# None (it crashes the Date32 writer: `AttributeError: 'NoneType' object has
+# no attribute 'year'`). Coalesce to the sentinel epoch DATE '1970-01-01'
+# instead, marking "source date missing" without crashing the insert.
+# processed_at IS genuinely Nullable(DateTime64(6)) in the migration -- NULL
+# there is semantically meaningful, so it's left a plain try_cast.
 # json_url/package_url/report_url/viewer_url/package_sha256 can be NULL in
 # DuckDB (not every filing has a JSON export, package hash, etc.) but their
 # ClickHouse columns are non-nullable String -- coalesce to ''.
 ESEF_FILINGS_COLUMN_EXPRESSIONS: dict[str, str] = {
-    "period_end": "try_cast(period_end as date)",
-    "date_added": "try_cast(date_added as date)",
+    "period_end": "coalesce(try_cast(period_end as date), DATE '1970-01-01')",
+    "date_added": "coalesce(try_cast(date_added as date), DATE '1970-01-01')",
     "processed_at": "try_cast(processed_at as timestamp)",
     "json_url": "coalesce(json_url, '')",
     "package_url": "coalesce(package_url, '')",
@@ -63,10 +71,16 @@ ESEF_FILINGS_COLUMN_EXPRESSIONS: dict[str, str] = {
 # explicitly so ClickHouse receives a real decimal, not a string.
 # period_end/period_start/period_instant are staged as text too but are
 # Date32/Nullable(Date32)/Nullable(Date32) in the migration.
+# period_end is NON-nullable Date32 (it's in the ORDER BY) -- a fact whose
+# period_end is missing, or a year-prefix-valid but otherwise malformed
+# string that try_cast alone would NULL (e.g. "2022-99-99"), must sentinel
+# to DATE '1970-01-01' rather than reach clickhouse_driver as None (crashes
+# the Date32 writer). period_start/period_instant ARE genuinely
+# Nullable(Date32) in the migration, so they stay plain try_cast.
 # `period_end_year` (local-only partition-scope column) is deliberately
 # absent here -- ESEF_FACTS_EXPORT_COLUMNS already excludes it.
 ESEF_FACTS_COLUMN_EXPRESSIONS: dict[str, str] = {
-    "period_end": "try_cast(period_end as date)",
+    "period_end": "coalesce(try_cast(period_end as date), DATE '1970-01-01')",
     "period_start": "try_cast(period_start as date)",
     "period_instant": "try_cast(period_instant as date)",
     "amount_original": "try_cast(amount_original as decimal(38,2))",

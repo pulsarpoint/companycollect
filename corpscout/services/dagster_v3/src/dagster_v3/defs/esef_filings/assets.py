@@ -718,7 +718,7 @@ def esef_entity_registry_map_clickhouse(
 ) -> dg.MaterializeResult:
     rows = replace_esef_entity_registry_map_clickhouse(
         clickhouse=clickhouse,
-        source_run_id=context.run_id,
+        source_run_id=context.run.run_id,
         log=context.log.info,
     )
     return dg.MaterializeResult(

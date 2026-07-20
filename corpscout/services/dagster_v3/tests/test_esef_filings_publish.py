@@ -6,14 +6,16 @@ No live ClickHouse anywhere -- a FakeClickHouseClient/FakeClickHouseResource
 pair records every SQL statement (mirroring
 tests/test_brazil_fin_cvm_clickhouse_export.py and
 tests/test_sweden_financial_metrics.py's stub patterns). The amount_original
-cast is the one test that runs a real DuckDB connection through the actual
+cast, the filings-index NULL-date sentinel, and the facts malformed-date
+sentinel are the tests that run a real DuckDB connection through the actual
 shared exporter (not monkeypatched) end-to-end, since the whole point is to
-prove the try_cast produces a real Decimal (or None), not to check that some
-function was called.
+prove what a real `try_cast`/`coalesce` produces -- a real Decimal, the
+sentinel epoch, or None -- not to check that some function was called.
 """
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -28,6 +30,7 @@ from dagster_v3.defs.esef_filings.publish import (
     MATCH_SOURCE_GLEIF_REGISTERED_AS,
     build_esef_entity_registry_map_select,
     export_esef_facts_clickhouse,
+    export_esef_filings_clickhouse,
     replace_esef_entity_registry_map_clickhouse,
 )
 from dagster_v3.defs.gleif.tables import GLEIF_LEI_RECORDS_TABLE
@@ -132,12 +135,17 @@ def test_export_esef_filings_clickhouse_uses_export_columns_and_casts(
 def test_esef_filings_column_expressions_cast_dates_and_coalesce_nullable_strings() -> (
     None
 ):
-    assert (
-        ESEF_FILINGS_COLUMN_EXPRESSIONS["period_end"] == "try_cast(period_end as date)"
+    # period_end/date_added are non-nullable Date32 in migration 000149 (period_end
+    # is in the ORDER BY, so it can never become Nullable) -- a missing/malformed
+    # source date must sentinel to the epoch, never reach clickhouse_driver as None.
+    assert ESEF_FILINGS_COLUMN_EXPRESSIONS["period_end"] == (
+        "coalesce(try_cast(period_end as date), DATE '1970-01-01')"
     )
-    assert (
-        ESEF_FILINGS_COLUMN_EXPRESSIONS["date_added"] == "try_cast(date_added as date)"
+    assert ESEF_FILINGS_COLUMN_EXPRESSIONS["date_added"] == (
+        "coalesce(try_cast(date_added as date), DATE '1970-01-01')"
     )
+    # processed_at is genuinely Nullable(DateTime64(6)) in the migration -- left
+    # as a plain try_cast (NULL is semantically meaningful here, not sentineled).
     assert (
         ESEF_FILINGS_COLUMN_EXPRESSIONS["processed_at"]
         == "try_cast(processed_at as timestamp)"
@@ -157,6 +165,94 @@ def test_esef_filings_column_expressions_cast_dates_and_coalesce_nullable_string
     assert set(ESEF_FILINGS_COLUMN_EXPRESSIONS) <= set(
         tables.ESEF_FILINGS_EXPORT_COLUMNS
     )
+
+
+# Mirrors assets.py's _FILINGS_INDEX_COLUMN_TYPES (DuckDB staging types for
+# esef_filings.filings_index) -- kept local to this test module so the
+# real-DuckDB round-trip test below doesn't need to import assets.py.
+_FILINGS_INDEX_STAGING_COLUMN_TYPES: dict[str, str] = {
+    "lei": "varchar",
+    "entity_name": "varchar",
+    "fxo_id": "varchar",
+    "country": "varchar",
+    "period_end": "varchar",
+    "date_added": "varchar",
+    "processed_at": "varchar",
+    "json_url": "varchar",
+    "package_url": "varchar",
+    "report_url": "varchar",
+    "viewer_url": "varchar",
+    "package_sha256": "varchar",
+    "error_count": "integer",
+    "warning_count": "integer",
+    "inconsistency_count": "integer",
+    "has_json_facts": "boolean",
+    "source_url": "varchar",
+    "source_run_id": "varchar",
+}
+assert tuple(_FILINGS_INDEX_STAGING_COLUMN_TYPES) == tables.ESEF_FILINGS_EXPORT_COLUMNS
+
+
+def test_export_esef_filings_clickhouse_sentinels_null_period_end_and_date_added() -> (
+    None
+):
+    """Regression test: migration 000149 declares esef_filings.period_end and
+    .date_added as non-nullable Date32 (period_end is in the ORDER BY, so it
+    can never become Nullable). A crawl row with a missing period_end/date_added
+    must export the sentinel epoch DATE '1970-01-01' for both -- and must NOT
+    export None, which crashes clickhouse_driver's Date32 writer
+    (`AttributeError: 'NoneType' object has no attribute 'year'`). Runs the
+    real shared exporter (not monkeypatched) end-to-end against a real DuckDB
+    connection, same rationale as the facts round-trip test below.
+    """
+    con = duckdb.connect(":memory:")
+    con.execute(f"create schema {tables.DLT_DATASET_NAME}")
+    columns_sql = ", ".join(
+        f"{name} {kind}" for name, kind in _FILINGS_INDEX_STAGING_COLUMN_TYPES.items()
+    )
+    con.execute(f"create table {tables.QUALIFIED_FILINGS_INDEX_TABLE} ({columns_sql})")
+    placeholders = ", ".join(["?"] * len(_FILINGS_INDEX_STAGING_COLUMN_TYPES))
+    con.executemany(
+        f"insert into {tables.QUALIFIED_FILINGS_INDEX_TABLE} values ({placeholders})",
+        [
+            (
+                "549300CSLHPO6Y1AZN37",
+                "Example Oyj",
+                "fx-1",
+                "FI",
+                None,  # period_end missing from the source crawl
+                None,  # date_added missing from the source crawl
+                None,  # processed_at -- genuinely Nullable(DateTime64), left None
+                None,
+                None,
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                False,
+                "https://filings.xbrl.org/",
+                "run-1",
+            ),
+        ],
+    )
+
+    client = FakeClickHouseClient()
+    rows = export_esef_filings_clickhouse(
+        duckdb_connection=con,
+        clickhouse=FakeClickHouseResource(client),
+    )
+
+    assert rows == 1
+    row = client.inserted_rows[0]
+    period_end_index = tables.ESEF_FILINGS_EXPORT_COLUMNS.index("period_end")
+    date_added_index = tables.ESEF_FILINGS_EXPORT_COLUMNS.index("date_added")
+    processed_at_index = tables.ESEF_FILINGS_EXPORT_COLUMNS.index("processed_at")
+    assert row[period_end_index] == date(1970, 1, 1)
+    assert row[date_added_index] == date(1970, 1, 1)
+    # Not sentineled: processed_at is genuinely Nullable in the migration.
+    assert row[processed_at_index] is None
 
 
 # --- esef_facts_clickhouse --------------------------------------------------
@@ -206,7 +302,14 @@ def test_esef_facts_column_expressions_cast_amount_original_and_period_dates() -
         ESEF_FACTS_COLUMN_EXPRESSIONS["amount_original"]
         == "try_cast(amount_original as decimal(38,2))"
     )
-    assert ESEF_FACTS_COLUMN_EXPRESSIONS["period_end"] == "try_cast(period_end as date)"
+    # period_end is non-nullable Date32 in migration 000149 -- sentinel a
+    # missing/malformed source date to the epoch rather than letting None
+    # reach clickhouse_driver's Date32 writer.
+    assert ESEF_FACTS_COLUMN_EXPRESSIONS["period_end"] == (
+        "coalesce(try_cast(period_end as date), DATE '1970-01-01')"
+    )
+    # period_start/period_instant are genuinely Nullable(Date32) in the
+    # migration -- left as plain try_cast, NULL is semantically meaningful.
     assert (
         ESEF_FACTS_COLUMN_EXPRESSIONS["period_start"]
         == "try_cast(period_start as date)"
@@ -246,6 +349,12 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
     DuckDB staging. Proves the real shared exporter (not monkeypatched)
     delivers a proper Decimal to ClickHouse for a large monetary value, and
     None (not the string "None" or an error) for a fact with no amount.
+
+    Also covers the period_end sentinel: migration 000149's esef_facts.period_end
+    is non-nullable Date32, so a fact whose period_end is a malformed string
+    (year-prefix-valid but not a real date, e.g. "2022-99-99" -- a plain
+    try_cast alone would NULL it) must export the sentinel epoch
+    DATE '1970-01-01', not None.
     """
     con = duckdb.connect(":memory:")
     con.execute(f"create schema {tables.DLT_DATASET_NAME}")
@@ -297,8 +406,33 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
                 "en",
                 "run-1",
             ),
+            (
+                "549300CSLHPO6Y1AZN37",
+                "fx-1",
+                "2022-99-99",  # malformed: year-prefix-valid, not a real date
+                "f-malformed-period-end",
+                "ns:Malformed",
+                "ns",
+                "Malformed",
+                None,
+                None,
+                "iso4217:EUR",
+                "EUR",
+                "monetary",
+                "",
+                None,
+                None,
+                "",
+                "en",
+                "run-1",
+            ),
         ],
     )
+
+    # Confirm the premise directly: DuckDB's try_cast alone NULLs the
+    # malformed string rather than raising or coercing it to some other date.
+    [(bare_try_cast,)] = con.execute("select try_cast('2022-99-99' as date)").fetchall()
+    assert bare_try_cast is None
 
     client = FakeClickHouseClient()
     rows = export_esef_facts_clickhouse(
@@ -306,7 +440,7 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
         clickhouse=FakeClickHouseResource(client),
     )
 
-    assert rows == 2
+    assert rows == 3
     by_fact_id = {
         row[tables.ESEF_FACTS_EXPORT_COLUMNS.index("fact_id")]: row
         for row in client.inserted_rows
@@ -316,6 +450,11 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
     assert revenue_amount == Decimal("438395039.49")
     assert isinstance(revenue_amount, Decimal)
     assert by_fact_id["f-narrative"][amount_index] is None
+
+    period_end_index = tables.ESEF_FACTS_EXPORT_COLUMNS.index("period_end")
+    assert by_fact_id["f-malformed-period-end"][period_end_index] == date(1970, 1, 1)
+    # Well-formed period_end values must pass through unaffected by the sentinel.
+    assert by_fact_id["f-revenue"][period_end_index] == date(2022, 12, 31)
 
 
 # --- esef_entity_registry_map_clickhouse ------------------------------------
