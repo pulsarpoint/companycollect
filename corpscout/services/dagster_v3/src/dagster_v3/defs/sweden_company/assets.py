@@ -127,6 +127,7 @@ def sweden_company_normalized_duckdb(
     deps=["sweden_company_normalized_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
+    pool=SWEDEN_COMPANY_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_COMPANIES_TABLE},
     description="Exports normalized Sweden companies to ClickHouse corpscout.se_companies.",
 )
@@ -150,6 +151,7 @@ def sweden_company_companies_clickhouse(
     deps=["sweden_company_normalized_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
+    pool=SWEDEN_COMPANY_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE},
     description=(
         "Exports normalized Sweden company addresses to ClickHouse "
@@ -176,6 +178,7 @@ def sweden_company_addresses_clickhouse(
     deps=["sweden_company_normalized_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
+    pool=SWEDEN_COMPANY_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_INDUSTRIES_TABLE},
     description="Exports normalized Sweden industries to ClickHouse corpscout.se_industries.",
 )

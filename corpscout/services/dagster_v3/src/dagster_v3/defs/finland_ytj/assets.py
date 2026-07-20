@@ -131,7 +131,11 @@ def finland_ytj_all_companies_duckdb_asset(
     )
 
 
-@dg.asset_check(asset="finland_ytj_all_companies_duckdb", name="all_companies_non_empty")
+@dg.asset_check(
+    asset="finland_ytj_all_companies_duckdb",
+    name="all_companies_non_empty",
+    pool="finland_ytj_duckdb",
+)
 def all_companies_non_empty(ytj_duckdb: DuckDBResource) -> dg.AssetCheckResult:
     with read_only_duckdb_connection(ytj_duckdb) as connection:
         row_count = connection.execute(

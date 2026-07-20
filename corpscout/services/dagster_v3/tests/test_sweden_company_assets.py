@@ -44,7 +44,10 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         assert clickhouse_node.parent_keys == {
             dg.AssetKey("sweden_company_normalized_duckdb")
         }
-        assert clickhouse_node.pools == set()
+        # Read-only exporters share the source DuckDB pool: a DuckDB writer
+        # excludes readers across processes, so unpooled reads collide with
+        # a concurrent refresh (see data-source-guidelines).
+        assert clickhouse_node.pools == {"sweden_company_duckdb"}
 
 
 def test_sweden_company_docs_describe_registry_pipeline_scope() -> None:

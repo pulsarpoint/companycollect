@@ -303,6 +303,7 @@ def esef_filings_index_duckdb(
 @dg.asset_check(
     asset="esef_filings_index_duckdb",
     name="filings_index_non_empty",
+    pool=ESEF_FILINGS_DUCKDB_POOL,
 )
 def filings_index_non_empty(
     esef_filings_duckdb: DuckDBResource,
