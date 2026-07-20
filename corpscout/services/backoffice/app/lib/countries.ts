@@ -120,6 +120,14 @@ export interface CountryDetailConfig {
    * company has no LEI.
    */
   gleifEntityQuery?: string;
+  /**
+   * {id:String} → ONE Wikidata company row (see WikidataCompanyRow in
+   * queries.server), matched via the company's LEI. Description, official
+   * name, inception, employees (+ as-of date), industry/legal-form labels,
+   * HQ, logo URL, current stock listings ("Exchange: TICKER | …"),
+   * websites, LinkedIn id, and the wikidata.org URL. Empty when unmatched.
+   */
+  wikidataQuery?: string;
 }
 
 export interface CountryConfig {
@@ -669,6 +677,55 @@ WHERE r.lei = (
   FROM gleif_lei_records
   WHERE jurisdiction = 'SE'
     AND replaceRegexpAll(registered_as, '[^0-9]', '') = {id:String}
+)
+LIMIT 1`,
+      // Wikidata enrichment, joined via LEI (the only reliable key between
+      // wikidata_company_identifiers and a national registry number).
+      wikidataQuery: `WITH (
+  SELECT coalesce(argMax(lei, (registration_status = 'ISSUED', entity_status = 'ACTIVE')), '')
+  FROM gleif_lei_records
+  WHERE jurisdiction = 'SE'
+    AND replaceRegexpAll(registered_as, '[^0-9]', '') = {id:String}
+) AS my_lei
+SELECT w.wikidata_id AS wikidata_id,
+  w.wikidata_url AS wikidata_url,
+  coalesce(w.company_description, '') AS description,
+  coalesce(w.official_name, '') AS official_name,
+  coalesce(toString(w.inception_date), '') AS inception_date,
+  w.employee_count AS employee_count,
+  coalesce(toString(w.employee_count_point_in_time), '') AS employee_count_as_of,
+  coalesce(w.industry_label, '') AS industry_label,
+  coalesce(w.legal_form_label, '') AS legal_form_label,
+  coalesce(w.headquarters_label, '') AS headquarters,
+  coalesce(w.headquarters_country_label, '') AS headquarters_country,
+  coalesce(w.logo_image_url, '') AS logo_url,
+  toUInt8(w.has_current_listing) AS has_current_listing,
+  coalesce(l.listings, '') AS listings,
+  coalesce(s.websites, '') AS websites,
+  coalesce(li.linkedin, '') AS linkedin_id
+FROM wikidata_companies AS w
+LEFT JOIN (
+  SELECT wikidata_id,
+    arrayStringConcat(groupUniqArray(concat(exchange_name, ': ', ticker)), ' | ') AS listings
+  FROM wikidata_company_listings
+  WHERE is_current AND ticker != ''
+  GROUP BY wikidata_id
+) AS l ON l.wikidata_id = w.wikidata_id
+LEFT JOIN (
+  SELECT wikidata_id,
+    arrayStringConcat(groupUniqArray(website_url), ' ') AS websites
+  FROM wikidata_company_websites
+  GROUP BY wikidata_id
+) AS s ON s.wikidata_id = w.wikidata_id
+LEFT JOIN (
+  SELECT wikidata_id, any(identifier_value) AS linkedin
+  FROM wikidata_company_identifiers
+  WHERE identifier_type = 'linkedin_company_id'
+  GROUP BY wikidata_id
+) AS li ON li.wikidata_id = w.wikidata_id
+WHERE my_lei != '' AND w.wikidata_id IN (
+  SELECT wikidata_id FROM wikidata_company_identifiers
+  WHERE identifier_type = 'lei' AND upper(identifier_value) = my_lei
 )
 LIMIT 1`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,

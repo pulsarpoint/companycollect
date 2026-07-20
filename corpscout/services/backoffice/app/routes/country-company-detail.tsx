@@ -12,6 +12,7 @@ import {
 } from "~/components/detail/detail-sections";
 import { ContactLocationCard } from "~/components/detail/contact-location-card";
 import { GleifGroupSection } from "~/components/detail/gleif-group-section";
+import { WikidataSection } from "~/components/detail/wikidata-section";
 import { SecondaryNamesSection } from "~/components/detail/secondary-names-section";
 import { ManagementSection } from "~/components/detail/management-section";
 import { FinancialsSection } from "~/components/detail/financials-section";
@@ -93,6 +94,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
         entity={detail.gleifEntity}
         countryCode={country.code}
       />
+      <WikidataSection wikidata={detail.wikidata} />
       <SecondaryNamesSection names={detail.secondaryNames} />
       <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} audit={detail.audit} />
       <IndustriesSection industries={detail.industries} />
