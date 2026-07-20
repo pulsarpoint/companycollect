@@ -32,9 +32,9 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         ).asset_layer.executable_asset_keys
     }
     # The weekly job runs the full chain end-to-end -- sync, catalog, parse,
-    # and both ClickHouse exports as separate assets in ONE run -- so the
-    # export scope is consumed in the same run that recorded it and cannot
-    # be orphaned by a later year-file rebuild (the 2026-07-18 incident).
+    # and both ClickHouse exports as separate unpartitioned assets in ONE
+    # run. The exports are stateless reconcilers (diff vs ClickHouse), so
+    # no later year-file rebuild can orphan them (the 2026-07-18 incident).
     assert current_job_asset_keys == {
         "sweden_financial_current_raw_archives_s3",
         "sweden_financial_current_report_xhtml_catalog_duckdb",

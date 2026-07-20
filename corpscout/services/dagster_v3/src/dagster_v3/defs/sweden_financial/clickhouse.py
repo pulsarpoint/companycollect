@@ -264,13 +264,22 @@ def resolve_unreconciled_facts_archive_keys(
     independently of the reports diff so a facts-only gap (e.g. a reports
     export that succeeded while the facts export failed) is still found.
 
-    Iterates the local FACTS counts, not the reports counts: an archive
-    with reports but zero extracted facts is legal and must not enter the
-    scope just because ClickHouse also has zero facts for it.
+    Diffs over the full local REPORT archive universe with the facts count
+    defaulted to 0: an archive with reports but zero extracted facts is a
+    clean 0 == 0 no-op when ClickHouse agrees, but ENTERS the scope when
+    ClickHouse still holds stale facts for it (e.g. a re-parse now yields
+    zero facts where an earlier export inserted some) -- the upsert then
+    deletes those stale rows and inserts nothing. Facts whose statement
+    keys vanished from the local file entirely remain unreachable
+    (pre-existing limitation shared with the backfill path; a backfill
+    export of the year cleans them).
     """
     report_counts = _local_report_counts_by_archive(duckdb_connection)
     _require_nonempty_local_reports(report_counts)
-    local_counts = _local_facts_counts_by_archive(duckdb_connection)
+    facts_counts = _local_facts_counts_by_archive(duckdb_connection)
+    local_counts = {
+        key: facts_counts.get(key, 0) for key in report_counts
+    }
     clickhouse_rows = clickhouse_client.execute(
         f"SELECT r.source_archive_key, count() "
         f"FROM {QUALIFIED_SE_FINANCIAL_FACTS_TABLE} AS f "

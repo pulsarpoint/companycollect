@@ -49,8 +49,9 @@ source-specific object-key conventions.
 layer. It uses static year partitions `2020` through `2026`.
 
 `sweden_financial_current_raw_archives_s3` materializes the current refresh
-archive layer. It uses 7-day date partitions from `2026-07-04` through the end of
-2026 and scans upstream archive year `2026` on each run.
+archive layer. It is unpartitioned (2026-07-20 design; scheduled weekly) and
+scans upstream archive year `2026` on each run, downloading only changed
+archives.
 
 It writes to bucket:
 
@@ -149,23 +150,28 @@ The parsed DuckDB tables are:
 - `sweden_financial.parse_errors` - one row per XHTML document that failed
   parsing, so a bad report does not block the rest of the partition.
 
-The ClickHouse exports are **partition-scoped incremental upserts**, never
-full-table replaces (architecture decision after the 2026-07-19 incident, where
-a host holding only one year's DuckDB file full-replaced the seven-year
+The ClickHouse exports are **scoped incremental upserts**, never full-table
+replaces (architecture decision after the 2026-07-19 incident, where a host
+holding only one year's DuckDB file full-replaced the seven-year
 `se_financial_facts` table — see the incident entry in the repo SDD ledger).
-Four partitioned assets mirror the parse assets' partition layout:
-`sweden_financial_backfill_reports_clickhouse` /
-`sweden_financial_current_reports_clickhouse` and their facts twins. Each
-partition run resolves its own archive scope from the LOCAL DuckDB catalog
-(fail-loud `ValueError` when the local file or scope is missing/empty), deletes
-exactly its own scope in ClickHouse — reports by `source_archive_key` (small
-Array param), facts by `statement_key` staged through a per-run Memory table so
-hundreds of thousands of keys travel as data blocks, never query text — with
-`mutations_sync = 1` (skipped entirely when the pre-count is 0, the steady-state
-new-archive case), then inserts that partition's rows with explicit columns. A
-run structurally cannot touch rows outside its own partition, so no host ever
-needs the full history locally. The source is append-shaped (immutable weekly
-archives), which is what makes delete-own-scope + insert exact.
+The backfill pair (`sweden_financial_backfill_reports_clickhouse` + facts
+twin) is year-partitioned: each partition run's scope is its year file's full
+archive set (fail-loud `ValueError` when the local file is missing/empty).
+The current pair (`sweden_financial_current_reports_clickhouse` + facts twin)
+is unpartitioned and **reconciling** (2026-07-20 design): each run diffs the
+local active-year file against ClickHouse per `source_archive_key` — row
+counts for reports; facts counted over the full report-archive universe via
+the `statement_key` join, so stale ClickHouse facts for a now-factless
+archive are also caught — and upserts exactly the missing/mismatched
+archives. Both delete exactly their own scope in ClickHouse — reports by
+`source_archive_key` (small Array param), facts by `statement_key` staged
+through a per-run Memory table so hundreds of thousands of keys travel as
+data blocks, never query text — with `mutations_sync = 1` (skipped entirely
+when the pre-count is 0, the steady-state new-archive case), then insert with
+explicit columns. A run structurally cannot touch rows outside its own scope,
+so no host ever needs the full history locally. The source is append-shaped
+(immutable weekly archives), which is what makes delete-own-scope + insert
+exact.
 
 Operational note: a backfill `2026` export and the weekly current writer share
 the 2026 DuckDB file; running both concurrently fails loudly on the DuckDB

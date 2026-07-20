@@ -483,6 +483,55 @@ def test_reconcile_facts_upserts_only_the_diff(
     assert len(client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]) == 2
 
 
+def test_reconcile_facts_deletes_stale_clickhouse_facts_for_factless_archive(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # A re-parse now yields ZERO local facts for W1's report, but an earlier
+    # export left facts in ClickHouse. The archive must enter the scope
+    # (0 local != N in CH) and the stale rows must be deleted via the
+    # stage-table mechanism, with nothing inserted back.
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
+        facts=(),
+    )
+    client = _reports_facts_fake_client()
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
+        _clickhouse_report_row(
+            company_id="5560000001", year="2026", archive_key=_ARCHIVE_KEY_2026_W1
+        )
+    )
+    stale_fact = _clickhouse_fact_row(company_id="5560000001", year="2026")
+    client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE].append(stale_fact)
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            metadata = reconcile_sweden_financial_facts_clickhouse(
+                duckdb_connection=connection,
+                clickhouse=resource,
+            )
+
+    assert metadata == {"archives": 1, "deleted": 1, "inserted": 0}
+    assert client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE] == []
+    # The delete went through the stage-table mechanism.
+    assert client.created_stage_tables
+
+
+def test_reconcile_facts_scope_raises_on_empty_year_file(
+    tmp_path: Path,
+) -> None:
+    _seed_year_file(tmp_path, "2026", reports=())
+    client = _reports_facts_fake_client()
+
+    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
+        with pytest.raises(ValueError, match="zero report rows"):
+            resolve_unreconciled_facts_archive_keys(connection, client)
+
+
 def test_reconcile_is_idempotent(
     tmp_path: Path,
     monkeypatch,
@@ -1030,14 +1079,12 @@ def _seed_year_file(
     *,
     reports: tuple[tuple[str, str], ...],
     facts: tuple[str, ...] = (),
-    catalog_rows: tuple[tuple[str, str, str, bool], ...] = (),
 ) -> Path:
     """Create a per-year Sweden financial DuckDB file like the parse assets do.
 
     ``reports`` is ``(company_id, source_archive_key)`` pairs; ``facts`` is
     company ids (one fact per report, linked via the report's statement
-    key); ``catalog_rows`` is ``(load_partition_key, sync_kind, s3_key,
-    downloaded)`` rows for ``archive_sync_catalog``.
+    key).
     """
     database_path = root / f"sweden_financial_source_{year}.duckdb"
     with duckdb.connect(str(database_path)) as connection:
@@ -1051,15 +1098,6 @@ def _seed_year_file(
             )
         for company_id in facts:
             _insert_fact(connection, year=year, company_id=company_id)
-        for load_partition_key, sync_kind, s3_key, downloaded in catalog_rows:
-            connection.execute(
-                f"""
-                insert into {SWEDEN_FINANCIAL_DATASET_NAME}.archive_sync_catalog
-                values ('run-1', ?, ?, ?, 'upstream.zip', '', '', 0, '', ?, ?, 0,
-                        '', '')
-                """,
-                [sync_kind, load_partition_key, year, s3_key, downloaded],
-            )
     return database_path
 
 
