@@ -1,4 +1,3 @@
-import re
 import uuid
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -146,86 +145,33 @@ def clickhouse_table_row_count(client: Any, qualified_table: str) -> int:
     return int(rows[0][0])
 
 
-_BACKFILL_PARTITION_KEY_PATTERN = re.compile(r"^\d{4}$")
-
-
-def _is_backfill_partition_key(partition_key: str) -> bool:
-    """Distinguish yearly backfill partitions from weekly current partitions.
-
-    Backfill partitions are bare 4-digit years (``"2020"``..``"2026"``);
-    current partitions are ISO week-start dates (``"2026-07-11"``). The two
-    partition families never collide in format, so this is enough to pick a
-    scope-resolution strategy without a separate "kind" parameter.
-    """
-    return bool(_BACKFILL_PARTITION_KEY_PATTERN.fullmatch(partition_key))
-
-
-def resolve_sweden_financial_partition_archive_keys(
+def resolve_sweden_financial_year_archive_keys(
     duckdb_connection: Any,
-    partition_key: str,
 ) -> list[str]:
-    """Resolve this partition's ``source_archive_key`` scope from the local
-    per-year DuckDB file already open on ``duckdb_connection``.
+    """Every distinct ``source_archive_key`` in the local year file's
+    ``reports`` table -- the backfill export scope ("the whole file"; the
+    parse layer replaces the entire year file for backfill partitions,
+    ``replace_scope="partition"`` in ``parsing.py``).
 
-    - **Yearly backfill partitions** (bare 4-digit year): the parse layer
-      replaces the ENTIRE year file for these
-      (``replace_scope="partition"`` in ``parsing.py``), so the export scope
-      is every distinct ``source_archive_key`` currently in that file's
-      ``reports`` table -- "the whole file".
-    - **Weekly current partitions** (ISO date): the parse layer only
-      replaces the archives it newly downloaded THIS run
-      (``replace_scope="archive"``), correlated by ``source_run_id`` within
-      one job run. The export runs later, in a *different* run (a different
-      ``source_run_id``), so it cannot use that correlation; instead it
-      re-derives the same archive set from ``archive_sync_catalog`` via the
-      ``load_partition_key`` column, which is set to the Dagster partition
-      key itself at sync time (see
-      ``archive_state.record_sweden_financial_archive_sync``) and so is
-      stable across runs. Filtered to ``downloaded`` rows because every
-      weekly sync re-lists the FULL year's upstream archives (see
-      ``resources.py:sync_raw_archives``) -- only rows with
-      ``downloaded = true`` are the archives that were actually new (and
-      therefore (re-)parsed) for this specific partition.
+    The weekly current exports do NOT use this: they are reconcilers
+    (``reconcile_sweden_financial_reports_clickhouse`` /
+    ``..._facts_...``) that diff the local file against ClickHouse and
+    need no partition-scope bookkeeping at all (the 2026-07-20
+    order-independence design).
 
-    Returns an EMPTY list for exactly one case: a weekly partition whose
-    sync DID run (catalog rows exist for it) but recorded zero
-    ``downloaded`` archives -- a legitimate quiet week upstream, which the
-    callers turn into a clean no-op export.
-
-    Raises ``ValueError`` if the partition's scope is otherwise empty --
-    either this host's local DuckDB file holds no rows for this partition
-    at all, or (for a weekly partition) this exact partition was never
-    synced/parsed locally. Never conflates that with the quiet-week case
-    (see the 2026-07-19 incident this design replaces, and the 2026-07-18
-    incident where a year rebuild wiped the weekly catalog rows).
+    Raises ``ValueError`` if the file holds no rows at all (corruption /
+    parse never ran -- never export nothing silently).
     """
-    if _is_backfill_partition_key(partition_key):
-        rows = duckdb_connection.execute(
-            f"select distinct source_archive_key "
-            f"from {SWEDEN_FINANCIAL_DATASET_NAME}.reports"
-        ).fetchall()
-        archive_keys = sorted({str(row[0]) for row in rows})
-    else:
-        rows = duckdb_connection.execute(
-            f"""
-            select s3_key, downloaded
-            from {SWEDEN_FINANCIAL_DATASET_NAME}.archive_sync_catalog
-            where load_partition_key = ?
-              and sync_kind = 'current'
-            """,
-            [partition_key],
-        ).fetchall()
-        archive_keys = sorted({str(key) for key, downloaded in rows if downloaded})
-        if rows and not archive_keys:
-            return []
+    rows = duckdb_connection.execute(
+        f"select distinct source_archive_key "
+        f"from {SWEDEN_FINANCIAL_DATASET_NAME}.reports"
+    ).fetchall()
+    archive_keys = sorted({str(row[0]) for row in rows})
     if not archive_keys:
         raise ValueError(
-            "No Sweden financial archive keys found for partition "
-            f"{partition_key!r}. The local DuckDB file holds no rows for "
-            "this partition's scope -- materialize the matching parse asset "
-            "for this exact partition on this host before exporting it (this "
-            "host may simply not hold this partition's data, e.g. a "
-            "different host completed this week's sync)."
+            "No Sweden financial archive keys found in the local year file. "
+            "The reports table is empty -- materialize the matching parse "
+            "asset on this host before exporting."
         )
     return archive_keys
 
@@ -346,29 +292,6 @@ def resolve_unreconciled_facts_archive_keys(
     return keys
 
 
-def _quiet_week_skip_metadata(
-    partition_key: str,
-    *,
-    log: Callable[..., object] | None = None,
-) -> dict[str, str | int]:
-    """No-op result for a weekly partition whose sync recorded zero changed
-    archives (see ``resolve_sweden_financial_partition_archive_keys``) --
-    the export succeeds without touching ClickHouse."""
-    if log is not None:
-        log(
-            "Skipping Sweden financial partition export: partition=%s synced "
-            "but zero archives changed upstream this week",
-            partition_key,
-        )
-    return {
-        "partition": partition_key,
-        "archives": 0,
-        "deleted": 0,
-        "inserted": 0,
-        "skipped_reason": "weekly sync recorded zero changed archives",
-    }
-
-
 def _statement_keys_for_archive_keys(
     duckdb_connection: Any,
     archive_keys: Sequence[str],
@@ -382,8 +305,8 @@ def _statement_keys_for_archive_keys(
     So the facts export's ClickHouse delete scope is expressed in
     ``statement_key``, derived here from the same local ``reports`` table
     used to resolve the archive scope. ``archive_keys`` is never empty
-    (``resolve_sweden_financial_partition_archive_keys`` raises first, and
-    the quiet-week empty scope short-circuits in the callers before this).
+    (``resolve_sweden_financial_year_archive_keys`` raises first, and the
+    reconcilers return early on an empty diff before calling this).
     """
     placeholders = ", ".join("?" for _ in archive_keys)
     rows = duckdb_connection.execute(
@@ -395,22 +318,6 @@ def _statement_keys_for_archive_keys(
         list(archive_keys),
     ).fetchall()
     return sorted({str(row[0]) for row in rows})
-
-
-def _reports_row_count_for_archive_keys(
-    duckdb_connection: Any,
-    archive_keys: Sequence[str],
-) -> int:
-    placeholders = ", ".join("?" for _ in archive_keys)
-    row = duckdb_connection.execute(
-        f"""
-        select count(*)
-        from {SWEDEN_FINANCIAL_DATASET_NAME}.reports
-        where source_archive_key in ({placeholders})
-        """,
-        list(archive_keys),
-    ).fetchone()
-    return int(row[0])
 
 
 def _count_and_delete_clickhouse_rows_by_key(
@@ -536,23 +443,14 @@ def _reports_scope_where_sql(archive_keys: Sequence[str]) -> str:
     return f"source_archive_key in ({_archive_keys_in_sql(archive_keys)})"
 
 
-def _facts_scope_where_sql(
-    partition_key: str,
-    archive_keys: Sequence[str],
-) -> str | None:
-    """DuckDB-side row filter for the facts insert.
-
-    - **Backfill partition**: the parse layer replaces the ENTIRE year file
-      for these, so the facts scope IS the whole local ``facts`` table -- no
-      filter at all (``None``). Inlining the year's ~98k-498k statement
-      keys as literals here would recreate the oversized-query problem on
-      the DuckDB side for nothing.
-    - **Weekly current partition**: filter facts through the local
-      ``reports`` table by this partition's archive keys (at most a few
-      hundred inlined literals) -- never by inlined statement keys.
-    """
-    if _is_backfill_partition_key(partition_key):
-        return None
+def _facts_scope_where_sql(archive_keys: Sequence[str]) -> str:
+    """DuckDB-side facts filter for an archive-scoped (reconcile) export:
+    facts joined through the local ``reports`` table by archive keys (at
+    most a few hundred inlined literals) -- never by inlined statement
+    keys (a year's ~98k-498k statement keys as literals would recreate
+    the oversized-query problem on the DuckDB side). The backfill upsert
+    passes ``where_sql=None`` instead: its scope IS the whole local
+    ``facts`` table."""
     return (
         "statement_key in (select statement_key "
         f"from {SWEDEN_FINANCIAL_DATASET_NAME}.reports "
@@ -627,34 +525,20 @@ def upsert_sweden_financial_reports_partition(
     partition_key: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, str | int]:
-    """Delete-and-insert-scoped export of one partition's Sweden financial
-    report rows into ``corpscout.se_financial_reports``.
+    """Delete-and-insert-scoped export of one backfill year's Sweden
+    financial report rows into ``corpscout.se_financial_reports``.
 
-    Never touches rows outside this partition's own ``source_archive_key``
-    scope -- cross-host and cross-partition safe by construction (the
-    never-full-replace design that closes the 2026-07-19 wipe incident).
+    The scope is the year file's full archive set. Never touches rows
+    outside that scope -- cross-host and cross-year safe by construction
+    (the never-full-replace design that closes the 2026-07-19 wipe
+    incident).
     """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=SWEDEN_FINANCIAL_DATABASE,
         tables=(SE_FINANCIAL_REPORTS_TABLE,),
     )
-    archive_keys = resolve_sweden_financial_partition_archive_keys(
-        duckdb_connection, partition_key
-    )
-    if not archive_keys:
-        return _quiet_week_skip_metadata(partition_key, log=log)
-    source_row_count = _reports_row_count_for_archive_keys(
-        duckdb_connection, archive_keys
-    )
-    if source_row_count == 0:
-        raise ValueError(
-            f"Sweden financial reports partition {partition_key!r} resolved "
-            f"{len(archive_keys)} archive keys but ZERO local report rows in "
-            "their scope; refusing to export nothing. The local DuckDB "
-            "reports table is out of sync with archive_sync_catalog -- "
-            "re-materialize this partition's parse asset on this host first."
-        )
+    archive_keys = resolve_sweden_financial_year_archive_keys(duckdb_connection)
     if log is not None:
         log(
             "Upserting Sweden financial reports partition: partition=%s archives=%s",
@@ -701,11 +585,11 @@ def upsert_sweden_financial_facts_partition(
     partition_key: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, str | int]:
-    """Delete-and-insert-scoped export of one partition's Sweden financial
-    fact rows into ``corpscout.se_financial_facts``.
+    """Delete-and-insert-scoped export of one backfill year's Sweden
+    financial fact rows into ``corpscout.se_financial_facts``.
 
-    Scoped by ``statement_key`` (derived from the partition's archive keys
-    via the local ``reports`` table) rather than ``source_archive_key``
+    Scoped by ``statement_key`` (derived from the year's archive keys via
+    the local ``reports`` table) rather than ``source_archive_key``
     directly -- ``se_financial_facts`` has no ``source_archive_key`` column.
     """
     assert_clickhouse_tables_exist(
@@ -713,20 +597,8 @@ def upsert_sweden_financial_facts_partition(
         database=SWEDEN_FINANCIAL_DATABASE,
         tables=(SE_FINANCIAL_FACTS_TABLE,),
     )
-    archive_keys = resolve_sweden_financial_partition_archive_keys(
-        duckdb_connection, partition_key
-    )
-    if not archive_keys:
-        return _quiet_week_skip_metadata(partition_key, log=log)
+    archive_keys = resolve_sweden_financial_year_archive_keys(duckdb_connection)
     statement_keys = _statement_keys_for_archive_keys(duckdb_connection, archive_keys)
-    if not statement_keys:
-        raise ValueError(
-            f"Sweden financial facts partition {partition_key!r} resolved "
-            f"{len(archive_keys)} archive keys but ZERO statement keys in "
-            "their scope; refusing to export nothing. The local DuckDB "
-            "reports table is out of sync with archive_sync_catalog -- "
-            "re-materialize this partition's parse asset on this host first."
-        )
     if log is not None:
         log(
             "Upserting Sweden financial facts partition: partition=%s archives=%s "
@@ -744,7 +616,7 @@ def upsert_sweden_financial_facts_partition(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_table="facts",
-            where_sql=_facts_scope_where_sql(partition_key, archive_keys),
+            where_sql=None,
             clickhouse_table=SE_FINANCIAL_FACTS_TABLE,
             columns=SE_FINANCIAL_FACTS_EXPORT_COLUMNS,
             log=log,
@@ -765,3 +637,109 @@ def upsert_sweden_financial_facts_partition(
         "deleted": deleted,
         "inserted": inserted,
     }
+
+
+_RECONCILE_NOOP_METADATA: dict[str, str | int] = {
+    "archives": 0,
+    "deleted": 0,
+    "inserted": 0,
+    "skipped_reason": "clickhouse already matches the local year file",
+}
+
+
+def reconcile_sweden_financial_reports_clickhouse(
+    *,
+    duckdb_connection: Any,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> dict[str, str | int]:
+    """Order-independent weekly export: upsert exactly the archives whose
+    local ``reports`` rows are missing or count-mismatched in ClickHouse.
+
+    A yearly rebuild cannot strand this -- there is no bookkeeping to
+    lose; the diff is recomputed from data every run (the 2026-07-20
+    design closing the 2026-07-18 wiped-ledger incident).
+    """
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=SWEDEN_FINANCIAL_DATABASE,
+        tables=(SE_FINANCIAL_REPORTS_TABLE,),
+    )
+    with clickhouse.get_connection() as client:
+        archive_keys = resolve_unreconciled_report_archive_keys(
+            duckdb_connection, client, log=log
+        )
+        if not archive_keys:
+            return dict(_RECONCILE_NOOP_METADATA)
+        deleted = _count_and_delete_clickhouse_rows_by_key(
+            client,
+            qualified_table=QUALIFIED_SE_FINANCIAL_REPORTS_TABLE,
+            column="source_archive_key",
+            keys=archive_keys,
+        )
+        inserted = _insert_partition_scope_rows(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=client,
+            duckdb_table="reports",
+            where_sql=_reports_scope_where_sql(archive_keys),
+            clickhouse_table=SE_FINANCIAL_REPORTS_TABLE,
+            columns=SE_FINANCIAL_REPORTS_EXPORT_COLUMNS,
+            log=log,
+        )
+    if log is not None:
+        log(
+            "Reconciled Sweden financial reports: archives=%s deleted=%s "
+            "inserted=%s",
+            len(archive_keys),
+            deleted,
+            inserted,
+        )
+    return {"archives": len(archive_keys), "deleted": deleted, "inserted": inserted}
+
+
+def reconcile_sweden_financial_facts_clickhouse(
+    *,
+    duckdb_connection: Any,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> dict[str, str | int]:
+    """Facts twin of ``reconcile_sweden_financial_reports_clickhouse``,
+    diffing facts counts per archive (via ``statement_key``) and deleting
+    through the Memory stage-table mechanism (statement-key scopes can
+    exceed ``max_query_size`` as Array params)."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=SWEDEN_FINANCIAL_DATABASE,
+        tables=(SE_FINANCIAL_FACTS_TABLE,),
+    )
+    with clickhouse.get_connection() as client:
+        archive_keys = resolve_unreconciled_facts_archive_keys(
+            duckdb_connection, client, log=log
+        )
+        if not archive_keys:
+            return dict(_RECONCILE_NOOP_METADATA)
+        statement_keys = _statement_keys_for_archive_keys(
+            duckdb_connection, archive_keys
+        )
+        deleted = _count_and_delete_facts_rows_via_scope_stage(
+            client,
+            statement_keys,
+        )
+        inserted = _insert_partition_scope_rows(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=client,
+            duckdb_table="facts",
+            where_sql=_facts_scope_where_sql(archive_keys),
+            clickhouse_table=SE_FINANCIAL_FACTS_TABLE,
+            columns=SE_FINANCIAL_FACTS_EXPORT_COLUMNS,
+            log=log,
+        )
+    if log is not None:
+        log(
+            "Reconciled Sweden financial facts: archives=%s deleted=%s "
+            "inserted=%s",
+            len(archive_keys),
+            deleted,
+            inserted,
+        )
+    return {"archives": len(archive_keys), "deleted": deleted, "inserted": inserted}

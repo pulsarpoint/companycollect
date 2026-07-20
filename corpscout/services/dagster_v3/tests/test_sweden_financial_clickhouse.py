@@ -17,7 +17,9 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     SE_FINANCIAL_REPORTS_EXPORT_COLUMNS,
     SHRINK_GUARD_MIN_RATIO,
     guard_against_clickhouse_table_shrink,
-    resolve_sweden_financial_partition_archive_keys,
+    reconcile_sweden_financial_facts_clickhouse,
+    reconcile_sweden_financial_reports_clickhouse,
+    resolve_sweden_financial_year_archive_keys,
     resolve_unreconciled_facts_archive_keys,
     resolve_unreconciled_report_archive_keys,
     upsert_sweden_financial_facts_partition,
@@ -229,7 +231,7 @@ def _patched_clickhouse(
 # --- scope resolution -------------------------------------------------------
 
 
-def test_resolve_backfill_partition_archive_keys_is_whole_file_distinct(
+def test_resolve_year_archive_keys_is_whole_file_distinct(
     tmp_path: Path,
 ) -> None:
     _seed_year_file(
@@ -243,89 +245,19 @@ def test_resolve_backfill_partition_archive_keys_is_whole_file_distinct(
     )
 
     with sweden_financial_year_duckdb_connection("2025", root=tmp_path) as connection:
-        keys = resolve_sweden_financial_partition_archive_keys(connection, "2025")
+        keys = resolve_sweden_financial_year_archive_keys(connection)
 
     assert keys == sorted([_ARCHIVE_KEY_2025_A, _ARCHIVE_KEY_2025_B])
 
 
-def test_resolve_current_partition_archive_keys_uses_archive_sync_catalog(
-    tmp_path: Path,
-) -> None:
-    _seed_year_file(
-        tmp_path,
-        "2026",
-        reports=(
-            ("5560000001", _ARCHIVE_KEY_2026_W1),
-            ("5560000002", _ARCHIVE_KEY_2026_W2),
-        ),
-        catalog_rows=(
-            # This partition, actually downloaded -> in scope.
-            ("2026-07-11", "current", _ARCHIVE_KEY_2026_W2, True),
-            # This partition, listed-but-not-downloaded (already present
-            # upstream re-listing) -> out of scope.
-            ("2026-07-11", "current", _ARCHIVE_KEY_2026_W1, False),
-            # A different weekly partition -> out of scope.
-            ("2026-07-04", "current", _ARCHIVE_KEY_2026_W1, True),
-        ),
-    )
-
-    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
-        keys = resolve_sweden_financial_partition_archive_keys(
-            connection, "2026-07-11"
-        )
-
-    assert keys == [_ARCHIVE_KEY_2026_W2]
-
-
-def test_resolve_partition_archive_keys_raises_when_backfill_scope_empty(
+def test_resolve_year_archive_keys_raises_when_file_empty(
     tmp_path: Path,
 ) -> None:
     _seed_year_file(tmp_path, "2024", reports=())
 
     with sweden_financial_year_duckdb_connection("2024", root=tmp_path) as connection:
         with pytest.raises(ValueError, match="No Sweden financial archive keys"):
-            resolve_sweden_financial_partition_archive_keys(connection, "2024")
-
-
-def test_resolve_current_partition_returns_empty_when_synced_but_nothing_new(
-    tmp_path: Path,
-) -> None:
-    # The weekly sync ran (catalog rows exist for this partition) but zero
-    # archives changed upstream -- a legitimate quiet week, not bookkeeping
-    # loss, so the scope resolves to empty instead of raising.
-    _seed_year_file(
-        tmp_path,
-        "2026",
-        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
-        catalog_rows=(
-            ("2026-07-18", "current", _ARCHIVE_KEY_2026_W1, False),
-            ("2026-07-18", "current", _ARCHIVE_KEY_2026_W2, False),
-        ),
-    )
-
-    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
-        keys = resolve_sweden_financial_partition_archive_keys(
-            connection, "2026-07-18"
-        )
-
-    assert keys == []
-
-
-def test_resolve_partition_archive_keys_raises_when_weekly_partition_not_synced(
-    tmp_path: Path,
-) -> None:
-    _seed_year_file(
-        tmp_path,
-        "2026",
-        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
-        catalog_rows=(("2026-07-04", "current", _ARCHIVE_KEY_2026_W1, True),),
-    )
-
-    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
-        with pytest.raises(ValueError, match="No Sweden financial archive keys"):
-            resolve_sweden_financial_partition_archive_keys(
-                connection, "2026-07-18"
-            )
+            resolve_sweden_financial_year_archive_keys(connection)
 
 
 def test_reconcile_reports_scope_is_missing_and_mismatched_archives(
@@ -436,6 +368,150 @@ def test_reconcile_facts_scope_counts_facts_per_archive(
     assert keys == [_ARCHIVE_KEY_2026_W2]
 
 
+# --- reconciling exports ----------------------------------------------------
+
+
+def test_reconcile_reports_upserts_only_the_diff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # W1 already in CH and matching -> untouched; W2 missing -> upserted.
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(
+            ("5560000001", _ARCHIVE_KEY_2026_W1),
+            ("5560000002", _ARCHIVE_KEY_2026_W2),
+        ),
+    )
+    client = _reports_facts_fake_client()
+    w1_row = _clickhouse_report_row(
+        company_id="5560000001", year="2026", archive_key=_ARCHIVE_KEY_2026_W1
+    )
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(w1_row)
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            metadata = reconcile_sweden_financial_reports_clickhouse(
+                duckdb_connection=connection,
+                clickhouse=resource,
+            )
+
+    assert metadata == {"archives": 1, "deleted": 0, "inserted": 1}
+    assert len(client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE]) == 2
+    assert w1_row in client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE]
+    # W2 was absent -> pre-count 0 -> pure insert, no delete mutation.
+    assert not any(
+        sql.startswith("ALTER TABLE") for sql in client.statements()
+    )
+
+
+def test_reconcile_reports_noop_when_clickhouse_matches(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_year_file(
+        tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),)
+    )
+    client = _reports_facts_fake_client()
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
+        _clickhouse_report_row(
+            company_id="5560000001", year="2026", archive_key=_ARCHIVE_KEY_2026_W1
+        )
+    )
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            metadata = reconcile_sweden_financial_reports_clickhouse(
+                duckdb_connection=connection,
+                clickhouse=resource,
+            )
+
+    assert metadata == {
+        "archives": 0,
+        "deleted": 0,
+        "inserted": 0,
+        "skipped_reason": "clickhouse already matches the local year file",
+    }
+    assert not any(
+        sql.startswith(("ALTER TABLE", "INSERT INTO"))
+        for sql in client.statements()
+    )
+
+
+def test_reconcile_facts_upserts_only_the_diff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(
+            ("5560000001", _ARCHIVE_KEY_2026_W1),
+            ("5560000002", _ARCHIVE_KEY_2026_W2),
+        ),
+        facts=("5560000001", "5560000002"),
+    )
+    client = _reports_facts_fake_client()
+    for company_id, archive_key in (
+        ("5560000001", _ARCHIVE_KEY_2026_W1),
+        ("5560000002", _ARCHIVE_KEY_2026_W2),
+    ):
+        client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
+            _clickhouse_report_row(
+                company_id=company_id, year="2026", archive_key=archive_key
+            )
+        )
+    w1_fact = _clickhouse_fact_row(company_id="5560000001", year="2026")
+    client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE].append(w1_fact)
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            metadata = reconcile_sweden_financial_facts_clickhouse(
+                duckdb_connection=connection,
+                clickhouse=resource,
+            )
+
+    assert metadata == {"archives": 1, "deleted": 0, "inserted": 1}
+    assert w1_fact in client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]
+    assert len(client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]) == 2
+
+
+def test_reconcile_is_idempotent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_year_file(
+        tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),)
+    )
+    client = _reports_facts_fake_client()
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            first = reconcile_sweden_financial_reports_clickhouse(
+                duckdb_connection=connection,
+                clickhouse=resource,
+            )
+            second = reconcile_sweden_financial_reports_clickhouse(
+                duckdb_connection=connection,
+                clickhouse=resource,
+            )
+
+    assert first["inserted"] == 1
+    assert second["skipped_reason"] == (
+        "clickhouse already matches the local year file"
+    )
+    assert len(client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE]) == 1
+
+
 # --- reports upsert ---------------------------------------------------------
 
 
@@ -537,120 +613,6 @@ def test_upsert_reports_partition_skips_delete_mutation_when_precount_zero(
     assert metadata["inserted"] == 1
     assert not any(
         sql.startswith("ALTER TABLE") for sql in client.statements()
-    )
-
-
-def test_upsert_reports_partition_skips_cleanly_on_quiet_week(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    # Weekly sync ran but zero archives changed upstream: the export must
-    # succeed as a no-op (never raise, never touch ClickHouse rows).
-    _seed_year_file(
-        tmp_path,
-        "2026",
-        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
-        catalog_rows=(("2026-07-18", "current", _ARCHIVE_KEY_2026_W1, False),),
-    )
-    client = _reports_facts_fake_client()
-    existing_row = _clickhouse_report_row(
-        company_id="5560000001",
-        year="2026",
-        archive_key=_ARCHIVE_KEY_2026_W1,
-    )
-    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(existing_row)
-
-    with _patched_clickhouse(monkeypatch, client) as resource:
-        with sweden_financial_year_duckdb_connection(
-            "2026", root=tmp_path
-        ) as connection:
-            metadata = upsert_sweden_financial_reports_partition(
-                duckdb_connection=connection,
-                clickhouse=resource,
-                partition_key="2026-07-18",
-            )
-
-    assert metadata == {
-        "partition": "2026-07-18",
-        "archives": 0,
-        "deleted": 0,
-        "inserted": 0,
-        "skipped_reason": "weekly sync recorded zero changed archives",
-    }
-    assert client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE] == [existing_row]
-    assert not any(
-        sql.startswith(("ALTER TABLE", "INSERT INTO"))
-        for sql in client.statements()
-    )
-
-
-def test_upsert_facts_partition_skips_cleanly_on_quiet_week(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    _seed_year_file(
-        tmp_path,
-        "2026",
-        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
-        facts=("5560000001",),
-        catalog_rows=(("2026-07-18", "current", _ARCHIVE_KEY_2026_W1, False),),
-    )
-    client = _reports_facts_fake_client()
-
-    with _patched_clickhouse(monkeypatch, client) as resource:
-        with sweden_financial_year_duckdb_connection(
-            "2026", root=tmp_path
-        ) as connection:
-            metadata = upsert_sweden_financial_facts_partition(
-                duckdb_connection=connection,
-                clickhouse=resource,
-                partition_key="2026-07-18",
-            )
-
-    assert metadata == {
-        "partition": "2026-07-18",
-        "archives": 0,
-        "deleted": 0,
-        "inserted": 0,
-        "skipped_reason": "weekly sync recorded zero changed archives",
-    }
-    assert client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE] == []
-    assert not any(
-        sql.startswith(("ALTER TABLE", "INSERT INTO", "CREATE TABLE"))
-        for sql in client.statements()
-    )
-
-
-def test_upsert_reports_partition_fails_loudly_when_scope_has_zero_source_rows(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    # The archive scope itself is NON-empty (the catalog says this weekly
-    # partition downloaded an archive) but the local reports table holds
-    # zero rows for it -- parse never ran / is out of sync. Exporting
-    # nothing silently is forbidden.
-    _seed_year_file(
-        tmp_path,
-        "2026",
-        reports=(),
-        catalog_rows=(("2026-07-11", "current", _ARCHIVE_KEY_2026_W1, True),),
-    )
-    client = _reports_facts_fake_client()
-
-    with _patched_clickhouse(monkeypatch, client) as resource:
-        with sweden_financial_year_duckdb_connection(
-            "2026", root=tmp_path
-        ) as connection:
-            with pytest.raises(ValueError, match="ZERO local report rows"):
-                upsert_sweden_financial_reports_partition(
-                    duckdb_connection=connection,
-                    clickhouse=resource,
-                    partition_key="2026-07-11",
-                )
-
-    assert not any(
-        sql.startswith(("ALTER TABLE", "INSERT INTO", "CREATE TABLE"))
-        for sql in client.statements()
     )
 
 
@@ -886,90 +848,6 @@ def test_upsert_facts_partition_scopes_by_statement_key_via_stage_table(
     assert insert_sql == (
         f"INSERT INTO `corpscout`.`se_financial_facts` "
         f"({expected_columns}) VALUES"
-    )
-
-
-def test_upsert_facts_weekly_partition_filters_facts_through_reports_join(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    # A weekly current partition exports only the facts belonging to ITS
-    # downloaded archives, resolved through the local reports table inside
-    # DuckDB -- the other archive's facts stay out of scope entirely.
-    _seed_year_file(
-        tmp_path,
-        "2026",
-        reports=(
-            ("5560000001", _ARCHIVE_KEY_2026_W1),
-            ("5560000002", _ARCHIVE_KEY_2026_W2),
-        ),
-        facts=("5560000001", "5560000002"),
-        catalog_rows=(
-            ("2026-07-11", "current", _ARCHIVE_KEY_2026_W2, True),
-            ("2026-07-11", "current", _ARCHIVE_KEY_2026_W1, False),
-        ),
-    )
-    client = _reports_facts_fake_client()
-    in_scope_key = _statement_key("5560000002", "2026")
-
-    with _patched_clickhouse(monkeypatch, client) as resource:
-        with sweden_financial_year_duckdb_connection(
-            "2026", root=tmp_path
-        ) as connection:
-            metadata = upsert_sweden_financial_facts_partition(
-                duckdb_connection=connection,
-                clickhouse=resource,
-                partition_key="2026-07-11",
-            )
-
-    assert metadata == {
-        "partition": "2026-07-11",
-        "archives": 1,
-        "deleted": 0,
-        "inserted": 1,
-    }
-    inserted_rows = client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE]
-    key_index = SE_FINANCIAL_FACTS_EXPORT_COLUMNS.index("statement_key")
-    assert [row[key_index] for row in inserted_rows] == [in_scope_key]
-
-    # The stage delete scope is exactly the in-scope statement key.
-    stage_insert_params = next(
-        params
-        for sql, params in client.operations
-        if _STAGE_INSERT_SQL_RE.match(sql)
-    )
-    assert stage_insert_params == [(in_scope_key,)]
-
-
-def test_upsert_facts_partition_fails_loudly_when_scope_has_zero_statement_keys(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    # Archive scope non-empty (catalog says downloaded) but the local
-    # reports table resolves it to zero statement keys -- fail loud, never
-    # silently export nothing.
-    _seed_year_file(
-        tmp_path,
-        "2026",
-        reports=(),
-        catalog_rows=(("2026-07-11", "current", _ARCHIVE_KEY_2026_W1, True),),
-    )
-    client = _reports_facts_fake_client()
-
-    with _patched_clickhouse(monkeypatch, client) as resource:
-        with sweden_financial_year_duckdb_connection(
-            "2026", root=tmp_path
-        ) as connection:
-            with pytest.raises(ValueError, match="ZERO statement keys"):
-                upsert_sweden_financial_facts_partition(
-                    duckdb_connection=connection,
-                    clickhouse=resource,
-                    partition_key="2026-07-11",
-                )
-
-    assert not any(
-        sql.startswith(("ALTER TABLE", "INSERT INTO", "CREATE TABLE"))
-        for sql in client.statements()
     )
 
 
