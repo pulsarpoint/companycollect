@@ -366,7 +366,7 @@ IFRS_METRIC_CONCEPTS: dict[str, tuple[str, ...]] = {
 - Modify: `docs/esef-filings-research.md` (status header → "implemented, see module design doc"), `docs/finland-data-sources.md` ("Planned" section: ESEF → live), `docs/sweden-data-sources.md` (roadmap item 9 note: ESEF module live, SE consumption via entity map)
 
 **Interfaces:**
-- `esef_filings_refresh_job` = index + current-year facts partition + the three exports + metrics (selection via `AssetSelection.assets(...)`; the facts asset is partitioned — job targets the partition matching `toYear(now)` via a schedule-time partition fn, mirroring `sweden_financial_current_year_weekly`'s resolver).
+- `esef_filings_refresh_job` = index + current-year facts partition + current-year report-XHTML archive (Task 9's `esef_report_xhtml_s3`) + the three exports + metrics (selection via `AssetSelection.assets(...)`; the facts asset is partitioned — job targets the partition matching `toYear(now)` via a schedule-time partition fn, mirroring `sweden_financial_current_year_weekly`'s resolver).
 - `esef_filings_backfill_job` = facts partitions for UI-launched backfill (2019–2027) with exports EXCLUDED (run exports once after all partitions land, like sweden).
 - Schedule `esef_filings_refresh_weekly`: `50 5 * * 0` Europe/Belgrade (staggered from every existing source), `DefaultScheduleStatus.STOPPED` until first validated live run (Task 8 flips it in the UI).
 - Design doc: as-built rewrite of the research doc following `docs/source-design-doc-template.md` (source, resource, assets, jobs, scope flag, matching, v1 skips: Arelle fallback, `company_financials_latest` integration).
@@ -390,7 +390,27 @@ No new code. Sequence (controller runs it, GraphQL launch pattern):
 
 ---
 
+### Task 9: Report XHTML archive to S3 (added 2026-07-20 mid-execution, user request; runs between Tasks 5 and 6 in execution order)
+
+**Files:**
+- Modify: `src/dagster_v3/defs/esef_filings/assets.py` (new asset)
+- Test: `tests/test_esef_filings_assets.py` (extend)
+
+**Interfaces:**
+- Consumes: `esef_filings.filings_index` (Task 3), `EsefFilingsClient.download_json_facts` (Task 2 — the download helper is URL-agnostic streamed GET with retries; reuse it for XHTML).
+- Produces: asset `esef_report_xhtml_s3`, same `StaticPartitionsDefinition` 2019–2027 keyed by `toYear(period_end)`, `deps=["esef_filings_index_duckdb"]`, `pool="esef_filings_duckdb"` (opens the DuckDB file read-only for scope resolution — pool required per CLAUDE.md), `BackfillPolicy.multi_run(1)`. Per partition run: select the year's filings from the local index; for each with a non-null `report_url`: download the filing's rendered XHTML to S3 `esef_filings/report_xhtml/fxo_id=<fxo_id>/report.xhtml` in bucket `source-esef-filings`, skip when the object already exists (fxo_id is version-stable — verified live). No parsing. Metadata: `filings_in_scope`, `downloaded_count`, `reused_count`, `skipped_no_report_url`, `skipped_out_of_range`.
+- Purpose: archive the full human-readable report documents now, as the corpus for a **future pass** building text extraction → embeddings → LLM-assisted search over annual reports (separate plan; see deferred). Volume estimate ~25k filings × 2–8 MB ≈ 50–200 GB on RustFS — flagged to the user.
+- Jobs wiring (Task 7 must include): the archive asset joins the backfill job's partitioned set and the weekly refresh job's current-year selection.
+
+- [ ] **Step 1: Failing asset test** — stub client+object store; partition run downloads only missing XHTMLs for its year, skips existing, counts filings without report_url; second run downloads nothing.
+- [ ] **Step 2: Implement the asset** (mirror the facts asset's scope resolution; all fallible work before/outside the write path — this asset never writes DuckDB, read-only connection only).
+- [ ] **Step 3: Run** `uv run pytest tests/test_esef_filings_assets.py -q` + `uv run dg check defs` → PASS. Commit: `feat(dagster): esef report xhtml archive to s3`.
+
+---
+
 ## Explicitly deferred (log in ledger, do not build)
+
+- **Embeddings + LLM search over archived report XHTML** (user, 2026-07-20): next pass after this plan — text extraction from the S3 XHTML corpus, embedding generation (existing embedder infra: Qwen3-Embedding-8B), vector search + LLM answering over annual-report content. Needs its own brainstorm/plan; the Task 9 archive is its data prerequisite.
 
 - Arelle/package fallback for filings without `json_url` (decide after Task 8 coverage numbers).
 - `company_financials_latest` consuming ESEF rows (scope-preference rule first).
