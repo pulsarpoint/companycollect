@@ -318,6 +318,15 @@ def test_esef_facts_column_expressions_cast_amount_original_and_period_dates() -
         ESEF_FACTS_COLUMN_EXPRESSIONS["period_instant"]
         == "try_cast(period_instant as date)"
     )
+    # period_duration_end (Finding 1 fix) is also genuinely Nullable(Date32)
+    # in the migration -- a duration fact's own true end date, distinct from
+    # the filing-level period_end. Plain try_cast, NO sentinel: an
+    # instant/text fact (or a malformed value) simply has no value here, and
+    # NULL is meaningful, not an error to sentinel away.
+    assert (
+        ESEF_FACTS_COLUMN_EXPRESSIONS["period_duration_end"]
+        == "try_cast(period_duration_end as date)"
+    )
     assert set(ESEF_FACTS_COLUMN_EXPRESSIONS) <= set(tables.ESEF_FACTS_EXPORT_COLUMNS)
 
 
@@ -331,6 +340,7 @@ _FACTS_STAGING_COLUMN_TYPES: dict[str, str] = {
     "concept_local_name": "varchar",
     "period_start": "varchar",
     "period_instant": "varchar",
+    "period_duration_end": "varchar",
     "unit": "varchar",
     "currency": "varchar",
     "value_kind": "varchar",
@@ -376,6 +386,7 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
                 "Revenue",
                 "2022-01-01",
                 None,
+                "2022-12-31",  # period_duration_end: this duration fact's true end
                 "iso4217:EUR",
                 "EUR",
                 "monetary",
@@ -396,6 +407,7 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
                 "Narrative",
                 None,
                 "2022-12-31",
+                None,  # period_duration_end: instant facts never have one
                 "",
                 "",
                 "text",
@@ -416,6 +428,7 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
                 "Malformed",
                 None,
                 None,
+                "2022-99-99",  # malformed period_duration_end -- must NULL, no sentinel
                 "iso4217:EUR",
                 "EUR",
                 "monetary",
@@ -455,6 +468,16 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
     assert by_fact_id["f-malformed-period-end"][period_end_index] == date(1970, 1, 1)
     # Well-formed period_end values must pass through unaffected by the sentinel.
     assert by_fact_id["f-revenue"][period_end_index] == date(2022, 12, 31)
+
+    # period_duration_end (Finding 1 fix): well-formed value passes through as
+    # a real date; a malformed value NULLs (genuinely Nullable, no sentinel --
+    # contrast with period_end's sentinel above for the very same row).
+    period_duration_end_index = tables.ESEF_FACTS_EXPORT_COLUMNS.index(
+        "period_duration_end"
+    )
+    assert by_fact_id["f-revenue"][period_duration_end_index] == date(2022, 12, 31)
+    assert by_fact_id["f-narrative"][period_duration_end_index] is None
+    assert by_fact_id["f-malformed-period-end"][period_duration_end_index] is None
 
 
 # --- esef_entity_registry_map_clickhouse ------------------------------------

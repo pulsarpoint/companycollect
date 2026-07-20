@@ -75,14 +75,18 @@ ESEF_FILINGS_COLUMN_EXPRESSIONS: dict[str, str] = {
 # period_end is missing, or a year-prefix-valid but otherwise malformed
 # string that try_cast alone would NULL (e.g. "2022-99-99"), must sentinel
 # to DATE '1970-01-01' rather than reach clickhouse_driver as None (crashes
-# the Date32 writer). period_start/period_instant ARE genuinely
-# Nullable(Date32) in the migration, so they stay plain try_cast.
+# the Date32 writer). period_start/period_instant/period_duration_end ARE
+# genuinely Nullable(Date32) in the migration, so they stay plain try_cast --
+# no sentinel. period_duration_end (Finding 1 fix) is a duration fact's own
+# true end date; instant/text facts and any fact predating this fix simply
+# have no value, and NULL there is meaningful, not an error to sentinel away.
 # `period_end_year` (local-only partition-scope column) is deliberately
 # absent here -- ESEF_FACTS_EXPORT_COLUMNS already excludes it.
 ESEF_FACTS_COLUMN_EXPRESSIONS: dict[str, str] = {
     "period_end": "coalesce(try_cast(period_end as date), DATE '1970-01-01')",
     "period_start": "try_cast(period_start as date)",
     "period_instant": "try_cast(period_instant as date)",
+    "period_duration_end": "try_cast(period_duration_end as date)",
     "amount_original": "try_cast(amount_original as decimal(38,2))",
 }
 

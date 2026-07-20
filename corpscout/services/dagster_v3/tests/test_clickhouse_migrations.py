@@ -1870,6 +1870,7 @@ ESEF_FACTS_COLUMNS = (
     "concept_local_name",
     "period_start",
     "period_instant",
+    "period_duration_end",
     "unit",
     "currency",
     "value_kind",

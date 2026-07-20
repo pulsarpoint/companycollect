@@ -132,6 +132,12 @@ _FILINGS_INDEX_COLUMNS_SQL = ", ".join(
 # Decimal value is already validated in Python (facts.EsefFact.amount_original),
 # and staging keeps raw-ish values as text per docs/data-source-guidelines.md
 # §3 -- the ClickHouse export casts to Decimal128(2).
+# `period_duration_end` (Finding 1 fix, migration 000149) carries a duration
+# fact's own true end date, distinct from `period_end` (the filing's own
+# period_end, stamped identically onto every fact) -- it lets metrics.py
+# structurally exclude a prior-year comparative duration fact instead of
+# relying on the filing-level period_end alone, which a comparative fact
+# also matches.
 _FACTS_COLUMN_TYPES: dict[str, str] = {
     "lei": "varchar",
     "fxo_id": "varchar",
@@ -143,6 +149,7 @@ _FACTS_COLUMN_TYPES: dict[str, str] = {
     "concept_local_name": "varchar",
     "period_start": "varchar",
     "period_instant": "varchar",
+    "period_duration_end": "varchar",
     "unit": "varchar",
     "currency": "varchar",
     "value_kind": "varchar",
@@ -426,6 +433,7 @@ def _row_from_fact(
         fact.concept_local_name,
         fact.period_start,
         fact.period_instant,
+        fact.period_duration_end,
         fact.unit,
         fact.currency,
         fact.value_kind,
@@ -903,6 +911,15 @@ def esef_entity_registry_map_clickhouse(
     )
 
 
+class EsefFinancialMetricsClickhouseExportConfig(dg.Config):
+    # Shrink-guard override (see sweden_financial/clickhouse.py's
+    # guard_against_clickhouse_table_shrink) -- MUST stay False by default.
+    # Only set True via explicit run config for a confirmed-intentional
+    # shrink of a populated esef_financial_metrics table, never as a
+    # standing default.
+    allow_shrink: bool = False
+
+
 @dg.asset(
     name="esef_financial_metrics_clickhouse",
     deps=["esef_facts_clickhouse", "esef_filings_clickhouse"],
@@ -913,17 +930,21 @@ def esef_entity_registry_map_clickhouse(
         "Rebuilds corpscout.esef_financial_metrics entirely in ClickHouse "
         "from corpscout.esef_facts + corpscout.esef_filings (+ "
         "corpscout.exchange_rates for USD conversion). ClickHouse-native "
-        "stage+INSERT-SELECT+EXCHANGE; no DuckDB input, no pool."
+        "stage+INSERT-SELECT+EXCHANGE, guarded against a staged replace that "
+        "would shrink the table by more than half (see "
+        "guard_against_clickhouse_table_shrink); no DuckDB input, no pool."
     ),
 )
 def esef_financial_metrics_clickhouse(
     context: dg.AssetExecutionContext,
+    config: EsefFinancialMetricsClickhouseExportConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     result = replace_esef_financial_metrics_clickhouse(
         clickhouse=clickhouse,
         source_run_id=context.run.run_id,
         log=context.log.info,
+        allow_shrink=config.allow_shrink,
     )
     return dg.MaterializeResult(
         metadata={

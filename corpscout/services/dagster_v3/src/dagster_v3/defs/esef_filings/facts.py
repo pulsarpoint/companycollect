@@ -54,6 +54,7 @@ class EsefFact:
     concept_local_name: str
     period_start: str | None
     period_instant: str | None
+    period_duration_end: str | None
     unit: str
     currency: str
     value_kind: str
@@ -105,7 +106,9 @@ def parse_oim_facts(
         if not sep:
             concept_namespace, concept_local_name = "", concept_qname
 
-        period_start, period_instant = _split_period(dimensions.get("period"))
+        period_start, period_instant, period_duration_end = _split_period(
+            dimensions.get("period")
+        )
         unit = _clean_str(dimensions.get("unit"))
         value_kind, currency = _classify_unit(unit)
         raw_value = _clean_str(entry.get("value"))
@@ -127,6 +130,7 @@ def parse_oim_facts(
                 concept_local_name=concept_local_name,
                 period_start=period_start,
                 period_instant=period_instant,
+                period_duration_end=period_duration_end,
                 unit=unit,
                 currency=currency,
                 value_kind=value_kind,
@@ -146,23 +150,26 @@ def _clean_str(value: Any) -> str:
     return str(value)
 
 
-def _split_period(period: Any) -> tuple[str | None, str | None]:
-    """Split an OIM period into (period_start, period_instant).
+def _split_period(period: Any) -> tuple[str | None, str | None, str | None]:
+    """Split an OIM period into (period_start, period_instant, period_duration_end).
 
-    Duration periods ("2022-01-01T00:00:00/2022-12-31T00:00:00") -> only the
-    start date is kept; the end is not re-stored (the filing's own
-    `period_end`, threaded through separately, already covers that -- see
-    module docstring / esef_facts schema, which has no separate per-fact end
-    column). Instant periods ("2022-12-31T00:00:00") -> kept as
-    period_instant. Anything unparseable (missing/blank/wrong type) yields
-    (None, None) rather than raising.
+    Duration periods ("2022-01-01T00:00:00/2022-12-31T00:00:00") -> both the
+    true start AND the true end are kept (period_instant stays None) -- the
+    duration's own end date is stored in `period_duration_end`, distinct from
+    the filing-level `period_end` threaded through separately. This is what
+    lets metrics.py structurally exclude a prior-year comparative duration
+    fact (same stamped `period_end` as the current year, but an earlier true
+    end date) instead of relying on a documented limitation. Instant periods
+    ("2022-12-31T00:00:00") -> kept as period_instant, period_duration_end
+    stays None. Anything unparseable (missing/blank/wrong type) yields
+    (None, None, None) rather than raising.
     """
     if not isinstance(period, str) or not period:
-        return None, None
+        return None, None, None
     if "/" in period:
-        start, _, _end = period.partition("/")
-        return _date_part(start), None
-    return None, _date_part(period)
+        start, _, end = period.partition("/")
+        return _date_part(start), None, _date_part(end)
+    return None, _date_part(period), None
 
 
 def _date_part(value: str) -> str | None:

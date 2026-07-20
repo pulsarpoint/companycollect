@@ -81,11 +81,28 @@ def test_instant_period_sets_period_instant_not_period_start() -> None:
     assert row.period_start is None
 
 
+def test_instant_fact_has_no_period_duration_end() -> None:
+    # Finding 1 regression: an instant fact must never carry a
+    # period_duration_end -- only duration facts do.
+    row = _by_fact_id(_parse_fixture())["caTagID398"]
+    assert row.period_duration_end is None
+
+
 def test_duration_period_sets_period_start_not_period_instant() -> None:
     row = _by_fact_id(_parse_fixture())["caTagID1463"]
     assert row.concept_qname == "ifrs-full:Revenue"
     assert row.period_start == "2021-01-01"
     assert row.period_instant is None
+
+
+def test_duration_fact_carries_its_true_period_duration_end() -> None:
+    # Finding 1 fix: the duration's own end date ("2021-01-01T00:00:00/
+    # 2022-01-01T00:00:00" -> end "2022-01-01") must be parsed and stored,
+    # not discarded -- this is what lets metrics.py structurally exclude a
+    # prior-year comparative duration fact instead of relying on the
+    # filing-level period_end alone.
+    row = _by_fact_id(_parse_fixture())["caTagID1463"]
+    assert row.period_duration_end == "2022-01-01"
 
 
 def test_text_fact_has_no_unit_currency_or_amount() -> None:
@@ -295,6 +312,7 @@ def test_fact_missing_period_yields_none_start_and_instant() -> None:
     assert len(rows) == 1
     assert rows[0].period_start is None
     assert rows[0].period_instant is None
+    assert rows[0].period_duration_end is None
 
 
 def test_fact_with_no_unit_and_no_value_is_text_with_empty_raw_value() -> None:

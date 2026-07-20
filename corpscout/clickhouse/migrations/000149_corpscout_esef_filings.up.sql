@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS corpscout.esef_facts
     concept_local_name  String,
     period_start        Nullable(Date32),
     period_instant      Nullable(Date32),
+    period_duration_end Nullable(Date32),
     unit                LowCardinality(String),
     currency            LowCardinality(String),
     value_kind          LowCardinality(String),

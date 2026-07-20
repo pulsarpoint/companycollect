@@ -3,12 +3,17 @@
 Unlike the exporters in ``publish.py`` (DuckDB -> ClickHouse), this table has
 no DuckDB input at all: it is built straight from two already-exported
 ClickHouse tables (``corpscout.esef_facts``, ``corpscout.esef_filings``) plus
-``corpscout.exchange_rates``, via a single ``WITH ... SELECT`` statement --
-the same ClickHouse-native stage + ``INSERT ... SELECT`` + ``EXCHANGE TABLES``
-machinery ``publish.py`` uses for ``esef_entity_registry_map``
-(``dagster_v3.contact_extraction.replace_table_from_select``), with an
-explicit refuse-on-empty check owned by this module, run BEFORE the stage
-table is even created (that shared helper has no such guard).
+``corpscout.exchange_rates``, via a single ``WITH ... SELECT`` statement.
+The stage + ``INSERT ... SELECT`` + ``EXCHANGE TABLES`` rebuild is inlined in
+``replace_esef_financial_metrics_clickhouse`` below (rather than delegated to
+``dagster_v3.contact_extraction.replace_table_from_select``, which
+``publish.py`` uses for ``esef_entity_registry_map``): this module needs two
+guards that shared helper doesn't provide a hook for -- an explicit
+refuse-on-empty check owned by this module, run BEFORE the stage table is
+even created, and the shrink guard
+(``sweden_financial.clickhouse.guard_against_clickhouse_table_shrink``),
+which must run against the staged data AFTER the INSERT but BEFORE the
+EXCHANGE.
 
 One row per ``fxo_id`` (a filing *version*, not a (lei, period_end) pair):
 filings.xbrl.org keeps every amendment of a filing under its own ``fxo_id``
@@ -22,19 +27,18 @@ Selection rules (mirrors ``sweden_financial/metrics.py``'s CTE style):
   - Undimensioned facts only (``dimensions = ''``).
   - Current period: instant facts (``period_instant`` set) must have
     ``period_instant = filing.period_end``; duration facts (no
-    ``period_instant``) are anchored on the fact's own (non-nullable)
-    ``period_end`` column, which ``facts.py`` stamps identically to the
-    filing's own ``period_end`` for every fact regardless of the real OIM
-    period -- i.e. this anchor is a structural no-op given the fxo_id join,
-    not a range check against ``period_start``. Known limitation: ESEF's
-    OIM export keeps no per-fact context id (unlike Sweden's
-    context_id IN ('period0', 'balans0')), so a prior-year comparative
-    duration fact (e.g. last year's Revenue, tagged with an earlier
-    ``period_start`` but the same stamped ``period_end``) is not
-    structurally distinguishable from the current-year fact and can compete
-    in the tiebreak below. Accepted per the Task 6 brief ("do not require
-    period_start matching -- fiscal years vary; the period_end anchor is
-    sufficient").
+    ``period_instant``) are anchored on the fact's own ``period_duration_end``
+    column (migration 000149, Finding 1 fix) -- the duration's real end date,
+    parsed by ``facts.py`` from the second half of the OIM period string,
+    distinct from the filing-level ``period_end`` that gets stamped
+    identically onto every fact regardless of the real OIM period. This is a
+    structural guarantee, not a heuristic: IFRS annual reports always carry
+    undimensioned prior-year comparative duration facts (last year's
+    Revenue, ProfitLoss, ...), and those comparatives have an earlier
+    ``period_duration_end`` than the filing's own ``period_end`` -- so the
+    ``facts.period_duration_end = filing.period_end`` anchor excludes them
+    from ``current_facts`` exactly like the instant-fact anchor excludes a
+    non-matching instant, before the tiebreak below ever sees them.
   - When a concept repeats (e.g. revenue's two candidate concepts, or a
     duration fact colliding with its own comparative-period twin above),
     the highest-precision (``decimals``) value wins, tie-broken
@@ -63,20 +67,25 @@ Selection rules (mirrors ``sweden_financial/metrics.py``'s CTE style):
     facts span EUR/SEK/NOK/GBP/CHF/DKK/... per filer).
 
 No params dict is passed to ``clickhouse_client.execute`` anywhere in this
-module (``replace_table_from_select`` calls ``execute(sql)`` with the SQL
-text alone) -- so, unlike ``sweden_financial/metrics.py`` (which DOES pass a
-params dict and must double every literal ``%``), literals here are plain
-single ``%``; there happen to be none in this module's SQL at all (no LIKE
-patterns), so this only matters if one is added later.
+module -- every statement below (including the inlined stage/insert/exchange
+sequence) is called as ``execute(sql)`` with the SQL text alone -- so, unlike
+``sweden_financial/metrics.py`` (which DOES pass a params dict and must
+double every literal ``%``), literals here are plain single ``%``; there
+happen to be none in this module's SQL at all (no LIKE patterns), so this
+only matters if one is added later.
 """
 
+import uuid
 from collections.abc import Callable
 
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.contact_extraction import replace_table_from_select
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.esef_filings import tables
+from dagster_v3.defs.sweden_financial.clickhouse import (
+    clickhouse_table_row_count,
+    guard_against_clickhouse_table_shrink,
+)
 
 MAPPING_VERSION = "esef-ifrs-v1"
 
@@ -197,12 +206,16 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
             WHERE facts.dimensions = ''
               AND (
                     (facts.period_instant IS NOT NULL AND facts.period_instant = filing.period_end)
-                 OR (facts.period_instant IS NULL AND facts.period_end = filing.period_end)
+                 OR (facts.period_instant IS NULL AND facts.period_duration_end = filing.period_end)
               )
         ),
         facts_by_filing AS (
             SELECT
                 fxo_id,
+                -- Counts rows already scoped by current_facts above (dimensions = ''
+                -- AND current-period anchor) -- undimensioned, current-period facts
+                -- only. Narrower than sweden_financial/metrics.py's same-named
+                -- source_fact_count column, which counts ALL facts for the filing.
                 count() AS source_fact_count,
                 countIf(concept_qname IN ({mapped_concepts_sql})) AS mapped_fact_count,
                 argMaxIf(currency, {_TIEBREAK_TUPLE_SQL}, currency != '') AS currency,
@@ -406,14 +419,24 @@ def replace_esef_financial_metrics_clickhouse(
     clickhouse: ClickhouseResource,
     source_run_id: str,
     log: Callable[..., object] | None = None,
+    allow_shrink: bool = False,
 ) -> dict[str, int]:
     """Atomically rebuild corpscout.esef_financial_metrics entirely in ClickHouse.
 
     Refuses to touch the existing table if the scoped SELECT would insert 0
     rows, checked BEFORE the stage table is even created -- same
     refuse-on-empty discipline as
-    ``publish.replace_esef_entity_registry_map_clickhouse``, whose
-    ``replace_table_from_select`` machinery this reuses.
+    ``publish.replace_esef_entity_registry_map_clickhouse``.
+
+    Also refuses a replace that would shrink the table by more than half of
+    its current row count, unless ``allow_shrink=True`` -- the same
+    ``guard_against_clickhouse_table_shrink`` shrink guard
+    ``sweden_financial_metrics_clickhouse`` uses, checked AFTER the SELECT is
+    staged but BEFORE the ``EXCHANGE TABLES`` swap. This is why the stage +
+    insert + exchange sequence is inlined here rather than delegated to
+    ``dagster_v3.contact_extraction.replace_table_from_select`` (see module
+    docstring): that shared helper runs the exchange immediately after the
+    insert, with no hook to check row counts in between.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -426,6 +449,11 @@ def replace_esef_financial_metrics_clickhouse(
         ),
     )
     select_sql = build_esef_financial_metrics_select(source_run_id)
+    stage_table = f"_tmp_{tables.ESEF_FINANCIAL_METRICS_TABLE}_{uuid.uuid4().hex}"
+    qualified_stage_table = f"`{tables.ESEF_DATABASE}`.`{stage_table}`"
+    qualified_target_table = (
+        f"`{tables.ESEF_DATABASE}`.`{tables.ESEF_FINANCIAL_METRICS_TABLE}`"
+    )
     with clickhouse.get_connection() as client:
         [(excluded_sentinel_period_end_count,)] = client.execute(
             f"SELECT count() FROM {tables.QUALIFIED_ESEF_FILINGS_TABLE} "
@@ -441,15 +469,40 @@ def replace_esef_financial_metrics_clickhouse(
                 f"{tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE} "
                 "(refuse-to-replace-on-empty)."
             )
-        rows = replace_table_from_select(
-            client,
-            qualified_table=tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE,
-            columns=tables.ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS,
-            select_sql=select_sql,
-            log=log,
+        client.execute(
+            f"CREATE TABLE {qualified_stage_table} AS {qualified_target_table}"
         )
+        primary_error: Exception | None = None
+        try:
+            client.execute(
+                f"INSERT INTO {qualified_stage_table} "
+                f"({', '.join(tables.ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS)}) "
+                f"{select_sql}"
+            )
+            staged_row_count = clickhouse_table_row_count(client, qualified_stage_table)
+            existing_row_count = clickhouse_table_row_count(
+                client, qualified_target_table
+            )
+            guard_against_clickhouse_table_shrink(
+                qualified_table=tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE,
+                existing_row_count=existing_row_count,
+                staged_row_count=staged_row_count,
+                allow_shrink=allow_shrink,
+            )
+            client.execute(
+                f"EXCHANGE TABLES {qualified_stage_table} AND {qualified_target_table}"
+            )
+        except Exception as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                client.execute(f"DROP TABLE IF EXISTS {qualified_stage_table}")
+            except Exception:
+                if primary_error is None:
+                    raise
     result = {
-        "rows_exported": rows,
+        "rows_exported": staged_row_count,
         "excluded_sentinel_period_end_count": int(excluded_sentinel_period_end_count),
     }
     if log is not None:

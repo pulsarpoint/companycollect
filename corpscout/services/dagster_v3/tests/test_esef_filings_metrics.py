@@ -32,20 +32,32 @@ class FakeClickHouseClient:
     """Records every statement; answers just enough to drive the code paths
     under test (system.tables existence check, the excluded-sentinel-count
     query, the pre-stage refuse-on-empty count, the ClickHouse-native
-    INSERT...SELECT path, and the post-exchange row-count readback)."""
+    INSERT...SELECT path, the shrink-guard's staged-vs-existing row-count
+    reads, and the EXCHANGE/DROP no-ops).
+
+    ``staged_row_count`` answers a bare ``SELECT count() FROM <table>`` whose
+    table name contains ``_tmp_`` (the uuid-suffixed stage table --
+    ``replace_esef_financial_metrics_clickhouse`` names it
+    ``_tmp_esef_financial_metrics_<hex>``); ``existing_row_count`` answers
+    the same query shape against the real (non-``_tmp_``) target table name
+    -- this is how the guard's two row-count reads, which are otherwise
+    identically-shaped SQL, are told apart.
+    """
 
     def __init__(
         self,
         *,
         excluded_sentinel_count: int = 3,
         would_be_row_count: int = 5,
-        post_exchange_row_count: int = 5,
+        staged_row_count: int = 5,
+        existing_row_count: int = 5,
     ) -> None:
         self.statements: list[str] = []
         self.table_checks: list[tuple[str, ...]] = []
         self.excluded_sentinel_count = excluded_sentinel_count
         self.would_be_row_count = would_be_row_count
-        self.post_exchange_row_count = post_exchange_row_count
+        self.staged_row_count = staged_row_count
+        self.existing_row_count = existing_row_count
 
     def execute(self, sql: str, params: Any = None) -> list[tuple[Any, ...]]:
         self.statements.append(sql)
@@ -70,7 +82,9 @@ class FakeClickHouseClient:
         if stripped.startswith("EXCHANGE TABLES"):
             return []
         if stripped.startswith("SELECT count() FROM"):
-            return [(self.post_exchange_row_count,)]
+            if "_tmp_" in stripped:
+                return [(self.staged_row_count,)]
+            return [(self.existing_row_count,)]
         if stripped.startswith("DROP TABLE"):
             return []
         raise AssertionError(f"unexpected SQL: {sql}")
@@ -159,6 +173,12 @@ def test_build_select_uses_deterministic_tiebreak_tuples_never_bare_argmax() -> 
 
 
 def test_build_select_current_period_selection_rule() -> None:
+    # Finding 1 fix: the duration-fact anchor is facts.period_duration_end
+    # (the duration's own true end date, migration 000149), NOT the
+    # filing-level facts.period_end -- the latter is stamped identically onto
+    # every fact (including prior-year comparatives) and would let a
+    # comparative duration fact compete in the tiebreak. This anchor
+    # structurally excludes it instead, mirroring the instant-fact anchor.
     sql = build_esef_financial_metrics_select("run-1")
     assert "facts.dimensions = ''" in sql
     assert (
@@ -166,7 +186,14 @@ def test_build_select_current_period_selection_rule() -> None:
         in sql
     )
     assert (
-        "facts.period_instant IS NULL AND facts.period_end = filing.period_end" in sql
+        "facts.period_instant IS NULL AND facts.period_duration_end = filing.period_end"
+        in sql
+    )
+    # The filing-level period_end must NOT be used as the duration anchor
+    # anymore -- guards against a regression back to the pre-fix SQL.
+    assert (
+        "facts.period_instant IS NULL AND facts.period_end = filing.period_end"
+        not in sql
     )
 
 
@@ -229,7 +256,10 @@ def test_esef_financial_metrics_export_columns_match_migration_order() -> None:
 
 def test_replace_esef_financial_metrics_clickhouse_stages_and_exchanges() -> None:
     client = FakeClickHouseClient(
-        excluded_sentinel_count=3, would_be_row_count=5, post_exchange_row_count=5
+        excluded_sentinel_count=3,
+        would_be_row_count=5,
+        staged_row_count=5,
+        existing_row_count=5,
     )
 
     result = replace_esef_financial_metrics_clickhouse(
@@ -261,6 +291,26 @@ def test_replace_esef_financial_metrics_clickhouse_stages_and_exchanges() -> Non
     )
     assert count_check_index < create_index
 
+    # The shrink guard's row-count reads must both happen AFTER the INSERT
+    # but BEFORE the EXCHANGE (see guard_against_clickhouse_table_shrink).
+    insert_index = next(
+        i
+        for i, s in enumerate(client.statements)
+        if s.startswith("INSERT INTO") and "SELECT" in s
+    )
+    exchange_index = next(
+        i for i, s in enumerate(client.statements) if s.startswith("EXCHANGE TABLES")
+    )
+    count_reads = [
+        i
+        for i, s in enumerate(client.statements)
+        if s.strip().startswith("SELECT count() FROM")
+        and not s.strip().startswith("SELECT count() FROM (")
+        and "WHERE period_end =" not in s
+    ]
+    assert len(count_reads) == 2
+    assert all(insert_index < i < exchange_index for i in count_reads)
+
 
 def test_replace_esef_financial_metrics_clickhouse_refuses_on_zero_rows() -> None:
     client = FakeClickHouseClient(would_be_row_count=0)
@@ -290,3 +340,45 @@ def test_replace_esef_financial_metrics_clickhouse_no_mutations_pure_insert_sele
 
     assert not any("mutations" in s.lower() for s in client.statements)
     assert not any(s.strip().upper().startswith("ALTER") for s in client.statements)
+
+
+# --- shrink guard (Finding 2) ------------------------------------------------
+
+
+def test_replace_esef_financial_metrics_clickhouse_refuses_on_shrink_below_ratio() -> (
+    None
+):
+    # staged (10) < 0.5 * existing (100) -> the shrink guard must refuse,
+    # mirroring sweden_financial_metrics_clickhouse's
+    # guard_against_clickhouse_table_shrink usage.
+    client = FakeClickHouseClient(
+        would_be_row_count=10, staged_row_count=10, existing_row_count=100
+    )
+
+    with pytest.raises(ValueError, match="Refusing to replace"):
+        replace_esef_financial_metrics_clickhouse(
+            clickhouse=FakeClickHouseResource(client),
+            source_run_id="run-1",
+        )
+
+    # The stage must be cleaned up even though the guard raised, and the
+    # EXCHANGE must never have happened.
+    assert any(s.startswith("DROP TABLE") for s in client.statements)
+    assert not any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+
+
+def test_replace_esef_financial_metrics_clickhouse_allow_shrink_overrides_guard() -> (
+    None
+):
+    client = FakeClickHouseClient(
+        would_be_row_count=10, staged_row_count=10, existing_row_count=100
+    )
+
+    result = replace_esef_financial_metrics_clickhouse(
+        clickhouse=FakeClickHouseResource(client),
+        source_run_id="run-1",
+        allow_shrink=True,
+    )
+
+    assert result == {"rows_exported": 10, "excluded_sentinel_period_end_count": 3}
+    assert any(s.startswith("EXCHANGE TABLES") for s in client.statements)
