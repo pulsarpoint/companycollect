@@ -285,6 +285,7 @@ def brazil_fin_cvm_companies_clickhouse(
     kinds={"python", "duckdb", "csv", "zip", "cvm", "dfp"},
     partitions_def=BRAZIL_FIN_CVM_DFP_RAW_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="brazil_fin_cvm_duckdb",
     description="Parses Brazil CVM DFP yearly ZIP archives from object storage into DuckDB.",
 )
 def brazil_fin_cvm_dfp_raw_duckdb(
@@ -325,6 +326,7 @@ def brazil_fin_cvm_dfp_raw_duckdb(
     kinds={"python", "duckdb", "csv", "zip", "cvm", "itr"},
     partitions_def=BRAZIL_FIN_CVM_ITR_RAW_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="brazil_fin_cvm_duckdb",
     description="Parses Brazil CVM ITR yearly ZIP archives from object storage into DuckDB.",
 )
 def brazil_fin_cvm_itr_raw_duckdb(
@@ -365,6 +367,7 @@ def brazil_fin_cvm_itr_raw_duckdb(
     kinds={"python", "duckdb", "csv", "zip", "cvm", "fre"},
     partitions_def=BRAZIL_FIN_CVM_FRE_RAW_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="brazil_fin_cvm_duckdb",
     description="Parses Brazil CVM FRE yearly ZIP archives from object storage into DuckDB.",
 )
 def brazil_fin_cvm_fre_raw_duckdb(
@@ -410,6 +413,7 @@ def brazil_fin_cvm_fre_raw_duckdb(
     kinds={"python", "duckdb", "currency", "fx", "cvm", "dfp"},
     partitions_def=BRAZIL_FIN_CVM_DFP_RAW_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="brazil_fin_cvm_duckdb",
     description=(
         "Adds USD and FX metadata columns to Brazil CVM DFP statement rows in the "
         "yearly DuckDB partition file."
@@ -448,6 +452,7 @@ def brazil_fin_cvm_dfp_statement_rows_usd_duckdb(
     kinds={"python", "duckdb", "currency", "fx", "cvm", "itr"},
     partitions_def=BRAZIL_FIN_CVM_ITR_RAW_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="brazil_fin_cvm_duckdb",
     description=(
         "Adds USD and FX metadata columns to Brazil CVM ITR statement rows in the "
         "yearly DuckDB partition file."
@@ -495,6 +500,10 @@ def _build_brazil_fin_cvm_clickhouse_table_asset(
         deps=deps,
         group_name=BRAZIL_FIN_CVM_GROUP_NAME,
         kinds={"python", "duckdb", "clickhouse", "cvm", family.lower()},
+        # Attaches EVERY existing family/year DuckDB file read-only, so it
+        # must hold the module DuckDB pool: a writer to any year file
+        # excludes readers across processes (see data-source-guidelines).
+        pool="brazil_fin_cvm_duckdb",
         metadata={"table": f"{tables.BRAZIL_CVM_DATABASE}.{clickhouse_table}"},
         description=(
             f"Exports Brazil CVM {family} DuckDB table {duckdb_table} to "
