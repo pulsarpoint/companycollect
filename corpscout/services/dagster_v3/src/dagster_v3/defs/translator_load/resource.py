@@ -138,7 +138,17 @@ class TranslatorResource(dg.ConfigurableResource):
             failed=int(stats.get("failed", 0)),
         )
 
-    def wait_for_queue_completion(self) -> TranslationQueueStats:
+    def wait_for_queue_completion(
+        self, *, baseline_failed: int = 0
+    ) -> TranslationQueueStats:
+        """Poll queue stats until idle.
+
+        ``baseline_failed``: the queue's failed count BEFORE this run
+        enqueued (failed items are permanent in the queue db and the stats
+        are global across sources, so a leftover failure from another
+        source must not fail this loader forever — only failures that
+        appear DURING this wait are this run's problem).
+        """
         if self.completion_timeout_seconds <= 0:
             raise ValueError("translator completion timeout must be positive")
         if self.completion_poll_interval_seconds <= 0:
@@ -147,9 +157,18 @@ class TranslatorResource(dg.ConfigurableResource):
         deadline = time.monotonic() + self.completion_timeout_seconds
         while True:
             stats = self.queue_stats()
-            if stats.failed > 0:
+            if stats.failed > baseline_failed:
                 raise TranslationQueueFailedError(stats)
-            if stats.is_idle():
+            # Terminal: nothing pending, everything flushed, and the only
+            # rows left in input are the permanent failed residue (failed
+            # items are never deleted from input_items, so `input == 0`
+            # alone would spin to timeout whenever a tolerated baseline
+            # failure exists).
+            if (
+                stats.pending == 0
+                and stats.output == 0
+                and stats.input == stats.failed
+            ):
                 return stats
             if time.monotonic() >= deadline:
                 raise TranslationQueueTimeoutError(

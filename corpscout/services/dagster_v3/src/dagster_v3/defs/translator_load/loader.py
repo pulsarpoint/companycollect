@@ -2,6 +2,10 @@
 
 Loader contract (the system's dedup economics live here):
 - Scan ONLY distinct texts not yet in corpscout.text_translations (anti-join).
+- Never enqueue whitespace-only texts: the model correctly returns an empty
+  translation for them, which the translator records as a PERMANENT failed
+  queue item (2026-07-20: 12 whitespace-only Latvian texts poisoned the
+  global failed count and failed every later source's loader).
 - Compute cityHash64 in ClickHouse SQL — never in Python — so hashes always
   agree with past runs.
 - Static-map columns never touch the LLM: insert straight into
@@ -36,7 +40,7 @@ LEFT ANTI JOIN (
     WHERE source_table = '{table}' AND source_column = '{column}'
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.{column})
-WHERE c.{column} <> ''"""
+WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''"""
 
 
 def build_static_scan_sql(table: str, column: str, key_column: str) -> str:
@@ -52,7 +56,7 @@ LEFT ANTI JOIN (
     WHERE source_table = '{table}' AND source_column = '{column}'
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.{column})
-WHERE c.{column} <> ''"""
+WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''"""
 
 
 def insert_static_translations(

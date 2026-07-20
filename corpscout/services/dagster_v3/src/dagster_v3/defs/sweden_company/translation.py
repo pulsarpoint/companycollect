@@ -190,6 +190,7 @@ def sweden_company_translation_load(
     clickhouse: ClickhouseResource,
     translator: TranslatorResource,
 ) -> dg.MaterializeResult:
+    baseline_failed = translator.queue_stats().failed
     with clickhouse.get_connection() as client:
         untranslated_rows = client.execute(
             build_scan_sql("corpscout.se_companies", "activity_description")
@@ -219,7 +220,9 @@ def sweden_company_translation_load(
             },
         )
     if enqueue_result.received > 0:
-        completion_stats = translator.wait_for_queue_completion()
+        completion_stats = translator.wait_for_queue_completion(
+            baseline_failed=baseline_failed
+        )
         context.log.info(
             "translator queue completed: input=%d pending=%d output=%d failed=%d",
             completion_stats.input,

@@ -102,6 +102,7 @@ def norway_brreg_translation_load(
     clickhouse: ClickhouseResource,
     translator: TranslatorResource,
 ) -> dg.MaterializeResult:
+    baseline_failed = translator.queue_stats().failed
     enqueued_received = 0
     enqueued_inserted = 0
     workflow_start_warnings: list[str] = []
@@ -164,7 +165,9 @@ def norway_brreg_translation_load(
             enqueued_received,
             enqueued_inserted,
         )
-        completion_stats = translator.wait_for_queue_completion()
+        completion_stats = translator.wait_for_queue_completion(
+            baseline_failed=baseline_failed
+        )
         context.log.info(
             "translator queue completed: input=%d pending=%d output=%d failed=%d",
             completion_stats.input,

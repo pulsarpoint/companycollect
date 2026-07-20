@@ -30,7 +30,9 @@ def test_build_scan_sql_is_anti_join_with_cityhash():
         "LEFT ANTI JOIN",
         "FROM corpscout.text_translations",
         "WHERE source_table = 'corpscout.no_companies' AND source_column = 'activity_text_original'",
-        "WHERE c.activity_text_original <> ''",
+        # Whitespace-only texts are excluded: the model returns an empty
+        # translation for them, which becomes a PERMANENT failed queue item.
+        "WHERE trim(BOTH ' \\t\\r\\n' FROM c.activity_text_original) != ''",
     ):
         assert fragment in sql, f"missing {fragment!r} in:\n{sql}"
 
@@ -284,7 +286,14 @@ def test_norway_asset_does_not_materialize_when_translation_fails(monkeypatch):
         norway_brreg_translation_load,
     )
 
-    session = _FakeSession(stats={"input": 1, "pending": 0, "output": 0, "failed": 1})
+    # First GET is the loader's pre-enqueue baseline (clean queue); the
+    # failure appears DURING this run's wait -> the asset must fail.
+    session = _FakeSession(
+        stats=[
+            {"input": 0, "pending": 0, "output": 0, "failed": 0},
+            {"input": 1, "pending": 0, "output": 0, "failed": 1},
+        ]
+    )
     monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
 
     with pytest.raises(TranslationQueueFailedError, match="1 failed translation items"):
@@ -293,6 +302,23 @@ def test_norway_asset_does_not_materialize_when_translation_fails(monkeypatch):
             _FakeTranslationClickHouseResource(),
             TranslatorResource(base_url="http://translator:8080"),
         )
+
+
+def test_wait_tolerates_pre_existing_failed_items_from_other_sources(monkeypatch):
+    # Failed items are permanent in the queue db and stats are global: a
+    # leftover failure from another source's load must not fail this run.
+    # The wait is terminal when only the failed residue remains in input.
+    session = _FakeSession(
+        stats={"input": 19, "pending": 0, "output": 0, "failed": 19}
+    )
+    monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
+
+    stats = TranslatorResource(
+        base_url="http://translator:8080"
+    ).wait_for_queue_completion(baseline_failed=19)
+
+    assert stats.failed == 19
+    assert stats.pending == 0
 
 
 def test_assets_are_defined_with_expected_deps():
