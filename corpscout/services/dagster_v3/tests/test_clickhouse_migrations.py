@@ -165,6 +165,7 @@ EXPECTED_MIGRATIONS = (
     "000148_corpscout_ted_procurement",
     "000149_corpscout_esef_filings",
     "000150_corpscout_se_translations",
+    "000151_corpscout_se_concept_labels_distinct",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
