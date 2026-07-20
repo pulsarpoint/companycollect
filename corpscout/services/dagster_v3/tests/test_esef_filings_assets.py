@@ -40,6 +40,7 @@ def _record(
     lei: str = "549300CSLHPO6Y1AZN37",
     entity_name: str = "Example AB",
     json_url: str | None = "https://filings.xbrl.org/x/facts.json",
+    report_url: str | None = "https://filings.xbrl.org/x/report.html",
     period_end: str | None = "2022-12-31",
 ) -> EsefFilingRecord:
     return EsefFilingRecord(
@@ -52,7 +53,7 @@ def _record(
         processed_at="2023-01-02 00:00:00",
         json_url=json_url,
         package_url="https://filings.xbrl.org/x/package.zip",
-        report_url="https://filings.xbrl.org/x/report.html",
+        report_url=report_url,
         viewer_url="https://filings.xbrl.org/x/viewer.html",
         package_sha256="deadbeef",
         error_count=0,
@@ -572,3 +573,234 @@ def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> 
 
     rows_after = _fetch_facts_rows(tmp_path)
     assert {row[0] for row in rows_after} == {"G-1"}
+
+
+# ==========================================================================
+# esef_report_xhtml_s3: year-partitioned report XHTML archive to S3
+#
+# `run_esef_report_xhtml_partition` (the plain function the asset delegates
+# to) is called DIRECTLY here, for the same reason as
+# `run_esef_filing_facts_partition` above -- see that section's docstring.
+# Unlike the facts asset, this one never writes DuckDB at all: the local
+# index is read once, read-only, purely to resolve which filings are in
+# scope for the partition year; the archive itself is pure S3 I/O.
+# ==========================================================================
+
+
+def _report_url(fxo_id: str) -> str:
+    return f"https://filings.xbrl.org/{fxo_id}/report.html"
+
+
+class _StubReportXhtmlDownloadClient:
+    """Stand-in for EsefFilingsClient() -- serves canned XHTML bytes keyed by
+    fxo_id (parsed back out of the report_url path `.../<fxo_id>/report.html`).
+    """
+
+    def __init__(self, body_by_fxo_id: dict[str, bytes]) -> None:
+        self._body_by_fxo_id = body_by_fxo_id
+        self.download_calls: list[str] = []
+
+    def download_json_facts(self, url: str, target: Path, **_: Any) -> None:
+        self.download_calls.append(url)
+        fxo_id = url.split("/")[-2]
+        target.write_bytes(self._body_by_fxo_id[fxo_id])
+
+
+def _run_report_xhtml_partition(
+    tmp_path: Path,
+    object_store: FakeObjectStore,
+    client: _StubReportXhtmlDownloadClient,
+    *,
+    partition_year: int,
+) -> dict[str, int]:
+    return assets.run_esef_report_xhtml_partition(
+        esef_filings_duckdb=_db_resource(tmp_path),
+        object_store=object_store,
+        client=client,
+        partition_year=partition_year,
+        log_info=lambda *a, **k: None,
+    )
+
+
+def test_report_xhtml_asset_wiring_partitions_deps_backfill_policy_and_pool() -> None:
+    asset_def = assets.esef_report_xhtml_s3
+    assert asset_def.partitions_def is not None
+    assert sorted(asset_def.partitions_def.get_partition_keys()) == [
+        str(year) for year in range(2019, 2028)
+    ]
+    dep_keys = {dep.asset_key for spec in asset_def.specs for dep in spec.deps}
+    assert dg.AssetKey("esef_filings_index_duckdb") in dep_keys
+    assert asset_def.backfill_policy == dg.BackfillPolicy.multi_run(
+        max_partitions_per_run=1
+    )
+    assert asset_def.op.pool == assets.ESEF_FILINGS_DUCKDB_POOL
+
+
+def test_report_xhtml_partition_archives_filings_in_scope_for_year(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", report_url=_report_url("A-1")
+            ),
+            _record(
+                fxo_id="B-1", period_end="2022-06-30", report_url=_report_url("B-1")
+            ),
+            # Different year -- out of scope for the "2022" partition.
+            _record(
+                fxo_id="G-1", period_end="2021-12-31", report_url=_report_url("G-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubReportXhtmlDownloadClient(
+        {"A-1": b"<html>A-1 report</html>", "B-1": b"<html>B-1 report</html>"}
+    )
+
+    metadata = _run_report_xhtml_partition(
+        tmp_path, object_store, client, partition_year=2022
+    )
+
+    assert metadata == {
+        "filings_in_scope": 2,
+        "downloaded_count": 2,
+        "reused_count": 0,
+        "skipped_no_report_url": 0,
+        "skipped_out_of_range": 0,
+    }
+    assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
+
+    # G-1 (period_end 2021) was never even attempted.
+    assert sorted(client.download_calls) == [
+        _report_url("A-1"),
+        _report_url("B-1"),
+    ]
+    assert (
+        object_store.objects[
+            (
+                assets.ESEF_FILINGS_FACTS_BUCKET,
+                "esef_filings/report_xhtml/fxo_id=A-1/report.xhtml",
+            )
+        ]
+        == b"<html>A-1 report</html>"
+    )
+    assert (
+        object_store.objects[
+            (
+                assets.ESEF_FILINGS_FACTS_BUCKET,
+                "esef_filings/report_xhtml/fxo_id=B-1/report.xhtml",
+            )
+        ]
+        == b"<html>B-1 report</html>"
+    )
+
+
+def test_report_xhtml_second_run_skips_existing_object_without_downloading(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [_record(fxo_id="A-1", period_end="2022-12-31", report_url=_report_url("A-1"))],
+    )
+    object_store = FakeObjectStore()
+
+    first_metadata = _run_report_xhtml_partition(
+        tmp_path,
+        object_store,
+        _StubReportXhtmlDownloadClient({"A-1": b"<html>A-1 report</html>"}),
+        partition_year=2022,
+    )
+    assert first_metadata["downloaded_count"] == 1
+    assert first_metadata["reused_count"] == 0
+
+    # New client instance for the second run -- if download_json_facts were
+    # called again it would KeyError (no payload registered), proving reuse.
+    second_client = _StubReportXhtmlDownloadClient({})
+    second_metadata = _run_report_xhtml_partition(
+        tmp_path, object_store, second_client, partition_year=2022
+    )
+    assert second_metadata["downloaded_count"] == 0
+    assert second_metadata["reused_count"] == 1
+    assert second_client.download_calls == []
+
+
+def test_report_xhtml_filing_without_report_url_increments_skipped_no_report_url(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(fxo_id="A-1", period_end="2022-12-31", report_url=None),
+            _record(
+                fxo_id="B-1", period_end="2022-06-30", report_url=_report_url("B-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubReportXhtmlDownloadClient({"B-1": b"<html>B-1 report</html>"})
+
+    metadata = _run_report_xhtml_partition(
+        tmp_path, object_store, client, partition_year=2022
+    )
+
+    assert metadata["filings_in_scope"] == 2
+    assert metadata["skipped_no_report_url"] == 1
+    assert metadata["downloaded_count"] == 1
+    assert client.download_calls == [_report_url("B-1")]
+
+
+def test_report_xhtml_null_and_out_of_range_period_end_are_skipped_without_crashing(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", report_url=_report_url("A-1")
+            ),
+            _record(fxo_id="D-1", period_end=None, report_url=_report_url("D-1")),
+            _record(
+                fxo_id="E-1", period_end="2030-01-01", report_url=_report_url("E-1")
+            ),
+            _record(fxo_id="F-1", period_end="garbage", report_url=_report_url("F-1")),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubReportXhtmlDownloadClient({"A-1": b"<html>A-1 report</html>"})
+
+    metadata = _run_report_xhtml_partition(
+        tmp_path, object_store, client, partition_year=2022
+    )
+
+    assert metadata["filings_in_scope"] == 1
+    assert metadata["skipped_out_of_range"] == 3
+    # None of the out-of-range filings were ever downloaded.
+    assert client.download_calls == [_report_url("A-1")]
+
+
+def test_report_xhtml_partition_never_opens_a_writable_duckdb_connection(
+    tmp_path: Path,
+) -> None:
+    """This asset only READS DuckDB -- confirm no `facts`/other table gets
+    created as a side effect of running it (a writable `get_connection()`
+    call would create the dataset schema)."""
+    _seed_filings_index(
+        tmp_path,
+        [_record(fxo_id="A-1", period_end="2022-12-31", report_url=_report_url("A-1"))],
+    )
+    object_store = FakeObjectStore()
+    client = _StubReportXhtmlDownloadClient({"A-1": b"<html>A-1 report</html>"})
+
+    _run_report_xhtml_partition(tmp_path, object_store, client, partition_year=2022)
+
+    with read_only_duckdb_connection(_db_resource(tmp_path)) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "select table_name from information_schema.tables "
+                "where table_schema = 'esef_filings'"
+            ).fetchall()
+        }
+    assert tables == {"filings_index"}

@@ -10,6 +10,12 @@ with skip-existing (fxo_id is versioned upstream, so the object key is
 stable per filing version) and partition-scope-replaces only its own
 `period_end_year` in `esef_filings.facts`.
 
+`esef_report_xhtml_s3` is a sibling year-partitioned asset that archives each
+filing's rendered report XHTML to S3 -- a pure archive layer (no parsing,
+no DuckDB write of its own) that is the corpus for a future embeddings/
+LLM-search pass over annual reports. It only ever opens the local index
+read-only for scope resolution.
+
 No `from __future__ import annotations` -- this module defines `@dg.asset`s
 and stringizing the `context: AssetExecutionContext` hint breaks Dagster's op
 context-type validation (see CLAUDE.md).
@@ -58,6 +64,11 @@ TOP_COUNTRY_LIMIT = 10
 # stable per filing version -- an existing object never needs re-fetching.
 ESEF_FILINGS_FACTS_BUCKET = "source-esef-filings"
 ESEF_FACT_JSON_PREFIX = "esef_filings/fact_json/"
+
+# S3 key layout for archived rendered report XHTML (Task 9) -- same bucket as
+# the fact JSON above, different prefix. fxo_id is version-stable upstream
+# (verified live), so the key never needs re-fetching once an object exists.
+ESEF_REPORT_XHTML_PREFIX = "esef_filings/report_xhtml/"
 
 FACTS_TABLE = tables.FACTS_TABLE
 QUALIFIED_FACTS_TABLE = tables.QUALIFIED_FACTS_TABLE
@@ -159,6 +170,10 @@ def esef_filings_source_duckdb_path(
 
 def _fact_json_object_key(fxo_id: str) -> str:
     return f"{ESEF_FACT_JSON_PREFIX}fxo_id={fxo_id}/facts.json"
+
+
+def _report_xhtml_object_key(fxo_id: str) -> str:
+    return f"{ESEF_REPORT_XHTML_PREFIX}fxo_id={fxo_id}/report.xhtml"
 
 
 def _row_from_record(
@@ -363,6 +378,34 @@ def _split_filings_by_partition_year(
         if year != partition_year:
             continue
         in_scope.append((lei, fxo_id, period_end, json_url, bool(has_json_facts)))
+    return in_scope, skipped_out_of_range
+
+
+_ReportXhtmlFilingRow = tuple[str, str | None]
+
+
+def _split_report_filings_by_partition_year(
+    rows: Sequence[tuple[Any, ...]], *, partition_year: int
+) -> tuple[list[_ReportXhtmlFilingRow], int]:
+    """Bucket filings_index rows into (this partition's filings, out-of-range
+    count) for the report XHTML archive asset.
+
+    Same `period_end`-year bucketing rule as `_split_filings_by_partition_year`
+    (and the same "recomputed fresh on every partition run" rationale for
+    `skipped_out_of_range` -- see that function's docstring), but the row
+    shape is narrower: (fxo_id, report_url) only -- this asset never parses
+    content, so it has no use for `lei`/`json_url`/`has_json_facts`.
+    """
+    in_scope: list[_ReportXhtmlFilingRow] = []
+    skipped_out_of_range = 0
+    for fxo_id, period_end, report_url in rows:
+        year = _period_end_year(period_end)
+        if year is None:
+            skipped_out_of_range += 1
+            continue
+        if year != partition_year:
+            continue
+        in_scope.append((fxo_id, report_url))
     return in_scope, skipped_out_of_range
 
 
@@ -625,6 +668,134 @@ def esef_filing_facts_duckdb(
     )
 
 
+def _archive_filing_report_xhtml(
+    *,
+    client: Any,
+    object_store: Any,
+    temp_dir: Path,
+    fxo_id: str,
+    report_url: str,
+) -> bool:
+    """Download one filing's rendered report XHTML to S3, skipping when the
+    object already exists.
+
+    Returns True when the object was freshly downloaded, False when it was
+    already present (skip-existing) -- fxo_id is version-stable upstream
+    (verified live), so an existing object is always the same bytes the
+    filing would produce again. Unlike `_download_and_parse_filing_facts`,
+    there is no parsing here, so a reused object never needs downloading
+    back locally -- an existence check alone suffices.
+    """
+    object_key = _report_xhtml_object_key(fxo_id)
+    if object_store.exists(object_key, bucket=ESEF_FILINGS_FACTS_BUCKET):
+        return False
+    local_path = temp_dir / f"{sha256(fxo_id.encode()).hexdigest()}.xhtml"
+    client.download_json_facts(report_url, local_path)
+    object_store.upload_file(object_key, local_path, bucket=ESEF_FILINGS_FACTS_BUCKET)
+    return True
+
+
+def run_esef_report_xhtml_partition(
+    *,
+    esef_filings_duckdb: DuckDBResource,
+    object_store: Any,
+    client: Any,
+    partition_year: int,
+    log_info: Callable[..., object],
+) -> dict[str, int]:
+    """Do the actual work of `esef_report_xhtml_s3` for one partition year.
+
+    Pure S3 archive layer (no parsing) -- the corpus for a future
+    embeddings/LLM-search pass over annual reports. Unlike
+    `run_esef_filing_facts_partition`, this function never opens a writable
+    DuckDB connection at all: the local index is read once, read-only, for
+    scope resolution, and everything else is S3 I/O. Split out from the
+    `@dg.asset` function for the same reason as
+    `run_esef_filing_facts_partition` (see its docstring): a
+    `ConfigurableResource` built with an injected private attribute does not
+    survive `dg.materialize`, so tests call this plain function directly with
+    duck-typed fakes instead.
+    """
+    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
+        index_rows = connection.execute(
+            "select fxo_id, period_end, report_url "
+            f"from {QUALIFIED_FILINGS_INDEX_TABLE} order by fxo_id"
+        ).fetchall()
+
+    in_scope, skipped_out_of_range = _split_report_filings_by_partition_year(
+        index_rows, partition_year=partition_year
+    )
+    log_info(
+        "ESEF report XHTML partition %s: %d filings in scope, %d skipped "
+        "(out of range)",
+        partition_year,
+        len(in_scope),
+        skipped_out_of_range,
+    )
+
+    object_store.ensure_bucket(ESEF_FILINGS_FACTS_BUCKET)
+
+    downloaded_count = 0
+    reused_count = 0
+    skipped_no_report_url = 0
+
+    with tempfile.TemporaryDirectory(prefix="esef_filings_report_xhtml_") as tmpdir:
+        temp_dir = Path(tmpdir)
+        for fxo_id, report_url in in_scope:
+            if not report_url:
+                skipped_no_report_url += 1
+                continue
+            downloaded = _archive_filing_report_xhtml(
+                client=client,
+                object_store=object_store,
+                temp_dir=temp_dir,
+                fxo_id=fxo_id,
+                report_url=report_url,
+            )
+            if downloaded:
+                downloaded_count += 1
+            else:
+                reused_count += 1
+
+    return {
+        "filings_in_scope": len(in_scope),
+        "downloaded_count": downloaded_count,
+        "reused_count": reused_count,
+        "skipped_no_report_url": skipped_no_report_url,
+        "skipped_out_of_range": skipped_out_of_range,
+    }
+
+
+@dg.asset(
+    name="esef_report_xhtml_s3",
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "xhtml", "esef_filings"},
+    deps=["esef_filings_index_duckdb"],
+    partitions_def=ESEF_FILING_FACTS_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=ESEF_FILINGS_DUCKDB_POOL,
+    description=(
+        "Archives each in-scope filing's rendered report XHTML to S3 "
+        f"(bucket={ESEF_FILINGS_FACTS_BUCKET}, prefix={ESEF_REPORT_XHTML_PREFIX}, "
+        "skip-existing). Pure archive layer -- no parsing -- the corpus for a "
+        "future embeddings/LLM-search pass over annual reports."
+    ),
+)
+def esef_report_xhtml_s3(
+    context: dg.AssetExecutionContext,
+    esef_filings_duckdb: DuckDBResource,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    metadata = run_esef_report_xhtml_partition(
+        esef_filings_duckdb=esef_filings_duckdb,
+        object_store=object_store,
+        client=EsefFilingsClient(),
+        partition_year=int(context.partition_key),
+        log_info=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=metadata)
+
+
 @dg.asset(
     name="esef_filings_clickhouse",
     deps=["esef_filings_index_duckdb"],
@@ -733,6 +904,7 @@ defs = dg.Definitions(
     assets=[
         esef_filings_index_duckdb,
         esef_filing_facts_duckdb,
+        esef_report_xhtml_s3,
         esef_filings_clickhouse,
         esef_facts_clickhouse,
         esef_entity_registry_map_clickhouse,
