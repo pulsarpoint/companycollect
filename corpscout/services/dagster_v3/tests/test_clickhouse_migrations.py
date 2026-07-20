@@ -164,6 +164,7 @@ EXPECTED_MIGRATIONS = (
     "000147_corpscout_fi_hilma_notices",
     "000148_corpscout_ted_procurement",
     "000149_corpscout_esef_filings",
+    "000150_corpscout_se_translations",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

@@ -24,6 +24,11 @@ from dagster_v3.defs.sweden_company.resources import (
     SwedenCompanyBulkResource,
     manifest_for_run,
 )
+from dagster_v3.defs.sweden_company.translation import (
+    se_code_labels_clickhouse,
+    sweden_company_translation_load,
+    sweden_company_translator_queue_health_check,
+)
 
 GROUP_NAME = "sweden_company"
 SWEDEN_COMPANY_DUCKDB_POOL = "sweden_company_duckdb"
@@ -252,8 +257,13 @@ defs = dg.Definitions(
         sweden_company_companies_clickhouse,
         sweden_company_addresses_clickhouse,
         sweden_company_industries_clickhouse,
+        se_code_labels_clickhouse,
+        sweden_company_translation_load,
     ],
-    asset_checks=[identities_normalized],
+    asset_checks=[
+        identities_normalized,
+        sweden_company_translator_queue_health_check,
+    ],
     jobs=[sweden_company_refresh_job],
     schedules=[sweden_company_refresh_weekly],
     resources={

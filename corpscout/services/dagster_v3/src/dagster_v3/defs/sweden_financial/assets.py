@@ -40,6 +40,11 @@ from dagster_v3.defs.sweden_financial.audits import (
     QUALIFIED_SE_COMPANY_AUDITS_TABLE,
     replace_se_company_audits_clickhouse,
 )
+from dagster_v3.defs.sweden_financial.concepts import (
+    se_financial_facts_concepts,
+    sweden_financial_concepts_translation_load,
+    sweden_financial_concepts_translator_queue_health_check,
+)
 from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsResource
 from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.sweden_financial.storage import (
@@ -810,8 +815,13 @@ defs = dg.Definitions(
         se_financial_history_clickhouse,
         se_company_officers_clickhouse,
         se_company_audits_clickhouse,
+        se_financial_facts_concepts,
+        sweden_financial_concepts_translation_load,
     ],
-    asset_checks=[archive_ingest_complete],
+    asset_checks=[
+        archive_ingest_complete,
+        sweden_financial_concepts_translator_queue_health_check,
+    ],
     jobs=[
         sweden_financial_backfill_job,
         sweden_financial_current_year_job,
