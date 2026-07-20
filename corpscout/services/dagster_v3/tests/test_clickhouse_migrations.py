@@ -163,6 +163,7 @@ EXPECTED_MIGRATIONS = (
     "000146_corpscout_se_company_audits",
     "000147_corpscout_fi_hilma_notices",
     "000148_corpscout_ted_procurement",
+    "000149_corpscout_esef_filings",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1834,6 +1835,127 @@ def test_sweden_financial_history_migration_covers_columns() -> None:
     assert "ENGINE = MergeTree" in sql
     assert "ORDER BY (company_id, fiscal_year)" in sql
     assert "DROP TABLE IF EXISTS corpscout.se_financial_history" in down_sql
+
+
+ESEF_FILINGS_COLUMNS = (
+    "lei",
+    "entity_name",
+    "fxo_id",
+    "country",
+    "period_end",
+    "date_added",
+    "processed_at",
+    "json_url",
+    "package_url",
+    "report_url",
+    "viewer_url",
+    "package_sha256",
+    "error_count",
+    "warning_count",
+    "inconsistency_count",
+    "has_json_facts",
+    "source_url",
+    "source_run_id",
+    "resolved_at",
+)
+
+ESEF_FACTS_COLUMNS = (
+    "lei",
+    "fxo_id",
+    "period_end",
+    "fact_id",
+    "concept_qname",
+    "concept_namespace",
+    "concept_local_name",
+    "period_start",
+    "period_instant",
+    "unit",
+    "currency",
+    "value_kind",
+    "raw_value",
+    "amount_original",
+    "decimals",
+    "dimensions",
+    "language",
+    "source_run_id",
+    "resolved_at",
+)
+
+ESEF_FINANCIAL_METRICS_COLUMNS = (
+    "lei",
+    "entity_name",
+    "fxo_id",
+    "country",
+    "scope",
+    "fiscal_year",
+    "period_start",
+    "period_end",
+    "currency",
+    "revenue_amount_original",
+    "revenue_amount_usd",
+    "operating_profit_amount_original",
+    "operating_profit_amount_usd",
+    "profit_loss_amount_original",
+    "profit_loss_amount_usd",
+    "total_assets_amount_original",
+    "total_assets_amount_usd",
+    "equity_amount_original",
+    "equity_amount_usd",
+    "liabilities_amount_original",
+    "liabilities_amount_usd",
+    "cash_amount_original",
+    "cash_amount_usd",
+    "employees",
+    "mapped_fact_count",
+    "source_fact_count",
+    "mapping_version",
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "viewer_url",
+    "source_run_id",
+    "resolved_at",
+)
+
+ESEF_ENTITY_REGISTRY_MAP_COLUMNS = (
+    "lei",
+    "country_iso2",
+    "registry_id_raw",
+    "registry_id",
+    "match_source",
+    "source_run_id",
+    "resolved_at",
+)
+
+
+def test_esef_filings_migration_covers_all_four_tables() -> None:
+    sql = _migration_sql("000149_corpscout_esef_filings.up.sql")
+    down_sql = _migration_sql("000149_corpscout_esef_filings.down.sql")
+
+    expected_columns_by_table = {
+        "esef_filings": ESEF_FILINGS_COLUMNS,
+        "esef_facts": ESEF_FACTS_COLUMNS,
+        "esef_financial_metrics": ESEF_FINANCIAL_METRICS_COLUMNS,
+        "esef_entity_registry_map": ESEF_ENTITY_REGISTRY_MAP_COLUMNS,
+    }
+
+    for table_name, column_names in expected_columns_by_table.items():
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        assert f"DROP TABLE IF EXISTS corpscout.{table_name}" in down_sql
+        for column_name in column_names:
+            assert f"    {column_name} " in sql
+
+    assert "ORDER BY (lei, period_end, fxo_id);" in sql
+    assert "ORDER BY (lei, period_end, fxo_id, fact_id);" in sql
+    assert "ORDER BY (country_iso2, registry_id, lei);" in sql
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+
+    # Down migration drops in reverse dependency order of the up migration.
+    drop_order = [
+        down_sql.index(f"DROP TABLE IF EXISTS corpscout.{table_name}")
+        for table_name in reversed(expected_columns_by_table)
+    ]
+    assert drop_order == sorted(drop_order)
 
 
 def _migration_sql(file_name: str) -> str:
