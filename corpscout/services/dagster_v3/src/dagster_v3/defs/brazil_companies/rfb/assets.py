@@ -480,6 +480,7 @@ def brazil_comp_rfb_websites_duckdb(
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=BRAZIL_COMP_RFB_COMPANIES_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_BR_COMPANIES_TABLE},
     description="Brazil RFB legal entities exported to ClickHouse corpscout.br_companies.",
 )
@@ -508,6 +509,7 @@ def brazil_comp_rfb_clickhouse_companies(
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=BRAZIL_COMP_RFB_COMPANIES_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_BR_ESTABLISHMENTS_TABLE},
     description=(
         "Brazil RFB establishments exported to ClickHouse corpscout.br_establishments."
@@ -538,6 +540,7 @@ def brazil_comp_rfb_clickhouse_establishments(
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=BRAZIL_COMP_RFB_CONTACT_INFO_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_BR_COMPANY_CONTACTS_TABLE},
     description=(
         "Brazil RFB canonical company contacts exported to ClickHouse "
@@ -572,6 +575,7 @@ def brazil_comp_rfb_clickhouse_company_contacts(
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=BRAZIL_COMP_RFB_WEBSITES_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_BR_COMPANY_DOMAINS_TABLE},
     description=(
         "Brazil RFB canonical company domains exported to ClickHouse "
@@ -606,6 +610,7 @@ def brazil_comp_rfb_clickhouse_company_domains(
     kinds={"python", "duckdb", "clickhouse"},
     partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=BRAZIL_COMP_RFB_WEBSITES_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_BR_WEBSITES_TABLE},
     description=(
         "Brazil RFB email-derived websites exported to ClickHouse "

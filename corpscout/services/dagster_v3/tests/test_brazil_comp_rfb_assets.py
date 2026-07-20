@@ -98,11 +98,21 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert companies_asset.op.pool == "brazil_comp_rfb_companies_duckdb"
     assert contact_info_asset.op.pool == "brazil_comp_rfb_contact_info_duckdb"
     assert websites_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
-    assert clickhouse_companies_asset.op.pool is None
-    assert clickhouse_establishments_asset.op.pool is None
-    assert clickhouse_company_contacts_asset.op.pool is None
-    assert clickhouse_company_domains_asset.op.pool is None
-    assert clickhouse_websites_asset.op.pool is None
+    # Read-only exporters carry the pool of the stage file they read: a
+    # DuckDB writer excludes readers across processes, so unpooled reads
+    # collide with a concurrent stage rebuild (see data-source-guidelines).
+    assert clickhouse_companies_asset.op.pool == "brazil_comp_rfb_companies_duckdb"
+    assert (
+        clickhouse_establishments_asset.op.pool == "brazil_comp_rfb_companies_duckdb"
+    )
+    assert (
+        clickhouse_company_contacts_asset.op.pool
+        == "brazil_comp_rfb_contact_info_duckdb"
+    )
+    assert (
+        clickhouse_company_domains_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
+    )
+    assert clickhouse_websites_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
     assert cleanup_asset.op.pool is None
 
 
