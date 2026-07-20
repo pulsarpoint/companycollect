@@ -261,7 +261,12 @@ Ordered roughly by value-for-effort:
    (liquidations, mergers, reconstructions) as an event stream; separate
    source, not yet investigated in depth.
 9. **LEI / GLEIF linkage** — connect `se_companies` to the existing `gleif`
-   module for group hierarchies.
+   module for group hierarchies. Note (2026-07-20): the cross-country
+   `defs/esef_filings/` module now builds `esef_entity_registry_map` from
+   `gleif_lei_records`, giving any Swedish LEI filer a registry-id match today
+   (SE normalizer: digits-only org number) — but only for companies that also
+   file ESEF (listed issuers). This item is still open for `se_companies`
+   broadly (unlisted companies have no ESEF filing to match through).
 10. **Cross-country identity linkage for people** — `company_people_all` is
     name-keyed per country; a person appearing in SE and NO is only a string
     match today. A real identity-linkage layer is deliberately deferred.

@@ -1,8 +1,11 @@
 # ESEF filings ingestion — research / pre-implementation design
 
-Status: **design only, not implemented** (agreed 2026-07-19; Finland is the first target).
-When implementation starts, this becomes `defs/esef_filings/docs/esef_filings-design.md`
-per §10 of `docs/data-source-guidelines.md`.
+Status: **implemented** (2026-07-20). This research doc is now historical context; the
+as-built design (source, resource/client, assets, tables, jobs/schedule, correctness
+decisions, deferred list) lives in
+`defs/esef_filings/docs/esef_filings-design.md`. Migration `000149` is written but
+**not yet applied** (ledger at 148) and no live materialization has run — server
+backfill + validation is Task 8 of the implementation plan (pending).
 
 ## Why
 

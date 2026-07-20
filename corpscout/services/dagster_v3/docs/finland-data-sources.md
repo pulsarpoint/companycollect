@@ -133,9 +133,14 @@ unchanged (design doc §8).
 
 ## Planned / not pursued
 
-- **ESEF listed-company financials** (fixes the 0/298 listed gap): designed in
-  `docs/esef-filings-research.md` — filings.xbrl.org, keyless, xBRL-JSON facts,
-  LEI→business id via `gleif`, consolidated-vs-standalone scope flag. Not built.
+- **ESEF listed-company financials** (fixes the 0/298 listed gap): **implemented**
+  (2026-07-20) as the cross-country `defs/esef_filings/` module — filings.xbrl.org,
+  keyless, xBRL-JSON facts, LEI→business id via `gleif` (`esef_entity_registry_map`,
+  FI normalizer included), `scope='consolidated_ifrs'` on every metrics row (never
+  silently mixed with `finland_xbrl`'s standalone statutory figures). See
+  `defs/esef_filings/docs/esef_filings-design.md` for the as-built design; migration
+  000149 is not yet applied and no live data has landed (Task 8, pending) — the
+  0/298 gap is not yet closed in production, just built and ready.
 - **YTJ company situations / registered entries**: see §1 gap — next in line.
 - **Not freely available** (documented, not chased): officers/board (paid Virre
   only; Finnish XBRL filings carry no signature facts), beneficial owners

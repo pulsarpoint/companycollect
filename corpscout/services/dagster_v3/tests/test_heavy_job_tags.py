@@ -17,6 +17,8 @@ HEAVY_BULK_JOBS = (
     "czech_ares_register_job",
     "estonia_ar_general_data_job",
     "companies_all_job",
+    "esef_filings_refresh_job",
+    "esef_filings_backfill_job",
 )
 
 

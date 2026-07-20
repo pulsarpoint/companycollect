@@ -25,9 +25,11 @@ import json
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
@@ -38,6 +40,7 @@ from dagster_v3.defs.common.duckdb_resources import (
     read_only_duckdb_connection,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.esef_filings import facts, tables
 from dagster_v3.defs.esef_filings.client import (
     ESEF_INDEX_URL,
@@ -957,6 +960,111 @@ def esef_financial_metrics_clickhouse(
     )
 
 
+# --- Jobs + schedule (Task 7) ------------------------------------------------
+#
+# esef_filings_refresh_job selects the index (unpartitioned), the two
+# year-partitioned assets (facts + report-XHTML archive, both on
+# ESEF_FILING_FACTS_PARTITIONS), and the three ClickHouse exports + metrics
+# (all unpartitioned) as ONE job. This is safe to combine into a single job
+# for a reason sweden_financial's history makes concrete: sweden's weekly
+# chain needed a 2026-07-20 de-partitioning redesign because it keeps a
+# SEPARATE DuckDB file PER YEAR, so a partition-scoped incremental ClickHouse
+# export became order-dependent against the yearly backfill (the 2026-07-18
+# incident -- see sweden_financial/docs/sweden_financial-design.md). ESEF
+# keeps its ENTIRE dataset in ONE DuckDB file (esef_filings_source.duckdb):
+# the year-partitioned facts/xhtml steps each delete-then-insert only their
+# own `period_end_year` scope within that single file, and the unpartitioned
+# exports downstream always full-replace ClickHouse from a read of the WHOLE
+# file (every year materialized so far) -- there is no split-file
+# order-independence hazard to design around here, so the exports don't need
+# their own separate job the way sweden's do.
+#
+# Mixing a partitioned selection with unpartitioned assets in ONE
+# `define_asset_job` is legal Dagster, verified by reading
+# `JobDefinition._get_partitions_def`
+# (.venv/.../dagster/_core/definitions/job_definition.py): it collects only
+# the non-None `partitions_def`s across the job's selected assets and
+# requires exactly one unique value; assets with `partitions_def=None` are
+# simply excluded from that check and execute unconditionally on every
+# launch of the job (not gated by the run's `partition_key`). Both
+# `esef_filing_facts_duckdb` and `esef_report_xhtml_s3` share the exact same
+# `ESEF_FILING_FACTS_PARTITIONS` object, so this job resolves to that single
+# partitions_def; the other five assets in the selection are unpartitioned
+# and simply run every time.
+ESEF_FILINGS_TIMEZONE = "Europe/Belgrade"
+
+ESEF_FILINGS_REFRESH_SELECTION = dg.AssetSelection.assets(
+    "esef_filings_index_duckdb",
+    "esef_filing_facts_duckdb",
+    "esef_report_xhtml_s3",
+    "esef_filings_clickhouse",
+    "esef_facts_clickhouse",
+    "esef_entity_registry_map_clickhouse",
+    "esef_financial_metrics_clickhouse",
+)
+
+# UI-launched backfill: the two year-partitioned assets ONLY (2019-2027).
+# Exports are deliberately excluded from the backfill job -- run
+# esef_filings_refresh_job (or the individual export assets) once after all
+# backfill partitions land, mirroring sweden_financial_backfill_job's
+# exports-excluded shape (its exports run in their own separate job instead).
+ESEF_FILINGS_BACKFILL_SELECTION = dg.AssetSelection.assets(
+    "esef_filing_facts_duckdb",
+    "esef_report_xhtml_s3",
+)
+
+esef_filings_refresh_job = dg.define_asset_job(
+    "esef_filings_refresh_job",
+    tags=HEAVY_BULK_RUN_TAGS,
+    selection=ESEF_FILINGS_REFRESH_SELECTION,
+)
+
+esef_filings_backfill_job = dg.define_asset_job(
+    "esef_filings_backfill_job",
+    tags=HEAVY_BULK_RUN_TAGS,
+    selection=ESEF_FILINGS_BACKFILL_SELECTION,
+)
+
+
+def _esef_filings_refresh_run_request(
+    context: dg.ScheduleEvaluationContext,
+) -> dg.RunRequest | dg.SkipReason:
+    """Resolve the current year's partition key at schedule-evaluation time.
+
+    Mirrors sweden_financial's (pre-de-partition) `_current_year_run_request`
+    resolver: esef_filings_refresh_job's two partitioned assets are keyed by
+    `str(year)` (ESEF_FILING_FACTS_PARTITIONS), not a Daily/Weekly/Monthly/
+    Hourly cadence, so `build_schedule_from_partitioned_job` doesn't apply --
+    the schedule must compute and hand the job a single partition_key itself.
+    Falls back to "now" (in ESEF_FILINGS_TIMEZONE) when Dagster evaluates the
+    schedule outside a real tick (`scheduled_execution_time is None`, e.g. a
+    manual "test schedule" click in the UI).
+    """
+    if context.scheduled_execution_time is None:
+        now = datetime.now(tz=ZoneInfo(ESEF_FILINGS_TIMEZONE))
+    else:
+        now = context.scheduled_execution_time.astimezone(
+            ZoneInfo(ESEF_FILINGS_TIMEZONE)
+        )
+    partition_key = str(now.year)
+    if partition_key not in ESEF_FILING_FACTS_PARTITIONS.get_partition_keys():
+        return dg.SkipReason(
+            f"No ESEF filings facts partition for schedule year {partition_key}"
+        )
+    return dg.RunRequest(partition_key=partition_key)
+
+
+esef_filings_refresh_weekly = dg.ScheduleDefinition(
+    name="esef_filings_refresh_weekly",
+    job=esef_filings_refresh_job,
+    cron_schedule="50 5 * * 0",
+    execution_timezone=ESEF_FILINGS_TIMEZONE,
+    execution_fn=_esef_filings_refresh_run_request,
+    # STOPPED until Task 8 validates a live run and flips it on in the UI.
+    default_status=dg.DefaultScheduleStatus.STOPPED,
+)
+
+
 defs = dg.Definitions(
     assets=[
         esef_filings_index_duckdb,
@@ -968,6 +1076,8 @@ defs = dg.Definitions(
         esef_financial_metrics_clickhouse,
     ],
     asset_checks=[filings_index_non_empty],
+    jobs=[esef_filings_refresh_job, esef_filings_backfill_job],
+    schedules=[esef_filings_refresh_weekly],
     resources={
         "esef_filings_duckdb": duckdb_resource(esef_filings_source_duckdb_path()),
     },

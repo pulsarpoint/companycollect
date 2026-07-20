@@ -18,8 +18,10 @@ an injected fake S3 client).
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import dagster as dg
 import pytest
@@ -29,8 +31,10 @@ from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
     read_only_duckdb_connection,
 )
+from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.esef_filings import assets
 from dagster_v3.defs.esef_filings.client import EsefFilingRecord
+from dagster_v3.definitions import defs as load_project_defs
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "esef_filings"
 
@@ -927,3 +931,135 @@ def test_report_xhtml_mid_partition_download_failure_propagates_with_no_phantom_
         assets.ESEF_FILINGS_FACTS_BUCKET,
         "esef_filings/report_xhtml/fxo_id=B-1/report.xhtml",
     ) not in object_store.uploaded_keys
+
+
+# --- Jobs + schedule (Task 7) ------------------------------------------------
+#
+# Mirrors the job/schedule contract-test style used elsewhere (e.g.
+# tests/test_wikidata_assets.py::test_wikidata_weekly_refresh_job_and_schedule_are_registered,
+# tests/test_estonia_ar_assets.py::test_schedules_registered_and_jobs_cover_full_chains):
+# load the full project Definitions, resolve jobs/schedules by name through
+# the RepositoryDefinition, and assert on their resolved shape (asset
+# selection, partitions_def, cron/timezone/status).
+
+
+def test_esef_filings_refresh_job_selects_index_partitioned_current_year_and_exports() -> (
+    None
+):
+    repo = load_project_defs().get_repository_def()
+    job = repo.get_job("esef_filings_refresh_job")
+    asset_keys = {key.path[-1] for key in job.asset_layer.executable_asset_keys}
+
+    assert asset_keys == {
+        "esef_filings_index_duckdb",
+        "esef_filing_facts_duckdb",
+        "esef_report_xhtml_s3",
+        "esef_filings_clickhouse",
+        "esef_facts_clickhouse",
+        "esef_entity_registry_map_clickhouse",
+        "esef_financial_metrics_clickhouse",
+    }
+
+
+def test_esef_filings_refresh_job_partitions_def_is_the_shared_year_partitions() -> (
+    None
+):
+    repo = load_project_defs().get_repository_def()
+    job = repo.get_job("esef_filings_refresh_job")
+
+    # Only esef_filing_facts_duckdb + esef_report_xhtml_s3 are partitioned in
+    # this selection; the job resolves a single shared partitions_def from
+    # them (JobDefinition._get_partitions_def collects only the non-None
+    # partitions_defs across the selection) even though the other 5 assets
+    # in the job are unpartitioned.
+    assert job.partitions_def is not None
+    assert set(job.partitions_def.get_partition_keys()) == set(
+        assets.ESEF_FILING_FACTS_PARTITIONS.get_partition_keys()
+    )
+
+
+def test_esef_filings_backfill_job_selects_partitioned_assets_only() -> None:
+    repo = load_project_defs().get_repository_def()
+    job = repo.get_job("esef_filings_backfill_job")
+    asset_keys = {key.path[-1] for key in job.asset_layer.executable_asset_keys}
+
+    # Exports excluded from the backfill job -- run the refresh job (or the
+    # individual export assets) once after all backfill partitions land.
+    assert asset_keys == {"esef_filing_facts_duckdb", "esef_report_xhtml_s3"}
+    assert set(job.partitions_def.get_partition_keys()) == set(
+        assets.ESEF_FILING_FACTS_PARTITIONS.get_partition_keys()
+    )
+
+
+def test_esef_filings_refresh_weekly_schedule_registered() -> None:
+    repo = load_project_defs().get_repository_def()
+    schedule = repo.get_schedule_def("esef_filings_refresh_weekly")
+
+    assert schedule.job_name == "esef_filings_refresh_job"
+    assert schedule.cron_schedule == "50 5 * * 0"
+    assert schedule.execution_timezone == "Europe/Belgrade"
+    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
+
+
+def test_esef_filings_jobs_carry_the_heavy_bulk_workload_tag() -> None:
+    repo = load_project_defs().get_repository_def()
+    for job_name in ("esef_filings_refresh_job", "esef_filings_backfill_job"):
+        job = repo.get_job(job_name)
+        for key, value in HEAVY_BULK_RUN_TAGS.items():
+            assert job.tags.get(key) == value, job_name
+
+
+class _FakeScheduleEvaluationContext:
+    """Duck-typed stand-in for dg.ScheduleEvaluationContext -- the resolver
+    only reads `.scheduled_execution_time` (see
+    assets._esef_filings_refresh_run_request's docstring)."""
+
+    def __init__(self, scheduled_execution_time: datetime | None) -> None:
+        self.scheduled_execution_time = scheduled_execution_time
+
+
+def test_refresh_run_request_resolves_current_year_partition_from_scheduled_time() -> (
+    None
+):
+    scheduled_time = datetime(2026, 7, 19, 5, 50, tzinfo=ZoneInfo("UTC"))
+    result = assets._esef_filings_refresh_run_request(
+        _FakeScheduleEvaluationContext(scheduled_time)
+    )
+    assert isinstance(result, dg.RunRequest)
+    # 2026-07-19 UTC 05:50 is still 2026-07-19 in Europe/Belgrade (UTC+2) --
+    # same calendar year either way, so this also proves the resolver
+    # actually converts to ESEF_FILINGS_TIMEZONE rather than reading the UTC
+    # year blindly (a same-year case can't distinguish that on its own, but
+    # combined with the boundary test below it does).
+    assert result.partition_key == "2026"
+
+
+def test_refresh_run_request_uses_belgrade_timezone_across_a_utc_year_boundary() -> (
+    None
+):
+    # 2025-12-31 23:30 UTC is already 2026-01-01 00:30 in Europe/Belgrade
+    # (UTC+1 in winter) -- proves the resolver converts to
+    # ESEF_FILINGS_TIMEZONE before taking `.year`, not the UTC year.
+    scheduled_time = datetime(2025, 12, 31, 23, 30, tzinfo=ZoneInfo("UTC"))
+    result = assets._esef_filings_refresh_run_request(
+        _FakeScheduleEvaluationContext(scheduled_time)
+    )
+    assert isinstance(result, dg.RunRequest)
+    assert result.partition_key == "2026"
+
+
+def test_refresh_run_request_skips_when_scheduled_year_has_no_partition() -> None:
+    scheduled_time = datetime(2030, 1, 1, tzinfo=ZoneInfo("UTC"))
+    result = assets._esef_filings_refresh_run_request(
+        _FakeScheduleEvaluationContext(scheduled_time)
+    )
+    assert isinstance(result, dg.SkipReason)
+
+
+def test_refresh_run_request_falls_back_to_now_when_no_scheduled_time() -> None:
+    result = assets._esef_filings_refresh_run_request(
+        _FakeScheduleEvaluationContext(None)
+    )
+    assert isinstance(result, dg.RunRequest)
+    expected_year = str(datetime.now(tz=ZoneInfo(assets.ESEF_FILINGS_TIMEZONE)).year)
+    assert result.partition_key == expected_year
