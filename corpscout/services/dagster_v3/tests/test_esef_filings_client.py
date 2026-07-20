@@ -389,6 +389,7 @@ def test_export_columns_match_migration_000149_column_order() -> None:
         tables.ESEF_FILINGS_TABLE: tables.ESEF_FILINGS_EXPORT_COLUMNS,
         tables.ESEF_FACTS_TABLE: tables.ESEF_FACTS_EXPORT_COLUMNS,
         tables.ESEF_ENTITY_REGISTRY_MAP_TABLE: tables.ESEF_ENTITY_MAP_EXPORT_COLUMNS,
+        tables.ESEF_FINANCIAL_METRICS_TABLE: tables.ESEF_FINANCIAL_METRICS_EXPORT_COLUMNS,
     }
 
     for table_name, export_columns in expected_by_table.items():

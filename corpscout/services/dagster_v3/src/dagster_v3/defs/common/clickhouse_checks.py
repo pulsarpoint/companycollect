@@ -56,6 +56,9 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ClickhouseLeaf(
         "esef_entity_registry_map_clickhouse", ("esef_entity_registry_map",), None
     ),
+    ClickhouseLeaf(
+        "esef_financial_metrics_clickhouse", ("esef_financial_metrics",), None
+    ),
     # estonia_ar — register daily, general data monthly 8th
     ClickhouseLeaf("estonia_ar_clickhouse_companies", ("ee_companies",), DAILY),
     ClickhouseLeaf(

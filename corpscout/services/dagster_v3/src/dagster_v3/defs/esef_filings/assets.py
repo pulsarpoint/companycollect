@@ -44,6 +44,9 @@ from dagster_v3.defs.esef_filings.client import (
     EsefFilingsClient,
     EsefFilingRecord,
 )
+from dagster_v3.defs.esef_filings.metrics import (
+    replace_esef_financial_metrics_clickhouse,
+)
 from dagster_v3.defs.esef_filings.publish import (
     export_esef_facts_clickhouse,
     export_esef_filings_clickhouse,
@@ -900,6 +903,39 @@ def esef_entity_registry_map_clickhouse(
     )
 
 
+@dg.asset(
+    name="esef_financial_metrics_clickhouse",
+    deps=["esef_facts_clickhouse", "esef_filings_clickhouse"],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse", "esef_filings"},
+    metadata={"table": tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE},
+    description=(
+        "Rebuilds corpscout.esef_financial_metrics entirely in ClickHouse "
+        "from corpscout.esef_facts + corpscout.esef_filings (+ "
+        "corpscout.exchange_rates for USD conversion). ClickHouse-native "
+        "stage+INSERT-SELECT+EXCHANGE; no DuckDB input, no pool."
+    ),
+)
+def esef_financial_metrics_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    result = replace_esef_financial_metrics_clickhouse(
+        clickhouse=clickhouse,
+        source_run_id=context.run.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "rows_exported": result["rows_exported"],
+            "excluded_sentinel_period_end_count": result[
+                "excluded_sentinel_period_end_count"
+            ],
+            "clickhouse_table": tables.QUALIFIED_ESEF_FINANCIAL_METRICS_TABLE,
+        }
+    )
+
+
 defs = dg.Definitions(
     assets=[
         esef_filings_index_duckdb,
@@ -908,6 +944,7 @@ defs = dg.Definitions(
         esef_filings_clickhouse,
         esef_facts_clickhouse,
         esef_entity_registry_map_clickhouse,
+        esef_financial_metrics_clickhouse,
     ],
     asset_checks=[filings_index_non_empty],
     resources={
