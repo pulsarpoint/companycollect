@@ -230,6 +230,122 @@ def resolve_sweden_financial_partition_archive_keys(
     return archive_keys
 
 
+def _local_report_counts_by_archive(duckdb_connection: Any) -> dict[str, int]:
+    rows = duckdb_connection.execute(
+        f"select source_archive_key, count(*) "
+        f"from {SWEDEN_FINANCIAL_DATASET_NAME}.reports group by 1"
+    ).fetchall()
+    return {str(key): int(count) for key, count in rows}
+
+
+def _local_facts_counts_by_archive(duckdb_connection: Any) -> dict[str, int]:
+    rows = duckdb_connection.execute(
+        f"""
+        select r.source_archive_key, count(*)
+        from {SWEDEN_FINANCIAL_DATASET_NAME}.facts f
+        join {SWEDEN_FINANCIAL_DATASET_NAME}.reports r using (statement_key)
+        group by 1
+        """
+    ).fetchall()
+    return {str(key): int(count) for key, count in rows}
+
+
+def _diff_against_clickhouse_counts(
+    *,
+    local_counts: dict[str, int],
+    clickhouse_rows: Sequence[tuple[Any, Any]],
+) -> list[str]:
+    clickhouse_counts = {str(key): int(count) for key, count in clickhouse_rows}
+    return sorted(
+        key
+        for key, count in local_counts.items()
+        if clickhouse_counts.get(key, 0) != count
+    )
+
+
+def _require_nonempty_local_reports(local_counts: dict[str, int]) -> None:
+    if not local_counts:
+        raise ValueError(
+            "Sweden financial year file has zero report rows; refusing to "
+            "reconcile from an empty local file -- re-materialize the parse "
+            "assets on this host first."
+        )
+
+
+def resolve_unreconciled_report_archive_keys(
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    *,
+    log: Callable[..., object] | None = None,
+) -> list[str]:
+    """Archives whose local ``reports`` row count differs from ClickHouse.
+
+    The order-independence mechanism (2026-07-20 design): the weekly export
+    carries NO bookkeeping of its own -- it diffs the local year file
+    against the target table and upserts exactly the difference, so a
+    yearly rebuild (which replaces the whole year file) can never strand
+    it. An empty diff is the legitimate "ClickHouse already has
+    everything" no-op.
+    """
+    local_counts = _local_report_counts_by_archive(duckdb_connection)
+    _require_nonempty_local_reports(local_counts)
+    clickhouse_rows = clickhouse_client.execute(
+        f"SELECT source_archive_key, count() "
+        f"FROM {QUALIFIED_SE_FINANCIAL_REPORTS_TABLE} "
+        f"WHERE source_archive_key IN %(keys)s GROUP BY source_archive_key",
+        {"keys": tuple(sorted(local_counts))},
+    )
+    keys = _diff_against_clickhouse_counts(
+        local_counts=local_counts, clickhouse_rows=clickhouse_rows
+    )
+    if log is not None:
+        log(
+            "Sweden reports reconcile scope: local_archives=%s unreconciled=%s",
+            len(local_counts),
+            len(keys),
+        )
+    return keys
+
+
+def resolve_unreconciled_facts_archive_keys(
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    *,
+    log: Callable[..., object] | None = None,
+) -> list[str]:
+    """Archives whose per-archive FACTS count (via the ``statement_key`` ->
+    ``reports`` join on both sides) differs from ClickHouse. Computed
+    independently of the reports diff so a facts-only gap (e.g. a reports
+    export that succeeded while the facts export failed) is still found.
+
+    Iterates the local FACTS counts, not the reports counts: an archive
+    with reports but zero extracted facts is legal and must not enter the
+    scope just because ClickHouse also has zero facts for it.
+    """
+    report_counts = _local_report_counts_by_archive(duckdb_connection)
+    _require_nonempty_local_reports(report_counts)
+    local_counts = _local_facts_counts_by_archive(duckdb_connection)
+    clickhouse_rows = clickhouse_client.execute(
+        f"SELECT r.source_archive_key, count() "
+        f"FROM {QUALIFIED_SE_FINANCIAL_FACTS_TABLE} AS f "
+        f"INNER JOIN {QUALIFIED_SE_FINANCIAL_REPORTS_TABLE} AS r "
+        f"ON f.statement_key = r.statement_key "
+        f"WHERE r.source_archive_key IN %(keys)s "
+        f"GROUP BY r.source_archive_key",
+        {"keys": tuple(sorted(report_counts))},
+    )
+    keys = _diff_against_clickhouse_counts(
+        local_counts=local_counts, clickhouse_rows=clickhouse_rows
+    )
+    if log is not None:
+        log(
+            "Sweden facts reconcile scope: local_archives=%s unreconciled=%s",
+            len(local_counts),
+            len(keys),
+        )
+    return keys
+
+
 def _quiet_week_skip_metadata(
     partition_key: str,
     *,

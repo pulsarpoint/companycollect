@@ -18,6 +18,8 @@ from dagster_v3.defs.sweden_financial.clickhouse import (
     SHRINK_GUARD_MIN_RATIO,
     guard_against_clickhouse_table_shrink,
     resolve_sweden_financial_partition_archive_keys,
+    resolve_unreconciled_facts_archive_keys,
+    resolve_unreconciled_report_archive_keys,
     upsert_sweden_financial_facts_partition,
     upsert_sweden_financial_reports_partition,
 )
@@ -59,6 +61,16 @@ _DROP_TABLE_SQL_RE = re.compile(r"^DROP TABLE IF EXISTS (corpscout\._tmp_\S+)$")
 
 _STAGE_TABLE_NAME_RE = re.compile(
     r"^corpscout\._tmp_se_facts_scope_[0-9a-f]{32}$"
+)
+
+_REPORTS_ARCHIVE_COUNT_SQL_RE = re.compile(
+    r"^SELECT source_archive_key, count\(\) FROM (\S+) "
+    r"WHERE source_archive_key IN %\(keys\)s GROUP BY source_archive_key$"
+)
+_FACTS_ARCHIVE_COUNT_SQL_RE = re.compile(
+    r"^SELECT r\.source_archive_key, count\(\) FROM (\S+) AS f "
+    r"INNER JOIN (\S+) AS r ON f\.statement_key = r\.statement_key "
+    r"WHERE r\.source_archive_key IN %\(keys\)s GROUP BY r\.source_archive_key$"
 )
 
 
@@ -149,6 +161,33 @@ class StatefulFakeClickHouseClient:
             table_name = normalized.split("`")[3]
             self.rows[f"corpscout.{table_name}"].extend(params)
             return []
+        reports_count_match = _REPORTS_ARCHIVE_COUNT_SQL_RE.match(normalized)
+        if reports_count_match is not None:
+            table = reports_count_match.group(1)
+            key_index = self.columns[table].index("source_archive_key")
+            counts: dict[str, int] = {}
+            for row in self.rows[table]:
+                key = row[key_index]
+                if key in params["keys"]:
+                    counts[key] = counts.get(key, 0) + 1
+            return sorted(counts.items())
+        facts_count_match = _FACTS_ARCHIVE_COUNT_SQL_RE.match(normalized)
+        if facts_count_match is not None:
+            facts_table, reports_table = facts_count_match.groups()
+            statement_index = self.columns[reports_table].index("statement_key")
+            archive_index = self.columns[reports_table].index("source_archive_key")
+            statement_to_archive = {
+                row[statement_index]: row[archive_index]
+                for row in self.rows[reports_table]
+                if row[archive_index] in params["keys"]
+            }
+            fact_statement_index = self.columns[facts_table].index("statement_key")
+            counts = {}
+            for row in self.rows[facts_table]:
+                archive = statement_to_archive.get(row[fact_statement_index])
+                if archive is not None:
+                    counts[archive] = counts.get(archive, 0) + 1
+            return sorted(counts.items())
         raise AssertionError(normalized)
 
     def _stage_keys(self, stage_table: str, stage_column: str) -> set[Any]:
@@ -287,6 +326,114 @@ def test_resolve_partition_archive_keys_raises_when_weekly_partition_not_synced(
             resolve_sweden_financial_partition_archive_keys(
                 connection, "2026-07-18"
             )
+
+
+def test_reconcile_reports_scope_is_missing_and_mismatched_archives(
+    tmp_path: Path,
+) -> None:
+    # W1 fully in CH (match), W2 absent from CH, 2025_A present with a
+    # WRONG count (1 local row seeded twice in CH) -> scope is W2 + 2025_A.
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(
+            ("5560000001", _ARCHIVE_KEY_2026_W1),
+            ("5560000002", _ARCHIVE_KEY_2026_W2),
+            ("5560000003", _ARCHIVE_KEY_2025_A),
+        ),
+    )
+    client = _reports_facts_fake_client()
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].extend(
+        [
+            _clickhouse_report_row(
+                company_id="5560000001",
+                year="2026",
+                archive_key=_ARCHIVE_KEY_2026_W1,
+            ),
+            _clickhouse_report_row(
+                company_id="5560000003",
+                year="2026",
+                archive_key=_ARCHIVE_KEY_2025_A,
+            ),
+            _clickhouse_report_row(
+                company_id="5560000003",
+                year="2026",
+                archive_key=_ARCHIVE_KEY_2025_A,
+            ),
+        ]
+    )
+
+    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
+        keys = resolve_unreconciled_report_archive_keys(connection, client)
+
+    assert keys == sorted([_ARCHIVE_KEY_2025_A, _ARCHIVE_KEY_2026_W2])
+
+
+def test_reconcile_reports_scope_empty_when_clickhouse_matches(
+    tmp_path: Path,
+) -> None:
+    _seed_year_file(
+        tmp_path, "2026", reports=(("5560000001", _ARCHIVE_KEY_2026_W1),)
+    )
+    client = _reports_facts_fake_client()
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
+        _clickhouse_report_row(
+            company_id="5560000001",
+            year="2026",
+            archive_key=_ARCHIVE_KEY_2026_W1,
+        )
+    )
+
+    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
+        keys = resolve_unreconciled_report_archive_keys(connection, client)
+
+    assert keys == []
+
+
+def test_reconcile_reports_scope_raises_on_empty_year_file(
+    tmp_path: Path,
+) -> None:
+    _seed_year_file(tmp_path, "2026", reports=())
+    client = _reports_facts_fake_client()
+
+    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
+        with pytest.raises(ValueError, match="zero report rows"):
+            resolve_unreconciled_report_archive_keys(connection, client)
+
+
+def test_reconcile_facts_scope_counts_facts_per_archive(
+    tmp_path: Path,
+) -> None:
+    # Local: one fact for W1's report and one for W2's. CH: W1's fact
+    # present, W2's absent -> facts scope is W2 only, even though CH's
+    # REPORTS table already has both (reports diff would be empty).
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(
+            ("5560000001", _ARCHIVE_KEY_2026_W1),
+            ("5560000002", _ARCHIVE_KEY_2026_W2),
+        ),
+        facts=("5560000001", "5560000002"),
+    )
+    client = _reports_facts_fake_client()
+    for company_id, archive_key in (
+        ("5560000001", _ARCHIVE_KEY_2026_W1),
+        ("5560000002", _ARCHIVE_KEY_2026_W2),
+    ):
+        client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(
+            _clickhouse_report_row(
+                company_id=company_id, year="2026", archive_key=archive_key
+            )
+        )
+    client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE].append(
+        _clickhouse_fact_row(company_id="5560000001", year="2026")
+    )
+
+    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
+        keys = resolve_unreconciled_facts_archive_keys(connection, client)
+
+    assert keys == [_ARCHIVE_KEY_2026_W2]
 
 
 # --- reports upsert ---------------------------------------------------------
