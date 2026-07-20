@@ -65,7 +65,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_backfill_report_xhtml_catalog_duckdb")
     )
     assert backfill_catalog_node.group_name == "sweden_financial"
-    assert backfill_catalog_node.pools == set()
+    assert backfill_catalog_node.pools == {"sweden_financial_duckdb"}
     assert backfill_catalog_node.parent_keys == {
         dg.AssetKey("sweden_financial_backfill_raw_archives_s3")
     }
@@ -75,7 +75,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb")
     )
     assert backfill_parsed_node.group_name == "sweden_financial"
-    assert backfill_parsed_node.pools == set()
+    assert backfill_parsed_node.pools == {"sweden_financial_duckdb"}
     assert backfill_parsed_node.parent_keys == {
         dg.AssetKey("sweden_financial_backfill_report_xhtml_catalog_duckdb")
     }
@@ -96,7 +96,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_current_report_xhtml_catalog_duckdb")
     )
     assert current_catalog_node.group_name == "sweden_financial"
-    assert current_catalog_node.pools == {"sweden_financial_current_2026_duckdb"}
+    assert current_catalog_node.pools == {"sweden_financial_duckdb"}
     assert current_catalog_node.parent_keys == {
         dg.AssetKey("sweden_financial_current_raw_archives_s3")
     }
@@ -106,7 +106,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         dg.AssetKey("sweden_financial_current_parsed_reports_duckdb")
     )
     assert current_parsed_node.group_name == "sweden_financial"
-    assert current_parsed_node.pools == {"sweden_financial_current_2026_duckdb"}
+    assert current_parsed_node.pools == {"sweden_financial_duckdb"}
     assert current_parsed_node.parent_keys == {
         dg.AssetKey("sweden_financial_current_report_xhtml_catalog_duckdb")
     }
@@ -156,7 +156,10 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     ):
         clickhouse_node = repo.asset_graph.get(dg.AssetKey(asset_key))
         assert clickhouse_node.group_name == "sweden_financial"
-        assert clickhouse_node.pools == set()
+        # Every asset touching a Sweden year DuckDB file shares one pool, so
+        # weekly and yearly chains serialize step-by-step instance-wide --
+        # safe to launch in ANY order AND in parallel.
+        assert clickhouse_node.pools == {"sweden_financial_duckdb"}
         assert clickhouse_node.partitions_def is backfill_raw_node.partitions_def
         assert clickhouse_node.parent_keys == {
             dg.AssetKey("sweden_financial_backfill_parsed_reports_duckdb"),
@@ -168,7 +171,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     ):
         clickhouse_node = repo.asset_graph.get(dg.AssetKey(asset_key))
         assert clickhouse_node.group_name == "sweden_financial"
-        assert clickhouse_node.pools == {"sweden_financial_current_2026_duckdb"}
+        assert clickhouse_node.pools == {"sweden_financial_duckdb"}
         assert clickhouse_node.partitions_def is None
         assert clickhouse_node.parent_keys == {
             dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),

@@ -173,9 +173,13 @@ so no host ever needs the full history locally. The source is append-shaped
 (immutable weekly archives), which is what makes delete-own-scope + insert
 exact.
 
-Operational note: a backfill `2026` export and the weekly current writer share
-the 2026 DuckDB file; running both concurrently fails loudly on the DuckDB
-cross-process lock — sequence them.
+Operational note: every asset that opens a Sweden year DuckDB file (backfill
+catalog/parse/exports and the weekly chain's DuckDB steps) carries the shared
+`sweden_financial_duckdb` pool (instance default limit 1), so Dagster
+serializes those steps across runs. Weekly and yearly chains can therefore be
+launched in ANY order and in PARALLEL: steps interleave instead of colliding
+on the DuckDB cross-process file lock, and each step sees a consistent file.
+The cost is that two backfill years cannot parse concurrently — accepted.
 
 `corpscout.se_financial_facts` is the lossless long-form layer: every parsed
 inline-XBRL numeric, date, text, context, unit, currency, and dimensional value
@@ -238,7 +242,7 @@ them, and reconciles ClickHouse.
 current chain, cancel any in-flight/queued backfills or runs targeting the
 old weekly partitions (`bulk_actions` / `run_tags key='dagster/backfill'`);
 a queued partition run that starts after the partitions are gone fails with
-`RUN_EXCEPTION` and can leak its `sweden_financial_current_2026_duckdb` pool
+`RUN_EXCEPTION` and can leak its `sweden_financial_duckdb` pool
 slot (see CLAUDE.md Troubleshooting). Historical weekly-partition
 materializations remain in the event log as orphans; that is cosmetic.
 

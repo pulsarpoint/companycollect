@@ -47,7 +47,14 @@ from dagster_v3.defs.sweden_financial.storage import (
 )
 
 GROUP_NAME = "sweden_financial"
-SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL = "sweden_financial_current_2026_duckdb"
+# ONE pool for EVERY asset that opens ANY Sweden year DuckDB file (backfill
+# catalog/parse/exports AND the whole weekly chain's DuckDB steps). The
+# instance defaults every pool to limit 1, so Dagster serializes these
+# steps across runs -- weekly and yearly chains can be launched in any
+# order AND in parallel; steps interleave instead of colliding on the
+# DuckDB cross-process file lock. (Cost: two backfill years cannot parse
+# concurrently -- acceptable; correctness over parallelism.)
+SWEDEN_FINANCIAL_DUCKDB_POOL = "sweden_financial_duckdb"
 
 
 SWEDEN_FINANCIAL_BACKFILL_YEARS = tuple(str(year) for year in range(2020, 2027))
@@ -127,6 +134,7 @@ def sweden_financial_backfill_raw_archives_s3(
     kinds={"python", "duckdb", "s3", "zip", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     description="Extracts Sweden backfill report XHTML files and replaces the year catalog.",
 )
 def sweden_financial_backfill_report_xhtml_catalog_duckdb(
@@ -188,7 +196,7 @@ def sweden_financial_current_raw_archives_s3(
     deps=["sweden_financial_current_raw_archives_s3"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "zip", "xhtml", "xbrl"},
-    pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     description="Extracts changed 2026 Sweden report XHTML archives for current refreshes.",
 )
 def sweden_financial_current_report_xhtml_catalog_duckdb(
@@ -238,6 +246,7 @@ def sweden_financial_current_report_xhtml_catalog_duckdb(
     kinds={"python", "duckdb", "s3", "xhtml", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     description=(
         "Parses Sweden backfill XHTML/iXBRL reports into structured report and "
         "fact tables in the year DuckDB file."
@@ -270,7 +279,7 @@ def sweden_financial_backfill_parsed_reports_duckdb(
     deps=["sweden_financial_current_report_xhtml_catalog_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "s3", "xhtml", "xbrl"},
-    pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     description=(
         "Parses changed Sweden current-year XHTML/iXBRL reports into structured "
         "report and fact tables in the active-year DuckDB file."
@@ -366,6 +375,7 @@ def _upsert_facts_partition_result(
     kinds={"python", "duckdb", "clickhouse", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     metadata={"table": QUALIFIED_SE_FINANCIAL_REPORTS_TABLE},
     description=(
         "Upserts one backfill year of parsed Sweden financial report "
@@ -389,7 +399,7 @@ def sweden_financial_backfill_reports_clickhouse(
     deps=["sweden_financial_current_parsed_reports_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "xbrl"},
-    pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     metadata={"table": QUALIFIED_SE_FINANCIAL_REPORTS_TABLE},
     description=(
         "Reconciles the active-year Sweden financial reports into "
@@ -428,6 +438,7 @@ def sweden_financial_current_reports_clickhouse(
     kinds={"python", "duckdb", "clickhouse", "xbrl"},
     partitions_def=SWEDEN_FINANCIAL_BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     metadata={"table": QUALIFIED_SE_FINANCIAL_FACTS_TABLE},
     description=(
         "Upserts one backfill year of parsed Sweden financial inline-XBRL "
@@ -450,7 +461,7 @@ def sweden_financial_backfill_facts_clickhouse(
     deps=["sweden_financial_current_parsed_reports_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "xbrl"},
-    pool=SWEDEN_FINANCIAL_CURRENT_DUCKDB_POOL,
+    pool=SWEDEN_FINANCIAL_DUCKDB_POOL,
     metadata={"table": QUALIFIED_SE_FINANCIAL_FACTS_TABLE},
     description=(
         "Reconciles the active-year Sweden financial inline-XBRL facts "
