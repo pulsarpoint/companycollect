@@ -21,7 +21,12 @@ fetch + LLM translation).
 ingest (dlt)  →  <source>_source.duckdb (staging)  →  transform (SQL/dbt)  →  corpscout.<table> (ClickHouse)
 ```
 - **One DuckDB file per source**, single-writer. Put `pool="<source>_duckdb"` on *every* asset that
-  writes it. The file **stem must differ from the dlt dataset name**.
+  **opens** it — writers AND read-only exporters (a DuckDB writer excludes readers across
+  processes, so an unpooled read-only step still collides with a concurrent write step's file
+  lock). One shared pool across ALL of a source's chains (refresh, backfill, export) is what makes
+  them safe to launch in any order and in parallel: Dagster interleaves the steps instead of
+  letting two runs race on the file (see the sweden_financial 2026-07-20 incident). The file
+  **stem must differ from the dlt dataset name**.
 - **Per-source module** under `defs/<source>/` (own DuckDB, own tables, own pool). This is the unit
   of isolation — do **not** fold multiple countries into one partitioned asset.
 - ClickHouse is the only `corpscout` database; the **migration owns the DDL**, code asserts the

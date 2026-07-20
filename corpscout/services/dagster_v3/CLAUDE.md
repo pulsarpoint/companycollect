@@ -27,9 +27,14 @@ files and S3 raw snapshots are rebuildable cache).
 - Validate before done: **`uv run dg check defs`** and the relevant `uv run pytest tests/...`.
 
 ## DuckDB (per-source file)
-- **One DuckDB file per source**, single-writer. Put a concurrency **`pool="..."`** on *every* asset that writes
-  that file (dlt load, dbt, ClickHouse export). The instance defaults every pool to limit 1
-  (`dagster.yaml` `concurrency.pools.default_limit: 1`), so just declaring the pool serializes writes.
+- **One DuckDB file per source**, single-writer. Put a concurrency **`pool="..."`** on *every* asset that **opens**
+  that file — writers AND read-only exporters (dlt load, dbt, ClickHouse export): a DuckDB writer excludes
+  readers across processes, so an unpooled read-only step still collides with a concurrent writer's file lock.
+  The instance defaults every pool to limit 1 (`dagster.yaml` `concurrency.pools.default_limit: 1`), so just
+  declaring the pool serializes the steps. Use ONE pool for all of a source's chains (refresh, backfill,
+  export) — that makes them safe to launch in any order and in parallel (steps interleave; see
+  sweden_financial's `sweden_financial_duckdb` pool, added 2026-07-20 after backfill assets without the pool
+  collided with the weekly chain).
 - **The DuckDB file stem must differ from the dlt dataset name** (e.g. file `latvia_ur_source.duckdb`, dataset
   `latvia_ur`). If they match, DuckDB's binder can't resolve `<dataset>.<table>` (`Ambiguous reference`).
 - dlt's `pipelines_dir` is a global singleton keyed only on `pipeline_name` — pass a per-checkout
