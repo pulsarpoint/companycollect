@@ -14,6 +14,13 @@ for it lives here yet.
 SOURCE_SLUG = "esef_filings"
 DLT_DATASET_NAME = "esef_filings"
 
+# DuckDB (esef_filings.*) staging table names -- shared by assets.py (which
+# builds them) and publish.py (which reads them for the ClickHouse export).
+FILINGS_INDEX_TABLE = "filings_index"
+FACTS_TABLE = "facts"
+QUALIFIED_FILINGS_INDEX_TABLE = f"{DLT_DATASET_NAME}.{FILINGS_INDEX_TABLE}"
+QUALIFIED_FACTS_TABLE = f"{DLT_DATASET_NAME}.{FACTS_TABLE}"
+
 ESEF_DATABASE = "corpscout"
 ESEF_FILINGS_TABLE = "esef_filings"
 ESEF_FACTS_TABLE = "esef_facts"

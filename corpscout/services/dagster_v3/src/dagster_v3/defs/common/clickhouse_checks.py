@@ -50,6 +50,12 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         MONTHLY,
     ),
     ClickhouseLeaf("czech_ares_clickhouse_industries", ("cz_industries",), MONTHLY),
+    # esef_filings — unscheduled in Task 5; jobs/schedule land in Task 7
+    ClickhouseLeaf("esef_filings_clickhouse", ("esef_filings",), None),
+    ClickhouseLeaf("esef_facts_clickhouse", ("esef_facts",), None),
+    ClickhouseLeaf(
+        "esef_entity_registry_map_clickhouse", ("esef_entity_registry_map",), None
+    ),
     # estonia_ar — register daily, general data monthly 8th
     ClickhouseLeaf("estonia_ar_clickhouse_companies", ("ee_companies",), DAILY),
     ClickhouseLeaf(
@@ -178,7 +184,9 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ClickhouseLeaf("se_company_officers_clickhouse", ("se_company_officers",), None),
     ClickhouseLeaf("se_company_audits_clickhouse", ("se_company_audits",), None),
     # uk_companies_house — register monthly 7th, financials monthly 8th, daily 09:00
-    ClickhouseLeaf("uk_companies_house_clickhouse_companies", ("gb_companies",), MONTHLY),
+    ClickhouseLeaf(
+        "uk_companies_house_clickhouse_companies", ("gb_companies",), MONTHLY
+    ),
     ClickhouseLeaf(
         "uk_companies_house_clickhouse_industries", ("gb_industries",), MONTHLY
     ),

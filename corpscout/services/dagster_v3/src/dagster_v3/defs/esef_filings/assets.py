@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import dagster as dg
+from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import (
@@ -37,13 +38,18 @@ from dagster_v3.defs.esef_filings.client import (
     EsefFilingsClient,
     EsefFilingRecord,
 )
+from dagster_v3.defs.esef_filings.publish import (
+    export_esef_facts_clickhouse,
+    export_esef_filings_clickhouse,
+    replace_esef_entity_registry_map_clickhouse,
+)
 
 GROUP_NAME = "esef_filings"
 ESEF_FILINGS_DUCKDB_POOL = "esef_filings_duckdb"
 ESEF_FILINGS_DUCKDB_ROOT = Path("data")
 
-FILINGS_INDEX_TABLE = "filings_index"
-QUALIFIED_FILINGS_INDEX_TABLE = f"{tables.DLT_DATASET_NAME}.{FILINGS_INDEX_TABLE}"
+FILINGS_INDEX_TABLE = tables.FILINGS_INDEX_TABLE
+QUALIFIED_FILINGS_INDEX_TABLE = tables.QUALIFIED_FILINGS_INDEX_TABLE
 
 TOP_COUNTRY_LIMIT = 10
 
@@ -53,8 +59,8 @@ TOP_COUNTRY_LIMIT = 10
 ESEF_FILINGS_FACTS_BUCKET = "source-esef-filings"
 ESEF_FACT_JSON_PREFIX = "esef_filings/fact_json/"
 
-FACTS_TABLE = "facts"
-QUALIFIED_FACTS_TABLE = f"{tables.DLT_DATASET_NAME}.{FACTS_TABLE}"
+FACTS_TABLE = tables.FACTS_TABLE
+QUALIFIED_FACTS_TABLE = tables.QUALIFIED_FACTS_TABLE
 
 # Matches facts._period_end_year's accepted range and the
 # StaticPartitionsDefinition below (str(y) for y in range(2019, 2028)).
@@ -618,8 +624,118 @@ def esef_filing_facts_duckdb(
     )
 
 
+@dg.asset(
+    name="esef_filings_clickhouse",
+    deps=["esef_filings_index_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "esef_filings"},
+    pool=ESEF_FILINGS_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_ESEF_FILINGS_TABLE},
+    description=(
+        "Full-replaces corpscout.esef_filings from DuckDB "
+        f"{QUALIFIED_FILINGS_INDEX_TABLE} via the shared stage+EXCHANGE "
+        "ClickHouse exporter."
+    ),
+)
+def esef_filings_clickhouse(
+    context: dg.AssetExecutionContext,
+    esef_filings_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
+        rows = export_esef_filings_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "rows_exported": rows,
+            "clickhouse_table": tables.QUALIFIED_ESEF_FILINGS_TABLE,
+        }
+    )
+
+
+def _all_partition_deps(*asset_keys: str) -> list[dg.AssetDep]:
+    """Deps of an unpartitioned derived asset on a year-partitioned upstream
+    (mirrors sweden_financial/assets.py's helper of the same name)."""
+    return [
+        dg.AssetDep(dg.AssetKey(asset_key), partition_mapping=dg.AllPartitionMapping())
+        for asset_key in asset_keys
+    ]
+
+
+@dg.asset(
+    name="esef_facts_clickhouse",
+    deps=_all_partition_deps("esef_filing_facts_duckdb"),
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "esef_filings"},
+    pool=ESEF_FILINGS_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_ESEF_FACTS_TABLE},
+    description=(
+        "Full-replaces corpscout.esef_facts from DuckDB "
+        f"{QUALIFIED_FACTS_TABLE} (every year partition) via the shared "
+        "stage+EXCHANGE ClickHouse exporter. Full replace is correct here -- "
+        "one DuckDB file holds the entire dataset, no split-file hazard."
+    ),
+)
+def esef_facts_clickhouse(
+    context: dg.AssetExecutionContext,
+    esef_filings_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    with read_only_duckdb_connection(esef_filings_duckdb) as connection:
+        rows = export_esef_facts_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={
+            "rows_exported": rows,
+            "clickhouse_table": tables.QUALIFIED_ESEF_FACTS_TABLE,
+        }
+    )
+
+
+@dg.asset(
+    name="esef_entity_registry_map_clickhouse",
+    deps=["esef_filings_clickhouse", "gleif_reference_clickhouse"],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse", "esef_filings", "gleif"},
+    metadata={"table": tables.QUALIFIED_ESEF_ENTITY_REGISTRY_MAP_TABLE},
+    description=(
+        "Rebuilds corpscout.esef_entity_registry_map entirely in ClickHouse "
+        "from corpscout.gleif_lei_records, scoped to LEIs present in "
+        "corpscout.esef_filings. ClickHouse-native stage+INSERT-SELECT+"
+        "EXCHANGE; no DuckDB input."
+    ),
+)
+def esef_entity_registry_map_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    rows = replace_esef_entity_registry_map_clickhouse(
+        clickhouse=clickhouse,
+        source_run_id=context.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "rows_exported": rows,
+            "clickhouse_table": tables.QUALIFIED_ESEF_ENTITY_REGISTRY_MAP_TABLE,
+        }
+    )
+
+
 defs = dg.Definitions(
-    assets=[esef_filings_index_duckdb, esef_filing_facts_duckdb],
+    assets=[
+        esef_filings_index_duckdb,
+        esef_filing_facts_duckdb,
+        esef_filings_clickhouse,
+        esef_facts_clickhouse,
+        esef_entity_registry_map_clickhouse,
+    ],
     asset_checks=[filings_index_non_empty],
     resources={
         "esef_filings_duckdb": duckdb_resource(esef_filings_source_duckdb_path()),

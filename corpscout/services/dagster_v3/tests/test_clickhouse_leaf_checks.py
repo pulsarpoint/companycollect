@@ -22,6 +22,9 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
     # spot-check one leaf per module family
     for expected in (
         "czech_ares_clickhouse_companies",
+        "esef_filings_clickhouse",
+        "esef_facts_clickhouse",
+        "esef_entity_registry_map_clickhouse",
         "estonia_ar_clickhouse_companies",
         "estonia_ar_clickhouse_financial_metrics",
         "exchange_rates_v2_clickhouse",
@@ -58,9 +61,9 @@ def test_every_leaf_has_a_row_count_check_and_scheduled_leaves_freshness() -> No
 
     for spec in chk.CLICKHOUSE_LEAVES:
         asset_key = dg.AssetKey(spec.asset_key)
-        assert (
-            dg.AssetCheckKey(asset_key, chk.ROW_COUNT_CHECK_NAME) in check_keys
-        ), f"{spec.asset_key}: missing row-count check"
+        assert dg.AssetCheckKey(asset_key, chk.ROW_COUNT_CHECK_NAME) in check_keys, (
+            f"{spec.asset_key}: missing row-count check"
+        )
         freshness_key = dg.AssetCheckKey(asset_key, chk.FRESHNESS_CHECK_NAME)
         if spec.max_age is not None:
             assert freshness_key in check_keys, f"{spec.asset_key}: missing freshness"
