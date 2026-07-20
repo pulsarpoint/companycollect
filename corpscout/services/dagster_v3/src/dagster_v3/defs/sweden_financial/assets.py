@@ -696,10 +696,18 @@ SWEDEN_FINANCIAL_BACKFILL_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_backfill_report_xhtml_catalog_duckdb",
     "sweden_financial_backfill_parsed_reports_duckdb",
 )
+# The weekly current selection is the FULL chain -- sync, catalog, parse,
+# and both ClickHouse exports -- as separate assets in one job/run. The
+# export resolves its archive scope from catalog rows the sync asset wrote
+# earlier in the same run, so a later year-file rebuild (the yearly backfill
+# replaces the whole year DuckDB, wiping weekly catalog bookkeeping -- the
+# 2026-07-18 incident) can never strand a scheduled weekly export.
 SWEDEN_FINANCIAL_CURRENT_SELECTION = dg.AssetSelection.assets(
     "sweden_financial_current_raw_archives_s3",
     "sweden_financial_current_report_xhtml_catalog_duckdb",
     "sweden_financial_current_parsed_reports_duckdb",
+    "sweden_financial_current_reports_clickhouse",
+    "sweden_financial_current_facts_clickhouse",
 )
 # A single asset job cannot mix the two export partition families (yearly
 # backfill vs weekly current StaticPartitionsDefinitions), so the ClickHouse

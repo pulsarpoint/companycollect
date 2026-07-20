@@ -147,9 +147,9 @@ the backoffice facts drill-down.
 | job | contents | trigger |
 |---|---|---|
 | `sweden_financial_backfill_job` | raw + catalog + parse, year partitions | manual backfill |
-| `sweden_financial_current_year_job` | raw + catalog + parse, 7-day partitions | `sweden_financial_current_year_weekly`, Sat 06:45 Europe/Belgrade, RUNNING |
+| `sweden_financial_current_year_job` | full weekly chain: raw + catalog + parse + reports/facts exports, 7-day partitions | `sweden_financial_current_year_weekly`, Sat 06:45 Europe/Belgrade, RUNNING |
 | `sweden_financial_backfill_clickhouse_job` | backfill reports+facts export pair | manual, after parse |
-| `sweden_financial_current_clickhouse_job` | current reports+facts export pair | after weekly parse |
+| `sweden_financial_current_clickhouse_job` | current reports+facts export pair (manual re-export; the weekly job already exports) | manual |
 | `sweden_financial_clickhouse_job` | derived wave: metrics, history, officers, audits | after exports |
 
 Operational notes:

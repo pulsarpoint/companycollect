@@ -187,29 +187,37 @@ def resolve_sweden_financial_partition_archive_keys(
       ``downloaded = true`` are the archives that were actually new (and
       therefore (re-)parsed) for this specific partition.
 
-    Raises ``ValueError`` if the resolved scope is empty -- either this
-    host's local DuckDB file holds no rows for this partition at all, or
-    (for a weekly partition) this exact partition was never synced/parsed
-    locally. Never returns an empty list silently (see the 2026-07-19
-    incident this design replaces).
+    Returns an EMPTY list for exactly one case: a weekly partition whose
+    sync DID run (catalog rows exist for it) but recorded zero
+    ``downloaded`` archives -- a legitimate quiet week upstream, which the
+    callers turn into a clean no-op export.
+
+    Raises ``ValueError`` if the partition's scope is otherwise empty --
+    either this host's local DuckDB file holds no rows for this partition
+    at all, or (for a weekly partition) this exact partition was never
+    synced/parsed locally. Never conflates that with the quiet-week case
+    (see the 2026-07-19 incident this design replaces, and the 2026-07-18
+    incident where a year rebuild wiped the weekly catalog rows).
     """
     if _is_backfill_partition_key(partition_key):
         rows = duckdb_connection.execute(
             f"select distinct source_archive_key "
             f"from {SWEDEN_FINANCIAL_DATASET_NAME}.reports"
         ).fetchall()
+        archive_keys = sorted({str(row[0]) for row in rows})
     else:
         rows = duckdb_connection.execute(
             f"""
-            select distinct s3_key
+            select s3_key, downloaded
             from {SWEDEN_FINANCIAL_DATASET_NAME}.archive_sync_catalog
             where load_partition_key = ?
               and sync_kind = 'current'
-              and downloaded
             """,
             [partition_key],
         ).fetchall()
-    archive_keys = sorted({str(row[0]) for row in rows})
+        archive_keys = sorted({str(key) for key, downloaded in rows if downloaded})
+        if rows and not archive_keys:
+            return []
     if not archive_keys:
         raise ValueError(
             "No Sweden financial archive keys found for partition "
@@ -220,6 +228,29 @@ def resolve_sweden_financial_partition_archive_keys(
             "different host completed this week's sync)."
         )
     return archive_keys
+
+
+def _quiet_week_skip_metadata(
+    partition_key: str,
+    *,
+    log: Callable[..., object] | None = None,
+) -> dict[str, str | int]:
+    """No-op result for a weekly partition whose sync recorded zero changed
+    archives (see ``resolve_sweden_financial_partition_archive_keys``) --
+    the export succeeds without touching ClickHouse."""
+    if log is not None:
+        log(
+            "Skipping Sweden financial partition export: partition=%s synced "
+            "but zero archives changed upstream this week",
+            partition_key,
+        )
+    return {
+        "partition": partition_key,
+        "archives": 0,
+        "deleted": 0,
+        "inserted": 0,
+        "skipped_reason": "weekly sync recorded zero changed archives",
+    }
 
 
 def _statement_keys_for_archive_keys(
@@ -235,7 +266,8 @@ def _statement_keys_for_archive_keys(
     So the facts export's ClickHouse delete scope is expressed in
     ``statement_key``, derived here from the same local ``reports`` table
     used to resolve the archive scope. ``archive_keys`` is never empty
-    (``resolve_sweden_financial_partition_archive_keys`` raises first).
+    (``resolve_sweden_financial_partition_archive_keys`` raises first, and
+    the quiet-week empty scope short-circuits in the callers before this).
     """
     placeholders = ", ".join("?" for _ in archive_keys)
     rows = duckdb_connection.execute(
@@ -494,6 +526,8 @@ def upsert_sweden_financial_reports_partition(
     archive_keys = resolve_sweden_financial_partition_archive_keys(
         duckdb_connection, partition_key
     )
+    if not archive_keys:
+        return _quiet_week_skip_metadata(partition_key, log=log)
     source_row_count = _reports_row_count_for_archive_keys(
         duckdb_connection, archive_keys
     )
@@ -566,6 +600,8 @@ def upsert_sweden_financial_facts_partition(
     archive_keys = resolve_sweden_financial_partition_archive_keys(
         duckdb_connection, partition_key
     )
+    if not archive_keys:
+        return _quiet_week_skip_metadata(partition_key, log=log)
     statement_keys = _statement_keys_for_archive_keys(duckdb_connection, archive_keys)
     if not statement_keys:
         raise ValueError(

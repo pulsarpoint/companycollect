@@ -248,6 +248,30 @@ def test_resolve_partition_archive_keys_raises_when_backfill_scope_empty(
             resolve_sweden_financial_partition_archive_keys(connection, "2024")
 
 
+def test_resolve_current_partition_returns_empty_when_synced_but_nothing_new(
+    tmp_path: Path,
+) -> None:
+    # The weekly sync ran (catalog rows exist for this partition) but zero
+    # archives changed upstream -- a legitimate quiet week, not bookkeeping
+    # loss, so the scope resolves to empty instead of raising.
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
+        catalog_rows=(
+            ("2026-07-18", "current", _ARCHIVE_KEY_2026_W1, False),
+            ("2026-07-18", "current", _ARCHIVE_KEY_2026_W2, False),
+        ),
+    )
+
+    with sweden_financial_year_duckdb_connection("2026", root=tmp_path) as connection:
+        keys = resolve_sweden_financial_partition_archive_keys(
+            connection, "2026-07-18"
+        )
+
+    assert keys == []
+
+
 def test_resolve_partition_archive_keys_raises_when_weekly_partition_not_synced(
     tmp_path: Path,
 ) -> None:
@@ -366,6 +390,87 @@ def test_upsert_reports_partition_skips_delete_mutation_when_precount_zero(
     assert metadata["inserted"] == 1
     assert not any(
         sql.startswith("ALTER TABLE") for sql in client.statements()
+    )
+
+
+def test_upsert_reports_partition_skips_cleanly_on_quiet_week(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # Weekly sync ran but zero archives changed upstream: the export must
+    # succeed as a no-op (never raise, never touch ClickHouse rows).
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
+        catalog_rows=(("2026-07-18", "current", _ARCHIVE_KEY_2026_W1, False),),
+    )
+    client = _reports_facts_fake_client()
+    existing_row = _clickhouse_report_row(
+        company_id="5560000001",
+        year="2026",
+        archive_key=_ARCHIVE_KEY_2026_W1,
+    )
+    client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE].append(existing_row)
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            metadata = upsert_sweden_financial_reports_partition(
+                duckdb_connection=connection,
+                clickhouse=resource,
+                partition_key="2026-07-18",
+            )
+
+    assert metadata == {
+        "partition": "2026-07-18",
+        "archives": 0,
+        "deleted": 0,
+        "inserted": 0,
+        "skipped_reason": "weekly sync recorded zero changed archives",
+    }
+    assert client.rows[QUALIFIED_SE_FINANCIAL_REPORTS_TABLE] == [existing_row]
+    assert not any(
+        sql.startswith(("ALTER TABLE", "INSERT INTO"))
+        for sql in client.statements()
+    )
+
+
+def test_upsert_facts_partition_skips_cleanly_on_quiet_week(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_year_file(
+        tmp_path,
+        "2026",
+        reports=(("5560000001", _ARCHIVE_KEY_2026_W1),),
+        facts=("5560000001",),
+        catalog_rows=(("2026-07-18", "current", _ARCHIVE_KEY_2026_W1, False),),
+    )
+    client = _reports_facts_fake_client()
+
+    with _patched_clickhouse(monkeypatch, client) as resource:
+        with sweden_financial_year_duckdb_connection(
+            "2026", root=tmp_path
+        ) as connection:
+            metadata = upsert_sweden_financial_facts_partition(
+                duckdb_connection=connection,
+                clickhouse=resource,
+                partition_key="2026-07-18",
+            )
+
+    assert metadata == {
+        "partition": "2026-07-18",
+        "archives": 0,
+        "deleted": 0,
+        "inserted": 0,
+        "skipped_reason": "weekly sync recorded zero changed archives",
+    }
+    assert client.rows[QUALIFIED_SE_FINANCIAL_FACTS_TABLE] == []
+    assert not any(
+        sql.startswith(("ALTER TABLE", "INSERT INTO", "CREATE TABLE"))
+        for sql in client.statements()
     )
 
 
