@@ -102,6 +102,15 @@ export interface CountryDetailConfig {
    * and archive_url/archive_name/nested_zip_name (public upstream archive).
    */
   factsDocumentQuery?: string;
+  /**
+   * {id:String} → GLEIF corporate-group links for the company's LEI (see
+   * GleifRelationshipRow in queries.server): direction ('parent' |
+   * 'subsidiary'), relationship_type (GLEIF vocabulary, e.g.
+   * IS_DIRECTLY_CONSOLIDATED_BY), other_lei, name, jurisdiction, and
+   * local_id — the other entity's registry number when it belongs to THIS
+   * country (enables an internal company link), else ''.
+   */
+  gleifRelationshipsQuery?: string;
 }
 
 export interface CountryConfig {
@@ -426,12 +435,16 @@ LIMIT 50000`,
       // toggle's pairing rule (needs BOTH <base>_en and <base>_original)
       // collapses it with activity_description_en from the translated
       // view; the code-label columns are deliberately unpaired singles.
+      // vat_number is DERIVED (SE + orgnr + 01, the standard momsreg.nr
+      // format) — the source carries no VAT registration flag, so this is
+      // the number IF the company is VAT-registered, not proof that it is.
       recordQuery: `SELECT c.* EXCEPT (activity_description),
   c.activity_description AS activity_description_original,
   t.activity_description_en AS activity_description_en,
   t.legal_form_label_en AS legal_form_label_en,
   t.status_reason_label_en AS status_reason_label_en,
-  g.lei AS lei
+  g.lei AS lei,
+  concat('SE', c.registration_number, '01') AS vat_number
 FROM se_companies AS c
 LEFT JOIN se_companies_translated AS t ON t.company_id = c.company_id
 LEFT JOIN (
@@ -596,6 +609,34 @@ FROM se_financial_metrics
 WHERE company_id = {id:String} AND fiscal_year = {year:UInt16}
 ORDER BY isNull(revenue_amount_original) ASC, source_record_id DESC
 LIMIT 1`,
+      // GLEIF consolidation links both ways: rows where our LEI is the
+      // START node are our parents (X IS_CONSOLIDATED_BY parent), rows
+      // where it is the END node are subsidiaries. local_id carries the
+      // digits-only orgnr for SE-jurisdiction relatives so the UI can link
+      // internally; ACTIVE relationship rows only.
+      gleifRelationshipsQuery: `WITH (
+  SELECT coalesce(argMax(lei, entity_status = 'ACTIVE'), '')
+  FROM gleif_lei_records
+  WHERE jurisdiction = 'SE'
+    AND replaceRegexpAll(registered_as, '[^0-9]', '') = {id:String}
+) AS my_lei
+SELECT
+  if(r.start_node_lei = my_lei, 'parent', 'subsidiary') AS direction,
+  r.relationship_type AS relationship_type,
+  if(r.start_node_lei = my_lei, r.end_node_lei, r.start_node_lei) AS other_lei,
+  any(coalesce(g.legal_name, '')) AS name,
+  any(coalesce(g.jurisdiction, '')) AS jurisdiction,
+  any(if(g.jurisdiction = 'SE',
+      replaceRegexpAll(coalesce(g.registered_as, ''), '[^0-9]', ''), '')) AS local_id
+FROM gleif_lei_relationships AS r
+LEFT JOIN gleif_lei_records AS g
+  ON g.lei = if(r.start_node_lei = my_lei, r.end_node_lei, r.start_node_lei)
+WHERE my_lei != ''
+  AND (r.start_node_lei = my_lei OR r.end_node_lei = my_lei)
+  AND r.relationship_status = 'ACTIVE'
+GROUP BY direction, relationship_type, other_lei
+ORDER BY direction = 'subsidiary', relationship_type, name
+LIMIT 500`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
   '' AS description_original,
   coalesce(nullIf(n.description_en, ''), i.nace_rev2_class_code) AS industry_label,

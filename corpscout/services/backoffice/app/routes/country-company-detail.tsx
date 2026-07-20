@@ -11,6 +11,7 @@ import {
   DomainsSection,
 } from "~/components/detail/detail-sections";
 import { ContactLocationCard } from "~/components/detail/contact-location-card";
+import { GleifGroupSection } from "~/components/detail/gleif-group-section";
 import { SecondaryNamesSection } from "~/components/detail/secondary-names-section";
 import { ManagementSection } from "~/components/detail/management-section";
 import { FinancialsSection } from "~/components/detail/financials-section";
@@ -87,6 +88,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
       </div>
 
       <CompanyRecordSection company={company} record={record} lang={lang} />
+      <GleifGroupSection relationships={detail.gleifRelationships} countryCode={country.code} />
       <SecondaryNamesSection names={detail.secondaryNames} />
       <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} audit={detail.audit} />
       <IndustriesSection industries={detail.industries} />

@@ -293,6 +293,17 @@ export interface PeopleMatchRow {
   fiscal_year: number;
 }
 
+export interface GleifRelationshipRow {
+  direction: "parent" | "subsidiary";
+  /** GLEIF vocabulary, e.g. IS_DIRECTLY_CONSOLIDATED_BY. */
+  relationship_type: string;
+  other_lei: string;
+  name: string;
+  jurisdiction: string;
+  /** The other entity's registry id when it is in this country, else ''. */
+  local_id: string;
+}
+
 export interface CompanyDetail {
   company: CompanyListRow;
   record: Record<string, unknown>;
@@ -311,6 +322,8 @@ export interface CompanyDetail {
   peopleMatches: PeopleMatchRow[];
   /** Latest filing's audit firm + opinion form; null when unavailable. */
   audit: AuditRow | null;
+  /** GLEIF corporate-group links; empty when no LEI or no query. */
+  gleifRelationships: GleifRelationshipRow[];
 }
 
 export async function getCompanyDetail(
@@ -372,6 +385,9 @@ export async function getCompanyDetail(
   const auditPromise = country.detail?.auditQuery
     ? chQuery<AuditRow>(country.detail.auditQuery, { id })
     : Promise.resolve([]);
+  const gleifRelationshipsPromise = country.detail?.gleifRelationshipsQuery
+    ? chQuery<GleifRelationshipRow>(country.detail.gleifRelationshipsQuery, { id })
+    : Promise.resolve([]);
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
   recordPromise.catch(() => {});
@@ -384,6 +400,7 @@ export async function getCompanyDetail(
   secondaryNamesPromise.catch(() => {});
   officersPromise.catch(() => {});
   auditPromise.catch(() => {});
+  gleifRelationshipsPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -395,7 +412,7 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
@@ -406,6 +423,7 @@ export async function getCompanyDetail(
     secondaryNamesPromise,
     officersPromise,
     auditPromise,
+    gleifRelationshipsPromise,
   ]);
 
   // Same-name matches need the officers' names, so this can only start once
@@ -439,5 +457,6 @@ export async function getCompanyDetail(
     officers,
     peopleMatches,
     audit: auditRows[0] ?? null,
+    gleifRelationships,
   };
 }
