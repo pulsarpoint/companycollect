@@ -81,19 +81,16 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     }
     assert backfill_parsed_node.partitions_def is backfill_raw_node.partitions_def
 
+    # The current (weekly refresh) chain is deliberately UNPARTITIONED
+    # (2026-07-20 order-independence design): weekly partition identities
+    # existed only to give exports a bookkeeping scope, which a yearly
+    # rebuild could wipe. The exports reconcile against ClickHouse instead.
     current_raw_node = repo.asset_graph.get(
         dg.AssetKey("sweden_financial_current_raw_archives_s3")
     )
     assert current_raw_node.group_name == "sweden_financial"
     assert current_raw_node.pools == set()
-    assert (
-        type(current_raw_node.partitions_def).__name__ == "StaticPartitionsDefinition"
-    )
-    current_keys = current_raw_node.partitions_def.get_partition_keys()
-    assert current_keys[0] == "2026-07-04"
-    assert current_keys[1] == "2026-07-11"
-    assert current_keys[-1] == "2026-12-26"
-    assert "2026" not in current_keys
+    assert current_raw_node.partitions_def is None
 
     current_catalog_node = repo.asset_graph.get(
         dg.AssetKey("sweden_financial_current_report_xhtml_catalog_duckdb")
@@ -103,7 +100,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     assert current_catalog_node.parent_keys == {
         dg.AssetKey("sweden_financial_current_raw_archives_s3")
     }
-    assert current_catalog_node.partitions_def is current_raw_node.partitions_def
+    assert current_catalog_node.partitions_def is None
 
     current_parsed_node = repo.asset_graph.get(
         dg.AssetKey("sweden_financial_current_parsed_reports_duckdb")
@@ -113,7 +110,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
     assert current_parsed_node.parent_keys == {
         dg.AssetKey("sweden_financial_current_report_xhtml_catalog_duckdb")
     }
-    assert current_parsed_node.partitions_def is current_raw_node.partitions_def
+    assert current_parsed_node.partitions_def is None
 
     clickhouse_job_asset_keys = {
         key.path[-1]
@@ -150,8 +147,9 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         "sweden_financial_current_facts_clickhouse",
     }
 
-    # The exports are partition-scoped upserts mirroring their parse
-    # counterparts' partition layout -- one backfill/current pair per table.
+    # The backfill exports are partition-scoped upserts mirroring their
+    # parse counterparts' year partitions; the current exports are
+    # unpartitioned reconcilers.
     for asset_key in (
         "sweden_financial_backfill_reports_clickhouse",
         "sweden_financial_backfill_facts_clickhouse",
@@ -171,7 +169,7 @@ def test_sweden_financial_backfill_and_current_assets_are_separate() -> None:
         clickhouse_node = repo.asset_graph.get(dg.AssetKey(asset_key))
         assert clickhouse_node.group_name == "sweden_financial"
         assert clickhouse_node.pools == {"sweden_financial_current_2026_duckdb"}
-        assert clickhouse_node.partitions_def is current_raw_node.partitions_def
+        assert clickhouse_node.partitions_def is None
         assert clickhouse_node.parent_keys == {
             dg.AssetKey("sweden_financial_current_parsed_reports_duckdb"),
         }
