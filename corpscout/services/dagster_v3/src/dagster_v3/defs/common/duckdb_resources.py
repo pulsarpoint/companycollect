@@ -53,12 +53,29 @@ def _normal_database_path(database: str | Path) -> Path:
 
 @contextmanager
 def read_only_duckdb_connection(resource: DuckDBResource) -> Iterator[Any]:
+    """Yield a read-only connection to `resource`'s underlying DuckDB file.
+
+    Guards against the same dagster_duckdb.DuckDBResource.get_connection()
+    bug documented on esef_filings/assets.py's `_replace_facts_partition`:
+    its `@contextmanager` body is `yield conn; conn.close()` with no
+    try/finally, so an exception raised inside the caller's `with` block is
+    thrown straight through that suspended `yield` and `conn.close()` never
+    runs -- the connection leaks. Wrapping our own `yield` in try/except
+    closes the connection ourselves before re-raising; on the success path
+    nothing changes here, and the real `get_connection()` still runs its own
+    `conn.close()` exactly once (our except body never runs, so this
+    function never touches an already-closed connection).
+    """
     read_only_resource = DuckDBResource(
         database=str(duckdb_database_path(resource)),
         connection_config={**resource.connection_config, "access_mode": "READ_ONLY"},
     )
     with read_only_resource.get_connection() as connection:
-        yield connection
+        try:
+            yield connection
+        except Exception:
+            connection.close()
+            raise
 
 
 def duckdb_connection_config(

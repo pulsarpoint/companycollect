@@ -17,11 +17,13 @@ an injected fake S3 client).
 
 import json
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import dagster as dg
 import pytest
+from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
@@ -195,6 +197,59 @@ def test_esef_filings_source_duckdb_path_defaults_under_data_root() -> None:
     assert assets.esef_filings_source_duckdb_path(root="custom") == Path(
         "custom/esef_filings_source.duckdb"
     )
+
+
+# ==========================================================================
+# read_only_duckdb_connection: exception-safety hardening.
+#
+# Every read-only DuckDB usage in this module (the index-non-empty check,
+# the facts/report-xhtml partition scope reads, the two ClickHouse export
+# assets) goes through this one shared helper
+# (dagster_v3.defs.common.duckdb_resources.read_only_duckdb_connection), so
+# hardening it once covers all of them. `dagster_duckdb.DuckDBResource
+# .get_connection()` is a bare `@contextmanager` (`yield conn; conn.close()`,
+# no try/finally) -- an exception raised inside the caller's `with` block is
+# thrown straight through the suspended `yield`, so `conn.close()` never
+# runs and the connection leaks. This test fakes that exact real behavior
+# (a `get_connection()` replacement that only closes on the no-exception
+# path) to prove `read_only_duckdb_connection`'s own try/except closes the
+# connection anyway.
+# ==========================================================================
+
+
+class _RecordingCloseConnection:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def execute(self, *_args: object, **_kwargs: object) -> Any:
+        raise RuntimeError("scope SELECT failed")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_read_only_duckdb_connection_closes_underlying_connection_on_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_connection = _RecordingCloseConnection()
+
+    @contextmanager
+    def fake_get_connection(self: DuckDBResource) -> Iterator[Any]:
+        # Mirrors dagster_duckdb's real (buggy) get_connection(): no
+        # try/finally, so conn.close() below only runs when the `with`
+        # block exits normally -- never on an exception raised inside it.
+        yield fake_connection
+        fake_connection.close()
+
+    monkeypatch.setattr(DuckDBResource, "get_connection", fake_get_connection)
+
+    resource = duckdb_resource(tmp_path / "esef_filings_source.duckdb")
+
+    with pytest.raises(RuntimeError, match="scope SELECT failed"):
+        with read_only_duckdb_connection(resource) as connection:
+            connection.execute("select count(*) from esef_filings.filings_index")
+
+    assert fake_connection.closed is True
 
 
 # ==========================================================================
@@ -804,3 +859,71 @@ def test_report_xhtml_partition_never_opens_a_writable_duckdb_connection(
             ).fetchall()
         }
     assert tables == {"filings_index"}
+
+
+class _FailingReportXhtmlDownloadClient:
+    """Stand-in for EsefFilingsClient() that raises when asked to download a
+    specific fxo_id's report -- used to prove a mid-partition download
+    failure fails the partition loudly (propagates, no swallowing) and
+    leaves no phantom S3 object for the filing that failed."""
+
+    def __init__(
+        self, body_by_fxo_id: dict[str, bytes], *, fail_for_fxo_id: str
+    ) -> None:
+        self._body_by_fxo_id = body_by_fxo_id
+        self._fail_for_fxo_id = fail_for_fxo_id
+        self.download_calls: list[str] = []
+
+    def download_json_facts(self, url: str, target: Path, **_: Any) -> None:
+        self.download_calls.append(url)
+        fxo_id = url.split("/")[-2]
+        if fxo_id == self._fail_for_fxo_id:
+            raise RuntimeError(f"simulated download failure for {fxo_id}")
+        target.write_bytes(self._body_by_fxo_id[fxo_id])
+
+
+def test_report_xhtml_mid_partition_download_failure_propagates_with_no_phantom_object(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", report_url=_report_url("A-1")
+            ),
+            _record(
+                fxo_id="B-1", period_end="2022-06-30", report_url=_report_url("B-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    # Rows are processed in fxo_id order (A-1 then B-1); B-1's download fails.
+    client = _FailingReportXhtmlDownloadClient(
+        {"A-1": b"<html>A-1 report</html>"}, fail_for_fxo_id="B-1"
+    )
+
+    with pytest.raises(RuntimeError, match="simulated download failure for B-1"):
+        _run_report_xhtml_partition(tmp_path, object_store, client, partition_year=2022)
+
+    assert client.download_calls == [_report_url("A-1"), _report_url("B-1")]
+
+    # A-1 (processed first) made it into the object store...
+    assert (
+        object_store.objects[
+            (
+                assets.ESEF_FILINGS_FACTS_BUCKET,
+                "esef_filings/report_xhtml/fxo_id=A-1/report.xhtml",
+            )
+        ]
+        == b"<html>A-1 report</html>"
+    )
+    # ...but B-1, whose download raised, left no object at all -- no phantom
+    # upload for a filing whose download never completed.
+    assert (
+        assets.ESEF_FILINGS_FACTS_BUCKET,
+        "esef_filings/report_xhtml/fxo_id=B-1/report.xhtml",
+    ) not in object_store.objects
+    assert (
+        assets.ESEF_FILINGS_FACTS_BUCKET,
+        "esef_filings/report_xhtml/fxo_id=B-1/report.xhtml",
+    ) not in object_store.uploaded_keys
