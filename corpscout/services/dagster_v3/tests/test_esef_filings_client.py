@@ -128,6 +128,49 @@ def test_iter_filings_joins_entity_by_relationship_id_for_lei_and_name() -> None
     assert cloetta.country == "SE"
 
 
+def test_iter_filings_missing_entity_relationship_id_yields_empty_lei_and_name() -> (
+    None
+):
+    # Synthetic fixture: relationships.entity.data.id points at "missing-999",
+    # which is absent from included -- the page-local entity map join must
+    # degrade to empty lei/entity_name rather than raising a KeyError.
+    payload = {
+        "data": [
+            {
+                "type": "filing",
+                "id": "1",
+                "attributes": {
+                    "fxo_id": "MISSING-ENTITY-2022-12-31-ESEF-XX-0",
+                    "country": "XX",
+                    "period_end": "2022-12-31",
+                    "date_added": "2023-01-01 00:00:00",
+                    "processed": "2023-01-02 00:00:00",
+                    "json_url": None,
+                    "package_url": None,
+                    "report_url": None,
+                    "viewer_url": None,
+                    "sha256": None,
+                    "error_count": 0,
+                    "warning_count": 0,
+                    "inconsistency_count": 0,
+                },
+                "relationships": {
+                    "entity": {"data": {"type": "entity", "id": "missing-999"}}
+                },
+            }
+        ],
+        "included": [],
+    }
+    session = _FakeIndexSession({1: payload, 2: _fixture_json("index_page_empty.json")})
+
+    records = list(esef_client.EsefFilingsClient(session=session).iter_filings())
+
+    assert len(records) == 1
+    assert records[0].fxo_id == "MISSING-ENTITY-2022-12-31-ESEF-XX-0"
+    assert records[0].lei == ""
+    assert records[0].entity_name == ""
+
+
 def test_iter_filings_absolutizes_relative_urls() -> None:
     session = _one_real_page_then_empty("index_page1.json")
 
@@ -219,7 +262,9 @@ class _FlakyDownloadSession:
 
     def get(self, url: str, *, timeout: int, stream: bool = False):
         self.calls += 1
-        return _FakeDownloadResponse(body=self._body, fail=self.calls <= self._fail_times)
+        return _FakeDownloadResponse(
+            body=self._body, fail=self.calls <= self._fail_times
+        )
 
 
 def test_download_json_facts_writes_real_fixture_bytes(tmp_path: Path) -> None:

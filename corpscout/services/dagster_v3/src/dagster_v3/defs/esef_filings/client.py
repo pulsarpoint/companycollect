@@ -61,9 +61,10 @@ def _absolute(url: str | None) -> str | None:
 
 class EsefFilingsClient:
     def __init__(self, session: Any | None = None) -> None:
-        self._session = session or dlt_requests.Client(
-            request_timeout=120, request_max_attempts=5
-        ).session
+        self._session = (
+            session
+            or dlt_requests.Client(request_timeout=120, request_max_attempts=5).session
+        )
 
     def iter_filings(self) -> Iterator[EsefFilingRecord]:
         page = 1
@@ -129,9 +130,7 @@ class EsefFilingsClient:
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
-                self._stream_download(
-                    json_url, target, timeout_seconds=timeout_seconds
-                )
+                self._stream_download(json_url, target, timeout_seconds=timeout_seconds)
                 return
             except _DOWNLOAD_RETRYABLE_ERRORS as exc:
                 last_error = exc
@@ -141,9 +140,7 @@ class EsefFilingsClient:
         assert last_error is not None
         raise last_error
 
-    def _stream_download(
-        self, url: str, target: Path, *, timeout_seconds: int
-    ) -> None:
+    def _stream_download(self, url: str, target: Path, *, timeout_seconds: int) -> None:
         response = self._session.get(url, timeout=timeout_seconds, stream=True)
         response.raise_for_status()
         written = 0
