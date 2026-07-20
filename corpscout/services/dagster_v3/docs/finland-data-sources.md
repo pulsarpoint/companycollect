@@ -40,6 +40,22 @@ to-replace-on-empty guards. Entity key everywhere: `business_id` (Y-tunnus,
   municipalities; ~819k register entries → 461k in scope. Finnish **VAT ids are
   derived**, not registered (`FI` + digits, valid while VAT-registered) — the
   backoffice derives them for display; `fi_companies.vat_id` is empty by design.
+- **Why always the full snapshot (no delta, no raw S3 layer)**: the API offers
+  no changed-since filter — `GET /companies` filters are search-shaped (name,
+  location, registration date; a registration-date filter catches only *new*
+  companies, not modifications), and unknown params are silently ignored
+  (probed live 2026-07-20). Each record carries a `lastModified` timestamp,
+  but that only enables *client-side* diffing after downloading everything —
+  so the fetch cost (one bulk `/all_companies` request/day) is irreducible,
+  and full-snapshot-replace is the simplest correct mode: deletions and every
+  modification handled for free, no delta-bookkeeping drift. There is also no
+  raw S3 archive layer: the response is a live API's current state, not an
+  immutable artifact (contrast the Sweden bulk ZIPs) — the dlt raw table in
+  `finland_ytj.duckdb` is the raw layer, and YTJ's payload carries its own
+  history (name versions, address `registered_on`). Revisit only if the daily
+  job's cost grows or PRH ships a real delta endpoint (then: `lastModified`
+  client-side diff, dossier §12–13 in
+  `companies/analysis/finland/prh_ytj/dossier.md`).
 - **Known gap (planned)**: the API payload carries `companySituations` (bankruptcy /
   liquidation / restructuring), `registeredEntries`, tax-registration and legal-form
   history that we do not load yet — `fi_company_situations`, `fi_registered_entries`,
