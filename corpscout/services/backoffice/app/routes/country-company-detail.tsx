@@ -88,7 +88,11 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
       </div>
 
       <CompanyRecordSection company={company} record={record} lang={lang} />
-      <GleifGroupSection relationships={detail.gleifRelationships} countryCode={country.code} />
+      <GleifGroupSection
+        relationships={detail.gleifRelationships}
+        entity={detail.gleifEntity}
+        countryCode={country.code}
+      />
       <SecondaryNamesSection names={detail.secondaryNames} />
       <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} audit={detail.audit} />
       <IndustriesSection industries={detail.industries} />

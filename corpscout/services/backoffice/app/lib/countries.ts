@@ -111,6 +111,15 @@ export interface CountryDetailConfig {
    * country (enables an internal company link), else ''.
    */
   gleifRelationshipsQuery?: string;
+  /**
+   * {id:String} → ONE GLEIF entity row for the company's LEI (see
+   * GleifEntityRow in queries.server): lei, lei_status (ISSUED | LAPSED |
+   * RETIRED | …), category (GENERAL | FUND | SOLE_PROPRIETOR | …),
+   * hq_country, hq_abroad (0/1), ownership_exceptions (comma-joined GLEIF
+   * no-parent reasons, e.g. NATURAL_PERSONS). Empty result when the
+   * company has no LEI.
+   */
+  gleifEntityQuery?: string;
 }
 
 export interface CountryConfig {
@@ -449,7 +458,7 @@ FROM se_companies AS c
 LEFT JOIN se_companies_translated AS t ON t.company_id = c.company_id
 LEFT JOIN (
   SELECT replaceRegexpAll(registered_as, '[^0-9]', '') AS orgnr,
-    argMax(lei, entity_status = 'ACTIVE') AS lei
+    argMax(lei, (registration_status = 'ISSUED', entity_status = 'ACTIVE')) AS lei
   FROM gleif_lei_records
   WHERE jurisdiction = 'SE' AND registered_as != ''
   GROUP BY orgnr
@@ -615,7 +624,7 @@ LIMIT 1`,
       // digits-only orgnr for SE-jurisdiction relatives so the UI can link
       // internally; ACTIVE relationship rows only.
       gleifRelationshipsQuery: `WITH (
-  SELECT coalesce(argMax(lei, entity_status = 'ACTIVE'), '')
+  SELECT coalesce(argMax(lei, (registration_status = 'ISSUED', entity_status = 'ACTIVE')), '')
   FROM gleif_lei_records
   WHERE jurisdiction = 'SE'
     AND replaceRegexpAll(registered_as, '[^0-9]', '') = {id:String}
@@ -637,6 +646,31 @@ WHERE my_lei != ''
 GROUP BY direction, relationship_type, other_lei
 ORDER BY direction = 'subsidiary', relationship_type, name
 LIMIT 500`,
+      gleifEntityQuery: `SELECT r.lei AS lei,
+  r.registration_status AS lei_status,
+  coalesce(r.category, '') AS category,
+  coalesce(hq.country, '') AS hq_country,
+  toUInt8(coalesce(hq.country, 'SE') != 'SE') AS hq_abroad,
+  coalesce(exc.reasons, '') AS ownership_exceptions
+FROM gleif_lei_records AS r
+LEFT JOIN (
+  SELECT lei, any(country) AS country
+  FROM gleif_lei_addresses
+  WHERE address_role = 'HEADQUARTERS_ADDRESS'
+  GROUP BY lei
+) AS hq ON hq.lei = r.lei
+LEFT JOIN (
+  SELECT lei, arrayStringConcat(arraySort(groupUniqArray(exception_reason)), ',') AS reasons
+  FROM gleif_lei_reporting_exceptions
+  GROUP BY lei
+) AS exc ON exc.lei = r.lei
+WHERE r.lei = (
+  SELECT coalesce(argMax(lei, (registration_status = 'ISSUED', entity_status = 'ACTIVE')), '')
+  FROM gleif_lei_records
+  WHERE jurisdiction = 'SE'
+    AND replaceRegexpAll(registered_as, '[^0-9]', '') = {id:String}
+)
+LIMIT 1`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
   '' AS description_original,
   coalesce(nullIf(n.description_en, ''), i.nace_rev2_class_code) AS industry_label,

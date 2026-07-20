@@ -1,7 +1,29 @@
 import { Link } from "react-router";
-import type { GleifRelationshipRow } from "~/lib/queries.server";
+import type { GleifEntityRow, GleifRelationshipRow } from "~/lib/queries.server";
 import { Badge } from "~/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
+
+/** GLEIF no-parent exception reasons → human text. */
+const OWNERSHIP_EXCEPTION_LABELS: Record<string, string> = {
+  NATURAL_PERSONS: "held directly by natural persons",
+  NO_KNOWN_PERSON: "no known controlling entity",
+  NON_CONSOLIDATING: "no consolidating parent",
+  NO_LEI: "parent exists but has no LEI",
+  NON_PUBLIC: "parent not disclosed",
+  CONSENT_NOT_OBTAINED: "parent not disclosed (consent not obtained)",
+};
+
+function ownershipSummary(entity: GleifEntityRow): string | null {
+  const reasons = entity.ownership_exceptions
+    .split(",")
+    .map((r) => r.trim())
+    .filter((r) => r !== "");
+  if (reasons.length === 0) return null;
+  const labels = Array.from(
+    new Set(reasons.map((r) => OWNERSHIP_EXCEPTION_LABELS[r] ?? r.toLowerCase())),
+  );
+  return labels.join("; ");
+}
 
 /** GLEIF relationship_type → short human label. Unknown types fall back to
  * the raw vocabulary term so new GLEIF types are never hidden. */
@@ -52,15 +74,19 @@ function EntityLine({ row, countryCode }: { row: GleifRelationshipRow; countryCo
 
 /** Corporate-group links from GLEIF consolidation data, split into parents
  * (who consolidates this company) and subsidiaries/branches (whom it
- * consolidates). Entities registered in this country link internally. */
+ * consolidates), plus the LEI entity facts: registration status, category,
+ * headquarters location, and the GLEIF ownership declaration when no parent
+ * is reported. Entities registered in this country link internally. */
 export function GleifGroupSection({
   relationships,
+  entity,
   countryCode,
 }: {
   relationships: GleifRelationshipRow[];
+  entity: GleifEntityRow | null;
   countryCode: string;
 }) {
-  if (relationships.length === 0) return null;
+  if (relationships.length === 0 && entity === null) return null;
   // A subsidiary usually appears under BOTH direct and ultimate
   // consolidation; keep one line per entity, preferring the direct link.
   const seen = new Set<string>();
@@ -76,17 +102,45 @@ export function GleifGroupSection({
   }
   const parents = deduped.filter((r) => r.direction === "parent");
   const subsidiaries = deduped.filter((r) => r.direction === "subsidiary");
+  const ownership = entity ? ownershipSummary(entity) : null;
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">
+        <CardTitle className="flex flex-wrap items-baseline gap-x-2 text-base">
           Corporate group{" "}
           <span className="text-muted-foreground text-sm font-normal">
             GLEIF consolidation links
           </span>
+          {entity && entity.lei_status !== "ISSUED" ? (
+            <Badge variant="outline" className="text-amber-600">
+              LEI {entity.lei_status.toLowerCase()}
+            </Badge>
+          ) : null}
+          {entity && entity.category && entity.category !== "GENERAL" ? (
+            <Badge variant="outline">{entity.category.toLowerCase().replaceAll("_", " ")}</Badge>
+          ) : null}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {entity ? (
+          <div className="text-muted-foreground space-y-0.5 text-xs">
+            <div>
+              Headquarters abroad:{" "}
+              <span className="text-foreground font-medium">
+                {entity.hq_abroad ? "true" : "false"}
+              </span>
+              {entity.hq_abroad && entity.hq_country ? (
+                <span> ({entity.hq_country})</span>
+              ) : null}
+            </div>
+            {ownership && parents.length === 0 ? (
+              <div>
+                Ownership (GLEIF declaration):{" "}
+                <span className="text-foreground font-medium">{ownership}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {parents.length > 0 ? (
           <div>
             <div className="text-muted-foreground mb-1 text-xs font-medium uppercase">Parents</div>
