@@ -237,22 +237,60 @@ still at 148, so no backfill/re-migrate ordering hazard) adds
 `period_duration_end Nullable(Date32)` to `corpscout.esef_facts`, immediately after
 `period_instant`. `facts.py`'s `_split_period` now returns
 `(period_start, period_instant, period_duration_end)`: for a duration period
-(`"2022-01-01T00:00:00/2022-12-31T00:00:00"`), `period_duration_end` carries the fact's
+(`"2022-01-01T00:00:00/2023-01-01T00:00:00"`), `period_duration_end` carries the fact's
 own **true end date** (the second half of the OIM period string) — distinct from the
-filing-level `period_end` stamped identically onto every fact. `metrics.py`'s
-`current_facts` CTE anchors current-period selection as:
+filing-level `period_end` stamped identically onto every fact.
+
+**Finding C1 (Critical, found in final whole-branch review): the OIM end-of-day date
+convention.** xBRL-JSON (OIM) canonicalizes an XBRL 2.1 "end of day" period boundary — an
+instant, or a duration's end — to **midnight of the day AFTER** the intended calendar day.
+A FY2022 filing (`period_end` = `2022-12-31`) therefore carries its *current* Assets
+instant as `"period": "2023-01-01T00:00:00"`, and its *current* Revenue duration as
+`"2022-01-01T00:00:00/2023-01-01T00:00:00"` — both one calendar day past the date a human
+(and `filing.period_end`) would name. Before this fix, `_split_period` took the raw date
+part with no adjustment, so `period_instant`/`period_duration_end` for a *current-period*
+fact never equaled `filing.period_end` at all: `metrics.py`'s anchor matched nothing, every
+`esef_financial_metrics` row got all-NULL amounts, and — because the row count still
+equaled the filing count — no existing guard (refuse-on-empty, the shrink guard) ever
+fired. See the real captured fixture, `tests/fixtures/esef_filings/facts_sample.json`, for
+both shapes.
+
+**Fix** (two sides, same finding):
+
+1. **Parser** (`facts.py`'s `_split_period`/`_end_of_day_date_part`): `period_instant` and
+   `period_duration_end` are both "end of day" values, so both go through
+   `_end_of_day_date_part`, which subtracts one day off a midnight timestamp
+   (`"2023-01-01T00:00:00"` → `"2022-12-31"`) to recover the human-conventional calendar
+   date. `period_start` needs no such adjustment — a period's start is already midnight of
+   its own first day (start-of-day semantics, not end-of-day), so it stays on the plain
+   `_date_part`. A non-midnight time (shouldn't occur for an OIM period boundary) is kept
+   as-is rather than guessed at.
+2. **Metrics anchor** (`metrics.py`'s `current_facts` CTE): now tolerant of a
+   non-canonical source, not just the parser's own exact output:
 
 ```sql
-(facts.period_instant IS NOT NULL AND facts.period_instant = filing.period_end)
-OR (facts.period_instant IS NULL AND facts.period_duration_end = filing.period_end)
+(facts.period_instant IS NOT NULL AND facts.period_instant IN (filing.period_end, addDays(filing.period_end, -1)))
+OR (facts.period_instant IS NULL AND facts.period_duration_end IN (filing.period_end, addDays(filing.period_end, -1)))
 ```
+
+   The **exact** match is the canonical case — once parsed by the fixed `facts.py`, a
+   current-period fact's date already equals `filing.period_end`. The **`-1 day` branch**
+   is tolerance for facts staged before this normalization existed (or any future fact
+   source storing the raw, un-adjusted OIM value) — a structural guarantee, not a
+   heuristic weakener: comparatives sit a full year (365/366 days) away from
+   `filing.period_end`, never one day away, so widening the anchor by a single day can
+   never admit a comparative into `current_facts`.
 
 This **structurally** excludes a prior-year comparative duration fact (same stamped
 `period_end`, earlier true `period_duration_end`) before the `(decimals, fact_id)`
 tiebreak ever sees it — exactly like the instant-fact branch already excluded a
 non-matching instant. It is a structural guarantee, not a heuristic: IFRS annual reports
 are guaranteed to carry undimensioned prior-year comparatives, so this anchor is load-
-bearing for metrics correctness, not an edge case.
+bearing for metrics correctness, not an edge case. Verified with an EXECUTED (not just
+SQL-text) DuckDB test —
+`tests/test_esef_filings_metrics.py::test_current_period_anchor_matches_current_year_excludes_prior_year_comparative`
+— that loads the real fixture through `parse_oim_facts`, stages the rows, and evaluates
+the DuckDB translation of the anchor predicate.
 
 ### 9.2 Sentinel dates (`1970-01-01`)
 
@@ -344,7 +382,7 @@ at the source, so the eventual `company_financials_latest` integration (or the p
 "Group (IFRS consolidated)" backoffice section, §10) can filter/branch on it explicitly
 rather than rediscovering the distinction ad hoc.
 
-### 9.6 Two independent guards on `esef_financial_metrics_clickhouse`, and why only that asset has both
+### 9.6 Shrink & completeness guards across the ClickHouse exports (and the index crawl)
 
 `replace_esef_financial_metrics_clickhouse` (`metrics.py`) runs **two** separate guards,
 at two different points in its stage/insert/exchange sequence:
@@ -362,23 +400,49 @@ at two different points in its stage/insert/exchange sequence:
    through as explicit per-run config on `esef_financial_metrics_clickhouse` — never a
    standing default; see the config class's docstring in `assets.py`).
 
-**Why this asset alone carries the shrink guard.** `esef_filings_clickhouse` and
-`esef_facts_clickhouse` (the two DuckDB→ClickHouse exports) and
-`esef_entity_registry_map_clickhouse` rely on refuse-on-empty ALONE — no shrink guard.
-Those three tables' row counts are structurally tied 1:1 to their upstream input on every
-run (the filings index, the accumulated facts across all backfilled years, the LEIs
-present in `esef_filings`), so a *partial* shrink (fewer rows than before, but still
-nonzero) isn't a distinct failure mode worth guarding beyond "not empty" — the ordinary
-variance is upstream index churn, not a bug class. `esef_financial_metrics`, in contrast,
-is a derived rebuild through a much longer chain (facts + filings + exchange rates, several
-joins, an FX resolution step that can itself silently produce fewer matched rows if
-`exchange_rates` is thin for a period), so a **partial** shrink — the SELECT still returns
-rows, just meaningfully fewer than before — is a plausible, distinguishable failure mode
-that refuse-on-empty alone would never catch. This mirrors exactly why
-`sweden_financial_metrics_clickhouse` carries the same shrink guard while
-`sweden_financial`'s simpler DuckDB-mirror exports don't (see
-`sweden_financial/clickhouse.py`'s module docstring) — the asymmetry is deliberate, not an
-inconsistency to "fix" by adding the guard everywhere.
+**`esef_filings_clickhouse` and `esef_facts_clickhouse` now carry the same shrink guard
+too (Finding M1, found in final whole-branch review)** — an earlier revision of this
+section described these two as relying on refuse-on-empty alone, deliberately, on the
+theory that their row counts are structurally tied 1:1 to their upstream input every run.
+That reasoning missed a real failure mode: a *truncated but nonzero* crawl, or a partial
+year-file materialization, would shrink these tables silently past the empty-guard's
+blind spot — exactly the failure class `guard_against_clickhouse_table_shrink` exists for
+(see `sweden_financial/clickhouse.py`'s module docstring on the 2026-07-19 incident that
+motivated it there). Sequenced differently than the metrics rebuild above, though: both
+exports delegate their whole stage+`INSERT`+`EXCHANGE TABLES` sequence to the shared
+`export_duckdb_connection_table_to_clickhouse` (`defs/clickhouse/resolved.py`), which
+exposes **no pre-exchange hook** to compare row counts in between (confirmed by reading
+it — the exchange runs unconditionally right after the insert, inside the same call), and
+duplicating that exporter here just to get one would contradict this module's own
+"reuse the shared exporter" design. So `publish.py`'s two export functions instead read
+the ClickHouse target's CURRENT row count and the DuckDB SOURCE table's row count — which
+the exporter turns 1:1 into the post-exchange target count, since it projects every
+source row with no filtering/dedup — and call the guard on those two counts **before ever
+calling the exporter**. A refusal there means the swap never runs at all, preserving the
+same "refuse before touching the table" discipline as every other guard in this module,
+computed from a different pair of counts than the metrics rebuild's staged-vs-existing
+comparison. Bypassable per-export via `allow_shrink` (default `False`) on
+`EsefFilingsClickhouseExportConfig`/`EsefFactsClickhouseExportConfig`.
+
+`esef_entity_registry_map_clickhouse` is the one remaining ClickHouse-native export that
+still relies on refuse-on-empty alone; it was out of scope for Finding M1 and may warrant
+the same treatment in a future pass — the reasoning that its row count is tied 1:1 to
+`esef_filings`/`gleif_lei_records` each run is unchanged, but so was the reasoning for the
+other two before this finding.
+
+**Crawl-completeness guard on `esef_filings_index_duckdb` itself (Finding M1).**
+Independent of the shrink guards above, and one step earlier in the pipeline: the client
+now surfaces the API's own reported total filing count
+(`EsefFilingsClient.last_reported_total`, JSON:API `meta.count`, captured off the first
+index page only), and the asset refuses (`ValueError`, raised before any DuckDB statement
+runs — same "before touching the table" discipline as the pre-existing empty-crawl guard)
+when the crawled count is below `CRAWL_COMPLETENESS_MIN_RATIO` (90%) of that reported
+total. This catches a truncated/partial crawl — the API's pagination stopping early, a
+network blip mid-sweep — that still returns a nonzero, non-empty result and would
+otherwise sail straight past the empty-crawl guard. A no-op when the API didn't report a
+count at all (`last_reported_total is None`) — there's no baseline to refuse against.
+`api_reported_total` is recorded in the asset's materialization metadata (`None` when
+unavailable) for observability even on runs where the guard doesn't fire.
 
 ## 10. Deferred (v1 skips)
 
@@ -455,11 +519,28 @@ of this task, tracked for a future pass:
   same `ObjectStoreResource`/`dg.materialize` reconstruction gotcha above, plus the
   ClickHouse equivalent for `ClickhouseResource` — both resources are monkeypatched at the
   CLASS level (not instance-injected) for exactly that reason.
-- **Two independent replace guards, asymmetric coverage** — see §9.6:
-  `esef_financial_metrics_clickhouse` runs both refuse-on-empty AND the shrink guard;
-  the three other exports (`esef_filings_clickhouse`, `esef_facts_clickhouse`,
-  `esef_entity_registry_map_clickhouse`) run refuse-on-empty only. Documented as a
-  finding here so a future reader doesn't read the asymmetry as an oversight.
+- **OIM end-of-day date convention breaking the metrics anchor** — Finding C1 (Critical),
+  found in the final whole-branch review pass, before this module's production deploy.
+  xBRL-JSON canonicalizes an XBRL 2.1 instant/duration-end to midnight of the day AFTER
+  the intended calendar date, so `facts.py`'s pre-fix parser never produced a
+  `period_instant`/`period_duration_end` matching `filing.period_end` for a *current*-
+  period fact — `metrics.py`'s anchor matched nothing, every `esef_financial_metrics` row
+  got all-NULL amounts, and no existing guard fired (row count still equaled the filing
+  count). Fixed on both sides: the parser now undoes the midnight-next-day shift
+  (`facts.py`'s `_end_of_day_date_part`), and the anchor is widened with a ±1-day
+  tolerance for any non-canonical source (`metrics.py`); see §9.1.
+- **Silent-truncation exposure on the index crawl, and asymmetric export shrink-guard
+  coverage** — Finding M1 (Major), same review pass. The index crawl asset had no way to
+  detect a truncated/partial crawl that still returned a nonzero result (no comparison
+  against the API's own reported total existed at all), and `esef_filings_clickhouse`/
+  `esef_facts_clickhouse` relied on refuse-on-empty alone while
+  `esef_financial_metrics_clickhouse` carried both refuse-on-empty AND the shrink guard.
+  Fixed: `EsefFilingsClient.last_reported_total` (JSON:API `meta.count`) powers a new
+  90%-completeness guard on the crawl itself, and the shrink guard is now wired into both
+  DuckDB→ClickHouse exports too (sequenced differently than the metrics rebuild, since the
+  shared exporter exposes no pre-exchange hook — see §9.6).
+  `esef_entity_registry_map_clickhouse` still runs refuse-on-empty only; out of scope for
+  this finding, tracked in §9.6 as a possible future pass, not an oversight.
 
 ## 12. Verification
 

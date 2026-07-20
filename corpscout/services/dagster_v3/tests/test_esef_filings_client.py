@@ -227,6 +227,78 @@ def test_absolute_treats_empty_string_as_none() -> None:
 
 
 # --------------------------------------------------------------------------
+# last_reported_total: API's own meta.count, captured off the first page
+# (Finding M1 -- powers the crawl-completeness guard in assets.py)
+# --------------------------------------------------------------------------
+
+
+def test_last_reported_total_is_none_before_any_crawl() -> None:
+    client = esef_client.EsefFilingsClient(session=_three_page_session())
+    assert client.last_reported_total is None
+
+
+def test_iter_filings_captures_reported_total_from_first_page_meta_count() -> None:
+    session = _three_page_session()
+    client = esef_client.EsefFilingsClient(session=session)
+
+    list(client.iter_filings())
+
+    # index_page1.json's real meta.count -- same fixture value repeated
+    # on index_page2.json (a real API would keep the total stable across
+    # pages of the same crawl).
+    assert client.last_reported_total == 25061
+
+
+def test_iter_filings_reported_total_reflects_only_the_first_page() -> None:
+    # A page-2 meta.count that differs from page 1's must NOT overwrite
+    # last_reported_total -- it is captured once, off the first page only.
+    session = _FakeIndexSession(
+        {
+            1: _fixture_json("index_page1.json"),
+            2: {**_fixture_json("index_page2.json"), "meta": {"count": 999}},
+            3: _fixture_json("index_page_empty.json"),
+        }
+    )
+    client = esef_client.EsefFilingsClient(session=session)
+
+    list(client.iter_filings())
+
+    assert client.last_reported_total == 25061
+
+
+def test_iter_filings_reported_total_is_none_when_first_page_meta_has_no_count() -> (
+    None
+):
+    session = _FakeIndexSession(
+        {1: {"data": [], "included": [], "meta": {}}},
+    )
+    client = esef_client.EsefFilingsClient(session=session)
+
+    list(client.iter_filings())
+
+    assert client.last_reported_total is None
+
+
+def test_iter_filings_reported_total_is_none_when_first_page_has_no_meta_key() -> None:
+    session = _FakeIndexSession({1: {"data": [], "included": []}})
+    client = esef_client.EsefFilingsClient(session=session)
+
+    list(client.iter_filings())
+
+    assert client.last_reported_total is None
+
+
+def test_extract_reported_total_tolerates_malformed_shapes() -> None:
+    assert esef_client._extract_reported_total({}) is None
+    assert esef_client._extract_reported_total({"meta": "not-a-dict"}) is None
+    assert esef_client._extract_reported_total({"meta": {}}) is None
+    assert esef_client._extract_reported_total({"meta": {"count": "25061"}}) is None
+    # bool is technically an int subclass in Python -- must not be accepted.
+    assert esef_client._extract_reported_total({"meta": {"count": True}}) is None
+    assert esef_client._extract_reported_total({"meta": {"count": 42}}) == 42
+
+
+# --------------------------------------------------------------------------
 # download_json_facts: whole-download retry loop
 # --------------------------------------------------------------------------
 

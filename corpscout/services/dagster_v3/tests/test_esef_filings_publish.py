@@ -89,6 +89,25 @@ class FakeClickHouseResource:
         yield self._client
 
 
+class _FakeDuckDBConnection:
+    """Answers only `select count(*) from <schema>.<table>` -- the shrink
+    guard's "would-be staged row count" read (Finding M1) -- with a fixed
+    row count. Used where the real shared exporter is monkeypatched away
+    (so a real DuckDB connection/table is unnecessary busywork); the real
+    round-trip tests below use an actual `duckdb.connect(":memory:")`
+    connection instead."""
+
+    def __init__(self, row_count: int) -> None:
+        self._row_count = row_count
+
+    def execute(self, sql: str) -> "_FakeDuckDBConnection":
+        assert sql.strip().lower().startswith("select count(*) from")
+        return self
+
+    def fetchall(self) -> list[tuple[int]]:
+        return [(self._row_count,)]
+
+
 # --- esef_filings_clickhouse -----------------------------------------------
 
 
@@ -115,7 +134,7 @@ def test_export_esef_filings_clickhouse_uses_export_columns_and_casts(
     )
 
     rows = publish.export_esef_filings_clickhouse(
-        duckdb_connection=object(),
+        duckdb_connection=_FakeDuckDBConnection(42),
         clickhouse=FakeClickHouseResource(FakeClickHouseClient()),
     )
 
@@ -255,6 +274,94 @@ def test_export_esef_filings_clickhouse_sentinels_null_period_end_and_date_added
     assert row[processed_at_index] is None
 
 
+def _seed_filings_index_duckdb(row_count: int) -> duckdb.DuckDBPyConnection:
+    con = duckdb.connect(":memory:")
+    con.execute(f"create schema {tables.DLT_DATASET_NAME}")
+    columns_sql = ", ".join(
+        f"{name} {kind}" for name, kind in _FILINGS_INDEX_STAGING_COLUMN_TYPES.items()
+    )
+    con.execute(f"create table {tables.QUALIFIED_FILINGS_INDEX_TABLE} ({columns_sql})")
+    placeholders = ", ".join(["?"] * len(_FILINGS_INDEX_STAGING_COLUMN_TYPES))
+    con.executemany(
+        f"insert into {tables.QUALIFIED_FILINGS_INDEX_TABLE} values ({placeholders})",
+        [
+            (
+                f"lei-{i}",
+                f"Example {i}",
+                f"fx-{i}",
+                "FI",
+                "2022-12-31",
+                "2023-01-01",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                False,
+                "https://filings.xbrl.org/",
+                "run-1",
+            )
+            for i in range(row_count)
+        ],
+    )
+    return con
+
+
+# --- esef_filings_clickhouse shrink guard (Finding M1) ----------------------
+
+
+def test_export_esef_filings_clickhouse_refuses_on_shrink_below_ratio() -> None:
+    # DuckDB source (2 rows) is far below 50% of the existing ClickHouse
+    # target (100 rows) -- the guard must refuse BEFORE the shared exporter
+    # (and therefore the EXCHANGE) ever runs.
+    con = _seed_filings_index_duckdb(2)
+    client = FakeClickHouseClient(post_exchange_row_count=100)
+
+    with pytest.raises(ValueError, match="Refusing to replace"):
+        export_esef_filings_clickhouse(
+            duckdb_connection=con,
+            clickhouse=FakeClickHouseResource(client),
+        )
+
+    assert not any(s.startswith("CREATE TABLE") for s in client.statements)
+    assert not any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+
+
+def test_export_esef_filings_clickhouse_allow_shrink_overrides_guard() -> None:
+    con = _seed_filings_index_duckdb(2)
+    client = FakeClickHouseClient(post_exchange_row_count=100)
+
+    rows = export_esef_filings_clickhouse(
+        duckdb_connection=con,
+        clickhouse=FakeClickHouseResource(client),
+        allow_shrink=True,
+    )
+
+    assert rows == 2
+    assert any(s.startswith("CREATE TABLE") for s in client.statements)
+    assert any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+
+
+def test_export_esef_filings_clickhouse_no_existing_rows_never_refuses() -> None:
+    # A brand-new (empty) target has existing_row_count == 0 --
+    # guard_against_clickhouse_table_shrink is a no-op in that case (see its
+    # docstring), so a normal first export must proceed without allow_shrink.
+    con = _seed_filings_index_duckdb(2)
+    client = FakeClickHouseClient(post_exchange_row_count=0)
+
+    rows = export_esef_filings_clickhouse(
+        duckdb_connection=con,
+        clickhouse=FakeClickHouseResource(client),
+    )
+
+    assert rows == 2
+    assert any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+
+
 # --- esef_facts_clickhouse --------------------------------------------------
 
 
@@ -281,7 +388,7 @@ def test_export_esef_facts_clickhouse_uses_export_columns_and_casts(
     )
 
     rows = publish.export_esef_facts_clickhouse(
-        duckdb_connection=object(),
+        duckdb_connection=_FakeDuckDBConnection(7),
         clickhouse=FakeClickHouseResource(FakeClickHouseClient()),
     )
 
@@ -478,6 +585,75 @@ def test_export_esef_facts_clickhouse_round_trips_large_decimal_and_null() -> No
     assert by_fact_id["f-revenue"][period_duration_end_index] == date(2022, 12, 31)
     assert by_fact_id["f-narrative"][period_duration_end_index] is None
     assert by_fact_id["f-malformed-period-end"][period_duration_end_index] is None
+
+
+def _seed_facts_duckdb(row_count: int) -> duckdb.DuckDBPyConnection:
+    con = duckdb.connect(":memory:")
+    con.execute(f"create schema {tables.DLT_DATASET_NAME}")
+    columns_sql = ", ".join(
+        f"{name} {kind}" for name, kind in _FACTS_STAGING_COLUMN_TYPES.items()
+    )
+    con.execute(f"create table {tables.QUALIFIED_FACTS_TABLE} ({columns_sql})")
+    placeholders = ", ".join(["?"] * len(_FACTS_STAGING_COLUMN_TYPES))
+    con.executemany(
+        f"insert into {tables.QUALIFIED_FACTS_TABLE} values ({placeholders})",
+        [
+            (
+                "549300CSLHPO6Y1AZN37",
+                f"fx-{i}",
+                "2022-12-31",
+                f"f-{i}",
+                "ns:Revenue",
+                "ns",
+                "Revenue",
+                "2022-01-01",
+                None,
+                "2022-12-31",
+                "iso4217:EUR",
+                "EUR",
+                "monetary",
+                "100.00",
+                "100.00",
+                2,
+                "",
+                "en",
+                "run-1",
+            )
+            for i in range(row_count)
+        ],
+    )
+    return con
+
+
+# --- esef_facts_clickhouse shrink guard (Finding M1) ------------------------
+
+
+def test_export_esef_facts_clickhouse_refuses_on_shrink_below_ratio() -> None:
+    con = _seed_facts_duckdb(2)
+    client = FakeClickHouseClient(post_exchange_row_count=100)
+
+    with pytest.raises(ValueError, match="Refusing to replace"):
+        export_esef_facts_clickhouse(
+            duckdb_connection=con,
+            clickhouse=FakeClickHouseResource(client),
+        )
+
+    assert not any(s.startswith("CREATE TABLE") for s in client.statements)
+    assert not any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+
+
+def test_export_esef_facts_clickhouse_allow_shrink_overrides_guard() -> None:
+    con = _seed_facts_duckdb(2)
+    client = FakeClickHouseClient(post_exchange_row_count=100)
+
+    rows = export_esef_facts_clickhouse(
+        duckdb_connection=con,
+        clickhouse=FakeClickHouseResource(client),
+        allow_shrink=True,
+    )
+
+    assert rows == 2
+    assert any(s.startswith("EXCHANGE TABLES") for s in client.statements)
 
 
 # --- esef_entity_registry_map_clickhouse ------------------------------------

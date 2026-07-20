@@ -12,13 +12,34 @@ non-nullable ClickHouse ``String`` columns (CLAUDE.md: a non-nullable
 ``String``/``LowCardinality(String)`` column must get ``''``, never ``NULL``
 -- the native driver ``.encode()``s every value and dies on ``None``).
 
+**Shrink guard (Finding M1).** Both DuckDB-sourced exports also run
+``guard_against_clickhouse_table_shrink`` (``sweden_financial/clickhouse.py``,
+ratio 0.5) -- but sequenced differently than ``metrics.py``'s
+``replace_esef_financial_metrics_clickhouse``, which inlines its own
+stage+INSERT+``EXCHANGE`` sequence specifically so the guard can run AFTER
+the INSERT but BEFORE the swap. ``export_duckdb_connection_table_to_clickhouse``
+exposes no such hook (confirmed by reading it: the ``EXCHANGE`` runs
+unconditionally right after the insert, inside the same call), and
+duplicating that exporter here just to get a pre-exchange hook is exactly
+what this module's docstring already says NOT to do (mirrors the entity map
+below, which owns its own guard rather than asking
+``replace_table_from_select`` for one). So the two functions below instead
+read the ClickHouse target's CURRENT row count and the DuckDB SOURCE table's
+row count -- which the exporter turns 1:1 into the post-exchange target
+count, since it projects every source row with no filtering/dedup/GROUP BY
+-- and call the guard on those two counts BEFORE ever calling the exporter.
+A refusal there means the exporter (and therefore the swap) never runs at
+all, preserving the same "refuse before touching the table" discipline as
+every other guard in this module, just computed from a different pair of
+counts than the metrics rebuild's staged-vs-existing comparison.
+
 The entity map is different: it never touches DuckDB. It is built entirely
 IN ClickHouse from ``corpscout.gleif_lei_records``, scoped to LEIs appearing
 in ``corpscout.esef_filings``, via a stage table + ``INSERT ... SELECT`` +
 ``EXCHANGE`` (``dagster_v3.contact_extraction.replace_table_from_select``) --
 with an explicit refuse-on-empty check this module owns (that shared helper
 has no such guard -- see its docstring), run *before* the stage table is even
-created.
+created. It does not carry the shrink guard (out of scope for Finding M1).
 """
 
 from collections.abc import Callable
@@ -34,6 +55,10 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.gleif.tables import GLEIF_LEI_RECORDS_TABLE
+from dagster_v3.defs.sweden_financial.clickhouse import (
+    clickhouse_table_row_count,
+    guard_against_clickhouse_table_shrink,
+)
 
 GLEIF_LEI_RECORDS_QUALIFIED_TABLE = f"{RESOLVED_DATABASE}.{GLEIF_LEI_RECORDS_TABLE}"
 
@@ -91,29 +116,54 @@ ESEF_FACTS_COLUMN_EXPRESSIONS: dict[str, str] = {
 }
 
 
+def _duckdb_table_row_count(duckdb_connection: Any, schema: str, table: str) -> int:
+    [(row_count,)] = duckdb_connection.execute(
+        f"select count(*) from {schema}.{table}"
+    ).fetchall()
+    return int(row_count)
+
+
 def export_esef_filings_clickhouse(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
+    allow_shrink: bool = False,
 ) -> int:
     """Full-replace corpscout.esef_filings from DuckDB esef_filings.filings_index.
 
     Full replace is correct here: the index crawl is itself a full sweep of
     filings.xbrl.org each run (see assets.py's esef_filings_index_duckdb), so
     the DuckDB table always holds the complete current index.
+
+    Guarded against a replace that would shrink the table by more than half
+    (Finding M1) -- see the module docstring for why this reads counts
+    BEFORE calling the shared exporter rather than staging-then-guarding
+    like ``metrics.py`` does. Bypassable via ``allow_shrink=True``.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.ESEF_DATABASE,
         tables=(tables.ESEF_FILINGS_TABLE,),
     )
-    if log is not None:
-        log(
-            "Exporting ESEF filings index to ClickHouse: table=%s",
-            tables.QUALIFIED_ESEF_FILINGS_TABLE,
-        )
     with clickhouse.get_connection() as client:
+        existing_row_count = clickhouse_table_row_count(
+            client, tables.QUALIFIED_ESEF_FILINGS_TABLE
+        )
+        would_be_row_count = _duckdb_table_row_count(
+            duckdb_connection, tables.DLT_DATASET_NAME, tables.FILINGS_INDEX_TABLE
+        )
+        guard_against_clickhouse_table_shrink(
+            qualified_table=tables.QUALIFIED_ESEF_FILINGS_TABLE,
+            existing_row_count=existing_row_count,
+            staged_row_count=would_be_row_count,
+            allow_shrink=allow_shrink,
+        )
+        if log is not None:
+            log(
+                "Exporting ESEF filings index to ClickHouse: table=%s",
+                tables.QUALIFIED_ESEF_FILINGS_TABLE,
+            )
         rows = export_duckdb_connection_table_to_clickhouse(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,
@@ -136,24 +186,41 @@ def export_esef_facts_clickhouse(
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
+    allow_shrink: bool = False,
 ) -> int:
     """Full-replace corpscout.esef_facts from DuckDB esef_filings.facts.
 
     Full replace is correct here -- unlike sweden_financial, one DuckDB file
     holds the entire ESEF facts dataset (no split-file/backfill hazard), and
     ~15-40M rows is well inside full-replace comfort (see task brief).
+
+    Guarded against a replace that would shrink the table by more than half
+    (Finding M1) -- see ``export_esef_filings_clickhouse``/the module
+    docstring for the guard's sequencing. Bypassable via ``allow_shrink=True``.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.ESEF_DATABASE,
         tables=(tables.ESEF_FACTS_TABLE,),
     )
-    if log is not None:
-        log(
-            "Exporting ESEF facts to ClickHouse: table=%s",
-            tables.QUALIFIED_ESEF_FACTS_TABLE,
-        )
     with clickhouse.get_connection() as client:
+        existing_row_count = clickhouse_table_row_count(
+            client, tables.QUALIFIED_ESEF_FACTS_TABLE
+        )
+        would_be_row_count = _duckdb_table_row_count(
+            duckdb_connection, tables.DLT_DATASET_NAME, tables.FACTS_TABLE
+        )
+        guard_against_clickhouse_table_shrink(
+            qualified_table=tables.QUALIFIED_ESEF_FACTS_TABLE,
+            existing_row_count=existing_row_count,
+            staged_row_count=would_be_row_count,
+            allow_shrink=allow_shrink,
+        )
+        if log is not None:
+            log(
+                "Exporting ESEF facts to ClickHouse: table=%s",
+                tables.QUALIFIED_ESEF_FACTS_TABLE,
+            )
         rows = export_duckdb_connection_table_to_clickhouse(
             duckdb_connection=duckdb_connection,
             clickhouse_client=client,

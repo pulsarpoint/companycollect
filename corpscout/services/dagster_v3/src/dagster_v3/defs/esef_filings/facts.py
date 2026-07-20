@@ -15,6 +15,22 @@ This module only parses an already-downloaded payload into ``EsefFact`` rows
 a whole-payload parse failure (malformed JSON) by counting and skipping the
 filing; this module only ever skips individual **fact entries** that are
 missing a usable ``dimensions.concept``.
+
+**OIM end-of-day date convention** (Finding C1 fix): XBRL 2.1 canonicalizes
+an "end of day" period boundary -- an instant, or a duration's end -- to
+midnight of the day AFTER the intended calendar date, and xBRL-JSON (OIM)
+preserves this literally rather than translating it back. A FY2022 filing
+(``filing.period_end`` = ``2022-12-31``) therefore carries its *current*
+Assets instant as ``"period": "2023-01-01T00:00:00"``, and its *current*
+Revenue duration as ``"2022-01-01T00:00:00/2023-01-01T00:00:00"`` -- both
+one calendar day past the date a human (and ``filing.period_end``) would
+name. ``_split_period``/``_end_of_day_date_part`` below subtract that one
+day back off ``period_instant`` and ``period_duration_end`` at parse time,
+so a current-period fact's stored dates match ``filing.period_end``
+exactly; ``period_start`` needs no such adjustment (a period's start is
+already midnight of its own first day -- start-of-day semantics, not
+end-of-day). See ``tests/fixtures/esef_filings/facts_sample.json`` for a
+real captured example of both shapes.
 """
 
 from __future__ import annotations
@@ -23,6 +39,7 @@ import dataclasses
 import decimal
 import json
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any
 
 from dagster_v3.defs.esef_filings import tables
@@ -153,29 +170,67 @@ def _clean_str(value: Any) -> str:
 def _split_period(period: Any) -> tuple[str | None, str | None, str | None]:
     """Split an OIM period into (period_start, period_instant, period_duration_end).
 
-    Duration periods ("2022-01-01T00:00:00/2022-12-31T00:00:00") -> both the
-    true start AND the true end are kept (period_instant stays None) -- the
-    duration's own end date is stored in `period_duration_end`, distinct from
-    the filing-level `period_end` threaded through separately. This is what
-    lets metrics.py structurally exclude a prior-year comparative duration
-    fact (same stamped `period_end` as the current year, but an earlier true
-    end date) instead of relying on a documented limitation. Instant periods
-    ("2022-12-31T00:00:00") -> kept as period_instant, period_duration_end
-    stays None. Anything unparseable (missing/blank/wrong type) yields
+    `period_instant` and `period_duration_end` are both "end of day" values
+    under the OIM midnight-next-day convention (see the module docstring),
+    so both go through `_end_of_day_date_part`, which subtracts one day off
+    a midnight timestamp to recover the human-conventional calendar date --
+    e.g. `"2023-01-01T00:00:00"` -> `"2022-12-31"`. `period_start` is a
+    start-of-day value already in human-conventional form (midnight of the
+    first day IS the first day), so it goes through the plain `_date_part`
+    instead -- no adjustment.
+
+    Duration periods ("2022-01-01T00:00:00/2023-01-01T00:00:00") -> both the
+    true start AND the true (adjusted) end are kept (period_instant stays
+    None) -- the duration's own end date is stored in `period_duration_end`,
+    distinct from the filing-level `period_end` threaded through separately.
+    This is what lets metrics.py structurally exclude a prior-year
+    comparative duration fact (same stamped `period_end` as the current
+    year, but an earlier true end date) instead of relying on a documented
+    limitation. Instant periods ("2023-01-01T00:00:00") -> kept as
+    period_instant (adjusted to "2022-12-31"), period_duration_end stays
+    None. Anything unparseable (missing/blank/wrong type) yields
     (None, None, None) rather than raising.
     """
     if not isinstance(period, str) or not period:
         return None, None, None
     if "/" in period:
         start, _, end = period.partition("/")
-        return _date_part(start), None, _date_part(end)
-    return None, _date_part(period), None
+        return _date_part(start), None, _end_of_day_date_part(end)
+    return None, _end_of_day_date_part(period), None
 
 
 def _date_part(value: str) -> str | None:
     if not value:
         return None
     return value.split("T", 1)[0]
+
+
+def _end_of_day_date_part(value: str) -> str | None:
+    """Recover the human-conventional calendar date an OIM end-of-day
+    timestamp represents.
+
+    XBRL 2.1 canonicalizes an "end of day" period boundary (an instant, or
+    a duration's end) to midnight of the day AFTER the intended calendar
+    day; xBRL-JSON (OIM) preserves that literally -- a FY2022 filing's
+    Dec-31 balance-sheet instant serializes as `"2023-01-01T00:00:00"`, not
+    `"2022-12-31..."`. Subtract one day off the date part whenever the time
+    is midnight -- an explicit `"T00:00:00"`, or no time component at all
+    (ISO 8601's implicit midnight) -- to undo that shift. A non-midnight
+    time shouldn't occur for an OIM period boundary; the date part is
+    returned unadjusted rather than guessed at in that case.
+    """
+    if not value:
+        return None
+    date_part, sep, time_part = value.partition("T")
+    if not date_part:
+        return None
+    if sep and time_part != "00:00:00":
+        return date_part
+    try:
+        day = date.fromisoformat(date_part)
+    except ValueError:
+        return date_part
+    return (day - timedelta(days=1)).isoformat()
 
 
 def _classify_unit(unit: str) -> tuple[str, str]:

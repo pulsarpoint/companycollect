@@ -76,16 +76,33 @@ def test_monetary_fact_value_currency_decimals() -> None:
 
 
 def test_instant_period_sets_period_instant_not_period_start() -> None:
-    row = _by_fact_id(_parse_fixture())["caTagID398"]
-    assert row.period_instant == "2022-01-01"
+    # Finding C1 fix: caTagID399's raw OIM period is "2023-01-01T00:00:00"
+    # -- the midnight-next-day encoding of this FY2022 filing's Dec-31
+    # balance date. The parser must subtract the day back off, so the
+    # *current-period* instant lands on "2022-12-31", matching
+    # filing.period_end exactly (the metrics anchor's positive-match case).
+    row = _by_fact_id(_parse_fixture())["caTagID399"]
+    assert row.period_instant == "2022-12-31"
     assert row.period_start is None
 
 
 def test_instant_fact_has_no_period_duration_end() -> None:
     # Finding 1 regression: an instant fact must never carry a
     # period_duration_end -- only duration facts do.
-    row = _by_fact_id(_parse_fixture())["caTagID398"]
+    row = _by_fact_id(_parse_fixture())["caTagID399"]
     assert row.period_duration_end is None
+
+
+def test_prior_year_comparative_instant_parses_to_its_own_true_date() -> None:
+    # Finding C1 fix: caTagID398's raw OIM period is "2022-01-01T00:00:00"
+    # -- this filing's FY2021 comparative Assets instant, encoded under the
+    # same midnight-next-day convention. Adjusted, it lands on "2021-12-31":
+    # the *prior* fiscal year-end, a full year away from filing.period_end
+    # ("2022-12-31"), never mistaken for the current period. This is what
+    # keeps the metrics anchor's structural comparative exclusion intact.
+    row = _by_fact_id(_parse_fixture())["caTagID398"]
+    assert row.period_instant == "2021-12-31"
+    assert row.period_start is None
 
 
 def test_duration_period_sets_period_start_not_period_instant() -> None:
@@ -96,13 +113,28 @@ def test_duration_period_sets_period_start_not_period_instant() -> None:
 
 
 def test_duration_fact_carries_its_true_period_duration_end() -> None:
-    # Finding 1 fix: the duration's own end date ("2021-01-01T00:00:00/
-    # 2022-01-01T00:00:00" -> end "2022-01-01") must be parsed and stored,
-    # not discarded -- this is what lets metrics.py structurally exclude a
-    # prior-year comparative duration fact instead of relying on the
-    # filing-level period_end alone.
+    # Finding 1 fix (end date parsed, not discarded) + Finding C1 fix (the
+    # midnight-next-day adjustment applied to that end date): caTagID1463's
+    # raw OIM period is "2021-01-01T00:00:00/2022-01-01T00:00:00" -- this
+    # filing's FY2021 *comparative* Revenue duration. Adjusted, the end
+    # lands on "2021-12-31": a full year before filing.period_end
+    # ("2022-12-31"), which is what lets metrics.py structurally exclude it
+    # instead of relying on the filing-level period_end alone.
     row = _by_fact_id(_parse_fixture())["caTagID1463"]
-    assert row.period_duration_end == "2022-01-01"
+    assert row.period_duration_end == "2021-12-31"
+
+
+def test_current_year_duration_fact_end_matches_filing_period_end() -> None:
+    # Finding C1 fix: caTagID1647's raw OIM period is
+    # "2022-01-01T00:00:00/2023-01-01T00:00:00" -- this filing's *current*
+    # FY2022 duration. period_start needs no adjustment (start-of-day
+    # already matches human convention); period_duration_end's midnight-
+    # next-day encoding is adjusted back one day, landing exactly on
+    # filing.period_end ("2022-12-31") -- the metrics anchor's
+    # positive-match case for a duration fact.
+    row = _by_fact_id(_parse_fixture())["caTagID1647"]
+    assert row.period_start == "2022-01-01"
+    assert row.period_duration_end == "2022-12-31"
 
 
 def test_text_fact_has_no_unit_currency_or_amount() -> None:

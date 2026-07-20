@@ -25,19 +25,34 @@ filing version -- no cross-version contamination.
 
 Selection rules (mirrors ``sweden_financial/metrics.py``'s CTE style):
   - Undimensioned facts only (``dimensions = ''``).
-  - Current period: instant facts (``period_instant`` set) must have
-    ``period_instant = filing.period_end``; duration facts (no
-    ``period_instant``) are anchored on the fact's own ``period_duration_end``
-    column (migration 000149, Finding 1 fix) -- the duration's real end date,
-    parsed by ``facts.py`` from the second half of the OIM period string,
-    distinct from the filing-level ``period_end`` that gets stamped
-    identically onto every fact regardless of the real OIM period. This is a
-    structural guarantee, not a heuristic: IFRS annual reports always carry
-    undimensioned prior-year comparative duration facts (last year's
-    Revenue, ProfitLoss, ...), and those comparatives have an earlier
-    ``period_duration_end`` than the filing's own ``period_end`` -- so the
-    ``facts.period_duration_end = filing.period_end`` anchor excludes them
-    from ``current_facts`` exactly like the instant-fact anchor excludes a
+  - Current period: instant facts (``period_instant`` set) must equal
+    ``filing.period_end`` OR the day before it
+    (``IN (filing.period_end, addDays(filing.period_end, -1))``); duration
+    facts (no ``period_instant``) get the same ``IN (...)`` tolerance
+    against their own ``period_duration_end`` column (migration 000149,
+    Finding 1 fix) -- the duration's real end date, parsed by ``facts.py``
+    from the second half of the OIM period string -- instead of the
+    filing-level ``period_end`` that gets stamped identically onto every
+    fact regardless of the real OIM period.
+
+    The **exact** match is the canonical case, and the only one a
+    correctly-parsed fact should ever need: ``facts.py``'s
+    ``_split_period``/``_end_of_day_date_part`` (Finding C1 fix) undo OIM's
+    end-of-day midnight-next-day encoding at parse time (XBRL 2.1
+    canonicalizes an instant/duration-end to midnight of the day AFTER the
+    intended calendar date -- a FY2022 filing's Dec-31 balance date arrives
+    as OIM ``"2023-01-01T00:00:00"``), so a current-period fact's
+    ``period_instant``/``period_duration_end`` already equals
+    ``filing.period_end`` exactly once parsed. The **``-1 day`` branch** is
+    tolerance for a non-canonical source -- facts staged before this
+    normalization existed, or any future fact source that stores the raw,
+    un-adjusted OIM value -- and is a structural guarantee, not a heuristic
+    weakener: IFRS annual reports always carry undimensioned prior-year
+    comparative duration/instant facts, and those comparatives sit a full
+    year (365/366 days) away from ``filing.period_end``, never one day
+    away, so widening the anchor by a single day can never admit a
+    comparative into ``current_facts`` -- it excludes them from
+    ``current_facts`` exactly like the instant-fact anchor excludes a
     non-matching instant, before the tiebreak below ever sees them.
   - When a concept repeats (e.g. revenue's two candidate concepts, or a
     duration fact colliding with its own comparative-period twin above),
@@ -203,10 +218,19 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
                 facts.fact_id AS fact_id
             FROM {tables.QUALIFIED_ESEF_FACTS_TABLE} AS facts
             INNER JOIN filings_in_scope AS filing ON filing.fxo_id = facts.fxo_id
+            -- Finding C1: the anchor tolerates the fact's date landing one
+            -- day before filing.period_end (addDays(..., -1)), not just an
+            -- exact match. facts.py's parser (Finding C1 fix) already
+            -- undoes OIM's midnight-next-day encoding, so a correctly
+            -- parsed current-period fact matches filing.period_end
+            -- exactly -- the -1-day branch is tolerance for a
+            -- non-canonical source only, never the primary path.
+            -- Comparatives sit a full year away, so this never reopens the
+            -- structural exclusion below.
             WHERE facts.dimensions = ''
               AND (
-                    (facts.period_instant IS NOT NULL AND facts.period_instant = filing.period_end)
-                 OR (facts.period_instant IS NULL AND facts.period_duration_end = filing.period_end)
+                    (facts.period_instant IS NOT NULL AND facts.period_instant IN (filing.period_end, addDays(filing.period_end, -1)))
+                 OR (facts.period_instant IS NULL AND facts.period_duration_end IN (filing.period_end, addDays(filing.period_end, -1)))
               )
         ),
         facts_by_filing AS (

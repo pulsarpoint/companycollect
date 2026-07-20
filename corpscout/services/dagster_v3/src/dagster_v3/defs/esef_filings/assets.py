@@ -281,6 +281,42 @@ def replace_esef_filings_index(
     }
 
 
+# A crawl that captures fewer than this fraction of the API's own reported
+# total filing count (`meta.count`, surfaced via
+# `EsefFilingsClient.last_reported_total`) is refused (Finding M1): a
+# truncated/partial crawl -- pagination stopping early, a network blip
+# mid-sweep -- can still return a nonzero, non-empty result, sailing right
+# past the refuse-on-empty guard below while silently dropping most of the
+# index. See `_check_crawl_completeness`.
+CRAWL_COMPLETENESS_MIN_RATIO = 0.9
+
+
+def _check_crawl_completeness(
+    *, crawled_count: int, api_reported_total: int | None
+) -> None:
+    """Refuse (raises `ValueError`, before any DB statement runs) a crawl
+    that captured less than `CRAWL_COMPLETENESS_MIN_RATIO` (90%) of the
+    API's own reported total filing count.
+
+    A no-op when `api_reported_total` is `None` -- the API's `meta.count`
+    wasn't available off the first index page (missing/malformed shape),
+    so there is no baseline to compare `crawled_count` against; refusing
+    on unrelated grounds isn't this guard's job (the plain
+    refuse-on-empty check already covers a 0-filing crawl regardless).
+    """
+    if api_reported_total is None:
+        return
+    if crawled_count >= api_reported_total * CRAWL_COMPLETENESS_MIN_RATIO:
+        return
+    raise ValueError(
+        f"ESEF filings crawl captured {crawled_count} filings, below "
+        f"{int(CRAWL_COMPLETENESS_MIN_RATIO * 100)}% of the API-reported "
+        f"total ({api_reported_total}) -- refusing to replace "
+        f"{QUALIFIED_FILINGS_INDEX_TABLE} (possible truncated/incomplete "
+        "crawl)."
+    )
+
+
 @dg.asset(
     name="esef_filings_index_duckdb",
     group_name=GROUP_NAME,
@@ -289,7 +325,8 @@ def replace_esef_filings_index(
     description=(
         "Full crawl of the filings.xbrl.org filing index into DuckDB table "
         f"{QUALIFIED_FILINGS_INDEX_TABLE}. Full replace each run; refuses to "
-        "replace the table on an empty crawl."
+        "replace the table on an empty crawl or on a crawl below "
+        f"{int(CRAWL_COMPLETENESS_MIN_RATIO * 100)}% of the API's reported total."
     ),
 )
 def esef_filings_index_duckdb(
@@ -298,7 +335,12 @@ def esef_filings_index_duckdb(
 ) -> dg.MaterializeResult:
     client = EsefFilingsClient()
     records = list(client.iter_filings())
-    context.log.info("ESEF filings index crawl fetched %d filings", len(records))
+    api_reported_total = client.last_reported_total
+    context.log.info(
+        "ESEF filings index crawl fetched %d filings (api_reported_total=%s)",
+        len(records),
+        api_reported_total,
+    )
 
     # Checked here too (ahead of replace_esef_filings_index's own guard): the
     # dagster_duckdb DuckDBResource.get_connection() context manager only
@@ -312,12 +354,16 @@ def esef_filings_index_duckdb(
             f"{QUALIFIED_FILINGS_INDEX_TABLE} (refuse-to-replace-on-empty)."
         )
 
+    _check_crawl_completeness(
+        crawled_count=len(records), api_reported_total=api_reported_total
+    )
+
     with esef_filings_duckdb.get_connection() as connection:
         summary = replace_esef_filings_index(
             connection=connection,
             records=records,
             source_url=ESEF_INDEX_URL,
-            source_run_id=context.run_id,
+            source_run_id=context.run.run_id,
         )
 
     return dg.MaterializeResult(
@@ -329,6 +375,7 @@ def esef_filings_index_duckdb(
             "country_distribution_top10": dg.MetadataValue.json(
                 summary["country_distribution_top10"]
             ),
+            "api_reported_total": api_reported_total,
             "duckdb_path": str(esef_filings_source_duckdb_path()),
         }
     )
@@ -816,6 +863,15 @@ def esef_report_xhtml_s3(
     return dg.MaterializeResult(metadata=metadata)
 
 
+class EsefFilingsClickhouseExportConfig(dg.Config):
+    # Shrink-guard override (Finding M1; see publish.py's module docstring
+    # and sweden_financial/clickhouse.py's guard_against_clickhouse_table_shrink)
+    # -- MUST stay False by default. Only set True via explicit run config
+    # for a confirmed-intentional shrink of a populated esef_filings table,
+    # never as a standing default.
+    allow_shrink: bool = False
+
+
 @dg.asset(
     name="esef_filings_clickhouse",
     deps=["esef_filings_index_duckdb"],
@@ -826,11 +882,13 @@ def esef_report_xhtml_s3(
     description=(
         "Full-replaces corpscout.esef_filings from DuckDB "
         f"{QUALIFIED_FILINGS_INDEX_TABLE} via the shared stage+EXCHANGE "
-        "ClickHouse exporter."
+        "ClickHouse exporter, guarded against a replace that would shrink "
+        "the table by more than half (see guard_against_clickhouse_table_shrink)."
     ),
 )
 def esef_filings_clickhouse(
     context: dg.AssetExecutionContext,
+    config: EsefFilingsClickhouseExportConfig,
     esef_filings_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
@@ -839,6 +897,7 @@ def esef_filings_clickhouse(
             duckdb_connection=connection,
             clickhouse=clickhouse,
             log=context.log.info,
+            allow_shrink=config.allow_shrink,
         )
     return dg.MaterializeResult(
         metadata={
@@ -857,6 +916,13 @@ def _all_partition_deps(*asset_keys: str) -> list[dg.AssetDep]:
     ]
 
 
+class EsefFactsClickhouseExportConfig(dg.Config):
+    # Shrink-guard override (Finding M1) -- MUST stay False by default. Only
+    # set True via explicit run config for a confirmed-intentional shrink of
+    # a populated esef_facts table, never as a standing default.
+    allow_shrink: bool = False
+
+
 @dg.asset(
     name="esef_facts_clickhouse",
     deps=_all_partition_deps("esef_filing_facts_duckdb"),
@@ -868,11 +934,14 @@ def _all_partition_deps(*asset_keys: str) -> list[dg.AssetDep]:
         "Full-replaces corpscout.esef_facts from DuckDB "
         f"{QUALIFIED_FACTS_TABLE} (every year partition) via the shared "
         "stage+EXCHANGE ClickHouse exporter. Full replace is correct here -- "
-        "one DuckDB file holds the entire dataset, no split-file hazard."
+        "one DuckDB file holds the entire dataset, no split-file hazard. "
+        "Guarded against a replace that would shrink the table by more than "
+        "half (see guard_against_clickhouse_table_shrink)."
     ),
 )
 def esef_facts_clickhouse(
     context: dg.AssetExecutionContext,
+    config: EsefFactsClickhouseExportConfig,
     esef_filings_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
@@ -881,6 +950,7 @@ def esef_facts_clickhouse(
             duckdb_connection=connection,
             clickhouse=clickhouse,
             log=context.log.info,
+            allow_shrink=config.allow_shrink,
         )
     return dg.MaterializeResult(
         metadata={

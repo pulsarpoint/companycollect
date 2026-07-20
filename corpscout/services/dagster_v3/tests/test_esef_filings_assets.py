@@ -71,20 +71,39 @@ def _record(
 
 
 class _StubEsefFilingsClient:
-    """Stand-in for EsefFilingsClient() -- no session, no network."""
+    """Stand-in for EsefFilingsClient() -- no session, no network.
 
-    def __init__(self, records: list[EsefFilingRecord]) -> None:
+    `last_reported_total` defaults to `None` (matching a real client before
+    any crawl, or a first page whose `meta` had no usable `count`) so every
+    existing test that doesn't pass it stays exempt from the Finding M1
+    crawl-completeness guard, which is a no-op when the total is unknown.
+    """
+
+    def __init__(
+        self,
+        records: list[EsefFilingRecord],
+        *,
+        last_reported_total: int | None = None,
+    ) -> None:
         self._records = records
+        self.last_reported_total = last_reported_total
 
     def iter_filings(self) -> Iterator[EsefFilingRecord]:
         yield from self._records
 
 
 def _patch_client(
-    monkeypatch: pytest.MonkeyPatch, records: list[EsefFilingRecord]
+    monkeypatch: pytest.MonkeyPatch,
+    records: list[EsefFilingRecord],
+    *,
+    last_reported_total: int | None = None,
 ) -> None:
     monkeypatch.setattr(
-        assets, "EsefFilingsClient", lambda: _StubEsefFilingsClient(records)
+        assets,
+        "EsefFilingsClient",
+        lambda: _StubEsefFilingsClient(
+            records, last_reported_total=last_reported_total
+        ),
     )
 
 
@@ -132,6 +151,8 @@ def test_three_records_land_one_without_json_facts(
     assert metadata["without_json_facts_count"].value == 1
     assert metadata["distinct_country_count"].value == 2
     assert metadata["country_distribution_top10"].value == {"SE": 2, "FI": 1}
+    # No last_reported_total from the (stubbed) client -- nothing to report.
+    assert metadata["api_reported_total"].value is None
 
     rows = _fetch_filings_index(tmp_path)
     assert [row[0] for row in rows] == ["A-1", "A-2", "A-3"]
@@ -176,6 +197,87 @@ def test_empty_crawl_raises_value_error_and_preserves_existing_rows(
 
     rows = _fetch_filings_index(tmp_path)
     assert [row[0] for row in rows] == ["A-1", "A-2"]
+
+
+# --------------------------------------------------------------------------
+# Crawl-completeness guard (Finding M1): a nonzero crawl that's still far
+# short of the API's own reported total (`meta.count`) must be refused, the
+# same "before touching the existing table" discipline as the empty-crawl
+# guard above.
+# --------------------------------------------------------------------------
+
+
+def test_crawl_completeness_guard_refuses_below_90_percent_and_preserves_existing_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_client(monkeypatch, [_record(fxo_id="A-1"), _record(fxo_id="A-2")])
+    first = dg.materialize(
+        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
+    )
+    assert first.success
+
+    # 2 crawled out of a reported 1000 -- nowhere near the 90% floor.
+    _patch_client(
+        monkeypatch,
+        [_record(fxo_id="C-1"), _record(fxo_id="C-2")],
+        last_reported_total=1000,
+    )
+    with pytest.raises(ValueError, match="below 90%"):
+        dg.materialize(
+            [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
+        )
+
+    # The prior (complete) crawl's rows must survive untouched.
+    rows = _fetch_filings_index(tmp_path)
+    assert [row[0] for row in rows] == ["A-1", "A-2"]
+
+
+def test_crawl_completeness_guard_passes_at_exactly_the_90_percent_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 9 crawled out of a reported 10 == exactly 90% -- must NOT refuse
+    # (the guard's floor is inclusive: "< 90%" refuses, "90%" passes).
+    records = [_record(fxo_id=f"A-{i}") for i in range(9)]
+    _patch_client(monkeypatch, records, last_reported_total=10)
+
+    result = dg.materialize(
+        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
+    )
+
+    assert result.success
+    metadata = result.asset_materializations_for_node("esef_filings_index_duckdb")[
+        0
+    ].metadata
+    assert metadata["row_count"].value == 9
+    assert metadata["api_reported_total"].value == 10
+
+
+def test_crawl_completeness_guard_is_a_noop_when_api_total_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only 1 filing crawled, no reported total available at all (the
+    # default -- matches a real client whose first page had no meta.count)
+    # -- nothing to compare against, so the guard must not fire.
+    _patch_client(monkeypatch, [_record(fxo_id="A-1")], last_reported_total=None)
+
+    result = dg.materialize(
+        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
+    )
+
+    assert result.success
+
+
+def test_check_crawl_completeness_refuses_below_ratio() -> None:
+    with pytest.raises(ValueError, match="below 90%"):
+        assets._check_crawl_completeness(crawled_count=89, api_reported_total=100)
+
+
+def test_check_crawl_completeness_passes_at_ratio() -> None:
+    assets._check_crawl_completeness(crawled_count=90, api_reported_total=100)
+
+
+def test_check_crawl_completeness_noop_when_total_unknown() -> None:
+    assets._check_crawl_completeness(crawled_count=0, api_reported_total=None)
 
 
 def test_filings_index_non_empty_check_passes_on_populated_table(
@@ -1040,6 +1142,7 @@ class _MixedJobEsefFilingsClient:
 
     def __init__(self, records: list[EsefFilingRecord]) -> None:
         self._records = records
+        self.last_reported_total: int | None = None
 
     def iter_filings(self) -> Iterator[EsefFilingRecord]:
         yield from self._records

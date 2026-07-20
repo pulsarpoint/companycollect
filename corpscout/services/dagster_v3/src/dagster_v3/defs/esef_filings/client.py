@@ -59,12 +59,36 @@ def _absolute(url: str | None) -> str | None:
     return url if url.startswith("http") else f"{ESEF_API_BASE}{url}"
 
 
+def _extract_reported_total(payload: dict[str, Any]) -> int | None:
+    """Pull the JSON:API `meta.count` (the API's own reported total filing
+    count) off an index page's payload, tolerating any shape that isn't a
+    plain non-bool int (missing `meta`, missing `count`, or a non-numeric
+    value) by returning `None` rather than raising -- the crawl itself must
+    never fail just because this optional metadata is absent."""
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    count = meta.get("count")
+    if isinstance(count, bool) or not isinstance(count, int):
+        return None
+    return count
+
+
 class EsefFilingsClient:
     def __init__(self, session: Any | None = None) -> None:
         self._session = (
             session
             or dlt_requests.Client(request_timeout=120, request_max_attempts=5).session
         )
+        # The API's own reported total filing count (`meta.count` on the
+        # JSON:API response), captured off the FIRST index page only (Finding
+        # M1) -- lets a caller compare "filings actually crawled" against
+        # "filings the API says exist" to detect a truncated/partial crawl
+        # (e.g. pagination stopping early, a network blip mid-sweep) that
+        # still returns a nonzero, non-empty result. `None` until
+        # `iter_filings()` has fetched at least one page, and stays `None`
+        # forever if that first page's `meta` has no usable `count`.
+        self.last_reported_total: int | None = None
 
     def iter_filings(self) -> Iterator[EsefFilingRecord]:
         page = 1
@@ -79,6 +103,8 @@ class EsefFilingsClient:
             )
             resp.raise_for_status()
             payload = resp.json()
+            if page == 1:
+                self.last_reported_total = _extract_reported_total(payload)
             entities = {
                 inc["id"]: inc["attributes"]
                 for inc in payload.get("included", [])
