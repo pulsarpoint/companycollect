@@ -285,7 +285,9 @@ class EsefFilingsClient:
 - [ ] **Step 3: Add asset check** `filings_index_non_empty` + a `country` distribution entry in materialization metadata (count by country, top 10 + total).
 - [ ] **Step 4: Run tests + `uv run dg check defs`** → PASS. Commit: `feat(dagster): esef filings index crawl asset`.
 
----### Task 4: Fact download + OIM xBRL-JSON parse (year-partitioned)
+---
+
+### Task 4: Fact download + OIM xBRL-JSON parse (year-partitioned)
 
 **Files:**
 - Create: `src/dagster_v3/defs/esef_filings/facts.py` (parser)
