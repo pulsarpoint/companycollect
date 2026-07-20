@@ -25,12 +25,14 @@ from zoneinfo import ZoneInfo
 
 import dagster as dg
 import pytest
+from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
     read_only_duckdb_connection,
 )
+from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.esef_filings import assets
 from dagster_v3.defs.esef_filings.client import EsefFilingRecord
@@ -996,7 +998,7 @@ def test_esef_filings_refresh_weekly_schedule_registered() -> None:
     schedule = repo.get_schedule_def("esef_filings_refresh_weekly")
 
     assert schedule.job_name == "esef_filings_refresh_job"
-    assert schedule.cron_schedule == "50 5 * * 0"
+    assert schedule.cron_schedule == "10 5 * * 0"
     assert schedule.execution_timezone == "Europe/Belgrade"
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
 
@@ -1007,6 +1009,213 @@ def test_esef_filings_jobs_carry_the_heavy_bulk_workload_tag() -> None:
         job = repo.get_job(job_name)
         for key, value in HEAVY_BULK_RUN_TAGS.items():
             assert job.tags.get(key) == value, job_name
+
+
+# ==========================================================================
+# esef_filings_refresh_job: actually EXECUTING the mixed partitioned/
+# unpartitioned selection, not just resolving its static shape (the tests
+# above only inspect job.asset_layer/partitions_def -- they never run a
+# single step). This is the one test in the whole module that proves the
+# weekly schedule's RunRequest(partition_key=str(year)) genuinely drives all
+# 7 assets end to end for that partition.
+#
+# KNOWN GOTCHA (see the facts-download test section's docstring above): a
+# ConfigurableResource built with an injected private attribute/instance
+# does NOT survive dg.materialize/execute_in_process -- Dagster reconstructs
+# it from its resolved pydantic config fields alone, silently dropping a
+# fake client and hitting real boto3/clickhouse_driver instead. Monkey-
+# patching the underlying methods at the CLASS level (ObjectStoreResource,
+# ClickhouseResource), not on an instance, survives that reconstruction: the
+# freshly-reconstructed instance still resolves to these patched methods.
+# ==========================================================================
+
+
+class _MixedJobEsefFilingsClient:
+    """Stand-in for EsefFilingsClient() supporting both `iter_filings()`
+    (used by esef_filings_index_duckdb) and `download_json_facts()` (used by
+    both year-partitioned assets, for the fact-JSON and, reused url/content
+    agnostic, the report-XHTML download). `_StubEsefFilingsClient` above
+    only implements `iter_filings` -- every other test in this file only
+    exercises the index asset in isolation."""
+
+    def __init__(self, records: list[EsefFilingRecord]) -> None:
+        self._records = records
+
+    def iter_filings(self) -> Iterator[EsefFilingRecord]:
+        yield from self._records
+
+    def download_json_facts(self, url: str, target: Path) -> None:
+        target.write_text(
+            json.dumps(
+                {
+                    "facts": {
+                        "f1": {
+                            "value": "1000",
+                            "decimals": -3,
+                            "dimensions": {
+                                "concept": "ifrs-full:Revenue",
+                                "period": "2026-01-01T00:00:00/2026-12-31T00:00:00",
+                                "unit": "iso4217:EUR",
+                            },
+                        }
+                    }
+                }
+            )
+        )
+
+
+class _MixedJobFakeClickHouseClient:
+    """Records every statement; answers just enough to drive every
+    ClickHouse-touching asset in esef_filings_refresh_job in one run (the
+    filings/facts row-batch export, and the entity-map + metrics
+    ClickHouse-native stage/INSERT-SELECT/EXCHANGE paths) -- merges the
+    statement shapes tests/test_esef_filings_publish.py's and
+    tests/test_esef_filings_metrics.py's same-purpose fakes handle
+    separately, since this single job run exercises both."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    def execute(self, sql: str, params: Any = None) -> list[tuple[Any, ...]]:
+        self.statements.append(sql)
+        stripped = sql.strip()
+        if "system.tables" in sql:
+            requested = tuple(params["tables"]) if isinstance(params, dict) else ()
+            return [(table,) for table in requested]
+        if stripped.startswith("SELECT count() FROM ("):
+            # Pre-stage refuse-on-empty check (metrics.py / publish.py) --
+            # must stay > 0 so neither export raises
+            # refuse-to-replace-on-empty.
+            return [(1,)]
+        if stripped.startswith("CREATE TABLE"):
+            return []
+        if stripped.startswith("INSERT INTO") and "SELECT" in stripped:
+            return []
+        if stripped.startswith("INSERT INTO"):
+            return []
+        if stripped.startswith("EXCHANGE TABLES"):
+            return []
+        if stripped.startswith("SELECT count() FROM"):
+            # Sentinel-exclusion count, plus the shrink guard's staged-vs-
+            # existing row-count reads -- 0 on both sides trivially
+            # satisfies guard_against_clickhouse_table_shrink
+            # (existing_row_count <= 0 short-circuits its ratio check).
+            return [(0,)]
+        if stripped.startswith("DROP TABLE"):
+            return []
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+
+def test_refresh_job_executes_all_assets_for_partition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = _record(fxo_id="A-1", period_end="2026-06-30")
+    monkeypatch.setattr(
+        assets, "EsefFilingsClient", lambda: _MixedJobEsefFilingsClient([record])
+    )
+
+    ch_client = _MixedJobFakeClickHouseClient()
+
+    @contextmanager
+    def fake_get_connection(
+        self: ClickhouseResource,
+    ) -> Iterator[_MixedJobFakeClickHouseClient]:
+        yield ch_client
+
+    def fake_ensure_bucket(
+        self: ObjectStoreResource, bucket: str | None = None
+    ) -> None:
+        return None
+
+    def fake_exists(
+        self: ObjectStoreResource, key: str, bucket: str | None = None
+    ) -> bool:
+        return False
+
+    def fake_upload_file(
+        self: ObjectStoreResource,
+        key: str,
+        source_path: str | Path,
+        bucket: str | None = None,
+    ) -> None:
+        return None
+
+    def fake_download_file(
+        self: ObjectStoreResource,
+        key: str,
+        target_path: str | Path,
+        bucket: str | None = None,
+    ) -> None:
+        Path(target_path).write_text("{}")
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+    monkeypatch.setattr(ObjectStoreResource, "ensure_bucket", fake_ensure_bucket)
+    monkeypatch.setattr(ObjectStoreResource, "exists", fake_exists)
+    monkeypatch.setattr(ObjectStoreResource, "upload_file", fake_upload_file)
+    monkeypatch.setattr(ObjectStoreResource, "download_file", fake_download_file)
+
+    object_store = ObjectStoreResource(
+        bucket="test-bucket",
+        endpoint_url="http://unused",
+        access_key="unused",
+        secret_key="unused",
+    )
+    clickhouse = ClickhouseResource(host="unused")
+
+    local_defs = dg.Definitions(
+        assets=[
+            assets.esef_filings_index_duckdb,
+            assets.esef_filing_facts_duckdb,
+            assets.esef_report_xhtml_s3,
+            assets.esef_filings_clickhouse,
+            assets.esef_facts_clickhouse,
+            assets.esef_entity_registry_map_clickhouse,
+            assets.esef_financial_metrics_clickhouse,
+        ],
+        jobs=[assets.esef_filings_refresh_job],
+        resources={
+            "esef_filings_duckdb": _db_resource(tmp_path),
+            "object_store": object_store,
+            "clickhouse": clickhouse,
+        },
+    )
+    job = local_defs.get_repository_def().get_job("esef_filings_refresh_job")
+
+    result = job.execute_in_process(partition_key="2026")
+
+    assert result.success
+    materialized_keys = {
+        event.event_specific_data.materialization.asset_key.path[-1]
+        for event in result.all_events
+        if event.event_type_value == "ASSET_MATERIALIZATION"
+    }
+    assert materialized_keys == {
+        "esef_filings_index_duckdb",
+        "esef_filing_facts_duckdb",
+        "esef_report_xhtml_s3",
+        "esef_filings_clickhouse",
+        "esef_facts_clickhouse",
+        "esef_entity_registry_map_clickhouse",
+        "esef_financial_metrics_clickhouse",
+    }
+
+    # Partitioned assets scoped to 2026 -- proves the partition_key genuinely
+    # gated the two year-partitioned assets onto the 2026-scoped filing,
+    # rather than them silently running unpartitioned/unscoped.
+    facts_metadata = result.asset_materializations_for_node("esef_filing_facts_duckdb")[
+        -1
+    ].metadata
+    assert facts_metadata["filings_in_scope"].value == 1
+    assert facts_metadata["skipped_out_of_range"].value == 0
+
+    xhtml_metadata = result.asset_materializations_for_node("esef_report_xhtml_s3")[
+        -1
+    ].metadata
+    assert xhtml_metadata["filings_in_scope"].value == 1
+    assert xhtml_metadata["skipped_out_of_range"].value == 0
+
+    rows = _fetch_filings_index(tmp_path)
+    assert [row[0] for row in rows] == ["A-1"]
 
 
 class _FakeScheduleEvaluationContext:

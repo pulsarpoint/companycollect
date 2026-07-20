@@ -156,11 +156,25 @@ Two jobs, one schedule:
 | `esef_filings_refresh_job` | `esef_filings_index_duckdb`, `esef_filing_facts_duckdb`, `esef_report_xhtml_s3`, `esef_filings_clickhouse`, `esef_facts_clickhouse`, `esef_entity_registry_map_clickhouse`, `esef_financial_metrics_clickhouse` | yes — resolves to `ESEF_FILING_FACTS_PARTITIONS` (shared by the 2 partitioned assets in the selection); the other 5 are unpartitioned and run every launch |
 | `esef_filings_backfill_job` | `esef_filing_facts_duckdb`, `esef_report_xhtml_s3` only | yes — same partitions_def, exports excluded |
 
-`esef_filings_refresh_weekly`: cron `50 5 * * 0`, `Europe/Belgrade`,
+`esef_filings_refresh_weekly`: cron `10 5 * * 0` (moved from the originally-drafted
+`50 5 * * 0`, which collided with `finland_verotax_schedule`'s `50 5 12 11 *` on
+`(minute, hour)` — every schedule in `defs/` must claim a unique `(minute, hour)` pair,
+enforced by `tests/test_schedule_cron_contracts.py`), `Europe/Belgrade`,
 `DefaultScheduleStatus.STOPPED` (until Task 8 validates a live run and flips it on in the
 UI). Both jobs carry `HEAVY_BULK_RUN_TAGS` (`corpscout/workload=heavy-bulk`) — like
 `sweden_financial`'s backfill/weekly jobs, this pipeline downloads many per-filing
 documents (facts JSON + report XHTML) per run.
+
+**Partition ceiling is a silent dead-man's switch, not a hard stop.** The schedule's
+`execution_fn` resolves `partition_key=str(now.year)` and only ever produces a
+`RunRequest` for a year inside `[ESEF_FACTS_PARTITION_YEAR_MIN, ESEF_FACTS_PARTITION_YEAR_MAX]`
+(currently 2019-2027, `assets.py`). From **2028** onward, every weekly tick resolves a
+`partition_key` with no matching partition and `_esef_filings_refresh_run_request` returns
+a `SkipReason` instead of a `RunRequest` — the schedule keeps firing on cron, keeps
+"succeeding" (a skip is not a failure), and simply stops refreshing ESEF data, with no
+alert. Bump `ESEF_FACTS_PARTITION_YEAR_MAX` (and the `ESEF_FILING_FACTS_PARTITIONS`
+static list it drives) before 2028 to avoid this; see the code comment at its
+declaration in `assets.py`.
 
 **Why ONE job for the whole refresh chain, unlike `sweden_financial`'s split.**
 `sweden_financial`'s weekly chain needed a 2026-07-20 de-partitioning redesign because it
@@ -297,6 +311,75 @@ scope is "match what can be matched," never "filter ingestion to what's matchabl
 `ReplacingMergeTree` duplicates in `gleif_lei_records`, even though that table is already
 one-row-per-lei post-merge.
 
+### 9.5 `scope = 'consolidated_ifrs'` — why ESEF never feeds `company_financials_latest` in v1
+
+Every row `metrics.py`'s `native_metrics` CTE produces is stamped a literal, hardcoded
+`scope`:
+
+```sql
+'consolidated_ifrs' AS scope,
+```
+
+This is not a placeholder for a future enum — it's a load-bearing correctness fence.
+ESEF filings are **consolidated GROUP IFRS** figures (the parent's group-wide financials,
+prepared under IFRS as EU law requires for listed issuers), whereas the per-country
+national-register sources this repo otherwise ingests (`finland_ytj`, `norway_brreg`,
+`estonia_ar`, `latvia_ur`, ...) report **standalone STATUTORY** financials for the single
+legal entity registered in that country, prepared under local GAAP. The same company/year
+can legitimately show *different, both-correct* numbers under these two scopes — a
+Finnish subsidiary's standalone revenue is not comparable to its Nordic parent group's
+consolidated revenue, and conflating the two is a silent, undetectable data-quality bug,
+not a rounding difference.
+
+`company_financials_latest` (the cross-source "pick one financials row per company/year"
+consumer) **does not read `esef_financial_metrics` in v1**, deliberately (see §10) — the
+scope-preference rule (when both a national-register standalone row and an ESEF
+consolidated row exist for the same company/year, which should `company_financials_latest`
+prefer, and does it ever need to expose both?) has not been agreed yet. Wiring ESEF in
+before that decision is made would let a consolidated-group figure silently overwrite or
+outrank a standalone statutory figure (or vice versa) with no signal to a consumer that the
+number's scope just changed underneath them. `scope='consolidated_ifrs'` on every
+`esef_financial_metrics` row is what makes that distinction machine-readable and enforced
+at the source, so the eventual `company_financials_latest` integration (or the planned
+"Group (IFRS consolidated)" backoffice section, §10) can filter/branch on it explicitly
+rather than rediscovering the distinction ad hoc.
+
+### 9.6 Two independent guards on `esef_financial_metrics_clickhouse`, and why only that asset has both
+
+`replace_esef_financial_metrics_clickhouse` (`metrics.py`) runs **two** separate guards,
+at two different points in its stage/insert/exchange sequence:
+
+1. **Refuse-on-empty** — checked BEFORE the stage table is even created: `SELECT count()
+   FROM (<scoped SELECT>)`; if 0, raises `ValueError` and the existing table is untouched.
+   Same discipline as `publish.replace_esef_entity_registry_map_clickhouse`'s refuse-on-
+   empty check and the shared DuckDB exporters' `allow_empty` guard.
+2. **Shrink guard** (`guard_against_clickhouse_table_shrink`, `sweden_financial/clickhouse.py`,
+   ratio `SHRINK_GUARD_MIN_RATIO = 0.5`) — checked AFTER the `INSERT ... SELECT` into the
+   staged table but BEFORE `EXCHANGE TABLES`: compares the freshly-staged row count against
+   the current live table's row count, and refuses the swap (raising `ValueError`) if the
+   stage would leave the table with less than 50% of its current rows. Bypassable only via
+   `EsefFinancialMetricsClickhouseExportConfig.allow_shrink` (default `False`, threaded
+   through as explicit per-run config on `esef_financial_metrics_clickhouse` — never a
+   standing default; see the config class's docstring in `assets.py`).
+
+**Why this asset alone carries the shrink guard.** `esef_filings_clickhouse` and
+`esef_facts_clickhouse` (the two DuckDB→ClickHouse exports) and
+`esef_entity_registry_map_clickhouse` rely on refuse-on-empty ALONE — no shrink guard.
+Those three tables' row counts are structurally tied 1:1 to their upstream input on every
+run (the filings index, the accumulated facts across all backfilled years, the LEIs
+present in `esef_filings`), so a *partial* shrink (fewer rows than before, but still
+nonzero) isn't a distinct failure mode worth guarding beyond "not empty" — the ordinary
+variance is upstream index churn, not a bug class. `esef_financial_metrics`, in contrast,
+is a derived rebuild through a much longer chain (facts + filings + exchange rates, several
+joins, an FX resolution step that can itself silently produce fewer matched rows if
+`exchange_rates` is thin for a period), so a **partial** shrink — the SELECT still returns
+rows, just meaningfully fewer than before — is a plausible, distinguishable failure mode
+that refuse-on-empty alone would never catch. This mirrors exactly why
+`sweden_financial_metrics_clickhouse` carries the same shrink guard while
+`sweden_financial`'s simpler DuckDB-mirror exports don't (see
+`sweden_financial/clickhouse.py`'s module docstring) — the asymmetry is deliberate, not an
+inconsistency to "fix" by adding the guard everywhere.
+
 ## 10. Deferred (v1 skips)
 
 Verbatim from the plan's "Explicitly deferred" ledger — not built, not being built as part
@@ -313,9 +396,10 @@ of this task, tracked for a future pass:
   (`has_json_facts = false`, `skipped_no_json` in materialization metadata), never
   silently dropped.
 - **`company_financials_latest` consuming ESEF rows** — blocked on agreeing the
-  scope-preference rule first (§8 of the research doc: ESEF is consolidated-group IFRS,
-  national-register statements are usually standalone statutory, and the two can
-  legitimately disagree for the same company/year — never silently mix them).
+  scope-preference rule first (§9.5: ESEF is consolidated-group IFRS, national-register
+  statements are usually standalone statutory, and the two can legitimately disagree for
+  the same company/year — never silently mix them; `scope='consolidated_ifrs'` on every
+  `esef_financial_metrics` row is the enforcement mechanism this decision will key off).
 - **Backoffice "Group (IFRS consolidated)" section** — a separate follow-up plan once
   data is live in production, mirroring the generic public-contracts section pattern;
   needs a `consolidatedFinancialsQuery` per country joining `esef_financial_metrics` ×
@@ -362,6 +446,20 @@ of this task, tracked for a future pass:
 - **Mixing a partitioned + unpartitioned asset selection in one job** — not actually a
   Dagster limitation once verified against the source (§8); flagged here so a future
   reader doesn't assume it needs sweden_financial's job-splitting treatment by default.
+  Originally only checked by inspecting `job.partitions_def`/`job.asset_layer` (the
+  definition's *static* shape) — a code-review fix pass added
+  `test_refresh_job_executes_all_assets_for_partition`
+  (`tests/test_esef_filings_assets.py`), which actually calls
+  `job.execute_in_process(partition_key="2026")` on a real, un-mocked-away
+  `esef_filings_refresh_job` and asserts all 7 asset keys materialize. That test hits the
+  same `ObjectStoreResource`/`dg.materialize` reconstruction gotcha above, plus the
+  ClickHouse equivalent for `ClickhouseResource` — both resources are monkeypatched at the
+  CLASS level (not instance-injected) for exactly that reason.
+- **Two independent replace guards, asymmetric coverage** — see §9.6:
+  `esef_financial_metrics_clickhouse` runs both refuse-on-empty AND the shrink guard;
+  the three other exports (`esef_filings_clickhouse`, `esef_facts_clickhouse`,
+  `esef_entity_registry_map_clickhouse`) run refuse-on-empty only. Documented as a
+  finding here so a future reader doesn't read the asymmetry as an oversight.
 
 ## 12. Verification
 
@@ -373,7 +471,16 @@ of this task, tracked for a future pass:
   job+schedule contracts). `uv run pytest tests/test_esef_filings_assets.py -q` →
   passing (job/schedule assertions added in Task 7: job asset-key coverage, shared
   partitions_def resolution, schedule cron/timezone/status, the resolver's
-  timezone-conversion and out-of-range-skip behavior). `uv run dg check defs` passes.
+  timezone-conversion and out-of-range-skip behavior; a code-review fix pass added
+  `test_refresh_job_executes_all_assets_for_partition`, which actually EXECUTES
+  `esef_filings_refresh_job` for `partition_key="2026"` rather than only inspecting its
+  static definition — see §11). `uv run dg check defs` passes.
+- **Cron slot**: `esef_filings_refresh_weekly` moved from `50 5 * * 0` (drafted) to
+  `10 5 * * 0` (shipped) after a code-review fix pass caught a `(minute, hour)` collision
+  with `finland_verotax_schedule`; `uv run pytest tests/test_schedule_cron_contracts.py -q`
+  confirms no ESEF collision remains (2 unrelated pre-existing collisions —
+  `companies_all`/`france_sirene` at `15 7`, `company_people`/`czech_ares` at `45 7` — are
+  untouched, out of scope for this module).
 - **Not yet done (Task 8, pending)**: migration 000149 has not been applied to live
   ClickHouse (ledger at 148); nothing in this module has been materialized against a real
   server. Task 8's plan (server backfill + validation) covers: confirming the migration

@@ -81,6 +81,12 @@ QUALIFIED_FACTS_TABLE = tables.QUALIFIED_FACTS_TABLE
 
 # Matches facts._period_end_year's accepted range and the
 # StaticPartitionsDefinition below (str(y) for y in range(2019, 2028)).
+# NOTE: once the real calendar year exceeds this ceiling (from 2028 on),
+# `_esef_filings_refresh_run_request` finds no matching partition for
+# `str(now.year)` and returns a `SkipReason` on every tick -- the weekly
+# schedule will fire and skip, silently, forever, until this constant (and
+# the partitions list below) is bumped. Nothing pages anyone when that
+# happens; it just quietly stops refreshing. See design doc Sec 8.
 ESEF_FACTS_PARTITION_YEAR_MIN = 2019
 ESEF_FACTS_PARTITION_YEAR_MAX = 2027
 ESEF_FILING_FACTS_PARTITIONS = dg.StaticPartitionsDefinition(
@@ -1057,7 +1063,10 @@ def _esef_filings_refresh_run_request(
 esef_filings_refresh_weekly = dg.ScheduleDefinition(
     name="esef_filings_refresh_weekly",
     job=esef_filings_refresh_job,
-    cron_schedule="50 5 * * 0",
+    # (minute, hour) must be unique across every schedule in defs/ (see
+    # tests/test_schedule_cron_contracts.py) -- "50 5" collided with
+    # finland_verotax_schedule's "50 5 12 11 *"; "10 5" is free.
+    cron_schedule="10 5 * * 0",
     execution_timezone=ESEF_FILINGS_TIMEZONE,
     execution_fn=_esef_filings_refresh_run_request,
     # STOPPED until Task 8 validates a live run and flips it on in the UI.
