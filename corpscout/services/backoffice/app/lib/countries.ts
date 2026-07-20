@@ -422,6 +422,19 @@ ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `company_id IN (SELECT company_id FROM se_industries WHERE is_primary = 1 AND nace_rev2_class_code IN {f_industry:Array(String)})`,
     detail: {
+      // activity_description is aliased to _original so the language
+      // toggle's pairing rule (needs BOTH <base>_en and <base>_original)
+      // collapses it with activity_description_en from the translated
+      // view; the code-label columns are deliberately unpaired singles.
+      recordQuery: `SELECT c.* EXCEPT (activity_description),
+  c.activity_description AS activity_description_original,
+  t.activity_description_en AS activity_description_en,
+  t.legal_form_label_en AS legal_form_label_en,
+  t.status_reason_label_en AS status_reason_label_en
+FROM se_companies AS c
+LEFT JOIN se_companies_translated AS t ON t.company_id = c.company_id
+WHERE c.registration_number = {id:String}
+LIMIT 1`,
       // se_financial_metrics is keyed on the normalized 10-digit orgnr
       // (= registration_number since the 2026-07-18 identity fix). Some
       // companies carry duplicate per-year rows where one is all-NULL —
@@ -472,16 +485,20 @@ LIMIT 25`,
       // Same filing the metrics row shows (metrics statement_key first);
       // falls back to the newest filing seen in facts for years whose
       // metrics row hasn't been rebuilt yet.
-      factsQuery: `SELECT concept_local_name AS concept, value_kind AS value_kind, raw_value AS raw_value,
-  toFloat64(amount_original) AS amount_original,
-  toFloat64(amount_usd) AS amount_usd,
-  currency AS currency,
-  toString(date_value) AS date_value,
-  text_value AS text_value,
-  dimensions AS dimensions,
-  context_id AS context_id
-FROM se_financial_facts
-WHERE company_id = {id:String} AND statement_key IN (
+      factsQuery: `SELECT f.concept_local_name AS concept,
+  l.label_en AS concept_label_en,
+  f.value_kind AS value_kind, f.raw_value AS raw_value,
+  toFloat64(f.amount_original) AS amount_original,
+  toFloat64(f.amount_usd) AS amount_usd,
+  f.currency AS currency,
+  toString(f.date_value) AS date_value,
+  f.text_value AS text_value,
+  f.dimensions AS dimensions,
+  f.context_id AS context_id
+FROM se_financial_facts AS f
+LEFT JOIN se_financial_concept_labels AS l
+  ON l.concept_local_name = f.concept_local_name
+WHERE f.company_id = {id:String} AND f.statement_key IN (
   SELECT statement_key FROM (
     SELECT statement_key, 0 AS pri
     FROM se_financial_metrics

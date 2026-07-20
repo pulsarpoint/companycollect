@@ -120,6 +120,7 @@ export default function CompanyFacts({ loaderData, params }: Route.ComponentProp
     ? facts.filter(
         (f) =>
           f.concept.toLowerCase().includes(needle) ||
+          (f.concept_label_en ?? "").toLowerCase().includes(needle) ||
           f.raw_value.toLowerCase().includes(needle) ||
           (f.text_value ?? "").toLowerCase().includes(needle),
       )
@@ -222,8 +223,17 @@ export default function CompanyFacts({ loaderData, params }: Route.ComponentProp
                 <TableBody>
                   {visible.map((f, i) => (
                     <TableRow key={i}>
-                      <TableCell className="break-words font-mono text-xs align-top whitespace-normal">
-                        {f.concept}
+                      <TableCell className="break-words align-top whitespace-normal">
+                        {f.concept_label_en ? (
+                          <>
+                            <div className="text-xs">{f.concept_label_en}</div>
+                            <div className="font-mono text-[11px] text-muted-foreground">
+                              {f.concept}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="font-mono text-xs">{f.concept}</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-muted-foreground align-top text-xs">
                         {f.value_kind}

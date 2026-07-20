@@ -192,6 +192,9 @@ export interface TaxRecordRow {
 
 export interface FactRow {
   concept: string;
+  /** English concept label (SE joins se_financial_concept_labels; other
+   * countries' factsQuery don't return it). Empty until translated. */
+  concept_label_en?: string | null;
   value_kind: string;
   raw_value: string;
   amount_original: number | null;

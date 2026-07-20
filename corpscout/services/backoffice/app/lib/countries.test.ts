@@ -187,6 +187,15 @@ describe("detail config", () => {
         expect(c.detail?.recordQuery).toContain("lv_companies_translated");
         expect(c.detail?.recordQuery).toContain("{id:String}");
         expect(c.detail?.recordQuery).toContain("c.*");
+      } else if (c.code === "se") {
+        expect(c.detail?.recordQuery).toContain("se_companies_translated");
+        expect(c.detail?.recordQuery).toContain("{id:String}");
+        // activity_description must be re-aliased to _original so the
+        // language toggle pairs it with activity_description_en.
+        expect(c.detail?.recordQuery).toContain(
+          "activity_description AS activity_description_original",
+        );
+        expect(c.detail?.recordQuery).toContain("legal_form_label_en");
       } else {
         expect(c.detail?.recordQuery, c.code).toBeUndefined();
       }
