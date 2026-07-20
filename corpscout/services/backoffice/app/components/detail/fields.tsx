@@ -1,4 +1,4 @@
-const ACRONYMS = new Set(["id", "usd", "url", "vat", "eu", "fx", "cnpj", "cvm", "nace", "sni", "ico", "siren"]);
+const ACRONYMS = new Set(["id", "usd", "url", "vat", "eu", "fx", "cnpj", "cvm", "nace", "sni", "ico", "siren", "lei"]);
 
 export function humanizeFieldKey(key: string): string {
   const words = key.split("_").map((w) => (ACRONYMS.has(w) ? w.toUpperCase() : w));

@@ -430,9 +430,17 @@ LIMIT 50000`,
   c.activity_description AS activity_description_original,
   t.activity_description_en AS activity_description_en,
   t.legal_form_label_en AS legal_form_label_en,
-  t.status_reason_label_en AS status_reason_label_en
+  t.status_reason_label_en AS status_reason_label_en,
+  g.lei AS lei
 FROM se_companies AS c
 LEFT JOIN se_companies_translated AS t ON t.company_id = c.company_id
+LEFT JOIN (
+  SELECT replaceRegexpAll(registered_as, '[^0-9]', '') AS orgnr,
+    argMax(lei, entity_status = 'ACTIVE') AS lei
+  FROM gleif_lei_records
+  WHERE jurisdiction = 'SE' AND registered_as != ''
+  GROUP BY orgnr
+) AS g ON g.orgnr = c.registration_number
 WHERE c.registration_number = {id:String}
 LIMIT 1`,
       // se_financial_metrics is keyed on the normalized 10-digit orgnr

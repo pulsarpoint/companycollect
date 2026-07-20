@@ -196,6 +196,12 @@ describe("detail config", () => {
           "activity_description AS activity_description_original",
         );
         expect(c.detail?.recordQuery).toContain("legal_form_label_en");
+        // LEI via GLEIF, matched on the digits-only orgnr (registered_as
+        // carries both '5569427692' and '559352-2948' formats upstream).
+        expect(c.detail?.recordQuery).toContain("gleif_lei_records");
+        expect(c.detail?.recordQuery).toContain(
+          "replaceRegexpAll(registered_as, '[^0-9]', '')",
+        );
       } else {
         expect(c.detail?.recordQuery, c.code).toBeUndefined();
       }
