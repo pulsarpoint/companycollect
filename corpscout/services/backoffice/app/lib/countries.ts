@@ -679,8 +679,8 @@ WHERE r.lei = (
     AND replaceRegexpAll(registered_as, '[^0-9]', '') = {id:String}
 )
 LIMIT 1`,
-      // Wikidata enrichment, joined via LEI (the only reliable key between
-      // wikidata_company_identifiers and a national registry number).
+      // Wikidata enrichment: matched on the Swedish org number (P6460,
+      // extracted at wikidata ingest since 2026-07-20) with LEI fallback.
       wikidataQuery: `WITH (
   SELECT coalesce(argMax(lei, (registration_status = 'ISSUED', entity_status = 'ACTIVE')), '')
   FROM gleif_lei_records
@@ -723,9 +723,11 @@ LEFT JOIN (
   WHERE identifier_type = 'linkedin_company_id'
   GROUP BY wikidata_id
 ) AS li ON li.wikidata_id = w.wikidata_id
-WHERE my_lei != '' AND w.wikidata_id IN (
+WHERE w.wikidata_id IN (
   SELECT wikidata_id FROM wikidata_company_identifiers
-  WHERE identifier_type = 'lei' AND upper(identifier_value) = my_lei
+  WHERE (identifier_type = 'se_orgnr'
+         AND replaceRegexpAll(identifier_value, '[^0-9]', '') = {id:String})
+     OR (my_lei != '' AND identifier_type = 'lei' AND upper(identifier_value) = my_lei)
 )
 LIMIT 1`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
