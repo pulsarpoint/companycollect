@@ -16,7 +16,12 @@ Discovery trail (searches, samples, licenses, rejected sources):
 | `finland_xbrl` | PRH — digital financial statements (XBRL API) | automated, partitioned by registration date | daily 06:00 | `fi_financial_statements` / `fi_financial_metrics` 46k, `fi_xbrl_facts_raw` 3.5M, `fi_company_financials_latest` 21k | CC-BY-4.0 |
 | `finland_verotax` | Verohallinto — public corporate income tax CSVs | automated bulk (URL discovery from vero.fi page) | yearly, Nov 12 | `fi_tax_records` 1.79M (tax years 2020–2024, 385k entities/yr) | CC-BY-4.0 |
 | `finland_hilma` | Hilma (hankintailmoitukset.fi) — public procurement notices | **manual portal export → S3** | manual, per upload | `fi_hilma_notices` 12.5k, `fi_hilma_notice_winners` 11.3k | free incl. commercial (portal ToS) |
-| `ted_procurement` | TED (EU) — EU-threshold award notices, country-agnostic (FIN configured) | automated, monthly publication-date partitions from 2024-01 | monthly 3rd 05:35 | `ted_notices` 12.3k, `ted_notice_winners` 44.8k (2024-01→2026-06 backfilled; 100% winner ids, 6,990 distinct companies join `fi_companies`) | EU open data |
+| `ted_procurement` | TED (EU) — EU-threshold award notices, **country-agnostic** (FIN configured) | automated, monthly publication-date partitions from 2024-01 | monthly 3rd 05:35 | `ted_notices` 12.3k, `ted_notice_winners` 44.8k (2024-01→2026-06 backfilled; 100% winner ids, 6,990 distinct companies join `fi_companies`) | EU open data |
+
+`ted_procurement` is a shared cross-country source, not a Finland-only pipeline —
+Finland is one configured country. See **`docs/ted-procurement.md`** for its
+architecture, how to add another country, and full coverage; it is summarised here
+only because Finland is one of its consumers.
 
 All four share the standard shape (`docs/data-source-guidelines.md`): download →
 per-source DuckDB staging → set-based SQL transform → migration-owned ClickHouse
