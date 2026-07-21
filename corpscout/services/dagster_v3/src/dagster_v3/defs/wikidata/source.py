@@ -1,15 +1,13 @@
-from __future__ import annotations
-
 import json
 from collections.abc import Iterator
 from hashlib import sha256
 from typing import Any
 
 import dagster as dg
-import dlt
-from dlt.extract.resource import DltResource
-from dlt.sources.helpers.requests import Client as DltRequestsClient
+import requests
 from pydantic import field_validator
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from dagster_v3.defs.wikidata.registry_seed import WIKIDATA_REGISTRY_NUMBER_PROPERTY_IDS
 
@@ -21,7 +19,6 @@ WIKIDATA_RAW_BUCKET = "source-wikidata-company-seed"
 # isn't actually an exchange listing. See defs/wikidata/registry_seed.py for where the
 # property set comes from.
 WIKIDATA_REGISTRY_PSEUDO_EXCHANGE_PREFIX = "registry_"
-WIKIDATA_DUCKDB_PIPELINE_NAME = "wikidata_listed_companies"
 WIKIDATA_DUCKDB_DATASET_NAME = "wikidata_stage"
 WIKIDATA_LISTED_COMPANIES_TABLE = "listed_companies"
 WIKIDATA_EXCHANGES_TABLE = "exchanges"
@@ -285,7 +282,7 @@ class WikidataRawPullConfig(dg.Config):
         return property_ids
 
 
-class WikidataListedCompaniesConfig(dg.Config):
+class WikidataSnapshotConfig(dg.Config):
     raw_run_id: str | None = None
     max_pages: int | None = None
     max_exchanges: int | None = None
@@ -311,22 +308,22 @@ class WikidataListedCompaniesConfig(dg.Config):
 class WikidataSparqlClient:
     def __init__(self, *, timeout_seconds: int) -> None:
         self._timeout_seconds = timeout_seconds
-        self._session = DltRequestsClient(
-            request_timeout=timeout_seconds,
-            request_max_attempts=WIKIDATA_REQUEST_MAX_ATTEMPTS,
-            request_backoff_factor=WIKIDATA_RETRY_INITIAL_DELAY_SECONDS,
-            request_max_retry_delay=WIKIDATA_RETRY_MAX_DELAY_SECONDS,
+        retry = Retry(
+            total=WIKIDATA_REQUEST_MAX_ATTEMPTS - 1,
+            backoff_factor=WIKIDATA_RETRY_INITIAL_DELAY_SECONDS,
+            backoff_max=WIKIDATA_RETRY_MAX_DELAY_SECONDS,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
             respect_retry_after_header=True,
         )
+        self._session = requests.Session()
+        self._session.mount("https://", HTTPAdapter(max_retries=retry))
 
     def fetch(self, query: str, *, user_agent: str) -> dict[str, Any]:
-        headers = getattr(self._session, "headers", None)
-        if isinstance(headers, dict):
-            headers["User-Agent"] = user_agent
-
         response = self._session.get(
             WIKIDATA_SPARQL_ENDPOINT,
             params={"query": query, "format": "json"},
+            headers={"User-Agent": user_agent},
             timeout=self._timeout_seconds,
         )
         response.raise_for_status()
@@ -789,84 +786,6 @@ ORDER BY DESC(?listedCompanyCount) ?exchange ?mic ?country
 """.strip()
 
 
-@dlt.source(name="wikidata_company_seed")
-def wikidata_listed_companies_source(
-    *,
-    object_store: Any | None = None,
-    raw_run_id: str | None = None,
-    max_pages: int | None = None,
-    max_exchanges: int | None = None,
-    source_run_id: str = "",
-) -> list[DltResource]:
-    return [
-        wikidata_listed_companies_resource(
-            object_store=object_store,
-            raw_run_id=raw_run_id,
-            max_pages=max_pages,
-            max_exchanges=max_exchanges,
-            source_run_id=source_run_id,
-        ),
-        wikidata_exchanges_resource(
-            object_store=object_store,
-            raw_run_id=raw_run_id,
-            max_exchanges=max_exchanges,
-            source_run_id=source_run_id,
-        ),
-    ]
-
-
-def wikidata_listed_companies_resource(
-    *,
-    object_store: Any | None = None,
-    raw_run_id: str | None = None,
-    max_pages: int | None = None,
-    max_exchanges: int | None = None,
-    source_run_id: str = "",
-) -> DltResource:
-    def rows() -> Iterator[dict[str, Any]]:
-        yield from iter_wikidata_listed_company_rows(
-            object_store=object_store,
-            raw_run_id=raw_run_id,
-            max_pages=max_pages,
-            max_exchanges=max_exchanges,
-            source_run_id=source_run_id,
-        )
-
-    return dlt.resource(
-        rows,
-        name=WIKIDATA_LISTED_COMPANIES_TABLE,
-        table_name=WIKIDATA_LISTED_COMPANIES_TABLE,
-        write_disposition="replace",
-        primary_key=["exchange_wikidata_id", "source_record_id"],
-        columns=WIKIDATA_LISTED_COMPANIES_COLUMNS,
-    )
-
-
-def wikidata_exchanges_resource(
-    *,
-    object_store: Any | None = None,
-    raw_run_id: str | None = None,
-    max_exchanges: int | None = None,
-    source_run_id: str = "",
-) -> DltResource:
-    def rows() -> Iterator[dict[str, Any]]:
-        yield from iter_wikidata_exchange_rows(
-            object_store=object_store,
-            raw_run_id=raw_run_id,
-            max_exchanges=max_exchanges,
-            source_run_id=source_run_id,
-        )
-
-    return dlt.resource(
-        rows,
-        name=WIKIDATA_EXCHANGES_TABLE,
-        table_name=WIKIDATA_EXCHANGES_TABLE,
-        write_disposition="replace",
-        primary_key="source_record_id",
-        columns=WIKIDATA_EXCHANGES_COLUMNS,
-    )
-
-
 def iter_wikidata_exchange_rows(
     *,
     object_store: Any | None = None,
@@ -876,12 +795,12 @@ def iter_wikidata_exchange_rows(
 ) -> Iterator[dict[str, Any]]:
     if object_store is None:
         raise ValueError(
-            "Wikidata exchange dlt source requires object_store; "
+            "Wikidata exchange parser requires object_store; "
             "materialize wikidata_company_seed_raw_objects first"
         )
     effective_raw_run_id = raw_run_id or source_run_id
     if not effective_raw_run_id:
-        raise ValueError("Wikidata exchange dlt source requires a raw run id")
+        raise ValueError("Wikidata exchange parser requires a raw run id")
 
     exchange_number = 0
     for manifest_key in completed_wikidata_raw_manifest_keys(
@@ -957,12 +876,12 @@ def iter_wikidata_listed_company_rows(
 ) -> Iterator[dict[str, Any]]:
     if object_store is None:
         raise ValueError(
-            "Wikidata listed-company dlt source requires object_store; "
+            "Wikidata listed-company parser requires object_store; "
             "materialize wikidata_company_seed_raw_objects first"
         )
     effective_raw_run_id = raw_run_id or source_run_id
     if not effective_raw_run_id:
-        raise ValueError("Wikidata listed-company dlt source requires a raw run id")
+        raise ValueError("Wikidata listed-company parser requires a raw run id")
 
     manifest_keys = completed_wikidata_raw_manifest_keys(
         object_store=object_store,

@@ -1,6 +1,5 @@
 import json
 from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -11,24 +10,25 @@ import duckdb
 import pytest
 from dagster import AssetKey
 from dagster_clickhouse import ClickhouseResource
-from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.wikidata import tables
 from dagster_v3.definitions import defs as load_project_defs
 
 
-def test_wikidata_clickhouse_asset_is_registered() -> None:
+def test_wikidata_table_assets_are_registered_one_to_one() -> None:
     repository = load_project_defs().get_repository_def()
     asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
     resource_keys = repository.get_top_level_resources().keys()
 
     assert "wikidata_company_seed_raw_objects" in asset_keys
-    assert "wikidata_listed_companies_duckdb" in asset_keys
-    assert "wikidata_exchanges_duckdb" in asset_keys
-    assert "wikidata_exchanges" in asset_keys
-    assert "wikidata_company_seed_clickhouse" in asset_keys
+    for table_name in tables.WIKIDATA_TABLES:
+        assert f"{table_name}_duckdb" in asset_keys
+        assert table_name in asset_keys
+    assert "wikidata_company_seed_complete" in asset_keys
+    assert "wikidata_company_seed_clickhouse" not in asset_keys
+    assert "wikidata_listed_companies_duckdb" not in asset_keys
     assert "clickhouse" in resource_keys
-    assert "dlt" in resource_keys
     assert "object_store" in resource_keys
     assert (
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
@@ -36,61 +36,128 @@ def test_wikidata_clickhouse_asset_is_registered() -> None:
     )
 
 
-def test_wikidata_clickhouse_depends_on_duckdb_final_tables() -> None:
-    repository = load_project_defs().get_repository_def()
-
-    deps = repository.asset_graph.get(
-        AssetKey(["wikidata_company_seed_clickhouse"])
-    ).parent_keys
-
-    assert {key.path[-1] for key in deps} == {
-        "wikidata_companies",
-        "wikidata_exchanges",
-        "wikidata_company_listings",
-        "wikidata_company_identifiers",
-        "wikidata_company_websites",
-        "wikidata_company_relationships",
-        "wikidata_company_people",
-        "wikidata_persons",
-        "wikidata_seed_extraction_runs",
-    }
-
-
-def test_wikidata_normalized_tables_depend_on_listed_companies_duckdb() -> None:
+def test_wikidata_clickhouse_tables_depend_on_matching_duckdb_assets() -> None:
     repository = load_project_defs().get_repository_def()
     asset_graph = repository.asset_graph
 
-    for asset_name in {
-        "wikidata_companies",
-        "wikidata_exchanges",
-        "wikidata_company_listings",
-        "wikidata_company_identifiers",
-        "wikidata_company_websites",
-        "wikidata_company_relationships",
-        "wikidata_company_people",
-        "wikidata_persons",
-        "wikidata_seed_extraction_runs",
-    }:
-        asset = asset_graph.get(AssetKey([asset_name]))
+    for table_name in tables.WIKIDATA_TABLES:
+        clickhouse_asset = asset_graph.get(AssetKey([table_name]))
+        assert clickhouse_asset.parent_keys == {AssetKey([f"{table_name}_duckdb"])}
+
+
+def test_wikidata_duckdb_tables_depend_on_raw_s3_snapshot() -> None:
+    repository = load_project_defs().get_repository_def()
+    asset_graph = repository.asset_graph
+
+    for table_name in tables.WIKIDATA_TABLES:
+        asset = asset_graph.get(AssetKey([f"{table_name}_duckdb"]))
         assert asset.is_executable
         assert asset.parent_keys == {
-            AssetKey(["wikidata_listed_companies_duckdb"]),
-            AssetKey(["wikidata_exchanges_duckdb"]),
+            AssetKey(["wikidata_company_seed_raw_objects"]),
         }
 
 
-def test_wikidata_listed_companies_duckdb_depends_on_raw_s3_snapshot() -> None:
+def test_wikidata_completion_depends_on_all_clickhouse_tables() -> None:
     repository = load_project_defs().get_repository_def()
 
-    dlt_asset = repository.asset_graph.get(
-        AssetKey(["wikidata_listed_companies_duckdb"])
+    completion_asset = repository.asset_graph.get(
+        AssetKey(["wikidata_company_seed_complete"])
     )
 
-    assert dlt_asset.parent_keys == {AssetKey(["wikidata_company_seed_raw_objects"])}
-    exchange_asset = repository.asset_graph.get(AssetKey(["wikidata_exchanges_duckdb"]))
-    assert exchange_asset.parent_keys == {
-        AssetKey(["wikidata_company_seed_raw_objects"])
+    assert completion_asset.parent_keys == {
+        AssetKey([table_name]) for table_name in tables.WIKIDATA_TABLES
     }
+
+
+def test_wikidata_tables_use_distinct_duckdb_files(monkeypatch, tmp_path: Path) -> None:
+    from dagster_v3.defs.wikidata import assets
+
+    monkeypatch.setattr(assets, "WIKIDATA_DUCKDB_DIRECTORY", tmp_path)
+
+    paths = {
+        assets.wikidata_duckdb_path(table_name) for table_name in tables.WIKIDATA_TABLES
+    }
+
+    assert len(paths) == len(tables.WIKIDATA_TABLES)
+    assert paths == {
+        tmp_path / f"{table_name}.duckdb" for table_name in tables.WIKIDATA_TABLES
+    }
+
+
+def test_wikidata_completion_verifies_one_source_run(monkeypatch) -> None:
+    from dagster_v3.defs.wikidata import assets
+
+    class QueryResult:
+        def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+            self.result_rows = rows
+
+    class Client:
+        def query(self, query: str) -> QueryResult:
+            if "listings.exchange_wikidata_id" in query:
+                return QueryResult([])
+            table_name = query.split("from corpscout.", 1)[1].split(" ", 1)[0]
+            if table_name in assets.WIKIDATA_EMPTY_ALLOWED_TABLES:
+                return QueryResult([])
+            return QueryResult([("run-1", 3)])
+
+    class ConnectionContext:
+        def __enter__(self) -> Client:
+            return Client()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        ClickhouseResource,
+        "get_connection",
+        lambda _self: ConnectionContext(),
+    )
+
+    result = assets._validate_wikidata_clickhouse_snapshot(
+        ClickhouseResource(host="localhost")
+    )
+
+    assert result.metadata["source_run_id"] == "run-1"
+    assert result.metadata["wikidata_companies_row_count"] == 3
+    assert result.metadata["wikidata_company_people_row_count"] == 0
+
+
+def test_wikidata_completion_rejects_mixed_source_runs(monkeypatch) -> None:
+    from dagster_v3.defs.wikidata import assets
+
+    class QueryResult:
+        def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+            self.result_rows = rows
+
+    class Client:
+        def query(self, query: str) -> QueryResult:
+            if "listings.exchange_wikidata_id" in query:
+                return QueryResult([])
+            table_name = query.split("from corpscout.", 1)[1].split(" ", 1)[0]
+            source_run_id = (
+                "run-2"
+                if table_name == tables.WIKIDATA_COMPANY_WEBSITES_TABLE
+                else "run-1"
+            )
+            return QueryResult([(source_run_id, 3)])
+
+    class ConnectionContext:
+        def __enter__(self) -> Client:
+            return Client()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        ClickhouseResource,
+        "get_connection",
+        lambda _self: ConnectionContext(),
+    )
+
+    with pytest.raises(ValueError, match="different source_run_id"):
+        assets._validate_wikidata_clickhouse_snapshot(
+            ClickhouseResource(host="localhost")
+        )
 
 
 def test_wikidata_weekly_refresh_job_and_schedule_are_registered() -> None:
@@ -117,14 +184,14 @@ def test_wikidata_canonical_contacts_asset_is_registered() -> None:
     assert "wikidata_clickhouse_canonical_contacts" in asset_keys
 
 
-def test_wikidata_canonical_contacts_depends_on_seed_clickhouse_export() -> None:
+def test_wikidata_canonical_contacts_depends_on_completed_seed() -> None:
     repository = load_project_defs().get_repository_def()
 
     deps = repository.asset_graph.get(
         AssetKey(["wikidata_clickhouse_canonical_contacts"])
     ).parent_keys
 
-    assert deps == {AssetKey(["wikidata_company_seed_clickhouse"])}
+    assert deps == {AssetKey(["wikidata_company_seed_complete"])}
 
 
 def test_wikidata_canonical_contacts_asset_in_weekly_job() -> None:
@@ -150,7 +217,7 @@ def test_wikidata_raw_object_asset_depends_only_on_registry_seed_spines() -> Non
         AssetKey(["wikidata_company_seed_raw_objects"])
     )
 
-    # No dlt/DuckDB upstream (the raw pull is the root of the wikidata chain); its only
+    # No DuckDB upstream (the raw pull is the root of the wikidata chain); its only
     # parents are the ordering-only discoverability deps onto each registry seed spec's
     # spine asset (see test_wikidata_registry_seed_specs_are_wired_into_seed_asset for
     # the full wiring assertion).
@@ -231,10 +298,10 @@ def test_wikidata_weekly_job_excludes_registry_seed_country_pipelines() -> None:
     }
 
     assert "wikidata_company_seed_raw_objects" in job_asset_keys
-    assert "wikidata_listed_companies_duckdb" in job_asset_keys
-    assert "wikidata_exchanges_duckdb" in job_asset_keys
-    assert "wikidata_exchanges" in job_asset_keys
-    assert "wikidata_company_seed_clickhouse" in job_asset_keys
+    for table_name in tables.WIKIDATA_TABLES:
+        assert f"{table_name}_duckdb" in job_asset_keys
+        assert table_name in job_asset_keys
+    assert "wikidata_company_seed_complete" in job_asset_keys
     assert "wikidata_clickhouse_canonical_contacts" in job_asset_keys
 
     assert "sweden_company_raw_snapshot_s3" not in job_asset_keys
@@ -249,36 +316,61 @@ def test_wikidata_weekly_job_excludes_registry_seed_country_pipelines() -> None:
     assert "brazil_comp_rfb_clickhouse_companies" not in job_asset_keys
 
 
-def test_wikidata_listed_companies_duckdb_materialization_uses_dlt_pipeline(
+def test_wikidata_companies_duckdb_materialization_writes_its_own_database(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     from dagster_v3.defs.wikidata import assets
+    from dagster_v3.defs.wikidata import source as wikidata_source
 
-    dlt_resource = FakeDagsterDltResource()
     object_store, _s3_client = _object_store()
-    monkeypatch.setattr(assets, "WIKIDATA_DUCKDB_PATH", tmp_path / "wikidata.duckdb")
+    source_row = {
+        column_name: (
+            0
+            if schema["data_type"] == "bigint"
+            else "2026-06-19T10:00:00+00:00"
+            if column_name == "retrieved_at"
+            else ""
+        )
+        for column_name, schema in wikidata_source.WIKIDATA_LISTED_COMPANIES_COLUMNS.items()
+    }
+    source_row.update(
+        {
+            "source_run_id": "run-1",
+            "exchange_wikidata_id": "QEX1",
+            "exchange_name": "Test Exchange",
+            "company_wikidata_id": "Q1",
+            "company_url": "http://www.wikidata.org/entity/Q1",
+            "company_label": "Alpha Inc",
+            "source_record_id": "QEX1:1:1:Q1",
+            "source_payload_hash": "hash-1",
+        }
+    )
+    monkeypatch.setattr(assets, "WIKIDATA_DUCKDB_DIRECTORY", tmp_path)
+    monkeypatch.setattr(
+        assets,
+        "iter_wikidata_listed_company_rows",
+        lambda **_kwargs: iter([source_row]),
+    )
 
     result = dg.materialize(
-        [assets.wikidata_listed_companies_duckdb_asset],
-        resources={"dlt": dlt_resource, "object_store": object_store},
+        [assets.wikidata_companies_duckdb],
+        resources={"object_store": object_store},
         run_config={
-            "ops": {
-                "wikidata_listed_companies_duckdb": {
-                    "config": {
-                        "max_exchanges": 1,
-                    }
-                }
-            }
+            "ops": {"wikidata_companies_duckdb": {"config": {"raw_run_id": "run-1"}}}
         },
     )
 
     assert result.success
-    assert dlt_resource.pipeline_names == ["wikidata_listed_companies"]
-    assert dlt_resource.resource_names == [["listed_companies", "exchanges"]]
+    database_path = tmp_path / "wikidata_companies.duckdb"
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        rows = connection.execute(
+            "select wikidata_id, name, source_run_id from wikidata.wikidata_companies"
+        ).fetchall()
+    assert rows == [("Q1", "Alpha Inc", "run-1")]
 
 
-def test_wikidata_listed_companies_source_reads_raw_s3_pages() -> None:
+def test_wikidata_listed_company_rows_read_raw_s3_pages() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
@@ -323,14 +415,14 @@ def test_wikidata_listed_companies_source_reads_raw_s3_pages() -> None:
         manifest_keys=[manifest_key],
     )
 
-    source = wikidata_source.wikidata_listed_companies_source(
-        object_store=object_store,
-        raw_run_id="run-1",
-        source_run_id="downstream-only-run",
+    rows = list(
+        wikidata_source.iter_wikidata_listed_company_rows(
+            object_store=object_store,
+            raw_run_id="run-1",
+            source_run_id="downstream-only-run",
+        )
     )
-    rows = list(source.resources[wikidata_source.WIKIDATA_LISTED_COMPANIES_TABLE])
 
-    assert list(source.resources.keys()) == ["listed_companies", "exchanges"]
     assert [row["exchange_wikidata_id"] for row in rows] == ["QEX1"]
     assert [row["exchange_name"] for row in rows] == ["Test Exchange One"]
     assert [row["company_wikidata_id"] for row in rows] == ["Q1"]
@@ -373,7 +465,7 @@ def test_wikidata_listed_companies_source_reads_raw_s3_pages() -> None:
     assert len(rows[0]["query_hash"]) == 64
 
 
-def test_wikidata_listed_companies_source_keeps_explicit_raw_run_id_strict() -> None:
+def test_wikidata_listed_company_rows_keep_explicit_raw_run_id_strict() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
@@ -490,9 +582,7 @@ def test_wikidata_active_exchange_query_and_collapse_preserve_multiple_mics() ->
     ]
 
 
-def test_wikidata_listed_companies_source_merges_manifest_augmentation_objects() -> (
-    None
-):
+def test_wikidata_listed_company_rows_merge_manifest_augmentation_objects() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
@@ -557,11 +647,12 @@ def test_wikidata_listed_companies_source_merges_manifest_augmentation_objects()
         manifest_keys=[manifest_key],
     )
 
-    source = wikidata_source.wikidata_listed_companies_source(
-        object_store=object_store,
-        source_run_id="run-1",
+    rows = list(
+        wikidata_source.iter_wikidata_listed_company_rows(
+            object_store=object_store,
+            source_run_id="run-1",
+        )
     )
-    rows = list(source.resources[wikidata_source.WIKIDATA_LISTED_COMPANIES_TABLE])
 
     assert len(rows) == 1
     assert rows[0]["source_record_id"] == "QEX1:000001:000001:Q1:Q1-L1:aug:000001"
@@ -570,30 +661,20 @@ def test_wikidata_listed_companies_source_merges_manifest_augmentation_objects()
     assert rows[0]["parent_organization_wikidata_id"] == "Q100"
 
 
-def test_wikidata_listed_companies_resource_declares_explicit_schema() -> None:
+def test_wikidata_listed_companies_stage_declares_explicit_schema() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
-    source = wikidata_source.wikidata_listed_companies_source(
-        source_run_id="run-1",
-    )
-    schema = source.resources[
-        wikidata_source.WIKIDATA_LISTED_COMPANIES_TABLE
-    ].compute_table_schema()
+    schema = wikidata_source.WIKIDATA_LISTED_COMPANIES_COLUMNS
 
-    assert set(schema["columns"]) == set(
-        wikidata_source.WIKIDATA_LISTED_COMPANIES_COLUMNS
-    )
-    assert schema["columns"]["exchange_wikidata_id"]["data_type"] == "text"
-    assert (
-        schema["columns"]["listed_company_count_on_exchange"]["data_type"] == "bigint"
-    )
-    assert schema["columns"]["page_number"]["data_type"] == "bigint"
-    assert schema["columns"]["source_payload_hash"]["data_type"] == "text"
-    assert schema["columns"]["company_description"]["data_type"] == "text"
-    assert schema["columns"]["headquarters_wikidata_id"]["data_type"] == "text"
-    assert schema["columns"]["headquarters_country_wikidata_id"]["data_type"] == "text"
-    assert schema["columns"]["headquarters_country_label"]["data_type"] == "text"
-    assert schema["columns"]["headquarters_country_iso2"]["data_type"] == "text"
+    assert schema["exchange_wikidata_id"]["data_type"] == "text"
+    assert schema["listed_company_count_on_exchange"]["data_type"] == "bigint"
+    assert schema["page_number"]["data_type"] == "bigint"
+    assert schema["source_payload_hash"]["data_type"] == "text"
+    assert schema["company_description"]["data_type"] == "text"
+    assert schema["headquarters_wikidata_id"]["data_type"] == "text"
+    assert schema["headquarters_country_wikidata_id"]["data_type"] == "text"
+    assert schema["headquarters_country_label"]["data_type"] == "text"
+    assert schema["headquarters_country_iso2"]["data_type"] == "text"
     for column_name in (
         "inception_date",
         "legal_form_wikidata_id",
@@ -630,10 +711,10 @@ def test_wikidata_listed_companies_resource_declares_explicit_schema() -> None:
         "owner_of_start_date",
         "owner_of_end_date",
     ):
-        assert schema["columns"][column_name]["data_type"] == "text"
+        assert schema[column_name]["data_type"] == "text"
 
 
-def test_wikidata_exchanges_resource_reads_completed_real_exchange_manifests() -> None:
+def test_wikidata_exchange_rows_read_completed_real_exchange_manifests() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
@@ -680,12 +761,13 @@ def test_wikidata_exchanges_resource_reads_completed_real_exchange_manifests() -
         manifest_keys=[exchange_manifest_key, registry_manifest_key],
     )
 
-    source = wikidata_source.wikidata_listed_companies_source(
-        object_store=object_store,
-        raw_run_id="run-1",
-        source_run_id="downstream-run",
+    rows = list(
+        wikidata_source.iter_wikidata_exchange_rows(
+            object_store=object_store,
+            raw_run_id="run-1",
+            source_run_id="downstream-run",
+        )
     )
-    rows = list(source.resources[wikidata_source.WIKIDATA_EXCHANGES_TABLE])
 
     assert [row["mic"] for row in rows] == ["XONE", "XTWO"]
     assert {row["exchange_wikidata_id"] for row in rows} == {"QEX1"}
@@ -693,18 +775,14 @@ def test_wikidata_exchanges_resource_reads_completed_real_exchange_manifests() -
     assert all(len(row["source_payload_hash"]) == 64 for row in rows)
 
 
-def test_wikidata_exchanges_resource_declares_explicit_schema() -> None:
+def test_wikidata_exchanges_stage_declares_explicit_schema() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
-    source = wikidata_source.wikidata_listed_companies_source(source_run_id="run-1")
-    schema = source.resources[
-        wikidata_source.WIKIDATA_EXCHANGES_TABLE
-    ].compute_table_schema()
+    schema = wikidata_source.WIKIDATA_EXCHANGES_COLUMNS
 
-    assert set(schema["columns"]) == set(wikidata_source.WIKIDATA_EXCHANGES_COLUMNS)
-    assert schema["columns"]["exchange_wikidata_id"]["data_type"] == "text"
-    assert schema["columns"]["listed_company_count"]["data_type"] == "bigint"
-    assert schema["columns"]["source_payload_hash"]["data_type"] == "text"
+    assert schema["exchange_wikidata_id"]["data_type"] == "text"
+    assert schema["listed_company_count"]["data_type"] == "bigint"
+    assert schema["source_payload_hash"]["data_type"] == "text"
 
 
 def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
@@ -881,7 +959,7 @@ def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages()
     from dagster_v3.defs.wikidata.source import WikidataRawPullConfig
 
     object_store, s3_client = _object_store()
-    client = FakeWikidataDltClient(
+    client = FakeWikidataClientWithDiscovery(
         exchange_payload=_wikidata_response(
             [
                 {
@@ -1300,7 +1378,7 @@ def test_wikidata_normalization_builds_final_duckdb_tables(tmp_path: Path) -> No
     _seed_wikidata_listed_companies(database_path)
 
     with duckdb.connect(str(database_path)) as connection:
-        row_counts = assets.normalize_wikidata_listed_companies_duckdb(
+        row_counts = assets.normalize_wikidata_snapshot_tables(
             connection,
             catalog_name=database_path.stem,
         )
@@ -1504,7 +1582,7 @@ def test_wikidata_normalization_dedups_company_seeded_via_exchange_and_registry(
     _seed_wikidata_registry_dedup_scenario(database_path)
 
     with duckdb.connect(str(database_path)) as connection:
-        row_counts = assets.normalize_wikidata_listed_companies_duckdb(
+        row_counts = assets.normalize_wikidata_snapshot_tables(
             connection,
             catalog_name=database_path.stem,
         )
@@ -1545,7 +1623,7 @@ def test_wikidata_exchange_normalization_rejects_invalid_mic(tmp_path: Path) -> 
             "where exchange_wikidata_id = 'QEX1'"
         )
         with pytest.raises(ValueError, match="Invalid Wikidata MIC values: BAD"):
-            assets.normalize_wikidata_listed_companies_duckdb(
+            assets.normalize_wikidata_snapshot_tables(
                 connection,
                 catalog_name=database_path.stem,
             )
@@ -1567,7 +1645,7 @@ def test_wikidata_exchange_normalization_requires_listing_coverage(
             ValueError,
             match="Wikidata listings reference missing exchanges: QEX2",
         ):
-            assets.normalize_wikidata_listed_companies_duckdb(
+            assets.normalize_wikidata_snapshot_tables(
                 connection,
                 catalog_name=database_path.stem,
             )
@@ -1750,7 +1828,7 @@ def test_wikidata_normalization_builds_company_people_and_persons_tables(
     _seed_wikidata_company_people_scenario(database_path)
 
     with duckdb.connect(str(database_path)) as connection:
-        row_counts = assets.normalize_wikidata_listed_companies_duckdb(
+        row_counts = assets.normalize_wikidata_snapshot_tables(
             connection,
             catalog_name=database_path.stem,
         )
@@ -2007,7 +2085,10 @@ def _seed_wikidata_company_people_scenario(database_path: Path) -> None:
         _seed_wikidata_exchanges_stage(connection)
 
 
-def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> None:
+def test_wikidata_clickhouse_export_uses_matching_table_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     from dagster_v3.defs.wikidata import assets, tables
 
     calls: dict[str, Any] = {}
@@ -2028,10 +2109,7 @@ def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> No
         **kwargs: Any,
     ) -> dict[str, int]:
         calls["replace"] = kwargs
-        return {
-            table_name: index + 1
-            for index, table_name in enumerate(tables.WIKIDATA_TABLES)
-        }
+        return {tables.WIKIDATA_COMPANIES_TABLE: 3}
 
     monkeypatch.setattr(
         assets,
@@ -2045,53 +2123,61 @@ def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> No
     )
 
     clickhouse = ClickhouseResource(host="localhost")
-    wikidata_duckdb = DuckDBResource(database=":memory:")
     client = object()
-    duckdb_connection = object()
+    database_path = tmp_path / "wikidata_companies.duckdb"
+    duckdb.connect(str(database_path)).close()
+    monkeypatch.setattr(
+        assets,
+        "wikidata_duckdb_path",
+        lambda _table_name: database_path,
+    )
 
-    @contextmanager
-    def fake_connection(self: ClickhouseResource) -> Iterator[object]:
-        yield client
+    class FakeConnectionContext:
+        def __enter__(self) -> object:
+            return client
 
-    @contextmanager
-    def fake_duckdb_connection(self: DuckDBResource) -> Iterator[object]:
-        yield duckdb_connection
+        def __exit__(self, *_args: object) -> None:
+            return None
 
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_connection)
-    monkeypatch.setattr(DuckDBResource, "get_connection", fake_duckdb_connection)
+    monkeypatch.setattr(
+        ClickhouseResource,
+        "get_connection",
+        lambda _self: FakeConnectionContext(),
+    )
 
-    result = assets._export_wikidata_tables_to_clickhouse(clickhouse, wikidata_duckdb)
+    result = assets._export_wikidata_table_to_clickhouse(
+        clickhouse,
+        table_name=tables.WIKIDATA_COMPANIES_TABLE,
+    )
 
     assert calls["assert"] == {
         "clickhouse": clickhouse,
         "database": "corpscout",
-        "tables": tables.WIKIDATA_TABLES,
+        "tables": (tables.WIKIDATA_COMPANIES_TABLE,),
     }
-    assert calls["replace"] == {
-        "duckdb_connection": duckdb_connection,
+    replace_call = calls["replace"]
+    assert replace_call["clickhouse_client"] is client
+    assert isinstance(replace_call["duckdb_connection"], duckdb.DuckDBPyConnection)
+    assert replace_call["duckdb_schema"] == "wikidata_companies.wikidata"
+    assert replace_call | {"duckdb_connection": None} == {
+        "duckdb_connection": None,
         "clickhouse_client": client,
-        "duckdb_schema": "wikidata.wikidata",
+        "duckdb_schema": "wikidata_companies.wikidata",
         "clickhouse_database": "corpscout",
-        "tables": tuple(
-            (table_name, tables.WIKIDATA_TABLE_COLUMNS[table_name])
-            for table_name in tables.WIKIDATA_TABLES
+        "tables": (
+            (
+                tables.WIKIDATA_COMPANIES_TABLE,
+                tables.WIKIDATA_TABLE_COLUMNS[tables.WIKIDATA_COMPANIES_TABLE],
+            ),
         ),
-        "allow_empty_tables": (
-            tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
-            tables.WIKIDATA_PERSONS_TABLE,
-        ),
+        "allow_empty_tables": (),
     }
     assert isinstance(result, dg.MaterializeResult)
     assert result.metadata == {
-        "wikidata_companies_row_count": 1,
-        "wikidata_exchanges_row_count": 2,
-        "wikidata_company_listings_row_count": 3,
-        "wikidata_company_identifiers_row_count": 4,
-        "wikidata_company_websites_row_count": 5,
-        "wikidata_company_relationships_row_count": 6,
-        "wikidata_company_people_row_count": 7,
-        "wikidata_persons_row_count": 8,
-        "wikidata_seed_extraction_runs_row_count": 9,
+        "clickhouse_database": "corpscout",
+        "clickhouse_table": tables.WIKIDATA_COMPANIES_TABLE,
+        "duckdb_path": str(database_path),
+        "row_count": 3,
     }
 
 
@@ -2120,7 +2206,7 @@ class FakeWikidataClient:
         return self._pages.pop(0)
 
 
-class FakeWikidataDltClient:
+class FakeWikidataClientWithDiscovery:
     def __init__(
         self,
         *,
@@ -2150,27 +2236,6 @@ class FakeWikidataDltClient:
         offset = int(query.split(offset_marker, 1)[1].splitlines()[0])
         self.company_offsets.setdefault(exchange_id, []).append(offset)
         return self._company_payloads_by_exchange[exchange_id].pop(0)
-
-
-class FakeDagsterDltResource:
-    def __init__(self) -> None:
-        self.pipeline_names: list[str] = []
-        self.resource_names: list[list[str]] = []
-
-    def run(self, **kwargs: Any) -> Iterator[dg.MaterializeResult]:
-        pipeline = kwargs["dlt_pipeline"]
-        source = kwargs["dlt_source"]
-        self.pipeline_names.append(pipeline.pipeline_name)
-        self.resource_names.append(list(source.resources.keys()))
-        asset_keys = {
-            "listed_companies": "wikidata_listed_companies_duckdb",
-            "exchanges": "wikidata_exchanges_duckdb",
-        }
-        for resource_name in source.resources:
-            yield dg.MaterializeResult(
-                asset_key=asset_keys[resource_name],
-                metadata={"pipeline_name": pipeline.pipeline_name},
-            )
 
 
 class FakeS3Client:

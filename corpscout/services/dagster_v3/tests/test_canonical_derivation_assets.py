@@ -150,9 +150,7 @@ def test_wikidata_canonical_contacts_asset_registered_with_dep():
 
     node = repo.asset_graph.get(dg.AssetKey("wikidata_clickhouse_canonical_contacts"))
     assert node.group_name == "wikidata"
-    assert {k.path[-1] for k in node.parent_keys} == {
-        "wikidata_company_seed_clickhouse"
-    }
+    assert {k.path[-1] for k in node.parent_keys} == {"wikidata_company_seed_complete"}
 
 
 def test_wikidata_canonical_contacts_asset_in_weekly_job():

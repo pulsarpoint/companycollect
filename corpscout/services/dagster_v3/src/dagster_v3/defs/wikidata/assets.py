@@ -7,30 +7,26 @@ from pathlib import Path
 from typing import Any
 
 import dagster as dg
-import dlt as dlt_lib
 import duckdb
 from dagster_clickhouse import ClickhouseResource
-from dagster_duckdb import DuckDBResource
-from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
-from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
     replace_duckdb_connection_tables_in_clickhouse,
 )
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.wikidata.registry_seed import (
     WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS,
 )
 from dagster_v3.defs.wikidata.source import (
     WIKIDATA_DUCKDB_DATASET_NAME,
-    WIKIDATA_DUCKDB_PIPELINE_NAME,
     WIKIDATA_EXCHANGES_TABLE,
+    WIKIDATA_EXCHANGES_COLUMNS,
     WIKIDATA_LISTED_COMPANIES_TABLE,
+    WIKIDATA_LISTED_COMPANIES_COLUMNS,
     WIKIDATA_RAW_BUCKET,
-    WikidataListedCompaniesConfig,
+    WikidataSnapshotConfig,
     WikidataRawPullConfig,
     WikidataSparqlClient,
     active_exchanges_object_key,
@@ -51,124 +47,21 @@ from dagster_v3.defs.wikidata.source import (
     registry_pseudo_exchange_id,
     response_bindings,
     snapshot_manifest_object_key,
+    iter_wikidata_exchange_rows,
+    iter_wikidata_listed_company_rows,
     wikidata_id_from_url,
-    wikidata_listed_companies_source,
 )
 from dagster_v3.defs.wikidata import tables
 from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 
 GROUP_NAME = "wikidata"
 WIKIDATA_DUCKDB_SCHEMA = "wikidata"
-WIKIDATA_DUCKDB_PATH = Path("data/wikidata.duckdb")
-WIKIDATA_DUCKDB_POOL = "wikidata_duckdb"
-WIKIDATA_DUCKDB_STAGE_ASSET_KEYS = (
-    dg.AssetKey("wikidata_listed_companies_duckdb"),
-    dg.AssetKey("wikidata_exchanges_duckdb"),
+WIKIDATA_DUCKDB_DIRECTORY = Path("data/wikidata")
+WIKIDATA_CLICKHOUSE_POOL = "wikidata_clickhouse"
+WIKIDATA_EMPTY_ALLOWED_TABLES = (
+    tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
+    tables.WIKIDATA_PERSONS_TABLE,
 )
-
-WIKIDATA_DUCKDB_FINAL_TABLE_ASSET_KEYS = tuple(
-    dg.AssetKey(table_name) for table_name in tables.WIKIDATA_TABLES
-)
-
-
-class WikidataDltTranslator(DagsterDltTranslator):
-    def get_asset_spec(self, data: DltResourceTranslatorData) -> dg.AssetSpec:
-        spec = super().get_asset_spec(data)
-        if data.resource.name == WIKIDATA_LISTED_COMPANIES_TABLE:
-            return spec.replace_attributes(
-                key="wikidata_listed_companies_duckdb",
-                deps=[dg.AssetKey("wikidata_company_seed_raw_objects")],
-                group_name=GROUP_NAME,
-                description=(
-                    "Active Wikidata listed-company rows parsed from a completed raw S3 snapshot and loaded to DuckDB with dlt."
-                ),
-                kinds={"python", "dlt", "duckdb", "wikidata"},
-            )
-        if data.resource.name == WIKIDATA_EXCHANGES_TABLE:
-            return spec.replace_attributes(
-                key="wikidata_exchanges_duckdb",
-                deps=[dg.AssetKey("wikidata_company_seed_raw_objects")],
-                group_name=GROUP_NAME,
-                description=(
-                    "Wikidata exchange and MIC rows parsed from completed raw exchange manifests and loaded to DuckDB with dlt."
-                ),
-                kinds={"python", "dlt", "duckdb", "wikidata"},
-            )
-        return spec
-
-
-def wikidata_listed_companies_pipeline(database_path: str | Path) -> Any:
-    database_file = Path(database_path)
-    database_file.parent.mkdir(parents=True, exist_ok=True)
-    working_dir = database_file.parent / ".dlt"
-    working_dir.mkdir(parents=True, exist_ok=True)
-    return dlt_lib.pipeline(
-        pipeline_name=WIKIDATA_DUCKDB_PIPELINE_NAME,
-        destination=dlt_lib.destinations.duckdb(str(database_file)),
-        dataset_name=WIKIDATA_DUCKDB_DATASET_NAME,
-        dev_mode=False,
-        pipelines_dir=str(working_dir),
-    )
-
-
-@dlt_assets(
-    dlt_source=wikidata_listed_companies_source(max_exchanges=1, max_pages=1),
-    dlt_pipeline=wikidata_listed_companies_pipeline(WIKIDATA_DUCKDB_PATH),
-    name="wikidata_listed_companies_duckdb",
-    dagster_dlt_translator=WikidataDltTranslator(),
-    pool=WIKIDATA_DUCKDB_POOL,
-)
-def wikidata_listed_companies_duckdb_asset(
-    context: dg.AssetExecutionContext,
-    config: WikidataListedCompaniesConfig,
-    dlt: DagsterDltResource,
-    object_store: ObjectStoreResource,
-) -> Iterator[Any]:
-    source_run_id = config.raw_run_id or context.run.run_id
-    yield from dlt.run(
-        context=context,
-        dlt_source=wikidata_listed_companies_source(
-            object_store=object_store,
-            raw_run_id=config.raw_run_id,
-            max_pages=config.max_pages,
-            max_exchanges=config.max_exchanges,
-            source_run_id=source_run_id,
-        ),
-        dlt_pipeline=wikidata_listed_companies_pipeline(WIKIDATA_DUCKDB_PATH),
-    )
-
-
-@dg.multi_asset(
-    specs=[
-        dg.AssetSpec(
-            table_name,
-            deps=WIKIDATA_DUCKDB_STAGE_ASSET_KEYS,
-            group_name=GROUP_NAME,
-            kinds={"python", "duckdb", "wikidata"},
-            description=f"Normalized Wikidata DuckDB table for `{table_name}`.",
-        )
-        for table_name in tables.WIKIDATA_TABLES
-    ],
-    pool=WIKIDATA_DUCKDB_POOL,
-)
-def wikidata_company_seed_duckdb_tables(
-    wikidata_duckdb: DuckDBResource,
-) -> Iterator[dg.MaterializeResult]:
-    with wikidata_duckdb.get_connection() as connection:
-        row_counts = normalize_wikidata_listed_companies_duckdb(
-            connection,
-            catalog_name=WIKIDATA_DUCKDB_PATH.stem,
-        )
-    for table_name in tables.WIKIDATA_TABLES:
-        yield dg.MaterializeResult(
-            asset_key=table_name,
-            metadata={
-                "duckdb_path": str(WIKIDATA_DUCKDB_PATH),
-                "duckdb_schema": WIKIDATA_DUCKDB_SCHEMA,
-                "duckdb_table": table_name,
-                "row_count": row_counts[table_name],
-            },
-        )
 
 
 @dg.asset(
@@ -209,61 +102,525 @@ def wikidata_company_seed_raw_objects(
     )
 
 
-@dg.asset(
-    deps=WIKIDATA_DUCKDB_FINAL_TABLE_ASSET_KEYS,
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse"},
-    pool=WIKIDATA_DUCKDB_POOL,
-    description="Exports normalized Wikidata company seed DuckDB tables to migrated ClickHouse tables.",
-)
-def wikidata_company_seed_clickhouse(
-    clickhouse: ClickhouseResource,
-    wikidata_duckdb: DuckDBResource,
+def wikidata_duckdb_path(table_name: str) -> Path:
+    if table_name not in tables.WIKIDATA_TABLES:
+        raise ValueError(f"Unsupported Wikidata table: {table_name}")
+    return WIKIDATA_DUCKDB_DIRECTORY / f"{table_name}.duckdb"
+
+
+def _materialize_wikidata_duckdb_table(
+    context: dg.AssetExecutionContext,
+    *,
+    table_name: str,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    return _export_wikidata_tables_to_clickhouse(clickhouse, wikidata_duckdb)
+    database_path = wikidata_duckdb_path(table_name)
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    source_run_id = config.raw_run_id or context.run_id
+    context.log.info(
+        "Starting Wikidata DuckDB table: table=%s source_run_id=%s database=%s",
+        table_name,
+        source_run_id,
+        database_path,
+    )
+    with duckdb.connect(str(database_path)) as connection:
+        if table_name == tables.WIKIDATA_EXCHANGES_TABLE:
+            source_row_count = _replace_wikidata_stage_table(
+                connection,
+                table_name=WIKIDATA_EXCHANGES_TABLE,
+                columns=WIKIDATA_EXCHANGES_COLUMNS,
+                rows=iter_wikidata_exchange_rows(
+                    object_store=object_store,
+                    raw_run_id=config.raw_run_id,
+                    max_exchanges=config.max_exchanges,
+                    source_run_id=source_run_id,
+                ),
+                log=context.log.info,
+            )
+        else:
+            source_row_count = _replace_wikidata_stage_table(
+                connection,
+                table_name=WIKIDATA_LISTED_COMPANIES_TABLE,
+                columns=WIKIDATA_LISTED_COMPANIES_COLUMNS,
+                rows=iter_wikidata_listed_company_rows(
+                    object_store=object_store,
+                    raw_run_id=config.raw_run_id,
+                    max_pages=config.max_pages,
+                    max_exchanges=config.max_exchanges,
+                    source_run_id=source_run_id,
+                ),
+                log=context.log.info,
+            )
+        row_count = normalize_wikidata_table(
+            connection,
+            table_name=table_name,
+            catalog_name=database_path.stem,
+        )
+    context.log.info(
+        "Completed Wikidata DuckDB table: table=%s source_rows=%s rows=%s database=%s",
+        table_name,
+        source_row_count,
+        row_count,
+        database_path,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "duckdb_path": str(database_path),
+            "duckdb_schema": WIKIDATA_DUCKDB_SCHEMA,
+            "duckdb_table": table_name,
+            "source_run_id": source_run_id,
+            "source_row_count": source_row_count,
+            "row_count": row_count,
+        }
+    )
 
 
-def _export_wikidata_tables_to_clickhouse(
+def _replace_wikidata_stage_table(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    table_name: str,
+    columns: dict[str, dict[str, Any]],
+    rows: Iterator[dict[str, Any]],
+    log: Callable[..., object],
+) -> int:
+    connection.execute(
+        f"create schema if not exists {_quote_duckdb_identifier(WIKIDATA_DUCKDB_DATASET_NAME)}"
+    )
+    qualified_table = _duckdb_qualified_name(
+        WIKIDATA_DUCKDB_DATASET_NAME,
+        table_name,
+    )
+    duckdb_types = {
+        "text": "varchar",
+        "timestamp": "timestamp",
+        "bigint": "bigint",
+    }
+    column_names = tuple(columns)
+    column_definitions = ", ".join(
+        f"{_quote_duckdb_identifier(column_name)} "
+        f"{duckdb_types[columns[column_name]['data_type']]}"
+        for column_name in column_names
+    )
+    connection.execute(
+        f"create or replace table {qualified_table} ({column_definitions})"
+    )
+    placeholders = ", ".join("?" for _column_name in column_names)
+    insert_sql = f"insert into {qualified_table} values ({placeholders})"
+    batch: list[tuple[Any, ...]] = []
+    row_count = 0
+    for row in rows:
+        batch.append(tuple(row.get(column_name) for column_name in column_names))
+        if len(batch) < 1_000:
+            continue
+        connection.executemany(insert_sql, batch)
+        row_count += len(batch)
+        batch.clear()
+        log(
+            "Loaded Wikidata DuckDB stage rows: table=%s rows=%s", table_name, row_count
+        )
+    if batch:
+        connection.executemany(insert_sql, batch)
+        row_count += len(batch)
+    log(
+        "Completed Wikidata DuckDB stage table: table=%s rows=%s", table_name, row_count
+    )
+    return row_count
+
+
+def _export_wikidata_table_to_clickhouse(
     clickhouse: ClickhouseResource,
-    wikidata_duckdb: DuckDBResource,
+    *,
+    table_name: str,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RESOLVED_DATABASE,
-        tables=tables.WIKIDATA_TABLES,
+        tables=(table_name,),
     )
-    with wikidata_duckdb.get_connection() as connection:
+    database_path = wikidata_duckdb_path(table_name)
+    with duckdb.connect(str(database_path), read_only=True) as connection:
         with clickhouse.get_connection() as client:
             row_counts = replace_duckdb_connection_tables_in_clickhouse(
                 duckdb_connection=connection,
                 clickhouse_client=client,
                 duckdb_schema=_duckdb_schema_qualifier(
-                    WIKIDATA_DUCKDB_PATH,
+                    database_path,
                     WIKIDATA_DUCKDB_SCHEMA,
                 ),
                 clickhouse_database=RESOLVED_DATABASE,
-                tables=tuple(
-                    (table_name, tables.WIKIDATA_TABLE_COLUMNS[table_name])
-                    for table_name in tables.WIKIDATA_TABLES
-                ),
-                # A small/narrow seed run can legitimately find zero person links (or a
-                # raw snapshot predating this augmentation kind) -- refuse-on-empty stays
-                # the default for every other wikidata table, but these two are allowed
-                # to replace-empty like the canonical <src>_company_contacts pattern
-                # (see dagster_v3/CLAUDE.md).
+                tables=((table_name, tables.WIKIDATA_TABLE_COLUMNS[table_name]),),
                 allow_empty_tables=(
-                    tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
-                    tables.WIKIDATA_PERSONS_TABLE,
+                    (table_name,) if table_name in WIKIDATA_EMPTY_ALLOWED_TABLES else ()
                 ),
             )
     return dg.MaterializeResult(
         metadata={
-            f"{table_name}_row_count": count for table_name, count in row_counts.items()
+            "clickhouse_database": RESOLVED_DATABASE,
+            "clickhouse_table": table_name,
+            "duckdb_path": str(database_path),
+            "row_count": row_counts[table_name],
         }
     )
 
 
-def normalize_wikidata_listed_companies_duckdb(
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_companies_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_COMPANIES_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_exchanges_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_EXCHANGES_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_company_listings_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_COMPANY_LISTINGS_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_company_identifiers_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_COMPANY_IDENTIFIERS_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_company_websites_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_COMPANY_WEBSITES_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_company_relationships_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_COMPANY_RELATIONSHIPS_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_company_people_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_persons_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_PERSONS_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_seed_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "wikidata"},
+)
+def wikidata_seed_extraction_runs_duckdb(
+    context: dg.AssetExecutionContext,
+    config: WikidataSnapshotConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _materialize_wikidata_duckdb_table(
+        context,
+        table_name=tables.WIKIDATA_SEED_EXTRACTION_RUNS_TABLE,
+        config=config,
+        object_store=object_store,
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_COMPANIES_TABLE,
+    deps=["wikidata_companies_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_companies_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_COMPANIES_TABLE
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_EXCHANGES_TABLE,
+    deps=["wikidata_exchanges_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_exchanges_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_EXCHANGES_TABLE
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_COMPANY_LISTINGS_TABLE,
+    deps=["wikidata_company_listings_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_company_listings_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_COMPANY_LISTINGS_TABLE
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_COMPANY_IDENTIFIERS_TABLE,
+    deps=["wikidata_company_identifiers_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_company_identifiers_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_COMPANY_IDENTIFIERS_TABLE
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_COMPANY_WEBSITES_TABLE,
+    deps=["wikidata_company_websites_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_company_websites_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_COMPANY_WEBSITES_TABLE
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_COMPANY_RELATIONSHIPS_TABLE,
+    deps=["wikidata_company_relationships_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_company_relationships_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_COMPANY_RELATIONSHIPS_TABLE
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
+    deps=["wikidata_company_people_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_company_people_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_COMPANY_PEOPLE_TABLE
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_PERSONS_TABLE,
+    deps=["wikidata_persons_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_persons_clickhouse(clickhouse: ClickhouseResource) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_PERSONS_TABLE
+    )
+
+
+@dg.asset(
+    name=tables.WIKIDATA_SEED_EXTRACTION_RUNS_TABLE,
+    deps=["wikidata_seed_extraction_runs_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=WIKIDATA_CLICKHOUSE_POOL,
+)
+def wikidata_seed_extraction_runs_clickhouse(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _export_wikidata_table_to_clickhouse(
+        clickhouse, table_name=tables.WIKIDATA_SEED_EXTRACTION_RUNS_TABLE
+    )
+
+
+@dg.asset(
+    deps=[dg.AssetKey(table_name) for table_name in tables.WIKIDATA_TABLES],
+    group_name=GROUP_NAME,
+    kinds={"python", "clickhouse", "wikidata"},
+    description="Verifies that every published Wikidata ClickHouse table belongs to one source snapshot.",
+)
+def wikidata_company_seed_complete(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return _validate_wikidata_clickhouse_snapshot(clickhouse)
+
+
+def _validate_wikidata_clickhouse_snapshot(
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    source_run_ids: set[str] = set()
+    row_counts: dict[str, int] = {}
+    with clickhouse.get_connection() as client:
+        for table_name in tables.WIKIDATA_TABLES:
+            result = client.query(
+                f"select source_run_id, count() from {RESOLVED_DATABASE}.{table_name} "
+                "group by source_run_id order by source_run_id limit 2"
+            )
+            rows = result.result_rows
+            row_counts[table_name] = sum(int(row[1]) for row in rows)
+            if not rows and table_name in WIKIDATA_EMPTY_ALLOWED_TABLES:
+                continue
+            if len(rows) != 1:
+                raise ValueError(
+                    f"ClickHouse table {table_name} does not contain exactly one source_run_id"
+                )
+            source_run_ids.add(str(rows[0][0]))
+
+        missing_exchange_ids = client.query(
+            f"select distinct listings.exchange_wikidata_id "
+            f"from {RESOLVED_DATABASE}.{tables.WIKIDATA_COMPANY_LISTINGS_TABLE} as listings "
+            f"left join {RESOLVED_DATABASE}.{tables.WIKIDATA_EXCHANGES_TABLE} as exchanges "
+            "on exchanges.exchange_wikidata_id = listings.exchange_wikidata_id "
+            "where exchanges.exchange_wikidata_id is null "
+            "order by listings.exchange_wikidata_id limit 10"
+        ).result_rows
+    if missing_exchange_ids:
+        values = ", ".join(str(row[0]) for row in missing_exchange_ids)
+        raise ValueError(f"Wikidata listings reference missing exchanges: {values}")
+    if len(source_run_ids) != 1:
+        raise ValueError(
+            "Wikidata ClickHouse tables contain different source_run_id values: "
+            f"{sorted(source_run_ids)}"
+        )
+    source_run_id = next(iter(source_run_ids))
+    return dg.MaterializeResult(
+        metadata={
+            "source_run_id": source_run_id,
+            **{
+                f"{table_name}_row_count": row_count
+                for table_name, row_count in row_counts.items()
+            },
+        }
+    )
+
+
+def normalize_wikidata_snapshot_tables(
     connection: duckdb.DuckDBPyConnection,
     *,
     catalog_name: str,
@@ -347,6 +704,78 @@ def normalize_wikidata_listed_companies_duckdb(
     }
 
 
+def normalize_wikidata_table(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    table_name: str,
+    catalog_name: str,
+) -> int:
+    target_schema = _duckdb_qualified_schema_name(catalog_name, WIKIDATA_DUCKDB_SCHEMA)
+    connection.execute(f"create schema if not exists {target_schema}")
+    if table_name == tables.WIKIDATA_EXCHANGES_TABLE:
+        source_table = _duckdb_qualified_table_name(
+            catalog_name,
+            WIKIDATA_DUCKDB_DATASET_NAME,
+            WIKIDATA_EXCHANGES_TABLE,
+        )
+        _assert_wikidata_exchanges_table_exists(
+            connection,
+            source_table=source_table,
+        )
+        _create_wikidata_exchanges_table(
+            connection,
+            source_table=source_table,
+            target_schema=target_schema,
+        )
+        _validate_wikidata_exchange_mics(connection, target_schema=target_schema)
+    else:
+        source_table = _duckdb_qualified_table_name(
+            catalog_name,
+            WIKIDATA_DUCKDB_DATASET_NAME,
+            WIKIDATA_LISTED_COMPANIES_TABLE,
+        )
+        _assert_wikidata_listed_companies_table_exists(
+            connection,
+            source_table=source_table,
+        )
+        _ensure_optional_wikidata_source_columns(connection, source_table=source_table)
+        table_builders: dict[str, Callable[..., None]] = {
+            tables.WIKIDATA_COMPANIES_TABLE: _create_wikidata_companies_table,
+            tables.WIKIDATA_COMPANY_LISTINGS_TABLE: (
+                _create_wikidata_company_listings_table
+            ),
+            tables.WIKIDATA_COMPANY_IDENTIFIERS_TABLE: (
+                _create_wikidata_company_identifiers_table
+            ),
+            tables.WIKIDATA_COMPANY_WEBSITES_TABLE: (
+                _create_wikidata_company_websites_table
+            ),
+            tables.WIKIDATA_COMPANY_RELATIONSHIPS_TABLE: (
+                _create_wikidata_company_relationships_table
+            ),
+            tables.WIKIDATA_COMPANY_PEOPLE_TABLE: _create_wikidata_company_people_table,
+            tables.WIKIDATA_PERSONS_TABLE: _create_wikidata_persons_table,
+            tables.WIKIDATA_SEED_EXTRACTION_RUNS_TABLE: (
+                _create_wikidata_seed_extraction_runs_table
+            ),
+        }
+        if table_name not in table_builders:
+            raise ValueError(f"Unsupported Wikidata table: {table_name}")
+        table_builders[table_name](
+            connection,
+            source_table=source_table,
+            target_schema=target_schema,
+        )
+    return _duckdb_table_count(
+        connection,
+        _duckdb_qualified_table_name(
+            catalog_name,
+            WIKIDATA_DUCKDB_SCHEMA,
+            table_name,
+        ),
+    )
+
+
 def _assert_wikidata_listed_companies_table_exists(
     connection: duckdb.DuckDBPyConnection,
     *,
@@ -358,7 +787,7 @@ def _assert_wikidata_listed_companies_table_exists(
         raise ValueError(
             "Missing DuckDB source table "
             f"{WIKIDATA_DUCKDB_DATASET_NAME}.{WIKIDATA_LISTED_COMPANIES_TABLE}; "
-            "materialize wikidata_listed_companies_duckdb first"
+            "load the Wikidata raw snapshot into DuckDB first"
         ) from exc
 
 
@@ -426,18 +855,7 @@ def _validate_wikidata_exchanges(
     *,
     target_schema: str,
 ) -> None:
-    invalid_mics = connection.execute(
-        f"""
-        select mic
-        from {target_schema}.{tables.WIKIDATA_EXCHANGES_TABLE}
-        where mic is not null
-          and not regexp_full_match(mic, '^[A-Z0-9]{{4}}$')
-        order by mic
-        """
-    ).fetchall()
-    if invalid_mics:
-        values = ", ".join(str(row[0]) for row in invalid_mics[:10])
-        raise ValueError(f"Invalid Wikidata MIC values: {values}")
+    _validate_wikidata_exchange_mics(connection, target_schema=target_schema)
 
     missing_exchange_ids = connection.execute(
         f"""
@@ -452,6 +870,25 @@ def _validate_wikidata_exchanges(
     if missing_exchange_ids:
         values = ", ".join(str(row[0]) for row in missing_exchange_ids[:10])
         raise ValueError(f"Wikidata listings reference missing exchanges: {values}")
+
+
+def _validate_wikidata_exchange_mics(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    target_schema: str,
+) -> None:
+    invalid_mics = connection.execute(
+        f"""
+        select mic
+        from {target_schema}.{tables.WIKIDATA_EXCHANGES_TABLE}
+        where mic is not null
+          and not regexp_full_match(mic, '^[A-Z0-9]{{4}}$')
+        order by mic
+        """
+    ).fetchall()
+    if invalid_mics:
+        values = ", ".join(str(row[0]) for row in invalid_mics[:10])
+        raise ValueError(f"Invalid Wikidata MIC values: {values}")
 
 
 def _create_wikidata_companies_table(
@@ -1846,12 +2283,10 @@ _wikidata_registry_seed_spine_exclusion = dg.AssetSelection.assets(
     )
 ).upstream()
 
-# The canonical-contacts derivation (wikidata_clickhouse_canonical_contacts,
-# defs/wikidata/contacts.py) runs after wikidata_company_seed_clickhouse lands
-# corpscout.wikidata_company_websites/wikidata_companies, joined via an explicit
-# union (not .upstream(), which already covers everything the export needs).
+# The canonical-contacts derivation runs only after the completion asset proves that
+# all nine ClickHouse tables belong to one source snapshot.
 wikidata_company_seed_selection = (
-    dg.AssetSelection.assets("wikidata_company_seed_clickhouse").upstream()
+    dg.AssetSelection.assets("wikidata_company_seed_complete").upstream()
     | dg.AssetSelection.assets("wikidata_clickhouse_canonical_contacts")
 ) - _wikidata_registry_seed_spine_exclusion
 
@@ -1874,12 +2309,27 @@ def wikidata_company_seed_weekly_schedule() -> dg.RunRequest:
 
 defs = dg.Definitions(
     assets=[
-        wikidata_listed_companies_duckdb_asset,
-        wikidata_company_seed_duckdb_tables,
         wikidata_company_seed_raw_objects,
-        wikidata_company_seed_clickhouse,
+        wikidata_companies_duckdb,
+        wikidata_exchanges_duckdb,
+        wikidata_company_listings_duckdb,
+        wikidata_company_identifiers_duckdb,
+        wikidata_company_websites_duckdb,
+        wikidata_company_relationships_duckdb,
+        wikidata_company_people_duckdb,
+        wikidata_persons_duckdb,
+        wikidata_seed_extraction_runs_duckdb,
+        wikidata_companies_clickhouse,
+        wikidata_exchanges_clickhouse,
+        wikidata_company_listings_clickhouse,
+        wikidata_company_identifiers_clickhouse,
+        wikidata_company_websites_clickhouse,
+        wikidata_company_relationships_clickhouse,
+        wikidata_company_people_clickhouse,
+        wikidata_persons_clickhouse,
+        wikidata_seed_extraction_runs_clickhouse,
+        wikidata_company_seed_complete,
     ],
     jobs=[wikidata_company_seed_weekly_job],
     schedules=[wikidata_company_seed_weekly_schedule],
-    resources={"wikidata_duckdb": duckdb_resource(WIKIDATA_DUCKDB_PATH)},
 )

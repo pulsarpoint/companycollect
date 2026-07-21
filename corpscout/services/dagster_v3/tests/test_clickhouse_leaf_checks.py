@@ -44,7 +44,7 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "sweden_financial_current_facts_clickhouse",
         "sweden_financial_metrics_clickhouse",
         "uk_companies_house_clickhouse_companies",
-        "wikidata_company_seed_clickhouse",
+        "wikidata_company_seed_complete",
     ):
         assert expected in keys, expected
 

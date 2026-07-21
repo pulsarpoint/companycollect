@@ -209,7 +209,7 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ),
     # wikidata — weekly Mon
     ClickhouseLeaf(
-        "wikidata_company_seed_clickhouse",
+        "wikidata_company_seed_complete",
         (
             "wikidata_companies",
             "wikidata_exchanges",
