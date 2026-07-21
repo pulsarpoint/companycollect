@@ -47,6 +47,8 @@ def test_wikidata_clickhouse_depends_on_duckdb_final_tables() -> None:
         "wikidata_company_identifiers",
         "wikidata_company_websites",
         "wikidata_company_relationships",
+        "wikidata_company_people",
+        "wikidata_persons",
         "wikidata_seed_extraction_runs",
     }
 
@@ -61,6 +63,8 @@ def test_wikidata_normalized_tables_depend_on_listed_companies_duckdb() -> None:
         "wikidata_company_identifiers",
         "wikidata_company_websites",
         "wikidata_company_relationships",
+        "wikidata_company_people",
+        "wikidata_persons",
         "wikidata_seed_extraction_runs",
     }:
         asset = asset_graph.get(AssetKey([asset_name]))
@@ -601,6 +605,10 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
         "raw/run_id=run-123/retrieved_date=2026-06-19/"
         "exchange_id=Q13677/augmentation_kind=relationships/page=000001_batch=000001.json"
     )
+    people_page_one_key = (
+        "raw/run_id=run-123/retrieved_date=2026-06-19/"
+        "exchange_id=Q13677/augmentation_kind=people/page=000001_batch=000001.json"
+    )
     manifest_key = (
         "raw/run_id=run-123/retrieved_date=2026-06-19/"
         "exchange_id=Q13677/manifest.json"
@@ -612,6 +620,7 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
     assert ("source-wikidata-company-seed", augmentation_page_two_key) in s3_client.objects
     assert ("source-wikidata-company-seed", identifier_page_one_key) in s3_client.objects
     assert ("source-wikidata-company-seed", relationship_page_one_key) in s3_client.objects
+    assert ("source-wikidata-company-seed", people_page_one_key) in s3_client.objects
     assert ("source-wikidata-company-seed", manifest_key) in s3_client.objects
     assert ("source-wikidata-company-seed", old_key) not in s3_client.objects
     assert ("source-wikidata-company-seed", old_legacy_key) not in s3_client.objects
@@ -637,6 +646,7 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
         augmentation_page_one_key,
         identifier_page_one_key,
         relationship_page_one_key,
+        people_page_one_key,
         augmentation_page_two_key,
         (
             "raw/run_id=run-123/retrieved_date=2026-06-19/"
@@ -645,6 +655,10 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
         (
             "raw/run_id=run-123/retrieved_date=2026-06-19/"
             "exchange_id=Q13677/augmentation_kind=relationships/page=000002_batch=000001.json"
+        ),
+        (
+            "raw/run_id=run-123/retrieved_date=2026-06-19/"
+            "exchange_id=Q13677/augmentation_kind=people/page=000002_batch=000001.json"
         ),
     ]
     assert len(manifest["query_hash"]) == 64
@@ -859,6 +873,7 @@ def test_wikidata_raw_pull_pulls_registry_properties_after_exchanges_as_pseudo_e
 def test_wikidata_query_uses_stable_order_for_offset_pagination() -> None:
     from dagster_v3.defs.wikidata.source import (
         build_company_identifier_augmentation_query,
+        build_company_people_augmentation_query,
         build_company_profile_augmentation_query,
         build_company_relationship_augmentation_query,
         build_listed_company_query,
@@ -868,6 +883,7 @@ def test_wikidata_query_uses_stable_order_for_offset_pagination() -> None:
     profile_query = build_company_profile_augmentation_query(("Q1", "Q2"))
     identifier_query = build_company_identifier_augmentation_query(("Q1", "Q2"))
     relationship_query = build_company_relationship_augmentation_query(("Q1", "Q2"))
+    people_query = build_company_people_augmentation_query(("Q1", "Q2"))
 
     assert (
         "OPTIONAL { ?headquarters wdt:P131*/wdt:P17 ?headquartersCountry . }"
@@ -909,6 +925,32 @@ def test_wikidata_query_uses_stable_order_for_offset_pagination() -> None:
     assert "?company p:P127 ?ownedByStatement" in relationship_query
     assert "?company p:P1830 ?ownerOfStatement" in relationship_query
     assert "?company wdt:P1320 ?openCorporatesId" not in relationship_query
+
+    assert "VALUES ?company { wd:Q1 wd:Q2 }" in people_query
+    assert "?company p:P169 ?roleStatement" in people_query
+    assert "?roleStatement ps:P169 ?person" in people_query
+    assert 'BIND("P169" AS ?roleProperty)' in people_query
+    assert "?company p:P112 ?roleStatement" in people_query
+    assert 'BIND("P112" AS ?roleProperty)' in people_query
+    assert "?company p:P488 ?roleStatement" in people_query
+    assert 'BIND("P488" AS ?roleProperty)' in people_query
+    assert "?company p:P3320 ?roleStatement" in people_query
+    assert 'BIND("P3320" AS ?roleProperty)' in people_query
+    # P127 (owned by) is filtered to person-valued targets only -- P127 usually points at
+    # another company, so without this the branch would pull in corporate owners too.
+    assert "?company p:P127 ?roleStatement" in people_query
+    assert "?person wdt:P31 wd:Q5" in people_query
+    assert 'BIND("P127" AS ?roleProperty)' in people_query
+    assert "OPTIONAL { ?roleStatement pq:P580 ?startDate . }" in people_query
+    assert "OPTIONAL { ?roleStatement pq:P582 ?endDate . }" in people_query
+    assert "?person wdt:P569 ?personBirthDate" in people_query
+    assert "BIND(YEAR(?personBirthDate) AS ?personBirthYear)" in people_query
+    assert "?person wdt:P18 ?personImage" in people_query
+    assert (
+        "https://commons.wikimedia.org/wiki/Special:FilePath/" in people_query
+    )
+    assert "?company wdt:P1320 ?openCorporatesId" not in people_query
+    assert people_query.index("ORDER BY") > people_query.rindex("SERVICE wikibase:label")
 
 
 def test_wikidata_registry_number_query_anchors_on_property_and_drops_listing_triples() -> (
@@ -1032,6 +1074,8 @@ def test_wikidata_normalization_builds_final_duckdb_tables(tmp_path: Path) -> No
         "wikidata_company_identifiers": 11,
         "wikidata_company_websites": 2,
         "wikidata_company_relationships": 4,
+        "wikidata_company_people": 0,
+        "wikidata_persons": 0,
         "wikidata_seed_extraction_runs": 1,
     }
 
@@ -1302,6 +1346,16 @@ create table wikidata.wikidata_stage.listed_companies (
     owner_of_label varchar,
     owner_of_start_date varchar,
     owner_of_end_date varchar,
+    person_wikidata_id varchar,
+    person_url varchar,
+    person_label varchar,
+    person_description varchar,
+    person_image varchar,
+    person_image_url varchar,
+    person_birth_year varchar,
+    role_property varchar,
+    role_start_date varchar,
+    role_end_date varchar,
     query_hash varchar,
     source_record_id varchar,
     source_payload_hash varchar,
@@ -1392,6 +1446,244 @@ def _seed_wikidata_registry_dedup_scenario(database_path: Path) -> None:
         )
 
 
+def test_wikidata_normalization_builds_company_people_and_persons_tables(
+    tmp_path: Path,
+) -> None:
+    # Acceptance case: Koenigsegg Automotive AB (Q500, discovered via the SE registry
+    # seed P6460) must yield Christian von Koenigsegg (Q600) as founder AND CEO, with
+    # description/image/birth year -- and dedup to ONE wikidata_persons row despite
+    # appearing via three separate role links across two companies. Company/person
+    # identity throughout is the Wikidata QID; nothing here matches on name.
+    from dagster_v3.defs.wikidata import assets
+
+    database_path = tmp_path / "wikidata.duckdb"
+    _seed_wikidata_company_people_scenario(database_path)
+
+    with duckdb.connect(str(database_path)) as connection:
+        row_counts = assets.normalize_wikidata_listed_companies_duckdb(
+            connection,
+            catalog_name=database_path.stem,
+        )
+
+    assert row_counts["wikidata_company_people"] == 6
+    assert row_counts["wikidata_persons"] == 4
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        company_people = connection.execute(
+            """
+            select
+                company_wikidata_id,
+                person_wikidata_id,
+                role_property,
+                role_label,
+                start_date,
+                end_date,
+                is_current
+            from wikidata.wikidata.wikidata_company_people
+            order by company_wikidata_id, role_property, person_wikidata_id
+            """
+        ).fetchall()
+        persons = connection.execute(
+            """
+            select
+                person_wikidata_id,
+                name,
+                name_normalized,
+                description,
+                birth_year,
+                image_url,
+                wikidata_url
+            from wikidata.wikidata.wikidata_persons
+            order by person_wikidata_id
+            """
+        ).fetchall()
+
+    assert company_people == [
+        ("Q500", "Q600", "P112", "founder", date(1994, 1, 1), None, 1),
+        ("Q500", "Q600", "P169", "chief executive officer", date(1994, 1, 1), None, 1),
+        ("Q500", "Q601", "P3320", "board member", date(2010, 1, 1), date(2015, 12, 31), 0),
+        ("Q501", "Q600", "P3320", "board member", None, None, 1),
+        ("Q502", "Q603", "P127", "owned by", None, None, 1),
+        ("Q502", "Q602", "P488", "chairperson", None, None, 1),
+    ]
+    assert persons == [
+        (
+            "Q600",
+            "Christian von Koenigsegg",
+            "christian von koenigsegg",
+            "Swedish automotive engineer and entrepreneur",
+            1972,
+            "https://commons.wikimedia.org/wiki/Special:FilePath/Christian%20von%20Koenigsegg.jpg",
+            "http://www.wikidata.org/entity/Q600",
+        ),
+        ("Q601", "Board Member X", "board member x", None, None, None, "http://www.wikidata.org/entity/Q601"),
+        ("Q602", "Chair Person Y", "chair person y", None, None, None, "http://www.wikidata.org/entity/Q602"),
+        ("Q603", "Owner Person Z", "owner person z", None, None, None, "http://www.wikidata.org/entity/Q603"),
+    ]
+
+
+def _seed_wikidata_company_people_scenario(database_path: Path) -> None:
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema wikidata.wikidata_stage")
+        connection.execute(_WIKIDATA_STAGE_TABLE_DDL)
+
+        def insert_row(row: dict[str, Any]) -> None:
+            columns = ", ".join(row.keys())
+            placeholders = ", ".join("?" for _ in row)
+            connection.execute(
+                "insert into wikidata.wikidata_stage.listed_companies "
+                f"({columns}) values ({placeholders})",
+                list(row.values()),
+            )
+
+        def person_row(
+            *,
+            exchange_wikidata_id: str,
+            company_wikidata_id: str,
+            company_label: str,
+            person_wikidata_id: str,
+            person_label: str,
+            role_property: str,
+            source_payload_hash: str,
+            person_description: str = "",
+            person_image: str = "",
+            person_image_url: str = "",
+            person_birth_year: str = "",
+            role_start_date: str = "",
+            role_end_date: str = "",
+        ) -> dict[str, Any]:
+            return {
+                "source_run_id": "run-1",
+                "retrieved_at": "2026-07-21 10:00:00",
+                "exchange_wikidata_id": exchange_wikidata_id,
+                "exchange_name": f"Wikidata registry-number seed: {exchange_wikidata_id}",
+                "listed_company_count_on_exchange": 0,
+                "page_number": 1,
+                "page_offset": 0,
+                "page_row_number": 1,
+                "company_wikidata_id": company_wikidata_id,
+                "company_url": f"http://www.wikidata.org/entity/{company_wikidata_id}",
+                "company_label": company_label,
+                "listing_statement_id": "",
+                "listing_url": "",
+                "person_wikidata_id": person_wikidata_id,
+                "person_url": f"http://www.wikidata.org/entity/{person_wikidata_id}",
+                "person_label": person_label,
+                "person_description": person_description,
+                "person_image": person_image,
+                "person_image_url": person_image_url,
+                "person_birth_year": person_birth_year,
+                "role_property": role_property,
+                "role_start_date": role_start_date,
+                "role_end_date": role_end_date,
+                "source_record_id": (
+                    f"{exchange_wikidata_id}:{company_wikidata_id}:{role_property}:"
+                    f"{person_wikidata_id}"
+                ),
+                "source_payload_hash": source_payload_hash,
+                "raw_binding_json": "{}",
+            }
+
+        koenigsegg_image_url = (
+            "https://commons.wikimedia.org/wiki/Special:FilePath/"
+            "Christian%20von%20Koenigsegg.jpg"
+        )
+        # CEO (P169) and founder (P112) are TWO separate role rows for the SAME person
+        # at the SAME company -- both must survive as distinct wikidata_company_people
+        # rows (grouped by role_property), while wikidata_persons still dedups to one.
+        insert_row(
+            person_row(
+                exchange_wikidata_id="registry_P6460",
+                company_wikidata_id="Q500",
+                company_label="Koenigsegg Automotive AB",
+                person_wikidata_id="Q600",
+                person_label="Christian von Koenigsegg",
+                person_description="Swedish automotive engineer and entrepreneur",
+                person_image="Christian von Koenigsegg.jpg",
+                person_image_url=koenigsegg_image_url,
+                person_birth_year="1972",
+                role_property="P169",
+                role_start_date="1994-01-01T00:00:00Z",
+                source_payload_hash="a" * 64,
+            )
+        )
+        insert_row(
+            person_row(
+                exchange_wikidata_id="registry_P6460",
+                company_wikidata_id="Q500",
+                company_label="Koenigsegg Automotive AB",
+                person_wikidata_id="Q600",
+                person_label="Christian von Koenigsegg",
+                person_description="Swedish automotive engineer and entrepreneur",
+                person_image="Christian von Koenigsegg.jpg",
+                person_image_url=koenigsegg_image_url,
+                person_birth_year="1972",
+                role_property="P112",
+                role_start_date="1994-01-01T00:00:00Z",
+                source_payload_hash="b" * 64,
+            )
+        )
+        # Historical board member (P3320) with an end date -> is_current must be 0.
+        insert_row(
+            person_row(
+                exchange_wikidata_id="registry_P6460",
+                company_wikidata_id="Q500",
+                company_label="Koenigsegg Automotive AB",
+                person_wikidata_id="Q601",
+                person_label="Board Member X",
+                role_property="P3320",
+                role_start_date="2010-01-01T00:00:00Z",
+                role_end_date="2015-12-31T00:00:00Z",
+                source_payload_hash="c" * 64,
+            )
+        )
+        # Same person (Q600) linked from a SECOND, different company -- proves
+        # wikidata_persons dedups across companies, not just across roles.
+        insert_row(
+            person_row(
+                exchange_wikidata_id="registry_P2333",
+                company_wikidata_id="Q501",
+                company_label="Koenigsegg Group AB",
+                person_wikidata_id="Q600",
+                person_label="Christian von Koenigsegg",
+                person_description="Swedish automotive engineer and entrepreneur",
+                person_image="Christian von Koenigsegg.jpg",
+                person_image_url=koenigsegg_image_url,
+                person_birth_year="1972",
+                role_property="P3320",
+                source_payload_hash="d" * 64,
+            )
+        )
+        # Chairperson (P488) at a third company, no description/image/birth year --
+        # exercises the nullable columns.
+        insert_row(
+            person_row(
+                exchange_wikidata_id="registry_P1059",
+                company_wikidata_id="Q502",
+                company_label="Example Holding AB",
+                person_wikidata_id="Q602",
+                person_label="Chair Person Y",
+                role_property="P488",
+                source_payload_hash="e" * 64,
+            )
+        )
+        # Person-valued owned-by (P127) at the same company -- the branch that requires
+        # the ?person wdt:P31 wd:Q5 filter in the SPARQL query (not re-verified here,
+        # that's build_company_people_augmentation_query's job; this only checks the
+        # DuckDB pivot treats a P127 row like any other role).
+        insert_row(
+            person_row(
+                exchange_wikidata_id="registry_P1059",
+                company_wikidata_id="Q502",
+                company_label="Example Holding AB",
+                person_wikidata_id="Q603",
+                person_label="Owner Person Z",
+                role_property="P127",
+                source_payload_hash="f" * 64,
+            )
+        )
+
+
 def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> None:
     from dagster_v3.defs.wikidata import assets, tables
 
@@ -1456,6 +1748,10 @@ def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> No
             (table_name, tables.WIKIDATA_TABLE_COLUMNS[table_name])
             for table_name in tables.WIKIDATA_TABLES
         ),
+        "allow_empty_tables": (
+            tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
+            tables.WIKIDATA_PERSONS_TABLE,
+        ),
     }
     assert isinstance(result, dg.MaterializeResult)
     assert result.metadata == {
@@ -1464,7 +1760,9 @@ def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> No
         "wikidata_company_identifiers_row_count": 3,
         "wikidata_company_websites_row_count": 4,
         "wikidata_company_relationships_row_count": 5,
-        "wikidata_seed_extraction_runs_row_count": 6,
+        "wikidata_company_people_row_count": 6,
+        "wikidata_persons_row_count": 7,
+        "wikidata_seed_extraction_runs_row_count": 8,
     }
 
 

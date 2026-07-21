@@ -102,6 +102,16 @@ WIKIDATA_LISTED_COMPANIES_COLUMNS: dict[str, dict[str, Any]] = {
     "owner_of_label": {"data_type": "text"},
     "owner_of_start_date": {"data_type": "text"},
     "owner_of_end_date": {"data_type": "text"},
+    "person_wikidata_id": {"data_type": "text"},
+    "person_url": {"data_type": "text"},
+    "person_label": {"data_type": "text"},
+    "person_description": {"data_type": "text"},
+    "person_image": {"data_type": "text"},
+    "person_image_url": {"data_type": "text"},
+    "person_birth_year": {"data_type": "text"},
+    "role_property": {"data_type": "text"},
+    "role_start_date": {"data_type": "text"},
+    "role_end_date": {"data_type": "text"},
     "query_hash": {"data_type": "text"},
     "source_record_id": {"data_type": "text", "nullable": False},
     "source_payload_hash": {"data_type": "text", "nullable": False},
@@ -151,6 +161,16 @@ WIKIDATA_AUGMENTATION_FIELD_NAMES = (
     "owner_of_label",
     "owner_of_start_date",
     "owner_of_end_date",
+    "person_wikidata_id",
+    "person_url",
+    "person_label",
+    "person_description",
+    "person_image",
+    "person_image_url",
+    "person_birth_year",
+    "role_property",
+    "role_start_date",
+    "role_end_date",
 )
 
 
@@ -623,6 +643,94 @@ WHERE {{
   }}
 }}
 ORDER BY ?company ?parentOrganizationStatement ?childOrganizationStatement ?ownedByStatement ?ownerOfStatement
+""".strip()
+
+
+def build_company_people_augmentation_query(company_ids: tuple[str, ...]) -> str:
+    """Company-anchored person links: chief executive officer (P169), founder (P112),
+    chairperson (P488), board member (P3320), and person-valued owned-by (P127, filtered
+    to ?person wdt:P31 wd:Q5 -- P127 usually points at another company, so without the
+    human filter this branch would pull in corporate owners too). Every branch shares the
+    same ?roleStatement/?person/?startDate/?endDate variable names (unlike
+    build_company_relationship_augmentation_query's per-branch names) since all five
+    represent the same shape (a person link with an optional date range) -- that keeps
+    the DuckDB pivot a single flat group-by instead of nine UNION branches. The company
+    anchor (?company, bound from the VALUES clause) is the only way a person enters this
+    table; there is no name-based lookup anywhere in this query or its consumers."""
+    values = company_values_clause(company_ids)
+    return f"""
+SELECT DISTINCT
+  ?company
+  ?person
+  ?personLabel
+  ?personDescription
+  ?personImage
+  ?personImageUrl
+  ?personBirthYear
+  ?roleProperty
+  ?startDate
+  ?endDate
+WHERE {{
+  VALUES ?company {{ {values} }}
+
+  {{
+    ?company p:P169 ?roleStatement .
+    ?roleStatement ps:P169 ?person .
+    BIND("P169" AS ?roleProperty)
+    OPTIONAL {{ ?roleStatement pq:P580 ?startDate . }}
+    OPTIONAL {{ ?roleStatement pq:P582 ?endDate . }}
+  }}
+  UNION
+  {{
+    ?company p:P112 ?roleStatement .
+    ?roleStatement ps:P112 ?person .
+    BIND("P112" AS ?roleProperty)
+    OPTIONAL {{ ?roleStatement pq:P580 ?startDate . }}
+    OPTIONAL {{ ?roleStatement pq:P582 ?endDate . }}
+  }}
+  UNION
+  {{
+    ?company p:P488 ?roleStatement .
+    ?roleStatement ps:P488 ?person .
+    BIND("P488" AS ?roleProperty)
+    OPTIONAL {{ ?roleStatement pq:P580 ?startDate . }}
+    OPTIONAL {{ ?roleStatement pq:P582 ?endDate . }}
+  }}
+  UNION
+  {{
+    ?company p:P3320 ?roleStatement .
+    ?roleStatement ps:P3320 ?person .
+    BIND("P3320" AS ?roleProperty)
+    OPTIONAL {{ ?roleStatement pq:P580 ?startDate . }}
+    OPTIONAL {{ ?roleStatement pq:P582 ?endDate . }}
+  }}
+  UNION
+  {{
+    ?company p:P127 ?roleStatement .
+    ?roleStatement ps:P127 ?person .
+    ?person wdt:P31 wd:Q5 .
+    BIND("P127" AS ?roleProperty)
+    OPTIONAL {{ ?roleStatement pq:P580 ?startDate . }}
+    OPTIONAL {{ ?roleStatement pq:P582 ?endDate . }}
+  }}
+
+  OPTIONAL {{
+    ?person wdt:P569 ?personBirthDate .
+    BIND(YEAR(?personBirthDate) AS ?personBirthYear)
+  }}
+  OPTIONAL {{
+    ?person wdt:P18 ?personImage .
+    BIND(IRI(CONCAT(
+      "https://commons.wikimedia.org/wiki/Special:FilePath/",
+      ENCODE_FOR_URI(STR(?personImage))
+    )) AS ?personImageUrl)
+  }}
+
+  SERVICE wikibase:label {{
+    bd:serviceParam wikibase:language "en" .
+  }}
+}}
+ORDER BY ?company ?roleProperty ?person
 """.strip()
 
 
@@ -1112,6 +1220,16 @@ def company_augmentation_row_from_binding(binding: dict[str, Any]) -> dict[str, 
         "owner_of_label": binding_value(binding, "ownerOfLabel"),
         "owner_of_start_date": binding_value(binding, "ownerOfStartDate"),
         "owner_of_end_date": binding_value(binding, "ownerOfEndDate"),
+        "person_wikidata_id": wikidata_id_from_url(binding_value(binding, "person")),
+        "person_url": binding_value(binding, "person"),
+        "person_label": binding_value(binding, "personLabel"),
+        "person_description": binding_value(binding, "personDescription"),
+        "person_image": binding_value(binding, "personImage"),
+        "person_image_url": binding_value(binding, "personImageUrl"),
+        "person_birth_year": binding_value(binding, "personBirthYear"),
+        "role_property": binding_value(binding, "roleProperty"),
+        "role_start_date": binding_value(binding, "startDate"),
+        "role_end_date": binding_value(binding, "endDate"),
         "augmentation_raw_binding_json": raw_binding_json,
     }
 

@@ -3,6 +3,8 @@ WIKIDATA_COMPANY_LISTINGS_TABLE = "wikidata_company_listings"
 WIKIDATA_COMPANY_IDENTIFIERS_TABLE = "wikidata_company_identifiers"
 WIKIDATA_COMPANY_WEBSITES_TABLE = "wikidata_company_websites"
 WIKIDATA_COMPANY_RELATIONSHIPS_TABLE = "wikidata_company_relationships"
+WIKIDATA_COMPANY_PEOPLE_TABLE = "wikidata_company_people"
+WIKIDATA_PERSONS_TABLE = "wikidata_persons"
 WIKIDATA_SEED_EXTRACTION_RUNS_TABLE = "wikidata_seed_extraction_runs"
 
 WIKIDATA_TABLES = (
@@ -11,6 +13,8 @@ WIKIDATA_TABLES = (
     WIKIDATA_COMPANY_IDENTIFIERS_TABLE,
     WIKIDATA_COMPANY_WEBSITES_TABLE,
     WIKIDATA_COMPANY_RELATIONSHIPS_TABLE,
+    WIKIDATA_COMPANY_PEOPLE_TABLE,
+    WIKIDATA_PERSONS_TABLE,
     WIKIDATA_SEED_EXTRACTION_RUNS_TABLE,
 )
 
@@ -104,6 +108,36 @@ WIKIDATA_TABLE_COLUMNS = {
         "start_date",
         "end_date",
         "is_current",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "retrieved_at",
+        "resolved_at",
+    ),
+    WIKIDATA_COMPANY_PEOPLE_TABLE: (
+        "company_wikidata_id",
+        "person_wikidata_id",
+        "role_property",
+        "role_label",
+        "start_date",
+        "end_date",
+        "is_current",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "retrieved_at",
+        "resolved_at",
+    ),
+    WIKIDATA_PERSONS_TABLE: (
+        "person_wikidata_id",
+        "name",
+        "name_normalized",
+        "description",
+        "birth_year",
+        "image_url",
+        "wikidata_url",
         "source_system",
         "source_run_id",
         "source_record_id",

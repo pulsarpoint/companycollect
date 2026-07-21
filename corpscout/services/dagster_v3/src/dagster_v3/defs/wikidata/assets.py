@@ -36,6 +36,7 @@ from dagster_v3.defs.wikidata.source import (
     binding_value,
     build_active_listed_exchanges_query,
     build_company_identifier_augmentation_query,
+    build_company_people_augmentation_query,
     build_company_profile_augmentation_query,
     build_company_relationship_augmentation_query,
     build_listed_company_query,
@@ -222,6 +223,15 @@ def _export_wikidata_tables_to_clickhouse(
                     (table_name, tables.WIKIDATA_TABLE_COLUMNS[table_name])
                     for table_name in tables.WIKIDATA_TABLES
                 ),
+                # A small/narrow seed run can legitimately find zero person links (or a
+                # raw snapshot predating this augmentation kind) -- refuse-on-empty stays
+                # the default for every other wikidata table, but these two are allowed
+                # to replace-empty like the canonical <src>_company_contacts pattern
+                # (see dagster_v3/CLAUDE.md).
+                allow_empty_tables=(
+                    tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
+                    tables.WIKIDATA_PERSONS_TABLE,
+                ),
             )
     return dg.MaterializeResult(
         metadata={f"{table_name}_row_count": count for table_name, count in row_counts.items()}
@@ -263,6 +273,16 @@ def normalize_wikidata_listed_companies_duckdb(
         target_schema=target_schema,
     )
     _create_wikidata_company_relationships_table(
+        connection,
+        source_table=source_table,
+        target_schema=target_schema,
+    )
+    _create_wikidata_company_people_table(
+        connection,
+        source_table=source_table,
+        target_schema=target_schema,
+    )
+    _create_wikidata_persons_table(
         connection,
         source_table=source_table,
         target_schema=target_schema,
@@ -428,6 +448,16 @@ def _ensure_optional_wikidata_source_columns(
         "owner_of_label",
         "owner_of_start_date",
         "owner_of_end_date",
+        "person_wikidata_id",
+        "person_url",
+        "person_label",
+        "person_description",
+        "person_image",
+        "person_image_url",
+        "person_birth_year",
+        "role_property",
+        "role_start_date",
+        "role_end_date",
     ):
         connection.execute(
             f"alter table {source_table} add column if not exists {column_name} varchar"
@@ -1009,6 +1039,109 @@ def _create_wikidata_company_relationships_table(
     )
 
 
+# Static role-label map (human strings, not SPARQL labels) for the person-link
+# properties build_company_people_augmentation_query pulls. Kept here in code, next to
+# the table it feeds, rather than round-tripped through Wikidata's label service.
+WIKIDATA_COMPANY_PEOPLE_ROLE_LABEL_SQL_CASE = """
+            case role_property
+                when 'P169' then 'chief executive officer'
+                when 'P112' then 'founder'
+                when 'P488' then 'chairperson'
+                when 'P3320' then 'board member'
+                when 'P127' then 'owned by'
+                else role_property
+            end"""
+
+
+def _create_wikidata_company_people_table(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    source_table: str,
+    target_schema: str,
+) -> None:
+    # Company anchor only: every row's identity is (company_wikidata_id,
+    # role_property, person_wikidata_id) -- both ids are Wikidata QIDs captured
+    # directly from the SPARQL binding (build_company_people_augmentation_query),
+    # never derived from a person's name/label. No fuzzy matching anywhere.
+    connection.execute(
+        f"""
+        create or replace table {target_schema}.{tables.WIKIDATA_COMPANY_PEOPLE_TABLE} as
+        with people as (
+            select
+                company_wikidata_id,
+                person_wikidata_id,
+                role_property,
+                {WIKIDATA_COMPANY_PEOPLE_ROLE_LABEL_SQL_CASE} as role_label,
+                try_cast(
+                    nullif(regexp_extract(role_start_date, '[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}', 0), '')
+                    as date
+                ) as start_date,
+                try_cast(
+                    nullif(regexp_extract(role_end_date, '[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}', 0), '')
+                    as date
+                ) as end_date,
+                source_run_id,
+                retrieved_at,
+                source_payload_hash
+            from {source_table}
+            where nullif(company_wikidata_id, '') is not null
+              and nullif(person_wikidata_id, '') is not null
+              and nullif(role_property, '') is not null
+        )
+        select
+            company_wikidata_id,
+            person_wikidata_id,
+            role_property,
+            max(role_label) as role_label,
+            min(start_date) as start_date,
+            max(end_date) as end_date,
+            case when max(end_date) is null then 1 else 0 end as is_current,
+            'wikidata' as source_system,
+            max(source_run_id) as source_run_id,
+            company_wikidata_id || ':' || role_property || ':' || person_wikidata_id
+                as source_record_id,
+            max(source_payload_hash) as source_payload_hash,
+            cast(max(retrieved_at) as timestamp) as retrieved_at,
+            cast(current_timestamp as timestamp) as resolved_at
+        from people
+        group by company_wikidata_id, person_wikidata_id, role_property
+        """
+    )
+
+
+def _create_wikidata_persons_table(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    source_table: str,
+    target_schema: str,
+) -> None:
+    # One row per person_wikidata_id, deduped across every company that links to them
+    # (e.g. a person who is CEO of one company and a board member of another still gets
+    # exactly one row here). Keyed on the Wikidata QID only -- never on name/label.
+    connection.execute(
+        f"""
+        create or replace table {target_schema}.{tables.WIKIDATA_PERSONS_TABLE} as
+        select
+            person_wikidata_id,
+            coalesce(nullif(max(person_label), ''), person_wikidata_id) as name,
+            lower(coalesce(nullif(max(person_label), ''), person_wikidata_id)) as name_normalized,
+            nullif(max(person_description), '') as description,
+            try_cast(nullif(max(person_birth_year), '') as usmallint) as birth_year,
+            nullif(max(person_image_url), '') as image_url,
+            nullif(max(person_url), '') as wikidata_url,
+            'wikidata' as source_system,
+            max(source_run_id) as source_run_id,
+            person_wikidata_id as source_record_id,
+            max(source_payload_hash) as source_payload_hash,
+            cast(max(retrieved_at) as timestamp) as retrieved_at,
+            cast(current_timestamp as timestamp) as resolved_at
+        from {source_table}
+        where nullif(person_wikidata_id, '') is not null
+        group by person_wikidata_id
+        """
+    )
+
+
 def _create_wikidata_seed_extraction_runs_table(
     connection: duckdb.DuckDBPyConnection,
     *,
@@ -1305,6 +1438,7 @@ def pull_wikidata_company_augmentation_raw_objects_for_page(
             ("profile", build_company_profile_augmentation_query),
             ("identifiers", build_company_identifier_augmentation_query),
             ("relationships", build_company_relationship_augmentation_query),
+            ("people", build_company_people_augmentation_query),
         )
         for query_index, (augmentation_kind, query_builder) in enumerate(
             query_builders,

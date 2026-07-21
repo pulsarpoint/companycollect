@@ -17,6 +17,7 @@ from dagster_v3.defs.ted_procurement import tables as ted_procurement_tables
 from dagster_v3.defs.finland_verotax import tables as finland_verotax_tables
 from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 from dagster_v3.defs.sweden_financial import history as sweden_financial_history
+from dagster_v3.defs.wikidata import tables as wikidata_tables
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
@@ -166,6 +167,7 @@ EXPECTED_MIGRATIONS = (
     "000149_corpscout_esef_filings",
     "000150_corpscout_se_translations",
     "000151_corpscout_se_concept_labels_distinct",
+    "000152_corpscout_wikidata_company_people",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1151,6 +1153,47 @@ def test_wikidata_company_augmentations_migration_adds_profile_and_property_colu
     assert "ADD COLUMN IF NOT EXISTS wikidata_property_id " in sql
     assert "ALTER TABLE corpscout.wikidata_company_relationships" in sql
     assert "DROP COLUMN IF EXISTS wikidata_property_id" in down_sql
+
+
+def test_wikidata_company_people_migration_creates_people_and_persons_tables() -> None:
+    sql = _migration_sql("000152_corpscout_wikidata_company_people.up.sql")
+    down_sql = _migration_sql("000152_corpscout_wikidata_company_people.down.sql")
+
+    assert "CREATE DATABASE IF NOT EXISTS" in sql
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_people" in sql
+    for column_name in wikidata_tables.WIKIDATA_TABLE_COLUMNS[
+        wikidata_tables.WIKIDATA_COMPANY_PEOPLE_TABLE
+    ]:
+        assert f" {column_name} " in sql, (
+            f"wikidata_company_people.{column_name} not found in migration SQL"
+        )
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert (
+        "ORDER BY (company_wikidata_id, role_property, person_wikidata_id);" in sql
+    )
+    assert "DROP TABLE IF EXISTS corpscout.wikidata_company_people" in down_sql
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_persons" in sql
+    for column_name in wikidata_tables.WIKIDATA_TABLE_COLUMNS[
+        wikidata_tables.WIKIDATA_PERSONS_TABLE
+    ]:
+        assert f" {column_name} " in sql, (
+            f"wikidata_persons.{column_name} not found in migration SQL"
+        )
+    assert "ORDER BY (person_wikidata_id);" in sql
+    assert "DROP TABLE IF EXISTS corpscout.wikidata_persons" in down_sql
+
+    # Down drops in reverse dependency order of the up migration (persons has no FK to
+    # people, but the convention elsewhere in this file is last-created-first-dropped).
+    assert down_sql.index(
+        "DROP TABLE IF EXISTS corpscout.wikidata_persons"
+    ) < down_sql.index("DROP TABLE IF EXISTS corpscout.wikidata_company_people")
+
+    # No name-based person matching anywhere in the schema -- person identity is always
+    # the Wikidata QID (person_wikidata_id), never a name/label column.
+    assert "name String" in sql
+    assert "name_normalized String" in sql
 
 
 def test_nace_category_embeddings_migration_covers_reference_matrix() -> None:
