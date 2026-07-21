@@ -66,6 +66,13 @@ QUALIFIED_FILINGS_INDEX_TABLE = tables.QUALIFIED_FILINGS_INDEX_TABLE
 
 TOP_COUNTRY_LIMIT = 10
 
+# Both per-filing download loops (facts + report-XHTML) log a progress line
+# via `log_info` every this-many processed filings, plus once, unconditionally,
+# at loop completion -- a multi-hour partition run otherwise produces no
+# visible progress signal between the "N filings in scope" line at the start
+# and the final materialization metadata.
+_PROGRESS_LOG_INTERVAL = 100
+
 # S3 bucket + key layout for downloaded fact JSON (Task 4). fxo_id is
 # versioned upstream (a new filing version gets a new fxo_id), so the key is
 # stable per filing version -- an existing object never needs re-fetching.
@@ -406,7 +413,8 @@ def _period_end_year(period_end: str | None) -> int | None:
     Returns None (never raises) for a missing/blank value, a value too
     short to hold a 4-digit year, a non-numeric prefix, or a year outside
     [ESEF_FACTS_PARTITION_YEAR_MIN, ESEF_FACTS_PARTITION_YEAR_MAX] -- all of
-    these are counted as `skipped_out_of_range` by the caller, never raised.
+    these are counted as `index_filings_outside_partition_range` by the
+    caller, never raised.
     """
     if not period_end or len(period_end) < 4:
         return None
@@ -427,25 +435,33 @@ def _split_filings_by_partition_year(
 ) -> tuple[list[_IndexFilingRow], int]:
     """Bucket filings_index rows into (this partition's filings, out-of-range count).
 
-    `skipped_out_of_range` is a whole-index count (every row with a NULL,
+    The out-of-range count is a whole-index count (every row with a NULL,
     unparseable, or out-of-[2019,2027] `period_end`), recomputed fresh on
     every partition run -- not scoped to `partition_year`. It's cheap (one
     pass over already-fetched rows) and doubles as an index-health signal;
     a row can never belong to more than one year bucket anyway, so scoping
     it further would just mean re-deriving the same total N times across
     the 9 backfill partitions for no benefit.
+
+    The caller stores this under the `index_filings_outside_partition_range`
+    metadata key -- renamed from `skipped_out_of_range`, which read as
+    partition-scoped and was misinterpreted live (a 2019 partition run with
+    `filings_in_scope=0, skipped_out_of_range=6` was reasonably read as "6
+    filings out of range in 2019", when it was really the whole index's
+    out-of-range count). Both partitioned assets also emit `partition_year`
+    in their metadata now, so the two numbers can never be conflated again.
     """
     in_scope: list[_IndexFilingRow] = []
-    skipped_out_of_range = 0
+    outside_partition_range_count = 0
     for lei, fxo_id, period_end, json_url, has_json_facts in rows:
         year = _period_end_year(period_end)
         if year is None:
-            skipped_out_of_range += 1
+            outside_partition_range_count += 1
             continue
         if year != partition_year:
             continue
         in_scope.append((lei, fxo_id, period_end, json_url, bool(has_json_facts)))
-    return in_scope, skipped_out_of_range
+    return in_scope, outside_partition_range_count
 
 
 _ReportXhtmlFilingRow = tuple[str, str | None]
@@ -458,22 +474,23 @@ def _split_report_filings_by_partition_year(
     count) for the report XHTML archive asset.
 
     Same `period_end`-year bucketing rule as `_split_filings_by_partition_year`
-    (and the same "recomputed fresh on every partition run" rationale for
-    `skipped_out_of_range` -- see that function's docstring), but the row
-    shape is narrower: (fxo_id, report_url) only -- this asset never parses
-    content, so it has no use for `lei`/`json_url`/`has_json_facts`.
+    (and the same "recomputed fresh on every partition run" rationale for the
+    `index_filings_outside_partition_range` metadata key -- see that
+    function's docstring), but the row shape is narrower: (fxo_id,
+    report_url) only -- this asset never parses content, so it has no use
+    for `lei`/`json_url`/`has_json_facts`.
     """
     in_scope: list[_ReportXhtmlFilingRow] = []
-    skipped_out_of_range = 0
+    outside_partition_range_count = 0
     for fxo_id, period_end, report_url in rows:
         year = _period_end_year(period_end)
         if year is None:
-            skipped_out_of_range += 1
+            outside_partition_range_count += 1
             continue
         if year != partition_year:
             continue
         in_scope.append((fxo_id, report_url))
-    return in_scope, skipped_out_of_range
+    return in_scope, outside_partition_range_count
 
 
 def _row_from_fact(
@@ -614,6 +631,41 @@ def _replace_facts_partition(
         raise
 
 
+def _log_facts_progress(
+    log_info: Callable[..., object],
+    *,
+    partition_year: int,
+    processed: int,
+    total: int,
+    downloaded: int,
+    reused: int,
+    skipped: int,
+    force: bool = False,
+) -> None:
+    """Log one progress line for `run_esef_filing_facts_partition`'s loop.
+
+    A no-op unless `processed` lands on `_PROGRESS_LOG_INTERVAL` or `force`
+    is set -- `force=True` is used exactly once, after the loop ends, so the
+    final tally is always logged even when `processed` isn't a multiple of
+    the interval. `skipped` is `skipped_no_json + skipped_upstream_missing`
+    (filings that never reached a download/reuse outcome) -- a filing whose
+    parse failed after a successful download/reuse is not double-counted
+    here, since it's already inside `downloaded`/`reused`.
+    """
+    if not force and processed % _PROGRESS_LOG_INTERVAL != 0:
+        return
+    log_info(
+        "ESEF facts partition %s: %d/%d filings processed "
+        "(%d downloaded, %d reused, %d skipped)",
+        partition_year,
+        processed,
+        total,
+        downloaded,
+        reused,
+        skipped,
+    )
+
+
 def run_esef_filing_facts_partition(
     *,
     esef_filings_duckdb: DuckDBResource,
@@ -646,18 +698,19 @@ def run_esef_filing_facts_partition(
             f"from {QUALIFIED_FILINGS_INDEX_TABLE} order by fxo_id"
         ).fetchall()
 
-    in_scope, skipped_out_of_range = _split_filings_by_partition_year(
+    in_scope, outside_partition_range_count = _split_filings_by_partition_year(
         index_rows, partition_year=partition_year
     )
     log_info(
-        "ESEF facts partition %s: %d filings in scope, %d skipped (out of range)",
+        "ESEF facts partition %s: %d filings in scope, %d outside partition range",
         partition_year,
         len(in_scope),
-        skipped_out_of_range,
+        outside_partition_range_count,
     )
 
     object_store.ensure_bucket(ESEF_FILINGS_FACTS_BUCKET)
 
+    processed_count = 0
     downloaded_count = 0
     reused_count = 0
     skipped_no_json = 0
@@ -671,8 +724,18 @@ def run_esef_filing_facts_partition(
     with tempfile.TemporaryDirectory(prefix="esef_filings_facts_") as tmpdir:
         temp_dir = Path(tmpdir)
         for lei, fxo_id, period_end, json_url, has_json_facts in in_scope:
+            processed_count += 1
             if not has_json_facts or not json_url:
                 skipped_no_json += 1
+                _log_facts_progress(
+                    log_info,
+                    partition_year=partition_year,
+                    processed=processed_count,
+                    total=len(in_scope),
+                    downloaded=downloaded_count,
+                    reused=reused_count,
+                    skipped=skipped_no_json + skipped_upstream_missing,
+                )
                 continue
             try:
                 parsed, downloaded, parse_failed = _download_and_parse_filing_facts(
@@ -705,6 +768,15 @@ def run_esef_filing_facts_partition(
                     fxo_id,
                     json_url,
                 )
+                _log_facts_progress(
+                    log_info,
+                    partition_year=partition_year,
+                    processed=processed_count,
+                    total=len(in_scope),
+                    downloaded=downloaded_count,
+                    reused=reused_count,
+                    skipped=skipped_no_json + skipped_upstream_missing,
+                )
                 continue
             if downloaded:
                 downloaded_count += 1
@@ -712,6 +784,15 @@ def run_esef_filing_facts_partition(
                 reused_count += 1
             if parse_failed:
                 parse_failed_count += 1
+                _log_facts_progress(
+                    log_info,
+                    partition_year=partition_year,
+                    processed=processed_count,
+                    total=len(in_scope),
+                    downloaded=downloaded_count,
+                    reused=reused_count,
+                    skipped=skipped_no_json + skipped_upstream_missing,
+                )
                 continue
             fact_rows.extend(
                 _row_from_fact(
@@ -719,6 +800,31 @@ def run_esef_filing_facts_partition(
                 )
                 for fact in parsed
             )
+            _log_facts_progress(
+                log_info,
+                partition_year=partition_year,
+                processed=processed_count,
+                total=len(in_scope),
+                downloaded=downloaded_count,
+                reused=reused_count,
+                skipped=skipped_no_json + skipped_upstream_missing,
+            )
+
+    # Unconditional completion log -- always fires exactly once with the
+    # final tally, even when `processed_count` doesn't land on
+    # `_PROGRESS_LOG_INTERVAL` (the periodic logging above is silent for the
+    # remainder past the last interval boundary).
+    if in_scope:
+        _log_facts_progress(
+            log_info,
+            partition_year=partition_year,
+            processed=processed_count,
+            total=len(in_scope),
+            downloaded=downloaded_count,
+            reused=reused_count,
+            skipped=skipped_no_json + skipped_upstream_missing,
+            force=True,
+        )
 
     with esef_filings_duckdb.get_connection() as connection:
         _replace_facts_partition(
@@ -733,7 +839,8 @@ def run_esef_filing_facts_partition(
         "reused_count": reused_count,
         "skipped_no_json": skipped_no_json,
         "skipped_upstream_missing": skipped_upstream_missing,
-        "skipped_out_of_range": skipped_out_of_range,
+        "index_filings_outside_partition_range": outside_partition_range_count,
+        "partition_year": partition_year,
         "parse_failed_count": parse_failed_count,
         "fact_row_count": len(fact_rows),
     }
@@ -803,6 +910,38 @@ def _archive_filing_report_xhtml(
     return True
 
 
+def _log_report_xhtml_progress(
+    log_info: Callable[..., object],
+    *,
+    partition_year: int,
+    processed: int,
+    total: int,
+    downloaded: int,
+    reused: int,
+    skipped: int,
+    force: bool = False,
+) -> None:
+    """Log one progress line for `run_esef_report_xhtml_partition`'s loop.
+
+    Same interval/force semantics as `_log_facts_progress` (see its
+    docstring). `skipped` is `skipped_no_report_url +
+    skipped_upstream_missing` -- there is no parse step in this loop, so
+    every filing lands in exactly one of downloaded/reused/skipped.
+    """
+    if not force and processed % _PROGRESS_LOG_INTERVAL != 0:
+        return
+    log_info(
+        "ESEF report xhtml partition %s: %d/%d filings processed "
+        "(%d downloaded, %d reused, %d skipped)",
+        partition_year,
+        processed,
+        total,
+        downloaded,
+        reused,
+        skipped,
+    )
+
+
 def run_esef_report_xhtml_partition(
     *,
     esef_filings_duckdb: DuckDBResource,
@@ -831,19 +970,20 @@ def run_esef_report_xhtml_partition(
             f"from {QUALIFIED_FILINGS_INDEX_TABLE} order by fxo_id"
         ).fetchall()
 
-    in_scope, skipped_out_of_range = _split_report_filings_by_partition_year(
+    in_scope, outside_partition_range_count = _split_report_filings_by_partition_year(
         index_rows, partition_year=partition_year
     )
     log_info(
-        "ESEF report XHTML partition %s: %d filings in scope, %d skipped "
-        "(out of range)",
+        "ESEF report XHTML partition %s: %d filings in scope, %d outside "
+        "partition range",
         partition_year,
         len(in_scope),
-        skipped_out_of_range,
+        outside_partition_range_count,
     )
 
     object_store.ensure_bucket(ESEF_FILINGS_FACTS_BUCKET)
 
+    processed_count = 0
     downloaded_count = 0
     reused_count = 0
     skipped_no_report_url = 0
@@ -852,8 +992,18 @@ def run_esef_report_xhtml_partition(
     with tempfile.TemporaryDirectory(prefix="esef_filings_report_xhtml_") as tmpdir:
         temp_dir = Path(tmpdir)
         for fxo_id, report_url in in_scope:
+            processed_count += 1
             if not report_url:
                 skipped_no_report_url += 1
+                _log_report_xhtml_progress(
+                    log_info,
+                    partition_year=partition_year,
+                    processed=processed_count,
+                    total=len(in_scope),
+                    downloaded=downloaded_count,
+                    reused=reused_count,
+                    skipped=skipped_no_report_url + skipped_upstream_missing,
+                )
                 continue
             try:
                 downloaded = _archive_filing_report_xhtml(
@@ -879,11 +1029,43 @@ def run_esef_report_xhtml_partition(
                     fxo_id,
                     report_url,
                 )
+                _log_report_xhtml_progress(
+                    log_info,
+                    partition_year=partition_year,
+                    processed=processed_count,
+                    total=len(in_scope),
+                    downloaded=downloaded_count,
+                    reused=reused_count,
+                    skipped=skipped_no_report_url + skipped_upstream_missing,
+                )
                 continue
             if downloaded:
                 downloaded_count += 1
             else:
                 reused_count += 1
+            _log_report_xhtml_progress(
+                log_info,
+                partition_year=partition_year,
+                processed=processed_count,
+                total=len(in_scope),
+                downloaded=downloaded_count,
+                reused=reused_count,
+                skipped=skipped_no_report_url + skipped_upstream_missing,
+            )
+
+    # Unconditional completion log -- see the analogous comment in
+    # run_esef_filing_facts_partition.
+    if in_scope:
+        _log_report_xhtml_progress(
+            log_info,
+            partition_year=partition_year,
+            processed=processed_count,
+            total=len(in_scope),
+            downloaded=downloaded_count,
+            reused=reused_count,
+            skipped=skipped_no_report_url + skipped_upstream_missing,
+            force=True,
+        )
 
     return {
         "filings_in_scope": len(in_scope),
@@ -891,7 +1073,8 @@ def run_esef_report_xhtml_partition(
         "reused_count": reused_count,
         "skipped_no_report_url": skipped_no_report_url,
         "skipped_upstream_missing": skipped_upstream_missing,
-        "skipped_out_of_range": skipped_out_of_range,
+        "index_filings_outside_partition_range": outside_partition_range_count,
+        "partition_year": partition_year,
     }
 
 

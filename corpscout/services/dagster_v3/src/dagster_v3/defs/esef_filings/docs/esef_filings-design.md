@@ -569,6 +569,21 @@ of this task, tracked for a future pass:
   404/410 were never in that set, so the dlt wrapper was already not retrying them; the
   incident's cost was one wasted attempt per dead link, not five, and no retry-config
   change was needed alongside the asset-loop fix.
+- **`skipped_out_of_range` misread as partition-scoped** (live-operation feedback,
+  2026-07-21): a user materialized the 2019 partition and saw
+  `filings_in_scope=0, skipped_out_of_range=6` in the run's metadata, and reasonably read
+  the 6 as "6 filings out of range in 2019" — it is actually a **whole-index** count
+  (every row across all years with a NULL/unparseable/out-of-range `period_end`,
+  recomputed fresh on every partition run; see `_split_filings_by_partition_year`'s
+  docstring), so the same 6 shows up unchanged on every other year's partition too. Fixed
+  by renaming the metadata key to `index_filings_outside_partition_range` (same whole-index
+  value, still a useful index-health signal — nothing about what's counted changed) and
+  having both `esef_filing_facts_duckdb` and `esef_report_xhtml_s3` also emit
+  `partition_year` in their metadata, so the two numbers can never be conflated again even
+  without reading the docstring. Both per-filing download loops also gained periodic
+  progress logging (every 100 processed filings, plus once at completion) via the asset's
+  `log_info`, so a multi-hour partition run has a visible heartbeat between the initial
+  "N filings in scope" line and the final materialization metadata.
 
 ## 12. Verification
 

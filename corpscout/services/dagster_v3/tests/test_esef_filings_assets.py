@@ -579,7 +579,8 @@ def test_facts_partition_downloads_and_parses_filings_in_scope_for_year(
     assert metadata["downloaded_count"] == 2
     assert metadata["reused_count"] == 0
     assert metadata["skipped_no_json"] == 0
-    assert metadata["skipped_out_of_range"] == 0
+    assert metadata["index_filings_outside_partition_range"] == 0
+    assert metadata["partition_year"] == 2022
     assert metadata["parse_failed_count"] == 0
     assert metadata["fact_row_count"] == 8  # 6 (fixture) + 2 (small payload)
     assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
@@ -686,7 +687,7 @@ def test_null_and_out_of_range_period_end_are_skipped_without_crashing(
     metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
 
     assert metadata["filings_in_scope"] == 1
-    assert metadata["skipped_out_of_range"] == 3
+    assert metadata["index_filings_outside_partition_range"] == 3
     assert metadata["fact_row_count"] == 6
     # None of the out-of-range filings were ever downloaded.
     assert client.download_calls == [_facts_json_url("A-1")]
@@ -878,6 +879,82 @@ def test_facts_partition_5xx_http_error_propagates_and_fails_partition_loudly(
 
 
 # ==========================================================================
+# Download progress logging (Issue 2, live-operation feedback): a multi-hour
+# partition run must log a heartbeat periodically via `log_info`, not just
+# print "N filings in scope" up front and go silent until the run's final
+# materialization metadata.
+# ==========================================================================
+
+
+def test_facts_partition_logs_progress_every_100_processed_filings(
+    tmp_path: Path,
+) -> None:
+    """105 stub filings -- 95 with a valid json_url (downloaded), 10
+    without (skipped_no_json) -- deterministically split the periodic
+    100-filing-boundary log from the completion log (105 is not itself a
+    multiple of 100, so these are genuinely two distinct log lines), and the
+    zero-padded `F-000`..`F-104` fxo_ids sort (and are therefore processed)
+    in the same order as the two groups are listed below. Numbers asserted
+    below come from the loop's real counters, not hardcoded placeholders.
+    """
+    downloaded_fxo_ids = [f"F-{i:03d}" for i in range(95)]
+    skipped_fxo_ids = [f"F-{i:03d}" for i in range(95, 105)]
+    records = [
+        _record(
+            fxo_id=fxo_id, period_end="2022-12-31", json_url=_facts_json_url(fxo_id)
+        )
+        for fxo_id in downloaded_fxo_ids
+    ] + [
+        _record(fxo_id=fxo_id, period_end="2022-12-31", json_url=None)
+        for fxo_id in skipped_fxo_ids
+    ]
+    _seed_filings_index(tmp_path, records)
+
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient(
+        {fxo_id: _SMALL_PAYLOAD_BYTES for fxo_id in downloaded_fxo_ids}
+    )
+    log_calls: list[tuple[Any, ...]] = []
+
+    assets.run_esef_filing_facts_partition(
+        esef_filings_duckdb=_db_resource(tmp_path),
+        object_store=object_store,
+        client=client,
+        partition_year=2022,
+        source_run_id="run-progress",
+        log_info=lambda *a, **k: log_calls.append(a),
+        log_warning=lambda *a, **k: None,
+    )
+
+    progress_calls = [call for call in log_calls if "processed" in call[0]]
+    assert len(progress_calls) == 2
+
+    _, year_1, processed_1, total_1, downloaded_1, reused_1, skipped_1 = progress_calls[
+        0
+    ]
+    assert (year_1, processed_1, total_1, downloaded_1, reused_1, skipped_1) == (
+        2022,
+        100,
+        105,
+        95,
+        0,
+        5,
+    )
+
+    _, year_2, processed_2, total_2, downloaded_2, reused_2, skipped_2 = progress_calls[
+        1
+    ]
+    assert (year_2, processed_2, total_2, downloaded_2, reused_2, skipped_2) == (
+        2022,
+        105,
+        105,
+        95,
+        0,
+        10,
+    )
+
+
+# ==========================================================================
 # esef_report_xhtml_s3: year-partitioned report XHTML archive to S3
 #
 # `run_esef_report_xhtml_partition` (the plain function the asset delegates
@@ -983,7 +1060,8 @@ def test_report_xhtml_partition_archives_filings_in_scope_for_year(
         "reused_count": 0,
         "skipped_no_report_url": 0,
         "skipped_upstream_missing": 0,
-        "skipped_out_of_range": 0,
+        "index_filings_outside_partition_range": 0,
+        "partition_year": 2022,
     }
     assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
 
@@ -1090,7 +1168,7 @@ def test_report_xhtml_null_and_out_of_range_period_end_are_skipped_without_crash
     )
 
     assert metadata["filings_in_scope"] == 1
-    assert metadata["skipped_out_of_range"] == 3
+    assert metadata["index_filings_outside_partition_range"] == 3
     # None of the out-of-range filings were ever downloaded.
     assert client.download_calls == [_report_url("A-1")]
 
@@ -1230,7 +1308,8 @@ def test_report_xhtml_partition_skips_404_increments_counter_no_s3_object(
         "reused_count": 0,
         "skipped_no_report_url": 0,
         "skipped_upstream_missing": 1,
-        "skipped_out_of_range": 0,
+        "index_filings_outside_partition_range": 0,
+        "partition_year": 2022,
     }
     # Both filings were attempted (the 404 didn't abort the loop early).
     assert client.download_calls == [_report_url("A-1"), _report_url("B-1")]
@@ -1568,13 +1647,15 @@ def test_refresh_job_executes_all_assets_for_partition(
         -1
     ].metadata
     assert facts_metadata["filings_in_scope"].value == 1
-    assert facts_metadata["skipped_out_of_range"].value == 0
+    assert facts_metadata["index_filings_outside_partition_range"].value == 0
+    assert facts_metadata["partition_year"].value == 2026
 
     xhtml_metadata = result.asset_materializations_for_node("esef_report_xhtml_s3")[
         -1
     ].metadata
     assert xhtml_metadata["filings_in_scope"].value == 1
-    assert xhtml_metadata["skipped_out_of_range"].value == 0
+    assert xhtml_metadata["index_filings_outside_partition_range"].value == 0
+    assert xhtml_metadata["partition_year"].value == 2026
 
     rows = _fetch_filings_index(tmp_path)
     assert [row[0] for row in rows] == ["A-1"]
