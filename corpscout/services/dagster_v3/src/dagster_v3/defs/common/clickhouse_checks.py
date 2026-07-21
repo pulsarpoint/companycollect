@@ -212,6 +212,7 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         "wikidata_company_seed_clickhouse",
         (
             "wikidata_companies",
+            "wikidata_exchanges",
             "wikidata_company_listings",
             "wikidata_company_identifiers",
             "wikidata_company_websites",

@@ -24,6 +24,7 @@ WIKIDATA_REGISTRY_PSEUDO_EXCHANGE_PREFIX = "registry_"
 WIKIDATA_DUCKDB_PIPELINE_NAME = "wikidata_listed_companies"
 WIKIDATA_DUCKDB_DATASET_NAME = "wikidata_stage"
 WIKIDATA_LISTED_COMPANIES_TABLE = "listed_companies"
+WIKIDATA_EXCHANGES_TABLE = "exchanges"
 DEFAULT_WIKIDATA_PAGE_SIZE = 5_000
 DEFAULT_WIKIDATA_AUGMENTATION_BATCH_SIZE = 100
 DEFAULT_WIKIDATA_REQUEST_TIMEOUT_SECONDS = 120
@@ -117,6 +118,20 @@ WIKIDATA_LISTED_COMPANIES_COLUMNS: dict[str, dict[str, Any]] = {
     "source_payload_hash": {"data_type": "text", "nullable": False},
     "raw_binding_json": {"data_type": "text"},
 }
+WIKIDATA_EXCHANGES_COLUMNS: dict[str, dict[str, Any]] = {
+    "source_run_id": {"data_type": "text"},
+    "retrieved_at": {"data_type": "timestamp"},
+    "exchange_wikidata_id": {"data_type": "text", "nullable": False},
+    "exchange_name": {"data_type": "text"},
+    "mic": {"data_type": "text"},
+    "country_wikidata_id": {"data_type": "text"},
+    "country_name": {"data_type": "text"},
+    "country_iso2": {"data_type": "text"},
+    "listed_company_count": {"data_type": "bigint"},
+    "source_record_id": {"data_type": "text", "nullable": False},
+    "source_payload_hash": {"data_type": "text", "nullable": False},
+    "raw_exchange_json": {"data_type": "text"},
+}
 
 WIKIDATA_AUGMENTATION_FIELD_NAMES = (
     "inception_date",
@@ -209,7 +224,9 @@ class WikidataRawPullConfig(dg.Config):
             return None
         stripped = value.strip()
         if not stripped:
-            raise ValueError("registry_property_ids_csv must not be blank when provided")
+            raise ValueError(
+                "registry_property_ids_csv must not be blank when provided"
+            )
         return stripped
 
     @field_validator("user_agent")
@@ -742,10 +759,23 @@ def company_values_clause(company_ids: tuple[str, ...]) -> str:
 
 def build_active_listed_exchanges_query() -> str:
     return """
-SELECT ?exchange ?exchangeLabel (COUNT(DISTINCT ?company) AS ?listedCompanyCount)
+SELECT
+  ?exchange
+  ?exchangeLabel
+  ?mic
+  ?country
+  ?countryLabel
+  ?countryIso2
+  (COUNT(DISTINCT ?company) AS ?listedCompanyCount)
 WHERE {
   ?company p:P414 ?listing .
   ?listing ps:P414 ?exchange .
+
+  OPTIONAL { ?exchange wdt:P7534 ?mic . }
+  OPTIONAL {
+    ?exchange wdt:P17 ?country .
+    OPTIONAL { ?country wdt:P297 ?countryIso2 . }
+  }
 
   FILTER NOT EXISTS { ?listing pq:P582 ?listingEndDate . }
   FILTER NOT EXISTS { ?company wdt:P576 ?dissolvedDate . }
@@ -754,8 +784,8 @@ WHERE {
     bd:serviceParam wikibase:language "en" .
   }
 }
-GROUP BY ?exchange ?exchangeLabel
-ORDER BY DESC(?listedCompanyCount) ?exchange
+GROUP BY ?exchange ?exchangeLabel ?mic ?country ?countryLabel ?countryIso2
+ORDER BY DESC(?listedCompanyCount) ?exchange ?mic ?country
 """.strip()
 
 
@@ -767,14 +797,22 @@ def wikidata_listed_companies_source(
     max_pages: int | None = None,
     max_exchanges: int | None = None,
     source_run_id: str = "",
-) -> DltResource:
-    return wikidata_listed_companies_resource(
-        object_store=object_store,
-        raw_run_id=raw_run_id,
-        max_pages=max_pages,
-        max_exchanges=max_exchanges,
-        source_run_id=source_run_id,
-    )
+) -> list[DltResource]:
+    return [
+        wikidata_listed_companies_resource(
+            object_store=object_store,
+            raw_run_id=raw_run_id,
+            max_pages=max_pages,
+            max_exchanges=max_exchanges,
+            source_run_id=source_run_id,
+        ),
+        wikidata_exchanges_resource(
+            object_store=object_store,
+            raw_run_id=raw_run_id,
+            max_exchanges=max_exchanges,
+            source_run_id=source_run_id,
+        ),
+    ]
 
 
 def wikidata_listed_companies_resource(
@@ -804,6 +842,111 @@ def wikidata_listed_companies_resource(
     )
 
 
+def wikidata_exchanges_resource(
+    *,
+    object_store: Any | None = None,
+    raw_run_id: str | None = None,
+    max_exchanges: int | None = None,
+    source_run_id: str = "",
+) -> DltResource:
+    def rows() -> Iterator[dict[str, Any]]:
+        yield from iter_wikidata_exchange_rows(
+            object_store=object_store,
+            raw_run_id=raw_run_id,
+            max_exchanges=max_exchanges,
+            source_run_id=source_run_id,
+        )
+
+    return dlt.resource(
+        rows,
+        name=WIKIDATA_EXCHANGES_TABLE,
+        table_name=WIKIDATA_EXCHANGES_TABLE,
+        write_disposition="replace",
+        primary_key="source_record_id",
+        columns=WIKIDATA_EXCHANGES_COLUMNS,
+    )
+
+
+def iter_wikidata_exchange_rows(
+    *,
+    object_store: Any | None = None,
+    raw_run_id: str | None = None,
+    max_exchanges: int | None = None,
+    source_run_id: str = "",
+) -> Iterator[dict[str, Any]]:
+    if object_store is None:
+        raise ValueError(
+            "Wikidata exchange dlt source requires object_store; "
+            "materialize wikidata_company_seed_raw_objects first"
+        )
+    effective_raw_run_id = raw_run_id or source_run_id
+    if not effective_raw_run_id:
+        raise ValueError("Wikidata exchange dlt source requires a raw run id")
+
+    exchange_number = 0
+    for manifest_key in completed_wikidata_raw_manifest_keys(
+        object_store=object_store,
+        run_id=effective_raw_run_id,
+    ):
+        manifest = read_wikidata_raw_json(
+            object_store=object_store,
+            object_key=manifest_key,
+        )
+        if manifest.get("query_mode") != "exchange":
+            continue
+        exchange_number += 1
+        if max_exchanges is not None and exchange_number > max_exchanges:
+            break
+        yield from exchange_rows_from_manifest(
+            manifest,
+            fallback_source_run_id=source_run_id,
+        )
+
+
+def exchange_rows_from_manifest(
+    manifest: dict[str, Any],
+    *,
+    fallback_source_run_id: str,
+) -> Iterator[dict[str, Any]]:
+    exchange_id = str(manifest.get("exchange_id") or "")
+    if not exchange_id:
+        raise ValueError("Wikidata raw exchange manifest is missing exchange_id")
+    raw_mics = manifest.get("mics", [])
+    if not isinstance(raw_mics, list):
+        raise ValueError("Wikidata raw exchange manifest mics must be a list")
+    mics = sorted(
+        {str(mic).strip().upper() for mic in raw_mics if str(mic).strip()}
+    ) or [None]
+
+    for mic in mics:
+        exchange_payload = {
+            "exchange_wikidata_id": exchange_id,
+            "exchange_name": str(manifest.get("exchange_name") or ""),
+            "mic": mic,
+            "country_wikidata_id": str(manifest.get("country_wikidata_id") or ""),
+            "country_name": str(manifest.get("country_name") or ""),
+            "country_iso2": str(manifest.get("country_iso2") or "").upper(),
+            "listed_company_count": int(
+                manifest.get("listed_company_count_on_exchange") or 0
+            ),
+        }
+        raw_exchange_json = json.dumps(
+            exchange_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        yield {
+            "source_run_id": str(manifest.get("run_id") or fallback_source_run_id),
+            "retrieved_at": str(manifest.get("started_at") or ""),
+            **exchange_payload,
+            "source_record_id": f"{exchange_id}:{mic or 'no_mic'}",
+            "source_payload_hash": sha256(
+                raw_exchange_json.encode("utf-8")
+            ).hexdigest(),
+            "raw_exchange_json": raw_exchange_json,
+        }
+
+
 def iter_wikidata_listed_company_rows(
     *,
     object_store: Any | None = None,
@@ -821,17 +964,10 @@ def iter_wikidata_listed_company_rows(
     if not effective_raw_run_id:
         raise ValueError("Wikidata listed-company dlt source requires a raw run id")
 
-    manifest_keys = wikidata_raw_manifest_keys(
+    manifest_keys = completed_wikidata_raw_manifest_keys(
         object_store=object_store,
         run_id=effective_raw_run_id,
-        fallback_to_latest=raw_run_id is None,
     )
-    if not manifest_keys:
-        raise ValueError(
-            "No Wikidata raw manifest objects found for "
-            f"run_id={effective_raw_run_id}; materialize "
-            "wikidata_company_seed_raw_objects first"
-        )
 
     for exchange_number, manifest_key in enumerate(manifest_keys, start=1):
         if max_exchanges is not None and exchange_number > max_exchanges:
@@ -844,52 +980,37 @@ def iter_wikidata_listed_company_rows(
         )
 
 
-def wikidata_raw_manifest_keys(
+def completed_wikidata_raw_manifest_keys(
     *,
     object_store: Any,
     run_id: str,
-    fallback_to_latest: bool,
 ) -> list[str]:
-    all_manifest_keys = [
-        key
-        for key in sorted(object_store.list_keys("raw/", bucket=WIKIDATA_RAW_BUCKET))
-        if key.endswith("/manifest.json")
-    ]
-    run_prefix = f"raw/run_id={run_id}/"
-    run_manifest_keys = [key for key in all_manifest_keys if key.startswith(run_prefix)]
-    if run_manifest_keys or not fallback_to_latest or not all_manifest_keys:
-        return run_manifest_keys
-
-    return latest_wikidata_raw_manifest_keys(
+    snapshot_key = snapshot_manifest_object_key(run_id=run_id)
+    if not object_store.exists(snapshot_key, bucket=WIKIDATA_RAW_BUCKET):
+        raise ValueError(
+            "No completed Wikidata raw snapshot found for "
+            f"run_id={run_id}; materialize wikidata_company_seed_raw_objects "
+            "in the same run or provide raw_run_id"
+        )
+    snapshot = read_wikidata_raw_json(
         object_store=object_store,
-        manifest_keys=all_manifest_keys,
+        object_key=snapshot_key,
     )
 
+    if snapshot.get("status") != "complete":
+        raise ValueError(
+            f"Wikidata raw snapshot run_id={run_id} is not marked complete"
+        )
+    manifest_keys = snapshot.get("manifest_keys")
+    if not isinstance(manifest_keys, list) or not manifest_keys:
+        raise ValueError(
+            f"Completed Wikidata raw snapshot run_id={run_id} has no manifest keys"
+        )
+    return [str(manifest_key) for manifest_key in manifest_keys]
 
-def latest_wikidata_raw_manifest_keys(
-    *,
-    object_store: Any,
-    manifest_keys: list[str],
-) -> list[str]:
-    manifest_keys_by_run: dict[str, list[str]] = {}
-    for manifest_key in manifest_keys:
-        run_prefix, separator, _ = manifest_key.partition("retrieved_date=")
-        if separator:
-            manifest_keys_by_run.setdefault(run_prefix, []).append(manifest_key)
 
-    if not manifest_keys_by_run:
-        return []
-
-    return max(
-        manifest_keys_by_run.values(),
-        key=lambda keys: str(
-            read_wikidata_raw_json(
-                object_store=object_store,
-                object_key=keys[0],
-            ).get("started_at")
-            or ""
-        ),
-    )
+def snapshot_manifest_object_key(*, run_id: str) -> str:
+    return f"raw/run_id={run_id}/snapshot_manifest.json"
 
 
 def iter_wikidata_listed_company_rows_from_manifest(
@@ -899,7 +1020,9 @@ def iter_wikidata_listed_company_rows_from_manifest(
     max_pages: int | None,
     fallback_source_run_id: str,
 ) -> Iterator[dict[str, Any]]:
-    manifest = read_wikidata_raw_json(object_store=object_store, object_key=manifest_key)
+    manifest = read_wikidata_raw_json(
+        object_store=object_store, object_key=manifest_key
+    )
     exchange = exchange_row_from_manifest(
         manifest,
         source_run_id=fallback_source_run_id,
@@ -922,7 +1045,9 @@ def iter_wikidata_listed_company_rows_from_manifest(
             limit=page_size,
             offset=page_offset,
         )
-        payload = read_wikidata_raw_json(object_store=object_store, object_key=object_key)
+        payload = read_wikidata_raw_json(
+            object_store=object_store, object_key=object_key
+        )
         for row_number, binding in enumerate(response_bindings(payload), start=1):
             base_row = listed_company_row_from_binding(
                 binding,
@@ -1015,7 +1140,9 @@ def wikidata_company_augmentation_rows_by_company_id(
 ) -> dict[str, list[dict[str, str]]]:
     rows_by_company_id: dict[str, list[dict[str, str]]] = {}
     for object_key in manifest_augmentation_object_keys(manifest):
-        payload = read_wikidata_raw_json(object_store=object_store, object_key=object_key)
+        payload = read_wikidata_raw_json(
+            object_store=object_store, object_key=object_key
+        )
         for binding in response_bindings(payload):
             augmentation_row = company_augmentation_row_from_binding(binding)
             company_id = augmentation_row["company_wikidata_id"]
@@ -1046,11 +1173,88 @@ def active_listed_exchange_row_from_binding(
     return {
         "exchange_wikidata_id": exchange_id,
         "exchange_name": binding_value(binding, "exchangeLabel"),
+        "mic": binding_value(binding, "mic"),
+        "country_wikidata_id": wikidata_id_from_url(binding_value(binding, "country")),
+        "country_name": binding_value(binding, "countryLabel"),
+        "country_iso2": binding_value(binding, "countryIso2"),
         "listed_company_count_on_exchange": binding_int(binding, "listedCompanyCount"),
         "source_run_id": source_run_id,
         "retrieved_at": retrieved_at,
         "source_row_number": source_row_number,
     }
+
+
+def collapse_active_listed_exchange_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows_by_exchange_id: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        exchange_id = str(row["exchange_wikidata_id"])
+        rows_by_exchange_id.setdefault(exchange_id, []).append(row)
+
+    collapsed_rows: list[dict[str, Any]] = []
+    for exchange_id, exchange_rows in rows_by_exchange_id.items():
+        first_row = exchange_rows[0]
+        country_candidates = {
+            (
+                str(row.get("country_wikidata_id") or ""),
+                str(row.get("country_name") or ""),
+                str(row.get("country_iso2") or ""),
+            )
+            for row in exchange_rows
+            if any(
+                row.get(field_name)
+                for field_name in (
+                    "country_wikidata_id",
+                    "country_name",
+                    "country_iso2",
+                )
+            )
+        }
+        country_id, country_name, country_iso2 = (
+            min(
+                country_candidates,
+                key=lambda candidate: (
+                    -sum(bool(value) for value in candidate),
+                    candidate,
+                ),
+            )
+            if country_candidates
+            else ("", "", "")
+        )
+        collapsed_rows.append(
+            {
+                "exchange_wikidata_id": exchange_id,
+                "exchange_name": min(
+                    (
+                        str(row["exchange_name"])
+                        for row in exchange_rows
+                        if str(row.get("exchange_name") or "")
+                    ),
+                    default=exchange_id,
+                ),
+                "mics": sorted(
+                    {
+                        str(row["mic"]).strip().upper()
+                        for row in exchange_rows
+                        if str(row.get("mic") or "").strip()
+                    }
+                ),
+                "country_wikidata_id": country_id,
+                "country_name": country_name,
+                "country_iso2": country_iso2.upper(),
+                "listed_company_count_on_exchange": max(
+                    int(row["listed_company_count_on_exchange"])
+                    for row in exchange_rows
+                ),
+                "source_run_id": str(first_row["source_run_id"]),
+                "retrieved_at": str(first_row["retrieved_at"]),
+                "source_row_number": min(
+                    int(row["source_row_number"]) for row in exchange_rows
+                ),
+            }
+        )
+    return collapsed_rows
 
 
 def listed_company_row_from_binding(
@@ -1075,7 +1279,9 @@ def listed_company_row_from_binding(
         "retrieved_at": retrieved_at,
         "exchange_wikidata_id": exchange_id,
         "exchange_name": exchange["exchange_name"],
-        "listed_company_count_on_exchange": exchange["listed_company_count_on_exchange"],
+        "listed_company_count_on_exchange": exchange[
+            "listed_company_count_on_exchange"
+        ],
         "page_number": page_number,
         "page_offset": page_offset,
         "page_row_number": page_row_number,
@@ -1091,21 +1297,31 @@ def listed_company_row_from_binding(
         "website_url": binding_value(binding, "website"),
         "cik": binding_value(binding, "cik"),
         "lei": binding_value(binding, "lei"),
-        "headquarters_wikidata_id": wikidata_id_from_url(binding_value(binding, "headquarters")),
+        "headquarters_wikidata_id": wikidata_id_from_url(
+            binding_value(binding, "headquarters")
+        ),
         "headquarters_label": binding_value(binding, "headquartersLabel"),
         "headquarters_country_wikidata_id": wikidata_id_from_url(
             binding_value(binding, "headquartersCountry")
         ),
-        "headquarters_country_label": binding_value(binding, "headquartersCountryLabel"),
+        "headquarters_country_label": binding_value(
+            binding, "headquartersCountryLabel"
+        ),
         "headquarters_country_iso2": binding_value(binding, "headquartersCountryIso2"),
         "inception_date": binding_value(binding, "inceptionDate"),
-        "legal_form_wikidata_id": wikidata_id_from_url(binding_value(binding, "legalForm")),
+        "legal_form_wikidata_id": wikidata_id_from_url(
+            binding_value(binding, "legalForm")
+        ),
         "legal_form_label": binding_value(binding, "legalFormLabel"),
         "employee_count": binding_value(binding, "employeeCount"),
-        "employee_count_point_in_time": binding_value(binding, "employeeCountPointInTime"),
+        "employee_count_point_in_time": binding_value(
+            binding, "employeeCountPointInTime"
+        ),
         "logo_image": binding_value(binding, "logoImage"),
         "logo_image_url": binding_value(binding, "logoImageUrl"),
-        "industry_wikidata_id": wikidata_id_from_url(binding_value(binding, "industry")),
+        "industry_wikidata_id": wikidata_id_from_url(
+            binding_value(binding, "industry")
+        ),
         "industry_label": binding_value(binding, "industryLabel"),
         "opencorporates_company_id": binding_value(binding, "openCorporatesId"),
         "eu_vat_number": binding_value(binding, "euVatNumber"),
@@ -1133,7 +1349,9 @@ def listed_company_row_from_binding(
             binding,
             "parentOrganizationStartDate",
         ),
-        "parent_organization_end_date": binding_value(binding, "parentOrganizationEndDate"),
+        "parent_organization_end_date": binding_value(
+            binding, "parentOrganizationEndDate"
+        ),
         "child_organization_statement_id": wikidata_id_from_url(
             binding_value(binding, "childOrganizationStatement")
         ),
@@ -1141,14 +1359,22 @@ def listed_company_row_from_binding(
             binding_value(binding, "childOrganization")
         ),
         "child_organization_label": binding_value(binding, "childOrganizationLabel"),
-        "child_organization_start_date": binding_value(binding, "childOrganizationStartDate"),
-        "child_organization_end_date": binding_value(binding, "childOrganizationEndDate"),
-        "owned_by_statement_id": wikidata_id_from_url(binding_value(binding, "ownedByStatement")),
+        "child_organization_start_date": binding_value(
+            binding, "childOrganizationStartDate"
+        ),
+        "child_organization_end_date": binding_value(
+            binding, "childOrganizationEndDate"
+        ),
+        "owned_by_statement_id": wikidata_id_from_url(
+            binding_value(binding, "ownedByStatement")
+        ),
         "owned_by_wikidata_id": wikidata_id_from_url(binding_value(binding, "ownedBy")),
         "owned_by_label": binding_value(binding, "ownedByLabel"),
         "owned_by_start_date": binding_value(binding, "ownedByStartDate"),
         "owned_by_end_date": binding_value(binding, "ownedByEndDate"),
-        "owner_of_statement_id": wikidata_id_from_url(binding_value(binding, "ownerOfStatement")),
+        "owner_of_statement_id": wikidata_id_from_url(
+            binding_value(binding, "ownerOfStatement")
+        ),
         "owner_of_wikidata_id": wikidata_id_from_url(binding_value(binding, "ownerOf")),
         "owner_of_label": binding_value(binding, "ownerOfLabel"),
         "owner_of_start_date": binding_value(binding, "ownerOfStartDate"),
@@ -1168,10 +1394,14 @@ def company_augmentation_row_from_binding(binding: dict[str, Any]) -> dict[str, 
     return {
         "company_wikidata_id": wikidata_id_from_url(binding_value(binding, "company")),
         "inception_date": binding_value(binding, "inceptionDate"),
-        "legal_form_wikidata_id": wikidata_id_from_url(binding_value(binding, "legalForm")),
+        "legal_form_wikidata_id": wikidata_id_from_url(
+            binding_value(binding, "legalForm")
+        ),
         "legal_form_label": binding_value(binding, "legalFormLabel"),
         "employee_count": binding_value(binding, "employeeCount"),
-        "employee_count_point_in_time": binding_value(binding, "employeeCountPointInTime"),
+        "employee_count_point_in_time": binding_value(
+            binding, "employeeCountPointInTime"
+        ),
         "logo_image": binding_value(binding, "logoImage"),
         "logo_image_url": binding_value(binding, "logoImageUrl"),
         "opencorporates_company_id": binding_value(binding, "openCorporatesId"),
@@ -1200,7 +1430,9 @@ def company_augmentation_row_from_binding(binding: dict[str, Any]) -> dict[str, 
             binding,
             "parentOrganizationStartDate",
         ),
-        "parent_organization_end_date": binding_value(binding, "parentOrganizationEndDate"),
+        "parent_organization_end_date": binding_value(
+            binding, "parentOrganizationEndDate"
+        ),
         "child_organization_statement_id": wikidata_id_from_url(
             binding_value(binding, "childOrganizationStatement")
         ),
@@ -1208,14 +1440,22 @@ def company_augmentation_row_from_binding(binding: dict[str, Any]) -> dict[str, 
             binding_value(binding, "childOrganization")
         ),
         "child_organization_label": binding_value(binding, "childOrganizationLabel"),
-        "child_organization_start_date": binding_value(binding, "childOrganizationStartDate"),
-        "child_organization_end_date": binding_value(binding, "childOrganizationEndDate"),
-        "owned_by_statement_id": wikidata_id_from_url(binding_value(binding, "ownedByStatement")),
+        "child_organization_start_date": binding_value(
+            binding, "childOrganizationStartDate"
+        ),
+        "child_organization_end_date": binding_value(
+            binding, "childOrganizationEndDate"
+        ),
+        "owned_by_statement_id": wikidata_id_from_url(
+            binding_value(binding, "ownedByStatement")
+        ),
         "owned_by_wikidata_id": wikidata_id_from_url(binding_value(binding, "ownedBy")),
         "owned_by_label": binding_value(binding, "ownedByLabel"),
         "owned_by_start_date": binding_value(binding, "ownedByStartDate"),
         "owned_by_end_date": binding_value(binding, "ownedByEndDate"),
-        "owner_of_statement_id": wikidata_id_from_url(binding_value(binding, "ownerOfStatement")),
+        "owner_of_statement_id": wikidata_id_from_url(
+            binding_value(binding, "ownerOfStatement")
+        ),
         "owner_of_wikidata_id": wikidata_id_from_url(binding_value(binding, "ownerOf")),
         "owner_of_label": binding_value(binding, "ownerOfLabel"),
         "owner_of_start_date": binding_value(binding, "ownerOfStartDate"),
@@ -1244,7 +1484,9 @@ def merged_listed_company_augmentation_row(
     for field_name in WIKIDATA_AUGMENTATION_FIELD_NAMES:
         row[field_name] = augmentation_row.get(field_name, "")
 
-    augmentation_raw_binding_json = augmentation_row.get("augmentation_raw_binding_json", "")
+    augmentation_raw_binding_json = augmentation_row.get(
+        "augmentation_raw_binding_json", ""
+    )
     row["raw_binding_json"] = json.dumps(
         {
             "listing": base_row["raw_binding_json"],
@@ -1253,8 +1495,12 @@ def merged_listed_company_augmentation_row(
         sort_keys=True,
         separators=(",", ":"),
     )
-    row["source_record_id"] = f"{base_row['source_record_id']}:aug:{augmentation_row_number:06d}"
-    row["source_payload_hash"] = sha256(row["raw_binding_json"].encode("utf-8")).hexdigest()
+    row["source_record_id"] = (
+        f"{base_row['source_record_id']}:aug:{augmentation_row_number:06d}"
+    )
+    row["source_payload_hash"] = sha256(
+        row["raw_binding_json"].encode("utf-8")
+    ).hexdigest()
     return row
 
 

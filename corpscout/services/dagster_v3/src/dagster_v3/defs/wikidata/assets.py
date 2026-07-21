@@ -21,10 +21,13 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.wikidata.registry_seed import WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
+from dagster_v3.defs.wikidata.registry_seed import (
+    WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS,
+)
 from dagster_v3.defs.wikidata.source import (
     WIKIDATA_DUCKDB_DATASET_NAME,
     WIKIDATA_DUCKDB_PIPELINE_NAME,
+    WIKIDATA_EXCHANGES_TABLE,
     WIKIDATA_LISTED_COMPANIES_TABLE,
     WIKIDATA_RAW_BUCKET,
     WikidataListedCompaniesConfig,
@@ -41,11 +44,13 @@ from dagster_v3.defs.wikidata.source import (
     build_company_relationship_augmentation_query,
     build_listed_company_query,
     build_registry_number_company_query,
+    collapse_active_listed_exchange_rows,
     manifest_object_key,
     page_object_key,
     query_hash,
     registry_pseudo_exchange_id,
     response_bindings,
+    snapshot_manifest_object_key,
     wikidata_id_from_url,
     wikidata_listed_companies_source,
 )
@@ -56,6 +61,10 @@ GROUP_NAME = "wikidata"
 WIKIDATA_DUCKDB_SCHEMA = "wikidata"
 WIKIDATA_DUCKDB_PATH = Path("data/wikidata.duckdb")
 WIKIDATA_DUCKDB_POOL = "wikidata_duckdb"
+WIKIDATA_DUCKDB_STAGE_ASSET_KEYS = (
+    dg.AssetKey("wikidata_listed_companies_duckdb"),
+    dg.AssetKey("wikidata_exchanges_duckdb"),
+)
 
 WIKIDATA_DUCKDB_FINAL_TABLE_ASSET_KEYS = tuple(
     dg.AssetKey(table_name) for table_name in tables.WIKIDATA_TABLES
@@ -65,17 +74,27 @@ WIKIDATA_DUCKDB_FINAL_TABLE_ASSET_KEYS = tuple(
 class WikidataDltTranslator(DagsterDltTranslator):
     def get_asset_spec(self, data: DltResourceTranslatorData) -> dg.AssetSpec:
         spec = super().get_asset_spec(data)
-        if data.resource.name != WIKIDATA_LISTED_COMPANIES_TABLE:
-            return spec
-        return spec.replace_attributes(
-            key="wikidata_listed_companies_duckdb",
-            deps=[dg.AssetKey("wikidata_company_seed_raw_objects")],
-            group_name=GROUP_NAME,
-            description=(
-                "Active Wikidata listed-company rows parsed from raw S3 pages and loaded to DuckDB with dlt."
-            ),
-            kinds={"python", "dlt", "duckdb", "wikidata"},
-        )
+        if data.resource.name == WIKIDATA_LISTED_COMPANIES_TABLE:
+            return spec.replace_attributes(
+                key="wikidata_listed_companies_duckdb",
+                deps=[dg.AssetKey("wikidata_company_seed_raw_objects")],
+                group_name=GROUP_NAME,
+                description=(
+                    "Active Wikidata listed-company rows parsed from a completed raw S3 snapshot and loaded to DuckDB with dlt."
+                ),
+                kinds={"python", "dlt", "duckdb", "wikidata"},
+            )
+        if data.resource.name == WIKIDATA_EXCHANGES_TABLE:
+            return spec.replace_attributes(
+                key="wikidata_exchanges_duckdb",
+                deps=[dg.AssetKey("wikidata_company_seed_raw_objects")],
+                group_name=GROUP_NAME,
+                description=(
+                    "Wikidata exchange and MIC rows parsed from completed raw exchange manifests and loaded to DuckDB with dlt."
+                ),
+                kinds={"python", "dlt", "duckdb", "wikidata"},
+            )
+        return spec
 
 
 def wikidata_listed_companies_pipeline(database_path: str | Path) -> Any:
@@ -123,7 +142,7 @@ def wikidata_listed_companies_duckdb_asset(
     specs=[
         dg.AssetSpec(
             table_name,
-            deps=[dg.AssetKey("wikidata_listed_companies_duckdb")],
+            deps=WIKIDATA_DUCKDB_STAGE_ASSET_KEYS,
             group_name=GROUP_NAME,
             kinds={"python", "duckdb", "wikidata"},
             description=f"Normalized Wikidata DuckDB table for `{table_name}`.",
@@ -161,7 +180,10 @@ def wikidata_company_seed_duckdb_tables(
     # explicitly excludes each spine's upstream so the weekly job doesn't balloon into
     # materializing nine full country pipelines (see WIKIDATA_REGISTRY_SEED_SPECS /
     # tests/test_wikidata_assets.py wiring test).
-    deps=[dg.AssetKey(spine_asset_key) for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS],
+    deps=[
+        dg.AssetKey(spine_asset_key)
+        for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
+    ],
     group_name=GROUP_NAME,
     kinds={"python", "wikidata", "s3"},
     description=(
@@ -234,7 +256,9 @@ def _export_wikidata_tables_to_clickhouse(
                 ),
             )
     return dg.MaterializeResult(
-        metadata={f"{table_name}_row_count": count for table_name, count in row_counts.items()}
+        metadata={
+            f"{table_name}_row_count": count for table_name, count in row_counts.items()
+        }
     )
 
 
@@ -248,13 +272,29 @@ def normalize_wikidata_listed_companies_duckdb(
         WIKIDATA_DUCKDB_DATASET_NAME,
         WIKIDATA_LISTED_COMPANIES_TABLE,
     )
+    exchanges_source_table = _duckdb_qualified_table_name(
+        catalog_name,
+        WIKIDATA_DUCKDB_DATASET_NAME,
+        WIKIDATA_EXCHANGES_TABLE,
+    )
     target_schema = _duckdb_qualified_schema_name(catalog_name, WIKIDATA_DUCKDB_SCHEMA)
-    _assert_wikidata_listed_companies_table_exists(connection, source_table=source_table)
+    _assert_wikidata_listed_companies_table_exists(
+        connection, source_table=source_table
+    )
+    _assert_wikidata_exchanges_table_exists(
+        connection,
+        source_table=exchanges_source_table,
+    )
     _ensure_optional_wikidata_source_columns(connection, source_table=source_table)
     connection.execute(f"create schema if not exists {target_schema}")
     _create_wikidata_companies_table(
         connection,
         source_table=source_table,
+        target_schema=target_schema,
+    )
+    _create_wikidata_exchanges_table(
+        connection,
+        source_table=exchanges_source_table,
         target_schema=target_schema,
     )
     _create_wikidata_company_listings_table(
@@ -292,6 +332,7 @@ def normalize_wikidata_listed_companies_duckdb(
         source_table=source_table,
         target_schema=target_schema,
     )
+    _validate_wikidata_exchanges(connection, target_schema=target_schema)
     return {
         table_name: _duckdb_table_count(
             connection,
@@ -318,6 +359,98 @@ def _assert_wikidata_listed_companies_table_exists(
             f"{WIKIDATA_DUCKDB_DATASET_NAME}.{WIKIDATA_LISTED_COMPANIES_TABLE}; "
             "materialize wikidata_listed_companies_duckdb first"
         ) from exc
+
+
+def _assert_wikidata_exchanges_table_exists(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    source_table: str,
+) -> None:
+    try:
+        connection.execute(f"select 1 from {source_table} limit 0")
+    except Exception as exc:
+        raise ValueError(
+            "Missing DuckDB source table "
+            f"{WIKIDATA_DUCKDB_DATASET_NAME}.{WIKIDATA_EXCHANGES_TABLE}; "
+            "materialize wikidata_exchanges_duckdb first"
+        ) from exc
+
+
+def _create_wikidata_exchanges_table(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    source_table: str,
+    target_schema: str,
+) -> None:
+    connection.execute(
+        f"""
+        create or replace table {target_schema}.{tables.WIKIDATA_EXCHANGES_TABLE} as
+        with normalized as (
+            select
+                trim(exchange_wikidata_id) as exchange_wikidata_id,
+                trim(exchange_name) as exchange_name,
+                nullif(upper(trim(mic)), '') as mic,
+                nullif(trim(country_wikidata_id), '') as country_wikidata_id,
+                nullif(trim(country_name), '') as country_name,
+                nullif(upper(trim(country_iso2)), '') as country_iso2,
+                listed_company_count,
+                source_run_id,
+                source_payload_hash,
+                retrieved_at
+            from {source_table}
+            where nullif(trim(exchange_wikidata_id), '') is not null
+        )
+        select
+            exchange_wikidata_id,
+            coalesce(nullif(max(exchange_name), ''), exchange_wikidata_id) as exchange_name,
+            mic,
+            nullif(max(country_wikidata_id), '') as country_wikidata_id,
+            nullif(max(country_name), '') as country_name,
+            nullif(max(country_iso2), '') as country_iso2,
+            cast(max(listed_company_count) as ubigint) as listed_company_count,
+            'wikidata' as source_system,
+            max(source_run_id) as source_run_id,
+            exchange_wikidata_id || ':' || coalesce(mic, 'no_mic') as source_record_id,
+            max(source_payload_hash) as source_payload_hash,
+            cast(max(retrieved_at) as timestamp) as retrieved_at,
+            cast(current_timestamp as timestamp) as resolved_at
+        from normalized
+        group by exchange_wikidata_id, mic
+        """
+    )
+
+
+def _validate_wikidata_exchanges(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    target_schema: str,
+) -> None:
+    invalid_mics = connection.execute(
+        f"""
+        select mic
+        from {target_schema}.{tables.WIKIDATA_EXCHANGES_TABLE}
+        where mic is not null
+          and not regexp_full_match(mic, '^[A-Z0-9]{{4}}$')
+        order by mic
+        """
+    ).fetchall()
+    if invalid_mics:
+        values = ", ".join(str(row[0]) for row in invalid_mics[:10])
+        raise ValueError(f"Invalid Wikidata MIC values: {values}")
+
+    missing_exchange_ids = connection.execute(
+        f"""
+        select distinct listings.exchange_wikidata_id
+        from {target_schema}.{tables.WIKIDATA_COMPANY_LISTINGS_TABLE} as listings
+        left join {target_schema}.{tables.WIKIDATA_EXCHANGES_TABLE} as exchanges
+          on exchanges.exchange_wikidata_id = listings.exchange_wikidata_id
+        where exchanges.exchange_wikidata_id is null
+        order by listings.exchange_wikidata_id
+        """
+    ).fetchall()
+    if missing_exchange_ids:
+        values = ", ".join(str(row[0]) for row in missing_exchange_ids[:10])
+        raise ValueError(f"Wikidata listings reference missing exchanges: {values}")
 
 
 def _create_wikidata_companies_table(
@@ -1188,7 +1321,9 @@ def _duckdb_qualified_table_name(
     schema_name: str,
     table_name: str,
 ) -> str:
-    return _duckdb_qualified_name(_duckdb_catalog_name(database_path), schema_name, table_name)
+    return _duckdb_qualified_name(
+        _duckdb_catalog_name(database_path), schema_name, table_name
+    )
 
 
 def _duckdb_catalog_name(database_path: str | Path) -> str:
@@ -1307,6 +1442,10 @@ def pull_wikidata_company_seed_raw_objects(
             "listed_company_count_on_exchange": seed_unit[
                 "listed_company_count_on_exchange"
             ],
+            "mics": seed_unit["mics"],
+            "country_wikidata_id": seed_unit["country_wikidata_id"],
+            "country_name": seed_unit["country_name"],
+            "country_iso2": seed_unit["country_iso2"],
             "registry_property_id": seed_unit["registry_property_id"],
             "page_size": config.page_size,
             "query_hash": current_query_hash,
@@ -1330,6 +1469,29 @@ def pull_wikidata_company_seed_raw_objects(
         if config.request_delay_seconds > 0 and unit_index < len(seed_units) - 1:
             sleep(config.request_delay_seconds)
 
+    snapshot_manifest_key = snapshot_manifest_object_key(run_id=run_id)
+    completed_at = datetime.now(UTC).isoformat()
+    object_store.write_json(
+        snapshot_manifest_key,
+        json.dumps(
+            {
+                "source": "wikidata",
+                "run_id": run_id,
+                "status": "complete",
+                "retrieved_date": retrieved_date,
+                "started_at": retrieved_at,
+                "completed_at": completed_at,
+                "exchange_count": len(exchange_rows),
+                "registry_property_count": len(registry_rows),
+                "page_count": total_page_count,
+                "row_count": total_row_count,
+                "manifest_keys": manifest_keys,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        bucket=WIKIDATA_RAW_BUCKET,
+    )
     deleted_old_raw_object_count = delete_old_wikidata_raw_snapshot_objects(
         object_store=object_store,
         run_id=run_id,
@@ -1343,6 +1505,7 @@ def pull_wikidata_company_seed_raw_objects(
             "row_count": total_row_count,
             "manifest_count": len(manifest_keys),
             "manifest_keys": manifest_keys,
+            "snapshot_manifest_key": snapshot_manifest_key,
             "active_exchanges_key": active_exchanges_key or "",
             "deleted_old_raw_object_count": deleted_old_raw_object_count,
             "retrieved_at": retrieved_at,
@@ -1357,6 +1520,10 @@ def _seed_unit_from_exchange_row(exchange_row: dict[str, Any]) -> dict[str, Any]
         "listed_company_count_on_exchange": exchange_row[
             "listed_company_count_on_exchange"
         ],
+        "mics": exchange_row["mics"],
+        "country_wikidata_id": exchange_row["country_wikidata_id"],
+        "country_name": exchange_row["country_name"],
+        "country_iso2": exchange_row["country_iso2"],
         "query_mode": "exchange",
         "registry_property_id": None,
     }
@@ -1369,6 +1536,10 @@ def _seed_unit_from_registry_row(registry_row: dict[str, Any]) -> dict[str, Any]
         "listed_company_count_on_exchange": registry_row[
             "listed_company_count_on_exchange"
         ],
+        "mics": [],
+        "country_wikidata_id": "",
+        "country_name": "",
+        "country_iso2": "",
         "query_mode": "registry_number",
         "registry_property_id": registry_row["registry_property_id"],
     }
@@ -1463,7 +1634,9 @@ def pull_wikidata_company_augmentation_raw_objects_for_page(
             object_keys.append(object_key)
             row_count += len(bindings)
 
-            is_last_query = batch_number == len(batches) and query_index == len(query_builders)
+            is_last_query = batch_number == len(batches) and query_index == len(
+                query_builders
+            )
             if config.request_delay_seconds > 0 and not is_last_query:
                 sleep(config.request_delay_seconds)
 
@@ -1507,7 +1680,7 @@ def wikidata_raw_pull_exchange_rows(
         json.dumps(payload, sort_keys=True, separators=(",", ":")),
         bucket=WIKIDATA_RAW_BUCKET,
     )
-    exchange_rows = [
+    binding_rows = [
         active_listed_exchange_row_from_binding(
             binding,
             source_run_id=run_id,
@@ -1515,8 +1688,10 @@ def wikidata_raw_pull_exchange_rows(
             source_row_number=row_number,
         )
         for row_number, binding in enumerate(response_bindings(payload), start=1)
-        if config.max_exchanges is None or row_number <= config.max_exchanges
     ]
+    exchange_rows = collapse_active_listed_exchange_rows(binding_rows)
+    if config.max_exchanges is not None:
+        exchange_rows = exchange_rows[: config.max_exchanges]
     if not exchange_rows:
         raise ValueError("Wikidata active listed-exchange query returned no exchanges")
     return exchange_rows, exchange_list_key
@@ -1536,6 +1711,10 @@ def wikidata_raw_pull_configured_exchange_rows(
         {
             "exchange_wikidata_id": exchange_id,
             "exchange_name": "",
+            "mics": [],
+            "country_wikidata_id": "",
+            "country_name": "",
+            "country_iso2": "",
             "listed_company_count_on_exchange": 0,
             "source_run_id": source_run_id,
             "retrieved_at": retrieved_at,
@@ -1569,7 +1748,10 @@ def delete_old_wikidata_raw_snapshot_objects(
 # (which includes the spine itself) to drop exactly the country pipelines and nothing
 # from the native wikidata chain — no wikidata_* asset is upstream of a country spine.
 _wikidata_registry_seed_spine_exclusion = dg.AssetSelection.assets(
-    *(dg.AssetKey(spine_asset_key) for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS)
+    *(
+        dg.AssetKey(spine_asset_key)
+        for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
+    )
 ).upstream()
 
 # The canonical-contacts derivation (wikidata_clickhouse_canonical_contacts,

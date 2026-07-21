@@ -1,4 +1,5 @@
 WIKIDATA_COMPANIES_TABLE = "wikidata_companies"
+WIKIDATA_EXCHANGES_TABLE = "wikidata_exchanges"
 WIKIDATA_COMPANY_LISTINGS_TABLE = "wikidata_company_listings"
 WIKIDATA_COMPANY_IDENTIFIERS_TABLE = "wikidata_company_identifiers"
 WIKIDATA_COMPANY_WEBSITES_TABLE = "wikidata_company_websites"
@@ -9,6 +10,7 @@ WIKIDATA_SEED_EXTRACTION_RUNS_TABLE = "wikidata_seed_extraction_runs"
 
 WIKIDATA_TABLES = (
     WIKIDATA_COMPANIES_TABLE,
+    WIKIDATA_EXCHANGES_TABLE,
     WIKIDATA_COMPANY_LISTINGS_TABLE,
     WIKIDATA_COMPANY_IDENTIFIERS_TABLE,
     WIKIDATA_COMPANY_WEBSITES_TABLE,
@@ -44,6 +46,21 @@ WIKIDATA_TABLE_COLUMNS = {
         "industry_label",
         "has_current_listing",
         "listing_count",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "retrieved_at",
+        "resolved_at",
+    ),
+    WIKIDATA_EXCHANGES_TABLE: (
+        "exchange_wikidata_id",
+        "exchange_name",
+        "mic",
+        "country_wikidata_id",
+        "country_name",
+        "country_iso2",
+        "listed_company_count",
         "source_system",
         "source_run_id",
         "source_record_id",

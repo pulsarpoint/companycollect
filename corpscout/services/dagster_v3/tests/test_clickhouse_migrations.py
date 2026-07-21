@@ -168,6 +168,7 @@ EXPECTED_MIGRATIONS = (
     "000150_corpscout_se_translations",
     "000151_corpscout_se_concept_labels_distinct",
     "000152_corpscout_wikidata_company_people",
+    "000153_corpscout_wikidata_exchanges",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1169,9 +1170,7 @@ def test_wikidata_company_people_migration_creates_people_and_persons_tables() -
             f"wikidata_company_people.{column_name} not found in migration SQL"
         )
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
-    assert (
-        "ORDER BY (company_wikidata_id, role_property, person_wikidata_id);" in sql
-    )
+    assert "ORDER BY (company_wikidata_id, role_property, person_wikidata_id);" in sql
     assert "DROP TABLE IF EXISTS corpscout.wikidata_company_people" in down_sql
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_persons" in sql
@@ -1194,6 +1193,34 @@ def test_wikidata_company_people_migration_creates_people_and_persons_tables() -
     # the Wikidata QID (person_wikidata_id), never a name/label column.
     assert "name String" in sql
     assert "name_normalized String" in sql
+
+
+def test_wikidata_exchanges_migration_creates_exchange_dimension() -> None:
+    sql = _migration_sql("000153_corpscout_wikidata_exchanges.up.sql")
+    down_sql = _migration_sql("000153_corpscout_wikidata_exchanges.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_exchanges" in sql
+    for column_name in (
+        "exchange_wikidata_id",
+        "exchange_name",
+        "mic",
+        "country_wikidata_id",
+        "country_name",
+        "country_iso2",
+        "listed_company_count",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "retrieved_at",
+        "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+
+    assert "mic Nullable(String)" in sql
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (exchange_wikidata_id, ifNull(mic, ''));" in sql
+    assert "DROP TABLE IF EXISTS corpscout.wikidata_exchanges" in down_sql
 
 
 def test_nace_category_embeddings_migration_covers_reference_matrix() -> None:
