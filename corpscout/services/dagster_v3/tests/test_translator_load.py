@@ -33,6 +33,9 @@ def test_build_scan_sql_is_anti_join_with_cityhash():
         # Whitespace-only texts are excluded: the model returns an empty
         # translation for them, which becomes a PERMANENT failed queue item.
         "WHERE trim(BOTH ' \\t\\r\\n' FROM c.activity_text_original) != ''",
+        # Oversized blobs stall the whole shared queue (head-of-batch
+        # prompt exceeds the model context and retries forever).
+        "AND length(c.activity_text_original) <= 8000",
     ):
         assert fragment in sql, f"missing {fragment!r} in:\n{sql}"
 

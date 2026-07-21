@@ -6,6 +6,12 @@ Loader contract (the system's dedup economics live here):
   translation for them, which the translator records as a PERMANENT failed
   queue item (2026-07-20: 12 whitespace-only Latvian texts poisoned the
   global failed count and failed every later source's loader).
+- Never enqueue texts over 8,000 chars: the translator batches 50 texts
+  into one LLM prompt, and a single malformed multi-megabyte blob makes
+  the head-of-queue batch exceed the model context forever -- the batch
+  retries identically and the whole queue stalls (2026-07-21: 102 packed
+  se_companies blobs, max 1.8M chars, froze 1.9M pending texts; genuine
+  descriptions are ~1k chars at p99.9).
 - Compute cityHash64 in ClickHouse SQL — never in Python — so hashes always
   agree with past runs.
 - Static-map columns never touch the LLM: insert straight into
@@ -40,7 +46,8 @@ LEFT ANTI JOIN (
     WHERE source_table = '{table}' AND source_column = '{column}'
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.{column})
-WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''"""
+WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''
+  AND length(c.{column}) <= 8000"""
 
 
 def build_static_scan_sql(table: str, column: str, key_column: str) -> str:
@@ -56,7 +63,8 @@ LEFT ANTI JOIN (
     WHERE source_table = '{table}' AND source_column = '{column}'
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.{column})
-WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''"""
+WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''
+  AND length(c.{column}) <= 8000"""
 
 
 def insert_static_translations(
