@@ -443,24 +443,53 @@ def _facts_json_url(fxo_id: str) -> str:
     return f"https://filings.xbrl.org/{fxo_id}/facts.json"
 
 
+class _FakeHttpErrorResponse:
+    """Duck-types `requests.Response` far enough for the asset loop's
+    `_is_permanently_missing_upstream_error` guard, which reads only
+    `.status_code` off `HTTPError.response`."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+
+def _http_error(status_code: int) -> Exception:
+    """Build a `dlt_requests.HTTPError` shaped like what
+    `EsefFilingsClient.download_json_facts` actually raises (see
+    client.py/session.py: `Session.request()` calls `resp.raise_for_status()`,
+    a plain `requests.exceptions.HTTPError` with `.response` set) -- used to
+    simulate both a permanently-missing upstream file (404/410, must be
+    skipped-and-counted) and any other HTTP error (e.g. 500, must still
+    propagate and fail the partition loudly)."""
+    return assets.dlt_requests.HTTPError(
+        f"{status_code} error", response=_FakeHttpErrorResponse(status_code)
+    )
+
+
 class _StubFactsDownloadClient:
     """Stand-in for EsefFilingsClient() -- serves canned bytes keyed by
     fxo_id (parsed back out of the json_url path `.../<fxo_id>/facts.json`),
-    or writes malformed text for fxo_ids in `malformed_fxo_ids`."""
+    writes malformed text for fxo_ids in `malformed_fxo_ids`, or raises an
+    HTTPError with the given status code for fxo_ids in
+    `http_error_status_by_fxo_id` (simulating filings.xbrl.org's dead
+    upstream links -- 404/410 -- or any other HTTP error)."""
 
     def __init__(
         self,
         payload_by_fxo_id: dict[str, bytes],
         *,
         malformed_fxo_ids: frozenset[str] = frozenset(),
+        http_error_status_by_fxo_id: dict[str, int] | None = None,
     ) -> None:
         self._payload_by_fxo_id = payload_by_fxo_id
         self._malformed_fxo_ids = malformed_fxo_ids
+        self._http_error_status_by_fxo_id = http_error_status_by_fxo_id or {}
         self.download_calls: list[str] = []
 
     def download_json_facts(self, json_url: str, target: Path, **_: Any) -> None:
         self.download_calls.append(json_url)
         fxo_id = json_url.split("/")[-2]
+        if fxo_id in self._http_error_status_by_fxo_id:
+            raise _http_error(self._http_error_status_by_fxo_id[fxo_id])
         if fxo_id in self._malformed_fxo_ids:
             target.write_text("{this is not valid json")
             return
@@ -492,6 +521,7 @@ def _run_facts_partition(
     *,
     partition_year: int,
     source_run_id: str = "run-1",
+    log_warning: Any = lambda *a, **k: None,
 ) -> dict[str, int]:
     return assets.run_esef_filing_facts_partition(
         esef_filings_duckdb=_db_resource(tmp_path),
@@ -500,7 +530,7 @@ def _run_facts_partition(
         partition_year=partition_year,
         source_run_id=source_run_id,
         log_info=lambda *a, **k: None,
-        log_warning=lambda *a, **k: None,
+        log_warning=log_warning,
     )
 
 
@@ -739,6 +769,115 @@ def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> 
 
 
 # ==========================================================================
+# Dead upstream links (production incident, 2026-07-21): filings.xbrl.org's
+# index advertises a `json_url` for a filing whose file 404s/410s upstream
+# (e.g. several UA filings). A permanently-missing file must be skipped and
+# counted (`skipped_upstream_missing`), never starve the whole partition --
+# but any OTHER HTTP error (5xx, etc.) must still propagate and fail loudly.
+# ==========================================================================
+
+
+def test_facts_partition_skips_404_increments_counter_no_s3_no_facts_row(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
+            ),
+            _record(
+                fxo_id="B-1", period_end="2022-06-30", json_url=_facts_json_url("B-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient(
+        {"B-1": _SMALL_PAYLOAD_BYTES},
+        http_error_status_by_fxo_id={"A-1": 404},
+    )
+    warnings: list[tuple[Any, ...]] = []
+
+    metadata = _run_facts_partition(
+        tmp_path,
+        object_store,
+        client,
+        partition_year=2022,
+        log_warning=lambda *a, **k: warnings.append(a),
+    )
+
+    assert metadata["filings_in_scope"] == 2
+    assert metadata["skipped_upstream_missing"] == 1
+    assert metadata["downloaded_count"] == 1  # B-1 only
+    assert metadata["fact_row_count"] == 2  # only B-1's small payload facts
+    # Both filings were attempted (the 404 didn't abort the loop early).
+    assert client.download_calls == [
+        _facts_json_url("A-1"),
+        _facts_json_url("B-1"),
+    ]
+    assert len(warnings) == 1
+
+    # A-1's dead upstream link left no S3 object and no facts row.
+    assert (
+        assets.ESEF_FILINGS_FACTS_BUCKET,
+        assets._fact_json_object_key("A-1"),
+    ) not in object_store.objects
+    assert object_store.uploaded_keys == [
+        (assets.ESEF_FILINGS_FACTS_BUCKET, assets._fact_json_object_key("B-1"))
+    ]
+    rows = _fetch_facts_rows(tmp_path)
+    assert {row[0] for row in rows} == {"B-1"}
+
+
+def test_facts_partition_skips_410_gone_same_as_404(tmp_path: Path) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
+            )
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient({}, http_error_status_by_fxo_id={"A-1": 410})
+
+    metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+
+    assert metadata["skipped_upstream_missing"] == 1
+    assert metadata["downloaded_count"] == 0
+    assert metadata["fact_row_count"] == 0
+    assert (
+        assets.ESEF_FILINGS_FACTS_BUCKET,
+        assets._fact_json_object_key("A-1"),
+    ) not in object_store.objects
+
+
+def test_facts_partition_5xx_http_error_propagates_and_fails_partition_loudly(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
+            )
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubFactsDownloadClient({}, http_error_status_by_fxo_id={"A-1": 500})
+
+    with pytest.raises(assets.dlt_requests.HTTPError):
+        _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+
+    assert client.download_calls == [_facts_json_url("A-1")]
+    # No phantom S3 object for the filing whose download 500'd.
+    assert (
+        assets.ESEF_FILINGS_FACTS_BUCKET,
+        assets._fact_json_object_key("A-1"),
+    ) not in object_store.objects
+
+
+# ==========================================================================
 # esef_report_xhtml_s3: year-partitioned report XHTML archive to S3
 #
 # `run_esef_report_xhtml_partition` (the plain function the asset delegates
@@ -756,16 +895,26 @@ def _report_url(fxo_id: str) -> str:
 
 class _StubReportXhtmlDownloadClient:
     """Stand-in for EsefFilingsClient() -- serves canned XHTML bytes keyed by
-    fxo_id (parsed back out of the report_url path `.../<fxo_id>/report.html`).
-    """
+    fxo_id (parsed back out of the report_url path `.../<fxo_id>/report.html`),
+    or raises an HTTPError with the given status code for fxo_ids in
+    `http_error_status_by_fxo_id` (simulating filings.xbrl.org's dead
+    upstream links -- 404/410 -- or any other HTTP error)."""
 
-    def __init__(self, body_by_fxo_id: dict[str, bytes]) -> None:
+    def __init__(
+        self,
+        body_by_fxo_id: dict[str, bytes],
+        *,
+        http_error_status_by_fxo_id: dict[str, int] | None = None,
+    ) -> None:
         self._body_by_fxo_id = body_by_fxo_id
+        self._http_error_status_by_fxo_id = http_error_status_by_fxo_id or {}
         self.download_calls: list[str] = []
 
     def download_json_facts(self, url: str, target: Path, **_: Any) -> None:
         self.download_calls.append(url)
         fxo_id = url.split("/")[-2]
+        if fxo_id in self._http_error_status_by_fxo_id:
+            raise _http_error(self._http_error_status_by_fxo_id[fxo_id])
         target.write_bytes(self._body_by_fxo_id[fxo_id])
 
 
@@ -775,6 +924,7 @@ def _run_report_xhtml_partition(
     client: _StubReportXhtmlDownloadClient,
     *,
     partition_year: int,
+    log_warning: Any = lambda *a, **k: None,
 ) -> dict[str, int]:
     return assets.run_esef_report_xhtml_partition(
         esef_filings_duckdb=_db_resource(tmp_path),
@@ -782,6 +932,7 @@ def _run_report_xhtml_partition(
         client=client,
         partition_year=partition_year,
         log_info=lambda *a, **k: None,
+        log_warning=log_warning,
     )
 
 
@@ -831,6 +982,7 @@ def test_report_xhtml_partition_archives_filings_in_scope_for_year(
         "downloaded_count": 2,
         "reused_count": 0,
         "skipped_no_report_url": 0,
+        "skipped_upstream_missing": 0,
         "skipped_out_of_range": 0,
     }
     assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
@@ -1035,6 +1187,113 @@ def test_report_xhtml_mid_partition_download_failure_propagates_with_no_phantom_
         assets.ESEF_FILINGS_FACTS_BUCKET,
         "esef_filings/report_xhtml/fxo_id=B-1/report.xhtml",
     ) not in object_store.uploaded_keys
+
+
+# --------------------------------------------------------------------------
+# Dead upstream links -- same guard as the facts asset above (see that
+# section's header comment); mirrored here for esef_report_xhtml_s3.
+# --------------------------------------------------------------------------
+
+
+def test_report_xhtml_partition_skips_404_increments_counter_no_s3_object(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(
+                fxo_id="A-1", period_end="2022-12-31", report_url=_report_url("A-1")
+            ),
+            _record(
+                fxo_id="B-1", period_end="2022-06-30", report_url=_report_url("B-1")
+            ),
+        ],
+    )
+    object_store = FakeObjectStore()
+    client = _StubReportXhtmlDownloadClient(
+        {"B-1": b"<html>B-1 report</html>"},
+        http_error_status_by_fxo_id={"A-1": 404},
+    )
+    warnings: list[tuple[Any, ...]] = []
+
+    metadata = _run_report_xhtml_partition(
+        tmp_path,
+        object_store,
+        client,
+        partition_year=2022,
+        log_warning=lambda *a, **k: warnings.append(a),
+    )
+
+    assert metadata == {
+        "filings_in_scope": 2,
+        "downloaded_count": 1,
+        "reused_count": 0,
+        "skipped_no_report_url": 0,
+        "skipped_upstream_missing": 1,
+        "skipped_out_of_range": 0,
+    }
+    # Both filings were attempted (the 404 didn't abort the loop early).
+    assert client.download_calls == [_report_url("A-1"), _report_url("B-1")]
+    assert len(warnings) == 1
+
+    # A-1's dead upstream link left no S3 object at all.
+    assert (
+        assets.ESEF_FILINGS_FACTS_BUCKET,
+        "esef_filings/report_xhtml/fxo_id=A-1/report.xhtml",
+    ) not in object_store.objects
+    assert (
+        object_store.objects[
+            (
+                assets.ESEF_FILINGS_FACTS_BUCKET,
+                "esef_filings/report_xhtml/fxo_id=B-1/report.xhtml",
+            )
+        ]
+        == b"<html>B-1 report</html>"
+    )
+
+
+def test_report_xhtml_partition_skips_410_gone_same_as_404(tmp_path: Path) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [_record(fxo_id="A-1", period_end="2022-12-31", report_url=_report_url("A-1"))],
+    )
+    object_store = FakeObjectStore()
+    client = _StubReportXhtmlDownloadClient(
+        {}, http_error_status_by_fxo_id={"A-1": 410}
+    )
+
+    metadata = _run_report_xhtml_partition(
+        tmp_path, object_store, client, partition_year=2022
+    )
+
+    assert metadata["skipped_upstream_missing"] == 1
+    assert metadata["downloaded_count"] == 0
+    assert (
+        assets.ESEF_FILINGS_FACTS_BUCKET,
+        "esef_filings/report_xhtml/fxo_id=A-1/report.xhtml",
+    ) not in object_store.objects
+
+
+def test_report_xhtml_partition_5xx_http_error_propagates_and_fails_partition_loudly(
+    tmp_path: Path,
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [_record(fxo_id="A-1", period_end="2022-12-31", report_url=_report_url("A-1"))],
+    )
+    object_store = FakeObjectStore()
+    client = _StubReportXhtmlDownloadClient(
+        {}, http_error_status_by_fxo_id={"A-1": 500}
+    )
+
+    with pytest.raises(assets.dlt_requests.HTTPError):
+        _run_report_xhtml_partition(tmp_path, object_store, client, partition_year=2022)
+
+    assert client.download_calls == [_report_url("A-1")]
+    assert (
+        assets.ESEF_FILINGS_FACTS_BUCKET,
+        "esef_filings/report_xhtml/fxo_id=A-1/report.xhtml",
+    ) not in object_store.objects
 
 
 # --- Jobs + schedule (Task 7) ------------------------------------------------

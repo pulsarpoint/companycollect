@@ -541,6 +541,34 @@ of this task, tracked for a future pass:
   shared exporter exposes no pre-exchange hook — see §9.6).
   `esef_entity_registry_map_clickhouse` still runs refuse-on-empty only; out of scope for
   this finding, tracked in §9.6 as a possible future pass, not an oversight.
+- **Dead upstream links 404ing out an entire year partition** (production incident,
+  observed 2026-07-21, first server backfill on 2020/2021/2022): filings.xbrl.org's index
+  advertises a `json_url`/`report_url` for a filing whose file no longer exists upstream
+  (example: `EDRPOU-33669793`'s 2020-12-31 UA filing 404s at
+  `.../33669793-2020-12-31.json`) — UA filings among others. Both per-filing download loops
+  (`run_esef_filing_facts_partition` / `run_esef_report_xhtml_partition`) let
+  `requests.exceptions.HTTPError` (via `dlt.sources.helpers.requests`, what
+  `EsefFilingsClient.download_json_facts`'s `Session.request()` → `raise_for_status()`
+  actually raises) propagate unconditionally, so one dead link failed the whole partition.
+  Fixed: both loops now catch `HTTPError` per filing and inspect
+  `exc.response.status_code` — a permanently-missing file (**404 or 410**) is logged
+  (fxo_id + URL) and counted in a new `skipped_upstream_missing` metadata counter, then the
+  loop continues to the next filing; the skip happens strictly before any S3 upload or
+  fact-row insert, so a permanently-missing filing leaves neither a phantom S3 object nor
+  facts rows behind. Every other `HTTPError` (5xx, or any other 4xx) still propagates and
+  fails the partition loudly — that distinction is the point, not a blanket try/except.
+  **`skipped_upstream_missing` is the number to watch** across future backfills/refreshes:
+  a small, stable count per partition is expected background noise from an aging public
+  index; a count that jumps run-over-run on the same partition, or that's large relative to
+  `filings_in_scope`, means something upstream changed and is worth a closer look — it is
+  never expected to reach zero permanently, since filings.xbrl.org's index is not curated
+  to remove entries for files it no longer serves.
+  **Client retry config was checked, not changed**: `EsefFilingsClient` builds its session
+  via `dlt_requests.Client(request_timeout=120, request_max_attempts=5)`, which defaults
+  `status_codes` to `(429, *range(500, 600))` (`dlt/sources/helpers/requests/retry.py`) —
+  404/410 were never in that set, so the dlt wrapper was already not retrying them; the
+  incident's cost was one wasted attempt per dead link, not five, and no retry-config
+  change was needed alongside the asset-loop fix.
 
 ## 12. Verification
 
@@ -555,7 +583,11 @@ of this task, tracked for a future pass:
   timezone-conversion and out-of-range-skip behavior; a code-review fix pass added
   `test_refresh_job_executes_all_assets_for_partition`, which actually EXECUTES
   `esef_filings_refresh_job` for `partition_key="2026"` rather than only inspecting its
-  static definition — see §11). `uv run dg check defs` passes.
+  static definition — see §11). A later fix pass (2026-07-21, dead-upstream-links
+  incident) added the `skipped_upstream_missing` coverage to both partitioned assets:
+  404/410 skipped-and-counted with no S3 object/facts row for that filing, other filings
+  in the same partition still processed, and a 500-shaped `HTTPError` still propagating
+  and failing the partition loudly — see §11. `uv run dg check defs` passes.
 - **Cron slot**: `esef_filings_refresh_weekly` moved from `50 5 * * 0` (drafted) to
   `10 5 * * 0` (shipped) after a code-review fix pass caught a `(minute, hour)` collision
   with `finland_verotax_schedule`; `uv run pytest tests/test_schedule_cron_contracts.py -q`

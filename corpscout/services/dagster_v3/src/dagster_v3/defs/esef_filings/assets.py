@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
+from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
@@ -502,6 +503,22 @@ def _row_from_fact(
     )
 
 
+def _is_permanently_missing_upstream_error(exc: dlt_requests.HTTPError) -> bool:
+    """True for a 404/410 -- filings.xbrl.org's index advertised a `json_url`/
+    `report_url` for this filing, but the file itself no longer exists
+    upstream (observed 2026-07-21: several UA filings among others, which
+    starved the 2020/2021/2022 backfill partitions before this guard
+    existed -- see docs/esef_filings-design.md Sec 11).
+
+    Every OTHER `HTTPError` (5xx after the dlt client's own retries are
+    exhausted, or any other 4xx) must still propagate and fail the
+    partition loudly -- only a confirmed-permanent 404/410 is safe to skip
+    and count rather than raise.
+    """
+    response = exc.response
+    return response is not None and response.status_code in (404, 410)
+
+
 def _download_and_parse_filing_facts(
     *,
     client: EsefFilingsClient,
@@ -644,6 +661,7 @@ def run_esef_filing_facts_partition(
     downloaded_count = 0
     reused_count = 0
     skipped_no_json = 0
+    skipped_upstream_missing = 0
     parse_failed_count = 0
     fact_rows: list[tuple[Any, ...]] = []
 
@@ -656,16 +674,38 @@ def run_esef_filing_facts_partition(
             if not has_json_facts or not json_url:
                 skipped_no_json += 1
                 continue
-            parsed, downloaded, parse_failed = _download_and_parse_filing_facts(
-                client=client,
-                object_store=object_store,
-                temp_dir=temp_dir,
-                lei=lei,
-                fxo_id=fxo_id,
-                period_end=period_end,
-                json_url=json_url,
-                log_warning=log_warning,
-            )
+            try:
+                parsed, downloaded, parse_failed = _download_and_parse_filing_facts(
+                    client=client,
+                    object_store=object_store,
+                    temp_dir=temp_dir,
+                    lei=lei,
+                    fxo_id=fxo_id,
+                    period_end=period_end,
+                    json_url=json_url,
+                    log_warning=log_warning,
+                )
+            except dlt_requests.HTTPError as exc:
+                # A dead upstream link (Sec 11: 2020/2021/2022 backfill
+                # incident) must not starve the whole partition -- but only
+                # a confirmed-permanent 404/410 is safe to skip; anything
+                # else (5xx, etc.) still propagates and fails loudly. This
+                # skip happens BEFORE any S3 upload or fact row is produced
+                # (_download_and_parse_filing_facts raises from inside its
+                # `if downloaded:` branch, ahead of `object_store.upload_file`),
+                # so a permanently-missing filing leaves no S3 object and no
+                # facts rows behind.
+                if not _is_permanently_missing_upstream_error(exc):
+                    raise
+                skipped_upstream_missing += 1
+                log_warning(
+                    "ESEF facts download permanently missing upstream "
+                    "(status=%s): fxo_id=%s json_url=%s",
+                    exc.response.status_code if exc.response is not None else None,
+                    fxo_id,
+                    json_url,
+                )
+                continue
             if downloaded:
                 downloaded_count += 1
             else:
@@ -692,6 +732,7 @@ def run_esef_filing_facts_partition(
         "downloaded_count": downloaded_count,
         "reused_count": reused_count,
         "skipped_no_json": skipped_no_json,
+        "skipped_upstream_missing": skipped_upstream_missing,
         "skipped_out_of_range": skipped_out_of_range,
         "parse_failed_count": parse_failed_count,
         "fact_row_count": len(fact_rows),
@@ -769,6 +810,7 @@ def run_esef_report_xhtml_partition(
     client: Any,
     partition_year: int,
     log_info: Callable[..., object],
+    log_warning: Callable[..., object],
 ) -> dict[str, int]:
     """Do the actual work of `esef_report_xhtml_s3` for one partition year.
 
@@ -805,6 +847,7 @@ def run_esef_report_xhtml_partition(
     downloaded_count = 0
     reused_count = 0
     skipped_no_report_url = 0
+    skipped_upstream_missing = 0
 
     with tempfile.TemporaryDirectory(prefix="esef_filings_report_xhtml_") as tmpdir:
         temp_dir = Path(tmpdir)
@@ -812,13 +855,31 @@ def run_esef_report_xhtml_partition(
             if not report_url:
                 skipped_no_report_url += 1
                 continue
-            downloaded = _archive_filing_report_xhtml(
-                client=client,
-                object_store=object_store,
-                temp_dir=temp_dir,
-                fxo_id=fxo_id,
-                report_url=report_url,
-            )
+            try:
+                downloaded = _archive_filing_report_xhtml(
+                    client=client,
+                    object_store=object_store,
+                    temp_dir=temp_dir,
+                    fxo_id=fxo_id,
+                    report_url=report_url,
+                )
+            except dlt_requests.HTTPError as exc:
+                # Same permanently-missing-upstream-file guard as
+                # run_esef_filing_facts_partition (see that loop's comment) --
+                # the skip happens before _archive_filing_report_xhtml's
+                # `object_store.upload_file` call, so no phantom S3 object is
+                # left for a filing whose report.html 404s/410s upstream.
+                if not _is_permanently_missing_upstream_error(exc):
+                    raise
+                skipped_upstream_missing += 1
+                log_warning(
+                    "ESEF report XHTML download permanently missing upstream "
+                    "(status=%s): fxo_id=%s report_url=%s",
+                    exc.response.status_code if exc.response is not None else None,
+                    fxo_id,
+                    report_url,
+                )
+                continue
             if downloaded:
                 downloaded_count += 1
             else:
@@ -829,6 +890,7 @@ def run_esef_report_xhtml_partition(
         "downloaded_count": downloaded_count,
         "reused_count": reused_count,
         "skipped_no_report_url": skipped_no_report_url,
+        "skipped_upstream_missing": skipped_upstream_missing,
         "skipped_out_of_range": skipped_out_of_range,
     }
 
@@ -859,6 +921,7 @@ def esef_report_xhtml_s3(
         client=EsefFilingsClient(),
         partition_year=int(context.partition_key),
         log_info=context.log.info,
+        log_warning=context.log.warning,
     )
     return dg.MaterializeResult(metadata=metadata)
 
