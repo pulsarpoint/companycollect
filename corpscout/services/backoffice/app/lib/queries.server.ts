@@ -83,7 +83,7 @@ export async function searchCompanies(
   const conds: string[] = [];
   const params: Record<string, unknown> = {};
   if (q) {
-    conds.push(`${country.nameColumn} ILIKE {pattern:String}`);
+    conds.push(`${country.searchColumnExpr ?? country.nameColumn} ILIKE {pattern:String}`);
     params.pattern = `%${q}%`;
   }
   for (const column of country.columns) {

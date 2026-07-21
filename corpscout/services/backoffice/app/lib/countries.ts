@@ -150,6 +150,14 @@ export interface CountryConfig {
   idColumn: string;
   /** Column holding the display name. */
   nameColumn: string;
+  /**
+   * Optional SQL expression the list search matches against instead of
+   * nameColumn — for countries whose registered names use formal legal-form
+   * words users don't type (SE registers "Aktiebolag" where everyone
+   * writes "AB"). The expression should contain the display name plus any
+   * normalized variants, e.g. concat(name, ' ', abbreviated-name).
+   */
+  searchColumnExpr?: string;
   /** SQL boolean expression selecting active companies. */
   activeExpr: string;
   /** Human-readable approximate row count, shown on the picker card. */
@@ -427,6 +435,10 @@ LIMIT 50`,
   {
     code: "se", name: "Sweden", flag: "🇸🇪", companiesTable: "se_companies",
     idColumn: "registration_number", nameColumn: "legal_name", activeExpr: "status = 'active'",
+    // Bolagsverket registers formal legal-form words; users type the
+    // abbreviations ("Investor AB" vs registered "Investor Aktiebolag").
+    searchColumnExpr:
+      "concat(coalesce(legal_name, ''), ' ', replaceRegexpAll(replaceRegexpAll(coalesce(legal_name, ''), '(?i)aktiebolag', 'AB'), '(?i)handelsbolag', 'HB'))",
     approxCompanies: "3.4M", features: ["financials", "industries"],
     industryJoinKeyExpr: "company_id",
     columns: [
