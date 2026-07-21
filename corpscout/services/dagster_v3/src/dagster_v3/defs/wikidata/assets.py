@@ -205,6 +205,7 @@ def wikidata_company_seed_raw_objects(
         run_id=context.run_id,
         retrieved_at=datetime.now(UTC).isoformat(),
         sleep=time.sleep,
+        log=context.log.info,
     )
 
 
@@ -1347,9 +1348,19 @@ def pull_wikidata_company_seed_raw_objects(
     run_id: str,
     retrieved_at: str,
     sleep: Callable[[float], None],
+    log: Callable[..., object],
 ) -> dg.MaterializeResult:
+    log(
+        "Starting Wikidata raw download: run_id=%s page_size=%s max_pages=%s "
+        "include_registry_seed=%s",
+        run_id,
+        config.page_size,
+        config.max_pages,
+        config.include_registry_seed,
+    )
     object_store.ensure_bucket(WIKIDATA_RAW_BUCKET)
     retrieved_date = retrieved_at[:10]
+    log("Discovering Wikidata exchanges and registry seed properties")
     exchange_rows, active_exchanges_key = wikidata_raw_pull_exchange_rows(
         client=client,
         object_store=object_store,
@@ -1369,12 +1380,21 @@ def pull_wikidata_company_seed_raw_objects(
     seed_units = [_seed_unit_from_exchange_row(row) for row in exchange_rows] + [
         _seed_unit_from_registry_row(row) for row in registry_rows
     ]
+    log(
+        "Wikidata seed discovery completed: exchanges=%s registry_properties=%s "
+        "download_units=%s",
+        len(exchange_rows),
+        len(registry_rows),
+        len(seed_units),
+    )
 
     total_row_count = 0
     total_page_count = 0
+    total_augmentation_row_count = 0
+    total_augmentation_object_count = 0
     manifest_keys: list[str] = []
 
-    for unit_index, seed_unit in enumerate(seed_units):
+    for unit_index, seed_unit in enumerate(seed_units, start=1):
         exchange_id = seed_unit["exchange_wikidata_id"]
         unit_row_count = 0
         unit_augmentation_row_count = 0
@@ -1383,6 +1403,16 @@ def pull_wikidata_company_seed_raw_objects(
         augmentation_object_keys: list[str] = []
         first_query = _seed_unit_query(seed_unit, limit=config.page_size, offset=0)
         current_query_hash = query_hash(first_query)
+        log(
+            "Starting Wikidata download unit: unit=%s/%s mode=%s exchange_id=%s "
+            "exchange_name=%s expected_listed_companies=%s",
+            unit_index,
+            len(seed_units),
+            seed_unit["query_mode"],
+            exchange_id,
+            seed_unit["exchange_name"],
+            seed_unit["listed_company_count_on_exchange"],
+        )
 
         while config.max_pages is None or page_count < config.max_pages:
             offset = page_count * config.page_size
@@ -1417,10 +1447,24 @@ def pull_wikidata_company_seed_raw_objects(
                     page_number=page_count,
                     listed_company_bindings=bindings,
                     sleep=sleep,
+                    log=log,
                 )
             )
             augmentation_object_keys.extend(page_augmentation_object_keys)
             unit_augmentation_row_count += page_augmentation_row_count
+            log(
+                "Downloaded Wikidata company page: unit=%s/%s exchange_id=%s "
+                "page=%s page_rows=%s unit_rows=%s augmentation_rows=%s "
+                "object_key=%s",
+                unit_index,
+                len(seed_units),
+                exchange_id,
+                page_count,
+                len(bindings),
+                unit_row_count,
+                unit_augmentation_row_count,
+                object_key,
+            )
 
             if len(bindings) < config.page_size:
                 break
@@ -1465,8 +1509,23 @@ def pull_wikidata_company_seed_raw_objects(
         manifest_keys.append(manifest_key)
         total_row_count += unit_row_count
         total_page_count += page_count
+        total_augmentation_row_count += unit_augmentation_row_count
+        total_augmentation_object_count += len(augmentation_object_keys)
+        log(
+            "Completed Wikidata download unit: unit=%s/%s exchange_id=%s "
+            "pages=%s company_rows=%s augmentation_objects=%s "
+            "augmentation_rows=%s manifest_key=%s",
+            unit_index,
+            len(seed_units),
+            exchange_id,
+            page_count,
+            unit_row_count,
+            len(augmentation_object_keys),
+            unit_augmentation_row_count,
+            manifest_key,
+        )
 
-        if config.request_delay_seconds > 0 and unit_index < len(seed_units) - 1:
+        if config.request_delay_seconds > 0 and unit_index < len(seed_units):
             sleep(config.request_delay_seconds)
 
     snapshot_manifest_key = snapshot_manifest_object_key(run_id=run_id)
@@ -1485,6 +1544,8 @@ def pull_wikidata_company_seed_raw_objects(
                 "registry_property_count": len(registry_rows),
                 "page_count": total_page_count,
                 "row_count": total_row_count,
+                "augmentation_object_count": total_augmentation_object_count,
+                "augmentation_row_count": total_augmentation_row_count,
                 "manifest_keys": manifest_keys,
             },
             sort_keys=True,
@@ -1496,6 +1557,20 @@ def pull_wikidata_company_seed_raw_objects(
         object_store=object_store,
         run_id=run_id,
     )
+    log(
+        "Completed Wikidata raw download: run_id=%s units=%s pages=%s "
+        "company_rows=%s augmentation_objects=%s augmentation_rows=%s "
+        "manifests=%s deleted_old_objects=%s snapshot_manifest_key=%s",
+        run_id,
+        len(seed_units),
+        total_page_count,
+        total_row_count,
+        total_augmentation_object_count,
+        total_augmentation_row_count,
+        len(manifest_keys),
+        deleted_old_raw_object_count,
+        snapshot_manifest_key,
+    )
     return dg.MaterializeResult(
         metadata={
             "bucket": WIKIDATA_RAW_BUCKET,
@@ -1503,6 +1578,8 @@ def pull_wikidata_company_seed_raw_objects(
             "registry_property_count": len(registry_rows),
             "page_count": total_page_count,
             "row_count": total_row_count,
+            "augmentation_object_count": total_augmentation_object_count,
+            "augmentation_row_count": total_augmentation_row_count,
             "manifest_count": len(manifest_keys),
             "manifest_keys": manifest_keys,
             "snapshot_manifest_key": snapshot_manifest_key,
@@ -1593,6 +1670,7 @@ def pull_wikidata_company_augmentation_raw_objects_for_page(
     page_number: int,
     listed_company_bindings: list[dict[str, Any]],
     sleep: Callable[[float], None],
+    log: Callable[..., object],
 ) -> tuple[list[str], int]:
     company_ids = sorted(
         {
@@ -1605,6 +1683,7 @@ def pull_wikidata_company_augmentation_raw_objects_for_page(
     row_count = 0
     batches = list(_batched(company_ids, config.augmentation_batch_size))
     for batch_number, company_id_batch in enumerate(batches, start=1):
+        batch_row_count = 0
         query_builders: tuple[tuple[str, Callable[[tuple[str, ...]], str]], ...] = (
             ("profile", build_company_profile_augmentation_query),
             ("identifiers", build_company_identifier_augmentation_query),
@@ -1633,12 +1712,25 @@ def pull_wikidata_company_augmentation_raw_objects_for_page(
             )
             object_keys.append(object_key)
             row_count += len(bindings)
+            batch_row_count += len(bindings)
 
             is_last_query = batch_number == len(batches) and query_index == len(
                 query_builders
             )
             if config.request_delay_seconds > 0 and not is_last_query:
                 sleep(config.request_delay_seconds)
+
+        log(
+            "Downloaded Wikidata augmentation batch: exchange_id=%s page=%s "
+            "batch=%s/%s companies=%s response_objects=%s rows=%s",
+            exchange_id,
+            page_number,
+            batch_number,
+            len(batches),
+            len(company_id_batch),
+            len(query_builders),
+            batch_row_count,
+        )
 
     return object_keys, row_count
 

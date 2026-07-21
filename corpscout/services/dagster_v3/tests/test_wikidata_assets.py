@@ -735,6 +735,10 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
             _wikidata_response([]),
         ]
     )
+    progress_messages: list[str] = []
+
+    def capture_progress(message: str, *args: object) -> None:
+        progress_messages.append(message % args)
 
     result = assets.pull_wikidata_company_seed_raw_objects(
         client=client,
@@ -750,6 +754,7 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
         run_id="run-123",
         retrieved_at="2026-06-19T10:00:00+00:00",
         sleep=lambda _seconds: None,
+        log=capture_progress,
     )
 
     page_one_key = (
@@ -850,6 +855,21 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
     assert result.metadata["page_count"] == 2
     assert result.metadata["exchange_count"] == 1
     assert result.metadata["deleted_old_raw_object_count"] == 2
+    assert any(
+        "Wikidata seed discovery completed: exchanges=1 registry_properties=0 "
+        "download_units=1" in message
+        for message in progress_messages
+    )
+    assert any(
+        "Downloaded Wikidata company page: unit=1/1 exchange_id=Q13677 "
+        "page=2 page_rows=1 unit_rows=2" in message
+        for message in progress_messages
+    )
+    assert any(
+        "Completed Wikidata raw download: run_id=run-123 units=1 pages=2 "
+        "company_rows=2 augmentation_objects=8" in message
+        for message in progress_messages
+    )
     assert "partition_month" not in result.metadata
     assert client.offsets == [0, 1, 2]
 
@@ -936,6 +956,7 @@ def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages()
         run_id="run-123",
         retrieved_at="2026-06-19T10:00:00+00:00",
         sleep=lambda _seconds: None,
+        log=lambda *_args: None,
     )
 
     manifest_key = (
@@ -1011,6 +1032,7 @@ def test_wikidata_raw_pull_pulls_registry_properties_after_exchanges_as_pseudo_e
         run_id="run-999",
         retrieved_at="2026-07-20T10:00:00+00:00",
         sleep=lambda _seconds: None,
+        log=lambda *_args: None,
     )
 
     exchange_manifest_key = (
