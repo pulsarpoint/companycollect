@@ -2,11 +2,22 @@ from dagster_v3.contact_extraction import (
     COMPANY_CONTACTS_COLUMNS,
     COMPANY_DOMAINS_COLUMNS,
 )
+from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSpec
 
 DLT_DATASET_NAME = "brazil_rfb"
 SNAPSHOT_FILES_TABLE = "snapshot_files"
 
 BRAZIL_COMP_RFB_DATABASE = "corpscout"
+
+# Wikidata P6204 = Brazilian CNPJ (BR). Aggregated by defs/wikidata/registry_seed.py;
+# see WikidataRegistrySeedSpec for why this lives here instead of a central list in
+# defs/wikidata/. The asset key is hardcoded (not imported from rfb/assets.py) to avoid
+# a circular import — it must match CLICKHOUSE_COMPANIES_ASSET_KEY in rfb/assets.py.
+WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
+    property_id="P6204",
+    country_iso2="BR",
+    spine_asset_key="brazil_comp_rfb_clickhouse_companies",
+)
 
 RAW_TABLE_BY_FAMILY = {
     "empresas": "empresas_raw",

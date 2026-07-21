@@ -1,3 +1,5 @@
+from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSpec
+
 DLT_DATASET_NAME = "uk_companies_house"
 COMPANIES_RAW_TABLE = "basic_company_data_raw"  # DuckDB staging (normalize_names read_csv)
 COMPANIES_TABLE = "companies"  # DuckDB normalized
@@ -11,6 +13,15 @@ DOWNLOAD_INDEX_URL = "https://download.companieshouse.gov.uk/en_output.html"
 BASIC_DATA_FILENAME_RE = r"BasicCompanyDataAsOneFile-\d{4}-\d{2}-01\.zip"
 
 _EXCLUDED = frozenset({"raw_entity", "source_payload_hash"})
+
+# Wikidata P2622 = UK Companies House company number (GB). Aggregated by
+# defs/wikidata/registry_seed.py; see WikidataRegistrySeedSpec for why this lives here
+# instead of a central list in defs/wikidata/.
+WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
+    property_id="P2622",
+    country_iso2="GB",
+    spine_asset_key="uk_companies_house_clickhouse_companies",
+)
 
 
 def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:

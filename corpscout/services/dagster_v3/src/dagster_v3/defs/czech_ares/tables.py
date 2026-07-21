@@ -1,9 +1,20 @@
+from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSpec
+
 CZECH_DATABASE = "corpscout"
 
 # CSU RES open data — stable URL, refreshed twice monthly. Free, no credentials.
 RES_DATA_URL = "https://opendata.csu.gov.cz/soubory/od/od_org03/res_data.csv"
 
 _EXCLUDED = frozenset({"raw_entity", "source_payload_hash"})
+
+# Wikidata P4156 = Czech ICO / business registration number (CZ). Aggregated by
+# defs/wikidata/registry_seed.py; see WikidataRegistrySeedSpec for why this lives here
+# instead of a central list in defs/wikidata/.
+WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
+    property_id="P4156",
+    country_iso2="CZ",
+    spine_asset_key="czech_ares_clickhouse_companies",
+)
 
 
 def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:

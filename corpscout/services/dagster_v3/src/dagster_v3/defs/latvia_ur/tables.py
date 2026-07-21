@@ -1,5 +1,7 @@
 from typing import Any
 
+from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSpec
+
 DLT_DATASET_NAME = "latvia_ur"
 ENTITIES_TABLE = "entities"
 COMPANY_ACTIVITY_TABLE = "company_activity"
@@ -49,6 +51,15 @@ def copy_dlt_columns(columns: dict[str, dict[str, Any]]) -> dict[str, dict[str, 
 LATVIA_UR_DATABASE = "corpscout"
 LV_COMPANIES_TABLE = "lv_companies"
 QUALIFIED_LV_COMPANIES_TABLE = f"{LATVIA_UR_DATABASE}.{LV_COMPANIES_TABLE}"
+
+# Wikidata P8053 = Latvian unified registration number (LV). Aggregated by
+# defs/wikidata/registry_seed.py; see WikidataRegistrySeedSpec for why this lives here
+# instead of a central list in defs/wikidata/.
+WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
+    property_id="P8053",
+    country_iso2="LV",
+    spine_asset_key="latvia_ur_clickhouse_companies",
+)
 
 LATVIA_VZD_ADDRESS_COLUMNS = (
     "vzd_address_text",

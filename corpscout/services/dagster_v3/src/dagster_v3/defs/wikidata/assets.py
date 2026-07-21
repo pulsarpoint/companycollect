@@ -21,6 +21,7 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.wikidata.registry_seed import WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
 from dagster_v3.defs.wikidata.source import (
     WIKIDATA_DUCKDB_DATASET_NAME,
     WIKIDATA_DUCKDB_PIPELINE_NAME,
@@ -38,9 +39,11 @@ from dagster_v3.defs.wikidata.source import (
     build_company_profile_augmentation_query,
     build_company_relationship_augmentation_query,
     build_listed_company_query,
+    build_registry_number_company_query,
     manifest_object_key,
     page_object_key,
     query_hash,
+    registry_pseudo_exchange_id,
     response_bindings,
     wikidata_id_from_url,
     wikidata_listed_companies_source,
@@ -149,9 +152,22 @@ def wikidata_company_seed_duckdb_tables(
 
 
 @dg.asset(
+    # Ordering-only deps for discoverability: every country with a national
+    # registry-number Wikidata property (see WikidataRegistrySeedSpec) shows up
+    # connected to the wikidata seed in the Dagster UI asset graph, and a country
+    # lacking the edge is visibly unwired. These deps do NOT force materialization —
+    # the seed stays on its own weekly schedule, and wikidata_company_seed_selection
+    # explicitly excludes each spine's upstream so the weekly job doesn't balloon into
+    # materializing nine full country pipelines (see WIKIDATA_REGISTRY_SEED_SPECS /
+    # tests/test_wikidata_assets.py wiring test).
+    deps=[dg.AssetKey(spine_asset_key) for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS],
     group_name=GROUP_NAME,
     kinds={"python", "wikidata", "s3"},
-    description="Pulls paged raw Wikidata listed-company SPARQL responses into object storage.",
+    description=(
+        "Pulls paged raw Wikidata company SPARQL responses into object storage: "
+        "exchange-listed companies, plus every Wikidata item carrying a national "
+        "registry-number property (pulled as pseudo-exchanges)."
+    ),
 )
 def wikidata_company_seed_raw_objects(
     context: dg.AssetExecutionContext,
@@ -344,7 +360,15 @@ def _create_wikidata_companies_table(
             nullif(max(logo_image_url), '') as logo_image_url,
             nullif(max(industry_wikidata_id), '') as industry_wikidata_id,
             nullif(max(industry_label), '') as industry_label,
-            cast(1 as integer) as has_current_listing,
+            -- Registry-number pseudo-exchange rows carry no listing_statement_id (see
+            -- build_registry_number_company_query); a company discovered only via a
+            -- registry property, never on a real exchange, must not claim a current
+            -- listing. Was hardcoded to 1 before the registry seed existed, when every
+            -- seeded company necessarily came from an exchange listing.
+            case
+                when count(distinct nullif(listing_statement_id, '')) > 0 then 1
+                else 0
+            end as has_current_listing,
             count(distinct nullif(listing_statement_id, '')) as listing_count,
             'wikidata' as source_system,
             max(source_run_id) as source_run_id,
@@ -1066,38 +1090,42 @@ def pull_wikidata_company_seed_raw_objects(
         retrieved_date=retrieved_date,
         retrieved_at=retrieved_at,
     )
+    registry_rows = wikidata_raw_pull_registry_rows(
+        config=config,
+        source_run_id=run_id,
+        retrieved_at=retrieved_at,
+    )
+    # Registry properties are pulled as pseudo-exchanges AFTER the real exchanges, in
+    # the same loop, so raw-object layout/manifests/page numbering/augmentation
+    # batching/provenance keys work unchanged (see build_registry_number_company_query).
+    seed_units = [_seed_unit_from_exchange_row(row) for row in exchange_rows] + [
+        _seed_unit_from_registry_row(row) for row in registry_rows
+    ]
+
     total_row_count = 0
     total_page_count = 0
     manifest_keys: list[str] = []
 
-    for exchange_index, exchange_row in enumerate(exchange_rows):
-        exchange_id = exchange_row["exchange_wikidata_id"]
-        exchange_row_count = 0
-        exchange_augmentation_row_count = 0
+    for unit_index, seed_unit in enumerate(seed_units):
+        exchange_id = seed_unit["exchange_wikidata_id"]
+        unit_row_count = 0
+        unit_augmentation_row_count = 0
         page_count = 0
         object_keys: list[str] = []
         augmentation_object_keys: list[str] = []
-        first_query = build_listed_company_query(
-            exchange_id=exchange_id,
-            limit=config.page_size,
-            offset=0,
-        )
+        first_query = _seed_unit_query(seed_unit, limit=config.page_size, offset=0)
         current_query_hash = query_hash(first_query)
 
         while config.max_pages is None or page_count < config.max_pages:
             offset = page_count * config.page_size
-            query = build_listed_company_query(
-                exchange_id=exchange_id,
-                limit=config.page_size,
-                offset=offset,
-            )
+            query = _seed_unit_query(seed_unit, limit=config.page_size, offset=offset)
             payload = client.fetch(query, user_agent=config.user_agent)
             bindings = response_bindings(payload)
             if not bindings:
                 break
 
             page_count += 1
-            exchange_row_count += len(bindings)
+            unit_row_count += len(bindings)
             object_key = page_object_key(
                 retrieved_date=retrieved_date,
                 run_id=run_id,
@@ -1124,7 +1152,7 @@ def pull_wikidata_company_seed_raw_objects(
                 )
             )
             augmentation_object_keys.extend(page_augmentation_object_keys)
-            exchange_augmentation_row_count += page_augmentation_row_count
+            unit_augmentation_row_count += page_augmentation_row_count
 
             if len(bindings) < config.page_size:
                 break
@@ -1138,18 +1166,19 @@ def pull_wikidata_company_seed_raw_objects(
         )
         manifest = {
             "source": "wikidata",
-            "query_mode": "exchange",
+            "query_mode": seed_unit["query_mode"],
             "run_id": run_id,
             "retrieved_date": retrieved_date,
             "exchange_id": exchange_id,
-            "exchange_name": exchange_row["exchange_name"],
-            "listed_company_count_on_exchange": exchange_row[
+            "exchange_name": seed_unit["exchange_name"],
+            "listed_company_count_on_exchange": seed_unit[
                 "listed_company_count_on_exchange"
             ],
+            "registry_property_id": seed_unit["registry_property_id"],
             "page_size": config.page_size,
             "query_hash": current_query_hash,
-            "row_count": exchange_row_count,
-            "augmentation_row_count": exchange_augmentation_row_count,
+            "row_count": unit_row_count,
+            "augmentation_row_count": unit_augmentation_row_count,
             "page_count": page_count,
             "started_at": retrieved_at,
             "completed_at": datetime.now(UTC).isoformat(),
@@ -1162,13 +1191,10 @@ def pull_wikidata_company_seed_raw_objects(
             bucket=WIKIDATA_RAW_BUCKET,
         )
         manifest_keys.append(manifest_key)
-        total_row_count += exchange_row_count
+        total_row_count += unit_row_count
         total_page_count += page_count
 
-        if (
-            config.request_delay_seconds > 0
-            and exchange_index < len(exchange_rows) - 1
-        ):
+        if config.request_delay_seconds > 0 and unit_index < len(seed_units) - 1:
             sleep(config.request_delay_seconds)
 
     deleted_old_raw_object_count = delete_old_wikidata_raw_snapshot_objects(
@@ -1179,6 +1205,7 @@ def pull_wikidata_company_seed_raw_objects(
         metadata={
             "bucket": WIKIDATA_RAW_BUCKET,
             "exchange_count": len(exchange_rows),
+            "registry_property_count": len(registry_rows),
             "page_count": total_page_count,
             "row_count": total_row_count,
             "manifest_count": len(manifest_keys),
@@ -1188,6 +1215,67 @@ def pull_wikidata_company_seed_raw_objects(
             "retrieved_at": retrieved_at,
         }
     )
+
+
+def _seed_unit_from_exchange_row(exchange_row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "exchange_wikidata_id": exchange_row["exchange_wikidata_id"],
+        "exchange_name": exchange_row["exchange_name"],
+        "listed_company_count_on_exchange": exchange_row[
+            "listed_company_count_on_exchange"
+        ],
+        "query_mode": "exchange",
+        "registry_property_id": None,
+    }
+
+
+def _seed_unit_from_registry_row(registry_row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "exchange_wikidata_id": registry_row["exchange_wikidata_id"],
+        "exchange_name": registry_row["exchange_name"],
+        "listed_company_count_on_exchange": registry_row[
+            "listed_company_count_on_exchange"
+        ],
+        "query_mode": "registry_number",
+        "registry_property_id": registry_row["registry_property_id"],
+    }
+
+
+def _seed_unit_query(seed_unit: dict[str, Any], *, limit: int, offset: int) -> str:
+    if seed_unit["query_mode"] == "registry_number":
+        return build_registry_number_company_query(
+            property_id=seed_unit["registry_property_id"],
+            limit=limit,
+            offset=offset,
+        )
+    return build_listed_company_query(
+        exchange_id=seed_unit["exchange_wikidata_id"],
+        limit=limit,
+        offset=offset,
+    )
+
+
+def wikidata_raw_pull_registry_rows(
+    *,
+    config: WikidataRawPullConfig,
+    source_run_id: str,
+    retrieved_at: str,
+) -> list[dict[str, Any]]:
+    if not config.include_registry_seed:
+        return []
+    property_ids = config.configured_registry_property_ids()
+    return [
+        {
+            "exchange_wikidata_id": registry_pseudo_exchange_id(property_id),
+            "exchange_name": f"Wikidata registry-number seed: {property_id}",
+            "listed_company_count_on_exchange": 0,
+            "registry_property_id": property_id,
+            "source_run_id": source_run_id,
+            "retrieved_at": retrieved_at,
+            "source_row_number": row_number,
+        }
+        for row_number, property_id in enumerate(property_ids, start=1)
+    ]
 
 
 def pull_wikidata_company_augmentation_raw_objects_for_page(
@@ -1338,6 +1426,18 @@ def delete_old_wikidata_raw_snapshot_objects(
     return object_store.delete_keys(stale_keys, bucket=WIKIDATA_RAW_BUCKET)
 
 
+# wikidata_company_seed_raw_objects declares ordering-only `deps` on every registry
+# seed spec's spine asset (see the asset's docstring) purely so the UI shows the
+# wikidata seed connected to each country's pipeline. `.upstream()` from the ClickHouse
+# export walks that edge too, so without this exclusion the weekly job's selection
+# would balloon into materializing nine full country pipelines (Sweden bulk download,
+# Norway entities, Denmark CVR, ...) every week. Subtract each spine's own `.upstream()`
+# (which includes the spine itself) to drop exactly the country pipelines and nothing
+# from the native wikidata chain — no wikidata_* asset is upstream of a country spine.
+_wikidata_registry_seed_spine_exclusion = dg.AssetSelection.assets(
+    *(dg.AssetKey(spine_asset_key) for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS)
+).upstream()
+
 # The canonical-contacts derivation (wikidata_clickhouse_canonical_contacts,
 # defs/wikidata/contacts.py) runs after wikidata_company_seed_clickhouse lands
 # corpscout.wikidata_company_websites/wikidata_companies, joined via an explicit
@@ -1345,7 +1445,7 @@ def delete_old_wikidata_raw_snapshot_objects(
 wikidata_company_seed_selection = (
     dg.AssetSelection.assets("wikidata_company_seed_clickhouse").upstream()
     | dg.AssetSelection.assets("wikidata_clickhouse_canonical_contacts")
-)
+) - _wikidata_registry_seed_spine_exclusion
 
 wikidata_company_seed_weekly_job = dg.define_asset_job(
     "wikidata_company_seed_weekly_job",

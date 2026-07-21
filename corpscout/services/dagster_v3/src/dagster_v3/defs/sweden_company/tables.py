@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSpec
+
 DLT_DATASET_NAME = "sweden_company"
 
 SWEDEN_DATABASE = "corpscout"
@@ -13,6 +15,15 @@ QUALIFIED_COMPANY_ADDRESSES_TABLE = (
 QUALIFIED_INDUSTRIES_TABLE = f"{SWEDEN_DATABASE}.{INDUSTRIES_TABLE_CH}"
 
 SWEDEN_COMPANY_DUCKDB_PATH = Path("data/sweden_company_source.duckdb")
+
+# Wikidata P6460 = Bolagsverket organisation number (SE). Aggregated by
+# defs/wikidata/registry_seed.py; see WikidataRegistrySeedSpec for why this lives here
+# instead of a central list in defs/wikidata/.
+WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
+    property_id="P6460",
+    country_iso2="SE",
+    spine_asset_key="sweden_company_companies_clickhouse",
+)
 
 BOLAGSVERKET_SOURCE_COLUMNS = (
     "organisationsidentitet",

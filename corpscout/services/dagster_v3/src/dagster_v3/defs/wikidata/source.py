@@ -11,8 +11,16 @@ from dlt.extract.resource import DltResource
 from dlt.sources.helpers.requests import Client as DltRequestsClient
 from pydantic import field_validator
 
+from dagster_v3.defs.wikidata.registry_seed import WIKIDATA_REGISTRY_NUMBER_PROPERTY_IDS
+
 WIKIDATA_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 WIKIDATA_RAW_BUCKET = "source-wikidata-company-seed"
+# Registry-number pulls are treated as pseudo-exchanges (id "registry_<PID>") so the
+# raw-object layout, manifests, page numbering, augmentation batching, and provenance
+# keys — all keyed on "exchange_id" — work unchanged for a company-discovery source that
+# isn't actually an exchange listing. See defs/wikidata/registry_seed.py for where the
+# property set comes from.
+WIKIDATA_REGISTRY_PSEUDO_EXCHANGE_PREFIX = "registry_"
 WIKIDATA_DUCKDB_PIPELINE_NAME = "wikidata_listed_companies"
 WIKIDATA_DUCKDB_DATASET_NAME = "wikidata_stage"
 WIKIDATA_LISTED_COMPANIES_TABLE = "listed_companies"
@@ -155,6 +163,14 @@ class WikidataRawPullConfig(dg.Config):
     request_timeout_seconds: int = DEFAULT_WIKIDATA_REQUEST_TIMEOUT_SECONDS
     request_delay_seconds: float = DEFAULT_WIKIDATA_REQUEST_DELAY_SECONDS
     user_agent: str = DEFAULT_WIKIDATA_USER_AGENT
+    # Registry-number seed: every Wikidata item carrying a national registry-number
+    # property (SE orgnr, NO orgnr, DK CVR, ...), not just exchange-listed companies.
+    # Pulled as pseudo-exchanges after the real exchanges above. Property set defaults
+    # to the union of every country module's WikidataRegistrySeedSpec (see
+    # defs/wikidata/registry_seed.py) — override with registry_property_ids_csv for a
+    # narrower run (e.g. backfilling one country).
+    include_registry_seed: bool = True
+    registry_property_ids_csv: str | None = None
 
     @field_validator("exchange_ids_csv")
     @classmethod
@@ -164,6 +180,16 @@ class WikidataRawPullConfig(dg.Config):
         stripped = value.strip()
         if not stripped:
             raise ValueError("exchange_ids_csv must not be blank when provided")
+        return stripped
+
+    @field_validator("registry_property_ids_csv")
+    @classmethod
+    def validate_optional_registry_property_ids(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("registry_property_ids_csv must not be blank when provided")
         return stripped
 
     @field_validator("user_agent")
@@ -206,6 +232,20 @@ class WikidataRawPullConfig(dg.Config):
         if not exchange_ids:
             raise ValueError("exchange_ids_csv must contain at least one exchange ID")
         return exchange_ids
+
+    def configured_registry_property_ids(self) -> tuple[str, ...]:
+        if self.registry_property_ids_csv is None:
+            return WIKIDATA_REGISTRY_NUMBER_PROPERTY_IDS
+        property_ids = tuple(
+            property_id.strip()
+            for property_id in self.registry_property_ids_csv.split(",")
+            if property_id.strip()
+        )
+        if not property_ids:
+            raise ValueError(
+                "registry_property_ids_csv must contain at least one property ID"
+            )
+        return property_ids
 
 
 class WikidataListedCompaniesConfig(dg.Config):
@@ -313,6 +353,85 @@ WHERE {{
   }}
 }}
 ORDER BY ?company ?listing ?website ?ticker ?isin ?cik ?lei ?headquarters ?headquartersCountry ?headquartersCountryIso2 ?industry
+LIMIT {limit}
+OFFSET {offset}
+""".strip()
+
+
+def registry_pseudo_exchange_id(property_id: str) -> str:
+    """The pseudo-exchange id a registry-number property pulls under, e.g.
+    ``registry_P6460`` for Sweden's orgnr. Keeps raw-object keys, manifests, and page
+    numbering identical in shape to a real exchange pull (all keyed on "exchange_id")."""
+    return f"{WIKIDATA_REGISTRY_PSEUDO_EXCHANGE_PREFIX}{property_id}"
+
+
+def is_registry_pseudo_exchange_id(exchange_id: str) -> bool:
+    return exchange_id.startswith(WIKIDATA_REGISTRY_PSEUDO_EXCHANGE_PREFIX)
+
+
+def registry_property_id_from_pseudo_exchange_id(exchange_id: str) -> str:
+    if not is_registry_pseudo_exchange_id(exchange_id):
+        raise ValueError(f"{exchange_id!r} is not a registry pseudo-exchange id")
+    return exchange_id[len(WIKIDATA_REGISTRY_PSEUDO_EXCHANGE_PREFIX) :]
+
+
+def build_registry_number_company_query(
+    *,
+    property_id: str,
+    limit: int,
+    offset: int,
+) -> str:
+    """Mirrors build_listed_company_query's SELECT bindings and OPTIONAL blocks so the
+    page-row parser (listed_company_row_from_binding) works unchanged, EXCEPT the WHERE
+    clause anchors on ``?company wdt:<property_id> ?registryValue .`` instead of a
+    p:P414 listing — there is no exchange/ticker/isin triple, so ?listing/?exchange/
+    ?exchangeLabel/?ticker/?isin simply come back unbound (empty) for every row, same as
+    any other absent OPTIONAL binding. The registry value itself is not selected: this
+    seed's job is only discovering company ids, the identifier augmentation query
+    (build_company_identifier_augmentation_query) already extracts the value per
+    company."""
+    return f"""
+SELECT DISTINCT
+  ?company
+  ?companyLabel
+  ?companyDescription
+  ?officialName
+  ?listing
+  ?exchange
+  ?exchangeLabel
+  ?ticker
+  ?isin
+  ?website
+  ?cik
+  ?lei
+  ?headquarters
+  ?headquartersLabel
+  ?headquartersCountry
+  ?headquartersCountryLabel
+  ?headquartersCountryIso2
+  ?industry
+  ?industryLabel
+WHERE {{
+  ?company wdt:{property_id} ?registryValue .
+
+  OPTIONAL {{ ?company wdt:P1448 ?officialName . }}
+  OPTIONAL {{ ?company wdt:P856 ?website . }}
+  OPTIONAL {{ ?company wdt:P5531 ?cik . }}
+  OPTIONAL {{ ?company wdt:P1278 ?lei . }}
+  OPTIONAL {{
+    ?company wdt:P159 ?headquarters .
+    OPTIONAL {{ ?headquarters wdt:P131*/wdt:P17 ?headquartersCountry . }}
+    OPTIONAL {{ ?headquartersCountry wdt:P297 ?headquartersCountryIso2 . }}
+  }}
+  OPTIONAL {{ ?company wdt:P452 ?industry . }}
+
+  FILTER NOT EXISTS {{ ?company wdt:P576 ?dissolvedDate . }}
+
+  SERVICE wikibase:label {{
+    bd:serviceParam wikibase:language "en" .
+  }}
+}}
+ORDER BY ?company ?website ?cik ?lei ?headquarters ?headquartersCountry ?headquartersCountryIso2 ?industry
 LIMIT {limit}
 OFFSET {offset}
 """.strip()

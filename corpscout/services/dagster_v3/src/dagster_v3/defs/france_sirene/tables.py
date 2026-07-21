@@ -1,3 +1,5 @@
+from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSpec
+
 DLT_DATASET_NAME = "france_sirene"
 UNITE_LEGALE_RAW_TABLE = "unite_legale_raw"  # DuckDB staging (all_varchar read_csv)
 ETABLISSEMENT_SIEGE_TABLE = "etablissement_siege"  # DuckDB: one siège address per siren
@@ -15,6 +17,15 @@ DATAGOUV_API = (
 # Resource URLs end with these suffixes; the *Historique variants are excluded.
 UNITE_LEGALE_URL_SUFFIX = "stock-stockunitelegale-csv.zip"
 ETABLISSEMENT_URL_SUFFIX = "stock-stocketablissement-csv.zip"
+
+# Wikidata P1616 = French SIREN number (FR). Aggregated by
+# defs/wikidata/registry_seed.py; see WikidataRegistrySeedSpec for why this lives here
+# instead of a central list in defs/wikidata/.
+WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
+    property_id="P1616",
+    country_iso2="FR",
+    spine_asset_key="france_sirene_clickhouse_companies",
+)
 
 # Siège address columns added to fr_companies by migration 000034 (Phase 2).
 FR_COMPANIES_ADDRESS_COLUMNS = (

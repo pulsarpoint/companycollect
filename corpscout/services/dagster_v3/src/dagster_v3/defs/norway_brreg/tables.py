@@ -1,11 +1,24 @@
 from typing import Any
 
+from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSpec
+
 NORWAY_BRREG_DATABASE = "corpscout"
 COMPANIES_TABLE = "companies"
 FINANCIAL_STATEMENTS_TABLE = "financial_statements"
 QUALIFIED_COMPANIES_TABLE = f"{NORWAY_BRREG_DATABASE}.{COMPANIES_TABLE}"
 QUALIFIED_FINANCIAL_STATEMENTS_TABLE = (
     f"{NORWAY_BRREG_DATABASE}.{FINANCIAL_STATEMENTS_TABLE}"
+)
+
+# Wikidata P2333 = Norwegian organisation number (NO). Aggregated by
+# defs/wikidata/registry_seed.py. Norway has two alternating companies-ClickHouse
+# assets (full snapshot vs incremental update partitions, see
+# defs/norway_brreg/assets/entity_clickhouse.py); the snapshot asset is the canonical
+# full-refresh spine.
+WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
+    property_id="P2333",
+    country_iso2="NO",
+    spine_asset_key="norway_brreg_entities_snapshot_clickhouse",
 )
 
 BRREG_ENTITIES_COLUMNS: dict[str, dict[str, Any]] = {

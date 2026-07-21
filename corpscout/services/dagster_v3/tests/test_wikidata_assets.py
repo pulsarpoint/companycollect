@@ -122,12 +122,23 @@ def test_wikidata_canonical_contacts_asset_in_weekly_job() -> None:
     assert "wikidata_clickhouse_canonical_contacts" in job_asset_keys
 
 
-def test_wikidata_raw_object_asset_has_no_upstream_dependencies() -> None:
+def test_wikidata_raw_object_asset_depends_only_on_registry_seed_spines() -> None:
+    from dagster_v3.defs.wikidata.registry_seed import (
+        WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS,
+    )
+
     repository = load_project_defs().get_repository_def()
 
     raw_asset = repository.asset_graph.get(AssetKey(["wikidata_company_seed_raw_objects"]))
 
-    assert raw_asset.parent_keys == set()
+    # No dlt/DuckDB upstream (the raw pull is the root of the wikidata chain); its only
+    # parents are the ordering-only discoverability deps onto each registry seed spec's
+    # spine asset (see test_wikidata_registry_seed_specs_are_wired_into_seed_asset for
+    # the full wiring assertion).
+    assert raw_asset.parent_keys == {
+        AssetKey([spine_asset_key])
+        for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
+    }
 
 
 def test_wikidata_raw_object_asset_is_not_partitioned() -> None:
@@ -136,6 +147,83 @@ def test_wikidata_raw_object_asset_is_not_partitioned() -> None:
     raw_asset = repository.asset_graph.get(AssetKey(["wikidata_company_seed_raw_objects"]))
 
     assert raw_asset.partitions_def is None
+
+
+def test_wikidata_registry_seed_specs_are_wired_into_seed_asset() -> None:
+    # Every country module with a Wikidata registry-number property owns ONE
+    # WikidataRegistrySeedSpec (declared next to that module's own tables, not in a
+    # central list under defs/wikidata/ -- see defs/common/wikidata_registry_seed.py).
+    # This test is what fails loudly when someone adds a spec without wiring it, or
+    # wires an edge without a real spec backing it.
+    from dagster_v3.defs.wikidata.registry_seed import WIKIDATA_REGISTRY_SEED_SPECS
+
+    repository = load_project_defs().get_repository_def()
+    asset_graph = repository.asset_graph
+    all_asset_keys = asset_graph.get_all_asset_keys()
+    raw_asset = asset_graph.get(AssetKey(["wikidata_company_seed_raw_objects"]))
+
+    expected_property_ids = {
+        "P6460",  # SE
+        "P2333",  # NO
+        "P1059",  # DK
+        "P12980",  # FI
+        "P2622",  # GB (UK Companies House)
+        "P1616",  # FR
+        "P4156",  # CZ
+        "P8053",  # LV
+        "P6204",  # BR
+    }
+    assert {spec.property_id for spec in WIKIDATA_REGISTRY_SEED_SPECS} == (
+        expected_property_ids
+    )
+    assert len(WIKIDATA_REGISTRY_SEED_SPECS) == 9
+
+    country_iso2_values = [spec.country_iso2 for spec in WIKIDATA_REGISTRY_SEED_SPECS]
+    assert len(country_iso2_values) == len(set(country_iso2_values))
+
+    for spec in WIKIDATA_REGISTRY_SEED_SPECS:
+        spine_key = AssetKey([spec.spine_asset_key])
+        assert spine_key in all_asset_keys, (
+            f"{spec.spine_asset_key} (country={spec.country_iso2}, "
+            f"property={spec.property_id}) is declared in a WikidataRegistrySeedSpec "
+            "but is not a registered Dagster asset"
+        )
+        assert spine_key in raw_asset.parent_keys, (
+            f"{spec.spine_asset_key} (country={spec.country_iso2}) is a registered "
+            "asset but wikidata_company_seed_raw_objects has no deps edge onto it"
+        )
+
+
+def test_wikidata_weekly_job_excludes_registry_seed_country_pipelines() -> None:
+    # wikidata_company_seed_raw_objects declares ordering-only deps on nine countries'
+    # companies-ClickHouse spine assets purely for UI discoverability (see
+    # test_wikidata_registry_seed_specs_are_wired_into_seed_asset). Naively
+    # `.upstream()`-ing from the ClickHouse export would walk those edges too and
+    # balloon the weekly job into materializing nine full country pipelines --
+    # wikidata_company_seed_selection must explicitly exclude them.
+    repository = load_project_defs().get_repository_def()
+    job_asset_keys = {
+        key.path[-1]
+        for key in repository.get_job(
+            "wikidata_company_seed_weekly_job"
+        ).asset_layer.executable_asset_keys
+    }
+
+    assert "wikidata_company_seed_raw_objects" in job_asset_keys
+    assert "wikidata_listed_companies_duckdb" in job_asset_keys
+    assert "wikidata_company_seed_clickhouse" in job_asset_keys
+    assert "wikidata_clickhouse_canonical_contacts" in job_asset_keys
+
+    assert "sweden_company_raw_snapshot_s3" not in job_asset_keys
+    assert "sweden_company_companies_clickhouse" not in job_asset_keys
+    assert "norway_brreg_entities_snapshot_clickhouse" not in job_asset_keys
+    assert "denmark_cvr_companies_duckdb" not in job_asset_keys
+    assert "finland_ytj_resolved_clickhouse" not in job_asset_keys
+    assert "uk_companies_house_clickhouse_companies" not in job_asset_keys
+    assert "france_sirene_clickhouse_companies" not in job_asset_keys
+    assert "czech_ares_clickhouse_companies" not in job_asset_keys
+    assert "latvia_ur_clickhouse_companies" not in job_asset_keys
+    assert "brazil_comp_rfb_clickhouse_companies" not in job_asset_keys
 
 
 def test_wikidata_listed_companies_duckdb_materialization_uses_dlt_pipeline(
@@ -480,6 +568,7 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
             exchange_ids_csv="Q13677",
             page_size=1,
             max_pages=None,
+            include_registry_seed=False,
             request_delay_seconds=0.25,
             user_agent="test-agent",
         ),
@@ -626,6 +715,7 @@ def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages()
             page_size=1,
             max_pages=None,
             max_exchanges=2,
+            include_registry_seed=False,
             request_delay_seconds=0,
             user_agent="test-agent",
         ),
@@ -653,6 +743,117 @@ def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages()
     assert result.metadata["exchange_count"] == 2
     assert result.metadata["row_count"] == 2
     assert client.company_offsets == {"QEX1": [0, 1], "QEX2": [0, 1]}
+
+
+def test_wikidata_raw_pull_pulls_registry_properties_after_exchanges_as_pseudo_exchanges() -> (
+    None
+):
+    from dagster_v3.defs.wikidata import assets
+    from dagster_v3.defs.wikidata.source import WikidataRawPullConfig
+
+    object_store, s3_client = _object_store()
+    client = FakeWikidataClient(
+        pages=[
+            # QEX1 (real exchange) page 1: one binding, less than page_size -> loop
+            # breaks after a single fetch.
+            _wikidata_response(
+                [
+                    _wikidata_company_binding(
+                        company_id="Q1",
+                        company_label="Alpha Inc",
+                        listing_id="Q1-L1",
+                        ticker="AAA",
+                        website="https://alpha.example",
+                    )
+                ]
+            ),
+            # registry_P6460 (pseudo-exchange) page 1: one unlisted company.
+            _wikidata_response(
+                [{"company": {"value": "http://www.wikidata.org/entity/Q9"}}]
+            ),
+            # registry_P2333 (pseudo-exchange) page 1: no companies for this property.
+            _wikidata_response([]),
+        ]
+    )
+
+    result = assets.pull_wikidata_company_seed_raw_objects(
+        client=client,
+        object_store=object_store,
+        config=WikidataRawPullConfig(
+            exchange_ids_csv="QEX1",
+            registry_property_ids_csv="P6460,P2333",
+            page_size=100,
+            max_pages=None,
+            request_delay_seconds=0,
+            user_agent="test-agent",
+        ),
+        run_id="run-999",
+        retrieved_at="2026-07-20T10:00:00+00:00",
+        sleep=lambda _seconds: None,
+    )
+
+    exchange_manifest_key = (
+        "raw/run_id=run-999/retrieved_date=2026-07-20/exchange_id=QEX1/manifest.json"
+    )
+    registry_p6460_manifest_key = (
+        "raw/run_id=run-999/retrieved_date=2026-07-20/"
+        "exchange_id=registry_P6460/manifest.json"
+    )
+    registry_p2333_manifest_key = (
+        "raw/run_id=run-999/retrieved_date=2026-07-20/"
+        "exchange_id=registry_P2333/manifest.json"
+    )
+
+    assert ("source-wikidata-company-seed", exchange_manifest_key) in s3_client.objects
+    assert (
+        "source-wikidata-company-seed",
+        registry_p6460_manifest_key,
+    ) in s3_client.objects
+    assert (
+        "source-wikidata-company-seed",
+        registry_p2333_manifest_key,
+    ) in s3_client.objects
+
+    exchange_manifest = json.loads(
+        s3_client.objects[("source-wikidata-company-seed", exchange_manifest_key)].decode(
+            "utf-8"
+        )
+    )
+    p6460_manifest = json.loads(
+        s3_client.objects[
+            ("source-wikidata-company-seed", registry_p6460_manifest_key)
+        ].decode("utf-8")
+    )
+    p2333_manifest = json.loads(
+        s3_client.objects[
+            ("source-wikidata-company-seed", registry_p2333_manifest_key)
+        ].decode("utf-8")
+    )
+
+    assert exchange_manifest["query_mode"] == "exchange"
+    assert exchange_manifest["registry_property_id"] is None
+
+    assert p6460_manifest["query_mode"] == "registry_number"
+    assert p6460_manifest["registry_property_id"] == "P6460"
+    assert p6460_manifest["exchange_id"] == "registry_P6460"
+    assert p6460_manifest["row_count"] == 1
+    assert p6460_manifest["page_count"] == 1
+
+    assert p2333_manifest["query_mode"] == "registry_number"
+    assert p2333_manifest["registry_property_id"] == "P2333"
+    assert p2333_manifest["exchange_id"] == "registry_P2333"
+    assert p2333_manifest["row_count"] == 0
+    assert p2333_manifest["page_count"] == 0
+    assert p2333_manifest["objects"] == []
+
+    # Registry pseudo-exchanges are pulled AFTER the real exchanges, in manifest order.
+    assert result.metadata["manifest_keys"] == [
+        exchange_manifest_key,
+        registry_p6460_manifest_key,
+        registry_p2333_manifest_key,
+    ]
+    assert result.metadata["exchange_count"] == 1
+    assert result.metadata["registry_property_count"] == 2
 
 
 def test_wikidata_query_uses_stable_order_for_offset_pagination() -> None:
@@ -708,6 +909,109 @@ def test_wikidata_query_uses_stable_order_for_offset_pagination() -> None:
     assert "?company p:P127 ?ownedByStatement" in relationship_query
     assert "?company p:P1830 ?ownerOfStatement" in relationship_query
     assert "?company wdt:P1320 ?openCorporatesId" not in relationship_query
+
+
+def test_wikidata_registry_number_query_anchors_on_property_and_drops_listing_triples() -> (
+    None
+):
+    from dagster_v3.defs.wikidata.source import build_registry_number_company_query
+
+    query = build_registry_number_company_query(property_id="P6460", limit=100, offset=200)
+
+    # Anchors on the registry property, not a p:P414 listing.
+    assert "?company wdt:P6460 ?registryValue ." in query
+    assert "p:P414" not in query
+    assert "ps:P414" not in query
+    assert "pq:P249" not in query
+    assert "pq:P946" not in query
+    assert "VALUES ?exchange" not in query
+
+    # Same SELECT shape as build_listed_company_query so the page-row parser
+    # (listed_company_row_from_binding) works unchanged -- listing/exchange/ticker/isin
+    # simply come back unbound for every row.
+    for select_var in ("?listing", "?exchange", "?exchangeLabel", "?ticker", "?isin"):
+        assert select_var in query
+
+    # Same OPTIONAL blocks as build_listed_company_query (minus the listing/exchange
+    # ones), so official name/website/cik/lei/headquarters/industry are still captured.
+    assert "OPTIONAL { ?company wdt:P1448 ?officialName . }" in query
+    assert "OPTIONAL { ?company wdt:P856 ?website . }" in query
+    assert "OPTIONAL { ?company wdt:P5531 ?cik . }" in query
+    assert "OPTIONAL { ?company wdt:P1278 ?lei . }" in query
+    assert "OPTIONAL { ?headquarters wdt:P131*/wdt:P17 ?headquartersCountry . }" in query
+    assert "OPTIONAL { ?headquartersCountry wdt:P297 ?headquartersCountryIso2 . }" in query
+    assert "OPTIONAL { ?company wdt:P452 ?industry . }" in query
+    assert "FILTER NOT EXISTS { ?company wdt:P576 ?dissolvedDate . }" in query
+
+    assert query.startswith("SELECT DISTINCT")
+    assert "ORDER BY ?company" in query
+    assert query.index("ORDER BY") < query.index("LIMIT 100")
+    assert query.index("LIMIT 100") < query.index("OFFSET 200")
+
+
+def test_wikidata_registry_pseudo_exchange_id_helpers() -> None:
+    from dagster_v3.defs.wikidata.source import (
+        is_registry_pseudo_exchange_id,
+        registry_property_id_from_pseudo_exchange_id,
+        registry_pseudo_exchange_id,
+    )
+
+    assert registry_pseudo_exchange_id("P6460") == "registry_P6460"
+    assert is_registry_pseudo_exchange_id("registry_P6460") is True
+    assert is_registry_pseudo_exchange_id("QEX1") is False
+    assert registry_property_id_from_pseudo_exchange_id("registry_P6460") == "P6460"
+
+    with pytest.raises(ValueError, match="not a registry pseudo-exchange id"):
+        registry_property_id_from_pseudo_exchange_id("QEX1")
+
+
+def test_wikidata_raw_pull_config_registry_seed_defaults_and_overrides() -> None:
+    from dagster_v3.defs.wikidata.registry_seed import (
+        WIKIDATA_REGISTRY_NUMBER_PROPERTY_IDS,
+    )
+    from dagster_v3.defs.wikidata.source import WikidataRawPullConfig
+
+    default_config = WikidataRawPullConfig()
+    assert default_config.include_registry_seed is True
+    assert (
+        default_config.configured_registry_property_ids()
+        == WIKIDATA_REGISTRY_NUMBER_PROPERTY_IDS
+    )
+
+    overridden_config = WikidataRawPullConfig(registry_property_ids_csv="P6460, P2333")
+    assert overridden_config.configured_registry_property_ids() == ("P6460", "P2333")
+
+    with pytest.raises(ValueError, match="registry_property_ids_csv must not be blank"):
+        WikidataRawPullConfig(registry_property_ids_csv="   ")
+
+    with pytest.raises(
+        ValueError, match="registry_property_ids_csv must contain at least one"
+    ):
+        WikidataRawPullConfig(registry_property_ids_csv=",  ,").configured_registry_property_ids()
+
+
+def test_wikidata_raw_pull_registry_rows_respects_include_toggle() -> None:
+    from dagster_v3.defs.wikidata import assets
+    from dagster_v3.defs.wikidata.source import WikidataRawPullConfig
+
+    enabled_rows = assets.wikidata_raw_pull_registry_rows(
+        config=WikidataRawPullConfig(registry_property_ids_csv="P6460,P1059"),
+        source_run_id="run-1",
+        retrieved_at="2026-07-20T10:00:00+00:00",
+    )
+    assert [row["exchange_wikidata_id"] for row in enabled_rows] == [
+        "registry_P6460",
+        "registry_P1059",
+    ]
+    assert [row["registry_property_id"] for row in enabled_rows] == ["P6460", "P1059"]
+    assert [row["listed_company_count_on_exchange"] for row in enabled_rows] == [0, 0]
+
+    disabled_rows = assets.wikidata_raw_pull_registry_rows(
+        config=WikidataRawPullConfig(include_registry_seed=False),
+        source_run_id="run-1",
+        retrieved_at="2026-07-20T10:00:00+00:00",
+    )
+    assert disabled_rows == []
 
 
 def test_wikidata_normalization_builds_final_duckdb_tables(tmp_path: Path) -> None:
@@ -889,6 +1193,203 @@ def test_wikidata_normalization_builds_final_duckdb_tables(tmp_path: Path) -> No
         ("Q2", "beta.example", "beta.example"),
     ]
     assert runs == [("active_exchange_listing", 2, 2, 2)]
+
+
+def test_wikidata_normalization_dedups_company_seeded_via_exchange_and_registry(
+    tmp_path: Path,
+) -> None:
+    # The same company discovered via a real exchange listing AND a registry-number
+    # pseudo-exchange must yield exactly ONE wikidata_companies row (dedup is by
+    # company_wikidata_id, unaffected by which seed source(s) found the company) and
+    # must NOT create a spurious wikidata_company_listings row for the registry pull
+    # (which carries no listing_statement_id). A company found ONLY via a registry
+    # property must not claim has_current_listing.
+    from dagster_v3.defs.wikidata import assets
+
+    database_path = tmp_path / "wikidata.duckdb"
+    _seed_wikidata_registry_dedup_scenario(database_path)
+
+    with duckdb.connect(str(database_path)) as connection:
+        row_counts = assets.normalize_wikidata_listed_companies_duckdb(
+            connection,
+            catalog_name=database_path.stem,
+        )
+
+    assert row_counts["wikidata_companies"] == 2
+    assert row_counts["wikidata_company_listings"] == 1
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        companies = connection.execute(
+            """
+            select wikidata_id, has_current_listing, listing_count
+            from wikidata.wikidata.wikidata_companies
+            order by wikidata_id
+            """
+        ).fetchall()
+        listings = connection.execute(
+            """
+            select wikidata_id, exchange_wikidata_id
+            from wikidata.wikidata.wikidata_company_listings
+            """
+        ).fetchall()
+
+    assert companies == [
+        ("Q1", 1, 1),  # exchange + registry seed -> one row, real listing counted
+        ("Q3", 0, 0),  # registry-only -> no current listing
+    ]
+    assert listings == [("Q1", "QEX1")]
+
+
+_WIKIDATA_STAGE_TABLE_DDL = """
+create table wikidata.wikidata_stage.listed_companies (
+    source_run_id varchar,
+    retrieved_at timestamp,
+    exchange_wikidata_id varchar,
+    exchange_name varchar,
+    listed_company_count_on_exchange bigint,
+    page_number bigint,
+    page_offset bigint,
+    page_row_number bigint,
+    company_wikidata_id varchar,
+    company_url varchar,
+    company_label varchar,
+    company_description varchar,
+    official_name varchar,
+    listing_statement_id varchar,
+    listing_url varchar,
+    ticker varchar,
+    isin varchar,
+    website_url varchar,
+    cik varchar,
+    lei varchar,
+    headquarters_wikidata_id varchar,
+    headquarters_label varchar,
+    headquarters_country_wikidata_id varchar,
+    headquarters_country_label varchar,
+    headquarters_country_iso2 varchar,
+    inception_date varchar,
+    legal_form_wikidata_id varchar,
+    legal_form_label varchar,
+    employee_count varchar,
+    employee_count_point_in_time varchar,
+    logo_image varchar,
+    logo_image_url varchar,
+    industry_wikidata_id varchar,
+    industry_label varchar,
+    opencorporates_company_id varchar,
+    eu_vat_number varchar,
+    duns_number varchar,
+    permid varchar,
+    bloomberg_company_id varchar,
+    linkedin_company_id varchar,
+    parent_organization_statement_id varchar,
+    parent_organization_wikidata_id varchar,
+    parent_organization_label varchar,
+    parent_organization_start_date varchar,
+    parent_organization_end_date varchar,
+    child_organization_statement_id varchar,
+    child_organization_wikidata_id varchar,
+    child_organization_label varchar,
+    child_organization_start_date varchar,
+    child_organization_end_date varchar,
+    owned_by_statement_id varchar,
+    owned_by_wikidata_id varchar,
+    owned_by_label varchar,
+    owned_by_start_date varchar,
+    owned_by_end_date varchar,
+    owner_of_statement_id varchar,
+    owner_of_wikidata_id varchar,
+    owner_of_label varchar,
+    owner_of_start_date varchar,
+    owner_of_end_date varchar,
+    query_hash varchar,
+    source_record_id varchar,
+    source_payload_hash varchar,
+    raw_binding_json varchar
+)
+"""
+
+
+def _seed_wikidata_registry_dedup_scenario(database_path: Path) -> None:
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema wikidata.wikidata_stage")
+        connection.execute(_WIKIDATA_STAGE_TABLE_DDL)
+
+        def insert_row(row: dict[str, Any]) -> None:
+            columns = ", ".join(row.keys())
+            placeholders = ", ".join("?" for _ in row)
+            connection.execute(
+                "insert into wikidata.wikidata_stage.listed_companies "
+                f"({columns}) values ({placeholders})",
+                list(row.values()),
+            )
+
+        # Q1: a real exchange listing row (QEX1) ...
+        insert_row(
+            {
+                "source_run_id": "run-1",
+                "retrieved_at": "2026-07-20 10:00:00",
+                "exchange_wikidata_id": "QEX1",
+                "exchange_name": "Test Exchange One",
+                "listed_company_count_on_exchange": 1,
+                "page_number": 1,
+                "page_offset": 0,
+                "page_row_number": 1,
+                "company_wikidata_id": "Q1",
+                "company_url": "http://www.wikidata.org/entity/Q1",
+                "company_label": "Alpha Inc",
+                "listing_statement_id": "Q1-L1",
+                "listing_url": "http://www.wikidata.org/entity/statement/Q1-L1",
+                "ticker": "AAA",
+                "source_record_id": "QEX1:000001:000001:Q1:Q1-L1",
+                "source_payload_hash": "a" * 64,
+                "raw_binding_json": "{}",
+            }
+        )
+        # ... PLUS a registry-number pseudo-exchange row (SE orgnr, P6460) for the SAME
+        # company -- no listing binding, per build_registry_number_company_query.
+        insert_row(
+            {
+                "source_run_id": "run-1",
+                "retrieved_at": "2026-07-20 10:00:00",
+                "exchange_wikidata_id": "registry_P6460",
+                "exchange_name": "Wikidata registry-number seed: P6460",
+                "listed_company_count_on_exchange": 0,
+                "page_number": 1,
+                "page_offset": 0,
+                "page_row_number": 1,
+                "company_wikidata_id": "Q1",
+                "company_url": "http://www.wikidata.org/entity/Q1",
+                "company_label": "Alpha Inc",
+                "listing_statement_id": "",
+                "listing_url": "",
+                "source_record_id": "registry_P6460:000001:000001:Q1:",
+                "source_payload_hash": "b" * 64,
+                "raw_binding_json": "{}",
+            }
+        )
+        # Q3: discovered ONLY via a registry-number pseudo-exchange (NO orgnr, P2333) --
+        # never listed on a real exchange.
+        insert_row(
+            {
+                "source_run_id": "run-1",
+                "retrieved_at": "2026-07-20 10:00:00",
+                "exchange_wikidata_id": "registry_P2333",
+                "exchange_name": "Wikidata registry-number seed: P2333",
+                "listed_company_count_on_exchange": 0,
+                "page_number": 1,
+                "page_offset": 0,
+                "page_row_number": 1,
+                "company_wikidata_id": "Q3",
+                "company_url": "http://www.wikidata.org/entity/Q3",
+                "company_label": "Gamma Unlisted AS",
+                "listing_statement_id": "",
+                "listing_url": "",
+                "source_record_id": "registry_P2333:000001:000001:Q3:",
+                "source_payload_hash": "c" * 64,
+                "raw_binding_json": "{}",
+            }
+        )
 
 
 def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> None:

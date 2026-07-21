@@ -292,6 +292,25 @@ the general-data/financials datasets before concluding it's unavailable.
   (would need a separate CSP/VID source) — document that explicitly. Reference impl: `estonia_ar`
   (`ee_industries` from `yldandmed.teatatud_tegevusalad`).
 
+## 8d. Cross-cutting standard E — Wikidata registry-number seed (check for every country)
+**If Wikidata has a national registry-number property for the country, wire it into the
+Wikidata registry-number seed** (`defs/wikidata/`), which seeds unlisted companies
+(discovered by carrying the property) alongside the exchange-listed-company seed. Check
+Wikidata for a property like SE `P6460`, NO `P2333`, DK `P1059` before concluding there
+isn't one — most countries with a national company/organisation register have one.
+- Declare **one `WikidataRegistrySeedSpec`** constant in the new source's own module
+  (its `tables.py`, or a tiny `wikidata_seed.py` if the module has no `tables.py`) —
+  see `defs/common/wikidata_registry_seed.py` for the dataclass and
+  `defs/sweden_company/tables.py:WIKIDATA_REGISTRY_SEED_SPEC` for the pattern. Declaring
+  it next to the source's own module (not in a central list under `defs/wikidata/`)
+  means it's naturally added alongside everything else for the source — a central list
+  would be forgotten.
+- `defs/wikidata/registry_seed.py` aggregates every module's spec via an explicit
+  import; add the new one there too. **The wikidata seed test
+  (`tests/test_wikidata_assets.py::test_wikidata_registry_seed_specs_are_wired_into_seed_asset`)
+  enforces the wiring** — it fails loudly if a spec is declared but not aggregated, or
+  aggregated but its `spine_asset_key` isn't a real registered asset.
+
 ## 9. Scheduling (cadence-matched, non-partitioned full-refresh)
 - **Match the schedule to the source's refresh rate**, and split chains that refresh differently into
   separate jobs (register daily/weekly; financials monthly). See CLAUDE.md "Scheduling".

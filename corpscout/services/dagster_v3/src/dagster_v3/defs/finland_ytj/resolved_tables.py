@@ -1,3 +1,5 @@
+from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSpec
+
 FI_COMPANIES_TABLE = "fi_companies"
 FI_COMPANY_ADDRESSES_TABLE = "fi_company_addresses"
 FI_NAMES_TABLE = "fi_names"
@@ -147,3 +149,12 @@ RESOLVED_EXPORT_COLUMNS = {
     )
     for table, columns in RESOLVED_TABLE_COLUMNS.items()
 }
+
+# Wikidata P12980 = Finnish Business ID / y-tunnus (FI). Aggregated by
+# defs/wikidata/registry_seed.py; see WikidataRegistrySeedSpec for why this lives here
+# instead of a central list in defs/wikidata/.
+WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
+    property_id="P12980",
+    country_iso2="FI",
+    spine_asset_key="finland_ytj_resolved_clickhouse",
+)
