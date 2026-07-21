@@ -588,11 +588,26 @@ def _download_and_parse_filing_facts(
     return parsed, downloaded, False
 
 
+# Bounds per-transaction uncommitted MVCC memory during the facts insert.
+# Production incident: the 2020-2023 backfill partitions (millions of parsed
+# XBRL facts each) failed with `_duckdb.OutOfMemoryException: failed to pin
+# block ... (73.8 GiB/73.8 GiB used)` on a ~412 MB DuckDB file with 92 GB RAM
+# free on the host -- not a data-volume problem. Root cause: a single
+# `executemany` over the WHOLE year's rows inside ONE transaction holds every
+# uncommitted row's MVCC version/undo data in memory for the entire insert;
+# small years (2026/2027) passed only because they're tiny. Committing every
+# `_FACTS_INSERT_CHUNK_SIZE` rows as its own transaction bounds the
+# uncommitted-row memory to one chunk's worth, regardless of the year's total
+# row count.
+_FACTS_INSERT_CHUNK_SIZE = 25_000
+
+
 def _replace_facts_partition(
     *,
     connection: Any,
     partition_year: int,
     fact_rows: Sequence[tuple[Any, ...]],
+    log_info: Callable[..., object],
 ) -> None:
     """Delete-then-insert ONLY `period_end_year = partition_year` rows.
 
@@ -604,24 +619,65 @@ def _replace_facts_partition(
     Closing it ourselves before re-raising is the fix; by this point all
     fallible work (download/parse) is already done, so the only things that
     can fail here are the DELETE/INSERT/COMMIT themselves.
+
+    MEMORY (see `_FACTS_INSERT_CHUNK_SIZE`'s comment for the production
+    incident this fixes): the DELETE commits in its own transaction first,
+    then `fact_rows` is inserted in bounded `_FACTS_INSERT_CHUNK_SIZE`-row
+    chunks, each its OWN transaction+commit -- uncommitted MVCC memory never
+    exceeds one chunk's worth, regardless of the year's total row count.
+    `preserve_insertion_order` is turned off first (insertion order is
+    irrelevant here: the ClickHouse export orders on its own); leaving it on
+    would make DuckDB buffer rows to preserve original insertion order across
+    the chunked inserts, defeating the point of chunking. `memory_limit` is
+    deliberately left at DuckDB's default -- this fix bounds *uncommitted*
+    transaction memory, it isn't a total-memory cap.
+
+    CONTRACT CHANGE from the prior single-transaction version: a mid-way
+    failure can now leave a PARTIAL year committed (the DELETE, plus however
+    many chunks committed before the failing one). This is ACCEPTABLE, not a
+    new hazard: the delete-first-on-next-run contract (this function's own
+    first write) already cleans up any partial state before the next attempt
+    re-inserts, and a partial partition's DuckDB rows are never read
+    downstream in the meantime -- the ClickHouse facts export
+    (`esef_facts_clickhouse`) only reads this table after
+    `esef_filing_facts_duckdb` SUCCEEDS for the partition, and
+    `esef_filings_backfill_job` deliberately excludes the exports (see the
+    job definitions below), so a partial/failed partition's rows are never
+    exported before the next run's delete-first cleans them up.
     """
     connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
     connection.execute(
         f"create table if not exists {QUALIFIED_FACTS_TABLE} ({_FACTS_COLUMNS_SQL})"
     )
-    connection.execute("begin transaction")
+    connection.execute("set preserve_insertion_order = false")
     try:
+        connection.execute("begin transaction")
         connection.execute(
             f"delete from {QUALIFIED_FACTS_TABLE} where period_end_year = ?",
             [partition_year],
         )
-        if fact_rows:
-            connection.executemany(
-                f"insert into {QUALIFIED_FACTS_TABLE} values "
-                f"({', '.join(['?'] * len(_FACTS_COLUMNS))})",
-                fact_rows,
-            )
         connection.execute("commit")
+
+        total = len(fact_rows)
+        insert_sql = (
+            f"insert into {QUALIFIED_FACTS_TABLE} values "
+            f"({', '.join(['?'] * len(_FACTS_COLUMNS))})"
+        )
+        inserted = 0
+        for start in range(0, total, _FACTS_INSERT_CHUNK_SIZE):
+            chunk = fact_rows[start : start + _FACTS_INSERT_CHUNK_SIZE]
+            connection.execute("begin transaction")
+            connection.executemany(insert_sql, chunk)
+            connection.execute("commit")
+            inserted += len(chunk)
+            log_info(
+                "ESEF facts partition %s: inserted %d/%d fact rows",
+                partition_year,
+                inserted,
+                total,
+            )
+        if total == 0:
+            log_info("ESEF facts partition %s: inserted 0/0 fact rows", partition_year)
     except Exception:
         try:
             connection.execute("rollback")
@@ -831,6 +887,7 @@ def run_esef_filing_facts_partition(
             connection=connection,
             partition_year=partition_year,
             fact_rows=fact_rows,
+            log_info=log_info,
         )
 
     return {

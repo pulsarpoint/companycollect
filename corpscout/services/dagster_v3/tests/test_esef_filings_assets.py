@@ -770,6 +770,118 @@ def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> 
 
 
 # ==========================================================================
+# _replace_facts_partition: chunked-insert memory fix (production OOM
+# incident -- `_duckdb.OutOfMemoryException: failed to pin block ...` on the
+# 2020-2023 backfill partitions, root-caused to a single `executemany` over a
+# whole year's rows inside one transaction; see that function's docstring).
+# These tests call `assets._replace_facts_partition` DIRECTLY with synthetic
+# rows -- bypassing `run_esef_filing_facts_partition`'s download/parse loop
+# entirely, since the OIM parser itself already has dedicated tests in
+# test_esef_filings_facts.py -- against a REAL on-disk DuckDB connection,
+# monkeypatching `_FACTS_INSERT_CHUNK_SIZE` down to a small value so a
+# handful of rows still exercises the multi-chunk/multi-transaction path.
+# ==========================================================================
+
+
+def _synthetic_fact_row(
+    *, fact_id: str, period_end_year: int, source_run_id: str = "test-run"
+) -> tuple[Any, ...]:
+    """A minimally-valid `esef_filings.facts` row shaped to
+    `assets._FACTS_COLUMNS` -- column order/count must match exactly since
+    `_replace_facts_partition` inserts with positional `?` placeholders."""
+    assert len(assets._FACTS_COLUMNS) == 20
+    return (
+        "5493000000000000TEST",  # lei
+        f"fxo-{period_end_year}",  # fxo_id
+        f"{period_end_year}-12-31",  # period_end
+        period_end_year,  # period_end_year
+        fact_id,  # fact_id
+        "ifrs-full:Revenue",  # concept_qname
+        "ifrs-full",  # concept_namespace
+        "Revenue",  # concept_local_name
+        None,  # period_start
+        None,  # period_instant
+        None,  # period_duration_end
+        "iso4217:EUR",  # unit
+        "EUR",  # currency
+        "monetary",  # value_kind
+        "100.00",  # raw_value
+        "100.00",  # amount_original
+        2,  # decimals
+        "{}",  # dimensions
+        None,  # language
+        source_run_id,  # source_run_id
+    )
+
+
+def test_replace_facts_partition_chunked_insert_lands_all_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """>1 chunk's worth of rows (7 rows / chunk size 3 -> chunks of 3, 3, 1)
+    must all land, scoped to the right year, and the per-chunk `log_info`
+    calls must show a running total -- proving the insert actually went
+    through multiple bounded transactions rather than one giant
+    executemany."""
+    monkeypatch.setattr(assets, "_FACTS_INSERT_CHUNK_SIZE", 3)
+    fact_rows = [
+        _synthetic_fact_row(fact_id=f"f-{i}", period_end_year=2022) for i in range(7)
+    ]
+    log_lines: list[tuple[Any, ...]] = []
+
+    with _db_resource(tmp_path).get_connection() as connection:
+        assets._replace_facts_partition(
+            connection=connection,
+            partition_year=2022,
+            fact_rows=fact_rows,
+            log_info=lambda *a, **k: log_lines.append(a),
+        )
+
+    rows = _fetch_facts_rows(tmp_path)
+    assert {row[1] for row in rows} == {f"f-{i}" for i in range(7)}
+    assert all(row[2] == 2022 for row in rows)
+
+    assert [line[2] for line in log_lines] == [3, 6, 7]  # running "inserted" total
+    assert [line[3] for line in log_lines] == [7, 7, 7]  # constant "total" rows
+
+
+def test_replace_facts_partition_rerun_replaces_not_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delete-first contract: re-running the partition replace for the same
+    year fully replaces its rows rather than appending duplicates alongside
+    them. The chunked multi-transaction insert doesn't change this contract
+    -- the DELETE still commits, alone, in its own transaction, before any
+    insert chunk begins."""
+    monkeypatch.setattr(assets, "_FACTS_INSERT_CHUNK_SIZE", 3)
+    first_rows = [
+        _synthetic_fact_row(fact_id=f"f-{i}", period_end_year=2022) for i in range(5)
+    ]
+    with _db_resource(tmp_path).get_connection() as connection:
+        assets._replace_facts_partition(
+            connection=connection,
+            partition_year=2022,
+            fact_rows=first_rows,
+            log_info=lambda *a, **k: None,
+        )
+    assert len(_fetch_facts_rows(tmp_path)) == 5
+
+    second_rows = [
+        _synthetic_fact_row(fact_id=f"g-{i}", period_end_year=2022) for i in range(4)
+    ]
+    with _db_resource(tmp_path).get_connection() as connection:
+        assets._replace_facts_partition(
+            connection=connection,
+            partition_year=2022,
+            fact_rows=second_rows,
+            log_info=lambda *a, **k: None,
+        )
+
+    rows = _fetch_facts_rows(tmp_path)
+    assert {row[1] for row in rows} == {f"g-{i}" for i in range(4)}
+    assert len(rows) == 4  # the 5 first-run rows are gone, not appended to
+
+
+# ==========================================================================
 # Dead upstream links (production incident, 2026-07-21): filings.xbrl.org's
 # index advertises a `json_url` for a filing whose file 404s/410s upstream
 # (e.g. several UA filings). A permanently-missing file must be skipped and
