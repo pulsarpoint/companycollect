@@ -169,6 +169,7 @@ EXPECTED_MIGRATIONS = (
     "000151_corpscout_se_concept_labels_distinct",
     "000152_corpscout_wikidata_company_people",
     "000153_corpscout_wikidata_exchanges",
+    "000154_corpscout_eodhd_market_data",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1221,6 +1222,113 @@ def test_wikidata_exchanges_migration_creates_exchange_dimension() -> None:
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
     assert "ORDER BY (exchange_wikidata_id, ifNull(mic, ''));" in sql
     assert "DROP TABLE IF EXISTS corpscout.wikidata_exchanges" in down_sql
+
+
+def test_eodhd_market_data_migration_creates_reference_and_price_tables() -> None:
+    sql = _migration_sql("000154_corpscout_eodhd_market_data.up.sql")
+    down_sql = _migration_sql("000154_corpscout_eodhd_market_data.down.sql")
+
+    expected_columns = {
+        "eodhd_exchanges": (
+            "exchange_code",
+            "exchange_name",
+            "country_name",
+            "country_iso2",
+            "country_iso3",
+            "currency",
+            "operating_mic_raw",
+            "source_system",
+            "source_run_id",
+            "source_record_id",
+            "source_payload_hash",
+            "retrieved_at",
+        ),
+        "eodhd_exchange_mics": (
+            "exchange_code",
+            "mic",
+            "mic_position",
+            "source_system",
+            "source_run_id",
+            "source_record_id",
+            "source_payload_hash",
+            "retrieved_at",
+        ),
+        "eodhd_symbols": (
+            "eodhd_symbol_key",
+            "exchange_code",
+            "reported_exchange_code",
+            "ticker",
+            "symbol_name",
+            "country_name",
+            "currency",
+            "instrument_type",
+            "isin",
+            "is_delisted",
+            "source_system",
+            "source_run_id",
+            "source_record_id",
+            "source_payload_hash",
+            "retrieved_at",
+        ),
+        "eodhd_symbol_mics": (
+            "eodhd_symbol_key",
+            "mic",
+            "is_primary",
+            "resolution_method",
+            "resolution_confidence",
+            "source_system",
+            "source_run_id",
+            "source_record_id",
+            "source_payload_hash",
+            "resolved_at",
+        ),
+        "eodhd_eod_prices": (
+            "eodhd_symbol_key",
+            "exchange_code",
+            "ticker",
+            "price_date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "adjusted_close",
+            "volume",
+            "currency",
+            "source_system",
+            "source_run_id",
+            "source_record_id",
+            "source_payload_hash",
+            "source_object_key",
+            "retrieved_at",
+        ),
+    }
+
+    for table_name, columns in expected_columns.items():
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        for column_name in columns:
+            assert f"    {column_name} " in sql, (
+                f"{table_name}.{column_name} not found in migration SQL"
+            )
+        assert f"DROP TABLE IF EXISTS corpscout.{table_name}" in down_sql
+
+    assert "ENGINE = ReplacingMergeTree(retrieved_at)" in sql
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "Nullable(Decimal(20, 8))" in sql
+    assert "PARTITION BY toYYYYMM(price_date)" in sql
+    assert "ORDER BY (eodhd_symbol_key, price_date);" in sql
+
+    expected_drop_order = (
+        "eodhd_eod_prices",
+        "eodhd_symbol_mics",
+        "eodhd_symbols",
+        "eodhd_exchange_mics",
+        "eodhd_exchanges",
+    )
+    drop_offsets = [
+        down_sql.index(f"DROP TABLE IF EXISTS corpscout.{table_name}")
+        for table_name in expected_drop_order
+    ]
+    assert drop_offsets == sorted(drop_offsets)
 
 
 def test_nace_category_embeddings_migration_covers_reference_matrix() -> None:
