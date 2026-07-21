@@ -338,6 +338,21 @@ export interface WikidataCompanyRow {
   linkedin_id: string;
 }
 
+export interface WikidataPersonRow {
+  person_wikidata_id: string;
+  name: string;
+  description: string;
+  birth_year: number | null;
+  image_url: string;
+  wikidata_url: string;
+  /** Human role label from the company-anchored link: founder, chief
+   * executive officer, chairperson, board member, owned by. */
+  role_label: string;
+  is_current: number;
+  start_date: string;
+  end_date: string;
+}
+
 export interface CompanyDetail {
   company: CompanyListRow;
   record: Record<string, unknown>;
@@ -362,6 +377,8 @@ export interface CompanyDetail {
   gleifEntity: GleifEntityRow | null;
   /** Wikidata enrichment matched via LEI; null when unmatched. */
   wikidata: WikidataCompanyRow | null;
+  /** Company-anchored Wikidata person links; empty when unmatched. */
+  wikidataPeople: WikidataPersonRow[];
 }
 
 export async function getCompanyDetail(
@@ -432,6 +449,9 @@ export async function getCompanyDetail(
   const wikidataPromise = country.detail?.wikidataQuery
     ? chQuery<WikidataCompanyRow>(country.detail.wikidataQuery, { id })
     : Promise.resolve([]);
+  const wikidataPeoplePromise = country.detail?.wikidataPeopleQuery
+    ? chQuery<WikidataPersonRow>(country.detail.wikidataPeopleQuery, { id })
+    : Promise.resolve([]);
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
   recordPromise.catch(() => {});
@@ -447,6 +467,7 @@ export async function getCompanyDetail(
   gleifRelationshipsPromise.catch(() => {});
   gleifEntityPromise.catch(() => {});
   wikidataPromise.catch(() => {});
+  wikidataPeoplePromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -458,7 +479,7 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships, gleifEntityRows, wikidataRows] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships, gleifEntityRows, wikidataRows, wikidataPeople] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
@@ -472,6 +493,7 @@ export async function getCompanyDetail(
     gleifRelationshipsPromise,
     gleifEntityPromise,
     wikidataPromise,
+    wikidataPeoplePromise,
   ]);
 
   // Same-name matches need the officers' names, so this can only start once
@@ -508,5 +530,6 @@ export async function getCompanyDetail(
     gleifRelationships,
     gleifEntity: gleifEntityRows[0] ?? null,
     wikidata: wikidataRows[0] ?? null,
+    wikidataPeople,
   };
 }

@@ -94,7 +94,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
         entity={detail.gleifEntity}
         countryCode={country.code}
       />
-      <WikidataSection wikidata={detail.wikidata} />
+      <WikidataSection wikidata={detail.wikidata} people={detail.wikidataPeople} />
       <SecondaryNamesSection names={detail.secondaryNames} />
       <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} audit={detail.audit} />
       <IndustriesSection industries={detail.industries} />

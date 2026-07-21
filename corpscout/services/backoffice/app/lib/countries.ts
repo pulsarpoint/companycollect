@@ -128,6 +128,15 @@ export interface CountryDetailConfig {
    * websites, LinkedIn id, and the wikidata.org URL. Empty when unmatched.
    */
   wikidataQuery?: string;
+  /**
+   * {id:String} → Wikidata-linked PEOPLE for the matched company (see
+   * WikidataPersonRow in queries.server): company-anchored role links
+   * (founder / CEO / chairperson / board member / owner) joined with each
+   * person's item data (name, description, birth year, image, wikidata
+   * URL). Current roles first. Empty when the company is unmatched or has
+   * no person links.
+   */
+  wikidataPeopleQuery?: string;
 }
 
 export interface CountryConfig {
@@ -730,6 +739,32 @@ WHERE w.wikidata_id IN (
      OR (my_lei != '' AND identifier_type = 'lei' AND upper(identifier_value) = my_lei)
 )
 LIMIT 1`,
+      wikidataPeopleQuery: `WITH (
+  SELECT coalesce(argMax(lei, (registration_status = 'ISSUED', entity_status = 'ACTIVE')), '')
+  FROM gleif_lei_records
+  WHERE jurisdiction = 'SE'
+    AND replaceRegexpAll(registered_as, '[^0-9]', '') = {id:String}
+) AS my_lei
+SELECT p.person_wikidata_id AS person_wikidata_id,
+  per.name AS name,
+  coalesce(per.description, '') AS description,
+  per.birth_year AS birth_year,
+  coalesce(per.image_url, '') AS image_url,
+  coalesce(per.wikidata_url, '') AS wikidata_url,
+  p.role_label AS role_label,
+  toUInt8(p.is_current) AS is_current,
+  coalesce(toString(p.start_date), '') AS start_date,
+  coalesce(toString(p.end_date), '') AS end_date
+FROM wikidata_company_people AS p
+JOIN wikidata_persons AS per ON per.person_wikidata_id = p.person_wikidata_id
+WHERE p.company_wikidata_id IN (
+  SELECT wikidata_id FROM wikidata_company_identifiers
+  WHERE (identifier_type = 'se_orgnr'
+         AND replaceRegexpAll(identifier_value, '[^0-9]', '') = {id:String})
+     OR (my_lei != '' AND identifier_type = 'lei' AND upper(identifier_value) = my_lei)
+)
+ORDER BY p.is_current DESC, p.role_label, per.name
+LIMIT 100`,
       industriesQuery: `SELECT i.nace_rev2_class_code AS industry_code,
   '' AS description_original,
   coalesce(nullIf(n.description_en, ''), i.nace_rev2_class_code) AS industry_label,
