@@ -59,6 +59,23 @@ class EodhdResource(dg.ConfigurableResource):
             },
         )
 
+    def bulk_prices(
+        self,
+        exchange_code: str,
+        *,
+        price_date: str,
+        symbol_keys: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"date": price_date}
+        if symbol_keys is not None:
+            if not symbol_keys:
+                return []
+            params["symbols"] = ",".join(symbol_keys)
+        return self._get_json_list(
+            f"eod-bulk-last-day/{exchange_code}",
+            params=params,
+        )
+
     def _get_json_list(
         self,
         path: str,

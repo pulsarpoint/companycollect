@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import quote
 
 import dagster as dg
-from pydantic import field_validator, model_validator
+from pydantic import field_validator
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
@@ -17,7 +17,6 @@ EODHD_SOURCE_SYSTEM = "eodhd"
 DEFAULT_REFERENCE_REQUEST_DELAY_SECONDS = 0.1
 DEFAULT_PRICE_REQUEST_DELAY_SECONDS = 0.05
 DEFAULT_PRICE_PROGRESS_INTERVAL = 100
-DEFAULT_PRICE_BACKFILL_YEARS = 6
 NON_COMPANY_EXCHANGE_CODES = frozenset({"CC", "FOREX", "GBOND", "MONEY", "EUFUND"})
 DEFAULT_EQUITY_INSTRUMENT_TYPES = (
     "Common Stock",
@@ -93,16 +92,13 @@ class EodhdRawRunConfig(dg.Config):
 
 
 class EodhdPriceBackfillConfig(dg.Config):
-    years: int = DEFAULT_PRICE_BACKFILL_YEARS
-    start_date: str | None = None
-    end_date: str | None = None
     instrument_types_csv: str = ",".join(DEFAULT_EQUITY_INSTRUMENT_TYPES)
     include_delisted: bool = True
     max_symbols: int | None = None
     request_delay_seconds: float = DEFAULT_PRICE_REQUEST_DELAY_SECONDS
     progress_interval: int = DEFAULT_PRICE_PROGRESS_INTERVAL
 
-    @field_validator("years", "progress_interval")
+    @field_validator("progress_interval")
     @classmethod
     def validate_positive_int(cls, value: int) -> int:
         if value <= 0:
@@ -123,17 +119,6 @@ class EodhdPriceBackfillConfig(dg.Config):
             raise ValueError("request_delay_seconds must be zero or greater")
         return value
 
-    @field_validator("start_date", "end_date")
-    @classmethod
-    def validate_optional_date(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("date must not be blank when provided")
-        date.fromisoformat(stripped)
-        return stripped
-
     @field_validator("instrument_types_csv")
     @classmethod
     def validate_instrument_types(cls, value: str) -> str:
@@ -141,16 +126,6 @@ class EodhdPriceBackfillConfig(dg.Config):
         if not stripped:
             raise ValueError("instrument_types_csv must not be blank")
         return stripped
-
-    @model_validator(mode="after")
-    def validate_date_order(self) -> "EodhdPriceBackfillConfig":
-        if (
-            self.start_date is not None
-            and self.end_date is not None
-            and date.fromisoformat(self.start_date) > date.fromisoformat(self.end_date)
-        ):
-            raise ValueError("start_date must be on or before end_date")
-        return self
 
     def instrument_types(self) -> tuple[str, ...]:
         return tuple(
@@ -160,19 +135,6 @@ class EodhdPriceBackfillConfig(dg.Config):
                 if value.strip()
             )
         )
-
-    def resolve_date_window(self, now: datetime) -> tuple[str, str]:
-        end = date.fromisoformat(self.end_date) if self.end_date else now.date()
-        if self.start_date is not None:
-            start = date.fromisoformat(self.start_date)
-        else:
-            try:
-                start = end.replace(year=end.year - self.years)
-            except ValueError:
-                start = end.replace(year=end.year - self.years, day=28)
-        if start > end:
-            raise ValueError("resolved start date must be on or before end date")
-        return start.isoformat(), end.isoformat()
 
 
 def write_eodhd_reference_snapshot(
@@ -394,10 +356,10 @@ def symbol_rows_from_payload(
                 "exchange_code": normalized_exchange_code,
                 "reported_exchange_code": optional_upper_text(raw_row.get("Exchange")),
                 "ticker": ticker,
-                "symbol_name": required_text(raw_row, "Name"),
+                "symbol_name": optional_text(raw_row.get("Name")) or ticker,
                 "country_name": optional_text(raw_row.get("Country")),
                 "currency": optional_upper_text(raw_row.get("Currency")),
-                "instrument_type": required_text(raw_row, "Type"),
+                "instrument_type": optional_text(raw_row.get("Type")) or "Unknown",
                 "isin": optional_upper_text(raw_row.get("Isin")),
                 "is_delisted": 1 if is_delisted else 0,
                 "source_system": EODHD_SOURCE_SYSTEM,
@@ -516,25 +478,6 @@ def reference_symbols_object_key(
     return (
         f"reference/run_id={run_id}/symbols/exchange={quote(exchange_code, safe='')}/"
         f"{status}.json.gz"
-    )
-
-
-def price_snapshot_object_key(run_id: str, partition_key: str) -> str:
-    return f"prices/partition={partition_key}/run_id={run_id}/snapshot.json"
-
-
-def price_catalog_object_key(run_id: str, partition_key: str) -> str:
-    return f"prices/partition={partition_key}/run_id={run_id}/catalog.json.gz"
-
-
-def price_symbol_object_key(
-    run_id: str,
-    partition_key: str,
-    symbol_key: str,
-) -> str:
-    return (
-        f"prices/partition={partition_key}/run_id={run_id}/symbols/"
-        f"{quote(symbol_key, safe='')}.json.gz"
     )
 
 

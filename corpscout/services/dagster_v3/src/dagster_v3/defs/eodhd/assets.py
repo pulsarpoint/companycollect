@@ -1,13 +1,13 @@
-import json
 import time
 from collections.abc import Callable, Iterable
-from datetime import UTC, datetime
-from hashlib import sha256
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import dagster as dg
 import duckdb
+import pyarrow as pa
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import (
@@ -24,12 +24,10 @@ from dagster_v3.defs.eodhd.source import (
     EodhdRawRunConfig,
     EodhdReferenceConfig,
     exchange_rows_from_payload,
-    price_catalog_object_key,
     price_rows_from_payload,
-    price_snapshot_object_key,
-    price_symbol_object_key,
     read_json_gzip,
     read_reference_snapshot,
+    reference_snapshot_object_key,
     resolve_symbol_mic_rows,
     symbol_rows_from_payload,
     utc_now_iso,
@@ -43,9 +41,18 @@ EODHD_DUCKDB_DIRECTORY = Path("data/eodhd")
 EODHD_CLICKHOUSE_POOL = "eodhd_clickhouse"
 EODHD_PRICE_DOWNLOAD_POOL = "eodhd_price_download"
 DUCKDB_INSERT_BATCH_SIZE = 5_000
-EODHD_PRICE_BUCKET_COUNT = 256
-EODHD_PRICE_PARTITIONS = dg.StaticPartitionsDefinition(
-    [f"bucket_{bucket_index:03d}" for bucket_index in range(EODHD_PRICE_BUCKET_COUNT)]
+EODHD_DAILY_SYMBOL_CHUNK_SIZE = 500
+EODHD_HISTORY_START_DATE = date(2020, 7, 1)
+EODHD_HISTORY_END_DATE = date(2026, 6, 30)
+EODHD_DAILY_START_DATE = date(2026, 7, 1)
+EODHD_HISTORY_YEARS = tuple(
+    str(year)
+    for year in range(EODHD_HISTORY_START_DATE.year, EODHD_HISTORY_END_DATE.year + 1)
+)
+EODHD_HISTORY_PARTITIONS = dg.StaticPartitionsDefinition(list(EODHD_HISTORY_YEARS))
+EODHD_DAILY_PARTITIONS = dg.DailyPartitionsDefinition(
+    start_date=EODHD_DAILY_START_DATE.isoformat(),
+    timezone="UTC",
 )
 EODHD_PRICE_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
 
@@ -259,83 +266,68 @@ def eodhd_reference_complete(
     deps=["eodhd_reference_complete"],
     group_name=GROUP_NAME,
     kinds={"python", "rest", "s3", "eodhd"},
-    partitions_def=EODHD_PRICE_PARTITIONS,
+    partitions_def=EODHD_HISTORY_PARTITIONS,
     backfill_policy=EODHD_PRICE_BACKFILL_POLICY,
     pool=EODHD_PRICE_DOWNLOAD_POOL,
-    description=(
-        "Downloads one stable symbol bucket of six-year EOD history sequentially "
-        "into partition-scoped, compressed S3 objects with a completed catalog."
-    ),
 )
-def eodhd_eod_price_raw_objects(
+def eodhd_eod_price_history_raw_objects(
     context: dg.AssetExecutionContext,
     config: EodhdPriceBackfillConfig,
     eodhd: EodhdResource,
     eodhd_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    symbols = select_eodhd_price_symbols(
-        config=config,
-        partition_key=context.partition_key,
+    symbols = select_eodhd_price_symbols(config=config)
+    return dg.MaterializeResult(
+        metadata=download_eodhd_history_year(
+            client=eodhd,
+            object_store=eodhd_object_store,
+            symbols=symbols,
+            year=context.partition_key,
+            request_delay_seconds=config.request_delay_seconds,
+            progress_interval=config.progress_interval,
+            log=context.log.info,
+        )
     )
-    start_date, end_date = config.resolve_date_window(datetime.now(UTC))
-    metadata = download_eodhd_price_snapshot(
-        client=eodhd,
-        object_store=eodhd_object_store,
-        symbols=symbols,
-        partition_key=context.partition_key,
-        run_id=context.run.run_id,
-        start_date=start_date,
-        end_date=end_date,
-        request_delay_seconds=config.request_delay_seconds,
-        progress_interval=config.progress_interval,
-        log=context.log.info,
-    )
-    return dg.MaterializeResult(metadata=metadata)
 
 
 @dg.asset(
-    deps=["eodhd_eod_price_raw_objects"],
+    deps=["eodhd_eod_price_history_raw_objects"],
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb", "eodhd"},
-    partitions_def=EODHD_PRICE_PARTITIONS,
+    partitions_def=EODHD_HISTORY_PARTITIONS,
     backfill_policy=EODHD_PRICE_BACKFILL_POLICY,
-    description=(
-        "Streams one completed EODHD price partition into its own DuckDB database."
-    ),
+    pool=EODHD_CLICKHOUSE_POOL,
 )
-def eodhd_eod_prices_duckdb(
+def eodhd_eod_price_history_duckdb(
     context: dg.AssetExecutionContext,
-    config: EodhdRawRunConfig,
+    config: EodhdPriceBackfillConfig,
     eodhd_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    raw_run_id = config.raw_run_id or context.run.run_id
-    metadata = materialize_eodhd_prices(
-        database_path=eodhd_duckdb_path(
-            tables.EODHD_EOD_PRICES_TABLE,
-            partition_key=context.partition_key,
-        ),
-        object_store=eodhd_object_store,
-        raw_run_id=raw_run_id,
-        partition_key=context.partition_key,
-        progress_interval=100,
-        log=context.log.info,
+    return dg.MaterializeResult(
+        metadata=materialize_eodhd_history_year(
+            database_path=eodhd_duckdb_path(
+                tables.EODHD_EOD_PRICES_TABLE,
+                partition_key=context.partition_key,
+                price_asset_kind="history",
+            ),
+            object_store=eodhd_object_store,
+            symbols=select_eodhd_price_symbols(config=config),
+            year=context.partition_key,
+            progress_interval=config.progress_interval,
+            log=context.log.info,
+        )
     )
-    return dg.MaterializeResult(metadata=metadata)
 
 
 @dg.asset(
-    name=tables.EODHD_EOD_PRICES_TABLE,
-    deps=["eodhd_eod_prices_duckdb"],
+    deps=["eodhd_eod_price_history_duckdb"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "eodhd"},
-    partitions_def=EODHD_PRICE_PARTITIONS,
+    partitions_def=EODHD_HISTORY_PARTITIONS,
     backfill_policy=EODHD_PRICE_BACKFILL_POLICY,
     pool=EODHD_CLICKHOUSE_POOL,
-    description=(
-        "Appends EODHD daily OHLCV history into the ReplacingMergeTree price table."
-    ),
 )
-def eodhd_eod_prices_clickhouse(
+def eodhd_eod_price_history_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
@@ -345,6 +337,88 @@ def eodhd_eod_prices_clickhouse(
         table_name=tables.EODHD_EOD_PRICES_TABLE,
         truncate=False,
         partition_key=context.partition_key,
+        price_asset_kind="history",
+    )
+
+
+@dg.asset(
+    deps=["eodhd_reference_complete"],
+    group_name=GROUP_NAME,
+    kinds={"python", "rest", "s3", "eodhd"},
+    partitions_def=EODHD_DAILY_PARTITIONS,
+    backfill_policy=EODHD_PRICE_BACKFILL_POLICY,
+    pool=EODHD_PRICE_DOWNLOAD_POOL,
+)
+def eodhd_eod_price_daily_raw_objects(
+    context: dg.AssetExecutionContext,
+    config: EodhdPriceBackfillConfig,
+    eodhd: EodhdResource,
+    eodhd_object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    symbols = select_eodhd_price_symbols(config=config, include_delisted=False)
+    return dg.MaterializeResult(
+        metadata=download_eodhd_daily_date(
+            client=eodhd,
+            object_store=eodhd_object_store,
+            symbols=symbols,
+            price_date=context.partition_key,
+            request_delay_seconds=config.request_delay_seconds,
+            progress_interval=config.progress_interval,
+            log=context.log.info,
+        )
+    )
+
+
+@dg.asset(
+    deps=["eodhd_eod_price_daily_raw_objects"],
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "duckdb", "eodhd"},
+    partitions_def=EODHD_DAILY_PARTITIONS,
+    backfill_policy=EODHD_PRICE_BACKFILL_POLICY,
+    pool=EODHD_CLICKHOUSE_POOL,
+)
+def eodhd_eod_price_daily_duckdb(
+    context: dg.AssetExecutionContext,
+    config: EodhdPriceBackfillConfig,
+    eodhd_object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return dg.MaterializeResult(
+        metadata=materialize_eodhd_daily_date(
+            database_path=eodhd_duckdb_path(
+                tables.EODHD_EOD_PRICES_TABLE,
+                partition_key=context.partition_key,
+                price_asset_kind="daily",
+            ),
+            object_store=eodhd_object_store,
+            symbols=select_eodhd_price_symbols(
+                config=config,
+                include_delisted=False,
+            ),
+            price_date=context.partition_key,
+            log=context.log.info,
+        )
+    )
+
+
+@dg.asset(
+    deps=["eodhd_eod_price_daily_duckdb"],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse", "eodhd"},
+    partitions_def=EODHD_DAILY_PARTITIONS,
+    backfill_policy=EODHD_PRICE_BACKFILL_POLICY,
+    pool=EODHD_CLICKHOUSE_POOL,
+)
+def eodhd_eod_price_daily_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    return export_eodhd_table_to_clickhouse(
+        context,
+        clickhouse=clickhouse,
+        table_name=tables.EODHD_EOD_PRICES_TABLE,
+        truncate=False,
+        partition_key=context.partition_key,
+        price_asset_kind="daily",
     )
 
 
@@ -352,6 +426,7 @@ def eodhd_duckdb_path(
     table_name: str,
     *,
     partition_key: str | None = None,
+    price_asset_kind: str | None = None,
 ) -> Path:
     supported_tables = {*tables.EODHD_REFERENCE_TABLES, tables.EODHD_EOD_PRICES_TABLE}
     if table_name not in supported_tables:
@@ -359,10 +434,18 @@ def eodhd_duckdb_path(
     if table_name == tables.EODHD_EOD_PRICES_TABLE:
         if partition_key is None:
             raise ValueError("EODHD price DuckDB path requires a partition key")
-        eodhd_price_bucket_index(partition_key)
-        return EODHD_DUCKDB_DIRECTORY / table_name / f"{partition_key}.duckdb"
+        if price_asset_kind not in {"history", "daily"}:
+            raise ValueError("EODHD price DuckDB path requires history or daily kind")
+        return (
+            EODHD_DUCKDB_DIRECTORY
+            / table_name
+            / price_asset_kind
+            / f"{partition_key}.duckdb"
+        )
     if partition_key is not None:
         raise ValueError(f"EODHD reference table {table_name} is not partitioned")
+    if price_asset_kind is not None:
+        raise ValueError(f"EODHD reference table {table_name} has no price kind")
     return EODHD_DUCKDB_DIRECTORY / f"{table_name}.duckdb"
 
 
@@ -542,35 +625,57 @@ def replace_eodhd_duckdb_table(
     column_definitions = ", ".join(
         f'"{column}" {column_types[column]}' for column in columns
     )
-    placeholders = ", ".join("?" for _ in columns)
     qualified_table = f'{EODHD_DUCKDB_SCHEMA}."{table_name}"'
     row_count = 0
-    batch: list[tuple[Any, ...]] = []
+    batch: list[dict[str, Any]] = []
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(f"create schema if not exists {EODHD_DUCKDB_SCHEMA}")
         connection.execute(
             f"create or replace table {qualified_table} ({column_definitions})"
         )
         for row in rows:
-            batch.append(tuple(row[column] for column in columns))
+            batch.append({column: row[column] for column in columns})
             if len(batch) >= DUCKDB_INSERT_BATCH_SIZE:
-                connection.executemany(
-                    f"insert into {qualified_table} values ({placeholders})",
-                    batch,
+                _insert_eodhd_duckdb_batch(
+                    connection=connection,
+                    qualified_table=qualified_table,
+                    columns=columns,
+                    rows=batch,
                 )
                 row_count += len(batch)
                 log("Loaded EODHD DuckDB rows: table=%s rows=%s", table_name, row_count)
                 batch.clear()
         if batch:
-            connection.executemany(
-                f"insert into {qualified_table} values ({placeholders})",
-                batch,
+            _insert_eodhd_duckdb_batch(
+                connection=connection,
+                qualified_table=qualified_table,
+                columns=columns,
+                rows=batch,
             )
             row_count += len(batch)
     if row_count == 0:
         raise ValueError(f"EODHD table {table_name} produced zero rows")
     log("Finished EODHD DuckDB table: table=%s rows=%s", table_name, row_count)
     return row_count
+
+
+def _insert_eodhd_duckdb_batch(
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    qualified_table: str,
+    columns: tuple[str, ...],
+    rows: list[dict[str, Any]],
+) -> None:
+    registered_name = "_eodhd_rows"
+    column_list = ", ".join(f'"{column}"' for column in columns)
+    connection.register(registered_name, pa.Table.from_pylist(rows))
+    try:
+        connection.execute(
+            f"insert into {qualified_table} ({column_list}) "
+            f"select {column_list} from {registered_name}"
+        )
+    finally:
+        connection.unregister(registered_name)
 
 
 def export_eodhd_table_to_clickhouse(
@@ -580,8 +685,13 @@ def export_eodhd_table_to_clickhouse(
     table_name: str,
     truncate: bool,
     partition_key: str | None = None,
+    price_asset_kind: str | None = None,
 ) -> dg.MaterializeResult:
-    database_path = eodhd_duckdb_path(table_name, partition_key=partition_key)
+    database_path = eodhd_duckdb_path(
+        table_name,
+        partition_key=partition_key,
+        price_asset_kind=price_asset_kind,
+    )
     if not database_path.exists():
         raise ValueError(
             f"Missing EODHD DuckDB database {database_path}; materialize "
@@ -626,28 +736,28 @@ def validate_eodhd_reference_snapshot(
     row_counts: dict[str, int] = {}
     with clickhouse.get_connection() as client:
         for table_name in tables.EODHD_REFERENCE_TABLES:
-            rows = client.query(
+            rows = client.execute(
                 f"select source_run_id, count() from {RESOLVED_DATABASE}.{table_name} "
                 "group by source_run_id order by source_run_id limit 2"
-            ).result_rows
+            )
             if len(rows) != 1:
                 raise ValueError(
                     f"ClickHouse table {table_name} does not contain exactly one source_run_id"
                 )
             source_run_ids.add(str(rows[0][0]))
             row_counts[table_name] = int(rows[0][1])
-        orphan_symbol_mics = client.query(
+        orphan_symbol_mics = client.execute(
             "/* missing_symbol_mics */ "
             f"select mappings.eodhd_symbol_key, mappings.mic "
             f"from {RESOLVED_DATABASE}.{tables.EODHD_SYMBOL_MICS_TABLE} as mappings "
             f"left join {RESOLVED_DATABASE}.{tables.EODHD_SYMBOLS_TABLE} as symbols "
             "on symbols.eodhd_symbol_key = mappings.eodhd_symbol_key "
             "where symbols.eodhd_symbol_key is null limit 10"
-        ).result_rows
-        invalid_mics = client.query(
+        )
+        invalid_mics = client.execute(
             f"select mic from {RESOLVED_DATABASE}.{tables.EODHD_SYMBOL_MICS_TABLE} "
             "where not match(mic, '^[A-Z0-9]{4}$') order by mic limit 10"
-        ).result_rows
+        )
     if orphan_symbol_mics:
         values = ", ".join(str(row[0]) for row in orphan_symbol_mics)
         raise ValueError(f"EODHD MIC mappings reference missing symbols: {values}")
@@ -674,9 +784,8 @@ def validate_eodhd_reference_snapshot(
 def select_eodhd_price_symbols(
     *,
     config: EodhdPriceBackfillConfig,
-    partition_key: str,
+    include_delisted: bool | None = None,
 ) -> list[dict[str, Any]]:
-    bucket_index = eodhd_price_bucket_index(partition_key)
     database_path = eodhd_duckdb_path(tables.EODHD_SYMBOLS_TABLE)
     if not database_path.exists():
         raise ValueError(
@@ -684,94 +793,196 @@ def select_eodhd_price_symbols(
         )
     with duckdb.connect(str(database_path), read_only=True) as connection:
         placeholders = ", ".join("?" for _ in config.instrument_types())
-        where_delisted = "" if config.include_delisted else "and is_delisted = 0"
+        should_include_delisted = (
+            config.include_delisted if include_delisted is None else include_delisted
+        )
+        where_delisted = "" if should_include_delisted else "and is_delisted = 0"
         query = (
             "select eodhd_symbol_key, exchange_code, ticker, currency "
             "from eodhd.eodhd_symbols "
             f"where instrument_type in ({placeholders}) {where_delisted} "
-            "and substr(sha256(eodhd_symbol_key), 1, 2) = ? "
             "order by eodhd_symbol_key"
         )
-        parameters = (*config.instrument_types(), f"{bucket_index:02x}")
-        rows = connection.execute(query, parameters).fetchall()
+        rows = connection.execute(query, config.instrument_types()).fetchall()
     if config.max_symbols is not None:
         rows = rows[: config.max_symbols]
     columns = ("eodhd_symbol_key", "exchange_code", "ticker", "currency")
     return [dict(zip(columns, row, strict=True)) for row in rows]
 
 
-def eodhd_price_partition_key(symbol_key: str) -> str:
-    if not isinstance(symbol_key, str) or not symbol_key:
-        raise ValueError("EODHD symbol key must be a non-empty string")
-    bucket_index = int(sha256(symbol_key.encode("utf-8")).hexdigest()[:2], 16)
-    return f"bucket_{bucket_index:03d}"
+def eodhd_history_year_window(year: str) -> tuple[str, str]:
+    if year not in EODHD_HISTORY_YEARS:
+        raise ValueError(f"Unsupported EODHD history year: {year}")
+    year_number = int(year)
+    start = max(EODHD_HISTORY_START_DATE, date(year_number, 1, 1))
+    end = min(EODHD_HISTORY_END_DATE, date(year_number, 12, 31))
+    return start.isoformat(), end.isoformat()
 
 
-def eodhd_price_bucket_index(partition_key: str) -> int:
-    prefix, separator, suffix = partition_key.partition("_")
-    if prefix != "bucket" or separator == "" or not suffix.isdigit():
-        raise ValueError(f"Invalid EODHD price partition key: {partition_key!r}")
-    bucket_index = int(suffix)
-    if not 0 <= bucket_index < EODHD_PRICE_BUCKET_COUNT:
-        raise ValueError(f"EODHD price bucket index out of range: {bucket_index}")
-    return bucket_index
+def history_symbol_object_key(year: str, symbol_key: str) -> str:
+    eodhd_history_year_window(year)
+    return f"prices/history/year={year}/symbols/{quote(symbol_key, safe='')}.json.gz"
 
 
-def download_eodhd_price_snapshot(
+def history_catalog_object_key(year: str) -> str:
+    eodhd_history_year_window(year)
+    return f"prices/history/year={year}/catalog.json.gz"
+
+
+def daily_prices_object_key(price_date: str) -> str:
+    parsed_date = date.fromisoformat(price_date)
+    if parsed_date < EODHD_DAILY_START_DATE:
+        raise ValueError(f"EODHD daily date is before cutover: {price_date}")
+    return f"prices/daily/date={price_date}/prices.json.gz"
+
+
+def write_price_envelope(
+    *,
+    symbol_key: str,
+    covered_ranges: list[tuple[str, str]],
+    prices: list[dict[str, Any]],
+    retrieved_at: str,
+    source_object_keys: list[str],
+) -> bytes:
+    return write_json_gzip(
+        {
+            "schema_version": 2,
+            "symbol_key": symbol_key,
+            "covered_ranges": [
+                {"start": start, "end": end} for start, end in covered_ranges
+            ],
+            "prices": sorted(prices, key=lambda row: str(row["date"])),
+            "retrieved_at": retrieved_at,
+            "source_object_keys": sorted(set(source_object_keys)),
+        }
+    )
+
+
+def read_price_envelope(content: bytes) -> dict[str, Any]:
+    envelope = read_json_gzip(content)
+    if not isinstance(envelope, dict) or envelope.get("schema_version") != 2:
+        raise ValueError("Invalid EODHD history price envelope")
+    if not isinstance(envelope.get("prices"), list):
+        raise ValueError("EODHD history price envelope has no price list")
+    return envelope
+
+
+def write_daily_envelope(
+    *,
+    price_date: str,
+    covered_symbols: list[str],
+    prices: list[dict[str, Any]],
+    retrieved_at: str,
+    source_object_keys: list[str],
+) -> bytes:
+    daily_prices_object_key(price_date)
+    return write_json_gzip(
+        {
+            "schema_version": 2,
+            "price_date": price_date,
+            "covered_symbols": sorted(set(covered_symbols)),
+            "prices": sorted(
+                prices,
+                key=lambda row: (str(row["eodhd_symbol_key"]), str(row["date"])),
+            ),
+            "retrieved_at": retrieved_at,
+            "source_object_keys": sorted(set(source_object_keys)),
+        }
+    )
+
+
+def read_daily_envelope(content: bytes) -> dict[str, Any]:
+    envelope = read_json_gzip(content)
+    if not isinstance(envelope, dict) or envelope.get("schema_version") != 2:
+        raise ValueError("Invalid EODHD daily price envelope")
+    if not isinstance(envelope.get("prices"), list):
+        raise ValueError("EODHD daily price envelope has no price list")
+    return envelope
+
+
+def download_eodhd_history_year(
     *,
     client: Any,
     object_store: ObjectStoreResource,
     symbols: list[dict[str, Any]],
-    partition_key: str,
-    run_id: str,
-    start_date: str,
-    end_date: str,
+    year: str,
     request_delay_seconds: float,
     progress_interval: int,
     log: Callable[..., object],
 ) -> dict[str, Any]:
-    eodhd_price_bucket_index(partition_key)
+    start_date, end_date = eodhd_history_year_window(year)
     object_store.ensure_bucket(EODHD_RAW_BUCKET)
     started_at = time.monotonic()
-    retrieved_at = utc_now_iso()
     catalog: list[dict[str, Any]] = []
     total_price_rows = 0
+    reused_symbol_count = 0
+    downloaded_request_count = 0
 
     log(
-        "Starting EODHD price partition download: partition=%s symbols=%s "
-        "from=%s to=%s",
-        partition_key,
+        "Starting EODHD history year: year=%s symbols=%s from=%s to=%s",
+        year,
         len(symbols),
         start_date,
         end_date,
     )
     for symbol_number, symbol in enumerate(symbols, start=1):
         symbol_key = str(symbol["eodhd_symbol_key"])
-        symbol_partition_key = eodhd_price_partition_key(symbol_key)
-        if symbol_partition_key != partition_key:
-            raise ValueError(
-                "EODHD symbol assigned to the wrong price partition: "
-                f"symbol={symbol_key} expected={symbol_partition_key} "
-                f"actual={partition_key}"
+        object_key = history_symbol_object_key(year, symbol_key)
+        prices_by_date: dict[str, dict[str, Any]] = {}
+        covered_ranges: list[tuple[str, str]] = []
+        source_object_keys: list[str] = []
+        if object_store.exists(object_key, bucket=EODHD_RAW_BUCKET):
+            envelope = read_price_envelope(
+                object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
             )
-        payload = client.prices(
-            symbol_key,
-            start_date=start_date,
-            end_date=end_date,
+            prices_by_date = {str(row["date"]): row for row in envelope["prices"]}
+            covered_ranges = _envelope_ranges(envelope)
+            source_object_keys = [
+                str(key) for key in envelope.get("source_object_keys", [])
+            ]
+        missing_ranges = _missing_ranges(
+            requested=(start_date, end_date),
+            covered=covered_ranges,
         )
-        object_key = price_symbol_object_key(run_id, partition_key, symbol_key)
-        content = write_json_gzip(payload)
-        object_store.write_bytes(object_key, content, bucket=EODHD_RAW_BUCKET)
+        if not missing_ranges:
+            reused_symbol_count += 1
+        retrieved_at = utc_now_iso()
+        for missing_start, missing_end in missing_ranges:
+            payload = client.prices(
+                symbol_key,
+                start_date=missing_start,
+                end_date=missing_end,
+            )
+            for row in payload:
+                row_date = str(row.get("date", ""))
+                if missing_start <= row_date <= missing_end:
+                    prices_by_date[row_date] = row
+            covered_ranges.append((missing_start, missing_end))
+            downloaded_request_count += 1
+        merged_ranges = _merge_ranges(covered_ranges)
+        object_store.write_bytes(
+            object_key,
+            write_price_envelope(
+                symbol_key=symbol_key,
+                covered_ranges=merged_ranges,
+                prices=list(prices_by_date.values()),
+                retrieved_at=retrieved_at,
+                source_object_keys=source_object_keys,
+            ),
+            bucket=EODHD_RAW_BUCKET,
+        )
         catalog.append(
             {
                 **symbol,
                 "object_key": object_key,
-                "row_count": len(payload),
-                "content_length_bytes": len(content),
+                "row_count": len(prices_by_date),
+                "covered_ranges": [
+                    {"start": start, "end": end} for start, end in merged_ranges
+                ],
                 "retrieved_at": retrieved_at,
             }
         )
-        total_price_rows += len(payload)
+        total_price_rows += len(prices_by_date)
         if (
             symbol_number == 1
             or symbol_number % progress_interval == 0
@@ -780,10 +991,10 @@ def download_eodhd_price_snapshot(
             elapsed = time.monotonic() - started_at
             rate = symbol_number / elapsed if elapsed > 0 else 0
             log(
-                "Downloaded EODHD price history: partition=%s progress=%s/%s "
+                "Prepared EODHD price history: year=%s progress=%s/%s "
                 "symbol=%s price_rows=%s rate_symbols_per_second=%.2f "
                 "elapsed_seconds=%.1f",
-                partition_key,
+                year,
                 symbol_number,
                 len(symbols),
                 symbol_key,
@@ -794,79 +1005,261 @@ def download_eodhd_price_snapshot(
         if request_delay_seconds > 0 and symbol_number < len(symbols):
             time.sleep(request_delay_seconds)
 
-    catalog_key = price_catalog_object_key(run_id, partition_key)
+    catalog_key = history_catalog_object_key(year)
     object_store.write_bytes(
         catalog_key,
-        write_json_gzip(catalog),
-        bucket=EODHD_RAW_BUCKET,
-    )
-    snapshot = {
-        "schema_version": 1,
-        "source_system": "eodhd",
-        "source_run_id": run_id,
-        "partition_key": partition_key,
-        "retrieved_at": retrieved_at,
-        "completed": True,
-        "start_date": start_date,
-        "end_date": end_date,
-        "symbol_count": len(symbols),
-        "price_row_count": total_price_rows,
-        "catalog_object_key": catalog_key,
-    }
-    object_store.write_json(
-        price_snapshot_object_key(run_id, partition_key),
-        json.dumps(snapshot, sort_keys=True, separators=(",", ":")),
+        write_json_gzip(
+            {
+                "schema_version": 2,
+                "year": year,
+                "completed": True,
+                "objects": catalog,
+            }
+        ),
         bucket=EODHD_RAW_BUCKET,
     )
     return {
-        "source_run_id": run_id,
-        "partition_key": partition_key,
+        "source_snapshot_id": f"history:{year}",
+        "year": year,
         "start_date": start_date,
         "end_date": end_date,
         "symbol_count": len(symbols),
+        "reused_symbol_count": reused_symbol_count,
+        "downloaded_request_count": downloaded_request_count,
         "price_row_count": total_price_rows,
-        "raw_object_count": len(symbols) + 2,
         "catalog_object_key": catalog_key,
-        "snapshot_object_key": price_snapshot_object_key(run_id, partition_key),
         "elapsed_seconds": round(time.monotonic() - started_at, 3),
     }
 
 
-def materialize_eodhd_prices(
+def download_eodhd_daily_date(
     *,
-    database_path: Path,
+    client: Any,
     object_store: ObjectStoreResource,
-    raw_run_id: str,
-    partition_key: str,
+    symbols: list[dict[str, Any]],
+    price_date: str,
+    request_delay_seconds: float,
     progress_interval: int,
     log: Callable[..., object],
 ) -> dict[str, Any]:
-    eodhd_price_bucket_index(partition_key)
-    snapshot_key = price_snapshot_object_key(raw_run_id, partition_key)
-    if not object_store.exists(snapshot_key, bucket=EODHD_RAW_BUCKET):
-        raise ValueError(
-            f"No completed EODHD price snapshot found for run_id={raw_run_id}; "
-            "materialize eodhd_eod_price_raw_objects first"
+    object_key = daily_prices_object_key(price_date)
+    object_store.ensure_bucket(EODHD_RAW_BUCKET)
+    prices_by_symbol: dict[str, dict[str, Any]] = {}
+    covered_symbols: set[str] = set()
+    source_object_keys: list[str] = []
+    if object_store.exists(object_key, bucket=EODHD_RAW_BUCKET):
+        envelope = read_daily_envelope(
+            object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
         )
-    snapshot = json.loads(
-        object_store.read_bytes(snapshot_key, bucket=EODHD_RAW_BUCKET)
-    )
-    if snapshot.get("completed") is not True:
-        raise ValueError(f"EODHD price snapshot is incomplete for run_id={raw_run_id}")
-    if snapshot.get("partition_key") != partition_key:
-        raise ValueError(
-            "EODHD price snapshot partition mismatch: "
-            f"expected={partition_key} actual={snapshot.get('partition_key')}"
+        if envelope.get("price_date") != price_date:
+            raise ValueError(f"EODHD daily object date mismatch: {object_key}")
+        covered_symbols.update(str(value) for value in envelope["covered_symbols"])
+        prices_by_symbol.update(
+            {str(row["eodhd_symbol_key"]): row for row in envelope["prices"]}
         )
-    catalog = read_json_gzip(
-        object_store.read_bytes(
-            str(snapshot["catalog_object_key"]),
+        source_object_keys.extend(
+            str(key) for key in envelope.get("source_object_keys", [])
+        )
+    symbols_by_exchange: dict[str, list[str]] = {}
+    for symbol in symbols:
+        symbol_key = str(symbol["eodhd_symbol_key"])
+        symbols_by_exchange.setdefault(str(symbol["exchange_code"]), []).append(
+            symbol_key
+        )
+    missing_by_exchange = {
+        exchange_code: [
+            symbol_key
+            for symbol_key in exchange_symbols
+            if symbol_key not in covered_symbols
+        ]
+        for exchange_code, exchange_symbols in symbols_by_exchange.items()
+    }
+    missing_by_exchange = {
+        exchange_code: symbol_keys
+        for exchange_code, symbol_keys in missing_by_exchange.items()
+        if symbol_keys
+    }
+    requests: list[tuple[str, list[str], list[str] | None]] = []
+    for exchange_code, missing_symbols in sorted(missing_by_exchange.items()):
+        if len(missing_symbols) == len(symbols_by_exchange[exchange_code]):
+            requests.append((exchange_code, missing_symbols, None))
+            continue
+        for offset in range(0, len(missing_symbols), EODHD_DAILY_SYMBOL_CHUNK_SIZE):
+            chunk = missing_symbols[offset : offset + EODHD_DAILY_SYMBOL_CHUNK_SIZE]
+            requests.append((exchange_code, chunk, chunk))
+
+    downloaded_request_count = 0
+    retrieved_at = utc_now_iso()
+    expected_symbols = {str(symbol["eodhd_symbol_key"]) for symbol in symbols}
+    for request_number, (exchange_code, covered_chunk, requested_chunk) in enumerate(
+        requests,
+        start=1,
+    ):
+        payload = client.bulk_prices(
+            exchange_code,
+            price_date=price_date,
+            symbol_keys=requested_chunk,
+        )
+        for row in payload:
+            symbol_key = _bulk_price_symbol_key(row, exchange_code=exchange_code)
+            if symbol_key not in expected_symbols:
+                continue
+            prices_by_symbol[symbol_key] = {
+                **row,
+                "eodhd_symbol_key": symbol_key,
+                "date": str(row.get("date") or price_date),
+            }
+        covered_symbols.update(covered_chunk)
+        downloaded_request_count += 1
+        object_store.write_bytes(
+            object_key,
+            write_daily_envelope(
+                price_date=price_date,
+                covered_symbols=list(covered_symbols),
+                prices=list(prices_by_symbol.values()),
+                retrieved_at=retrieved_at,
+                source_object_keys=source_object_keys,
+            ),
             bucket=EODHD_RAW_BUCKET,
         )
-    )
-    if not isinstance(catalog, list):
-        raise ValueError(f"EODHD price snapshot catalog is not a list: {raw_run_id}")
+        if (
+            request_number == 1
+            or request_number % progress_interval == 0
+            or request_number == len(requests)
+        ):
+            log(
+                "Downloaded EODHD daily prices: date=%s progress=%s/%s "
+                "covered_symbols=%s rows=%s",
+                price_date,
+                request_number,
+                len(requests),
+                len(covered_symbols),
+                len(prices_by_symbol),
+            )
+        if request_delay_seconds > 0 and request_number < len(requests):
+            time.sleep(request_delay_seconds)
+    if not requests:
+        object_store.write_bytes(
+            object_key,
+            write_daily_envelope(
+                price_date=price_date,
+                covered_symbols=list(covered_symbols),
+                prices=list(prices_by_symbol.values()),
+                retrieved_at=retrieved_at,
+                source_object_keys=source_object_keys,
+            ),
+            bucket=EODHD_RAW_BUCKET,
+        )
+    return {
+        "source_snapshot_id": f"daily:{price_date}",
+        "price_date": price_date,
+        "symbol_count": len(symbols),
+        "reused_symbol_count": len(symbols)
+        - sum(len(values) for values in missing_by_exchange.values()),
+        "downloaded_request_count": downloaded_request_count,
+        "price_row_count": len(prices_by_symbol),
+        "object_key": object_key,
+    }
 
+
+def materialize_eodhd_history_year(
+    *,
+    database_path: Path,
+    object_store: ObjectStoreResource,
+    symbols: list[dict[str, Any]],
+    year: str,
+    progress_interval: int,
+    log: Callable[..., object],
+) -> dict[str, Any]:
+    eodhd_history_year_window(year)
+    rows: list[dict[str, Any]] = []
+    for symbol_number, symbol in enumerate(symbols, start=1):
+        object_key = history_symbol_object_key(year, str(symbol["eodhd_symbol_key"]))
+        if not object_store.exists(object_key, bucket=EODHD_RAW_BUCKET):
+            raise ValueError(f"Missing EODHD history object: {object_key}")
+        envelope = read_price_envelope(
+            object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
+        )
+        rows.extend(
+            price_rows_from_payload(
+                envelope["prices"],
+                symbol=symbol,
+                source_run_id=f"history:{year}",
+                source_object_key=object_key,
+                retrieved_at=str(envelope["retrieved_at"]),
+            )
+        )
+        if symbol_number == 1 or symbol_number % progress_interval == 0:
+            log(
+                "Parsed EODHD history objects: year=%s progress=%s/%s rows=%s",
+                year,
+                symbol_number,
+                len(symbols),
+                len(rows),
+            )
+    date_bounds = _replace_price_duckdb(database_path=database_path, rows=rows)
+    return {
+        "source_snapshot_id": f"history:{year}",
+        "year": year,
+        "duckdb_path": str(database_path),
+        "duckdb_schema": EODHD_DUCKDB_SCHEMA,
+        "duckdb_table": tables.EODHD_EOD_PRICES_TABLE,
+        "row_count": len(rows),
+        "symbol_count": len(symbols),
+        "min_price_date": str(date_bounds[0]) if date_bounds[0] is not None else None,
+        "max_price_date": str(date_bounds[1]) if date_bounds[1] is not None else None,
+    }
+
+
+def materialize_eodhd_daily_date(
+    *,
+    database_path: Path,
+    object_store: ObjectStoreResource,
+    symbols: list[dict[str, Any]],
+    price_date: str,
+    log: Callable[..., object],
+) -> dict[str, Any]:
+    object_key = daily_prices_object_key(price_date)
+    if not object_store.exists(object_key, bucket=EODHD_RAW_BUCKET):
+        raise ValueError(f"Missing EODHD daily object: {object_key}")
+    envelope = read_daily_envelope(
+        object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
+    )
+    symbols_by_key = {str(row["eodhd_symbol_key"]): row for row in symbols}
+    rows: list[dict[str, Any]] = []
+    for raw_row in envelope["prices"]:
+        symbol_key = str(raw_row["eodhd_symbol_key"])
+        symbol = symbols_by_key.get(symbol_key)
+        if symbol is None:
+            log("Skipping unknown EODHD daily symbol: symbol=%s", symbol_key)
+            continue
+        rows.extend(
+            price_rows_from_payload(
+                [raw_row],
+                symbol=symbol,
+                source_run_id=f"daily:{price_date}",
+                source_object_key=object_key,
+                retrieved_at=str(envelope["retrieved_at"]),
+            )
+        )
+    date_bounds = _replace_price_duckdb(database_path=database_path, rows=rows)
+    return {
+        "source_snapshot_id": f"daily:{price_date}",
+        "price_date": price_date,
+        "duckdb_path": str(database_path),
+        "duckdb_schema": EODHD_DUCKDB_SCHEMA,
+        "duckdb_table": tables.EODHD_EOD_PRICES_TABLE,
+        "row_count": len(rows),
+        "min_price_date": str(date_bounds[0]) if date_bounds[0] is not None else None,
+        "max_price_date": str(date_bounds[1]) if date_bounds[1] is not None else None,
+    }
+
+
+def _replace_price_duckdb(
+    *,
+    database_path: Path,
+    rows: list[dict[str, Any]],
+) -> tuple[Any, Any]:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     table_name = tables.EODHD_EOD_PRICES_TABLE
     columns = tables.EODHD_TABLE_COLUMNS[table_name]
@@ -874,56 +1267,69 @@ def materialize_eodhd_prices(
     definitions = ", ".join(f'"{column}" {column_types[column]}' for column in columns)
     placeholders = ", ".join("?" for _ in columns)
     qualified_table = f'{EODHD_DUCKDB_SCHEMA}."{table_name}"'
-    row_count = 0
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(f"create schema if not exists {EODHD_DUCKDB_SCHEMA}")
         connection.execute(f"create or replace table {qualified_table} ({definitions})")
-        for object_number, catalog_row in enumerate(catalog, start=1):
-            payload = read_json_gzip(
-                object_store.read_bytes(
-                    str(catalog_row["object_key"]),
-                    bucket=EODHD_RAW_BUCKET,
-                )
+        if rows:
+            connection.executemany(
+                f"insert into {qualified_table} values ({placeholders})",
+                [tuple(row[column] for column in columns) for row in rows],
             )
-            rows = price_rows_from_payload(
-                payload,
-                symbol=catalog_row,
-                source_run_id=raw_run_id,
-                source_object_key=str(catalog_row["object_key"]),
-                retrieved_at=str(catalog_row["retrieved_at"]),
-            )
-            if rows:
-                connection.executemany(
-                    f"insert into {qualified_table} values ({placeholders})",
-                    [tuple(row[column] for column in columns) for row in rows],
-                )
-                row_count += len(rows)
-            if (
-                object_number == 1
-                or object_number % progress_interval == 0
-                or object_number == len(catalog)
-            ):
-                log(
-                    "Parsed EODHD price objects: progress=%s/%s symbol=%s rows=%s",
-                    object_number,
-                    len(catalog),
-                    catalog_row["eodhd_symbol_key"],
-                    row_count,
-                )
-        date_bounds = connection.execute(
+        return connection.execute(
             f"select min(price_date), max(price_date) from {qualified_table}"
         ).fetchone()
-    return {
-        "source_run_id": raw_run_id,
-        "partition_key": partition_key,
-        "duckdb_path": str(database_path),
-        "duckdb_schema": EODHD_DUCKDB_SCHEMA,
-        "duckdb_table": table_name,
-        "row_count": row_count,
-        "symbol_count": len(catalog),
-        "min_price_date": str(date_bounds[0]) if date_bounds[0] is not None else None,
-        "max_price_date": str(date_bounds[1]) if date_bounds[1] is not None else None,
-    }
+
+
+def _envelope_ranges(envelope: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        (str(value["start"]), str(value["end"]))
+        for value in envelope.get("covered_ranges", [])
+    ]
+
+
+def _merge_ranges(values: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if not values:
+        return []
+    merged: list[tuple[date, date]] = []
+    for start_text, end_text in sorted(values):
+        start = date.fromisoformat(start_text)
+        end = date.fromisoformat(end_text)
+        if not merged or start > merged[-1][1] + timedelta(days=1):
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return [(start.isoformat(), end.isoformat()) for start, end in merged]
+
+
+def _missing_ranges(
+    *,
+    requested: tuple[str, str],
+    covered: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    requested_start = date.fromisoformat(requested[0])
+    requested_end = date.fromisoformat(requested[1])
+    cursor = requested_start
+    missing: list[tuple[str, str]] = []
+    for start_text, end_text in _merge_ranges(covered):
+        start = max(date.fromisoformat(start_text), requested_start)
+        end = min(date.fromisoformat(end_text), requested_end)
+        if end < cursor:
+            continue
+        if start > cursor:
+            missing.append(
+                (cursor.isoformat(), (start - timedelta(days=1)).isoformat())
+            )
+        cursor = max(cursor, end + timedelta(days=1))
+    if cursor <= requested_end:
+        missing.append((cursor.isoformat(), requested_end.isoformat()))
+    return missing
+
+
+def _bulk_price_symbol_key(row: dict[str, Any], *, exchange_code: str) -> str:
+    code = str(row.get("code") or row.get("Code") or "").strip().upper()
+    if not code:
+        raise ValueError("EODHD bulk price row has no symbol code")
+    return code if "." in code else f"{code}.{exchange_code.upper()}"
 
 
 def _reference_table_result(
@@ -933,7 +1339,23 @@ def _reference_table_result(
     config: EodhdRawRunConfig,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    raw_run_id = config.raw_run_id or context.run.run_id
+    configured_run_id = config.raw_run_id
+    if configured_run_id is None and object_store.exists(
+        reference_snapshot_object_key(context.run_id),
+        bucket=EODHD_RAW_BUCKET,
+    ):
+        configured_run_id = context.run_id
+    raw_run_id = resolve_upstream_materialization_run_id(
+        instance=context.instance,
+        configured_run_id=configured_run_id,
+        upstream_asset_key=dg.AssetKey("eodhd_reference_raw_objects"),
+        partition_key=None,
+    )
+    context.log.info(
+        "Using completed EODHD raw materialization: table=%s source_run_id=%s",
+        table_name,
+        raw_run_id,
+    )
     metadata = materialize_eodhd_reference_table(
         table_name=table_name,
         database_path=eodhd_duckdb_path(table_name),
@@ -942,6 +1364,41 @@ def _reference_table_result(
         log=context.log.info,
     )
     return dg.MaterializeResult(metadata=metadata)
+
+
+def resolve_upstream_materialization_run_id(
+    *,
+    instance: dg.DagsterInstance,
+    configured_run_id: str | None,
+    upstream_asset_key: dg.AssetKey,
+    partition_key: str | None,
+) -> str:
+    if configured_run_id is not None:
+        return configured_run_id
+
+    if partition_key is None:
+        event = instance.get_latest_materialization_event(upstream_asset_key)
+        run_id = event.run_id if event is not None else None
+    else:
+        records = instance.fetch_materializations(
+            dg.AssetRecordsFilter(
+                asset_key=upstream_asset_key,
+                asset_partitions=[partition_key],
+            ),
+            limit=1,
+        ).records
+        run_id = records[0].run_id if records else None
+
+    if run_id is None:
+        partition_description = (
+            f" partition={partition_key}" if partition_key is not None else ""
+        )
+        raise ValueError(
+            f"Upstream asset {upstream_asset_key.to_user_string()}"
+            f"{partition_description} has no successful materialization; "
+            "materialize it first or provide raw_run_id"
+        )
+    return run_id
 
 
 def _duckdb_source_run_ids(
@@ -966,13 +1423,29 @@ eodhd_reference_weekly_job = dg.define_asset_job(
     selection=eodhd_reference_selection,
 )
 
-eodhd_price_backfill_job = dg.define_asset_job(
-    "eodhd_price_backfill_job",
+eodhd_price_history_backfill_job = dg.define_asset_job(
+    "eodhd_price_history_backfill_job",
     selection=dg.AssetSelection.assets(
-        "eodhd_eod_price_raw_objects",
-        "eodhd_eod_prices_duckdb",
-        tables.EODHD_EOD_PRICES_TABLE,
+        "eodhd_eod_price_history_raw_objects",
+        "eodhd_eod_price_history_duckdb",
+        "eodhd_eod_price_history_clickhouse",
     ),
+)
+
+eodhd_price_daily_job = dg.define_asset_job(
+    "eodhd_price_daily_job",
+    selection=dg.AssetSelection.assets(
+        "eodhd_eod_price_daily_raw_objects",
+        "eodhd_eod_price_daily_duckdb",
+        "eodhd_eod_price_daily_clickhouse",
+    ),
+)
+
+eodhd_price_daily_schedule = dg.build_schedule_from_partitioned_job(
+    eodhd_price_daily_job,
+    name="eodhd_price_daily_schedule",
+    hour_of_day=6,
+    minute_of_hour=15,
 )
 
 
@@ -998,12 +1471,19 @@ defs = dg.Definitions(
         eodhd_symbols_clickhouse,
         eodhd_symbol_mics_clickhouse,
         eodhd_reference_complete,
-        eodhd_eod_price_raw_objects,
-        eodhd_eod_prices_duckdb,
-        eodhd_eod_prices_clickhouse,
+        eodhd_eod_price_history_raw_objects,
+        eodhd_eod_price_history_duckdb,
+        eodhd_eod_price_history_clickhouse,
+        eodhd_eod_price_daily_raw_objects,
+        eodhd_eod_price_daily_duckdb,
+        eodhd_eod_price_daily_clickhouse,
     ],
-    jobs=[eodhd_reference_weekly_job, eodhd_price_backfill_job],
-    schedules=[eodhd_reference_weekly_schedule],
+    jobs=[
+        eodhd_reference_weekly_job,
+        eodhd_price_history_backfill_job,
+        eodhd_price_daily_job,
+    ],
+    schedules=[eodhd_reference_weekly_schedule, eodhd_price_daily_schedule],
     resources={
         "eodhd": EodhdResource(),
         "eodhd_object_store": ObjectStoreResource(bucket=EODHD_RAW_BUCKET),
