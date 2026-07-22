@@ -13,7 +13,6 @@ from dagster_v3.defs.france_sirene.clickhouse import (
     export_france_sirene_clickhouse_industries,
 )
 from dagster_v3.defs.france_sirene.industries import build_france_sirene_industries
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 
 GROUP_NAME = "france_sirene"
 FRANCE_SIRENE_DUCKDB_POOL = "france_sirene_duckdb"
@@ -202,7 +201,6 @@ def _duckdb_table_count(
 # (the raw asset), so .upstream() of the two exports pulls a single download.
 france_sirene_register_job = dg.define_asset_job(
     "france_sirene_register_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=dg.AssetSelection.assets(
         "france_sirene_clickhouse_companies",
         "france_sirene_clickhouse_industries",

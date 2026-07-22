@@ -10,13 +10,6 @@ concurrency:
   # from exhausting the shared Postgres connection slots. Tune to taste.
   runs:
     max_concurrent_runs: 32
-    # Multi-GB snapshot jobs (tagged via defs/common/tags.py) are additionally
-    # capped so a synchronized schedule storm can't fill all 32 run slots with
-    # bulk loads at once.
-    tag_concurrency_limits:
-      - key: corpscout/workload
-        value: heavy-bulk
-        limit: 2
   # Per-pool op limit (default 1). Assets that share a single-writer DuckDB file
   # (e.g. pool="exchange_rates_v2_duckdb") are serialized to one writer.
   pools:
@@ -29,16 +22,13 @@ run_retries:
   enabled: true
   max_retries: 2
 
-# Daemon-side watchdog for hung/zombie runs. A run stuck past max_runtime is
-# terminated instead of silently holding its limit-1 pool slot forever;
-# free_slots_after_run_end_seconds releases concurrency slots of terminal runs
-# even when the run worker crashed without cleanup (the leaked-slot wedge that
-# scripts/dagster-health-check.py otherwise has to repair).
+# Monitor launch/cancel transitions and release concurrency slots retained by
+# terminal runs. Runtime is intentionally unbounded because wall-clock limits
+# cannot distinguish a dead worker from a valid long-running materialization.
 run_monitoring:
   enabled: true
   start_timeout_seconds: 600
   cancel_timeout_seconds: 600
-  max_runtime_seconds: 21600 # 6h — longest bulk loads (Brazil RFB) run hours
   poll_interval_seconds: 120
   free_slots_after_run_end_seconds: 300
 

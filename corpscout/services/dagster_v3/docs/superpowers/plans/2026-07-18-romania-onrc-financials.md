@@ -501,7 +501,7 @@ uv run pytest tests/test_domains_assets.py tests/test_company_financials_latest.
 
 **Files:** both `assets.py` modules and both design docs.
 
-- [ ] Define `romania_onrc_register_job` using the full upstream selection; tag as a heavy bulk run.
+- [ ] Define `romania_onrc_register_job` using the full upstream selection; rely on the assets' explicit storage pools for concurrency.
 - [ ] Schedule ONRC monthly after the expected publication window, staggered from existing sources,
   default STOPPED.
 - [ ] Define separate financial ingest and publish jobs so a raw/package failure cannot partially

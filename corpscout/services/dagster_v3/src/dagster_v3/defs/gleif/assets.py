@@ -28,7 +28,6 @@ from dagster_v3.defs.gleif.dlt_csv import (
     load_gleif_csv_raw_tables,
     raw_table_row_counts,
 )
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.gleif.source import (
     GLEIF_RAW_BUCKET,
     GleifRawDownloadConfig,
@@ -221,7 +220,6 @@ def gleif_raw_retention(object_store: ObjectStoreResource) -> dg.MaterializeResu
 
 
 gleif_reference_bootstrap_job = dg.define_asset_job(
-    tags=HEAVY_BULK_RUN_TAGS,
     name="gleif_reference_bootstrap_job",
     selection=[
         "gleif_full_raw_reference_files",
@@ -235,7 +233,6 @@ gleif_reference_bootstrap_job = dg.define_asset_job(
 )
 
 gleif_reference_delta_job = dg.define_asset_job(
-    tags=HEAVY_BULK_RUN_TAGS,
     name="gleif_reference_delta_job",
     selection=[
         "gleif_delta_raw_reference_files",

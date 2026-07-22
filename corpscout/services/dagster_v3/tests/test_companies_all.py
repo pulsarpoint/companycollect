@@ -186,15 +186,6 @@ def test_companies_all_asset_deps_pinned() -> None:
     assert actual_deps == expected
 
 
-def test_companies_all_job_has_heavy_bulk_tag() -> None:
-    from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
-    from dagster_v3.defs.companies_all.assets import companies_all_job
-
-    assert companies_all_job.name == "companies_all_job"
-    for key, value in HEAVY_BULK_RUN_TAGS.items():
-        assert companies_all_job.tags.get(key) == value
-
-
 def test_companies_all_schedule_running_daily_cron() -> None:
     from dagster_v3.defs.companies_all.assets import companies_all_schedule
 

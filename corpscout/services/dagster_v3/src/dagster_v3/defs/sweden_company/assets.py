@@ -19,7 +19,6 @@ from dagster_v3.defs.sweden_company.normalized_duckdb import (
     replace_sweden_company_normalized_tables,
 )
 from dagster_v3.defs.sweden_company.raw_duckdb import load_sweden_company_raw_manifest
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.sweden_company.resources import (
     SwedenCompanyBulkResource,
     manifest_for_run,
@@ -232,7 +231,6 @@ def identities_normalized(clickhouse: ClickhouseResource) -> dg.AssetCheckResult
 
 sweden_company_refresh_job = dg.define_asset_job(
     "sweden_company_refresh_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=dg.AssetSelection.assets(
         "sweden_company_companies_clickhouse",
         "sweden_company_addresses_clickhouse",

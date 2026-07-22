@@ -1,0 +1,7 @@
+---
+commoncrawl_warc_index_builder_deploy_dir: /opt/companycollect/corpscout/commoncrawl/cc-warc-index-builder
+commoncrawl_warc_index_builder_owner: graovic
+commoncrawl_warc_index_builder_group: graovic
+commoncrawl_warc_index_builder_python: "3.14"
+commoncrawl_warc_index_builder_target_system: Linux
+commoncrawl_warc_index_builder_target_architecture: x86_64

@@ -169,41 +169,44 @@ rm -rf /home/graovic/cc-warc-index-data/CC-MAIN-2026-25/warc-index/pages25/candi
 Do not remove the manifests, WARC-size sample, or catalog. A later `--rebuild-catalog` must query remote
 shards again if candidates were removed.
 
-## Full run on wappalyzer
+## Full run on commoncrawl2
 
-Keep the checkout, data, DuckDB spill, and logs under `/home/graovic`; never use `/tmp` for a full crawl.
-`/tmp` may be capacity-limited or cleaned while the multi-hour run is active.
+Keep data, DuckDB spill, and logs under `/home/graovic`; never use `/tmp` for a full crawl. `/tmp` may be
+capacity-limited or cleaned while the multi-hour run is active.
 
-Recommended paths:
+The builder has its own Ansible deployment, separate from `cc-enrich-worker`. Recommended paths:
 
 ```text
-/home/graovic/cc-processor                   # grouped checkout and shared .env
+/opt/companycollect/corpscout/commoncrawl/cc-warc-index-builder  # deployed command
 /home/graovic/cc-warc-index-data             # --base and DuckDB spill
 /home/graovic/logs                            # persistent logs
 ```
 
-After placing the grouped processor checkout on `graovic@wappalyzer` and creating the single protected
-`/home/graovic/cc-processor/.env`:
+After deploying with [`ansible/site.yml`](ansible/site.yml) and creating the single protected processor
+environment file:
 
 ```bash
-ssh graovic@wappalyzer
+ssh graovic@commoncrawl2
 mkdir -p /home/graovic/cc-warc-index-data /home/graovic/logs
-cd /home/graovic/cc-processor
-chmod 0600 .env
+cd /opt/companycollect/corpscout/commoncrawl/cc-warc-index-builder
+chmod 0600 ../cc-processor/.env
+set -a; . ../cc-processor/.env; set +a
 tmux new -s cc-warc-index
 
-make catalog CRAWL=CC-MAIN-2026-25 PAGES_PER_DOMAIN=25 \
+./bin/cc-warc-index-builder \
+  --base /home/graovic/cc-warc-index-data \
+  --crawl CC-MAIN-2026-25 \
+  --pages-per-domain 25 \
   2>&1 | tee /home/graovic/logs/cc-warc-index-CC-MAIN-2026-25.log
 ```
 
 Use the direct command when overriding builder-specific controls:
 
 ```bash
-cd /home/graovic/cc-processor/cc-warc-index-builder
-set -a; source ../.env; set +a
-uv sync --frozen
+cd /opt/companycollect/corpscout/commoncrawl/cc-warc-index-builder
+set -a; source ../cc-processor/.env; set +a
 
-uv run --frozen cc-warc-index-builder \
+./bin/cc-warc-index-builder \
   --base /home/graovic/cc-warc-index-data \
   --crawl CC-MAIN-2026-25 \
   --pages-per-domain 25 \

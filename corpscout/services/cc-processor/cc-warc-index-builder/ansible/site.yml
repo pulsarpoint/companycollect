@@ -1,0 +1,233 @@
+---
+- name: Deploy the Common Crawl WARC index builder
+  hosts: commoncrawl_warc_index_builders
+  become: true
+  gather_facts: true
+  vars:
+    builder_source_dir: "{{ playbook_dir }}/.."
+    builder_artifact_dir: "{{ builder_source_dir }}/dist/deploy"
+    builder_requirements_file: "{{ builder_artifact_dir }}/requirements.txt"
+    builder_remote_venv: "{{ commoncrawl_warc_index_builder_deploy_dir }}/.venv"
+
+  tasks:
+    - name: Require the declared target platform
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.system == commoncrawl_warc_index_builder_target_system
+          - ansible_facts.architecture == commoncrawl_warc_index_builder_target_architecture
+        fail_msg: >-
+          The WARC index builder supports
+          {{ commoncrawl_warc_index_builder_target_system }}/{{ commoncrawl_warc_index_builder_target_architecture }},
+          but {{ inventory_hostname }} reports
+          {{ ansible_facts.system }}/{{ ansible_facts.architecture }}.
+
+    - name: Run the builder test suite on the control machine
+      ansible.builtin.command:
+        argv:
+          - uv
+          - run
+          - --frozen
+          - pytest
+          - -q
+        chdir: "{{ builder_source_dir }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      check_mode: false
+      changed_when: false
+
+    - name: Build the builder wheel on the control machine
+      ansible.builtin.command:
+        argv:
+          - uv
+          - build
+          - --wheel
+          - --clear
+          - --out-dir
+          - "{{ builder_artifact_dir }}"
+        chdir: "{{ builder_source_dir }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      check_mode: false
+      changed_when: false
+
+    - name: Export locked production dependencies on the control machine
+      ansible.builtin.command:
+        argv:
+          - uv
+          - export
+          - --frozen
+          - --no-dev
+          - --no-emit-project
+          - --output-file
+          - "{{ builder_requirements_file }}"
+        chdir: "{{ builder_source_dir }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      check_mode: false
+      changed_when: false
+
+    - name: Find the locally built wheel
+      ansible.builtin.find:
+        paths: "{{ builder_artifact_dir }}"
+        patterns: "*.whl"
+        file_type: file
+      register: builder_local_wheels
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Require exactly one locally built wheel
+      ansible.builtin.assert:
+        that:
+          - builder_local_wheels.matched == 1
+        fail_msg: >-
+          Expected one WARC index builder wheel in {{ builder_artifact_dir }},
+          found {{ builder_local_wheels.matched }}.
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Record the local and remote wheel paths
+      ansible.builtin.set_fact:
+        builder_local_wheel: "{{ builder_local_wheels.files[0].path }}"
+        builder_remote_wheel: >-
+          {{ commoncrawl_warc_index_builder_deploy_dir }}/artifacts/{{
+          builder_local_wheels.files[0].path | basename }}
+
+    - name: Find uv for the deployment user
+      ansible.builtin.command:
+        argv:
+          - /bin/sh
+          - -lc
+          - command -v uv
+      register: builder_remote_uv_lookup
+      become: false
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Require uv on the target
+      ansible.builtin.assert:
+        that:
+          - builder_remote_uv_lookup.rc == 0
+          - builder_remote_uv_lookup.stdout | trim | length > 0
+        fail_msg: >-
+          Install uv for {{ ansible_user }} on {{ inventory_hostname }} before deploying
+          cc-warc-index-builder.
+
+    - name: Record the target uv executable
+      ansible.builtin.set_fact:
+        builder_remote_uv: "{{ builder_remote_uv_lookup.stdout | trim }}"
+
+    - name: Inspect the target virtual environment
+      ansible.builtin.stat:
+        path: "{{ builder_remote_venv }}/bin/python"
+      register: builder_remote_python
+
+    - name: Inspect the target builder command
+      ansible.builtin.stat:
+        path: "{{ builder_remote_venv }}/bin/cc-warc-index-builder"
+      register: builder_remote_command
+
+    - name: Create builder deployment directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ commoncrawl_warc_index_builder_owner }}"
+        group: "{{ commoncrawl_warc_index_builder_group }}"
+        mode: "0755"
+      loop:
+        - "{{ commoncrawl_warc_index_builder_deploy_dir }}"
+        - "{{ commoncrawl_warc_index_builder_deploy_dir }}/artifacts"
+        - "{{ commoncrawl_warc_index_builder_deploy_dir }}/bin"
+
+    - name: Copy the locked production requirements
+      ansible.builtin.copy:
+        src: "{{ builder_requirements_file }}"
+        dest: "{{ commoncrawl_warc_index_builder_deploy_dir }}/requirements.txt"
+        owner: "{{ commoncrawl_warc_index_builder_owner }}"
+        group: "{{ commoncrawl_warc_index_builder_group }}"
+        mode: "0644"
+      when: not ansible_check_mode
+
+    - name: Copy the builder wheel
+      ansible.builtin.copy:
+        src: "{{ builder_local_wheel }}"
+        dest: "{{ builder_remote_wheel }}"
+        owner: "{{ commoncrawl_warc_index_builder_owner }}"
+        group: "{{ commoncrawl_warc_index_builder_group }}"
+        mode: "0644"
+      register: builder_wheel_copy
+      when: not ansible_check_mode
+
+    - name: Create the Python virtual environment
+      ansible.builtin.command:
+        argv:
+          - "{{ builder_remote_uv }}"
+          - venv
+          - --python
+          - "{{ commoncrawl_warc_index_builder_python }}"
+          - "{{ builder_remote_venv }}"
+        chdir: "{{ commoncrawl_warc_index_builder_deploy_dir }}"
+      become: false
+      when:
+        - not ansible_check_mode
+        - not builder_remote_python.stat.executable | default(false)
+
+    - name: Install the locked production dependencies
+      ansible.builtin.command:
+        argv:
+          - "{{ builder_remote_uv }}"
+          - pip
+          - install
+          - --python
+          - "{{ builder_remote_venv }}/bin/python"
+          - --require-hashes
+          - --requirements
+          - "{{ commoncrawl_warc_index_builder_deploy_dir }}/requirements.txt"
+        chdir: "{{ commoncrawl_warc_index_builder_deploy_dir }}"
+      become: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Install the WARC index builder wheel
+      ansible.builtin.command:
+        argv:
+          - "{{ builder_remote_uv }}"
+          - pip
+          - install
+          - --python
+          - "{{ builder_remote_venv }}/bin/python"
+          - --no-deps
+          - --reinstall-package
+          - cc-warc-index-builder
+          - "{{ builder_remote_wheel }}"
+        chdir: "{{ commoncrawl_warc_index_builder_deploy_dir }}"
+      become: false
+      when:
+        - not ansible_check_mode
+        - >-
+          builder_wheel_copy.changed
+          or not builder_remote_python.stat.executable | default(false)
+          or not builder_remote_command.stat.executable | default(false)
+
+    - name: Link the stable builder command
+      ansible.builtin.file:
+        src: ../.venv/bin/cc-warc-index-builder
+        dest: "{{ commoncrawl_warc_index_builder_deploy_dir }}/bin/cc-warc-index-builder"
+        state: link
+        owner: "{{ commoncrawl_warc_index_builder_owner }}"
+        group: "{{ commoncrawl_warc_index_builder_group }}"
+      when: not ansible_check_mode
+
+    - name: Validate the deployed builder command
+      ansible.builtin.command:
+        argv:
+          - "{{ commoncrawl_warc_index_builder_deploy_dir }}/bin/cc-warc-index-builder"
+          - --help
+      become: false
+      changed_when: false
+      when: not ansible_check_mode

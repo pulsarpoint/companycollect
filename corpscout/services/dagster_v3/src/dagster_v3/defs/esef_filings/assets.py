@@ -41,7 +41,6 @@ from dagster_v3.defs.common.duckdb_resources import (
     read_only_duckdb_connection,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.esef_filings import facts, tables
 from dagster_v3.defs.esef_filings.client import (
     ESEF_INDEX_URL,
@@ -1394,13 +1393,11 @@ ESEF_FILINGS_BACKFILL_SELECTION = dg.AssetSelection.assets(
 
 esef_filings_refresh_job = dg.define_asset_job(
     "esef_filings_refresh_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=ESEF_FILINGS_REFRESH_SELECTION,
 )
 
 esef_filings_backfill_job = dg.define_asset_job(
     "esef_filings_backfill_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=ESEF_FILINGS_BACKFILL_SELECTION,
 )
 

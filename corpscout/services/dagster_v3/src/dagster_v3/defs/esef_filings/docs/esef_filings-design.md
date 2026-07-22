@@ -161,9 +161,9 @@ Two jobs, one schedule:
 `(minute, hour)` — every schedule in `defs/` must claim a unique `(minute, hour)` pair,
 enforced by `tests/test_schedule_cron_contracts.py`), `Europe/Belgrade`,
 `DefaultScheduleStatus.STOPPED` (until Task 8 validates a live run and flips it on in the
-UI). Both jobs carry `HEAVY_BULK_RUN_TAGS` (`corpscout/workload=heavy-bulk`) — like
-`sweden_financial`'s backfill/weekly jobs, this pipeline downloads many per-filing
-documents (facts JSON + report XHTML) per run.
+UI). Concurrency is controlled by the pools on assets that access shared
+storage; ESEF runs do not share a run-level scheduling class with unrelated
+sources.
 
 **Partition ceiling is a silent dead-man's switch, not a hard stop.** The schedule's
 `execution_fn` resolves `partition_key=str(now.year)` and only ever produces a

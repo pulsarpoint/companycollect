@@ -8,7 +8,7 @@ The normal production flow is:
 
 ```text
 official Common Crawl Parquet URL index
-    -> cc-warc-index-builder on wappalyzer
+    -> cc-warc-index-builder on commoncrawl2
     -> catalog.duckdb + ready.json on RustFS
     -> cc-enrich-worker range runner on commoncrawl2 (range reads or one whole-WARC download)
     -> local Parquet + .produced marker
@@ -87,9 +87,9 @@ source .env
 set +a
 ```
 
-Values such as `OUT_BASE_DIR` are host-specific. On `wappalyzer` it should point to catalog build storage;
-on `commoncrawl2` it should point to the processor's catalog cache, output, logs, and markers. Do not commit
-or copy secrets into component directories.
+Values such as `OUT_BASE_DIR` are workload-specific. Point it to catalog-build storage while running the
+builder and to the processor's catalog cache, output, logs, and markers while running the worker. Do not
+commit or copy secrets into component directories.
 
 ## Build and test
 
@@ -125,8 +125,8 @@ make release TARGET_GOOS=linux TARGET_GOARCH=amd64
 ```
 
 The release target tests and vets the Go runtime, then uses `deploy/runtime.Dockerfile` to write
-`cc-enrich-worker` under `dist/linux-amd64/`. The catalog builder is a Python application
-run on `wappalyzer`; it is not part of the processor-server binary release.
+`cc-enrich-worker` under `dist/linux-amd64/`. The catalog builder is a separately deployed Python
+application and is not part of the processor-server binary release.
 
 ## Apply the ClickHouse schema
 
@@ -151,36 +151,28 @@ must be brought current before retrying the WARC.
 The builder accepts any crawl ID for which Common Crawl publishes the URL-index and WARC manifests. The
 crawl ID is an input, not a constant in the code.
 
-On `wappalyzer`, keep the checkout, catalog data, spill, and logs on persistent storage:
+On `commoncrawl2`, keep the catalog data, spill, and logs on persistent storage:
 
 ```bash
-ssh graovic@wappalyzer
-cd /home/graovic/cc-processor
-chmod 0600 .env
+ssh graovic@commoncrawl2
+cd /opt/companycollect/corpscout/commoncrawl/cc-warc-index-builder
+chmod 0600 ../cc-processor/.env
 
-make catalog CRAWL=CC-MAIN-2026-25 PAGES_PER_DOMAIN=25
+set -a; . ../cc-processor/.env; set +a
+./bin/cc-warc-index-builder \
+  --base /home/graovic/cc-warc-index-data \
+  --crawl CC-MAIN-2026-25 \
+  --pages-per-domain 25
 ```
 
-`make catalog` is the preferred entry point. It loads the shared `.env`, synchronizes the locked Python
-environment, and runs the builder for the requested crawl. `CRAWL` is required so a command cannot silently
-build the wrong release. `PAGES_PER_DOMAIN` defaults to `25`; pass additional builder flags through
-`CATALOG_ARGS`, for example:
+The crawl is always explicit, so a command cannot silently build the wrong release. Export the shared
+processor environment file before invoking any builder controls:
 
 ```bash
-make catalog \
-  CRAWL=CC-MAIN-2026-25 \
-  PAGES_PER_DOMAIN=25 \
-  CATALOG_ARGS='--attempts 5 --threads 16 --memory-limit 24GB'
-```
+cd /opt/companycollect/corpscout/commoncrawl/cc-warc-index-builder
+set -a; source ../cc-processor/.env; set +a
 
-For direct access to builder controls, run from the component directory and export the shared parent file:
-
-```bash
-cd /home/graovic/cc-processor/cc-warc-index-builder
-set -a; source ../.env; set +a
-
-uv sync --frozen
-uv run --frozen cc-warc-index-builder \
+./bin/cc-warc-index-builder \
   --base /home/graovic/cc-warc-index-data \
   --crawl CC-MAIN-2026-25 \
   --pages-per-domain 25 \

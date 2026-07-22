@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	recordObservationsTable = "corpscout.commoncrawl_domain_dns_record_observations"
-	scanTable               = "corpscout.commoncrawl_domain_dns_scan"
+	recordIngestTable = "corpscout.commoncrawl_domain_dns_record_ingest"
+	scanTable         = "corpscout.commoncrawl_domain_dns_scan"
 )
 
 func chColumns[T any]() []string {
@@ -78,8 +78,8 @@ func FlushDNS(ctx context.Context, connection driver.Conn, localStore *store.Sto
 	if len(ready.Roots) == 0 {
 		return 0, nil
 	}
-	if _, err := insert(ctx, connection, recordObservationsTable, observationRows(ready.Records, scanID, time.Now().UTC())); err != nil {
-		return 0, fmt.Errorf("write DNS observations: %w", err)
+	if _, err := insert(ctx, connection, recordIngestTable, observationRows(ready.Records, scanID, time.Now().UTC())); err != nil {
+		return 0, fmt.Errorf("write DNS record ingest: %w", err)
 	}
 	if _, err := insert(ctx, connection, scanTable, ready.Summaries); err != nil {
 		return 0, fmt.Errorf("write DNS summaries: %w", err)

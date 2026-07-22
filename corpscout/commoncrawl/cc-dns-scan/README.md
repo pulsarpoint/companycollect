@@ -18,15 +18,18 @@ The scanner reads:
 It writes:
 
 - `corpscout.commoncrawl_domain_dns_scan`;
-- `corpscout.commoncrawl_domain_dns_record_observations`;
+- full retry-safe record events to `corpscout.commoncrawl_domain_dns_record_ingest`;
+- canonical definitions in `corpscout.commoncrawl_domain_dns_records` and narrow temporal evidence in
+  `corpscout.commoncrawl_domain_dns_record_sightings` through synchronous ClickHouse materialized views;
 - `corpscout.commoncrawl_ip_addresses` through the corresponding ClickHouse materialized view; and
-- `corpscout.domain_hostnames_state` through `domain_hostnames_ingest_mv`.
+- `corpscout.domain_hostnames_state` through the corresponding ClickHouse materialized view.
 
-`commoncrawl_domain_dns_record_observations` is the authoritative record history. Every known or
-unknown RR type is retained with its numeric type/class, presentation-format RDATA, and uncompressed
-wire RDATA. `domain_hostnames` is a read-only view of record owners with an observed A, AAAA, or
-CNAME record. The scanners write only observation history, while ClickHouse incrementally maintains
-the compact hostname state and exposes its finalized rows through `domain_hostnames`.
+`commoncrawl_domain_dns_records_current` exposes one logical row per known or unknown RR with its
+numeric type/class, presentation-format RDATA, and uncompressed wire RDATA.
+`commoncrawl_domain_dns_record_sightings` stores its scan and observation-time history without
+repeating those wide values. `domain_hostnames` is a read-only view of record owners with an observed
+A, AAAA, or CNAME record. The scanners write only the shared ingest boundary, while ClickHouse
+synchronously maintains both normalized tables and the compact hostname and IP states.
 
 ## Resolution behavior
 

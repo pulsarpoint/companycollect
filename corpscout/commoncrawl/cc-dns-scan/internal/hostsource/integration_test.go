@@ -52,7 +52,7 @@ func insertObservation(
 	if discovery == "axfr" {
 		source = "axfr"
 	}
-	if err := conn.Exec(ctx, `INSERT INTO corpscout.commoncrawl_domain_dns_record_observations
+	if err := conn.Exec(ctx, `INSERT INTO corpscout.commoncrawl_domain_dns_record_ingest
 		(root_domain, name, record_type, value, source, discovery, scan_id, observed_at, loaded_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rootDomain, name, recordType, "integration-test-value", source, discovery, scanID,
@@ -65,7 +65,9 @@ func cleanupObservations(t *testing.T, ctx context.Context, conn driver.Conn, ro
 	t.Helper()
 	t.Cleanup(func() {
 		for _, rootDomain := range roots {
-			_ = conn.Exec(ctx, `DELETE FROM corpscout.commoncrawl_domain_dns_record_observations
+			_ = conn.Exec(ctx, `DELETE FROM corpscout.commoncrawl_domain_dns_record_sightings
+				WHERE root_domain = ?`, rootDomain)
+			_ = conn.Exec(ctx, `DELETE FROM corpscout.commoncrawl_domain_dns_records
 				WHERE root_domain = ?`, rootDomain)
 			_ = conn.Exec(ctx, `DELETE FROM corpscout.domain_hostnames_state
 				WHERE root_domain = ?`, rootDomain)

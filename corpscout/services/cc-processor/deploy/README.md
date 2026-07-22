@@ -6,8 +6,8 @@ symlinks, no version pinning. It does not copy source code and does not modify c
 output, logs, or markers.
 
 See the parent [`cc-processor` runbook](../README.md) for catalog construction, the shared environment,
-ClickHouse migrations, processing commands, and completion semantics. It does not deploy or run
-`cc-warc-index-builder` on `wappalyzer`.
+ClickHouse migrations, processing commands, and completion semantics. The builder has its own
+[`ansible`](../cc-warc-index-builder/ansible/README.md) deployment and is not part of this playbook.
 
 ## Target
 

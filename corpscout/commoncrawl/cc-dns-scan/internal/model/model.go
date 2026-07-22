@@ -133,17 +133,10 @@ type StagedDNSRecord struct {
 	ObservedAt   time.Time
 }
 
-// RecordObservationRow mirrors corpscout.commoncrawl_domain_dns_record_observations (Task 7's
-// retry-safe record-load path). This is not a pre-aggregated fact —
-// it is one IMMUTABLE row per (identity, source, discovery, scan_id) observation, so replaying a
-// scan's load (the same rows, same ScanID) always produces byte-identical rows that
-// ReplacingMergeTree(loaded_at) collapses to one on merge/FINAL, however many times it is retried.
-// Field order matches the CREATE TABLE column order (see migrations 000113 and 000123); ORDER BY is
-// (root_domain, name, record_type, slot, value, source, discovery, scan_id, record_type_code,
-// record_class_code, name_server, name_server_ip) — the FULL logical
-// observation identity, so LoadedAt only decides which physical copy of an identical row survives a
-// retry, never whether two truly distinct observations collapse into one. See internal/load/load.go
-// for why LoadedAt is safe to set to time.Now() on every call (rather than pinned per scan_id).
+// RecordObservationRow is the full retry-safe event accepted by the ClickHouse DNS record ingest
+// boundary. ClickHouse derives the canonical RR definition, narrow temporal sighting, hostname
+// state, and IP state synchronously from this one block. LoadedAt may change on retry because each
+// durable target uses it only as a ReplacingMergeTree version or an idempotent max aggregate.
 type RecordObservationRow struct {
 	RootDomain   string    `ch:"root_domain"`
 	Name         string    `ch:"name"`

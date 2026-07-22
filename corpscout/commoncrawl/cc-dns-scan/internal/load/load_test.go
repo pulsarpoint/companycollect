@@ -22,3 +22,9 @@ func TestObservationRowsCarryUniversalRRFields(t *testing.T) {
 		t.Errorf("universal RR fields lost: %+v", row)
 	}
 }
+
+func TestRecordRowsUseNormalizedIngestBoundary(t *testing.T) {
+	if recordIngestTable != "corpscout.commoncrawl_domain_dns_record_ingest" {
+		t.Fatalf("record ingest table = %q", recordIngestTable)
+	}
+}

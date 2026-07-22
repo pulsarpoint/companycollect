@@ -9,7 +9,9 @@ technology inference.
 
 ## Source boundaries
 
-- `corpscout.commoncrawl_domain_dns_record_observations` is the retry-safe DNS record source.
+- `corpscout.commoncrawl_domain_dns_record_ingest` is the retry-safe DNS record write boundary.
+- `corpscout.commoncrawl_domain_dns_records` stores canonical unique DNS resource records.
+- `corpscout.commoncrawl_domain_dns_record_sightings` stores their narrow temporal evidence.
 - `corpscout.commoncrawl_ip_addresses` is an incremental aggregate registry containing one
   logical canonical IP row with DNS first/last-seen timestamps.
 - `MAXMIND_DATABASE_DIRECTORY` contains `GeoLite2-City.mmdb` and

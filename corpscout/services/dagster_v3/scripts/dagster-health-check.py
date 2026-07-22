@@ -24,11 +24,9 @@ Exits non-zero when any problem is found, so it composes with cron/CI alerting:
     */10 * * * *  cd .../dagster_v3 && uv run python scripts/dagster-health-check.py || notify ...
 """
 
-from __future__ import annotations
-
 import argparse
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Bootstrap the same env dagster-dev.sh exports so the script "just works".
@@ -37,12 +35,13 @@ os.environ.setdefault("DAGSTER_HOME", str(ROOT))
 if not os.environ.get("DAGSTER_PG_URL"):
     env_file = ROOT / ".env"
     if env_file.exists():
-        for line in env_file.read_text().splitlines():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
             if line.startswith("DAGSTER_PG_URL="):
                 os.environ["DAGSTER_PG_URL"] = line.split("=", 1)[1].strip()
                 break
 
 from dagster import DagsterInstance, DagsterRunStatus, RunsFilter  # noqa: E402
+from dagster_v3.defs.common.alerts import latest_run_activity_timestamp  # noqa: E402
 
 TERMINAL = {
     DagsterRunStatus.SUCCESS,
@@ -98,12 +97,16 @@ def main() -> int:
                 els.free_concurrency_slots_for_run(run_id)
                 print(f"      freed slot held by finished run {run_id} ({status})")
             else:
-                print(f"      slot held by finished run {run_id} ({status}) — rerun with --fix")
+                print(
+                    f"      slot held by finished run {run_id} ({status}) — rerun with --fix"
+                )
 
     # 2. Stuck QUEUED runs.
     print("== queued runs ==")
     queued_cut = now - timedelta(minutes=args.queued_mins)
-    queued = instance.get_run_records(filters=RunsFilter(statuses=[DagsterRunStatus.QUEUED]))
+    queued = instance.get_run_records(
+        filters=RunsFilter(statuses=[DagsterRunStatus.QUEUED])
+    )
     stuck = [r for r in queued if (_aware(r.create_timestamp) or now) < queued_cut]
     if not stuck:
         print(f"  ok — none queued > {args.queued_mins}m ({len(queued)} queued)")
@@ -111,22 +114,36 @@ def main() -> int:
         problems += 1
         run = rec.dagster_run
         job = run.job_name
-        print(f"  STUCK {rec.dagster_run.run_id} [{job}] queued {_age(_aware(rec.create_timestamp), now)}")
+        print(
+            f"  STUCK {rec.dagster_run.run_id} [{job}] queued {_age(_aware(rec.create_timestamp), now)}"
+        )
 
     # 3. Stale STARTED runs (possible zombies / hung steps).
     print("== started runs ==")
     idle_cut = now - timedelta(minutes=args.idle_mins)
-    started = instance.get_run_records(filters=RunsFilter(statuses=[DagsterRunStatus.STARTED]))
-    stale = [r for r in started if (_aware(r.update_timestamp) or now) < idle_cut]
+    started = instance.get_run_records(
+        filters=RunsFilter(statuses=[DagsterRunStatus.STARTED])
+    )
+    stale = []
+    for record in started:
+        latest_activity = _aware(
+            latest_run_activity_timestamp(
+                instance,
+                record.dagster_run.run_id,
+                record.start_time or record.create_timestamp.timestamp(),
+            )
+        )
+        if latest_activity is not None and latest_activity < idle_cut:
+            stale.append((record, latest_activity))
     if not stale:
         print(f"  ok — none idle > {args.idle_mins}m ({len(started)} started)")
-    for rec in stale:
+    for rec, latest_activity in stale:
         problems += 1
         run = rec.dagster_run
-        last_event = _aware(rec.update_timestamp)
         print(
             f"  STALE {run.run_id} [{run.job_name}] started "
-            f"{_age(_aware(rec.start_time), now)} ago, no event for {_age(last_event, now)}"
+            f"{_age(_aware(rec.start_time), now)} ago, "
+            f"no event for {_age(latest_activity, now)}"
         )
 
     print(f"\n{'PROBLEMS: ' + str(problems) if problems else 'OK — no problems found'}")

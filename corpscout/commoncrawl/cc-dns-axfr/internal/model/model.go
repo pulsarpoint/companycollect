@@ -31,7 +31,8 @@ type NameserverEndpoint struct {
 	Dialable bool
 }
 
-// RecordObservationRow is one retry-safe AXFR record observation loaded into ClickHouse.
+// RecordObservationRow is one full retry-safe AXFR event sent through the ClickHouse DNS record
+// ingest boundary, which derives the canonical record and its temporal sighting.
 type RecordObservationRow struct {
 	RootDomain   string    `ch:"root_domain"`
 	Name         string    `ch:"name"`

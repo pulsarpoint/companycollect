@@ -52,7 +52,6 @@ from dagster_v3.defs.wikidata.source import (
     wikidata_id_from_url,
 )
 from dagster_v3.defs.wikidata import tables
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 
 GROUP_NAME = "wikidata"
 WIKIDATA_DUCKDB_SCHEMA = "wikidata"
@@ -2292,7 +2291,6 @@ wikidata_company_seed_selection = (
 
 wikidata_company_seed_weekly_job = dg.define_asset_job(
     "wikidata_company_seed_weekly_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=wikidata_company_seed_selection,
 )
 

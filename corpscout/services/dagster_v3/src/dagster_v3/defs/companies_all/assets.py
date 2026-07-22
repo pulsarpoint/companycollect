@@ -50,7 +50,6 @@ from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
 )
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.companies_all.sql import SOURCES, build_country_insert_select
 from dagster_v3.defs.companies_all.tables import (
     COMPANIES_ALL_COLUMNS,
@@ -212,7 +211,6 @@ def companies_all_clickhouse(
 
 companies_all_job = dg.define_asset_job(
     "companies_all_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=dg.AssetSelection.assets("companies_all_clickhouse"),
 )
 

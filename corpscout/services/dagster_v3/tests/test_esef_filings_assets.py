@@ -33,7 +33,6 @@ from dagster_v3.defs.common.duckdb_resources import (
     read_only_duckdb_connection,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.esef_filings import assets
 from dagster_v3.defs.esef_filings.client import EsefFilingRecord
 from dagster_v3.definitions import defs as load_project_defs
@@ -1553,14 +1552,6 @@ def test_esef_filings_refresh_weekly_schedule_registered() -> None:
     assert schedule.cron_schedule == "10 5 * * 0"
     assert schedule.execution_timezone == "Europe/Belgrade"
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
-
-
-def test_esef_filings_jobs_carry_the_heavy_bulk_workload_tag() -> None:
-    repo = load_project_defs().get_repository_def()
-    for job_name in ("esef_filings_refresh_job", "esef_filings_backfill_job"):
-        job = repo.get_job(job_name)
-        for key, value in HEAVY_BULK_RUN_TAGS.items():
-            assert job.tags.get(key) == value, job_name
 
 
 # ==========================================================================

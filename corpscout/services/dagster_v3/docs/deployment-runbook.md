@@ -38,7 +38,7 @@ External services a host must reach (credentials via `.env`, see §2):
 | vLLM endpoints | `TRANSLATION_PROVIDER_LOCAL_*`, `COMMONCRAWL_EMBED_*` | translation + NACE classification |
 | MaxMind dir | `MAXMIND_DATABASE_DIRECTORY` | commoncrawl_geoip |
 | Companies House API | `COMPANY_HOUSE` key | UK financials |
-| Alert webhook | `ALERT_WEBHOOK_URL` | run-failure alerts (Slack incoming-webhook payload) |
+| Alert webhook | `ALERT_WEBHOOK_URL` | run-failure and event-inactivity alerts (Slack incoming-webhook payload) |
 
 ## 2. Environment contract
 
@@ -138,15 +138,17 @@ Rules (see CLAUDE.md "ClickHouse migrations"):
    `corpscout-dagster-dev.service` with the lock-synchronized `.venv/bin/dg`
    development supervisor, `DAGSTER_HOME`, `DAGSTER_PG_URL`, and the DB pool
    overflow set. **A restart is required after any `dagster.yaml` change**
-   (run_retries, run_monitoring, retention, tag concurrency limits are
-   daemon-side). Rerun Ansible after changing the server-owned `.env`; its
+   (run_retries, run_monitoring, concurrency, and retention are daemon-side).
+   Rerun Ansible after changing the server-owned `.env`; its
    checksum is part of the unit revision and triggers validation plus restart.
 6. The health-check script is not scheduled by this transitional Ansible role.
    If the backstop is wanted, install it separately and verify its schedule:
    ```
    */10 * * * * cd <repo> && <uv> run python scripts/dagster-health-check.py --fix >> <repo>/logs/health-check.log 2>&1
    ```
-7. Set `ALERT_WEBHOOK_URL` so `run_failure_alert_sensor` (default RUNNING) can deliver failures.
+7. Set `ALERT_WEBHOOK_URL` so the default-RUNNING failure and stale-run sensors
+   can deliver alerts. `DAGSTER_STALE_RUN_IDLE_SECONDS` controls how long a
+   started run may emit no events before alerting (default: 3600).
 8. Verify in the UI: schedules RUNNING for the sources you expect (schedules are
    default-STOPPED until validated per the data-source guidelines), daemon heartbeats healthy.
 
@@ -156,17 +158,20 @@ Rules (see CLAUDE.md "ClickHouse migrations"):
   logs are available with `journalctl -u corpscout-dagster-dev`. The old
   `dagster` tmux session is not part of the managed deployment.
 
-- **Failure signal**: `run_failure_alert_sensor` posts every failed run to the webhook and logs
-  it. Freshness/row-count asset checks on the ClickHouse leaves catch silently-stopped
-  schedules and empty tables.
-- **Wedged queue** (run stuck QUEUED, leaked pool slot): `run_monitoring` +
-  `free_slots_after_run_end_seconds` in `dagster.yaml` should prevent it; when
-  separately scheduled, `dagster-health-check.py --fix` is the backstop. Manual diagnosis: CLAUDE.md
-  "Troubleshooting".
+- **Failure signal**: `run_failure_alert_sensor` posts every failed run;
+  `stale_run_alert_sensor` reports started runs with no recent events. Both log
+  locally and use the configured webhook. Freshness/row-count asset checks on
+  the ClickHouse leaves catch silently-stopped schedules and empty tables.
+- **Wedged queue** (run stuck QUEUED, leaked pool slot):
+  `free_slots_after_run_end_seconds` releases slots retained by terminal runs;
+  when separately scheduled, `dagster-health-check.py --fix` is the backstop and
+  reports started runs with no recent event activity. Manual diagnosis:
+  CLAUDE.md "Troubleshooting".
 - **Connection pressure**: inspect with the `pg_stat_activity` one-liner in CLAUDE.md; the
   durable fix is PgBouncer in front of the shared Postgres.
-- **Heavy bulk jobs** are capped at 2 concurrent via the `corpscout/workload=heavy-bulk` run
-  tag (`defs/common/tags.py` + `dagster.yaml`); tag any new multi-GB snapshot job the same way.
+- **Concurrency** is controlled by the global run limit and the pools attached
+  to assets that access shared storage. Do not couple unrelated sources with a
+  shared run tag.
 - **Backfills**: launch from the UI only, one-partition-per-run (enforced by the repo-level
   backfill-policy contract test). Cancel in-flight backfills before changing a
   `partitions_def`.

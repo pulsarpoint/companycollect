@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	axfrLatestTable         = "corpscout.dns_axfr_latest"
-	axfrChangesTable        = "corpscout.dns_axfr_state_changes"
-	recordObservationsTable = "corpscout.commoncrawl_domain_dns_record_observations"
+	axfrLatestTable   = "corpscout.dns_axfr_latest"
+	axfrChangesTable  = "corpscout.dns_axfr_state_changes"
+	recordIngestTable = "corpscout.commoncrawl_domain_dns_record_ingest"
 )
 
 type endpointKey struct {
@@ -104,8 +104,8 @@ func flushReady(ctx context.Context, connection driver.Conn, store *axfrStore, s
 		return 0, fmt.Errorf("write AXFR latest state: %w", err)
 	}
 	records := buildRecordObservationRows(domains, scanID)
-	if _, err := insertRows(ctx, connection, recordObservationsTable, records); err != nil {
-		return 0, fmt.Errorf("write AXFR observations: %w", err)
+	if _, err := insertRows(ctx, connection, recordIngestTable, records); err != nil {
+		return 0, fmt.Errorf("write AXFR record ingest: %w", err)
 	}
 	if err := store.acknowledge(ctx, scanID, domains); err != nil {
 		return 0, fmt.Errorf("acknowledge AXFR domains: %w", err)

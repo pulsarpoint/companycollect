@@ -46,7 +46,6 @@ from dagster_v3.defs.sweden_financial.concepts import (
     sweden_financial_concepts_translator_queue_health_check,
 )
 from dagster_v3.defs.sweden_financial.resources import SwedenFinancialReportsResource
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 from dagster_v3.defs.sweden_financial.storage import (
     sweden_financial_year_duckdb_connection,
 )
@@ -764,13 +763,11 @@ SWEDEN_FINANCIAL_CLICKHOUSE_SELECTION = dg.AssetSelection.assets(
 
 sweden_financial_backfill_job = dg.define_asset_job(
     "sweden_financial_backfill_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=SWEDEN_FINANCIAL_BACKFILL_SELECTION,
 )
 
 sweden_financial_current_year_job = dg.define_asset_job(
     "sweden_financial_current_year_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=SWEDEN_FINANCIAL_CURRENT_SELECTION,
 )
 

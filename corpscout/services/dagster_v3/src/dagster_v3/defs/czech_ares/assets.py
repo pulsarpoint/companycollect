@@ -13,7 +13,6 @@ from dagster_v3.defs.czech_ares.clickhouse import (
 )
 from dagster_v3.defs.czech_ares.industries import build_czech_ares_industries
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
-from dagster_v3.defs.common.tags import HEAVY_BULK_RUN_TAGS
 
 GROUP_NAME = "czech_ares"
 CZECH_ARES_DUCKDB_POOL = "czech_ares_duckdb"
@@ -161,7 +160,6 @@ def czech_ares_clickhouse_industries(
 # Register + industries both derive from the ONE res_data.csv download.
 czech_ares_register_job = dg.define_asset_job(
     "czech_ares_register_job",
-    tags=HEAVY_BULK_RUN_TAGS,
     selection=dg.AssetSelection.assets(
         "czech_ares_clickhouse_companies",
         "czech_ares_clickhouse_company_contacts",

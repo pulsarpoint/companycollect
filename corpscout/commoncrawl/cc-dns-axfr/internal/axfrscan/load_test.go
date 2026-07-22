@@ -107,3 +107,9 @@ func TestBuildRecordObservationRowsPreservesWholeZone(t *testing.T) {
 		t.Errorf("observation types = %v, want A and TXT", types)
 	}
 }
+
+func TestRecordRowsUseNormalizedIngestBoundary(t *testing.T) {
+	if recordIngestTable != "corpscout.commoncrawl_domain_dns_record_ingest" {
+		t.Fatalf("record ingest table = %q", recordIngestTable)
+	}
+}

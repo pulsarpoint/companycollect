@@ -20,7 +20,7 @@ _COMMONCRAWL_IP_ADDRESSES_SPEC = dg.AssetSpec(
     key=COMMONCRAWL_IP_ADDRESSES_KEY,
     description=(
         "Canonical unique A/AAAA addresses incrementally aggregated from retry-safe "
-        "CommonCrawl DNS record observations. Each stable hash bucket can be observed "
+        "CommonCrawl DNS record ingest events. Each stable hash bucket can be observed "
         "manually to record whether its IP membership changed."
     ),
     group_name="commoncrawl_ip",

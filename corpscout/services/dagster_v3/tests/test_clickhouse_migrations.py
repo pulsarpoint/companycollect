@@ -170,6 +170,8 @@ EXPECTED_MIGRATIONS = (
     "000152_corpscout_wikidata_company_people",
     "000153_corpscout_wikidata_exchanges",
     "000154_corpscout_eodhd_market_data",
+    "000155_corpscout_dns_record_normalization",
+    "000156_corpscout_dns_record_observations_cleanup",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -723,6 +725,130 @@ def test_domain_hostnames_final_read_uses_ordered_state_merge() -> None:
     assert "GROUP BY\n    root_domain,\n    hostname" in down_sql
     assert "DROP TABLE" not in down_sql
     assert "DROP VIEW" not in down_sql
+
+
+def test_dns_record_normalization_preserves_retry_safe_staged_rollout() -> None:
+    sql = _migration_sql("000155_corpscout_dns_record_normalization.up.sql")
+    down_sql = _migration_sql("000155_corpscout_dns_record_normalization.down.sql")
+    records_backfill = (
+        OPERATIONS_DIR / "dns_records_backfill_bucket.sql"
+    ).read_text()
+    sightings_backfill = (
+        OPERATIONS_DIR / "dns_record_sightings_backfill_bucket.sql"
+    ).read_text()
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records" in sql
+    )
+    assert "record_id        FixedString(16)" in sql
+    assert "ENGINE = ReplacingMergeTree(loaded_at)" in sql
+    assert "PARTITION BY cityHash64(root_domain) % 16" in sql
+    assert "record_class_code UInt16" in sql
+    assert "rdata_wire       String" in sql
+    assert (
+        "CREATE VIEW IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_records_current" in sql
+    )
+    assert "FROM corpscout.commoncrawl_domain_dns_records FINAL" in sql
+    assert "SETTINGS do_not_merge_across_partitions_select_final = 1" in sql
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_record_sightings" in sql
+    )
+    assert "PARTITION BY toYYYYMM(observed_at)" in sql
+    assert "root_domain   String" in sql
+    assert "observed_at   DateTime64(3, 'UTC')" in sql
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_record_ingest" in sql
+    )
+    assert "ENGINE = Null" in sql
+    record_id_expression = (
+        "sipHash128(root_domain, name, record_type_code, "
+        "record_class_code, rdata_wire) AS record_id"
+    )
+    assert sql.count(record_id_expression) == 2
+    assert "TO corpscout.commoncrawl_domain_dns_records" in sql
+    assert "TO corpscout.commoncrawl_domain_dns_record_sightings" in sql
+    assert "TO corpscout.commoncrawl_ip_addresses" in sql
+    assert "TO corpscout.domain_hostnames_state" in sql
+
+    # The legacy source and its original triggers remain available until bucketed backfill and
+    # production validation finish. Applying the schema before deploying either writer is safe.
+    assert (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_observations"
+        not in sql
+    )
+    assert "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_mv" not in sql
+    assert "DROP VIEW IF EXISTS corpscout.domain_hostnames_ingest_mv" not in sql
+
+    for backfill in (records_backfill, sightings_backfill):
+        assert "FROM corpscout.commoncrawl_domain_dns_record_observations" in backfill
+        assert "cityHash64(root_domain) % 16 = {bucket:UInt8}" in backfill
+        assert record_id_expression in backfill
+
+    assert "GROUP BY\n    root_domain,\n    name" in records_backfill
+    assert "INSERT INTO corpscout.commoncrawl_domain_dns_record_sightings" in sightings_backfill
+
+    drop_hostname_mv = "DROP VIEW IF EXISTS corpscout.domain_hostnames_ingest_v2_mv"
+    drop_ip_mv = (
+        "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_ingest_v2_mv"
+    )
+    drop_ingest = (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest"
+    )
+    assert drop_hostname_mv in down_sql
+    assert drop_ip_mv in down_sql
+    assert drop_ingest in down_sql
+    assert down_sql.index(drop_hostname_mv) < down_sql.index(drop_ingest)
+    assert down_sql.index(drop_ip_mv) < down_sql.index(drop_ingest)
+
+
+def test_dns_record_observations_cleanup_removes_only_legacy_write_path() -> None:
+    sql = _migration_sql(
+        "000156_corpscout_dns_record_observations_cleanup.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000156_corpscout_dns_record_observations_cleanup.down.sql"
+    )
+
+    drop_ip_mv = "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_mv"
+    drop_hostname_mv = "DROP VIEW IF EXISTS corpscout.domain_hostnames_ingest_mv"
+    drop_legacy = (
+        "DROP TABLE IF EXISTS "
+        "corpscout.commoncrawl_domain_dns_record_observations"
+    )
+    assert drop_ip_mv in sql
+    assert drop_hostname_mv in sql
+    assert drop_legacy in sql
+    assert sql.index(drop_ip_mv) < sql.index(drop_legacy)
+    assert sql.index(drop_hostname_mv) < sql.index(drop_legacy)
+    assert "SETTINGS max_table_size_to_drop = 150000000000" in sql
+
+    assert "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_ingest_v2_mv" not in sql
+    assert "DROP VIEW IF EXISTS corpscout.domain_hostnames_ingest_v2_mv" not in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest" not in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records" not in sql
+    assert (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_sightings"
+        not in sql
+    )
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_record_observations" in down_sql
+    )
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "corpscout.commoncrawl_ip_addresses_mv" in down_sql
+    )
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "corpscout.domain_hostnames_ingest_mv" in down_sql
+    )
+    assert "INSERT INTO corpscout.commoncrawl_domain_dns_record_observations" not in down_sql
 
 
 def test_sweden_company_registry_migration_covers_exported_columns() -> None:
