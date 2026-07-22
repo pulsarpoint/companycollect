@@ -29,6 +29,7 @@ from dagster_v3.defs.wikidata.source import (
     WikidataSnapshotConfig,
     WikidataRawPullConfig,
     WikidataSparqlClient,
+    WikidataTransientRequestError,
     active_exchanges_object_key,
     active_listed_exchange_row_from_binding,
     augmentation_object_key,
@@ -57,6 +58,9 @@ GROUP_NAME = "wikidata"
 WIKIDATA_DUCKDB_SCHEMA = "wikidata"
 WIKIDATA_DUCKDB_DIRECTORY = Path("data/wikidata")
 WIKIDATA_CLICKHOUSE_POOL = "wikidata_clickhouse"
+WIKIDATA_STEP_MAX_RETRIES = 4
+WIKIDATA_STEP_RETRY_BASE_DELAY_SECONDS = 300
+WIKIDATA_STEP_RETRY_MAX_DELAY_SECONDS = 2_400
 WIKIDATA_EMPTY_ALLOWED_TABLES = (
     tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
     tables.WIKIDATA_PERSONS_TABLE,
@@ -90,14 +94,36 @@ def wikidata_company_seed_raw_objects(
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     client = WikidataSparqlClient(timeout_seconds=config.request_timeout_seconds)
-    return pull_wikidata_company_seed_raw_objects(
-        client=client,
-        object_store=object_store,
-        config=config,
-        run_id=context.run_id,
-        retrieved_at=datetime.now(UTC).isoformat(),
-        sleep=time.sleep,
-        log=context.log.info,
+    try:
+        return pull_wikidata_company_seed_raw_objects(
+            client=client,
+            object_store=object_store,
+            config=config,
+            run_id=context.run_id,
+            retrieved_at=datetime.now(UTC).isoformat(),
+            sleep=time.sleep,
+            log=context.log.info,
+        )
+    except WikidataTransientRequestError as exc:
+        retry_delay_seconds = wikidata_step_retry_delay_seconds(context.retry_number)
+        context.log.warning(
+            "Wikidata transient request failure; retrying checkpointed step in %s "
+            "seconds (retry=%s/%s): %s",
+            retry_delay_seconds,
+            context.retry_number + 1,
+            WIKIDATA_STEP_MAX_RETRIES,
+            exc,
+        )
+        raise dg.RetryRequested(
+            max_retries=WIKIDATA_STEP_MAX_RETRIES,
+            seconds_to_wait=retry_delay_seconds,
+        ) from exc
+
+
+def wikidata_step_retry_delay_seconds(retry_number: int) -> int:
+    return min(
+        WIKIDATA_STEP_RETRY_BASE_DELAY_SECONDS * 2**retry_number,
+        WIKIDATA_STEP_RETRY_MAX_DELAY_SECONDS,
     )
 
 
@@ -1850,27 +1876,52 @@ def pull_wikidata_company_seed_raw_objects(
             seed_unit["listed_company_count_on_exchange"],
         )
 
+        offset = 0
         while config.max_pages is None or page_count < config.max_pages:
-            offset = page_count * config.page_size
-            query = _seed_unit_query(seed_unit, limit=config.page_size, offset=offset)
-            payload = client.fetch(query, user_agent=config.user_agent)
+            page_number = page_count + 1
+            object_key = page_object_key(
+                retrieved_date=retrieved_date,
+                run_id=run_id,
+                exchange_id=exchange_id,
+                page_number=page_number,
+            )
+            reused_checkpoint = object_store.exists(
+                object_key,
+                bucket=WIKIDATA_RAW_BUCKET,
+            )
+            if reused_checkpoint:
+                payload = read_wikidata_raw_payload(
+                    object_store=object_store,
+                    object_key=object_key,
+                )
+                log(
+                    "Reusing checkpointed Wikidata company page: exchange_id=%s "
+                    "page=%s offset=%s object_key=%s",
+                    exchange_id,
+                    page_number,
+                    offset,
+                    object_key,
+                )
+            else:
+                query = _seed_unit_query(
+                    seed_unit,
+                    limit=config.page_size,
+                    offset=offset,
+                )
+                payload = client.fetch(query, user_agent=config.user_agent)
             bindings = response_bindings(payload)
             if not bindings:
                 break
 
             page_count += 1
             unit_row_count += len(bindings)
-            object_key = page_object_key(
-                retrieved_date=retrieved_date,
-                run_id=run_id,
-                exchange_id=exchange_id,
-                page_number=page_count,
-            )
-            object_store.write_json(
-                object_key,
-                json.dumps(payload, sort_keys=True, separators=(",", ":")),
-                bucket=WIKIDATA_RAW_BUCKET,
-            )
+            offset += len(bindings)
+            if not reused_checkpoint:
+                object_store.write_json(
+                    object_key,
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                    bucket=WIKIDATA_RAW_BUCKET,
+                )
             object_keys.append(object_key)
             page_augmentation_object_keys, page_augmentation_row_count = (
                 pull_wikidata_company_augmentation_raw_objects_for_page(
@@ -1902,7 +1953,7 @@ def pull_wikidata_company_seed_raw_objects(
                 object_key,
             )
 
-            if len(bindings) < config.page_size:
+            if not reused_checkpoint and len(bindings) < config.page_size:
                 break
             if config.request_delay_seconds > 0:
                 sleep(config.request_delay_seconds)
@@ -2131,8 +2182,6 @@ def pull_wikidata_company_augmentation_raw_objects_for_page(
             start=1,
         ):
             query = query_builder(tuple(company_id_batch))
-            payload = client.fetch(query, user_agent=config.user_agent)
-            bindings = response_bindings(payload)
             object_key = augmentation_object_key(
                 retrieved_date=retrieved_date,
                 run_id=run_id,
@@ -2141,11 +2190,28 @@ def pull_wikidata_company_augmentation_raw_objects_for_page(
                 page_number=page_number,
                 batch_number=batch_number,
             )
-            object_store.write_json(
-                object_key,
-                json.dumps(payload, sort_keys=True, separators=(",", ":")),
-                bucket=WIKIDATA_RAW_BUCKET,
-            )
+            if object_store.exists(object_key, bucket=WIKIDATA_RAW_BUCKET):
+                payload = read_wikidata_raw_payload(
+                    object_store=object_store,
+                    object_key=object_key,
+                )
+                log(
+                    "Reusing checkpointed Wikidata augmentation: exchange_id=%s "
+                    "page=%s batch=%s kind=%s object_key=%s",
+                    exchange_id,
+                    page_number,
+                    batch_number,
+                    augmentation_kind,
+                    object_key,
+                )
+            else:
+                payload = client.fetch(query, user_agent=config.user_agent)
+                object_store.write_json(
+                    object_key,
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                    bucket=WIKIDATA_RAW_BUCKET,
+                )
+            bindings = response_bindings(payload)
             object_keys.append(object_key)
             row_count += len(bindings)
             batch_row_count += len(bindings)
@@ -2169,6 +2235,19 @@ def pull_wikidata_company_augmentation_raw_objects_for_page(
         )
 
     return object_keys, row_count
+
+
+def read_wikidata_raw_payload(
+    *,
+    object_store: ObjectStoreResource,
+    object_key: str,
+) -> dict[str, Any]:
+    payload = json.loads(
+        object_store.read_bytes(object_key, bucket=WIKIDATA_RAW_BUCKET).decode("utf-8")
+    )
+    if not isinstance(payload, dict):
+        raise ValueError(f"Wikidata checkpoint is not a JSON object: {object_key}")
+    return payload
 
 
 def _batched[T](items: list[T], batch_size: int) -> Iterator[list[T]]:

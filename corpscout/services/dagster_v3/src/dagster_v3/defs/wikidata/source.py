@@ -22,7 +22,7 @@ WIKIDATA_REGISTRY_PSEUDO_EXCHANGE_PREFIX = "registry_"
 WIKIDATA_DUCKDB_DATASET_NAME = "wikidata_stage"
 WIKIDATA_LISTED_COMPANIES_TABLE = "listed_companies"
 WIKIDATA_EXCHANGES_TABLE = "exchanges"
-DEFAULT_WIKIDATA_PAGE_SIZE = 5_000
+DEFAULT_WIKIDATA_PAGE_SIZE = 1_000
 DEFAULT_WIKIDATA_AUGMENTATION_BATCH_SIZE = 100
 DEFAULT_WIKIDATA_REQUEST_TIMEOUT_SECONDS = 120
 DEFAULT_WIKIDATA_REQUEST_DELAY_SECONDS = 1.0
@@ -30,6 +30,7 @@ DEFAULT_WIKIDATA_USER_AGENT = "corpscout-dagster-v3-wikidata/0.1"
 WIKIDATA_REQUEST_MAX_ATTEMPTS = 5
 WIKIDATA_RETRY_INITIAL_DELAY_SECONDS = 10.0
 WIKIDATA_RETRY_MAX_DELAY_SECONDS = 120.0
+WIKIDATA_TRANSIENT_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 WIKIDATA_LISTED_COMPANIES_COLUMNS: dict[str, dict[str, Any]] = {
     "source_run_id": {"data_type": "text"},
     "retrieved_at": {"data_type": "timestamp"},
@@ -320,17 +321,37 @@ class WikidataSparqlClient:
         self._session.mount("https://", HTTPAdapter(max_retries=retry))
 
     def fetch(self, query: str, *, user_agent: str) -> dict[str, Any]:
-        response = self._session.get(
-            WIKIDATA_SPARQL_ENDPOINT,
-            params={"query": query, "format": "json"},
-            headers={"User-Agent": user_agent},
-            timeout=self._timeout_seconds,
-        )
-        response.raise_for_status()
+        try:
+            response = self._session.get(
+                WIKIDATA_SPARQL_ENDPOINT,
+                params={"query": query, "format": "json"},
+                headers={"User-Agent": user_agent},
+                timeout=self._timeout_seconds,
+            )
+            response.raise_for_status()
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.exceptions.RetryError,
+        ) as exc:
+            raise WikidataTransientRequestError(
+                "Wikidata request failed after exhausting HTTP retries"
+            ) from exc
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code in WIKIDATA_TRANSIENT_HTTP_STATUS_CODES:
+                raise WikidataTransientRequestError(
+                    f"Wikidata returned transient HTTP status {status_code}"
+                ) from exc
+            raise
         payload = response.json()
         if not isinstance(payload, dict):
             raise ValueError("Wikidata SPARQL response was not a JSON object")
         return payload
+
+
+class WikidataTransientRequestError(RuntimeError):
+    """A Wikidata or network failure that is safe to retry after a longer delay."""
 
 
 def build_listed_company_query(

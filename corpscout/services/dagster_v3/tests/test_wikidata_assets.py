@@ -8,6 +8,7 @@ from typing import Any
 import dagster as dg
 import duckdb
 import pytest
+import requests
 from dagster import AssetKey
 from dagster_clickhouse import ClickhouseResource
 
@@ -950,6 +951,118 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
     )
     assert "partition_month" not in result.metadata
     assert client.offsets == [0, 1, 2]
+
+
+def test_wikidata_raw_pull_resumes_from_checkpoint_after_transient_failure() -> None:
+    from dagster_v3.defs.wikidata import assets
+    from dagster_v3.defs.wikidata.source import (
+        WikidataRawPullConfig,
+        WikidataTransientRequestError,
+    )
+
+    class FailingAfterFirstPageClient:
+        def __init__(self) -> None:
+            self.offsets: list[int] = []
+
+        def fetch(self, query: str, *, user_agent: str) -> dict[str, Any]:
+            assert user_agent == "test-agent"
+            if "VALUES ?company" in query:
+                return _wikidata_response([])
+            offset = int(query.split("OFFSET ", 1)[1].splitlines()[0])
+            self.offsets.append(offset)
+            if offset == 0:
+                return _wikidata_response(
+                    [{"company": {"value": "http://www.wikidata.org/entity/Q1"}}]
+                )
+            raise WikidataTransientRequestError("Wikidata unavailable")
+
+    object_store, _s3_client = _object_store()
+    config = WikidataRawPullConfig(
+        exchange_ids_csv="QEX1",
+        page_size=1,
+        include_registry_seed=False,
+        request_delay_seconds=0,
+        user_agent="test-agent",
+    )
+    first_client = FailingAfterFirstPageClient()
+
+    with pytest.raises(WikidataTransientRequestError, match="unavailable"):
+        assets.pull_wikidata_company_seed_raw_objects(
+            client=first_client,
+            object_store=object_store,
+            config=config,
+            run_id="checkpointed-run",
+            retrieved_at="2026-07-22T10:00:00+00:00",
+            sleep=lambda _seconds: None,
+            log=lambda *_args: None,
+        )
+
+    resumed_client = FakeWikidataClient(
+        pages=[
+            _wikidata_response(
+                [{"company": {"value": "http://www.wikidata.org/entity/Q2"}}]
+            ),
+            _wikidata_response([]),
+        ]
+    )
+    progress_messages: list[str] = []
+
+    result = assets.pull_wikidata_company_seed_raw_objects(
+        client=resumed_client,
+        object_store=object_store,
+        config=config,
+        run_id="checkpointed-run",
+        retrieved_at="2026-07-22T10:00:00+00:00",
+        sleep=lambda _seconds: None,
+        log=lambda message, *args: progress_messages.append(message % args),
+    )
+
+    assert first_client.offsets == [0, 1]
+    assert resumed_client.offsets == [1, 2]
+    assert result.metadata["row_count"] == 2
+    assert any(
+        "Reusing checkpointed Wikidata company page" in message
+        for message in progress_messages
+    )
+    assert (
+        sum(
+            "Reusing checkpointed Wikidata augmentation" in message
+            for message in progress_messages
+        )
+        == 4
+    )
+
+
+def test_wikidata_step_retry_uses_bounded_exponential_delay() -> None:
+    from dagster_v3.defs.wikidata import assets
+
+    assert [
+        assets.wikidata_step_retry_delay_seconds(retry_number)
+        for retry_number in range(6)
+    ] == [300, 600, 1_200, 2_400, 2_400, 2_400]
+
+
+def test_wikidata_client_translates_exhausted_http_retries() -> None:
+    from dagster_v3.defs.wikidata.source import (
+        WikidataSparqlClient,
+        WikidataTransientRequestError,
+    )
+
+    class FailingSession:
+        def get(self, *_args: object, **_kwargs: object) -> None:
+            raise requests.exceptions.RetryError("too many 504 error responses")
+
+    client = WikidataSparqlClient.__new__(WikidataSparqlClient)
+    client._timeout_seconds = 120
+    client._session = FailingSession()
+
+    with pytest.raises(
+        WikidataTransientRequestError,
+        match="exhausting HTTP retries",
+    ) as exc_info:
+        client.fetch("SELECT * WHERE {}", user_agent="test-agent")
+
+    assert isinstance(exc_info.value.__cause__, requests.exceptions.RetryError)
 
 
 def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages() -> (
