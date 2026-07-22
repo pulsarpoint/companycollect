@@ -62,6 +62,8 @@
   before every attempt, verifies `Content-Length` when present, retries
   `ChunkedEncodingError`/`ConnectionError`/`Timeout`). This same method is reused, URL and
   content agnostic, for the report-XHTML archive download in `esef_report_xhtml_s3`.
+  Report XHTML is staged in `/tmp`, and each local file is unlinked immediately after its
+  S3 upload attempt, so a partition never accumulates all downloaded reports locally.
 - **Staging shape**: `esef_filings.filings_index` (one row per `EsefFilingRecord`, full
   replace every run) and `esef_filings.facts` (one row per parsed OIM fact,
   `period_end_year`-scoped delete+insert per partition). Both stage loosely-typed text

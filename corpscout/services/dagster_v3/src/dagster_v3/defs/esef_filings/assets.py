@@ -955,14 +955,22 @@ def _archive_filing_report_xhtml(
     (verified live), so an existing object is always the same bytes the
     filing would produce again. Unlike `_download_and_parse_filing_facts`,
     there is no parsing here, so a reused object never needs downloading
-    back locally -- an existence check alone suffices.
+    back locally -- an existence check alone suffices. A freshly downloaded
+    local file is removed as soon as its upload attempt finishes.
     """
     object_key = _report_xhtml_object_key(fxo_id)
     if object_store.exists(object_key, bucket=ESEF_FILINGS_FACTS_BUCKET):
         return False
     local_path = temp_dir / f"{sha256(fxo_id.encode()).hexdigest()}.xhtml"
-    client.download_json_facts(report_url, local_path)
-    object_store.upload_file(object_key, local_path, bucket=ESEF_FILINGS_FACTS_BUCKET)
+    try:
+        client.download_json_facts(report_url, local_path)
+        object_store.upload_file(
+            object_key,
+            local_path,
+            bucket=ESEF_FILINGS_FACTS_BUCKET,
+        )
+    finally:
+        local_path.unlink(missing_ok=True)
     return True
 
 

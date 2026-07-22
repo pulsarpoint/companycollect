@@ -1106,6 +1106,30 @@ class _StubReportXhtmlDownloadClient:
         target.write_bytes(self._body_by_fxo_id[fxo_id])
 
 
+def test_archive_report_xhtml_removes_local_file_after_upload(tmp_path: Path) -> None:
+    object_store = FakeObjectStore()
+    client = _StubReportXhtmlDownloadClient(
+        {"A-1": b"<html>A-1 report</html>"}
+    )
+
+    downloaded = assets._archive_filing_report_xhtml(
+        client=client,
+        object_store=object_store,
+        temp_dir=tmp_path,
+        fxo_id="A-1",
+        report_url=_report_url("A-1"),
+    )
+
+    assert downloaded is True
+    assert list(tmp_path.iterdir()) == []
+    assert object_store.objects[
+        (
+            assets.ESEF_FILINGS_FACTS_BUCKET,
+            "esef_filings/report_xhtml/fxo_id=A-1/report.xhtml",
+        )
+    ] == b"<html>A-1 report</html>"
+
+
 def _run_report_xhtml_partition(
     tmp_path: Path,
     object_store: FakeObjectStore,
