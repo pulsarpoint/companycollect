@@ -80,6 +80,9 @@ Selection rules (mirrors ``sweden_financial/metrics.py``'s CTE style):
     (``argMaxIf``/``argMinIf`` on either side of the requested date), just
     generalized off the ``SEK``/``USD`` pair to an arbitrary currency (ESEF
     facts span EUR/SEK/NOK/GBP/CHF/DKK/... per filer).
+  - A non-finite or Decimal(38, 2)-overflowing converted USD value becomes
+    ``NULL``. One malformed source amount must not abort the atomic rebuild
+    of metrics for every filing.
 
 No params dict is passed to ``clickhouse_client.execute`` anywhere in this
 module -- every statement below (including the inlined stage/insert/exchange
@@ -163,6 +166,14 @@ def _coalesce_candidates_sql(metric_name: str) -> str:
     if candidate_count == 1:
         return candidates
     return f"coalesce({candidates})"
+
+
+def _nullable_usd_amount_sql(amount_column: str) -> str:
+    """Convert an original amount to USD without failing the full rebuild."""
+    return (
+        "accurateCastOrNull("
+        f"toFloat64({amount_column}) * fx_rate_to_usd, 'Decimal(38,2)')"
+    )
 
 
 def build_esef_financial_metrics_select(source_run_id: str) -> str:
@@ -339,17 +350,19 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
                 fc.fxo_id AS fxo_id,
                 multiIf(
                     fc.currency = '', CAST(NULL AS Nullable(Float64)),
-                    fc.currency = 'EUR', usd.eur_usd_rate,
-                    usd.eur_usd_rate / ccy.eur_ccy_rate
+                    fc.currency = 'EUR', nullIf(usd.eur_usd_rate, 0),
+                    nullIf(usd.eur_usd_rate, 0) / nullIf(ccy.eur_ccy_rate, 0)
                 ) AS fx_rate_to_usd,
                 multiIf(
                     fc.currency = '', CAST(NULL AS Nullable(Date32)),
                     fc.currency = 'EUR', usd.eur_usd_rate_date,
+                    ccy.eur_ccy_rate = 0, CAST(NULL AS Nullable(Date32)),
                     ccy.eur_ccy_rate_date
                 ) AS fx_rate_date,
                 multiIf(
                     fc.currency = '', '',
                     fc.currency = 'EUR', coalesce(usd.eur_usd_source, ''),
+                    ccy.eur_ccy_rate = 0, '',
                     coalesce(ccy.eur_ccy_source, '')
                 ) AS fx_source
             FROM filing_currency AS fc
@@ -412,19 +425,19 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
             period_end,
             currency,
             revenue_amount_original,
-            cast(toFloat64(revenue_amount_original) * fx_rate_to_usd AS Nullable(Decimal(38, 2))) AS revenue_amount_usd,
+            {_nullable_usd_amount_sql("revenue_amount_original")} AS revenue_amount_usd,
             operating_profit_amount_original,
-            cast(toFloat64(operating_profit_amount_original) * fx_rate_to_usd AS Nullable(Decimal(38, 2))) AS operating_profit_amount_usd,
+            {_nullable_usd_amount_sql("operating_profit_amount_original")} AS operating_profit_amount_usd,
             profit_loss_amount_original,
-            cast(toFloat64(profit_loss_amount_original) * fx_rate_to_usd AS Nullable(Decimal(38, 2))) AS profit_loss_amount_usd,
+            {_nullable_usd_amount_sql("profit_loss_amount_original")} AS profit_loss_amount_usd,
             total_assets_amount_original,
-            cast(toFloat64(total_assets_amount_original) * fx_rate_to_usd AS Nullable(Decimal(38, 2))) AS total_assets_amount_usd,
+            {_nullable_usd_amount_sql("total_assets_amount_original")} AS total_assets_amount_usd,
             equity_amount_original,
-            cast(toFloat64(equity_amount_original) * fx_rate_to_usd AS Nullable(Decimal(38, 2))) AS equity_amount_usd,
+            {_nullable_usd_amount_sql("equity_amount_original")} AS equity_amount_usd,
             liabilities_amount_original,
-            cast(toFloat64(liabilities_amount_original) * fx_rate_to_usd AS Nullable(Decimal(38, 2))) AS liabilities_amount_usd,
+            {_nullable_usd_amount_sql("liabilities_amount_original")} AS liabilities_amount_usd,
             cash_amount_original,
-            cast(toFloat64(cash_amount_original) * fx_rate_to_usd AS Nullable(Decimal(38, 2))) AS cash_amount_usd,
+            {_nullable_usd_amount_sql("cash_amount_original")} AS cash_amount_usd,
             employees,
             mapped_fact_count,
             source_fact_count,

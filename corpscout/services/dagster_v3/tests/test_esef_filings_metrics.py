@@ -231,8 +231,31 @@ def test_build_select_fx_triangulation_is_currency_aware() -> None:
     sql = build_esef_financial_metrics_select("run-1")
     assert "base_currency = 'EUR' AND quote_currency = 'USD'" in sql
     assert "WHERE base_currency = 'EUR'" in sql  # per-currency ccy_rates CTE
-    assert "usd.eur_usd_rate / ccy.eur_ccy_rate" in sql
+    assert "nullIf(usd.eur_usd_rate, 0) / nullIf(ccy.eur_ccy_rate, 0)" in sql
+    assert "ccy.eur_ccy_rate = 0, CAST(NULL AS Nullable(Date32))" in sql
+    assert "ccy.eur_ccy_rate = 0, ''" in sql
     assert "fc.currency = 'EUR'" in sql
+
+
+def test_build_select_usd_conversion_is_null_safe() -> None:
+    sql = build_esef_financial_metrics_select("run-1")
+    amount_columns = (
+        "revenue_amount_original",
+        "operating_profit_amount_original",
+        "profit_loss_amount_original",
+        "total_assets_amount_original",
+        "equity_amount_original",
+        "liabilities_amount_original",
+        "cash_amount_original",
+    )
+
+    for amount_column in amount_columns:
+        assert (
+            "accurateCastOrNull("
+            f"toFloat64({amount_column}) * fx_rate_to_usd, 'Decimal(38,2)')"
+        ) in sql
+
+    assert "* fx_rate_to_usd AS Nullable(Decimal(38, 2))" not in sql
 
 
 def test_esef_financial_metrics_export_columns_match_migration_order() -> None:
