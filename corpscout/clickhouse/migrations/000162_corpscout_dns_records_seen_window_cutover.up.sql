@@ -26,7 +26,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS corpscout.commoncrawl_domain_dns_records_
 TO corpscout.commoncrawl_domain_dns_records
 AS
 SELECT
-    sipHash128(root_domain, name, record_type_code, record_class_code, rdata_wire) AS record_id,
+    record_id,
     root_domain,
     name,
     any(record_type) AS record_type,
@@ -40,7 +40,24 @@ SELECT
     min(observed_at) AS first_seen,
     max(observed_at) AS last_seen,
     max(loaded_at) AS last_loaded_at
-FROM corpscout.commoncrawl_domain_dns_record_ingest
+FROM
+(
+    SELECT
+        sipHash128(root_domain, name, record_type_code, record_class_code, rdata_wire) AS record_id,
+        root_domain,
+        name,
+        record_type,
+        record_type_code,
+        record_class_code,
+        value,
+        rdata_wire,
+        priority,
+        source,
+        discovery,
+        observed_at,
+        loaded_at
+    FROM corpscout.commoncrawl_domain_dns_record_ingest
+)
 GROUP BY
     root_domain,
     name,

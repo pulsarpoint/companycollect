@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records_v2
     value             SimpleAggregateFunction(any, String),
     rdata_wire        SimpleAggregateFunction(any, String),
     priority          SimpleAggregateFunction(any, UInt16),
-    sources           SimpleAggregateFunction(groupUniqArrayArray, Array(LowCardinality(String))),
-    discoveries       SimpleAggregateFunction(groupUniqArrayArray, Array(LowCardinality(String))),
+    sources           SimpleAggregateFunction(groupUniqArrayArray, Array(String)),
+    discoveries       SimpleAggregateFunction(groupUniqArrayArray, Array(String)),
     first_seen        SimpleAggregateFunction(min, DateTime64(3, 'UTC')),
     last_seen         SimpleAggregateFunction(max, DateTime64(3, 'UTC')),
     last_loaded_at    SimpleAggregateFunction(max, DateTime64(3, 'UTC'))
@@ -43,11 +43,14 @@ ORDER BY
 
 -- Dual-write trigger. The existing 000155 MVs stay attached to the ingest routing table until the
 -- 000162 cutover, so this migration is safe to apply while both DNS writers keep inserting.
+-- record_id is computed in the inner scope so the outer GROUP BY references a plain column. If the
+-- hash were aliased at the aggregation level, the GROUP BY key would expand through the rdata_wire
+-- alias into any(rdata_wire) and the server would reject the aggregate-inside-GROUP-BY.
 CREATE MATERIALIZED VIEW IF NOT EXISTS corpscout.commoncrawl_domain_dns_records_ingest_v2_mv
 TO corpscout.commoncrawl_domain_dns_records_v2
 AS
 SELECT
-    sipHash128(root_domain, name, record_type_code, record_class_code, rdata_wire) AS record_id,
+    record_id,
     root_domain,
     name,
     any(record_type) AS record_type,
@@ -61,7 +64,24 @@ SELECT
     min(observed_at) AS first_seen,
     max(observed_at) AS last_seen,
     max(loaded_at) AS last_loaded_at
-FROM corpscout.commoncrawl_domain_dns_record_ingest
+FROM
+(
+    SELECT
+        sipHash128(root_domain, name, record_type_code, record_class_code, rdata_wire) AS record_id,
+        root_domain,
+        name,
+        record_type,
+        record_type_code,
+        record_class_code,
+        value,
+        rdata_wire,
+        priority,
+        source,
+        discovery,
+        observed_at,
+        loaded_at
+    FROM corpscout.commoncrawl_domain_dns_record_ingest
+)
 GROUP BY
     root_domain,
     name,

@@ -871,10 +871,9 @@ def test_dns_records_seen_window_dual_writes_idempotent_aggregates() -> None:
     assert "PARTITION BY cityHash64(root_domain) % 16" in sql
     assert "SimpleAggregateFunction(min, DateTime64(3, 'UTC'))" in sql
     assert "SimpleAggregateFunction(max, DateTime64(3, 'UTC'))" in sql
-    assert (
-        "SimpleAggregateFunction(groupUniqArrayArray, Array(LowCardinality(String)))"
-        in sql
-    )
+    # groupUniqArrayArray returns Array(String), so the storage type must match exactly.
+    # Array(LowCardinality(String)) is rejected by the server with an incompatible-types error.
+    assert "SimpleAggregateFunction(groupUniqArrayArray, Array(String))" in sql
     # The outbox retry model re-inserts duplicate rows; every aggregate must be idempotent.
     assert "SimpleAggregateFunction(sum" not in sql
 
