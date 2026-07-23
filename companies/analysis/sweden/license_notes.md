@@ -52,3 +52,84 @@ Use the API only for future targeted enrichment if credentials are available.
 - [ ] Exact reuse wording for annual-report raw XHTML/iXBRL documents.
 - [ ] Whether annual-report archive names and directory partitioning are stable enough to use as raw
       object keys directly.
+
+## Upphandlingsmyndigheten procurement data
+
+The official open-data page says its data is free to use. Attribution must
+include source, date, and the period covered. When Corpscout processes the
+statistics, the attribution must identify Corpscout as the processor rather
+than implying that Upphandlingsmyndigheten produced the derived result.
+
+Source:
+
+```text
+https://www.upphandlingsmyndigheten.se/om-oss/var-oppna-data/
+```
+
+Recommended attribution pattern:
+
+```text
+Data: Upphandlingsmyndigheten
+Processing: Corpscout
+Source snapshot: <date>
+Coverage: <period>
+```
+
+## TED
+
+TED's legal notice says procurement notices in the Supplement to the Official
+Journal may be freely reused for commercial or non-commercial purposes unless
+otherwise noted. SIMAP metadata is dedicated to the public domain under CC0;
+editorial website content is CC BY 4.0.
+
+```text
+https://ted.europa.eu/en/legal-notice
+```
+
+Keep EU source attribution and do not reuse the TED/SIMAP logos.
+
+## GLEIF
+
+GLEIF and ANNA publish the ISIN-to-LEI relationship file as an open daily
+mapping. The initiative is voluntary at the national-numbering-agency level,
+so license openness does not imply complete global ISIN coverage.
+
+```text
+https://www.gleif.org/en/lei-data/lei-mapping/download-isin-to-lei-relationship-files
+```
+
+## EODHD
+
+EODHD is a commercial authenticated data provider, not an official exchange or
+regulatory source. The current Corpscout subscription successfully supports the
+exchange list, active/delisted symbol lists, and price endpoints already used
+by the EODHD pipeline. A 2026-07-23 probe of the documented ID Mapping API
+returned HTTP 402 Payment Required.
+
+Before making that endpoint a required identity source:
+
+- confirm the required subscription tier and API-call allowance;
+- confirm internal storage and user-facing display rights for identifiers,
+  listing status, and prices;
+- keep EODHD provenance visible and do not describe vendor activity status as
+  official legal admission status.
+
+The open GLEIF ISIN-to-LEI file avoids making the paid EODHD ID Mapping endpoint
+a hard dependency for symbols that already have ISINs.
+
+## Exchange/venue data
+
+Do not assume that a publicly reachable market-data endpoint grants production
+storage or redistribution rights.
+
+- Nasdaq publishes formal European data policies and sells Nordic equity
+  reference-data files. Confirm whether the proposed boolean/list display is
+  covered before using the public screener API in production.
+- NGM states that its market-data policy governs display, non-display, and
+  redistribution use. Its Data API should be treated as licensed access.
+- Spotlight exposes organisation numbers and LEIs on public company pages,
+  but automated collection and republication terms still need review.
+
+Use EODHD for the operational ticker/price layer, ESMA FIRDS plus GLEIF for the
+reusable regulatory identity/status spine, then use venue data under an
+appropriate agreement for ticker/status enrichment.

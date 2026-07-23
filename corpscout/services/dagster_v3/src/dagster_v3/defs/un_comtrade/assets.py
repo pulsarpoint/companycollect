@@ -52,7 +52,6 @@ def un_comtrade_snapshot_s3(
         retrieved_at=datetime.now(UTC),
         start_year=source.UN_COMTRADE_START_YEAR,
         end_year=date.today().year - 1,
-        subscription_key=source.subscription_key_from_environment(),
         session=None,
         timeout_seconds=source.DEFAULT_TIMEOUT_SECONDS,
         request_interval_seconds=source.DEFAULT_REQUEST_INTERVAL_SECONDS,

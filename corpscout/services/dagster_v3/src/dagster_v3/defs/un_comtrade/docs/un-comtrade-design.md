@@ -8,7 +8,7 @@
 - DuckDB pool: `un_comtrade_duckdb`
 - ClickHouse migration: `000160_corpscout_un_comtrade`
 - Historical window: fixed at 2015 through the latest completed calendar year
-- Credentials: `UN_COMTRADE_SUBSCRIPTION_KEY`
+- Credentials: none
 
 This source loads annual merchandise-trade totals for every reporter returned by
 UN Comtrade. It does not contain a configured country list. The API request
@@ -30,12 +30,12 @@ This is deliberately separate from a future detailed product/partner source.
 
 ## Ingest decision
 
-UN Comtrade's free API supports filtered final-data queries but not premium bulk
-files. The free tier's daily-call limit makes reporter/year fetching wasteful:
-more than 2,000 calls would be required for the initial window. Total/world
-trade contains only up to two rows per reporter and year, so the raw asset makes
-one final-data request per year and batches data-availability requests at the
-source's 12-period limit.
+UN Comtrade's anonymous public preview API supports filtered final-data queries
+but is capped at 500 rows per request. Total/world trade contains only up to two
+rows per reporter and year and remains below that cap, so the raw asset makes
+one anonymous preview request per year and batches anonymous data-availability
+requests at the source's 12-period limit. It rejects a response at the
+500-record cap rather than publishing potentially truncated data.
 
 The Dagster assets are not partitioned. API responses and S3 objects are
 physically separated by year, but a refresh is one atomic snapshot. This keeps
@@ -44,19 +44,18 @@ auditable raw object, and avoids dynamic country partitions or a maintained
 country registry.
 
 The raw downloader uses dlt's retrying HTTP client, honors `Retry-After`, and
-paces requests for the free API. The subscription key is sent in the
-`Ocp-Apim-Subscription-Key` header and is never added to source URLs, manifests,
-or logs.
+paces anonymous requests at one request per second to respect UN Comtrade's
+fair-usage policy.
 
 ## Asset chain
 
 1. `un_comtrade_snapshot_s3`
-   downloads batched `getDa` availability CSVs first, then one final-data CSV
-   for each available year. If the previous calendar year has not been released
-   yet, the asset still refreshes every available historical year and records
-   both the requested and actual latest year. It validates CSV contracts,
-   writes content-addressed objects, and writes the run manifest only after
-   every request succeeds.
+   downloads batched public `getDA` availability CSVs first, then one anonymous
+   final-data preview CSV for each available year. If the previous calendar
+   year has not been released yet, the asset still refreshes every available
+   historical year and records both the requested and actual latest year. It
+   validates CSV contracts and the preview cap, writes content-addressed
+   objects, and writes the run manifest only after every request succeeds.
 2. `un_comtrade_annual_totals_duckdb`
    downloads and hash-verifies all snapshot objects before opening the
    persistent DuckDB file. DuckDB's CSV reader performs all casts,
@@ -112,9 +111,9 @@ and ClickHouse validation succeed.
 
 ## Issues found during processing
 
-- Public preview is capped at 500 records, but the authenticated free
-  final-data API supports the small total/world query. Preview is used only for
-  development probes.
+- Public preview is capped at 500 records. The total/world request currently
+  returns fewer than 400 records per year, so anonymous access is sufficient
+  and the pipeline fails closed if the cap is ever reached.
 - Country/year requests improve fault isolation but exceed the free daily quota.
   Year-level requests preserve automatic reporter discovery with far fewer
   calls.

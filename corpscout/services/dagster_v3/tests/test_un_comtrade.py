@@ -281,7 +281,6 @@ def _sync_fixture(
         retrieved_at=datetime(2026, 7, 23, 12, 0, tzinfo=UTC),
         start_year=start_year,
         end_year=end_year,
-        subscription_key="test-secret",
         session=FakeSession(
             _fixture_responses(
                 start_year=start_year,
@@ -300,7 +299,7 @@ def test_annual_totals_request_is_all_reporters_and_total_world_trade() -> None:
     url = source.annual_totals_url(2024)
     query = parse_qs(urlparse(url).query)
 
-    assert urlparse(url).path == "/data/v1/get/C/A/HS"
+    assert urlparse(url).path == "/public/v1/preview/C/A/HS"
     assert "reporterCode" not in query
     assert "subscription-key" not in query
     assert query == {
@@ -311,8 +310,18 @@ def test_annual_totals_request_is_all_reporters_and_total_world_trade() -> None:
         "partner2Code": ["0"],
         "customsCode": ["C00"],
         "motCode": ["0"],
-        "maxRecords": ["100000"],
+        "maxRecords": ["500"],
         "includeDesc": ["true"],
+        "format": ["csv"],
+    }
+
+
+def test_data_availability_request_uses_anonymous_public_api() -> None:
+    url = source.data_availability_url((2023, 2024))
+
+    assert urlparse(url).path == "/public/v1/getDA/C/A/HS"
+    assert parse_qs(urlparse(url).query) == {
+        "period": ["2023,2024"],
         "format": ["csv"],
     }
 
@@ -325,13 +334,7 @@ def test_availability_periods_are_batched_at_the_source_limit() -> None:
     assert batches[1] == tuple(range(2014, 2026))
 
 
-def test_subscription_key_is_required_but_not_stored_in_manifest(
-    monkeypatch,
-) -> None:
-    monkeypatch.delenv(source.UN_COMTRADE_SUBSCRIPTION_KEY_ENV, raising=False)
-    with pytest.raises(ValueError, match=source.UN_COMTRADE_SUBSCRIPTION_KEY_ENV):
-        source.subscription_key_from_environment()
-
+def test_snapshot_requires_no_credentials() -> None:
     object_store = FakeObjectStore()
     session = FakeSession(_fixture_responses(start_year=2023, end_year=2024))
     result = source.sync_un_comtrade_snapshot(
@@ -340,7 +343,6 @@ def test_subscription_key_is_required_but_not_stored_in_manifest(
         retrieved_at=datetime(2026, 7, 23, 12, 0, tzinfo=UTC),
         start_year=2023,
         end_year=2024,
-        subscription_key="test-secret",
         session=session,
         timeout_seconds=30,
         request_interval_seconds=0,
@@ -350,8 +352,8 @@ def test_subscription_key_is_required_but_not_stored_in_manifest(
         (source.UN_COMTRADE_RAW_BUCKET, source.snapshot_manifest_key("run-1"))
     ]
     manifest = json.loads(manifest_bytes)
-    assert session.headers[source.SUBSCRIPTION_KEY_HEADER] == "test-secret"
-    assert b"test-secret" not in manifest_bytes
+    assert "Ocp-Apim-Subscription-Key" not in session.headers
+    assert "subscription-key" not in manifest_bytes.decode("utf-8").lower()
     assert object_store.created_buckets == [source.UN_COMTRADE_RAW_BUCKET]
     assert result.metadata["year_count"] == 2
     assert result.metadata["object_count"] == 3
@@ -373,7 +375,6 @@ def test_snapshot_reuses_content_addressed_objects() -> None:
         retrieved_at=datetime(2026, 7, 23, 13, 0, tzinfo=UTC),
         start_year=2023,
         end_year=2024,
-        subscription_key="test-secret",
         session=FakeSession(_fixture_responses(start_year=2023, end_year=2024)),
         timeout_seconds=30,
         request_interval_seconds=0,
@@ -399,7 +400,6 @@ def test_snapshot_uses_availability_to_skip_an_unreleased_latest_year() -> None:
         retrieved_at=datetime(2026, 1, 10, 12, 0, tzinfo=UTC),
         start_year=2023,
         end_year=2024,
-        subscription_key="test-secret",
         session=session,
         timeout_seconds=30,
         request_interval_seconds=0,
@@ -429,7 +429,6 @@ def test_snapshot_does_not_write_manifest_for_invalid_csv(monkeypatch) -> None:
             retrieved_at=datetime(2026, 7, 23, 12, 0, tzinfo=UTC),
             start_year=2024,
             end_year=2024,
-            subscription_key="test-secret",
             session=FakeSession(responses),
             timeout_seconds=30,
             request_interval_seconds=0,

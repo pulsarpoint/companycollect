@@ -142,6 +142,10 @@ export interface CountryDetailConfig {
 export interface CountryConfig {
   /** Lowercase ISO2 code, used as the URL segment /:country. */
   code: string;
+  /** Uppercase ISO3 code used by IMF and UN Comtrade. */
+  iso3: string;
+  /** Eurostat geography code when the country is covered by Eurostat. */
+  eurostatGeoCode?: string;
   name: string;
   flag: string;
   /** ClickHouse table holding the canonical company rows. */
@@ -203,7 +207,7 @@ export type CountryFinancialsAggregates = {
 
 export const COUNTRIES: CountryConfig[] = [
   {
-    code: "no", name: "Norway", flag: "🇳🇴", companiesTable: "no_companies",
+    code: "no", iso3: "NOR", eurostatGeoCode: "NO", name: "Norway", flag: "🇳🇴", companiesTable: "no_companies",
     idColumn: "org_number", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "1.2M", features: ["financials", "industries", "contacts", "domains"],
     columns: [
@@ -304,7 +308,7 @@ LIMIT 10`,
     },
   },
   {
-    code: "fi", name: "Finland", flag: "🇫🇮", companiesTable: "fi_companies",
+    code: "fi", iso3: "FIN", eurostatGeoCode: "FI", name: "Finland", flag: "🇫🇮", companiesTable: "fi_companies",
     idColumn: "business_id", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "460k", features: ["financials", "industries", "contacts", "domains"],
     columns: [
@@ -433,7 +437,7 @@ LIMIT 50`,
     financialsLatest: { table: "fi_company_financials_latest", companyKeyExpr: "business_id" },
   },
   {
-    code: "se", name: "Sweden", flag: "🇸🇪", companiesTable: "se_companies",
+    code: "se", iso3: "SWE", eurostatGeoCode: "SE", name: "Sweden", flag: "🇸🇪", companiesTable: "se_companies",
     idColumn: "registration_number", nameColumn: "legal_name", activeExpr: "status = 'active'",
     // Bolagsverket registers formal legal-form words; users type the
     // abbreviations ("Investor AB" vs registered "Investor Aktiebolag").
@@ -809,7 +813,7 @@ LIMIT 10`,
     },
   },
   {
-    code: "ee", name: "Estonia", flag: "🇪🇪", companiesTable: "ee_companies",
+    code: "ee", iso3: "EST", eurostatGeoCode: "EE", name: "Estonia", flag: "🇪🇪", companiesTable: "ee_companies",
     idColumn: "reg_code", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "373k", features: ["financials", "industries", "contacts", "domains"],
     columns: [
@@ -896,7 +900,7 @@ LIMIT 1`,
     },
   },
   {
-    code: "lv", name: "Latvia", flag: "🇱🇻", companiesTable: "lv_companies",
+    code: "lv", iso3: "LVA", eurostatGeoCode: "LV", name: "Latvia", flag: "🇱🇻", companiesTable: "lv_companies",
     idColumn: "regcode", nameColumn: "legal_name", activeExpr: "is_active = 1",
     approxCompanies: "485k", features: ["financials", "contacts", "domains"],
     columns: [
@@ -956,7 +960,7 @@ LIMIT 1`,
     financialsLatest: { table: "lv_company_financials_latest", companyKeyExpr: "regcode" },
   },
   {
-    code: "gb", name: "United Kingdom", flag: "🇬🇧", companiesTable: "gb_companies",
+    code: "gb", iso3: "GBR", eurostatGeoCode: "UK", name: "United Kingdom", flag: "🇬🇧", companiesTable: "gb_companies",
     idColumn: "company_number", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "5.7M", features: ["financials", "industries"],
     columns: [
@@ -1035,7 +1039,7 @@ LIMIT 1`,
     },
   },
   {
-    code: "fr", name: "France", flag: "🇫🇷", companiesTable: "fr_companies",
+    code: "fr", iso3: "FRA", eurostatGeoCode: "FR", name: "France", flag: "🇫🇷", companiesTable: "fr_companies",
     idColumn: "siren", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "29.7M", features: ["industries"],
     columns: [
@@ -1088,7 +1092,7 @@ LIMIT 1`,
     },
   },
   {
-    code: "br", name: "Brazil", flag: "🇧🇷", companiesTable: "br_companies",
+    code: "br", iso3: "BRA", name: "Brazil", flag: "🇧🇷", companiesTable: "br_companies",
     idColumn: "cnpj_basico", nameColumn: "legal_name", activeExpr: "is_active = 1",
     approxCompanies: "68.6M", features: ["financials", "contacts", "domains"],
     columns: [
@@ -1174,7 +1178,7 @@ LIMIT 1`,
     financialsLatest: { table: "br_company_financials_latest", companyKeyExpr: "cnpj_basico" },
   },
   {
-    code: "cz", name: "Czechia", flag: "🇨🇿", companiesTable: "cz_companies",
+    code: "cz", iso3: "CZE", eurostatGeoCode: "CZ", name: "Czechia", flag: "🇨🇿", companiesTable: "cz_companies",
     idColumn: "ico", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "3.5M", features: ["industries", "contacts", "domains"],
     columns: [
@@ -1237,7 +1241,7 @@ LIMIT 1`,
     },
   },
   {
-    code: "sk", name: "Slovakia", flag: "🇸🇰", companiesTable: "sk_companies",
+    code: "sk", iso3: "SVK", eurostatGeoCode: "SK", name: "Slovakia", flag: "🇸🇰", companiesTable: "sk_companies",
     idColumn: "ico", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "2.2M", features: ["financials", "industries"],
     columns: [

@@ -1,5 +1,15 @@
 # Company data sources for Sweden
 
+Deep analysis of the cross-country list signals requested on 2026-07-23 is in:
+
+```text
+company-signals-analysis.md
+```
+
+It covers financial-data availability, public-procurement awards (including
+Upphandlingsmyndigheten and TED), current public listings, tri-state UI/filter
+semantics, empirical source coverage, and the recommended ingestion order.
+
 ## Status
 
 - Official bulk data: **found** — Bolagsverket publishes downloadable company bulk files directly on the
@@ -9,6 +19,17 @@
 - Financial data: **found** — annual reports are available as public ZIP files under the
   `arsredovisningar/` directory. The observed sample archive contains per-company ZIPs with XHTML/iXBRL
   annual-report documents.
+- Public procurement: **found** — use Upphandlingsmyndigheten's national
+  supplier-award open data as primary and enable Sweden in the existing TED
+  eForms pipeline as the EU-threshold/current complement.
+- Current public listings: **operational source found; official validation
+  still to add** — EODHD already supplies global active/delisted symbols,
+  instrument types, ISINs, MIC candidates, and prices. Add the open GLEIF
+  ISIN-to-LEI relationship file and use existing GLEIF `registered_as` data
+  to resolve Swedish organisation numbers. Then add ESMA FIRDS for exact EEA
+  venues, regulatory classification, admission/termination history, and a
+  defensible negative result. EODHD's separate ID Mapping API returned HTTP
+  402 under the current subscription.
 - Open data portal/source page: **found** — Bolagsverket documents downloadable files on its
   "Nedladdningsbara filer" page.
 - License: **open/high-value dataset, but exact reuse wording should still be recorded per dataset**.

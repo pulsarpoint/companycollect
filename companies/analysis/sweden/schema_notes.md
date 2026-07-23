@@ -132,3 +132,151 @@ raw_record              <- full raw row / raw iXBRL fact metadata
 - Parse Bolagsverket packed fields without losing raw suffix metadata.
 - Store raw annual-report archive path, nested ZIP path, XHTML filename, and concept QName for every
   financial fact.
+
+## Cross-country company-signal projection
+
+The main list needs true tri-state values:
+
+```text
+has_financial_data       Nullable(UInt8)
+has_public_award         Nullable(UInt8)
+is_publicly_traded       Nullable(UInt8)
+```
+
+Semantics:
+
+```text
+1    confirmed positive
+0    source checked; no result inside its declared scope
+NULL unknown, unsupported, unmatchable, or stale
+```
+
+Do not use `0` for gray. Store shared country/source scope in a separate
+coverage table rather than repeating caveat strings on every company:
+
+```text
+company_signal_coverage
+  country_code
+  signal_name
+  coverage_status
+  coverage_from
+  coverage_to
+  source_slugs
+  source_updated_at
+  caveat
+  resolved_at
+```
+
+Useful main-list summaries:
+
+```text
+financial_latest_year
+public_award_count
+public_award_last_date
+listing_venue_count
+listing_markets
+signals_resolved_at
+```
+
+## Public-procurement source model
+
+Keep source rows before deriving the company signal:
+
+```text
+se_procurement_awards
+  source_slug
+  source_procurement_id
+  source_lot_id
+  source_advertising_database
+  publication_date
+  title
+  agreement_type
+  contracted
+  buyer_name
+  buyer_id_raw
+  buyer_id_normalized
+  supplier_name
+  supplier_id_raw
+  supplier_id_normalized
+  cpv_code
+  source_record_id
+  source_payload_hash
+  resolved_at
+```
+
+The existing generic TED tables remain separate. Build
+`company_public_procurement_summary` from the union so original provenance and
+cross-source deduplication remain possible.
+
+## Public-listing source model
+
+Use one row per equity instrument/listing:
+
+```text
+company_listings
+  country_code
+  company_id
+  issuer_lei
+  isin
+  ticker
+  instrument_name
+  instrument_type
+  venue_name
+  mic
+  market_type
+  segment
+  admission_date
+  termination_date
+  trading_status
+  is_current
+  source_slug
+  source_record_id
+  source_retrieved_at
+```
+
+Resolve Swedish companies through authoritative identifiers:
+
+```text
+EODHD symbol
+  -> EODHD ISIN
+  -> GLEIF daily ISIN-to-LEI relationship
+  -> GLEIF registered_as
+  -> 10-digit company_id
+
+FIRDS ISIN + issuer LEI + MIC
+  -> GLEIF registered_as
+  -> 10-digit company_id
+```
+
+Name-only matching is a manual-review fallback, not an automatic production
+join.
+
+Add explicit match/status provenance:
+
+```text
+identity_match_method       eodhd_isin_gleif | firds_issuer_lei | direct_orgnr
+identity_match_confidence   high | medium | unresolved
+listing_status_source       eodhd | esma_firds | venue
+source_status               active | delisted | admitted | terminated | cancelled
+```
+
+The first derived EODHD layer should retain unmatched rows:
+
+```text
+eodhd_company_listings
+  eodhd_symbol_key
+  company_id Nullable(String)
+  isin Nullable(String)
+  issuer_lei Nullable(String)
+  mic Nullable(String)
+  instrument_type
+  is_delisted
+  identity_match_method
+  identity_match_confidence
+  unresolved_reason
+  source_run_id
+  resolved_at
+```
+
+Do not overwrite EODHD status with FIRDS status. Reconcile both into
+`company_listings` while retaining their separate source observations.

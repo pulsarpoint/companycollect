@@ -77,3 +77,186 @@
 - Result: API access requires authentication with EU identity documentation/eID-style process.
 - Decision: Do not build first ingestion around API. Use it only for future targeted enrichment if
   credentials are available.
+
+## Attempt 7 — current repository and live-data inventory
+
+- Date/time: 2026-07-23
+- Source: Local Dagster/backoffice code and read-only ClickHouse queries
+- Why: Separate missing-source coverage from parser/UI gaps.
+- Result:
+  - `companies_all` has 3,407,809 Sweden rows, 1,774,084 active rows,
+    and 560,208 rows with the current financial flag.
+  - Active limited-company forms total 817,643; 512,180 have financial
+    data (62.6%).
+  - `se_financial_reports` covers 572,074 companies and
+    `se_financial_metrics` covers 570,472; only 1,602 report companies
+    lack mapped metrics.
+  - Main-list schema/filtering has no procurement or listing signal.
+  - Wikidata listing coverage maps only 56 current Swedish listing
+    entities to registry identifiers.
+- Decision: Treat financial missingness mainly as source/eligibility, not
+  parser loss; add tri-state signals to the shared list model.
+
+## Attempt 8 — Upphandlingsmyndigheten national award data
+
+- Date/time: 2026-07-23
+- Source:
+  - `https://www.upphandlingsmyndigheten.se/om-oss/var-oppna-data/`
+  - `https://catalog.upphandlingsmyndigheten.se/rowstore/dataset/582c2145-af7d-4eb5-a02d-dffd60585ff0`
+  - `https://catalog.upphandlingsmyndigheten.se/store/12/resource/239`
+- Why: Find a Sweden-wide supplier/winner source, including procurement
+  below EU thresholds.
+- Result:
+  - Public 115,068,644-byte CSV plus row API.
+  - 102,785 rows covering 2021–2024, 40,245 procurement IDs, and
+    19,983 distinct digits-only supplier IDs.
+  - 18,564 supplier IDs matched the live Sweden company universe (92.9%).
+  - Direct procurement is excluded and after-notice compliance is
+    incomplete.
+- Decision: Use UHM as the national primary source. Positive winner evidence
+  is strong; a missing row is only “not observed in covered data.”
+
+## Attempt 9 — TED Sweden feasibility
+
+- Date/time: 2026-07-23
+- Source: Existing `defs/ted_procurement` module and official TED
+  Search API/eForms documentation.
+- Why: Determine whether TED should be used in addition to UHM.
+- Result:
+  - Existing parser is already tested with Swedish multi-winner eForms.
+  - The module is country-parameterized; Sweden needs `SWE`/`SE` added.
+  - TED supplies current EU-threshold award XML and award values where
+    reported, but the current module intentionally starts at 2024.
+- Decision: Enable TED as the EU-threshold/current complement, not as a
+  replacement for UHM.
+
+## Attempt 10 — Nasdaq + GLEIF listing identity test
+
+- Date/time: 2026-07-23
+- Sources:
+  - `https://api.nasdaq.com/api/nordic/screener/shares`
+  - `https://www.gleif.org/en/lei-data/lei-mapping/download-isin-to-lei-relationship-files`
+  - existing `gleif_lei_records`
+- Why: Test whether current venue instruments can map deterministically to
+  Swedish registry companies.
+- Result:
+  - 414 Stockholm Main instruments and 334 Stockholm First North
+    instruments.
+  - 725 of 748 ISINs matched the current GLEIF ISIN-to-LEI file.
+  - The union resolved to 655 unique Swedish organisation numbers; all
+    655 matched the live Sweden registry.
+- Decision: ISIN -> LEI -> `registered_as` is the correct listing identity
+  chain. Do not use names or Wikidata as the primary join.
+
+## Attempt 11 — Spotlight and NGM venue sources
+
+- Date/time: 2026-07-23
+- Sources:
+  - `https://www.spotlightstockmarket.com/en/market-overview/our-companies/`
+  - `https://www.ngm.se/en/our-companies-eng`
+  - NGM market-data documentation
+- Why: Cover Swedish growth/MTF venues outside Nasdaq.
+- Result:
+  - Spotlight exposed 135 current company pages, all with organisation
+    numbers, 113 with LEIs, and 125 matching Swedish registry rows.
+  - NGM's public company page is current but primarily name/website based.
+    Its Data API has the needed instrument/ISIN/status/segment fields, with
+    market-data licensing.
+- Decision: Use Spotlight for validation after a terms review. Use ESMA
+  FIRDS for NGM boolean coverage or license the NGM Data API; do not
+  auto-match NGM names.
+
+## Attempt 12 — ESMA FIRDS and listing scope
+
+- Date/time: 2026-07-23
+- Sources:
+  - `https://www.esma.europa.eu/document/firds-instructions-access-and-download-full-and-delta-reference-data-files`
+  - current ESMA MiFIR reporting documentation
+- Why: Find a reusable regulatory source covering regulated markets and
+  MTFs with issuer LEIs.
+- Result: Public weekly full and daily delta reference files expose ISIN,
+  issuer LEI, MIC, classification, admission date, and termination date.
+- Decision: Use FIRDS as the listing spine, filtered to current equities and
+  declared venue MICs. Add venue feeds only for enrichment/validation.
+
+## Attempt 13 — financial paper/digital distinction
+
+- Date/time: 2026-07-23
+- Sources:
+  - Bolagsverket annual-report guidance
+  - Bolagsverket annual-report statistics API documentation
+  - Bolagsverket document-product documentation
+- Why: Explain the missing financial population and identify an upgrade path.
+- Result:
+  - Every limited company must file within seven months after financial
+    year end.
+  - Bolagsverket still accepts paper reports.
+  - The official statistics API explicitly reports paper and digital
+    submissions separately.
+  - Older document-delivery documentation describes scanned annual-report
+    delivery, but access, cost, and current reuse terms require confirmation.
+- Decision: “No digital report” is not “no annual report.” Keep the free
+  iXBRL source, add ESEF for listed consolidated data, and investigate
+  scanned-paper access before considering OCR.
+
+## Attempt 14 — existing EODHD listing pipeline and live Sweden coverage
+
+- Date/time: 2026-07-23
+- Sources:
+  - existing `defs/eodhd` Dagster source
+  - live `eodhd_exchanges`, `eodhd_symbols`, `eodhd_symbol_mics`, and
+    `eodhd_eod_prices` ClickHouse tables
+  - `https://eodhd.com/financial-apis/covered-tickers-eodhd`
+- Why: Determine whether direct Nasdaq Nordic ingestion is required before a
+  company-level public-listing signal can be built.
+- Result:
+  - EODHD already collects global active and delisted symbol snapshots, MIC
+    candidates, and historical/daily prices.
+  - Stockholm (`ST`) resolves to `XSTO`.
+  - There are 946 active and 670 delisted Stockholm common-stock symbols.
+  - 737 active common stocks have ISIN and 209 do not.
+  - Current tables have no LEI or Swedish `company_id`, and no downstream
+    EODHD-to-company mapping exists.
+- Decision: Use EODHD as the operational listing/price source, but add a
+  deterministic identifier bridge before exposing the company flag. Keep
+  absence gray because the provider defines active symbols through recent
+  activity rather than official admission status.
+
+## Attempt 15 — EODHD ID Mapping entitlement and GLEIF fallback
+
+- Date/time: 2026-07-23
+- Sources:
+  - `https://eodhd.com/api/id-mapping`
+  - `https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol`
+  - `https://www.gleif.org/en/lei-data/lei-mapping/download-isin-to-lei-relationship-files`
+  - live `gleif_lei_records`
+- Why: Choose the first implementation for symbol/ISIN/LEI/company mapping.
+- Result:
+  - EODHD documents symbol, ISIN, FIGI, and LEI mappings with exchange-scoped
+    pagination.
+  - A bounded `filter[ex]=ST` request returned HTTP 402 Payment Required under
+    the configured subscription; no payload was saved.
+  - GLEIF/ANNA publishes open daily ISIN-to-LEI relationship files.
+  - Existing GLEIF data contains 117,831 Swedish LEIs with `registered_as`;
+    117,478 normalize to ten digits and 114,995 match `se_companies`.
+- Decision: First ingest the open GLEIF ISIN-to-LEI file and join existing
+  EODHD ISINs through `gleif_lei_records.registered_as`. Treat the paid EODHD
+  ID Mapping endpoint as an optional later gap-filler after a subscription
+  decision.
+
+## Attempt 16 — FIRDS value beyond EODHD
+
+- Date/time: 2026-07-23
+- Sources:
+  - `https://www.esma.europa.eu/document/firds-instructions-access-and-download-full-and-delta-reference-data-files`
+  - current ESMA FIRDS/MiFIR documentation
+- Why: Explain whether EODHD makes FIRDS redundant.
+- Result:
+  - FIRDS adds exact `(ISIN, MIC)` regulatory records, issuer LEI, CFI
+    classification, admission/first-trade and termination dates, and
+    new/modified/terminated/cancelled lifecycle files.
+  - It supports point-in-time status and exact EEA venue scope, while EODHD
+    supplies operational global tickers and prices.
+- Decision: Keep both roles. EODHD is the operational vendor layer; FIRDS is
+  the official EEA identity, classification, venue, lifecycle, and
+  completeness layer required before a trustworthy scoped red state.

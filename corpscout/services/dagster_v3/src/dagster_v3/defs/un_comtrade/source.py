@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import os
 import tempfile
 import time
 from datetime import datetime
@@ -20,9 +19,7 @@ UN_COMTRADE_API_BASE_URL = "https://comtradeapi.un.org"
 UN_COMTRADE_RAW_BUCKET = "source-un-comtrade"
 UN_COMTRADE_RAW_PREFIX = "un_comtrade/annual_totals"
 UN_COMTRADE_START_YEAR = 2015
-UN_COMTRADE_SUBSCRIPTION_KEY_ENV = "UN_COMTRADE_SUBSCRIPTION_KEY"
-SUBSCRIPTION_KEY_HEADER = "Ocp-Apim-Subscription-Key"
-MAX_RECORDS_PER_REQUEST = 100_000
+PUBLIC_PREVIEW_MAX_RECORDS = 500
 MAX_AVAILABILITY_PERIODS_PER_REQUEST = 12
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_DOWNLOAD_ATTEMPTS = 5
@@ -96,12 +93,12 @@ def annual_totals_url(year: int) -> str:
             "partner2Code": "0",
             "customsCode": "C00",
             "motCode": "0",
-            "maxRecords": str(MAX_RECORDS_PER_REQUEST),
+            "maxRecords": str(PUBLIC_PREVIEW_MAX_RECORDS),
             "includeDesc": "true",
             "format": "csv",
         }
     )
-    return f"{UN_COMTRADE_API_BASE_URL}/data/v1/get/C/A/HS?{query}"
+    return f"{UN_COMTRADE_API_BASE_URL}/public/v1/preview/C/A/HS?{query}"
 
 
 def data_availability_url(periods: tuple[int, ...]) -> str:
@@ -117,7 +114,7 @@ def data_availability_url(periods: tuple[int, ...]) -> str:
             "format": "csv",
         }
     )
-    return f"{UN_COMTRADE_API_BASE_URL}/data/v1/getDa/C/A/HS?{query}"
+    return f"{UN_COMTRADE_API_BASE_URL}/public/v1/getDA/C/A/HS?{query}"
 
 
 def availability_period_batches(
@@ -141,16 +138,6 @@ def availability_period_batches(
             )
         ),
     )
-
-
-def subscription_key_from_environment() -> str:
-    value = os.environ.get(UN_COMTRADE_SUBSCRIPTION_KEY_ENV, "").strip()
-    if value == "":
-        raise ValueError(
-            f"{UN_COMTRADE_SUBSCRIPTION_KEY_ENV} is required for the UN "
-            "Comtrade final-data API"
-        )
-    return value
 
 
 def snapshot_manifest_key(run_id: str) -> str:
@@ -183,7 +170,6 @@ def sync_un_comtrade_snapshot(
     retrieved_at: datetime,
     start_year: int,
     end_year: int,
-    subscription_key: str,
     session: Any | None,
     timeout_seconds: int,
     request_interval_seconds: float,
@@ -192,8 +178,6 @@ def sync_un_comtrade_snapshot(
         raise ValueError(
             f"UN Comtrade start year {start_year} exceeds end year {end_year}"
         )
-    if subscription_key.strip() == "":
-        raise ValueError("UN Comtrade subscription key must not be blank")
     if timeout_seconds <= 0:
         raise ValueError("UN Comtrade timeout must be positive")
     if request_interval_seconds < 0:
@@ -202,13 +186,8 @@ def sync_un_comtrade_snapshot(
     requested_years = tuple(range(start_year, end_year + 1))
     object_store.ensure_bucket(UN_COMTRADE_RAW_BUCKET)
     owns_session = session is None
-    http_session = session or un_comtrade_http_session(subscription_key)
-    http_session.headers.update(
-        {
-            "User-Agent": DEFAULT_USER_AGENT,
-            SUBSCRIPTION_KEY_HEADER: subscription_key,
-        }
-    )
+    http_session = session or un_comtrade_http_session()
+    http_session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
 
     annual_totals: list[dict[str, Any]] = []
     availability: list[dict[str, Any]] = []
@@ -303,6 +282,12 @@ def sync_un_comtrade_snapshot(
                         required_columns=TOTALS_REQUIRED_COLUMNS,
                     )
                 )
+                if record_count >= PUBLIC_PREVIEW_MAX_RECORDS:
+                    raise ValueError(
+                        "UN Comtrade annual totals reached the anonymous preview "
+                        f"limit of {PUBLIC_PREVIEW_MAX_RECORDS} records for "
+                        f"{year}; refusing a potentially truncated snapshot"
+                    )
                 request_number += 1
                 object_key = (
                     f"{UN_COMTRADE_RAW_PREFIX}/raw/kind=annual_totals/"
@@ -383,19 +368,14 @@ def sync_un_comtrade_snapshot(
     )
 
 
-def un_comtrade_http_session(subscription_key: str) -> dlt_requests.Session:
+def un_comtrade_http_session() -> dlt_requests.Session:
     client = dlt_requests.Client(
         request_timeout=DEFAULT_TIMEOUT_SECONDS,
         request_max_attempts=DEFAULT_DOWNLOAD_ATTEMPTS,
         request_backoff_factor=DEFAULT_RETRY_BASE_SECONDS,
         respect_retry_after_header=True,
     )
-    client.session.headers.update(
-        {
-            "User-Agent": DEFAULT_USER_AGENT,
-            SUBSCRIPTION_KEY_HEADER: subscription_key,
-        }
-    )
+    client.session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
     return client.session
 
 
@@ -496,11 +476,6 @@ def _validate_csv(
         record_count = sum(1 for row in reader if any(cell != "" for cell in row))
     if record_count == 0:
         raise ValueError(f"UN Comtrade file {path.name} contains no data rows")
-    if record_count >= MAX_RECORDS_PER_REQUEST:
-        raise ValueError(
-            f"UN Comtrade file {path.name} reached the {MAX_RECORDS_PER_REQUEST} "
-            "record limit and may be truncated"
-        )
     return record_count
 
 

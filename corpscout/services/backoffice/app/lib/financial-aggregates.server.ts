@@ -320,9 +320,13 @@ export async function getCountryFinancials(code: string): Promise<null | {
 
 // ---------- Industry (division) page ----------
 
-export async function getIndustryFinancials(division: string): Promise<null | {
+export async function getIndustryFinancials(
+  division: string,
+  countryCode?: string,
+): Promise<null | {
   division: string;
   label: string;
+  countryCode: string | null;
   countries: CountryTotals[];
   topCompanies: TopCompany[];
 }> {
@@ -331,7 +335,10 @@ export async function getIndustryFinancials(division: string): Promise<null | {
   const label = labels.get(division);
   if (!label) return null;
 
-  const countries = naceCountries();
+  const normalizedCountryCode = countryCode?.toLowerCase();
+  const countries = normalizedCountryCode
+    ? naceCountries().filter((country) => country.code === normalizedCountryCode)
+    : naceCountries();
   if (countries.length === 0) return null;
 
   const params = { division };
@@ -354,5 +361,11 @@ export async function getIndustryFinancials(division: string): Promise<null | {
   // ("0 / —" rows) to the country table and chart — drop them here so every
   // consumer of getIndustryFinancials sees only countries actually present.
   const presentCountries = sortCountryTotals(totalsRows.map(parseTotals)).filter((c) => c.companies > 0);
-  return { division, label, countries: presentCountries, topCompanies };
+  return {
+    division,
+    label,
+    countryCode: normalizedCountryCode ?? null,
+    countries: presentCountries,
+    topCompanies,
+  };
 }

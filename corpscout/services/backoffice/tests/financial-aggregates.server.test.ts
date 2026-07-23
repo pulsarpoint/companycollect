@@ -108,8 +108,24 @@ describe("getIndustryFinancials", () => {
     expect(re!.topCompanies[0].revenue_usd).toBeGreaterThan(1e8);
   }, 60_000);
 
+  it("scopes industry totals and companies to the requested country", async () => {
+    const wholesale = await timed("getIndustryFinancials(46, se)", () =>
+      getIndustryFinancials("46", "se"),
+    );
+
+    expect(wholesale).not.toBeNull();
+    expect(wholesale!.countryCode).toBe("se");
+    expect(wholesale!.countries.map((country) => country.country_code)).toEqual(["se"]);
+    expect(wholesale!.countries[0].companies).toBeGreaterThan(0);
+    expect(wholesale!.topCompanies.length).toBeGreaterThan(0);
+    expect(
+      wholesale!.topCompanies.every((company) => company.country_code === "se"),
+    ).toBe(true);
+  }, 60_000);
+
   it("rejects garbage division codes", async () => {
     expect(await getIndustryFinancials("9x")).toBeNull();
     expect(await getIndustryFinancials("999")).toBeNull();
+    expect(await getIndustryFinancials("46", "xx")).toBeNull();
   });
 });
