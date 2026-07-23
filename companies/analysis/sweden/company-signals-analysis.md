@@ -4,25 +4,31 @@ Analysis date: **2026-07-23**
 
 ## Summary
 
-Sweden can support all three signals on the company list, but they do not have
-the same negative-result semantics:
-
-| Signal | Positive result | Can Sweden prove a negative? | Recommended list behavior |
-|---|---|---|---|
-| Financial data available | We have at least one usable financial statement | Yes, if the label means **available in Corpscout**; no, if it means the company has no annual report | Green when available, red when checked but unavailable in our sources, gray only when the country/source is unsupported |
-| Public award observed | The company is a named winner in UHM or TED | Not absolutely: direct purchases are excluded and after-notice compliance is incomplete | Green for an observed award; red only with the explicit meaning “no award found in covered sources/period”; gray for unsupported or unmatchable entities |
-| Currently publicly traded | A current equity instrument maps to the company on an in-scope venue | Yes, within a declared venue scope and a fresh, exhaustive instrument list | Green for current listing, red for absent from the complete in-scope venue set, gray when the entity cannot be matched or the source is stale/unavailable |
-
-The most important product rule is:
+**Decision (2026-07-23): v1 uses a two-state display contract — yes/unknown
+only.** Almost no source in scope can prove an explicit "no," so the product
+never renders a negative state. The most important product rule is:
 
 ```text
 green = positive evidence
-red   = checked and no result within the stated scope
-gray  = unknown, unsupported, unmatchable, or stale
+gray  = no positive evidence (unknown, unsupported, unmatchable, or stale)
 ```
 
-Red must never silently mean “never” when the source only covers a time period
-or a subset of events.
+A red/negative state is deliberately out of scope for v1. Because gray never
+claims anything about the company, no source coverage gap, stale snapshot, or
+missing paper filing can produce a false negative.
+
+Sweden can support all three signals on the company list:
+
+| Signal | Positive result | Could Sweden ever prove a negative? | v1 list behavior |
+|---|---|---|---|
+| Financial data available | We have at least one usable financial statement | Not for the company itself: paper filings are absent from the digital bulk source | Green when available; gray otherwise |
+| Public award observed | The company is a named winner in UHM or TED | No: direct purchases are excluded and after-notice compliance is incomplete | Green for an observed award; gray otherwise |
+| Currently publicly traded | A current equity instrument maps to the company on an in-scope venue | Only with a fresh, exhaustive venue snapshot (FIRDS); deferred as a future option | Green for a current listing; gray otherwise |
+
+The evidence tables below stay rich enough (per-award rows, per-instrument
+listing rows, provenance) that a scope-complete negative state — for example a
+FIRDS-based "not on any Swedish venue" — can be added later without
+re-ingestion. Only the display contract is simplified, not the storage.
 
 ### Recommended Sweden source stack
 
@@ -237,11 +243,11 @@ data, not a claim about the company.
 The main-list icon should be labelled **Financial data available**:
 
 - green: usable statement exists;
-- red: Sweden financial sources were checked, but no usable statement is
-  available in Corpscout;
-- gray: no country source/coverage or entity cannot be evaluated.
+- gray: no usable statement in Corpscout, no country source/coverage, or the
+  entity cannot be evaluated.
 
-This makes the red state truthful even while paper filings are missing.
+Gray makes no claim about the company, so the missing paper filings cannot
+produce a false negative.
 
 #### 2. Add ESEF as a separate consolidated-financial layer
 
@@ -419,8 +425,7 @@ company X has never contracted with a public institution
 Recommended UI language:
 
 - green: **Public award observed**
-- red: **No public award found in covered sources**
-- gray: **Unknown / not covered**
+- gray: **No award observed in covered sources / unknown**
 
 The tooltip should show:
 
@@ -546,8 +551,9 @@ AND is_delisted = 0
 AND issuer LEI maps to a Swedish company_id
 ```
 
-EODHD can support positive evidence quickly. Absence must remain gray until an
-official, fresh, scope-complete source can establish a trustworthy negative.
+EODHD can support positive evidence quickly. Absence stays gray in v1; a
+trustworthy negative would require an official, fresh, scope-complete source
+such as FIRDS and is deferred as a future option.
 
 ### Why FIRDS is still needed after EODHD
 
@@ -565,8 +571,8 @@ EODHD and FIRDS serve different roles:
 | Admission/termination history | Not present in our current symbol schema | Admission/first-trade and termination dates plus deltas |
 | Regulatory provenance | Commercial vendor | Trading-venue/SI reports under MiFIR/MAR |
 
-FIRDS is needed for four product guarantees that EODHD alone cannot currently
-provide:
+FIRDS provides four product capabilities that EODHD alone cannot currently
+provide (the fourth is a future option, not a v1 requirement):
 
 1. **Authoritative venue scope.** FIRDS identifies the exact trading venue by
    MIC, allowing Stockholm Main, First North, NGM, Nordic SME, and Spotlight
@@ -579,10 +585,11 @@ provide:
    cancellation files distinguish new, modified, terminated, and cancelled
    `(ISIN, MIC)` records. Admission/first-trade and termination dates support
    both “currently traded” and historical “was traded on date T” queries.
-4. **Defensible negative results.** A fresh, complete FIRDS snapshot filtered
-   to declared EEA venues gives a much stronger basis for red (“not found in
-   the complete in-scope venue set”). EODHD absence remains vendor-coverage
-   uncertainty and should stay gray.
+4. **A future negative state.** A fresh, complete FIRDS snapshot filtered to
+   declared EEA venues is the only realistic basis for a defensible “not found
+   in the complete in-scope venue set.” V1 deliberately does not render a
+   negative; this option is preserved for later. EODHD absence remains
+   vendor-coverage uncertainty and stays gray regardless.
 
 FIRDS therefore does not replace EODHD. EODHD remains the operational global
 ticker/price source; FIRDS is the official EEA identity, venue, classification,
@@ -759,14 +766,14 @@ duplicating companies on the main list.
 
 ## Cross-country product and schema
 
-### Use a real tri-state, not two booleans
+### Use a two-state signal that never fakes a negative
 
 For the main search projection:
 
 ```text
-has_financial_data       Nullable(UInt8)
-has_public_award         Nullable(UInt8)
-is_publicly_traded       Nullable(UInt8)
+has_financial_data       UInt8
+has_public_award         UInt8
+is_publicly_traded       UInt8
 ```
 
 Meaning:
@@ -774,11 +781,14 @@ Meaning:
 | Stored value | UI | Meaning |
 |---:|---|---|
 | `1` | green | confirmed positive |
-| `0` | red | source checked; no result in declared scope |
-| `NULL` | gray | unknown/unsupported/unmatchable/stale |
+| `0` | gray | no positive evidence (unknown/unsupported/unmatchable/stale) |
 
-Do not encode gray as `0`. The current non-null `has_financials UInt8` cannot
-represent source unavailability across countries.
+`0` must never be rendered as a negative claim about the company. This keeps
+the existing non-null `has_financials UInt8` storage contract — only the label
+and rendering change, and no cross-country migration is required. If a
+scope-complete negative is ever added (for example FIRDS-backed listing
+absence), that is the point to widen the type; the underlying evidence tables
+already retain enough provenance to backfill it without re-ingestion.
 
 Add useful summary fields:
 
@@ -814,21 +824,24 @@ gives the UI enough information for tooltips and gray states.
 Use explicit filter values:
 
 ```text
-financial_data = available | unavailable | unknown
-public_award   = observed | not_observed | unknown
-public_listing = current | not_current | unknown
+financial_data = available | unknown
+public_award   = observed | unknown
+public_listing = current | unknown
 ```
+
+The `unknown` option doubles as the practical “no data here” filter — nothing
+is lost functionally; only the claim that absence means absence is removed.
 
 For Sweden, the initial values should be:
 
-| Signal | Green | Red | Gray |
-|---|---|---|---|
-| Financial data | usable Bolagsverket/ESEF statement exists | sources checked but no usable statement in Corpscout | unsupported/unmatchable |
-| Public award | UHM or TED winner match exists | no match in stated source/time coverage | invalid/unmatchable ID or stale/failed source |
-| Public listing | current equity listing in in-scope venue set | absent from fresh, complete in-scope venue set | unresolved entity or incomplete/stale venue snapshot |
+| Signal | Green | Gray |
+|---|---|---|
+| Financial data | usable Bolagsverket/ESEF statement exists | no usable statement in Corpscout, or unsupported/unmatchable |
+| Public award | UHM or TED winner match exists | no match in covered sources, invalid/unmatchable ID, or stale/failed source |
+| Public listing | current equity listing in in-scope venue set | no matched current listing, unresolved entity, or incomplete/stale venue snapshot |
 
-Facet counts must include all three states. The existing “Has financials”
-positive-only filter should become a three-option filter.
+Facet counts must include both states. The existing “Has financials”
+positive-only filter becomes a two-option filter.
 
 ### Main-list icons
 
@@ -934,12 +947,15 @@ received, so no raw API response was saved.
 
 ### Phase 1 — correct product semantics
 
-1. Change the cross-country signal contract to `1 / 0 / NULL`.
-2. Add country/signal coverage metadata.
-3. Rename the financial label to “Financial data available.”
-4. Add three-state filters and facet counts.
+1. Keep the signal storage as plain `UInt8` (`1` = confirmed positive, `0` =
+   no positive evidence).
+2. Render `0` as neutral/gray everywhere; never as a negative claim.
+3. Add country/signal coverage metadata for tooltips.
+4. Rename the financial label to “Financial data available.”
+5. Add two-state filters and facet counts.
 
-This prevents misleading red icons before new sources are added.
+This removes the misleading implication that absence of data means a negative
+fact about the company, with no storage migration required.
 
 ### Phase 2 — Sweden procurement
 
@@ -959,15 +975,17 @@ This is the highest-value, lowest-uncertainty new signal.
    ISIN -> LEI -> Swedish organisation number.
 3. Publish the EODHD-backed positive green signal; keep unmatched/absent rows
    gray.
-4. Ingest FIRDS weekly full plus daily delta/cancellation reference data.
+4. Ingest FIRDS weekly full plus daily delta/cancellation reference data for
+   venue accuracy, instrument classification, and lifecycle history.
 5. Reconcile EODHD and FIRDS into one instrument-level listing model, with
    source-specific provenance and conflict flags.
 6. Validate Nasdaq, Spotlight, and NGM counts against venue sources.
-7. Enable a scoped red state only after FIRDS freshness/completeness checks
-   pass.
-8. Add current-listing icon/filter and detail evidence.
+7. Add current-listing icon/filter and detail evidence.
 
-This can support a trustworthy red state within a declared venue scope.
+Because v1 has no negative state, FIRDS is not load-bearing for the boolean
+and steps 4–6 can slide later without blocking the green signal. The FIRDS
+reconciliation preserves the option of a venue-scoped negative state in a
+future version.
 
 ### Phase 4 — financial coverage improvement
 
@@ -983,8 +1001,12 @@ This can support a trustworthy red state within a declared venue scope.
 1. **Listing scope:** does “publicly traded” mean Swedish venues, any EEA
    venue, or anywhere worldwide? V1 should explicitly say Swedish regulated
    markets and Swedish MTF/growth markets.
-2. **Procurement red:** product approval is needed for the wording “no award
-   found in covered sources,” because the data cannot prove “never contracted.”
+2. **Personal data in procurement suppliers:** Swedish sole traders use the
+   personal identity number as the organisation number, so the UHM supplier ID
+   column contains personnummer for person-form suppliers (and some of the
+   ~7% unmatched digits-only IDs plausibly are, too). Decide whether
+   person-form suppliers are ingested/displayed at all before the procurement
+   layer ships.
 3. **Paper financials:** confirm whether any current Bolagsverket high-value
    API endpoint delivers scanned paper filings. Do not assume it does.
 4. **Market-data rights:** confirm production storage and display rights for
@@ -1011,5 +1033,7 @@ This can support a trustworthy red state within a declared venue scope.
    before deduplication.
 12. **Foreign suppliers/issuers:** retain unmatched foreign entities in source
    tables, but do not attach them to Swedish registry rows by name alone.
-13. **Refresh failure:** a stale or failed source snapshot must turn an
-    otherwise red absence into gray, not silently preserve a false negative.
+13. **Refresh failure:** with no negative state, a stale or failed source
+    snapshot cannot create a false negative, but it must still be visible in
+    the coverage metadata, and green evidence should carry its retrieval date
+    so aging positives can be spotted.
