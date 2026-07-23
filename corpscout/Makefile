@@ -1,4 +1,4 @@
-.PHONY: up down logs rebuild rebuild-local scheduler-local-bin migrate-up migrate-down migrate-test-up migrate-test-down clickhouse-migrate-up clickhouse-migrate-up-one clickhouse-migrate-down clickhouse-migrate-force clickhouse-migrate-version clickhouse-dns-record-backfill source-fixtures-existing-artifacts source-list sqlc-generate test test-db
+.PHONY: up down logs rebuild rebuild-local scheduler-local-bin migrate-up migrate-down migrate-test-up migrate-test-down clickhouse-migrate-up clickhouse-migrate-up-one clickhouse-migrate-down clickhouse-migrate-force clickhouse-migrate-version clickhouse-dns-record-backfill clickhouse-dns-seen-window-backfill source-fixtures-existing-artifacts source-list sqlc-generate test test-db
 
 DATABASE_URL := $(or $(DATABASE_URL),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),postgres://corpscout:change-me@companycollect:5432/corpscout?sslmode=disable)
 CORPSCOUT_TEST_DATABASE_URL := $(or $(CORPSCOUT_TEST_DATABASE_URL),$(shell sed -n 's/^CORPSCOUT_TEST_DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1 | sed 's|/corpscout?|/corpscout_test?|'),postgres://corpscout:change-me@companycollect:5432/corpscout_test?sslmode=disable)
@@ -64,6 +64,14 @@ clickhouse-dns-record-backfill:
 	DNS_BACKFILL_END_BUCKET="$(or $(END_BUCKET),15)" \
 	DNS_BACKFILL_PHASE="$(or $(PHASE),both)" \
 	./clickhouse/operations/run_dns_record_normalization_backfill.sh
+
+clickhouse-dns-seen-window-backfill:
+	@CLICKHOUSE_NATIVE_URL="$(CLICKHOUSE_NATIVE_URL)" \
+	COMPANYCOLLECT_HOST_IP="$(COMPANYCOLLECT_HOST_IP)" \
+	DNS_SEEN_BACKFILL_START_BUCKET="$(or $(START_BUCKET),0)" \
+	DNS_SEEN_BACKFILL_END_BUCKET="$(or $(END_BUCKET),15)" \
+	DNS_SEEN_BACKFILL_PHASE="$(or $(PHASE),both)" \
+	./clickhouse/operations/run_dns_records_seen_window_backfill.sh
 
 source-fixtures-existing-artifacts:
 	@docker run --rm $(POSTGRES_DOCKER_ARGS) -v "$(CURDIR)/database/fixtures:/fixtures:ro" postgres:16-alpine psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -f /fixtures/company_source_existing_artifact_runs.sql

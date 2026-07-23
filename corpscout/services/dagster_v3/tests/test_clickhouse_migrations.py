@@ -177,6 +177,9 @@ EXPECTED_MIGRATIONS = (
     "000158_corpscout_imf_weo",
     "000159_corpscout_eurostat",
     "000160_corpscout_un_comtrade",
+    "000161_corpscout_dns_records_seen_window",
+    "000162_corpscout_dns_records_seen_window_cutover",
+    "000163_corpscout_dns_record_sightings_cleanup",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -854,6 +857,187 @@ def test_dns_record_observations_cleanup_removes_only_legacy_write_path() -> Non
         "corpscout.domain_hostnames_ingest_mv" in down_sql
     )
     assert "INSERT INTO corpscout.commoncrawl_domain_dns_record_observations" not in down_sql
+
+
+def test_dns_records_seen_window_dual_writes_idempotent_aggregates() -> None:
+    sql = _migration_sql("000161_corpscout_dns_records_seen_window.up.sql")
+    down_sql = _migration_sql("000161_corpscout_dns_records_seen_window.down.sql")
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records_v2"
+        in sql
+    )
+    assert "ENGINE = AggregatingMergeTree()" in sql
+    assert "PARTITION BY cityHash64(root_domain) % 16" in sql
+    assert "SimpleAggregateFunction(min, DateTime64(3, 'UTC'))" in sql
+    assert "SimpleAggregateFunction(max, DateTime64(3, 'UTC'))" in sql
+    assert (
+        "SimpleAggregateFunction(groupUniqArrayArray, Array(LowCardinality(String)))"
+        in sql
+    )
+    # The outbox retry model re-inserts duplicate rows; every aggregate must be idempotent.
+    assert "SimpleAggregateFunction(sum" not in sql
+
+    record_id_expression = (
+        "sipHash128(root_domain, name, record_type_code, "
+        "record_class_code, rdata_wire) AS record_id"
+    )
+    assert record_id_expression in sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_records_ingest_v2_mv" in sql
+    )
+    assert "TO corpscout.commoncrawl_domain_dns_records_v2" in sql
+    assert "min(observed_at) AS first_seen" in sql
+    assert "max(observed_at) AS last_seen" in sql
+    assert "groupUniqArray(source) AS sources" in sql
+    assert "groupUniqArray(discovery) AS discoveries" in sql
+    assert "GROUP BY" in sql
+
+    # 000161 only dual-writes; the 000155 write path and read surface must stay attached.
+    assert "DROP VIEW IF EXISTS corpscout.commoncrawl_domain_dns_records_ingest_mv" not in sql
+    assert (
+        "DROP VIEW IF EXISTS corpscout.commoncrawl_domain_dns_record_sightings_ingest_mv"
+        not in sql
+    )
+    assert "RENAME TABLE" not in sql
+
+    drop_mv = (
+        "DROP VIEW IF EXISTS corpscout.commoncrawl_domain_dns_records_ingest_v2_mv"
+    )
+    drop_table = "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records_v2"
+    assert drop_mv in down_sql
+    assert drop_table in down_sql
+    assert down_sql.index(drop_mv) < down_sql.index(drop_table)
+
+
+def test_dns_records_seen_window_backfill_streams_within_one_bucket() -> None:
+    backfill = (
+        OPERATIONS_DIR / "dns_records_seen_window_backfill_bucket.sql"
+    ).read_text()
+    validate = (
+        OPERATIONS_DIR / "dns_records_seen_window_validate_bucket.sql"
+    ).read_text()
+
+    assert "INSERT INTO corpscout.commoncrawl_domain_dns_records_v2" in backfill
+    assert "FROM corpscout.commoncrawl_domain_dns_records AS r" in backfill
+    assert "FROM corpscout.commoncrawl_domain_dns_record_sightings" in backfill
+    assert backfill.count("cityHash64(root_domain) % 16 = {bucket:UInt8}") >= 1
+    assert "cityHash64(r.root_domain) % 16 = {bucket:UInt8}" in backfill
+    # Records without sightings fall back to loaded_at instead of sentinel timestamps.
+    assert "if(s.sighting_count = 0, r.loaded_at, s.first_seen)" in backfill
+    assert "if(s.sighting_count = 0, r.loaded_at, s.last_seen)" in backfill
+    # Memory-safety settings: stream the sort-key GROUP BY and spill the join.
+    assert "optimize_aggregation_in_order = 1" in backfill
+    assert "join_algorithm = 'grace_hash'" in backfill
+    assert "max_bytes_before_external_group_by" in backfill
+
+    assert "FROM corpscout.commoncrawl_domain_dns_records_v2" in validate
+    assert "throwIf" in validate
+    assert "v2_count < legacy_count" in validate
+    assert "first_seen > last_seen" in validate
+    assert validate.count("optimize_aggregation_in_order = 1") == 2
+
+
+def test_dns_records_seen_window_cutover_fails_closed_during_rename() -> None:
+    sql = _migration_sql("000162_corpscout_dns_records_seen_window_cutover.up.sql")
+    down_sql = _migration_sql(
+        "000162_corpscout_dns_records_seen_window_cutover.down.sql"
+    )
+
+    drop_records_mv = (
+        "DROP VIEW IF EXISTS corpscout.commoncrawl_domain_dns_records_ingest_mv"
+    )
+    drop_sightings_mv = (
+        "DROP VIEW IF EXISTS "
+        "corpscout.commoncrawl_domain_dns_record_sightings_ingest_mv"
+    )
+    rename = (
+        "RENAME TABLE\n"
+        "    corpscout.commoncrawl_domain_dns_records "
+        "TO corpscout.commoncrawl_domain_dns_records_legacy,\n"
+        "    corpscout.commoncrawl_domain_dns_records_v2 "
+        "TO corpscout.commoncrawl_domain_dns_records;"
+    )
+    recreate_mv = (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_records_ingest_v2_mv\n"
+        "TO corpscout.commoncrawl_domain_dns_records\n"
+    )
+
+    # Legacy triggers are removed before the swap so nothing writes into renamed-away tables,
+    # and the MV is reattached only after the swap so gap inserts fail and the outboxes retry.
+    assert drop_records_mv in sql
+    assert drop_sightings_mv in sql
+    assert rename in sql
+    assert recreate_mv in sql
+    assert sql.index(drop_records_mv) < sql.index(rename)
+    assert sql.index(drop_sightings_mv) < sql.index(rename)
+    assert sql.index(rename) < sql.index(recreate_mv)
+
+    assert (
+        "CREATE VIEW IF NOT EXISTS corpscout.commoncrawl_domain_dns_records_current"
+        in sql
+    )
+    assert "FROM corpscout.commoncrawl_domain_dns_records FINAL" in sql
+    assert "SETTINGS do_not_merge_across_partitions_select_final = 1" in sql
+    for column in ("sources", "discoveries", "first_seen", "last_seen"):
+        assert f"    {column}," in sql
+
+    # Cutover must not delete data; that is 000163's job.
+    assert "DROP TABLE" not in sql
+
+    assert (
+        "RENAME TABLE\n"
+        "    corpscout.commoncrawl_domain_dns_records "
+        "TO corpscout.commoncrawl_domain_dns_records_v2,\n"
+        "    corpscout.commoncrawl_domain_dns_records_legacy "
+        "TO corpscout.commoncrawl_domain_dns_records;"
+    ) in down_sql
+    assert "TO corpscout.commoncrawl_domain_dns_records_v2" in down_sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_records_ingest_mv" in down_sql
+    )
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_record_sightings_ingest_mv" in down_sql
+    )
+    assert "TO corpscout.commoncrawl_domain_dns_record_sightings" in down_sql
+    assert "DROP TABLE" not in down_sql
+
+
+def test_dns_record_sightings_cleanup_drops_only_superseded_tables() -> None:
+    sql = _migration_sql("000163_corpscout_dns_record_sightings_cleanup.up.sql")
+    down_sql = _migration_sql(
+        "000163_corpscout_dns_record_sightings_cleanup.down.sql"
+    )
+
+    assert (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records_legacy" in sql
+    )
+    assert (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_sightings"
+        in sql
+    )
+    assert sql.count("SETTINGS max_table_size_to_drop = 150000000000") == 2
+
+    # The live write path and the canonical records table must survive cleanup.
+    assert "commoncrawl_domain_dns_records_ingest_v2_mv" not in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest" not in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records\n" not in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records;" not in sql
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records_legacy"
+        in down_sql
+    )
+    assert (
+        "CREATE TABLE IF NOT EXISTS "
+        "corpscout.commoncrawl_domain_dns_record_sightings" in down_sql
+    )
+    assert "INSERT INTO" not in down_sql
+    assert "CREATE MATERIALIZED VIEW" not in down_sql
 
 
 def test_sweden_company_registry_migration_covers_exported_columns() -> None:

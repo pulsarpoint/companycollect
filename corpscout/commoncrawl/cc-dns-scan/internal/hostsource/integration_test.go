@@ -65,8 +65,6 @@ func cleanupObservations(t *testing.T, ctx context.Context, conn driver.Conn, ro
 	t.Helper()
 	t.Cleanup(func() {
 		for _, rootDomain := range roots {
-			_ = conn.Exec(ctx, `DELETE FROM corpscout.commoncrawl_domain_dns_record_sightings
-				WHERE root_domain = ?`, rootDomain)
 			_ = conn.Exec(ctx, `DELETE FROM corpscout.commoncrawl_domain_dns_records
 				WHERE root_domain = ?`, rootDomain)
 			_ = conn.Exec(ctx, `DELETE FROM corpscout.domain_hostnames_state

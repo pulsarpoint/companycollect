@@ -1,5 +1,11 @@
 # DNS record normalization backfill
 
+> **Superseded.** This procedure completed with migrations 155/156. The per-scan sighting fact it
+> populated is replaced by the seen-window records table (migrations 161–163); for the current
+> procedure see [dns_records_seen_window_backfill.md](dns_records_seen_window_backfill.md). Kept
+> for historical reference — its runner now hard-fails because the legacy observations table was
+> dropped by migration 156.
+
 Migration 155 introduces the canonical DNS record dimension and monthly sighting fact. The legacy
 wide observation table remains the historical backfill source and is not removed by the migration.
 
