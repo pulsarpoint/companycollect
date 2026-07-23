@@ -18,6 +18,7 @@ from dagster_v3.defs.finland_verotax import tables as finland_verotax_tables
 from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 from dagster_v3.defs.sweden_financial import history as sweden_financial_history
 from dagster_v3.defs.wikidata import tables as wikidata_tables
+from dagster_v3.defs.world_bank_macro import tables as world_bank_macro_tables
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
@@ -172,6 +173,10 @@ EXPECTED_MIGRATIONS = (
     "000154_corpscout_eodhd_market_data",
     "000155_corpscout_dns_record_normalization",
     "000156_corpscout_dns_record_observations_cleanup",
+    "000157_corpscout_world_bank_macro_observations",
+    "000158_corpscout_imf_weo",
+    "000159_corpscout_eurostat",
+    "000160_corpscout_un_comtrade",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -901,6 +906,9 @@ def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
         "000001_reference_nace_categories.up.sql": nace_tables.NACE_CATEGORIES_DDL,
         "000004_norway_brreg_financial_statements.up.sql": (
             norway_brreg_tables.FINANCIAL_STATEMENTS_DDL
+        ),
+        "000157_corpscout_world_bank_macro_observations.up.sql": (
+            world_bank_macro_tables.WORLD_BANK_MACRO_DDL
         ),
     }
 

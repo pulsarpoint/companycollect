@@ -144,6 +144,12 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ),
     # nace — weekly Mon
     ClickhouseLeaf("nace_categories_clickhouse", ("nace_categories",), WEEKLY),
+    # UN Comtrade — monthly 10th (schedule default-STOPPED until first live run)
+    ClickhouseLeaf(
+        "un_comtrade_annual_totals_clickhouse",
+        ("un_comtrade_annual_availability", "un_comtrade_annual_totals"),
+        MONTHLY,
+    ),
     # open_page_rank — weekly Sun (schedule default-STOPPED; WARN is the signal)
     ClickhouseLeaf(
         "open_page_rank_domains_clickhouse", ("open_page_rank_domains",), WEEKLY
@@ -209,7 +215,7 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ),
     # wikidata — weekly Mon
     ClickhouseLeaf(
-        "wikidata_company_seed_complete",
+        "wikidata_snapshot_complete",
         (
             "wikidata_companies",
             "wikidata_exchanges",

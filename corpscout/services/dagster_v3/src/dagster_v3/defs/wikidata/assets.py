@@ -42,12 +42,15 @@ from dagster_v3.defs.wikidata.source import (
     build_listed_company_query,
     build_registry_number_company_query,
     collapse_active_listed_exchange_rows,
+    completed_wikidata_raw_manifest_keys,
     manifest_object_key,
     page_object_key,
     query_hash,
     registry_pseudo_exchange_id,
     response_bindings,
+    seed_units_object_key,
     snapshot_manifest_object_key,
+    stage_manifest_object_key,
     iter_wikidata_exchange_rows,
     iter_wikidata_listed_company_rows,
     wikidata_id_from_url,
@@ -61,6 +64,50 @@ WIKIDATA_CLICKHOUSE_POOL = "wikidata_clickhouse"
 WIKIDATA_STEP_MAX_RETRIES = 4
 WIKIDATA_STEP_RETRY_BASE_DELAY_SECONDS = 300
 WIKIDATA_STEP_RETRY_MAX_DELAY_SECONDS = 2_400
+WIKIDATA_SPARQL_POOL = "wikidata_sparql"
+WIKIDATA_WEEKLY_PARTITIONS = dg.WeeklyPartitionsDefinition(
+    start_date="2026-07-20",
+    minute_offset=30,
+    hour_offset=3,
+    day_offset=1,
+    timezone="Europe/Belgrade",
+    end_offset=1,
+)
+WIKIDATA_COMPANY_SOURCE_PARTITIONS = dg.DynamicPartitionsDefinition(
+    name="wikidata_company_source"
+)
+WIKIDATA_RAW_PARTITIONS = dg.MultiPartitionsDefinition(
+    {
+        "company_source": WIKIDATA_COMPANY_SOURCE_PARTITIONS,
+        "date": WIKIDATA_WEEKLY_PARTITIONS,
+    }
+)
+WIKIDATA_COMPANY_PAGES_KIND = "company_pages"
+WIKIDATA_COMPANY_PROFILE_KIND = "company_profiles"
+WIKIDATA_COMPANY_IDENTIFIERS_KIND = "company_identifiers"
+WIKIDATA_COMPANY_RELATIONSHIPS_KIND = "company_relationships"
+WIKIDATA_COMPANY_PEOPLE_KIND = "company_people"
+WIKIDATA_PERSONS_KIND = "persons"
+WIKIDATA_AUGMENTATION_KIND_BY_DATA_KIND = {
+    WIKIDATA_COMPANY_PROFILE_KIND: "profile",
+    WIKIDATA_COMPANY_IDENTIFIERS_KIND: "identifiers",
+    WIKIDATA_COMPANY_RELATIONSHIPS_KIND: "relationships",
+    WIKIDATA_COMPANY_PEOPLE_KIND: "people",
+}
+WIKIDATA_AUGMENTATION_QUERY_BY_DATA_KIND = {
+    WIKIDATA_COMPANY_PROFILE_KIND: build_company_profile_augmentation_query,
+    WIKIDATA_COMPANY_IDENTIFIERS_KIND: build_company_identifier_augmentation_query,
+    WIKIDATA_COMPANY_RELATIONSHIPS_KIND: (
+        build_company_relationship_augmentation_query
+    ),
+    WIKIDATA_COMPANY_PEOPLE_KIND: build_company_people_augmentation_query,
+}
+WIKIDATA_NETWORK_DATA_KINDS = tuple(WIKIDATA_AUGMENTATION_KIND_BY_DATA_KIND)
+WIKIDATA_ALL_SEED_UNIT_DATA_KINDS = (
+    WIKIDATA_COMPANY_PAGES_KIND,
+    *WIKIDATA_NETWORK_DATA_KINDS,
+    WIKIDATA_PERSONS_KIND,
+)
 WIKIDATA_EMPTY_ALLOWED_TABLES = (
     tables.WIKIDATA_COMPANY_PEOPLE_TABLE,
     tables.WIKIDATA_PERSONS_TABLE,
@@ -68,38 +115,106 @@ WIKIDATA_EMPTY_ALLOWED_TABLES = (
 
 
 @dg.asset(
-    # Ordering-only deps for discoverability: every country with a national
-    # registry-number Wikidata property (see WikidataRegistrySeedSpec) shows up
-    # connected to the wikidata seed in the Dagster UI asset graph, and a country
-    # lacking the edge is visibly unwired. These deps do NOT force materialization —
-    # the seed stays on its own weekly schedule, and wikidata_company_seed_selection
-    # explicitly excludes each spine's upstream so the weekly job doesn't balloon into
-    # materializing nine full country pipelines (see WIKIDATA_REGISTRY_SEED_SPECS /
-    # tests/test_wikidata_assets.py wiring test).
-    deps=[
-        dg.AssetKey(spine_asset_key)
-        for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
-    ],
     group_name=GROUP_NAME,
     kinds={"python", "wikidata", "s3"},
     description=(
-        "Pulls paged raw Wikidata company SPARQL responses into object storage: "
-        "exchange-listed companies, plus every Wikidata item carrying a national "
-        "registry-number property (pulled as pseudo-exchanges)."
+        "Downloads or reuses the weekly active-exchange catalog. This asset "
+        "contains exchange discovery only; it does not download companies or people."
     ),
+    partitions_def=WIKIDATA_WEEKLY_PARTITIONS,
+    pool=WIKIDATA_SPARQL_POOL,
 )
-def wikidata_company_seed_raw_objects(
+def wikidata_exchanges_raw(
     context: dg.AssetExecutionContext,
     config: WikidataRawPullConfig,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     client = WikidataSparqlClient(timeout_seconds=config.request_timeout_seconds)
+    return pull_wikidata_exchanges_raw(
+        client=client,
+        object_store=object_store,
+        config=config,
+        partition_date=context.partition_key,
+        source_run_id=context.partition_key,
+        retrieved_at=datetime.now(UTC).isoformat(),
+    )
+
+
+@dg.asset(
+    deps=[
+        dg.AssetDep("wikidata_exchanges_raw"),
+        *(
+            dg.AssetDep(
+                dg.AssetKey(spine_asset_key),
+                partition_mapping=dg.AllPartitionMapping(),
+            )
+            for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
+        ),
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description=(
+        "Builds company-source partitions from exchange listings and national "
+        "registry identifiers. This asset is company-specific, not the Wikidata root."
+    ),
+    partitions_def=WIKIDATA_WEEKLY_PARTITIONS,
+)
+def wikidata_company_source_units(
+    context: dg.AssetExecutionContext,
+    config: WikidataRawPullConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    partition_date = context.partition_key
+    client = WikidataSparqlClient(timeout_seconds=config.request_timeout_seconds)
+    retrieved_at = datetime.now(UTC).isoformat()
+    return discover_wikidata_company_sources(
+        client=client,
+        object_store=object_store,
+        config=config,
+        partition_date=partition_date,
+        source_run_id=partition_date,
+        retrieved_at=retrieved_at,
+        log=context.log.info,
+    )
+
+
+@dg.asset(
+    deps=[
+        dg.AssetDep(
+            "wikidata_company_source_units",
+            partition_mapping=dg.MultiToSingleDimensionPartitionMapping("date"),
+        )
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description=(
+        "Downloads only base company/listing pages for one weekly company source. "
+        "Profiles, identifiers, relationships, and people are separate assets."
+    ),
+    partitions_def=WIKIDATA_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=WIKIDATA_SPARQL_POOL,
+)
+def wikidata_company_pages_raw(
+    context: dg.AssetExecutionContext,
+    config: WikidataRawPullConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    partition_date, seed_unit_id = wikidata_company_source_partition(context)
+    seed_unit = read_wikidata_seed_unit(
+        object_store=object_store,
+        partition_date=partition_date,
+        exchange_id=seed_unit_id,
+    )
+    client = WikidataSparqlClient(timeout_seconds=config.request_timeout_seconds)
     try:
-        return pull_wikidata_company_seed_raw_objects(
+        return pull_wikidata_company_pages_for_seed_unit(
             client=client,
             object_store=object_store,
             config=config,
-            run_id=context.run_id,
+            partition_date=partition_date,
+            seed_unit=seed_unit,
+            source_run_id=partition_date,
             retrieved_at=datetime.now(UTC).isoformat(),
             sleep=time.sleep,
             log=context.log.info,
@@ -107,8 +222,11 @@ def wikidata_company_seed_raw_objects(
     except WikidataTransientRequestError as exc:
         retry_delay_seconds = wikidata_step_retry_delay_seconds(context.retry_number)
         context.log.warning(
-            "Wikidata transient request failure; retrying checkpointed step in %s "
-            "seconds (retry=%s/%s): %s",
+            "Wikidata transient request failure; retrying partition date=%s "
+            "seed_unit=%s data_kind=%s in %s seconds (retry=%s/%s): %s",
+            partition_date,
+            seed_unit_id,
+            WIKIDATA_COMPANY_PAGES_KIND,
             retry_delay_seconds,
             context.retry_number + 1,
             WIKIDATA_STEP_MAX_RETRIES,
@@ -118,6 +236,225 @@ def wikidata_company_seed_raw_objects(
             max_retries=WIKIDATA_STEP_MAX_RETRIES,
             seconds_to_wait=retry_delay_seconds,
         ) from exc
+
+
+def _wikidata_augmentation_asset(
+    context: dg.AssetExecutionContext,
+    *,
+    config: WikidataRawPullConfig,
+    object_store: ObjectStoreResource,
+    data_kind: str,
+) -> dg.MaterializeResult:
+    partition_date, seed_unit_id = wikidata_company_source_partition(context)
+    client = WikidataSparqlClient(timeout_seconds=config.request_timeout_seconds)
+    try:
+        return pull_wikidata_augmentation_for_seed_unit(
+            client=client,
+            object_store=object_store,
+            config=config,
+            partition_date=partition_date,
+            seed_unit_id=seed_unit_id,
+            data_kind=data_kind,
+            source_run_id=partition_date,
+            retrieved_at=datetime.now(UTC).isoformat(),
+            sleep=time.sleep,
+            log=context.log.info,
+        )
+    except WikidataTransientRequestError as exc:
+        retry_delay_seconds = wikidata_step_retry_delay_seconds(context.retry_number)
+        context.log.warning(
+            "Wikidata transient request failure; retrying partition date=%s "
+            "seed_unit=%s data_kind=%s in %s seconds (retry=%s/%s): %s",
+            partition_date,
+            seed_unit_id,
+            data_kind,
+            retry_delay_seconds,
+            context.retry_number + 1,
+            WIKIDATA_STEP_MAX_RETRIES,
+            exc,
+        )
+        raise dg.RetryRequested(
+            max_retries=WIKIDATA_STEP_MAX_RETRIES,
+            seconds_to_wait=retry_delay_seconds,
+        ) from exc
+
+
+@dg.asset(
+    deps=["wikidata_company_pages_raw"],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description="Downloads only company profile attributes for one company source.",
+    partitions_def=WIKIDATA_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=WIKIDATA_SPARQL_POOL,
+)
+def wikidata_company_profiles_raw(
+    context: dg.AssetExecutionContext,
+    config: WikidataRawPullConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _wikidata_augmentation_asset(
+        context,
+        config=config,
+        object_store=object_store,
+        data_kind=WIKIDATA_COMPANY_PROFILE_KIND,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_pages_raw"],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description="Downloads only company identifiers for one company source.",
+    partitions_def=WIKIDATA_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=WIKIDATA_SPARQL_POOL,
+)
+def wikidata_company_identifiers_raw(
+    context: dg.AssetExecutionContext,
+    config: WikidataRawPullConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _wikidata_augmentation_asset(
+        context,
+        config=config,
+        object_store=object_store,
+        data_kind=WIKIDATA_COMPANY_IDENTIFIERS_KIND,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_pages_raw"],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description="Downloads company relationships for one weekly company source.",
+    partitions_def=WIKIDATA_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=WIKIDATA_SPARQL_POOL,
+)
+def wikidata_company_relationships_raw(
+    context: dg.AssetExecutionContext,
+    config: WikidataRawPullConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _wikidata_augmentation_asset(
+        context,
+        config=config,
+        object_store=object_store,
+        data_kind=WIKIDATA_COMPANY_RELATIONSHIPS_KIND,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_pages_raw"],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description="Downloads company-to-person links for one weekly company source.",
+    partitions_def=WIKIDATA_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=WIKIDATA_SPARQL_POOL,
+)
+def wikidata_company_people_raw(
+    context: dg.AssetExecutionContext,
+    config: WikidataRawPullConfig,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return _wikidata_augmentation_asset(
+        context,
+        config=config,
+        object_store=object_store,
+        data_kind=WIKIDATA_COMPANY_PEOPLE_KIND,
+    )
+
+
+@dg.asset(
+    deps=["wikidata_company_people_raw"],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description=(
+        "Materializes person records independently from the company-person raw "
+        "responses. It performs no additional Wikidata request."
+    ),
+    partitions_def=WIKIDATA_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+)
+def wikidata_persons_raw(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    partition_date, seed_unit_id = wikidata_company_source_partition(context)
+    return materialize_wikidata_persons_for_seed_unit(
+        object_store=object_store,
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+    )
+
+
+@dg.asset(
+    deps=[
+        "wikidata_company_pages_raw",
+        "wikidata_company_profiles_raw",
+        "wikidata_company_identifiers_raw",
+        "wikidata_company_relationships_raw",
+        "wikidata_company_people_raw",
+        "wikidata_persons_raw",
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description="Combines completed domain manifests for one weekly company source.",
+    partitions_def=WIKIDATA_RAW_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+)
+def wikidata_company_source_snapshot(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    partition_date, seed_unit_id = wikidata_company_source_partition(context)
+    return materialize_wikidata_company_source_snapshot(
+        object_store=object_store,
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+    )
+
+
+@dg.asset(
+    deps=[
+        dg.AssetDep(
+            "wikidata_company_source_snapshot",
+            partition_mapping=dg.MultiToSingleDimensionPartitionMapping("date"),
+        )
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "wikidata", "s3"},
+    description=(
+        "Verifies every company-source manifest for a weekly partition and "
+        "publishes the aggregate Wikidata raw snapshot consumed by DuckDB."
+    ),
+    partitions_def=WIKIDATA_WEEKLY_PARTITIONS,
+)
+def wikidata_raw_snapshot(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    return finalize_wikidata_raw_snapshot(
+        object_store=object_store,
+        partition_date=context.partition_key,
+        completed_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def wikidata_company_source_partition(
+    context: dg.AssetExecutionContext,
+) -> tuple[str, str]:
+    partition_key = context.partition_key
+    if not isinstance(partition_key, dg.MultiPartitionKey):
+        raise ValueError(
+            "Wikidata company raw asset requires company_source and date partitions"
+        )
+    return (
+        partition_key.keys_by_dimension["date"],
+        partition_key.keys_by_dimension["company_source"],
+    )
 
 
 def wikidata_step_retry_delay_seconds(retry_number: int) -> int:
@@ -142,11 +479,15 @@ def _materialize_wikidata_duckdb_table(
 ) -> dg.MaterializeResult:
     database_path = wikidata_duckdb_path(table_name)
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    source_run_id = config.raw_run_id or context.run_id
+    partition_date = resolve_wikidata_snapshot_partition_date(
+        object_store=object_store,
+        configured_partition_date=config.partition_date,
+    )
+    source_run_id = partition_date
     context.log.info(
-        "Starting Wikidata DuckDB table: table=%s source_run_id=%s database=%s",
+        "Starting Wikidata DuckDB table: table=%s partition_date=%s database=%s",
         table_name,
-        source_run_id,
+        partition_date,
         database_path,
     )
     with duckdb.connect(str(database_path)) as connection:
@@ -157,7 +498,7 @@ def _materialize_wikidata_duckdb_table(
                 columns=WIKIDATA_EXCHANGES_COLUMNS,
                 rows=iter_wikidata_exchange_rows(
                     object_store=object_store,
-                    raw_run_id=config.raw_run_id,
+                    partition_date=partition_date,
                     max_exchanges=config.max_exchanges,
                     source_run_id=source_run_id,
                 ),
@@ -170,7 +511,7 @@ def _materialize_wikidata_duckdb_table(
                 columns=WIKIDATA_LISTED_COMPANIES_COLUMNS,
                 rows=iter_wikidata_listed_company_rows(
                     object_store=object_store,
-                    raw_run_id=config.raw_run_id,
+                    partition_date=partition_date,
                     max_pages=config.max_pages,
                     max_exchanges=config.max_exchanges,
                     source_run_id=source_run_id,
@@ -194,6 +535,7 @@ def _materialize_wikidata_duckdb_table(
             "duckdb_path": str(database_path),
             "duckdb_schema": WIKIDATA_DUCKDB_SCHEMA,
             "duckdb_table": table_name,
+            "partition_date": partition_date,
             "source_run_id": source_run_id,
             "source_row_count": source_row_count,
             "row_count": row_count,
@@ -290,7 +632,7 @@ def _export_wikidata_table_to_clickhouse(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -308,7 +650,7 @@ def wikidata_companies_duckdb(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -326,7 +668,7 @@ def wikidata_exchanges_duckdb(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -344,7 +686,7 @@ def wikidata_company_listings_duckdb(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -362,7 +704,7 @@ def wikidata_company_identifiers_duckdb(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -380,7 +722,7 @@ def wikidata_company_websites_duckdb(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -398,7 +740,7 @@ def wikidata_company_relationships_duckdb(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -416,7 +758,7 @@ def wikidata_company_people_duckdb(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -434,7 +776,7 @@ def wikidata_persons_duckdb(
 
 
 @dg.asset(
-    deps=["wikidata_company_seed_raw_objects"],
+    deps=["wikidata_raw_snapshot"],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "wikidata"},
 )
@@ -590,7 +932,7 @@ def wikidata_seed_extraction_runs_clickhouse(
     kinds={"python", "clickhouse", "wikidata"},
     description="Verifies that every published Wikidata ClickHouse table belongs to one source snapshot.",
 )
-def wikidata_company_seed_complete(
+def wikidata_snapshot_complete(
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     return _validate_wikidata_clickhouse_snapshot(clickhouse)
@@ -1802,88 +2144,398 @@ def _quote_duckdb_identifier(identifier: str) -> str:
     return f'"{escaped}"'
 
 
-def pull_wikidata_company_seed_raw_objects(
+def pull_wikidata_exchanges_raw(
     *,
     client: Any,
     object_store: ObjectStoreResource,
     config: WikidataRawPullConfig,
-    run_id: str,
+    partition_date: str,
+    source_run_id: str,
     retrieved_at: str,
-    sleep: Callable[[float], None],
+) -> dg.MaterializeResult:
+    object_store.ensure_bucket(WIKIDATA_RAW_BUCKET)
+    exchange_rows, active_exchanges_key = wikidata_raw_pull_exchange_rows(
+        client=client,
+        object_store=object_store,
+        config=config,
+        partition_date=partition_date,
+        source_run_id=source_run_id,
+        retrieved_at=retrieved_at,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "bucket": WIKIDATA_RAW_BUCKET,
+            "partition_date": partition_date,
+            "exchange_count": len(exchange_rows),
+            "active_exchanges_key": active_exchanges_key or "",
+            "exchange_ids": [
+                str(exchange_row["exchange_wikidata_id"])
+                for exchange_row in exchange_rows
+            ],
+        }
+    )
+
+
+def discover_wikidata_company_sources(
+    *,
+    client: Any,
+    object_store: ObjectStoreResource,
+    config: WikidataRawPullConfig,
+    partition_date: str,
+    source_run_id: str,
+    retrieved_at: str,
     log: Callable[..., object],
 ) -> dg.MaterializeResult:
-    log(
-        "Starting Wikidata raw download: run_id=%s page_size=%s max_pages=%s "
-        "include_registry_seed=%s",
-        run_id,
-        config.page_size,
-        config.max_pages,
-        config.include_registry_seed,
-    )
     object_store.ensure_bucket(WIKIDATA_RAW_BUCKET)
-    retrieved_date = retrieved_at[:10]
+    catalog_key = seed_units_object_key(partition_date=partition_date)
+    if object_store.exists(catalog_key, bucket=WIKIDATA_RAW_BUCKET):
+        seed_units = read_wikidata_seed_units(
+            object_store=object_store,
+            partition_date=partition_date,
+        )
+        log(
+            "Reusing Wikidata seed-unit catalog: partition_date=%s units=%s key=%s",
+            partition_date,
+            len(seed_units),
+            catalog_key,
+        )
+        return _wikidata_seed_units_result(
+            partition_date=partition_date,
+            catalog_key=catalog_key,
+            seed_units=seed_units,
+            reused=True,
+        )
+
     log("Discovering Wikidata exchanges and registry seed properties")
     exchange_rows, active_exchanges_key = wikidata_raw_pull_exchange_rows(
         client=client,
         object_store=object_store,
         config=config,
-        run_id=run_id,
-        retrieved_date=retrieved_date,
+        partition_date=partition_date,
+        source_run_id=source_run_id,
         retrieved_at=retrieved_at,
     )
     registry_rows = wikidata_raw_pull_registry_rows(
         config=config,
-        source_run_id=run_id,
+        source_run_id=source_run_id,
         retrieved_at=retrieved_at,
     )
-    # Registry properties are pulled as pseudo-exchanges AFTER the real exchanges, in
-    # the same loop, so raw-object layout/manifests/page numbering/augmentation
-    # batching/provenance keys work unchanged (see build_registry_number_company_query).
     seed_units = [_seed_unit_from_exchange_row(row) for row in exchange_rows] + [
         _seed_unit_from_registry_row(row) for row in registry_rows
     ]
+    object_store.write_json(
+        catalog_key,
+        json.dumps(
+            {
+                "source": "wikidata",
+                "status": "complete",
+                "partition_date": partition_date,
+                "source_run_id": source_run_id,
+                "retrieved_at": retrieved_at,
+                "active_exchanges_key": active_exchanges_key,
+                "seed_units": seed_units,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        bucket=WIKIDATA_RAW_BUCKET,
+    )
     log(
-        "Wikidata seed discovery completed: exchanges=%s registry_properties=%s "
-        "download_units=%s",
+        "Completed Wikidata seed-unit discovery: partition_date=%s exchanges=%s "
+        "registry_properties=%s units=%s key=%s",
+        partition_date,
         len(exchange_rows),
         len(registry_rows),
         len(seed_units),
+        catalog_key,
+    )
+    return _wikidata_seed_units_result(
+        partition_date=partition_date,
+        catalog_key=catalog_key,
+        seed_units=seed_units,
+        reused=False,
     )
 
-    total_row_count = 0
-    total_page_count = 0
-    total_augmentation_row_count = 0
-    total_augmentation_object_count = 0
-    manifest_keys: list[str] = []
 
-    for unit_index, seed_unit in enumerate(seed_units, start=1):
-        exchange_id = seed_unit["exchange_wikidata_id"]
-        unit_row_count = 0
-        unit_augmentation_row_count = 0
-        page_count = 0
-        object_keys: list[str] = []
-        augmentation_object_keys: list[str] = []
-        first_query = _seed_unit_query(seed_unit, limit=config.page_size, offset=0)
-        current_query_hash = query_hash(first_query)
-        log(
-            "Starting Wikidata download unit: unit=%s/%s mode=%s exchange_id=%s "
-            "exchange_name=%s expected_listed_companies=%s",
-            unit_index,
-            len(seed_units),
-            seed_unit["query_mode"],
-            exchange_id,
-            seed_unit["exchange_name"],
-            seed_unit["listed_company_count_on_exchange"],
+def _wikidata_seed_units_result(
+    *,
+    partition_date: str,
+    catalog_key: str,
+    seed_units: list[dict[str, Any]],
+    reused: bool,
+) -> dg.MaterializeResult:
+    exchange_count = sum(unit["query_mode"] == "exchange" for unit in seed_units)
+    return dg.MaterializeResult(
+        metadata={
+            "bucket": WIKIDATA_RAW_BUCKET,
+            "partition_date": partition_date,
+            "seed_units_key": catalog_key,
+            "unit_count": len(seed_units),
+            "exchange_count": exchange_count,
+            "registry_property_count": len(seed_units) - exchange_count,
+            "exchange_ids": [str(unit["exchange_wikidata_id"]) for unit in seed_units],
+            "reused": reused,
+        }
+    )
+
+
+def read_wikidata_seed_units(
+    *,
+    object_store: ObjectStoreResource,
+    partition_date: str,
+) -> list[dict[str, Any]]:
+    catalog_key = seed_units_object_key(partition_date=partition_date)
+    if not object_store.exists(catalog_key, bucket=WIKIDATA_RAW_BUCKET):
+        raise ValueError(
+            f"No Wikidata seed-unit catalog exists for partition_date={partition_date}"
+        )
+    payload = read_wikidata_raw_payload(
+        object_store=object_store,
+        object_key=catalog_key,
+    )
+    raw_seed_units = payload.get("seed_units")
+    if not isinstance(raw_seed_units, list) or not raw_seed_units:
+        raise ValueError(
+            "Wikidata seed-unit catalog must contain at least one seed unit: "
+            f"{catalog_key}"
+        )
+    seed_units: list[dict[str, Any]] = []
+    for raw_seed_unit in raw_seed_units:
+        if not isinstance(raw_seed_unit, dict):
+            raise ValueError(f"Wikidata seed unit is not an object: {catalog_key}")
+        exchange_id = str(raw_seed_unit.get("exchange_wikidata_id") or "")
+        if not exchange_id:
+            raise ValueError(f"Wikidata seed unit has no exchange id: {catalog_key}")
+        seed_units.append(raw_seed_unit)
+    return seed_units
+
+
+def read_wikidata_seed_unit(
+    *,
+    object_store: ObjectStoreResource,
+    partition_date: str,
+    exchange_id: str,
+) -> dict[str, Any]:
+    matches = [
+        seed_unit
+        for seed_unit in read_wikidata_seed_units(
+            object_store=object_store,
+            partition_date=partition_date,
+        )
+        if seed_unit["exchange_wikidata_id"] == exchange_id
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "Expected one Wikidata seed unit for "
+            f"partition_date={partition_date} exchange_id={exchange_id}; "
+            f"found {len(matches)}"
+        )
+    return matches[0]
+
+
+def pull_wikidata_company_pages_for_seed_unit(
+    *,
+    client: Any,
+    object_store: ObjectStoreResource,
+    config: WikidataRawPullConfig,
+    partition_date: str,
+    seed_unit: dict[str, Any],
+    source_run_id: str,
+    retrieved_at: str,
+    sleep: Callable[[float], None],
+    log: Callable[..., object],
+) -> dg.MaterializeResult:
+    object_store.ensure_bucket(WIKIDATA_RAW_BUCKET)
+    seed_unit_id = str(seed_unit["exchange_wikidata_id"])
+    adopted = adopt_existing_wikidata_stage_manifest(
+        object_store=object_store,
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=WIKIDATA_COMPANY_PAGES_KIND,
+    )
+    if adopted is not None:
+        return wikidata_stage_result(adopted, reused=True)
+
+    stage_key = stage_manifest_object_key(
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=WIKIDATA_COMPANY_PAGES_KIND,
+    )
+    if object_store.exists(stage_key, bucket=WIKIDATA_RAW_BUCKET):
+        return wikidata_stage_result(
+            read_completed_wikidata_stage_manifest(
+                object_store=object_store,
+                partition_date=partition_date,
+                seed_unit_id=seed_unit_id,
+                data_kind=WIKIDATA_COMPANY_PAGES_KIND,
+            ),
+            reused=True,
         )
 
-        offset = 0
-        while config.max_pages is None or page_count < config.max_pages:
-            page_number = page_count + 1
-            object_key = page_object_key(
-                retrieved_date=retrieved_date,
-                run_id=run_id,
-                exchange_id=exchange_id,
+    object_keys: list[str] = []
+    row_count = 0
+    page_count = 0
+    offset = 0
+    first_query = _seed_unit_query(seed_unit, limit=config.page_size, offset=0)
+    while config.max_pages is None or page_count < config.max_pages:
+        page_number = page_count + 1
+        object_key = page_object_key(
+            partition_date=partition_date,
+            exchange_id=seed_unit_id,
+            page_number=page_number,
+        )
+        reused_checkpoint = object_store.exists(
+            object_key,
+            bucket=WIKIDATA_RAW_BUCKET,
+        )
+        if reused_checkpoint:
+            payload = read_wikidata_raw_payload(
+                object_store=object_store,
+                object_key=object_key,
+            )
+        else:
+            payload = client.fetch(
+                _seed_unit_query(
+                    seed_unit,
+                    limit=config.page_size,
+                    offset=offset,
+                ),
+                user_agent=config.user_agent,
+            )
+            object_store.write_json(
+                object_key,
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                bucket=WIKIDATA_RAW_BUCKET,
+            )
+        bindings = response_bindings(payload)
+        if not bindings:
+            break
+        page_count += 1
+        row_count += len(bindings)
+        offset += len(bindings)
+        object_keys.append(object_key)
+        log(
+            "%s Wikidata company page: partition_date=%s seed_unit=%s "
+            "page=%s page_rows=%s total_rows=%s object_key=%s",
+            "Reused" if reused_checkpoint else "Downloaded",
+            partition_date,
+            seed_unit_id,
+            page_number,
+            len(bindings),
+            row_count,
+            object_key,
+        )
+        if len(bindings) < config.page_size:
+            break
+        if config.request_delay_seconds > 0:
+            sleep(config.request_delay_seconds)
+
+    manifest = {
+        "source": "wikidata",
+        "status": "complete",
+        "data_kind": WIKIDATA_COMPANY_PAGES_KIND,
+        "partition_date": partition_date,
+        "source_run_id": source_run_id,
+        "seed_unit_id": seed_unit_id,
+        "exchange_id": seed_unit_id,
+        "query_mode": seed_unit["query_mode"],
+        "exchange_name": seed_unit["exchange_name"],
+        "listed_company_count_on_exchange": seed_unit[
+            "listed_company_count_on_exchange"
+        ],
+        "mics": seed_unit["mics"],
+        "country_wikidata_id": seed_unit["country_wikidata_id"],
+        "country_name": seed_unit["country_name"],
+        "country_iso2": seed_unit["country_iso2"],
+        "registry_property_id": seed_unit["registry_property_id"],
+        "page_size": config.page_size,
+        "max_pages": config.max_pages,
+        "query_hash": query_hash(first_query),
+        "row_count": row_count,
+        "page_count": page_count,
+        "started_at": retrieved_at,
+        "completed_at": datetime.now(UTC).isoformat(),
+        "objects": object_keys,
+    }
+    write_wikidata_stage_manifest(
+        object_store=object_store,
+        manifest=manifest,
+    )
+    return wikidata_stage_result(manifest, reused=False)
+
+
+def pull_wikidata_augmentation_for_seed_unit(
+    *,
+    client: Any,
+    object_store: ObjectStoreResource,
+    config: WikidataRawPullConfig,
+    partition_date: str,
+    seed_unit_id: str,
+    data_kind: str,
+    source_run_id: str,
+    retrieved_at: str,
+    sleep: Callable[[float], None],
+    log: Callable[..., object],
+) -> dg.MaterializeResult:
+    if data_kind not in WIKIDATA_AUGMENTATION_KIND_BY_DATA_KIND:
+        raise ValueError(f"Unsupported Wikidata data kind: {data_kind}")
+    adopted = adopt_existing_wikidata_stage_manifest(
+        object_store=object_store,
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=data_kind,
+    )
+    if adopted is not None:
+        return wikidata_stage_result(adopted, reused=True)
+
+    stage_key = stage_manifest_object_key(
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=data_kind,
+    )
+    if object_store.exists(stage_key, bucket=WIKIDATA_RAW_BUCKET):
+        return wikidata_stage_result(
+            read_completed_wikidata_stage_manifest(
+                object_store=object_store,
+                partition_date=partition_date,
+                seed_unit_id=seed_unit_id,
+                data_kind=data_kind,
+            ),
+            reused=True,
+        )
+
+    pages_manifest = read_completed_wikidata_stage_manifest(
+        object_store=object_store,
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=WIKIDATA_COMPANY_PAGES_KIND,
+    )
+    augmentation_kind = WIKIDATA_AUGMENTATION_KIND_BY_DATA_KIND[data_kind]
+    query_builder = WIKIDATA_AUGMENTATION_QUERY_BY_DATA_KIND[data_kind]
+    object_keys: list[str] = []
+    row_count = 0
+    for page_number, page_key in enumerate(pages_manifest["objects"], start=1):
+        listed_bindings = response_bindings(
+            read_wikidata_raw_payload(
+                object_store=object_store,
+                object_key=str(page_key),
+            )
+        )
+        company_ids = sorted(
+            {
+                wikidata_id_from_url(binding_value(binding, "company"))
+                for binding in listed_bindings
+                if wikidata_id_from_url(binding_value(binding, "company"))
+            }
+        )
+        batches = list(_batched(company_ids, config.augmentation_batch_size))
+        for batch_number, company_id_batch in enumerate(batches, start=1):
+            object_key = augmentation_object_key(
+                partition_date=partition_date,
+                exchange_id=seed_unit_id,
+                augmentation_kind=augmentation_kind,
                 page_number=page_number,
+                batch_number=batch_number,
             )
             reused_checkpoint = object_store.exists(
                 object_key,
@@ -1894,145 +2546,478 @@ def pull_wikidata_company_seed_raw_objects(
                     object_store=object_store,
                     object_key=object_key,
                 )
-                log(
-                    "Reusing checkpointed Wikidata company page: exchange_id=%s "
-                    "page=%s offset=%s object_key=%s",
-                    exchange_id,
-                    page_number,
-                    offset,
-                    object_key,
-                )
             else:
-                query = _seed_unit_query(
-                    seed_unit,
-                    limit=config.page_size,
-                    offset=offset,
+                payload = client.fetch(
+                    query_builder(tuple(company_id_batch)),
+                    user_agent=config.user_agent,
                 )
-                payload = client.fetch(query, user_agent=config.user_agent)
-            bindings = response_bindings(payload)
-            if not bindings:
-                break
-
-            page_count += 1
-            unit_row_count += len(bindings)
-            offset += len(bindings)
-            if not reused_checkpoint:
                 object_store.write_json(
                     object_key,
                     json.dumps(payload, sort_keys=True, separators=(",", ":")),
                     bucket=WIKIDATA_RAW_BUCKET,
                 )
             object_keys.append(object_key)
-            page_augmentation_object_keys, page_augmentation_row_count = (
-                pull_wikidata_company_augmentation_raw_objects_for_page(
-                    client=client,
-                    object_store=object_store,
-                    config=config,
-                    run_id=run_id,
-                    retrieved_date=retrieved_date,
-                    exchange_id=exchange_id,
-                    page_number=page_count,
-                    listed_company_bindings=bindings,
-                    sleep=sleep,
-                    log=log,
-                )
-            )
-            augmentation_object_keys.extend(page_augmentation_object_keys)
-            unit_augmentation_row_count += page_augmentation_row_count
+            row_count += len(response_bindings(payload))
             log(
-                "Downloaded Wikidata company page: unit=%s/%s exchange_id=%s "
-                "page=%s page_rows=%s unit_rows=%s augmentation_rows=%s "
-                "object_key=%s",
-                unit_index,
-                len(seed_units),
-                exchange_id,
-                page_count,
-                len(bindings),
-                unit_row_count,
-                unit_augmentation_row_count,
+                "%s Wikidata data kind: partition_date=%s seed_unit=%s "
+                "data_kind=%s page=%s batch=%s object_key=%s",
+                "Reused" if reused_checkpoint else "Downloaded",
+                partition_date,
+                seed_unit_id,
+                data_kind,
+                page_number,
+                batch_number,
                 object_key,
             )
-
-            if not reused_checkpoint and len(bindings) < config.page_size:
-                break
-            if config.request_delay_seconds > 0:
+            if (
+                config.request_delay_seconds > 0
+                and not reused_checkpoint
+                and (page_number, batch_number)
+                != (len(pages_manifest["objects"]), len(batches))
+            ):
                 sleep(config.request_delay_seconds)
 
+    manifest = {
+        "source": "wikidata",
+        "status": "complete",
+        "data_kind": data_kind,
+        "augmentation_kind": augmentation_kind,
+        "partition_date": partition_date,
+        "source_run_id": source_run_id,
+        "seed_unit_id": seed_unit_id,
+        "exchange_id": seed_unit_id,
+        "augmentation_batch_size": config.augmentation_batch_size,
+        "row_count": row_count,
+        "started_at": retrieved_at,
+        "completed_at": datetime.now(UTC).isoformat(),
+        "objects": object_keys,
+    }
+    write_wikidata_stage_manifest(
+        object_store=object_store,
+        manifest=manifest,
+    )
+    return wikidata_stage_result(manifest, reused=False)
+
+
+def materialize_wikidata_persons_for_seed_unit(
+    *,
+    object_store: ObjectStoreResource,
+    partition_date: str,
+    seed_unit_id: str,
+) -> dg.MaterializeResult:
+    adopted = adopt_existing_wikidata_stage_manifest(
+        object_store=object_store,
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=WIKIDATA_PERSONS_KIND,
+    )
+    if adopted is not None:
+        return wikidata_stage_result(adopted, reused=True)
+    stage_key = stage_manifest_object_key(
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=WIKIDATA_PERSONS_KIND,
+    )
+    if object_store.exists(stage_key, bucket=WIKIDATA_RAW_BUCKET):
+        return wikidata_stage_result(
+            read_completed_wikidata_stage_manifest(
+                object_store=object_store,
+                partition_date=partition_date,
+                seed_unit_id=seed_unit_id,
+                data_kind=WIKIDATA_PERSONS_KIND,
+            ),
+            reused=True,
+        )
+    people_manifest = read_completed_wikidata_stage_manifest(
+        object_store=object_store,
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=WIKIDATA_COMPANY_PEOPLE_KIND,
+    )
+    manifest = {
+        **people_manifest,
+        "data_kind": WIKIDATA_PERSONS_KIND,
+        "completed_at": datetime.now(UTC).isoformat(),
+    }
+    write_wikidata_stage_manifest(
+        object_store=object_store,
+        manifest=manifest,
+    )
+    return wikidata_stage_result(manifest, reused=False)
+
+
+def materialize_wikidata_company_source_snapshot(
+    *,
+    object_store: ObjectStoreResource,
+    partition_date: str,
+    seed_unit_id: str,
+) -> dg.MaterializeResult:
+    combined_manifest_key = manifest_object_key(
+        partition_date=partition_date,
+        exchange_id=seed_unit_id,
+    )
+    if object_store.exists(combined_manifest_key, bucket=WIKIDATA_RAW_BUCKET):
+        manifest = read_wikidata_raw_payload(
+            object_store=object_store,
+            object_key=combined_manifest_key,
+        )
+        _validate_completed_wikidata_unit_manifest(
+            object_store=object_store,
+            manifest=manifest,
+            manifest_key=combined_manifest_key,
+            partition_date=partition_date,
+            exchange_id=seed_unit_id,
+        )
+        return _wikidata_unit_result(
+            partition_date=partition_date,
+            exchange_id=seed_unit_id,
+            manifest_key=combined_manifest_key,
+            manifest=manifest,
+            reused=True,
+        )
+
+    stage_manifests = {
+        data_kind: read_completed_wikidata_stage_manifest(
+            object_store=object_store,
+            partition_date=partition_date,
+            seed_unit_id=seed_unit_id,
+            data_kind=data_kind,
+        )
+        for data_kind in WIKIDATA_ALL_SEED_UNIT_DATA_KINDS
+    }
+    pages_manifest = stage_manifests[WIKIDATA_COMPANY_PAGES_KIND]
+    augmentation_manifests = [
+        stage_manifests[data_kind] for data_kind in WIKIDATA_NETWORK_DATA_KINDS
+    ]
+    manifest = {
+        **pages_manifest,
+        "status": "complete",
+        "augmentation_batch_size": max(
+            (
+                int(stage_manifest.get("augmentation_batch_size") or 0)
+                for stage_manifest in augmentation_manifests
+            ),
+            default=0,
+        ),
+        "augmentation_row_count": sum(
+            int(stage_manifest.get("row_count") or 0)
+            for stage_manifest in augmentation_manifests
+        ),
+        "augmentation_objects": [
+            str(object_key)
+            for stage_manifest in augmentation_manifests
+            for object_key in stage_manifest["objects"]
+        ],
+        "completed_at": datetime.now(UTC).isoformat(),
+    }
+    manifest.pop("data_kind", None)
+    object_store.write_json(
+        combined_manifest_key,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+        bucket=WIKIDATA_RAW_BUCKET,
+    )
+    return _wikidata_unit_result(
+        partition_date=partition_date,
+        exchange_id=seed_unit_id,
+        manifest_key=combined_manifest_key,
+        manifest=manifest,
+        reused=False,
+    )
+
+
+def adopt_existing_wikidata_stage_manifest(
+    *,
+    object_store: ObjectStoreResource,
+    partition_date: str,
+    seed_unit_id: str,
+    data_kind: str,
+) -> dict[str, Any] | None:
+    stage_key = stage_manifest_object_key(
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=data_kind,
+    )
+    if object_store.exists(stage_key, bucket=WIKIDATA_RAW_BUCKET):
+        return None
+    combined_key = manifest_object_key(
+        partition_date=partition_date,
+        exchange_id=seed_unit_id,
+    )
+    if not object_store.exists(combined_key, bucket=WIKIDATA_RAW_BUCKET):
+        return None
+    combined = read_wikidata_raw_payload(
+        object_store=object_store,
+        object_key=combined_key,
+    )
+    _validate_completed_wikidata_unit_manifest(
+        object_store=object_store,
+        manifest=combined,
+        manifest_key=combined_key,
+        partition_date=partition_date,
+        exchange_id=seed_unit_id,
+    )
+    if data_kind == WIKIDATA_COMPANY_PAGES_KIND:
+        object_keys = [str(key) for key in combined.get("objects", [])]
+        row_count = int(combined.get("row_count") or 0)
+    else:
+        source_data_kind = (
+            WIKIDATA_COMPANY_PEOPLE_KIND
+            if data_kind == WIKIDATA_PERSONS_KIND
+            else data_kind
+        )
+        augmentation_kind = WIKIDATA_AUGMENTATION_KIND_BY_DATA_KIND[source_data_kind]
+        marker = f"/augmentation_kind={augmentation_kind}/"
+        object_keys = [
+            str(key)
+            for key in combined.get("augmentation_objects", [])
+            if marker in str(key)
+        ]
+        row_count = sum(
+            len(
+                response_bindings(
+                    read_wikidata_raw_payload(
+                        object_store=object_store,
+                        object_key=object_key,
+                    )
+                )
+            )
+            for object_key in object_keys
+        )
+    manifest = {
+        "source": "wikidata",
+        "status": "complete",
+        "data_kind": data_kind,
+        "partition_date": partition_date,
+        "source_run_id": partition_date,
+        "seed_unit_id": seed_unit_id,
+        "exchange_id": seed_unit_id,
+        "row_count": row_count,
+        "started_at": combined.get("started_at"),
+        "completed_at": combined.get("completed_at"),
+        "objects": object_keys,
+    }
+    if data_kind == WIKIDATA_COMPANY_PAGES_KIND:
+        for field_name in (
+            "query_mode",
+            "exchange_name",
+            "listed_company_count_on_exchange",
+            "mics",
+            "country_wikidata_id",
+            "country_name",
+            "country_iso2",
+            "registry_property_id",
+            "page_size",
+            "max_pages",
+            "query_hash",
+            "page_count",
+        ):
+            manifest[field_name] = combined.get(field_name)
+    else:
+        manifest["augmentation_kind"] = (
+            "people"
+            if data_kind == WIKIDATA_PERSONS_KIND
+            else WIKIDATA_AUGMENTATION_KIND_BY_DATA_KIND[data_kind]
+        )
+        manifest["augmentation_batch_size"] = combined.get("augmentation_batch_size")
+    write_wikidata_stage_manifest(
+        object_store=object_store,
+        manifest=manifest,
+    )
+    return manifest
+
+
+def read_completed_wikidata_stage_manifest(
+    *,
+    object_store: ObjectStoreResource,
+    partition_date: str,
+    seed_unit_id: str,
+    data_kind: str,
+) -> dict[str, Any]:
+    manifest_key = stage_manifest_object_key(
+        partition_date=partition_date,
+        seed_unit_id=seed_unit_id,
+        data_kind=data_kind,
+    )
+    if not object_store.exists(manifest_key, bucket=WIKIDATA_RAW_BUCKET):
+        raise ValueError(f"Missing Wikidata stage manifest: {manifest_key}")
+    manifest = read_wikidata_raw_payload(
+        object_store=object_store,
+        object_key=manifest_key,
+    )
+    if (
+        manifest.get("status") != "complete"
+        or manifest.get("partition_date") != partition_date
+        or manifest.get("seed_unit_id") != seed_unit_id
+        or manifest.get("data_kind") != data_kind
+    ):
+        raise ValueError(f"Invalid Wikidata stage manifest: {manifest_key}")
+    missing_keys = [
+        str(object_key)
+        for object_key in manifest.get("objects", [])
+        if not object_store.exists(str(object_key), bucket=WIKIDATA_RAW_BUCKET)
+    ]
+    if missing_keys:
+        raise ValueError(
+            f"Wikidata stage manifest references missing objects: {missing_keys[:5]}"
+        )
+    return manifest
+
+
+def write_wikidata_stage_manifest(
+    *,
+    object_store: ObjectStoreResource,
+    manifest: dict[str, Any],
+) -> None:
+    object_store.write_json(
+        stage_manifest_object_key(
+            partition_date=str(manifest["partition_date"]),
+            seed_unit_id=str(manifest["seed_unit_id"]),
+            data_kind=str(manifest["data_kind"]),
+        ),
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+        bucket=WIKIDATA_RAW_BUCKET,
+    )
+
+
+def wikidata_stage_result(
+    manifest: dict[str, Any],
+    *,
+    reused: bool,
+) -> dg.MaterializeResult:
+    return dg.MaterializeResult(
+        metadata={
+            "bucket": WIKIDATA_RAW_BUCKET,
+            "partition_date": str(manifest["partition_date"]),
+            "seed_unit_id": str(manifest["seed_unit_id"]),
+            "data_kind": str(manifest["data_kind"]),
+            "manifest_key": stage_manifest_object_key(
+                partition_date=str(manifest["partition_date"]),
+                seed_unit_id=str(manifest["seed_unit_id"]),
+                data_kind=str(manifest["data_kind"]),
+            ),
+            "object_count": len(manifest.get("objects", [])),
+            "row_count": int(manifest.get("row_count") or 0),
+            "reused": reused,
+        }
+    )
+
+
+def _validate_completed_wikidata_unit_manifest(
+    *,
+    object_store: ObjectStoreResource,
+    manifest: dict[str, Any],
+    manifest_key: str,
+    partition_date: str,
+    exchange_id: str,
+) -> None:
+    if manifest.get("status") != "complete":
+        raise ValueError(f"Wikidata unit manifest is not complete: {manifest_key}")
+    if manifest.get("partition_date") != partition_date:
+        raise ValueError(f"Wikidata unit manifest has wrong partition: {manifest_key}")
+    if manifest.get("exchange_id") != exchange_id:
+        raise ValueError(f"Wikidata unit manifest has wrong exchange: {manifest_key}")
+    raw_object_keys = [
+        *manifest.get("objects", []),
+        *manifest.get("augmentation_objects", []),
+    ]
+    missing_keys = [
+        str(object_key)
+        for object_key in raw_object_keys
+        if not object_store.exists(str(object_key), bucket=WIKIDATA_RAW_BUCKET)
+    ]
+    if missing_keys:
+        raise ValueError(
+            f"Wikidata unit manifest references missing objects: {missing_keys[:5]}"
+        )
+
+
+def _wikidata_unit_result(
+    *,
+    partition_date: str,
+    exchange_id: str,
+    manifest_key: str,
+    manifest: dict[str, Any],
+    reused: bool,
+) -> dg.MaterializeResult:
+    return dg.MaterializeResult(
+        metadata={
+            "bucket": WIKIDATA_RAW_BUCKET,
+            "partition_date": partition_date,
+            "exchange_id": exchange_id,
+            "page_count": int(manifest.get("page_count") or 0),
+            "row_count": int(manifest.get("row_count") or 0),
+            "augmentation_object_count": len(manifest.get("augmentation_objects", [])),
+            "augmentation_row_count": int(manifest.get("augmentation_row_count") or 0),
+            "manifest_key": manifest_key,
+            "reused": reused,
+        }
+    )
+
+
+def finalize_wikidata_raw_snapshot(
+    *,
+    object_store: ObjectStoreResource,
+    partition_date: str,
+    completed_at: str,
+) -> dg.MaterializeResult:
+    seed_units = read_wikidata_seed_units(
+        object_store=object_store,
+        partition_date=partition_date,
+    )
+    manifests: list[dict[str, Any]] = []
+    manifest_keys: list[str] = []
+    for seed_unit in seed_units:
+        exchange_id = str(seed_unit["exchange_wikidata_id"])
         manifest_key = manifest_object_key(
-            retrieved_date=retrieved_date,
-            run_id=run_id,
+            partition_date=partition_date,
             exchange_id=exchange_id,
         )
-        manifest = {
-            "source": "wikidata",
-            "query_mode": seed_unit["query_mode"],
-            "run_id": run_id,
-            "retrieved_date": retrieved_date,
-            "exchange_id": exchange_id,
-            "exchange_name": seed_unit["exchange_name"],
-            "listed_company_count_on_exchange": seed_unit[
-                "listed_company_count_on_exchange"
-            ],
-            "mics": seed_unit["mics"],
-            "country_wikidata_id": seed_unit["country_wikidata_id"],
-            "country_name": seed_unit["country_name"],
-            "country_iso2": seed_unit["country_iso2"],
-            "registry_property_id": seed_unit["registry_property_id"],
-            "page_size": config.page_size,
-            "query_hash": current_query_hash,
-            "row_count": unit_row_count,
-            "augmentation_row_count": unit_augmentation_row_count,
-            "page_count": page_count,
-            "started_at": retrieved_at,
-            "completed_at": datetime.now(UTC).isoformat(),
-            "objects": object_keys,
-            "augmentation_objects": augmentation_object_keys,
-        }
-        object_store.write_json(
-            manifest_key,
-            json.dumps(manifest, sort_keys=True, separators=(",", ":")),
-            bucket=WIKIDATA_RAW_BUCKET,
+        if not object_store.exists(manifest_key, bucket=WIKIDATA_RAW_BUCKET):
+            raise ValueError(
+                "Wikidata weekly snapshot is incomplete: "
+                f"partition_date={partition_date} missing_exchange={exchange_id}"
+            )
+        manifest = read_wikidata_raw_payload(
+            object_store=object_store,
+            object_key=manifest_key,
         )
+        _validate_completed_wikidata_unit_manifest(
+            object_store=object_store,
+            manifest=manifest,
+            manifest_key=manifest_key,
+            partition_date=partition_date,
+            exchange_id=exchange_id,
+        )
+        manifests.append(manifest)
         manifest_keys.append(manifest_key)
-        total_row_count += unit_row_count
-        total_page_count += page_count
-        total_augmentation_row_count += unit_augmentation_row_count
-        total_augmentation_object_count += len(augmentation_object_keys)
-        log(
-            "Completed Wikidata download unit: unit=%s/%s exchange_id=%s "
-            "pages=%s company_rows=%s augmentation_objects=%s "
-            "augmentation_rows=%s manifest_key=%s",
-            unit_index,
-            len(seed_units),
-            exchange_id,
-            page_count,
-            unit_row_count,
-            len(augmentation_object_keys),
-            unit_augmentation_row_count,
-            manifest_key,
-        )
 
-        if config.request_delay_seconds > 0 and unit_index < len(seed_units):
-            sleep(config.request_delay_seconds)
-
-    snapshot_manifest_key = snapshot_manifest_object_key(run_id=run_id)
-    completed_at = datetime.now(UTC).isoformat()
+    snapshot_manifest_key = snapshot_manifest_object_key(partition_date=partition_date)
+    exchange_count = sum(
+        manifest.get("query_mode") == "exchange" for manifest in manifests
+    )
+    row_count = sum(int(manifest.get("row_count") or 0) for manifest in manifests)
+    page_count = sum(int(manifest.get("page_count") or 0) for manifest in manifests)
+    augmentation_row_count = sum(
+        int(manifest.get("augmentation_row_count") or 0) for manifest in manifests
+    )
+    augmentation_object_count = sum(
+        len(manifest.get("augmentation_objects", [])) for manifest in manifests
+    )
     object_store.write_json(
         snapshot_manifest_key,
         json.dumps(
             {
                 "source": "wikidata",
-                "run_id": run_id,
                 "status": "complete",
-                "retrieved_date": retrieved_date,
-                "started_at": retrieved_at,
+                "partition_date": partition_date,
+                "source_run_id": partition_date,
                 "completed_at": completed_at,
-                "exchange_count": len(exchange_rows),
-                "registry_property_count": len(registry_rows),
-                "page_count": total_page_count,
-                "row_count": total_row_count,
-                "augmentation_object_count": total_augmentation_object_count,
-                "augmentation_row_count": total_augmentation_row_count,
+                "exchange_count": exchange_count,
+                "registry_property_count": len(manifests) - exchange_count,
+                "page_count": page_count,
+                "row_count": row_count,
+                "augmentation_object_count": augmentation_object_count,
+                "augmentation_row_count": augmentation_row_count,
                 "manifest_keys": manifest_keys,
             },
             sort_keys=True,
@@ -2040,41 +3025,45 @@ def pull_wikidata_company_seed_raw_objects(
         ),
         bucket=WIKIDATA_RAW_BUCKET,
     )
-    deleted_old_raw_object_count = delete_old_wikidata_raw_snapshot_objects(
-        object_store=object_store,
-        run_id=run_id,
-    )
-    log(
-        "Completed Wikidata raw download: run_id=%s units=%s pages=%s "
-        "company_rows=%s augmentation_objects=%s augmentation_rows=%s "
-        "manifests=%s deleted_old_objects=%s snapshot_manifest_key=%s",
-        run_id,
-        len(seed_units),
-        total_page_count,
-        total_row_count,
-        total_augmentation_object_count,
-        total_augmentation_row_count,
-        len(manifest_keys),
-        deleted_old_raw_object_count,
-        snapshot_manifest_key,
-    )
     return dg.MaterializeResult(
         metadata={
             "bucket": WIKIDATA_RAW_BUCKET,
-            "exchange_count": len(exchange_rows),
-            "registry_property_count": len(registry_rows),
-            "page_count": total_page_count,
-            "row_count": total_row_count,
-            "augmentation_object_count": total_augmentation_object_count,
-            "augmentation_row_count": total_augmentation_row_count,
-            "manifest_count": len(manifest_keys),
-            "manifest_keys": manifest_keys,
+            "partition_date": partition_date,
+            "unit_count": len(manifests),
+            "exchange_count": exchange_count,
+            "registry_property_count": len(manifests) - exchange_count,
+            "page_count": page_count,
+            "row_count": row_count,
+            "augmentation_object_count": augmentation_object_count,
+            "augmentation_row_count": augmentation_row_count,
             "snapshot_manifest_key": snapshot_manifest_key,
-            "active_exchanges_key": active_exchanges_key or "",
-            "deleted_old_raw_object_count": deleted_old_raw_object_count,
-            "retrieved_at": retrieved_at,
         }
     )
+
+
+def resolve_wikidata_snapshot_partition_date(
+    *,
+    object_store: ObjectStoreResource,
+    configured_partition_date: str | None,
+) -> str:
+    if configured_partition_date is not None:
+        completed_wikidata_raw_manifest_keys(
+            object_store=object_store,
+            partition_date=configured_partition_date,
+        )
+        return configured_partition_date
+
+    snapshot_keys = [
+        key
+        for key in object_store.list_keys(
+            "partition_date=",
+            bucket=WIKIDATA_RAW_BUCKET,
+        )
+        if key.endswith("/snapshot_manifest.json")
+    ]
+    if not snapshot_keys:
+        raise ValueError("No completed Wikidata weekly raw snapshot exists")
+    return sorted(snapshot_keys)[-1].split("/", 1)[0].removeprefix("partition_date=")
 
 
 def _seed_unit_from_exchange_row(exchange_row: dict[str, Any]) -> dict[str, Any]:
@@ -2146,97 +3135,6 @@ def wikidata_raw_pull_registry_rows(
     ]
 
 
-def pull_wikidata_company_augmentation_raw_objects_for_page(
-    *,
-    client: Any,
-    object_store: ObjectStoreResource,
-    config: WikidataRawPullConfig,
-    run_id: str,
-    retrieved_date: str,
-    exchange_id: str,
-    page_number: int,
-    listed_company_bindings: list[dict[str, Any]],
-    sleep: Callable[[float], None],
-    log: Callable[..., object],
-) -> tuple[list[str], int]:
-    company_ids = sorted(
-        {
-            wikidata_id_from_url(binding_value(binding, "company"))
-            for binding in listed_company_bindings
-            if wikidata_id_from_url(binding_value(binding, "company"))
-        }
-    )
-    object_keys: list[str] = []
-    row_count = 0
-    batches = list(_batched(company_ids, config.augmentation_batch_size))
-    for batch_number, company_id_batch in enumerate(batches, start=1):
-        batch_row_count = 0
-        query_builders: tuple[tuple[str, Callable[[tuple[str, ...]], str]], ...] = (
-            ("profile", build_company_profile_augmentation_query),
-            ("identifiers", build_company_identifier_augmentation_query),
-            ("relationships", build_company_relationship_augmentation_query),
-            ("people", build_company_people_augmentation_query),
-        )
-        for query_index, (augmentation_kind, query_builder) in enumerate(
-            query_builders,
-            start=1,
-        ):
-            query = query_builder(tuple(company_id_batch))
-            object_key = augmentation_object_key(
-                retrieved_date=retrieved_date,
-                run_id=run_id,
-                exchange_id=exchange_id,
-                augmentation_kind=augmentation_kind,
-                page_number=page_number,
-                batch_number=batch_number,
-            )
-            if object_store.exists(object_key, bucket=WIKIDATA_RAW_BUCKET):
-                payload = read_wikidata_raw_payload(
-                    object_store=object_store,
-                    object_key=object_key,
-                )
-                log(
-                    "Reusing checkpointed Wikidata augmentation: exchange_id=%s "
-                    "page=%s batch=%s kind=%s object_key=%s",
-                    exchange_id,
-                    page_number,
-                    batch_number,
-                    augmentation_kind,
-                    object_key,
-                )
-            else:
-                payload = client.fetch(query, user_agent=config.user_agent)
-                object_store.write_json(
-                    object_key,
-                    json.dumps(payload, sort_keys=True, separators=(",", ":")),
-                    bucket=WIKIDATA_RAW_BUCKET,
-                )
-            bindings = response_bindings(payload)
-            object_keys.append(object_key)
-            row_count += len(bindings)
-            batch_row_count += len(bindings)
-
-            is_last_query = batch_number == len(batches) and query_index == len(
-                query_builders
-            )
-            if config.request_delay_seconds > 0 and not is_last_query:
-                sleep(config.request_delay_seconds)
-
-        log(
-            "Downloaded Wikidata augmentation batch: exchange_id=%s page=%s "
-            "batch=%s/%s companies=%s response_objects=%s rows=%s",
-            exchange_id,
-            page_number,
-            batch_number,
-            len(batches),
-            len(company_id_batch),
-            len(query_builders),
-            batch_row_count,
-        )
-
-    return object_keys, row_count
-
-
 def read_wikidata_raw_payload(
     *,
     object_store: ObjectStoreResource,
@@ -2260,8 +3158,8 @@ def wikidata_raw_pull_exchange_rows(
     client: Any,
     object_store: ObjectStoreResource,
     config: WikidataRawPullConfig,
-    run_id: str,
-    retrieved_date: str,
+    partition_date: str,
+    source_run_id: str,
     retrieved_at: str,
 ) -> tuple[list[dict[str, Any]], str | None]:
     configured_exchange_ids = config.configured_exchange_ids()
@@ -2269,28 +3167,33 @@ def wikidata_raw_pull_exchange_rows(
         return (
             wikidata_raw_pull_configured_exchange_rows(
                 configured_exchange_ids,
-                source_run_id=run_id,
+                source_run_id=source_run_id,
                 retrieved_at=retrieved_at,
                 max_exchanges=config.max_exchanges,
             ),
             None,
         )
 
-    query = build_active_listed_exchanges_query()
-    payload = client.fetch(query, user_agent=config.user_agent)
     exchange_list_key = active_exchanges_object_key(
-        retrieved_date=retrieved_date,
-        run_id=run_id,
+        partition_date=partition_date,
     )
-    object_store.write_json(
-        exchange_list_key,
-        json.dumps(payload, sort_keys=True, separators=(",", ":")),
-        bucket=WIKIDATA_RAW_BUCKET,
-    )
+    if object_store.exists(exchange_list_key, bucket=WIKIDATA_RAW_BUCKET):
+        payload = read_wikidata_raw_payload(
+            object_store=object_store,
+            object_key=exchange_list_key,
+        )
+    else:
+        query = build_active_listed_exchanges_query()
+        payload = client.fetch(query, user_agent=config.user_agent)
+        object_store.write_json(
+            exchange_list_key,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            bucket=WIKIDATA_RAW_BUCKET,
+        )
     binding_rows = [
         active_listed_exchange_row_from_binding(
             binding,
-            source_run_id=run_id,
+            source_run_id=source_run_id,
             retrieved_at=retrieved_at,
             source_row_number=row_number,
         )
@@ -2331,29 +3234,10 @@ def wikidata_raw_pull_configured_exchange_rows(
     ]
 
 
-def delete_old_wikidata_raw_snapshot_objects(
-    *,
-    object_store: ObjectStoreResource,
-    run_id: str,
-) -> int:
-    raw_prefix = "raw/"
-    current_run_prefix = f"{raw_prefix}run_id={run_id}/"
-    stale_keys = [
-        key
-        for key in object_store.list_keys(raw_prefix, bucket=WIKIDATA_RAW_BUCKET)
-        if not key.startswith(current_run_prefix)
-    ]
-    return object_store.delete_keys(stale_keys, bucket=WIKIDATA_RAW_BUCKET)
-
-
-# wikidata_company_seed_raw_objects declares ordering-only `deps` on every registry
-# seed spec's spine asset (see the asset's docstring) purely so the UI shows the
-# wikidata seed connected to each country's pipeline. `.upstream()` from the ClickHouse
-# export walks that edge too, so without this exclusion the weekly job's selection
-# would balloon into materializing nine full country pipelines (Sweden bulk download,
-# Norway entities, Denmark CVR, ...) every week. Subtract each spine's own `.upstream()`
-# (which includes the spine itself) to drop exactly the country pipelines and nothing
-# from the native wikidata chain — no wikidata_* asset is upstream of a country spine.
+# Company-source discovery declares ordering-only dependencies on every registry
+# seed spine so Dagster shows where registry identifiers originate. The publish
+# selection must exclude those country pipelines; they are inputs, not work that
+# Wikidata should rematerialize.
 _wikidata_registry_seed_spine_exclusion = dg.AssetSelection.assets(
     *(
         dg.AssetKey(spine_asset_key)
@@ -2361,32 +3245,380 @@ _wikidata_registry_seed_spine_exclusion = dg.AssetSelection.assets(
     )
 ).upstream()
 
-# The canonical-contacts derivation runs only after the completion asset proves that
-# all nine ClickHouse tables belong to one source snapshot.
-wikidata_company_seed_selection = (
-    dg.AssetSelection.assets("wikidata_company_seed_complete").upstream()
-    | dg.AssetSelection.assets("wikidata_clickhouse_canonical_contacts")
-) - _wikidata_registry_seed_spine_exclusion
+_wikidata_raw_assets = dg.AssetSelection.assets(
+    "wikidata_exchanges_raw",
+    "wikidata_company_source_units",
+    "wikidata_company_pages_raw",
+    "wikidata_company_profiles_raw",
+    "wikidata_company_identifiers_raw",
+    "wikidata_company_relationships_raw",
+    "wikidata_company_people_raw",
+    "wikidata_persons_raw",
+    "wikidata_company_source_snapshot",
+    "wikidata_raw_snapshot",
+)
+wikidata_publish_selection = (
+    (
+        dg.AssetSelection.assets("wikidata_snapshot_complete").upstream()
+        | dg.AssetSelection.assets("wikidata_clickhouse_canonical_contacts")
+    )
+    - _wikidata_registry_seed_spine_exclusion
+    - _wikidata_raw_assets
+)
 
-wikidata_company_seed_weekly_job = dg.define_asset_job(
-    "wikidata_company_seed_weekly_job",
-    selection=wikidata_company_seed_selection,
+wikidata_publish_job = dg.define_asset_job(
+    "wikidata_publish_job",
+    selection=wikidata_publish_selection,
+)
+wikidata_exchange_discovery_job = dg.define_asset_job(
+    "wikidata_exchange_discovery_job",
+    selection=dg.AssetSelection.assets("wikidata_exchanges_raw"),
+)
+wikidata_company_source_discovery_job = dg.define_asset_job(
+    "wikidata_company_source_discovery_job",
+    selection=dg.AssetSelection.assets("wikidata_company_source_units"),
+)
+wikidata_company_pages_job = dg.define_asset_job(
+    "wikidata_company_pages_job",
+    selection=dg.AssetSelection.assets("wikidata_company_pages_raw"),
+)
+wikidata_company_profiles_job = dg.define_asset_job(
+    "wikidata_company_profiles_job",
+    selection=dg.AssetSelection.assets("wikidata_company_profiles_raw"),
+)
+wikidata_company_identifiers_job = dg.define_asset_job(
+    "wikidata_company_identifiers_job",
+    selection=dg.AssetSelection.assets("wikidata_company_identifiers_raw"),
+)
+wikidata_company_relationships_job = dg.define_asset_job(
+    "wikidata_company_relationships_job",
+    selection=dg.AssetSelection.assets("wikidata_company_relationships_raw"),
+)
+wikidata_company_people_job = dg.define_asset_job(
+    "wikidata_company_people_job",
+    selection=dg.AssetSelection.assets("wikidata_company_people_raw"),
+)
+wikidata_persons_job = dg.define_asset_job(
+    "wikidata_persons_job",
+    selection=dg.AssetSelection.assets("wikidata_persons_raw"),
+)
+wikidata_company_source_snapshot_job = dg.define_asset_job(
+    "wikidata_company_source_snapshot_job",
+    selection=dg.AssetSelection.assets("wikidata_company_source_snapshot"),
+)
+wikidata_raw_snapshot_job = dg.define_asset_job(
+    "wikidata_raw_snapshot_job",
+    selection=dg.AssetSelection.assets("wikidata_raw_snapshot"),
 )
 
 
 @dg.schedule(
-    name="wikidata_company_seed_weekly_schedule",
+    name="wikidata_weekly_schedule",
     cron_schedule="30 3 * * 1",
     execution_timezone="Europe/Belgrade",
-    job=wikidata_company_seed_weekly_job,
+    job=wikidata_exchange_discovery_job,
+    default_status=dg.DefaultScheduleStatus.RUNNING,
 )
-def wikidata_company_seed_weekly_schedule() -> dg.RunRequest:
-    return dg.RunRequest()
+def wikidata_weekly_schedule(
+    context: dg.ScheduleEvaluationContext,
+) -> dg.RunRequest:
+    if context.scheduled_execution_time is None:
+        raise ValueError("Wikidata weekly schedule requires a scheduled execution time")
+    return dg.RunRequest(
+        partition_key=context.scheduled_execution_time.strftime("%Y-%m-%d")
+    )
+
+
+@dg.asset_sensor(
+    asset_key=dg.AssetKey("wikidata_exchanges_raw"),
+    job=wikidata_company_source_discovery_job,
+    default_status=dg.DefaultSensorStatus.RUNNING,
+)
+def wikidata_exchange_catalog_sensor(
+    _context: dg.SensorEvaluationContext,
+    event: dg.EventLogEntry,
+) -> dg.RunRequest:
+    materialization = event.asset_materialization
+    if materialization is None or materialization.partition is None:
+        raise ValueError("Wikidata exchange materialization has no partition date")
+    partition_date = materialization.partition
+    return dg.RunRequest(
+        run_key=f"wikidata-company-sources:{partition_date}",
+        partition_key=partition_date,
+    )
+
+
+@dg.asset_sensor(
+    asset_key=dg.AssetKey("wikidata_company_source_units"),
+    job=wikidata_company_pages_job,
+    default_status=dg.DefaultSensorStatus.RUNNING,
+    required_resource_keys={"object_store"},
+)
+def wikidata_company_source_sensor(
+    context: dg.SensorEvaluationContext,
+    event: dg.EventLogEntry,
+) -> dg.SensorResult:
+    materialization = event.asset_materialization
+    if materialization is None or materialization.partition is None:
+        raise ValueError(
+            "Wikidata company-source materialization has no partition date"
+        )
+    partition_date = materialization.partition
+    object_store = context.resources.object_store
+    company_sources = read_wikidata_seed_units(
+        object_store=object_store,
+        partition_date=partition_date,
+    )
+    company_source_ids = [
+        str(company_source["exchange_wikidata_id"])
+        for company_source in company_sources
+    ]
+    return dg.SensorResult(
+        dynamic_partitions_requests=[
+            WIKIDATA_COMPANY_SOURCE_PARTITIONS.build_add_request(company_source_ids)
+        ],
+        run_requests=[
+            dg.RunRequest(
+                run_key=f"wikidata-company-pages:{partition_date}:{company_source_id}",
+                partition_key=str(
+                    dg.MultiPartitionKey(
+                        {
+                            "date": partition_date,
+                            "company_source": company_source_id,
+                        }
+                    )
+                ),
+            )
+            for company_source_id in company_source_ids
+        ],
+    )
+
+
+@dg.asset_sensor(
+    asset_key=dg.AssetKey("wikidata_company_pages_raw"),
+    jobs=[
+        wikidata_company_profiles_job,
+        wikidata_company_identifiers_job,
+        wikidata_company_relationships_job,
+        wikidata_company_people_job,
+    ],
+    default_status=dg.DefaultSensorStatus.RUNNING,
+)
+def wikidata_company_pages_sensor(
+    _context: dg.SensorEvaluationContext,
+    event: dg.EventLogEntry,
+) -> list[dg.RunRequest]:
+    materialization = event.asset_materialization
+    if materialization is None or materialization.partition is None:
+        raise ValueError("Wikidata company-page materialization has no partition")
+    partition_key = materialization.partition
+    jobs = (
+        wikidata_company_profiles_job,
+        wikidata_company_identifiers_job,
+        wikidata_company_relationships_job,
+        wikidata_company_people_job,
+    )
+    return [
+        dg.RunRequest(
+            run_key=f"{job.name}:{partition_key}",
+            partition_key=partition_key,
+            job_name=job.name,
+        )
+        for job in jobs
+    ]
+
+
+@dg.asset_sensor(
+    asset_key=dg.AssetKey("wikidata_company_people_raw"),
+    job=wikidata_persons_job,
+    default_status=dg.DefaultSensorStatus.RUNNING,
+)
+def wikidata_company_people_sensor(
+    _context: dg.SensorEvaluationContext,
+    event: dg.EventLogEntry,
+) -> dg.RunRequest:
+    materialization = event.asset_materialization
+    if materialization is None or materialization.partition is None:
+        raise ValueError("Wikidata company-people materialization has no partition")
+    partition_key = materialization.partition
+    return dg.RunRequest(
+        run_key=f"wikidata-persons:{partition_key}",
+        partition_key=partition_key,
+    )
+
+
+@dg.sensor(
+    job=wikidata_company_source_snapshot_job,
+    default_status=dg.DefaultSensorStatus.RUNNING,
+    minimum_interval_seconds=60,
+    required_resource_keys={"object_store"},
+)
+def wikidata_company_source_snapshot_sensor(
+    context: dg.SensorEvaluationContext,
+) -> dg.SensorResult | dg.SkipReason:
+    object_store = context.resources.object_store
+    catalog_keys = [
+        key
+        for key in object_store.list_keys(
+            "partition_date=",
+            bucket=WIKIDATA_RAW_BUCKET,
+        )
+        if key.endswith("/seed_units.json")
+    ]
+    ready_partitions: list[tuple[str, str]] = []
+    for catalog_key in sorted(catalog_keys):
+        partition_date = catalog_key.split("/", 1)[0].removeprefix("partition_date=")
+        company_sources = read_wikidata_seed_units(
+            object_store=object_store,
+            partition_date=partition_date,
+        )
+        for company_source in company_sources:
+            company_source_id = str(company_source["exchange_wikidata_id"])
+            if object_store.exists(
+                manifest_object_key(
+                    partition_date=partition_date,
+                    exchange_id=company_source_id,
+                ),
+                bucket=WIKIDATA_RAW_BUCKET,
+            ):
+                continue
+            if all(
+                object_store.exists(
+                    stage_manifest_object_key(
+                        partition_date=partition_date,
+                        seed_unit_id=company_source_id,
+                        data_kind=data_kind,
+                    ),
+                    bucket=WIKIDATA_RAW_BUCKET,
+                )
+                for data_kind in WIKIDATA_ALL_SEED_UNIT_DATA_KINDS
+            ):
+                ready_partitions.append((partition_date, company_source_id))
+
+    if not ready_partitions:
+        return dg.SkipReason(
+            "No completed Wikidata company-source stages await aggregation"
+        )
+    return dg.SensorResult(
+        run_requests=[
+            dg.RunRequest(
+                run_key=f"wikidata-source-snapshot:{partition_date}:{company_source_id}",
+                partition_key=str(
+                    dg.MultiPartitionKey(
+                        {
+                            "date": partition_date,
+                            "company_source": company_source_id,
+                        }
+                    )
+                ),
+            )
+            for partition_date, company_source_id in ready_partitions
+        ]
+    )
+
+
+@dg.sensor(
+    job=wikidata_raw_snapshot_job,
+    default_status=dg.DefaultSensorStatus.RUNNING,
+    minimum_interval_seconds=60,
+    required_resource_keys={"object_store"},
+)
+def wikidata_raw_snapshot_sensor(
+    context: dg.SensorEvaluationContext,
+) -> dg.SensorResult | dg.SkipReason:
+    object_store = context.resources.object_store
+    catalog_keys = [
+        key
+        for key in object_store.list_keys(
+            "partition_date=",
+            bucket=WIKIDATA_RAW_BUCKET,
+        )
+        if key.endswith("/seed_units.json")
+    ]
+    ready_partition_dates: list[str] = []
+    for catalog_key in sorted(catalog_keys):
+        partition_date = catalog_key.split("/", 1)[0].removeprefix("partition_date=")
+        if object_store.exists(
+            snapshot_manifest_object_key(partition_date=partition_date),
+            bucket=WIKIDATA_RAW_BUCKET,
+        ):
+            continue
+        company_sources = read_wikidata_seed_units(
+            object_store=object_store,
+            partition_date=partition_date,
+        )
+        if all(
+            object_store.exists(
+                manifest_object_key(
+                    partition_date=partition_date,
+                    exchange_id=str(company_source["exchange_wikidata_id"]),
+                ),
+                bucket=WIKIDATA_RAW_BUCKET,
+            )
+            for company_source in company_sources
+        ):
+            ready_partition_dates.append(partition_date)
+
+    if not ready_partition_dates:
+        return dg.SkipReason("No complete Wikidata weekly partition awaits aggregation")
+    return dg.SensorResult(
+        run_requests=[
+            dg.RunRequest(
+                run_key=f"wikidata-raw-snapshot:{partition_date}",
+                partition_key=partition_date,
+            )
+            for partition_date in ready_partition_dates
+        ]
+    )
+
+
+@dg.asset_sensor(
+    asset_key=dg.AssetKey("wikidata_raw_snapshot"),
+    job=wikidata_publish_job,
+    default_status=dg.DefaultSensorStatus.RUNNING,
+)
+def wikidata_publish_sensor(
+    _context: dg.SensorEvaluationContext,
+    event: dg.EventLogEntry,
+) -> dg.RunRequest:
+    materialization = event.asset_materialization
+    if materialization is None or materialization.partition is None:
+        raise ValueError("Wikidata raw snapshot materialization has no partition date")
+    partition_date = materialization.partition
+    duckdb_assets = (
+        "wikidata_companies_duckdb",
+        "wikidata_exchanges_duckdb",
+        "wikidata_company_listings_duckdb",
+        "wikidata_company_identifiers_duckdb",
+        "wikidata_company_websites_duckdb",
+        "wikidata_company_relationships_duckdb",
+        "wikidata_company_people_duckdb",
+        "wikidata_persons_duckdb",
+        "wikidata_seed_extraction_runs_duckdb",
+    )
+    return dg.RunRequest(
+        run_key=f"wikidata-publish:{partition_date}",
+        run_config={
+            "ops": {
+                asset_name: {"config": {"partition_date": partition_date}}
+                for asset_name in duckdb_assets
+            }
+        },
+    )
 
 
 defs = dg.Definitions(
     assets=[
-        wikidata_company_seed_raw_objects,
+        wikidata_exchanges_raw,
+        wikidata_company_source_units,
+        wikidata_company_pages_raw,
+        wikidata_company_profiles_raw,
+        wikidata_company_identifiers_raw,
+        wikidata_company_relationships_raw,
+        wikidata_company_people_raw,
+        wikidata_persons_raw,
+        wikidata_company_source_snapshot,
+        wikidata_raw_snapshot,
         wikidata_companies_duckdb,
         wikidata_exchanges_duckdb,
         wikidata_company_listings_duckdb,
@@ -2405,8 +3637,29 @@ defs = dg.Definitions(
         wikidata_company_people_clickhouse,
         wikidata_persons_clickhouse,
         wikidata_seed_extraction_runs_clickhouse,
-        wikidata_company_seed_complete,
+        wikidata_snapshot_complete,
     ],
-    jobs=[wikidata_company_seed_weekly_job],
-    schedules=[wikidata_company_seed_weekly_schedule],
+    jobs=[
+        wikidata_publish_job,
+        wikidata_exchange_discovery_job,
+        wikidata_company_source_discovery_job,
+        wikidata_company_pages_job,
+        wikidata_company_profiles_job,
+        wikidata_company_identifiers_job,
+        wikidata_company_relationships_job,
+        wikidata_company_people_job,
+        wikidata_persons_job,
+        wikidata_company_source_snapshot_job,
+        wikidata_raw_snapshot_job,
+    ],
+    schedules=[wikidata_weekly_schedule],
+    sensors=[
+        wikidata_exchange_catalog_sensor,
+        wikidata_company_source_sensor,
+        wikidata_company_pages_sensor,
+        wikidata_company_people_sensor,
+        wikidata_company_source_snapshot_sensor,
+        wikidata_raw_snapshot_sensor,
+        wikidata_publish_sensor,
+    ],
 )

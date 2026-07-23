@@ -29,26 +29,26 @@
   filter. **`fxo_id`** is the filing-*version* key (see §9.3) — every table's `ORDER BY`
   includes it for exactly that reason.
 
-## 2. Ingest mode — hybrid: full-sweep index + year-partitioned incremental downloads
+## 2. Ingest mode — source-processed monthly increments + reconciliation
 
-- **Index** (`esef_filings_index_duckdb`): non-partitioned, full-replace every run. One
-  paginated sweep (~125 pages @ 200/page) covers the entire ~25k-filing index in one run
-  — there is no per-window bookkeeping benefit to partitioning it (§2's "why partition"
-  test fails: the whole dataset already comes back cheaply). This is a deliberate
-  deviation from the original research doc's monthly-partition sketch.
-- **Facts + report-XHTML archive** (`esef_filing_facts_duckdb`, `esef_report_xhtml_s3`):
-  year-partitioned (`StaticPartitionsDefinition` `str(y)` for `y` in `2019..2027`, keyed
-  by `toYear(period_end)`), `BackfillPolicy.multi_run(max_partitions_per_run=1)`. This
-  is a deliberate deviation from §4 ("API-only sources → partition by the API's natural
-  window"): the partition key is **not** an API paging parameter — it's derived locally
-  by grouping the *already-crawled* index rows by year (`_split_filings_by_partition_year`
-  / `_split_report_filings_by_partition_year`). The expensive, partition-worthy part is
-  the **per-filing download** (json_url / report_url), not the index crawl itself; year
-  buckets give backfill a throttleable unit of work and give the weekly refresh a natural
-  "current year only" selection, without needing the API to support date-windowed paging.
-- Both partitioned assets independently re-read the full local index and re-derive their
-  own year bucket on every run (cheap — one pass over already-fetched rows); neither
-  depends on the other's output.
+- **Shared partition clock**: all three ingest assets use
+  `ESEF_FILINGS_DISCOVERY_PARTITIONS`, a UTC `MonthlyPartitionsDefinition` starting at
+  `2023-01-01`. The key is the source's `processed` timestamp, which describes when a
+  filing version became available. It is deliberately independent of fiscal
+  `period_end`: a 2021 report first processed in July 2026 belongs to `2026-07-01`.
+- **Index** (`esef_filings_index_duckdb`): fetches only its processed-time window through
+  the API's JSON filter, ordered by `(processed, fxo_id)`, then upserts the cumulative
+  DuckDB index by stable filing-version key `fxo_id`. An empty monthly window is valid and
+  does not erase earlier months.
+- **Facts + report-XHTML archive** (`esef_filing_facts_duckdb`,
+  `esef_report_xhtml_s3`): read the same processed-month slice from the cumulative local
+  index. The facts writer replaces rows only for the filing ids in that slice; the archive
+  remains skip-existing in object storage. Both use
+  `BackfillPolicy.multi_run(max_partitions_per_run=1)`.
+- **Reconciliation** (`esef_filings_index_reconciliation_duckdb`): an intentionally
+  unpartitioned full API sweep and atomic index replacement, isolated from the weekly
+  incremental path. It reports new/removed ids and affected processed months and runs via
+  a separate stopped-by-default monthly schedule.
 
 ## 3. Loading
 
@@ -64,9 +64,10 @@
   content agnostic, for the report-XHTML archive download in `esef_report_xhtml_s3`.
   Report XHTML is staged in `/tmp`, and each local file is unlinked immediately after its
   S3 upload attempt, so a partition never accumulates all downloaded reports locally.
-- **Staging shape**: `esef_filings.filings_index` (one row per `EsefFilingRecord`, full
-  replace every run) and `esef_filings.facts` (one row per parsed OIM fact,
-  `period_end_year`-scoped delete+insert per partition). Both stage loosely-typed text
+- **Staging shape**: `esef_filings.filings_index` (one row per `EsefFilingRecord`,
+  cumulative upsert by `fxo_id` in the active path) and `esef_filings.facts` (one row per
+  parsed OIM fact, filing-id-scoped delete+insert per processed-month partition). Both
+  stage loosely-typed text
   columns (see `assets.py`'s `_FILINGS_INDEX_COLUMN_TYPES` / `_FACTS_COLUMN_TYPES`
   docstrings) — real typing/casting happens at ClickHouse export time (§5).
 - No dlt row-resource, no CSV, no DuckDB bulk CSV reader: the source is JSON, not a bulk
@@ -149,76 +150,32 @@ to close later. No contact-extraction asset exists for this module.
   the same EUR→USD lookup (ratio 1.0) with no special case. Facts span
   EUR/SEK/NOK/GBP/CHF/DKK/... per filer.
 
-## 8. Jobs & schedule (Task 7)
-
-Two jobs, one schedule:
+## 8. Jobs & schedules
 
 | job | selection | partitioned? |
 |---|---|---|
-| `esef_filings_refresh_job` | `esef_filings_index_duckdb`, `esef_filing_facts_duckdb`, `esef_report_xhtml_s3`, `esef_filings_clickhouse`, `esef_facts_clickhouse`, `esef_entity_registry_map_clickhouse`, `esef_financial_metrics_clickhouse` | yes — resolves to `ESEF_FILING_FACTS_PARTITIONS` (shared by the 2 partitioned assets in the selection); the other 5 are unpartitioned and run every launch |
-| `esef_filings_backfill_job` | `esef_filing_facts_duckdb`, `esef_report_xhtml_s3` only | yes — same partitions_def, exports excluded |
+| `esef_filings_refresh_job` | monthly index, facts, XHTML, then all ClickHouse/derived assets | yes — `ESEF_FILINGS_DISCOVERY_PARTITIONS`; downstream unpartitioned assets rebuild from the cumulative DuckDB state |
+| `esef_filings_backfill_job` | monthly index, facts, XHTML only | yes — same processed-month definition; exports excluded |
+| `esef_filings_reconciliation_job` | full-sweep reconciliation index only | no |
 
-`esef_filings_refresh_weekly`: cron `10 5 * * 0` (moved from the originally-drafted
-`50 5 * * 0`, which collided with `finland_verotax_schedule`'s `50 5 12 11 *` on
-`(minute, hour)` — every schedule in `defs/` must claim a unique `(minute, hour)` pair,
-enforced by `tests/test_schedule_cron_contracts.py`), `Europe/Belgrade`,
-`DefaultScheduleStatus.STOPPED` (until Task 8 validates a live run and flips it on in the
-UI). Concurrency is controlled by the pools on assets that access shared
-storage; ESEF runs do not share a run-level scheduling class with unrelated
-sources.
+`esef_filings_refresh_weekly` runs at `10 5 * * 0`, timezone `Europe/Belgrade`, and is
+stopped by default. Its resolver uses the source's UTC clock and always emits the open
+processed month (`YYYY-MM-01`). On the first weekly tick of a new month it also emits the
+previous month, preventing the days between the prior tick and month boundary from being
+stranded without doubling the full downstream rebuild on every later tick. Each request
+has a tick-specific run key, as Dagster requires for a multi-run schedule evaluation. The
+monthly definition has no manually maintained end-year ceiling, and `end_offset=1` makes
+the open month selectable.
 
-**Partition ceiling is a silent dead-man's switch, not a hard stop.** The schedule's
-`execution_fn` resolves `partition_key=str(now.year)` and only ever produces a
-`RunRequest` for a year inside `[ESEF_FACTS_PARTITION_YEAR_MIN, ESEF_FACTS_PARTITION_YEAR_MAX]`
-(currently 2019-2027, `assets.py`). From **2028** onward, every weekly tick resolves a
-`partition_key` with no matching partition and `_esef_filings_refresh_run_request` returns
-a `SkipReason` instead of a `RunRequest` — the schedule keeps firing on cron, keeps
-"succeeding" (a skip is not a failure), and simply stops refreshing ESEF data, with no
-alert. Bump `ESEF_FACTS_PARTITION_YEAR_MAX` (and the `ESEF_FILING_FACTS_PARTITIONS`
-static list it drives) before 2028 to avoid this; see the code comment at its
-declaration in `assets.py`.
+`esef_filings_reconciliation_monthly` runs at `25 5 2 * *`, timezone
+`Europe/Belgrade`, and is also stopped by default. Keeping reconciliation in a separate
+job prevents a full sweep from being an accidental prerequisite of every weekly refresh.
 
-**Why ONE job for the whole refresh chain, unlike `sweden_financial`'s split.**
-`sweden_financial`'s weekly chain needed a 2026-07-20 de-partitioning redesign because it
-keeps a **separate DuckDB file per year**: a partition-scoped incremental ClickHouse
-export became order-dependent against the yearly backfill (the 2026-07-18 incident — see
-`sweden_financial/docs/sweden_financial-design.md`), and the fix split the pipeline into
-three jobs (partitioned backfill parse+export, unpartitioned reconciling weekly
-parse+export, unpartitioned derived rebuild) plus reconciler-shaped exports. `esef_filings`
-keeps its **entire dataset in ONE DuckDB file** (`esef_filings_source.duckdb`): the
-year-partitioned facts/XHTML steps each delete-then-insert only their own
-`period_end_year` scope within that single file, and the unpartitioned exports downstream
-always full-replace ClickHouse from a read of the **whole** file (every year materialized
-so far, including whatever the just-run partition step wrote). There is no split-file
-order-independence hazard to design around here — a single job mirrors what
-`sweden_financial`'s *pre-incident* shape looked like (see its commit `111704a5`, before
-the 2026-07-19 incremental-export rework), where the weekly job's selection was a single
-partitions_def shared across the whole chain including the exports.
-
-**Mixing a partitioned selection with unpartitioned assets in one job is legal Dagster,
-verified by reading the source** (not assumed): `JobDefinition._get_partitions_def`
-(`dagster/_core/definitions/job_definition.py`) collects only the **non-None**
-`partitions_def`s across a job's selected assets and requires exactly one unique value;
-assets with `partitions_def=None` are simply excluded from that check and execute
-unconditionally on every launch of the job — they are not gated by the run's
-`partition_key`. Confirmed empirically too: `uv run dg check defs` passes, and a script
-resolving the real repository's `esef_filings_refresh_job` shows
-`job.partitions_def.get_partition_keys() == ['2019', ..., '2027']` with all 7 asset keys
-present in the selection.
-
-`esef_filings_refresh_weekly`'s `execution_fn` (`_esef_filings_refresh_run_request`)
-mirrors `sweden_financial_current_year_weekly`'s pre-de-partition
-`_current_year_run_request` resolver: at schedule-evaluation time it converts
-`context.scheduled_execution_time` to `Europe/Belgrade` and hands the job
-`RunRequest(partition_key=str(year))`; a year with no matching partition (should never
-happen inside 2019-2027, but defensive) returns a `SkipReason` instead of crashing the
-tick. Falls back to "now" in `Europe/Belgrade` when Dagster evaluates the schedule outside
-a real tick (`scheduled_execution_time is None`).
-
-`esef_filings_backfill_job` is the UI-launched backfill vehicle for 2019-2027 — exports
-are deliberately excluded from it; run `esef_filings_refresh_job` (or the individual
-export assets) once after all backfill partitions land, exactly like
-`sweden_financial_backfill_job`'s exports-excluded shape.
+All monthly ingest assets share one partitions definition. The ClickHouse exports remain
+unpartitioned and full-replace from the cumulative local tables, so a weekly run exports
+all months materialized so far, including the just-upserted month. Backfills exclude
+exports; run the refresh job or individual exports once after the monthly ingest backfill
+finishes.
 
 ## 9. Correctness decisions
 
@@ -432,19 +389,15 @@ the same treatment in a future pass — the reasoning that its row count is tied
 `esef_filings`/`gleif_lei_records` each run is unchanged, but so was the reasoning for the
 other two before this finding.
 
-**Crawl-completeness guard on `esef_filings_index_duckdb` itself (Finding M1).**
-Independent of the shrink guards above, and one step earlier in the pipeline: the client
-now surfaces the API's own reported total filing count
-(`EsefFilingsClient.last_reported_total`, JSON:API `meta.count`, captured off the first
-index page only), and the asset refuses (`ValueError`, raised before any DuckDB statement
-runs — same "before touching the table" discipline as the pre-existing empty-crawl guard)
-when the crawled count is below `CRAWL_COMPLETENESS_MIN_RATIO` (90%) of that reported
-total. This catches a truncated/partial crawl — the API's pagination stopping early, a
-network blip mid-sweep — that still returns a nonzero, non-empty result and would
-otherwise sail straight past the empty-crawl guard. A no-op when the API didn't report a
-count at all (`last_reported_total is None`) — there's no baseline to refuse against.
-`api_reported_total` is recorded in the asset's materialization metadata (`None` when
-unavailable) for observability even on runs where the guard doesn't fire.
+**Crawl-completeness guard on index queries (Finding M1).** The client surfaces the
+API's reported result count for the selected query (`EsefFilingsClient.last_reported_total`,
+JSON:API `meta.count`, captured from the first page). Both a processed-month fetch and the
+full reconciliation refuse before opening DuckDB when the crawled count falls below
+`CRAWL_COMPLETENESS_MIN_RATIO` (90%) of that reported result count. This catches nonempty
+but truncated pagination. A genuinely empty monthly query (`meta.count = 0`) is valid and
+preserves the cumulative index; an empty full reconciliation is refused separately.
+When the API does not report a count, the ratio guard is a no-op and metadata records the
+missing baseline.
 
 ## 10. Deferred (v1 skips)
 
@@ -516,7 +469,7 @@ of this task, tracked for a future pass:
   definition's *static* shape) — a code-review fix pass added
   `test_refresh_job_executes_all_assets_for_partition`
   (`tests/test_esef_filings_assets.py`), which actually calls
-  `job.execute_in_process(partition_key="2026")` on a real, un-mocked-away
+  `job.execute_in_process(partition_key="2026-07-01")` on a real, un-mocked-away
   `esef_filings_refresh_job` and asserts all 7 asset keys materialize. That test hits the
   same `ObjectStoreResource`/`dg.materialize` reconstruction gotcha above, plus the
   ClickHouse equivalent for `ClickhouseResource` — both resources are monkeypatched at the
@@ -543,7 +496,7 @@ of this task, tracked for a future pass:
   shared exporter exposes no pre-exchange hook — see §9.6).
   `esef_entity_registry_map_clickhouse` still runs refuse-on-empty only; out of scope for
   this finding, tracked in §9.6 as a possible future pass, not an oversight.
-- **Dead upstream links 404ing out an entire year partition** (production incident,
+- **Dead upstream links 404ing out an entire partition** (production incident,
   observed 2026-07-21, first server backfill on 2020/2021/2022): filings.xbrl.org's index
   advertises a `json_url`/`report_url` for a filing whose file no longer exists upstream
   (example: `EDRPOU-33669793`'s 2020-12-31 UA filing 404s at
@@ -571,21 +524,16 @@ of this task, tracked for a future pass:
   404/410 were never in that set, so the dlt wrapper was already not retrying them; the
   incident's cost was one wasted attempt per dead link, not five, and no retry-config
   change was needed alongside the asset-loop fix.
-- **`skipped_out_of_range` misread as partition-scoped** (live-operation feedback,
-  2026-07-21): a user materialized the 2019 partition and saw
-  `filings_in_scope=0, skipped_out_of_range=6` in the run's metadata, and reasonably read
-  the 6 as "6 filings out of range in 2019" — it is actually a **whole-index** count
-  (every row across all years with a NULL/unparseable/out-of-range `period_end`,
-  recomputed fresh on every partition run; see `_split_filings_by_partition_year`'s
-  docstring), so the same 6 shows up unchanged on every other year's partition too. Fixed
-  by renaming the metadata key to `index_filings_outside_partition_range` (same whole-index
-  value, still a useful index-health signal — nothing about what's counted changed) and
-  having both `esef_filing_facts_duckdb` and `esef_report_xhtml_s3` also emit
-  `partition_year` in their metadata, so the two numbers can never be conflated again even
-  without reading the docstring. Both per-filing download loops also gained periodic
-  progress logging (every 100 processed filings, plus once at completion) via the asset's
-  `log_info`, so a multi-hour partition run has a visible heartbeat between the initial
-  "N filings in scope" line and the final materialization metadata.
+- **Fiscal-year partitions miss late discoveries** (correctness redesign, 2026-07-22):
+  the weekly job previously materialized only the current fiscal `period_end` year. Live
+  API rows processed in 2026 included filings whose fiscal period ended in 2021, so those
+  filing versions could enter the full-replaced index but never reach facts/XHTML during
+  the normal weekly path. Fixed end to end by using the API's source `processed` month for
+  index, facts, and XHTML; incrementally upserting the cumulative index by `fxo_id`; and
+  isolating the full sweep as an explicit reconciliation asset. `period_end_year` remains
+  a fact attribute, never an orchestration clock. Both download loops retain progress
+  logging every 100 filings plus completion metadata keyed by `partition_key` and the UTC
+  processed window.
 
 ## 12. Verification
 
@@ -595,11 +543,11 @@ of this task, tracked for a future pass:
   `tests/test_esef_filings_assets.py`, `tests/test_esef_filings_publish.py`,
   `tests/test_esef_filings_metrics.py` (mapping/pivot/export/migration-column-order/
   job+schedule contracts). `uv run pytest tests/test_esef_filings_assets.py -q` →
-  passing (job/schedule assertions added in Task 7: job asset-key coverage, shared
-  partitions_def resolution, schedule cron/timezone/status, the resolver's
-  timezone-conversion and out-of-range-skip behavior; a code-review fix pass added
+  passing (job/schedule assertions cover asset-key coverage, the shared monthly
+  partitions definition, schedule cron/timezone/status, UTC month resolution, and the
+  lack of a static end-year ceiling; a code-review fix pass added
   `test_refresh_job_executes_all_assets_for_partition`, which actually EXECUTES
-  `esef_filings_refresh_job` for `partition_key="2026"` rather than only inspecting its
+  `esef_filings_refresh_job` for `partition_key="2026-07-01"` rather than only inspecting its
   static definition — see §11). A later fix pass (2026-07-21, dead-upstream-links
   incident) added the `skipped_upstream_missing` coverage to both partitioned assets:
   404/410 skipped-and-counted with no S3 object/facts row for that filing, other filings
@@ -616,7 +564,8 @@ of this task, tracked for a future pass:
   server. Task 8's plan (server backfill + validation) covers: confirming the migration
   applied cleanly, a live index materialization (compare `meta.count` vs stored rows,
   per-country distribution, `json_url` coverage fraction — the number the Arelle-fallback
-  decision in §10 depends on), a UI-launched backfill of `esef_filing_facts_duckdb` +
-  `esef_report_xhtml_s3` across 2019-2027, running the exports + entity map + metrics, and
+  decision in §10 depends on), a UI-launched processed-month backfill of the index +
+  `esef_filing_facts_duckdb` + `esef_report_xhtml_s3` from 2023 onward, running the
+  exports + entity map + metrics, and
   spot-checking real figures (e.g. Nokia, Ericsson) against published annual reports
   before flipping `esef_filings_refresh_weekly` on in the UI.

@@ -1,5 +1,4 @@
-"""Tests for the ESEF filings index crawl asset and the year-partitioned
-fact download/parse asset.
+"""Tests for the ESEF filings index crawl and processed-month download assets.
 
 Index-crawl tests: no network -- EsefFilingsClient is monkeypatched on the
 assets module to a stub returning canned EsefFilingRecord instances,
@@ -7,8 +6,7 @@ mirroring the class-monkeypatch pattern used for ExchangeRateClient in
 tests/test_norway_brreg_financial_statement_assets.py. Each test materializes
 into a fresh tmp_path DuckDB file via dg.materialize's resource override.
 
-Facts-download tests: call `assets.run_esef_filing_facts_partition` (the
-plain function the `esef_filing_facts_duckdb` asset delegates to) directly
+Facts-download tests call the raw-S3 and DuckDB runner functions directly
 with a duck-typed FakeObjectStore/stub client, rather than through
 `dg.materialize` -- see the long comment at the top of that test section for
 why (a real, confirmed Dagster resource-reconstruction behavior that drops
@@ -49,6 +47,7 @@ def _record(
     json_url: str | None = "https://filings.xbrl.org/x/facts.json",
     report_url: str | None = "https://filings.xbrl.org/x/report.html",
     period_end: str | None = "2022-12-31",
+    processed_at: str | None = "2023-01-02 00:00:00",
 ) -> EsefFilingRecord:
     return EsefFilingRecord(
         lei=lei,
@@ -57,7 +56,7 @@ def _record(
         country=country,
         period_end=period_end,
         date_added="2023-01-01 00:00:00",
-        processed_at="2023-01-02 00:00:00",
+        processed_at=processed_at,
         json_url=json_url,
         package_url="https://filings.xbrl.org/x/package.zip",
         report_url=report_url,
@@ -87,7 +86,7 @@ class _StubEsefFilingsClient:
         self._records = records
         self.last_reported_total = last_reported_total
 
-    def iter_filings(self) -> Iterator[EsefFilingRecord]:
+    def iter_filings(self, **_: Any) -> Iterator[EsefFilingRecord]:
         yield from self._records
 
 
@@ -119,6 +118,14 @@ def _resources(tmp_path: Path) -> dict[str, object]:
     return {"esef_filings_duckdb": _db_resource(tmp_path)}
 
 
+def _materialize_index(tmp_path: Path) -> dg.ExecuteInProcessResult:
+    return dg.materialize(
+        [assets.esef_filings_index_duckdb],
+        resources=_resources(tmp_path),
+        partition_key="2023-01-01",
+    )
+
+
 def _fetch_filings_index(tmp_path: Path) -> list[tuple]:
     with read_only_duckdb_connection(_db_resource(tmp_path)) as connection:
         return connection.execute(
@@ -137,15 +144,14 @@ def test_three_records_land_one_without_json_facts(
     ]
     _patch_client(monkeypatch, records)
 
-    result = dg.materialize(
-        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-    )
+    result = _materialize_index(tmp_path)
 
     assert result.success
     metadata = result.asset_materializations_for_node("esef_filings_index_duckdb")[
         0
     ].metadata
-    assert metadata["row_count"].value == 3
+    assert metadata["window_row_count"].value == 3
+    assert metadata["index_row_count"].value == 3
     assert metadata["with_json_facts_count"].value == 2
     assert metadata["without_json_facts_count"].value == 1
     assert metadata["distinct_country_count"].value == 2
@@ -160,49 +166,75 @@ def test_three_records_land_one_without_json_facts(
     assert all(row[3] == result.run_id for row in rows)
 
 
-def test_second_materialization_full_replaces_no_duplicates(
+def test_second_materialization_upserts_without_duplicates_or_erasing_other_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_client(monkeypatch, [_record(fxo_id="A-1"), _record(fxo_id="A-2")])
-    first = dg.materialize(
-        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-    )
+    first = _materialize_index(tmp_path)
     assert first.success
 
     _patch_client(monkeypatch, [_record(fxo_id="B-1")])
-    second = dg.materialize(
-        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-    )
+    second = _materialize_index(tmp_path)
     assert second.success
 
     rows = _fetch_filings_index(tmp_path)
-    assert [row[0] for row in rows] == ["B-1"]
+    assert [row[0] for row in rows] == ["A-1", "A-2", "B-1"]
 
 
-def test_empty_crawl_raises_value_error_and_preserves_existing_rows(
+def test_empty_processed_window_is_valid_and_preserves_existing_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_client(monkeypatch, [_record(fxo_id="A-1"), _record(fxo_id="A-2")])
-    first = dg.materialize(
-        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-    )
+    first = _materialize_index(tmp_path)
     assert first.success
 
     _patch_client(monkeypatch, [])
-    with pytest.raises(ValueError, match="0 filings"):
-        dg.materialize(
-            [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-        )
+    empty = _materialize_index(tmp_path)
+    assert empty.success
 
     rows = _fetch_filings_index(tmp_path)
     assert [row[0] for row in rows] == ["A-1", "A-2"]
 
 
+def test_reconciliation_reports_new_and_removed_filing_months(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_filings_index(
+        tmp_path,
+        [
+            _record(fxo_id="KEEP-1", processed_at="2023-01-10 00:00:00"),
+            _record(fxo_id="REMOVED-1", processed_at="2023-02-10 00:00:00"),
+        ],
+    )
+    _patch_client(
+        monkeypatch,
+        [
+            _record(fxo_id="KEEP-1", processed_at="2023-01-10 00:00:00"),
+            _record(fxo_id="NEW-1", processed_at="2023-03-10 00:00:00"),
+        ],
+        last_reported_total=2,
+    )
+
+    result = dg.materialize(
+        [assets.esef_filings_index_reconciliation_duckdb],
+        resources=_resources(tmp_path),
+    )
+
+    assert result.success
+    metadata = result.asset_materializations_for_node(
+        "esef_filings_index_reconciliation_duckdb"
+    )[0].metadata
+    assert metadata["new_since_local_count"].value == 1
+    assert metadata["removed_upstream_count"].value == 1
+    assert metadata["affected_processed_months"].value == ["2023-02", "2023-03"]
+    assert [row[0] for row in _fetch_filings_index(tmp_path)] == ["KEEP-1", "NEW-1"]
+
+
 # --------------------------------------------------------------------------
 # Crawl-completeness guard (Finding M1): a nonzero crawl that's still far
 # short of the API's own reported total (`meta.count`) must be refused, the
-# same "before touching the existing table" discipline as the empty-crawl
-# guard above.
+# same "before touching the existing table" discipline as reconciliation's
+# explicit empty-crawl guard.
 # --------------------------------------------------------------------------
 
 
@@ -210,9 +242,7 @@ def test_crawl_completeness_guard_refuses_below_90_percent_and_preserves_existin
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_client(monkeypatch, [_record(fxo_id="A-1"), _record(fxo_id="A-2")])
-    first = dg.materialize(
-        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-    )
+    first = _materialize_index(tmp_path)
     assert first.success
 
     # 2 crawled out of a reported 1000 -- nowhere near the 90% floor.
@@ -222,9 +252,7 @@ def test_crawl_completeness_guard_refuses_below_90_percent_and_preserves_existin
         last_reported_total=1000,
     )
     with pytest.raises(ValueError, match="below 90%"):
-        dg.materialize(
-            [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-        )
+        _materialize_index(tmp_path)
 
     # The prior (complete) crawl's rows must survive untouched.
     rows = _fetch_filings_index(tmp_path)
@@ -239,15 +267,13 @@ def test_crawl_completeness_guard_passes_at_exactly_the_90_percent_threshold(
     records = [_record(fxo_id=f"A-{i}") for i in range(9)]
     _patch_client(monkeypatch, records, last_reported_total=10)
 
-    result = dg.materialize(
-        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-    )
+    result = _materialize_index(tmp_path)
 
     assert result.success
     metadata = result.asset_materializations_for_node("esef_filings_index_duckdb")[
         0
     ].metadata
-    assert metadata["row_count"].value == 9
+    assert metadata["window_row_count"].value == 9
     assert metadata["api_reported_total"].value == 10
 
 
@@ -259,9 +285,7 @@ def test_crawl_completeness_guard_is_a_noop_when_api_total_is_unknown(
     # -- nothing to compare against, so the guard must not fire.
     _patch_client(monkeypatch, [_record(fxo_id="A-1")], last_reported_total=None)
 
-    result = dg.materialize(
-        [assets.esef_filings_index_duckdb], resources=_resources(tmp_path)
-    )
+    result = _materialize_index(tmp_path)
 
     assert result.success
 
@@ -287,6 +311,7 @@ def test_filings_index_non_empty_check_passes_on_populated_table(
     result = dg.materialize(
         [assets.esef_filings_index_duckdb, assets.filings_index_non_empty],
         resources=_resources(tmp_path),
+        partition_key="2023-01-01",
     )
 
     assert result.success
@@ -360,7 +385,7 @@ def test_read_only_duckdb_connection_closes_underlying_connection_on_exception(
 
 
 # ==========================================================================
-# esef_filing_facts_duckdb: year-partitioned download + OIM parse
+# esef_filing_facts_json_s3 + esef_filing_facts_duckdb
 #
 # `run_esef_filing_facts_partition` (the plain function the asset delegates
 # to) is called DIRECTLY here rather than through `dg.materialize` -- a
@@ -518,36 +543,84 @@ def _run_facts_partition(
     object_store: FakeObjectStore,
     client: _StubFactsDownloadClient,
     *,
-    partition_year: int,
+    partition_key: str = "2023-01-01",
     source_run_id: str = "run-1",
     log_warning: Any = lambda *a, **k: None,
-) -> dict[str, int]:
-    return assets.run_esef_filing_facts_partition(
+) -> dict[str, int | str]:
+    raw_metadata = assets.run_esef_filing_facts_json_partition(
         esef_filings_duckdb=_db_resource(tmp_path),
         object_store=object_store,
         client=client,
-        partition_year=partition_year,
+        partition_key=partition_key,
+        log_info=lambda *a, **k: None,
+        log_warning=log_warning,
+    )
+    facts_metadata = assets.run_esef_filing_facts_partition(
+        esef_filings_duckdb=_db_resource(tmp_path),
+        object_store=object_store,
+        partition_key=partition_key,
         source_run_id=source_run_id,
         log_info=lambda *a, **k: None,
         log_warning=log_warning,
     )
+    return {
+        **facts_metadata,
+        **{f"raw_{key}": value for key, value in raw_metadata.items()},
+    }
 
 
-def test_facts_asset_wiring_partitions_deps_backfill_policy_and_pool() -> None:
+def test_facts_asset_wiring_partitions_by_processed_month() -> None:
+    raw_asset_def = assets.esef_filing_facts_json_s3
     asset_def = assets.esef_filing_facts_duckdb
-    assert asset_def.partitions_def is not None
-    assert sorted(asset_def.partitions_def.get_partition_keys()) == [
-        str(year) for year in range(2019, 2028)
-    ]
+    assert isinstance(asset_def.partitions_def, dg.MonthlyPartitionsDefinition)
+    assert asset_def.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
+    assert raw_asset_def.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
+    assert asset_def.partitions_def.start == datetime(
+        2023, 1, 1, tzinfo=ZoneInfo("UTC")
+    )
+    raw_dep_keys = {
+        dep.asset_key for spec in raw_asset_def.specs for dep in spec.deps
+    }
+    assert dg.AssetKey("esef_filings_index_duckdb") in raw_dep_keys
     dep_keys = {dep.asset_key for spec in asset_def.specs for dep in spec.deps}
-    assert dg.AssetKey("esef_filings_index_duckdb") in dep_keys
+    assert dep_keys == {
+        dg.AssetKey("esef_filings_index_duckdb"),
+        dg.AssetKey("esef_filing_facts_json_s3"),
+    }
     assert asset_def.backfill_policy == dg.BackfillPolicy.multi_run(
         max_partitions_per_run=1
     )
     assert asset_def.op.pool == assets.ESEF_FILINGS_DUCKDB_POOL
 
 
-def test_facts_partition_downloads_and_parses_filings_in_scope_for_year(
+def test_incremental_index_upsert_preserves_other_processed_months(
+    tmp_path: Path,
+) -> None:
+    january = _record(fxo_id="JAN-1", processed_at="2023-01-15 12:00:00")
+    july_late_filing = _record(
+        fxo_id="JUL-1",
+        period_end="2021-12-31",
+        processed_at="2026-07-21 18:21:29.311103",
+    )
+
+    with _db_resource(tmp_path).get_connection() as connection:
+        assets.upsert_esef_filings_index(
+            connection=connection,
+            records=[january],
+            source_url=assets.ESEF_INDEX_URL,
+            source_run_id="january-run",
+        )
+        assets.upsert_esef_filings_index(
+            connection=connection,
+            records=[july_late_filing],
+            source_url=assets.ESEF_INDEX_URL,
+            source_run_id="july-run",
+        )
+
+    assert [row[0] for row in _fetch_filings_index(tmp_path)] == ["JAN-1", "JUL-1"]
+
+
+def test_facts_partition_downloads_filings_discovered_in_processed_month(
     tmp_path: Path,
 ) -> None:
     _seed_filings_index(
@@ -559,9 +632,12 @@ def test_facts_partition_downloads_and_parses_filings_in_scope_for_year(
             _record(
                 fxo_id="B-1", period_end="2022-06-30", json_url=_facts_json_url("B-1")
             ),
-            # Different year -- out of scope for the "2022" partition.
+            # Same fiscal-year family, but discovered in the next month.
             _record(
-                fxo_id="G-1", period_end="2021-12-31", json_url=_facts_json_url("G-1")
+                fxo_id="G-1",
+                period_end="2021-12-31",
+                processed_at="2023-02-02 00:00:00",
+                json_url=_facts_json_url("G-1"),
             ),
         ],
     )
@@ -571,20 +647,26 @@ def test_facts_partition_downloads_and_parses_filings_in_scope_for_year(
     )
 
     metadata = _run_facts_partition(
-        tmp_path, object_store, client, partition_year=2022, source_run_id="run-A"
+        tmp_path,
+        object_store,
+        client,
+        partition_key="2023-01-01",
+        source_run_id="run-A",
     )
 
     assert metadata["filings_in_scope"] == 2
-    assert metadata["downloaded_count"] == 2
-    assert metadata["reused_count"] == 0
+    assert metadata["raw_downloaded_count"] == 2
+    assert metadata["raw_reused_count"] == 0
     assert metadata["skipped_no_json"] == 0
-    assert metadata["index_filings_outside_partition_range"] == 0
-    assert metadata["partition_year"] == 2022
+    assert metadata["partition_key"] == "2023-01-01"
+    assert metadata["processed_window_start"] == "2023-01-01 00:00:00"
+    assert metadata["processed_window_end"] == "2023-02-01 00:00:00"
     assert metadata["parse_failed_count"] == 0
     assert metadata["fact_row_count"] == 8  # 6 (fixture) + 2 (small payload)
     assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
 
-    # G-1 (period_end 2021) was never even attempted.
+    # G-1 was discovered in February, so January never attempts it even
+    # though fiscal period_end is deliberately unrelated to discovery time.
     assert sorted(client.download_calls) == [
         _facts_json_url("A-1"),
         _facts_json_url("B-1"),
@@ -613,11 +695,11 @@ def test_second_run_reuses_s3_object_and_keeps_row_count_stable(
         tmp_path,
         object_store,
         _StubFactsDownloadClient({"A-1": _FIXTURE_FACTS_BYTES}),
-        partition_year=2022,
+        partition_key="2023-01-01",
         source_run_id="run-1",
     )
-    assert first_metadata["downloaded_count"] == 1
-    assert first_metadata["reused_count"] == 0
+    assert first_metadata["raw_downloaded_count"] == 1
+    assert first_metadata["raw_reused_count"] == 0
     assert first_metadata["fact_row_count"] == 6
 
     # New client instance for the second run -- if download_json_facts were
@@ -627,17 +709,20 @@ def test_second_run_reuses_s3_object_and_keeps_row_count_stable(
         tmp_path,
         object_store,
         second_client,
-        partition_year=2022,
+        partition_key="2023-01-01",
         source_run_id="run-2",
     )
-    assert second_metadata["downloaded_count"] == 0
-    assert second_metadata["reused_count"] == 1
+    assert second_metadata["raw_downloaded_count"] == 0
+    assert second_metadata["raw_reused_count"] == 1
+    assert second_metadata["checkpointed_filing_count"] == 1
+    assert second_metadata["checkpointed_fact_row_count"] == 6
+    assert second_metadata["s3_read_count"] == 0
     assert second_metadata["fact_row_count"] == 6
     assert second_client.download_calls == []
 
     rows = _fetch_facts_rows(tmp_path)
     assert len(rows) == 6
-    assert all(row[3] == "run-2" for row in rows)  # scoped replace, no dupes
+    assert all(row[3] == "run-1" for row in rows)  # checkpoint reuse, no rewrite
 
 
 def test_filing_without_json_url_increments_skipped_no_json(tmp_path: Path) -> None:
@@ -653,16 +738,18 @@ def test_filing_without_json_url_increments_skipped_no_json(tmp_path: Path) -> N
     object_store = FakeObjectStore()
     client = _StubFactsDownloadClient({"B-1": _SMALL_PAYLOAD_BYTES})
 
-    metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+    metadata = _run_facts_partition(
+        tmp_path, object_store, client, partition_key="2023-01-01"
+    )
 
     assert metadata["filings_in_scope"] == 2
     assert metadata["skipped_no_json"] == 1
-    assert metadata["downloaded_count"] == 1
+    assert metadata["raw_downloaded_count"] == 1
     assert metadata["fact_row_count"] == 2
     assert client.download_calls == [_facts_json_url("B-1")]
 
 
-def test_null_and_out_of_range_period_end_are_skipped_without_crashing(
+def test_invalid_period_end_values_are_skipped_without_crashing(
     tmp_path: Path,
 ) -> None:
     _seed_filings_index(
@@ -673,7 +760,7 @@ def test_null_and_out_of_range_period_end_are_skipped_without_crashing(
             ),
             _record(fxo_id="D-1", period_end=None, json_url=_facts_json_url("D-1")),
             _record(
-                fxo_id="E-1", period_end="2030-01-01", json_url=_facts_json_url("E-1")
+                fxo_id="E-1", period_end="2022-99-99", json_url=_facts_json_url("E-1")
             ),
             _record(
                 fxo_id="F-1", period_end="garbage", json_url=_facts_json_url("F-1")
@@ -681,15 +768,27 @@ def test_null_and_out_of_range_period_end_are_skipped_without_crashing(
         ],
     )
     object_store = FakeObjectStore()
-    client = _StubFactsDownloadClient({"A-1": _FIXTURE_FACTS_BYTES})
+    client = _StubFactsDownloadClient(
+        {
+            filing_id: _FIXTURE_FACTS_BYTES
+            for filing_id in ("A-1", "D-1", "E-1", "F-1")
+        }
+    )
 
-    metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+    metadata = _run_facts_partition(
+        tmp_path, object_store, client, partition_key="2023-01-01"
+    )
 
-    assert metadata["filings_in_scope"] == 1
-    assert metadata["index_filings_outside_partition_range"] == 3
+    assert metadata["filings_in_scope"] == 4
+    assert metadata["skipped_invalid_period_end"] == 3
     assert metadata["fact_row_count"] == 6
-    # None of the out-of-range filings were ever downloaded.
-    assert client.download_calls == [_facts_json_url("A-1")]
+    # The raw archive preserves every source object. Invalid fiscal dates are
+    # rejected only at the parsed-DuckDB boundary.
+    assert metadata["raw_downloaded_count"] == 4
+    assert client.download_calls == [
+        _facts_json_url(filing_id)
+        for filing_id in ("A-1", "D-1", "E-1", "F-1")
+    ]
 
 
 def test_malformed_json_increments_parse_failed_count_without_crashing(
@@ -711,18 +810,22 @@ def test_malformed_json_increments_parse_failed_count_without_crashing(
         {"A-1": _FIXTURE_FACTS_BYTES}, malformed_fxo_ids=frozenset({"F-1"})
     )
 
-    metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+    metadata = _run_facts_partition(
+        tmp_path, object_store, client, partition_key="2023-01-01"
+    )
 
     assert metadata["filings_in_scope"] == 2
     assert metadata["parse_failed_count"] == 1
-    assert metadata["downloaded_count"] == 2  # both bytes were fetched/uploaded
+    assert metadata["raw_downloaded_count"] == 2  # raw asset archived both files
     assert metadata["fact_row_count"] == 6  # only A-1's facts landed
 
     rows = _fetch_facts_rows(tmp_path)
     assert {row[0] for row in rows} == {"A-1"}
 
 
-def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> None:
+def test_partition_scoped_replace_does_not_touch_other_processed_months(
+    tmp_path: Path,
+) -> None:
     _seed_filings_index(
         tmp_path,
         [
@@ -730,7 +833,10 @@ def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> 
                 fxo_id="A-1", period_end="2022-12-31", json_url=_facts_json_url("A-1")
             ),
             _record(
-                fxo_id="G-1", period_end="2021-12-31", json_url=_facts_json_url("G-1")
+                fxo_id="G-1",
+                period_end="2021-12-31",
+                processed_at="2023-02-02 00:00:00",
+                json_url=_facts_json_url("G-1"),
             ),
         ],
     )
@@ -739,8 +845,8 @@ def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> 
         {"A-1": _FIXTURE_FACTS_BYTES, "G-1": _SMALL_PAYLOAD_BYTES}
     )
 
-    _run_facts_partition(tmp_path, object_store, client, partition_year=2021)
-    _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+    _run_facts_partition(tmp_path, object_store, client, partition_key="2023-02-01")
+    _run_facts_partition(tmp_path, object_store, client, partition_key="2023-01-01")
 
     rows = _fetch_facts_rows(tmp_path)
     assert {row[0] for row in rows} == {"A-1", "G-1"}
@@ -748,19 +854,22 @@ def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> 
     assert by_fxo["A-1"] == 2022
     assert by_fxo["G-1"] == 2021
 
-    # Re-materializing "2022" with a filing set that no longer includes A-1
-    # (index full-replace can never be empty, so keep G-1) must delete ONLY
-    # period_end_year=2022 rows -- 2021's G-1 rows survive.
+    # Re-materializing January with A-1 still in that discovery month but no
+    # longer exposing facts deletes A-1's facts only; February's G-1 survives.
     _seed_filings_index(
         tmp_path,
         [
+            _record(fxo_id="A-1", period_end="2022-12-31", json_url=None),
             _record(
-                fxo_id="G-1", period_end="2021-12-31", json_url=_facts_json_url("G-1")
-            )
+                fxo_id="G-1",
+                period_end="2021-12-31",
+                processed_at="2023-02-02 00:00:00",
+                json_url=_facts_json_url("G-1"),
+            ),
         ],
     )
     empty_metadata = _run_facts_partition(
-        tmp_path, object_store, _StubFactsDownloadClient({}), partition_year=2022
+        tmp_path, object_store, _StubFactsDownloadClient({}), partition_key="2023-01-01"
     )
     assert empty_metadata["fact_row_count"] == 0
 
@@ -769,11 +878,11 @@ def test_partition_scoped_replace_does_not_touch_other_years(tmp_path: Path) -> 
 
 
 # ==========================================================================
-# _replace_facts_partition: chunked-insert memory fix (production OOM
+# _replace_facts_for_filings: chunked-insert memory fix (production OOM
 # incident -- `_duckdb.OutOfMemoryException: failed to pin block ...` on the
 # 2020-2023 backfill partitions, root-caused to a single `executemany` over a
-# whole year's rows inside one transaction; see that function's docstring).
-# These tests call `assets._replace_facts_partition` DIRECTLY with synthetic
+# a whole partition's rows inside one transaction; see that function's docstring).
+# These tests call `assets._replace_facts_for_filings` DIRECTLY with synthetic
 # rows -- bypassing `run_esef_filing_facts_partition`'s download/parse loop
 # entirely, since the OIM parser itself already has dedicated tests in
 # test_esef_filings_facts.py -- against a REAL on-disk DuckDB connection,
@@ -787,7 +896,7 @@ def _synthetic_fact_row(
 ) -> tuple[Any, ...]:
     """A minimally-valid `esef_filings.facts` row shaped to
     `assets._FACTS_COLUMNS` -- column order/count must match exactly since
-    `_replace_facts_partition` inserts with positional `?` placeholders."""
+    `_replace_facts_for_filings` inserts with positional `?` placeholders."""
     assert len(assets._FACTS_COLUMNS) == 20
     return (
         "5493000000000000TEST",  # lei
@@ -828,10 +937,13 @@ def test_replace_facts_partition_chunked_insert_lands_all_rows(
     log_lines: list[tuple[Any, ...]] = []
 
     with _db_resource(tmp_path).get_connection() as connection:
-        assets._replace_facts_partition(
+        assets._replace_facts_for_filings(
             connection=connection,
-            partition_year=2022,
+            filing_ids=["fxo-2022"],
+            partition_key="2023-01-01",
             fact_rows=fact_rows,
+            completed_filing_fact_counts={"fxo-2022": 7},
+            source_run_id="test-run",
             log_info=lambda *a, **k: log_lines.append(a),
         )
 
@@ -856,10 +968,13 @@ def test_replace_facts_partition_rerun_replaces_not_duplicates(
         _synthetic_fact_row(fact_id=f"f-{i}", period_end_year=2022) for i in range(5)
     ]
     with _db_resource(tmp_path).get_connection() as connection:
-        assets._replace_facts_partition(
+        assets._replace_facts_for_filings(
             connection=connection,
-            partition_year=2022,
+            filing_ids=["fxo-2022"],
+            partition_key="2023-01-01",
             fact_rows=first_rows,
+            completed_filing_fact_counts={"fxo-2022": 5},
+            source_run_id="test-run",
             log_info=lambda *a, **k: None,
         )
     assert len(_fetch_facts_rows(tmp_path)) == 5
@@ -868,10 +983,13 @@ def test_replace_facts_partition_rerun_replaces_not_duplicates(
         _synthetic_fact_row(fact_id=f"g-{i}", period_end_year=2022) for i in range(4)
     ]
     with _db_resource(tmp_path).get_connection() as connection:
-        assets._replace_facts_partition(
+        assets._replace_facts_for_filings(
             connection=connection,
-            partition_year=2022,
+            filing_ids=["fxo-2022"],
+            partition_key="2023-01-01",
             fact_rows=second_rows,
+            completed_filing_fact_counts={"fxo-2022": 4},
+            source_run_id="test-run",
             log_info=lambda *a, **k: None,
         )
 
@@ -914,20 +1032,23 @@ def test_facts_partition_skips_404_increments_counter_no_s3_no_facts_row(
         tmp_path,
         object_store,
         client,
-        partition_year=2022,
+        partition_key="2023-01-01",
         log_warning=lambda *a, **k: warnings.append(a),
     )
 
     assert metadata["filings_in_scope"] == 2
-    assert metadata["skipped_upstream_missing"] == 1
-    assert metadata["downloaded_count"] == 1  # B-1 only
+    assert metadata["raw_skipped_upstream_missing"] == 1
+    assert metadata["raw_downloaded_count"] == 1  # B-1 only
+    assert metadata["skipped_missing_raw_object"] == 1
     assert metadata["fact_row_count"] == 2  # only B-1's small payload facts
     # Both filings were attempted (the 404 didn't abort the loop early).
     assert client.download_calls == [
         _facts_json_url("A-1"),
         _facts_json_url("B-1"),
     ]
-    assert len(warnings) == 1
+    # The independent raw and parsed assets each report their own missing
+    # boundary: upstream 404 first, then absent S3 input for the parser.
+    assert len(warnings) == 2
 
     # A-1's dead upstream link left no S3 object and no facts row.
     assert (
@@ -953,10 +1074,13 @@ def test_facts_partition_skips_410_gone_same_as_404(tmp_path: Path) -> None:
     object_store = FakeObjectStore()
     client = _StubFactsDownloadClient({}, http_error_status_by_fxo_id={"A-1": 410})
 
-    metadata = _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+    metadata = _run_facts_partition(
+        tmp_path, object_store, client, partition_key="2023-01-01"
+    )
 
-    assert metadata["skipped_upstream_missing"] == 1
-    assert metadata["downloaded_count"] == 0
+    assert metadata["raw_skipped_upstream_missing"] == 1
+    assert metadata["raw_downloaded_count"] == 0
+    assert metadata["skipped_missing_raw_object"] == 1
     assert metadata["fact_row_count"] == 0
     assert (
         assets.ESEF_FILINGS_FACTS_BUCKET,
@@ -979,7 +1103,7 @@ def test_facts_partition_5xx_http_error_propagates_and_fails_partition_loudly(
     client = _StubFactsDownloadClient({}, http_error_status_by_fxo_id={"A-1": 500})
 
     with pytest.raises(assets.dlt_requests.HTTPError):
-        _run_facts_partition(tmp_path, object_store, client, partition_year=2022)
+        _run_facts_partition(tmp_path, object_store, client, partition_key="2023-01-01")
 
     assert client.download_calls == [_facts_json_url("A-1")]
     # No phantom S3 object for the filing whose download 500'd.
@@ -1000,7 +1124,7 @@ def test_facts_partition_5xx_http_error_propagates_and_fails_partition_loudly(
 def test_facts_partition_logs_progress_every_100_processed_filings(
     tmp_path: Path,
 ) -> None:
-    """105 stub filings -- 95 with a valid json_url (downloaded), 10
+    """105 stub filings -- 95 with archived JSON, 10
     without (skipped_no_json) -- deterministically split the periodic
     100-filing-boundary log from the completion log (105 is not itself a
     multiple of 100, so these are genuinely two distinct log lines), and the
@@ -1027,24 +1151,31 @@ def test_facts_partition_logs_progress_every_100_processed_filings(
     )
     log_calls: list[tuple[Any, ...]] = []
 
-    assets.run_esef_filing_facts_partition(
+    assets.run_esef_filing_facts_json_partition(
         esef_filings_duckdb=_db_resource(tmp_path),
         object_store=object_store,
         client=client,
-        partition_year=2022,
+        partition_key="2023-01-01",
+        log_info=lambda *a, **k: None,
+        log_warning=lambda *a, **k: None,
+    )
+    assets.run_esef_filing_facts_partition(
+        esef_filings_duckdb=_db_resource(tmp_path),
+        object_store=object_store,
+        partition_key="2023-01-01",
         source_run_id="run-progress",
         log_info=lambda *a, **k: log_calls.append(a),
         log_warning=lambda *a, **k: None,
     )
 
-    progress_calls = [call for call in log_calls if "processed" in call[0]]
+    progress_calls = [call for call in log_calls if "filings processed" in call[0]]
     assert len(progress_calls) == 2
 
-    _, year_1, processed_1, total_1, downloaded_1, reused_1, skipped_1 = progress_calls[
-        0
-    ]
-    assert (year_1, processed_1, total_1, downloaded_1, reused_1, skipped_1) == (
-        2022,
+    _, key_1, processed_1, total_1, s3_read_1, checkpointed_1, skipped_1 = (
+        progress_calls[0]
+    )
+    assert (key_1, processed_1, total_1, s3_read_1, checkpointed_1, skipped_1) == (
+        "2023-01-01",
         100,
         105,
         95,
@@ -1052,11 +1183,11 @@ def test_facts_partition_logs_progress_every_100_processed_filings(
         5,
     )
 
-    _, year_2, processed_2, total_2, downloaded_2, reused_2, skipped_2 = progress_calls[
-        1
-    ]
-    assert (year_2, processed_2, total_2, downloaded_2, reused_2, skipped_2) == (
-        2022,
+    _, key_2, processed_2, total_2, s3_read_2, checkpointed_2, skipped_2 = (
+        progress_calls[1]
+    )
+    assert (key_2, processed_2, total_2, s3_read_2, checkpointed_2, skipped_2) == (
+        "2023-01-01",
         105,
         105,
         95,
@@ -1066,14 +1197,14 @@ def test_facts_partition_logs_progress_every_100_processed_filings(
 
 
 # ==========================================================================
-# esef_report_xhtml_s3: year-partitioned report XHTML archive to S3
+# esef_report_xhtml_s3: processed-month report XHTML archive to S3
 #
 # `run_esef_report_xhtml_partition` (the plain function the asset delegates
 # to) is called DIRECTLY here, for the same reason as
 # `run_esef_filing_facts_partition` above -- see that section's docstring.
 # Unlike the facts asset, this one never writes DuckDB at all: the local
 # index is read once, read-only, purely to resolve which filings are in
-# scope for the partition year; the archive itself is pure S3 I/O.
+# scope for the processed-month partition; the archive itself is pure S3 I/O.
 # ==========================================================================
 
 
@@ -1135,14 +1266,14 @@ def _run_report_xhtml_partition(
     object_store: FakeObjectStore,
     client: _StubReportXhtmlDownloadClient,
     *,
-    partition_year: int,
+    partition_key: str = "2023-01-01",
     log_warning: Any = lambda *a, **k: None,
-) -> dict[str, int]:
+) -> dict[str, int | str]:
     return assets.run_esef_report_xhtml_partition(
         esef_filings_duckdb=_db_resource(tmp_path),
         object_store=object_store,
         client=client,
-        partition_year=partition_year,
+        partition_key=partition_key,
         log_info=lambda *a, **k: None,
         log_warning=log_warning,
     )
@@ -1150,10 +1281,7 @@ def _run_report_xhtml_partition(
 
 def test_report_xhtml_asset_wiring_partitions_deps_backfill_policy_and_pool() -> None:
     asset_def = assets.esef_report_xhtml_s3
-    assert asset_def.partitions_def is not None
-    assert sorted(asset_def.partitions_def.get_partition_keys()) == [
-        str(year) for year in range(2019, 2028)
-    ]
+    assert asset_def.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
     dep_keys = {dep.asset_key for spec in asset_def.specs for dep in spec.deps}
     assert dg.AssetKey("esef_filings_index_duckdb") in dep_keys
     assert asset_def.backfill_policy == dg.BackfillPolicy.multi_run(
@@ -1162,7 +1290,7 @@ def test_report_xhtml_asset_wiring_partitions_deps_backfill_policy_and_pool() ->
     assert asset_def.op.pool == assets.ESEF_FILINGS_DUCKDB_POOL
 
 
-def test_report_xhtml_partition_archives_filings_in_scope_for_year(
+def test_report_xhtml_partition_archives_filings_discovered_in_processed_month(
     tmp_path: Path,
 ) -> None:
     _seed_filings_index(
@@ -1174,9 +1302,12 @@ def test_report_xhtml_partition_archives_filings_in_scope_for_year(
             _record(
                 fxo_id="B-1", period_end="2022-06-30", report_url=_report_url("B-1")
             ),
-            # Different year -- out of scope for the "2022" partition.
+            # Discovered in the next month, irrespective of its fiscal year.
             _record(
-                fxo_id="G-1", period_end="2021-12-31", report_url=_report_url("G-1")
+                fxo_id="G-1",
+                period_end="2021-12-31",
+                processed_at="2023-02-02 00:00:00",
+                report_url=_report_url("G-1"),
             ),
         ],
     )
@@ -1186,7 +1317,7 @@ def test_report_xhtml_partition_archives_filings_in_scope_for_year(
     )
 
     metadata = _run_report_xhtml_partition(
-        tmp_path, object_store, client, partition_year=2022
+        tmp_path, object_store, client, partition_key="2023-01-01"
     )
 
     assert metadata == {
@@ -1195,12 +1326,13 @@ def test_report_xhtml_partition_archives_filings_in_scope_for_year(
         "reused_count": 0,
         "skipped_no_report_url": 0,
         "skipped_upstream_missing": 0,
-        "index_filings_outside_partition_range": 0,
-        "partition_year": 2022,
+        "partition_key": "2023-01-01",
+        "processed_window_start": "2023-01-01 00:00:00",
+        "processed_window_end": "2023-02-01 00:00:00",
     }
     assert object_store.created_buckets == [assets.ESEF_FILINGS_FACTS_BUCKET]
 
-    # G-1 (period_end 2021) was never even attempted.
+    # G-1 was discovered in February and is not attempted by January.
     assert sorted(client.download_calls) == [
         _report_url("A-1"),
         _report_url("B-1"),
@@ -1238,7 +1370,7 @@ def test_report_xhtml_second_run_skips_existing_object_without_downloading(
         tmp_path,
         object_store,
         _StubReportXhtmlDownloadClient({"A-1": b"<html>A-1 report</html>"}),
-        partition_year=2022,
+        partition_key="2023-01-01",
     )
     assert first_metadata["downloaded_count"] == 1
     assert first_metadata["reused_count"] == 0
@@ -1247,7 +1379,7 @@ def test_report_xhtml_second_run_skips_existing_object_without_downloading(
     # called again it would KeyError (no payload registered), proving reuse.
     second_client = _StubReportXhtmlDownloadClient({})
     second_metadata = _run_report_xhtml_partition(
-        tmp_path, object_store, second_client, partition_year=2022
+        tmp_path, object_store, second_client, partition_key="2023-01-01"
     )
     assert second_metadata["downloaded_count"] == 0
     assert second_metadata["reused_count"] == 1
@@ -1270,7 +1402,7 @@ def test_report_xhtml_filing_without_report_url_increments_skipped_no_report_url
     client = _StubReportXhtmlDownloadClient({"B-1": b"<html>B-1 report</html>"})
 
     metadata = _run_report_xhtml_partition(
-        tmp_path, object_store, client, partition_year=2022
+        tmp_path, object_store, client, partition_key="2023-01-01"
     )
 
     assert metadata["filings_in_scope"] == 2
@@ -1279,7 +1411,7 @@ def test_report_xhtml_filing_without_report_url_increments_skipped_no_report_url
     assert client.download_calls == [_report_url("B-1")]
 
 
-def test_report_xhtml_null_and_out_of_range_period_end_are_skipped_without_crashing(
+def test_report_xhtml_does_not_require_a_valid_fiscal_period_end(
     tmp_path: Path,
 ) -> None:
     _seed_filings_index(
@@ -1296,16 +1428,25 @@ def test_report_xhtml_null_and_out_of_range_period_end_are_skipped_without_crash
         ],
     )
     object_store = FakeObjectStore()
-    client = _StubReportXhtmlDownloadClient({"A-1": b"<html>A-1 report</html>"})
-
-    metadata = _run_report_xhtml_partition(
-        tmp_path, object_store, client, partition_year=2022
+    client = _StubReportXhtmlDownloadClient(
+        {
+            fxo_id: f"<html>{fxo_id} report</html>".encode()
+            for fxo_id in ("A-1", "D-1", "E-1", "F-1")
+        }
     )
 
-    assert metadata["filings_in_scope"] == 1
-    assert metadata["index_filings_outside_partition_range"] == 3
-    # None of the out-of-range filings were ever downloaded.
-    assert client.download_calls == [_report_url("A-1")]
+    metadata = _run_report_xhtml_partition(
+        tmp_path, object_store, client, partition_key="2023-01-01"
+    )
+
+    assert metadata["filings_in_scope"] == 4
+    assert metadata["downloaded_count"] == 4
+    assert client.download_calls == [
+        _report_url("A-1"),
+        _report_url("D-1"),
+        _report_url("E-1"),
+        _report_url("F-1"),
+    ]
 
 
 def test_report_xhtml_partition_never_opens_a_writable_duckdb_connection(
@@ -1321,7 +1462,9 @@ def test_report_xhtml_partition_never_opens_a_writable_duckdb_connection(
     object_store = FakeObjectStore()
     client = _StubReportXhtmlDownloadClient({"A-1": b"<html>A-1 report</html>"})
 
-    _run_report_xhtml_partition(tmp_path, object_store, client, partition_year=2022)
+    _run_report_xhtml_partition(
+        tmp_path, object_store, client, partition_key="2023-01-01"
+    )
 
     with read_only_duckdb_connection(_db_resource(tmp_path)) as connection:
         tables = {
@@ -1376,7 +1519,9 @@ def test_report_xhtml_mid_partition_download_failure_propagates_with_no_phantom_
     )
 
     with pytest.raises(RuntimeError, match="simulated download failure for B-1"):
-        _run_report_xhtml_partition(tmp_path, object_store, client, partition_year=2022)
+        _run_report_xhtml_partition(
+            tmp_path, object_store, client, partition_key="2023-01-01"
+        )
 
     assert client.download_calls == [_report_url("A-1"), _report_url("B-1")]
 
@@ -1433,7 +1578,7 @@ def test_report_xhtml_partition_skips_404_increments_counter_no_s3_object(
         tmp_path,
         object_store,
         client,
-        partition_year=2022,
+        partition_key="2023-01-01",
         log_warning=lambda *a, **k: warnings.append(a),
     )
 
@@ -1443,8 +1588,9 @@ def test_report_xhtml_partition_skips_404_increments_counter_no_s3_object(
         "reused_count": 0,
         "skipped_no_report_url": 0,
         "skipped_upstream_missing": 1,
-        "index_filings_outside_partition_range": 0,
-        "partition_year": 2022,
+        "partition_key": "2023-01-01",
+        "processed_window_start": "2023-01-01 00:00:00",
+        "processed_window_end": "2023-02-01 00:00:00",
     }
     # Both filings were attempted (the 404 didn't abort the loop early).
     assert client.download_calls == [_report_url("A-1"), _report_url("B-1")]
@@ -1477,7 +1623,7 @@ def test_report_xhtml_partition_skips_410_gone_same_as_404(tmp_path: Path) -> No
     )
 
     metadata = _run_report_xhtml_partition(
-        tmp_path, object_store, client, partition_year=2022
+        tmp_path, object_store, client, partition_key="2023-01-01"
     )
 
     assert metadata["skipped_upstream_missing"] == 1
@@ -1501,7 +1647,9 @@ def test_report_xhtml_partition_5xx_http_error_propagates_and_fails_partition_lo
     )
 
     with pytest.raises(assets.dlt_requests.HTTPError):
-        _run_report_xhtml_partition(tmp_path, object_store, client, partition_year=2022)
+        _run_report_xhtml_partition(
+            tmp_path, object_store, client, partition_key="2023-01-01"
+        )
 
     assert client.download_calls == [_report_url("A-1")]
     assert (
@@ -1520,15 +1668,14 @@ def test_report_xhtml_partition_5xx_http_error_propagates_and_fails_partition_lo
 # selection, partitions_def, cron/timezone/status).
 
 
-def test_esef_filings_refresh_job_selects_index_partitioned_current_year_and_exports() -> (
-    None
-):
+def test_esef_filings_refresh_job_selects_monthly_ingest_and_exports() -> None:
     repo = load_project_defs().get_repository_def()
     job = repo.get_job("esef_filings_refresh_job")
     asset_keys = {key.path[-1] for key in job.asset_layer.executable_asset_keys}
 
     assert asset_keys == {
         "esef_filings_index_duckdb",
+        "esef_filing_facts_json_s3",
         "esef_filing_facts_duckdb",
         "esef_report_xhtml_s3",
         "esef_filings_clickhouse",
@@ -1538,21 +1685,11 @@ def test_esef_filings_refresh_job_selects_index_partitioned_current_year_and_exp
     }
 
 
-def test_esef_filings_refresh_job_partitions_def_is_the_shared_year_partitions() -> (
-    None
-):
+def test_esef_filings_refresh_job_uses_shared_discovery_month_partitions() -> None:
     repo = load_project_defs().get_repository_def()
     job = repo.get_job("esef_filings_refresh_job")
 
-    # Only esef_filing_facts_duckdb + esef_report_xhtml_s3 are partitioned in
-    # this selection; the job resolves a single shared partitions_def from
-    # them (JobDefinition._get_partitions_def collects only the non-None
-    # partitions_defs across the selection) even though the other 5 assets
-    # in the job are unpartitioned.
-    assert job.partitions_def is not None
-    assert set(job.partitions_def.get_partition_keys()) == set(
-        assets.ESEF_FILING_FACTS_PARTITIONS.get_partition_keys()
-    )
+    assert job.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
 
 
 def test_esef_filings_backfill_job_selects_partitioned_assets_only() -> None:
@@ -1562,10 +1699,13 @@ def test_esef_filings_backfill_job_selects_partitioned_assets_only() -> None:
 
     # Exports excluded from the backfill job -- run the refresh job (or the
     # individual export assets) once after all backfill partitions land.
-    assert asset_keys == {"esef_filing_facts_duckdb", "esef_report_xhtml_s3"}
-    assert set(job.partitions_def.get_partition_keys()) == set(
-        assets.ESEF_FILING_FACTS_PARTITIONS.get_partition_keys()
-    )
+    assert asset_keys == {
+        "esef_filings_index_duckdb",
+        "esef_filing_facts_json_s3",
+        "esef_filing_facts_duckdb",
+        "esef_report_xhtml_s3",
+    }
+    assert job.partitions_def is assets.ESEF_FILINGS_DISCOVERY_PARTITIONS
 
 
 def test_esef_filings_refresh_weekly_schedule_registered() -> None:
@@ -1578,12 +1718,45 @@ def test_esef_filings_refresh_weekly_schedule_registered() -> None:
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
 
 
+def test_esef_filings_refresh_weekly_schedule_emits_both_overlap_runs() -> None:
+    context = dg.build_schedule_context(
+        scheduled_execution_time=datetime(2026, 7, 5, tzinfo=ZoneInfo("UTC")),
+        repository_def=load_project_defs().get_repository_def(),
+    )
+
+    execution_data = assets.esef_filings_refresh_weekly.evaluate_tick(context)
+
+    assert [request.partition_key for request in execution_data.run_requests] == [
+        "2026-06-01",
+        "2026-07-01",
+    ]
+    assert [request.run_key for request in execution_data.run_requests] == [
+        "2026-07-05T00:00:00Z:2026-06-01",
+        "2026-07-05T00:00:00Z:2026-07-01",
+    ]
+
+
+def test_esef_filings_reconciliation_job_and_schedule_are_registered() -> None:
+    repo = load_project_defs().get_repository_def()
+    job = repo.get_job("esef_filings_reconciliation_job")
+    schedule = repo.get_schedule_def("esef_filings_reconciliation_monthly")
+
+    assert {key.path[-1] for key in job.asset_layer.executable_asset_keys} == {
+        "esef_filings_index_reconciliation_duckdb"
+    }
+    assert job.partitions_def is None
+    assert schedule.job_name == "esef_filings_reconciliation_job"
+    assert schedule.cron_schedule == "25 5 2 * *"
+    assert schedule.execution_timezone == "Europe/Belgrade"
+    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
+
+
 # ==========================================================================
 # esef_filings_refresh_job: actually EXECUTING the mixed partitioned/
 # unpartitioned selection, not just resolving its static shape (the tests
 # above only inspect job.asset_layer/partitions_def -- they never run a
 # single step). This is the one test in the whole module that proves the
-# weekly schedule's RunRequest(partition_key=str(year)) genuinely drives all
+# weekly schedule's processed-month partition key genuinely drives all
 # 7 assets end to end for that partition.
 #
 # KNOWN GOTCHA (see the facts-download test section's docstring above): a
@@ -1600,7 +1773,7 @@ def test_esef_filings_refresh_weekly_schedule_registered() -> None:
 class _MixedJobEsefFilingsClient:
     """Stand-in for EsefFilingsClient() supporting both `iter_filings()`
     (used by esef_filings_index_duckdb) and `download_json_facts()` (used by
-    both year-partitioned assets, for the fact-JSON and, reused url/content
+    both processed-month assets, for the fact-JSON and, reused url/content
     agnostic, the report-XHTML download). `_StubEsefFilingsClient` above
     only implements `iter_filings` -- every other test in this file only
     exercises the index asset in isolation."""
@@ -1609,7 +1782,7 @@ class _MixedJobEsefFilingsClient:
         self._records = records
         self.last_reported_total: int | None = None
 
-    def iter_filings(self) -> Iterator[EsefFilingRecord]:
+    def iter_filings(self, **_: Any) -> Iterator[EsefFilingRecord]:
         yield from self._records
 
     def download_json_facts(self, url: str, target: Path) -> None:
@@ -1677,12 +1850,17 @@ class _MixedJobFakeClickHouseClient:
 def test_refresh_job_executes_all_assets_for_partition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    record = _record(fxo_id="A-1", period_end="2026-06-30")
+    record = _record(
+        fxo_id="A-1",
+        period_end="2021-12-31",
+        processed_at="2026-07-21 18:21:29.311103",
+    )
     monkeypatch.setattr(
         assets, "EsefFilingsClient", lambda: _MixedJobEsefFilingsClient([record])
     )
 
     ch_client = _MixedJobFakeClickHouseClient()
+    stored_objects: dict[tuple[str | None, str], bytes] = {}
 
     @contextmanager
     def fake_get_connection(
@@ -1698,7 +1876,7 @@ def test_refresh_job_executes_all_assets_for_partition(
     def fake_exists(
         self: ObjectStoreResource, key: str, bucket: str | None = None
     ) -> bool:
-        return False
+        return (bucket, key) in stored_objects
 
     def fake_upload_file(
         self: ObjectStoreResource,
@@ -1706,7 +1884,7 @@ def test_refresh_job_executes_all_assets_for_partition(
         source_path: str | Path,
         bucket: str | None = None,
     ) -> None:
-        return None
+        stored_objects[(bucket, key)] = Path(source_path).read_bytes()
 
     def fake_download_file(
         self: ObjectStoreResource,
@@ -1714,7 +1892,7 @@ def test_refresh_job_executes_all_assets_for_partition(
         target_path: str | Path,
         bucket: str | None = None,
     ) -> None:
-        Path(target_path).write_text("{}")
+        Path(target_path).write_bytes(stored_objects[(bucket, key)])
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
     monkeypatch.setattr(ObjectStoreResource, "ensure_bucket", fake_ensure_bucket)
@@ -1733,6 +1911,7 @@ def test_refresh_job_executes_all_assets_for_partition(
     local_defs = dg.Definitions(
         assets=[
             assets.esef_filings_index_duckdb,
+            assets.esef_filing_facts_json_s3,
             assets.esef_filing_facts_duckdb,
             assets.esef_report_xhtml_s3,
             assets.esef_filings_clickhouse,
@@ -1749,7 +1928,7 @@ def test_refresh_job_executes_all_assets_for_partition(
     )
     job = local_defs.get_repository_def().get_job("esef_filings_refresh_job")
 
-    result = job.execute_in_process(partition_key="2026")
+    result = job.execute_in_process(partition_key="2026-07-01")
 
     assert result.success
     materialized_keys = {
@@ -1759,6 +1938,7 @@ def test_refresh_job_executes_all_assets_for_partition(
     }
     assert materialized_keys == {
         "esef_filings_index_duckdb",
+        "esef_filing_facts_json_s3",
         "esef_filing_facts_duckdb",
         "esef_report_xhtml_s3",
         "esef_filings_clickhouse",
@@ -1767,22 +1947,19 @@ def test_refresh_job_executes_all_assets_for_partition(
         "esef_financial_metrics_clickhouse",
     }
 
-    # Partitioned assets scoped to 2026 -- proves the partition_key genuinely
-    # gated the two year-partitioned assets onto the 2026-scoped filing,
-    # rather than them silently running unpartitioned/unscoped.
+    # A 2021 fiscal filing discovered in July 2026 proves scoping follows the
+    # source processed timestamp rather than fiscal period_end.
     facts_metadata = result.asset_materializations_for_node("esef_filing_facts_duckdb")[
         -1
     ].metadata
     assert facts_metadata["filings_in_scope"].value == 1
-    assert facts_metadata["index_filings_outside_partition_range"].value == 0
-    assert facts_metadata["partition_year"].value == 2026
+    assert facts_metadata["partition_key"].value == "2026-07-01"
 
     xhtml_metadata = result.asset_materializations_for_node("esef_report_xhtml_s3")[
         -1
     ].metadata
     assert xhtml_metadata["filings_in_scope"].value == 1
-    assert xhtml_metadata["index_filings_outside_partition_range"].value == 0
-    assert xhtml_metadata["partition_year"].value == 2026
+    assert xhtml_metadata["partition_key"].value == "2026-07-01"
 
     rows = _fetch_filings_index(tmp_path)
     assert [row[0] for row in rows] == ["A-1"]
@@ -1797,48 +1974,45 @@ class _FakeScheduleEvaluationContext:
         self.scheduled_execution_time = scheduled_execution_time
 
 
-def test_refresh_run_request_resolves_current_year_partition_from_scheduled_time() -> (
-    None
-):
+def test_refresh_run_request_after_first_week_covers_current_utc_month_only() -> None:
     scheduled_time = datetime(2026, 7, 19, 5, 50, tzinfo=ZoneInfo("UTC"))
-    result = assets._esef_filings_refresh_run_request(
-        _FakeScheduleEvaluationContext(scheduled_time)
+    result = list(
+        assets._esef_filings_refresh_run_request(
+            _FakeScheduleEvaluationContext(scheduled_time)
+        )
     )
-    assert isinstance(result, dg.RunRequest)
-    # 2026-07-19 UTC 05:50 is still 2026-07-19 in Europe/Belgrade (UTC+2) --
-    # same calendar year either way, so this also proves the resolver
-    # actually converts to ESEF_FILINGS_TIMEZONE rather than reading the UTC
-    # year blindly (a same-year case can't distinguish that on its own, but
-    # combined with the boundary test below it does).
-    assert result.partition_key == "2026"
+    assert [request.partition_key for request in result] == ["2026-07-01"]
 
 
-def test_refresh_run_request_uses_belgrade_timezone_across_a_utc_year_boundary() -> (
-    None
-):
-    # 2025-12-31 23:30 UTC is already 2026-01-01 00:30 in Europe/Belgrade
-    # (UTC+1 in winter) -- proves the resolver converts to
-    # ESEF_FILINGS_TIMEZONE before taking `.year`, not the UTC year.
+def test_refresh_run_requests_use_source_utc_clock_at_month_boundary() -> None:
+    # It is already January in Belgrade, but still December in the source's
+    # UTC processed-time clock.
     scheduled_time = datetime(2025, 12, 31, 23, 30, tzinfo=ZoneInfo("UTC"))
-    result = assets._esef_filings_refresh_run_request(
-        _FakeScheduleEvaluationContext(scheduled_time)
+    result = list(
+        assets._esef_filings_refresh_run_request(
+            _FakeScheduleEvaluationContext(scheduled_time)
+        )
     )
-    assert isinstance(result, dg.RunRequest)
-    assert result.partition_key == "2026"
+    assert [request.partition_key for request in result] == ["2025-12-01"]
 
 
-def test_refresh_run_request_skips_when_scheduled_year_has_no_partition() -> None:
+def test_refresh_run_request_has_no_manually_maintained_end_year_ceiling() -> None:
     scheduled_time = datetime(2030, 1, 1, tzinfo=ZoneInfo("UTC"))
-    result = assets._esef_filings_refresh_run_request(
-        _FakeScheduleEvaluationContext(scheduled_time)
+    result = list(
+        assets._esef_filings_refresh_run_request(
+            _FakeScheduleEvaluationContext(scheduled_time)
+        )
     )
-    assert isinstance(result, dg.SkipReason)
+    assert [request.partition_key for request in result] == [
+        "2029-12-01",
+        "2030-01-01",
+    ]
 
 
 def test_refresh_run_request_falls_back_to_now_when_no_scheduled_time() -> None:
-    result = assets._esef_filings_refresh_run_request(
-        _FakeScheduleEvaluationContext(None)
+    result = list(
+        assets._esef_filings_refresh_run_request(_FakeScheduleEvaluationContext(None))
     )
-    assert isinstance(result, dg.RunRequest)
-    expected_year = str(datetime.now(tz=ZoneInfo(assets.ESEF_FILINGS_TIMEZONE)).year)
-    assert result.partition_key == expected_year
+    current_month = datetime.now(tz=ZoneInfo("UTC")).strftime("%Y-%m-01")
+    assert len(result) in {1, 2}
+    assert result[-1].partition_key == current_month

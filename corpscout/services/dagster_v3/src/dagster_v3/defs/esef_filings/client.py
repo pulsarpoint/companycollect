@@ -6,9 +6,11 @@ its entity via `relationships.entity.data.id`. We build a page-local
 `{entity_id: attributes}` map and join by that id — never by array position.
 """
 
+import json
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +76,34 @@ def _extract_reported_total(payload: dict[str, Any]) -> int | None:
     return count
 
 
+def _api_timestamp(value: datetime) -> str:
+    if value.utcoffset() is None:
+        raise ValueError("ESEF processed-window timestamps must be timezone-aware")
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _processed_window_filter(
+    processed_from: datetime, processed_until: datetime
+) -> str:
+    if processed_from >= processed_until:
+        raise ValueError("ESEF processed-window start must be before its end")
+    return json.dumps(
+        [
+            {
+                "name": "processed",
+                "op": "ge",
+                "val": _api_timestamp(processed_from),
+            },
+            {
+                "name": "processed",
+                "op": "lt",
+                "val": _api_timestamp(processed_until),
+            },
+        ],
+        separators=(",", ":"),
+    )
+
+
 class EsefFilingsClient:
     def __init__(self, session: Any | None = None) -> None:
         self._session = (
@@ -90,16 +120,35 @@ class EsefFilingsClient:
         # forever if that first page's `meta` has no usable `count`.
         self.last_reported_total: int | None = None
 
-    def iter_filings(self) -> Iterator[EsefFilingRecord]:
+    def iter_filings(
+        self,
+        *,
+        processed_from: datetime | None = None,
+        processed_until: datetime | None = None,
+    ) -> Iterator[EsefFilingRecord]:
+        if (processed_from is None) != (processed_until is None):
+            raise ValueError(
+                "ESEF processed-window bounds must either both be set or both be omitted"
+            )
+        self.last_reported_total = None
         page = 1
         while True:
+            params: dict[str, Any] = {
+                "page[size]": PAGE_SIZE,
+                "page[number]": page,
+                "include": "entity",
+                # Ascending processed time makes an open current-month crawl
+                # stable while new records are appended. fxo_id is the
+                # deterministic tie-breaker for equal processed timestamps.
+                "sort": "processed,fxo_id",
+            }
+            if processed_from is not None and processed_until is not None:
+                params["filter"] = _processed_window_filter(
+                    processed_from, processed_until
+                )
             resp = self._session.get(
                 ESEF_INDEX_URL,
-                params={
-                    "page[size]": PAGE_SIZE,
-                    "page[number]": page,
-                    "include": "entity",
-                },
+                params=params,
             )
             resp.raise_for_status()
             payload = resp.json()

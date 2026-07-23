@@ -39,4 +39,21 @@ describe("facet-options loader", () => {
     expect(options[0]).toMatchObject({ value: "true", label: "yes" });
     expect(options[0].count).toBeGreaterThan(1_000_000);
   });
+
+  it("loads country-scoped facet values", async () => {
+    const result = await loader(
+      request("http://test/facet-options?column=industry&country=ee&q=computer"),
+    );
+    const { options } = result as { options: { value: string; label: string; count: number }[] };
+    expect(options.length).toBeGreaterThan(0);
+    expect(options.every((option) => option.count > 0)).toBe(true);
+  });
+
+  it("rejects invalid country scopes", async () => {
+    const caught = await catchThrown(
+      loader(request("http://test/facet-options?column=industry&country=xx")),
+    );
+    expect(caught).toBeInstanceOf(Response);
+    expect((caught as Response).status).toBe(400);
+  });
 });

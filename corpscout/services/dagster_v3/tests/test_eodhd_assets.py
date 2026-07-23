@@ -7,6 +7,7 @@ from typing import Any
 import dagster as dg
 import duckdb
 import pytest
+import requests
 from dagster import AssetKey
 from dagster_clickhouse import ClickhouseResource
 
@@ -162,12 +163,34 @@ def test_eodhd_tables_use_distinct_duckdb_files(monkeypatch, tmp_path: Path) -> 
 
 
 def test_reference_config_rejects_invalid_limits_and_blank_exchange_codes() -> None:
-    from dagster_v3.defs.eodhd.source import EodhdReferenceConfig
+    from dagster_v3.defs.eodhd.source import (
+        EodhdPriceBackfillConfig,
+        EodhdReferenceConfig,
+    )
 
     with pytest.raises(ValueError, match="greater than zero"):
         EodhdReferenceConfig(max_exchanges=0)
     with pytest.raises(ValueError, match="must not be blank"):
         EodhdReferenceConfig(exchange_codes_csv="  ")
+    with pytest.raises(ValueError, match="greater than zero"):
+        EodhdPriceBackfillConfig(max_history_requests_per_run=0)
+
+
+def test_history_backfill_defaults_are_gentle_and_manual() -> None:
+    from dagster_v3.defs.eodhd.source import EodhdPriceBackfillConfig
+
+    config = EodhdPriceBackfillConfig()
+    repository = eodhd_repository()
+    history_job = repository.get_job("eodhd_price_history_backfill_job")
+    schedule_names = {
+        schedule.name for schedule in repository.schedule_defs
+    }
+
+    assert config.request_delay_seconds == 0.25
+    assert config.max_history_requests_per_run == 90_000
+    assert history_job.run_tags["dagster/max_retries"] == "0"
+    assert history_job.run_tags["eodhd/backfill_mode"] == "manual_single_partition"
+    assert "eodhd_price_history_backfill_schedule" not in schedule_names
 
 
 def test_history_year_window_clamps_first_and_last_year() -> None:
@@ -444,6 +467,7 @@ def test_history_year_download_reuses_s3_and_materializes_duckdb_table(
         symbols=symbols,
         year="2026",
         request_delay_seconds=0,
+        max_requests=90_000,
         progress_interval=1,
         log=lambda *_args: None,
     )
@@ -499,6 +523,7 @@ def test_empty_history_year_materializes_as_successful_empty_table(
         symbols=[],
         year="2020",
         request_delay_seconds=0,
+        max_requests=90_000,
         progress_interval=1,
         log=lambda *_args: None,
     )
@@ -522,6 +547,78 @@ def test_empty_history_year_materializes_as_successful_empty_table(
     assert materialize_metadata["row_count"] == 0
     assert materialize_metadata["min_price_date"] is None
     assert row_count == 0
+
+
+def test_history_request_budget_saves_progress_and_resumes_next_run(
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.common.resources import ObjectStoreResource
+    from dagster_v3.defs.eodhd import assets
+    from dagster_v3.defs.eodhd.source import EODHD_RAW_BUCKET
+
+    object_store = ObjectStoreResource(
+        s3_client=FakeS3Client(),
+        bucket=EODHD_RAW_BUCKET,
+    )
+    client = FakeEodhdClient()
+    symbols = [
+        {
+            "eodhd_symbol_key": symbol_key,
+            "exchange_code": "WAR",
+            "ticker": symbol_key.split(".", maxsplit=1)[0],
+            "currency": "PLN",
+        }
+        for symbol_key in ("AAA.WAR", "BBB.WAR", "CCC.WAR")
+    ]
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(assets.time, "sleep", sleep_calls.append)
+
+    with pytest.raises(dg.Failure, match="Relaunch this same partition"):
+        assets.download_eodhd_history_year(
+            client=client,
+            object_store=object_store,
+            symbols=symbols,
+            year="2026",
+            request_delay_seconds=0.25,
+            max_requests=2,
+            progress_interval=1,
+            log=lambda *_args: None,
+        )
+
+    assert [call[0] for call in client.price_calls] == ["AAA.WAR", "BBB.WAR"]
+    assert sleep_calls == [0.25]
+    assert object_store.exists(
+        assets.history_symbol_object_key("2026", "AAA.WAR"),
+        bucket=EODHD_RAW_BUCKET,
+    )
+    assert object_store.exists(
+        assets.history_symbol_object_key("2026", "BBB.WAR"),
+        bucket=EODHD_RAW_BUCKET,
+    )
+    assert not object_store.exists(
+        assets.history_symbol_object_key("2026", "CCC.WAR"),
+        bucket=EODHD_RAW_BUCKET,
+    )
+
+    metadata = assets.download_eodhd_history_year(
+        client=client,
+        object_store=object_store,
+        symbols=symbols,
+        year="2026",
+        request_delay_seconds=0.25,
+        max_requests=2,
+        progress_interval=1,
+        log=lambda *_args: None,
+    )
+
+    assert [call[0] for call in client.price_calls] == [
+        "AAA.WAR",
+        "BBB.WAR",
+        "CCC.WAR",
+    ]
+    assert sleep_calls == [0.25]
+    assert metadata["reused_symbol_count"] == 2
+    assert metadata["downloaded_request_count"] == 1
 
 
 def test_daily_download_reuses_complete_s3_date_without_http() -> None:
@@ -637,6 +734,34 @@ def test_eodhd_bulk_price_resource_passes_date_and_optional_symbols() -> None:
         "fmt": "json",
     }
     assert session.calls[1][1]["symbols"] == "CDR.WAR"
+
+
+def test_eodhd_http_errors_do_not_expose_api_token() -> None:
+    from dagster_v3.defs.eodhd.resources import EodhdApiError, EodhdResource
+
+    api_token = "secret-token"
+    response = FakeHttpResponse(
+        status_code=402,
+        text=(
+            "You exceeded your daily API requests limit. "
+            f"Do not echo {api_token}."
+        ),
+    )
+    resource = EodhdResource(
+        api_token=api_token,
+        session=FakeHttpSession(response=response),
+    )
+
+    with pytest.raises(EodhdApiError) as error:
+        resource.prices(
+            "AAA.WAR",
+            start_date="2026-01-01",
+            end_date="2026-06-30",
+        )
+
+    assert "HTTP 402" in str(error.value)
+    assert "daily API requests limit" in str(error.value)
+    assert api_token not in str(error.value)
 
 
 def test_duckdb_reference_table_materialization_writes_expected_contract(
@@ -784,7 +909,20 @@ class FakeEodhdClient:
 
 
 class FakeHttpResponse:
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        text: str = "",
+    ) -> None:
+        self.status_code = status_code
+        self.text = text
+
     def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            response = requests.Response()
+            response.status_code = self.status_code
+            raise requests.HTTPError(response=response)
         return None
 
     def json(self) -> list[dict[str, Any]]:
@@ -792,8 +930,9 @@ class FakeHttpResponse:
 
 
 class FakeHttpSession:
-    def __init__(self) -> None:
+    def __init__(self, *, response: FakeHttpResponse | None = None) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.response = response or FakeHttpResponse()
 
     def get(
         self,
@@ -806,7 +945,7 @@ class FakeHttpSession:
         assert headers["Accept"] == "application/json"
         assert timeout > 0
         self.calls.append((url, params))
-        return FakeHttpResponse()
+        return self.response
 
 
 class FakeS3Client:

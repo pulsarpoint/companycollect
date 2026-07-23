@@ -100,7 +100,7 @@ def build_domains_select() -> str:
 
 @dg.asset(
     name="wikidata_clickhouse_canonical_contacts",
-    deps=[dg.AssetKey("wikidata_company_seed_complete")],
+    deps=[dg.AssetKey("wikidata_snapshot_complete")],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse"},
     description=(

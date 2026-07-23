@@ -13,6 +13,10 @@ DEFAULT_EODHD_TIMEOUT_SECONDS = 120
 DEFAULT_EODHD_USER_AGENT = "corpscout-dagster-v3-eodhd/0.1"
 
 
+class EodhdApiError(RuntimeError):
+    """Provider error that never includes the authenticated request URL."""
+
+
 class EodhdResource(dg.ConfigurableResource):
     """Authenticated EODHD HTTP boundary used by reference and price assets."""
 
@@ -82,9 +86,10 @@ class EodhdResource(dg.ConfigurableResource):
         *,
         params: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        api_token = str(_resolve_env_value(self.api_token))
         request_params = {
             **params,
-            "api_token": _resolve_env_value(self.api_token),
+            "api_token": api_token,
             "fmt": "json",
         }
         response = self._session().get(
@@ -93,7 +98,14 @@ class EodhdResource(dg.ConfigurableResource):
             headers={"User-Agent": self.user_agent, "Accept": "application/json"},
             timeout=self.timeout_seconds,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError:
+            status_code = getattr(response, "status_code", "unknown")
+            detail = _safe_eodhd_error_detail(response, api_token=api_token)
+            raise EodhdApiError(
+                f"EODHD endpoint {path} returned HTTP {status_code}: {detail}"
+            ) from None
         payload = response.json()
         if not isinstance(payload, list):
             raise ValueError(
@@ -126,3 +138,13 @@ def _resolve_env_value(value: Any) -> Any:
     if callable(get_value):
         return get_value()
     return value
+
+
+def _safe_eodhd_error_detail(response: Any, *, api_token: str) -> str:
+    response_text = str(getattr(response, "text", "")).strip()
+    if not response_text:
+        return "no response detail"
+    normalized = " ".join(response_text.split())
+    if api_token:
+        normalized = normalized.replace(api_token, "[REDACTED]")
+    return normalized[:500]

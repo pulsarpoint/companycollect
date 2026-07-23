@@ -234,6 +234,16 @@ function allCountryTotalsSql(): string {
     .join(" UNION ALL ");
 }
 
+/**
+ * Financial totals used by both the financials landing and the country
+ * directory. Keeping this query here preserves each registry source's sum
+ * rules, including Norway's foreign-branch exclusion.
+ */
+export async function getAllCountryFinancialTotals(): Promise<CountryTotals[]> {
+  const rows = await chQuery<RawTotalsRow>(allCountryTotalsSql());
+  return sortCountryTotals(rows.map(parseTotals));
+}
+
 function landingTopDivisionsSql(): string {
   const branches = naceCountries().map((c) => countryDivisionsSql(c));
   return `SELECT division, toUInt32(sum(companies)) AS companies, sum(revenue_usd) AS revenue_usd
@@ -258,13 +268,13 @@ export async function getGlobalFinancialOverview(): Promise<{
 }> {
   const [labels, totalsRows, divisionRows, topRows] = await Promise.all([
     getDivisionLabels(),
-    chQuery<RawTotalsRow>(allCountryTotalsSql()),
+    getAllCountryFinancialTotals(),
     chQuery<RawDivisionRow>(landingTopDivisionsSql()),
     chQuery<RawTopCompanyRow>(landingTopCompaniesSql()),
   ]);
   const topCompanies = await enrichTopCompanies(topRows);
   return {
-    countries: sortCountryTotals(totalsRows.map(parseTotals)),
+    countries: totalsRows,
     topDivisions: divisionRows.map((r) => toDivisionRevenue(r, labels)),
     topCompanies,
   };

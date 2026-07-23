@@ -1,5 +1,6 @@
 import json
 from collections.abc import Iterator
+from datetime import date
 from hashlib import sha256
 from typing import Any
 
@@ -12,7 +13,7 @@ from urllib3.util.retry import Retry
 from dagster_v3.defs.wikidata.registry_seed import WIKIDATA_REGISTRY_NUMBER_PROPERTY_IDS
 
 WIKIDATA_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
-WIKIDATA_RAW_BUCKET = "source-wikidata-company-seed"
+WIKIDATA_RAW_BUCKET = "source-wikidata-weekly"
 # Registry-number pulls are treated as pseudo-exchanges (id "registry_<PID>") so the
 # raw-object layout, manifests, page numbering, augmentation batching, and provenance
 # keys — all keyed on "exchange_id" — work unchanged for a company-discovery source that
@@ -284,18 +285,19 @@ class WikidataRawPullConfig(dg.Config):
 
 
 class WikidataSnapshotConfig(dg.Config):
-    raw_run_id: str | None = None
+    partition_date: str | None = None
     max_pages: int | None = None
     max_exchanges: int | None = None
 
-    @field_validator("raw_run_id")
+    @field_validator("partition_date")
     @classmethod
-    def validate_optional_run_id(cls, value: str | None) -> str | None:
+    def validate_optional_partition_date(cls, value: str | None) -> str | None:
         if value is None:
             return None
         stripped = value.strip()
         if not stripped:
-            raise ValueError("raw_run_id must not be blank when provided")
+            raise ValueError("partition_date must not be blank when provided")
+        date.fromisoformat(stripped)
         return stripped
 
     @field_validator("max_pages", "max_exchanges")
@@ -810,23 +812,19 @@ ORDER BY DESC(?listedCompanyCount) ?exchange ?mic ?country
 def iter_wikidata_exchange_rows(
     *,
     object_store: Any | None = None,
-    raw_run_id: str | None = None,
+    partition_date: str,
     max_exchanges: int | None = None,
     source_run_id: str = "",
 ) -> Iterator[dict[str, Any]]:
     if object_store is None:
         raise ValueError(
             "Wikidata exchange parser requires object_store; "
-            "materialize wikidata_company_seed_raw_objects first"
+            "materialize wikidata_raw_snapshot first"
         )
-    effective_raw_run_id = raw_run_id or source_run_id
-    if not effective_raw_run_id:
-        raise ValueError("Wikidata exchange parser requires a raw run id")
-
     exchange_number = 0
     for manifest_key in completed_wikidata_raw_manifest_keys(
         object_store=object_store,
-        run_id=effective_raw_run_id,
+        partition_date=partition_date,
     ):
         manifest = read_wikidata_raw_json(
             object_store=object_store,
@@ -876,7 +874,9 @@ def exchange_rows_from_manifest(
             separators=(",", ":"),
         )
         yield {
-            "source_run_id": str(manifest.get("run_id") or fallback_source_run_id),
+            "source_run_id": str(
+                manifest.get("source_run_id") or fallback_source_run_id
+            ),
             "retrieved_at": str(manifest.get("started_at") or ""),
             **exchange_payload,
             "source_record_id": f"{exchange_id}:{mic or 'no_mic'}",
@@ -890,7 +890,7 @@ def exchange_rows_from_manifest(
 def iter_wikidata_listed_company_rows(
     *,
     object_store: Any | None = None,
-    raw_run_id: str | None = None,
+    partition_date: str,
     max_pages: int | None = None,
     max_exchanges: int | None = None,
     source_run_id: str = "",
@@ -898,15 +898,11 @@ def iter_wikidata_listed_company_rows(
     if object_store is None:
         raise ValueError(
             "Wikidata listed-company parser requires object_store; "
-            "materialize wikidata_company_seed_raw_objects first"
+            "materialize wikidata_raw_snapshot first"
         )
-    effective_raw_run_id = raw_run_id or source_run_id
-    if not effective_raw_run_id:
-        raise ValueError("Wikidata listed-company parser requires a raw run id")
-
     manifest_keys = completed_wikidata_raw_manifest_keys(
         object_store=object_store,
-        run_id=effective_raw_run_id,
+        partition_date=partition_date,
     )
 
     for exchange_number, manifest_key in enumerate(manifest_keys, start=1):
@@ -923,14 +919,14 @@ def iter_wikidata_listed_company_rows(
 def completed_wikidata_raw_manifest_keys(
     *,
     object_store: Any,
-    run_id: str,
+    partition_date: str,
 ) -> list[str]:
-    snapshot_key = snapshot_manifest_object_key(run_id=run_id)
+    snapshot_key = snapshot_manifest_object_key(partition_date=partition_date)
     if not object_store.exists(snapshot_key, bucket=WIKIDATA_RAW_BUCKET):
         raise ValueError(
             "No completed Wikidata raw snapshot found for "
-            f"run_id={run_id}; materialize wikidata_company_seed_raw_objects "
-            "in the same run or provide raw_run_id"
+            f"partition_date={partition_date}; materialize "
+            "wikidata_raw_snapshot first"
         )
     snapshot = read_wikidata_raw_json(
         object_store=object_store,
@@ -939,18 +935,19 @@ def completed_wikidata_raw_manifest_keys(
 
     if snapshot.get("status") != "complete":
         raise ValueError(
-            f"Wikidata raw snapshot run_id={run_id} is not marked complete"
+            f"Wikidata raw snapshot partition_date={partition_date} is not marked complete"
         )
     manifest_keys = snapshot.get("manifest_keys")
     if not isinstance(manifest_keys, list) or not manifest_keys:
         raise ValueError(
-            f"Completed Wikidata raw snapshot run_id={run_id} has no manifest keys"
+            "Completed Wikidata raw snapshot "
+            f"partition_date={partition_date} has no manifest keys"
         )
     return [str(manifest_key) for manifest_key in manifest_keys]
 
 
-def snapshot_manifest_object_key(*, run_id: str) -> str:
-    return f"raw/run_id={run_id}/snapshot_manifest.json"
+def snapshot_manifest_object_key(*, partition_date: str) -> str:
+    return f"partition_date={partition_date}/snapshot_manifest.json"
 
 
 def iter_wikidata_listed_company_rows_from_manifest(
@@ -967,7 +964,7 @@ def iter_wikidata_listed_company_rows_from_manifest(
         manifest,
         source_run_id=fallback_source_run_id,
     )
-    source_run_id = str(manifest.get("run_id") or fallback_source_run_id)
+    source_run_id = str(manifest.get("source_run_id") or fallback_source_run_id)
     retrieved_at = str(manifest.get("started_at") or "")
     page_size = manifest_page_size(manifest)
     augmentation_rows_by_company_id = wikidata_company_augmentation_rows_by_company_id(
@@ -1046,7 +1043,7 @@ def exchange_row_from_manifest(
         "listed_company_count_on_exchange": int(
             manifest.get("listed_company_count_on_exchange") or 0
         ),
-        "source_run_id": str(manifest.get("run_id") or source_run_id),
+        "source_run_id": str(manifest.get("source_run_id") or source_run_id),
         "retrieved_at": str(manifest.get("started_at") or ""),
         "source_row_number": 0,
     }
@@ -1480,28 +1477,26 @@ def query_hash(query: str) -> str:
 
 def page_object_key(
     *,
-    retrieved_date: str,
-    run_id: str,
+    partition_date: str,
     exchange_id: str,
     page_number: int,
 ) -> str:
     return (
-        f"raw/run_id={run_id}/retrieved_date={retrieved_date}/"
+        f"partition_date={partition_date}/"
         f"exchange_id={exchange_id}/page={page_number:06d}.json"
     )
 
 
 def augmentation_object_key(
     *,
-    retrieved_date: str,
-    run_id: str,
+    partition_date: str,
     exchange_id: str,
     augmentation_kind: str,
     page_number: int,
     batch_number: int,
 ) -> str:
     return (
-        f"raw/run_id={run_id}/retrieved_date={retrieved_date}/"
+        f"partition_date={partition_date}/"
         f"exchange_id={exchange_id}/augmentation_kind={augmentation_kind}/"
         f"page={page_number:06d}_batch={batch_number:06d}.json"
     )
@@ -1509,19 +1504,27 @@ def augmentation_object_key(
 
 def manifest_object_key(
     *,
-    retrieved_date: str,
-    run_id: str,
+    partition_date: str,
     exchange_id: str,
 ) -> str:
+    return f"partition_date={partition_date}/exchange_id={exchange_id}/manifest.json"
+
+
+def stage_manifest_object_key(
+    *,
+    partition_date: str,
+    seed_unit_id: str,
+    data_kind: str,
+) -> str:
     return (
-        f"raw/run_id={run_id}/retrieved_date={retrieved_date}/"
-        f"exchange_id={exchange_id}/manifest.json"
+        f"partition_date={partition_date}/exchange_id={seed_unit_id}/"
+        f"data_kind={data_kind}/manifest.json"
     )
 
 
-def active_exchanges_object_key(
-    *,
-    retrieved_date: str,
-    run_id: str,
-) -> str:
-    return f"raw/run_id={run_id}/retrieved_date={retrieved_date}/active_exchanges.json"
+def active_exchanges_object_key(*, partition_date: str) -> str:
+    return f"partition_date={partition_date}/active_exchanges.json"
+
+
+def seed_units_object_key(*, partition_date: str) -> str:
+    return f"partition_date={partition_date}/seed_units.json"

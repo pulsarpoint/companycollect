@@ -16,17 +16,33 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.wikidata import tables
 from dagster_v3.definitions import defs as load_project_defs
 
+WIKIDATA_TEST_BUCKET = "source-wikidata-weekly"
+
 
 def test_wikidata_table_assets_are_registered_one_to_one() -> None:
     repository = load_project_defs().get_repository_def()
     asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
     resource_keys = repository.get_top_level_resources().keys()
 
-    assert "wikidata_company_seed_raw_objects" in asset_keys
+    assert {
+        "wikidata_exchanges_raw",
+        "wikidata_company_source_units",
+        "wikidata_company_pages_raw",
+        "wikidata_company_profiles_raw",
+        "wikidata_company_identifiers_raw",
+        "wikidata_company_relationships_raw",
+        "wikidata_company_people_raw",
+        "wikidata_persons_raw",
+        "wikidata_company_source_snapshot",
+        "wikidata_raw_snapshot",
+    }.issubset(asset_keys)
+    assert "wikidata_company_seed_units" not in asset_keys
+    assert "wikidata_company_seed_raw_objects" not in asset_keys
+    assert "wikidata_company_seed_raw_snapshot" not in asset_keys
     for table_name in tables.WIKIDATA_TABLES:
         assert f"{table_name}_duckdb" in asset_keys
         assert table_name in asset_keys
-    assert "wikidata_company_seed_complete" in asset_keys
+    assert "wikidata_snapshot_complete" in asset_keys
     assert "wikidata_company_seed_clickhouse" not in asset_keys
     assert "wikidata_listed_companies_duckdb" not in asset_keys
     assert "clickhouse" in resource_keys
@@ -54,7 +70,7 @@ def test_wikidata_duckdb_tables_depend_on_raw_s3_snapshot() -> None:
         asset = asset_graph.get(AssetKey([f"{table_name}_duckdb"]))
         assert asset.is_executable
         assert asset.parent_keys == {
-            AssetKey(["wikidata_company_seed_raw_objects"]),
+            AssetKey(["wikidata_raw_snapshot"]),
         }
 
 
@@ -62,7 +78,7 @@ def test_wikidata_completion_depends_on_all_clickhouse_tables() -> None:
     repository = load_project_defs().get_repository_def()
 
     completion_asset = repository.asset_graph.get(
-        AssetKey(["wikidata_company_seed_complete"])
+        AssetKey(["wikidata_snapshot_complete"])
     )
 
     assert completion_asset.parent_keys == {
@@ -161,21 +177,34 @@ def test_wikidata_completion_rejects_mixed_source_runs(monkeypatch) -> None:
         )
 
 
-def test_wikidata_weekly_refresh_job_and_schedule_are_registered() -> None:
+def test_wikidata_domain_jobs_and_weekly_schedule_are_registered() -> None:
     repository = load_project_defs().get_repository_def()
     job_names = set(repository.job_names)
     schedule_names = {schedule.name for schedule in repository.schedule_defs}
     weekly_schedule = next(
         schedule
         for schedule in repository.schedule_defs
-        if schedule.name == "wikidata_company_seed_weekly_schedule"
+        if schedule.name == "wikidata_weekly_schedule"
     )
 
-    assert "wikidata_company_seed_weekly_job" in job_names
-    assert "wikidata_company_seed_weekly_schedule" in schedule_names
-    assert weekly_schedule.job_name == "wikidata_company_seed_weekly_job"
+    assert {
+        "wikidata_publish_job",
+        "wikidata_exchange_discovery_job",
+        "wikidata_company_source_discovery_job",
+        "wikidata_company_pages_job",
+        "wikidata_company_profiles_job",
+        "wikidata_company_identifiers_job",
+        "wikidata_company_relationships_job",
+        "wikidata_company_people_job",
+        "wikidata_persons_job",
+        "wikidata_company_source_snapshot_job",
+        "wikidata_raw_snapshot_job",
+    }.issubset(job_names)
+    assert "wikidata_weekly_schedule" in schedule_names
+    assert weekly_schedule.job_name == "wikidata_exchange_discovery_job"
     assert weekly_schedule.cron_schedule == "30 3 * * 1"
     assert weekly_schedule.execution_timezone == "Europe/Belgrade"
+    assert weekly_schedule.default_status == dg.DefaultScheduleStatus.RUNNING
 
 
 def test_wikidata_canonical_contacts_asset_is_registered() -> None:
@@ -185,57 +214,108 @@ def test_wikidata_canonical_contacts_asset_is_registered() -> None:
     assert "wikidata_clickhouse_canonical_contacts" in asset_keys
 
 
-def test_wikidata_canonical_contacts_depends_on_completed_seed() -> None:
+def test_wikidata_canonical_contacts_depends_on_completed_snapshot() -> None:
     repository = load_project_defs().get_repository_def()
 
     deps = repository.asset_graph.get(
         AssetKey(["wikidata_clickhouse_canonical_contacts"])
     ).parent_keys
 
-    assert deps == {AssetKey(["wikidata_company_seed_complete"])}
+    assert deps == {AssetKey(["wikidata_snapshot_complete"])}
 
 
-def test_wikidata_canonical_contacts_asset_in_weekly_job() -> None:
+def test_wikidata_canonical_contacts_asset_in_publish_job() -> None:
     repository = load_project_defs().get_repository_def()
     job_asset_keys = {
         key.path[-1]
         for key in repository.get_job(
-            "wikidata_company_seed_weekly_job"
+            "wikidata_publish_job"
         ).asset_layer.executable_asset_keys
     }
 
     assert "wikidata_clickhouse_canonical_contacts" in job_asset_keys
 
 
-def test_wikidata_raw_object_asset_depends_only_on_registry_seed_spines() -> None:
+def test_wikidata_raw_domain_asset_dependencies_are_split() -> None:
+    repository = load_project_defs().get_repository_def()
+    asset_graph = repository.asset_graph
+
+    assert asset_graph.get(AssetKey(["wikidata_company_pages_raw"])).parent_keys == {
+        AssetKey(["wikidata_company_source_units"]),
+    }
+    for asset_name in (
+        "wikidata_company_profiles_raw",
+        "wikidata_company_identifiers_raw",
+        "wikidata_company_relationships_raw",
+        "wikidata_company_people_raw",
+    ):
+        assert asset_graph.get(AssetKey([asset_name])).parent_keys == {
+            AssetKey(["wikidata_company_pages_raw"]),
+        }
+    assert asset_graph.get(AssetKey(["wikidata_persons_raw"])).parent_keys == {
+        AssetKey(["wikidata_company_people_raw"]),
+    }
+    assert asset_graph.get(
+        AssetKey(["wikidata_company_source_snapshot"])
+    ).parent_keys == {
+        AssetKey(["wikidata_company_pages_raw"]),
+        AssetKey(["wikidata_company_profiles_raw"]),
+        AssetKey(["wikidata_company_identifiers_raw"]),
+        AssetKey(["wikidata_company_relationships_raw"]),
+        AssetKey(["wikidata_company_people_raw"]),
+        AssetKey(["wikidata_persons_raw"]),
+    }
+    assert asset_graph.get(AssetKey(["wikidata_raw_snapshot"])).parent_keys == {
+        AssetKey(["wikidata_company_source_snapshot"]),
+    }
+
+
+def test_wikidata_company_source_asset_depends_on_exchanges_and_registry_spines() -> (
+    None
+):
     from dagster_v3.defs.wikidata.registry_seed import (
         WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS,
     )
 
     repository = load_project_defs().get_repository_def()
 
-    raw_asset = repository.asset_graph.get(
-        AssetKey(["wikidata_company_seed_raw_objects"])
+    discovery_asset = repository.asset_graph.get(
+        AssetKey(["wikidata_company_source_units"])
     )
 
-    # No DuckDB upstream (the raw pull is the root of the wikidata chain); its only
-    # parents are the ordering-only discoverability deps onto each registry seed spec's
-    # spine asset (see test_wikidata_registry_seed_specs_are_wired_into_seed_asset for
-    # the full wiring assertion).
-    assert raw_asset.parent_keys == {
-        AssetKey([spine_asset_key])
-        for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
+    assert discovery_asset.parent_keys == {
+        AssetKey(["wikidata_exchanges_raw"]),
+        *(
+            AssetKey([spine_asset_key])
+            for spine_asset_key in WIKIDATA_REGISTRY_SEED_SPINE_ASSET_KEYS
+        ),
     }
 
 
-def test_wikidata_raw_object_asset_is_not_partitioned() -> None:
+def test_wikidata_raw_domain_assets_are_partitioned_by_week_and_company_source() -> (
+    None
+):
+    from dagster_v3.defs.wikidata import assets
+
     repository = load_project_defs().get_repository_def()
-
-    raw_asset = repository.asset_graph.get(
-        AssetKey(["wikidata_company_seed_raw_objects"])
-    )
-
-    assert raw_asset.partitions_def is None
+    for asset_name in (
+        "wikidata_company_pages_raw",
+        "wikidata_company_profiles_raw",
+        "wikidata_company_identifiers_raw",
+        "wikidata_company_relationships_raw",
+        "wikidata_company_people_raw",
+        "wikidata_persons_raw",
+        "wikidata_company_source_snapshot",
+    ):
+        raw_asset = repository.asset_graph.get(AssetKey([asset_name]))
+        assert raw_asset.partitions_def == assets.WIKIDATA_RAW_PARTITIONS
+        assert raw_asset.partitions_def.get_partitions_def_for_dimension("date") == (
+            assets.WIKIDATA_WEEKLY_PARTITIONS
+        )
+        assert (
+            raw_asset.partitions_def.get_partitions_def_for_dimension("company_source")
+            == assets.WIKIDATA_COMPANY_SOURCE_PARTITIONS
+        )
 
 
 def test_wikidata_registry_seed_specs_are_wired_into_seed_asset() -> None:
@@ -249,7 +329,7 @@ def test_wikidata_registry_seed_specs_are_wired_into_seed_asset() -> None:
     repository = load_project_defs().get_repository_def()
     asset_graph = repository.asset_graph
     all_asset_keys = asset_graph.get_all_asset_keys()
-    raw_asset = asset_graph.get(AssetKey(["wikidata_company_seed_raw_objects"]))
+    discovery_asset = asset_graph.get(AssetKey(["wikidata_company_source_units"]))
 
     expected_property_ids = {
         "P6460",  # SE
@@ -277,32 +357,30 @@ def test_wikidata_registry_seed_specs_are_wired_into_seed_asset() -> None:
             f"property={spec.property_id}) is declared in a WikidataRegistrySeedSpec "
             "but is not a registered Dagster asset"
         )
-        assert spine_key in raw_asset.parent_keys, (
+        assert spine_key in discovery_asset.parent_keys, (
             f"{spec.spine_asset_key} (country={spec.country_iso2}) is a registered "
-            "asset but wikidata_company_seed_raw_objects has no deps edge onto it"
+            "asset but wikidata_company_source_units has no deps edge onto it"
         )
 
 
-def test_wikidata_weekly_job_excludes_registry_seed_country_pipelines() -> None:
-    # wikidata_company_seed_raw_objects declares ordering-only deps on nine countries'
-    # companies-ClickHouse spine assets purely for UI discoverability (see
-    # test_wikidata_registry_seed_specs_are_wired_into_seed_asset). Naively
-    # `.upstream()`-ing from the ClickHouse export would walk those edges too and
-    # balloon the weekly job into materializing nine full country pipelines --
-    # wikidata_company_seed_selection must explicitly exclude them.
+def test_wikidata_publish_job_excludes_raw_and_registry_source_pipelines() -> None:
     repository = load_project_defs().get_repository_def()
     job_asset_keys = {
         key.path[-1]
         for key in repository.get_job(
-            "wikidata_company_seed_weekly_job"
+            "wikidata_publish_job"
         ).asset_layer.executable_asset_keys
     }
 
-    assert "wikidata_company_seed_raw_objects" in job_asset_keys
+    assert "wikidata_exchanges_raw" not in job_asset_keys
+    assert "wikidata_company_source_units" not in job_asset_keys
+    assert "wikidata_company_pages_raw" not in job_asset_keys
+    assert "wikidata_persons_raw" not in job_asset_keys
+    assert "wikidata_raw_snapshot" not in job_asset_keys
     for table_name in tables.WIKIDATA_TABLES:
         assert f"{table_name}_duckdb" in job_asset_keys
         assert table_name in job_asset_keys
-    assert "wikidata_company_seed_complete" in job_asset_keys
+    assert "wikidata_snapshot_complete" in job_asset_keys
     assert "wikidata_clickhouse_canonical_contacts" in job_asset_keys
 
     assert "sweden_company_raw_snapshot_s3" not in job_asset_keys
@@ -353,12 +431,21 @@ def test_wikidata_companies_duckdb_materialization_writes_its_own_database(
         "iter_wikidata_listed_company_rows",
         lambda **_kwargs: iter([source_row]),
     )
+    monkeypatch.setattr(
+        assets,
+        "resolve_wikidata_snapshot_partition_date",
+        lambda **_kwargs: "2026-06-16",
+    )
 
     result = dg.materialize(
         [assets.wikidata_companies_duckdb],
         resources={"object_store": object_store},
         run_config={
-            "ops": {"wikidata_companies_duckdb": {"config": {"raw_run_id": "run-1"}}}
+            "ops": {
+                "wikidata_companies_duckdb": {
+                    "config": {"partition_date": "2026-06-16"}
+                }
+            }
         },
     )
 
@@ -375,13 +462,9 @@ def test_wikidata_listed_company_rows_read_raw_s3_pages() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
-    page_key = (
-        "raw/run_id=run-1/retrieved_date=2026-06-19/exchange_id=QEX1/page=000001.json"
-    )
-    manifest_key = (
-        "raw/run_id=run-1/retrieved_date=2026-06-19/exchange_id=QEX1/manifest.json"
-    )
-    s3_client.objects[("source-wikidata-company-seed", page_key)] = json.dumps(
+    page_key = "partition_date=2026-06-16/exchange_id=QEX1/page=000001.json"
+    manifest_key = "partition_date=2026-06-16/exchange_id=QEX1/manifest.json"
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, page_key)] = json.dumps(
         _wikidata_response(
             [
                 _wikidata_company_binding(
@@ -394,11 +477,12 @@ def test_wikidata_listed_company_rows_read_raw_s3_pages() -> None:
             ]
         )
     ).encode("utf-8")
-    s3_client.objects[("source-wikidata-company-seed", manifest_key)] = json.dumps(
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, manifest_key)] = json.dumps(
         {
             "source": "wikidata",
             "query_mode": "exchange",
-            "run_id": "run-1",
+            "partition_date": "2026-06-16",
+            "source_run_id": "2026-06-16",
             "exchange_id": "QEX1",
             "exchange_name": "Test Exchange One",
             "listed_company_count_on_exchange": 1,
@@ -412,14 +496,14 @@ def test_wikidata_listed_company_rows_read_raw_s3_pages() -> None:
     ).encode("utf-8")
     _write_snapshot_manifest(
         s3_client,
-        run_id="run-1",
+        partition_date="2026-06-16",
         manifest_keys=[manifest_key],
     )
 
     rows = list(
         wikidata_source.iter_wikidata_listed_company_rows(
             object_store=object_store,
-            raw_run_id="run-1",
+            partition_date="2026-06-16",
             source_run_id="downstream-only-run",
         )
     )
@@ -459,69 +543,63 @@ def test_wikidata_listed_company_rows_read_raw_s3_pages() -> None:
     assert [row["owned_by_label"] for row in rows] == ["Alpha Owner"]
     assert [row["owner_of_wikidata_id"] for row in rows] == ["Q103"]
     assert [row["owner_of_label"] for row in rows] == ["Alpha Owned Business"]
-    assert rows[0]["source_run_id"] == "run-1"
+    assert rows[0]["source_run_id"] == "2026-06-16"
     assert rows[0]["retrieved_at"] == "2026-06-19T10:00:00+00:00"
     assert rows[0]["source_record_id"] == "QEX1:000001:000001:Q1:Q1-L1"
     assert len(rows[0]["source_payload_hash"]) == 64
     assert len(rows[0]["query_hash"]) == 64
 
 
-def test_wikidata_listed_company_rows_keep_explicit_raw_run_id_strict() -> None:
+def test_wikidata_listed_company_rows_keep_partition_date_strict() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
-    manifest_key = (
-        "raw/run_id=available-run/retrieved_date=2026-06-19/"
-        "exchange_id=QEX1/manifest.json"
-    )
-    s3_client.objects[("source-wikidata-company-seed", manifest_key)] = json.dumps(
+    manifest_key = "partition_date=2026-06-16/exchange_id=QEX1/manifest.json"
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, manifest_key)] = json.dumps(
         {
-            "run_id": "available-run",
+            "partition_date": "2026-06-16",
+            "source_run_id": "2026-06-16",
             "started_at": "2026-06-19T10:00:00+00:00",
             "exchange_id": "QEX1",
             "objects": [],
         }
     ).encode("utf-8")
 
-    with pytest.raises(ValueError, match="run_id=missing-run"):
+    with pytest.raises(ValueError, match="partition_date=2026-06-23"):
         list(
             wikidata_source.iter_wikidata_listed_company_rows(
                 object_store=object_store,
-                raw_run_id="missing-run",
+                partition_date="2026-06-23",
                 source_run_id="downstream-only-run",
             )
         )
 
 
-def test_wikidata_completed_snapshot_manifest_is_strictly_run_scoped() -> None:
+def test_wikidata_completed_snapshot_manifest_is_strictly_partition_scoped() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
-    old_manifest_key = (
-        "raw/run_id=old-run/retrieved_date=2026-06-18/exchange_id=QEX1/manifest.json"
-    )
-    new_manifest_key = (
-        "raw/run_id=new-run/retrieved_date=2026-06-19/exchange_id=QEX1/manifest.json"
-    )
+    old_manifest_key = "partition_date=2026-06-16/exchange_id=QEX1/manifest.json"
+    new_manifest_key = "partition_date=2026-06-23/exchange_id=QEX1/manifest.json"
     _write_snapshot_manifest(
         s3_client,
-        run_id="old-run",
+        partition_date="2026-06-16",
         manifest_keys=[old_manifest_key],
     )
     _write_snapshot_manifest(
         s3_client,
-        run_id="new-run",
+        partition_date="2026-06-23",
         manifest_keys=[new_manifest_key],
     )
 
     assert wikidata_source.completed_wikidata_raw_manifest_keys(
         object_store=object_store,
-        run_id="old-run",
+        partition_date="2026-06-16",
     ) == [old_manifest_key]
     with pytest.raises(ValueError, match="completed Wikidata raw snapshot"):
         wikidata_source.completed_wikidata_raw_manifest_keys(
             object_store=object_store,
-            run_id="downstream-only-run",
+            partition_date="2026-06-30",
         )
 
 
@@ -587,17 +665,13 @@ def test_wikidata_listed_company_rows_merge_manifest_augmentation_objects() -> N
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
-    page_key = (
-        "raw/run_id=run-1/retrieved_date=2026-06-19/exchange_id=QEX1/page=000001.json"
-    )
+    page_key = "partition_date=2026-06-16/exchange_id=QEX1/page=000001.json"
     augmentation_key = (
-        "raw/run_id=run-1/retrieved_date=2026-06-19/"
+        "partition_date=2026-06-16/"
         "exchange_id=QEX1/augmentation_kind=profile/page=000001_batch=000001.json"
     )
-    manifest_key = (
-        "raw/run_id=run-1/retrieved_date=2026-06-19/exchange_id=QEX1/manifest.json"
-    )
-    s3_client.objects[("source-wikidata-company-seed", page_key)] = json.dumps(
+    manifest_key = "partition_date=2026-06-16/exchange_id=QEX1/manifest.json"
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, page_key)] = json.dumps(
         _wikidata_response(
             [
                 {
@@ -611,7 +685,7 @@ def test_wikidata_listed_company_rows_merge_manifest_augmentation_objects() -> N
             ]
         )
     ).encode("utf-8")
-    s3_client.objects[("source-wikidata-company-seed", augmentation_key)] = json.dumps(
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, augmentation_key)] = json.dumps(
         _wikidata_response(
             [
                 _wikidata_company_binding(
@@ -624,11 +698,12 @@ def test_wikidata_listed_company_rows_merge_manifest_augmentation_objects() -> N
             ]
         )
     ).encode("utf-8")
-    s3_client.objects[("source-wikidata-company-seed", manifest_key)] = json.dumps(
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, manifest_key)] = json.dumps(
         {
             "source": "wikidata",
             "query_mode": "exchange",
-            "run_id": "run-1",
+            "partition_date": "2026-06-16",
+            "source_run_id": "2026-06-16",
             "exchange_id": "QEX1",
             "exchange_name": "Test Exchange One",
             "listed_company_count_on_exchange": 1,
@@ -644,14 +719,15 @@ def test_wikidata_listed_company_rows_merge_manifest_augmentation_objects() -> N
     ).encode("utf-8")
     _write_snapshot_manifest(
         s3_client,
-        run_id="run-1",
+        partition_date="2026-06-16",
         manifest_keys=[manifest_key],
     )
 
     rows = list(
         wikidata_source.iter_wikidata_listed_company_rows(
             object_store=object_store,
-            source_run_id="run-1",
+            partition_date="2026-06-16",
+            source_run_id="2026-06-16",
         )
     )
 
@@ -719,54 +795,49 @@ def test_wikidata_exchange_rows_read_completed_real_exchange_manifests() -> None
     from dagster_v3.defs.wikidata import source as wikidata_source
 
     object_store, s3_client = _object_store()
-    exchange_manifest_key = (
-        "raw/run_id=run-1/retrieved_date=2026-07-21/exchange_id=QEX1/manifest.json"
-    )
+    exchange_manifest_key = "partition_date=2026-07-20/exchange_id=QEX1/manifest.json"
     registry_manifest_key = (
-        "raw/run_id=run-1/retrieved_date=2026-07-21/"
-        "exchange_id=registry_P6460/manifest.json"
+        "partition_date=2026-07-20/exchange_id=registry_P6460/manifest.json"
     )
-    s3_client.objects[("source-wikidata-company-seed", exchange_manifest_key)] = (
-        json.dumps(
-            {
-                "source": "wikidata",
-                "query_mode": "exchange",
-                "run_id": "run-1",
-                "exchange_id": "QEX1",
-                "exchange_name": "Test Exchange",
-                "mics": ["XONE", "XTWO"],
-                "country_wikidata_id": "Q30",
-                "country_name": "United States",
-                "country_iso2": "US",
-                "listed_company_count_on_exchange": 12,
-                "started_at": "2026-07-21T10:00:00+00:00",
-                "objects": [],
-            }
-        ).encode("utf-8")
-    )
-    s3_client.objects[("source-wikidata-company-seed", registry_manifest_key)] = (
-        json.dumps(
-            {
-                "source": "wikidata",
-                "query_mode": "registry_number",
-                "run_id": "run-1",
-                "exchange_id": "registry_P6460",
-                "started_at": "2026-07-21T10:00:00+00:00",
-                "objects": [],
-            }
-        ).encode("utf-8")
-    )
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, exchange_manifest_key)] = json.dumps(
+        {
+            "source": "wikidata",
+            "query_mode": "exchange",
+            "partition_date": "2026-07-20",
+            "source_run_id": "2026-07-20",
+            "exchange_id": "QEX1",
+            "exchange_name": "Test Exchange",
+            "mics": ["XONE", "XTWO"],
+            "country_wikidata_id": "Q30",
+            "country_name": "United States",
+            "country_iso2": "US",
+            "listed_company_count_on_exchange": 12,
+            "started_at": "2026-07-21T10:00:00+00:00",
+            "objects": [],
+        }
+    ).encode("utf-8")
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, registry_manifest_key)] = json.dumps(
+        {
+            "source": "wikidata",
+            "query_mode": "registry_number",
+            "partition_date": "2026-07-20",
+            "source_run_id": "2026-07-20",
+            "exchange_id": "registry_P6460",
+            "started_at": "2026-07-21T10:00:00+00:00",
+            "objects": [],
+        }
+    ).encode("utf-8")
     _write_snapshot_manifest(
         s3_client,
-        run_id="run-1",
+        partition_date="2026-07-20",
         manifest_keys=[exchange_manifest_key, registry_manifest_key],
     )
 
     rows = list(
         wikidata_source.iter_wikidata_exchange_rows(
             object_store=object_store,
-            raw_run_id="run-1",
-            source_run_id="downstream-run",
+            partition_date="2026-07-20",
+            source_run_id="2026-07-20",
         )
     )
 
@@ -786,24 +857,12 @@ def test_wikidata_exchanges_stage_declares_explicit_schema() -> None:
     assert schema["source_payload_hash"]["data_type"] == "text"
 
 
-def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
+def test_wikidata_company_pages_and_augmentations_write_separate_manifests() -> None:
     from dagster_v3.defs.wikidata import assets
     from dagster_v3.defs.wikidata.source import WikidataRawPullConfig
 
     object_store, s3_client = _object_store()
-    old_key = (
-        "raw/run_id=old-run/retrieved_date=2026-06-18/"
-        "exchange_id=Q13677/page=000001.json"
-    )
-    s3_client.objects[("source-wikidata-company-seed", old_key)] = b"old"
-    old_legacy_key = (
-        "raw/retrieved_date=2026-06-18/run_id=old-run/"
-        "exchange_id=Q13677/page=000001.json"
-    )
-    s3_client.objects[("source-wikidata-company-seed", old_legacy_key)] = b"old legacy"
-    unrelated_key = "other/raw/run_id=old-run/page=000001.json"
-    s3_client.objects[("source-wikidata-company-seed", unrelated_key)] = b"unrelated"
-    client = FakeWikidataClient(
+    pages_client = FakeWikidataClient(
         pages=[
             _wikidata_response(
                 [{"company": {"value": "http://www.wikidata.org/entity/Q1"}}]
@@ -819,138 +878,107 @@ def test_wikidata_raw_pull_writes_pages_and_manifest() -> None:
     def capture_progress(message: str, *args: object) -> None:
         progress_messages.append(message % args)
 
-    result = assets.pull_wikidata_company_seed_raw_objects(
-        client=client,
+    pages_result = assets.pull_wikidata_company_pages_for_seed_unit(
+        client=pages_client,
         object_store=object_store,
         config=WikidataRawPullConfig(
-            exchange_ids_csv="Q13677",
             page_size=1,
             max_pages=None,
-            include_registry_seed=False,
             request_delay_seconds=0.25,
             user_agent="test-agent",
         ),
-        run_id="run-123",
+        partition_date="2026-06-16",
+        seed_unit=_wikidata_seed_unit("Q13677"),
+        source_run_id="2026-06-16",
         retrieved_at="2026-06-19T10:00:00+00:00",
         sleep=lambda _seconds: None,
         log=capture_progress,
     )
 
-    page_one_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/"
-        "exchange_id=Q13677/page=000001.json"
-    )
-    page_two_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/"
-        "exchange_id=Q13677/page=000002.json"
-    )
-    augmentation_page_one_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/"
-        "exchange_id=Q13677/augmentation_kind=profile/page=000001_batch=000001.json"
-    )
-    augmentation_page_two_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/"
-        "exchange_id=Q13677/augmentation_kind=profile/page=000002_batch=000001.json"
-    )
-    identifier_page_one_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/"
-        "exchange_id=Q13677/augmentation_kind=identifiers/page=000001_batch=000001.json"
-    )
-    relationship_page_one_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/"
-        "exchange_id=Q13677/augmentation_kind=relationships/page=000001_batch=000001.json"
-    )
-    people_page_one_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/"
-        "exchange_id=Q13677/augmentation_kind=people/page=000001_batch=000001.json"
-    )
-    manifest_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/exchange_id=Q13677/manifest.json"
-    )
-
-    assert ("source-wikidata-company-seed", page_one_key) in s3_client.objects
-    assert ("source-wikidata-company-seed", page_two_key) in s3_client.objects
-    assert (
-        "source-wikidata-company-seed",
-        augmentation_page_one_key,
-    ) in s3_client.objects
-    assert (
-        "source-wikidata-company-seed",
-        augmentation_page_two_key,
-    ) in s3_client.objects
-    assert (
-        "source-wikidata-company-seed",
-        identifier_page_one_key,
-    ) in s3_client.objects
-    assert (
-        "source-wikidata-company-seed",
-        relationship_page_one_key,
-    ) in s3_client.objects
-    assert ("source-wikidata-company-seed", people_page_one_key) in s3_client.objects
-    assert ("source-wikidata-company-seed", manifest_key) in s3_client.objects
-    assert ("source-wikidata-company-seed", old_key) not in s3_client.objects
-    assert ("source-wikidata-company-seed", old_legacy_key) not in s3_client.objects
-    assert ("source-wikidata-company-seed", unrelated_key) in s3_client.objects
-    page_three_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/"
-        "exchange_id=Q13677/page=000003.json"
-    )
-    assert ("source-wikidata-company-seed", page_three_key) not in s3_client.objects
-
-    manifest = json.loads(
-        s3_client.objects[("source-wikidata-company-seed", manifest_key)].decode(
-            "utf-8"
-        )
-    )
-    assert manifest["source"] == "wikidata"
-    assert manifest["query_mode"] == "exchange"
-    assert manifest["exchange_id"] == "Q13677"
-    assert "partition_month" not in manifest
-    assert manifest["row_count"] == 2
-    assert manifest["augmentation_row_count"] == 0
-    assert manifest["page_count"] == 2
-    assert manifest["objects"] == [page_one_key, page_two_key]
-    assert manifest["augmentation_objects"] == [
-        augmentation_page_one_key,
-        identifier_page_one_key,
-        relationship_page_one_key,
-        people_page_one_key,
-        augmentation_page_two_key,
-        (
-            "raw/run_id=run-123/retrieved_date=2026-06-19/"
-            "exchange_id=Q13677/augmentation_kind=identifiers/page=000002_batch=000001.json"
-        ),
-        (
-            "raw/run_id=run-123/retrieved_date=2026-06-19/"
-            "exchange_id=Q13677/augmentation_kind=relationships/page=000002_batch=000001.json"
-        ),
-        (
-            "raw/run_id=run-123/retrieved_date=2026-06-19/"
-            "exchange_id=Q13677/augmentation_kind=people/page=000002_batch=000001.json"
-        ),
+    page_keys = [
+        "partition_date=2026-06-16/exchange_id=Q13677/page=000001.json",
+        "partition_date=2026-06-16/exchange_id=Q13677/page=000002.json",
     ]
-    assert len(manifest["query_hash"]) == 64
-    assert result.metadata["row_count"] == 2
-    assert result.metadata["page_count"] == 2
-    assert result.metadata["exchange_count"] == 1
-    assert result.metadata["deleted_old_raw_object_count"] == 2
-    assert any(
-        "Wikidata seed discovery completed: exchanges=1 registry_properties=0 "
-        "download_units=1" in message
-        for message in progress_messages
+    pages_manifest_key = (
+        "partition_date=2026-06-16/exchange_id=Q13677/"
+        "data_kind=company_pages/manifest.json"
+    )
+    profile_keys = [
+        "partition_date=2026-06-16/"
+        "exchange_id=Q13677/augmentation_kind=profile/"
+        "page=000001_batch=000001.json",
+        "partition_date=2026-06-16/"
+        "exchange_id=Q13677/augmentation_kind=profile/"
+        "page=000002_batch=000001.json",
+    ]
+    profile_manifest_key = (
+        "partition_date=2026-06-16/"
+        "exchange_id=Q13677/data_kind=company_profiles/manifest.json"
+    )
+
+    assert all(
+        (WIKIDATA_TEST_BUCKET, page_key) in s3_client.objects for page_key in page_keys
+    )
+    pages_manifest = json.loads(
+        s3_client.objects[(WIKIDATA_TEST_BUCKET, pages_manifest_key)].decode("utf-8")
+    )
+    assert pages_manifest["data_kind"] == "company_pages"
+    assert pages_manifest["objects"] == page_keys
+    assert pages_manifest["row_count"] == 2
+    assert pages_result.metadata["data_kind"] == "company_pages"
+    assert pages_result.metadata["reused"] is False
+    assert not any(
+        "augmentation_kind=" in key
+        for bucket, key in s3_client.objects
+        if bucket == WIKIDATA_TEST_BUCKET
+    )
+
+    profile_client = FakeWikidataClient(
+        pages=[],
+        augmentation_payloads=[
+            _wikidata_response([]),
+            _wikidata_response([]),
+        ],
+    )
+    profile_result = assets.pull_wikidata_augmentation_for_seed_unit(
+        client=profile_client,
+        object_store=object_store,
+        config=WikidataRawPullConfig(
+            page_size=1,
+            request_delay_seconds=0,
+            user_agent="test-agent",
+        ),
+        partition_date="2026-06-16",
+        seed_unit_id="Q13677",
+        data_kind=assets.WIKIDATA_COMPANY_PROFILE_KIND,
+        source_run_id="2026-06-16",
+        retrieved_at="2026-06-19T10:05:00+00:00",
+        sleep=lambda _seconds: None,
+        log=capture_progress,
+    )
+
+    assert all(
+        (WIKIDATA_TEST_BUCKET, profile_key) in s3_client.objects
+        for profile_key in profile_keys
+    )
+    profile_manifest = json.loads(
+        s3_client.objects[(WIKIDATA_TEST_BUCKET, profile_manifest_key)].decode("utf-8")
+    )
+    assert profile_manifest["data_kind"] == "company_profiles"
+    assert profile_manifest["objects"] == profile_keys
+    assert profile_result.metadata["data_kind"] == "company_profiles"
+    assert not any(
+        "augmentation_kind=identifiers" in key
+        or "augmentation_kind=relationships" in key
+        or "augmentation_kind=people" in key
+        for bucket, key in s3_client.objects
+        if bucket == WIKIDATA_TEST_BUCKET
     )
     assert any(
-        "Downloaded Wikidata company page: unit=1/1 exchange_id=Q13677 "
-        "page=2 page_rows=1 unit_rows=2" in message
+        "Wikidata company page: partition_date=2026-06-16 seed_unit=Q13677" in message
         for message in progress_messages
     )
-    assert any(
-        "Completed Wikidata raw download: run_id=run-123 units=1 pages=2 "
-        "company_rows=2 augmentation_objects=8" in message
-        for message in progress_messages
-    )
-    assert "partition_month" not in result.metadata
-    assert client.offsets == [0, 1, 2]
+    assert pages_client.offsets == [0, 1, 2]
 
 
 def test_wikidata_raw_pull_resumes_from_checkpoint_after_transient_failure() -> None:
@@ -987,11 +1015,13 @@ def test_wikidata_raw_pull_resumes_from_checkpoint_after_transient_failure() -> 
     first_client = FailingAfterFirstPageClient()
 
     with pytest.raises(WikidataTransientRequestError, match="unavailable"):
-        assets.pull_wikidata_company_seed_raw_objects(
+        assets.pull_wikidata_company_pages_for_seed_unit(
             client=first_client,
             object_store=object_store,
             config=config,
-            run_id="checkpointed-run",
+            partition_date="2026-07-20",
+            seed_unit=_wikidata_seed_unit("QEX1"),
+            source_run_id="first-dagster-run",
             retrieved_at="2026-07-22T10:00:00+00:00",
             sleep=lambda _seconds: None,
             log=lambda *_args: None,
@@ -1007,11 +1037,13 @@ def test_wikidata_raw_pull_resumes_from_checkpoint_after_transient_failure() -> 
     )
     progress_messages: list[str] = []
 
-    result = assets.pull_wikidata_company_seed_raw_objects(
+    result = assets.pull_wikidata_company_pages_for_seed_unit(
         client=resumed_client,
         object_store=object_store,
         config=config,
-        run_id="checkpointed-run",
+        partition_date="2026-07-20",
+        seed_unit=_wikidata_seed_unit("QEX1"),
+        source_run_id="different-dagster-retry-run",
         retrieved_at="2026-07-22T10:00:00+00:00",
         sleep=lambda _seconds: None,
         log=lambda message, *args: progress_messages.append(message % args),
@@ -1020,17 +1052,151 @@ def test_wikidata_raw_pull_resumes_from_checkpoint_after_transient_failure() -> 
     assert first_client.offsets == [0, 1]
     assert resumed_client.offsets == [1, 2]
     assert result.metadata["row_count"] == 2
+    assert result.metadata["reused"] is False
     assert any(
-        "Reusing checkpointed Wikidata company page" in message
-        for message in progress_messages
+        "Reused Wikidata company page" in message for message in progress_messages
     )
-    assert (
-        sum(
-            "Reusing checkpointed Wikidata augmentation" in message
-            for message in progress_messages
+    assert all(
+        "run_id=" not in key
+        for bucket, key in _s3_client.objects
+        if bucket == WIKIDATA_TEST_BUCKET
+    )
+
+    class NoNetworkClient:
+        def fetch(self, _query: str, *, user_agent: str) -> dict[str, Any]:
+            raise AssertionError(
+                f"completed partition performed a request as {user_agent}"
+            )
+
+    repeated_result = assets.pull_wikidata_company_pages_for_seed_unit(
+        client=NoNetworkClient(),
+        object_store=object_store,
+        config=config,
+        partition_date="2026-07-20",
+        seed_unit=_wikidata_seed_unit("QEX1"),
+        source_run_id="third-dagster-run",
+        retrieved_at="2026-07-22T12:00:00+00:00",
+        sleep=lambda _seconds: None,
+        log=lambda *_args: None,
+    )
+
+    assert repeated_result.metadata["reused"] is True
+    assert repeated_result.metadata["row_count"] == 2
+
+
+def test_wikidata_split_stages_adopt_completed_manifest_without_network() -> None:
+    from dagster_v3.defs.wikidata import assets
+    from dagster_v3.defs.wikidata.source import WikidataRawPullConfig
+
+    class NoNetworkClient:
+        def fetch(self, _query: str, *, user_agent: str) -> dict[str, Any]:
+            raise AssertionError(
+                f"migrated partition performed a request as {user_agent}"
+            )
+
+    object_store, s3_client = _object_store()
+    prefix = "partition_date=2026-07-20/exchange_id=QEX1"
+    page_key = f"{prefix}/page=000001.json"
+    augmentation_keys = [
+        (
+            f"{prefix}/augmentation_kind={augmentation_kind}/"
+            "page=000001_batch=000001.json"
         )
-        == 4
+        for augmentation_kind in ("profile", "identifiers", "relationships", "people")
+    ]
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, page_key)] = json.dumps(
+        _wikidata_response(
+            [{"company": {"value": "http://www.wikidata.org/entity/Q1"}}]
+        )
+    ).encode("utf-8")
+    for augmentation_key in augmentation_keys:
+        s3_client.objects[(WIKIDATA_TEST_BUCKET, augmentation_key)] = json.dumps(
+            _wikidata_response([])
+        ).encode("utf-8")
+    combined_manifest_key = f"{prefix}/manifest.json"
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, combined_manifest_key)] = json.dumps(
+        {
+            "source": "wikidata",
+            "status": "complete",
+            "query_mode": "exchange",
+            "partition_date": "2026-07-20",
+            "source_run_id": "2026-07-20",
+            "exchange_id": "QEX1",
+            "exchange_name": "Test Exchange",
+            "listed_company_count_on_exchange": 1,
+            "mics": ["XONE"],
+            "country_wikidata_id": "Q30",
+            "country_name": "United States",
+            "country_iso2": "US",
+            "registry_property_id": None,
+            "page_size": 100,
+            "max_pages": None,
+            "query_hash": "hash",
+            "row_count": 1,
+            "page_count": 1,
+            "augmentation_batch_size": 100,
+            "augmentation_row_count": 0,
+            "started_at": "2026-07-20T10:00:00+00:00",
+            "completed_at": "2026-07-20T11:00:00+00:00",
+            "objects": [page_key],
+            "augmentation_objects": augmentation_keys,
+        }
+    ).encode("utf-8")
+    config = WikidataRawPullConfig(
+        request_delay_seconds=0,
+        user_agent="test-agent",
     )
+
+    results = [
+        assets.pull_wikidata_company_pages_for_seed_unit(
+            client=NoNetworkClient(),
+            object_store=object_store,
+            config=config,
+            partition_date="2026-07-20",
+            seed_unit=_wikidata_seed_unit("QEX1"),
+            source_run_id="new-dagster-run",
+            retrieved_at="2026-07-23T10:00:00+00:00",
+            sleep=lambda _seconds: None,
+            log=lambda *_args: None,
+        ),
+        *(
+            assets.pull_wikidata_augmentation_for_seed_unit(
+                client=NoNetworkClient(),
+                object_store=object_store,
+                config=config,
+                partition_date="2026-07-20",
+                seed_unit_id="QEX1",
+                data_kind=data_kind,
+                source_run_id="new-dagster-run",
+                retrieved_at="2026-07-23T10:00:00+00:00",
+                sleep=lambda _seconds: None,
+                log=lambda *_args: None,
+            )
+            for data_kind in assets.WIKIDATA_NETWORK_DATA_KINDS
+        ),
+        assets.materialize_wikidata_persons_for_seed_unit(
+            object_store=object_store,
+            partition_date="2026-07-20",
+            seed_unit_id="QEX1",
+        ),
+    ]
+
+    assert all(result.metadata["reused"] is True for result in results)
+    assert {
+        key
+        for bucket, key in s3_client.objects
+        if bucket == WIKIDATA_TEST_BUCKET and "/data_kind=" in key
+    } == {
+        f"{prefix}/data_kind={data_kind}/manifest.json"
+        for data_kind in assets.WIKIDATA_ALL_SEED_UNIT_DATA_KINDS
+    }
+    snapshot_result = assets.materialize_wikidata_company_source_snapshot(
+        object_store=object_store,
+        partition_date="2026-07-20",
+        seed_unit_id="QEX1",
+    )
+    assert snapshot_result.metadata["reused"] is True
+    assert snapshot_result.metadata["manifest_key"] == combined_manifest_key
 
 
 def test_wikidata_step_retry_uses_bounded_exponential_delay() -> None:
@@ -1040,6 +1206,57 @@ def test_wikidata_step_retry_uses_bounded_exponential_delay() -> None:
         assets.wikidata_step_retry_delay_seconds(retry_number)
         for retry_number in range(6)
     ] == [300, 600, 1_200, 2_400, 2_400, 2_400]
+
+
+def test_wikidata_legacy_keys_map_to_the_week_download_started() -> None:
+    from dagster_v3.defs.wikidata.migrate_raw_bucket import (
+        legacy_object_target_key,
+        weekly_partition_date,
+    )
+
+    assert weekly_partition_date("2026-07-20") == "2026-07-20"
+    assert weekly_partition_date("2026-07-23") == "2026-07-20"
+    assert (
+        legacy_object_target_key(
+            "raw/run_id=retry-run/retrieved_date=2026-07-23/"
+            "exchange_id=QEX1/page=000001.json"
+        )
+        == "partition_date=2026-07-20/exchange_id=QEX1/page=000001.json"
+    )
+
+
+def test_wikidata_legacy_manifest_rewrite_removes_run_identity() -> None:
+    from dagster_v3.defs.wikidata.migrate_raw_bucket import rewrite_legacy_manifest
+
+    legacy_prefix = "raw/run_id=retry-run/retrieved_date=2026-07-23/exchange_id=QEX1"
+    rewritten = rewrite_legacy_manifest(
+        {
+            "source": "wikidata",
+            "run_id": "retry-run",
+            "retrieved_date": "2026-07-23",
+            "exchange_id": "QEX1",
+            "query_mode": "exchange",
+            "objects": [f"{legacy_prefix}/page=000001.json"],
+            "augmentation_objects": [
+                f"{legacy_prefix}/augmentation_kind=profile/"
+                "page=000001_batch=000001.json"
+            ],
+        },
+        target_key=("partition_date=2026-07-20/exchange_id=QEX1/manifest.json"),
+    )
+
+    assert rewritten["status"] == "complete"
+    assert rewritten["partition_date"] == "2026-07-20"
+    assert rewritten["source_run_id"] == "2026-07-20"
+    assert "run_id" not in rewritten
+    assert "retrieved_date" not in rewritten
+    assert rewritten["objects"] == [
+        "partition_date=2026-07-20/exchange_id=QEX1/page=000001.json"
+    ]
+    assert rewritten["augmentation_objects"] == [
+        "partition_date=2026-07-20/exchange_id=QEX1/"
+        "augmentation_kind=profile/page=000001_batch=000001.json"
+    ]
 
 
 def test_wikidata_client_translates_exhausted_http_retries() -> None:
@@ -1065,7 +1282,7 @@ def test_wikidata_client_translates_exhausted_http_retries() -> None:
     assert isinstance(exc_info.value.__cause__, requests.exceptions.RetryError)
 
 
-def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages() -> (
+def test_wikidata_seed_discovery_writes_exchange_catalog_without_company_pages() -> (
     None
 ):
     from dagster_v3.defs.wikidata import assets
@@ -1133,54 +1350,57 @@ def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages()
         },
     )
 
-    result = assets.pull_wikidata_company_seed_raw_objects(
+    config = WikidataRawPullConfig(
+        page_size=1,
+        max_pages=None,
+        max_exchanges=2,
+        include_registry_seed=False,
+        request_delay_seconds=0,
+        user_agent="test-agent",
+    )
+    result = assets.discover_wikidata_company_sources(
         client=client,
         object_store=object_store,
-        config=WikidataRawPullConfig(
-            page_size=1,
-            max_pages=None,
-            max_exchanges=2,
-            include_registry_seed=False,
-            request_delay_seconds=0,
-            user_agent="test-agent",
-        ),
-        run_id="run-123",
+        config=config,
+        partition_date="2026-06-16",
+        source_run_id="2026-06-16",
         retrieved_at="2026-06-19T10:00:00+00:00",
-        sleep=lambda _seconds: None,
         log=lambda *_args: None,
     )
 
-    manifest_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/exchange_id=QEX1/manifest.json"
+    exchange_list_key = "partition_date=2026-06-16/active_exchanges.json"
+    catalog_key = "partition_date=2026-06-16/seed_units.json"
+    catalog = json.loads(
+        s3_client.objects[(WIKIDATA_TEST_BUCKET, catalog_key)].decode("utf-8")
     )
-    exchange_list_key = (
-        "raw/run_id=run-123/retrieved_date=2026-06-19/active_exchanges.json"
-    )
-    manifest = json.loads(
-        s3_client.objects[("source-wikidata-company-seed", manifest_key)].decode(
-            "utf-8"
-        )
-    )
+    first_unit = catalog["seed_units"][0]
 
-    assert ("source-wikidata-company-seed", exchange_list_key) in s3_client.objects
-    assert manifest["exchange_name"] == "Test Exchange One"
-    assert manifest["mics"] == ["XALT", "XONE"]
-    assert manifest["country_wikidata_id"] == "Q30"
-    assert manifest["country_name"] == "United States"
-    assert manifest["country_iso2"] == "US"
-    assert manifest["listed_company_count_on_exchange"] == 2
-    assert manifest["page_size"] == 1
+    assert (WIKIDATA_TEST_BUCKET, exchange_list_key) in s3_client.objects
+    assert first_unit["exchange_name"] == "Test Exchange One"
+    assert first_unit["mics"] == ["XALT", "XONE"]
+    assert first_unit["country_wikidata_id"] == "Q30"
+    assert first_unit["country_name"] == "United States"
+    assert first_unit["country_iso2"] == "US"
+    assert first_unit["listed_company_count_on_exchange"] == 2
     assert result.metadata["exchange_count"] == 2
-    assert result.metadata["row_count"] == 2
-    assert result.metadata["snapshot_manifest_key"] == (
-        "raw/run_id=run-123/snapshot_manifest.json"
+    assert result.metadata["unit_count"] == 2
+    assert client.company_offsets == {}
+    assert len(client.queries) == 1
+
+    reused_result = assets.discover_wikidata_company_sources(
+        client=client,
+        object_store=object_store,
+        config=config,
+        partition_date="2026-06-16",
+        source_run_id="different-run",
+        retrieved_at="2026-06-19T11:00:00+00:00",
+        log=lambda *_args: None,
     )
-    assert client.company_offsets == {"QEX1": [0, 1], "QEX2": [0, 1]}
+    assert reused_result.metadata["reused"] is True
+    assert len(client.queries) == 1
 
 
-def test_wikidata_raw_pull_pulls_registry_properties_after_exchanges_as_pseudo_exchanges() -> (
-    None
-):
+def test_wikidata_partitioned_pull_keeps_registry_pseudo_exchanges_separate() -> None:
     from dagster_v3.defs.wikidata import assets
     from dagster_v3.defs.wikidata.source import WikidataRawPullConfig
 
@@ -1209,59 +1429,99 @@ def test_wikidata_raw_pull_pulls_registry_properties_after_exchanges_as_pseudo_e
         ]
     )
 
-    result = assets.pull_wikidata_company_seed_raw_objects(
+    config = WikidataRawPullConfig(
+        exchange_ids_csv="QEX1",
+        registry_property_ids_csv="P6460,P2333",
+        page_size=100,
+        max_pages=None,
+        request_delay_seconds=0,
+        user_agent="test-agent",
+    )
+    discovery_result = assets.discover_wikidata_company_sources(
         client=client,
         object_store=object_store,
-        config=WikidataRawPullConfig(
-            exchange_ids_csv="QEX1",
-            registry_property_ids_csv="P6460,P2333",
-            page_size=100,
-            max_pages=None,
-            request_delay_seconds=0,
-            user_agent="test-agent",
-        ),
-        run_id="run-999",
+        config=config,
+        partition_date="2026-07-20",
+        source_run_id="2026-07-20",
         retrieved_at="2026-07-20T10:00:00+00:00",
-        sleep=lambda _seconds: None,
         log=lambda *_args: None,
     )
-
-    exchange_manifest_key = (
-        "raw/run_id=run-999/retrieved_date=2026-07-20/exchange_id=QEX1/manifest.json"
+    seed_units = assets.read_wikidata_seed_units(
+        object_store=object_store,
+        partition_date="2026-07-20",
     )
+    for seed_unit in seed_units:
+        seed_unit_id = str(seed_unit["exchange_wikidata_id"])
+        assets.pull_wikidata_company_pages_for_seed_unit(
+            client=client,
+            object_store=object_store,
+            config=config,
+            partition_date="2026-07-20",
+            seed_unit=seed_unit,
+            source_run_id="2026-07-20",
+            retrieved_at="2026-07-20T10:00:00+00:00",
+            sleep=lambda _seconds: None,
+            log=lambda *_args: None,
+        )
+        for data_kind in assets.WIKIDATA_NETWORK_DATA_KINDS:
+            assets.pull_wikidata_augmentation_for_seed_unit(
+                client=client,
+                object_store=object_store,
+                config=config,
+                partition_date="2026-07-20",
+                seed_unit_id=seed_unit_id,
+                data_kind=data_kind,
+                source_run_id="2026-07-20",
+                retrieved_at="2026-07-20T10:00:00+00:00",
+                sleep=lambda _seconds: None,
+                log=lambda *_args: None,
+            )
+        assets.materialize_wikidata_persons_for_seed_unit(
+            object_store=object_store,
+            partition_date="2026-07-20",
+            seed_unit_id=seed_unit_id,
+        )
+        assets.materialize_wikidata_company_source_snapshot(
+            object_store=object_store,
+            partition_date="2026-07-20",
+            seed_unit_id=seed_unit_id,
+        )
+    result = assets.finalize_wikidata_raw_snapshot(
+        object_store=object_store,
+        partition_date="2026-07-20",
+        completed_at="2026-07-20T11:00:00+00:00",
+    )
+
+    exchange_manifest_key = "partition_date=2026-07-20/exchange_id=QEX1/manifest.json"
     registry_p6460_manifest_key = (
-        "raw/run_id=run-999/retrieved_date=2026-07-20/"
-        "exchange_id=registry_P6460/manifest.json"
+        "partition_date=2026-07-20/exchange_id=registry_P6460/manifest.json"
     )
     registry_p2333_manifest_key = (
-        "raw/run_id=run-999/retrieved_date=2026-07-20/"
-        "exchange_id=registry_P2333/manifest.json"
+        "partition_date=2026-07-20/exchange_id=registry_P2333/manifest.json"
     )
 
-    assert ("source-wikidata-company-seed", exchange_manifest_key) in s3_client.objects
+    assert (WIKIDATA_TEST_BUCKET, exchange_manifest_key) in s3_client.objects
     assert (
-        "source-wikidata-company-seed",
+        WIKIDATA_TEST_BUCKET,
         registry_p6460_manifest_key,
     ) in s3_client.objects
     assert (
-        "source-wikidata-company-seed",
+        WIKIDATA_TEST_BUCKET,
         registry_p2333_manifest_key,
     ) in s3_client.objects
 
     exchange_manifest = json.loads(
-        s3_client.objects[
-            ("source-wikidata-company-seed", exchange_manifest_key)
-        ].decode("utf-8")
+        s3_client.objects[(WIKIDATA_TEST_BUCKET, exchange_manifest_key)].decode("utf-8")
     )
     p6460_manifest = json.loads(
-        s3_client.objects[
-            ("source-wikidata-company-seed", registry_p6460_manifest_key)
-        ].decode("utf-8")
+        s3_client.objects[(WIKIDATA_TEST_BUCKET, registry_p6460_manifest_key)].decode(
+            "utf-8"
+        )
     )
     p2333_manifest = json.loads(
-        s3_client.objects[
-            ("source-wikidata-company-seed", registry_p2333_manifest_key)
-        ].decode("utf-8")
+        s3_client.objects[(WIKIDATA_TEST_BUCKET, registry_p2333_manifest_key)].decode(
+            "utf-8"
+        )
     )
 
     assert exchange_manifest["query_mode"] == "exchange"
@@ -1280,12 +1540,12 @@ def test_wikidata_raw_pull_pulls_registry_properties_after_exchanges_as_pseudo_e
     assert p2333_manifest["page_count"] == 0
     assert p2333_manifest["objects"] == []
 
-    # Registry pseudo-exchanges are pulled AFTER the real exchanges, in manifest order.
-    assert result.metadata["manifest_keys"] == [
-        exchange_manifest_key,
-        registry_p6460_manifest_key,
-        registry_p2333_manifest_key,
+    assert discovery_result.metadata["exchange_ids"] == [
+        "QEX1",
+        "registry_P6460",
+        "registry_P2333",
     ]
+    assert result.metadata["unit_count"] == 3
     assert result.metadata["exchange_count"] == 1
     assert result.metadata["registry_property_count"] == 2
 
@@ -2401,7 +2661,7 @@ def _object_store() -> tuple[ObjectStoreResource, FakeS3Client]:
     s3_client = FakeS3Client()
     return (
         ObjectStoreResource(
-            bucket="source-wikidata-company-seed",
+            bucket=WIKIDATA_TEST_BUCKET,
             endpoint_url="http://test-s3",
             access_key="test-access-key",
             secret_key="test-secret-key",
@@ -2414,18 +2674,38 @@ def _object_store() -> tuple[ObjectStoreResource, FakeS3Client]:
 def _write_snapshot_manifest(
     s3_client: FakeS3Client,
     *,
-    run_id: str,
+    partition_date: str,
     manifest_keys: list[str],
 ) -> None:
-    snapshot_key = f"raw/run_id={run_id}/snapshot_manifest.json"
-    s3_client.objects[("source-wikidata-company-seed", snapshot_key)] = json.dumps(
+    snapshot_key = f"partition_date={partition_date}/snapshot_manifest.json"
+    s3_client.objects[(WIKIDATA_TEST_BUCKET, snapshot_key)] = json.dumps(
         {
             "source": "wikidata",
-            "run_id": run_id,
             "status": "complete",
+            "partition_date": partition_date,
+            "source_run_id": partition_date,
             "manifest_keys": manifest_keys,
         }
     ).encode("utf-8")
+
+
+def _wikidata_seed_unit(
+    exchange_id: str,
+    *,
+    query_mode: str = "exchange",
+    registry_property_id: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "exchange_wikidata_id": exchange_id,
+        "exchange_name": f"Test Exchange {exchange_id}",
+        "listed_company_count_on_exchange": None,
+        "mics": [],
+        "country_wikidata_id": None,
+        "country_name": None,
+        "country_iso2": None,
+        "query_mode": query_mode,
+        "registry_property_id": registry_property_id,
+    }
 
 
 def _seed_wikidata_listed_companies(database_path: Path) -> None:

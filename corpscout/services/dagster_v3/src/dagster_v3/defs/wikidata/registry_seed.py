@@ -10,7 +10,7 @@ imported here explicitly. Adding a country's spec therefore happens naturally al
 that country's own module; a central hardcoded list living in ``defs/wikidata/`` would be
 easy to forget when a new country ships. ``tests/test_wikidata_assets.py`` enforces the
 wiring: every spec's ``spine_asset_key`` must be a real, registered asset that appears in
-``wikidata_company_seed_raw_objects``'s parent keys.
+``wikidata_company_source_units`` parent keys.
 """
 
 from dagster_v3.defs.brazil_companies.rfb.tables import (

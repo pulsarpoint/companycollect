@@ -15,7 +15,8 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 EODHD_RAW_BUCKET = "source-eodhd"
 EODHD_SOURCE_SYSTEM = "eodhd"
 DEFAULT_REFERENCE_REQUEST_DELAY_SECONDS = 0.1
-DEFAULT_PRICE_REQUEST_DELAY_SECONDS = 0.05
+DEFAULT_PRICE_REQUEST_DELAY_SECONDS = 0.25
+DEFAULT_HISTORY_REQUESTS_PER_RUN = 90_000
 DEFAULT_PRICE_PROGRESS_INTERVAL = 100
 NON_COMPANY_EXCHANGE_CODES = frozenset({"CC", "FOREX", "GBOND", "MONEY", "EUFUND"})
 DEFAULT_EQUITY_INSTRUMENT_TYPES = (
@@ -96,9 +97,10 @@ class EodhdPriceBackfillConfig(dg.Config):
     include_delisted: bool = True
     max_symbols: int | None = None
     request_delay_seconds: float = DEFAULT_PRICE_REQUEST_DELAY_SECONDS
+    max_history_requests_per_run: int = DEFAULT_HISTORY_REQUESTS_PER_RUN
     progress_interval: int = DEFAULT_PRICE_PROGRESS_INTERVAL
 
-    @field_validator("progress_interval")
+    @field_validator("progress_interval", "max_history_requests_per_run")
     @classmethod
     def validate_positive_int(cls, value: int) -> int:
         if value <= 0:

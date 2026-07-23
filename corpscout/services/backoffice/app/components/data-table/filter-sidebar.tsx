@@ -39,17 +39,19 @@ function FacetCombobox({
   facetKey,
   label,
   selected,
+  lockedCountry,
 }: {
   facetKey: string;
   label: string;
   selected: string[];
+  lockedCountry?: string;
 }) {
   const fetcher = useFetcher<{ options: FacetOption[] }>();
   const navigate = useNavigate();
   const effectiveParams = useEffectiveSearchParams();
   const [open, setOpen] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const base = `/facet-options?column=${facetKey}`;
+  const base = `/facet-options?column=${facetKey}${lockedCountry ? `&country=${lockedCountry}` : ""}`;
 
   function onOpenChange(next: boolean) {
     // Cancel any pending debounced query fetch so a stale `q=` result can't
@@ -156,7 +158,13 @@ function FacetToggle({
 // never as a value-search FacetCombobox.
 const COMBOBOX_FACET_KEYS = UNIFIED_FACET_KEYS.filter((key) => key !== "has_financials");
 
-export function FilterSidebar({ filters }: { filters: CompanyFilters }) {
+export function FilterSidebar({
+  filters,
+  lockedCountry,
+}: {
+  filters: CompanyFilters;
+  lockedCountry?: string;
+}) {
   const activeCount = Object.values(filters).reduce((n, v) => n + v.length, 0);
   const navigate = useNavigate();
   const searchParams = useEffectiveSearchParams();
@@ -181,12 +189,13 @@ export function FilterSidebar({ filters }: { filters: CompanyFilters }) {
               })
             }
           />
-          {COMBOBOX_FACET_KEYS.map((key) => (
+          {COMBOBOX_FACET_KEYS.filter((key) => !(lockedCountry && key === "country")).map((key) => (
             <FacetCombobox
               key={key}
               facetKey={key}
               label={facetLabel(key)}
               selected={filters[key] ?? []}
+              lockedCountry={lockedCountry}
             />
           ))}
         </div>

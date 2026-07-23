@@ -4,6 +4,9 @@ export default [
   layout("routes/shell.tsx", [
     index("routes/home.tsx"),
     route("companies", "routes/companies.tsx"),
+    route("countries", "routes/countries.tsx"),
+    route("countries/:country/companies", "routes/country-companies.tsx"),
+    route("countries/:country", "routes/country-overview.tsx"),
     route("company/:country/:id", "routes/country-company-detail.tsx"),
     route("company/:country/:id/facts/:year", "routes/company-facts.tsx"),
     route("company/:country/:id/facts/:year/document", "routes/company-facts-document.ts"),

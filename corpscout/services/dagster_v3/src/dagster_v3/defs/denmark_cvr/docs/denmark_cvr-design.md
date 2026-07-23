@@ -78,6 +78,11 @@ retry can repair a missing `_en` object from the existing original without makin
 another DataCVR request. Unknown source keys fail with their structural path so
 the mapping can be reviewed without logging source values.
 
+HTTP 429 and transient 5xx responses are retried for the affected CVR in the
+same browser session, using bounded `Retry-After` or exponential backoff. A
+response that is still transiently unavailable after the configured attempts
+fails the partition so Dagster does not mark an incomplete bucket as materialized.
+
 ### Local company-detail smoke test
 
 Run a deterministic 50-company sample from the local DuckDB company table with:

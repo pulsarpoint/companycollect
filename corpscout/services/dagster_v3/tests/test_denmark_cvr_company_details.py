@@ -188,6 +188,58 @@ def test_detail_resource_reuses_one_https_browser_session() -> None:
     assert browser.closed is True
 
 
+def test_detail_resource_retries_transient_503_without_aborting_batch() -> None:
+    first = {"stamdata": {"cvrnummer": "45448037"}}
+    second = {"stamdata": {"cvrnummer": "22756214"}}
+    page = FakePage(
+        [
+            {
+                "ok": True,
+                "status": 200,
+                "headers": {"content-type": "application/json"},
+                "body": json.dumps(first),
+            },
+            {
+                "ok": False,
+                "status": 503,
+                "headers": {"retry-after": "2"},
+                "body": "",
+            },
+            {
+                "ok": True,
+                "status": 200,
+                "headers": {"content-type": "application/json"},
+                "body": json.dumps(second),
+            },
+        ]
+    )
+    browser = FakeBrowser(page)
+    sleeps: list[float] = []
+
+    downloads = list(
+        DenmarkCvrCompanyDetailResource(
+            min_delay_ms=10,
+            max_delay_ms=10,
+            max_attempts=3,
+            retry_base_delay_seconds=1,
+            retry_max_delay_seconds=10,
+        ).iter_company_details(
+            ("45448037", "22756214"),
+            launcher=lambda: browser,
+            sleep=sleeps.append,
+        )
+    )
+
+    assert [download.payload for download in downloads] == [first, second]
+    assert [call["url"] for call in page.evaluate_calls] == [
+        company_detail_api_url("https://datacvr.virk.dk", "45448037"),
+        company_detail_api_url("https://datacvr.virk.dk", "22756214"),
+        company_detail_api_url("https://datacvr.virk.dk", "22756214"),
+    ]
+    assert sleeps == [0.01, 2.0]
+    assert browser.closed is True
+
+
 def test_key_translation_is_recursive_and_does_not_translate_values() -> None:
     original = {
         "stamdata": {

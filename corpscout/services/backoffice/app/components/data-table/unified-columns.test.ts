@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatRevenueUsd } from "~/components/data-table/unified-columns";
+import { buildUnifiedColumns, formatRevenueUsd } from "~/components/data-table/unified-columns";
 
 describe("formatRevenueUsd", () => {
   it("formats large values compactly with the fiscal year", () => {
@@ -20,5 +20,17 @@ describe("formatRevenueUsd", () => {
 
   it("omits the year suffix when fiscal year is null but revenue is present", () => {
     expect(formatRevenueUsd(5_000_000, null)).toBe("$5M");
+  });
+});
+
+describe("buildUnifiedColumns", () => {
+  it("includes the country column by default", () => {
+    expect(buildUnifiedColumns("country", "asc").map((column) => column.id)).toContain("country");
+  });
+
+  it("omits the country column for a locked-country route", () => {
+    expect(
+      buildUnifiedColumns("name", "asc", { showCountry: false }).map((column) => column.id),
+    ).toEqual(["name", "industry", "revenue"]);
   });
 });

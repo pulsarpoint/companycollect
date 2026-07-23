@@ -16,8 +16,12 @@ export function formatRevenueUsd(
   return `$${compactUsd.format(value)}${fiscalYear != null ? ` (${fiscalYear})` : ""}`;
 }
 
-export function buildUnifiedColumns(sort: string, dir: SortDir): ColumnDef<UnifiedRow, unknown>[] {
-  return [
+export function buildUnifiedColumns(
+  sort: string,
+  dir: SortDir,
+  { showCountry = true }: { showCountry?: boolean } = {},
+): ColumnDef<UnifiedRow, unknown>[] {
+  const columns: ColumnDef<UnifiedRow, unknown>[] = [
     {
       id: "name",
       header: () => (
@@ -69,7 +73,10 @@ export function buildUnifiedColumns(sort: string, dir: SortDir): ColumnDef<Unifi
         </div>
       ),
     },
-    {
+  ];
+
+  if (showCountry) {
+    columns.push({
       id: "country",
       header: () => (
         <DataTableColumnHeader label="Country" sortKey="country" currentSort={sort} currentDir={dir} />
@@ -84,6 +91,8 @@ export function buildUnifiedColumns(sort: string, dir: SortDir): ColumnDef<Unifi
           </span>
         );
       },
-    },
-  ];
+    });
+  }
+
+  return columns;
 }

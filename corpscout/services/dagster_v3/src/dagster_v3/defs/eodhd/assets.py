@@ -269,6 +269,11 @@ def eodhd_reference_complete(
     partitions_def=EODHD_HISTORY_PARTITIONS,
     backfill_policy=EODHD_PRICE_BACKFILL_POLICY,
     pool=EODHD_PRICE_DOWNLOAD_POOL,
+    description=(
+        "Downloads one manually selected EODHD history-year partition. Each run "
+        "stops before consuming the account's full daily request allowance and "
+        "resumes from deterministic S3 symbol objects when relaunched."
+    ),
 )
 def eodhd_eod_price_history_raw_objects(
     context: dg.AssetExecutionContext,
@@ -284,6 +289,7 @@ def eodhd_eod_price_history_raw_objects(
             symbols=symbols,
             year=context.partition_key,
             request_delay_seconds=config.request_delay_seconds,
+            max_requests=config.max_history_requests_per_run,
             progress_interval=config.progress_interval,
             log=context.log.info,
         )
@@ -907,6 +913,7 @@ def download_eodhd_history_year(
     symbols: list[dict[str, Any]],
     year: str,
     request_delay_seconds: float,
+    max_requests: int,
     progress_interval: int,
     log: Callable[..., object],
 ) -> dict[str, Any]:
@@ -948,6 +955,24 @@ def download_eodhd_history_year(
             reused_symbol_count += 1
         retrieved_at = utc_now_iso()
         for missing_start, missing_end in missing_ranges:
+            if downloaded_request_count >= max_requests:
+                raise dg.Failure(
+                    description=(
+                        f"EODHD history request budget reached for partition {year} "
+                        f"after {downloaded_request_count} requests. Partial symbol "
+                        "objects are saved in S3. Relaunch this same partition after "
+                        "the daily EODHD quota resets; completed symbols will be reused."
+                    ),
+                    metadata={
+                        "year": year,
+                        "request_budget": max_requests,
+                        "downloaded_request_count": downloaded_request_count,
+                        "saved_symbol_count": len(catalog),
+                    },
+                    allow_retries=False,
+                )
+            if downloaded_request_count > 0 and request_delay_seconds > 0:
+                time.sleep(request_delay_seconds)
             payload = client.prices(
                 symbol_key,
                 start_date=missing_start,
@@ -1002,8 +1027,6 @@ def download_eodhd_history_year(
                 rate,
                 elapsed,
             )
-        if request_delay_seconds > 0 and symbol_number < len(symbols):
-            time.sleep(request_delay_seconds)
 
     catalog_key = history_catalog_object_key(year)
     object_store.write_bytes(
@@ -1430,6 +1453,14 @@ eodhd_price_history_backfill_job = dg.define_asset_job(
         "eodhd_eod_price_history_duckdb",
         "eodhd_eod_price_history_clickhouse",
     ),
+    description=(
+        "Manual EODHD history job. Launch exactly one year partition per day and "
+        "relaunch the same year if its request budget is reached."
+    ),
+    run_tags={
+        "dagster/max_retries": "0",
+        "eodhd/backfill_mode": "manual_single_partition",
+    },
 )
 
 eodhd_price_daily_job = dg.define_asset_job(

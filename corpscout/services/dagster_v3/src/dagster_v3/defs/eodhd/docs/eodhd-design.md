@@ -30,6 +30,17 @@ Every object records its covered date range or covered symbols. Historical and
 daily extraction checks this metadata before making an HTTP request. A retry
 therefore reuses complete S3 data and requests only missing coverage.
 
+Historical extraction is deliberately operated as a manual, daily backfill:
+
+1. Launch `eodhd_price_history_backfill_job` for exactly one year partition.
+2. If the run reaches its 90,000-request safety budget, leave the partition
+   incomplete and relaunch that same year after the EODHD quota resets.
+3. Move to the next year only after the current year materializes successfully.
+
+Requests are paced at four per second by default. The job disables automatic
+run retries so a quota or budget failure cannot immediately consume more calls.
+The safety budget and pacing remain configurable per manual run.
+
 ## Legacy S3 inspection
 
 The old `prices/partition=bucket_*/run_id=*` prefix was inspected once on the
@@ -48,8 +59,8 @@ the price migration.
 
 ## Jobs and schedule
 
-- `eodhd_price_history_backfill_job`: fills missing historical coverage and
-  publishes it to ClickHouse.
+- `eodhd_price_history_backfill_job`: manually fills one selected historical
+  year and publishes it to ClickHouse. It has no schedule.
 - `eodhd_price_daily_job`: fetches one daily partition.
 - `eodhd_price_daily_schedule`: runs at 06:15 UTC; its operational state is
   managed in Dagster.

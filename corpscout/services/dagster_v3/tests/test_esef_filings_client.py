@@ -8,6 +8,7 @@ No test here hits the network.
 
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,7 @@ class _FakeIndexSession:
     def __init__(self, pages: dict[int, dict[str, Any]]) -> None:
         self._pages = pages
         self.requested_pages: list[int] = []
+        self.requested_params: list[dict[str, Any]] = []
 
     def get(
         self,
@@ -69,6 +71,7 @@ class _FakeIndexSession:
         assert params["include"] == "entity"
         page_number = params["page[number]"]
         self.requested_pages.append(page_number)
+        self.requested_params.append(params)
         return _FakeIndexResponse(self._pages[page_number])
 
 
@@ -108,6 +111,32 @@ def test_iter_filings_stops_immediately_on_empty_first_page() -> None:
 
     assert records == []
     assert session.requested_pages == [1]
+
+
+def test_iter_filings_filters_and_sorts_by_processed_window() -> None:
+    session = _FakeIndexSession({1: _fixture_json("index_page_empty.json")})
+
+    list(
+        esef_client.EsefFilingsClient(session=session).iter_filings(
+            processed_from=datetime(2026, 7, 1, tzinfo=UTC),
+            processed_until=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+    )
+
+    params = session.requested_params[0]
+    assert params["sort"] == "processed,fxo_id"
+    assert json.loads(params["filter"]) == [
+        {
+            "name": "processed",
+            "op": "ge",
+            "val": "2026-07-01 00:00:00",
+        },
+        {
+            "name": "processed",
+            "op": "lt",
+            "val": "2026-08-01 00:00:00",
+        },
+    ]
 
 
 def _one_real_page_then_empty(fixture_name: str) -> _FakeIndexSession:

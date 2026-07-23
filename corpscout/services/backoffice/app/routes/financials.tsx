@@ -43,7 +43,7 @@ export default function Financials({ loaderData }: Route.ComponentProps) {
               key: c.country_code,
               label: getCountry(c.country_code)?.name ?? c.country_code,
               revenue_usd: c.revenue_usd,
-              href: `/financials/country/${c.country_code}`,
+              href: `/countries/${c.country_code}`,
             }))}
           />
           <Table>
@@ -62,7 +62,7 @@ export default function Financials({ loaderData }: Route.ComponentProps) {
                   <TableRow key={c.country_code}>
                     <TableCell>
                       <Link
-                        to={`/financials/country/${c.country_code}`}
+                        to={`/countries/${c.country_code}`}
                         className="flex w-fit items-center gap-1.5 font-medium underline-offset-2 hover:underline"
                       >
                         <span>{country?.flag}</span>

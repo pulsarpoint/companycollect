@@ -298,6 +298,9 @@ class DenmarkCvrCompanyDetailResource(dg.ConfigurableResource):
     locale: str = "en"
     min_delay_ms: int = 100
     max_delay_ms: int = 800
+    max_attempts: int = 5
+    retry_base_delay_seconds: float = 5.0
+    retry_max_delay_seconds: float = 120.0
 
     @model_validator(mode="after")
     def validate_configuration(self) -> Self:
@@ -308,6 +311,14 @@ class DenmarkCvrCompanyDetailResource(dg.ConfigurableResource):
             raise ValueError("request delays must not be negative")
         if self.min_delay_ms > self.max_delay_ms:
             raise ValueError("min_delay_ms must not exceed max_delay_ms")
+        if self.max_attempts <= 0:
+            raise ValueError("max_attempts must be greater than zero")
+        if self.retry_base_delay_seconds < 0 or self.retry_max_delay_seconds < 0:
+            raise ValueError("retry delays must not be negative")
+        if self.retry_base_delay_seconds > self.retry_max_delay_seconds:
+            raise ValueError(
+                "retry_base_delay_seconds must not exceed retry_max_delay_seconds"
+            )
         return self
 
     def iter_company_details(
@@ -341,15 +352,12 @@ class DenmarkCvrCompanyDetailResource(dg.ConfigurableResource):
                 if company_index > 0:
                     sleep(self._request_delay_seconds())
                 source_url = company_detail_api_url(self.detail_base_url, cvr)
-                try:
-                    result = page.evaluate(
-                        DATACVR_COMPANY_DETAIL_SCRIPT,
-                        {"url": source_url},
-                    )
-                except Exception:
-                    raise DenmarkCvrCompanyDetailRequestError(
-                        f"DataCVR company-detail request failed for CVR {cvr}"
-                    ) from None
+                result = self._request_with_retry(
+                    page,
+                    cvr=cvr,
+                    source_url=source_url,
+                    sleep=sleep,
+                )
                 yield _validated_company_detail_download(
                     cvr=cvr,
                     source_url=source_url,
@@ -360,6 +368,38 @@ class DenmarkCvrCompanyDetailResource(dg.ConfigurableResource):
 
     def _request_delay_seconds(self) -> float:
         return randint(self.min_delay_ms, self.max_delay_ms) / 1_000
+
+    def _request_with_retry(
+        self,
+        page: Any,
+        *,
+        cvr: str,
+        source_url: str,
+        sleep: Callable[[float], None],
+    ) -> Any:
+        result: Any = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                result = page.evaluate(
+                    DATACVR_COMPANY_DETAIL_SCRIPT,
+                    {"url": source_url},
+                )
+            except Exception:
+                raise DenmarkCvrCompanyDetailRequestError(
+                    f"DataCVR company-detail request failed for CVR {cvr}"
+                ) from None
+            if not _is_retryable_company_detail_result(result):
+                return result
+            if attempt < self.max_attempts:
+                sleep(
+                    _company_detail_retry_delay_seconds(
+                        result,
+                        attempt=attempt,
+                        base_delay_seconds=self.retry_base_delay_seconds,
+                        max_delay_seconds=self.retry_max_delay_seconds,
+                    )
+                )
+        return result
 
 
 def company_detail_api_url(base_url: str, cvr: str) -> str:
@@ -849,6 +889,43 @@ def _validated_company_detail_download(
         status=status,
         response_headers=response_headers,
     )
+
+
+def _is_retryable_company_detail_result(result: Any) -> bool:
+    return isinstance(result, Mapping) and result.get("status") in {
+        429,
+        500,
+        502,
+        503,
+        504,
+    }
+
+
+def _company_detail_retry_delay_seconds(
+    result: Mapping[str, Any],
+    *,
+    attempt: int,
+    base_delay_seconds: float,
+    max_delay_seconds: float,
+) -> float:
+    headers = result.get("headers")
+    if isinstance(headers, Mapping):
+        retry_after = next(
+            (
+                value
+                for key, value in headers.items()
+                if str(key).lower() == "retry-after"
+            ),
+            None,
+        )
+        if isinstance(retry_after, str):
+            try:
+                parsed_retry_after = float(retry_after)
+            except ValueError:
+                parsed_retry_after = -1
+            if parsed_retry_after >= 0:
+                return min(parsed_retry_after, max_delay_seconds)
+    return min(base_delay_seconds * (2 ** (attempt - 1)), max_delay_seconds)
 
 
 def _parse_company_detail_payload(raw_body: str, *, cvr: str) -> dict[str, Any]:

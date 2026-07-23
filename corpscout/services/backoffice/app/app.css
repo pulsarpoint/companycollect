@@ -128,3 +128,18 @@
     @apply font-sans;
   }
 }
+
+.country-map-region {
+  transition: fill 150ms ease, opacity 150ms ease, stroke-width 150ms ease;
+}
+
+a:hover > .country-map-region,
+a:focus-visible > .country-map-region {
+  opacity: 0.78 !important;
+  stroke-width: 1.5 !important;
+}
+
+a:focus-visible > .country-map-region {
+  outline: none;
+  filter: drop-shadow(0 0 2px var(--ring));
+}

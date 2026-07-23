@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router";
-import { Building2, ChartColumn, Users } from "lucide-react";
+import { Building2, ChartColumn, Globe2, Users } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -13,6 +13,7 @@ import {
 
 const NAV_ITEMS = [
   { title: "Companies", to: "/companies", icon: Building2 },
+  { title: "Countries", to: "/countries", icon: Globe2 },
   { title: "People", to: "/people", icon: Users },
   { title: "Financials", to: "/financials", icon: ChartColumn },
 ];
