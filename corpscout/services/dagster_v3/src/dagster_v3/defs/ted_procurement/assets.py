@@ -89,8 +89,8 @@ def ted_monthly_snapshot(
     prefix = tables.s3_partition_prefix(partition_key)
     ted_object_store.ensure_bucket()
 
-    listing_rows: list[dict[str, str]] = []
-    manifest: list[dict[str, str]] = []
+    listing_by_scope: dict[tuple[str, str], dict[str, str]] = {}
+    manifest_by_publication: dict[str, dict[str, str]] = {}
     downloaded = reused = 0
     for country in tables.COUNTRIES:
         query = build_monthly_query(
@@ -103,19 +103,19 @@ def ted_monthly_snapshot(
             publication_number = str(notice.get("publication-number", ""))
             if publication_number == "":
                 continue
-            listing_rows.append(
-                {
-                    "publication_number": publication_number,
-                    "publication_date": str(notice.get("publication-date", "")),
-                    "notice_type": str(notice.get("notice-type", "")),
-                    "buyer_name": _first_text(notice.get("buyer-name")),
-                    "notice_title": _first_text(notice.get("notice-title")),
-                    "total_value": _first_text(notice.get("total-value")),
-                    "total_value_currency": _first_text(notice.get("total-value-cur")),
-                    "country_iso2": country.country_iso2,
-                    "place_country": country.place_code,
-                }
-            )
+            listing_by_scope[(country.country_iso2, publication_number)] = {
+                "publication_number": publication_number,
+                "publication_date": str(notice.get("publication-date", "")),
+                "notice_type": str(notice.get("notice-type", "")),
+                "buyer_name": _first_text(notice.get("buyer-name")),
+                "notice_title": _first_text(notice.get("notice-title")),
+                "total_value": _first_text(notice.get("total-value")),
+                "total_value_currency": _first_text(notice.get("total-value-cur")),
+                "country_iso2": country.country_iso2,
+                "place_country": country.place_code,
+            }
+            if publication_number in manifest_by_publication:
+                continue
             xml_key = f"{prefix}xml/{publication_number}.xml"
             if ted_object_store.exists(xml_key):
                 reused += 1
@@ -125,10 +125,13 @@ def ted_monthly_snapshot(
                 )
                 downloaded += 1
                 time.sleep(XML_THROTTLE_SECONDS)
-            manifest.append(
-                {"publication_number": publication_number, "xml_key": xml_key}
-            )
+            manifest_by_publication[publication_number] = {
+                "publication_number": publication_number,
+                "xml_key": xml_key,
+            }
 
+    listing_rows = list(listing_by_scope.values())
+    manifest = list(manifest_by_publication.values())
     ted_object_store.write_bytes(
         f"{prefix}listing.jsonl",
         "\n".join(json.dumps(row, ensure_ascii=False) for row in listing_rows).encode(),
@@ -335,15 +338,27 @@ def ted_publish_clickhouse(
 
 ted_procurement_job = dg.define_asset_job(
     "ted_procurement_job",
-    selection=dg.AssetSelection.assets(
-        "ted_monthly_snapshot", "ted_monthly_duckdb"
-    ),
+    selection=dg.AssetSelection.assets("ted_monthly_snapshot", "ted_monthly_duckdb"),
     partitions_def=MONTHLY_PARTITIONS,
 )
 ted_publish_job = dg.define_asset_job(
     "ted_publish_job",
     selection=dg.AssetSelection.assets("ted_publish_clickhouse"),
 )
+
+
+@dg.run_status_sensor(
+    run_status=dg.DagsterRunStatus.SUCCESS,
+    monitored_jobs=[ted_procurement_job],
+    request_job=ted_publish_job,
+    default_status=dg.DefaultSensorStatus.STOPPED,
+)
+def ted_publish_after_monthly_parse(
+    context: dg.RunStatusSensorContext,
+) -> dg.RunRequest:
+    return dg.RunRequest(run_key=context.dagster_run.run_id)
+
+
 # Monthly: refresh the just-closed month then publish. Backfills run from the UI.
 ted_procurement_schedule = dg.ScheduleDefinition(
     name="ted_procurement_schedule",
@@ -357,6 +372,7 @@ defs = dg.Definitions(
     assets=[ted_monthly_snapshot, ted_monthly_duckdb, ted_publish_clickhouse],
     jobs=[ted_procurement_job, ted_publish_job],
     schedules=[ted_procurement_schedule],
+    sensors=[ted_publish_after_monthly_parse],
     resources={
         "ted_procurement_duckdb": duckdb_resource(TED_DUCKDB_PATH),
         "ted_object_store": ObjectStoreResource(bucket=tables.S3_BUCKET),

@@ -24,6 +24,7 @@ from dagster_v3.defs.denmark_cvr.company_details import (
     DENMARK_CVR_COMPANY_DETAIL_KEY_MAP,
     DENMARK_CVR_COMPANY_DETAIL_PARTITIONS,
     DENMARK_CVR_COMPANY_DETAIL_PREFIX,
+    company_detail_failure_object_key,
     company_detail_object_key,
 )
 from dagster_v3.defs.denmark_cvr.duckdb_asset import (
@@ -124,6 +125,7 @@ class DenmarkCvrPersonDetailDownload:
 class DenmarkCvrPersonIdCatalogSummary:
     company_count: int
     source_object_count: int
+    ignored_company_count: int
     source_relation_count: int
     person_count: int
     database_size_bytes: int
@@ -343,7 +345,10 @@ def rebuild_company_detail_person_ids(
                 "Denmark CVR person IDs require a non-empty company DuckDB table"
             )
 
-        _require_complete_company_details(object_store, connection)
+        ignored_company_cvrs = _require_complete_company_details(
+            object_store,
+            connection,
+        )
         connection.execute(
             "create or replace temporary table denmark_cvr_staged_person_ids "
             "(person_id varchar, person_type varchar, company_cvr varchar)"
@@ -357,6 +362,8 @@ def rebuild_company_detail_person_ids(
             cvrs = _company_partition_cvrs(connection, partition_key)
             rows: list[tuple[str, str, str]] = []
             for cvr in cvrs:
+                if cvr in ignored_company_cvrs:
+                    continue
                 object_key = company_detail_object_key(
                     partition_key,
                     cvr,
@@ -457,6 +464,7 @@ def rebuild_company_detail_person_ids(
     return DenmarkCvrPersonIdCatalogSummary(
         company_count=company_count,
         source_object_count=source_object_count,
+        ignored_company_count=len(ignored_company_cvrs),
         source_relation_count=source_relation_count,
         person_count=person_count,
         database_size_bytes=database_size_bytes,
@@ -679,8 +687,9 @@ def write_person_detail_partition(
     },
     description=(
         "Requires every company-detail hash partition to contain original and "
-        "English-key JSON, then rebuilds the deduplicated DataCVR person-ID and "
-        "person-type catalog used by person-detail downloads."
+        "English-key JSON or an explicit unavailable-company marker, then rebuilds "
+        "the deduplicated DataCVR person-ID and person-type catalog used by "
+        "person-detail downloads."
     ),
 )
 def denmark_cvr_company_detail_person_ids_duckdb(
@@ -698,6 +707,7 @@ def denmark_cvr_company_detail_person_ids_duckdb(
         metadata={
             "company_count": summary.company_count,
             "source_object_count": summary.source_object_count,
+            "ignored_company_count": summary.ignored_company_count,
             "source_relation_count": summary.source_relation_count,
             "person_count": summary.person_count,
             "database_path": str(DENMARK_CVR_DUCKDB_PATH),
@@ -771,10 +781,11 @@ def denmark_cvr_person_details_s3(
 def _require_complete_company_details(
     object_store: ObjectStoreResource,
     connection: duckdb.DuckDBPyConnection,
-) -> None:
+) -> set[str]:
     missing_original_count = 0
     missing_english_count = 0
     expected_count = 0
+    ignored_cvrs: set[str] = set()
     for partition_key in DENMARK_CVR_COMPANY_DETAIL_PARTITIONS.get_partition_keys():
         cvrs = _company_partition_cvrs(connection, partition_key)
         expected_count += len(cvrs)
@@ -785,23 +796,27 @@ def _require_complete_company_details(
             )
         )
         for cvr in cvrs:
+            original_key = company_detail_object_key(
+                partition_key,
+                cvr,
+                english_keys=False,
+            )
+            english_key = company_detail_object_key(
+                partition_key,
+                cvr,
+                english_keys=True,
+            )
+            failure_key = company_detail_failure_object_key(partition_key, cvr)
             if (
-                company_detail_object_key(
-                    partition_key,
-                    cvr,
-                    english_keys=False,
-                )
-                not in existing_keys
+                failure_key in existing_keys
+                and original_key not in existing_keys
+                and english_key not in existing_keys
             ):
+                ignored_cvrs.add(cvr)
+                continue
+            if original_key not in existing_keys:
                 missing_original_count += 1
-            if (
-                company_detail_object_key(
-                    partition_key,
-                    cvr,
-                    english_keys=True,
-                )
-                not in existing_keys
-            ):
+            if english_key not in existing_keys:
                 missing_english_count += 1
     if missing_original_count or missing_english_count:
         raise RuntimeError(
@@ -810,6 +825,7 @@ def _require_complete_company_details(
             f"missing_original={missing_original_count} "
             f"missing_english={missing_english_count}"
         )
+    return ignored_cvrs
 
 
 def _company_partition_cvrs(

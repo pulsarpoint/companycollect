@@ -61,9 +61,9 @@ export function PublicContractsSection({
   if (contracts.length === 0) return null;
 
   return (
-    <Card>
+    <Card id="government-contracts">
       <CardHeader>
-        <CardTitle className="text-base">Public contracts</CardTitle>
+        <CardTitle className="text-base">Government contracts</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="overflow-x-auto">

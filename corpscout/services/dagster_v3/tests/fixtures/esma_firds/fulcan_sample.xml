@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BizData xmlns="urn:iso:std:iso:20022:tech:xsd:head.003.001.01">
+  <Pyld>
+    <Document xmlns="urn:iso:std:iso:20022:tech:xsd:auth.102.001.01">
+      <FinInstrmRptgCxlRpt>
+        <RptHdr><RptgPrd><Dt>2026-07-20</Dt></RptgPrd></RptHdr>
+        <CxlData>
+          <FinInstrmGnlAttrbts><Id>SE0000000003</Id></FinInstrmGnlAttrbts>
+          <TradgVnRltdAttrbts><Id>XSAT</Id></TradgVnRltdAttrbts>
+        </CxlData>
+      </FinInstrmRptgCxlRpt>
+    </Document>
+  </Pyld>
+</BizData>

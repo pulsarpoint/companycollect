@@ -1,9 +1,10 @@
-# TED procurement source — design (pre-implementation)
+# TED procurement source — design
 
 Status: **implemented 2026-07-19** (`defs/ted_procurement/`). Countries configured:
-FIN. First verified partition: 2026-06 — 578 notices, 1,873 winner rows (100% with
-national ids, 91% joining `fi_companies`), published to `corpscout.ted_notices` +
-`corpscout.ted_notice_winners` (migration 000148).
+FIN/FI and SWE/SE. First verified Finland partition: 2026-06 — 578 notices,
+1,873 winner rows (100% with national ids, 91% joining `fi_companies`), published
+to `corpscout.ted_notices` + `corpscout.ted_notice_winners` (migration 000148).
+Sweden was enabled on 2026-07-23 for the shared government-contract signal.
 
 ## Why
 
@@ -51,8 +52,10 @@ scale-up path if we ever want every country at once). Therefore:
 - Notice types v1: award-carrying forms only (`can-standard`, `can-social`,
   `can-desg`, `can-modif` candidates — final list fixed during implementation from the
   type facet). Contract notices (pre-award) are Hilma/TED noise for our purpose.
-- Countries v1: `("FIN",)` — a module-level tuple; adding a country = extending it
-  (each country's rows land in the same tables keyed by `place_country`).
+- Countries: `FIN/FI` and `SWE/SE` — a module-level tuple; adding a country =
+  extending it. A notice returned for more than one country scope is stored once
+  per `(country_iso2, publication_number)` while its XML is downloaded and parsed
+  only once.
 
 ## Pipeline shape
 
@@ -63,17 +66,22 @@ search index (monthly partition, per country)
   -> lxml parse: notices + organizations + lot_results (award values) + winner links
   -> DuckDB partition tables
   -> corpscout.ted_notices + corpscout.ted_notice_winners (atomic replace from all partitions)
+  -> exact national-id match to country company tables
+  -> company_government_contract_evidence + company_public_procurement_summary
   -> USD step (per-amount currency, publication-date FX key)
 ```
 
 - **Parser output is generic** (§5b spirit): organizations with
   `(registration_name, company_id, company_id_scheme, country)` and lot results with
   awarded values; the winner join resolves TenderingParty → Company. National-id
-  normalization per country (FIN: strip `FI` VAT prefix / hyphen check → Y-tunnus)
-  happens in SQL, mapping-table-driven, not hardcoded in the parser.
+  normalization happens after parsing: Finland strips the `FI` VAT prefix and
+  validates Y-tunnus shape; Sweden strips separators and only the legal-entity
+  `16` century prefix. Swedish 12-digit `19`/`20` personal identities are retained
+  as non-company identifiers and never truncated into false company matches.
 - `ted_notice_winners` mirrors the `fi_hilma_notice_winners` shape
-  (ORDER BY winner id first) so consumers query both the same way; plus
-  `place_country` and `winner_country`.
+  so consumers query both the same way; plus `place_country` and
+  `winner_country`. Its physical key includes `country_iso2`, because the same TED
+  notice can legitimately occur in several country search scopes.
 
 ## ClickHouse (migration `0001XX`, next free number at implementation time)
 
@@ -93,8 +101,11 @@ search index (monthly partition, per country)
   proper nouns otherwise.
 - **Contacts/industry (§8b/8c)**: none in source; CPV kept verbatim (same decision
   as Hilma). No canonical contacts pair (supplement source).
-- **Schedule (§9)**: monthly, after month close (e.g. 3rd, 05:35 staggered), current
-  month refreshable via `end_offset=1`. Backfill 2024-01→now from the UI.
+- **Schedule (§9)**: monthly, after month close (3rd, 05:35), current month
+  refreshable via `end_offset=1`. Backfill 2024-01→now from the UI. The partition
+  job only snapshots/parses; the stopped-by-default
+  `ted_publish_after_monthly_parse` run-status sensor launches the unpartitioned
+  all-partition ClickHouse publish after a successful partition run.
 
 ## Issues found during implementation
 

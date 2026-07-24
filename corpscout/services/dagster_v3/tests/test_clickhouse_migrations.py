@@ -6,8 +6,11 @@ from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
 from dagster_v3.defs.companies_all import tables as companies_all_tables
+from dagster_v3.defs.company_listings import tables as company_listings_tables
+from dagster_v3.defs.company_signals import tables as company_signals_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
+from dagster_v3.defs.esma_firds import tables as esma_firds_tables
 from dagster_v3.defs.finland_ytj import resolved_tables as finland_resolved_tables
 from dagster_v3.defs.nace import tables as nace_tables
 from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
@@ -16,6 +19,7 @@ from dagster_v3.defs.finland_hilma import tables as finland_hilma_tables
 from dagster_v3.defs.ted_procurement import tables as ted_procurement_tables
 from dagster_v3.defs.finland_verotax import tables as finland_verotax_tables
 from dagster_v3.defs.sweden_company import tables as sweden_company_tables
+from dagster_v3.defs.sweden_uhm_procurement import tables as sweden_uhm_tables
 from dagster_v3.defs.sweden_financial import history as sweden_financial_history
 from dagster_v3.defs.wikidata import tables as wikidata_tables
 from dagster_v3.defs.world_bank_macro import tables as world_bank_macro_tables
@@ -180,6 +184,13 @@ EXPECTED_MIGRATIONS = (
     "000161_corpscout_dns_records_seen_window",
     "000162_corpscout_dns_records_seen_window_cutover",
     "000163_corpscout_dns_record_sightings_cleanup",
+    "000164_corpscout_esma_firds",
+    "000165_corpscout_company_procurement_signals",
+    "000166_corpscout_se_uhm_procurement",
+    "000167_corpscout_ted_country_grain",
+    "000168_corpscout_companies_all_government_contract",
+    "000169_corpscout_dk_cvr_company_detail_failures",
+    "000170_corpscout_se_company_listings",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -738,16 +749,12 @@ def test_domain_hostnames_final_read_uses_ordered_state_merge() -> None:
 def test_dns_record_normalization_preserves_retry_safe_staged_rollout() -> None:
     sql = _migration_sql("000155_corpscout_dns_record_normalization.up.sql")
     down_sql = _migration_sql("000155_corpscout_dns_record_normalization.down.sql")
-    records_backfill = (
-        OPERATIONS_DIR / "dns_records_backfill_bucket.sql"
-    ).read_text()
+    records_backfill = (OPERATIONS_DIR / "dns_records_backfill_bucket.sql").read_text()
     sightings_backfill = (
         OPERATIONS_DIR / "dns_record_sightings_backfill_bucket.sql"
     ).read_text()
 
-    assert (
-        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records" in sql
-    )
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records" in sql
     assert "record_id        FixedString(16)" in sql
     assert "ENGINE = ReplacingMergeTree(loaded_at)" in sql
     assert "PARTITION BY cityHash64(root_domain) % 16" in sql
@@ -798,15 +805,14 @@ def test_dns_record_normalization_preserves_retry_safe_staged_rollout() -> None:
         assert record_id_expression in backfill
 
     assert "GROUP BY\n    root_domain,\n    name" in records_backfill
-    assert "INSERT INTO corpscout.commoncrawl_domain_dns_record_sightings" in sightings_backfill
+    assert (
+        "INSERT INTO corpscout.commoncrawl_domain_dns_record_sightings"
+        in sightings_backfill
+    )
 
     drop_hostname_mv = "DROP VIEW IF EXISTS corpscout.domain_hostnames_ingest_v2_mv"
-    drop_ip_mv = (
-        "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_ingest_v2_mv"
-    )
-    drop_ingest = (
-        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest"
-    )
+    drop_ip_mv = "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_ingest_v2_mv"
+    drop_ingest = "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest"
     assert drop_hostname_mv in down_sql
     assert drop_ip_mv in down_sql
     assert drop_ingest in down_sql
@@ -815,9 +821,7 @@ def test_dns_record_normalization_preserves_retry_safe_staged_rollout() -> None:
 
 
 def test_dns_record_observations_cleanup_removes_only_legacy_write_path() -> None:
-    sql = _migration_sql(
-        "000156_corpscout_dns_record_observations_cleanup.up.sql"
-    )
+    sql = _migration_sql("000156_corpscout_dns_record_observations_cleanup.up.sql")
     down_sql = _migration_sql(
         "000156_corpscout_dns_record_observations_cleanup.down.sql"
     )
@@ -825,8 +829,7 @@ def test_dns_record_observations_cleanup_removes_only_legacy_write_path() -> Non
     drop_ip_mv = "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_mv"
     drop_hostname_mv = "DROP VIEW IF EXISTS corpscout.domain_hostnames_ingest_mv"
     drop_legacy = (
-        "DROP TABLE IF EXISTS "
-        "corpscout.commoncrawl_domain_dns_record_observations"
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_observations"
     )
     assert drop_ip_mv in sql
     assert drop_hostname_mv in sql
@@ -835,9 +838,13 @@ def test_dns_record_observations_cleanup_removes_only_legacy_write_path() -> Non
     assert sql.index(drop_hostname_mv) < sql.index(drop_legacy)
     assert "SETTINGS max_table_size_to_drop = 150000000000" in sql
 
-    assert "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_ingest_v2_mv" not in sql
+    assert (
+        "DROP VIEW IF EXISTS corpscout.commoncrawl_ip_addresses_ingest_v2_mv" not in sql
+    )
     assert "DROP VIEW IF EXISTS corpscout.domain_hostnames_ingest_v2_mv" not in sql
-    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest" not in sql
+    assert (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest" not in sql
+    )
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records" not in sql
     assert (
         "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_sightings"
@@ -856,7 +863,10 @@ def test_dns_record_observations_cleanup_removes_only_legacy_write_path() -> Non
         "CREATE MATERIALIZED VIEW IF NOT EXISTS "
         "corpscout.domain_hostnames_ingest_mv" in down_sql
     )
-    assert "INSERT INTO corpscout.commoncrawl_domain_dns_record_observations" not in down_sql
+    assert (
+        "INSERT INTO corpscout.commoncrawl_domain_dns_record_observations"
+        not in down_sql
+    )
 
 
 def test_dns_records_seen_window_dual_writes_idempotent_aggregates() -> None:
@@ -864,8 +874,7 @@ def test_dns_records_seen_window_dual_writes_idempotent_aggregates() -> None:
     down_sql = _migration_sql("000161_corpscout_dns_records_seen_window.down.sql")
 
     assert (
-        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records_v2"
-        in sql
+        "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records_v2" in sql
     )
     assert "ENGINE = AggregatingMergeTree()" in sql
     assert "PARTITION BY cityHash64(root_domain) % 16" in sql
@@ -894,7 +903,10 @@ def test_dns_records_seen_window_dual_writes_idempotent_aggregates() -> None:
     assert "GROUP BY" in sql
 
     # 000161 only dual-writes; the 000155 write path and read surface must stay attached.
-    assert "DROP VIEW IF EXISTS corpscout.commoncrawl_domain_dns_records_ingest_mv" not in sql
+    assert (
+        "DROP VIEW IF EXISTS corpscout.commoncrawl_domain_dns_records_ingest_mv"
+        not in sql
+    )
     assert (
         "DROP VIEW IF EXISTS corpscout.commoncrawl_domain_dns_record_sightings_ingest_mv"
         not in sql
@@ -1008,22 +1020,19 @@ def test_dns_records_seen_window_cutover_fails_closed_during_rename() -> None:
 
 def test_dns_record_sightings_cleanup_drops_only_superseded_tables() -> None:
     sql = _migration_sql("000163_corpscout_dns_record_sightings_cleanup.up.sql")
-    down_sql = _migration_sql(
-        "000163_corpscout_dns_record_sightings_cleanup.down.sql"
-    )
+    down_sql = _migration_sql("000163_corpscout_dns_record_sightings_cleanup.down.sql")
 
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records_legacy" in sql
     assert (
-        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records_legacy" in sql
-    )
-    assert (
-        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_sightings"
-        in sql
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_sightings" in sql
     )
     assert sql.count("SETTINGS max_table_size_to_drop = 150000000000") == 2
 
     # The live write path and the canonical records table must survive cleanup.
     assert "commoncrawl_domain_dns_records_ingest_v2_mv" not in sql
-    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest" not in sql
+    assert (
+        "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_record_ingest" not in sql
+    )
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records\n" not in sql
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_dns_records;" not in sql
 
@@ -2238,11 +2247,17 @@ def test_commoncrawl_jsonld_keeps_each_page_entity() -> None:
 
 def test_companies_all_migration_covers_columns() -> None:
     sql = _migration_sql("000139_corpscout_companies_all.up.sql")
+    signal_sql = _migration_sql(
+        "000168_corpscout_companies_all_government_contract.up.sql"
+    )
     down_sql = _migration_sql("000139_corpscout_companies_all.down.sql")
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.companies_all" in sql
     for column_name in companies_all_tables.COMPANIES_ALL_COLUMNS:
-        assert f"    {column_name} " in sql
+        assert (
+            f"    {column_name} " in sql
+            or f"ADD COLUMN IF NOT EXISTS {column_name} " in signal_sql
+        )
 
     assert (
         "INDEX idx_name_ngram name_normalized TYPE ngrambf_v1(3, 262144, 3, 0) GRANULARITY 4"
@@ -2273,6 +2288,132 @@ def test_ted_procurement_migration_covers_export_columns() -> None:
     assert "ENGINE = ReplacingMergeTree" in sql
     assert "DROP TABLE IF EXISTS corpscout.ted_notices" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.ted_notice_winners" in down_sql
+
+
+def test_esma_firds_migration_covers_export_columns() -> None:
+    sql = _migration_sql("000164_corpscout_esma_firds.up.sql")
+    down_sql = _migration_sql("000164_corpscout_esma_firds.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.firds_instrument_events" in sql
+    for column_name in esma_firds_tables.EVENTS_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.firds_instruments_current" in sql
+    for column_name in esma_firds_tables.CURRENT_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "ORDER BY (\n    isin,\n    mic,\n    valid_from," in sql
+    assert "ORDER BY (isin, mic)" in sql
+    assert "source_payload_hash" not in sql
+    assert "raw_record_xml" not in sql
+    assert "DROP TABLE IF EXISTS corpscout.firds_instruments_current" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.firds_instrument_events" in down_sql
+
+
+def test_se_company_listings_migration_covers_columns_in_order() -> None:
+    sql = _migration_sql("000170_corpscout_se_company_listings.up.sql")
+    down_sql = _migration_sql("000170_corpscout_se_company_listings.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_listings" in sql
+    last_index = -1
+    for column_name in company_listings_tables.SE_COMPANY_LISTINGS_COLUMNS:
+        index = sql.index(f"    {column_name} ")
+        assert index > last_index
+        last_index = index
+
+    assert "ENGINE = MergeTree" in sql
+    assert "ORDER BY (company_id, isin, mic)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.se_company_listings" in down_sql
+
+
+def test_company_procurement_signals_migration_covers_columns() -> None:
+    sql = _migration_sql("000165_corpscout_company_procurement_signals.up.sql")
+    down_sql = _migration_sql("000165_corpscout_company_procurement_signals.down.sql")
+
+    contracts = (
+        (
+            "company_government_contract_evidence",
+            company_signals_tables.GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS,
+            "ORDER BY (country_code, company_id, evidence_id)",
+        ),
+        (
+            "company_public_procurement_summary",
+            company_signals_tables.PUBLIC_PROCUREMENT_SUMMARY_COLUMNS,
+            "ORDER BY (country_code, company_id)",
+        ),
+        (
+            "company_signal_coverage",
+            company_signals_tables.SIGNAL_COVERAGE_COLUMNS,
+            "ORDER BY (country_code, signal_name)",
+        ),
+    )
+    for table, columns, order_by in contracts:
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in sql
+        for column in columns:
+            assert f"    {column} " in sql
+        assert order_by in sql
+        assert f"DROP TABLE IF EXISTS corpscout.{table}" in down_sql
+
+
+def test_sweden_uhm_migration_covers_export_columns() -> None:
+    sql = _migration_sql("000166_corpscout_se_uhm_procurement.up.sql")
+    down_sql = _migration_sql("000166_corpscout_se_uhm_procurement.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_uhm_procurement_awards" in sql
+    for column in sweden_uhm_tables.AWARDS_COLUMNS:
+        assert f"    {column} " in sql
+    assert "ORDER BY (\n    supplier_id_normalized,\n    source_procurement_id," in sql
+    assert "DROP TABLE IF EXISTS corpscout.se_uhm_procurement_awards" in down_sql
+
+
+def test_ted_country_grain_migration_is_country_safe() -> None:
+    sql = _migration_sql("000167_corpscout_ted_country_grain.up.sql")
+
+    assert "ORDER BY (country_iso2, publication_number)" in sql
+    assert "ORDER BY (\n    country_iso2,\n    winner_national_id," in sql
+    assert "INSERT INTO corpscout._tmp_ted_notices_country_grain" in sql
+    assert "INSERT INTO corpscout._tmp_ted_notice_winners_country_grain" in sql
+    assert sql.count("EXCHANGE TABLES") == 2
+
+
+def test_companies_all_government_contract_migration_covers_columns() -> None:
+    sql = _migration_sql("000168_corpscout_companies_all_government_contract.up.sql")
+    down_sql = _migration_sql(
+        "000168_corpscout_companies_all_government_contract.down.sql"
+    )
+
+    for column in (
+        "has_government_contract",
+        "public_award_count",
+        "public_award_last_date",
+        "signals_resolved_at",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column} " in sql
+        assert f"DROP COLUMN IF EXISTS {column}" in down_sql
+
+
+def test_denmark_cvr_company_detail_failure_migration_is_auditable() -> None:
+    sql = _migration_sql("000169_corpscout_dk_cvr_company_detail_failures.up.sql")
+    down_sql = _migration_sql(
+        "000169_corpscout_dk_cvr_company_detail_failures.down.sql"
+    )
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.dk_cvr_company_detail_failures" in sql
+    for column in (
+        "cvr",
+        "http_status",
+        "first_failed_at",
+        "failed_at",
+        "failure_count",
+        "decision",
+        "source_asset",
+        "source_partition_key",
+        "source_url",
+        "source_run_id",
+        "failure_object_key",
+    ):
+        assert f"    {column} " in sql
+    assert "DROP TABLE IF EXISTS corpscout.dk_cvr_company_detail_failures" in down_sql
 
 
 def test_finland_hilma_migration_covers_export_columns() -> None:

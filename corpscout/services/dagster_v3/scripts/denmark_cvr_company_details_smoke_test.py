@@ -19,6 +19,7 @@ import click
 import duckdb
 
 from dagster_v3.defs.denmark_cvr.company_details import (
+    DenmarkCvrCompanyDetailHttpFailure,
     DenmarkCvrCompanyDetailKeyError,
     DenmarkCvrCompanyDetailRequestError,
     DenmarkCvrCompanyDetailResource,
@@ -98,6 +99,11 @@ def validate_company_detail_sample(
         details.iter_company_details(selected_cvrs),
         start=1,
     ):
+        if isinstance(download, DenmarkCvrCompanyDetailHttpFailure):
+            raise DenmarkCvrCompanyDetailRequestError(
+                "DataCVR company-detail smoke test returned HTTP "
+                f"{download.status} for CVR {download.cvr}"
+            )
         unknown_paths = company_detail_unmapped_key_paths(download.payload)
         if unknown_paths:
             failures.append(

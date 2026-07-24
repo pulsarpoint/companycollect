@@ -94,8 +94,13 @@ FINANCIALS_LATEST_EXPORT_KEYS = tuple(
     for code in COMPANY_FINANCIALS_LATEST_COUNTRIES
 )
 
+SIGNAL_SUMMARY_EXPORT_KEYS = ("company_public_procurement_summary_clickhouse",)
+
 UPSTREAM_KEYS = (
-    COMPANIES_EXPORT_KEYS + INDUSTRIES_EXPORT_KEYS + FINANCIALS_LATEST_EXPORT_KEYS
+    COMPANIES_EXPORT_KEYS
+    + INDUSTRIES_EXPORT_KEYS
+    + FINANCIALS_LATEST_EXPORT_KEYS
+    + SIGNAL_SUMMARY_EXPORT_KEYS
 )
 
 
@@ -179,9 +184,10 @@ def _replace_companies_all_table(client, *, log) -> dict:
     metadata={"table": f"{RESOLVED_DATABASE}.{COMPANIES_ALL_TABLE}"},
     description=(
         "Uniform per-company row across all 10 countries (search/facet/"
-        "industry/financial columns), built from the per-country companies "
+        "industry/financial/government-contract columns), built from the per-country companies "
         "exports, industries tables, and company_financials_latest "
-        "summaries into corpscout.companies_all (stage + EXCHANGE TABLES)."
+        "plus procurement summaries into corpscout.companies_all "
+        "(stage + EXCHANGE TABLES)."
     ),
 )
 def companies_all_clickhouse(
@@ -194,6 +200,7 @@ def companies_all_clickhouse(
         database=RESOLVED_DATABASE,
         tables=[
             COMPANIES_ALL_TABLE,
+            "company_public_procurement_summary",
             *(SOURCES[code]["companies_table"] for code in COMPANIES_ALL_COUNTRIES),
         ],
     )

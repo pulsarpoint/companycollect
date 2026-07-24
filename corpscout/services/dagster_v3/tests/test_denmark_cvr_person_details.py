@@ -10,6 +10,7 @@ from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.denmark_cvr.company_details import (
     company_detail_bucket_key,
+    company_detail_failure_object_key,
     company_detail_object_key,
 )
 from dagster_v3.defs.denmark_cvr.duckdb_asset import (
@@ -314,6 +315,44 @@ def test_person_id_catalog_builds_deduplicated_duckdb_input(tmp_path: Path) -> N
             f"from {DENMARK_CVR_DUCKDB_SCHEMA}.{DENMARK_CVR_PERSON_IDS_TABLE}"
         ).fetchone()
     assert row == ("4000000001", "deltager", 2)
+
+
+def test_person_id_catalog_accepts_explicit_ignored_company_marker(
+    tmp_path: Path,
+) -> None:
+    available_cvr = "45448037"
+    ignored_cvr = "22756214"
+    database = tmp_path / "denmark.duckdb"
+    _create_company_table(database, (available_cvr, ignored_cvr))
+    available_partition = company_detail_bucket_key(available_cvr)
+    ignored_partition = company_detail_bucket_key(ignored_cvr)
+    objects = {
+        company_detail_object_key(
+            available_partition,
+            available_cvr,
+            english_keys=False,
+        ): _company_detail_bytes(available_cvr),
+        company_detail_object_key(
+            available_partition,
+            available_cvr,
+            english_keys=True,
+        ): b"{}",
+        company_detail_failure_object_key(
+            ignored_partition,
+            ignored_cvr,
+        ): b'{"decision":"ignore_company"}',
+    }
+
+    summary = rebuild_company_detail_person_ids(
+        object_store=FakeObjectStore(objects),
+        denmark_cvr_duckdb=_duckdb_resource(database),
+        rebuilt_at=datetime(2026, 7, 24, tzinfo=UTC),
+    )
+
+    assert summary.company_count == 2
+    assert summary.source_object_count == 1
+    assert summary.ignored_company_count == 1
+    assert summary.person_count == 1
 
 
 def test_person_partition_candidates_are_read_from_duckdb(tmp_path: Path) -> None:

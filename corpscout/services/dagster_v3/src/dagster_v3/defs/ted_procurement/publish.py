@@ -15,6 +15,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
 )
+from dagster_v3.defs.sweden_company.identity import normalize_sweden_identity
 from dagster_v3.defs.ted_procurement import tables
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
@@ -41,8 +42,11 @@ def list_parsed_partitions() -> list[tuple[str, Path]]:
 
 
 def normalize_national_id(country: str, raw: str) -> str:
-    rule = tables.NATIONAL_ID_NORMALIZATION.get(country.upper())
+    country_code = country.upper()
     value = raw.strip()
+    if country_code in {"SE", "SWE"}:
+        return normalize_sweden_identity(value)
+    rule = tables.NATIONAL_ID_NORMALIZATION.get(country_code)
     if rule is None or value == "":
         return value
     pattern, replacement = rule
@@ -73,7 +77,11 @@ def build_publish_tables(
             ("_ted_orgs_all", "organizations"),
             ("_ted_winners_all", "winner_links"),
         ):
-            verb = f"create or replace temp table {temp} as" if first else f"insert into {temp}"
+            verb = (
+                f"create or replace temp table {temp} as"
+                if first
+                else f"insert into {temp}"
+            )
             duckdb_connection.execute(
                 f"{verb} select *, '{key}' as partition_key from {alias}.{source}"
             )
@@ -87,7 +95,8 @@ def build_publish_tables(
         with deduped as (
             select * from _ted_listing_all
             qualify row_number() over (
-                partition by publication_number order by partition_key desc
+                partition by country_iso2, publication_number
+                order by partition_key desc
             ) = 1
         ),
         docs as (
@@ -262,9 +271,15 @@ def apply_ted_usd_conversion(
         (winners, "awarded", "awarded_currency"),
     ):
         original = (
-            "total_value_amount_original" if amount == "total_value" else "awarded_amount_original"
+            "total_value_amount_original"
+            if amount == "total_value"
+            else "awarded_amount_original"
         )
-        usd = "total_value_amount_usd" if amount == "total_value" else "awarded_amount_usd"
+        usd = (
+            "total_value_amount_usd"
+            if amount == "total_value"
+            else "awarded_amount_usd"
+        )
         duckdb_connection.execute(
             f"""
             update {qualified} as records
@@ -282,7 +297,11 @@ def apply_ted_usd_conversion(
             f"select count(*) from {winners} where awarded_amount_usd is not null"
         ).fetchone()[0]
     )
-    counts = {"rate_pairs": len(pairs), "rates_found": len(fx_rows), "winner_amounts_converted": converted}
+    counts = {
+        "rate_pairs": len(pairs),
+        "rates_found": len(fx_rows),
+        "winner_amounts_converted": converted,
+    }
     if log is not None:
         log("Applied TED USD conversion: %s", counts)
     return counts
@@ -302,7 +321,11 @@ def export_ted_clickhouse(
     counts: dict[str, int] = {}
     with clickhouse.get_connection() as client:
         for duckdb_table, ch_table, columns in (
-            (tables.NOTICES_TABLE, tables.TED_NOTICES_TABLE, tables.TED_NOTICES_COLUMNS),
+            (
+                tables.NOTICES_TABLE,
+                tables.TED_NOTICES_TABLE,
+                tables.TED_NOTICES_COLUMNS,
+            ),
             (
                 tables.NOTICE_WINNERS_TABLE,
                 tables.TED_NOTICE_WINNERS_TABLE,

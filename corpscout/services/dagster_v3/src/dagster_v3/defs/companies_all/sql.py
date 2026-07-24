@@ -331,10 +331,16 @@ SELECT
   fin.fiscal_year AS fiscal_year,
   fin.employees AS employees,
   toUInt8(fin.company_id != '') AS has_financials,
+  toUInt8(proc.company_id != '') AS has_government_contract,
+  proc.public_award_count AS public_award_count,
+  proc.public_award_last_date AS public_award_last_date,
+  coalesce(proc.resolved_at, now64(3)) AS signals_resolved_at,
   now64(3) AS resolved_at
 FROM corpscout.{companies_table} AS c
 LEFT JOIN ({industry_subquery}) AS ind ON ind.company_id = toString({industry_join_key})
 LEFT JOIN corpscout.{financials_table} AS fin ON fin.company_id = toString({financials_join_key})
+LEFT JOIN corpscout.company_public_procurement_summary AS proc
+  ON proc.country_code = '{code}' AND proc.company_id = toString({id})
 """
 
 # fr/cz have no financials-latest summary table: no `fin` join, and the four
@@ -357,9 +363,15 @@ SELECT
   CAST(NULL AS Nullable(Int32)) AS fiscal_year,
   CAST(NULL AS Nullable(Float64)) AS employees,
   toUInt8(0) AS has_financials,
+  toUInt8(proc.company_id != '') AS has_government_contract,
+  proc.public_award_count AS public_award_count,
+  proc.public_award_last_date AS public_award_last_date,
+  coalesce(proc.resolved_at, now64(3)) AS signals_resolved_at,
   now64(3) AS resolved_at
 FROM corpscout.{companies_table} AS c
 LEFT JOIN ({industry_subquery}) AS ind ON ind.company_id = toString({industry_join_key})
+LEFT JOIN corpscout.company_public_procurement_summary AS proc
+  ON proc.country_code = '{code}' AND proc.company_id = toString({id})
 """
 
 

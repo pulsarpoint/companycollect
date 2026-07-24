@@ -2,6 +2,9 @@
 
 Analysis date: **2026-07-23**
 
+Implementation plan:
+[`corpscout/docs/superpowers/plans/2026-07-23-sweden-company-signals.md`](../../../corpscout/docs/superpowers/plans/2026-07-23-sweden-company-signals.md)
+
 ## Summary
 
 **Decision (2026-07-23): v1 uses a two-state display contract — yes/unknown
@@ -22,8 +25,8 @@ Sweden can support all three signals on the company list:
 | Signal | Positive result | Could Sweden ever prove a negative? | v1 list behavior |
 |---|---|---|---|
 | Financial data available | We have at least one usable financial statement | Not for the company itself: paper filings are absent from the digital bulk source | Green when available; gray otherwise |
-| Public award observed | The company is a named winner in UHM or TED | No: direct purchases are excluded and after-notice compliance is incomplete | Green for an observed award; gray otherwise |
-| Currently publicly traded | A current equity instrument maps to the company on an in-scope venue | Only with a fresh, exhaustive venue snapshot (FIRDS); deferred as a future option | Green for a current listing; gray otherwise |
+| Government contract observed | The company is a named winner in UHM or TED | No: direct purchases are excluded and after-notice compliance is incomplete | Green for an observed contract award; gray otherwise |
+| Currently publicly traded | A current equity instrument maps to the company on an in-scope venue | FIRDS provides the required scoped foundation, but a red/negative UI remains a future product option | Green for a current listing; gray otherwise |
 
 The evidence tables below stay rich enough (per-award rows, per-instrument
 listing rows, provenance) that a scope-complete negative state — for example a
@@ -43,9 +46,9 @@ public procurement
   + TED eForms awards from 2024 onward
 
 public listing
-  EODHD active/delisted equity listings + prices
-  + GLEIF ISIN -> LEI -> Swedish organisation number
-  + ESMA FIRDS for official EEA venue, classification, and lifecycle evidence
+  ESMA FIRDS as the shared EU venue, classification, and lifecycle foundation
+  + GLEIF LEI -> Swedish organisation number (and ISIN -> LEI fallback)
+  + EODHD symbols and prices as operational enrichment
   + venue sources only for ticker/segment validation when needed
 ```
 
@@ -424,7 +427,7 @@ company X has never contracted with a public institution
 
 Recommended UI language:
 
-- green: **Public award observed**
+- green: **Government contract observed**
 - gray: **No award observed in covered sources / unknown**
 
 The tooltip should show:
@@ -487,75 +490,63 @@ Include suspended/observation-status instruments as listed, but store the
 instrument status. Exclude bonds, funds, ETPs, warrants, and other non-equity
 instruments from the company-level equity-listing flag.
 
-A broader “listed anywhere in the EEA” flag can be derived from FIRDS later.
+A broader “listed anywhere in the EEA” flag can be derived later from the same
+country-neutral FIRDS foundation.
 Truly worldwide listing coverage requires additional non-EEA venue/reference
 data and should not be implied by the Swedish-venue v1 flag.
 
-### First operational step: EODHD + GLEIF identity mapping
+### First operational step: a reusable EU FIRDS foundation
 
-The first implementation should extend the existing EODHD/GLEIF path, but the
-correct chain is not “ask GLEIF to resolve a ticker.” GLEIF does not identify
-EODHD ticker symbols. EODHD supplies the symbol and, when available, the ISIN;
-the open GLEIF/ANNA relationship file supplies ISIN-to-LEI; the existing GLEIF
-LEI record supplies the Swedish registry identifier:
-
-```text
-eodhd_symbols
-  symbol + instrument_type + is_delisted + ISIN
-    -> GLEIF daily ISIN-to-LEI relationship
-    -> gleif_lei_records.lei
-    -> primary_country_iso2 = SE
-    -> registered_as
-    -> digits-only 10-character Swedish organisation number
-    -> se_companies.company_id
-```
-
-Add two durable layers:
+FIRDS should be implemented before the Sweden-specific listing projection.
+The ingestion must retain all EEA countries, MICs, and instrument classes,
+including full, delta, termination, invalid, and cancellation history.
+Sweden is only the first downstream country configuration.
 
 ```text
-gleif_isin_lei
-  isin
-  lei
-  mapping_file_date
-  source_record_id
-  retrieved_at
-
-eodhd_company_listings
-  eodhd_symbol_key
-  company_id
-  isin
-  issuer_lei
-  mic
-  instrument_type
-  is_delisted
-  identity_match_method
-  identity_match_confidence
-  source_run_id
-  resolved_at
+ESMA FIRDS weekly full + daily delta/cancellation files
+  -> immutable instrument lifecycle events
+  -> current exact (ISIN, MIC) state for all EEA venues
+  -> per-country equity/MIC projection
+  -> issuer LEI
+  -> GLEIF registered_as
+  -> normalized country registry identifier
 ```
 
-The current EODHD plan also advertises an ID Mapping API returning symbol,
-ISIN, FIGI, and LEI. A bounded `filter[ex]=ST` probe on 2026-07-23 returned
-HTTP **402 Payment Required** with the configured subscription. Therefore:
+For Sweden, resolve the configured equity venues as:
 
-1. do not make the paid EODHD ID Mapping endpoint a dependency yet;
-2. ingest the free daily GLEIF ISIN-to-LEI file first;
-3. use the paid endpoint later only if the subscription is upgraded, primarily
-   to fill/cross-check symbols whose exchange-list row lacks an ISIN.
+```text
+FIRDS current (ISIN, MIC, CFI, issuer LEI)
+  -> GLEIF LEI record
+  -> primary_country_iso2 = SE
+  -> registered_as
+  -> digits-only 10-character Swedish organisation number
+  -> se_companies.company_id
+```
+
+Then enrich the FIRDS-authoritative row with EODHD ticker, symbol metadata,
+and prices by ISIN. Where a source row lacks a usable issuer LEI, the open
+GLEIF/ANNA ISIN-to-LEI relationship can act as an identity fallback.
+
+The current EODHD plan also advertises a separately entitled ID Mapping API.
+A bounded probe on 2026-07-23 returned HTTP **402 Payment Required** with the
+configured subscription. It is therefore not a dependency. It can be added
+later to enrich/cross-check symbols, but it must not replace FIRDS lifecycle
+state or the open GLEIF identity bridge.
 
 For the first green signal, require:
 
 ```text
-instrument_type in (Common Stock, Preferred Stock, Stock)
-AND is_delisted = 0
-AND issuer LEI maps to a Swedish company_id
+exact (ISIN, MIC) is current in fresh, sequence-complete FIRDS state
+AND CFI is an allowed equity class
+AND MIC is in the configured Sweden scope
+AND issuer LEI maps deterministically to a Swedish company_id
 ```
 
-EODHD can support positive evidence quickly. Absence stays gray in v1; a
-trustworthy negative would require an official, fresh, scope-complete source
-such as FIRDS and is deferred as a future option.
+EODHD-only active rows remain useful QA/enrichment evidence but do not create
+the Sweden green signal. Absence still stays gray in v1; ingesting FIRDS now
+does not itself authorize a red/negative display.
 
-### Why FIRDS is still needed after EODHD
+### Why FIRDS comes before EODHD enrichment
 
 EODHD and FIRDS serve different roles:
 
@@ -591,9 +582,9 @@ provide (the fourth is a future option, not a v1 requirement):
    negative; this option is preserved for later. EODHD absence remains
    vendor-coverage uncertainty and stays gray regardless.
 
-FIRDS therefore does not replace EODHD. EODHD remains the operational global
-ticker/price source; FIRDS is the official EEA identity, venue, classification,
-and lifecycle layer.
+FIRDS therefore does not replace EODHD. FIRDS is built first as the shared
+official EEA identity, venue, classification, and lifecycle layer; EODHD
+remains the operational global ticker/price enrichment source.
 
 ### Additional information available from FIRDS
 
@@ -772,7 +763,7 @@ For the main search projection:
 
 ```text
 has_financial_data       UInt8
-has_public_award         UInt8
+has_government_contract  UInt8
 is_publicly_traded       UInt8
 ```
 
@@ -824,9 +815,9 @@ gives the UI enough information for tooltips and gray states.
 Use explicit filter values:
 
 ```text
-financial_data = available | unknown
-public_award   = observed | unknown
-public_listing = current | unknown
+financial_data      = available | unknown
+government_contract = observed | unknown
+public_listing       = current | unknown
 ```
 
 The `unknown` option doubles as the practical “no data here” filter — nothing
@@ -837,7 +828,7 @@ For Sweden, the initial values should be:
 | Signal | Green | Gray |
 |---|---|---|
 | Financial data | usable Bolagsverket/ESEF statement exists | no usable statement in Corpscout, or unsupported/unmatchable |
-| Public award | UHM or TED winner match exists | no match in covered sources, invalid/unmatchable ID, or stale/failed source |
+| Government contract | UHM or TED winner match exists | no match in covered sources, invalid/unmatchable ID, or stale/failed source |
 | Public listing | current equity listing in in-scope venue set | no matched current listing, unresolved entity, or incomplete/stale venue snapshot |
 
 Facet counts must include both states. The existing “Has financials”
@@ -856,12 +847,13 @@ Suggested labels:
 
 ```text
 Financial data available
-Public award observed
+Government contract observed
 Currently equity-traded
 ```
 
-Avoid the ambiguous labels “has financials,” “has public contracts,” and
-“public company.”
+Avoid the ambiguous labels “has financials” and “public company.” For
+government contracts, pair the label with “observed” in accessible text and
+coverage tooltips so gray never claims that no contract exists.
 
 ## Best sources found
 
@@ -969,23 +961,26 @@ This is the highest-value, lowest-uncertainty new signal.
 
 ### Phase 3 — Sweden listing
 
-1. Add the daily GLEIF ISIN-to-LEI relationship file to the existing GLEIF
-   module.
-2. Build `eodhd_company_listings` from active/delisted EODHD symbols through
-   ISIN -> LEI -> Swedish organisation number.
-3. Publish the EODHD-backed positive green signal; keep unmatched/absent rows
-   gray.
-4. Ingest FIRDS weekly full plus daily delta/cancellation reference data for
-   venue accuracy, instrument classification, and lifecycle history.
-5. Reconcile EODHD and FIRDS into one instrument-level listing model, with
-   source-specific provenance and conflict flags.
+1. Ingest FIRDS weekly full plus daily delta/cancellation data into one
+   country-neutral EU instrument-event history and deterministic current-state
+   table. Do not filter source ingestion to Sweden.
+2. Add the daily GLEIF ISIN-to-LEI relationship file to the existing GLEIF
+   module and use existing LEI `registered_as` identity data.
+3. Build `eodhd_company_listings` as source-specific symbol/price enrichment
+   and resolution QA.
+4. Build the canonical Sweden listing projection from FIRDS exact
+   `(ISIN, MIC)` state, map issuer LEIs to organisation numbers, and enrich
+   matching ISINs with EODHD tickers/prices.
+5. Reconcile conflicts with FIRDS controlling EEA venue lifecycle and EODHD
+   remaining the operational ticker/price source.
 6. Validate Nasdaq, Spotlight, and NGM counts against venue sources.
 7. Add current-listing icon/filter and detail evidence.
 
-Because v1 has no negative state, FIRDS is not load-bearing for the boolean
-and steps 4–6 can slide later without blocking the green signal. The FIRDS
-reconciliation preserves the option of a venue-scoped negative state in a
-future version.
+FIRDS is load-bearing for the first Sweden listing green signal and is
+implemented first because the same foundation supports every later EEA
+country. The UI remains green/gray: FIRDS completeness preserves the option
+of a venue-scoped negative state, but red requires a separate future product
+decision.
 
 ### Phase 4 — financial coverage improvement
 

@@ -13,6 +13,12 @@ describe("publicContractsQuery", () => {
     expect(getCountry("fi")?.detail?.publicContractsQuery).toBeTruthy();
   });
 
+  it("sweden declares a government contracts evidence query", () => {
+    const query = getCountry("se")?.detail?.publicContractsQuery;
+    expect(query).toContain("company_government_contract_evidence");
+    expect(query).toContain("country_code = 'SE'");
+  });
+
   it.each(withContracts.map((c) => [c.code, c] as const))(
     "%s public contracts query executes against the live schema",
     async (_code, country) => {

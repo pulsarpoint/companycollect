@@ -18,5 +18,9 @@ COMPANIES_ALL_COLUMNS = (
     "fiscal_year",
     "employees",
     "has_financials",
+    "has_government_contract",
+    "public_award_count",
+    "public_award_last_date",
+    "signals_resolved_at",
     "resolved_at",
 )

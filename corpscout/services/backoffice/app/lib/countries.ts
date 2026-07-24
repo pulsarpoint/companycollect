@@ -424,8 +424,10 @@ FROM (
     toFloat64(w.awarded_amount_usd) AS amount_usd,
     w.awarded_currency AS currency
   FROM ted_notice_winners w
-  JOIN ted_notices n ON n.publication_number = w.publication_number
-  WHERE w.winner_national_id = {id:String}
+  JOIN ted_notices n ON n.country_iso2 = w.country_iso2
+    AND n.publication_number = w.publication_number
+  WHERE w.country_iso2 = 'FI'
+    AND w.winner_national_id = {id:String}
     AND w.publication_number NOT IN (
       SELECT replaceRegexpOne(ted_number, '^0+', '')
       FROM fi_hilma_notices WHERE ted_number != ''
@@ -800,6 +802,19 @@ FROM se_company_addresses
 WHERE company_id IN (SELECT company_id FROM se_companies WHERE registration_number = {id:String})
 ORDER BY address_type
 LIMIT 10`,
+      publicContractsQuery: `SELECT
+  arrayStringConcat(source_slugs, ' + ') AS source,
+  arrayStringConcat(source_references, ', ') AS notice_ref,
+  coalesce(toString(publication_date), '') AS contract_date,
+  buyer_name,
+  title,
+  CAST(NULL AS Nullable(Float64)) AS amount_original,
+  CAST(NULL AS Nullable(Float64)) AS amount_usd,
+  '' AS currency
+FROM company_government_contract_evidence
+WHERE country_code = 'SE' AND company_id = {id:String}
+ORDER BY publication_date DESC NULLS LAST, evidence_id
+LIMIT 100`,
     },
     financialsLatest: { table: "se_company_financials_latest", companyKeyExpr: "company_id" },
     financialsAggregates: {

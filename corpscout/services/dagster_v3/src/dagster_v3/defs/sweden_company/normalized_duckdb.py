@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from dagster_v3.defs.sweden_company import tables
+from dagster_v3.defs.sweden_company.identity import sweden_identity_sql
 
 BOLAGSVERKET_REQUIRED_COLUMNS = (
     "source_run_id",
@@ -17,23 +18,6 @@ BOLAGSVERKET_REQUIRED_COLUMNS = (
     "verksamhetsbeskrivning",
     "postadress",
 )
-
-
-def _identity_sql(raw_column: str) -> str:
-    """Normalized Swedish organization identity from a raw source id column.
-
-    Strips non-digits, then removes the '16' century prefix SCB (and some
-    Bolagsverket rows) put in front of a 10-digit organisationsnummer in
-    12-digit PeOrgNr form. 12-digit person-keyed ids (19/20 birth-century
-    prefixes, sole traders) pass through unchanged -- '16' can never prefix
-    a real personnummer. Without this, the same company appears once per
-    source (~745k phantom duplicates measured 2026-07-18).
-    """
-    digits = f"regexp_replace(coalesce({raw_column}, ''), '[^0-9]', '', 'g')"
-    return (
-        f"case when length({digits}) = 12 and {digits} like '16%' "
-        f"then substring({digits}, 3) else {digits} end"
-    )
 
 
 SCB_REQUIRED_COLUMNS = (
@@ -68,7 +52,9 @@ def replace_sweden_company_normalized_tables(
         _validate_required_columns(connection)
         _replace_companies_table(connection=connection, loaded_at=loaded_at)
         _replace_company_addresses_table(connection=connection, loaded_at=loaded_at)
-        _replace_company_industry_codes_table(connection=connection, loaded_at=loaded_at)
+        _replace_company_industry_codes_table(
+            connection=connection, loaded_at=loaded_at
+        )
 
         counts = {
             "companies": _table_count(connection, "companies"),
@@ -89,8 +75,8 @@ def replace_sweden_company_normalized_tables(
 
 
 def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
-    bolagsverket_identity = _identity_sql("organisationsidentitet")
-    scb_identity = _identity_sql("PeOrgNr")
+    bolagsverket_identity = sweden_identity_sql("organisationsidentitet")
+    scb_identity = sweden_identity_sql("PeOrgNr")
     connection.execute(
         f"""
         create or replace table sweden_company.companies as
@@ -186,8 +172,8 @@ def _replace_companies_table(*, connection: Any, loaded_at: datetime) -> None:
 
 
 def _replace_company_addresses_table(*, connection: Any, loaded_at: datetime) -> None:
-    bolagsverket_identity = _identity_sql("organisationsidentitet")
-    scb_identity = _identity_sql("PeOrgNr")
+    bolagsverket_identity = sweden_identity_sql("organisationsidentitet")
+    scb_identity = sweden_identity_sql("PeOrgNr")
     connection.execute(
         f"""
         create or replace table sweden_company.company_addresses as
@@ -267,7 +253,7 @@ def _replace_company_industry_codes_table(
     connection: Any,
     loaded_at: datetime,
 ) -> None:
-    scb_identity = _identity_sql("PeOrgNr")
+    scb_identity = sweden_identity_sql("PeOrgNr")
     connection.execute(
         f"""
         create or replace table sweden_company.company_industry_codes as
@@ -413,7 +399,7 @@ def _table_count(connection: Any, table_name: str) -> int:
 
 
 def _bolagsverket_company_count(connection: Any) -> int:
-    bolagsverket_identity = _identity_sql("organisationsidentitet")
+    bolagsverket_identity = sweden_identity_sql("organisationsidentitet")
     return _scalar_count(
         connection,
         f"""
@@ -425,7 +411,7 @@ def _bolagsverket_company_count(connection: Any) -> int:
 
 
 def _scb_company_count(connection: Any) -> int:
-    scb_identity = _identity_sql("PeOrgNr")
+    scb_identity = sweden_identity_sql("PeOrgNr")
     return _scalar_count(
         connection,
         f"""

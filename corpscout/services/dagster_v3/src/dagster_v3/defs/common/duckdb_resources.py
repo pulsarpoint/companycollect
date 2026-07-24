@@ -52,6 +52,17 @@ def _normal_database_path(database: str | Path) -> Path:
 
 
 @contextmanager
+def safe_duckdb_connection(resource: DuckDBResource) -> Iterator[Any]:
+    """Yield a writable DuckDB connection that always closes on errors."""
+    with resource.get_connection() as connection:
+        try:
+            yield connection
+        except Exception:
+            connection.close()
+            raise
+
+
+@contextmanager
 def read_only_duckdb_connection(resource: DuckDBResource) -> Iterator[Any]:
     """Yield a read-only connection to `resource`'s underlying DuckDB file.
 
@@ -70,12 +81,8 @@ def read_only_duckdb_connection(resource: DuckDBResource) -> Iterator[Any]:
         database=str(duckdb_database_path(resource)),
         connection_config={**resource.connection_config, "access_mode": "READ_ONLY"},
     )
-    with read_only_resource.get_connection() as connection:
-        try:
-            yield connection
-        except Exception:
-            connection.close()
-            raise
+    with safe_duckdb_connection(read_only_resource) as connection:
+        yield connection
 
 
 def duckdb_connection_config(

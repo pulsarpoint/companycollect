@@ -55,7 +55,10 @@ class TedCountry:
     country_iso2: str  # our country key, e.g. "FI"
 
 
-COUNTRIES: tuple[TedCountry, ...] = (TedCountry(place_code="FIN", country_iso2="FI"),)
+COUNTRIES: tuple[TedCountry, ...] = (
+    TedCountry(place_code="FIN", country_iso2="FI"),
+    TedCountry(place_code="SWE", country_iso2="SE"),
+)
 
 # National-id normalization rules keyed by the organization's country code as
 # it appears in eForms (ISO 3166-1 alpha-3 or alpha-2 depending on notice).

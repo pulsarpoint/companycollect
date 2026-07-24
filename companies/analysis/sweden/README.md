@@ -7,8 +7,11 @@ company-signals-analysis.md
 ```
 
 It covers financial-data availability, public-procurement awards (including
-Upphandlingsmyndigheten and TED), current public listings, tri-state UI/filter
+Upphandlingsmyndigheten and TED), current public listings, two-state UI/filter
 semantics, empirical source coverage, and the recommended ingestion order.
+
+The repository-level implementation plan is
+[`2026-07-23-sweden-company-signals.md`](../../../corpscout/docs/superpowers/plans/2026-07-23-sweden-company-signals.md).
 
 ## Status
 
@@ -22,14 +25,14 @@ semantics, empirical source coverage, and the recommended ingestion order.
 - Public procurement: **found** — use Upphandlingsmyndigheten's national
   supplier-award open data as primary and enable Sweden in the existing TED
   eForms pipeline as the EU-threshold/current complement.
-- Current public listings: **operational source found; official validation
-  still to add** — EODHD already supplies global active/delisted symbols,
-  instrument types, ISINs, MIC candidates, and prices. Add the open GLEIF
-  ISIN-to-LEI relationship file and use existing GLEIF `registered_as` data
-  to resolve Swedish organisation numbers. Then add ESMA FIRDS for exact EEA
-  venues, regulatory classification, admission/termination history, and a
-  defensible negative result. EODHD's separate ID Mapping API returned HTTP
-  402 under the current subscription.
+- Current public listings: **sources identified; FIRDS foundation comes
+  first** — ingest ESMA FIRDS once for all EEA countries, retaining full,
+  delta, termination, and cancellation history plus exact ISIN/MIC/CFI/issuer
+  LEI data. Sweden is the first downstream country projection. Use GLEIF to
+  resolve issuer LEIs to Swedish organisation numbers (and as an ISIN-to-LEI
+  fallback), then enrich canonical rows with EODHD symbols and prices.
+  EODHD's separate ID Mapping API returned HTTP 402 under the current
+  subscription and is not a required dependency.
 - Open data portal/source page: **found** — Bolagsverket documents downloadable files on its
   "Nedladdningsbara filer" page.
 - License: **open/high-value dataset, but exact reuse wording should still be recorded per dataset**.

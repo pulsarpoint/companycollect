@@ -79,9 +79,26 @@ another DataCVR request. Unknown source keys fail with their structural path so
 the mapping can be reviewed without logging source values.
 
 HTTP 429 and transient 5xx responses are retried for the affected CVR in the
-same browser session, using bounded `Retry-After` or exponential backoff. A
-response that is still transiently unavailable after the configured attempts
-fails the partition so Dagster does not mark an incomplete bucket as materialized.
+same browser session, using bounded `Retry-After` or exponential backoff. An
+exhausted 500/502/503/504 response is recorded by CVR, HTTP status, and UTC
+timestamp in `data/denmark_cvr_company_detail_failures.sqlite3`. Exhausted 429
+rate limits still fail normally because they are not company-specific.
+
+The first occurrence, and repeated occurrences less than 24 hours after the
+first, still fail the partition. Once the same CVR and status recur at least 24
+hours after the first unresolved occurrence, the asset:
+
+- writes
+  `denmark_cvr/company_details/bucket_NNN/cvr=<CVR>/company_error.json`;
+- logs the attempt and `ignore_company` decision in
+  `corpscout.dk_cvr_company_detail_failures`;
+- continues downloading the remaining companies in the browser session.
+
+The marker contains only safe audit fields, never the response body, cookies, or
+browser state. A later successful response clears that CVR's unresolved local
+failure history. Existing markers are terminal inputs for the static snapshot,
+so retries do not repeatedly call a company endpoint already classified as
+unavailable.
 
 ### Local company-detail smoke test
 
@@ -112,6 +129,8 @@ stored in a date-versioned namespace:
 
 - `denmark_cvr/company_details/updates/date=<X>/bucket_NNN/cvr=<CVR>/company.json`
 - `denmark_cvr/company_details/updates/date=<X>/bucket_NNN/cvr=<CVR>/company_en.json`
+- `denmark_cvr/company_details/updates/date=<X>/bucket_NNN/cvr=<CVR>/company_error.json`
+  for a repeated company-specific HTTP failure.
 
 Date-versioned keys keep refresh inputs reproducible and prevent an initial
 snapshot from hiding a later refresh. With the current upstream search policy,
@@ -129,8 +148,9 @@ the complete company-detail snapshot:
 1. `denmark_cvr_company_detail_person_ids_duckdb` depends on both
    `denmark_cvr_companies_duckdb` and `denmark_cvr_company_details_s3`.
 2. Before replacing its catalog, it verifies that every expected company CVR has
-   both `company.json` and `company_en.json` in the correct one of all 128
-   company-detail buckets.
+   either both `company.json` and `company_en.json`, or an explicit
+   `company_error.json` marker, in the correct one of all 128 company-detail
+   buckets. Marked companies are counted and excluded from person-ID extraction.
 3. It extracts IDs from
    `personkreds.personkredser[].personRoller[]` and
    `personkreds.ophoerteFad[]`, keeps only records whose `enhedstype` is

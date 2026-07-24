@@ -139,7 +139,7 @@ The main list needs true tri-state values:
 
 ```text
 has_financial_data       Nullable(UInt8)
-has_public_award         Nullable(UInt8)
+has_government_contract  Nullable(UInt8)
 is_publicly_traded       Nullable(UInt8)
 ```
 

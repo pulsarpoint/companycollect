@@ -77,6 +77,10 @@ def test_companies_all_columns_match_global_constraints_order() -> None:
         "fiscal_year",
         "employees",
         "has_financials",
+        "has_government_contract",
+        "public_award_count",
+        "public_award_last_date",
+        "signals_resolved_at",
         "resolved_at",
     )
 
@@ -145,6 +149,18 @@ def test_no_financials_countries_use_null_literals(code: str) -> None:
     assert "fin." not in select
 
 
+@pytest.mark.parametrize("code", COMPANIES_ALL_COUNTRIES)
+def test_every_country_joins_procurement_summary_without_changing_grain(
+    code: str,
+) -> None:
+    select = build_country_insert_select(code)
+    assert "LEFT JOIN corpscout.company_public_procurement_summary AS proc" in select
+    assert f"proc.country_code = '{code}'" in select
+    assert "toUInt8(proc.company_id != '') AS has_government_contract" in select
+    assert "proc.public_award_count AS public_award_count" in select
+    assert "proc.public_award_last_date AS public_award_last_date" in select
+
+
 def test_se_industry_and_financials_join_key_is_qualified_company_id() -> None:
     select = build_country_insert_select("se")
     assert "ON ind.company_id = toString(c.company_id)" in select
@@ -180,8 +196,9 @@ def test_companies_all_asset_deps_pinned() -> None:
         EXPECTED_COMPANIES_EXPORT_KEYS
         | EXPECTED_INDUSTRIES_EXPORT_KEYS
         | EXPECTED_FINANCIALS_LATEST_EXPORT_KEYS
+        | {"company_public_procurement_summary_clickhouse"}
     )
-    assert len(expected_keys) == 11 + 10 + 8
+    assert len(expected_keys) == 11 + 10 + 8 + 1
     expected = {dg.AssetKey(key) for key in expected_keys}
     assert actual_deps == expected
 
@@ -276,9 +293,7 @@ def test_replace_companies_all_table_refuses_empty_source_country(
 
     # The stage table must still be cleaned up even though the build was
     # refused (the `finally: DROP TABLE IF EXISTS` path).
-    assert any(
-        stmt.startswith("DROP TABLE IF EXISTS") for stmt in client.statements
-    )
+    assert any(stmt.startswith("DROP TABLE IF EXISTS") for stmt in client.statements)
     # The build must refuse BEFORE reaching a later country's leg.
     later_codes = COMPANIES_ALL_COUNTRIES[
         COMPANIES_ALL_COUNTRIES.index(empty_code) + 1 :

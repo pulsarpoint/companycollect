@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -10,10 +11,13 @@ from dagster_duckdb import DuckDBResource
 from dagster_v3.defs.denmark_cvr.company_details import (
     DENMARK_CVR_COMPANY_DETAIL_PARTITIONS,
     DenmarkCvrCompanyDetailDownload,
+    DenmarkCvrCompanyDetailHttpFailure,
     DenmarkCvrCompanyDetailKeyError,
     DenmarkCvrCompanyDetailResource,
+    clear_company_detail_failure_history,
     company_detail_api_url,
     company_detail_bucket_key,
+    company_detail_failure_object_key,
     company_detail_object_key,
     company_detail_page_url,
     company_detail_partition_cvrs,
@@ -22,6 +26,8 @@ from dagster_v3.defs.denmark_cvr.company_details import (
     denmark_cvr_company_detail_updates_s3,
     denmark_cvr_company_details_s3,
     defs,
+    insert_company_detail_failure_record,
+    record_company_detail_http_failure,
     translate_company_detail_keys,
     write_company_detail_partition,
     write_company_detail_updates,
@@ -92,7 +98,13 @@ class FakeObjectStore:
 
 
 class FakeDetailResource:
-    def __init__(self, downloads: dict[str, DenmarkCvrCompanyDetailDownload]) -> None:
+    def __init__(
+        self,
+        downloads: dict[
+            str,
+            DenmarkCvrCompanyDetailDownload | DenmarkCvrCompanyDetailHttpFailure,
+        ],
+    ) -> None:
         self.downloads = downloads
         self.requested_cvrs: list[str] = []
 
@@ -114,6 +126,19 @@ def _download(cvr: str, payload: dict[str, Any]) -> DenmarkCvrCompanyDetailDownl
         raw_body=raw_body,
         payload=payload,
         status=200,
+        response_headers={"content-type": "application/json"},
+    )
+
+
+def _http_failure(
+    cvr: str,
+    *,
+    status: int = 500,
+) -> DenmarkCvrCompanyDetailHttpFailure:
+    return DenmarkCvrCompanyDetailHttpFailure(
+        cvr=cvr,
+        source_url=company_detail_api_url("https://datacvr.virk.dk", cvr),
+        status=status,
         response_headers={"content-type": "application/json"},
     )
 
@@ -238,6 +263,282 @@ def test_detail_resource_retries_transient_503_without_aborting_batch() -> None:
     ]
     assert sleeps == [0.01, 2.0]
     assert browser.closed is True
+
+
+def test_detail_resource_returns_exhausted_500_and_continues_batch() -> None:
+    failed_cvr = "41387971"
+    successful_cvr = "45448037"
+    successful_payload = {"stamdata": {"cvrnummer": successful_cvr}}
+    page = FakePage(
+        [
+            {
+                "ok": False,
+                "status": 500,
+                "headers": {"content-type": "application/json"},
+                "body": "",
+            },
+            {
+                "ok": False,
+                "status": 500,
+                "headers": {"content-type": "application/json"},
+                "body": "",
+            },
+            {
+                "ok": True,
+                "status": 200,
+                "headers": {"content-type": "application/json"},
+                "body": json.dumps(successful_payload),
+            },
+        ]
+    )
+    browser = FakeBrowser(page)
+
+    results = list(
+        DenmarkCvrCompanyDetailResource(
+            min_delay_ms=0,
+            max_delay_ms=0,
+            max_attempts=2,
+            retry_base_delay_seconds=0,
+            retry_max_delay_seconds=0,
+        ).iter_company_details(
+            (failed_cvr, successful_cvr),
+            launcher=lambda: browser,
+            sleep=lambda _: None,
+        )
+    )
+
+    assert results[0] == _http_failure(failed_cvr)
+    assert isinstance(results[1], DenmarkCvrCompanyDetailDownload)
+    assert results[1].payload == successful_payload
+    assert len(page.evaluate_calls) == 3
+    assert browser.closed is True
+
+
+def test_detail_resource_does_not_suppress_exhausted_rate_limit() -> None:
+    cvr = "41387971"
+    browser = FakeBrowser(
+        FakePage(
+            [
+                {
+                    "ok": False,
+                    "status": 429,
+                    "headers": {"retry-after": "60"},
+                    "body": "",
+                }
+            ]
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 429"):
+        list(
+            DenmarkCvrCompanyDetailResource(
+                min_delay_ms=0,
+                max_delay_ms=0,
+                max_attempts=1,
+                retry_base_delay_seconds=0,
+                retry_max_delay_seconds=0,
+            ).iter_company_details(
+                (cvr,),
+                launcher=lambda: browser,
+                sleep=lambda _: None,
+            )
+        )
+
+    assert browser.closed is True
+
+
+def test_company_detail_failure_is_ignored_only_after_24_hours(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "company-detail-failures.sqlite3"
+    failure = _http_failure("41387971")
+    first_failed_at = datetime(2026, 7, 22, 8, tzinfo=UTC)
+
+    first = record_company_detail_http_failure(
+        database_path,
+        failure=failure,
+        failed_at=first_failed_at,
+        suppression_age=timedelta(hours=24),
+        source_asset="denmark_cvr_company_details_s3",
+        source_partition_key=company_detail_bucket_key(failure.cvr),
+        source_run_id="run-1",
+        failure_object_key="failure-1.json",
+    )
+    second = record_company_detail_http_failure(
+        database_path,
+        failure=failure,
+        failed_at=first_failed_at + timedelta(hours=23),
+        suppression_age=timedelta(hours=24),
+        source_asset="denmark_cvr_company_details_s3",
+        source_partition_key=company_detail_bucket_key(failure.cvr),
+        source_run_id="run-2",
+        failure_object_key="failure-2.json",
+    )
+    third = record_company_detail_http_failure(
+        database_path,
+        failure=failure,
+        failed_at=first_failed_at + timedelta(hours=25),
+        suppression_age=timedelta(hours=24),
+        source_asset="denmark_cvr_company_details_s3",
+        source_partition_key=company_detail_bucket_key(failure.cvr),
+        source_run_id="run-3",
+        failure_object_key="failure-3.json",
+    )
+
+    assert first.decision == "fail_partition"
+    assert first.failure_count == 1
+    assert second.decision == "fail_partition"
+    assert second.failure_count == 2
+    assert third.decision == "ignore_company"
+    assert third.failure_count == 3
+    assert third.first_failed_at == first_failed_at
+
+    clear_company_detail_failure_history(database_path, failure.cvr)
+    reset = record_company_detail_http_failure(
+        database_path,
+        failure=failure,
+        failed_at=first_failed_at + timedelta(hours=26),
+        suppression_age=timedelta(hours=24),
+        source_asset="denmark_cvr_company_details_s3",
+        source_partition_key=company_detail_bucket_key(failure.cvr),
+        source_run_id="run-4",
+        failure_object_key="failure-4.json",
+    )
+    assert reset.decision == "fail_partition"
+    assert reset.failure_count == 1
+
+
+def test_partition_writer_records_first_failure_before_failing(
+    tmp_path: Path,
+) -> None:
+    failed_cvr = "41387971"
+    partition_key = company_detail_bucket_key(failed_cvr)
+    failure = _http_failure(failed_cvr)
+    store = FakeObjectStore()
+    failure_records = []
+
+    with pytest.raises(
+        RuntimeError,
+        match="persistent failure attempt 1 was recorded",
+    ):
+        write_company_detail_partition(
+            object_store=store,
+            details=FakeDetailResource({failed_cvr: failure}),
+            partition_key=partition_key,
+            cvrs=(failed_cvr,),
+            failure_database_path=(tmp_path / "company-detail-failures.sqlite3"),
+            failure_suppression_age=timedelta(hours=24),
+            observed_at=datetime(2026, 7, 22, 8, tzinfo=UTC),
+            source_run_id="run-1",
+            record_failure=failure_records.append,
+        )
+
+    assert len(failure_records) == 1
+    assert failure_records[0].decision == "fail_partition"
+    assert (
+        company_detail_failure_object_key(partition_key, failed_cvr)
+        not in store.objects
+    )
+
+
+def test_partition_writer_marks_repeated_failure_and_continues(
+    tmp_path: Path,
+) -> None:
+    partition_key = "bucket_039"
+    failed_cvr = "10000218"
+    successful_cvr = "10000356"
+    failure = _http_failure(failed_cvr)
+    first_failed_at = datetime(2026, 7, 22, 8, tzinfo=UTC)
+    database_path = tmp_path / "company-detail-failures.sqlite3"
+    failure_key = company_detail_failure_object_key(partition_key, failed_cvr)
+    record_company_detail_http_failure(
+        database_path,
+        failure=failure,
+        failed_at=first_failed_at,
+        suppression_age=timedelta(hours=24),
+        source_asset="denmark_cvr_company_details_s3",
+        source_partition_key=partition_key,
+        source_run_id="run-1",
+        failure_object_key=failure_key,
+    )
+    store = FakeObjectStore()
+    detail_resource = FakeDetailResource(
+        {
+            failed_cvr: failure,
+            successful_cvr: _download(
+                successful_cvr,
+                {"stamdata": {"cvrnummer": successful_cvr, "navn": "Success"}},
+            ),
+        }
+    )
+    failure_records = []
+
+    summary = write_company_detail_partition(
+        object_store=store,
+        details=detail_resource,
+        partition_key=partition_key,
+        cvrs=(failed_cvr, successful_cvr),
+        failure_database_path=database_path,
+        failure_suppression_age=timedelta(hours=24),
+        observed_at=first_failed_at + timedelta(hours=25),
+        source_run_id="run-2",
+        record_failure=failure_records.append,
+    )
+
+    assert detail_resource.requested_cvrs == [failed_cvr, successful_cvr]
+    assert summary.complete_company_count == 1
+    assert summary.ignored_company_count == 1
+    assert summary.resolved_company_count == 2
+    assert len(failure_records) == 1
+    assert failure_records[0].decision == "ignore_company"
+    marker = json.loads(store.objects[failure_key])
+    assert marker["cvr"] == failed_cvr
+    assert marker["http_status"] == 500
+    assert marker["failure_count"] == 2
+    assert "body" not in marker
+    assert (
+        company_detail_object_key(
+            partition_key,
+            successful_cvr,
+            english_keys=False,
+        )
+        in store.objects
+    )
+
+
+def test_clickhouse_failure_record_contains_auditable_safe_fields(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "company-detail-failures.sqlite3"
+    failure = _http_failure("41387971")
+    record = record_company_detail_http_failure(
+        database_path,
+        failure=failure,
+        failed_at=datetime(2026, 7, 23, 9, tzinfo=UTC),
+        suppression_age=timedelta(hours=24),
+        source_asset="denmark_cvr_company_details_s3",
+        source_partition_key=company_detail_bucket_key(failure.cvr),
+        source_run_id="run-1",
+        failure_object_key="company_error.json",
+    )
+
+    class FakeClickHouseClient:
+        def __init__(self) -> None:
+            self.executions: list[tuple[str, list[tuple[Any, ...]]]] = []
+
+        def execute(self, sql: str, rows: list[tuple[Any, ...]]) -> None:
+            self.executions.append((sql, rows))
+
+    client = FakeClickHouseClient()
+    insert_company_detail_failure_record(client, record)
+
+    assert len(client.executions) == 1
+    sql, rows = client.executions[0]
+    assert "corpscout.dk_cvr_company_detail_failures" in sql
+    assert rows[0][0] == failure.cvr
+    assert rows[0][1] == 500
+    assert record.source_url not in str(record.response_headers)
+    assert "body" not in str(rows[0]).lower()
 
 
 def test_key_translation_is_recursive_and_does_not_translate_values() -> None:
@@ -459,7 +760,7 @@ def test_daily_candidates_are_selected_from_the_duckdb_source_partition(
     ) == ("22756214", "45448037")
 
 
-def test_daily_detail_writer_versions_objects_by_update_date() -> None:
+def test_daily_detail_writer_versions_objects_by_update_date(tmp_path: Path) -> None:
     update_date = "2026-07-17"
     first_cvr = "45448037"
     second_cvr = "22756214"
@@ -493,6 +794,11 @@ def test_daily_detail_writer_versions_objects_by_update_date() -> None:
         details=detail_resource,
         update_date=update_date,
         cvrs=(first_cvr, second_cvr),
+        failure_database_path=tmp_path / "company-detail-failures.sqlite3",
+        failure_suppression_age=timedelta(hours=24),
+        observed_at=datetime(2026, 7, 17, tzinfo=UTC),
+        source_run_id="test-run",
+        record_failure=lambda _: None,
     )
 
     assert detail_resource.requested_cvrs == [second_cvr]
@@ -516,7 +822,9 @@ def test_daily_detail_writer_versions_objects_by_update_date() -> None:
     )
 
 
-def test_partition_writer_reuses_original_json_and_checkpoints_each_download() -> None:
+def test_partition_writer_reuses_original_json_and_checkpoints_each_download(
+    tmp_path: Path,
+) -> None:
     partition_key = "bucket_039"
     complete_cvr = "10000218"
     original_only_cvr = "10000356"
@@ -554,6 +862,11 @@ def test_partition_writer_reuses_original_json_and_checkpoints_each_download() -
         details=detail_resource,
         partition_key=partition_key,
         cvrs=(complete_cvr, original_only_cvr, download_cvr),
+        failure_database_path=tmp_path / "company-detail-failures.sqlite3",
+        failure_suppression_age=timedelta(hours=24),
+        observed_at=datetime(2026, 7, 17, tzinfo=UTC),
+        source_run_id="test-run",
+        record_failure=lambda _: None,
     )
 
     assert detail_resource.requested_cvrs == [download_cvr]

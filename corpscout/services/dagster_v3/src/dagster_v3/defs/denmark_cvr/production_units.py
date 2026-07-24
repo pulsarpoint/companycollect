@@ -19,6 +19,7 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.denmark_cvr.assets import DENMARK_CVR_BUCKET
 from dagster_v3.defs.denmark_cvr.company_details import (
     DENMARK_CVR_COMPANY_DETAIL_PARTITIONS,
+    DenmarkCvrCompanyDetailHttpFailure,
     DenmarkCvrCompanyDetailResource,
     company_detail_bucket_key,
     company_detail_partition_cvrs,
@@ -255,13 +256,20 @@ def _write_production_unit_captures(
         object_store.list_keys(object_prefix, bucket=DENMARK_CVR_BUCKET)
     )
     pending_cvrs = tuple(
-        cvr for cvr, object_key in object_keys.items() if object_key not in existing_keys
+        cvr
+        for cvr, object_key in object_keys.items()
+        if object_key not in existing_keys
     )
     downloaded_count = 0
     downloaded_size_bytes = 0
     stored_size_bytes = 0
     returned_cvrs: set[str] = set()
     for download in details.iter_company_details(pending_cvrs):
+        if isinstance(download, DenmarkCvrCompanyDetailHttpFailure):
+            raise DenmarkCvrProductionUnitCaptureError(
+                "DataCVR production-unit capture returned HTTP "
+                f"{download.status} for CVR {download.cvr}"
+            )
         if download.cvr not in object_keys or download.cvr in returned_cvrs:
             raise DenmarkCvrProductionUnitCaptureError(
                 "DataCVR production-unit capture returned an unexpected company"
@@ -635,7 +643,7 @@ def _parse_capture(
 ) -> ParsedProductionUnitCapture:
     try:
         payload = json.loads(raw_body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except UnicodeDecodeError, json.JSONDecodeError:
         raise DenmarkCvrProductionUnitCaptureError(
             f"Invalid Denmark CVR production-unit JSON object: {object_key}"
         ) from None
@@ -790,18 +798,14 @@ def _production_unit_row(
         "postal_code_and_city": _optional_string(master_data.get("postnummerOgBy")),
         "email": _optional_string(master_data.get("email")),
         "phone": _optional_string(master_data.get("telefon")),
-        "primary_industry_code": _optional_string(
-            primary_industry.get("branchekode")
-        ),
+        "primary_industry_code": _optional_string(primary_industry.get("branchekode")),
         "primary_industry_title": _optional_string(primary_industry.get("titel")),
         "secondary_industries": _json_text(master_data.get("bibrancher", [])),
         "start_date": _optional_date(master_data.get("startdato")),
         "cessation_date": _optional_date(master_data.get("ophoersdato")),
         "advertising_protected": _optional_bool(master_data.get("reklamebeskyttet")),
         "building_number": _optional_string(master_data.get("bygningsnummer")),
-        "open_on_public_holidays": _optional_bool(
-            master_data.get("helligdagsaabent")
-        ),
+        "open_on_public_holidays": _optional_bool(master_data.get("helligdagsaabent")),
         "registered_in_anti_money_laundering_register": _optional_bool(
             master_data.get("registreretIHvidvaskregistret")
         ),

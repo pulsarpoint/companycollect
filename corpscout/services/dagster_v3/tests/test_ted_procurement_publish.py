@@ -21,9 +21,21 @@ FIXTURES = Path(__file__).parent / "fixtures" / "ted_procurement"
 def test_normalize_national_id() -> None:
     assert normalize_national_id("FIN", "FI28563905") == "2856390-5"
     assert normalize_national_id("FIN", "2856390-5") == "2856390-5"
-    assert normalize_national_id("SWE", "556533-8133") == "556533-8133"
+    assert normalize_national_id("SWE", "556533-8133") == "5565338133"
+    assert normalize_national_id("SE", "5565338133") == "5565338133"
+    assert normalize_national_id("SWE", "165565338133") == "5565338133"
+    assert normalize_national_id("SWE", "195565338133") == "195565338133"
     assert normalize_national_id("", "whatever") == "whatever"
     assert normalize_national_id("FIN", "") == ""
+
+
+def test_ted_countries_include_sweden() -> None:
+    assert {
+        (country.place_code, country.country_iso2) for country in tables.COUNTRIES
+    } == {
+        ("FIN", "FI"),
+        ("SWE", "SE"),
+    }
 
 
 def _write_partition(tmp_path: Path, key: str, fixture_names: list[str]) -> Path:
@@ -111,7 +123,9 @@ class _FakeExchangeRates:
 @pytest.fixture
 def publish_connection(tmp_path: Path) -> tuple[duckdb.DuckDBPyConnection, list]:
     p1 = _write_partition(
-        tmp_path, "2026-03-01", ["492374-2026.xml", "494092-2026.xml", "494783-2026.xml"]
+        tmp_path,
+        "2026-03-01",
+        ["492374-2026.xml", "494092-2026.xml", "494783-2026.xml"],
     )
     # Same notice re-listed in a later partition — dedup must keep the newer.
     p2 = _write_partition(tmp_path, "2026-04-01", ["492374-2026.xml"])
@@ -184,3 +198,36 @@ def test_build_refuses_empty_partitions() -> None:
     con = duckdb.connect(":memory:")
     with pytest.raises(ValueError, match="No parsed TED partitions"):
         build_publish_tables(duckdb_connection=con, partitions=[], source_run_id="run")
+
+
+def test_same_notice_survives_in_two_country_scopes(tmp_path: Path) -> None:
+    partition = _write_partition(tmp_path, "2026-03-01", ["494783-2026.xml"])
+    partition_connection = duckdb.connect(str(partition))
+    partition_connection.execute(
+        """
+        insert into listing
+        select publication_number, publication_date, notice_type, buyer_name,
+               notice_title, total_value, total_value_currency, 'FI', 'FIN'
+        from listing
+        """
+    )
+    partition_connection.close()
+
+    connection = duckdb.connect(":memory:")
+    counts = build_publish_tables(
+        duckdb_connection=connection,
+        partitions=[("2026-03-01", partition)],
+        source_run_id="run",
+    )
+
+    assert counts["notices"] == 2
+    assert counts["winners"] == 6
+    scopes = connection.execute(
+        f"""
+        select country_iso2, count(*)
+        from {tables.DLT_DATASET_NAME}.{tables.NOTICE_WINNERS_TABLE}
+        group by country_iso2
+        order by country_iso2
+        """
+    ).fetchall()
+    assert scopes == [("FI", 3), ("SE", 3)]

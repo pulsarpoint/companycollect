@@ -1,5 +1,8 @@
 import importlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import pytest
@@ -135,6 +138,39 @@ def test_read_only_duckdb_connection_rejects_writes(tmp_path: Path) -> None:
         )
         with pytest.raises(Exception):
             connection.execute("insert into companies values ('b')")
+
+
+def test_safe_duckdb_connection_closes_underlying_connection_on_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    helpers = importlib.import_module("dagster_v3.defs.common.duckdb_resources")
+
+    class RecordingConnection:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_connection = RecordingConnection()
+
+    @contextmanager
+    def fake_get_connection(_self: DuckDBResource) -> Iterator[Any]:
+        yield fake_connection
+        fake_connection.close()
+
+    monkeypatch.setattr(
+        DuckDBResource,
+        "get_connection",
+        fake_get_connection,
+    )
+    resource = helpers.duckdb_resource(tmp_path / "source.duckdb")
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        with helpers.safe_duckdb_connection(resource):
+            raise RuntimeError("write failed")
+
+    assert fake_connection.closed is True
 
 
 def test_finland_ytj_resources_module_exposes_api_resource() -> None:
