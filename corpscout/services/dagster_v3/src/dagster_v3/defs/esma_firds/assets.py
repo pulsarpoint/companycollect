@@ -1,5 +1,6 @@
 import json
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
@@ -333,6 +334,7 @@ def esma_firds_clickhouse(
         counts = export_esma_firds_clickhouse(
             duckdb_connection=connection,
             clickhouse=clickhouse,
+            log=context.log.info,
         )
     context.log.info("Published FIRDS tables to ClickHouse", extra=counts)
     return dg.MaterializeResult(metadata=counts)
@@ -342,6 +344,7 @@ def export_esma_firds_clickhouse(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
+    log: Callable[..., object],
 ) -> dict[str, int]:
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -358,6 +361,7 @@ def export_esma_firds_clickhouse(
                 (tables.EVENTS_TABLE, tables.EVENTS_EXPORT_COLUMNS),
                 (tables.CURRENT_TABLE, tables.CURRENT_EXPORT_COLUMNS),
             ),
+            log=log,
         )
     return {
         "event_rows": row_counts[tables.EVENTS_TABLE],

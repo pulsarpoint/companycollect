@@ -148,6 +148,7 @@ def replace_duckdb_connection_tables_in_clickhouse(
     tables: Sequence[tuple[str, Sequence[str]]],
     batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
     allow_empty_tables: Collection[str] = (),
+    log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     _validate_batch_size(batch_size)
     requested_tables = tuple(
@@ -218,6 +219,8 @@ def replace_duckdb_connection_tables_in_clickhouse(
                 clickhouse_columns=clickhouse_columns_by_table[clickhouse_table],
                 columns=columns,
                 batch_size=batch_size,
+                log=log,
+                log_table=f"{clickhouse_database}.{clickhouse_table}",
             )
 
         for clickhouse_table, _ in requested_tables:

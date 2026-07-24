@@ -1078,6 +1078,7 @@ def test_replace_duckdb_connection_tables_in_clickhouse_loads_stages_in_batches(
             lambda: type("U", (), {"hex": next(stage_names)})(),
         )
         client = FakeInsertClickHouseClient()
+        messages: list[str] = []
 
         row_counts = replace_duckdb_connection_tables_in_clickhouse(
             duckdb_connection=connection,
@@ -1089,6 +1090,7 @@ def test_replace_duckdb_connection_tables_in_clickhouse_loads_stages_in_batches(
                 ("fi_websites", ("business_id",)),
             ),
             batch_size=2,
+            log=lambda message, *args: messages.append(message % args),
         )
 
     assert row_counts == {
@@ -1116,6 +1118,14 @@ def test_replace_duckdb_connection_tables_in_clickhouse_loads_stages_in_batches(
             "INSERT INTO `corpscout`.`_tmp_fi_websites_second` (`business_id`) VALUES",
             [("2000001-1",), ("2000002-2",)],
         ),
+    ]
+    assert messages == [
+        "Inserted ClickHouse row batch: table=corpscout.fi_companies "
+        "batch_number=1 batch_rows=2 total_rows=2",
+        "Inserted ClickHouse row batch: table=corpscout.fi_companies "
+        "batch_number=2 batch_rows=1 total_rows=3",
+        "Inserted ClickHouse row batch: table=corpscout.fi_websites "
+        "batch_number=1 batch_rows=2 total_rows=2",
     ]
 
 
