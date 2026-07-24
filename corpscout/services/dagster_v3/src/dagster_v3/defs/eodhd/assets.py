@@ -938,12 +938,14 @@ def download_eodhd_history_year(
         prices_by_date: dict[str, dict[str, Any]] = {}
         covered_ranges: list[tuple[str, str]] = []
         source_object_keys: list[str] = []
+        retrieved_at = utc_now_iso()
         if object_store.exists(object_key, bucket=EODHD_RAW_BUCKET):
             envelope = read_price_envelope(
                 object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
             )
             prices_by_date = {str(row["date"]): row for row in envelope["prices"]}
             covered_ranges = _envelope_ranges(envelope)
+            retrieved_at = str(envelope["retrieved_at"])
             source_object_keys = [
                 str(key) for key in envelope.get("source_object_keys", [])
             ]
@@ -953,7 +955,7 @@ def download_eodhd_history_year(
         )
         if not missing_ranges:
             reused_symbol_count += 1
-        retrieved_at = utc_now_iso()
+        merged_ranges = _merge_ranges(covered_ranges)
         for missing_start, missing_end in missing_ranges:
             if downloaded_request_count >= max_requests:
                 raise dg.Failure(
@@ -984,18 +986,19 @@ def download_eodhd_history_year(
                     prices_by_date[row_date] = row
             covered_ranges.append((missing_start, missing_end))
             downloaded_request_count += 1
-        merged_ranges = _merge_ranges(covered_ranges)
-        object_store.write_bytes(
-            object_key,
-            write_price_envelope(
-                symbol_key=symbol_key,
-                covered_ranges=merged_ranges,
-                prices=list(prices_by_date.values()),
-                retrieved_at=retrieved_at,
-                source_object_keys=source_object_keys,
-            ),
-            bucket=EODHD_RAW_BUCKET,
-        )
+            merged_ranges = _merge_ranges(covered_ranges)
+            retrieved_at = utc_now_iso()
+            object_store.write_bytes(
+                object_key,
+                write_price_envelope(
+                    symbol_key=symbol_key,
+                    covered_ranges=merged_ranges,
+                    prices=list(prices_by_date.values()),
+                    retrieved_at=retrieved_at,
+                    source_object_keys=source_object_keys,
+                ),
+                bucket=EODHD_RAW_BUCKET,
+            )
         catalog.append(
             {
                 **symbol,
@@ -1458,6 +1461,7 @@ eodhd_price_history_backfill_job = dg.define_asset_job(
         "relaunch the same year if its request budget is reached."
     ),
     run_tags={
+        "dagster/max_runtime": "0",
         "dagster/max_retries": "0",
         "eodhd/backfill_mode": "manual_single_partition",
     },

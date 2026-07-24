@@ -38,8 +38,12 @@ Historical extraction is deliberately operated as a manual, daily backfill:
 3. Move to the next year only after the current year materializes successfully.
 
 Requests are paced at four per second by default. The job disables automatic
-run retries so a quota or budget failure cannot immediately consume more calls.
-The safety budget and pacing remain configurable per manual run.
+run retries so a quota or budget failure cannot immediately consume more calls,
+and sets `dagster/max_runtime=0` so the instance watchdog does not terminate
+this intentionally long-running job. Each completed symbol object is an atomic,
+durable checkpoint; an interrupted relaunch reuses its covered date range and
+only requests missing symbols or ranges. The safety budget and pacing remain
+configurable per manual run.
 
 ## Legacy S3 inspection
 

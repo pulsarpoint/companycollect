@@ -188,6 +188,7 @@ def test_history_backfill_defaults_are_gentle_and_manual() -> None:
 
     assert config.request_delay_seconds == 0.25
     assert config.max_history_requests_per_run == 90_000
+    assert history_job.run_tags["dagster/max_runtime"] == "0"
     assert history_job.run_tags["dagster/max_retries"] == "0"
     assert history_job.run_tags["eodhd/backfill_mode"] == "manual_single_partition"
     assert "eodhd_price_history_backfill_schedule" not in schedule_names
@@ -619,6 +620,163 @@ def test_history_request_budget_saves_progress_and_resumes_next_run(
     assert sleep_calls == [0.25]
     assert metadata["reused_symbol_count"] == 2
     assert metadata["downloaded_request_count"] == 1
+
+
+def test_history_request_budget_checkpoints_each_missing_range() -> None:
+    from dagster_v3.defs.common.resources import ObjectStoreResource
+    from dagster_v3.defs.eodhd import assets
+    from dagster_v3.defs.eodhd.source import EODHD_RAW_BUCKET
+
+    object_store = ObjectStoreResource(
+        s3_client=FakeS3Client(),
+        bucket=EODHD_RAW_BUCKET,
+    )
+    client = FakeEodhdClient()
+    symbols = [
+        {
+            "eodhd_symbol_key": "AAA.WAR",
+            "exchange_code": "WAR",
+            "ticker": "AAA",
+            "currency": "PLN",
+        }
+    ]
+    object_key = assets.history_symbol_object_key("2026", "AAA.WAR")
+    object_store.write_bytes(
+        object_key,
+        assets.write_price_envelope(
+            symbol_key="AAA.WAR",
+            covered_ranges=[("2026-03-01", "2026-03-31")],
+            prices=[],
+            retrieved_at="2026-07-21T10:00:00+00:00",
+            source_object_keys=[],
+        ),
+        bucket=EODHD_RAW_BUCKET,
+    )
+
+    with pytest.raises(dg.Failure, match="request budget reached"):
+        assets.download_eodhd_history_year(
+            client=client,
+            object_store=object_store,
+            symbols=symbols,
+            year="2026",
+            request_delay_seconds=0,
+            max_requests=1,
+            progress_interval=1,
+            log=lambda *_args: None,
+        )
+
+    checkpoint = assets.read_price_envelope(
+        object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
+    )
+    assert assets._envelope_ranges(checkpoint) == [
+        ("2026-01-01", "2026-03-31")
+    ]
+    assert client.price_calls == [
+        ("AAA.WAR", "2026-01-01", "2026-02-28"),
+    ]
+
+    metadata = assets.download_eodhd_history_year(
+        client=client,
+        object_store=object_store,
+        symbols=symbols,
+        year="2026",
+        request_delay_seconds=0,
+        max_requests=90_000,
+        progress_interval=1,
+        log=lambda *_args: None,
+    )
+
+    assert client.price_calls == [
+        ("AAA.WAR", "2026-01-01", "2026-02-28"),
+        ("AAA.WAR", "2026-04-01", "2026-06-30"),
+    ]
+    assert metadata["downloaded_request_count"] == 1
+
+
+def test_history_interruption_resumes_from_durable_symbol_objects(
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.common.resources import ObjectStoreResource
+    from dagster_v3.defs.eodhd import assets
+    from dagster_v3.defs.eodhd.source import EODHD_RAW_BUCKET
+
+    object_store = ObjectStoreResource(
+        s3_client=FakeS3Client(),
+        bucket=EODHD_RAW_BUCKET,
+    )
+    client = FakeEodhdClient()
+    symbols = [
+        {
+            "eodhd_symbol_key": symbol_key,
+            "exchange_code": "WAR",
+            "ticker": symbol_key.split(".", maxsplit=1)[0],
+            "currency": "PLN",
+        }
+        for symbol_key in ("AAA.WAR", "BBB.WAR", "CCC.WAR")
+    ]
+    uninterrupted_prices = client.prices
+
+    def interrupt_on_third_symbol(
+        symbol_key: str,
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        if symbol_key == "CCC.WAR":
+            raise RuntimeError("worker interrupted")
+        return uninterrupted_prices(
+            symbol_key,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    monkeypatch.setattr(client, "prices", interrupt_on_third_symbol)
+    with pytest.raises(RuntimeError, match="worker interrupted"):
+        assets.download_eodhd_history_year(
+            client=client,
+            object_store=object_store,
+            symbols=symbols,
+            year="2026",
+            request_delay_seconds=0,
+            max_requests=90_000,
+            progress_interval=1,
+            log=lambda *_args: None,
+        )
+
+    assert [call[0] for call in client.price_calls] == ["AAA.WAR", "BBB.WAR"]
+    for symbol_key in ("AAA.WAR", "BBB.WAR"):
+        assert object_store.exists(
+            assets.history_symbol_object_key("2026", symbol_key),
+            bucket=EODHD_RAW_BUCKET,
+        )
+    assert not object_store.exists(
+        assets.history_catalog_object_key("2026"),
+        bucket=EODHD_RAW_BUCKET,
+    )
+
+    monkeypatch.setattr(client, "prices", uninterrupted_prices)
+    metadata = assets.download_eodhd_history_year(
+        client=client,
+        object_store=object_store,
+        symbols=symbols,
+        year="2026",
+        request_delay_seconds=0,
+        max_requests=90_000,
+        progress_interval=1,
+        log=lambda *_args: None,
+    )
+
+    assert [call[0] for call in client.price_calls] == [
+        "AAA.WAR",
+        "BBB.WAR",
+        "CCC.WAR",
+    ]
+    assert metadata["reused_symbol_count"] == 2
+    assert metadata["downloaded_request_count"] == 1
+    assert object_store.exists(
+        assets.history_catalog_object_key("2026"),
+        bucket=EODHD_RAW_BUCKET,
+    )
 
 
 def test_daily_download_reuses_complete_s3_date_without_http() -> None:
