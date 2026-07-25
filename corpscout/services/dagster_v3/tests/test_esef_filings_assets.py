@@ -16,12 +16,15 @@ an injected fake S3 client).
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace as dataclass_replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import dagster as dg
+import duckdb
+import pyarrow as pa
 import pytest
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
@@ -194,6 +197,194 @@ def test_empty_processed_window_is_valid_and_preserves_existing_rows(
 
     rows = _fetch_filings_index(tmp_path)
     assert [row[0] for row in rows] == ["A-1", "A-2"]
+
+
+def test_replace_filings_index_arrow_load_preserves_exact_row_shape(
+    tmp_path: Path,
+) -> None:
+    record = dataclass_replace(
+        _record(
+            fxo_id="EXACT-1",
+            json_url=None,
+            report_url=None,
+            period_end=None,
+            processed_at=None,
+        ),
+        package_url=None,
+        viewer_url=None,
+        package_sha256=None,
+        error_count=1,
+        warning_count=2,
+        inconsistency_count=3,
+    )
+
+    with _db_resource(tmp_path).get_connection() as connection:
+        assets.replace_esef_filings_index(
+            connection=connection,
+            records=[record],
+            source_url="https://example.test/index",
+            source_run_id="exact-run",
+        )
+        result = connection.execute(
+            "select * from esef_filings.filings_index"
+        )
+        columns = tuple(column[0] for column in result.description)
+        row = result.fetchone()
+
+    assert columns == assets.tables.ESEF_FILINGS_EXPORT_COLUMNS
+    assert row == (
+        record.lei,
+        record.entity_name,
+        "EXACT-1",
+        record.country,
+        None,
+        record.date_added,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        1,
+        2,
+        3,
+        False,
+        "https://example.test/index",
+        "exact-run",
+    )
+
+
+def test_replace_filings_index_refuses_empty_and_rolls_back_arrow_failure(
+    tmp_path: Path,
+) -> None:
+    original = _record(fxo_id="ORIGINAL-1")
+    invalid = dataclass_replace(
+        _record(fxo_id="INVALID-1"),
+        error_count="not-an-integer",
+    )
+
+    with _db_resource(tmp_path).get_connection() as connection:
+        assets.replace_esef_filings_index(
+            connection=connection,
+            records=[original],
+            source_url=assets.ESEF_INDEX_URL,
+            source_run_id="seed-run",
+        )
+        with pytest.raises(ValueError, match="refusing to replace"):
+            assets.replace_esef_filings_index(
+                connection=connection,
+                records=[],
+                source_url=assets.ESEF_INDEX_URL,
+                source_run_id="empty-run",
+            )
+        with pytest.raises(pa.ArrowInvalid, match="convert"):
+            assets.replace_esef_filings_index(
+                connection=connection,
+                records=[invalid],
+                source_url=assets.ESEF_INDEX_URL,
+                source_run_id="invalid-run",
+            )
+        rows = connection.execute(
+            "select fxo_id, source_run_id from esef_filings.filings_index"
+        ).fetchall()
+
+    assert rows == [("ORIGINAL-1", "seed-run")]
+
+
+def test_upsert_filings_index_uses_fxo_id_identity_and_last_record_wins(
+    tmp_path: Path,
+) -> None:
+    first = _record(fxo_id="SAME-1", entity_name="First version")
+    last = _record(fxo_id="SAME-1", entity_name="Last version")
+    other = _record(fxo_id="OTHER-1")
+
+    with _db_resource(tmp_path).get_connection() as connection:
+        first_summary = assets.upsert_esef_filings_index(
+            connection=connection,
+            records=[first, other, last],
+            source_url=assets.ESEF_INDEX_URL,
+            source_run_id="first-run",
+        )
+        second_summary = assets.upsert_esef_filings_index(
+            connection=connection,
+            records=[first, other, last],
+            source_url=assets.ESEF_INDEX_URL,
+            source_run_id="second-run",
+        )
+        rows = connection.execute(
+            "select fxo_id, entity_name, source_run_id "
+            "from esef_filings.filings_index order by fxo_id"
+        ).fetchall()
+
+    assert first_summary["received_count"] == 3
+    assert first_summary["duplicate_fxo_id_count"] == 1
+    assert first_summary["index_row_count"] == 2
+    assert second_summary["index_row_count"] == 2
+    assert rows == [
+        ("OTHER-1", "Example AB", "second-run"),
+        ("SAME-1", "Last version", "second-run"),
+    ]
+
+
+class _CountingIndexConnection:
+    def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
+        self.connection = connection
+        self.insert_count = 0
+
+    def execute(self, statement: str, *args: Any, **kwargs: Any) -> Any:
+        normalized_statement = " ".join(statement.split()).lower()
+        if normalized_statement.startswith(
+            f"insert into {assets._FILINGS_INDEX_REPLACEMENT_TABLE}"
+        ):
+            self.insert_count += 1
+        return self.connection.execute(statement, *args, **kwargs)
+
+    def register(self, name: str, value: object) -> None:
+        self.connection.register(name, value)
+
+    def unregister(self, name: str) -> None:
+        self.connection.unregister(name)
+
+
+def test_replace_filings_index_loads_500k_rows_in_50k_arrow_batches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [_record(fxo_id="BULK-1")] * 500_000
+    batch_sizes: list[int] = []
+    original_arrow_table = assets._filings_index_arrow_table
+
+    def tracked_arrow_table(
+        batch: list[EsefFilingRecord],
+        *,
+        source_url: str,
+        source_run_id: str,
+    ) -> pa.Table:
+        batch_sizes.append(len(batch))
+        return original_arrow_table(
+            batch,
+            source_url=source_url,
+            source_run_id=source_run_id,
+        )
+
+    monkeypatch.setattr(assets, "_filings_index_arrow_table", tracked_arrow_table)
+
+    with duckdb.connect(str(tmp_path / "bulk-index.duckdb")) as connection:
+        counting_connection = _CountingIndexConnection(connection)
+        summary = assets.replace_esef_filings_index(
+            connection=counting_connection,
+            records=records,
+            source_url=assets.ESEF_INDEX_URL,
+            source_run_id="bulk-run",
+        )
+        row_count = connection.execute(
+            "select count(*) from esef_filings.filings_index"
+        ).fetchone()[0]
+
+    assert summary["row_count"] == 500_000
+    assert row_count == 500_000
+    assert batch_sizes == [assets._FILINGS_INDEX_INSERT_BATCH_SIZE] * 10
+    assert counting_connection.insert_count == 10
 
 
 def test_reconciliation_reports_new_and_removed_filing_months(

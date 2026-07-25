@@ -133,6 +133,33 @@ _FILINGS_INDEX_COLUMNS_SQL = ", ".join(
     f"{name} {_FILINGS_INDEX_COLUMN_TYPES[name]}"
     for name in tables.ESEF_FILINGS_EXPORT_COLUMNS
 )
+_FILINGS_INDEX_INSERT_BATCH_SIZE = 50_000
+_FILINGS_INDEX_BATCH_RELATION = "_esef_filings_index_batch"
+_FILINGS_INDEX_REPLACEMENT_TABLE = "_esef_filings_index_replacement"
+_FILINGS_INDEX_UPSERT_TABLE = "_esef_filings_index_upsert"
+_FILINGS_INDEX_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("lei", pa.string(), nullable=False),
+        pa.field("entity_name", pa.string(), nullable=False),
+        pa.field("fxo_id", pa.string(), nullable=False),
+        pa.field("country", pa.string(), nullable=False),
+        pa.field("period_end", pa.string()),
+        pa.field("date_added", pa.string()),
+        pa.field("processed_at", pa.string()),
+        pa.field("json_url", pa.string()),
+        pa.field("package_url", pa.string()),
+        pa.field("report_url", pa.string()),
+        pa.field("viewer_url", pa.string()),
+        pa.field("package_sha256", pa.string()),
+        pa.field("error_count", pa.int32(), nullable=False),
+        pa.field("warning_count", pa.int32(), nullable=False),
+        pa.field("inconsistency_count", pa.int32(), nullable=False),
+        pa.field("has_json_facts", pa.bool_(), nullable=False),
+        pa.field("source_url", pa.string(), nullable=False),
+        pa.field("source_run_id", pa.string(), nullable=False),
+    ]
+)
+assert tuple(_FILINGS_INDEX_ARROW_SCHEMA.names) == tables.ESEF_FILINGS_EXPORT_COLUMNS
 
 # esef_filings.facts column types, keyed by name. Same drift-guard idea as
 # _FILINGS_INDEX_COLUMN_TYPES above, plus one local-only column:
@@ -198,29 +225,67 @@ def _report_xhtml_object_key(fxo_id: str) -> str:
     return f"{ESEF_REPORT_XHTML_PREFIX}fxo_id={fxo_id}/report.xhtml"
 
 
-def _row_from_record(
-    record: EsefFilingRecord, *, source_url: str, source_run_id: str
-) -> tuple[Any, ...]:
-    return (
-        record.lei,
-        record.entity_name,
-        record.fxo_id,
-        record.country,
-        record.period_end,
-        record.date_added,
-        record.processed_at,
-        record.json_url,
-        record.package_url,
-        record.report_url,
-        record.viewer_url,
-        record.package_sha256,
-        record.error_count,
-        record.warning_count,
-        record.inconsistency_count,
-        record.json_url is not None,
-        source_url,
-        source_run_id,
+def _filings_index_arrow_table(
+    records: Sequence[EsefFilingRecord],
+    *,
+    source_url: str,
+    source_run_id: str,
+) -> pa.Table:
+    return pa.Table.from_arrays(
+        [
+            pa.array([record.lei for record in records], type=pa.string()),
+            pa.array([record.entity_name for record in records], type=pa.string()),
+            pa.array([record.fxo_id for record in records], type=pa.string()),
+            pa.array([record.country for record in records], type=pa.string()),
+            pa.array([record.period_end for record in records], type=pa.string()),
+            pa.array([record.date_added for record in records], type=pa.string()),
+            pa.array([record.processed_at for record in records], type=pa.string()),
+            pa.array([record.json_url for record in records], type=pa.string()),
+            pa.array([record.package_url for record in records], type=pa.string()),
+            pa.array([record.report_url for record in records], type=pa.string()),
+            pa.array([record.viewer_url for record in records], type=pa.string()),
+            pa.array([record.package_sha256 for record in records], type=pa.string()),
+            pa.array([record.error_count for record in records], type=pa.int32()),
+            pa.array([record.warning_count for record in records], type=pa.int32()),
+            pa.array(
+                [record.inconsistency_count for record in records],
+                type=pa.int32(),
+            ),
+            pa.array(
+                [record.json_url is not None for record in records],
+                type=pa.bool_(),
+            ),
+            pa.array([source_url] * len(records), type=pa.string()),
+            pa.array([source_run_id] * len(records), type=pa.string()),
+        ],
+        schema=_FILINGS_INDEX_ARROW_SCHEMA,
     )
+
+
+def _insert_filings_index_records(
+    *,
+    connection: Any,
+    target_table: str,
+    records: Sequence[EsefFilingRecord],
+    source_url: str,
+    source_run_id: str,
+) -> None:
+    column_names = ", ".join(tables.ESEF_FILINGS_EXPORT_COLUMNS)
+    for offset in range(0, len(records), _FILINGS_INDEX_INSERT_BATCH_SIZE):
+        record_batch = records[offset : offset + _FILINGS_INDEX_INSERT_BATCH_SIZE]
+        arrow_table = _filings_index_arrow_table(
+            record_batch,
+            source_url=source_url,
+            source_run_id=source_run_id,
+        )
+        connection.register(_FILINGS_INDEX_BATCH_RELATION, arrow_table)
+        try:
+            connection.execute(
+                f"insert into {target_table} ({column_names}) "
+                f"select {column_names} from {_FILINGS_INDEX_BATCH_RELATION}"
+            )
+        finally:
+            connection.unregister(_FILINGS_INDEX_BATCH_RELATION)
 
 
 def _country_distribution_top(
@@ -263,22 +328,24 @@ def replace_esef_filings_index(
             "ESEF filings crawl returned 0 filings -- refusing to replace "
             f"{QUALIFIED_FILINGS_INDEX_TABLE} (refuse-to-replace-on-empty)."
         )
-    rows = [
-        _row_from_record(record, source_url=source_url, source_run_id=source_run_id)
-        for record in records
-    ]
-
     connection.execute("begin transaction")
     try:
         connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
         connection.execute(
-            f"create or replace table {QUALIFIED_FILINGS_INDEX_TABLE} "
+            f"create or replace temp table {_FILINGS_INDEX_REPLACEMENT_TABLE} "
             f"({_FILINGS_INDEX_COLUMNS_SQL})"
         )
-        connection.executemany(
-            f"insert into {QUALIFIED_FILINGS_INDEX_TABLE} values "
-            f"({', '.join(['?'] * len(tables.ESEF_FILINGS_EXPORT_COLUMNS))})",
-            rows,
+        _insert_filings_index_records(
+            connection=connection,
+            target_table=_FILINGS_INDEX_REPLACEMENT_TABLE,
+            records=records,
+            source_url=source_url,
+            source_run_id=source_run_id,
+        )
+        columns = ", ".join(tables.ESEF_FILINGS_EXPORT_COLUMNS)
+        connection.execute(
+            f"create or replace table {QUALIFIED_FILINGS_INDEX_TABLE} as "
+            f"select {columns} from {_FILINGS_INDEX_REPLACEMENT_TABLE}"
         )
         connection.execute("commit")
     except Exception:
@@ -308,11 +375,6 @@ def upsert_esef_filings_index(
             raise ValueError("ESEF filing record has an empty fxo_id")
         records_by_fxo_id[record.fxo_id] = record
     unique_records = list(records_by_fxo_id.values())
-    rows = [
-        _row_from_record(record, source_url=source_url, source_run_id=source_run_id)
-        for record in unique_records
-    ]
-
     connection.execute("begin transaction")
     try:
         connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
@@ -320,23 +382,25 @@ def upsert_esef_filings_index(
             f"create table if not exists {QUALIFIED_FILINGS_INDEX_TABLE} "
             f"({_FILINGS_INDEX_COLUMNS_SQL})"
         )
-        if rows:
+        if unique_records:
             connection.execute(
-                "create or replace temp table esef_filings_index_upsert "
+                f"create or replace temp table {_FILINGS_INDEX_UPSERT_TABLE} "
                 f"as select * from {QUALIFIED_FILINGS_INDEX_TABLE} where false"
             )
-            connection.executemany(
-                "insert into esef_filings_index_upsert values "
-                f"({', '.join(['?'] * len(tables.ESEF_FILINGS_EXPORT_COLUMNS))})",
-                rows,
+            _insert_filings_index_records(
+                connection=connection,
+                target_table=_FILINGS_INDEX_UPSERT_TABLE,
+                records=unique_records,
+                source_url=source_url,
+                source_run_id=source_run_id,
             )
             connection.execute(
                 f"delete from {QUALIFIED_FILINGS_INDEX_TABLE} "
-                "where fxo_id in (select fxo_id from esef_filings_index_upsert)"
+                f"where fxo_id in (select fxo_id from {_FILINGS_INDEX_UPSERT_TABLE})"
             )
             connection.execute(
                 f"insert into {QUALIFIED_FILINGS_INDEX_TABLE} "
-                "select * from esef_filings_index_upsert"
+                f"select * from {_FILINGS_INDEX_UPSERT_TABLE}"
             )
         connection.execute("commit")
     except Exception:
