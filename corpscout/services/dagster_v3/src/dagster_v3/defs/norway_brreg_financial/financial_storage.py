@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -14,15 +15,11 @@ from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.norway_brreg_financial.constants import (
     NORWAY_BRREG_FINANCIAL_BUCKET,
 )
-from dagster_v3.defs.norway_brreg_financial.financial_fetches import (
-    financial_fetches_parquet_schema,
-)
 
 FINANCIAL_RESPONSE_PREFIX = "norway_brreg/financial/responses/"
 FINANCIAL_RESPONSE_INDEX_PREFIX = "norway_brreg/financial/response_index/"
 ANNUAL_ACCOUNT_PDF_PREFIX = "norway_brreg/annual_accounts/pdfs/"
 ANNUAL_ACCOUNT_DOCUMENT_PREFIX = "norway_brreg/annual_accounts/documents/"
-READ_PROGRESS_INTERVAL = 100
 
 
 class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
@@ -304,92 +301,88 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             if key.endswith("/responses.parquet")
         )
 
-    def read_consolidated_historical_response_index(
-        self,
-        *,
-        log: Callable[..., object] | None = None,
-    ) -> pl.DataFrame:
-        """All distinct response-index outcomes across bootstrap and updates."""
-        response_index_keys = self.list_all_response_index_keys()
-        _log(
-            log,
-            "Preparing Norway Brreg consolidated historical financial response "
-            "index read: file_count=%d",
-            len(response_index_keys),
+    def download_response_index(self, key: str, target_path: str | Path) -> None:
+        self.object_store.download_file(
+            key,
+            target_path,
+            bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
         )
-        frames = self._read_frames_with_progress(
-            response_index_keys,
-            label="financial response index parquet files",
-            log=log,
-        )
-        if not frames:
-            combined = pl.DataFrame(schema=financial_fetches_parquet_schema())
-        else:
-            combined = pl.concat(frames, how="vertical_relaxed")
-        _log(
-            log,
-            "Deduplicating Norway Brreg historical financial response index rows: "
-            "input_rows=%d",
-            combined.height,
-        )
-        if combined.is_empty():
-            consolidated = combined
-        else:
-            consolidated = combined.unique(
-                subset=["org_number", "fetch_status", "source_object_key"],
-                keep="last",
-                maintain_order=True,
-            )
-        _log(
-            log,
-            "Completed Norway Brreg consolidated historical financial response "
-            "index read: input_rows=%d output_rows=%d file_count=%d",
-            combined.height,
-            consolidated.height,
-            len(response_index_keys),
-        )
-        return consolidated
 
-    def write_snapshot_statements(
+    def download_update_response_index(
         self,
-        frame: pl.DataFrame,
+        partition_date: str,
+        target_path: str | Path,
+    ) -> None:
+        self.download_response_index(
+            financial_update_response_index_object_key(partition_date),
+            target_path,
+        )
+
+    def upload_snapshot_statements(
+        self,
+        source_path: str | Path,
         *,
         log: Callable[..., object] | None = None,
     ) -> str:
-        return self._write_frame(
+        return self._upload_file(
             financial_statements_snapshot_object_key(),
-            frame,
+            source_path,
             log=log,
         )
 
-    def write_update_statements(self, partition_date: str, frame: pl.DataFrame) -> str:
-        return self._write_frame(
-            financial_statements_update_object_key(partition_date), frame
-        )
-
-    def read_snapshot_statements(self) -> pl.DataFrame:
-        return self._read_frame(financial_statements_snapshot_object_key())
-
-    def read_update_statements(self, partition_date: str) -> pl.DataFrame:
-        return self._read_frame(financial_statements_update_object_key(partition_date))
-
-    def write_snapshot_usd_statements(self, frame: pl.DataFrame) -> str:
-        return self._write_frame(financial_statements_usd_snapshot_object_key(), frame)
-
-    def write_update_usd_statements(
-        self, partition_date: str, frame: pl.DataFrame
+    def upload_update_statements(
+        self,
+        partition_date: str,
+        source_path: str | Path,
     ) -> str:
-        return self._write_frame(
-            financial_statements_usd_update_object_key(partition_date),
-            frame,
+        return self._upload_file(
+            financial_statements_update_object_key(partition_date),
+            source_path,
         )
 
-    def read_snapshot_usd_statements(self) -> pl.DataFrame:
-        return self._read_frame(financial_statements_usd_snapshot_object_key())
+    def download_snapshot_statements(self, target_path: str | Path) -> None:
+        self._download_file(financial_statements_snapshot_object_key(), target_path)
 
-    def read_update_usd_statements(self, partition_date: str) -> pl.DataFrame:
-        return self._read_frame(
-            financial_statements_usd_update_object_key(partition_date)
+    def download_update_statements(
+        self,
+        partition_date: str,
+        target_path: str | Path,
+    ) -> None:
+        self._download_file(
+            financial_statements_update_object_key(partition_date),
+            target_path,
+        )
+
+    def upload_snapshot_usd_statements(self, source_path: str | Path) -> str:
+        return self._upload_file(
+            financial_statements_usd_snapshot_object_key(),
+            source_path,
+        )
+
+    def upload_update_usd_statements(
+        self,
+        partition_date: str,
+        source_path: str | Path,
+    ) -> str:
+        return self._upload_file(
+            financial_statements_usd_update_object_key(partition_date),
+            source_path,
+        )
+
+    def download_snapshot_usd_statements(self, target_path: str | Path) -> None:
+        self._download_file(
+            financial_statements_usd_snapshot_object_key(),
+            target_path,
+        )
+
+    def download_update_usd_statements(
+        self,
+        partition_date: str,
+        target_path: str | Path,
+    ) -> None:
+        self._download_file(
+            financial_statements_usd_update_object_key(partition_date),
+            target_path,
         )
 
     def _write_frame(
@@ -428,6 +421,35 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         )
         return key
 
+    def _upload_file(
+        self,
+        key: str,
+        source_path: str | Path,
+        *,
+        log: Callable[..., object] | None = None,
+    ) -> str:
+        path = Path(source_path)
+        self.object_store.ensure_bucket(NORWAY_BRREG_FINANCIAL_BUCKET)
+        _log(
+            log,
+            "Uploading Norway Brreg financial parquet file: key=%s size_bytes=%d",
+            key,
+            path.stat().st_size,
+        )
+        self.object_store.upload_file(
+            key,
+            path,
+            bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
+        )
+        return key
+
+    def _download_file(self, key: str, target_path: str | Path) -> None:
+        self.object_store.download_file(
+            key,
+            target_path,
+            bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
+        )
+
     def _read_frame(self, key: str) -> pl.DataFrame:
         return _read_parquet_bytes(
             self.object_store.read_bytes(
@@ -435,45 +457,6 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
                 bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
             )
         )
-
-    def _read_frames_with_progress(
-        self,
-        keys: list[str],
-        *,
-        label: str,
-        log: Callable[..., object] | None,
-    ) -> list[pl.DataFrame]:
-        if not keys:
-            _log(log, "No Norway Brreg %s found", label)
-            return []
-
-        total_files = len(keys)
-        _log(
-            log,
-            "Reading Norway Brreg %s: total_files=%d",
-            label,
-            total_files,
-        )
-        frames: list[pl.DataFrame] = []
-        for index, key in enumerate(keys, start=1):
-            frames.append(self._read_frame(key))
-            if _should_log_progress(index, total_files, READ_PROGRESS_INTERVAL):
-                _log(
-                    log,
-                    "Read Norway Brreg %s: files_read=%d total_files=%d latest_key=%s",
-                    label,
-                    index,
-                    total_files,
-                    key,
-                )
-        _log(
-            log,
-            "Completed reading Norway Brreg %s: total_files=%d",
-            label,
-            total_files,
-        )
-        return frames
-
 
 def financial_bootstrap_response_partition_prefix(bucket_key: str) -> str:
     return (
@@ -634,10 +617,6 @@ def _json_object_bytes(value: dict[str, Any]) -> bytes:
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-
-
-def _should_log_progress(index: int, total: int, interval: int) -> bool:
-    return index == 1 or index == total or index % interval == 0
 
 
 def _log(log: Callable[..., object] | None, message: str, *args: object) -> None:

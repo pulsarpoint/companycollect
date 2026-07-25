@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterator
 from datetime import UTC
 from datetime import datetime
 from decimal import Decimal
@@ -169,6 +170,40 @@ def test_build_resolved_original_rows_from_successful_fetches_only() -> None:
     assert rows[0]["fx_rate_date"] is None
     assert rows[0]["fx_source"] is None
     assert rows[0]["resolved_at"] == resolved_at
+
+
+def test_iter_resolved_original_rows_consumes_fetch_generator_lazily() -> None:
+    consumed_org_numbers: list[str] = []
+
+    def fetch_rows() -> Iterator[dict[str, object]]:
+        for org_number in ("923609016", "923609017"):
+            consumed_org_numbers.append(org_number)
+            record = _financial_record()
+            record["virksomhet"]["organisasjonsnummer"] = org_number
+            yield {
+                "org_number": org_number,
+                "source_run_id": "run-1",
+                "source_url": (
+                    "https://data.brreg.no/regnskapsregisteret/regnskap/"
+                    f"{org_number}"
+                ),
+                "fetch_status": "success",
+                "raw_response": json.dumps([record]),
+            }
+
+    rows = (
+        financial_normalize.iter_resolved_financial_statement_original_rows_from_fetch_rows(
+            fetch_rows(),
+            resolved_at=datetime(2026, 6, 30, 12, 0, 0, tzinfo=UTC),
+        )
+    )
+
+    assert consumed_org_numbers == []
+    assert next(rows)["org_number"] == "923609016"
+    assert consumed_org_numbers == ["923609016"]
+    assert next(rows)["org_number"] == "923609017"
+    assert consumed_org_numbers == ["923609016", "923609017"]
+    assert list(rows) == []
 
 
 def test_build_resolved_usd_rows_converts_available_fx_and_keeps_missing_fx_rows() -> None:

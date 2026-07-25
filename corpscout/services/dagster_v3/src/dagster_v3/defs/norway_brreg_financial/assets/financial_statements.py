@@ -1,16 +1,19 @@
 import json
+import tempfile
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC
-from datetime import datetime
+from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 
 import dagster as dg
 import duckdb
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 from dagster_clickhouse import ClickhouseResource
-from exchange_rates import ExchangeRateClient
+from exchange_rates import ExchangeRateClient, ExchangeRateRequest
 
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
@@ -63,6 +66,24 @@ FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS = (
 )
 RESPONSE_READ_BATCH_SIZE = 1_000
 RESPONSE_READ_WORKERS = 8
+STATEMENT_WRITE_BATCH_SIZE = 50_000
+_RESPONSE_INDEX_RAW_TABLE = "_norway_response_index_raw"
+_RESPONSE_INDEX_TABLE = "_norway_response_index"
+_EMPTY_RESPONSE_INDEX_RELATION = "_norway_empty_response_index"
+_STATEMENT_STREAM_ORDINAL = "_statement_stream_ordinal"
+_STATEMENT_OUTPUT_ORDINAL = "_statement_output_ordinal"
+_STATEMENT_DEDUP_RANK = "_statement_dedup_rank"
+_FX_STAGE_TABLE = "_norway_financial_statement_fx"
+_FX_BATCH_RELATION = "_norway_financial_statement_fx_batch"
+_FX_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("currency", pa.string(), nullable=False),
+        pa.field("period_end_date", pa.date32(), nullable=False),
+        pa.field("fx_rate", pa.string(), nullable=False),
+        pa.field("fx_rate_date", pa.date32(), nullable=False),
+        pa.field("fx_source", pa.string()),
+    ]
+)
 
 FINANCIAL_STATEMENT_SCHEMA = {
     "country_iso2": pl.Utf8,
@@ -140,46 +161,38 @@ def norway_brreg_financial_statements_snapshot_parquet(
         "Building Norway Brreg snapshot financial statements parquet from the "
         "historical response index"
     )
-    response_index = (
-        norway_brreg_financial_storage.read_consolidated_historical_response_index(
+    with tempfile.TemporaryDirectory(
+        prefix="norway-brreg-financial-statements-snapshot-"
+    ) as temporary_directory:
+        work_directory = Path(temporary_directory)
+        response_index_paths = _download_historical_response_indexes(
+            norway_brreg_financial_storage,
+            target_directory=work_directory / "response-indexes",
             log=context.log.info,
         )
-    )
-    successful_fetch_count = _successful_fetch_count(response_index)
-    context.log.info(
-        "Loaded Norway Brreg historical response index for statement normalization: "
-        "response_rows=%d successful_responses=%d",
-        response_index.height,
-        successful_fetch_count,
-    )
-    statement_frame = _original_statement_frame(
-        response_index,
-        storage=norway_brreg_financial_storage,
-        log=context.log.info,
-    )
-    context.log.info(
-        "Writing Norway Brreg snapshot financial statements parquet: "
-        "statement_rows=%d bucket=%s",
-        statement_frame.height,
-        NORWAY_BRREG_FINANCIAL_BUCKET,
-    )
-    output_key = norway_brreg_financial_storage.write_snapshot_statements(
-        statement_frame,
-        log=context.log.info,
-    )
+        output_path = work_directory / "financial_statements.parquet"
+        counts = _build_original_statement_parquet(
+            response_index_paths=response_index_paths,
+            output_path=output_path,
+            database_path=work_directory / "response-index.duckdb",
+            storage=norway_brreg_financial_storage,
+            log=context.log.info,
+        )
+        output_key = norway_brreg_financial_storage.upload_snapshot_statements(
+            output_path,
+            log=context.log.info,
+        )
     context.log.info(
         "Completed Norway Brreg snapshot financial statements parquet: "
         "response_index_rows=%d successful_responses=%d statement_rows=%d s3_key=%s",
-        response_index.height,
-        successful_fetch_count,
-        statement_frame.height,
+        counts["fetch_row_count"],
+        counts["successful_fetch_count"],
+        counts["statement_row_count"],
         output_key,
     )
     return dg.MaterializeResult(
         metadata={
-            "fetch_row_count": response_index.height,
-            "successful_fetch_count": successful_fetch_count,
-            "statement_row_count": statement_frame.height,
+            **counts,
             "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
         }
@@ -207,33 +220,40 @@ def norway_brreg_financial_statements_updates_parquet(
         "Building Norway Brreg update financial statements parquet: partition=%s",
         partition_date,
     )
-    fetch_frame = norway_brreg_financial_storage.read_update_response_index(
-        partition_date
-    )
-    statement_frame = _original_statement_frame(
-        fetch_frame,
-        storage=norway_brreg_financial_storage,
-        log=context.log.info,
-    )
-    output_key = norway_brreg_financial_storage.write_update_statements(
-        partition_date,
-        statement_frame,
-    )
+    with tempfile.TemporaryDirectory(
+        prefix="norway-brreg-financial-statements-update-"
+    ) as temporary_directory:
+        work_directory = Path(temporary_directory)
+        response_index_path = work_directory / "responses.parquet"
+        norway_brreg_financial_storage.download_update_response_index(
+            partition_date,
+            response_index_path,
+        )
+        output_path = work_directory / "financial_statements.parquet"
+        counts = _build_original_statement_parquet(
+            response_index_paths=[response_index_path],
+            output_path=output_path,
+            database_path=work_directory / "response-index.duckdb",
+            storage=norway_brreg_financial_storage,
+            log=context.log.info,
+        )
+        output_key = norway_brreg_financial_storage.upload_update_statements(
+            partition_date,
+            output_path,
+        )
     context.log.info(
         "Completed Norway Brreg update financial statements parquet: "
         "partition=%s fetch_rows=%d successful_fetches=%d statement_rows=%d s3_key=%s",
         partition_date,
-        fetch_frame.height,
-        _successful_fetch_count(fetch_frame),
-        statement_frame.height,
+        counts["fetch_row_count"],
+        counts["successful_fetch_count"],
+        counts["statement_row_count"],
         output_key,
     )
     return dg.MaterializeResult(
         metadata={
             "partition_date": partition_date,
-            "fetch_row_count": fetch_frame.height,
-            "successful_fetch_count": _successful_fetch_count(fetch_frame),
-            "statement_row_count": statement_frame.height,
+            **counts,
             "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
         }
@@ -255,22 +275,33 @@ def norway_brreg_financial_statements_snapshot_usd_parquet(
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
     context.log.info("Building Norway Brreg snapshot financial statements USD parquet")
-    original_frame = norway_brreg_financial_storage.read_snapshot_statements()
-    usd_frame = _usd_statement_frame(original_frame)
-    output_key = norway_brreg_financial_storage.write_snapshot_usd_statements(usd_frame)
+    with tempfile.TemporaryDirectory(
+        prefix="norway-brreg-financial-statements-snapshot-usd-"
+    ) as temporary_directory:
+        work_directory = Path(temporary_directory)
+        original_path = work_directory / "financial_statements.parquet"
+        output_path = work_directory / "financial_statements_usd.parquet"
+        norway_brreg_financial_storage.download_snapshot_statements(original_path)
+        counts = _build_usd_statement_parquet(
+            original_path=original_path,
+            output_path=output_path,
+            database_path=work_directory / "financial-statements.duckdb",
+            exchange_rates=ExchangeRateClient.from_env(),
+        )
+        output_key = (
+            norway_brreg_financial_storage.upload_snapshot_usd_statements(output_path)
+        )
     context.log.info(
         "Completed Norway Brreg snapshot financial statements USD parquet: "
         "original_rows=%d usd_rows=%d rate_dates=%d s3_key=%s",
-        original_frame.height,
-        usd_frame.height,
-        _rate_date_count(usd_frame),
+        counts["original_row_count"],
+        counts["usd_row_count"],
+        counts["rate_date_count"],
         output_key,
     )
     return dg.MaterializeResult(
         metadata={
-            "original_row_count": original_frame.height,
-            "usd_row_count": usd_frame.height,
-            "rate_date_count": _rate_date_count(usd_frame),
+            **counts,
             "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
         }
@@ -298,29 +329,41 @@ def norway_brreg_financial_statements_updates_usd_parquet(
         "Building Norway Brreg update financial statements USD parquet: partition=%s",
         partition_date,
     )
-    original_frame = norway_brreg_financial_storage.read_update_statements(
-        partition_date
-    )
-    usd_frame = _usd_statement_frame(original_frame)
-    output_key = norway_brreg_financial_storage.write_update_usd_statements(
-        partition_date,
-        usd_frame,
-    )
+    with tempfile.TemporaryDirectory(
+        prefix="norway-brreg-financial-statements-update-usd-"
+    ) as temporary_directory:
+        work_directory = Path(temporary_directory)
+        original_path = work_directory / "financial_statements.parquet"
+        output_path = work_directory / "financial_statements_usd.parquet"
+        norway_brreg_financial_storage.download_update_statements(
+            partition_date,
+            original_path,
+        )
+        counts = _build_usd_statement_parquet(
+            original_path=original_path,
+            output_path=output_path,
+            database_path=work_directory / "financial-statements.duckdb",
+            exchange_rates=ExchangeRateClient.from_env(),
+        )
+        output_key = (
+            norway_brreg_financial_storage.upload_update_usd_statements(
+                partition_date,
+                output_path,
+            )
+        )
     context.log.info(
         "Completed Norway Brreg update financial statements USD parquet: "
         "partition=%s original_rows=%d usd_rows=%d rate_dates=%d s3_key=%s",
         partition_date,
-        original_frame.height,
-        usd_frame.height,
-        _rate_date_count(usd_frame),
+        counts["original_row_count"],
+        counts["usd_row_count"],
+        counts["rate_date_count"],
         output_key,
     )
     return dg.MaterializeResult(
         metadata={
             "partition_date": partition_date,
-            "original_row_count": original_frame.height,
-            "usd_row_count": usd_frame.height,
-            "rate_date_count": _rate_date_count(usd_frame),
+            **counts,
             "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
         }
@@ -430,24 +473,35 @@ def replace_financial_statement_snapshot_parquet_in_clickhouse(
     clickhouse_client: Any,
     log: Callable[..., None] | None = None,
 ) -> int:
-    frame = storage.read_snapshot_usd_statements()
-    _log(
-        log,
-        "Loaded Norway Brreg snapshot financial statement USD parquet: rows=%s",
-        frame.height,
-    )
-    with duckdb.connect(":memory:") as connection:
-        _load_financial_frame_into_duckdb(connection, frame)
-        return export_duckdb_connection_table_to_clickhouse(
-            duckdb_connection=connection,
-            clickhouse_client=clickhouse_client,
-            duckdb_schema=FINANCIAL_STATEMENTS_DUCKDB_SCHEMA,
-            duckdb_table=FINANCIAL_STATEMENTS_TABLE,
-            clickhouse_database=RESOLVED_DATABASE,
-            clickhouse_table=FINANCIAL_STATEMENTS_TABLE,
-            columns=FINANCIAL_STATEMENT_COLUMNS,
-            truncate=True,
-        )
+    with tempfile.TemporaryDirectory(
+        prefix="norway-brreg-financial-snapshot-publish-"
+    ) as temporary_directory:
+        work_directory = Path(temporary_directory)
+        parquet_path = work_directory / "financial_statements_usd.parquet"
+        storage.download_snapshot_usd_statements(parquet_path)
+        with duckdb.connect(
+            str(work_directory / "financial-statements.duckdb")
+        ) as connection:
+            row_count = _load_financial_parquet_into_duckdb(
+                connection,
+                parquet_path,
+            )
+            _log(
+                log,
+                "Loaded Norway Brreg snapshot financial statement USD parquet "
+                "into DuckDB: rows=%s",
+                row_count,
+            )
+            return export_duckdb_connection_table_to_clickhouse(
+                duckdb_connection=connection,
+                clickhouse_client=clickhouse_client,
+                duckdb_schema=FINANCIAL_STATEMENTS_DUCKDB_SCHEMA,
+                duckdb_table=FINANCIAL_STATEMENTS_TABLE,
+                clickhouse_database=RESOLVED_DATABASE,
+                clickhouse_table=FINANCIAL_STATEMENTS_TABLE,
+                columns=FINANCIAL_STATEMENT_COLUMNS,
+                truncate=True,
+            )
 
 
 def apply_financial_statement_update_parquet_to_clickhouse(
@@ -462,146 +516,368 @@ def apply_financial_statement_update_parquet_to_clickhouse(
         partition_date,
         ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
     )
-    frame = financial_storage.read_update_usd_statements(partition_date)
-    _validate_financial_frame_columns(frame)
-    replacement_key_rows = _financial_statement_replacement_key_rows(frame)
-    row_counts = {
-        "affected_orgs": affected_orgs.height,
-        "replacement_statement_keys": len(replacement_key_rows),
-        FINANCIAL_STATEMENTS_TABLE: frame.height,
-    }
-    if not replacement_key_rows:
-        _log(
-            log,
-            "Norway Brreg financial update partition %s has no replacement "
-            "statements; preserving existing ClickHouse rows",
+    with tempfile.TemporaryDirectory(
+        prefix="norway-brreg-financial-update-publish-"
+    ) as temporary_directory:
+        work_directory = Path(temporary_directory)
+        parquet_path = work_directory / "financial_statements_usd.parquet"
+        financial_storage.download_update_usd_statements(
             partition_date,
+            parquet_path,
         )
-        return row_counts
-
-    if affected_orgs.height < 1:
-        _validate_no_financial_replacements_without_affected_orgs(frame)
-
-    replacement_stage_table = f"_tmp_no_financial_statement_keys_{uuid.uuid4().hex}"
-    replacement_stage_qualified = _quote_clickhouse_qualified_table(
-        RESOLVED_DATABASE,
-        replacement_stage_table,
-    )
-    quoted_key_columns = ", ".join(
-        _quote_clickhouse_identifier(column)
-        for column in FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS
-    )
-    replacement_key_columns_ddl = ", ".join(
-        f"{_quote_clickhouse_identifier(column)} String"
-        for column in FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS
-    )
-    clickhouse_client.execute(
-        f"CREATE TABLE {replacement_stage_qualified} "
-        f"({replacement_key_columns_ddl}) ENGINE = Memory"
-    )
-    primary_error: Exception | None = None
-    try:
-        _insert_clickhouse_rows(
-            clickhouse_client,
-            database=RESOLVED_DATABASE,
-            table=replacement_stage_table,
-            qualified_table=replacement_stage_qualified,
-            columns=FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS,
-            rows=replacement_key_rows,
-        )
-        clickhouse_client.execute(
-            f"ALTER TABLE {_quote_clickhouse_qualified_table(RESOLVED_DATABASE, FINANCIAL_STATEMENTS_TABLE)} "
-            f"DELETE WHERE ({quoted_key_columns}) IN "
-            f"(SELECT {quoted_key_columns} FROM {replacement_stage_qualified}) "
-            "SETTINGS mutations_sync = 1"
-        )
-
-        with duckdb.connect(":memory:") as connection:
-            _load_financial_frame_into_duckdb(connection, frame)
-            row_counts[FINANCIAL_STATEMENTS_TABLE] = (
-                export_duckdb_connection_table_to_clickhouse(
-                    duckdb_connection=connection,
-                    clickhouse_client=clickhouse_client,
-                    duckdb_schema=FINANCIAL_STATEMENTS_DUCKDB_SCHEMA,
-                    duckdb_table=FINANCIAL_STATEMENTS_TABLE,
-                    clickhouse_database=RESOLVED_DATABASE,
-                    clickhouse_table=FINANCIAL_STATEMENTS_TABLE,
-                    columns=FINANCIAL_STATEMENT_COLUMNS,
-                    truncate=False,
-                )
+        with duckdb.connect(
+            str(work_directory / "financial-statements.duckdb")
+        ) as connection:
+            statement_count = _load_financial_parquet_into_duckdb(
+                connection,
+                parquet_path,
             )
-    except Exception as exc:
-        primary_error = exc
-        raise
-    finally:
-        _drop_affected_stage_table(
-            clickhouse_client,
-            replacement_stage_qualified,
-            suppress_errors=primary_error is not None,
-        )
-    return row_counts
+            replacement_key_rows = (
+                _financial_statement_replacement_key_rows_from_duckdb(connection)
+            )
+            row_counts = {
+                "affected_orgs": affected_orgs.height,
+                "replacement_statement_keys": len(replacement_key_rows),
+                FINANCIAL_STATEMENTS_TABLE: statement_count,
+            }
+            if not replacement_key_rows:
+                _log(
+                    log,
+                    "Norway Brreg financial update partition %s has no replacement "
+                    "statements; preserving existing ClickHouse rows",
+                    partition_date,
+                )
+                return row_counts
+
+            if affected_orgs.height < 1:
+                _validate_no_financial_replacements_without_affected_orgs(
+                    statement_count
+                )
+
+            replacement_stage_table = (
+                f"_tmp_no_financial_statement_keys_{uuid.uuid4().hex}"
+            )
+            replacement_stage_qualified = _quote_clickhouse_qualified_table(
+                RESOLVED_DATABASE,
+                replacement_stage_table,
+            )
+            quoted_key_columns = ", ".join(
+                _quote_clickhouse_identifier(column)
+                for column in FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS
+            )
+            replacement_key_columns_ddl = ", ".join(
+                f"{_quote_clickhouse_identifier(column)} String"
+                for column in FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS
+            )
+            clickhouse_client.execute(
+                f"CREATE TABLE {replacement_stage_qualified} "
+                f"({replacement_key_columns_ddl}) ENGINE = Memory"
+            )
+            primary_error: Exception | None = None
+            try:
+                _insert_clickhouse_rows(
+                    clickhouse_client,
+                    database=RESOLVED_DATABASE,
+                    table=replacement_stage_table,
+                    qualified_table=replacement_stage_qualified,
+                    columns=FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS,
+                    rows=replacement_key_rows,
+                )
+                clickhouse_client.execute(
+                    f"ALTER TABLE {_quote_clickhouse_qualified_table(RESOLVED_DATABASE, FINANCIAL_STATEMENTS_TABLE)} "
+                    f"DELETE WHERE ({quoted_key_columns}) IN "
+                    f"(SELECT {quoted_key_columns} FROM {replacement_stage_qualified}) "
+                    "SETTINGS mutations_sync = 1"
+                )
+
+                row_counts[FINANCIAL_STATEMENTS_TABLE] = (
+                    export_duckdb_connection_table_to_clickhouse(
+                        duckdb_connection=connection,
+                        clickhouse_client=clickhouse_client,
+                        duckdb_schema=FINANCIAL_STATEMENTS_DUCKDB_SCHEMA,
+                        duckdb_table=FINANCIAL_STATEMENTS_TABLE,
+                        clickhouse_database=RESOLVED_DATABASE,
+                        clickhouse_table=FINANCIAL_STATEMENTS_TABLE,
+                        columns=FINANCIAL_STATEMENT_COLUMNS,
+                        truncate=False,
+                    )
+                )
+            except Exception as exc:
+                primary_error = exc
+                raise
+            finally:
+                _drop_affected_stage_table(
+                    clickhouse_client,
+                    replacement_stage_qualified,
+                    suppress_errors=primary_error is not None,
+                )
+            return row_counts
 
 
-def _original_statement_frame(
-    response_index: pl.DataFrame,
+def _download_historical_response_indexes(
+    storage: NorwayBrregFinancialParquetStorageResource,
     *,
+    target_directory: Path,
+    log: Callable[..., object] | None = None,
+) -> list[Path]:
+    keys = storage.list_all_response_index_keys()
+    target_directory.mkdir(parents=True, exist_ok=True)
+    _log(
+        log,
+        "Downloading Norway Brreg financial response index parquet files: count=%d",
+        len(keys),
+    )
+    paths: list[Path] = []
+    for index, key in enumerate(keys):
+        path = target_directory / f"response-index-{index:06d}.parquet"
+        storage.download_response_index(key, path)
+        paths.append(path)
+    return paths
+
+
+def _build_original_statement_parquet(
+    *,
+    response_index_paths: list[Path],
+    output_path: Path,
+    database_path: Path,
     storage: NorwayBrregFinancialParquetStorageResource,
     log: Callable[..., object] | None = None,
-) -> pl.DataFrame:
-    _log(
-        log,
-        "Converting Norway Brreg response index to Python rows: response_rows=%d",
-        response_index.height,
-    )
-    if response_index.is_empty():
-        return _financial_statement_frame([])
-    successful_fetch_rows = response_index.filter(
-        pl.col("fetch_status") == financial_fetches.FINANCIAL_FETCH_STATUS_SUCCESS
-    ).to_dicts()
-    _log(
-        log,
-        "Reading verified Norway Brreg financial response JSON: successful_fetches=%d "
-        "batch_size=%d workers=%d",
-        len(successful_fetch_rows),
-        RESPONSE_READ_BATCH_SIZE,
-        RESPONSE_READ_WORKERS,
-    )
-    resolved_at = datetime.now(UTC)
-    rows: list[dict[str, Any]] = []
-    for batch_start in range(0, len(successful_fetch_rows), RESPONSE_READ_BATCH_SIZE):
-        response_rows = _response_rows_with_verified_payloads(
-            successful_fetch_rows[batch_start : batch_start + RESPONSE_READ_BATCH_SIZE],
+) -> dict[str, int]:
+    with duckdb.connect(str(database_path)) as connection:
+        index_counts = _load_response_index_parquet_files(
+            connection,
+            response_index_paths,
+            log=log,
+        )
+        statement_count = _write_original_statement_parquet(
+            connection,
+            output_path=output_path,
             storage=storage,
+            log=log,
         )
-        rows.extend(
-            financial_normalize.build_resolved_financial_statement_original_rows_from_fetch_rows(
-                response_rows,
-                resolved_at=resolved_at,
-                log=log,
-            )
+    return {
+        "fetch_row_count": index_counts["fetch_row_count"],
+        "successful_fetch_count": index_counts["successful_fetch_count"],
+        "statement_row_count": statement_count,
+    }
+
+
+def _load_response_index_parquet_files(
+    connection: duckdb.DuckDBPyConnection,
+    paths: list[Path],
+    *,
+    log: Callable[..., object] | None = None,
+) -> dict[str, int]:
+    empty_arrow = financial_fetches.financial_fetches_frame([]).to_arrow()
+    connection.register(_EMPTY_RESPONSE_INDEX_RELATION, empty_arrow)
+    try:
+        connection.execute(
+            f"""
+            create or replace table {_RESPONSE_INDEX_RAW_TABLE} as
+            select *, cast(null as bigint) as _response_index_ordinal
+            from {_EMPTY_RESPONSE_INDEX_RELATION}
+            where false
+            """
         )
+    finally:
+        connection.unregister(_EMPTY_RESPONSE_INDEX_RELATION)
+
+    input_rows = 0
+    for file_index, path in enumerate(paths, start=1):
+        file_rows = int(
+            connection.execute(
+                "select count(*) from read_parquet(?)",
+                [str(path)],
+            ).fetchone()[0]
+        )
+        connection.execute(
+            f"""
+            insert into {_RESPONSE_INDEX_RAW_TABLE}
+            select *,
+                   cast(? as bigint) + row_number() over ()
+                       as _response_index_ordinal
+            from read_parquet(?)
+            """,
+            [input_rows, str(path)],
+        )
+        input_rows += file_rows
         _log(
             log,
-            "Parsed Norway Brreg financial response JSON batch: processed=%d "
-            "total=%d statement_rows=%d",
-            min(batch_start + RESPONSE_READ_BATCH_SIZE, len(successful_fetch_rows)),
-            len(successful_fetch_rows),
-            len(rows),
+            "Loaded Norway Brreg response index parquet into DuckDB: "
+            "file=%d total_files=%d file_rows=%d total_rows=%d",
+            file_index,
+            len(paths),
+            file_rows,
+            input_rows,
         )
+
+    connection.execute(
+        f"""
+        create or replace table {_RESPONSE_INDEX_TABLE} as
+        select * exclude ({_STATEMENT_DEDUP_RANK})
+        from (
+            select *,
+                   row_number() over (
+                       partition by org_number, fetch_status, source_object_key
+                       order by _response_index_ordinal desc
+                   ) as {_STATEMENT_DEDUP_RANK}
+            from {_RESPONSE_INDEX_RAW_TABLE}
+        )
+        where {_STATEMENT_DEDUP_RANK} = 1
+        order by _response_index_ordinal
+        """
+    )
+    output_rows, successful_rows = connection.execute(
+        f"""
+        select
+            count(*),
+            count(*) filter (
+                where fetch_status = ?
+            )
+        from {_RESPONSE_INDEX_TABLE}
+        """,
+        [financial_fetches.FINANCIAL_FETCH_STATUS_SUCCESS],
+    ).fetchone()
     _log(
         log,
-        "Coercing Norway Brreg snapshot financial statement rows to parquet schema: "
-        "statement_rows=%d columns=%d",
-        len(rows),
-        len(FINANCIAL_STATEMENT_SCHEMA),
+        "Deduplicated Norway Brreg response indexes set-wise: "
+        "input_rows=%d output_rows=%d successful_rows=%d",
+        input_rows,
+        output_rows,
+        successful_rows,
     )
-    statement_frame = _financial_statement_frame(rows)
-    if statement_frame.is_empty():
-        return statement_frame
-    return statement_frame.unique(
-        subset=["source_system", "source_record_id"],
-        keep="last",
-        maintain_order=True,
+    return {
+        "fetch_row_count": int(output_rows),
+        "successful_fetch_count": int(successful_rows),
+    }
+
+
+def _write_original_statement_parquet(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    output_path: Path,
+    storage: NorwayBrregFinancialParquetStorageResource,
+    log: Callable[..., object] | None = None,
+) -> int:
+    spool_path = output_path.with_name(f"{output_path.stem}-spool.parquet")
+    statement_schema = _financial_statement_frame([]).to_arrow().schema
+    spool_schema = statement_schema.append(
+        pa.field(_STATEMENT_STREAM_ORDINAL, pa.int64(), nullable=False)
+    )
+    resolved_at = datetime.now(UTC)
+    parsed_rows = 0
+    processed_fetches = 0
+    pending_rows: list[dict[str, Any]] = []
+    result = connection.execute(
+        f"""
+        select * exclude (_response_index_ordinal)
+        from {_RESPONSE_INDEX_TABLE}
+        where fetch_status = ?
+        order by _response_index_ordinal
+        """,
+        [financial_fetches.FINANCIAL_FETCH_STATUS_SUCCESS],
+    )
+    with pq.ParquetWriter(spool_path, spool_schema, compression="zstd") as writer:
+        for record_batch in result.to_arrow_reader(
+            batch_size=RESPONSE_READ_BATCH_SIZE
+        ):
+            index_rows = record_batch.to_pylist()
+            response_rows = _response_rows_with_verified_payloads(
+                index_rows,
+                storage=storage,
+            )
+            normalized_rows = (
+                financial_normalize.iter_resolved_financial_statement_original_rows_from_fetch_rows(
+                    response_rows,
+                    resolved_at=resolved_at,
+                    log=log,
+                    total_fetch_rows=len(response_rows),
+                )
+            )
+            for normalized_row in normalized_rows:
+                pending_rows.append(normalized_row)
+                if len(pending_rows) == STATEMENT_WRITE_BATCH_SIZE:
+                    _write_statement_parquet_batch(
+                        writer,
+                        pending_rows,
+                        first_ordinal=parsed_rows,
+                        spool_schema=spool_schema,
+                    )
+                    parsed_rows += len(pending_rows)
+                    pending_rows.clear()
+            processed_fetches += len(index_rows)
+            _log(
+                log,
+                "Parsed Norway Brreg response JSON record batch: "
+                "processed_fetches=%d parsed_statement_rows=%d",
+                processed_fetches,
+                parsed_rows + len(pending_rows),
+            )
+        _write_statement_parquet_batch(
+            writer,
+            pending_rows,
+            first_ordinal=parsed_rows,
+            spool_schema=spool_schema,
+        )
+        parsed_rows += len(pending_rows)
+
+    columns = ", ".join(
+        _quote_duckdb_identifier(column) for column in FINANCIAL_STATEMENT_COLUMNS
+    )
+    connection.execute(
+        f"""
+        copy (
+            select {columns}
+            from (
+                select *,
+                       row_number() over (
+                           partition by source_system, source_record_id
+                           order by {_STATEMENT_STREAM_ORDINAL} desc
+                       ) as {_STATEMENT_DEDUP_RANK}
+                from read_parquet(?)
+            )
+            where {_STATEMENT_DEDUP_RANK} = 1
+            order by {_STATEMENT_STREAM_ORDINAL}
+        ) to {_duckdb_string_literal(output_path)}
+        (format parquet, compression zstd)
+        """,
+        [str(spool_path)],
+    )
+    statement_count = int(
+        connection.execute(
+            "select count(*) from read_parquet(?)",
+            [str(output_path)],
+        ).fetchone()[0]
+    )
+    _log(
+        log,
+        "Completed bounded Norway Brreg statement parsing: "
+        "parsed_rows=%d deduplicated_rows=%d",
+        parsed_rows,
+        statement_count,
+    )
+    return statement_count
+
+
+def _write_statement_parquet_batch(
+    writer: pq.ParquetWriter,
+    rows: list[dict[str, Any]],
+    *,
+    first_ordinal: int,
+    spool_schema: pa.Schema,
+) -> None:
+    if not rows:
+        return
+    table = _financial_statement_frame(rows).to_arrow()
+    ordinal_array = pa.array(
+        range(first_ordinal, first_ordinal + len(rows)),
+        type=pa.int64(),
+    )
+    writer.write_table(
+        pa.Table.from_arrays(
+            [*table.columns, ordinal_array],
+            schema=spool_schema,
+        )
     )
 
 
@@ -649,12 +925,164 @@ def _response_rows_with_verified_payloads(
         return list(executor.map(load, response_index_rows))
 
 
-def _usd_statement_frame(original_frame: pl.DataFrame) -> pl.DataFrame:
-    rows = financial_normalize.build_resolved_financial_statement_usd_rows(
-        original_frame.to_dicts(),
-        exchange_rates=ExchangeRateClient.from_env(),
+def _build_usd_statement_parquet(
+    *,
+    original_path: Path,
+    output_path: Path,
+    database_path: Path,
+    exchange_rates: Any,
+) -> dict[str, int]:
+    with duckdb.connect(str(database_path)) as connection:
+        available_columns = _parquet_columns(connection, original_path)
+        _validate_financial_columns(available_columns)
+        columns = ", ".join(
+            _quote_duckdb_identifier(column) for column in FINANCIAL_STATEMENT_COLUMNS
+        )
+        connection.execute(
+            f"""
+            create table _norway_financial_statements as
+            select {columns},
+                   row_number() over () as {_STATEMENT_OUTPUT_ORDINAL}
+            from read_parquet(?)
+            """,
+            [str(original_path)],
+        )
+        original_row_count = int(
+            connection.execute(
+                "select count(*) from _norway_financial_statements"
+            ).fetchone()[0]
+        )
+        pairs = connection.execute(
+            """
+            select distinct upper(currency), cast(period_end_date as varchar)
+            from _norway_financial_statements
+            where currency <> '' and period_end_date is not null
+            order by 1, 2
+            """
+        ).fetchall()
+        requests = [
+            ExchangeRateRequest(currency=currency, rate_date=rate_date)
+            for currency, rate_date in pairs
+        ]
+        rates = _load_available_usd_rates(exchange_rates, requests)
+        fx_rows = [
+            {
+                "currency": currency,
+                "period_end_date": date.fromisoformat(rate_date),
+                "fx_rate": str(rate.rate),
+                "fx_rate_date": date.fromisoformat(str(rate.rate_date)),
+                "fx_source": rate.source,
+            }
+            for currency, rate_date in pairs
+            if (rate := rates.get((currency, rate_date))) is not None
+        ]
+        _replace_fx_stage(connection, fx_rows)
+
+        reset_assignments = [
+            "quality_flag = coalesce(quality_flag, '')",
+            *(f"{name}_amount_usd = null" for name in financial_normalize.FINANCIAL_AMOUNT_NAMES),
+            "fx_rate_to_usd = null",
+            "fx_rate_date = null",
+            "fx_source = null",
+        ]
+        connection.execute(
+            "update _norway_financial_statements set "
+            + ", ".join(reset_assignments)
+        )
+        if fx_rows:
+            amount_assignments = ", ".join(
+                f"{name}_amount_usd = cast("
+                f"statements.{name}_amount_original * fx.fx_rate "
+                "as decimal(38, 6))"
+                for name in financial_normalize.FINANCIAL_AMOUNT_NAMES
+            )
+            connection.execute(
+                f"""
+                update _norway_financial_statements as statements
+                set {amount_assignments},
+                    fx_rate_to_usd = fx.fx_rate,
+                    fx_rate_date = fx.fx_rate_date,
+                    fx_source = fx.fx_source
+                from {_FX_STAGE_TABLE} as fx
+                where upper(statements.currency) = fx.currency
+                  and statements.period_end_date = fx.period_end_date
+                """
+            )
+        connection.execute(
+            f"""
+            copy (
+                select {columns}
+                from _norway_financial_statements
+                order by {_STATEMENT_OUTPUT_ORDINAL}
+            ) to {_duckdb_string_literal(output_path)}
+            (format parquet, compression zstd)
+            """
+        )
+        usd_row_count, rate_date_count = connection.execute(
+            """
+            select count(*), count(distinct fx_rate_date)
+            from _norway_financial_statements
+            """
+        ).fetchone()
+    return {
+        "original_row_count": original_row_count,
+        "usd_row_count": int(usd_row_count),
+        "rate_date_count": int(rate_date_count),
+    }
+
+
+def _load_available_usd_rates(
+    exchange_rates: Any,
+    requests: list[ExchangeRateRequest],
+) -> dict[tuple[str, str], Any]:
+    if not requests:
+        return {}
+    try:
+        return exchange_rates.usd_rates(requests)
+    except LookupError:
+        rates: dict[tuple[str, str], Any] = {}
+        for request in requests:
+            try:
+                rates.update(exchange_rates.usd_rates([request]))
+            except LookupError:
+                continue
+        return rates
+
+
+def _replace_fx_stage(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[dict[str, Any]],
+) -> None:
+    connection.execute(
+        f"""
+        create or replace temp table {_FX_STAGE_TABLE} (
+            currency varchar not null,
+            period_end_date date not null,
+            fx_rate decimal(38, 12) not null,
+            fx_rate_date date not null,
+            fx_source varchar
+        )
+        """
     )
-    return _financial_statement_frame(rows)
+    if not rows:
+        return
+    arrow_table = pa.Table.from_pylist(rows, schema=_FX_ARROW_SCHEMA)
+    connection.register(_FX_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"""
+            insert into {_FX_STAGE_TABLE}
+            select
+                currency,
+                period_end_date,
+                cast(fx_rate as decimal(38, 12)),
+                fx_rate_date,
+                fx_source
+            from {_FX_BATCH_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_FX_BATCH_RELATION)
 
 
 def _financial_statement_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
@@ -682,30 +1110,46 @@ def _financial_statement_column_expression(
     return pl.col(column_name).cast(data_type, strict=False).alias(column_name)
 
 
-def _load_financial_frame_into_duckdb(
+def _load_financial_parquet_into_duckdb(
     connection: duckdb.DuckDBPyConnection,
-    frame: pl.DataFrame,
-) -> None:
-    _validate_financial_frame_columns(frame)
-    frame = _coerce_financial_statement_frame(frame)
+    parquet_path: Path,
+) -> int:
+    _validate_financial_columns(_parquet_columns(connection, parquet_path))
     connection.execute(
         f"create schema {_quote_duckdb_identifier(FINANCIAL_STATEMENTS_DUCKDB_SCHEMA)}"
     )
-    registered_name = "_frame_no_financial_statements"
-    connection.register(registered_name, frame.to_arrow())
-    try:
+    columns = ", ".join(
+        _quote_duckdb_identifier(column) for column in FINANCIAL_STATEMENT_COLUMNS
+    )
+    connection.execute(
+        f"create table {_quote_duckdb_identifier(FINANCIAL_STATEMENTS_DUCKDB_SCHEMA)}."
+        f"{_quote_duckdb_identifier(FINANCIAL_STATEMENTS_TABLE)} as "
+        f"select {columns} from read_parquet(?)",
+        [str(parquet_path)],
+    )
+    return int(
         connection.execute(
-            f"create table {_quote_duckdb_identifier(FINANCIAL_STATEMENTS_DUCKDB_SCHEMA)}."
-            f"{_quote_duckdb_identifier(FINANCIAL_STATEMENTS_TABLE)} as "
-            f"select * from {_quote_duckdb_identifier(registered_name)}"
-        )
-    finally:
-        connection.unregister(registered_name)
+            f"select count(*) from "
+            f"{_quote_duckdb_identifier(FINANCIAL_STATEMENTS_DUCKDB_SCHEMA)}."
+            f"{_quote_duckdb_identifier(FINANCIAL_STATEMENTS_TABLE)}"
+        ).fetchone()[0]
+    )
 
 
-def _validate_financial_frame_columns(frame: pl.DataFrame) -> None:
+def _parquet_columns(
+    connection: duckdb.DuckDBPyConnection,
+    parquet_path: Path,
+) -> list[str]:
+    result = connection.execute(
+        "select * from read_parquet(?) limit 0",
+        [str(parquet_path)],
+    )
+    return [description[0] for description in result.description]
+
+
+def _validate_financial_columns(columns: list[str]) -> None:
     missing_columns = [
-        column for column in FINANCIAL_STATEMENT_COLUMNS if column not in frame.columns
+        column for column in FINANCIAL_STATEMENT_COLUMNS if column not in columns
     ]
     if missing_columns:
         raise ValueError(
@@ -714,14 +1158,22 @@ def _validate_financial_frame_columns(frame: pl.DataFrame) -> None:
         )
 
 
-def _financial_statement_replacement_key_rows(
-    frame: pl.DataFrame,
+def _financial_statement_replacement_key_rows_from_duckdb(
+    connection: duckdb.DuckDBPyConnection,
 ) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
-    unique_keys = frame.select(FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS).unique(
-        maintain_order=True
+    source_system_column, source_record_id_column = (
+        _quote_duckdb_identifier(column)
+        for column in FINANCIAL_STATEMENT_REPLACEMENT_KEY_COLUMNS
     )
-    for source_system, source_record_id in unique_keys.iter_rows():
+    unique_keys = connection.execute(
+        f"""
+        select distinct {source_system_column}, {source_record_id_column}
+        from {_quote_duckdb_identifier(FINANCIAL_STATEMENTS_DUCKDB_SCHEMA)}.
+             {_quote_duckdb_identifier(FINANCIAL_STATEMENTS_TABLE)}
+        """
+    ).fetchall()
+    for source_system, source_record_id in unique_keys:
         if (
             not isinstance(source_system, str)
             or source_system.strip() == ""
@@ -737,24 +1189,16 @@ def _financial_statement_replacement_key_rows(
 
 
 def _validate_no_financial_replacements_without_affected_orgs(
-    frame: pl.DataFrame,
+    statement_count: int,
 ) -> None:
-    if frame.height > 0:
+    if statement_count > 0:
         raise ValueError(
             "Norway Brreg update partition has replacement financial statement rows but no affected orgs"
         )
 
 
-def _successful_fetch_count(fetch_frame: pl.DataFrame) -> int:
-    if fetch_frame.is_empty() or "fetch_status" not in fetch_frame.columns:
-        return 0
-    return fetch_frame.filter(pl.col("fetch_status") == "success").height
-
-
-def _rate_date_count(frame: pl.DataFrame) -> int:
-    if frame.is_empty() or "fx_rate_date" not in frame.columns:
-        return 0
-    return frame.get_column("fx_rate_date").drop_nulls().n_unique()
+def _duckdb_string_literal(value: str | Path) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _log(log: Callable[..., None] | None, message: str, *args: Any) -> None:

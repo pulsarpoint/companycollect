@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -89,15 +89,36 @@ def build_resolved_financial_statement_original_rows_from_fetch_rows(
     log: Callable[..., object] | None = None,
     progress_interval: int = NORMALIZATION_PROGRESS_INTERVAL,
 ) -> list[dict[str, Any]]:
+    return list(
+        iter_resolved_financial_statement_original_rows_from_fetch_rows(
+            fetch_rows,
+            resolved_at=resolved_at,
+            log=log,
+            progress_interval=progress_interval,
+            total_fetch_rows=len(fetch_rows),
+        )
+    )
+
+
+def iter_resolved_financial_statement_original_rows_from_fetch_rows(
+    fetch_rows: Iterable[dict[str, Any]],
+    *,
+    resolved_at: Any,
+    log: Callable[..., object] | None = None,
+    progress_interval: int = NORMALIZATION_PROGRESS_INTERVAL,
+    total_fetch_rows: int | None = None,
+) -> Iterator[dict[str, Any]]:
     _validate_progress_interval(progress_interval)
     _log(
         log,
-        "Starting Norway Brreg financial statement normalization: fetch_rows=%d",
-        len(fetch_rows),
+        "Starting Norway Brreg financial statement normalization: fetch_rows=%s",
+        "unknown" if total_fetch_rows is None else total_fetch_rows,
     )
-    rows: list[dict[str, Any]] = []
     successful_fetches = 0
+    statement_rows = 0
+    processed_fetch_rows = 0
     for index, fetch_row in enumerate(fetch_rows, start=1):
+        processed_fetch_rows = index
         if fetch_row.get("fetch_status") == "success":
             successful_fetches += 1
             payload = fetch_row.get("response_payload")
@@ -115,32 +136,35 @@ def build_resolved_financial_statement_original_rows_from_fetch_rows(
                         run_id=_string(fetch_row.get("source_run_id")),
                         source_url=_string(fetch_row.get("source_url")),
                     )
-                    rows.append(
-                        _resolved_financial_statement_row(
-                            staging_row,
-                            resolved_at=resolved_at,
-                        )
+                    statement_rows += 1
+                    yield _resolved_financial_statement_row(
+                        staging_row,
+                        resolved_at=resolved_at,
                     )
-        if _should_log_progress(index, len(fetch_rows), progress_interval):
+        if (
+            index == 1
+            or index % progress_interval == 0
+            or total_fetch_rows is not None
+            and index == total_fetch_rows
+        ):
             _log(
                 log,
                 "Processed Norway Brreg financial statement normalization: "
-                "processed_fetch_rows=%d total_fetch_rows=%d successful_fetches=%d "
+                "processed_fetch_rows=%d total_fetch_rows=%s successful_fetches=%d "
                 "statement_rows=%d",
                 index,
-                len(fetch_rows),
+                "unknown" if total_fetch_rows is None else total_fetch_rows,
                 successful_fetches,
-                len(rows),
+                statement_rows,
             )
     _log(
         log,
         "Completed Norway Brreg financial statement normalization: "
         "fetch_rows=%d successful_fetches=%d statement_rows=%d",
-        len(fetch_rows),
+        processed_fetch_rows,
         successful_fetches,
-        len(rows),
+        statement_rows,
     )
-    return rows
 
 
 def build_resolved_financial_statement_usd_rows(

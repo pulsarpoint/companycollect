@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC
 from datetime import date
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import dagster as dg
+import duckdb
 import pyarrow as pa
 import polars as pl
 import pytest
@@ -109,6 +112,18 @@ class FakeFinancialStorage:
             )
         return self.historical_raw_fetches_frame
 
+    def list_all_response_index_keys(self) -> list[str]:
+        self.historical_raw_fetch_reads += 1
+        if self.historical_raw_fetches_frame is None:
+            return []
+        return ["response-index/historical/responses.parquet"]
+
+    def download_response_index(self, _key: str, target_path: str | Path) -> None:
+        assert self.historical_raw_fetches_frame is not None
+        financial_fetches.financial_fetches_frame(
+            self.historical_raw_fetches_frame.to_dicts()
+        ).write_parquet(target_path)
+
     def read_snapshot_fetches(self) -> pl.DataFrame:
         self.snapshot_fetch_reads += 1
         assert self.snapshot_fetches is not None
@@ -121,6 +136,16 @@ class FakeFinancialStorage:
     def read_update_response_index(self, partition_date: str) -> pl.DataFrame:
         self.update_fetch_reads.append(partition_date)
         return self.update_fetches[partition_date]
+
+    def download_update_response_index(
+        self,
+        partition_date: str,
+        target_path: str | Path,
+    ) -> None:
+        self.update_fetch_reads.append(partition_date)
+        financial_fetches.financial_fetches_frame(
+            self.update_fetches[partition_date].to_dicts()
+        ).write_parquet(target_path)
 
     def response_exists(self, key: str) -> bool:
         return key in self.responses
@@ -135,8 +160,31 @@ class FakeFinancialStorage:
             log("storage write marker: statement_rows=%d", frame.height)
         return "snapshot/statements.parquet"
 
+    def upload_snapshot_statements(
+        self,
+        source_path: str | Path,
+        *,
+        log=None,
+    ) -> str:
+        self.snapshot_statements = pl.read_parquet(source_path)
+        if log is not None:
+            self.snapshot_statement_write_log_calls += 1
+            log(
+                "storage write marker: statement_rows=%d",
+                self.snapshot_statements.height,
+            )
+        return "snapshot/statements.parquet"
+
     def write_update_statements(self, partition_date: str, frame: pl.DataFrame) -> str:
         self.update_statements[partition_date] = frame
+        return f"updates/{partition_date}/statements.parquet"
+
+    def upload_update_statements(
+        self,
+        partition_date: str,
+        source_path: str | Path,
+    ) -> str:
+        self.update_statements[partition_date] = pl.read_parquet(source_path)
         return f"updates/{partition_date}/statements.parquet"
 
     def read_snapshot_statements(self) -> pl.DataFrame:
@@ -144,12 +192,33 @@ class FakeFinancialStorage:
         assert self.snapshot_statements is not None
         return self.snapshot_statements
 
+    def download_snapshot_statements(self, target_path: str | Path) -> None:
+        self.snapshot_statement_reads += 1
+        assert self.snapshot_statements is not None
+        financial_statements._coerce_financial_statement_frame(
+            self.snapshot_statements
+        ).write_parquet(target_path)
+
     def read_update_statements(self, partition_date: str) -> pl.DataFrame:
         self.update_statement_reads.append(partition_date)
         return self.update_statements[partition_date]
 
+    def download_update_statements(
+        self,
+        partition_date: str,
+        target_path: str | Path,
+    ) -> None:
+        self.update_statement_reads.append(partition_date)
+        financial_statements._coerce_financial_statement_frame(
+            self.update_statements[partition_date]
+        ).write_parquet(target_path)
+
     def write_snapshot_usd_statements(self, frame: pl.DataFrame) -> str:
         self.snapshot_usd_statements = frame
+        return "snapshot/statements_usd.parquet"
+
+    def upload_snapshot_usd_statements(self, source_path: str | Path) -> str:
+        self.snapshot_usd_statements = pl.read_parquet(source_path)
         return "snapshot/statements_usd.parquet"
 
     def write_update_usd_statements(
@@ -158,14 +227,39 @@ class FakeFinancialStorage:
         self.update_usd_statements[partition_date] = frame
         return f"updates/{partition_date}/statements_usd.parquet"
 
+    def upload_update_usd_statements(
+        self,
+        partition_date: str,
+        source_path: str | Path,
+    ) -> str:
+        self.update_usd_statements[partition_date] = pl.read_parquet(source_path)
+        return f"updates/{partition_date}/statements_usd.parquet"
+
     def read_snapshot_usd_statements(self) -> pl.DataFrame:
         self.snapshot_usd_reads += 1
         assert self.snapshot_usd_statements is not None
         return self.snapshot_usd_statements
 
+    def download_snapshot_usd_statements(self, target_path: str | Path) -> None:
+        self.snapshot_usd_reads += 1
+        assert self.snapshot_usd_statements is not None
+        financial_statements._coerce_financial_statement_frame(
+            self.snapshot_usd_statements
+        ).write_parquet(target_path)
+
     def read_update_usd_statements(self, partition_date: str) -> pl.DataFrame:
         self.update_usd_reads.append(partition_date)
         return self.update_usd_statements[partition_date]
+
+    def download_update_usd_statements(
+        self,
+        partition_date: str,
+        target_path: str | Path,
+    ) -> None:
+        self.update_usd_reads.append(partition_date)
+        financial_statements._coerce_financial_statement_frame(
+            self.update_usd_statements[partition_date]
+        ).write_parquet(target_path)
 
 
 class FakeEntityStorage:
@@ -294,11 +388,11 @@ def test_snapshot_statement_asset_logs_historical_read_and_normalization_progres
         norway_brreg_financial_storage=storage,
     )
 
-    assert storage.consolidated_fetch_log_calls == 1
+    assert storage.historical_raw_fetch_reads == 1
     assert storage.snapshot_statement_write_log_calls == 1
 
 
-def test_original_statement_frame_logs_normalization_progress() -> None:
+def test_original_statement_parquet_logs_normalization_progress(tmp_path: Path) -> None:
     log = CapturingLog()
     fetch_frame = pl.DataFrame(
         [
@@ -307,8 +401,14 @@ def test_original_statement_frame_logs_normalization_progress() -> None:
         ]
     )
 
-    financial_statements._original_statement_frame(
-        fetch_frame,
+    response_index_path = tmp_path / "responses.parquet"
+    financial_fetches.financial_fetches_frame(fetch_frame.to_dicts()).write_parquet(
+        response_index_path
+    )
+    financial_statements._build_original_statement_parquet(
+        response_index_paths=[response_index_path],
+        output_path=tmp_path / "statements.parquet",
+        database_path=tmp_path / "statements.duckdb",
         storage=FakeFinancialStorage(
             responses={
                 _response_key("923609016"): _response_body([_financial_record()])
@@ -318,12 +418,14 @@ def test_original_statement_frame_logs_normalization_progress() -> None:
     )
 
     assert any(
-        "Reading verified Norway Brreg financial response JSON" in message
+        "Parsed Norway Brreg response JSON record batch" in message
         for message in log.messages
     )
 
 
-def test_original_statement_frame_preserves_history_across_response_objects() -> None:
+def test_original_statement_parquet_preserves_history_across_response_objects(
+    tmp_path: Path,
+) -> None:
     older_record = _financial_record()
     older_record["id"] = 1001
     older_record["regnskapsperiode"] = {
@@ -338,8 +440,15 @@ def test_original_statement_frame_preserves_history_across_response_objects() ->
     second_body = _response_body([older_record, latest_record])
     second_row["source_payload_hash"] = financial_fetches.sha256_hex(second_body)
 
-    frame = financial_statements._original_statement_frame(
-        pl.DataFrame([first_row, second_row]),
+    response_index_path = tmp_path / "responses.parquet"
+    financial_fetches.financial_fetches_frame([first_row, second_row]).write_parquet(
+        response_index_path
+    )
+    output_path = tmp_path / "statements.parquet"
+    financial_statements._build_original_statement_parquet(
+        response_index_paths=[response_index_path],
+        output_path=output_path,
+        database_path=tmp_path / "statements.duckdb",
         storage=FakeFinancialStorage(
             responses={
                 _response_key("923609016"): _response_body([older_record]),
@@ -347,8 +456,175 @@ def test_original_statement_frame_preserves_history_across_response_objects() ->
             }
         ),
     )
+    frame = pl.read_parquet(output_path)
 
     assert sorted(frame.get_column("filing_id").to_list()) == [1001, 1002]
+
+
+def test_response_index_files_deduplicate_set_wise_and_keep_last(
+    tmp_path: Path,
+) -> None:
+    first_row = _success_fetch_row("923609016", [_financial_record()])
+    first_row["source_run_id"] = "run-1"
+    first_row["fetched_at"] = "2026-07-01T00:00:00+00:00"
+    second_row = {**first_row, "source_run_id": "run-2"}
+    second_row["fetched_at"] = "2026-07-25T00:00:00+00:00"
+    first_path = tmp_path / "first.parquet"
+    second_path = tmp_path / "second.parquet"
+    financial_fetches.financial_fetches_frame([first_row]).write_parquet(first_path)
+    financial_fetches.financial_fetches_frame([second_row]).write_parquet(second_path)
+
+    with duckdb.connect(str(tmp_path / "response-index.duckdb")) as connection:
+        counts = financial_statements._load_response_index_parquet_files(
+            connection,
+            [first_path, second_path],
+        )
+        stored_run = connection.execute(
+            f"select source_run_id from {financial_statements._RESPONSE_INDEX_TABLE}"
+        ).fetchone()[0]
+
+    assert counts == {
+        "fetch_row_count": 1,
+        "successful_fetch_count": 1,
+    }
+    assert stored_run == "run-2"
+
+
+def test_snapshot_hash_failure_does_not_publish_partial_parquet() -> None:
+    fetch_row = _success_fetch_row("923609016", [_financial_record()])
+    storage = FakeFinancialStorage(
+        historical_raw_fetches_frame=pl.DataFrame([fetch_row]),
+        responses={fetch_row["source_object_key"]: b"changed response bytes"},
+    )
+
+    with pytest.raises(RuntimeError, match="response JSON hash mismatch"):
+        norway_brreg_financial_statements_snapshot_parquet(
+            context=dg.build_asset_context(),
+            norway_brreg_financial_storage=storage,
+        )
+
+    assert storage.snapshot_statements is None
+
+
+def test_snapshot_streams_500k_response_index_rows_in_bounded_batches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response_index_path = tmp_path / "responses.parquet"
+    with duckdb.connect(":memory:") as setup_connection:
+        setup_connection.execute(
+            f"""
+            copy (
+                select
+                    'NO'::varchar as country_iso2,
+                    'norway_brregregnskap'::varchar as source_slug,
+                    'bulk-run'::varchar as source_run_id,
+                    i::bigint as source_line_number,
+                    i::varchar as source_record_id,
+                    repeat('a', 64)::varchar as source_payload_hash,
+                    ('responses/' || i::varchar || '.json')::varchar
+                        as source_object_key,
+                    'api'::varchar as capture_method,
+                    true::boolean as original_http_bytes_preserved,
+                    lpad(i::varchar, 9, '0')::varchar as org_number,
+                    'Synthetic AS'::varchar as legal_name,
+                    ''::varchar as website,
+                    '2024'::varchar as last_submitted_accounts_year,
+                    ('https://example.test/' || i::varchar)::varchar as source_url,
+                    'success'::varchar as fetch_status,
+                    200::bigint as http_status,
+                    ''::varchar as error_type,
+                    ''::varchar as error_message,
+                    1::bigint as attempt_count,
+                    timestamptz '2026-07-25 00:00:00+00' as fetched_at
+                from range(500000) as records(i)
+            ) to {financial_statements._duckdb_string_literal(response_index_path)}
+            (format parquet, compression zstd)
+            """
+        )
+
+    database_path = tmp_path / "response-index.duckdb"
+    output_path = tmp_path / "statements.parquet"
+    response_batch_sizes: list[int] = []
+    writer_batch_sizes: list[int] = []
+    normalize_calls = 0
+    original_write_batch = financial_statements._write_statement_parquet_batch
+    synthetic_row = _resolved_financial_row(org_number="923609016", usd=False)
+
+    def verified_rows(
+        response_index_rows: list[dict[str, Any]],
+        *,
+        storage: object,
+    ) -> list[dict[str, Any]]:
+        del storage
+        response_batch_sizes.append(len(response_index_rows))
+        return response_index_rows
+
+    def normalized_rows(
+        fetch_rows: list[dict[str, Any]],
+        *,
+        resolved_at: datetime,
+        log: object = None,
+        total_fetch_rows: int | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        nonlocal normalize_calls
+        del resolved_at, log
+        assert total_fetch_rows == len(fetch_rows)
+        normalize_calls += 1
+        if normalize_calls == 1:
+            for _ in range(50_001):
+                yield synthetic_row
+
+    def tracked_write_batch(
+        writer: object,
+        rows: list[dict[str, Any]],
+        *,
+        first_ordinal: int,
+        spool_schema: pa.Schema,
+    ) -> None:
+        writer_batch_sizes.append(len(rows))
+        original_write_batch(
+            writer,
+            rows,
+            first_ordinal=first_ordinal,
+            spool_schema=spool_schema,
+        )
+
+    monkeypatch.setattr(
+        financial_statements,
+        "_response_rows_with_verified_payloads",
+        verified_rows,
+    )
+    monkeypatch.setattr(
+        financial_normalize,
+        "iter_resolved_financial_statement_original_rows_from_fetch_rows",
+        normalized_rows,
+    )
+    monkeypatch.setattr(
+        financial_statements,
+        "_write_statement_parquet_batch",
+        tracked_write_batch,
+    )
+
+    with duckdb.connect(str(database_path)) as connection:
+        counts = financial_statements._load_response_index_parquet_files(
+            connection,
+            [response_index_path],
+        )
+        statement_count = financial_statements._write_original_statement_parquet(
+            connection,
+            output_path=output_path,
+            storage=object(),
+        )
+
+    assert counts == {
+        "fetch_row_count": 500_000,
+        "successful_fetch_count": 500_000,
+    }
+    assert statement_count == 1
+    assert len(response_batch_sizes) == 500
+    assert max(response_batch_sizes) == financial_statements.RESPONSE_READ_BATCH_SIZE
+    assert writer_batch_sizes == [50_000, 1]
 
 
 def test_update_statements_asset_writes_empty_partition_with_resolved_columns() -> None:
