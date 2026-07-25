@@ -4,6 +4,8 @@ from shutil import copyfileobj
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_company import tables
 from dagster_v3.defs.sweden_company.resources import SWEDEN_COMPANY_RAW_BUCKET
@@ -14,6 +16,32 @@ BOLAGSVERKET_RAW_REJECTS_TEMP_TABLE = "sweden_company_bolagsverket_raw_rejects"
 BOLAGSVERKET_RAW_REJECT_SCANS_TEMP_TABLE = (
     "sweden_company_bolagsverket_raw_reject_scans"
 )
+_RAW_FILES_COLUMNS = (
+    "source_slug",
+    "source_url",
+    "s3_bucket",
+    "s3_key",
+    "source_last_modified",
+    "retrieved_date",
+    "source_run_id",
+    "size_bytes",
+    "sha256",
+)
+_RAW_FILES_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("source_slug", pa.string(), nullable=False),
+        pa.field("source_url", pa.string(), nullable=False),
+        pa.field("s3_bucket", pa.string(), nullable=False),
+        pa.field("s3_key", pa.string(), nullable=False),
+        pa.field("source_last_modified", pa.string(), nullable=False),
+        pa.field("retrieved_date", pa.string(), nullable=False),
+        pa.field("source_run_id", pa.string(), nullable=False),
+        pa.field("size_bytes", pa.int64()),
+        pa.field("sha256", pa.string(), nullable=False),
+    ]
+)
+assert tuple(_RAW_FILES_ARROW_SCHEMA.names) == _RAW_FILES_COLUMNS
+_RAW_FILES_RELATION = "_sweden_company_raw_files"
 
 
 def load_sweden_company_raw_manifest(
@@ -114,17 +142,17 @@ def _validate_manifest_source_slugs(manifest: dict[str, Any]) -> None:
 
 def _replace_raw_files_table(*, connection: Any, manifest: dict[str, Any]) -> None:
     rows = [
-        (
-            str(file_entry["source_slug"]),
-            str(file_entry["source_url"]),
-            SWEDEN_COMPANY_RAW_BUCKET,
-            str(file_entry["s3_key"]),
-            str(file_entry["source_last_modified"]),
-            str(manifest["retrieved_date"]),
-            str(manifest["run_id"]),
-            _optional_int(file_entry.get("size_bytes")),
-            str(file_entry.get("sha256") or ""),
-        )
+        {
+            "source_slug": str(file_entry["source_slug"]),
+            "source_url": str(file_entry["source_url"]),
+            "s3_bucket": SWEDEN_COMPANY_RAW_BUCKET,
+            "s3_key": str(file_entry["s3_key"]),
+            "source_last_modified": str(file_entry["source_last_modified"]),
+            "retrieved_date": str(manifest["retrieved_date"]),
+            "source_run_id": str(manifest["run_id"]),
+            "size_bytes": _optional_int(file_entry.get("size_bytes")),
+            "sha256": str(file_entry.get("sha256") or ""),
+        }
         for file_entry in manifest["files"]
     ]
     connection.execute(
@@ -143,10 +171,19 @@ def _replace_raw_files_table(*, connection: Any, manifest: dict[str, Any]) -> No
         """
     )
     if rows:
-        connection.executemany(
-            f"insert into {tables.DLT_DATASET_NAME}.raw_files values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
+        raw_files = pa.Table.from_pylist(rows, schema=_RAW_FILES_ARROW_SCHEMA)
+        connection.register(_RAW_FILES_RELATION, raw_files)
+        try:
+            connection.execute(
+                f"""
+                insert into {tables.DLT_DATASET_NAME}.raw_files
+                ({", ".join(_RAW_FILES_COLUMNS)})
+                select {", ".join(_RAW_FILES_COLUMNS)}
+                from {_RAW_FILES_RELATION}
+                """
+            )
+        finally:
+            connection.unregister(_RAW_FILES_RELATION)
 
 
 def _replace_bolagsverket_raw_table(

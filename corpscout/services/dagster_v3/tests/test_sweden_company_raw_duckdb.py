@@ -94,6 +94,12 @@ def test_load_sweden_company_raw_manifest_creates_raw_duckdb_tables(tmp_path: Pa
             manifest=manifest,
             source_run_id="run-1",
         )
+        rerun_counts = load_sweden_company_raw_manifest(
+            connection=connection,
+            object_store=object_store,
+            manifest=manifest,
+            source_run_id="run-1",
+        )
         raw_files = connection.execute(
             f"select source_slug, s3_key, sha256 from {tables.DLT_DATASET_NAME}.raw_files "
             "order by source_slug"
@@ -119,6 +125,7 @@ def test_load_sweden_company_raw_manifest_creates_raw_duckdb_tables(tmp_path: Pa
         "bolagsverket_raw_rejected_lines": 0,
         "scb_raw": 1,
     }
+    assert rerun_counts == counts
     assert raw_files == [
         ("bolagsverket_bulkfil", bolagsverket_key, "bolag-sha"),
         ("scb_bulkfil", scb_key, "scb-sha"),
