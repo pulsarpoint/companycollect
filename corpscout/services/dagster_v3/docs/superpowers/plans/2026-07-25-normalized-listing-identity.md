@@ -95,10 +95,28 @@ For a national-ID scheme, `company_identifier` rows are self-referential:
 price of one uniform join path, and it disappears for schemes where the issuer
 identifier genuinely is not the company id — SEC `cik` being the clear case.
 
-**Do not build the Brazil resolver speculatively.** B3-listed companies
-plausibly hold LEIs already, since anything traded by international investors
-needs one for EU and US reporting. Task 7 Step 3 measures the Brazilian hit rate
-against `br_companies`; record the number there and decide from it.
+**The two layers fail independently, and the scheme exists because of layer B.**
+
+- Layer C — does a Brazilian company hold an LEI? Often yes. LEI is mandatory
+  for issuers admitted to EU venues under MiFID II, and common wherever EMIR or
+  Dodd-Frank reporting applies, so Brazilian issuers with ADRs or Eurobonds
+  generally have one. B3 and CVM do not require it for a domestic listing.
+- Layer B — does any source map a Brazilian **ISIN** to that LEI? **No.** FIRDS
+  covers EU venues only, and the GLEIF ISIN-LEI file carries 0 `BR` ISINs of its
+  9,062,208 rows (measured 2026-07-24).
+
+So the Brazilian instrument-to-issuer edge must come from a Brazilian source —
+CVM and B3 publish ticker and CNPJ — which means `issuer_scheme = 'cnpj'`
+however good Brazilian LEI coverage turns out to be. This is why the compound
+key is justified by evidence rather than speculation.
+
+The alternative is synthesizing LEI-keyed rows: ticker → CNPJ → reverse-lookup
+`company_identifier` → LEI → write back into `instrument_issuer` as `'lei'`.
+That preserves a single-scheme key at the cost of making layer B depend on layer
+C, which collapses the layering. Rejected.
+
+**Still do not build the Brazil resolver in this plan.** It needs a CVM/B3
+ticker-to-CNPJ source that does not exist yet, and Tasks 1-8 must land first.
 
 ## File Structure
 
@@ -2133,11 +2151,17 @@ LEFT JOIN corpscout.company_identifier AS c
 WHERE upperUTF8(ifNull(g.jurisdiction, '')) = 'SE';
 ```
 
-Repeat with `'BR'`. **This is the number that decides whether Brazil needs a
-`cnpj` scheme at all.** A high hit rate means Brazilian issuers already carry
-LEIs and `issuer_scheme = 'lei'` covers them; a low one means a Brazil rule with
-`issuer_scheme="cnpj"` resolving from `br_cvm_companies` is required. Record the
-result in the "Non-LEI countries" section rather than acting on intuition.
+Repeat with `'BR'` against `br_companies`. This measures **layer C only** — how
+many Brazilian companies are reachable from an LEI. It does **not** decide
+whether Brazil needs the `cnpj` scheme: that is settled at layer B, where no
+source maps a `BR` ISIN to any issuer, so a Brazilian instrument edge is
+CNPJ-keyed regardless of this number.
+
+What the number is actually good for: if Brazilian layer-C coverage is high,
+a future `cnpj` layer-B edge can be joined onward to LEI-keyed facts through
+`company_identifier`, giving Brazilian instruments the same downstream reach as
+Swedish ones. If it is low, Brazilian companies stay reachable only through
+their own national identifier. Record it in "Non-LEI countries" either way.
 
 Also measure which schemes are actually in play, so the generalization is
 justified by data rather than assumed:
