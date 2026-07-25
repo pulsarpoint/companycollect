@@ -150,6 +150,7 @@ class FakePagedFinancialReportsSession:
 class FakeS3Client:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
+        self.downloaded_files: list[tuple[str, str]] = []
 
     def create_bucket(self, Bucket: str) -> None:
         pass
@@ -164,6 +165,10 @@ class FakeS3Client:
 
     def get_object(self, Bucket: str, Key: str) -> dict:
         return {"Body": BytesIO(self.objects[(Bucket, Key)])}
+
+    def download_file(self, Bucket: str, Key: str, Filename: str) -> None:
+        self.downloaded_files.append((Bucket, Key))
+        Path(Filename).write_bytes(self.objects[(Bucket, Key)])
 
 
 class FakeS3Error(Exception):
@@ -767,6 +772,43 @@ def test_data_daily_duckdb_replaces_only_current_partition(tmp_path: Path) -> No
         ("2026-06-01", "new-row", "2024-08-18"),
         ("2026-06-02", "other-partition", "2026-02-01"),
     ]
+
+
+def test_data_daily_duckdb_invalid_csv_keeps_published_partition(
+    tmp_path: Path,
+) -> None:
+    object_store, s3_client = _object_store()
+    s3_key = financial_data_daily_key("2026-06-01")
+    s3_client.objects[("source-finland-prh-xbrl", s3_key)] = (
+        "businessId,financialDate,registrationDate\r\n"
+        "published,2025-12-31,2026-06-01\r\n"
+    ).encode()
+    duckdb_path = tmp_path / "daily_invalid.duckdb"
+    materialize_data_daily_duckdb(
+        partition_key="2026-06-01",
+        object_store=object_store,
+        daily_duckdb=duckdb_resource(duckdb_path),
+    )
+
+    s3_client.objects[("source-finland-prh-xbrl", s3_key)] = (
+        b"businessId,financialDate,unexpected\r\nfailed,2025-12-31,value\r\n"
+    )
+    with pytest.raises(ValueError, match="columns must be exactly"):
+        materialize_data_daily_duckdb(
+            partition_key="2026-06-01",
+            object_store=object_store,
+            daily_duckdb=duckdb_resource(duckdb_path),
+        )
+
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        rows = connection.execute(
+            f"""
+            select partition_key, "businessId"
+            from {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE}
+            """
+        ).fetchall()
+
+    assert rows == [("2026-06-01", "published")]
 
 
 def test_data_daily_duckdb_ch_inserts_current_partition_into_clickhouse(
@@ -1504,6 +1546,94 @@ def test_data_snapshot_duckdb_writes_s3_csv_to_duckdb(tmp_path: Path) -> None:
         ("0100123-2", "2024-05-31", "2024-08-17"),
         ("0202020-2", "2025-12-31", "2026-02-01"),
     ]
+    assert s3_client.downloaded_files == [
+        ("source-finland-prh-xbrl", FINANCIAL_DATA_S3_SNAPSHOT_KEY)
+    ]
+
+
+def test_data_snapshot_duckdb_scans_500k_csv_rows_without_python_row_batches(
+    tmp_path: Path,
+) -> None:
+    object_store, s3_client = _object_store()
+    csv_buffer = BytesIO()
+    csv_buffer.write(b"businessId,financialDate,registrationDate\r\n")
+    for index in range(500_000):
+        csv_buffer.write(
+            f"{index:07d}-0,2025-12-31,2026-01-01\r\n".encode()
+        )
+    s3_client.objects[
+        ("source-finland-prh-xbrl", FINANCIAL_DATA_S3_SNAPSHOT_KEY)
+    ] = csv_buffer.getvalue()
+    duckdb_path = tmp_path / "snapshot_bulk.duckdb"
+
+    result = materialize_data_snapshot_duckdb(
+        object_store=object_store,
+        snapshot_duckdb=duckdb_resource(duckdb_path),
+    )
+
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        summary = connection.execute(
+            f"""
+            select count(*), min("businessId"), max("businessId")
+            from {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE}
+            """
+        ).fetchone()
+
+    assert result.metadata["row_count"] == 500_000
+    assert summary == (500_000, "0000000-0", "0499999-0")
+    assert s3_client.downloaded_files == [
+        ("source-finland-prh-xbrl", FINANCIAL_DATA_S3_SNAPSHOT_KEY)
+    ]
+
+
+def test_data_snapshot_duckdb_validates_columns_before_atomic_replacement(
+    tmp_path: Path,
+) -> None:
+    object_store, s3_client = _object_store()
+    object_key = ("source-finland-prh-xbrl", FINANCIAL_DATA_S3_SNAPSHOT_KEY)
+    s3_client.objects[object_key] = (
+        "businessId,financialDate,registrationDate\r\n"
+        "published,2025-12-31,2026-01-01\r\n"
+    ).encode()
+    duckdb_path = tmp_path / "snapshot_validation.duckdb"
+    materialize_data_snapshot_duckdb(
+        object_store=object_store,
+        snapshot_duckdb=duckdb_resource(duckdb_path),
+    )
+
+    s3_client.objects[object_key] = (
+        b"businessId,financialDate,extra\r\nfailed,2025-12-31,value\r\n"
+    )
+    with pytest.raises(ValueError, match="columns must be exactly"):
+        materialize_data_snapshot_duckdb(
+            object_store=object_store,
+            snapshot_duckdb=duckdb_resource(duckdb_path),
+        )
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        published = connection.execute(
+            f"""
+            select "businessId"
+            from {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE}
+            """
+        ).fetchall()
+    assert published == [("published",)]
+
+    s3_client.objects[object_key] = (
+        b"businessId,financialDate,registrationDate\r\n"
+    )
+    result = materialize_data_snapshot_duckdb(
+        object_store=object_store,
+        snapshot_duckdb=duckdb_resource(duckdb_path),
+    )
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        remaining = connection.execute(
+            f"select count(*) from "
+            f"{FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}."
+            f"{FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_TABLE}"
+        ).fetchone()[0]
+
+    assert result.metadata["row_count"] == 0
+    assert remaining == 0
 
 
 def test_data_snapshot_duckdb_asset_is_registered_after_s3_snapshot() -> None:

@@ -1,3 +1,6 @@
+import tempfile
+from pathlib import Path
+
 import dagster as dg
 from dagster_duckdb import DuckDBResource
 
@@ -11,8 +14,9 @@ from dagster_v3.defs.finland_xbrl.assets.data_daily import (
     financial_data_daily_key,
 )
 from dagster_v3.defs.finland_xbrl.assets.data_snapshot_duckdb import (
+    FINANCIAL_DATA_CSV_RAW_STAGE_TABLE,
     FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
-    financial_data_csv_rows,
+    stage_financial_data_csv,
 )
 
 FINLAND_XBRL_FINANCIAL_DATA_DAILY_DUCKDB_PATH = (
@@ -28,52 +32,65 @@ def materialize_data_daily_duckdb(
     daily_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     s3_key = financial_data_daily_key(partition_key)
-    csv_body = object_store.read_bytes(s3_key, bucket=XBRL_BUCKET).decode("utf-8")
-    rows = financial_data_csv_rows(csv_body)
-    with daily_duckdb.get_connection() as connection:
-        connection.execute(
-            f"create schema if not exists {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}"
+    with tempfile.TemporaryDirectory(prefix="finland_xbrl_daily_") as temp_dir:
+        csv_path = Path(temp_dir) / "financial_statements.csv"
+        object_store.download_file(
+            s3_key,
+            csv_path,
+            bucket=XBRL_BUCKET,
         )
-        connection.execute(
-            f"""
-            create table if not exists
-              {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE} (
-                partition_key varchar,
-                "businessId" varchar,
-                "financialDate" varchar,
-                "registrationDate" varchar
-              )
-            """
-        )
-        connection.execute(
-            f"""
-            delete from {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE}
-            where partition_key = ?
-            """,
-            [partition_key],
-        )
-        if rows:
-            connection.executemany(
-                f"""
-                insert into {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE}
-                  (partition_key, "businessId", "financialDate", "registrationDate")
-                values (?, ?, ?, ?)
-                """,
-                [
-                    (
-                        partition_key,
-                        row["businessId"],
-                        row["financialDate"],
-                        row["registrationDate"],
-                    )
-                    for row in rows
-                ],
+        with daily_duckdb.get_connection() as connection:
+            row_count = stage_financial_data_csv(
+                connection=connection,
+                csv_path=csv_path,
             )
+            connection.execute("begin transaction")
+            try:
+                connection.execute(
+                    f"create schema if not exists "
+                    f"{FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}"
+                )
+                connection.execute(
+                    f"""
+                    create table if not exists
+                      {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE} (
+                        partition_key varchar,
+                        "businessId" varchar,
+                        "financialDate" varchar,
+                        "registrationDate" varchar
+                      )
+                    """
+                )
+                connection.execute(
+                    f"""
+                    delete from {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE}
+                    where partition_key = ?
+                    """,
+                    [partition_key],
+                )
+                connection.execute(
+                    f"""
+                    insert into
+                      {FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA}.{FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE}
+                      (partition_key, "businessId", "financialDate", "registrationDate")
+                    select
+                        ?::varchar as partition_key,
+                        trim(coalesce("businessId", ''))::varchar as "businessId",
+                        trim(coalesce("financialDate", ''))::varchar as "financialDate",
+                        trim(coalesce("registrationDate", ''))::varchar as "registrationDate"
+                    from {FINANCIAL_DATA_CSV_RAW_STAGE_TABLE}
+                    """,
+                    [partition_key],
+                )
+            except Exception:
+                connection.execute("rollback")
+                raise
+            connection.execute("commit")
 
     return dg.MaterializeResult(
         metadata={
             "partition": partition_key,
-            "row_count": len(rows),
+            "row_count": row_count,
             "duckdb_schema": FINLAND_XBRL_SNAPSHOT_CSV_DUCKDB_SCHEMA,
             "duckdb_table": FINLAND_XBRL_DAILY_CSV_DUCKDB_TABLE,
             "s3_bucket": XBRL_BUCKET,
