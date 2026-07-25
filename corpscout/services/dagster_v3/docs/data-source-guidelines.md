@@ -59,6 +59,16 @@ Pick the **first** that applies. Record the choice + why in the design doc.
     bulk files it's the slow path; don't.
 - **Keep raw values as text in staging**; do all casts in the transform. Keep a `raw_*` JSON column
   + `source_payload_hash` in DuckDB for provenance (excluded from ClickHouse — see §6/CLAUDE.md).
+- **Python-produced rows → typed Arrow or Polars relations**, registered with DuckDB and loaded
+  through `INSERT … SELECT`. Flush parsed or wide records in batches of at most 50,000 rows.
+  Small source catalogs and dimension metadata may use one typed relation. If a parser is
+  unbounded, spool those batches to temporary Parquet files or a disk-backed staging table.
+- **Never use DuckDB `executemany` in production loaders.** Full replacements must insert from a
+  registered relation or native file scan inside an atomic staging/replacement transaction.
+  Per-record changes must become one staged relation plus set-based `UPDATE … FROM`.
+  `tests/test_duckdb_bulk_loading_contract.py` enforces this rule. The five existing TED
+  procurement calls are an explicit temporary exception owned by the separate TED streaming
+  rewrite; the guard fixes their exact package/file counts so the exception cannot spread.
 - **Split big multi-file downloads into one raw-load asset per file** (checkpoints); resolve
   rotating filenames from the source's index at runtime, don't hardcode (see
   `estonia_ar/financials.py:resolve_financial_url`).
