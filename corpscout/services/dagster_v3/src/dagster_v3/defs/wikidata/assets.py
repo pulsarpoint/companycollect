@@ -8,6 +8,7 @@ from typing import Any
 
 import dagster as dg
 import duckdb
+import pyarrow as pa
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import (
@@ -64,6 +65,7 @@ WIKIDATA_CLICKHOUSE_POOL = "wikidata_clickhouse"
 WIKIDATA_STEP_MAX_RETRIES = 4
 WIKIDATA_STEP_RETRY_BASE_DELAY_SECONDS = 300
 WIKIDATA_STEP_RETRY_MAX_DELAY_SECONDS = 2_400
+WIKIDATA_DUCKDB_INSERT_BATCH_ROWS = 50_000
 WIKIDATA_SPARQL_POOL = "wikidata_sparql"
 WIKIDATA_WEEKLY_PARTITIONS = dg.WeeklyPartitionsDefinition(
     start_date="2026-07-20",
@@ -550,7 +552,10 @@ def _replace_wikidata_stage_table(
     columns: dict[str, dict[str, Any]],
     rows: Iterator[dict[str, Any]],
     log: Callable[..., object],
+    batch_rows: int = WIKIDATA_DUCKDB_INSERT_BATCH_ROWS,
 ) -> int:
+    if batch_rows < 1:
+        raise ValueError("Wikidata DuckDB insert batch size must be greater than zero")
     connection.execute(
         f"create schema if not exists {_quote_duckdb_identifier(WIKIDATA_DUCKDB_DATASET_NAME)}"
     )
@@ -572,27 +577,79 @@ def _replace_wikidata_stage_table(
     connection.execute(
         f"create or replace table {qualified_table} ({column_definitions})"
     )
-    placeholders = ", ".join("?" for _column_name in column_names)
-    insert_sql = f"insert into {qualified_table} values ({placeholders})"
     batch: list[tuple[Any, ...]] = []
     row_count = 0
     for row in rows:
         batch.append(tuple(row.get(column_name) for column_name in column_names))
-        if len(batch) < 1_000:
+        if len(batch) < batch_rows:
             continue
-        connection.executemany(insert_sql, batch)
+        _insert_wikidata_stage_batch(
+            connection,
+            qualified_table=qualified_table,
+            columns=columns,
+            rows=batch,
+        )
         row_count += len(batch)
         batch.clear()
         log(
             "Loaded Wikidata DuckDB stage rows: table=%s rows=%s", table_name, row_count
         )
     if batch:
-        connection.executemany(insert_sql, batch)
+        _insert_wikidata_stage_batch(
+            connection,
+            qualified_table=qualified_table,
+            columns=columns,
+            rows=batch,
+        )
         row_count += len(batch)
     log(
         "Completed Wikidata DuckDB stage table: table=%s rows=%s", table_name, row_count
     )
     return row_count
+
+
+def _insert_wikidata_stage_batch(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    qualified_table: str,
+    columns: dict[str, dict[str, Any]],
+    rows: list[tuple[Any, ...]],
+) -> None:
+    column_names = tuple(columns)
+    values_by_column = tuple(zip(*rows, strict=True))
+    arrays: list[pa.Array] = []
+    for column_name, values in zip(column_names, values_by_column, strict=True):
+        data_type = columns[column_name]["data_type"]
+        if data_type == "bigint":
+            arrays.append(pa.array(values, type=pa.int64()))
+        else:
+            arrays.append(
+                pa.array(
+                    [None if value is None else str(value) for value in values],
+                    type=pa.string(),
+                )
+            )
+    arrow_table = pa.Table.from_arrays(arrays, names=column_names)
+    registered_name = "_wikidata_stage_batch"
+    duckdb_types = {
+        "text": "varchar",
+        "timestamp": "timestamp",
+        "bigint": "bigint",
+    }
+    select_list = ", ".join(
+        f"cast({_quote_duckdb_identifier(column_name)} as "
+        f"{duckdb_types[columns[column_name]['data_type']]}) as "
+        f"{_quote_duckdb_identifier(column_name)}"
+        for column_name in column_names
+    )
+    connection.register(registered_name, arrow_table)
+    try:
+        connection.execute(
+            f"insert into {qualified_table} select {select_list} "
+            f"from {_quote_duckdb_identifier(registered_name)}"
+        )
+    finally:
+        connection.unregister(registered_name)
 
 
 def _export_wikidata_table_to_clickhouse(

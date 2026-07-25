@@ -791,6 +791,45 @@ def test_wikidata_listed_companies_stage_declares_explicit_schema() -> None:
         assert schema[column_name]["data_type"] == "text"
 
 
+def test_wikidata_stage_streams_arrow_batches() -> None:
+    from dagster_v3.defs.wikidata import assets
+
+    columns = {
+        "source_id": {"data_type": "text"},
+        "retrieved_at": {"data_type": "timestamp"},
+        "source_count": {"data_type": "bigint"},
+    }
+    consumed = 0
+
+    def rows() -> Iterator[dict[str, Any]]:
+        nonlocal consumed
+        for index in range(5):
+            consumed += 1
+            yield {
+                "source_id": f"Q{index}",
+                "retrieved_at": "2026-07-25T12:00:00",
+                "source_count": index,
+            }
+
+    with duckdb.connect(":memory:") as connection:
+        row_count = assets._replace_wikidata_stage_table(
+            connection,
+            table_name="stream_test",
+            columns=columns,
+            rows=rows(),
+            log=lambda *_args: None,
+            batch_rows=2,
+        )
+        stored = connection.execute(
+            f"select source_id, source_count from "
+            f"{assets.WIKIDATA_DUCKDB_DATASET_NAME}.stream_test order by source_count"
+        ).fetchall()
+
+    assert consumed == 5
+    assert row_count == 5
+    assert stored == [(f"Q{index}", index) for index in range(5)]
+
+
 def test_wikidata_exchange_rows_read_completed_real_exchange_manifests() -> None:
     from dagster_v3.defs.wikidata import source as wikidata_source
 
