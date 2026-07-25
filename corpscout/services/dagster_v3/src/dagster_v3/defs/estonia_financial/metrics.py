@@ -1,6 +1,8 @@
 from collections.abc import Callable
+from datetime import date
 from typing import Any, Protocol
 
+import pyarrow as pa
 from duckdb import DuckDBPyConnection
 
 from dagster_v3.defs.estonia_ar import tables
@@ -76,6 +78,16 @@ def build_estonia_ar_financial_metrics(
 # The shared client builds one UNION ALL branch per requested (currency, date)
 # pair; ClickHouse rejects very wide plans (code 572). Batch the request set.
 _RATE_REQUEST_BATCH = 50
+_FX_BATCH_RELATION = "_ee_fx_batch"
+_FX_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("currency", pa.string(), nullable=False),
+        pa.field("period_end", pa.date32(), nullable=False),
+        pa.field("fx_rate", pa.string(), nullable=False),
+        pa.field("fx_rate_date", pa.date32(), nullable=False),
+        pa.field("fx_source", pa.string()),
+    ]
+)
 
 
 def _load_rates(
@@ -120,7 +132,13 @@ def apply_estonia_ar_usd_conversion(
     requests = [_request(currency, end) for currency, end in pairs]
     rates = _load_rates(exchange_rates, requests)
     fx_rows = [
-        (currency, end, rate.rate, str(rate.rate_date), rate.source)
+        {
+            "currency": currency,
+            "period_end": date.fromisoformat(end),
+            "fx_rate": str(rate.rate),
+            "fx_rate_date": date.fromisoformat(str(rate.rate_date)),
+            "fx_source": rate.source,
+        }
         for currency, end in pairs
         if (rate := rates.get((currency, end))) is not None
     ]
@@ -138,11 +156,17 @@ def apply_estonia_ar_usd_conversion(
         "fx_rate_date date, fx_source varchar)"
     )
     if fx_rows:
-        duckdb_connection.executemany(
-            "insert into _ee_fx values "
-            "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
-            fx_rows,
-        )
+        fx_table = pa.Table.from_pylist(fx_rows, schema=_FX_ARROW_SCHEMA)
+        duckdb_connection.register(_FX_BATCH_RELATION, fx_table)
+        try:
+            duckdb_connection.execute(
+                "insert into _ee_fx "
+                "select currency, period_end, "
+                "cast(fx_rate as decimal(38, 12)), fx_rate_date, fx_source "
+                f"from {_FX_BATCH_RELATION}"
+            )
+        finally:
+            duckdb_connection.unregister(_FX_BATCH_RELATION)
     duckdb_connection.execute(
         f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
         f"fx_source = '', {reset_usd}"

@@ -78,6 +78,10 @@ def test_usd_conversion_fills_usd(tmp_path: Path):
         counts = metrics.apply_estonia_ar_usd_conversion(
             duckdb_connection=conn, exchange_rates=_StubExchangeRates()
         )
+        rerun_counts = metrics.apply_estonia_ar_usd_conversion(
+            duckdb_connection=conn, exchange_rates=_StubExchangeRates()
+        )
+    assert rerun_counts == counts
     assert counts["rate_pairs"] == 1  # EUR / 2019-12-31
     assert counts["rows_converted"] == 1
     wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_WIDE_TABLE}"
@@ -90,6 +94,32 @@ def test_usd_conversion_fills_usd(tmp_path: Path):
     assert row[1] == Decimal("5500.00")  # 5000 * 1.10
     assert row[2] == Decimal("1.100000000000")
     assert row[3] == "TEST"
+
+
+def test_usd_conversion_without_rates_resets_usd_columns(tmp_path: Path):
+    class _EmptyExchangeRates:
+        def usd_rates(self, requests):
+            return {}
+
+    db_path = tmp_path / "estonia_ar_source.duckdb"
+    _build_native(db_path)
+    with duckdb.connect(str(db_path)) as conn:
+        metrics.apply_estonia_ar_usd_conversion(
+            duckdb_connection=conn,
+            exchange_rates=_StubExchangeRates(),
+        )
+        counts = metrics.apply_estonia_ar_usd_conversion(
+            duckdb_connection=conn,
+            exchange_rates=_EmptyExchangeRates(),
+        )
+        wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_WIDE_TABLE}"
+        row = conn.execute(
+            "select revenue_amount_usd, fx_rate_to_usd, fx_rate_date, fx_source "
+            f"from {wide} where report_id = '1703729'"
+        ).fetchone()
+
+    assert counts == {"rate_pairs": 1, "rates_found": 0, "rows_converted": 0}
+    assert row == (None, None, None, "")
 
 
 def test_load_rates_batches_requests():
