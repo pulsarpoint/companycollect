@@ -6,7 +6,6 @@ from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
 from dagster_v3.defs.companies_all import tables as companies_all_tables
-from dagster_v3.defs.company_listings import tables as company_listings_tables
 from dagster_v3.defs.company_signals import tables as company_signals_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
@@ -199,6 +198,7 @@ EXPECTED_MIGRATIONS = (
     "000173_corpscout_instrument_issuer",
     "000174_corpscout_company_identifier",
     "000175_corpscout_company_listings_view",
+    "000176_corpscout_drop_se_company_listings",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2318,22 +2318,6 @@ def test_esma_firds_migration_covers_export_columns() -> None:
     assert "DROP TABLE IF EXISTS corpscout.firds_instrument_events" in down_sql
 
 
-def test_se_company_listings_migration_covers_columns_in_order() -> None:
-    sql = _migration_sql("000170_corpscout_se_company_listings.up.sql")
-    down_sql = _migration_sql("000170_corpscout_se_company_listings.down.sql")
-
-    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_listings" in sql
-    last_index = -1
-    for column_name in company_listings_tables.SE_COMPANY_LISTINGS_COLUMNS:
-        index = sql.index(f"    {column_name} ")
-        assert index > last_index
-        last_index = index
-
-    assert "ENGINE = MergeTree" in sql
-    assert "ORDER BY (company_id, isin, mic)" in sql
-    assert "DROP TABLE IF EXISTS corpscout.se_company_listings" in down_sql
-
-
 def test_instrument_issuer_migration_replaces_isin_lei() -> None:
     sql = _migration_sql("000173_corpscout_instrument_issuer.up.sql")
     down_sql = _migration_sql("000173_corpscout_instrument_issuer.down.sql")
@@ -2359,6 +2343,21 @@ def test_instrument_issuer_migration_replaces_isin_lei() -> None:
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.isin_lei" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.instrument_issuer" in down_sql
+
+
+def test_drop_se_company_listings_migration_is_forward_only() -> None:
+    """000170 stays on disk as history; the table is removed by a later step.
+
+    Deleting 000170 would give a fresh environment a different migration
+    history than production, which recorded it as applied. A forward drop
+    converges both on the same end state instead.
+    """
+    sql = _migration_sql("000176_corpscout_drop_se_company_listings.up.sql")
+    down_sql = _migration_sql("000176_corpscout_drop_se_company_listings.down.sql")
+
+    assert "DROP TABLE IF EXISTS corpscout.se_company_listings" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_listings" in down_sql
+    assert (MIGRATIONS_DIR / "000170_corpscout_se_company_listings.up.sql").exists()
 
 
 def test_company_listings_view_joins_the_three_layers() -> None:
