@@ -379,7 +379,89 @@ export interface CompanyDetail {
   wikidata: WikidataCompanyRow | null;
   /** Company-anchored Wikidata person links; empty when unmatched. */
   wikidataPeople: WikidataPersonRow[];
+  /** Consolidated IFRS figures from the company's ESEF annual reports,
+   * newest fiscal year first; empty when the company files none. */
+  esefFilings: EsefFilingRow[];
 }
+
+/** One fiscal year of consolidated IFRS figures extracted from a company's
+ * ESEF annual report, with a link back to the source document. */
+export interface EsefFilingRow {
+  fiscal_year: number;
+  period_end: string;
+  currency: string;
+  revenue_amount_original: number | null;
+  revenue_amount_usd: number | null;
+  operating_profit_amount_usd: number | null;
+  profit_loss_amount_usd: number | null;
+  total_assets_amount_usd: number | null;
+  equity_amount_usd: number | null;
+  viewer_url: string;
+  filing_versions: number;
+  composed_from_amendment: number;
+}
+
+/**
+ * ESEF figures for one company, resolved through corpscout.company_identifier
+ * rather than re-deriving the LEI from registered_as — so this one query serves
+ * every country instead of needing a per-country variant.
+ *
+ * Amendments are handled per field, not per row. filings.xbrl.org keeps each
+ * version of a filing under its own fxo_id, and an amendment does not always
+ * re-tag everything the original did: measured 2026-07-25, taking only the
+ * newest version would drop revenue for 17 company-periods, total assets for
+ * 18, equity for 16. Each metric therefore comes from the newest version that
+ * actually reports it, which can compose a row from two documents —
+ * composed_from_amendment flags that so the document link is not read as the
+ * sole source of every figure on the row.
+ */
+const ESEF_FILINGS_QUERY = `
+WITH versions AS (
+  SELECT
+    m.fiscal_year AS fiscal_year,
+    m.period_end AS period_end,
+    m.currency AS currency,
+    m.revenue_amount_original AS revenue_amount_original,
+    m.revenue_amount_usd AS revenue_amount_usd,
+    m.operating_profit_amount_usd AS operating_profit_amount_usd,
+    m.profit_loss_amount_usd AS profit_loss_amount_usd,
+    m.total_assets_amount_usd AS total_assets_amount_usd,
+    m.equity_amount_usd AS equity_amount_usd,
+    m.viewer_url AS viewer_url,
+    toUInt32(extract(m.fxo_id, '-([0-9]+)$')) AS version
+  FROM corpscout.esef_financial_metrics AS m
+  INNER JOIN corpscout.company_identifier AS c
+    ON c.issuer_scheme = 'lei'
+   AND c.issuer_id = upperUTF8(trimBoth(m.lei))
+  WHERE c.country_code = {country:String}
+    AND c.company_id = {id:String}
+)
+SELECT
+  v.fiscal_year AS fiscal_year,
+  toString(v.period_end) AS period_end,
+  argMaxIf(v.currency, v.version, v.currency != '') AS currency,
+  argMaxIf(v.revenue_amount_original, v.version, v.revenue_amount_original IS NOT NULL) AS revenue_amount_original,
+  argMaxIf(v.revenue_amount_usd, v.version, v.revenue_amount_usd IS NOT NULL) AS revenue_amount_usd,
+  argMaxIf(v.operating_profit_amount_usd, v.version, v.operating_profit_amount_usd IS NOT NULL) AS operating_profit_amount_usd,
+  argMaxIf(v.profit_loss_amount_usd, v.version, v.profit_loss_amount_usd IS NOT NULL) AS profit_loss_amount_usd,
+  argMaxIf(v.total_assets_amount_usd, v.version, v.total_assets_amount_usd IS NOT NULL) AS total_assets_amount_usd,
+  argMaxIf(v.equity_amount_usd, v.version, v.equity_amount_usd IS NOT NULL) AS equity_amount_usd,
+  -- Newest version that actually carries a link, not simply the newest: an
+  -- amendment sometimes lands without a viewer_url and the row would then
+  -- offer no way back to the source document.
+  argMaxIf(v.viewer_url, v.version, v.viewer_url != '') AS viewer_url,
+  toUInt32(count()) AS filing_versions,
+  toUInt8(
+    count() > 1
+    -- maxIf over an empty set returns 0 rather than NULL, so a company that
+    -- reports no revenue in any version would otherwise look "composed".
+    AND countIf(v.revenue_amount_usd IS NOT NULL) > 0
+    AND maxIf(v.version, v.revenue_amount_usd IS NOT NULL) != max(v.version)
+  ) AS composed_from_amendment
+FROM versions AS v
+GROUP BY v.fiscal_year, v.period_end
+ORDER BY v.fiscal_year DESC
+LIMIT 12`;
 
 export async function getCompanyDetail(
   country: CountryConfig,
@@ -452,6 +534,12 @@ export async function getCompanyDetail(
   const wikidataPeoplePromise = country.detail?.wikidataPeopleQuery
     ? chQuery<WikidataPersonRow>(country.detail.wikidataPeopleQuery, { id })
     : Promise.resolve([]);
+  // Country-agnostic: resolved through company_identifier, so no per-country
+  // config entry is needed and every country gets it at once.
+  const esefFilingsPromise = chQuery<EsefFilingRow>(ESEF_FILINGS_QUERY, {
+    id,
+    country: country.code.toUpperCase(),
+  });
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
   recordPromise.catch(() => {});
@@ -468,6 +556,7 @@ export async function getCompanyDetail(
   gleifEntityPromise.catch(() => {});
   wikidataPromise.catch(() => {});
   wikidataPeoplePromise.catch(() => {});
+  esefFilingsPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -479,7 +568,7 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships, gleifEntityRows, wikidataRows, wikidataPeople] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships, gleifEntityRows, wikidataRows, wikidataPeople, esefFilings] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
@@ -494,6 +583,7 @@ export async function getCompanyDetail(
     gleifEntityPromise,
     wikidataPromise,
     wikidataPeoplePromise,
+    esefFilingsPromise,
   ]);
 
   // Same-name matches need the officers' names, so this can only start once
@@ -531,5 +621,6 @@ export async function getCompanyDetail(
     gleifEntity: gleifEntityRows[0] ?? null,
     wikidata: wikidataRows[0] ?? null,
     wikidataPeople,
+    esefFilings,
   };
 }

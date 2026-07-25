@@ -16,6 +16,7 @@ import { WikidataSection } from "~/components/detail/wikidata-section";
 import { SecondaryNamesSection } from "~/components/detail/secondary-names-section";
 import { ManagementSection } from "~/components/detail/management-section";
 import { FinancialsSection } from "~/components/detail/financials-section";
+import { EsefSection } from "~/components/detail/esef-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
 import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
 import { decorateFiRecord, FiRegistryBadges } from "~/components/detail/countries/fi-registry";
@@ -113,6 +114,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
           />
         );
       })()}
+      <EsefSection filings={detail.esefFilings} />
       <FiTaxRecordsSection taxRecords={detail.taxRecords} />
       <PublicContractsSection contracts={detail.publicContracts} />
       <ContactLocationCard
