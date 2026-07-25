@@ -452,22 +452,6 @@ function OverviewTab({
             </CardContent>
           </Card>
 
-          <Card size="sm">
-            <CardHeader>
-              <CardTitle>Company reporting</CardTitle>
-              <CardDescription>Latest available company financials.</CardDescription>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2">
-              <Metric
-                label="Reported revenue"
-                value={formatRevenueUsd(summary.revenue_usd, null)}
-              />
-              <Metric
-                label="Latest FY"
-                value={String(summary.latest_fiscal_year ?? "—")}
-              />
-            </CardContent>
-          </Card>
         </div>
       </div>
 
