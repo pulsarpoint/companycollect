@@ -3269,6 +3269,7 @@ wikidata_publish_selection = (
 wikidata_publish_job = dg.define_asset_job(
     "wikidata_publish_job",
     selection=wikidata_publish_selection,
+    run_tags={"dagster/max_runtime": "0"},
 )
 wikidata_exchange_discovery_job = dg.define_asset_job(
     "wikidata_exchange_discovery_job",
