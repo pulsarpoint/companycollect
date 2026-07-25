@@ -1,5 +1,8 @@
 from collections.abc import Callable
+from datetime import date
 from typing import Any, Protocol
+
+import pyarrow as pa
 
 from dagster_v3.defs.brazil_financial.cvm.parsing import (
     BRAZIL_CVM_DUCKDB_SCHEMA,
@@ -7,6 +10,16 @@ from dagster_v3.defs.brazil_financial.cvm.parsing import (
 )
 
 _RATE_REQUEST_BATCH = 50
+_FX_BATCH_RELATION = "_br_cvm_fx_batch"
+_FX_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("currency", pa.string(), nullable=False),
+        pa.field("period_end", pa.date32(), nullable=False),
+        pa.field("fx_rate", pa.string(), nullable=False),
+        pa.field("fx_rate_date", pa.date32(), nullable=False),
+        pa.field("fx_source", pa.string()),
+    ]
+)
 
 
 class ExchangeRates(Protocol):
@@ -42,7 +55,13 @@ def apply_brazil_cvm_statement_rows_usd_conversion_for_table(
     requests = [_request(currency, period_end) for currency, period_end in pairs]
     rates = _load_rates(exchange_rates, requests)
     fx_rows = [
-        (currency, period_end, rate.rate, str(rate.rate_date), rate.source)
+        {
+            "currency": currency,
+            "period_end": date.fromisoformat(period_end),
+            "fx_rate": str(rate.rate),
+            "fx_rate_date": date.fromisoformat(str(rate.rate_date)),
+            "fx_source": rate.source,
+        }
         for currency, period_end in pairs
         if (rate := rates.get((currency, period_end))) is not None
     ]
@@ -53,11 +72,17 @@ def apply_brazil_cvm_statement_rows_usd_conversion_for_table(
         "fx_rate_date date, fx_source varchar)"
     )
     if fx_rows:
-        duckdb_connection.executemany(
-            "insert into _br_cvm_fx values "
-            "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
-            fx_rows,
-        )
+        fx_table = pa.Table.from_pylist(fx_rows, schema=_FX_ARROW_SCHEMA)
+        duckdb_connection.register(_FX_BATCH_RELATION, fx_table)
+        try:
+            duckdb_connection.execute(
+                "insert into _br_cvm_fx "
+                "select currency, period_end, "
+                "cast(fx_rate as decimal(38, 12)), fx_rate_date, fx_source "
+                f"from {_FX_BATCH_RELATION}"
+            )
+        finally:
+            duckdb_connection.unregister(_FX_BATCH_RELATION)
 
     duckdb_connection.execute(
         f"""

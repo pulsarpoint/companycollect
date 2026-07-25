@@ -110,6 +110,39 @@ def test_statement_rows_usd_conversion_without_rates_leaves_usd_null(
     assert amount_usd is None
 
 
+def test_statement_rows_usd_conversion_is_idempotent(tmp_path: Path) -> None:
+    from dagster_v3.defs.brazil_financial.cvm.usd_conversion import (
+        apply_brazil_cvm_statement_rows_usd_conversion,
+    )
+
+    with duckdb.connect(str(tmp_path / "source.duckdb")) as connection:
+        _seed_statement_rows(connection)
+        exchange_rates = _StubExchangeRates()
+        first_counts = apply_brazil_cvm_statement_rows_usd_conversion(
+            duckdb_connection=connection,
+            exchange_rates=exchange_rates,
+        )
+        second_counts = apply_brazil_cvm_statement_rows_usd_conversion(
+            duckdb_connection=connection,
+            exchange_rates=exchange_rates,
+        )
+        rows = connection.execute(
+            f"select source_record_id, amount_usd, fx_source "
+            f"from {BRAZIL_CVM_DUCKDB_SCHEMA}.{DFP_STATEMENT_ROWS_TABLE} "
+            "order by source_record_id"
+        ).fetchall()
+
+    assert first_counts == second_counts == {
+        "rate_pairs": 1,
+        "rates_found": 1,
+        "rows_converted": 2,
+    }
+    assert rows == [
+        ("row-brl", Decimal("20.000000"), "TEST"),
+        ("row-real-mil", Decimal("429783000.000000"), "TEST"),
+    ]
+
+
 def test_statement_rows_usd_conversion_handles_large_scaled_amounts(
     tmp_path: Path,
 ) -> None:
