@@ -1069,16 +1069,11 @@ def test_partition_scoped_replace_does_not_touch_other_processed_months(
 
 
 # ==========================================================================
-# _replace_facts_for_filings: chunked-insert memory fix (production OOM
-# incident -- `_duckdb.OutOfMemoryException: failed to pin block ...` on the
-# 2020-2023 backfill partitions, root-caused to a single `executemany` over a
-# a whole partition's rows inside one transaction; see that function's docstring).
-# These tests call `assets._replace_facts_for_filings` DIRECTLY with synthetic
-# rows -- bypassing `run_esef_filing_facts_partition`'s download/parse loop
-# entirely, since the OIM parser itself already has dedicated tests in
-# test_esef_filings_facts.py -- against a REAL on-disk DuckDB connection,
-# monkeypatching `_FACTS_INSERT_CHUNK_SIZE` down to a small value so a
-# handful of rows still exercises the multi-chunk/multi-transaction path.
+# _replace_facts_for_filings: bounded Parquet insert path. These tests call
+# the writer directly with synthetic rows spooled through the production
+# Arrow/Parquet helper, bypassing the already-covered OIM parsing boundary.
+# A small monkeypatched batch size exercises multiple Parquet scans and
+# transactions without creating a large fixture.
 # ==========================================================================
 
 
@@ -1113,6 +1108,44 @@ def _synthetic_fact_row(
     )
 
 
+def _spool_synthetic_fact_rows(
+    target_directory: Path,
+    fact_rows: Iterator[tuple[Any, ...]] | list[tuple[Any, ...]],
+    *,
+    file_prefix: str,
+) -> list[tuple[Path, int]]:
+    return assets._spool_fact_rows_to_parquet(
+        fact_rows,
+        target_directory=target_directory,
+        file_prefix=file_prefix,
+    )
+
+
+def test_fact_parquet_spool_coalesces_small_filing_submissions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(assets, "_FACTS_INSERT_CHUNK_SIZE", 3)
+    spool = assets._FactParquetSpool(
+        target_directory=tmp_path / "coalesced-fact-batches",
+        file_prefix="coalesced",
+    )
+
+    first_count = spool.add_fact_rows(
+        _synthetic_fact_row(fact_id=f"first-{index}", period_end_year=2022)
+        for index in range(2)
+    )
+    second_count = spool.add_fact_rows(
+        _synthetic_fact_row(fact_id=f"second-{index}", period_end_year=2022)
+        for index in range(2)
+    )
+    fact_batches = spool.close()
+
+    assert first_count == 2
+    assert second_count == 2
+    assert [row_count for _, row_count in fact_batches] == [3, 1]
+
+
 def test_replace_facts_partition_chunked_insert_lands_all_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1126,19 +1159,31 @@ def test_replace_facts_partition_chunked_insert_lands_all_rows(
         _synthetic_fact_row(fact_id=f"f-{i}", period_end_year=2022) for i in range(7)
     ]
     log_lines: list[tuple[Any, ...]] = []
+    fact_batches = _spool_synthetic_fact_rows(
+        tmp_path / "fact-batches",
+        fact_rows,
+        file_prefix="chunked",
+    )
 
     with _db_resource(tmp_path).get_connection() as connection:
         assets._replace_facts_for_filings(
             connection=connection,
             filing_ids=["fxo-2022"],
             partition_key="2023-01-01",
-            fact_rows=fact_rows,
+            fact_batches=fact_batches,
             completed_filing_fact_counts={"fxo-2022": 7},
             source_run_id="test-run",
             log_info=lambda *a, **k: log_lines.append(a),
         )
+        exact_result = connection.execute(
+            "select * from esef_filings.facts where fact_id = 'f-0'"
+        )
+        exact_columns = tuple(column[0] for column in exact_result.description)
+        exact_row = exact_result.fetchone()
 
     rows = _fetch_facts_rows(tmp_path)
+    assert exact_columns == assets._FACTS_COLUMNS
+    assert exact_row == fact_rows[0]
     assert {row[1] for row in rows} == {f"f-{i}" for i in range(7)}
     assert all(row[2] == 2022 for row in rows)
 
@@ -1158,12 +1203,17 @@ def test_replace_facts_partition_rerun_replaces_not_duplicates(
     first_rows = [
         _synthetic_fact_row(fact_id=f"f-{i}", period_end_year=2022) for i in range(5)
     ]
+    first_batches = _spool_synthetic_fact_rows(
+        tmp_path / "first-fact-batches",
+        first_rows,
+        file_prefix="first",
+    )
     with _db_resource(tmp_path).get_connection() as connection:
         assets._replace_facts_for_filings(
             connection=connection,
             filing_ids=["fxo-2022"],
             partition_key="2023-01-01",
-            fact_rows=first_rows,
+            fact_batches=first_batches,
             completed_filing_fact_counts={"fxo-2022": 5},
             source_run_id="test-run",
             log_info=lambda *a, **k: None,
@@ -1173,12 +1223,17 @@ def test_replace_facts_partition_rerun_replaces_not_duplicates(
     second_rows = [
         _synthetic_fact_row(fact_id=f"g-{i}", period_end_year=2022) for i in range(4)
     ]
+    second_batches = _spool_synthetic_fact_rows(
+        tmp_path / "second-fact-batches",
+        second_rows,
+        file_prefix="second",
+    )
     with _db_resource(tmp_path).get_connection() as connection:
         assets._replace_facts_for_filings(
             connection=connection,
             filing_ids=["fxo-2022"],
             partition_key="2023-01-01",
-            fact_rows=second_rows,
+            fact_batches=second_batches,
             completed_filing_fact_counts={"fxo-2022": 4},
             source_run_id="test-run",
             log_info=lambda *a, **k: None,
@@ -1187,6 +1242,164 @@ def test_replace_facts_partition_rerun_replaces_not_duplicates(
     rows = _fetch_facts_rows(tmp_path)
     assert {row[1] for row in rows} == {f"g-{i}" for i in range(4)}
     assert len(rows) == 4  # the 5 first-run rows are gone, not appended to
+
+
+class _CountingFactConnection:
+    def __init__(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        *,
+        fail_on_insert: int | None = None,
+    ) -> None:
+        self.connection = connection
+        self.fail_on_insert = fail_on_insert
+        self.fact_insert_count = 0
+        self.closed = False
+
+    def execute(self, statement: str, *args: Any, **kwargs: Any) -> Any:
+        normalized_statement = " ".join(statement.split()).lower()
+        if (
+            normalized_statement.startswith("insert into esef_filings.facts ")
+            and "read_parquet" in normalized_statement
+        ):
+            self.fact_insert_count += 1
+            if self.fact_insert_count == self.fail_on_insert:
+                raise RuntimeError("simulated ESEF fact batch insert failure")
+        return self.connection.execute(statement, *args, **kwargs)
+
+    def register(self, name: str, value: object) -> None:
+        self.connection.register(name, value)
+
+    def unregister(self, name: str) -> None:
+        self.connection.unregister(name)
+
+    def close(self) -> None:
+        self.closed = True
+        self.connection.close()
+
+
+def test_replace_facts_spools_and_inserts_500k_rows_in_50k_batches(
+    tmp_path: Path,
+) -> None:
+    fact_batches = _spool_synthetic_fact_rows(
+        tmp_path / "bulk-fact-batches",
+        (
+            _synthetic_fact_row(
+                fact_id=f"bulk-{index}",
+                period_end_year=2022,
+                source_run_id="bulk-run",
+            )
+            for index in range(500_000)
+        ),
+        file_prefix="bulk",
+    )
+
+    with duckdb.connect(str(tmp_path / "bulk-facts.duckdb")) as connection:
+        counting_connection = _CountingFactConnection(connection)
+        assets._replace_facts_for_filings(
+            connection=counting_connection,
+            filing_ids=["fxo-2022"],
+            partition_key="2023-01-01",
+            fact_batches=fact_batches,
+            completed_filing_fact_counts={"fxo-2022": 500_000},
+            source_run_id="bulk-run",
+            log_info=lambda *a, **k: None,
+        )
+        fact_row_count = connection.execute(
+            "select count(*) from esef_filings.facts"
+        ).fetchone()[0]
+        state_row = connection.execute(
+            "select fact_count, source_run_id "
+            "from esef_filings.facts_ingestion_state"
+        ).fetchone()
+
+    assert [row_count for _, row_count in fact_batches] == [50_000] * 10
+    assert counting_connection.fact_insert_count == 10
+    assert fact_row_count == 500_000
+    assert state_row == (500_000, "bulk-run")
+
+
+def test_replace_facts_retry_deletes_a_partially_committed_batch_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(assets, "_FACTS_INSERT_CHUNK_SIZE", 3)
+    database_path = tmp_path / "retry-facts.duckdb"
+    seed_batches = _spool_synthetic_fact_rows(
+        tmp_path / "seed-fact-batches",
+        iter([_synthetic_fact_row(fact_id="seed", period_end_year=2022)]),
+        file_prefix="seed",
+    )
+    retry_batches = _spool_synthetic_fact_rows(
+        tmp_path / "retry-fact-batches",
+        (
+            _synthetic_fact_row(fact_id=f"retry-{index}", period_end_year=2022)
+            for index in range(7)
+        ),
+        file_prefix="retry",
+    )
+
+    with duckdb.connect(str(database_path)) as connection:
+        assets._replace_facts_for_filings(
+            connection=connection,
+            filing_ids=["fxo-2022"],
+            partition_key="2023-01-01",
+            fact_batches=seed_batches,
+            completed_filing_fact_counts={"fxo-2022": 1},
+            source_run_id="seed-run",
+            log_info=lambda *a, **k: None,
+        )
+
+    failing_connection = _CountingFactConnection(
+        duckdb.connect(str(database_path)),
+        fail_on_insert=2,
+    )
+    with pytest.raises(RuntimeError, match="simulated ESEF fact batch"):
+        assets._replace_facts_for_filings(
+            connection=failing_connection,
+            filing_ids=["fxo-2022"],
+            partition_key="2023-01-01",
+            fact_batches=retry_batches,
+            completed_filing_fact_counts={"fxo-2022": 7},
+            source_run_id="retry-run",
+            log_info=lambda *a, **k: None,
+        )
+    assert failing_connection.closed is True
+
+    with duckdb.connect(str(database_path)) as connection:
+        partial_fact_ids = [
+            row[0]
+            for row in connection.execute(
+                "select fact_id from esef_filings.facts order by fact_id"
+            ).fetchall()
+        ]
+        state_count = connection.execute(
+            "select count(*) from esef_filings.facts_ingestion_state"
+        ).fetchone()[0]
+        assets._replace_facts_for_filings(
+            connection=connection,
+            filing_ids=["fxo-2022"],
+            partition_key="2023-01-01",
+            fact_batches=retry_batches,
+            completed_filing_fact_counts={"fxo-2022": 7},
+            source_run_id="retry-run",
+            log_info=lambda *a, **k: None,
+        )
+        final_fact_ids = [
+            row[0]
+            for row in connection.execute(
+                "select fact_id from esef_filings.facts order by fact_id"
+            ).fetchall()
+        ]
+        final_state = connection.execute(
+            "select fact_count, source_run_id "
+            "from esef_filings.facts_ingestion_state"
+        ).fetchone()
+
+    assert partial_fact_ids == ["retry-0", "retry-1", "retry-2"]
+    assert state_count == 0
+    assert final_fact_ids == [f"retry-{index}" for index in range(7)]
+    assert final_state == (7, "retry-run")
 
 
 # ==========================================================================

@@ -28,15 +28,17 @@ context-type validation (see CLAUDE.md).
 import json
 import tempfile
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import dagster as dg
 import pyarrow as pa
+import pyarrow.parquet as pq
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 from dlt.sources.helpers import requests as dlt_requests
@@ -713,17 +715,20 @@ def _archive_filing_fact_json(
     return True
 
 
-def _read_and_parse_filing_facts(
+def _read_and_spool_filing_facts(
     *,
     object_store: Any,
     temp_dir: Path,
+    fact_spool: "_FactParquetSpool",
     lei: str,
     fxo_id: str,
     period_end: str,
+    period_end_year: int,
     json_url: str,
+    source_run_id: str,
     log_warning: Callable[..., object],
-) -> tuple[list[facts.EsefFact], bool]:
-    """Read one archived fact JSON object from S3 and parse its OIM facts.
+) -> tuple[int, bool]:
+    """Read one archived fact JSON object and spool bounded Parquet batches.
 
     The upstream network is deliberately absent from this function. The raw
     `esef_filing_facts_json_s3` asset owns downloads; the DuckDB asset only
@@ -744,14 +749,24 @@ def _read_and_parse_filing_facts(
                 json_url,
                 exc,
             )
-            return [], True
+            return 0, True
 
-        return (
-            facts.parse_oim_facts(
-                payload, lei=lei, fxo_id=fxo_id, period_end=period_end
-            ),
-            False,
+        fact_count = fact_spool.add_fact_rows(
+            (
+                _row_from_fact(
+                    fact,
+                    period_end_year=period_end_year,
+                    source_run_id=source_run_id,
+                )
+                for fact in facts.iter_oim_facts(
+                    payload,
+                    lei=lei,
+                    fxo_id=fxo_id,
+                    period_end=period_end,
+                )
+            )
         )
+        return fact_count, False
     finally:
         local_path.unlink(missing_ok=True)
 
@@ -903,8 +918,11 @@ def run_esef_filing_facts_json_partition(
 # `_FACTS_INSERT_CHUNK_SIZE` rows as its own transaction bounds the
 # uncommitted-row memory to one chunk's worth, regardless of the partition's total
 # row count.
-_FACTS_INSERT_CHUNK_SIZE = 25_000
+_FACTS_INSERT_CHUNK_SIZE = 50_000
+_FACTS_SPOOL_SUBMISSION_SIZE = 5_000
 _FACTS_S3_READ_WORKERS = 8
+_FACTS_REPLACEMENT_IDS_RELATION = "_esef_facts_replacement_ids"
+_FACTS_INGESTION_STATE_RELATION = "_esef_facts_ingestion_state"
 _FACTS_ARROW_TYPES = tuple(
     pa.int32() if column_type == "integer" else pa.string()
     for column_type in _FACTS_COLUMN_TYPES.values()
@@ -925,12 +943,137 @@ def _facts_arrow_table(fact_rows: Sequence[tuple[Any, ...]]) -> pa.Table:
     )
 
 
+def _spool_fact_rows_to_parquet(
+    fact_rows: Iterable[tuple[Any, ...]],
+    *,
+    target_directory: Path,
+    file_prefix: str,
+) -> list[tuple[Path, int]]:
+    spool = _FactParquetSpool(
+        target_directory=target_directory,
+        file_prefix=file_prefix,
+    )
+    spool.add_fact_rows(fact_rows)
+    return spool.close()
+
+
+class _FactParquetSpool:
+    def __init__(self, *, target_directory: Path, file_prefix: str) -> None:
+        self._target_directory = target_directory
+        self._target_directory.mkdir(parents=True, exist_ok=True)
+        self._file_prefix = file_prefix
+        self._pending_rows: list[tuple[Any, ...]] = []
+        self._batches: list[tuple[Path, int]] = []
+        self._lock = Lock()
+        self._closed = False
+
+    def add_fact_rows(self, fact_rows: Iterable[tuple[Any, ...]]) -> int:
+        submission_size = min(
+            _FACTS_SPOOL_SUBMISSION_SIZE,
+            _FACTS_INSERT_CHUNK_SIZE,
+        )
+        submitted_count = 0
+        submission: list[tuple[Any, ...]] = []
+        for fact_row in fact_rows:
+            submission.append(fact_row)
+            submitted_count += 1
+            if len(submission) == submission_size:
+                self._append_submission(submission)
+                submission.clear()
+        if submission:
+            self._append_submission(submission)
+        return submitted_count
+
+    def close(self) -> list[tuple[Path, int]]:
+        with self._lock:
+            if self._closed:
+                return list(self._batches)
+            if self._pending_rows:
+                self._batches.append(
+                    _write_fact_parquet_batch(
+                        self._pending_rows,
+                        target_directory=self._target_directory,
+                        file_prefix=self._file_prefix,
+                        batch_index=len(self._batches),
+                    )
+                )
+                self._pending_rows.clear()
+            self._closed = True
+            return list(self._batches)
+
+    def _append_submission(
+        self,
+        fact_rows: Sequence[tuple[Any, ...]],
+    ) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Cannot append to a closed ESEF fact spool")
+            offset = 0
+            while offset < len(fact_rows):
+                available = _FACTS_INSERT_CHUNK_SIZE - len(self._pending_rows)
+                end = min(offset + available, len(fact_rows))
+                self._pending_rows.extend(fact_rows[offset:end])
+                offset = end
+                if len(self._pending_rows) == _FACTS_INSERT_CHUNK_SIZE:
+                    self._batches.append(
+                        _write_fact_parquet_batch(
+                            self._pending_rows,
+                            target_directory=self._target_directory,
+                            file_prefix=self._file_prefix,
+                            batch_index=len(self._batches),
+                        )
+                    )
+                    self._pending_rows.clear()
+
+
+def _write_fact_parquet_batch(
+    fact_rows: Sequence[tuple[Any, ...]],
+    *,
+    target_directory: Path,
+    file_prefix: str,
+    batch_index: int,
+) -> tuple[Path, int]:
+    if not fact_rows or len(fact_rows) > _FACTS_INSERT_CHUNK_SIZE:
+        raise ValueError(
+            "ESEF fact Parquet batch must contain between 1 and "
+            f"{_FACTS_INSERT_CHUNK_SIZE} rows"
+        )
+    path = target_directory / f"{file_prefix}-{batch_index:06d}.parquet"
+    pq.write_table(
+        _facts_arrow_table(fact_rows),
+        path,
+        compression="zstd",
+    )
+    return path, len(fact_rows)
+
+
+def _validate_fact_parquet_batches(
+    fact_batches: Sequence[tuple[Path, int]],
+) -> int:
+    total = 0
+    for path, expected_row_count in fact_batches:
+        actual_row_count = pq.ParquetFile(path).metadata.num_rows
+        if (
+            expected_row_count < 1
+            or expected_row_count > _FACTS_INSERT_CHUNK_SIZE
+            or actual_row_count != expected_row_count
+        ):
+            raise ValueError(
+                "Invalid ESEF fact Parquet batch metadata: "
+                f"path={path} expected_rows={expected_row_count} "
+                f"actual_rows={actual_row_count} "
+                f"maximum_rows={_FACTS_INSERT_CHUNK_SIZE}"
+            )
+        total += actual_row_count
+    return total
+
+
 def _replace_facts_for_filings(
     *,
     connection: Any,
     filing_ids: Sequence[str],
     partition_key: str,
-    fact_rows: Sequence[tuple[Any, ...]],
+    fact_batches: Sequence[tuple[Path, int]],
     completed_filing_fact_counts: Mapping[str, int],
     source_run_id: str,
     log_info: Callable[..., object],
@@ -948,9 +1091,9 @@ def _replace_facts_for_filings(
 
     MEMORY (see `_FACTS_INSERT_CHUNK_SIZE`'s comment for the production
     incident this fixes): the DELETE commits in its own transaction first,
-    then `fact_rows` is inserted in bounded `_FACTS_INSERT_CHUNK_SIZE`-row
-    chunks, each its OWN transaction+commit -- uncommitted MVCC memory never
-    exceeds one chunk's worth, regardless of the month's total row count.
+    then each bounded Parquet batch is scanned by DuckDB into its OWN
+    transaction+commit -- uncommitted MVCC memory never exceeds one batch,
+    regardless of the month's total row count.
     `preserve_insertion_order` is turned off first (insertion order is
     irrelevant here: the ClickHouse export orders on its own); leaving it on
     would make DuckDB buffer rows to preserve original insertion order across
@@ -971,28 +1114,34 @@ def _replace_facts_for_filings(
     job definitions below), so a partial/failed partition's rows are never
     exported before the next run's delete-first cleans them up.
     """
-    connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
-    connection.execute(
-        f"create table if not exists {QUALIFIED_FACTS_TABLE} ({_FACTS_COLUMNS_SQL})"
-    )
-    connection.execute(
-        f"create table if not exists {QUALIFIED_FACTS_INGESTION_STATE_TABLE} ("
-        "fxo_id varchar, fact_count bigint, source_run_id varchar, "
-        "completed_at timestamp)"
-    )
-    connection.execute("set preserve_insertion_order = false")
     try:
+        total = _validate_fact_parquet_batches(fact_batches)
+        connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
+        connection.execute(
+            f"create table if not exists {QUALIFIED_FACTS_TABLE} "
+            f"({_FACTS_COLUMNS_SQL})"
+        )
+        connection.execute(
+            f"create table if not exists {QUALIFIED_FACTS_INGESTION_STATE_TABLE} ("
+            "fxo_id varchar, fact_count bigint, source_run_id varchar, "
+            "completed_at timestamp)"
+        )
+        connection.execute("set preserve_insertion_order = false")
         connection.execute("begin transaction")
         unique_filing_ids = sorted(set(filing_ids))
         if unique_filing_ids:
-            connection.execute(
-                "create or replace temp table esef_facts_replace_filing_ids "
-                "(fxo_id varchar)"
+            replacement_ids = pa.Table.from_arrays(
+                [pa.array(unique_filing_ids, type=pa.string())],
+                names=["fxo_id"],
             )
-            connection.executemany(
-                "insert into esef_facts_replace_filing_ids values (?)",
-                [(fxo_id,) for fxo_id in unique_filing_ids],
-            )
+            connection.register(_FACTS_REPLACEMENT_IDS_RELATION, replacement_ids)
+            try:
+                connection.execute(
+                    "create or replace temp table esef_facts_replace_filing_ids "
+                    f"as select fxo_id from {_FACTS_REPLACEMENT_IDS_RELATION}"
+                )
+            finally:
+                connection.unregister(_FACTS_REPLACEMENT_IDS_RELATION)
             [(existing_fact_row_count,)] = connection.execute(
                 f"select count(*) from {QUALIFIED_FACTS_TABLE} facts "
                 "join esef_facts_replace_filing_ids replacement "
@@ -1014,43 +1163,54 @@ def _replace_facts_for_filings(
             )
         connection.execute("commit")
 
-        total = len(fact_rows)
         inserted = 0
-        registered_chunk_name = "esef_facts_insert_chunk"
-        for start in range(0, total, _FACTS_INSERT_CHUNK_SIZE):
-            chunk = fact_rows[start : start + _FACTS_INSERT_CHUNK_SIZE]
-            connection.register(registered_chunk_name, _facts_arrow_table(chunk))
+        columns = ", ".join(_FACTS_COLUMNS)
+        for batch_path, batch_row_count in fact_batches:
             connection.execute("begin transaction")
             connection.execute(
-                f"insert into {QUALIFIED_FACTS_TABLE} "
-                f"select * from {registered_chunk_name}"
+                f"insert into {QUALIFIED_FACTS_TABLE} ({columns}) "
+                f"select {columns} from read_parquet(?)",
+                [str(batch_path)],
             )
             connection.execute("commit")
-            inserted += len(chunk)
+            inserted += batch_row_count
             log_info(
                 "ESEF facts partition %s: inserted %d/%d fact rows",
                 partition_key,
                 inserted,
                 total,
             )
-        if total > 0:
-            connection.unregister(registered_chunk_name)
         if total == 0:
             log_info("ESEF facts partition %s: inserted 0/0 fact rows", partition_key)
 
         if completed_filing_fact_counts:
-            connection.execute("begin transaction")
-            connection.executemany(
-                f"insert into {QUALIFIED_FACTS_INGESTION_STATE_TABLE} "
-                "values (?, ?, ?, current_timestamp)",
+            state_items = sorted(completed_filing_fact_counts.items())
+            ingestion_state = pa.Table.from_arrays(
                 [
-                    (fxo_id, fact_count, source_run_id)
-                    for fxo_id, fact_count in sorted(
-                        completed_filing_fact_counts.items()
-                    )
+                    pa.array(
+                        (fxo_id for fxo_id, _ in state_items),
+                        type=pa.string(),
+                    ),
+                    pa.array(
+                        (fact_count for _, fact_count in state_items),
+                        type=pa.int64(),
+                    ),
+                    pa.array([source_run_id] * len(state_items), type=pa.string()),
                 ],
+                names=["fxo_id", "fact_count", "source_run_id"],
             )
-            connection.execute("commit")
+            connection.register(_FACTS_INGESTION_STATE_RELATION, ingestion_state)
+            connection.execute("begin transaction")
+            try:
+                connection.execute(
+                    f"insert into {QUALIFIED_FACTS_INGESTION_STATE_TABLE} "
+                    "(fxo_id, fact_count, source_run_id, completed_at) "
+                    "select fxo_id, fact_count, source_run_id, current_timestamp "
+                    f"from {_FACTS_INGESTION_STATE_RELATION}"
+                )
+                connection.execute("commit")
+            finally:
+                connection.unregister(_FACTS_INGESTION_STATE_RELATION)
     except Exception:
         try:
             connection.execute("rollback")
@@ -1170,7 +1330,7 @@ def run_esef_filing_facts_partition(
     skipped_invalid_period_end = 0
     skipped_missing_raw_object = 0
     parse_failed_count = 0
-    fact_rows: list[tuple[Any, ...]] = []
+    inserted_fact_row_count = 0
     filing_ids_to_replace: list[str] = []
     completed_filing_fact_counts: dict[str, int] = {}
 
@@ -1178,37 +1338,45 @@ def run_esef_filing_facts_partition(
     # connection opens below.
     with tempfile.TemporaryDirectory(prefix="esef_filings_facts_") as tmpdir:
         temp_dir = Path(tmpdir)
+        spool_directory = temp_dir / "fact_batches"
+        fact_spool = _FactParquetSpool(
+            target_directory=spool_directory,
+            file_prefix="facts",
+        )
 
         def read_filing(
             filing: _IndexFilingRow,
-        ) -> tuple[str, int | None, list[facts.EsefFact]]:
+        ) -> tuple[str, int | None, int]:
             lei, fxo_id, period_end, json_url, has_json_facts = filing
             period_end_year = _period_end_year(period_end)
             if period_end_year is None:
-                return "invalid_period_end", None, []
+                return "invalid_period_end", None, 0
             if not has_json_facts or not json_url:
-                return "no_json", period_end_year, []
+                return "no_json", period_end_year, 0
             if fxo_id in checkpointed_fact_counts:
-                return "checkpointed", period_end_year, []
+                return "checkpointed", period_end_year, 0
             assert period_end is not None
             object_key = _fact_json_object_key(fxo_id)
             if not object_store.exists(
                 object_key, bucket=ESEF_FILINGS_FACTS_BUCKET
             ):
-                return "missing_raw_object", period_end_year, []
+                return "missing_raw_object", period_end_year, 0
 
-            parsed, parse_failed = _read_and_parse_filing_facts(
+            fact_count, parse_failed = _read_and_spool_filing_facts(
                 object_store=object_store,
                 temp_dir=temp_dir,
+                fact_spool=fact_spool,
                 lei=lei,
                 fxo_id=fxo_id,
                 period_end=period_end,
+                period_end_year=period_end_year,
                 json_url=json_url,
+                source_run_id=source_run_id,
                 log_warning=log_warning,
             )
             if parse_failed:
-                return "parse_failed", period_end_year, []
-            return "parsed", period_end_year, parsed
+                return "parse_failed", period_end_year, 0
+            return "parsed", period_end_year, fact_count
 
         with ThreadPoolExecutor(max_workers=_FACTS_S3_READ_WORKERS) as executor:
             read_results = executor.map(
@@ -1221,7 +1389,7 @@ def run_esef_filing_facts_partition(
                 start=1,
             ):
                 _, fxo_id, _, json_url, _ = filing
-                status, period_end_year, parsed = read_result
+                status, period_end_year, parsed_fact_count = read_result
                 if status == "invalid_period_end":
                     filing_ids_to_replace.append(fxo_id)
                     skipped_invalid_period_end += 1
@@ -1248,15 +1416,8 @@ def run_esef_filing_facts_partition(
                     assert period_end_year is not None
                     filing_ids_to_replace.append(fxo_id)
                     s3_read_count += 1
-                    completed_filing_fact_counts[fxo_id] = len(parsed)
-                    fact_rows.extend(
-                        _row_from_fact(
-                            fact,
-                            period_end_year=period_end_year,
-                            source_run_id=source_run_id,
-                        )
-                        for fact in parsed
-                    )
+                    completed_filing_fact_counts[fxo_id] = parsed_fact_count
+                    inserted_fact_row_count += parsed_fact_count
                 _log_facts_progress(
                     log_info,
                     partition_key=partition_key,
@@ -1271,36 +1432,44 @@ def run_esef_filing_facts_partition(
                     ),
                 )
 
-    # Unconditional completion log -- always fires exactly once with the
-    # final tally, even when `processed_count` doesn't land on
-    # `_PROGRESS_LOG_INTERVAL` (the periodic logging above is silent for the
-    # remainder past the last interval boundary).
-    if in_scope:
-        _log_facts_progress(
-            log_info,
-            partition_key=partition_key,
-            processed=processed_count,
-            total=len(in_scope),
-            s3_read=s3_read_count,
-            checkpointed=checkpointed_filing_count,
-            skipped=(
-                skipped_no_json
-                + skipped_invalid_period_end
-                + skipped_missing_raw_object
-            ),
-            force=True,
-        )
+        fact_batches = fact_spool.close()
+        spooled_fact_row_count = sum(row_count for _, row_count in fact_batches)
+        if spooled_fact_row_count != inserted_fact_row_count:
+            raise RuntimeError(
+                "ESEF fact spool row count does not match parsed row count: "
+                f"spooled={spooled_fact_row_count} parsed={inserted_fact_row_count}"
+            )
 
-    with esef_filings_duckdb.get_connection() as connection:
-        _replace_facts_for_filings(
-            connection=connection,
-            filing_ids=filing_ids_to_replace,
-            partition_key=partition_key,
-            fact_rows=fact_rows,
-            completed_filing_fact_counts=completed_filing_fact_counts,
-            source_run_id=source_run_id,
-            log_info=log_info,
-        )
+        # Unconditional completion log -- always fires exactly once with the
+        # final tally, even when `processed_count` doesn't land on
+        # `_PROGRESS_LOG_INTERVAL` (the periodic logging above is silent for the
+        # remainder past the last interval boundary).
+        if in_scope:
+            _log_facts_progress(
+                log_info,
+                partition_key=partition_key,
+                processed=processed_count,
+                total=len(in_scope),
+                s3_read=s3_read_count,
+                checkpointed=checkpointed_filing_count,
+                skipped=(
+                    skipped_no_json
+                    + skipped_invalid_period_end
+                    + skipped_missing_raw_object
+                ),
+                force=True,
+            )
+
+        with esef_filings_duckdb.get_connection() as connection:
+            _replace_facts_for_filings(
+                connection=connection,
+                filing_ids=filing_ids_to_replace,
+                partition_key=partition_key,
+                fact_batches=fact_batches,
+                completed_filing_fact_counts=completed_filing_fact_counts,
+                source_run_id=source_run_id,
+                log_info=log_info,
+            )
 
     return {
         "filings_in_scope": len(in_scope),
@@ -1314,8 +1483,8 @@ def run_esef_filing_facts_partition(
         "processed_window_start": processed_from,
         "processed_window_end": processed_until,
         "parse_failed_count": parse_failed_count,
-        "inserted_fact_row_count": len(fact_rows),
-        "fact_row_count": checkpointed_fact_row_count + len(fact_rows),
+        "inserted_fact_row_count": inserted_fact_row_count,
+        "fact_row_count": checkpointed_fact_row_count + inserted_fact_row_count,
     }
 
 

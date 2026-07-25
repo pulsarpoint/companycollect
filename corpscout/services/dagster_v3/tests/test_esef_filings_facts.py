@@ -62,6 +62,30 @@ def test_parses_every_well_formed_fact_in_the_fixture() -> None:
     assert all(row.period_end == PERIOD_END for row in rows)
 
 
+def test_iter_oim_facts_consumes_fact_entries_lazily() -> None:
+    consumed_fact_ids: list[str] = []
+
+    class TrackingFactMap(dict[str, Any]):
+        def items(self):
+            for fact_id, entry in super().items():
+                consumed_fact_ids.append(fact_id)
+                yield fact_id, entry
+
+    payload = _fixture_payload()
+    payload["facts"] = TrackingFactMap(payload["facts"])
+    rows = facts.iter_oim_facts(
+        payload,
+        lei=LEI,
+        fxo_id=FXO_ID,
+        period_end=PERIOD_END,
+    )
+
+    assert consumed_fact_ids == []
+    first_row = next(rows)
+    assert consumed_fact_ids == [first_row.fact_id]
+    assert len(list(rows)) == 5
+
+
 def test_monetary_fact_value_currency_decimals() -> None:
     row = _by_fact_id(_parse_fixture())["caTagID398"]
     assert row.concept_qname == "ifrs-full:Assets"

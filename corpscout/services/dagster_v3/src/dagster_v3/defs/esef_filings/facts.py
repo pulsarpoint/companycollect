@@ -38,6 +38,7 @@ from __future__ import annotations
 import dataclasses
 import decimal
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -97,7 +98,21 @@ assert _ESEF_FACT_FIELD_NAMES == tables.ESEF_FACTS_EXPORT_COLUMNS[:-1], (
 def parse_oim_facts(
     payload: dict[str, Any], *, lei: str, fxo_id: str, period_end: str
 ) -> list[EsefFact]:
-    """Parse one filing's OIM xBRL-JSON payload into `EsefFact` rows.
+    """Return all parsed facts for callers that need a materialized list."""
+    return list(
+        iter_oim_facts(
+            payload,
+            lei=lei,
+            fxo_id=fxo_id,
+            period_end=period_end,
+        )
+    )
+
+
+def iter_oim_facts(
+    payload: dict[str, Any], *, lei: str, fxo_id: str, period_end: str
+) -> Iterator[EsefFact]:
+    """Yield one filing's OIM xBRL-JSON payload as `EsefFact` rows.
 
     Skips (without raising) any fact entry that isn't a dict, whose
     `dimensions` isn't a dict, or whose `dimensions.concept` isn't a
@@ -106,9 +121,8 @@ def parse_oim_facts(
     """
     facts_map = payload.get("facts")
     if not isinstance(facts_map, dict):
-        return []
+        return
 
-    parsed: list[EsefFact] = []
     for fact_id, entry in facts_map.items():
         if not isinstance(entry, dict):
             continue
@@ -136,29 +150,26 @@ def parse_oim_facts(
         dimensions_json = _serialize_extra_dimensions(dimensions)
         decimals = _parse_decimals(entry.get("decimals"))
 
-        parsed.append(
-            EsefFact(
-                lei=lei,
-                fxo_id=fxo_id,
-                period_end=period_end,
-                fact_id=str(fact_id),
-                concept_qname=concept_qname,
-                concept_namespace=concept_namespace,
-                concept_local_name=concept_local_name,
-                period_start=period_start,
-                period_instant=period_instant,
-                period_duration_end=period_duration_end,
-                unit=unit,
-                currency=currency,
-                value_kind=value_kind,
-                raw_value=raw_value,
-                amount_original=amount_original,
-                decimals=decimals,
-                dimensions=dimensions_json,
-                language=language,
-            )
+        yield EsefFact(
+            lei=lei,
+            fxo_id=fxo_id,
+            period_end=period_end,
+            fact_id=str(fact_id),
+            concept_qname=concept_qname,
+            concept_namespace=concept_namespace,
+            concept_local_name=concept_local_name,
+            period_start=period_start,
+            period_instant=period_instant,
+            period_duration_end=period_duration_end,
+            unit=unit,
+            currency=currency,
+            value_kind=value_kind,
+            raw_value=raw_value,
+            amount_original=amount_original,
+            decimals=decimals,
+            dimensions=dimensions_json,
+            language=language,
         )
-    return parsed
 
 
 def _clean_str(value: Any) -> str:
