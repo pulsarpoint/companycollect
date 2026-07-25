@@ -10,7 +10,7 @@ from dagster_v3.defs.company_listings import tables as company_listings_tables
 from dagster_v3.defs.company_signals import tables as company_signals_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
-from dagster_v3.defs.isin_lei import tables as isin_lei_tables
+from dagster_v3.defs.instrument_issuer import tables as instrument_issuer_tables
 from dagster_v3.defs.instrument_venues import tables as instrument_venues_tables
 from dagster_v3.defs.esma_firds import tables as esma_firds_tables
 from dagster_v3.defs.finland_ytj import resolved_tables as finland_resolved_tables
@@ -195,6 +195,7 @@ EXPECTED_MIGRATIONS = (
     "000170_corpscout_se_company_listings",
     "000171_corpscout_isin_lei",
     "000172_corpscout_instrument_venues",
+    "000173_corpscout_instrument_issuer",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2330,20 +2331,31 @@ def test_se_company_listings_migration_covers_columns_in_order() -> None:
     assert "DROP TABLE IF EXISTS corpscout.se_company_listings" in down_sql
 
 
-def test_isin_lei_migration_covers_columns_in_order() -> None:
-    sql = _migration_sql("000171_corpscout_isin_lei.up.sql")
-    down_sql = _migration_sql("000171_corpscout_isin_lei.down.sql")
+def test_instrument_issuer_migration_replaces_isin_lei() -> None:
+    sql = _migration_sql("000173_corpscout_instrument_issuer.up.sql")
+    down_sql = _migration_sql("000173_corpscout_instrument_issuer.down.sql")
 
-    assert "CREATE TABLE IF NOT EXISTS corpscout.isin_lei" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.instrument_issuer" in sql
     last_index = -1
-    for column_name in isin_lei_tables.ISIN_LEI_COLUMNS:
+    for column_name in instrument_issuer_tables.INSTRUMENT_ISSUER_COLUMNS:
         index = sql.index(f"    {column_name} ")
         assert index > last_index
         last_index = index
 
     assert "ENGINE = MergeTree" in sql
-    assert "ORDER BY (isin, lei, mapping_source)" in sql
-    assert "DROP TABLE IF EXISTS corpscout.isin_lei" in down_sql
+    assert "ORDER BY (isin, issuer_scheme, issuer_id, mapping_source)" in sql
+
+    # The rows are carried forward, not discarded, and only after the new table
+    # exists. isin_lei held 9,129,076 rows when this migration was written.
+    assert "INSERT INTO corpscout.instrument_issuer" in sql
+    assert "'lei' AS issuer_scheme" in sql
+    assert "FROM corpscout.isin_lei" in sql
+    assert sql.index("INSERT INTO corpscout.instrument_issuer") < sql.index(
+        "DROP TABLE IF EXISTS corpscout.isin_lei"
+    )
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.isin_lei" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.instrument_issuer" in down_sql
 
 
 def test_instrument_venues_migration_covers_columns_in_order() -> None:

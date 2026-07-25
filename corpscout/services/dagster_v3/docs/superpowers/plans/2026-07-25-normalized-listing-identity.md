@@ -1073,16 +1073,27 @@ Three changes at once, because they cannot be separated: `lei` becomes
 sort key changes. **ClickHouse cannot `ALTER` a sort key to insert a column**,
 so this is a new table rather than a migration of the old one.
 
-**Precondition:** `corpscout.isin_lei` has never been materialized — the asset
-from migration `000171` was committed but never run. Verify before writing the
-migration:
+**Precondition check performed 2026-07-25:**
 
 ```sql
 SELECT count() FROM corpscout.isin_lei;
+-- 9,129,076
 ```
 
-If this returns a non-zero count, stop: someone materialized it, and the drop
-needs a data-preserving path instead.
+The table **is** populated — `isin_lei_clickhouse` was materialized. So the
+migration copies the rows forward rather than dropping them: `issuer_scheme` is
+a constant `'lei'` for every existing row and `lei` maps straight onto
+`issuer_id`, so the carry-over is exact and costs one `INSERT SELECT` instead of
+a full re-scan of `firds_instrument_events`.
+
+Nothing consumes `corpscout.isin_lei` — verified by grepping the repo for
+references outside its own module and migration test — so the swap has no
+downstream breakage.
+
+That materialization also retired two risks: the
+`argMax(cfi_category_observed, …) AS cfi_category` alias did not trigger
+ClickHouse's cyclic-alias error, and the scalar subquery in the quality
+aggregate executed at 9.1M rows.
 
 - [ ] **Step 1: Write the failing contract test**
 
@@ -1309,13 +1320,13 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- venue facts belong, and the sort key gains a column in the middle, which
 -- ClickHouse cannot ALTER.
 --
--- isin_lei was never materialized, so dropping it loses nothing. This was
--- verified against the live table before this migration was committed.
+-- isin_lei held 9,129,076 rows when this migration was written, so its contents
+-- are carried forward rather than dropped. Every existing row is an LEI mapping,
+-- so issuer_scheme is the constant 'lei' and lei maps straight onto issuer_id.
+-- Copying costs one INSERT SELECT instead of re-scanning firds_instrument_events.
 --
 -- The grain keeps mapping_source so two sources disagreeing about an ISIN's
 -- issuer stays visible instead of being silently resolved.
-DROP TABLE IF EXISTS corpscout.isin_lei;
-
 CREATE TABLE IF NOT EXISTS corpscout.instrument_issuer
 (
     isin                         String,
@@ -1329,7 +1340,27 @@ CREATE TABLE IF NOT EXISTS corpscout.instrument_issuer
 )
 ENGINE = MergeTree
 ORDER BY (isin, issuer_scheme, issuer_id, mapping_source);
+
+INSERT INTO corpscout.instrument_issuer
+    (isin, issuer_scheme, issuer_id, mapping_source,
+     first_seen_date, last_seen_date, source_run_id, resolved_at)
+SELECT
+    isin,
+    'lei' AS issuer_scheme,
+    lei AS issuer_id,
+    mapping_source,
+    first_seen_date,
+    last_seen_date,
+    source_run_id,
+    resolved_at
+FROM corpscout.isin_lei;
+
+DROP TABLE IF EXISTS corpscout.isin_lei;
 ```
+
+The `INSERT SELECT` is safe on a fresh database as well: the ledger is
+sequential, so `000171` has always created `corpscout.isin_lei` by the time this
+runs, and copying zero rows from an empty table is a no-op.
 
 `000173_corpscout_instrument_issuer.down.sql`:
 
@@ -1361,8 +1392,11 @@ def test_instrument_issuer_migration_replaces_isin_lei() -> None:
     sql = _migration_sql("000173_corpscout_instrument_issuer.up.sql")
     down_sql = _migration_sql("000173_corpscout_instrument_issuer.down.sql")
 
-    assert "DROP TABLE IF EXISTS corpscout.isin_lei" in sql
     assert "CREATE TABLE IF NOT EXISTS corpscout.instrument_issuer" in sql
+    assert "INSERT INTO corpscout.instrument_issuer" in sql
+    assert "'lei' AS issuer_scheme" in sql
+    assert "FROM corpscout.isin_lei" in sql
+    assert sql.index("INSERT INTO") < sql.index("DROP TABLE IF EXISTS corpscout.isin_lei")
     last_index = -1
     for column_name in instrument_issuer_tables.INSTRUMENT_ISSUER_COLUMNS:
         index = sql.index(f"    {column_name} ")
