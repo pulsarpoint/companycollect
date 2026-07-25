@@ -97,6 +97,11 @@ def test_usd_conversion_step_fills_usd(tmp_path: Path):
             duckdb_connection=conn,
             exchange_rates=stub,
         )
+        rerun_counts = metrics.apply_latvia_financial_usd_conversion(
+            duckdb_connection=conn,
+            exchange_rates=stub,
+        )
+    assert rerun_counts == counts
     assert counts["rate_pairs"] == 1  # both rows are EUR / 2016-12-31
     assert counts["rates_found"] == 1
     assert counts["rows_converted"] == 2
@@ -125,16 +130,21 @@ def test_usd_conversion_no_rates_leaves_usd_null(tmp_path: Path):
             return {}
 
     with duckdb.connect(str(db_path)) as conn:
+        metrics.apply_latvia_financial_usd_conversion(
+            duckdb_connection=conn,
+            exchange_rates=_StubExchangeRates(),
+        )
         counts = metrics.apply_latvia_financial_usd_conversion(
             duckdb_connection=conn, exchange_rates=_EmptyRates()
         )
     assert counts["rows_converted"] == 0
     wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_WIDE_TABLE}"
     with duckdb.connect(str(db_path), read_only=True) as conn:
-        usd = conn.execute(
-            f"select revenue_amount_usd from {wide} where statement_id = '709390'"
-        ).fetchone()[0]
-    assert usd is None
+        row = conn.execute(
+            "select revenue_amount_usd, fx_rate_to_usd, fx_rate_date, fx_source "
+            f"from {wide} where statement_id = '709390'"
+        ).fetchone()
+    assert row == (None, None, None, "")
 
 
 def test_load_rates_batches_to_bound_clickhouse_query_plan():
