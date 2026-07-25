@@ -378,8 +378,9 @@ def test_duckdb_stages_preserve_documents_facts_mappings_and_validated_metrics()
         chunk_key="bucket_00",
         source_run_id="run-2",
     )
+    mapping_tracking = TrackingDuckDbConnection(connection)
     mapping_counts = apply_builtin_concept_mappings(
-        connection=connection,
+        connection=mapping_tracking,
         filing_year=2025,
         chunk_key="bucket_00",
     )
@@ -405,6 +406,9 @@ def test_duckdb_stages_preserve_documents_facts_mappings_and_validated_metrics()
     assert connection.execute(
         f"select mapping_version from {ANNUAL_ACCOUNT_DATASET}.metrics limit 1"
     ).fetchone() == (MAPPING_VERSION,)
+    assert mapping_tracking.arrow_batches == [
+        (annual_account_financials._CONCEPT_MAPPING_BATCH_RELATION, 1)
+    ]
 
 
 def test_document_and_fact_replacement_uses_arrow_and_one_set_update() -> None:
@@ -563,7 +567,7 @@ def test_fact_publish_failure_rolls_back_and_allows_retry() -> None:
     }
 
 
-def test_fact_stage_streams_500k_wide_rows_in_bounded_arrow_batches() -> None:
+def test_fact_stage_and_fx_conversion_process_500k_rows_set_wise() -> None:
     connection = duckdb.connect(":memory:")
     ensure_annual_account_duckdb_schema(connection)
     annual_account_financials._create_fact_stage_tables(connection)
@@ -586,25 +590,48 @@ def test_fact_stage_streams_500k_wide_rows_in_bounded_arrow_batches() -> None:
         f"select count(*), min(fact_id), max(fact_id) "
         f"from {annual_account_financials._FACT_STAGE_TABLE}"
     ).fetchone()
+    connection.execute(
+        f"insert into {ANNUAL_ACCOUNT_DATASET}.facts "
+        f"select * from {annual_account_financials._FACT_STAGE_TABLE}"
+    )
+    converted = apply_annual_account_usd_conversion(
+        connection=tracking,
+        exchange_rates=FakeExchangeRates(),
+        filing_year=2025,
+        chunk_key="bucket_00",
+    )
+    fx_updates = [
+        statement
+        for statement in tracking.statements
+        if statement.startswith(f"update {ANNUAL_ACCOUNT_DATASET}.facts as facts")
+        and f"from {annual_account_financials._FX_STAGE_TABLE}" in statement
+    ]
 
     assert inserted == 500_000
     assert stored == (500_000, "fact-000000", "fact-499999")
-    assert tracking.arrow_batches == [
-        (annual_account_financials._FACT_BATCH_RELATION, 50_000)
-    ] * 10
+    assert converted == {
+        "converted_fact_count": 500_000,
+        "unconverted_fact_count": 0,
+    }
+    assert tracking.arrow_batches == (
+        [(annual_account_financials._FACT_BATCH_RELATION, 50_000)] * 10
+        + [(annual_account_financials._FX_BATCH_RELATION, 1)]
+    )
+    assert len(fx_updates) == 1
 
 
 def test_usd_conversion_only_updates_missing_amounts() -> None:
     connection, _storage = _loaded_sample_partition()
+    tracking = TrackingDuckDbConnection(connection)
 
     first = apply_annual_account_usd_conversion(
-        connection=connection,
+        connection=tracking,
         exchange_rates=FakeExchangeRates(),
         filing_year=2025,
         chunk_key="bucket_00",
     )
     second = apply_annual_account_usd_conversion(
-        connection=connection,
+        connection=tracking,
         exchange_rates=FakeExchangeRates(),
         filing_year=2025,
         chunk_key="bucket_00",
@@ -619,6 +646,17 @@ def test_usd_conversion_only_updates_missing_amounts() -> None:
     ).fetchone()
     assert amount_usd == amount_original * Decimal("0.1")
     assert fx_source == "test-rates"
+    assert [batch[0] for batch in tracking.arrow_batches] == [
+        annual_account_financials._FX_BATCH_RELATION
+    ]
+    assert len(
+        [
+            statement
+            for statement in tracking.statements
+            if statement.startswith(f"update {ANNUAL_ACCOUNT_DATASET}.facts as facts")
+            and f"from {annual_account_financials._FX_STAGE_TABLE}" in statement
+        ]
+    ) == 1
 
 
 def test_usd_conversion_limits_rate_scale_before_multiplication() -> None:
@@ -685,8 +723,9 @@ def test_llm_mapping_preserves_extended_concepts(
         extended_concept_response,
     )
 
+    tracking = TrackingDuckDbConnection(connection)
     counts = apply_llm_concept_mappings(
-        connection=connection,
+        connection=tracking,
         filing_year=2025,
         chunk_key="bucket_00",
         base_url="http://llm.invalid/v1",
@@ -731,6 +770,10 @@ def test_llm_mapping_preserves_extended_concepts(
     assert raw_response_count == extended_count
     assert metric_counts["metric_row_count"] > 0
     assert "share_capital" not in projected_concepts
+    assert [batch[0] for batch in tracking.arrow_batches] == [
+        annual_account_financials._CONCEPT_MAPPING_BATCH_RELATION,
+        annual_account_financials._CONCEPT_MAPPING_BATCH_RELATION,
+    ]
 
 
 def test_metric_validation_keeps_ambiguous_facts_and_marks_review() -> None:
@@ -746,8 +789,9 @@ def test_metric_validation_keeps_ambiguous_facts_and_marks_review() -> None:
         "where raw_label = 'Annen driftskostnad'"
     )
 
+    tracking = TrackingDuckDbConnection(connection)
     build_annual_account_metrics(
-        connection=connection,
+        connection=tracking,
         filing_year=2025,
         chunk_key="bucket_00",
         source_run_id="run-metrics",
@@ -760,6 +804,18 @@ def test_metric_validation_keeps_ambiguous_facts_and_marks_review() -> None:
     assert validation_status == "review"
     assert json.loads(warnings) == ["duplicate_canonical_concept_values"]
     assert len(json.loads(source_fact_ids)) == 1
+    assert tracking.arrow_batches == [
+        (annual_account_financials._VALIDATION_WARNING_BATCH_RELATION, 2)
+    ]
+    assert len(
+        [
+            statement
+            for statement in tracking.statements
+            if statement.startswith(f"update {ANNUAL_ACCOUNT_DATASET}.metrics as metrics")
+            and annual_account_financials._VALIDATION_WARNING_BATCH_RELATION
+            in statement
+        ]
+    ) == 1
 
 
 def test_clickhouse_publish_atomically_replaces_one_partition(monkeypatch: Any) -> None:

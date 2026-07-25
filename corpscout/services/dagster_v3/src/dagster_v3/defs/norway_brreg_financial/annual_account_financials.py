@@ -39,6 +39,12 @@ _FACT_STAGE_TABLE = "_norway_annual_account_fact_stage"
 _FACT_BATCH_RELATION = "_norway_annual_account_fact_batch"
 _FACT_COUNT_STAGE_TABLE = "_norway_annual_account_fact_count_stage"
 _FACT_COUNT_BATCH_RELATION = "_norway_annual_account_fact_count_batch"
+_CONCEPT_MAPPING_BATCH_RELATION = "_norway_annual_account_concept_mapping_batch"
+_FX_STAGE_TABLE = "_norway_annual_account_fx_stage"
+_FX_BATCH_RELATION = "_norway_annual_account_fx_batch"
+_VALIDATION_WARNING_BATCH_RELATION = (
+    "_norway_annual_account_validation_warning_batch"
+)
 
 _DOCUMENT_COLUMNS = (
     "document_id",
@@ -182,6 +188,53 @@ _FACT_COUNT_ARROW_SCHEMA = pa.schema(
     [
         pa.field("document_id", pa.string(), nullable=False),
         pa.field("fact_count", pa.int64(), nullable=False),
+    ]
+)
+_CONCEPT_MAPPING_COLUMNS = (
+    "normalized_label",
+    "statement_type",
+    "canonical_concept",
+    "mapping_method",
+    "mapping_confidence",
+    "model",
+    "prompt_version",
+    "raw_response",
+    "mapped_at",
+)
+_CONCEPT_MAPPING_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("normalized_label", pa.string(), nullable=False),
+        pa.field("statement_type", pa.string(), nullable=False),
+        pa.field("canonical_concept", pa.string()),
+        pa.field("mapping_method", pa.string(), nullable=False),
+        pa.field("mapping_confidence", pa.float64(), nullable=False),
+        pa.field("model", pa.string()),
+        pa.field("prompt_version", pa.string(), nullable=False),
+        pa.field("raw_response", pa.string()),
+        pa.field("mapped_at", pa.timestamp("us", tz="UTC"), nullable=False),
+    ]
+)
+_FX_COLUMNS = (
+    "currency",
+    "period_end_date",
+    "fx_rate",
+    "fx_rate_date",
+    "fx_source",
+)
+_FX_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("currency", pa.string(), nullable=False),
+        pa.field("period_end_date", pa.date32(), nullable=False),
+        pa.field("fx_rate", pa.string(), nullable=False),
+        pa.field("fx_rate_date", pa.date32(), nullable=False),
+        pa.field("fx_source", pa.string()),
+    ]
+)
+_VALIDATION_WARNING_COLUMNS = ("metric_id", "metric_warnings")
+_VALIDATION_WARNING_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("metric_id", pa.string(), nullable=False),
+        pa.field("metric_warnings", pa.string(), nullable=False),
     ]
 )
 
@@ -620,11 +673,7 @@ def apply_builtin_concept_mappings(
         if normalized_label in BUILTIN_CONCEPTS
     ]
     if rows:
-        connection.executemany(
-            f"insert or replace into {ANNUAL_ACCOUNT_DATASET}.concept_mappings "
-            "values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
+        _upsert_concept_mapping_rows(connection, rows)
     _apply_mapping_table_to_facts(
         connection,
         filing_year=filing_year,
@@ -751,11 +800,7 @@ def apply_llm_concept_mappings(
                     mapped_at,
                 )
             )
-    connection.executemany(
-        f"insert or replace into {ANNUAL_ACCOUNT_DATASET}.concept_mappings "
-        "values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+    _upsert_concept_mapping_rows(connection, rows)
     _apply_mapping_table_to_facts(
         connection,
         filing_year=filing_year,
@@ -803,69 +848,56 @@ def apply_annual_account_usd_conversion(
                     rates.update(exchange_rates.usd_rates([request]))
                 except LookupError:
                     continue
-    converted = 0
+    fx_rows: list[tuple[Any, ...]] = []
     for currency, rate_date in pairs:
         rate = rates.get((currency, rate_date))
         if rate is None:
             continue
-        matching_before = int(
-            connection.execute(
-                f"""
-                select count(*)
-                from {ANNUAL_ACCOUNT_DATASET}.facts
-                where source_filing_year = ? and source_chunk = ?
-                  and upper(currency) = ? and period_end_date = cast(? as date)
-                  and amount_original is not null and amount_usd is null
-                """,
-                [filing_year, chunk_key, currency, rate_date],
-            ).fetchone()[0]
+        fx_rows.append(
+            (
+                currency,
+                date.fromisoformat(rate_date),
+                str(rate.rate),
+                date.fromisoformat(str(rate.rate_date)),
+                rate.source,
+            )
         )
+    _replace_fx_stage_rows(connection, fx_rows)
+    matching_before = _unconverted_annual_account_fact_count(
+        connection,
+        filing_year=filing_year,
+        chunk_key=chunk_key,
+    )
+    if fx_rows:
         connection.execute(
             f"""
-            update {ANNUAL_ACCOUNT_DATASET}.facts
+            update {ANNUAL_ACCOUNT_DATASET}.facts as facts
             set amount_usd = cast(
-                    amount_original * cast(? as decimal(38, 12))
+                    facts.amount_original * fx.fx_rate
                     as decimal(38, 10)
                 ),
-                fx_rate_to_usd = cast(? as decimal(38, 12)),
-                fx_rate_date = ?, fx_source = ?
-            where source_filing_year = ? and source_chunk = ?
-              and upper(currency) = ? and period_end_date = cast(? as date)
-              and amount_original is not null and amount_usd is null
+                fx_rate_to_usd = fx.fx_rate,
+                fx_rate_date = fx.fx_rate_date,
+                fx_source = fx.fx_source
+            from {_FX_STAGE_TABLE} as fx
+            where facts.source_filing_year = ?
+              and facts.source_chunk = ?
+              and upper(facts.currency) = fx.currency
+              and facts.period_end_date = fx.period_end_date
+              and facts.amount_original is not null
+              and facts.amount_usd is null
             """,
-            [
-                rate.rate,
-                rate.rate,
-                rate.rate_date,
-                rate.source,
-                filing_year,
-                chunk_key,
-                currency,
-                rate_date,
-            ],
-        )
-        matching_after = int(
-            connection.execute(
-                f"""
-                select count(*)
-                from {ANNUAL_ACCOUNT_DATASET}.facts
-                where source_filing_year = ? and source_chunk = ?
-                  and upper(currency) = ? and period_end_date = cast(? as date)
-                  and amount_original is not null and amount_usd is null
-                """,
-                [filing_year, chunk_key, currency, rate_date],
-            ).fetchone()[0]
-        )
-        converted += matching_before - matching_after
-    remaining = int(
-        connection.execute(
-            f"select count(*) from {ANNUAL_ACCOUNT_DATASET}.facts "
-            "where source_filing_year = ? and source_chunk = ? "
-            "and amount_original is not null and amount_usd is null",
             [filing_year, chunk_key],
-        ).fetchone()[0]
+        )
+    remaining = _unconverted_annual_account_fact_count(
+        connection,
+        filing_year=filing_year,
+        chunk_key=chunk_key,
     )
-    return {"converted_fact_count": converted, "unconverted_fact_count": remaining}
+    return {
+        "converted_fact_count": matching_before - remaining,
+        "unconverted_fact_count": remaining,
+    }
 
 
 def build_annual_account_metrics(
@@ -1037,17 +1069,97 @@ def _mark_metrics_requiring_review(
         )
     if not warnings_by_metric:
         return
-    connection.executemany(
-        f"""
-        update {ANNUAL_ACCOUNT_DATASET}.metrics
-        set validation_status = 'review', metric_warnings = ?
-        where metric_id = ?
-        """,
+    _update_metric_validation_warnings(
+        connection,
         [
-            (json.dumps(warnings, sort_keys=True), metric_id)
+            (metric_id, json.dumps(warnings, sort_keys=True))
             for metric_id, warnings in warnings_by_metric.items()
         ],
     )
+
+
+def _update_metric_validation_warnings(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[tuple[str, str]],
+) -> None:
+    arrow_table = _rows_to_arrow_table(
+        rows=rows,
+        columns=_VALIDATION_WARNING_COLUMNS,
+        schema=_VALIDATION_WARNING_ARROW_SCHEMA,
+    )
+    connection.register(_VALIDATION_WARNING_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"""
+            update {ANNUAL_ACCOUNT_DATASET}.metrics as metrics
+            set validation_status = 'review',
+                metric_warnings = warnings.metric_warnings
+            from {_VALIDATION_WARNING_BATCH_RELATION} as warnings
+            where metrics.metric_id = warnings.metric_id
+            """
+        )
+    finally:
+        connection.unregister(_VALIDATION_WARNING_BATCH_RELATION)
+
+
+def _unconverted_annual_account_fact_count(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    filing_year: int,
+    chunk_key: str,
+) -> int:
+    return int(
+        connection.execute(
+            f"""
+            select count(*)
+            from {ANNUAL_ACCOUNT_DATASET}.facts
+            where source_filing_year = ? and source_chunk = ?
+              and amount_original is not null and amount_usd is null
+            """,
+            [filing_year, chunk_key],
+        ).fetchone()[0]
+    )
+
+
+def _replace_fx_stage_rows(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[tuple[Any, ...]],
+) -> None:
+    connection.execute(
+        f"""
+        create or replace temp table {_FX_STAGE_TABLE} (
+            currency varchar not null,
+            period_end_date date not null,
+            fx_rate decimal(38, 12) not null,
+            fx_rate_date date not null,
+            fx_source varchar
+        )
+        """
+    )
+    if not rows:
+        return
+
+    arrow_table = _rows_to_arrow_table(
+        rows=rows,
+        columns=_FX_COLUMNS,
+        schema=_FX_ARROW_SCHEMA,
+    )
+    connection.register(_FX_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"""
+            insert into {_FX_STAGE_TABLE}
+            select
+                currency,
+                period_end_date,
+                cast(fx_rate as decimal(38, 12)),
+                fx_rate_date,
+                fx_source
+            from {_FX_BATCH_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_FX_BATCH_RELATION)
 
 
 def llm_settings() -> tuple[str, str, str]:
@@ -1599,6 +1711,25 @@ def _rows_to_arrow_table(
         ],
         schema=schema,
     )
+
+
+def _upsert_concept_mapping_rows(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[tuple[Any, ...]],
+) -> None:
+    arrow_table = _rows_to_arrow_table(
+        rows=rows,
+        columns=_CONCEPT_MAPPING_COLUMNS,
+        schema=_CONCEPT_MAPPING_ARROW_SCHEMA,
+    )
+    connection.register(_CONCEPT_MAPPING_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"insert or replace into {ANNUAL_ACCOUNT_DATASET}.concept_mappings "
+            f"select * from {_CONCEPT_MAPPING_BATCH_RELATION}"
+        )
+    finally:
+        connection.unregister(_CONCEPT_MAPPING_BATCH_RELATION)
 
 
 def _apply_mapping_table_to_facts(
