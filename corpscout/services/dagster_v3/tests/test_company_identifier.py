@@ -64,37 +64,27 @@ def test_sql_requires_the_identifier_to_exist_in_the_register() -> None:
     assert "r.company_id = g.company_id_normalized" in sql
 
 
-def test_sweden_rule_lists_every_swedish_company_register() -> None:
-    """Four RA codes issue Swedish organisationsnummer, not just Bolagsverket.
+def test_sql_does_not_tier_confidence_by_registration_authority() -> None:
+    """The register lookup is what validates a match, so there is one tier.
 
-    Measured 2026-07-25 against gleif_lei_records joined to se_companies:
-    RA000544 98.8% of 108,771 · RA000546 84.7% of 8,192 ·
-    RA000735 95.8% of 426 · RA000545 70.5% of 166.
-
-    RA000547 is deliberately absent: 4 of its 270 SE entities resolve, on
-    identifiers averaging 5.2 digits, so those matches are most likely
-    coincidental collisions against a 3.4M-row register and belong in the
-    lower confidence tier.
+    Measured 2026-07-25: adding a registration-authority corroboration tier
+    separated 7 rows out of 114,974, and cost a per-country discovery step on
+    every country added. The raw authority code is still stored for diagnosis,
+    it just does not gate or grade anything.
     """
-    assert _SE.registration_authority_ids == frozenset(
-        {"RA000544", "RA000546", "RA000735", "RA000545"}
-    )
-
-
-def test_sql_tiers_all_configured_authorities() -> None:
     sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
-    for code in ("RA000544", "RA000546", "RA000735", "RA000545"):
-        assert f"g.registered_at_id = '{code}'" in sql
-    assert "RA000547" not in sql
+    assert "'register_verified' AS match_confidence" in sql
+    assert "'gleif_registered_as' AS match_method" in sql
+    assert "RA000544" not in sql
+    assert "'registration_authority'" not in sql
+    assert "'jurisdiction_normalized'" not in sql
 
 
-def test_sql_tiers_confidence_by_registration_authority() -> None:
+def test_sql_still_stores_the_authority_code_for_diagnosis() -> None:
     sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
-    assert "registration_authority" in sql
-    assert "jurisdiction_normalized" in sql
-    assert "registered_at_id" in sql
+    assert "g.registered_at_id AS registration_authority_id" in sql
 
 
 def test_sql_marks_superseded_issuers_as_not_current() -> None:
@@ -146,12 +136,11 @@ def _resource(
     return resource
 
 
-def test_replace_reports_the_authority_confidence_tier(
+def test_replace_publishes_and_reports_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # row_count, issuer_count, company_count, identity_key_count,
-    # authority_matched_rows, invalid_rows
-    client = _FakeClickHouseClient((800, 800, 800, 800, 640, 0))
+    # row_count, issuer_count, company_count, identity_key_count, invalid_rows
+    client = _FakeClickHouseClient((800, 800, 800, 800, 0))
     resource = _resource(monkeypatch, client)
 
     metadata = replace_company_identifier_clickhouse(
@@ -164,7 +153,6 @@ def test_replace_reports_the_authority_confidence_tier(
     assert any(s.startswith("EXCHANGE TABLES") for s in client.statements)
     assert client.statements[-1].startswith("DROP TABLE IF EXISTS")
     assert metadata["row_count"] == 800
-    assert metadata["authority_matched_rows"] == 640
     assert metadata["country_code"] == "SE"
 
 
@@ -172,7 +160,7 @@ def test_replace_refuses_a_degraded_gleif_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A partial GLEIF load must not empty a populated country."""
-    client = _FakeClickHouseClient((12, 12, 12, 12, 0, 0))
+    client = _FakeClickHouseClient((12, 12, 12, 12, 0))
     resource = _resource(monkeypatch, client)
 
     with pytest.raises(ValueError, match="below the expected floor"):
@@ -189,7 +177,7 @@ def test_replace_refuses_a_degraded_gleif_refresh(
 def test_replace_refuses_duplicate_identity_grain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = _FakeClickHouseClient((800, 800, 799, 799, 640, 0))
+    client = _FakeClickHouseClient((800, 800, 799, 799, 0))
     resource = _resource(monkeypatch, client)
 
     with pytest.raises(ValueError, match="grain mismatch"):

@@ -21,7 +21,6 @@ _QUALITY_COLUMNS = (
     "issuer_count",
     "company_count",
     "identity_key_count",
-    "authority_matched_rows",
     "invalid_rows",
 )
 
@@ -42,17 +41,10 @@ def build_company_identifier_insert_sql(
 
     A row is emitted only when the normalized identifier exists in the register.
     The register is the ground truth, so an issuer that does not resolve is
-    dropped rather than stored as an unverified guess.
+    dropped rather than stored as an unverified guess. That lookup is the whole
+    validation -- there is one confidence level because there is one proof.
     """
     columns = ", ".join(tables.COMPANY_IDENTIFIER_COLUMNS)
-    authority_ids = rule.registration_authority_ids
-    authority_predicate = (
-        " OR ".join(
-            f"g.registered_at_id = '{code}'" for code in sorted(authority_ids)
-        )
-        if authority_ids
-        else "0"
-    )
     return f"""INSERT INTO {stage_table} ({columns})
 WITH
 register_current AS
@@ -96,9 +88,8 @@ SELECT
     g.lei AS issuer_id,
     '{rule.country_code}' AS country_code,
     r.company_id AS company_id,
-    if({authority_predicate}, 'registration_authority', 'jurisdiction_normalized')
-        AS match_method,
-    if({authority_predicate}, 'exact', 'normalized') AS match_confidence,
+    'gleif_registered_as' AS match_method,
+    'register_verified' AS match_confidence,
     g.registered_at_id AS registration_authority_id,
     g.registered_as_raw AS registered_as_raw,
     g.company_id_normalized AS company_id_normalized,
@@ -123,7 +114,6 @@ def _quality_sql(stage_table: str) -> str:
     uniqExact(company_id) AS company_count,
     uniqExact((issuer_scheme, issuer_id, country_code, company_id))
         AS identity_key_count,
-    countIf(match_method = 'registration_authority') AS authority_matched_rows,
     countIf(
         issuer_scheme = ''
         OR issuer_id = ''
@@ -247,11 +237,11 @@ def company_identifier_clickhouse(
         resolved_at=datetime.now(UTC),
     )
     context.log.info(
-        "Resolved %s company identifiers: rows=%s companies=%s authority_tier=%s",
+        "Resolved %s company identifiers: rows=%s issuers=%s companies=%s",
         metadata["country_code"],
         metadata["row_count"],
+        metadata["issuer_count"],
         metadata["company_count"],
-        metadata["authority_matched_rows"],
     )
     return dg.MaterializeResult(metadata=metadata)
 
