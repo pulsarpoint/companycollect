@@ -1,7 +1,10 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from datetime import date
+from decimal import Decimal
 from typing import Any, Protocol
 
 import duckdb
+import pyarrow as pa
 
 from dagster_v3.defs.slovakia_financials import raw_store, tables
 
@@ -9,6 +12,10 @@ DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 METRICS_TABLE = tables.METRICS_TABLE
 METRIC_NAMES = tables.SK_METRIC_NAMES
 _RATE_REQUEST_BATCH = 50
+DEFAULT_INSERT_BATCH_ROWS = 50_000
+_METRICS_STAGE_TABLE = "_sk_stage"
+_METRICS_BATCH_RELATION = "_sk_metrics_batch"
+_FX_BATCH_RELATION = "_sk_fx_batch"
 
 # Metric → (table index, cisloRiadku) per statutory template family. table 0 =
 # Strana aktív (assets), 1 = Strana pasív (equity+liabilities), 2 = Výkaz ziskov
@@ -259,8 +266,12 @@ def build_metrics_from_batches(
                 skipped += 1
                 continue
             rows.append(row)
-        _append_metrics_batch(connection, rows, source_run_id, batch_key)
-        statements += len(rows)
+        statements += _append_metrics_batch(
+            connection,
+            rows,
+            source_run_id,
+            batch_key,
+        )
 
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
     table_statements = int(
@@ -287,69 +298,95 @@ def build_metrics_from_batches(
     return counts
 
 
-_STAGE_COLUMNS = (
-    "statement_id",
-    "ruz_entity_id",
-    "ico",
-    "template_name",
-    "statement_type",
-    "fiscal_year",
-    "period_start",
-    "period_end",
-    "filed_date",
-    "approved_date",
-    "currency",
-    *(f"{metric}_amount_original" for metric in METRIC_NAMES),
-    "mapped_metric_count",
-    "template_mapped",
+_STAGE_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("statement_id", pa.string(), nullable=False),
+        pa.field("ruz_entity_id", pa.string(), nullable=False),
+        pa.field("ico", pa.string(), nullable=False),
+        pa.field("template_name", pa.string(), nullable=False),
+        pa.field("statement_type", pa.string(), nullable=False),
+        pa.field("fiscal_year", pa.int32()),
+        pa.field("period_start", pa.string()),
+        pa.field("period_end", pa.string()),
+        pa.field("filed_date", pa.string()),
+        pa.field("approved_date", pa.string()),
+        pa.field("currency", pa.string(), nullable=False),
+        *(
+            pa.field(f"{metric}_amount_original", pa.float64())
+            for metric in METRIC_NAMES
+        ),
+        pa.field("mapped_metric_count", pa.int32(), nullable=False),
+        pa.field("template_mapped", pa.int32(), nullable=False),
+    ]
+)
+_FX_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("currency", pa.string(), nullable=False),
+        pa.field("period_end", pa.date32(), nullable=False),
+        pa.field("fx_rate", pa.decimal128(38, 12), nullable=False),
+        pa.field("fx_rate_date", pa.date32(), nullable=False),
+    ]
 )
 
 
-def _stage_row(row: dict[str, Any]) -> tuple[Any, ...]:
-    return (
-        str(row["statement_id"]),
-        row["ruz_entity_id"],
-        row["ico"],
-        row["template_name"],
-        row["statement_type"],
-        row["fiscal_year"],
-        row["period_start"],
-        row["period_end"],
-        row["filed_date"],
-        row["approved_date"],
-        row["currency"],
-        *(row["metrics"][metric] for metric in METRIC_NAMES),
-        row["mapped_metric_count"],
-        row["template_mapped"],
-    )
+def _stage_arrow_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "statement_id": str(row["statement_id"]),
+        "ruz_entity_id": row["ruz_entity_id"],
+        "ico": row["ico"],
+        "template_name": row["template_name"],
+        "statement_type": row["statement_type"],
+        "fiscal_year": row["fiscal_year"],
+        "period_start": row["period_start"],
+        "period_end": row["period_end"],
+        "filed_date": row["filed_date"],
+        "approved_date": row["approved_date"],
+        "currency": row["currency"],
+        **{
+            f"{metric}_amount_original": row["metrics"][metric]
+            for metric in METRIC_NAMES
+        },
+        "mapped_metric_count": row["mapped_metric_count"],
+        "template_mapped": row["template_mapped"],
+    }
 
 
 def _append_metrics_batch(
     connection: duckdb.DuckDBPyConnection,
-    rows: list[dict[str, Any]],
+    rows: Iterable[dict[str, Any]],
     source_run_id: str,
     batch_key: str,
-) -> None:
+    batch_rows: int = DEFAULT_INSERT_BATCH_ROWS,
+) -> int:
+    if batch_rows < 1:
+        raise ValueError("Slovakia financial insert batch size must be positive")
+
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
     amount_cols = ", ".join(f"{m}_amount_original decimal(38, 2)" for m in METRIC_NAMES)
-    placeholders = ", ".join(["?"] * len(_STAGE_COLUMNS))
     metric_cols_select = ", ".join(
         f"{m}_amount_original, cast(null as decimal(38, 2)) as {m}_amount_usd"
         for m in METRIC_NAMES
     )
     connection.execute(
-        f"create or replace temp table _sk_stage ("
+        f"create or replace temp table {_METRICS_STAGE_TABLE} ("
         f"statement_id varchar, ruz_entity_id varchar, ico varchar, "
         f"template_name varchar, statement_type varchar, fiscal_year integer, "
         f"period_start date, period_end date, filed_date date, approved_date date, "
         f"currency_original varchar, {amount_cols}, "
         f"mapped_metric_count integer, template_mapped integer)"
     )
-    if rows:
-        connection.executemany(
-            f"insert into _sk_stage values ({placeholders})",
-            [_stage_row(row) for row in rows],
-        )
+    row_batch: list[dict[str, Any]] = []
+    row_count = 0
+    for row in rows:
+        row_batch.append(row)
+        if len(row_batch) >= batch_rows:
+            _insert_metrics_stage_batch(connection, row_batch)
+            row_count += len(row_batch)
+            row_batch.clear()
+    if row_batch:
+        _insert_metrics_stage_batch(connection, row_batch)
+        row_count += len(row_batch)
+
     connection.execute("begin transaction")
     try:
         connection.execute(f"delete from {qualified} where source_batch_key = ?", [batch_key])
@@ -359,7 +396,7 @@ def _append_metrics_batch(
             select
                 'SK' as country_iso2,
                 '{tables.SOURCE_SLUG}' as source_slug,
-                '{source_run_id}' as source_run_id,
+                ? as source_run_id,
                 statement_id as source_record_id,
                 ico,
                 ruz_entity_id,
@@ -382,21 +419,62 @@ def _append_metrics_batch(
                 '{tables.RUZ_BASE_URL}' as source_url,
                 now() as resolved_at,
                 ? as source_batch_key
-            from _sk_stage
+            from {_METRICS_STAGE_TABLE}
             """,
-            [batch_key],
+            [source_run_id, batch_key],
         )
         connection.execute(
             f"delete from {PROCESSED_BATCHES_TABLE} where batch_key = ?", [batch_key]
         )
         connection.execute(
             f"insert into {PROCESSED_BATCHES_TABLE} values (?, ?, ?, now())",
-            [batch_key, source_run_id, len(rows)],
+            [batch_key, source_run_id, row_count],
         )
         connection.execute("commit")
     except Exception:
         connection.execute("rollback")
         raise
+    return row_count
+
+
+def _insert_metrics_stage_batch(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[dict[str, Any]],
+) -> None:
+    arrow_table = pa.Table.from_pylist(
+        [_stage_arrow_row(row) for row in rows],
+        schema=_STAGE_ARROW_SCHEMA,
+    )
+    metric_select = ", ".join(
+        f"cast({metric}_amount_original as decimal(38, 2)) "
+        f"as {metric}_amount_original"
+        for metric in METRIC_NAMES
+    )
+    connection.register(_METRICS_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"""
+            insert into {_METRICS_STAGE_TABLE}
+            select
+                statement_id,
+                ruz_entity_id,
+                ico,
+                template_name,
+                statement_type,
+                fiscal_year,
+                cast(period_start as date),
+                cast(period_end as date),
+                cast(filed_date as date),
+                cast(approved_date as date),
+                currency,
+                {metric_select},
+                mapped_metric_count,
+                template_mapped
+            from {_METRICS_BATCH_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_METRICS_BATCH_RELATION)
 
 
 def _load_rates(exchange_rates: ExchangeRates, requests: list[Any]) -> dict[tuple[str, str], Any]:
@@ -434,7 +512,12 @@ def apply_slovakia_usd_conversion(
     requests = [_request(currency, end) for currency, end in pairs]
     rates = _load_rates(exchange_rates, requests)
     fx_rows = [
-        (currency, end, rate.rate, str(rate.rate_date))
+        {
+            "currency": currency,
+            "period_end": date.fromisoformat(end),
+            "fx_rate": Decimal(str(rate.rate)),
+            "fx_rate_date": date.fromisoformat(str(rate.rate_date)),
+        }
         for currency, end in pairs
         if (rate := rates.get((currency, end))) is not None
     ]
@@ -448,11 +531,19 @@ def apply_slovakia_usd_conversion(
         "currency varchar, period_end date, fx_rate decimal(38, 12), fx_rate_date date)"
     )
     if fx_rows:
-        connection.executemany(
-            "insert into _sk_fx values "
-            "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date))",
+        fx_table = pa.Table.from_pylist(
             fx_rows,
+            schema=_FX_ARROW_SCHEMA,
         )
+        connection.register(_FX_BATCH_RELATION, fx_table)
+        try:
+            connection.execute(
+                "insert into _sk_fx "
+                "select currency, period_end, fx_rate, fx_rate_date "
+                f"from {_FX_BATCH_RELATION}"
+            )
+        finally:
+            connection.unregister(_FX_BATCH_RELATION)
     connection.execute(
         f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
         f"fx_converted_at = NULL, {reset_usd}"

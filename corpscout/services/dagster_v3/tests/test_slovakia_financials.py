@@ -4,10 +4,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.slovakia_financials import incremental, metrics, raw_store, tables
 
-MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIG_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 METRICS_MIGRATION = (MIG_DIR / "000043_corpscout_sk_financial_metrics.up.sql").read_text()
 
 # --- faithful POD fixture (4-col assets table + 2-col pasíva/P&L) -------------
@@ -70,6 +71,25 @@ class FakeRates:
             )
             for r in requests
         }
+
+
+class TrackingDuckDbConnection:
+    def __init__(self, connection):
+        self._connection = connection
+        self.arrow_batch_sizes = []
+
+    def execute(self, *args, **kwargs):
+        return self._connection.execute(*args, **kwargs)
+
+    def register(self, view_name, python_object):
+        self.arrow_batch_sizes.append(python_object.num_rows)
+        return self._connection.register(view_name, python_object)
+
+    def unregister(self, view_name):
+        return self._connection.unregister(view_name)
+
+    def executemany(self, query, rows):
+        raise AssertionError("Slovakia financial stages must use Arrow inserts")
 
 
 def test_template_family():
@@ -162,14 +182,89 @@ def test_usd_conversion_fills_amounts(tmp_path):
     db = tmp_path / "skfin.duckdb"
     with duckdb.connect(str(db)) as con:
         metrics.build_metrics_from_batches(connection=con, object_store=store, source_run_id="r1")
-        counts = metrics.apply_slovakia_usd_conversion(connection=con, exchange_rates=FakeRates())
+        tracking = TrackingDuckDbConnection(con)
+        counts = metrics.apply_slovakia_usd_conversion(
+            connection=tracking,
+            exchange_rates=FakeRates(),
+        )
     assert counts["rows_converted"] == 1
+    assert tracking.arrow_batch_sizes == [1]
     with duckdb.connect(str(db), read_only=True) as con:
         usd, fx = con.execute(
             f"select total_assets_amount_usd, fx_rate_to_usd "
             f"from {tables.DLT_DATASET_NAME}.{tables.METRICS_TABLE}"
         ).fetchone()
     assert float(usd) == 968.0 and float(fx) == 1.1  # 880 * 1.1
+
+
+def test_metrics_stage_streams_500k_generator_rows_in_bounded_arrow_batches(
+    tmp_path,
+):
+    db = tmp_path / "skfin_bulk.duckdb"
+    with duckdb.connect(str(db)) as connection:
+        metrics._ensure_metrics_tables(connection)
+        tracking = TrackingDuckDbConnection(connection)
+
+        def rows():
+            for index in range(500_000):
+                if index == 50_000:
+                    assert tracking.arrow_batch_sizes == [50_000]
+                yield _decoded_metric_row(index)
+
+        inserted = metrics._append_metrics_batch(
+            tracking,
+            rows(),
+            "bulk-run",
+            "synthetic-batch",
+        )
+        table_rows = connection.execute(
+            f"select count(*) from {tables.DLT_DATASET_NAME}.{tables.METRICS_TABLE}"
+        ).fetchone()[0]
+        processed_rows = connection.execute(
+            f"select statements from {metrics.PROCESSED_BATCHES_TABLE} "
+            "where batch_key = 'synthetic-batch'"
+        ).fetchone()[0]
+
+    assert inserted == 500_000
+    assert table_rows == 500_000
+    assert processed_rows == 500_000
+    assert tracking.arrow_batch_sizes == [50_000] * 10
+
+
+def test_metrics_stage_failure_keeps_previous_batch_and_retry_state(tmp_path):
+    db = tmp_path / "skfin_failure.duckdb"
+    with duckdb.connect(str(db)) as connection:
+        metrics._ensure_metrics_tables(connection)
+        metrics._append_metrics_batch(
+            connection,
+            iter([_decoded_metric_row(1)]),
+            "published-run",
+            "published-batch",
+        )
+
+        def failing_rows():
+            yield _decoded_metric_row(2)
+            raise RuntimeError("synthetic stage failure")
+
+        with pytest.raises(RuntimeError, match="synthetic stage failure"):
+            metrics._append_metrics_batch(
+                connection,
+                failing_rows(),
+                "failed-run",
+                "failed-batch",
+                batch_rows=1,
+            )
+        published = connection.execute(
+            f"select statement_id, source_batch_key "
+            f"from {tables.DLT_DATASET_NAME}.{tables.METRICS_TABLE}"
+        ).fetchall()
+        processed = connection.execute(
+            f"select batch_key from {metrics.PROCESSED_BATCHES_TABLE} "
+            "order by batch_key"
+        ).fetchall()
+
+    assert published == [("1", "published-batch")]
+    assert processed == [("published-batch",)]
 
 
 def test_cursor_roundtrip(tmp_path):
@@ -341,6 +436,28 @@ def _pod_bundle() -> dict:
         "reports": [
             {"id": 7001, "idSablony": 699, "pristupnostDat": "Verejné", "obsah": POD_OBSAH}
         ],
+    }
+
+
+def _decoded_metric_row(statement_id: int) -> dict:
+    return {
+        "statement_id": statement_id,
+        "ruz_entity_id": str(statement_id),
+        "ico": f"{statement_id:08d}",
+        "template_name": "Úč POD",
+        "statement_type": "Riadna",
+        "fiscal_year": 2025,
+        "period_start": "2025-01-01",
+        "period_end": "2025-12-31",
+        "filed_date": None,
+        "approved_date": None,
+        "currency": "EUR",
+        "metrics": {
+            metric: float(statement_id) if metric == "total_assets" else None
+            for metric in tables.SK_METRIC_NAMES
+        },
+        "mapped_metric_count": 1,
+        "template_mapped": 1,
     }
 
 
