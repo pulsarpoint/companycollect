@@ -25,16 +25,28 @@ def test_normalize_national_id() -> None:
     assert normalize_national_id("SE", "5565338133") == "5565338133"
     assert normalize_national_id("SWE", "165565338133") == "5565338133"
     assert normalize_national_id("SWE", "195565338133") == "195565338133"
+    # Norwegian organisasjonsnummer. TED publishes the bare 9 digits -- verified
+    # against live notices 350545-2025 and 351526-2025, whose ids 937884117,
+    # 926725939 and 982903742 match no_companies.org_number directly -- so the
+    # rule mainly has to leave them alone while tolerating VAT and grouped forms.
+    assert normalize_national_id("NOR", "937884117") == "937884117"
+    assert normalize_national_id("NO", "926725939") == "926725939"
+    assert normalize_national_id("NOR", "NO937884117MVA") == "937884117"
+    assert normalize_national_id("NOR", "937 884 117") == "937884117"
+    # Not an organisasjonsnummer (10 digits) -- must pass through untouched
+    # rather than be coerced into a wrong-but-plausible match.
+    assert normalize_national_id("NOR", "0110140071") == "0110140071"
     assert normalize_national_id("", "whatever") == "whatever"
     assert normalize_national_id("FIN", "") == ""
 
 
-def test_ted_countries_include_sweden() -> None:
+def test_ted_countries_include_sweden_and_norway() -> None:
     assert {
         (country.place_code, country.country_iso2) for country in tables.COUNTRIES
     } == {
         ("FIN", "FI"),
         ("SWE", "SE"),
+        ("NOR", "NO"),
     }
 
 

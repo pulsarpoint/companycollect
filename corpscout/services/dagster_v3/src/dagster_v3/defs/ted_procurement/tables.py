@@ -58,6 +58,7 @@ class TedCountry:
 COUNTRIES: tuple[TedCountry, ...] = (
     TedCountry(place_code="FIN", country_iso2="FI"),
     TedCountry(place_code="SWE", country_iso2="SE"),
+    TedCountry(place_code="NOR", country_iso2="NO"),
 )
 
 # National-id normalization rules keyed by the organization's country code as
@@ -68,6 +69,14 @@ NATIONAL_ID_NORMALIZATION: dict[str, tuple[str, str]] = {
     # Finnish VAT form FI12345678 -> Y-tunnus 1234567-8.
     "FIN": (r"^FI(\d{7})(\d)$", r"\1-\2"),
     "FI": (r"^FI(\d{7})(\d)$", r"\1-\2"),
+    # Norwegian organisasjonsnummer is 9 bare digits, which is exactly the
+    # no_companies.org_number format -- TED already publishes it that way
+    # (verified against live notices), so this rule mostly passes values
+    # through untouched. It also folds the VAT form NO<9 digits>MVA and the
+    # space-grouped form seen in other sources. Anything that is not 9 digits
+    # falls through verbatim rather than being coerced into a wrong match.
+    "NOR": (r"^(?:NO)?\s*(\d{3})\s*(\d{3})\s*(\d{3})\s*(?:MVA)?$", r"\1\2\3"),
+    "NO": (r"^(?:NO)?\s*(\d{3})\s*(\d{3})\s*(\d{3})\s*(?:MVA)?$", r"\1\2\3"),
 }
 
 
