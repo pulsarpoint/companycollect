@@ -114,7 +114,23 @@ QUALIFIED_EXCHANGE_RATES_TABLE = f"{tables.ESEF_DATABASE}.{EXCHANGE_RATES_TABLE}
 # the first concept wins over later ones (a fallback), and this insertion
 # order is what the SQL builder below walks to emit the coalesce chain.
 IFRS_METRIC_CONCEPTS: dict[str, tuple[str, ...]] = {
-    "revenue": ("ifrs-full:Revenue", "ifrs-full:RevenueFromContractsWithCustomers"),
+    # Totals first, components last: a filer reporting both a total and its
+    # goods/services split must resolve to the total, or the coalesce would
+    # take one component and understate revenue. RevenueFromSaleOfGoods is a
+    # component for most filers but the sole top line for some (Axfood tags
+    # only that, at 84.06bn SEK for FY2024), which is why it is present at all.
+    #
+    # ifrs-full:RevenueFromInterest is deliberately excluded. A bank's interest
+    # revenue is not comparable with a retailer's turnover, so folding it into
+    # the same column would make cross-company ranking meaningless. Banks and
+    # investment entities keep a NULL revenue instead -- an honest absence.
+    "revenue": (
+        "ifrs-full:Revenue",
+        "ifrs-full:RevenueFromContractsWithCustomers",
+        "ifrs-full:RevenueAndOperatingIncome",
+        "ifrs-full:RevenueFromSaleOfGoods",
+        "ifrs-full:RevenueFromRenderingOfServices",
+    ),
     "operating_profit": ("ifrs-full:ProfitLossFromOperatingActivities",),
     "profit_loss": ("ifrs-full:ProfitLoss",),
     "total_assets": ("ifrs-full:Assets",),
@@ -253,7 +269,18 @@ def build_esef_financial_metrics_select(source_run_id: str) -> str:
                 -- source_fact_count column, which counts ALL facts for the filing.
                 count() AS source_fact_count,
                 countIf(concept_qname IN ({mapped_concepts_sql})) AS mapped_fact_count,
-                argMaxIf(currency, {_TIEBREAK_TUPLE_SQL}, currency != '') AS currency,
+                -- ISO-4217 only. esef_facts.currency holds the raw XBRL unit,
+                -- so per-share facts carry expressions like
+                -- 'SEK/xbrli:shares' (EPS is denominated in kronor *per
+                -- share*). Those facts also carry a filing's highest
+                -- `decimals` -- EPS is tagged to 2 places, revenue in millions
+                -- at -6 -- so the precision tiebreak picks the unit expression
+                -- every time and the FX lookup then finds no rate for it.
+                argMaxIf(
+                    currency,
+                    {_TIEBREAK_TUPLE_SQL},
+                    currency != '' AND match(currency, '^[A-Z]{{3}}$')
+                ) AS currency,
                 argMaxIf(period_start, {_TIEBREAK_TUPLE_SQL}, period_start IS NOT NULL) AS period_start,
 {candidate_columns_sql}
             FROM current_facts

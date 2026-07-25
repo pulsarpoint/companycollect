@@ -129,11 +129,21 @@ def test_ifrs_metric_concepts_shape_and_order() -> None:
         "cash",
         "employees",
     ]
-    # First-concept-wins order preserved for the one metric with a fallback.
+    # First-concept-wins order preserved for the one metric with fallbacks.
+    # Totals precede components on purpose: a filer that reports both a total
+    # and its goods/services split must resolve to the total, or the coalesce
+    # would take one component and understate revenue.
     assert IFRS_METRIC_CONCEPTS["revenue"] == (
         "ifrs-full:Revenue",
         "ifrs-full:RevenueFromContractsWithCustomers",
+        "ifrs-full:RevenueAndOperatingIncome",
+        "ifrs-full:RevenueFromSaleOfGoods",
+        "ifrs-full:RevenueFromRenderingOfServices",
     )
+    # Deliberately absent: ifrs-full:RevenueFromInterest. A bank's interest
+    # revenue is not comparable with a retailer's turnover, and folding it in
+    # would silently make cross-company ranking meaningless.
+    assert "ifrs-full:RevenueFromInterest" not in IFRS_METRIC_CONCEPTS["revenue"]
     for metric_name in (
         "operating_profit",
         "profit_loss",
@@ -161,6 +171,26 @@ def test_build_select_contains_all_eight_concept_groups() -> None:
     for concepts in IFRS_METRIC_CONCEPTS.values():
         for concept in concepts:
             assert f"concept_qname = '{concept}'" in sql, concept
+
+
+def test_build_select_currency_ignores_xbrl_unit_expressions() -> None:
+    """The filing currency must be an ISO-4217 code, never an XBRL unit.
+
+    esef_facts.currency holds the raw XBRL unit, so per-share facts carry
+    expressions like 'SEK/xbrli:shares' (earnings per share is denominated in
+    kronor *per share*). Those facts also carry the highest `decimals` in a
+    filing -- EPS is tagged to 2 decimal places while revenue is tagged in
+    millions at decimals -6 -- so an argMax on the precision tiebreak picks the
+    unit expression every time and poisons the filing's currency.
+
+    Measured 2026-07-25 before this guard: 310 of 347 Swedish 2024 filings
+    resolved to 'SEK/xbrli:shares', the FX lookup found no rate for it, and
+    revenue_amount_usd came back NULL for all of them. Only the 11 filings
+    that happened to resolve to a plain code converted.
+    """
+    sql = build_esef_financial_metrics_select("run-1")
+    assert "match(currency, '^[A-Z]{3}$')" in sql
+    assert "argMaxIf(currency, (coalesce(decimals, -1000), fact_id), currency != '')" not in sql
 
 
 def test_build_select_balance_equation_liabilities_fallback() -> None:
