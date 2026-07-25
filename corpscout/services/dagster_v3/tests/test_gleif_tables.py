@@ -3,7 +3,7 @@ from pathlib import Path
 from dagster_v3.defs.gleif import tables
 
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 
 
 def test_gleif_table_names_are_current_reference_tables() -> None:

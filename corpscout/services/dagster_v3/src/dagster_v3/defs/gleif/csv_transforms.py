@@ -23,6 +23,11 @@ from dagster_v3.defs.gleif.duckdb_state import (
     _row_counts,
     _upsert_current_tables_from_schema,
 )
+from dagster_v3.defs.gleif.reference_api import (
+    GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE,
+    GLEIF_RAW_LEI_ISSUERS_API_TABLE,
+    GLEIF_REFERENCE_API_DLT_DATASET_NAME,
+)
 
 
 def replace_current_from_dlt_raw_tables(
@@ -59,6 +64,20 @@ def replace_current_from_dlt_raw_tables(
             "GLEIF full normalization produced 0 lei_records rows; "
             "refusing to replace the current tables"
         )
+    empty_reference_tables = [
+        table_name
+        for table_name in (
+            tables.GLEIF_LEI_ISSUERS_TABLE,
+            tables.GLEIF_CODE_LIST_ENTRIES_TABLE,
+        )
+        if staged_counts.get(table_name, 0) == 0
+    ]
+    if empty_reference_tables:
+        raise ValueError(
+            "GLEIF API normalization produced empty reference tables: "
+            + ", ".join(empty_reference_tables)
+            + "; refusing to replace the current tables"
+        )
     if load_mode == "full":
         _replace_current_tables_from_schema(
             connection,
@@ -76,23 +95,34 @@ def replace_current_from_dlt_raw_tables(
 
 
 def _ensure_required_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:
-    required_tables = {
-        GLEIF_RAW_LEI_RECORDS_TABLE,
-        GLEIF_RAW_RELATIONSHIPS_TABLE,
-        GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+    required_tables_by_schema = {
+        GLEIF_DLT_RAW_DATASET_NAME: {
+            GLEIF_RAW_LEI_RECORDS_TABLE,
+            GLEIF_RAW_RELATIONSHIPS_TABLE,
+            GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        },
+        GLEIF_REFERENCE_API_DLT_DATASET_NAME: {
+            GLEIF_RAW_LEI_ISSUERS_API_TABLE,
+            GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE,
+        },
     }
-    existing_tables = {
-        row[0]
-        for row in connection.execute(
-            """
-            select table_name
-            from information_schema.tables
-            where table_schema = ?
-            """,
-            [GLEIF_DLT_RAW_DATASET_NAME],
-        ).fetchall()
-    }
-    missing_tables = sorted(required_tables - existing_tables)
+    missing_tables: list[str] = []
+    for schema_name, required_tables in required_tables_by_schema.items():
+        existing_tables = {
+            row[0]
+            for row in connection.execute(
+                """
+                select table_name
+                from information_schema.tables
+                where table_schema = ?
+                """,
+                [schema_name],
+            ).fetchall()
+        }
+        missing_tables.extend(
+            f"{schema_name}.{table_name}"
+            for table_name in sorted(required_tables - existing_tables)
+        )
     if missing_tables:
         raise ValueError(f"Missing GLEIF dlt raw tables: {missing_tables}")
 
@@ -145,6 +175,14 @@ def _build_staging_tables(
         catalog_name=catalog_name,
         publish_date=publish_date,
         run_id=run_id,
+    )
+    _build_lei_issuers(
+        connection,
+        catalog_name=catalog_name,
+    )
+    _build_code_list_entries(
+        connection,
+        catalog_name=catalog_name,
     )
 
 
@@ -527,6 +565,58 @@ def _build_reporting_exceptions(
     )
 
 
+def _build_lei_issuers(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    catalog_name: str,
+) -> None:
+    connection.execute(
+        f"""
+        create or replace table
+          {_staging_table(catalog_name, tables.GLEIF_LEI_ISSUERS_TABLE)} as
+        select
+          coalesce(lei, '') as lei,
+          coalesce(name, '') as name,
+          nullif(marketing_name, '') as marketing_name,
+          nullif(website, '') as website,
+          try_cast(accreditation_date as timestamp) as accreditation_date,
+          cast(coalesce(jurisdictions_json, '[]') as varchar[]) as jurisdictions,
+          cast(coalesce(fund_jurisdictions_json, '[]') as varchar[]) as fund_jurisdictions,
+          'gleif' as source_system,
+          coalesce(source_run_id, '') as source_run_id,
+          try_cast(retrieved_at as timestamp) as retrieved_at,
+          try_cast(retrieved_at as timestamp) as resolved_at
+        from {_reference_api_raw_table(GLEIF_RAW_LEI_ISSUERS_API_TABLE)}
+        """
+    )
+
+
+def _build_code_list_entries(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    catalog_name: str,
+) -> None:
+    connection.execute(
+        f"""
+        create or replace table
+          {_staging_table(catalog_name, tables.GLEIF_CODE_LIST_ENTRIES_TABLE)} as
+        select
+          coalesce(code_list, '') as code_list,
+          coalesce(code, '') as code,
+          coalesce(label, '') as label,
+          nullif(description, '') as description,
+          nullif(country_iso2, '') as country_iso2,
+          try_cast(valid_from as date) as valid_from,
+          try_cast(valid_to as date) as valid_to,
+          'gleif' as source_system,
+          coalesce(source_run_id, '') as source_run_id,
+          try_cast(retrieved_at as timestamp) as retrieved_at,
+          try_cast(retrieved_at as timestamp) as resolved_at
+        from {_reference_api_raw_table(GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE)}
+        """
+    )
+
+
 def _staging_row_counts(
     connection: duckdb.DuckDBPyConnection,
     *,
@@ -544,6 +634,10 @@ def _staging_row_counts(
 
 def _raw_table(table_name: str) -> str:
     return f"{_quote(GLEIF_DLT_RAW_DATASET_NAME)}.{_quote(table_name)}"
+
+
+def _reference_api_raw_table(table_name: str) -> str:
+    return f"{_quote(GLEIF_REFERENCE_API_DLT_DATASET_NAME)}.{_quote(table_name)}"
 
 
 def _raw_column_or_null(

@@ -10,6 +10,11 @@ from dagster_v3.defs.gleif.dlt_csv import (
     GLEIF_RAW_RELATIONSHIPS_TABLE,
     GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
 )
+from dagster_v3.defs.gleif.reference_api import (
+    GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE,
+    GLEIF_RAW_LEI_ISSUERS_API_TABLE,
+    GLEIF_REFERENCE_API_DLT_DATASET_NAME,
+)
 
 
 def test_replace_current_from_dlt_raw_tables_builds_normalized_tables(
@@ -34,6 +39,8 @@ def test_replace_current_from_dlt_raw_tables_builds_normalized_tables(
     assert row_counts["gleif_lei_relationships"] == 1
     assert row_counts["gleif_lei_relationship_periods"] == 1
     assert row_counts["gleif_lei_reporting_exceptions"] == 1
+    assert row_counts["gleif_lei_issuers"] == 1
+    assert row_counts["gleif_code_list_entries"] == 1
 
     with duckdb.connect(str(database_path), read_only=True) as connection:
         assert connection.execute(
@@ -62,6 +69,22 @@ def test_replace_current_from_dlt_raw_tables_builds_normalized_tables(
             ("LEGAL_NAME", "ACME PLC", "en", 0),
             ("OTHER_ENTITY_NAME", "ACME LIMITED", "en", 1),
         ]
+        assert connection.execute(
+            """
+            select lei, jurisdictions, fund_jurisdictions
+            from gleif_reference.gleif.gleif_lei_issuers
+            """
+        ).fetchall() == [
+            ("029200067A7K6CH0H586", ["NG"], ["NG"]),
+        ]
+        assert connection.execute(
+            """
+            select code_list, code, label, country_iso2
+            from gleif_reference.gleif.gleif_code_list_entries
+            """
+        ).fetchall() == [
+            ("REGISTRATION_AUTHORITY", "RA000001", "Afghanistan Registry", "AF"),
+        ]
 
 
 def test_full_replace_refuses_empty_lei_records(tmp_path: Path) -> None:
@@ -78,6 +101,75 @@ def test_full_replace_refuses_empty_lei_records(tmp_path: Path) -> None:
                 publish_date="2026-06-20T16:00:00+00:00",
                 run_id="run-empty",
             )
+
+
+def test_normalization_refuses_empty_reference_api_tables(tmp_path: Path) -> None:
+    database_path = tmp_path / "gleif_reference.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        seed_raw_tables(connection)
+        connection.execute(
+            f"""
+            delete from
+              {GLEIF_REFERENCE_API_DLT_DATASET_NAME}.
+              {GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE}
+            """
+        )
+
+        with pytest.raises(ValueError, match="gleif_code_list_entries"):
+            replace_current_from_dlt_raw_tables(
+                connection=connection,
+                catalog_name=database_path.stem,
+                load_mode="full",
+                publish_date="2026-06-20T16:00:00+00:00",
+                run_id="run-empty-reference",
+            )
+
+
+def test_delta_exactly_replaces_full_refresh_reference_tables(tmp_path: Path) -> None:
+    database_path = tmp_path / "gleif_reference.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        seed_raw_tables(connection)
+        replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="full",
+            publish_date="2026-06-20T16:00:00+00:00",
+            run_id="run-full",
+        )
+        connection.execute(
+            """
+            insert into gleif_reference.gleif.gleif_lei_issuers
+            select
+              'STALE', 'Stale issuer', null, null, null, [], [],
+              'gleif', 'old-run', now(), now()
+            """
+        )
+        connection.execute(
+            """
+            insert into gleif_reference.gleif.gleif_code_list_entries
+            select
+              'REGISTRATION_AUTHORITY', 'STALE', 'Stale code', null, null,
+              null, null, 'gleif', 'old-run', now(), now()
+            """
+        )
+
+        replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="delta",
+            publish_date="2026-06-21T16:00:00+00:00",
+            run_id="run-delta",
+        )
+
+        assert connection.execute(
+            "select lei from gleif_reference.gleif.gleif_lei_issuers"
+        ).fetchall() == [("029200067A7K6CH0H586",)]
+        assert connection.execute(
+            """
+            select code
+            from gleif_reference.gleif.gleif_code_list_entries
+            """
+        ).fetchall() == [("RA000001",)]
 
 
 def test_non_nullable_strings_are_coalesced_for_clickhouse(tmp_path: Path) -> None:
@@ -350,6 +442,81 @@ def seed_raw_tables(
           {", '2027-06-20T00:00:00Z'" if include_reporting_exception_registration_columns else ""}
           {", '213800WAVVOPS85N2205'" if include_reporting_exception_registration_columns else ""}
           {", null" if include_reporting_exception_registration_columns else ""}
+        )
+        """
+    )
+    connection.execute(f"create schema if not exists {GLEIF_REFERENCE_API_DLT_DATASET_NAME}")
+    connection.execute(
+        f"""
+        create or replace table
+          {GLEIF_REFERENCE_API_DLT_DATASET_NAME}.{GLEIF_RAW_LEI_ISSUERS_API_TABLE} (
+            lei varchar,
+            name varchar,
+            marketing_name varchar,
+            website varchar,
+            accreditation_date varchar,
+            jurisdictions_json varchar,
+            fund_jurisdictions_json varchar,
+            source_url varchar,
+            raw_payload_json varchar,
+            source_run_id varchar,
+            retrieved_at varchar
+          )
+        """
+    )
+    connection.execute(
+        f"""
+        insert into
+          {GLEIF_REFERENCE_API_DLT_DATASET_NAME}.{GLEIF_RAW_LEI_ISSUERS_API_TABLE}
+        values (
+          '029200067A7K6CH0H586',
+          'CSCS PLC',
+          'CSCS Nigeria',
+          'https://lei.cscs.ng/',
+          '2018-01-30T00:00:00+00:00',
+          '["NG"]',
+          '["NG"]',
+          'https://api.gleif.org/api/v1/lei-issuers',
+          '{{}}',
+          'run-1',
+          '2026-06-20T16:00:00+00:00'
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        create or replace table
+          {GLEIF_REFERENCE_API_DLT_DATASET_NAME}.{GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE} (
+            code_list varchar,
+            code varchar,
+            label varchar,
+            description varchar,
+            country_iso2 varchar,
+            valid_from varchar,
+            valid_to varchar,
+            source_url varchar,
+            raw_payload_json varchar,
+            source_run_id varchar,
+            retrieved_at varchar
+          )
+        """
+    )
+    connection.execute(
+        f"""
+        insert into
+          {GLEIF_REFERENCE_API_DLT_DATASET_NAME}.{GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE}
+        values (
+          'REGISTRATION_AUTHORITY',
+          'RA000001',
+          'Afghanistan Registry',
+          'Ministry of Commerce',
+          'AF',
+          null,
+          null,
+          'https://api.gleif.org/api/v1/registration-authorities',
+          '{{}}',
+          'run-1',
+          '2026-06-20T16:00:00+00:00'
         )
         """
     )

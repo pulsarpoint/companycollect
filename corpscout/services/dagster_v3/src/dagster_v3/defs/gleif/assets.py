@@ -6,7 +6,10 @@ import tempfile
 from typing import Any, Literal, cast
 
 import dagster as dg
+from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
+from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
+from dagster_dlt.translator import DltResourceTranslatorData
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import (
@@ -28,6 +31,14 @@ from dagster_v3.defs.gleif.dlt_csv import (
     load_gleif_csv_raw_tables,
     raw_table_row_counts,
 )
+from dagster_v3.defs.gleif.reference_api import (
+    GLEIF_API_TIMEOUT_SECONDS,
+    GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE,
+    GLEIF_RAW_LEI_ISSUERS_API_TABLE,
+    gleif_reference_api_dlt_pipeline,
+    gleif_reference_api_source,
+    utc_now_iso,
+)
 from dagster_v3.defs.gleif.source import (
     GLEIF_RAW_BUCKET,
     GleifRawDownloadConfig,
@@ -45,6 +56,10 @@ GLEIF_DUCKDB_RAW_ASSET_KEYS = (
     dg.AssetKey("gleif_raw_relationships_duckdb"),
     dg.AssetKey("gleif_raw_reporting_exceptions_duckdb"),
 )
+GLEIF_REFERENCE_API_ASSET_KEYS = (
+    dg.AssetKey("gleif_lei_issuers_api_duckdb"),
+    dg.AssetKey("gleif_code_list_entries_api_duckdb"),
+)
 
 GLEIF_DUCKDB_RAW_ASSET_BY_TABLE = {
     GLEIF_RAW_LEI_RECORDS_TABLE: "gleif_raw_lei_records_duckdb",
@@ -55,6 +70,28 @@ MIN_FULL_RAW_ROW_COUNTS = {
     GLEIF_RAW_LEI_RECORDS_TABLE: 5_001,
     GLEIF_RAW_RELATIONSHIPS_TABLE: 5_001,
 }
+
+GLEIF_REFERENCE_API_ASSET_BY_TABLE = {
+    GLEIF_RAW_LEI_ISSUERS_API_TABLE: "gleif_lei_issuers_api_duckdb",
+    GLEIF_RAW_CODE_LIST_ENTRIES_API_TABLE: "gleif_code_list_entries_api_duckdb",
+}
+
+
+class GleifReferenceApiDltTranslator(DagsterDltTranslator):
+    def get_asset_spec(self, data: DltResourceTranslatorData) -> dg.AssetSpec:
+        spec = super().get_asset_spec(data)
+        asset_name = GLEIF_REFERENCE_API_ASSET_BY_TABLE.get(data.resource.table_name)
+        if asset_name is None:
+            return spec
+        return spec.replace_attributes(
+            key=asset_name,
+            deps=[],
+            group_name=GROUP_NAME,
+            description=(
+                f"Raw GLEIF API reference table `{data.resource.table_name}` loaded into DuckDB."
+            ),
+            kinds={"python", "dlt", "duckdb", "gleif"},
+        )
 
 
 @dg.asset(
@@ -149,8 +186,33 @@ def gleif_raw_duckdb_dlt_assets(
         )
 
 
+@dlt_assets(
+    dlt_source=gleif_reference_api_source(
+        source_run_id="definition-shape",
+        retrieved_at="1970-01-01T00:00:00Z",
+    ),
+    dlt_pipeline=gleif_reference_api_dlt_pipeline(GLEIF_DUCKDB_PATH),
+    name="gleif_reference_api_duckdb",
+    dagster_dlt_translator=GleifReferenceApiDltTranslator(),
+    pool=GLEIF_DUCKDB_POOL,
+)
+def gleif_reference_api_duckdb_assets(
+    context: AssetExecutionContext,
+    dlt: DagsterDltResource,
+) -> Iterator[Any]:
+    yield from dlt.run(
+        context=context,
+        dlt_source=gleif_reference_api_source(
+            source_run_id=context.run_id,
+            retrieved_at=utc_now_iso(),
+            timeout_seconds=GLEIF_API_TIMEOUT_SECONDS,
+        ),
+        dlt_pipeline=gleif_reference_api_dlt_pipeline(GLEIF_DUCKDB_PATH),
+    )
+
+
 @dg.asset(
-    deps=GLEIF_DUCKDB_RAW_ASSET_KEYS,
+    deps=(*GLEIF_DUCKDB_RAW_ASSET_KEYS, *GLEIF_REFERENCE_API_ASSET_KEYS),
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "gleif"},
     pool=GLEIF_DUCKDB_POOL,
@@ -226,6 +288,8 @@ gleif_reference_bootstrap_job = dg.define_asset_job(
         "gleif_raw_lei_records_duckdb",
         "gleif_raw_relationships_duckdb",
         "gleif_raw_reporting_exceptions_duckdb",
+        "gleif_lei_issuers_api_duckdb",
+        "gleif_code_list_entries_api_duckdb",
         "gleif_reference_duckdb_state",
         "gleif_reference_clickhouse",
         "gleif_raw_retention",
@@ -239,6 +303,8 @@ gleif_reference_delta_job = dg.define_asset_job(
         "gleif_raw_lei_records_duckdb",
         "gleif_raw_relationships_duckdb",
         "gleif_raw_reporting_exceptions_duckdb",
+        "gleif_lei_issuers_api_duckdb",
+        "gleif_code_list_entries_api_duckdb",
         "gleif_reference_duckdb_state",
         "gleif_reference_clickhouse",
         "gleif_raw_retention",
@@ -257,6 +323,7 @@ defs = dg.Definitions(
         gleif_full_raw_reference_files,
         gleif_delta_raw_reference_files,
         gleif_raw_duckdb_dlt_assets,
+        gleif_reference_api_duckdb_assets,
         gleif_reference_duckdb_state,
         gleif_reference_clickhouse,
         gleif_raw_retention,

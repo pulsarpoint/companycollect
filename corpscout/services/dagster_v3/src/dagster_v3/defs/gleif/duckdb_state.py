@@ -31,6 +31,13 @@ TABLE_KEYS = {
     tables.GLEIF_CODE_LIST_ENTRIES_TABLE: ("code_list", "code"),
 }
 
+FULL_REFRESH_TABLES = frozenset(
+    {
+        tables.GLEIF_LEI_ISSUERS_TABLE,
+        tables.GLEIF_CODE_LIST_ENTRIES_TABLE,
+    }
+)
+
 DUCKDB_COLUMN_TYPES = {
     "address_lines": "varchar[]",
     "sequence": "integer",
@@ -160,6 +167,14 @@ def _upsert_current_tables_from_schema(
         for table_name in tables.GLEIF_TABLES:
             if source_row_counts.get(table_name, 0) == 0:
                 continue
+            if table_name in FULL_REFRESH_TABLES:
+                _replace_table_rows_from_schema(
+                    connection,
+                    catalog_name=catalog_name,
+                    table_name=table_name,
+                    source_schema_name=source_schema_name,
+                )
+                continue
             _upsert_table_from_schema(
                 connection,
                 catalog_name=catalog_name,
@@ -170,6 +185,31 @@ def _upsert_current_tables_from_schema(
     except Exception:
         connection.execute("rollback")
         raise
+
+
+def _replace_table_rows_from_schema(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    catalog_name: str,
+    table_name: str,
+    source_schema_name: str,
+) -> None:
+    columns = tables.GLEIF_TABLE_COLUMNS[table_name]
+    source_table = _qualified_table(
+        table_name,
+        catalog_name=catalog_name,
+        schema_name=source_schema_name,
+    )
+    target_table = _qualified_table(
+        table_name,
+        catalog_name=catalog_name,
+        schema_name=DUCKDB_SCHEMA,
+    )
+    connection.execute(f"delete from {target_table}")
+    connection.execute(
+        f"insert into {target_table} "
+        f"select {', '.join(_quote(column) for column in columns)} from {source_table}"
+    )
 
 
 def _upsert_table_from_schema(

@@ -31,6 +31,8 @@ def test_gleif_assets_are_registered() -> None:
     assert "gleif_raw_lei_records_duckdb" in asset_names
     assert "gleif_raw_relationships_duckdb" in asset_names
     assert "gleif_raw_reporting_exceptions_duckdb" in asset_names
+    assert "gleif_lei_issuers_api_duckdb" in asset_names
+    assert "gleif_code_list_entries_api_duckdb" in asset_names
     assert "gleif_reference_duckdb_state" in asset_names
     assert "gleif_reference_clickhouse" in asset_names
     assert "gleif_raw_retention" in asset_names
@@ -68,6 +70,8 @@ def test_gleif_duckdb_state_depends_on_dlt_raw_assets() -> None:
         AssetKey(["gleif_raw_lei_records_duckdb"]),
         AssetKey(["gleif_raw_relationships_duckdb"]),
         AssetKey(["gleif_raw_reporting_exceptions_duckdb"]),
+        AssetKey(["gleif_lei_issuers_api_duckdb"]),
+        AssetKey(["gleif_code_list_entries_api_duckdb"]),
     }
 
 
