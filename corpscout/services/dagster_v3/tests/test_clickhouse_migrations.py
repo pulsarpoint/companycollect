@@ -199,6 +199,7 @@ EXPECTED_MIGRATIONS = (
     "000174_corpscout_company_identifier",
     "000175_corpscout_company_listings_view",
     "000176_corpscout_drop_se_company_listings",
+    "000177_corpscout_rename_government_contract_summary",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -539,6 +540,7 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             or "INSERT INTO" in sql  # data migration (e.g. backfill into a new table)
             or "CREATE DICTIONARY IF NOT EXISTS" in sql
             or "CREATE USER IF NOT EXISTS" in sql
+            or "RENAME TABLE" in sql  # rename is a schema change, and its own inverse
         )
         # Never TRUNCATE TABLE in an up migration. Match the full statement, not the bare
         # substring: legitimate column names like axfr_truncated contain "TRUNCATE" but are
@@ -571,6 +573,7 @@ def test_clickhouse_migrations_have_down_files() -> None:
             or "TRUNCATE TABLE IF EXISTS" in sql  # undo a data backfill
             or "DROP DICTIONARY IF EXISTS" in sql
             or "DROP USER IF EXISTS" in sql
+            or "RENAME TABLE" in sql  # the inverse of a rename is a rename
         )
 
 
@@ -2420,8 +2423,10 @@ def test_company_procurement_signals_migration_covers_columns() -> None:
             "ORDER BY (country_code, company_id, evidence_id)",
         ),
         (
+            # 000165 created this as company_public_procurement_summary.
+            # 000177 renamed it; this migration keeps its original name.
             "company_public_procurement_summary",
-            company_signals_tables.PUBLIC_PROCUREMENT_SUMMARY_COLUMNS,
+            company_signals_tables.GOVERNMENT_CONTRACT_SUMMARY_COLUMNS,
             "ORDER BY (country_code, company_id)",
         ),
         (

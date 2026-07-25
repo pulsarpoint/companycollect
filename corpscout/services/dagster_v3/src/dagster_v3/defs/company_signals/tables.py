@@ -2,7 +2,7 @@ CLICKHOUSE_DATABASE = "corpscout"
 GROUP_NAME = "company_signals"
 
 GOVERNMENT_CONTRACT_EVIDENCE_TABLE = "company_government_contract_evidence"
-PUBLIC_PROCUREMENT_SUMMARY_TABLE = "company_public_procurement_summary"
+GOVERNMENT_CONTRACT_SUMMARY_TABLE = "company_government_contract_summary"
 SIGNAL_COVERAGE_TABLE = "company_signal_coverage"
 
 GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS = (
@@ -19,7 +19,7 @@ GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS = (
     "resolved_at",
 )
 
-PUBLIC_PROCUREMENT_SUMMARY_COLUMNS = (
+GOVERNMENT_CONTRACT_SUMMARY_COLUMNS = (
     "country_code",
     "company_id",
     "public_award_count",

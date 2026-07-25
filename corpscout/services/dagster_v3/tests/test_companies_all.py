@@ -154,7 +154,7 @@ def test_every_country_joins_procurement_summary_without_changing_grain(
     code: str,
 ) -> None:
     select = build_country_insert_select(code)
-    assert "LEFT JOIN corpscout.company_public_procurement_summary AS proc" in select
+    assert "LEFT JOIN corpscout.company_government_contract_summary AS proc" in select
     assert f"proc.country_code = '{code}'" in select
     assert "toUInt8(proc.company_id != '') AS has_government_contract" in select
     assert "proc.public_award_count AS public_award_count" in select
@@ -196,7 +196,7 @@ def test_companies_all_asset_deps_pinned() -> None:
         EXPECTED_COMPANIES_EXPORT_KEYS
         | EXPECTED_INDUSTRIES_EXPORT_KEYS
         | EXPECTED_FINANCIALS_LATEST_EXPORT_KEYS
-        | {"company_public_procurement_summary_clickhouse"}
+        | {"company_government_contract_summary_clickhouse"}
     )
     assert len(expected_keys) == 11 + 10 + 8 + 1
     expected = {dg.AssetKey(key) for key in expected_keys}

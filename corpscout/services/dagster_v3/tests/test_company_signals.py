@@ -20,7 +20,7 @@ def test_procurement_table_contracts() -> None:
         "source_updated_at",
         "resolved_at",
     )
-    assert tables.PUBLIC_PROCUREMENT_SUMMARY_COLUMNS == (
+    assert tables.GOVERNMENT_CONTRACT_SUMMARY_COLUMNS == (
         "country_code",
         "company_id",
         "public_award_count",
@@ -60,11 +60,11 @@ def test_procurement_sql_uses_exact_sweden_identity_and_country_scoped_ted() -> 
 
 def test_procurement_asset_depends_on_both_sources() -> None:
     from dagster_v3.defs.company_signals.procurement import (
-        company_public_procurement_summary_clickhouse,
+        company_government_contract_summary_clickhouse,
     )
 
-    spec = company_public_procurement_summary_clickhouse.specs_by_key[
-        company_public_procurement_summary_clickhouse.key
+    spec = company_government_contract_summary_clickhouse.specs_by_key[
+        company_government_contract_summary_clickhouse.key
     ]
     assert {dep.asset_key for dep in spec.deps} == {
         dg.AssetKey("sweden_uhm_procurement_awards_clickhouse"),

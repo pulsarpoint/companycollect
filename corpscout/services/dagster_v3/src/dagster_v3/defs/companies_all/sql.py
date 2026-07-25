@@ -339,7 +339,7 @@ SELECT
 FROM corpscout.{companies_table} AS c
 LEFT JOIN ({industry_subquery}) AS ind ON ind.company_id = toString({industry_join_key})
 LEFT JOIN corpscout.{financials_table} AS fin ON fin.company_id = toString({financials_join_key})
-LEFT JOIN corpscout.company_public_procurement_summary AS proc
+LEFT JOIN corpscout.company_government_contract_summary AS proc
   ON proc.country_code = '{code}' AND proc.company_id = toString({id})
 """
 
@@ -370,7 +370,7 @@ SELECT
   now64(3) AS resolved_at
 FROM corpscout.{companies_table} AS c
 LEFT JOIN ({industry_subquery}) AS ind ON ind.company_id = toString({industry_join_key})
-LEFT JOIN corpscout.company_public_procurement_summary AS proc
+LEFT JOIN corpscout.company_government_contract_summary AS proc
   ON proc.country_code = '{code}' AND proc.company_id = toString({id})
 """
 

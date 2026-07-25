@@ -94,7 +94,7 @@ FINANCIALS_LATEST_EXPORT_KEYS = tuple(
     for code in COMPANY_FINANCIALS_LATEST_COUNTRIES
 )
 
-SIGNAL_SUMMARY_EXPORT_KEYS = ("company_public_procurement_summary_clickhouse",)
+SIGNAL_SUMMARY_EXPORT_KEYS = ("company_government_contract_summary_clickhouse",)
 
 UPSTREAM_KEYS = (
     COMPANIES_EXPORT_KEYS
@@ -200,7 +200,7 @@ def companies_all_clickhouse(
         database=RESOLVED_DATABASE,
         tables=[
             COMPANIES_ALL_TABLE,
-            "company_public_procurement_summary",
+            "company_government_contract_summary",
             *(SOURCES[code]["companies_table"] for code in COMPANIES_ALL_COUNTRIES),
         ],
     )

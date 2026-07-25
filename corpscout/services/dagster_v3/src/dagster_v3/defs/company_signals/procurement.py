@@ -163,7 +163,7 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
 
 
 @dg.asset(
-    name="company_public_procurement_summary_clickhouse",
+    name="company_government_contract_summary_clickhouse",
     deps=[
         dg.AssetKey("sweden_uhm_procurement_awards_clickhouse"),
         dg.AssetKey("ted_publish_clickhouse"),
@@ -173,7 +173,7 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
     metadata={
         "tables": [
             f"{tables.CLICKHOUSE_DATABASE}.{tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE}",
-            f"{tables.CLICKHOUSE_DATABASE}.{tables.PUBLIC_PROCUREMENT_SUMMARY_TABLE}",
+            f"{tables.CLICKHOUSE_DATABASE}.{tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE}",
             f"{tables.CLICKHOUSE_DATABASE}.{tables.SIGNAL_COVERAGE_TABLE}",
         ]
     },
@@ -183,13 +183,13 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
         "plus independently queryable coverage metadata."
     ),
 )
-def company_public_procurement_summary_clickhouse(
+def company_government_contract_summary_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     required_tables = (
         tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE,
-        tables.PUBLIC_PROCUREMENT_SUMMARY_TABLE,
+        tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE,
         tables.SIGNAL_COVERAGE_TABLE,
         "se_uhm_procurement_awards",
         "ted_notice_winners",
@@ -205,7 +205,7 @@ def company_public_procurement_summary_clickhouse(
         table: f"_tmp_{table}_{uuid.uuid4().hex}"
         for table in (
             tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE,
-            tables.PUBLIC_PROCUREMENT_SUMMARY_TABLE,
+            tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE,
             tables.SIGNAL_COVERAGE_TABLE,
         )
     }
@@ -248,19 +248,19 @@ def company_public_procurement_summary_clickhouse(
             )
             client.execute(procurement_evidence_insert_sql(evidence_stage))
 
-            summary_stage = qualified_stages[tables.PUBLIC_PROCUREMENT_SUMMARY_TABLE]
+            summary_stage = qualified_stages[tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE]
             client.execute(
                 f"""
                 INSERT INTO {summary_stage}
                 SELECT *
-                FROM {qualified[tables.PUBLIC_PROCUREMENT_SUMMARY_TABLE]}
+                FROM {qualified[tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE]}
                 WHERE country_code != '{COUNTRY_CODE}'
                 """
             )
             client.execute(
                 f"""
                 INSERT INTO {summary_stage}
-                    ({", ".join(tables.PUBLIC_PROCUREMENT_SUMMARY_COLUMNS)})
+                    ({", ".join(tables.GOVERNMENT_CONTRACT_SUMMARY_COLUMNS)})
                 SELECT
                     country_code,
                     company_id,
@@ -363,14 +363,14 @@ def company_public_procurement_summary_clickhouse(
     )
 
 
-company_public_procurement_summary_job = dg.define_asset_job(
-    "company_public_procurement_summary_job",
-    selection=dg.AssetSelection.assets("company_public_procurement_summary_clickhouse"),
+company_government_contract_summary_job = dg.define_asset_job(
+    "company_government_contract_summary_job",
+    selection=dg.AssetSelection.assets("company_government_contract_summary_clickhouse"),
 )
 
 defs = dg.Definitions(
-    assets=[company_public_procurement_summary_clickhouse],
-    jobs=[company_public_procurement_summary_job],
+    assets=[company_government_contract_summary_clickhouse],
+    jobs=[company_government_contract_summary_job],
 )
 
 

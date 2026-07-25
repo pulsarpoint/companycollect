@@ -67,7 +67,7 @@ search index (monthly partition, per country)
   -> DuckDB partition tables
   -> corpscout.ted_notices + corpscout.ted_notice_winners (atomic replace from all partitions)
   -> exact national-id match to country company tables
-  -> company_government_contract_evidence + company_public_procurement_summary
+  -> company_government_contract_evidence + company_government_contract_summary
   -> USD step (per-amount currency, publication-date FX key)
 ```
 
