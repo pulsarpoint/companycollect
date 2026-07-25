@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import dagster as dg
 import dlt as dlt_lib
 import duckdb
+import pytest
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.definitions import defs as load_project_defs
@@ -247,24 +248,7 @@ def test_nace_registered_clickhouse_resource_reads_env_at_definition_time(
 def test_normalize_nace_categories_duckdb_reads_raw_payloads(tmp_path) -> None:
     duckdb_path = tmp_path / "nace.duckdb"
     with duckdb.connect(str(duckdb_path)) as connection:
-        connection.execute(f"create schema {nace_source.NACE_DUCKDB_DATASET_NAME}")
-        connection.execute(
-            f"""
-            create table {nace_source.NACE_DUCKDB_DATASET_NAME}.{nace_source.NACE_RAW_DLT_TABLE} (
-              classification_version varchar,
-              source_scheme_uri varchar,
-              source_url varchar,
-              request_query varchar,
-              response_csv varchar,
-              source_payload_hash varchar,
-              valid_from date,
-              valid_to date,
-              is_current utinyint,
-              source_run_id varchar,
-              pulled_at timestamp
-            )
-            """
-        )
+        _create_raw_nace_payloads_table(connection)
         for scheme, body in zip(nace_source.NACE_SCHEMES, FakeSparqlSession().bodies):
             connection.execute(
                 f"""
@@ -288,8 +272,12 @@ def test_normalize_nace_categories_duckdb_reads_raw_payloads(tmp_path) -> None:
 
     with duckdb.connect(str(duckdb_path)) as connection:
         counts = nace_assets.normalize_nace_categories_duckdb(connection=connection)
+        rerun_counts = nace_assets.normalize_nace_categories_duckdb(
+            connection=connection
+        )
 
     assert counts == {"raw_payloads": 2, "rows": 4}
+    assert rerun_counts == counts
     with duckdb.connect(str(duckdb_path), read_only=True) as connection:
         rows = connection.execute(
             f"""
@@ -305,6 +293,85 @@ def test_normalize_nace_categories_duckdb_reads_raw_payloads(tmp_path) -> None:
         ("NACE_REV_2_1", "05", "05", "B", "B", "05 Coal"),
         ("NACE_REV_2_1", "B", "B", None, "B", "B Mining"),
     ]
+
+
+def test_normalize_nace_categories_clears_snapshot_for_empty_input(
+    tmp_path,
+) -> None:
+    duckdb_path = tmp_path / "nace.duckdb"
+    with duckdb.connect(str(duckdb_path)) as connection:
+        _create_raw_nace_payloads_table(connection)
+        nace_assets._ensure_nace_duckdb_schema(connection)
+        connection.execute(
+            f"""
+            insert into {nace_source.NACE_DUCKDB_DATASET_NAME}.
+                        {tables.NACE_CATEGORIES_TABLE}
+            (classification_version)
+            values ('STALE')
+            """
+        )
+
+        counts = nace_assets.normalize_nace_categories_duckdb(connection=connection)
+        remaining_rows = connection.execute(
+            f"""
+            select count(*)
+            from {nace_source.NACE_DUCKDB_DATASET_NAME}.
+                 {tables.NACE_CATEGORIES_TABLE}
+            """
+        ).fetchone()[0]
+
+    assert counts == {"raw_payloads": 0, "rows": 0}
+    assert remaining_rows == 0
+
+
+def test_normalize_nace_categories_preserves_snapshot_for_invalid_input(
+    tmp_path,
+) -> None:
+    duckdb_path = tmp_path / "nace.duckdb"
+    with duckdb.connect(str(duckdb_path)) as connection:
+        _create_raw_nace_payloads_table(connection)
+        nace_assets._ensure_nace_duckdb_schema(connection)
+        connection.execute(
+            f"""
+            insert into {nace_source.NACE_DUCKDB_DATASET_NAME}.
+                        {tables.NACE_CATEGORIES_TABLE}
+            (classification_version)
+            values ('PRESERVED')
+            """
+        )
+        scheme = nace_source.NACE_SCHEMES[0]
+        connection.execute(
+            f"""
+            insert into {nace_source.NACE_DUCKDB_DATASET_NAME}.
+                        {nace_source.NACE_RAW_DLT_TABLE}
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                scheme.classification_version,
+                scheme.scheme_uri,
+                nace_source.SPARQL_ENDPOINT,
+                nace_source.nace_sparql_query(scheme.scheme_uri),
+                "concept,notation,label,broader\n",
+                "a" * 64,
+                scheme.valid_from,
+                scheme.valid_to,
+                scheme.is_current,
+                "run-1",
+                "2026-06-16T00:00:00.000",
+            ],
+        )
+
+        with pytest.raises(ValueError, match="returned no NACE rows"):
+            nace_assets.normalize_nace_categories_duckdb(connection=connection)
+        preserved_versions = connection.execute(
+            f"""
+            select classification_version
+            from {nace_source.NACE_DUCKDB_DATASET_NAME}.
+                 {tables.NACE_CATEGORIES_TABLE}
+            """
+        ).fetchall()
+
+    assert preserved_versions == [("PRESERVED",)]
 
 
 def test_export_nace_categories_clickhouse_replaces_from_duckdb(tmp_path, monkeypatch) -> None:
@@ -374,6 +441,32 @@ class FakeClickHouseClient:
         if params is not None:
             self.inserted_rows.append(list(params))
         return []
+
+
+def _create_raw_nace_payloads_table(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    connection.execute(
+        f"create schema if not exists {nace_source.NACE_DUCKDB_DATASET_NAME}"
+    )
+    connection.execute(
+        f"""
+        create table {nace_source.NACE_DUCKDB_DATASET_NAME}.
+                     {nace_source.NACE_RAW_DLT_TABLE} (
+          classification_version varchar,
+          source_scheme_uri varchar,
+          source_url varchar,
+          request_query varchar,
+          response_csv varchar,
+          source_payload_hash varchar,
+          valid_from date,
+          valid_to date,
+          is_current utinyint,
+          source_run_id varchar,
+          pulled_at timestamp
+        )
+        """
+    )
 
 
 class FakeSparqlResponse:

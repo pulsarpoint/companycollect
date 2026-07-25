@@ -7,6 +7,7 @@ from typing import Any
 import dagster as dg
 import dlt as dlt_lib
 import duckdb
+import pyarrow as pa
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
@@ -36,6 +37,31 @@ NACE_DUCKDB_PATH = Path("data/nace_source.duckdb")
 # Single-writer pool for every asset touching the nace DuckDB file
 # (the instance defaults every pool to limit 1).
 NACE_DUCKDB_POOL = "nace_duckdb"
+_NACE_CATEGORIES_RELATION = "_nace_categories_batch"
+_NACE_CATEGORIES_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("classification_version", pa.string(), nullable=False),
+        pa.field("code", pa.string(), nullable=False),
+        pa.field("normalized_code", pa.string(), nullable=False),
+        pa.field("parent_code", pa.string()),
+        pa.field("level", pa.string(), nullable=False),
+        pa.field("section_code", pa.string()),
+        pa.field("description_en", pa.string(), nullable=False),
+        pa.field("concept_uri", pa.string(), nullable=False),
+        pa.field("parent_concept_uri", pa.string()),
+        pa.field("source_scheme_uri", pa.string(), nullable=False),
+        pa.field("source_url", pa.string(), nullable=False),
+        pa.field("source_payload_hash", pa.string(), nullable=False),
+        pa.field("valid_from", pa.string(), nullable=False),
+        pa.field("valid_to", pa.string()),
+        pa.field("is_current", pa.uint8(), nullable=False),
+        pa.field("source_run_id", pa.string(), nullable=False),
+        pa.field("pulled_at", pa.string(), nullable=False),
+        pa.field("_dlt_load_id", pa.string(), nullable=False),
+        pa.field("_dlt_id", pa.string(), nullable=False),
+    ]
+)
+assert tuple(_NACE_CATEGORIES_ARROW_SCHEMA.names) == tables.NACE_CATEGORIES_COLUMNS
 
 
 class NaceDltTranslator(DagsterDltTranslator):
@@ -162,11 +188,7 @@ def normalize_nace_categories_duckdb(
         order by classification_version
         """
     ).fetchall()
-    connection.execute(
-        f"delete from {NACE_DUCKDB_DATASET_NAME}.{tables.NACE_CATEGORIES_TABLE}"
-    )
-
-    normalized_rows: list[tuple[Any, ...]] = []
+    normalized_rows: list[dict[str, Any]] = []
     for raw_row in raw_rows:
         (
             classification_version,
@@ -195,17 +217,40 @@ def normalize_nace_categories_duckdb(
             source_run_id=str(source_run_id),
             pulled_at=str(pulled_at),
         )
-        normalized_rows.extend(_nace_row_tuple(row) for row in rows)
+        normalized_rows.extend(_nace_arrow_row(row) for row in rows)
 
-    if normalized_rows:
-        connection.executemany(
-            f"""
-            insert into {NACE_DUCKDB_DATASET_NAME}.{tables.NACE_CATEGORIES_TABLE}
-            ({", ".join(tables.NACE_CATEGORIES_COLUMNS)})
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+    arrow_table = (
+        pa.Table.from_pylist(
             normalized_rows,
+            schema=_NACE_CATEGORIES_ARROW_SCHEMA,
         )
+        if normalized_rows
+        else None
+    )
+    if arrow_table is not None:
+        connection.register(_NACE_CATEGORIES_RELATION, arrow_table)
+    try:
+        connection.execute("begin transaction")
+        try:
+            connection.execute(
+                f"delete from {NACE_DUCKDB_DATASET_NAME}.{tables.NACE_CATEGORIES_TABLE}"
+            )
+            if arrow_table is not None:
+                connection.execute(
+                    f"""
+                    insert into {NACE_DUCKDB_DATASET_NAME}.{tables.NACE_CATEGORIES_TABLE}
+                    ({", ".join(tables.NACE_CATEGORIES_COLUMNS)})
+                    select {", ".join(tables.NACE_CATEGORIES_COLUMNS)}
+                    from {_NACE_CATEGORIES_RELATION}
+                    """
+                )
+            connection.execute("commit")
+        except Exception:
+            connection.execute("rollback")
+            raise
+    finally:
+        if arrow_table is not None:
+            connection.unregister(_NACE_CATEGORIES_RELATION)
     return {"raw_payloads": len(raw_rows), "rows": len(normalized_rows)}
 
 
@@ -267,17 +312,16 @@ def _validate_nace_duckdb_schema(connection: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def _nace_row_tuple(row: dict[str, Any]) -> tuple[Any, ...]:
+def _nace_arrow_row(row: dict[str, Any]) -> dict[str, Any]:
     dlt_id_source = "|".join(
         "" if row.get(column) is None else str(row.get(column))
         for column in tables.NACE_CATEGORIES_COLUMNS[:-2]
     )
-    row_with_dlt = {
+    return {
         **row,
         "_dlt_load_id": "",
         "_dlt_id": hashlib.sha256(dlt_id_source.encode("utf-8")).hexdigest(),
     }
-    return tuple(row_with_dlt.get(column) for column in tables.NACE_CATEGORIES_COLUMNS)
 
 
 def _date_string(value: Any) -> str:
