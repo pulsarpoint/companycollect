@@ -198,6 +198,7 @@ EXPECTED_MIGRATIONS = (
     "000172_corpscout_instrument_venues",
     "000173_corpscout_instrument_issuer",
     "000174_corpscout_company_identifier",
+    "000175_corpscout_company_listings_view",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2358,6 +2359,21 @@ def test_instrument_issuer_migration_replaces_isin_lei() -> None:
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.isin_lei" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.instrument_issuer" in down_sql
+
+
+def test_company_listings_view_joins_the_three_layers() -> None:
+    sql = _migration_sql("000175_corpscout_company_listings_view.up.sql")
+    down_sql = _migration_sql("000175_corpscout_company_listings_view.down.sql")
+
+    assert "CREATE VIEW IF NOT EXISTS corpscout.company_listings" in sql
+    assert "FROM corpscout.instrument_venues AS v" in sql
+    assert "INNER JOIN corpscout.instrument_issuer AS i" in sql
+    assert "ON i.isin = v.isin" in sql
+    assert "INNER JOIN corpscout.company_identifier AS c" in sql
+    assert "ON c.issuer_scheme = i.issuer_scheme" in sql
+    assert "AND c.issuer_id = i.issuer_id" in sql
+    assert "WHERE c.is_current = 1" in sql
+    assert "DROP VIEW IF EXISTS corpscout.company_listings" in down_sql
 
 
 def test_company_identifier_migration_covers_columns_in_order() -> None:
