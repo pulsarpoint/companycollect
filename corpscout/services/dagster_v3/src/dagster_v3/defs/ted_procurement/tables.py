@@ -71,8 +71,13 @@ NATIONAL_ID_NORMALIZATION: dict[str, tuple[str, str]] = {
 }
 
 
-def s3_partition_prefix(partition_key: str) -> str:
-    return f"monthly/partition={partition_key}/"
+def s3_partition_prefix(*, country_iso2: str, month: str) -> str:
+    """Object prefix for one (country, month) partition.
+
+    Country leads the path so a single country's snapshots can be listed,
+    audited, or expired without walking every month of every other country.
+    """
+    return f"monthly/country={country_iso2}/partition={month}/"
 
 
 # Column order must match the DuckDB notices table and the 000148 migration.

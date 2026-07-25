@@ -40,6 +40,27 @@ TED_DUCKDB_PATH = Path("data") / tables.DUCKDB_FILE_NAME
 MONTHLY_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date="2024-01-01", end_offset=1
 )
+
+# Country is a partition dimension, not a loop inside the asset. When it was a
+# loop, a country added to COUNTRIES later could not be filled without
+# re-fetching every country already loaded -- which is why ted_notice_winners
+# held 45,891 Finnish winners and zero Swedish ones long after Sweden was
+# added. Now `dg launch --partition SE|2024-01-01` fills exactly one country.
+TED_PARTITIONS = dg.MultiPartitionsDefinition(
+    {
+        "country": dg.StaticPartitionsDefinition(
+            [country.country_iso2 for country in tables.COUNTRIES]
+        ),
+        "month": MONTHLY_PARTITIONS,
+    }
+)
+
+
+def _partition_country_and_month(context: dg.AssetExecutionContext) -> tuple[str, str]:
+    keys = context.partition_key.keys_by_dimension
+    return keys["country"], keys["month"]
+
+
 BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
 
 
@@ -69,7 +90,7 @@ def _first_text(value: object) -> str:
 
 @dg.asset(
     name="ted_monthly_snapshot",
-    partitions_def=MONTHLY_PARTITIONS,
+    partitions_def=TED_PARTITIONS,
     backfill_policy=BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "s3"},
@@ -84,51 +105,53 @@ def ted_monthly_snapshot(
     context: dg.AssetExecutionContext,
     ted_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    partition_key = context.partition_key
-    date_start, date_end = _month_bounds(partition_key)
-    prefix = tables.s3_partition_prefix(partition_key)
+    country_iso2, month = _partition_country_and_month(context)
+    date_start, date_end = _month_bounds(month)
+    prefix = tables.s3_partition_prefix(country_iso2=country_iso2, month=month)
     ted_object_store.ensure_bucket()
 
+    country = next(
+        entry for entry in tables.COUNTRIES if entry.country_iso2 == country_iso2
+    )
     listing_by_scope: dict[tuple[str, str], dict[str, str]] = {}
     manifest_by_publication: dict[str, dict[str, str]] = {}
     downloaded = reused = 0
-    for country in tables.COUNTRIES:
-        query = build_monthly_query(
-            place_codes=(country.place_code,),
-            date_start=date_start,
-            date_end=date_end,
-        )
-        context.log.info("TED search: %s", query)
-        for notice in iter_search_notices(query=query):
-            publication_number = str(notice.get("publication-number", ""))
-            if publication_number == "":
-                continue
-            listing_by_scope[(country.country_iso2, publication_number)] = {
-                "publication_number": publication_number,
-                "publication_date": str(notice.get("publication-date", "")),
-                "notice_type": str(notice.get("notice-type", "")),
-                "buyer_name": _first_text(notice.get("buyer-name")),
-                "notice_title": _first_text(notice.get("notice-title")),
-                "total_value": _first_text(notice.get("total-value")),
-                "total_value_currency": _first_text(notice.get("total-value-cur")),
-                "country_iso2": country.country_iso2,
-                "place_country": country.place_code,
-            }
-            if publication_number in manifest_by_publication:
-                continue
-            xml_key = f"{prefix}xml/{publication_number}.xml"
-            if ted_object_store.exists(xml_key):
-                reused += 1
-            else:
-                ted_object_store.write_bytes(
-                    xml_key, fetch_notice_xml(publication_number=publication_number)
-                )
-                downloaded += 1
-                time.sleep(XML_THROTTLE_SECONDS)
-            manifest_by_publication[publication_number] = {
-                "publication_number": publication_number,
-                "xml_key": xml_key,
-            }
+    query = build_monthly_query(
+        place_codes=(country.place_code,),
+        date_start=date_start,
+        date_end=date_end,
+    )
+    context.log.info("TED search: %s", query)
+    for notice in iter_search_notices(query=query):
+        publication_number = str(notice.get("publication-number", ""))
+        if publication_number == "":
+            continue
+        listing_by_scope[(country.country_iso2, publication_number)] = {
+            "publication_number": publication_number,
+            "publication_date": str(notice.get("publication-date", "")),
+            "notice_type": str(notice.get("notice-type", "")),
+            "buyer_name": _first_text(notice.get("buyer-name")),
+            "notice_title": _first_text(notice.get("notice-title")),
+            "total_value": _first_text(notice.get("total-value")),
+            "total_value_currency": _first_text(notice.get("total-value-cur")),
+            "country_iso2": country.country_iso2,
+            "place_country": country.place_code,
+        }
+        if publication_number in manifest_by_publication:
+            continue
+        xml_key = f"{prefix}xml/{publication_number}.xml"
+        if ted_object_store.exists(xml_key):
+            reused += 1
+        else:
+            ted_object_store.write_bytes(
+                xml_key, fetch_notice_xml(publication_number=publication_number)
+            )
+            downloaded += 1
+            time.sleep(XML_THROTTLE_SECONDS)
+        manifest_by_publication[publication_number] = {
+            "publication_number": publication_number,
+            "xml_key": xml_key,
+        }
 
     listing_rows = list(listing_by_scope.values())
     manifest = list(manifest_by_publication.values())
@@ -142,7 +165,13 @@ def ted_monthly_snapshot(
     )
     ted_object_store.write_json(
         f"{prefix}_SUCCESS.json",
-        json.dumps({"notices": len(listing_rows), "partition": partition_key}),
+        json.dumps(
+            {
+                "notices": len(listing_rows),
+                "country": country_iso2,
+                "month": month,
+            }
+        ),
     )
     return dg.MaterializeResult(
         metadata={
@@ -157,7 +186,7 @@ def ted_monthly_snapshot(
 @dg.asset(
     name="ted_monthly_duckdb",
     deps=[dg.AssetKey("ted_monthly_snapshot")],
-    partitions_def=MONTHLY_PARTITIONS,
+    partitions_def=TED_PARTITIONS,
     backfill_policy=BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
@@ -172,11 +201,11 @@ def ted_monthly_duckdb(
     context: dg.AssetExecutionContext,
     ted_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    partition_key = context.partition_key
-    prefix = tables.s3_partition_prefix(partition_key)
+    country_iso2, month = _partition_country_and_month(context)
+    prefix = tables.s3_partition_prefix(country_iso2=country_iso2, month=month)
     if not ted_object_store.exists(f"{prefix}_SUCCESS.json"):
         raise ValueError(
-            f"TED snapshot partition {partition_key} has no _SUCCESS marker — "
+            f"TED snapshot partition {country_iso2}/{month} has no _SUCCESS marker — "
             "materialize ted_monthly_snapshot first"
         )
     listing = [
@@ -225,7 +254,7 @@ def ted_monthly_duckdb(
                 )
             )
 
-    target = partition_duckdb_path(partition_key)
+    target = partition_duckdb_path(country_iso2=country_iso2, month=month)
     target.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(target))
     try:
@@ -339,7 +368,6 @@ def ted_publish_clickhouse(
 ted_procurement_job = dg.define_asset_job(
     "ted_procurement_job",
     selection=dg.AssetSelection.assets("ted_monthly_snapshot", "ted_monthly_duckdb"),
-    partitions_def=MONTHLY_PARTITIONS,
 )
 ted_publish_job = dg.define_asset_job(
     "ted_publish_job",

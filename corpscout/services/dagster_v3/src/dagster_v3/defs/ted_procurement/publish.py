@@ -27,17 +27,35 @@ class ExchangeRates(Protocol):
     def usd_rates(self, requests: list[Any]) -> dict[tuple[str, str], Any]: ...
 
 
-def partition_duckdb_path(partition_key: str) -> Path:
-    return PARTITION_DUCKDB_ROOT / f"partition_key={partition_key}" / "data.duckdb"
+def partition_duckdb_path(*, country_iso2: str, month: str) -> Path:
+    """One DuckDB file per (country, month) partition.
+
+    Country leads the path for the same reason it leads the object prefix: a
+    country must be removable or re-fetchable on its own.
+    """
+    return (
+        PARTITION_DUCKDB_ROOT
+        / f"country={country_iso2}"
+        / f"partition_key={month}"
+        / "data.duckdb"
+    )
 
 
-def list_parsed_partitions() -> list[tuple[str, Path]]:
+def list_parsed_partitions() -> list[tuple[str, str, Path]]:
+    """Every parsed partition as (country_iso2, month, path), sorted.
+
+    The publish step is deliberately unpartitioned and unions all of these, so
+    it picks up a newly backfilled country without any change of its own.
+    """
     if not PARTITION_DUCKDB_ROOT.exists():
         return []
     result = []
-    for entry in sorted(PARTITION_DUCKDB_ROOT.glob("partition_key=*/data.duckdb")):
-        key = entry.parent.name.removeprefix("partition_key=")
-        result.append((key, entry))
+    for entry in sorted(
+        PARTITION_DUCKDB_ROOT.glob("country=*/partition_key=*/data.duckdb")
+    ):
+        month = entry.parent.name.removeprefix("partition_key=")
+        country_iso2 = entry.parent.parent.name.removeprefix("country=")
+        result.append((country_iso2, month, entry))
     return result
 
 
@@ -56,7 +74,7 @@ def normalize_national_id(country: str, raw: str) -> str:
 def build_publish_tables(
     *,
     duckdb_connection: DuckDBPyConnection,
-    partitions: Iterable[tuple[str, Path]],
+    partitions: Iterable[tuple[str, str, Path]],
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
@@ -68,7 +86,7 @@ def build_publish_tables(
         )
     duckdb_connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
     first = True
-    for key, path in partitions:
+    for _country_iso2, month, path in partitions:
         alias = "part_db"
         duckdb_connection.execute(f"attach '{path}' as {alias} (read_only)")
         for temp, source in (
@@ -83,7 +101,7 @@ def build_publish_tables(
                 else f"insert into {temp}"
             )
             duckdb_connection.execute(
-                f"{verb} select *, '{key}' as partition_key from {alias}.{source}"
+                f"{verb} select *, '{month}' as partition_key from {alias}.{source}"
             )
         duckdb_connection.execute(f"detach {alias}")
         first = False

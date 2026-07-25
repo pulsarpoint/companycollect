@@ -130,7 +130,7 @@ def publish_connection(tmp_path: Path) -> tuple[duckdb.DuckDBPyConnection, list]
     # Same notice re-listed in a later partition — dedup must keep the newer.
     p2 = _write_partition(tmp_path, "2026-04-01", ["492374-2026.xml"])
     con = duckdb.connect(":memory:")
-    return con, [("2026-03-01", p1), ("2026-04-01", p2)]
+    return con, [("FI", "2026-03-01", p1), ("FI", "2026-04-01", p2)]
 
 
 def test_build_publish_tables_and_usd(publish_connection) -> None:
@@ -216,7 +216,7 @@ def test_same_notice_survives_in_two_country_scopes(tmp_path: Path) -> None:
     connection = duckdb.connect(":memory:")
     counts = build_publish_tables(
         duckdb_connection=connection,
-        partitions=[("2026-03-01", partition)],
+        partitions=[("FI", "2026-03-01", partition)],
         source_run_id="run",
     )
 
@@ -231,3 +231,57 @@ def test_same_notice_survives_in_two_country_scopes(tmp_path: Path) -> None:
         """
     ).fetchall()
     assert scopes == [("FI", 3), ("SE", 3)]
+
+
+# --- month x country partitioning -------------------------------------------
+
+
+def test_partitions_are_keyed_by_country_and_month() -> None:
+    """Country is a partition dimension so one country can be backfilled alone.
+
+    Previously the assets were month-only and looped every entry in COUNTRIES,
+    so a country added later could not be filled without re-fetching the ones
+    already loaded -- which is exactly why ted_notice_winners held 45,891
+    Finnish winners and zero Swedish ones after Sweden was added to COUNTRIES.
+    """
+    from dagster_v3.defs.ted_procurement.assets import TED_PARTITIONS
+
+    assert set(TED_PARTITIONS.partition_dimension_names) == {"country", "month"}
+    countries = next(
+        dimension.partitions_def
+        for dimension in TED_PARTITIONS.partitions_defs
+        if dimension.name == "country"
+    )
+    assert set(countries.get_partition_keys()) == {
+        country.country_iso2 for country in tables.COUNTRIES
+    }
+
+
+def test_s3_prefix_and_duckdb_path_separate_countries() -> None:
+    """Both storage layouts must key on country, or two countries collide."""
+    from dagster_v3.defs.ted_procurement.publish import partition_duckdb_path
+
+    se_prefix = tables.s3_partition_prefix(country_iso2="SE", month="2024-01-01")
+    fi_prefix = tables.s3_partition_prefix(country_iso2="FI", month="2024-01-01")
+    assert se_prefix != fi_prefix
+    assert "country=SE" in se_prefix and "partition=2024-01-01" in se_prefix
+
+    se_path = partition_duckdb_path(country_iso2="SE", month="2024-01-01")
+    fi_path = partition_duckdb_path(country_iso2="FI", month="2024-01-01")
+    assert se_path != fi_path
+    assert "country=SE" in str(se_path)
+
+
+def test_list_parsed_partitions_reports_country_and_month(tmp_path, monkeypatch) -> None:
+    from dagster_v3.defs.ted_procurement import publish as publish_module
+
+    monkeypatch.setattr(publish_module, "PARTITION_DUCKDB_ROOT", tmp_path)
+    for country, month in (("SE", "2024-01-01"), ("FI", "2024-02-01")):
+        target = publish_module.partition_duckdb_path(country_iso2=country, month=month)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"")
+
+    found = {
+        (country, month) for country, month, _ in publish_module.list_parsed_partitions()
+    }
+    assert found == {("SE", "2024-01-01"), ("FI", "2024-02-01")}
