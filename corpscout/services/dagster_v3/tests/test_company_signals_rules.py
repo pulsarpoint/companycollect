@@ -35,10 +35,29 @@ def test_norway_is_ted_only_and_says_so() -> None:
     assert "Doffin" in rule.coverage_caveat
 
 
+def test_finland_is_ted_only_despite_having_a_national_register() -> None:
+    """Hilma exists but is shaped like TED, not like UHM's flat awards table.
+
+    Finland is TED-only until NationalProcurementSource supports that second
+    shape. That still resolves 39,314 of 43,731 winners to 7,067 companies
+    (89.9%, measured 2026-07-25), so the rule earns its place now.
+    """
+    rule = COUNTRY_PROCUREMENT_RULES["FI"]
+
+    assert rule.companies_table == "fi_companies"
+    assert rule.company_id_column == "business_id"
+    # Y-tunnus is 1234567-8 -- nine characters including the dash.
+    assert rule.identifier_length == 9
+    assert rule.national_source is None
+    assert rule.upstream_asset_keys == ("ted_publish_clickhouse",)
+    assert "Hilma" in rule.coverage_caveat
+
+
 def test_each_country_gets_its_own_asset_name() -> None:
     names = {rule.asset_name for rule in COUNTRY_PROCUREMENT_RULES.values()}
     assert names == {
         "se_government_contract_signals_clickhouse",
+        "fi_government_contract_signals_clickhouse",
         "no_government_contract_signals_clickhouse",
     }
 

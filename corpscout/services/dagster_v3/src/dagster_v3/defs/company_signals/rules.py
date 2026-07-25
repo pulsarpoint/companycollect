@@ -96,6 +96,27 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
             awards_table="se_uhm_procurement_awards",
         ),
     ),
+    # Finland has its own register too -- fi_hilma_notice_winners, 11,265 rows --
+    # but Hilma is shaped like TED (a winners/notices pair) rather than like
+    # UHM's single flat awards table, so it cannot reuse the national-source CTE
+    # as written. Finland is therefore TED-only for now, which still resolves
+    # 39,314 of 43,731 winners to 7,067 companies (89.9%, measured 2026-07-25).
+    # Wiring Hilma in means generalizing NationalProcurementSource to a second
+    # shape, not adding a field.
+    "FI": CountryProcurementRule(
+        country_code="FI",
+        companies_table="fi_companies",
+        company_id_column="business_id",
+        # Y-tunnus is 7 digits, a dash and a check digit: 1234567-8.
+        identifier_length=9,
+        ted_winner_countries=("FI", "FIN"),
+        coverage_caveat=(
+            "TED eForms awards only; Hilma, Finland's national procurement "
+            "register, is ingested but not yet joined to this signal, so "
+            "contracts below the EU publication thresholds are absent."
+        ),
+        national_source=None,
+    ),
     "NO": CountryProcurementRule(
         country_code="NO",
         companies_table="no_companies",

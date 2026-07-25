@@ -98,6 +98,7 @@ FINANCIALS_LATEST_EXPORT_KEYS = tuple(
 # which each country asset replaces its own partition of.
 SIGNAL_SUMMARY_EXPORT_KEYS = (
     "se_government_contract_signals_clickhouse",
+    "fi_government_contract_signals_clickhouse",
     "no_government_contract_signals_clickhouse",
 )
 
