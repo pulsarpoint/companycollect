@@ -40,9 +40,7 @@ def read_cursor(connection: duckdb.DuckDBPyConnection) -> str | None:
     return row[0] if row else None
 
 
-def write_cursor(
-    connection: duckdb.DuckDBPyConnection, last_archive_date: str
-) -> None:
+def write_cursor(connection: duckdb.DuckDBPyConnection, last_archive_date: str) -> None:
     _ensure_cursor_table(connection)
     connection.execute(
         f"insert into {CURSOR_TABLE} values (?, ?) "
@@ -88,7 +86,7 @@ def build_incremental_metrics(
     cursor = read_cursor(connection)
     selected = select_new_archives(archives, cursor, max_archives)
 
-    rows: list[tuple[Any, ...]] = []
+    financials.create_metrics_stage_table(connection)
     parsed = 0
     for archive_date, object_key in selected:
         archive = archives_by_key[object_key]
@@ -99,8 +97,10 @@ def build_incremental_metrics(
                 archive_path,
                 bucket=raw_archives.UK_COMPANIES_HOUSE_RAW_BUCKET,
             )
-            archive_rows, archive_parsed = financials.parse_archive_rows(archive_path)
-        rows.extend(archive_rows)
+            archive_parsed = financials.append_metrics_rows(
+                connection=connection,
+                rows=financials.iter_archive_rows(archive_path),
+            )
         parsed += archive_parsed
         if log is not None:
             log(
@@ -109,9 +109,8 @@ def build_incremental_metrics(
                 archive_parsed,
             )
 
-    counts = financials.write_metrics_table(
+    counts = financials.replace_metrics_table_from_stage(
         connection=connection,
-        rows=rows,
         source_run_id=source_run_id,
         source_slug=ARCHIVE_SOURCE_SLUG,
         allow_empty=True,

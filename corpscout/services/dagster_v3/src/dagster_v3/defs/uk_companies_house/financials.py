@@ -1,11 +1,14 @@
 import re
 import tempfile
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
 import duckdb
+import pyarrow as pa
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.uk_companies_house import raw_archives, resources, tables
@@ -18,6 +21,38 @@ FINANCIALS_SOURCE_SLUG = "uk_companies_house_accounts"
 DEFAULT_CURRENCY = "GBP"
 _RATE_REQUEST_BATCH = 50
 _IXBRL_SUFFIXES = (".html", ".xhtml", ".xml")
+DEFAULT_INSERT_BATCH_ROWS = 50_000
+_METRICS_STAGE_TABLE = "_gb_stage"
+_METRICS_BATCH_RELATION = "_gb_metrics_batch"
+_FX_BATCH_RELATION = "_gb_fx_batch"
+_METRICS_STAGE_COLUMNS = (
+    "company_number",
+    "period_end",
+    "fiscal_year",
+    "currency",
+    *(f"{metric}_amount_original" for metric in METRIC_NAMES),
+)
+_METRICS_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("company_number", pa.string(), nullable=False),
+        pa.field("period_end", pa.date32(), nullable=False),
+        pa.field("fiscal_year", pa.int32(), nullable=False),
+        pa.field("currency", pa.string(), nullable=False),
+        *(
+            pa.field(f"{metric}_amount_original", pa.string())
+            for metric in METRIC_NAMES
+        ),
+    ]
+)
+_FX_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("currency", pa.string(), nullable=False),
+        pa.field("period_end", pa.date32(), nullable=False),
+        pa.field("fx_rate", pa.decimal128(38, 12), nullable=False),
+        pa.field("fx_rate_date", pa.date32(), nullable=False),
+        pa.field("fx_source", pa.string(), nullable=False),
+    ]
+)
 
 
 class ExchangeRates(Protocol):
@@ -77,10 +112,13 @@ def build_uk_financials_from_archive(
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Parse every iXBRL filing in an accounts archive into native-GBP metrics."""
-    rows, parsed = parse_archive_rows(archive_path)
-    counts = write_metrics_table(
+    create_metrics_stage_table(connection)
+    parsed = append_metrics_rows(
         connection=connection,
-        rows=rows,
+        rows=iter_archive_rows(archive_path),
+    )
+    counts = replace_metrics_table_from_stage(
+        connection=connection,
         source_run_id=source_run_id,
         source_slug=FINANCIALS_SOURCE_SLUG,
     )
@@ -95,25 +133,22 @@ def build_uk_financials_from_archive(
     return counts
 
 
-def parse_archive_rows(archive_path: str | Path) -> tuple[list[tuple[Any, ...]], int]:
-    """Parse every iXBRL filing in one accounts archive → (metric rows, parsed count)."""
-    rows: list[tuple[Any, ...]] = []
-    parsed = 0
+def iter_archive_rows(archive_path: str | Path) -> Iterator[tuple[Any, ...]]:
+    """Yield native-currency metric rows from one iXBRL accounts archive."""
     with zipfile.ZipFile(archive_path) as archive:
-        members = [
-            n for n in archive.namelist() if n.lower().endswith(_IXBRL_SUFFIXES)
-        ]
-        for name in members:
-            extracted = _extract_metrics(archive.read(name))
+        for member in archive.infolist():
+            if member.is_dir() or not member.filename.lower().endswith(_IXBRL_SUFFIXES):
+                continue
+            extracted = _extract_metrics(archive.read(member))
             if extracted is None:
                 continue
-            parsed += 1
             company_number, period_end, metrics = extracted
-            rows.append(metrics_row(company_number, period_end, metrics))
-    return rows, parsed
+            yield metrics_row(company_number, period_end, metrics)
 
 
-def metrics_row(company_number: str, period_end: Any, metrics: dict[str, Any]) -> tuple[Any, ...]:
+def metrics_row(
+    company_number: str, period_end: Any, metrics: dict[str, Any]
+) -> tuple[Any, ...]:
     """One staging row: (company_number, period_end, fiscal_year, currency, *originals)."""
     return (
         company_number,
@@ -124,69 +159,175 @@ def metrics_row(company_number: str, period_end: Any, metrics: dict[str, Any]) -
     )
 
 
-def write_metrics_table(*, connection: duckdb.DuckDBPyConnection,
+def create_metrics_stage_table(connection: duckdb.DuckDBPyConnection) -> None:
+    amount_cols = ", ".join(
+        f"{metric}_amount_original decimal(38, 2)" for metric in METRIC_NAMES
+    )
+    connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    connection.execute(
+        f"create or replace temp table {_METRICS_STAGE_TABLE} ("
+        f"company_number varchar, period_end date, fiscal_year integer, "
+        f"currency varchar, {amount_cols})"
+    )
+
+
+def append_metrics_rows(
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    rows: Iterable[tuple[Any, ...]],
+    batch_rows: int = DEFAULT_INSERT_BATCH_ROWS,
+) -> int:
+    """Stream metric rows into the current staging table in bounded Arrow batches."""
+    if batch_rows < 1:
+        raise ValueError("UK accounts insert batch size must be greater than zero")
+
+    batch: list[tuple[Any, ...]] = []
+    inserted = 0
+    for row in rows:
+        batch.append(row)
+        if len(batch) >= batch_rows:
+            _insert_metrics_batch(connection, batch)
+            inserted += len(batch)
+            batch.clear()
+    if batch:
+        _insert_metrics_batch(connection, batch)
+        inserted += len(batch)
+    return inserted
+
+
+def _insert_metrics_batch(
+    connection: duckdb.DuckDBPyConnection,
     rows: list[tuple[Any, ...]],
+) -> None:
+    expected_columns = len(_METRICS_STAGE_COLUMNS)
+    if any(len(row) != expected_columns for row in rows):
+        raise ValueError(
+            f"UK accounts metric rows must contain {expected_columns} columns"
+        )
+
+    arrow_table = pa.Table.from_arrays(
+        [
+            pa.array((row[0] for row in rows), type=pa.string()),
+            pa.array((row[1] for row in rows), type=pa.date32()),
+            pa.array((row[2] for row in rows), type=pa.int32()),
+            pa.array((row[3] for row in rows), type=pa.string()),
+            *(
+                pa.array(
+                    (None if row[index] is None else str(row[index]) for row in rows),
+                    type=pa.string(),
+                )
+                for index in range(4, expected_columns)
+            ),
+        ],
+        schema=_METRICS_ARROW_SCHEMA,
+    )
+    column_list = ", ".join(_METRICS_STAGE_COLUMNS)
+    select_list = ", ".join(
+        (
+            *_METRICS_STAGE_COLUMNS[:4],
+            *(
+                f"cast({column} as decimal(38, 2)) as {column}"
+                for column in _METRICS_STAGE_COLUMNS[4:]
+            ),
+        )
+    )
+    connection.register(_METRICS_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"insert into {_METRICS_STAGE_TABLE} ({column_list}) "
+            f"select {select_list} from {_METRICS_BATCH_RELATION}"
+        )
+    finally:
+        connection.unregister(_METRICS_BATCH_RELATION)
+
+
+def replace_metrics_table_from_stage(
+    *,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     source_slug: str,
     allow_empty: bool = False,
 ) -> dict[str, int]:
-    """Write staging metric rows into the DuckDB metrics table (latest period/company)."""
+    """Atomically replace metrics with the latest staged period per company."""
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
-    amount_cols = ", ".join(f"{m}_amount_original decimal(38, 2)" for m in METRIC_NAMES)
-    placeholders = ", ".join(["?"] * (4 + len(METRIC_NAMES)))
     metric_cols_select = ", ".join(
         f"{m}_amount_original, cast(null as decimal(38, 2)) as {m}_amount_usd"
         for m in METRIC_NAMES
     )
-    connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
-    connection.execute(
-        f"create or replace temp table _gb_stage ("
-        f"company_number varchar, period_end date, fiscal_year integer, "
-        f"currency varchar, {amount_cols})"
+    staged_rows = int(
+        connection.execute(f"select count(*) from {_METRICS_STAGE_TABLE}").fetchone()[0]
     )
-    if rows:
-        connection.executemany(
-            f"insert into _gb_stage values ({placeholders})", rows
-        )
-    connection.execute(
-        f"""
-        create or replace table {qualified} as
-        with ranked as (
-            select *, row_number() over (
-                partition by company_number order by period_end desc
-            ) as rn
-            from _gb_stage
-        )
-        select
-            'GB' as country_iso2,
-            {resources._sql_literal(source_slug)} as source_slug,
-            {resources._sql_literal(source_run_id)} as source_run_id,
-            company_number as source_record_id,
-            company_number,
-            period_end as period_end_date,
-            fiscal_year,
-            currency,
-            {metric_cols_select},
-            cast(null as decimal(38, 12)) as fx_rate_to_usd,
-            cast(null as date) as fx_rate_date,
-            '' as fx_source,
-            now() as resolved_at
-        from ranked where rn = 1
-        """
-    )
-    company_rows = int(
-        connection.execute(f"select count(*) from {qualified}").fetchone()[0]
-    )
-    with_revenue = int(
-        connection.execute(
-            f"select count(*) from {qualified} where revenue_amount_original is not null"
-        ).fetchone()[0]
-    )
-    if company_rows == 0 and not allow_empty:
+    if staged_rows == 0 and not allow_empty:
         raise ValueError(
             "UK Companies House accounts produced no metrics; refusing to replace the table"
         )
+
+    connection.execute("begin transaction")
+    try:
+        connection.execute(
+            f"""
+            create or replace table {qualified} as
+            with ranked as (
+                select *, row_number() over (
+                    partition by company_number order by period_end desc
+                ) as rn
+                from {_METRICS_STAGE_TABLE}
+            )
+            select
+                'GB' as country_iso2,
+                {resources._sql_literal(source_slug)} as source_slug,
+                {resources._sql_literal(source_run_id)} as source_run_id,
+                company_number as source_record_id,
+                company_number,
+                period_end as period_end_date,
+                fiscal_year,
+                currency,
+                {metric_cols_select},
+                cast(null as decimal(38, 12)) as fx_rate_to_usd,
+                cast(null as date) as fx_rate_date,
+                '' as fx_source,
+                now() as resolved_at
+            from ranked where rn = 1
+            """
+        )
+        company_rows = int(
+            connection.execute(f"select count(*) from {qualified}").fetchone()[0]
+        )
+        with_revenue = int(
+            connection.execute(
+                f"select count(*) from {qualified} "
+                "where revenue_amount_original is not null"
+            ).fetchone()[0]
+        )
+    except Exception:
+        connection.execute("rollback")
+        raise
+    connection.execute("commit")
     return {"companies": company_rows, "with_revenue": with_revenue}
+
+
+def write_metrics_table(
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    rows: Iterable[tuple[Any, ...]],
+    source_run_id: str,
+    source_slug: str,
+    allow_empty: bool = False,
+    batch_rows: int = DEFAULT_INSERT_BATCH_ROWS,
+) -> dict[str, int]:
+    """Stream rows into staging and atomically publish the latest company periods."""
+    create_metrics_stage_table(connection)
+    append_metrics_rows(
+        connection=connection,
+        rows=rows,
+        batch_rows=batch_rows,
+    )
+    return replace_metrics_table_from_stage(
+        connection=connection,
+        source_run_id=source_run_id,
+        source_slug=source_slug,
+        allow_empty=allow_empty,
+    )
 
 
 def build_uk_companies_house_financials(
@@ -254,7 +395,13 @@ def apply_uk_usd_conversion(
     requests = [_request(currency, end) for currency, end in pairs]
     rates = _load_rates(exchange_rates, requests)
     fx_rows = [
-        (currency, end, rate.rate, str(rate.rate_date), rate.source)
+        (
+            currency,
+            date.fromisoformat(end),
+            Decimal(str(rate.rate)),
+            date.fromisoformat(str(rate.rate_date)),
+            rate.source,
+        )
         for currency, end in pairs
         if (rate := rates.get((currency, end))) is not None
     ]
@@ -270,11 +417,19 @@ def apply_uk_usd_conversion(
         "fx_rate_date date, fx_source varchar)"
     )
     if fx_rows:
-        connection.executemany(
-            "insert into _gb_fx values "
-            "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
-            fx_rows,
+        fx_table = pa.Table.from_pylist(
+            [dict(zip(_FX_ARROW_SCHEMA.names, row, strict=True)) for row in fx_rows],
+            schema=_FX_ARROW_SCHEMA,
         )
+        connection.register(_FX_BATCH_RELATION, fx_table)
+        try:
+            connection.execute(
+                "insert into _gb_fx "
+                "select currency, period_end, fx_rate, fx_rate_date, fx_source "
+                f"from {_FX_BATCH_RELATION}"
+            )
+        finally:
+            connection.unregister(_FX_BATCH_RELATION)
     connection.execute(
         f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
         f"fx_source = '', {reset_usd}"
@@ -296,7 +451,11 @@ def apply_uk_usd_conversion(
             f"select count(*) from {qualified} where fx_rate_to_usd is not null"
         ).fetchone()[0]
     )
-    counts = {"rate_pairs": len(pairs), "rates_found": len(fx_rows), "rows_converted": converted}
+    counts = {
+        "rate_pairs": len(pairs),
+        "rates_found": len(fx_rows),
+        "rows_converted": converted,
+    }
     if log is not None:
         log(
             "Applied UK USD conversion: rate_pairs=%s rates_found=%s rows_converted=%s",

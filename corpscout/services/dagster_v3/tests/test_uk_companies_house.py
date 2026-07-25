@@ -1,10 +1,13 @@
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.uk_companies_house import industries, resources, tables
 
-MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIG_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 COMPANIES_MIGRATION = (MIG_DIR / "000035_corpscout_gb_companies.up.sql").read_text()
 INDUSTRIES_MIGRATION = (MIG_DIR / "000036_corpscout_gb_industries.up.sql").read_text()
 FINANCIALS_MIGRATION = (
@@ -51,19 +54,35 @@ def test_companies_build(tmp_path):
         )
     assert counts == {"companies": 3, "active": 2}
     with duckdb.connect(str(db), read_only=True) as con:
-        cols = [r[0] for r in con.execute(
-            f"describe {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
-        ).fetchall()]
+        cols = [
+            r[0]
+            for r in con.execute(
+                f"describe {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
+            ).fetchall()
+        ]
         assert cols == list(tables.GB_COMPANIES_COLUMNS)
-        rows = {r[0]: r for r in con.execute(
-            f"select company_number, name, company_category, is_active, incorporation_date, "
-            f"dissolution_date, address, address_line_2, postal_code, city, county, country "
-            f"from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
-        ).fetchall()}
+        rows = {
+            r[0]: r
+            for r in con.execute(
+                f"select company_number, name, company_category, is_active, incorporation_date, "
+                f"dissolution_date, address, address_line_2, postal_code, city, county, country "
+                f"from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
+            ).fetchall()
+        }
     import datetime as dt
+
     assert rows["08209948"][1:] == (
-        "ACME LTD", "Private Limited Company", True, dt.date(2012, 9, 11), None,
-        "1 HIGH STREET", "FLOOR 2", "EC1A 1AA", "LONDON", "GREATER LONDON", "ENGLAND",
+        "ACME LTD",
+        "Private Limited Company",
+        True,
+        dt.date(2012, 9, 11),
+        None,
+        "1 HIGH STREET",
+        "FLOOR 2",
+        "EC1A 1AA",
+        "LONDON",
+        "GREATER LONDON",
+        "ENGLAND",
     )
     # dissolved -> is_active False, dissolution date parsed.
     assert rows["00000001"][3] is False
@@ -79,9 +98,12 @@ def test_industries_build_sic_to_nace(tmp_path):
     # ACME has 2 SIC, DORMANT 1 (unmapped), OLD 1 -> 4 rows, 3 mapped.
     assert counts == {"industries": 4, "nace_mapped": 3}
     with duckdb.connect(str(db), read_only=True) as con:
-        cols = [r[0] for r in con.execute(
-            f"describe {tables.DLT_DATASET_NAME}.{tables.INDUSTRIES_RAW_TABLE}"
-        ).fetchall()]
+        cols = [
+            r[0]
+            for r in con.execute(
+                f"describe {tables.DLT_DATASET_NAME}.{tables.INDUSTRIES_RAW_TABLE}"
+            ).fetchall()
+        ]
         assert cols == list(tables.GB_INDUSTRIES_COLUMNS)
         rows = con.execute(
             f"select company_number, source_industry_code, source_industry_code_set, "
@@ -91,7 +113,14 @@ def test_industries_build_sic_to_nace(tmp_path):
         ).fetchall()
     by = {(r[0], r[1]): r for r in rows}
     # primary SIC -> NACE Rev2, first 4 digits.
-    assert by[("08209948", "62012")][2:] == ("UK_SIC_2007", "NACE_REV_2", "62.01", "6201", "mapped", 1)
+    assert by[("08209948", "62012")][2:] == (
+        "UK_SIC_2007",
+        "NACE_REV_2",
+        "62.01",
+        "6201",
+        "mapped",
+        1,
+    )
     assert by[("08209948", "70229")][6:] == ("mapped", 0)  # secondary
     # 99999 Dormant placeholder -> unmapped.
     assert by[("09999999", "99999")][4:] == ("99.99", "9999", "unmapped", 1)
@@ -99,7 +128,8 @@ def test_industries_build_sic_to_nace(tmp_path):
 
 def test_companies_export_columns_match_migration():
     assert (
-        f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_COMPANIES_TABLE}" in COMPANIES_MIGRATION
+        f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_COMPANIES_TABLE}"
+        in COMPANIES_MIGRATION
     )
     for column in tables.GB_COMPANIES_EXPORT_COLUMNS:
         assert f"    {column} " in COMPANIES_MIGRATION, f"missing {column} in 000035"
@@ -109,7 +139,8 @@ def test_companies_export_columns_match_migration():
 
 def test_industries_export_columns_match_migration():
     assert (
-        f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_INDUSTRIES_TABLE}" in INDUSTRIES_MIGRATION
+        f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_INDUSTRIES_TABLE}"
+        in INDUSTRIES_MIGRATION
     )
     for column in tables.GB_INDUSTRIES_EXPORT_COLUMNS:
         assert f"    {column} " in INDUSTRIES_MIGRATION, f"missing {column} in 000036"
@@ -147,13 +178,19 @@ def test_financials_build_from_archive(tmp_path):
     db = tmp_path / "fin.duckdb"
     with duckdb.connect(str(db)) as con:
         counts = financials.build_uk_financials_from_archive(
-            connection=con, archive_path=archive, source_run_id="r1", source_url="http://x.zip"
+            connection=con,
+            archive_path=archive,
+            source_run_id="r1",
+            source_url="http://x.zip",
         )
     assert counts["companies"] == 1 and counts["with_revenue"] == 1
     with duckdb.connect(str(db), read_only=True) as con:
-        cols = [r[0] for r in con.execute(
-            f"describe {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
-        ).fetchall()]
+        cols = [
+            r[0]
+            for r in con.execute(
+                f"describe {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
+            ).fetchall()
+        ]
         assert cols == list(tables.GB_FINANCIAL_METRICS_COLUMNS)
         row = con.execute(
             f"select company_number, currency, revenue_amount_original, "
@@ -162,8 +199,227 @@ def test_financials_build_from_archive(tmp_path):
         ).fetchone()
     assert row[0] == "01234567" and row[1] == "GBP"
     assert row[2] == 1234000  # turnover scale applied
-    assert row[3] == -5000    # profit sign applied
+    assert row[3] == -5000  # profit sign applied
     assert row[4] == 1495313  # net assets
+
+
+def test_financial_metric_staging_streams_500k_rows_in_bounded_arrow_batches(
+    tmp_path,
+    monkeypatch,
+):
+    from dagster_v3.defs.uk_companies_house import financials
+
+    batch_sizes = []
+    original_insert = financials._insert_metrics_batch
+
+    def recording_insert(connection, rows):
+        batch_sizes.append(len(rows))
+        original_insert(connection, rows)
+
+    monkeypatch.setattr(financials, "_insert_metrics_batch", recording_insert)
+    consumed = 0
+
+    def rows():
+        nonlocal consumed
+        for index in range(500_000):
+            consumed += 1
+            yield (
+                f"{index:08d}",
+                date(2025, 12, 31),
+                2025,
+                "GBP",
+                Decimal(index),
+                *(None for _ in tables.UK_FINANCIAL_METRIC_NAMES[1:]),
+            )
+
+    with duckdb.connect(str(tmp_path / "bulk.duckdb")) as connection:
+        financials.create_metrics_stage_table(connection)
+        inserted = financials.append_metrics_rows(
+            connection=connection,
+            rows=rows(),
+        )
+        staged = connection.execute("select count(*) from _gb_stage").fetchone()[0]
+
+    assert consumed == 500_000
+    assert inserted == 500_000
+    assert staged == 500_000
+    assert batch_sizes == [50_000] * 10
+
+
+def test_financial_metric_replacement_keeps_previous_table_on_empty_or_parse_failure(
+    tmp_path,
+):
+    from dagster_v3.defs.uk_companies_house import financials
+
+    original = (
+        "00000001",
+        date(2024, 12, 31),
+        2024,
+        "GBP",
+        Decimal("100"),
+        *(None for _ in tables.UK_FINANCIAL_METRIC_NAMES[1:]),
+    )
+
+    def failing_rows():
+        yield (
+            "00000002",
+            date(2025, 12, 31),
+            2025,
+            "GBP",
+            Decimal("200"),
+            *(None for _ in tables.UK_FINANCIAL_METRIC_NAMES[1:]),
+        )
+        raise RuntimeError("synthetic parser failure")
+
+    with duckdb.connect(str(tmp_path / "rollback.duckdb")) as connection:
+        financials.write_metrics_table(
+            connection=connection,
+            rows=iter([original]),
+            source_run_id="run-1",
+            source_slug="test",
+        )
+        with pytest.raises(ValueError, match="produced no metrics"):
+            financials.write_metrics_table(
+                connection=connection,
+                rows=iter(()),
+                source_run_id="run-2",
+                source_slug="test",
+            )
+        with pytest.raises(RuntimeError, match="synthetic parser failure"):
+            financials.write_metrics_table(
+                connection=connection,
+                rows=failing_rows(),
+                source_run_id="run-3",
+                source_slug="test",
+                batch_rows=1,
+            )
+        remaining = connection.execute(
+            f"select company_number, source_run_id "
+            f"from {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
+        ).fetchall()
+
+    assert remaining == [("00000001", "run-1")]
+
+
+def test_financial_metric_rerun_preserves_latest_period_selection(tmp_path):
+    from dagster_v3.defs.uk_companies_house import financials
+
+    def rows():
+        for period, revenue in (
+            (date(2024, 12, 31), Decimal("100")),
+            (date(2025, 12, 31), Decimal("200.125")),
+        ):
+            yield (
+                "00000001",
+                period,
+                period.year,
+                "GBP",
+                revenue,
+                *(None for _ in tables.UK_FINANCIAL_METRIC_NAMES[1:]),
+            )
+
+    with duckdb.connect(str(tmp_path / "idempotent.duckdb")) as connection:
+        first = financials.write_metrics_table(
+            connection=connection,
+            rows=rows(),
+            source_run_id="same-run",
+            source_slug="test",
+        )
+        second = financials.write_metrics_table(
+            connection=connection,
+            rows=rows(),
+            source_run_id="same-run",
+            source_slug="test",
+        )
+        published = connection.execute(
+            f"select period_end_date, revenue_amount_original "
+            f"from {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
+        ).fetchall()
+
+    assert first == second == {"companies": 1, "with_revenue": 1}
+    assert published == [(date(2025, 12, 31), Decimal("200.13"))]
+
+
+def test_financial_metric_empty_replacement_preserves_schema(tmp_path):
+    from dagster_v3.defs.uk_companies_house import financials
+
+    with duckdb.connect(str(tmp_path / "empty.duckdb")) as connection:
+        counts = financials.write_metrics_table(
+            connection=connection,
+            rows=iter(()),
+            source_run_id="run-empty",
+            source_slug="test",
+            allow_empty=True,
+        )
+        columns = [
+            row[0]
+            for row in connection.execute(
+                f"describe {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
+            ).fetchall()
+        ]
+
+    assert counts == {"companies": 0, "with_revenue": 0}
+    assert columns == list(tables.GB_FINANCIAL_METRICS_COLUMNS)
+
+
+def test_financial_metric_fx_arrow_stage_preserves_conversion_results(tmp_path):
+    from dagster_v3.defs.uk_companies_house import financials
+
+    class FakeRate:
+        rate = Decimal("1.250000000000")
+        rate_date = "2025-12-30"
+        source = "synthetic-fx"
+
+    class FakeExchangeRates:
+        def usd_rates(self, requests):
+            return {
+                (request.currency, request.rate_date): FakeRate()
+                for request in requests
+            }
+
+    metric_row = (
+        "00000001",
+        date(2025, 12, 31),
+        2025,
+        "GBP",
+        Decimal("100.00"),
+        *(None for _ in tables.UK_FINANCIAL_METRIC_NAMES[1:]),
+    )
+    with duckdb.connect(str(tmp_path / "fx.duckdb")) as connection:
+        financials.write_metrics_table(
+            connection=connection,
+            rows=iter([metric_row]),
+            source_run_id="run-fx",
+            source_slug="test",
+        )
+        first = financials.apply_uk_usd_conversion(
+            connection=connection,
+            exchange_rates=FakeExchangeRates(),
+        )
+        second = financials.apply_uk_usd_conversion(
+            connection=connection,
+            exchange_rates=FakeExchangeRates(),
+        )
+        converted = connection.execute(
+            f"select revenue_amount_usd, fx_rate_to_usd, fx_rate_date, fx_source "
+            f"from {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
+        ).fetchone()
+
+    assert (
+        first
+        == second
+        == {
+            "rate_pairs": 1,
+            "rates_found": 1,
+            "rows_converted": 1,
+        }
+    )
+    assert converted == (
+        Decimal("125.00"),
+        Decimal("1.250000000000"),
+        date(2025, 12, 30),
+        "synthetic-fx",
+    )
 
 
 def test_financials_export_columns_match_migration():
@@ -277,7 +533,9 @@ def test_pdf_extract_financials_with_fake_llm(monkeypatch):
     from dagster_v3.defs.uk_companies_house import pdf_extract
 
     # avoid real OCR: feed canned text.
-    monkeypatch.setattr(pdf_extract, "ocr_pdf_bytes", lambda *a, **k: "Revenue 58,739 ...")
+    monkeypatch.setattr(
+        pdf_extract, "ocr_pdf_bytes", lambda *a, **k: "Revenue 58,739 ..."
+    )
 
     class _Msg:
         content = (
@@ -298,10 +556,17 @@ def test_pdf_extract_financials_with_fake_llm(monkeypatch):
     class _FakeLLM:
         chat = _Chat()
 
-    result = pdf_extract.extract_pdf_financials(
-        b"%PDF", base_url="x", model="m", api_key="k",
-    ) if False else pdf_extract.extract_financials_from_text(
-        "Revenue 58,739", base_url="x", model="m", api_key="k", client=_FakeLLM()
+    result = (
+        pdf_extract.extract_pdf_financials(
+            b"%PDF",
+            base_url="x",
+            model="m",
+            api_key="k",
+        )
+        if False
+        else pdf_extract.extract_financials_from_text(
+            "Revenue 58,739", base_url="x", model="m", api_key="k", client=_FakeLLM()
+        )
     )
     assert result["revenue"] == 58739 and result["currency"] == "USD"
 
@@ -315,7 +580,9 @@ def test_register_job_and_schedule():
     assert sch.job.name == "uk_companies_house_register_job"
     keys = {
         k.path[-1]
-        for k in repo.get_job("uk_companies_house_register_job").asset_layer.executable_asset_keys
+        for k in repo.get_job(
+            "uk_companies_house_register_job"
+        ).asset_layer.executable_asset_keys
     }
     assert keys == {
         "uk_companies_house_register_archive_s3",
