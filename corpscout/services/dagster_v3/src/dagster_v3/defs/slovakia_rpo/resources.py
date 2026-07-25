@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import duckdb
+import pyarrow as pa
 import requests
 from dlt.sources.helpers import requests as dlt_requests
 
@@ -26,7 +27,7 @@ DEFAULT_TIMEOUT_SECONDS = 900
 DOWNLOAD_CHUNK_BYTES = 1 << 20
 DOWNLOAD_MAX_ATTEMPTS = 5
 DOWNLOAD_RETRY_BASE_SECONDS = 2.0
-DEFAULT_INSERT_BATCH_ROWS = 20_000
+DEFAULT_INSERT_BATCH_ROWS = 50_000
 
 _DOWNLOAD_RETRYABLE_ERRORS = (
     requests.exceptions.ChunkedEncodingError,
@@ -234,12 +235,10 @@ def load_records_into_duckdb(
     records: Iterable[dict[str, Any]],
     batch_rows: int = DEFAULT_INSERT_BATCH_ROWS,
 ) -> int:
-    """Extract + batch-insert organization records into the DuckDB raw table."""
+    """Extract and bulk-insert organization records into the DuckDB raw table."""
+    if batch_rows < 1:
+        raise ValueError("Slovak RPO insert batch size must be greater than zero")
     _create_raw_table(connection)
-    placeholders = ", ".join("?" for _ in RPO_RAW_COLUMNS)
-    insert_sql = (
-        f"insert into {DLT_DATASET_NAME}.{RPO_RAW_TABLE} values ({placeholders})"
-    )
     batch: list[tuple[str, ...]] = []
     count = 0
     for record in records:
@@ -248,13 +247,34 @@ def load_records_into_duckdb(
             continue
         batch.append(tuple(row[column] for column in RPO_RAW_COLUMNS))
         if len(batch) >= batch_rows:
-            connection.executemany(insert_sql, batch)
+            _insert_raw_batch(connection, batch)
             count += len(batch)
-            batch = []
+            batch.clear()
     if batch:
-        connection.executemany(insert_sql, batch)
+        _insert_raw_batch(connection, batch)
         count += len(batch)
     return count
+
+
+def _insert_raw_batch(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[tuple[str, ...]],
+) -> None:
+    values_by_column = zip(*rows, strict=True)
+    arrow_table = pa.Table.from_arrays(
+        [pa.array(values, type=pa.string()) for values in values_by_column],
+        names=RPO_RAW_COLUMNS,
+    )
+    registered_name = "_slovakia_rpo_raw_batch"
+    column_list = ", ".join(f'"{column}"' for column in RPO_RAW_COLUMNS)
+    connection.register(registered_name, arrow_table)
+    try:
+        connection.execute(
+            f"insert into {DLT_DATASET_NAME}.{RPO_RAW_TABLE} ({column_list}) "
+            f"select {column_list} from {registered_name}"
+        )
+    finally:
+        connection.unregister(registered_name)
 
 
 def load_slovakia_rpo_dump(

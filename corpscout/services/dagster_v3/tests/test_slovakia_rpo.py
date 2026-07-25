@@ -3,10 +3,11 @@ import json
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.slovakia_rpo import industries, resources, tables
 
-MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIG_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 COMPANIES_MIGRATION = (MIG_DIR / "000041_corpscout_sk_companies.up.sql").read_text()
 INDUSTRIES_MIGRATION = (MIG_DIR / "000042_corpscout_sk_industries.up.sql").read_text()
 
@@ -126,6 +127,47 @@ def test_extract_company_terminated_and_missing_ico():
 def test_iter_dump_records_stops_at_organizations_block():
     records = list(resources.iter_dump_records(_make_dump([R1, R2]).splitlines(keepends=True)))
     assert [r["id"] for r in records] == [13553043, 222]  # suborganizations not yielded
+
+
+def test_load_records_streams_arrow_batches(tmp_path):
+    consumed = 0
+
+    def records():
+        nonlocal consumed
+        for index in range(5):
+            consumed += 1
+            yield {
+                **R2,
+                "id": index,
+                "identifiers": [{"value": str(index), "validFrom": "2010-05-05"}],
+            }
+
+    with duckdb.connect(str(tmp_path / "streamed.duckdb")) as connection:
+        row_count = resources.load_records_into_duckdb(
+            connection=connection,
+            records=records(),
+            batch_rows=2,
+        )
+        stored = connection.execute(
+            f"select count(*) from {tables.DLT_DATASET_NAME}.{tables.RPO_RAW_TABLE}"
+        ).fetchone()[0]
+
+    assert consumed == 5
+    assert row_count == 5
+    assert stored == 5
+
+
+def test_load_records_rejects_invalid_batch_size():
+    with duckdb.connect(":memory:") as connection:
+        with pytest.raises(
+            ValueError,
+            match="Slovak RPO insert batch size must be greater than zero",
+        ):
+            resources.load_records_into_duckdb(
+                connection=connection,
+                records=[],
+                batch_rows=0,
+            )
 
 
 def test_companies_build(tmp_path):
