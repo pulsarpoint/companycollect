@@ -3,6 +3,7 @@ import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace as dataclass_replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -462,6 +463,15 @@ def test_duckdb_normalization_unpivots_tsv_and_preserves_statuses(
                   and value_code = 'B1GQ'
                 """
             ).fetchone()[0]
+            dimension_rows = connection.execute(
+                f"""
+                select dimension_code, dimension_label, dimension_position,
+                       value_code, value_label, value_position
+                from {tables.EUROSTAT_DUCKDB_SCHEMA}.
+                     {tables.EUROSTAT_DIMENSION_VALUES_TABLE}
+                order by dimension_position, value_position
+                """
+            ).fetchall()
 
     assert counts == {
         "datasets": 1,
@@ -499,6 +509,55 @@ def test_duckdb_normalization_unpivots_tsv_and_preserves_statuses(
         ("NO", "A,CP_MEUR,D21X31,NO", 2012, 106.0, ""),
     ]
     assert gross_domestic_product == "Gross domestic product"
+    assert dimension_rows == [
+        ("freq", "freq label", 1, "A", "Annual", 1),
+        ("unit", "unit label", 2, "CP_MEUR", "Current prices, million euro", 1),
+        ("na_item", "na_item label", 3, "B1GQ", "Gross domestic product", 1),
+        (
+            "na_item",
+            "na_item label",
+            3,
+            "D21X31",
+            "Taxes less subsidies on products",
+            2,
+        ),
+        ("geo", "geo label", 4, "NO", "Norway", 1),
+        ("geo", "geo label", 4, "DE", "Germany", 2),
+        (
+            "geo",
+            "geo label",
+            4,
+            "EU27_2020",
+            "European Union - 27 countries",
+            3,
+        ),
+    ]
+
+
+def test_dimension_value_insert_refuses_empty_metadata(tmp_path: Path) -> None:
+    object_store = FakeObjectStore()
+    manifest = _sync_fixture(object_store=object_store, run_id="run-1")
+
+    with transform.local_snapshot_files(
+        object_store=object_store,
+        manifest=manifest,
+        datasets=(FIXTURE_DATASET,),
+    ) as local_snapshot:
+        dataset_snapshot = local_snapshot.datasets[0]
+        empty_snapshot = dataclass_replace(
+            dataset_snapshot,
+            metadata=dataclass_replace(
+                dataset_snapshot.metadata,
+                dimensions=(),
+            ),
+        )
+        with duckdb.connect(str(tmp_path / "eurostat.duckdb")) as connection:
+            transform.ensure_eurostat_duckdb_schema(connection)
+            with pytest.raises(ValueError, match="has no dimension values"):
+                transform._insert_dimension_values(
+                    connection=connection,
+                    dataset_snapshot=empty_snapshot,
+                )
 
 
 def test_duckdb_rejects_malformed_observations_without_replacing_existing_data(

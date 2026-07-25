@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import pyarrow as pa
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.duckdb.schema_contract import (
@@ -17,6 +18,23 @@ from dagster_v3.defs.duckdb.schema_contract import (
     validate_duckdb_table_contract,
 )
 from dagster_v3.defs.eurostat import source, tables
+
+_DIMENSION_VALUES_RELATION = "_eurostat_dimension_values_batch"
+_DIMENSION_VALUES_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("dataset_code", pa.string(), nullable=False),
+        pa.field("dimension_code", pa.string(), nullable=False),
+        pa.field("dimension_label", pa.string(), nullable=False),
+        pa.field("dimension_position", pa.uint16(), nullable=False),
+        pa.field("value_code", pa.string(), nullable=False),
+        pa.field("value_label", pa.string(), nullable=False),
+        pa.field("value_position", pa.uint16(), nullable=False),
+    ]
+)
+assert (
+    tuple(_DIMENSION_VALUES_ARROW_SCHEMA.names)
+    == tables.EUROSTAT_DIMENSION_VALUES_COLUMNS
+)
 
 
 @dataclass(frozen=True)
@@ -218,15 +236,15 @@ def _insert_dimension_values(
     dataset_snapshot: LocalDatasetSnapshot,
 ) -> None:
     rows = [
-        (
-            dataset_snapshot.dataset.code,
-            dimension.code,
-            dimension.label,
-            dimension.position,
-            value.code,
-            value.label,
-            value.position,
-        )
+        {
+            "dataset_code": dataset_snapshot.dataset.code,
+            "dimension_code": dimension.code,
+            "dimension_label": dimension.label,
+            "dimension_position": dimension.position,
+            "value_code": value.code,
+            "value_label": value.label,
+            "value_position": value.position,
+        }
         for dimension in dataset_snapshot.metadata.dimensions
         for value in dimension.values
     ]
@@ -234,14 +252,22 @@ def _insert_dimension_values(
         raise ValueError(
             f"Eurostat dataset {dataset_snapshot.dataset.code} has no dimension values"
         )
-    connection.executemany(
-        f"""
-        insert into {_qualified(tables.EUROSTAT_DIMENSION_VALUES_TABLE)}
-        ({", ".join(tables.EUROSTAT_DIMENSION_VALUES_COLUMNS)})
-        values (?, ?, ?, ?, ?, ?, ?)
-        """,
+    dimension_values = pa.Table.from_pylist(
         rows,
+        schema=_DIMENSION_VALUES_ARROW_SCHEMA,
     )
+    connection.register(_DIMENSION_VALUES_RELATION, dimension_values)
+    try:
+        connection.execute(
+            f"""
+            insert into {_qualified(tables.EUROSTAT_DIMENSION_VALUES_TABLE)}
+            ({", ".join(tables.EUROSTAT_DIMENSION_VALUES_COLUMNS)})
+            select {", ".join(tables.EUROSTAT_DIMENSION_VALUES_COLUMNS)}
+            from {_DIMENSION_VALUES_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_DIMENSION_VALUES_RELATION)
 
 
 def _normalize_dataset_tsv(
