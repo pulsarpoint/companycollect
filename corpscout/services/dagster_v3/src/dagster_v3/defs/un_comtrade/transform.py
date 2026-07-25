@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import pyarrow as pa
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.duckdb.schema_contract import (
@@ -17,6 +18,28 @@ from dagster_v3.defs.duckdb.schema_contract import (
     validate_duckdb_table_contract,
 )
 from dagster_v3.defs.un_comtrade import source, tables
+
+_TOTALS_SOURCE_FILES_RELATION = "_un_comtrade_totals_source_files_batch"
+_TOTALS_SOURCE_FILES_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("local_path", pa.string(), nullable=False),
+        pa.field("expected_year", pa.uint16(), nullable=False),
+        pa.field("source_url", pa.string(), nullable=False),
+        pa.field("source_object_key", pa.string(), nullable=False),
+        pa.field("source_object_hash", pa.string(), nullable=False),
+    ]
+)
+_AVAILABILITY_SOURCE_FILES_RELATION = (
+    "_un_comtrade_availability_source_files_batch"
+)
+_AVAILABILITY_SOURCE_FILES_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("local_path", pa.string(), nullable=False),
+        pa.field("source_url", pa.string(), nullable=False),
+        pa.field("source_object_key", pa.string(), nullable=False),
+        pa.field("source_object_hash", pa.string(), nullable=False),
+    ]
+)
 
 
 @dataclass(frozen=True)
@@ -213,22 +236,31 @@ def _normalize_annual_totals(
         )
         """
     )
-    connection.executemany(
-        """
-        insert into un_comtrade_totals_source_files
-        values (?, ?, ?, ?, ?)
-        """,
+    source_files = pa.Table.from_pylist(
         [
-            (
-                str(item.path),
-                item.year,
-                item.source_url,
-                item.source_object_key,
-                item.source_object_hash,
-            )
+            {
+                "local_path": str(item.path),
+                "expected_year": item.year,
+                "source_url": item.source_url,
+                "source_object_key": item.source_object_key,
+                "source_object_hash": item.source_object_hash,
+            }
             for item in local_snapshot.annual_totals
         ],
+        schema=_TOTALS_SOURCE_FILES_ARROW_SCHEMA,
     )
+    connection.register(_TOTALS_SOURCE_FILES_RELATION, source_files)
+    try:
+        connection.execute(
+            f"""
+            insert into un_comtrade_totals_source_files
+            select local_path, expected_year, source_url,
+                   source_object_key, source_object_hash
+            from {_TOTALS_SOURCE_FILES_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_TOTALS_SOURCE_FILES_RELATION)
     connection.execute(
         """
         create or replace temp table un_comtrade_raw_totals as
@@ -333,21 +365,29 @@ def _normalize_availability(
         )
         """
     )
-    connection.executemany(
-        """
-        insert into un_comtrade_availability_source_files
-        values (?, ?, ?, ?)
-        """,
+    source_files = pa.Table.from_pylist(
         [
-            (
-                str(item.path),
-                item.source_url,
-                item.source_object_key,
-                item.source_object_hash,
-            )
+            {
+                "local_path": str(item.path),
+                "source_url": item.source_url,
+                "source_object_key": item.source_object_key,
+                "source_object_hash": item.source_object_hash,
+            }
             for item in local_snapshot.availability
         ],
+        schema=_AVAILABILITY_SOURCE_FILES_ARROW_SCHEMA,
     )
+    connection.register(_AVAILABILITY_SOURCE_FILES_RELATION, source_files)
+    try:
+        connection.execute(
+            f"""
+            insert into un_comtrade_availability_source_files
+            select local_path, source_url, source_object_key, source_object_hash
+            from {_AVAILABILITY_SOURCE_FILES_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_AVAILABILITY_SOURCE_FILES_RELATION)
     connection.execute(
         """
         create or replace temp table un_comtrade_raw_availability as

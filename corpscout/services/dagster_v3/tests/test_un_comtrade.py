@@ -457,6 +457,11 @@ def test_duckdb_normalizes_totals_and_availability_from_verified_s3_files(
                 local_snapshot=local_snapshot,
                 minimum_historical_reporters=2,
             )
+            rerun_counts = transform.replace_un_comtrade_snapshot(
+                connection=connection,
+                local_snapshot=local_snapshot,
+                minimum_historical_reporters=2,
+            )
             totals = connection.execute(
                 f"""
                 select year, reporter_iso, flow_code, primary_value_usd,
@@ -488,6 +493,7 @@ def test_duckdb_normalizes_totals_and_availability_from_verified_s3_files(
         "max_year": 2024,
         "latest_year_reporters": 2,
     }
+    assert rerun_counts == counts
     assert totals == [
         (
             2024,
