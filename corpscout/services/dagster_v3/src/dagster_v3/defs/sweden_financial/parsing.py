@@ -3,7 +3,7 @@ import re
 import tempfile
 import uuid
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
@@ -27,6 +27,7 @@ RAW_ARCHIVE_PREFIX = "sweden_financial/raw_archives/"
 REPORT_XHTML_PREFIX = "sweden_financial/report_xhtml/"
 LOG_EVERY_NESTED_ZIPS = 1_000
 SWEDEN_FINANCIAL_XHTML_PARSER_VERSION = "sweden-financial-ixbrl-v1"
+REPORT_XHTML_CATALOG_INSERT_BATCH_SIZE = 50_000
 PARSED_REPORT_INSERT_BATCH_SIZE = 50_000
 IX_NS = "http://www.xbrl.org/2013/inlineXBRL"
 XBRLI_NS = "http://www.xbrl.org/2003/instance"
@@ -108,6 +109,21 @@ _PARSE_ERROR_COLUMNS = (
     "error",
     "resolved_at",
 )
+_REPORT_XHTML_CATALOG_COLUMNS = (
+    "source_run_id",
+    "partition_year",
+    "source_archive_key",
+    "nested_zip_member",
+    "xhtml_member",
+    "xhtml_s3_bucket",
+    "xhtml_s3_key",
+    "company_id",
+    "report_period_end",
+    "source_archive_year",
+    "source_archive_name",
+    "size_bytes",
+    "sha256",
+)
 _STRING = pa.string()
 _INT64 = pa.int64()
 _DATE32 = pa.date32()
@@ -182,6 +198,22 @@ _PARSE_ERROR_ARROW_TYPES = (
     _STRING,
     _TIMESTAMP_US,
 )
+_REPORT_XHTML_CATALOG_ARROW_TYPES = (
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _STRING,
+    _INT64,
+    _STRING,
+)
+_REPORT_XHTML_CATALOG_STAGE_TABLE = "_sweden_financial_report_xhtml_catalog_stage"
 
 
 def sweden_financial_source_duckdb_path(
@@ -201,8 +233,16 @@ def extract_sweden_financial_report_xhtml_catalog(
     partition_year: str,
     source_archive_keys: list[str] | None = None,
     replace_scope: str = "partition",
+    insert_batch_size: int = REPORT_XHTML_CATALOG_INSERT_BATCH_SIZE,
     log_info: Callable[..., object] | None = None,
 ) -> dict[str, int]:
+    if insert_batch_size < 1:
+        raise ValueError("Sweden financial catalog insert batch size must be positive")
+    if replace_scope not in {"partition", "archive"}:
+        raise ValueError(
+            f"Unknown Sweden financial XHTML replace scope: {replace_scope}"
+        )
+
     started_at = monotonic()
     object_store.ensure_bucket(SWEDEN_FINANCIAL_RAW_BUCKET)
     if source_archive_keys is None:
@@ -210,8 +250,7 @@ def extract_sweden_financial_report_xhtml_catalog(
             f"{RAW_ARCHIVE_PREFIX}year={partition_year}/",
             bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
         )
-    else:
-        source_archive_keys = sorted(source_archive_keys)
+    source_archive_keys = sorted(source_archive_keys)
     archive_count = len(source_archive_keys)
     if log_info is not None:
         log_info(
@@ -221,7 +260,9 @@ def extract_sweden_financial_report_xhtml_catalog(
             archive_count,
             replace_scope,
         )
-    rows: list[tuple[Any, ...]] = []
+    _create_report_xhtml_catalog_stage(connection)
+    row_batch: list[tuple[Any, ...]] = []
+    catalog_row_count = 0
     nested_zip_count = 0
     skipped_nested_zip_count = 0
     downloaded_report_count = 0
@@ -230,7 +271,7 @@ def extract_sweden_financial_report_xhtml_catalog(
     with tempfile.TemporaryDirectory(prefix="sweden_financial_parse_") as tmpdir:
         temp_dir = Path(tmpdir)
         for archive_index, source_archive_key in enumerate(
-            sorted(source_archive_keys),
+            source_archive_keys,
             start=1,
         ):
             archive_started_at = monotonic()
@@ -263,19 +304,18 @@ def extract_sweden_financial_report_xhtml_catalog(
                     nested_zip_count += 1
                     archive_nested_zip_count += 1
                     nested_zip_body = outer_zip.read(nested_member)
-                    nested_reports = _extract_nested_reports(
+                    nested_report_count = 0
+                    for row, downloaded in _iter_nested_reports(
                         nested_zip_body=nested_zip_body,
                         nested_zip_member=nested_member.filename,
                         source_archive_key=source_archive_key,
                         source_run_id=source_run_id,
                         partition_year=partition_year,
                         object_store=object_store,
-                    )
-                    if not nested_reports:
-                        skipped_nested_zip_count += 1
-                        archive_skipped_nested_zip_count += 1
-                    for row, downloaded in nested_reports:
-                        rows.append(row)
+                    ):
+                        nested_report_count += 1
+                        catalog_row_count += 1
+                        row_batch.append(row)
                         archive_report_count += 1
                         if downloaded:
                             downloaded_report_count += 1
@@ -283,6 +323,14 @@ def extract_sweden_financial_report_xhtml_catalog(
                         else:
                             reused_report_count += 1
                             archive_reused_report_count += 1
+                        if len(row_batch) >= insert_batch_size:
+                            _flush_report_xhtml_catalog_rows(
+                                connection=connection,
+                                rows=row_batch,
+                            )
+                    if nested_report_count == 0:
+                        skipped_nested_zip_count += 1
+                        archive_skipped_nested_zip_count += 1
                     if log_info is not None and (
                         archive_nested_zip_count == 1
                         or archive_nested_zip_count % LOG_EVERY_NESTED_ZIPS == 0
@@ -298,7 +346,7 @@ def extract_sweden_financial_report_xhtml_catalog(
                             archive_nested_zip_count,
                             archive_report_count,
                             archive_skipped_nested_zip_count,
-                            len(rows),
+                            catalog_row_count,
                         )
             if log_info is not None:
                 log_info(
@@ -314,23 +362,26 @@ def extract_sweden_financial_report_xhtml_catalog(
                     archive_skipped_nested_zip_count,
                     archive_downloaded_report_count,
                     archive_reused_report_count,
-                    len(rows),
+                    catalog_row_count,
                     monotonic() - archive_started_at,
                     source_archive_key,
                 )
 
+    _flush_report_xhtml_catalog_rows(
+        connection=connection,
+        rows=row_batch,
+    )
     if log_info is not None:
         log_info(
             "Replacing Sweden financial XHTML catalog rows: partition_year=%s "
             "replace_scope=%s rows=%s",
             partition_year,
             replace_scope,
-            len(rows),
+            catalog_row_count,
         )
-    _replace_report_xhtml_catalog(
+    _publish_report_xhtml_catalog_stage(
         connection=connection,
         partition_year=partition_year,
-        rows=rows,
         replace_scope=replace_scope,
         source_archive_names=sorted(
             {
@@ -348,7 +399,7 @@ def extract_sweden_financial_report_xhtml_catalog(
             archive_count,
             nested_zip_count,
             skipped_nested_zip_count,
-            len(rows),
+            catalog_row_count,
             downloaded_report_count,
             reused_report_count,
             monotonic() - started_at,
@@ -358,10 +409,10 @@ def extract_sweden_financial_report_xhtml_catalog(
         "source_archive_count": len(source_archive_keys),
         "nested_zip_count": nested_zip_count,
         "skipped_nested_zip_count": skipped_nested_zip_count,
-        "report_xhtml_count": len(rows),
+        "report_xhtml_count": catalog_row_count,
         "downloaded_report_xhtml_count": downloaded_report_count,
         "reused_report_xhtml_count": reused_report_count,
-        "catalog_row_count": len(rows),
+        "catalog_row_count": catalog_row_count,
     }
 
 
@@ -587,7 +638,7 @@ def report_xhtml_object_key(
     )
 
 
-def _extract_nested_reports(
+def _iter_nested_reports(
     *,
     nested_zip_body: bytes,
     nested_zip_member: str,
@@ -595,22 +646,15 @@ def _extract_nested_reports(
     source_run_id: str,
     partition_year: str,
     object_store: ObjectStoreResource,
-) -> list[tuple[tuple[Any, ...], bool]]:
+) -> Iterator[tuple[tuple[Any, ...], bool]]:
     company_id, report_period_end = _metadata_from_nested_zip_name(nested_zip_member)
     source_archive_year = _year_from_archive_object_key(source_archive_key)
     source_archive_name = _archive_name_from_object_key(source_archive_key)
-    reports: list[tuple[tuple[Any, ...], bool]] = []
 
     with zipfile.ZipFile(BytesIO(nested_zip_body)) as nested_zip:
-        xhtml_members = [
-            member
-            for member in _zip_file_members(nested_zip)
-            if member.filename.lower().endswith((".xhtml", ".html"))
-        ]
-        if not xhtml_members:
-            return []
-
-        for xhtml_member in xhtml_members:
+        for xhtml_member in _zip_file_members(nested_zip):
+            if not xhtml_member.filename.lower().endswith((".xhtml", ".html")):
+                continue
             xhtml_body = nested_zip.read(xhtml_member)
             xhtml_s3_key = report_xhtml_object_key(
                 partition_year=partition_year,
@@ -630,42 +674,30 @@ def _extract_nested_reports(
                     xhtml_body,
                     bucket=SWEDEN_FINANCIAL_RAW_BUCKET,
                 )
-            reports.append(
+            yield (
                 (
-                    (
-                        source_run_id,
-                        partition_year,
-                        source_archive_key,
-                        nested_zip_member,
-                        xhtml_member.filename,
-                        SWEDEN_FINANCIAL_RAW_BUCKET,
-                        xhtml_s3_key,
-                        company_id,
-                        report_period_end,
-                        source_archive_year,
-                        source_archive_name,
-                        len(xhtml_body),
-                        sha256(xhtml_body).hexdigest(),
-                    ),
-                    downloaded,
-                )
+                    source_run_id,
+                    partition_year,
+                    source_archive_key,
+                    nested_zip_member,
+                    xhtml_member.filename,
+                    SWEDEN_FINANCIAL_RAW_BUCKET,
+                    xhtml_s3_key,
+                    company_id,
+                    report_period_end,
+                    source_archive_year,
+                    source_archive_name,
+                    len(xhtml_body),
+                    sha256(xhtml_body).hexdigest(),
+                ),
+                downloaded,
             )
 
-    return reports
 
-
-def _replace_report_xhtml_catalog(
-    *,
-    connection: Any,
-    partition_year: str,
-    rows: list[tuple[Any, ...]],
-    replace_scope: str,
-    source_archive_names: list[str],
-) -> None:
-    connection.execute(f"create schema if not exists {SWEDEN_FINANCIAL_DATASET_NAME}")
+def _create_report_xhtml_catalog_stage(connection: Any) -> None:
     connection.execute(
         f"""
-        create table if not exists {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog (
+        create or replace temp table {_REPORT_XHTML_CATALOG_STAGE_TABLE} (
             source_run_id varchar,
             partition_year varchar,
             source_archive_key varchar,
@@ -682,16 +714,86 @@ def _replace_report_xhtml_catalog(
         )
         """
     )
-    if replace_scope == "partition":
+
+
+def _flush_report_xhtml_catalog_rows(
+    *,
+    connection: Any,
+    rows: list[tuple[Any, ...]],
+) -> None:
+    if not rows:
+        return
+    arrow_table = _arrow_table_from_rows(
+        columns=_REPORT_XHTML_CATALOG_COLUMNS,
+        arrow_types=_REPORT_XHTML_CATALOG_ARROW_TYPES,
+        rows=rows,
+    )
+    registered_name = f"_sweden_financial_report_xhtml_catalog_{uuid.uuid4().hex}"
+    column_list = ", ".join(
+        _quote_duckdb_identifier(column)
+        for column in _REPORT_XHTML_CATALOG_COLUMNS
+    )
+    connection.register(registered_name, arrow_table)
+    try:
         connection.execute(
             f"""
-            delete from {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
-            where partition_year = ?
-            """,
-            [partition_year],
+            insert into {_REPORT_XHTML_CATALOG_STAGE_TABLE} ({column_list})
+            select {column_list}
+            from {_quote_duckdb_identifier(registered_name)}
+            """
         )
-    elif replace_scope == "archive":
-        if source_archive_names:
+    finally:
+        connection.unregister(registered_name)
+    rows.clear()
+
+
+def _publish_report_xhtml_catalog_stage(
+    *,
+    connection: Any,
+    partition_year: str,
+    replace_scope: str,
+    source_archive_names: list[str],
+) -> None:
+    if replace_scope not in {"partition", "archive"}:
+        raise ValueError(
+            f"Unknown Sweden financial XHTML replace scope: {replace_scope}"
+        )
+
+    connection.execute("begin transaction")
+    try:
+        connection.execute(
+            f"""
+            create schema if not exists {SWEDEN_FINANCIAL_DATASET_NAME}
+            """
+        )
+        connection.execute(
+            f"""
+            create table if not exists {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog (
+                source_run_id varchar,
+                partition_year varchar,
+                source_archive_key varchar,
+                nested_zip_member varchar,
+                xhtml_member varchar,
+                xhtml_s3_bucket varchar,
+                xhtml_s3_key varchar,
+                company_id varchar,
+                report_period_end varchar,
+                source_archive_year varchar,
+                source_archive_name varchar,
+                size_bytes bigint,
+                sha256 varchar
+            )
+            """
+        )
+        if replace_scope == "partition":
+            connection.execute(
+                f"""
+                delete from {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
+                where partition_year = ?
+                """,
+                [partition_year],
+            )
+        elif source_archive_names:
             placeholders = ", ".join("?" for _ in source_archive_names)
             connection.execute(
                 f"""
@@ -701,18 +803,16 @@ def _replace_report_xhtml_catalog(
                 """,
                 [partition_year, *source_archive_names],
             )
-    else:
-        raise ValueError(
-            f"Unknown Sweden financial XHTML replace scope: {replace_scope}"
-        )
-    if rows:
-        connection.executemany(
+        connection.execute(
             f"""
             insert into {SWEDEN_FINANCIAL_DATASET_NAME}.report_xhtml_catalog
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
+            select * from {_REPORT_XHTML_CATALOG_STAGE_TABLE}
+            """
         )
+    except Exception:
+        connection.execute("rollback")
+        raise
+    connection.execute("commit")
 
 
 def _ensure_parsed_report_tables(connection: Any) -> None:

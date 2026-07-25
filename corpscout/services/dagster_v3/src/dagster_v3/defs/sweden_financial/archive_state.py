@@ -1,6 +1,8 @@
 import json
 from typing import Any
 
+import pyarrow as pa
+
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_financial.parsing import SWEDEN_FINANCIAL_DATASET_NAME
 from dagster_v3.defs.sweden_financial.resources import (
@@ -11,6 +13,41 @@ from dagster_v3.defs.sweden_financial.resources import (
 )
 
 ARCHIVE_SYNC_MANIFEST_PREFIX = "sweden_financial/raw_archive_sync_manifests/"
+_ARCHIVE_SYNC_COLUMNS = (
+    "source_run_id",
+    "sync_kind",
+    "load_partition_key",
+    "archive_year",
+    "upstream_key",
+    "source_last_modified",
+    "etag",
+    "source_size_bytes",
+    "source_url",
+    "s3_key",
+    "downloaded",
+    "stored_size_bytes",
+    "sha256",
+    "content_type",
+)
+_ARCHIVE_SYNC_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("source_run_id", pa.string(), nullable=False),
+        pa.field("sync_kind", pa.string(), nullable=False),
+        pa.field("load_partition_key", pa.string(), nullable=False),
+        pa.field("archive_year", pa.string(), nullable=False),
+        pa.field("upstream_key", pa.string(), nullable=False),
+        pa.field("source_last_modified", pa.string(), nullable=False),
+        pa.field("etag", pa.string(), nullable=False),
+        pa.field("source_size_bytes", pa.int64(), nullable=False),
+        pa.field("source_url", pa.string(), nullable=False),
+        pa.field("s3_key", pa.string(), nullable=False),
+        pa.field("downloaded", pa.bool_(), nullable=False),
+        pa.field("stored_size_bytes", pa.int64()),
+        pa.field("sha256", pa.string()),
+        pa.field("content_type", pa.string(), nullable=False),
+    ]
+)
+_ARCHIVE_SYNC_BATCH_RELATION = "_sweden_financial_archive_sync_batch"
 
 
 def archive_sync_manifest_key(*, sync_kind: str, load_partition_key: str) -> str:
@@ -114,40 +151,57 @@ def record_sweden_financial_archive_sync(
     load_partition_key: str,
 ) -> None:
     _ensure_archive_sync_catalog(connection)
-    connection.execute(
-        f"""
-        delete from {SWEDEN_FINANCIAL_DATASET_NAME}.archive_sync_catalog
-        where source_run_id = ? and sync_kind = ? and load_partition_key = ?
-        """,
-        [source_run_id, sync_kind, load_partition_key],
-    )
     rows = [
-        (
-            source_run_id,
-            sync_kind,
-            load_partition_key,
-            stored.archive.year,
-            stored.archive.upstream_key,
-            stored.archive.source_last_modified,
-            stored.archive.etag,
-            stored.archive.source_size_bytes,
-            stored.source_url,
-            stored.s3_key,
-            stored.downloaded,
-            stored.stored_size_bytes,
-            stored.sha256,
-            stored.content_type,
-        )
+        {
+            "source_run_id": source_run_id,
+            "sync_kind": sync_kind,
+            "load_partition_key": load_partition_key,
+            "archive_year": stored.archive.year,
+            "upstream_key": stored.archive.upstream_key,
+            "source_last_modified": stored.archive.source_last_modified,
+            "etag": stored.archive.etag,
+            "source_size_bytes": stored.archive.source_size_bytes,
+            "source_url": stored.source_url,
+            "s3_key": stored.s3_key,
+            "downloaded": stored.downloaded,
+            "stored_size_bytes": stored.stored_size_bytes,
+            "sha256": stored.sha256,
+            "content_type": stored.content_type,
+        }
         for stored in sync_result.stored_archives
     ]
-    if rows:
-        connection.executemany(
+    arrow_table = (
+        pa.Table.from_pylist(rows, schema=_ARCHIVE_SYNC_ARROW_SCHEMA) if rows else None
+    )
+    registered = False
+    connection.execute("begin transaction")
+    try:
+        connection.execute(
             f"""
-            insert into {SWEDEN_FINANCIAL_DATASET_NAME}.archive_sync_catalog
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            delete from {SWEDEN_FINANCIAL_DATASET_NAME}.archive_sync_catalog
+            where source_run_id = ? and sync_kind = ? and load_partition_key = ?
             """,
-            rows,
+            [source_run_id, sync_kind, load_partition_key],
         )
+        if arrow_table is not None:
+            column_list = ", ".join(_ARCHIVE_SYNC_COLUMNS)
+            connection.register(_ARCHIVE_SYNC_BATCH_RELATION, arrow_table)
+            registered = True
+            connection.execute(
+                f"""
+                insert into {SWEDEN_FINANCIAL_DATASET_NAME}.archive_sync_catalog
+                ({column_list})
+                select {column_list} from {_ARCHIVE_SYNC_BATCH_RELATION}
+                """
+            )
+    except Exception:
+        connection.execute("rollback")
+        raise
+    else:
+        connection.execute("commit")
+    finally:
+        if registered:
+            connection.unregister(_ARCHIVE_SYNC_BATCH_RELATION)
 
 
 def changed_sweden_financial_archive_keys_for_run(

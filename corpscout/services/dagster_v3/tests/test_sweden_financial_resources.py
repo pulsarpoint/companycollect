@@ -74,6 +74,7 @@ class FakeObjectStore:
 class TrackingDuckDbConnection:
     def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
         self._connection = connection
+        self.catalog_arrow_batch_sizes: list[int] = []
         self.report_arrow_batch_sizes: list[int] = []
         self.fact_arrow_batch_sizes: list[int] = []
         self.error_arrow_batch_sizes: list[int] = []
@@ -83,7 +84,9 @@ class TrackingDuckDbConnection:
         return self._connection.execute(*args, **kwargs)
 
     def register(self, view_name: str, python_object: Any) -> duckdb.DuckDBPyConnection:
-        if "reports" in view_name:
+        if "report_xhtml_catalog" in view_name:
+            self.catalog_arrow_batch_sizes.append(python_object.num_rows)
+        elif "reports" in view_name:
             self.report_arrow_batch_sizes.append(python_object.num_rows)
         elif "facts" in view_name:
             self.fact_arrow_batch_sizes.append(python_object.num_rows)
@@ -491,6 +494,137 @@ def test_extract_sweden_financial_report_xhtml_catalog_from_raw_archive(
         object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, catalog_rows[0][6])]
         == b"<html><body>annual report</body></html>"
     )
+
+
+def test_extract_sweden_financial_catalog_streams_500k_rows_in_arrow_batches(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.sweden_financial import parsing
+
+    object_store = FakeObjectStore()
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2025/12_31.zip",
+        source_last_modified="2026-01-02T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = _outer_zip(
+        nested_name="5594386681_2025-12-31.zip",
+    )
+
+    with duckdb.connect(str(tmp_path / "catalog_bulk.duckdb")) as connection:
+        tracking_connection = TrackingDuckDbConnection(connection)
+
+        def synthetic_nested_reports(**_kwargs):
+            for index in range(500_000):
+                if index == 50_000:
+                    assert tracking_connection.catalog_arrow_batch_sizes == [50_000]
+                yield (
+                    (
+                        "bulk-run",
+                        "2025",
+                        raw_archive_key,
+                        "5594386681_2025-12-31.zip",
+                        f"{index}.xhtml",
+                        SWEDEN_FINANCIAL_RAW_BUCKET,
+                        f"sweden_financial/report_xhtml/{index}.xhtml",
+                        "5594386681",
+                        "2025-12-31",
+                        "2025",
+                        "12_31.zip",
+                        1,
+                        "synthetic-sha256",
+                    ),
+                    False,
+                )
+
+        monkeypatch.setattr(
+            parsing,
+            "_iter_nested_reports",
+            synthetic_nested_reports,
+        )
+        counts = parsing.extract_sweden_financial_report_xhtml_catalog(
+            connection=tracking_connection,
+            object_store=object_store,
+            source_run_id="bulk-run",
+            partition_year="2025",
+            source_archive_keys=[raw_archive_key],
+        )
+        stored_rows = connection.execute(
+            "select count(*) from sweden_financial.report_xhtml_catalog"
+        ).fetchone()[0]
+
+    assert counts["catalog_row_count"] == 500_000
+    assert stored_rows == 500_000
+    assert tracking_connection.catalog_arrow_batch_sizes == [50_000] * 10
+
+
+def test_extract_sweden_financial_catalog_keeps_published_rows_on_parser_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.sweden_financial import parsing
+
+    object_store = FakeObjectStore()
+    raw_archive_key = archive_object_key(
+        upstream_key="arsredovisningar/2025/12_31.zip",
+        source_last_modified="2026-01-02T09:13:53.713Z",
+    )
+    object_store.objects[(SWEDEN_FINANCIAL_RAW_BUCKET, raw_archive_key)] = _outer_zip(
+        nested_name="5594386681_2025-12-31.zip",
+    )
+
+    with duckdb.connect(str(tmp_path / "catalog_failure.duckdb")) as connection:
+        parsing.extract_sweden_financial_report_xhtml_catalog(
+            connection=connection,
+            object_store=object_store,
+            source_run_id="published-run",
+            partition_year="2025",
+            source_archive_keys=[raw_archive_key],
+        )
+
+        def failing_nested_reports(**_kwargs):
+            yield (
+                (
+                    "failed-run",
+                    "2025",
+                    raw_archive_key,
+                    "5594386681_2025-12-31.zip",
+                    "replacement.xhtml",
+                    SWEDEN_FINANCIAL_RAW_BUCKET,
+                    "sweden_financial/report_xhtml/replacement.xhtml",
+                    "0000000000",
+                    "2025-12-31",
+                    "2025",
+                    "12_31.zip",
+                    1,
+                    "replacement-sha256",
+                ),
+                False,
+            )
+            raise RuntimeError("synthetic catalog parser failure")
+
+        monkeypatch.setattr(
+            parsing,
+            "_iter_nested_reports",
+            failing_nested_reports,
+        )
+        with pytest.raises(RuntimeError, match="synthetic catalog parser failure"):
+            parsing.extract_sweden_financial_report_xhtml_catalog(
+                connection=connection,
+                object_store=object_store,
+                source_run_id="failed-run",
+                partition_year="2025",
+                source_archive_keys=[raw_archive_key],
+                insert_batch_size=1,
+            )
+        published_rows = connection.execute(
+            """
+            select source_run_id, company_id
+            from sweden_financial.report_xhtml_catalog
+            """
+        ).fetchall()
+
+    assert published_rows == [("published-run", "5594386681")]
 
 
 def test_parse_sweden_financial_report_xhtml_catalog_writes_reports_and_facts(

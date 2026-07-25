@@ -1,4 +1,5 @@
 import duckdb
+from typing import Any
 
 from dagster_v3.defs.sweden_financial.archive_state import (
     archive_sync_manifest_key,
@@ -26,6 +27,29 @@ class FakeObjectStore:
     def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
         assert bucket is not None
         return self.objects[(bucket, key)]
+
+
+class TrackingDuckDbConnection:
+    def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
+        self._connection = connection
+        self.arrow_batch_sizes: list[int] = []
+
+    def execute(self, *args: Any, **kwargs: Any) -> duckdb.DuckDBPyConnection:
+        return self._connection.execute(*args, **kwargs)
+
+    def register(self, view_name: str, python_object: Any) -> duckdb.DuckDBPyConnection:
+        self.arrow_batch_sizes.append(python_object.num_rows)
+        return self._connection.register(view_name, python_object)
+
+    def unregister(self, view_name: str) -> duckdb.DuckDBPyConnection:
+        return self._connection.unregister(view_name)
+
+    def executemany(
+        self,
+        query: str,
+        rows: list[tuple[Any, ...]],
+    ) -> duckdb.DuckDBPyConnection:
+        raise AssertionError("Sweden financial sync state should use an Arrow insert")
 
 
 def test_records_archive_sync_and_returns_changed_keys_for_run(tmp_path):
@@ -63,8 +87,16 @@ def test_records_archive_sync_and_returns_changed_keys_for_run(tmp_path):
     )
 
     with duckdb.connect(str(tmp_path / "state.duckdb")) as connection:
+        tracking_connection = TrackingDuckDbConnection(connection)
         record_sweden_financial_archive_sync(
-            connection=connection,
+            connection=tracking_connection,
+            sync_result=sync_result,
+            sync_kind="current",
+            source_run_id="run-1",
+            load_partition_key="2026-07-04",
+        )
+        record_sweden_financial_archive_sync(
+            connection=tracking_connection,
             sync_result=sync_result,
             sync_kind="current",
             source_run_id="run-1",
@@ -72,9 +104,15 @@ def test_records_archive_sync_and_returns_changed_keys_for_run(tmp_path):
         )
 
         assert changed_sweden_financial_archive_keys_for_run(
-            connection=connection,
+            connection=tracking_connection,
             source_run_id="run-1",
         ) == [changed.s3_key]
+        row_count = connection.execute(
+            "select count(*) from sweden_financial.archive_sync_catalog"
+        ).fetchone()[0]
+
+    assert row_count == 2
+    assert tracking_connection.arrow_batch_sizes == [2, 2]
 
 
 def test_archive_sync_manifest_round_trips_through_object_store() -> None:
