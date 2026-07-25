@@ -1189,6 +1189,116 @@ def test_sql_marks_superseded_leis_as_not_current() -> None:
 
     assert "successor_entity_lei" in sql
     assert "AS is_current" in sql
+
+
+class _FakeClickHouseClient:
+    def __init__(self, quality_row: tuple[object, ...]) -> None:
+        self.quality_row = quality_row
+        self.statements: list[str] = []
+
+    def execute(
+        self,
+        sql: str,
+        params: dict[str, object] | None = None,
+    ) -> list[tuple[object, ...]]:
+        self.statements.append(sql)
+        if "system.tables" in sql:
+            requested = tuple(params["tables"]) if params is not None else ()
+            return [(table,) for table in requested]
+        if "row_count" in sql:
+            return [self.quality_row]
+        return []
+
+
+def _resource(
+    monkeypatch: pytest.MonkeyPatch,
+    client: _FakeClickHouseClient,
+) -> ClickhouseResource:
+    resource = ClickhouseResource(host="localhost")
+
+    @contextmanager
+    def fake_get_connection(
+        self: ClickhouseResource,
+    ) -> Iterator[_FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+    return resource
+
+
+def test_replace_reports_the_authority_confidence_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # row_count, lei_count, company_count, identity_key_count,
+    # authority_matched_rows, invalid_rows
+    client = _FakeClickHouseClient((800, 800, 800, 800, 640, 0))
+    resource = _resource(monkeypatch, client)
+
+    metadata = replace_company_lei_clickhouse(
+        clickhouse=resource,
+        rule=_SE,
+        source_run_id="run-1",
+        resolved_at=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+    assert client.statements[-1].startswith("DROP TABLE IF EXISTS")
+    assert metadata["row_count"] == 800
+    assert metadata["authority_matched_rows"] == 640
+    assert metadata["country_code"] == "SE"
+
+
+def test_replace_refuses_a_degraded_gleif_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial GLEIF load must not empty a populated country."""
+    client = _FakeClickHouseClient((12, 12, 12, 12, 0, 0))
+    resource = _resource(monkeypatch, client)
+
+    with pytest.raises(ValueError, match="below the expected floor"):
+        replace_company_lei_clickhouse(
+            clickhouse=resource,
+            rule=_SE,
+            source_run_id="run-1",
+            resolved_at=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
+        )
+
+    assert not any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+
+
+def test_replace_refuses_duplicate_identity_grain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClickHouseClient((800, 800, 799, 799, 640, 0))
+    resource = _resource(monkeypatch, client)
+
+    with pytest.raises(ValueError, match="grain mismatch"):
+        replace_company_lei_clickhouse(
+            clickhouse=resource,
+            rule=_SE,
+            source_run_id="run-1",
+            resolved_at=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
+        )
+
+    assert not any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+```
+
+The imports at the top of this test file:
+
+```python
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+
+import pytest
+from dagster_clickhouse import ClickhouseResource
+
+from dagster_v3.defs.company_lei import tables
+from dagster_v3.defs.company_lei.assets import (
+    build_company_lei_insert_sql,
+    replace_company_lei_clickhouse,
+)
+from dagster_v3.defs.company_lei.rules import COUNTRY_IDENTITY_RULES
 ```
 
 - [ ] **Step 2: Run and confirm failure**
@@ -1396,15 +1506,196 @@ INNER JOIN register_current AS r
 WHERE length(g.company_id_normalized) = {rule.identifier_length}"""
 ```
 
-Then add `replace_company_lei_clickhouse` following the same
-stage → validate → `EXCHANGE TABLES` shape as
-`defs/instrument_venues/assets.py` (Task 3 Step 4), with quality columns
-`row_count`, `lei_count`, `company_count`, `identity_key_count`,
-`authority_matched_rows`, `invalid_rows`. Gate on: zero rows, grain mismatch
-(`identity_key_count != row_count`), invalid rows, and `row_count` below
-`rule.min_expected_rows`. Wire the asset `company_lei_clickhouse` with deps
-`("gleif_reference_clickhouse", "sweden_company_companies_clickhouse")`, pool
-`company_lei_clickhouse`, group `tables.GROUP_NAME`.
+Then add the publisher and asset to the same file:
+
+```python
+import uuid
+from datetime import UTC, date, datetime
+
+import dagster as dg
+from dagster_clickhouse import ClickhouseResource
+
+from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.company_lei import tables
+from dagster_v3.defs.company_lei.rules import (
+    COUNTRY_IDENTITY_RULES,
+    CountryIdentityRule,
+)
+
+COMPANY_LEI_UPSTREAM_ASSET_KEYS = (
+    "gleif_reference_clickhouse",
+    "sweden_company_companies_clickhouse",
+)
+
+_QUALITY_COLUMNS = (
+    "row_count",
+    "lei_count",
+    "company_count",
+    "identity_key_count",
+    "authority_matched_rows",
+    "invalid_rows",
+)
+
+
+def _qualified(table_name: str) -> str:
+    return f"`{tables.CLICKHOUSE_DATABASE}`.`{table_name}`"
+
+
+def _quality_sql(stage_table: str) -> str:
+    return f"""SELECT
+    count() AS row_count,
+    uniqExact(lei) AS lei_count,
+    uniqExact(company_id) AS company_count,
+    uniqExact((lei, country_code, company_id)) AS identity_key_count,
+    countIf(match_method = 'registration_authority') AS authority_matched_rows,
+    countIf(
+        lei = ''
+        OR country_code = ''
+        OR company_id = ''
+        OR match_method = ''
+        OR match_confidence = ''
+    ) AS invalid_rows
+FROM {stage_table}"""
+
+
+def _validate_quality(
+    quality: dict[str, object],
+    rule: CountryIdentityRule,
+) -> None:
+    row_count = int(quality["row_count"])
+    identity_key_count = int(quality["identity_key_count"])
+    invalid_rows = int(quality["invalid_rows"])
+
+    if row_count == 0:
+        raise ValueError(
+            f"{rule.country_code} company LEI resolution produced no rows"
+        )
+    if row_count < rule.min_expected_rows:
+        raise ValueError(
+            f"{rule.country_code} company LEI rows below the expected floor: "
+            f"rows={row_count} floor={rule.min_expected_rows}"
+        )
+    if identity_key_count != row_count:
+        raise ValueError(
+            f"{rule.country_code} company LEI grain mismatch: "
+            f"rows={row_count} unique_keys={identity_key_count}"
+        )
+    if invalid_rows != 0:
+        raise ValueError(
+            f"{rule.country_code} company LEI rows are invalid: {invalid_rows}"
+        )
+
+
+def replace_company_lei_clickhouse(
+    *,
+    clickhouse: ClickhouseResource,
+    rule: CountryIdentityRule,
+    source_run_id: str,
+    resolved_at: datetime,
+) -> dict[str, object]:
+    """Atomically rebuild one country's LEI to company resolution."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.CLICKHOUSE_DATABASE,
+        tables=(
+            tables.COMPANY_LEI_TABLE,
+            "gleif_lei_records",
+            rule.register_table,
+        ),
+    )
+    stage_name = (
+        f"_tmp_{tables.COMPANY_LEI_TABLE}_"
+        f"{rule.country_code.lower()}_{uuid.uuid4().hex}"
+    )
+    qualified_stage = _qualified(stage_name)
+    qualified_target = _qualified(tables.COMPANY_LEI_TABLE)
+
+    with clickhouse.get_connection() as client:
+        client.execute(f"CREATE TABLE {qualified_stage} AS {qualified_target}")
+        primary_error: Exception | None = None
+        try:
+            client.execute(
+                build_company_lei_insert_sql(qualified_stage, rule),
+                {"source_run_id": source_run_id, "resolved_at": resolved_at},
+            )
+            row = client.execute(_quality_sql(qualified_stage))[0]
+            quality = {
+                column: value
+                for column, value in zip(_QUALITY_COLUMNS, row, strict=True)
+            }
+            _validate_quality(quality, rule)
+            client.execute(
+                f"EXCHANGE TABLES {qualified_stage} AND {qualified_target}"
+            )
+        except Exception as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                client.execute(f"DROP TABLE IF EXISTS {qualified_stage}")
+            except Exception:
+                if primary_error is None:
+                    raise
+
+    return {
+        **quality,
+        "country_code": rule.country_code,
+        "register_table": rule.register_table,
+        "table": tables.QUALIFIED_COMPANY_LEI_TABLE,
+        "source_run_id": source_run_id,
+    }
+
+
+@dg.asset(
+    name="company_lei_clickhouse",
+    deps=[dg.AssetKey(key) for key in COMPANY_LEI_UPSTREAM_ASSET_KEYS],
+    group_name=tables.GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    pool="company_lei_clickhouse",
+    metadata={"table": tables.QUALIFIED_COMPANY_LEI_TABLE},
+    description=(
+        "Resolves GLEIF LEI records to national company identifiers by "
+        "validating the normalized registered_as value against the country "
+        "register. An LEI that does not resolve produces no row."
+    ),
+)
+def company_lei_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    metadata = replace_company_lei_clickhouse(
+        clickhouse=clickhouse,
+        rule=COUNTRY_IDENTITY_RULES["SE"],
+        source_run_id=context.run_id,
+        resolved_at=datetime.now(UTC),
+    )
+    context.log.info(
+        "Resolved %s company LEIs: rows=%s companies=%s authority_tier=%s",
+        metadata["country_code"],
+        metadata["row_count"],
+        metadata["company_count"],
+        metadata["authority_matched_rows"],
+    )
+    return dg.MaterializeResult(metadata=metadata)
+
+
+company_lei_job = dg.define_asset_job(
+    "company_lei_job",
+    selection=dg.AssetSelection.assets("company_lei_clickhouse"),
+)
+
+defs = dg.Definitions(
+    assets=[company_lei_clickhouse],
+    jobs=[company_lei_job],
+)
+```
+
+Note the single-country asset: `COUNTRY_IDENTITY_RULES` has one entry, and
+`EXCHANGE TABLES` replaces the whole table. When the second country is added,
+this must become either one asset per country writing its own partition, or a
+single asset looping every rule into one stage table before the swap. Do not
+add a second rule without making that change — a second country would otherwise
+silently erase the first.
 
 - [ ] **Step 6: Run tests and definition checks**
 
