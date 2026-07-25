@@ -1,5 +1,14 @@
 # Unified Company Listings Implementation Plan
 
+> **SUPERSEDED (2026-07-25)** by
+> [`2026-07-25-normalized-listing-identity.md`](2026-07-25-normalized-listing-identity.md).
+> This plan materialized one denormalized listings table partitioned by country.
+> The replacement normalizes the same facts into three layers joined by their
+> natural keys, which removes the country-partitioning machinery entirely and
+> stores company identity once per LEI instead of once per instrument-venue row
+> (~92 instruments per issuer). Kept for the rationale on partition-level
+> replacement, should a materialized rollup ever be needed. Do not implement.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the per-country `se_company_listings` table with one unified,
