@@ -13,23 +13,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from dagster_v3.defs.company_signals.sources import (
+    HILMA,
+    TED,
+    UHM,
+    ProcurementSource,
+)
+
 SIGNAL_NAME = "government_contract"
 UHM_SOURCE = "sweden_uhm_procurement"
 TED_SOURCE = "ted_procurement"
-
-
-@dataclass(frozen=True)
-class NationalProcurementSource:
-    """A country's own procurement register, where one is ingested.
-
-    Optional by design: TED covers only contracts at or above the EU
-    publication thresholds, so a country without a national source sees a
-    minority of its real procurement. That gap has to be stated in the
-    coverage row rather than left to look like an absence of contracts.
-    """
-
-    source_slug: str
-    awards_table: str
 
 
 @dataclass(frozen=True)
@@ -47,7 +40,7 @@ class CountryProcurementRule:
     identifier_length: int
     ted_winner_countries: tuple[str, ...]
     coverage_caveat: str
-    national_source: NationalProcurementSource | None = None
+    sources: tuple[ProcurementSource, ...]
 
     @property
     def asset_name(self) -> str:
@@ -55,28 +48,18 @@ class CountryProcurementRule:
 
     @property
     def upstream_asset_keys(self) -> tuple[str, ...]:
-        keys = ["ted_publish_clickhouse"]
-        if self.national_source is not None:
-            keys.insert(0, "sweden_uhm_procurement_awards_clickhouse")
-        return tuple(keys)
+        return tuple(sorted({source.upstream_asset_key for source in self.sources}))
 
     @property
     def source_slugs(self) -> tuple[str, ...]:
-        slugs = [TED_SOURCE]
-        if self.national_source is not None:
-            slugs.insert(0, self.national_source.source_slug)
-        return tuple(sorted(slugs))
+        return tuple(sorted(source.slug for source in self.sources))
 
     @property
     def required_clickhouse_tables(self) -> tuple[str, ...]:
-        tables_needed = [
-            "ted_notice_winners",
-            "ted_notices",
-            self.companies_table,
-        ]
-        if self.national_source is not None:
-            tables_needed.append(self.national_source.awards_table)
-        return tuple(tables_needed)
+        needed = {self.companies_table}
+        for source in self.sources:
+            needed.update(source.required_tables)
+        return tuple(sorted(needed))
 
 
 COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
@@ -91,10 +74,7 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
             "direct/non-advertised procurement, missing after-notices, and "
             "many framework call-offs."
         ),
-        national_source=NationalProcurementSource(
-            source_slug=UHM_SOURCE,
-            awards_table="se_uhm_procurement_awards",
-        ),
+        sources=(UHM, TED),
     ),
     # Finland has its own register too -- fi_hilma_notice_winners, 11,265 rows --
     # but Hilma is shaped like TED (a winners/notices pair) rather than like
@@ -115,7 +95,7 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
             "register, is ingested but not yet joined to this signal, so "
             "contracts below the EU publication thresholds are absent."
         ),
-        national_source=None,
+        sources=(HILMA, TED),
     ),
     "NO": CountryProcurementRule(
         country_code="NO",
@@ -132,6 +112,6 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
             "register, is not ingested, so contracts below the EU publication "
             "thresholds are absent entirely."
         ),
-        national_source=None,
+        sources=(TED,),
     ),
 }

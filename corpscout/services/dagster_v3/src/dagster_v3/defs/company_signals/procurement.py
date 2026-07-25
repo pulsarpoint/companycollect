@@ -16,123 +16,30 @@ SIGNAL_NAME = "government_contract"
 UHM_SOURCE = "sweden_uhm_procurement"
 TED_SOURCE = "ted_procurement"
 
-def _national_source_cte(rule: CountryProcurementRule) -> str:
-    """The country's own procurement register, when one is ingested."""
-    return f"""    uhm_base AS
-    (
-        SELECT
-            '{rule.country_code}' AS country_code,
-            u.company_id AS company_id,
-            concat(
-                'uhm:',
-                lower(hex(MD5(concat(
-                    u.company_id, '|', u.source_procurement_id, '|', u.source_lot_id,
-                    '|', ifNull(toString(u.publication_date), ''), '|',
-                    lowerUTF8(replaceRegexpAll(trim(u.title), '\\\\s+', ' '))
-                ))))
-            ) AS evidence_id,
-            '{UHM_SOURCE}' AS source_slug,
-            concat(
-                u.source_procurement_id,
-                if(u.source_lot_id = '', '', concat(':', u.source_lot_id))
-            ) AS source_reference,
-            u.publication_date AS publication_date,
-            u.buyer_name AS buyer_name,
-            u.title AS title,
-            any(u.agreement_type) AS agreement_type,
-            max(u.source_retrieved_at) AS source_updated_at,
-            if(
-                u.publication_date IS NULL OR u.buyer_name = '' OR u.title = '',
-                '',
-                lower(hex(MD5(concat(
-                    u.company_id, '|',
-                    lowerUTF8(replaceRegexpAll(trim(u.buyer_name), '\\\\s+', ' ')), '|',
-                    toString(u.publication_date), '|',
-                    lowerUTF8(replaceRegexpAll(trim(u.title), '\\\\s+', ' '))
-                ))))
-            ) AS dedup_key
-        FROM corpscout.{rule.national_source.awards_table} AS u
-        WHERE u.company_match_status = 'exact'
-          AND u.company_id != ''
-        GROUP BY
-            u.company_id,
-            u.source_procurement_id,
-            u.source_lot_id,
-            u.publication_date,
-            u.buyer_name,
-            u.title
-    ),
-"""
-
-
 def procurement_evidence_insert_sql(
     stage_table: str,
     rule: CountryProcurementRule,
 ) -> str:
-    """Build the deterministic UHM/TED evidence merge for Sweden."""
+    """Union every source the country declares, then canonicalize duplicates.
+
+    Each source emits the same canonical columns, so this builder neither knows
+    nor cares whether a source is a flat awards table or a winners/notices pair.
+    """
     columns = ", ".join(tables.GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS)
-    ted_countries = ", ".join(f"'{c}'" for c in rule.ted_winner_countries)
-    # A country with no ingested national register contributes TED alone. The
-    # cross-source dedup below then finds no UHM rows and becomes a harmless
-    # no-op rather than needing its own branch.
-    uhm_cte = _national_source_cte(rule) if rule.national_source else ""
-    source_union = (
-        "        SELECT * FROM uhm_base\n        UNION ALL\n        SELECT * FROM ted_base"
-        if rule.national_source
-        else "        SELECT * FROM ted_base"
+    # Sources own their CTE text and are inconsistent about a trailing
+    # comma, so normalize before joining rather than trusting each one.
+    ctes = [
+        source.build_cte(rule, source.cte_name).rstrip().rstrip(",")
+        for source in rule.sources
+    ]
+    source_union = "\n        UNION ALL\n".join(
+        f"        SELECT * FROM {source.cte_name}" for source in rule.sources
     )
+    source_ctes = ",\n".join(ctes)
     return f"""
     INSERT INTO {stage_table} ({columns})
     WITH
-{uhm_cte}    ted_base AS
-    (
-        SELECT
-            '{rule.country_code}' AS country_code,
-            c.{rule.company_id_column} AS company_id,
-            concat(
-                'ted:', w.publication_number, ':', w.lot_id, ':',
-                w.tender_id, ':', toString(w.winner_ordinal)
-            ) AS evidence_id,
-            '{TED_SOURCE}' AS source_slug,
-            concat(
-                w.publication_number, ':', w.lot_id, ':',
-                w.tender_id, ':', toString(w.winner_ordinal)
-            ) AS source_reference,
-            w.publication_date AS publication_date,
-            any(n.buyer_name) AS buyer_name,
-            any(n.notice_title) AS title,
-            '' AS agreement_type,
-            max(greatest(w.resolved_at, n.resolved_at)) AS source_updated_at,
-            if(
-                w.publication_date IS NULL
-                    OR any(n.buyer_name) = ''
-                    OR any(n.notice_title) = '',
-                '',
-                lower(hex(MD5(concat(
-                    c.{rule.company_id_column}, '|',
-                    lowerUTF8(replaceRegexpAll(trim(any(n.buyer_name)), '\\\\s+', ' ')), '|',
-                    toString(w.publication_date), '|',
-                    lowerUTF8(replaceRegexpAll(trim(any(n.notice_title)), '\\\\s+', ' '))
-                ))))
-            ) AS dedup_key
-        FROM corpscout.ted_notice_winners AS w
-        INNER JOIN corpscout.ted_notices AS n
-            ON n.country_iso2 = w.country_iso2
-           AND n.publication_number = w.publication_number
-        INNER JOIN corpscout.{rule.companies_table} AS c
-            ON c.{rule.company_id_column} = w.winner_national_id
-        WHERE w.country_iso2 = '{rule.country_code}'
-          AND upper(w.winner_country) IN ({ted_countries})
-          AND length(w.winner_national_id) = {rule.identifier_length}
-          AND length(c.{rule.company_id_column}) = {rule.identifier_length}
-        GROUP BY
-            c.{rule.company_id_column},
-            w.publication_number,
-            w.lot_id,
-            w.tender_id,
-            w.winner_ordinal,
-            w.publication_date
-    ),
+{source_ctes},
     source_rows AS
     (
 {source_union}
@@ -141,18 +48,18 @@ def procurement_evidence_insert_sql(
     (
         SELECT
             dedup_key,
-            countIf(source_slug = '{UHM_SOURCE}') AS uhm_rows,
-            countIf(source_slug = '{TED_SOURCE}') AS ted_rows
+            uniqExact(source_slug) AS source_count,
+            count() AS row_count
         FROM source_rows
         WHERE dedup_key != ''
         GROUP BY dedup_key
-        HAVING uhm_rows > 0 AND ted_rows > 0
+        HAVING source_count > 1
     ),
     unambiguous_cross_source_keys AS
     (
         SELECT dedup_key
         FROM cross_source_key_counts
-        WHERE uhm_rows = 1 AND ted_rows = 1
+        WHERE row_count = source_count
     ),
     canonicalized AS
     (
@@ -171,6 +78,7 @@ def procurement_evidence_insert_sql(
         canonical_evidence_id AS evidence_id,
         arraySort(groupUniqArray(source_slug)) AS source_slugs,
         arraySort(groupUniqArray(source_reference)) AS source_references,
+        arraySort(groupUniqArrayIf(source_url, source_url != '')) AS source_urls,
         max(publication_date) AS publication_date,
         any(buyer_name) AS buyer_name,
         any(title) AS title,

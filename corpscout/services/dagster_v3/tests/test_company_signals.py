@@ -14,6 +14,7 @@ def test_procurement_table_contracts() -> None:
         "evidence_id",
         "source_slugs",
         "source_references",
+        "source_urls",
         "publication_date",
         "buyer_name",
         "title",

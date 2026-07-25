@@ -201,6 +201,7 @@ EXPECTED_MIGRATIONS = (
     "000176_corpscout_drop_se_company_listings",
     "000177_corpscout_rename_government_contract_summary",
     "000178_corpscout_partition_contract_signals_by_country",
+    "000179_corpscout_contract_evidence_source_urls",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2420,7 +2421,12 @@ def test_company_procurement_signals_migration_covers_columns() -> None:
     contracts = (
         (
             "company_government_contract_evidence",
-            company_signals_tables.GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS,
+            # source_urls was added later by 000179, so it is absent here.
+            tuple(
+                c
+                for c in company_signals_tables.GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS
+                if c != "source_urls"
+            ),
             "ORDER BY (country_code, company_id, evidence_id)",
         ),
         (

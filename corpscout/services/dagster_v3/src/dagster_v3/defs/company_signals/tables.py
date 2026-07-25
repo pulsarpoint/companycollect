@@ -11,6 +11,7 @@ GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS = (
     "evidence_id",
     "source_slugs",
     "source_references",
+    "source_urls",
     "publication_date",
     "buyer_name",
     "title",
