@@ -218,6 +218,10 @@ def test_usd_conversion_fills_pairs(
     counts = apply_finland_verotax_usd_conversion(
         duckdb_connection=connection, exchange_rates=exchange_rates
     )
+    rerun_counts = apply_finland_verotax_usd_conversion(
+        duckdb_connection=connection, exchange_rates=exchange_rates
+    )
+    assert rerun_counts == counts
     assert counts == {"rate_pairs": 2, "rates_found": 1, "rows_converted": 1}
 
     qualified = f"{tables.DLT_DATASET_NAME}.{tables.TAX_RECORDS_TABLE}"
@@ -236,6 +240,48 @@ def test_usd_conversion_fills_pairs(
         """
     ).fetchone()
     assert unconverted == (None, None, "")
+
+
+def test_usd_conversion_without_rates_resets_usd_values(
+    connection: duckdb.DuckDBPyConnection,
+    tmp_path: Path,
+) -> None:
+    _load_year(
+        connection,
+        tmp_path,
+        2024,
+        [HEADER_8, "2024;0104539-0;Testi Oy;091 Helsinki;1000,00;200,00;10,00;0,00"],
+    )
+    build_finland_verotax_tax_records(
+        duckdb_connection=connection,
+        source_run_id="run",
+        years=(2024,),
+    )
+    apply_finland_verotax_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=_FakeExchangeRates(
+            {
+                ("EUR", "2024-12-31"): _FakeRate(
+                    rate=Decimal("1.10"),
+                    rate_date=date(2024, 12, 31),
+                    source="ecb",
+                )
+            }
+        ),
+    )
+
+    counts = apply_finland_verotax_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=_FakeExchangeRates({}),
+    )
+    qualified = f"{tables.DLT_DATASET_NAME}.{tables.TAX_RECORDS_TABLE}"
+    row = connection.execute(
+        "select taxable_income_amount_usd, fx_rate_to_usd, "
+        f"fx_rate_date, fx_source from {qualified}"
+    ).fetchone()
+
+    assert counts == {"rate_pairs": 1, "rates_found": 0, "rows_converted": 0}
+    assert row == (None, None, None, "")
 
 
 def test_tax_records_columns_match_contract(
