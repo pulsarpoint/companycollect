@@ -10,6 +10,7 @@ from dagster_v3.defs.company_listings import tables as company_listings_tables
 from dagster_v3.defs.company_signals import tables as company_signals_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
+from dagster_v3.defs.company_identifier import tables as company_identifier_tables
 from dagster_v3.defs.instrument_issuer import tables as instrument_issuer_tables
 from dagster_v3.defs.instrument_venues import tables as instrument_venues_tables
 from dagster_v3.defs.esma_firds import tables as esma_firds_tables
@@ -196,6 +197,7 @@ EXPECTED_MIGRATIONS = (
     "000171_corpscout_isin_lei",
     "000172_corpscout_instrument_venues",
     "000173_corpscout_instrument_issuer",
+    "000174_corpscout_company_identifier",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2356,6 +2358,24 @@ def test_instrument_issuer_migration_replaces_isin_lei() -> None:
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.isin_lei" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.instrument_issuer" in down_sql
+
+
+def test_company_identifier_migration_covers_columns_in_order() -> None:
+    sql = _migration_sql("000174_corpscout_company_identifier.up.sql")
+    down_sql = _migration_sql("000174_corpscout_company_identifier.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.company_identifier" in sql
+    last_index = -1
+    for column_name in company_identifier_tables.COMPANY_IDENTIFIER_COLUMNS:
+        index = sql.index(f"    {column_name} ")
+        assert index > last_index
+        last_index = index
+
+    assert "ENGINE = MergeTree" in sql
+    assert (
+        "ORDER BY (issuer_scheme, issuer_id, country_code, company_id)" in sql
+    )
+    assert "DROP TABLE IF EXISTS corpscout.company_identifier" in down_sql
 
 
 def test_instrument_venues_migration_covers_columns_in_order() -> None:
