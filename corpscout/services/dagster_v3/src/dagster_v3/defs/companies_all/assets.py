@@ -94,7 +94,12 @@ FINANCIALS_LATEST_EXPORT_KEYS = tuple(
     for code in COMPANY_FINANCIALS_LATEST_COUNTRIES
 )
 
-SIGNAL_SUMMARY_EXPORT_KEYS = ("company_government_contract_summary_clickhouse",)
+# One upstream per country: companies_all reads the shared summary table,
+# which each country asset replaces its own partition of.
+SIGNAL_SUMMARY_EXPORT_KEYS = (
+    "se_government_contract_signals_clickhouse",
+    "no_government_contract_signals_clickhouse",
+)
 
 UPSTREAM_KEYS = (
     COMPANIES_EXPORT_KEYS

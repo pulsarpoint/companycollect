@@ -1,6 +1,7 @@
 import dagster as dg
 
 from dagster_v3.defs.company_signals import tables
+from dagster_v3.defs.company_signals.rules import COUNTRY_PROCUREMENT_RULES
 from dagster_v3.defs.company_signals.procurement import (
     procurement_evidence_insert_sql,
 )
@@ -43,7 +44,9 @@ def test_procurement_table_contracts() -> None:
 
 
 def test_procurement_sql_uses_exact_sweden_identity_and_country_scoped_ted() -> None:
-    sql = procurement_evidence_insert_sql("`corpscout`.`evidence_stage`")
+    sql = procurement_evidence_insert_sql(
+        "`corpscout`.`evidence_stage`", COUNTRY_PROCUREMENT_RULES["SE"]
+    )
 
     assert "FROM corpscout.se_uhm_procurement_awards" in sql
     assert "FROM corpscout.ted_notice_winners" in sql
@@ -60,7 +63,14 @@ def test_procurement_sql_uses_exact_sweden_identity_and_country_scoped_ted() -> 
 
 def test_procurement_asset_depends_on_both_sources() -> None:
     from dagster_v3.defs.company_signals.procurement import (
-        company_government_contract_summary_clickhouse,
+        COUNTRY_CONTRACT_ASSETS,
+    )
+
+    # Sweden is now its own asset; Norway is a sibling with TED only.
+    company_government_contract_summary_clickhouse = next(
+        asset
+        for asset in COUNTRY_CONTRACT_ASSETS
+        if asset.key.to_user_string() == "se_government_contract_signals_clickhouse"
     )
 
     spec = company_government_contract_summary_clickhouse.specs_by_key[

@@ -196,9 +196,14 @@ def test_companies_all_asset_deps_pinned() -> None:
         EXPECTED_COMPANIES_EXPORT_KEYS
         | EXPECTED_INDUSTRIES_EXPORT_KEYS
         | EXPECTED_FINANCIALS_LATEST_EXPORT_KEYS
-        | {"company_government_contract_summary_clickhouse"}
+        # One government-contract asset per country, each replacing its own
+        # partition of the shared summary table.
+        | {
+            "se_government_contract_signals_clickhouse",
+            "no_government_contract_signals_clickhouse",
+        }
     )
-    assert len(expected_keys) == 11 + 10 + 8 + 1
+    assert len(expected_keys) == 11 + 10 + 8 + 2
     expected = {dg.AssetKey(key) for key in expected_keys}
     assert actual_deps == expected
 

@@ -1,0 +1,116 @@
+"""Per-country rules for the government-contract signal.
+
+One country = one entry here plus one asset built from it by the factory in
+``procurement.py``. Countries are separate assets rather than partitions of a
+single asset because their upstream dependencies genuinely differ: Sweden reads
+its national procurement register alongside TED, Norway has no ingested national
+source and reads TED alone. Dagster declares deps per asset, not per partition,
+so a partitioned asset would make Norway falsely depend on Swedish UHM data and
+hold it back whenever that source is stale.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+SIGNAL_NAME = "government_contract"
+UHM_SOURCE = "sweden_uhm_procurement"
+TED_SOURCE = "ted_procurement"
+
+
+@dataclass(frozen=True)
+class NationalProcurementSource:
+    """A country's own procurement register, where one is ingested.
+
+    Optional by design: TED covers only contracts at or above the EU
+    publication thresholds, so a country without a national source sees a
+    minority of its real procurement. That gap has to be stated in the
+    coverage row rather than left to look like an absence of contracts.
+    """
+
+    source_slug: str
+    awards_table: str
+
+
+@dataclass(frozen=True)
+class CountryProcurementRule:
+    """How one country's government-contract evidence is assembled.
+
+    company_id_column differs per register -- se_companies keys on company_id,
+    no_companies on org_number -- and identifier_length is the national company
+    number's digit count, used to reject TED winner ids that cannot be one.
+    """
+
+    country_code: str
+    companies_table: str
+    company_id_column: str
+    identifier_length: int
+    ted_winner_countries: tuple[str, ...]
+    coverage_caveat: str
+    national_source: NationalProcurementSource | None = None
+
+    @property
+    def asset_name(self) -> str:
+        return f"{self.country_code.lower()}_government_contract_signals_clickhouse"
+
+    @property
+    def upstream_asset_keys(self) -> tuple[str, ...]:
+        keys = ["ted_publish_clickhouse"]
+        if self.national_source is not None:
+            keys.insert(0, "sweden_uhm_procurement_awards_clickhouse")
+        return tuple(keys)
+
+    @property
+    def source_slugs(self) -> tuple[str, ...]:
+        slugs = [TED_SOURCE]
+        if self.national_source is not None:
+            slugs.insert(0, self.national_source.source_slug)
+        return tuple(sorted(slugs))
+
+    @property
+    def required_clickhouse_tables(self) -> tuple[str, ...]:
+        tables_needed = [
+            "ted_notice_winners",
+            "ted_notices",
+            self.companies_table,
+        ]
+        if self.national_source is not None:
+            tables_needed.append(self.national_source.awards_table)
+        return tuple(tables_needed)
+
+
+COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
+    "SE": CountryProcurementRule(
+        country_code="SE",
+        companies_table="se_companies",
+        company_id_column="company_id",
+        identifier_length=10,
+        ted_winner_countries=("SE", "SWE"),
+        coverage_caveat=(
+            "UHM advertised procurement and TED eForms awards; excludes "
+            "direct/non-advertised procurement, missing after-notices, and "
+            "many framework call-offs."
+        ),
+        national_source=NationalProcurementSource(
+            source_slug=UHM_SOURCE,
+            awards_table="se_uhm_procurement_awards",
+        ),
+    ),
+    "NO": CountryProcurementRule(
+        country_code="NO",
+        companies_table="no_companies",
+        company_id_column="org_number",
+        identifier_length=9,
+        ted_winner_countries=("NO", "NOR"),
+        # Deliberately blunt: with no national source ingested, a Norwegian
+        # company showing no contracts is indistinguishable from one whose
+        # contracts all sat below the EU threshold. Saying so is the whole
+        # point of the coverage row.
+        coverage_caveat=(
+            "TED eForms awards only; Doffin, Norway's national procurement "
+            "register, is not ingested, so contracts below the EU publication "
+            "thresholds are absent entirely."
+        ),
+        national_source=None,
+    ),
+}

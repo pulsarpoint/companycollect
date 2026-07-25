@@ -200,6 +200,7 @@ EXPECTED_MIGRATIONS = (
     "000175_corpscout_company_listings_view",
     "000176_corpscout_drop_se_company_listings",
     "000177_corpscout_rename_government_contract_summary",
+    "000178_corpscout_partition_contract_signals_by_country",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

@@ -6,22 +6,22 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.company_signals import tables
 
+from dagster_v3.defs.company_signals.rules import (
+    COUNTRY_PROCUREMENT_RULES,
+    CountryProcurementRule,
+)
+
 COUNTRY_CODE = "SE"
 SIGNAL_NAME = "government_contract"
 UHM_SOURCE = "sweden_uhm_procurement"
 TED_SOURCE = "ted_procurement"
 
-
-def procurement_evidence_insert_sql(stage_table: str) -> str:
-    """Build the deterministic UHM/TED evidence merge for Sweden."""
-    columns = ", ".join(tables.GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS)
-    return f"""
-    INSERT INTO {stage_table} ({columns})
-    WITH
-    uhm_base AS
+def _national_source_cte(rule: CountryProcurementRule) -> str:
+    """The country's own procurement register, when one is ingested."""
+    return f"""    uhm_base AS
     (
         SELECT
-            'SE' AS country_code,
+            '{rule.country_code}' AS country_code,
             u.company_id AS company_id,
             concat(
                 'uhm:',
@@ -51,7 +51,7 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
                     lowerUTF8(replaceRegexpAll(trim(u.title), '\\\\s+', ' '))
                 ))))
             ) AS dedup_key
-        FROM corpscout.se_uhm_procurement_awards AS u
+        FROM corpscout.{rule.national_source.awards_table} AS u
         WHERE u.company_match_status = 'exact'
           AND u.company_id != ''
         GROUP BY
@@ -62,11 +62,33 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
             u.buyer_name,
             u.title
     ),
-    ted_base AS
+"""
+
+
+def procurement_evidence_insert_sql(
+    stage_table: str,
+    rule: CountryProcurementRule,
+) -> str:
+    """Build the deterministic UHM/TED evidence merge for Sweden."""
+    columns = ", ".join(tables.GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS)
+    ted_countries = ", ".join(f"'{c}'" for c in rule.ted_winner_countries)
+    # A country with no ingested national register contributes TED alone. The
+    # cross-source dedup below then finds no UHM rows and becomes a harmless
+    # no-op rather than needing its own branch.
+    uhm_cte = _national_source_cte(rule) if rule.national_source else ""
+    source_union = (
+        "        SELECT * FROM uhm_base\n        UNION ALL\n        SELECT * FROM ted_base"
+        if rule.national_source
+        else "        SELECT * FROM ted_base"
+    )
+    return f"""
+    INSERT INTO {stage_table} ({columns})
+    WITH
+{uhm_cte}    ted_base AS
     (
         SELECT
-            'SE' AS country_code,
-            c.company_id AS company_id,
+            '{rule.country_code}' AS country_code,
+            c.{rule.company_id_column} AS company_id,
             concat(
                 'ted:', w.publication_number, ':', w.lot_id, ':',
                 w.tender_id, ':', toString(w.winner_ordinal)
@@ -87,7 +109,7 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
                     OR any(n.notice_title) = '',
                 '',
                 lower(hex(MD5(concat(
-                    c.company_id, '|',
+                    c.{rule.company_id_column}, '|',
                     lowerUTF8(replaceRegexpAll(trim(any(n.buyer_name)), '\\\\s+', ' ')), '|',
                     toString(w.publication_date), '|',
                     lowerUTF8(replaceRegexpAll(trim(any(n.notice_title)), '\\\\s+', ' '))
@@ -97,14 +119,14 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
         INNER JOIN corpscout.ted_notices AS n
             ON n.country_iso2 = w.country_iso2
            AND n.publication_number = w.publication_number
-        INNER JOIN corpscout.se_companies AS c
-            ON c.company_id = w.winner_national_id
-        WHERE w.country_iso2 = 'SE'
-          AND upper(w.winner_country) IN ('SE', 'SWE')
-          AND length(w.winner_national_id) = 10
-          AND length(c.company_id) = 10
+        INNER JOIN corpscout.{rule.companies_table} AS c
+            ON c.{rule.company_id_column} = w.winner_national_id
+        WHERE w.country_iso2 = '{rule.country_code}'
+          AND upper(w.winner_country) IN ({ted_countries})
+          AND length(w.winner_national_id) = {rule.identifier_length}
+          AND length(c.{rule.company_id_column}) = {rule.identifier_length}
         GROUP BY
-            c.company_id,
+            c.{rule.company_id_column},
             w.publication_number,
             w.lot_id,
             w.tender_id,
@@ -113,9 +135,7 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
     ),
     source_rows AS
     (
-        SELECT * FROM uhm_base
-        UNION ALL
-        SELECT * FROM ted_base
+{source_union}
     ),
     cross_source_key_counts AS
     (
@@ -162,215 +182,232 @@ def procurement_evidence_insert_sql(stage_table: str) -> str:
     """
 
 
-@dg.asset(
-    name="company_government_contract_summary_clickhouse",
-    deps=[
-        dg.AssetKey("sweden_uhm_procurement_awards_clickhouse"),
-        dg.AssetKey("ted_publish_clickhouse"),
-    ],
-    group_name=tables.GROUP_NAME,
-    kinds={"clickhouse", "sql"},
-    metadata={
-        "tables": [
-            f"{tables.CLICKHOUSE_DATABASE}.{tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE}",
-            f"{tables.CLICKHOUSE_DATABASE}.{tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE}",
-            f"{tables.CLICKHOUSE_DATABASE}.{tables.SIGNAL_COVERAGE_TABLE}",
-        ]
-    },
-    description=(
-        "Deduplicates Sweden UHM and TED winner evidence, then publishes one "
-        "government-contract count/latest-date summary per matched company "
-        "plus independently queryable coverage metadata."
-    ),
-)
-def company_government_contract_summary_clickhouse(
-    context: dg.AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    required_tables = (
-        tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE,
-        tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE,
-        tables.SIGNAL_COVERAGE_TABLE,
-        "se_uhm_procurement_awards",
-        "ted_notice_winners",
-        "ted_notices",
-        "se_companies",
+def build_country_contract_asset(
+    rule: CountryProcurementRule,
+) -> dg.AssetsDefinition:
+    """One asset per country, because their upstreams genuinely differ.
+
+    Sweden reads its national register alongside TED; Norway has no
+    ingested national source and reads TED alone. Dagster declares deps per
+    asset, so a single partitioned asset would make Norway falsely depend on
+    Swedish UHM data and stall whenever that source is stale.
+    """
+    coverage_slugs = ", ".join(f"'{slug}'" for slug in rule.source_slugs)
+    caveat = rule.coverage_caveat.replace("'", "''")
+
+    @dg.asset(
+        name=rule.asset_name,
+        deps=[dg.AssetKey(key) for key in rule.upstream_asset_keys],
+        group_name=tables.GROUP_NAME,
+        kinds={"clickhouse", "sql"},
+        metadata={
+            "tables": [
+                f"{tables.CLICKHOUSE_DATABASE}.{tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE}",
+                f"{tables.CLICKHOUSE_DATABASE}.{tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE}",
+                f"{tables.CLICKHOUSE_DATABASE}.{tables.SIGNAL_COVERAGE_TABLE}",
+            ]
+        },
+        description=(
+            f"Government-contract evidence for {rule.country_code}: deduplicates "
+            f"{' and '.join(rule.source_slugs)} winner evidence, then publishes "
+            "one count/latest-date summary per matched company plus a coverage "
+            "row stating what this country's sources do and do not cover."
+        ),
     )
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=tables.CLICKHOUSE_DATABASE,
-        tables=required_tables,
-    )
-    stages = {
-        table: f"_tmp_{table}_{uuid.uuid4().hex}"
-        for table in (
+    def _country_contract_signals(
+            context: dg.AssetExecutionContext,
+            clickhouse: ClickhouseResource,
+        ) -> dg.MaterializeResult:
+        required_tables = (
             tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE,
             tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE,
             tables.SIGNAL_COVERAGE_TABLE,
+            *rule.required_clickhouse_tables,
         )
-    }
-    qualified = {table: _qualified(table) for table in stages}
-    qualified_stages = {table: _qualified(stage) for table, stage in stages.items()}
-
-    with clickhouse.get_connection() as client:
-        [(uhm_rows,)] = client.execute(
-            "SELECT count() FROM corpscout.se_uhm_procurement_awards"
+        assert_clickhouse_tables_exist(
+            clickhouse,
+            database=tables.CLICKHOUSE_DATABASE,
+            tables=required_tables,
         )
-        [(ted_rows,)] = client.execute(
-            """
-            SELECT count()
-            FROM corpscout.ted_notice_winners
-            WHERE country_iso2 = 'SE'
-              AND length(winner_national_id) = 10
-            """
-        )
-        if int(uhm_rows) + int(ted_rows) == 0:
-            raise ValueError(
-                "Both Sweden UHM and TED procurement inputs are empty; "
-                "refusing to replace company summaries"
+        stages = {
+            table: f"_tmp_{table}_{uuid.uuid4().hex}"
+            for table in (
+                tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE,
+                tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE,
+                tables.SIGNAL_COVERAGE_TABLE,
             )
+        }
+        qualified = {table: _qualified(table) for table in stages}
+        qualified_stages = {table: _qualified(stage) for table, stage in stages.items()}
 
-        for table in stages:
-            client.execute(
-                f"CREATE TABLE {qualified_stages[table]} AS {qualified[table]}"
+        with clickhouse.get_connection() as client:
+            [(uhm_rows,)] = client.execute(
+                "SELECT count() FROM corpscout.se_uhm_procurement_awards"
             )
-        exchanged: list[str] = []
-        primary_error: Exception | None = None
-        try:
-            evidence_stage = qualified_stages[tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE]
-            client.execute(
-                f"""
-                INSERT INTO {evidence_stage}
-                SELECT *
-                FROM {qualified[tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE]}
-                WHERE country_code != '{COUNTRY_CODE}'
+            [(ted_rows,)] = client.execute(
                 """
-            )
-            client.execute(procurement_evidence_insert_sql(evidence_stage))
-
-            summary_stage = qualified_stages[tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE]
-            client.execute(
-                f"""
-                INSERT INTO {summary_stage}
-                SELECT *
-                FROM {qualified[tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE]}
-                WHERE country_code != '{COUNTRY_CODE}'
-                """
-            )
-            client.execute(
-                f"""
-                INSERT INTO {summary_stage}
-                    ({", ".join(tables.GOVERNMENT_CONTRACT_SUMMARY_COLUMNS)})
-                SELECT
-                    country_code,
-                    company_id,
-                    toUInt32(count()) AS public_award_count,
-                    max(publication_date) AS public_award_last_date,
-                    arraySort(arrayDistinct(arrayFlatten(groupArray(source_slugs))))
-                        AS source_slugs,
-                    max(source_updated_at) AS source_updated_at,
-                    now64(3) AS resolved_at
-                FROM {evidence_stage}
-                WHERE country_code = '{COUNTRY_CODE}'
-                GROUP BY country_code, company_id
-                """
-            )
-
-            coverage_stage = qualified_stages[tables.SIGNAL_COVERAGE_TABLE]
-            client.execute(
-                f"""
-                INSERT INTO {coverage_stage}
-                SELECT *
-                FROM {qualified[tables.SIGNAL_COVERAGE_TABLE]}
-                WHERE NOT (
-                    country_code = '{COUNTRY_CODE}'
-                    AND signal_name = '{SIGNAL_NAME}'
-                )
-                """
-            )
-            client.execute(
-                f"""
-                INSERT INTO {coverage_stage}
-                    ({", ".join(tables.SIGNAL_COVERAGE_COLUMNS)})
-                SELECT
-                    '{COUNTRY_CODE}' AS country_code,
-                    '{SIGNAL_NAME}' AS signal_name,
-                    'partial' AS coverage_status,
-                    min(publication_date) AS coverage_from,
-                    max(publication_date) AS coverage_to,
-                    ['{UHM_SOURCE}', '{TED_SOURCE}'] AS source_slugs,
-                    max(source_updated_at) AS source_updated_at,
-                    now64(3) AS resolved_at,
-                    'UHM advertised procurement and TED eForms awards; excludes direct/non-advertised procurement, missing after-notices, and many framework call-offs.'
-                        AS caveat
-                FROM {evidence_stage}
-                WHERE country_code = '{COUNTRY_CODE}'
-                """
-            )
-
-            [(evidence_rows, distinct_companies)] = client.execute(
-                f"""
-                SELECT count(), uniqExact(company_id)
-                FROM {evidence_stage}
-                WHERE country_code = '{COUNTRY_CODE}'
-                """
-            )
-            [(summary_rows,)] = client.execute(
-                f"""
                 SELECT count()
-                FROM {summary_stage}
-                WHERE country_code = '{COUNTRY_CODE}'
+                FROM corpscout.ted_notice_winners
+                WHERE country_iso2 = 'SE'
+                  AND length(winner_national_id) = 10
                 """
             )
-            if int(evidence_rows) == 0 or int(summary_rows) == 0:
+            if int(uhm_rows) + int(ted_rows) == 0:
                 raise ValueError(
-                    "Sweden procurement summary produced no company evidence"
-                )
-            if int(summary_rows) != int(distinct_companies):
-                raise ValueError(
-                    "Sweden procurement summary grain mismatch: "
-                    f"summaries={summary_rows} companies={distinct_companies}"
+                    "Both Sweden UHM and TED procurement inputs are empty; "
+                    "refusing to replace company summaries"
                 )
 
             for table in stages:
                 client.execute(
-                    f"EXCHANGE TABLES {qualified_stages[table]} AND {qualified[table]}"
+                    f"CREATE TABLE {qualified_stages[table]} AS {qualified[table]}"
                 )
-                exchanged.append(table)
-        except Exception as exc:
-            primary_error = exc
-            for table in reversed(exchanged):
+            exchanged: list[str] = []
+            primary_error: Exception | None = None
+            try:
+                evidence_stage = qualified_stages[tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE]
+                client.execute(procurement_evidence_insert_sql(evidence_stage, rule))
+
+                summary_stage = qualified_stages[tables.GOVERNMENT_CONTRACT_SUMMARY_TABLE]
                 client.execute(
-                    f"EXCHANGE TABLES {qualified_stages[table]} AND {qualified[table]}"
+                    f"""
+                    INSERT INTO {summary_stage}
+                        ({", ".join(tables.GOVERNMENT_CONTRACT_SUMMARY_COLUMNS)})
+                    SELECT
+                        country_code,
+                        company_id,
+                        toUInt32(count()) AS public_award_count,
+                        max(publication_date) AS public_award_last_date,
+                        arraySort(arrayDistinct(arrayFlatten(groupArray(source_slugs))))
+                            AS source_slugs,
+                        max(source_updated_at) AS source_updated_at,
+                        now64(3) AS resolved_at
+                    FROM {evidence_stage}
+                    WHERE country_code = '{rule.country_code}'
+                    GROUP BY country_code, company_id
+                    """
                 )
-            raise
-        finally:
-            for table in reversed(tuple(stages)):
-                try:
-                    client.execute(f"DROP TABLE IF EXISTS {qualified_stages[table]}")
-                except Exception:
-                    if primary_error is None:
-                        raise
 
-    return dg.MaterializeResult(
-        metadata={
-            "uhm_source_rows": int(uhm_rows),
-            "ted_source_rows": int(ted_rows),
-            "evidence_rows": int(evidence_rows),
-            "summary_rows": int(summary_rows),
-            "distinct_companies": int(distinct_companies),
-        }
+                coverage_stage = qualified_stages[tables.SIGNAL_COVERAGE_TABLE]
+                client.execute(
+                    f"""
+                    INSERT INTO {coverage_stage}
+                        ({", ".join(tables.SIGNAL_COVERAGE_COLUMNS)})
+                    SELECT
+                        '{rule.country_code}' AS country_code,
+                        '{SIGNAL_NAME}' AS signal_name,
+                        'partial' AS coverage_status,
+                        min(publication_date) AS coverage_from,
+                        max(publication_date) AS coverage_to,
+                        [{coverage_slugs}] AS source_slugs,
+                        max(source_updated_at) AS source_updated_at,
+                        now64(3) AS resolved_at,
+                        '{caveat}'
+                            AS caveat
+                    FROM {evidence_stage}
+                    WHERE country_code = '{rule.country_code}'
+                    """
+                )
+
+                [(evidence_rows, distinct_companies)] = client.execute(
+                    f"""
+                    SELECT count(), uniqExact(company_id)
+                    FROM {evidence_stage}
+                    WHERE country_code = '{rule.country_code}'
+                    """
+                )
+                [(summary_rows,)] = client.execute(
+                    f"""
+                    SELECT count()
+                    FROM {summary_stage}
+                    WHERE country_code = '{rule.country_code}'
+                    """
+                )
+                if int(evidence_rows) == 0 or int(summary_rows) == 0:
+                    # Refuse to blank a partition that currently holds rows --
+                    # that is a degraded refresh. An empty result for a country
+                    # that has none yet is not a failure: Norway legitimately
+                    # produces nothing until its TED partitions are backfilled,
+                    # and failing there would leave the asset permanently red
+                    # for a state that is simply "no data yet".
+                    existing_rows = client.execute(
+                        f"""
+                        SELECT count()
+                        FROM {qualified[tables.GOVERNMENT_CONTRACT_EVIDENCE_TABLE]}
+                        WHERE country_code = '{rule.country_code}'
+                        """
+                    )[0][0]
+                    if int(existing_rows) > 0:
+                        raise ValueError(
+                            f"{rule.country_code} government-contract signal "
+                            f"produced no evidence, but the existing partition "
+                            f"holds {existing_rows} rows -- refusing to blank it"
+                        )
+                    context.log.warning(
+                        "%s has no government-contract evidence yet; publishing "
+                        "an empty partition and a coverage row that says so",
+                        rule.country_code,
+                    )
+                if int(summary_rows) != int(distinct_companies):
+                    raise ValueError(
+                        "Sweden procurement summary grain mismatch: "
+                        f"summaries={summary_rows} companies={distinct_companies}"
+                    )
+
+                for table in stages:
+                    client.execute(
+                        f"ALTER TABLE {qualified[table]} REPLACE PARTITION '{rule.country_code}' "
+                        f"FROM {qualified_stages[table]}"
+                    )
+                    exchanged.append(table)
+            except Exception as exc:
+                primary_error = exc
+                for table in reversed(exchanged):
+                    client.execute(
+                        f"ALTER TABLE {qualified[table]} REPLACE PARTITION '{rule.country_code}' "
+                        f"FROM {qualified_stages[table]}"
+                    )
+                raise
+            finally:
+                for table in reversed(tuple(stages)):
+                    try:
+                        client.execute(f"DROP TABLE IF EXISTS {qualified_stages[table]}")
+                    except Exception:
+                        if primary_error is None:
+                            raise
+
+        return dg.MaterializeResult(
+            metadata={
+                "uhm_source_rows": int(uhm_rows),
+                "ted_source_rows": int(ted_rows),
+                "evidence_rows": int(evidence_rows),
+                "summary_rows": int(summary_rows),
+                "distinct_companies": int(distinct_companies),
+            }
+        )
+
+
+    return _country_contract_signals
+
+
+COUNTRY_CONTRACT_ASSETS = [
+    build_country_contract_asset(rule)
+    for rule in COUNTRY_PROCUREMENT_RULES.values()
+]
+
+# One job per country, so a country can be refreshed on its own and a failing
+# country cannot hold back the others.
+COUNTRY_CONTRACT_JOBS = [
+    dg.define_asset_job(
+        f"{rule.country_code.lower()}_government_contract_signals_job",
+        selection=dg.AssetSelection.assets(rule.asset_name),
     )
-
-
-company_government_contract_summary_job = dg.define_asset_job(
-    "company_government_contract_summary_job",
-    selection=dg.AssetSelection.assets("company_government_contract_summary_clickhouse"),
-)
+    for rule in COUNTRY_PROCUREMENT_RULES.values()
+]
 
 defs = dg.Definitions(
-    assets=[company_government_contract_summary_clickhouse],
-    jobs=[company_government_contract_summary_job],
+    assets=COUNTRY_CONTRACT_ASSETS,
+    jobs=COUNTRY_CONTRACT_JOBS,
 )
 
 
