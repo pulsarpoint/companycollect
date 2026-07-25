@@ -155,6 +155,20 @@ def _build_lei_records(
     publish_date: str,
     run_id: str,
 ) -> None:
+    # Resolved defensively: the successor columns are indexed by dlt from
+    # Entity.SuccessorEntity.N.*, and a golden copy whose widest record has no
+    # successor would not produce them at all. _raw_column_or_null degrades to
+    # NULL rather than failing the whole rebuild on a missing column.
+    successor_lei = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_LEI_RECORDS_TABLE,
+        column_name="entity_successor_entity_1_successor_lei",
+    )
+    successor_name = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_LEI_RECORDS_TABLE,
+        column_name="entity_successor_entity_1_successor_entity_name",
+    )
     connection.execute(
         f"""
         create or replace table {_staging_table(catalog_name, tables.GLEIF_LEI_RECORDS_TABLE)} as
@@ -174,8 +188,18 @@ def _build_lei_records(
           nullif(entity_registration_authority_registration_authority_entity_id, '') as registered_as,
           null as associated_entity_lei,
           null as associated_entity_name,
-          null as successor_entity_lei,
-          null as successor_entity_name,
+          -- The golden-copy CSV carries Entity.SuccessorEntity.N.SuccessorLEI,
+          -- indexed because an entity that splits has several successors. Only
+          -- the first is kept: the target column is scalar, and a split is rare
+          -- enough that modelling it properly belongs in its own table rather
+          -- than a widened records row.
+          --
+          -- These were hardcoded to NULL, which discarded every succession link
+          -- in the source -- 1.8% of records populate it, roughly 60k across
+          -- the 3.35M golden copy -- and left is_current in
+          -- corpscout.company_identifier permanently 1, carrying no signal.
+          nullif({successor_lei}, '') as successor_entity_lei,
+          nullif({successor_name}, '') as successor_entity_name,
           try_cast(entity_entity_creation_date as timestamp) as creation_date,
           try_cast(entity_entity_expiration_date as timestamp) as expiration_date,
           nullif(entity_entity_expiration_reason, '') as expiration_reason,

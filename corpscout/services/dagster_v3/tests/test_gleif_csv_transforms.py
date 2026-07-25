@@ -42,6 +42,16 @@ def test_replace_current_from_dlt_raw_tables_builds_normalized_tables(
             from gleif_reference.gleif.gleif_lei_records
             """
         ).fetchall() == [("ACME PLC", "ACTIVE", "ISSUED", "run-1")]
+        # The golden-copy CSV carries Entity.SuccessorEntity.N.SuccessorLEI, and
+        # 1.8% of records populate it. It was previously hardcoded to NULL here,
+        # which left is_current downstream permanently 1 and lost every
+        # succession link.
+        assert connection.execute(
+            """
+            select successor_entity_lei, successor_entity_name
+            from gleif_reference.gleif.gleif_lei_records
+            """
+        ).fetchall() == [("549300SUCCESSOR00001", "ACME SUCCESSOR PLC")]
         assert connection.execute(
             """
             select name_type, name, language, sequence
@@ -182,6 +192,8 @@ def seed_raw_tables(
           entity_registration_authority_registration_authority_id varchar,
           entity_registration_authority_other_registration_authority_id varchar,
           entity_registration_authority_registration_authority_entity_id varchar,
+          entity_successor_entity_1_successor_lei varchar,
+          entity_successor_entity_1_successor_entity_name varchar,
           entity_entity_creation_date varchar,
           entity_entity_expiration_date varchar,
           entity_entity_expiration_reason varchar,
@@ -228,6 +240,8 @@ def seed_raw_tables(
               'RA000585',
               null,
               '123456',
+              '549300SUCCESSOR00001',
+              'ACME SUCCESSOR PLC',
               '2020-01-01T00:00:00Z',
               null,
               null,
@@ -339,3 +353,42 @@ def seed_raw_tables(
         )
         """
     )
+
+
+def test_lei_records_transform_tolerates_missing_successor_columns(
+    tmp_path: Path,
+) -> None:
+    """A golden copy whose widest record has no successor omits the columns.
+
+    dlt derives Entity.SuccessorEntity.N.* from the data it sees, so the
+    columns are absent rather than empty when nothing in the file populates
+    them. That must degrade to NULL, not fail the whole rebuild.
+    """
+    database_path = tmp_path / "gleif_reference.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        seed_raw_tables(connection)
+        connection.execute(
+            f"alter table {GLEIF_DLT_RAW_DATASET_NAME}.{GLEIF_RAW_LEI_RECORDS_TABLE} "
+            "drop column entity_successor_entity_1_successor_lei"
+        )
+        connection.execute(
+            f"alter table {GLEIF_DLT_RAW_DATASET_NAME}.{GLEIF_RAW_LEI_RECORDS_TABLE} "
+            "drop column entity_successor_entity_1_successor_entity_name"
+        )
+
+        row_counts = replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="full",
+            publish_date="2026-06-20T16:00:00+00:00",
+            run_id="run-1",
+        )
+
+    assert row_counts["gleif_lei_records"] == 1
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        assert connection.execute(
+            """
+            select successor_entity_lei, successor_entity_name
+            from gleif_reference.gleif.gleif_lei_records
+            """
+        ).fetchall() == [(None, None)]
