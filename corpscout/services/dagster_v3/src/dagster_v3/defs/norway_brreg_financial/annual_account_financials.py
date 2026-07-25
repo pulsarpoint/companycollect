@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -13,6 +13,7 @@ from typing import Any
 
 import duckdb
 from openai import OpenAI
+import pyarrow as pa
 
 from exchange_rates import ExchangeRateRequest
 from dagster_v3.defs.norway_brreg_financial.models import (
@@ -31,6 +32,158 @@ LLM_MAX_TOKENS = 4_096
 LLM_MAX_BATCH_SIZE = 2
 SOURCE_SLUG = "norway_brreg_annual_accounts_pdf"
 SOURCE_BUCKET = "source-norway-brreg"
+DEFAULT_INSERT_BATCH_ROWS = 50_000
+_DOCUMENT_STAGE_TABLE = "_norway_annual_account_document_stage"
+_DOCUMENT_BATCH_RELATION = "_norway_annual_account_document_batch"
+_FACT_STAGE_TABLE = "_norway_annual_account_fact_stage"
+_FACT_BATCH_RELATION = "_norway_annual_account_fact_batch"
+_FACT_COUNT_STAGE_TABLE = "_norway_annual_account_fact_count_stage"
+_FACT_COUNT_BATCH_RELATION = "_norway_annual_account_fact_count_batch"
+
+_DOCUMENT_COLUMNS = (
+    "document_id",
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "org_number",
+    "legal_name",
+    "source_filing_year",
+    "source_chunk",
+    "source_json_object_key",
+    "source_json_uri",
+    "source_json_sha256",
+    "source_pdf_url",
+    "source_pdf_sha256",
+    "source_pdf_size_bytes",
+    "retrieved_at",
+    "pdf_page_count",
+    "native_text_page_count",
+    "ocr_page_count",
+    "parse_status",
+    "parse_warnings",
+    "fact_count",
+    "parser_version",
+    "resolved_at",
+)
+_DOCUMENT_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("document_id", pa.string(), nullable=False),
+        pa.field("country_iso2", pa.string(), nullable=False),
+        pa.field("source_slug", pa.string(), nullable=False),
+        pa.field("source_run_id", pa.string(), nullable=False),
+        pa.field("org_number", pa.string(), nullable=False),
+        pa.field("legal_name", pa.string(), nullable=False),
+        pa.field("source_filing_year", pa.int32(), nullable=False),
+        pa.field("source_chunk", pa.string(), nullable=False),
+        pa.field("source_json_object_key", pa.string(), nullable=False),
+        pa.field("source_json_uri", pa.string(), nullable=False),
+        pa.field("source_json_sha256", pa.string(), nullable=False),
+        pa.field("source_pdf_url", pa.string(), nullable=False),
+        pa.field("source_pdf_sha256", pa.string(), nullable=False),
+        pa.field("source_pdf_size_bytes", pa.int64(), nullable=False),
+        pa.field("retrieved_at", pa.timestamp("us", tz="UTC")),
+        pa.field("pdf_page_count", pa.int32(), nullable=False),
+        pa.field("native_text_page_count", pa.int32(), nullable=False),
+        pa.field("ocr_page_count", pa.int32(), nullable=False),
+        pa.field("parse_status", pa.string(), nullable=False),
+        pa.field("parse_warnings", pa.string(), nullable=False),
+        pa.field("fact_count", pa.int64(), nullable=False),
+        pa.field("parser_version", pa.string(), nullable=False),
+        pa.field("resolved_at", pa.timestamp("us", tz="UTC"), nullable=False),
+    ]
+)
+_FACT_COLUMNS = (
+    "fact_id",
+    "document_id",
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "org_number",
+    "source_filing_year",
+    "source_chunk",
+    "fact_ordinal",
+    "page_number",
+    "line_number",
+    "statement_type",
+    "table_title",
+    "raw_label",
+    "normalized_label",
+    "canonical_concept",
+    "column_label",
+    "fiscal_year",
+    "period_end_date",
+    "is_comparative",
+    "value_kind",
+    "raw_value",
+    "numeric_value",
+    "currency",
+    "unit_scale",
+    "amount_original",
+    "amount_usd",
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "bbox",
+    "evidence",
+    "ocr_confidence",
+    "extraction_method",
+    "mapping_method",
+    "mapping_confidence",
+    "quality_flags",
+    "source_json_sha256",
+    "parser_version",
+    "resolved_at",
+)
+_FACT_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("fact_id", pa.string(), nullable=False),
+        pa.field("document_id", pa.string(), nullable=False),
+        pa.field("country_iso2", pa.string(), nullable=False),
+        pa.field("source_slug", pa.string(), nullable=False),
+        pa.field("source_run_id", pa.string(), nullable=False),
+        pa.field("org_number", pa.string(), nullable=False),
+        pa.field("source_filing_year", pa.int32(), nullable=False),
+        pa.field("source_chunk", pa.string(), nullable=False),
+        pa.field("fact_ordinal", pa.int64(), nullable=False),
+        pa.field("page_number", pa.int32(), nullable=False),
+        pa.field("line_number", pa.int32(), nullable=False),
+        pa.field("statement_type", pa.string(), nullable=False),
+        pa.field("table_title", pa.string(), nullable=False),
+        pa.field("raw_label", pa.string(), nullable=False),
+        pa.field("normalized_label", pa.string(), nullable=False),
+        pa.field("canonical_concept", pa.string()),
+        pa.field("column_label", pa.string(), nullable=False),
+        pa.field("fiscal_year", pa.int32()),
+        pa.field("period_end_date", pa.string()),
+        pa.field("is_comparative", pa.bool_(), nullable=False),
+        pa.field("value_kind", pa.string(), nullable=False),
+        pa.field("raw_value", pa.string(), nullable=False),
+        pa.field("numeric_value", pa.string(), nullable=False),
+        pa.field("currency", pa.string(), nullable=False),
+        pa.field("unit_scale", pa.string(), nullable=False),
+        pa.field("amount_original", pa.string()),
+        pa.field("amount_usd", pa.string()),
+        pa.field("fx_rate_to_usd", pa.string()),
+        pa.field("fx_rate_date", pa.string()),
+        pa.field("fx_source", pa.string()),
+        pa.field("bbox", pa.string(), nullable=False),
+        pa.field("evidence", pa.string(), nullable=False),
+        pa.field("ocr_confidence", pa.float64(), nullable=False),
+        pa.field("extraction_method", pa.string(), nullable=False),
+        pa.field("mapping_method", pa.string(), nullable=False),
+        pa.field("mapping_confidence", pa.float64()),
+        pa.field("quality_flags", pa.string(), nullable=False),
+        pa.field("source_json_sha256", pa.string(), nullable=False),
+        pa.field("parser_version", pa.string(), nullable=False),
+        pa.field("resolved_at", pa.timestamp("us", tz="UTC"), nullable=False),
+    ]
+)
+_FACT_COUNT_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("document_id", pa.string(), nullable=False),
+        pa.field("fact_count", pa.int64(), nullable=False),
+    ]
+)
 
 METRIC_NAMES = (
     "operating_revenue",
@@ -278,24 +431,27 @@ def load_annual_account_documents(
     source_run_id: str,
 ) -> dict[str, int]:
     ensure_annual_account_duckdb_schema(connection)
+    _create_document_stage_table(connection)
     keys = storage.list_annual_account_document_keys(
         filing_year=filing_year,
         chunk_key=chunk_key,
     )
-    rows: list[tuple[Any, ...]] = []
     json_bytes = 0
     resolved_at = datetime.now(UTC)
-    for key in keys:
-        body = storage.read_response(key)
-        document = AnnualAccountDocument.model_validate_json(body)
-        if document.filing_year != filing_year:
-            raise RuntimeError(
-                f"Annual-account JSON filing year mismatch: key={key} "
-                f"expected={filing_year} actual={document.filing_year}"
-            )
-        source_json_sha256 = hashlib.sha256(body).hexdigest()
-        rows.append(
-            (
+
+    def document_rows() -> Iterable[tuple[Any, ...]]:
+        nonlocal json_bytes
+        for key in keys:
+            body = storage.read_response(key)
+            document = AnnualAccountDocument.model_validate_json(body)
+            if document.filing_year != filing_year:
+                raise RuntimeError(
+                    f"Annual-account JSON filing year mismatch: key={key} "
+                    f"expected={filing_year} actual={document.filing_year}"
+                )
+            source_json_sha256 = hashlib.sha256(body).hexdigest()
+            json_bytes += len(body)
+            yield (
                 document.document_id,
                 document.country_iso2,
                 SOURCE_SLUG,
@@ -320,8 +476,11 @@ def load_annual_account_documents(
                 PARSER_VERSION,
                 resolved_at,
             )
-        )
-        json_bytes += len(body)
+
+    document_count = _append_document_stage_rows(
+        connection=connection,
+        rows=document_rows(),
+    )
 
     connection.execute("begin transaction")
     try:
@@ -330,17 +489,16 @@ def load_annual_account_documents(
             "where source_filing_year = ? and source_chunk = ?",
             [filing_year, chunk_key],
         )
-        if rows:
-            connection.executemany(
-                f"insert into {ANNUAL_ACCOUNT_DATASET}.documents values "
-                f"({', '.join(['?'] * 23)})",
-                rows,
+        if document_count:
+            connection.execute(
+                f"insert into {ANNUAL_ACCOUNT_DATASET}.documents "
+                f"select * from {_DOCUMENT_STAGE_TABLE}"
             )
         connection.execute("commit")
     except Exception:
         connection.execute("rollback")
         raise
-    return {"document_count": len(rows), "json_bytes": json_bytes}
+    return {"document_count": document_count, "json_bytes": json_bytes}
 
 
 def replace_annual_account_facts(
@@ -361,31 +519,41 @@ def replace_annual_account_facts(
         """,
         [filing_year, chunk_key],
     ).fetchall()
-    fact_rows: list[tuple[Any, ...]] = []
-    fact_counts: dict[str, int] = {}
+    _create_fact_stage_tables(connection)
+    fact_counts: list[tuple[str, int]] = []
     resolved_at = datetime.now(UTC)
-    for document_id, key, expected_json_sha256 in documents:
-        body = storage.read_response(key)
-        actual_json_sha256 = hashlib.sha256(body).hexdigest()
-        if actual_json_sha256 != expected_json_sha256:
-            raise RuntimeError(
-                f"Annual-account JSON hash mismatch: key={key} "
-                f"expected={expected_json_sha256} actual={actual_json_sha256}"
+
+    def fact_rows() -> Iterable[tuple[Any, ...]]:
+        for document_id, key, expected_json_sha256 in documents:
+            body = storage.read_response(key)
+            actual_json_sha256 = hashlib.sha256(body).hexdigest()
+            if actual_json_sha256 != expected_json_sha256:
+                raise RuntimeError(
+                    f"Annual-account JSON hash mismatch: key={key} "
+                    f"expected={expected_json_sha256} actual={actual_json_sha256}"
+                )
+            document = AnnualAccountDocument.model_validate_json(body)
+            facts = extract_annual_account_facts(
+                document,
+                source_json_sha256=actual_json_sha256,
             )
-        document = AnnualAccountDocument.model_validate_json(body)
-        facts = extract_annual_account_facts(
-            document,
-            source_json_sha256=actual_json_sha256,
-        )
-        fact_counts[str(document_id)] = len(facts)
-        fact_rows.extend(
-            _fact_row(
-                fact,
-                source_run_id=source_run_id,
-                source_chunk=chunk_key,
-                resolved_at=resolved_at,
-            )
-            for fact in facts
+            fact_counts.append((str(document_id), len(facts)))
+            for fact in facts:
+                yield _fact_row(
+                    fact,
+                    source_run_id=source_run_id,
+                    source_chunk=chunk_key,
+                    resolved_at=resolved_at,
+                )
+
+    fact_count = _append_fact_stage_rows(
+        connection=connection,
+        rows=fact_rows(),
+    )
+    if fact_counts:
+        _insert_fact_count_stage_rows(
+            connection,
+            fact_counts,
         )
 
     connection.execute("begin transaction")
@@ -395,24 +563,30 @@ def replace_annual_account_facts(
             "where source_filing_year = ? and source_chunk = ?",
             [filing_year, chunk_key],
         )
-        if fact_rows:
-            connection.executemany(
-                f"insert into {ANNUAL_ACCOUNT_DATASET}.facts values "
-                f"({', '.join(['?'] * 40)})",
-                fact_rows,
-            )
-        for document_id, count in fact_counts.items():
+        if fact_count:
             connection.execute(
-                f"update {ANNUAL_ACCOUNT_DATASET}.documents "
-                "set parse_status = 'parsed', fact_count = ?, parser_version = ?, "
-                "resolved_at = ? where document_id = ?",
-                [count, PARSER_VERSION, resolved_at, document_id],
+                f"insert into {ANNUAL_ACCOUNT_DATASET}.facts "
+                f"select * from {_FACT_STAGE_TABLE}"
             )
+        connection.execute(
+            f"""
+            update {ANNUAL_ACCOUNT_DATASET}.documents as documents
+            set parse_status = 'parsed',
+                fact_count = counts.fact_count,
+                parser_version = ?,
+                resolved_at = ?
+            from {_FACT_COUNT_STAGE_TABLE} as counts
+            where documents.document_id = counts.document_id
+              and documents.source_filing_year = ?
+              and documents.source_chunk = ?
+            """,
+            [PARSER_VERSION, resolved_at, filing_year, chunk_key],
+        )
         connection.execute("commit")
     except Exception:
         connection.execute("rollback")
         raise
-    return {"document_count": len(documents), "fact_count": len(fact_rows)}
+    return {"document_count": len(documents), "fact_count": fact_count}
 
 
 def apply_builtin_concept_mappings(
@@ -1219,12 +1393,12 @@ def _fact_row(
         fact.is_comparative,
         fact.value_kind,
         fact.raw_value,
-        fact.numeric_value,
+        str(fact.numeric_value),
         fact.currency,
-        fact.unit_scale,
-        fact.amount_original,
-        fact.amount_usd,
-        fact.fx_rate_to_usd,
+        str(fact.unit_scale),
+        None if fact.amount_original is None else str(fact.amount_original),
+        None if fact.amount_usd is None else str(fact.amount_usd),
+        None if fact.fx_rate_to_usd is None else str(fact.fx_rate_to_usd),
         fact.fx_rate_date,
         fact.fx_source,
         json.dumps(fact.bbox),
@@ -1237,6 +1411,193 @@ def _fact_row(
         fact.source_json_sha256,
         fact.parser_version,
         resolved_at,
+    )
+
+
+def _create_document_stage_table(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    connection.execute(
+        f"create or replace temp table {_DOCUMENT_STAGE_TABLE} as "
+        f"select * from {ANNUAL_ACCOUNT_DATASET}.documents where false"
+    )
+
+
+def _append_document_stage_rows(
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    rows: Iterable[tuple[Any, ...]],
+    batch_rows: int = DEFAULT_INSERT_BATCH_ROWS,
+) -> int:
+    if batch_rows < 1:
+        raise ValueError("Norway annual-account document batch size must be positive")
+
+    batch: list[tuple[Any, ...]] = []
+    inserted = 0
+    for row in rows:
+        batch.append(row)
+        if len(batch) >= batch_rows:
+            _insert_document_stage_batch(connection, batch)
+            inserted += len(batch)
+            batch.clear()
+    if batch:
+        _insert_document_stage_batch(connection, batch)
+        inserted += len(batch)
+    return inserted
+
+
+def _insert_document_stage_batch(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[tuple[Any, ...]],
+) -> None:
+    arrow_table = _rows_to_arrow_table(
+        rows=rows,
+        columns=_DOCUMENT_COLUMNS,
+        schema=_DOCUMENT_ARROW_SCHEMA,
+    )
+    connection.register(_DOCUMENT_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"insert into {_DOCUMENT_STAGE_TABLE} "
+            f"select * from {_DOCUMENT_BATCH_RELATION}"
+        )
+    finally:
+        connection.unregister(_DOCUMENT_BATCH_RELATION)
+
+
+def _create_fact_stage_tables(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    connection.execute(
+        f"create or replace temp table {_FACT_STAGE_TABLE} as "
+        f"select * from {ANNUAL_ACCOUNT_DATASET}.facts where false"
+    )
+    connection.execute(
+        f"create or replace temp table {_FACT_COUNT_STAGE_TABLE} ("
+        "document_id varchar not null, fact_count bigint not null)"
+    )
+
+
+def _append_fact_stage_rows(
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    rows: Iterable[tuple[Any, ...]],
+    batch_rows: int = DEFAULT_INSERT_BATCH_ROWS,
+) -> int:
+    if batch_rows < 1:
+        raise ValueError("Norway annual-account fact batch size must be positive")
+
+    batch: list[tuple[Any, ...]] = []
+    inserted = 0
+    for row in rows:
+        batch.append(row)
+        if len(batch) >= batch_rows:
+            _insert_fact_stage_batch(connection, batch)
+            inserted += len(batch)
+            batch.clear()
+    if batch:
+        _insert_fact_stage_batch(connection, batch)
+        inserted += len(batch)
+    return inserted
+
+
+def _insert_fact_stage_batch(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[tuple[Any, ...]],
+) -> None:
+    arrow_table = _rows_to_arrow_table(
+        rows=rows,
+        columns=_FACT_COLUMNS,
+        schema=_FACT_ARROW_SCHEMA,
+    )
+    connection.register(_FACT_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"""
+            insert into {_FACT_STAGE_TABLE}
+            select
+                fact_id,
+                document_id,
+                country_iso2,
+                source_slug,
+                source_run_id,
+                org_number,
+                source_filing_year,
+                source_chunk,
+                fact_ordinal,
+                page_number,
+                line_number,
+                statement_type,
+                table_title,
+                raw_label,
+                normalized_label,
+                canonical_concept,
+                column_label,
+                fiscal_year,
+                cast(period_end_date as date),
+                is_comparative,
+                value_kind,
+                raw_value,
+                cast(numeric_value as decimal(38, 10)),
+                currency,
+                cast(unit_scale as decimal(38, 6)),
+                cast(amount_original as decimal(38, 10)),
+                cast(amount_usd as decimal(38, 10)),
+                cast(fx_rate_to_usd as decimal(38, 12)),
+                cast(fx_rate_date as date),
+                fx_source,
+                bbox,
+                evidence,
+                ocr_confidence,
+                extraction_method,
+                mapping_method,
+                mapping_confidence,
+                quality_flags,
+                source_json_sha256,
+                parser_version,
+                resolved_at
+            from {_FACT_BATCH_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_FACT_BATCH_RELATION)
+
+
+def _insert_fact_count_stage_rows(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[tuple[str, int]],
+) -> None:
+    arrow_table = _rows_to_arrow_table(
+        rows=rows,
+        columns=("document_id", "fact_count"),
+        schema=_FACT_COUNT_ARROW_SCHEMA,
+    )
+    connection.register(_FACT_COUNT_BATCH_RELATION, arrow_table)
+    try:
+        connection.execute(
+            f"insert into {_FACT_COUNT_STAGE_TABLE} "
+            f"select * from {_FACT_COUNT_BATCH_RELATION}"
+        )
+    finally:
+        connection.unregister(_FACT_COUNT_BATCH_RELATION)
+
+
+def _rows_to_arrow_table(
+    *,
+    rows: list[tuple[Any, ...]],
+    columns: tuple[str, ...],
+    schema: pa.Schema,
+) -> pa.Table:
+    if any(len(row) != len(columns) for row in rows):
+        raise ValueError(
+            f"Norway annual-account rows must contain {len(columns)} columns"
+        )
+    return pa.Table.from_arrays(
+        [
+            pa.array((row[index] for row in rows), type=field.type)
+            for index, field in enumerate(schema)
+        ],
+        schema=schema,
     )
 
 

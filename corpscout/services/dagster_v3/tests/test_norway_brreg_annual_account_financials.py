@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from decimal import Decimal
 import hashlib
 import json
@@ -9,6 +11,7 @@ from typing import Any
 
 import dagster as dg
 import duckdb
+import pytest
 from pytest import MonkeyPatch
 
 from dagster_v3.defs.norway_brreg_financial import annual_account_financials
@@ -64,6 +67,45 @@ class FakeAnnualAccountStorage:
 
     def read_response(self, key: str) -> bytes:
         return self.objects[key]
+
+
+class TrackingDuckDbConnection:
+    def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
+        self._connection = connection
+        self.arrow_batches: list[tuple[str, int]] = []
+        self.statements: list[str] = []
+
+    def execute(self, *args: Any, **kwargs: Any) -> duckdb.DuckDBPyConnection:
+        if args and isinstance(args[0], str):
+            self.statements.append(" ".join(args[0].split()).lower())
+        return self._connection.execute(*args, **kwargs)
+
+    def register(
+        self,
+        view_name: str,
+        python_object: Any,
+    ) -> duckdb.DuckDBPyConnection:
+        self.arrow_batches.append((view_name, python_object.num_rows))
+        return self._connection.register(view_name, python_object)
+
+    def unregister(self, view_name: str) -> duckdb.DuckDBPyConnection:
+        return self._connection.unregister(view_name)
+
+    def executemany(self, *_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("Norway annual accounts must use Arrow inserts")
+
+
+class FailingFactPublishConnection(TrackingDuckDbConnection):
+    def execute(self, *args: Any, **kwargs: Any) -> duckdb.DuckDBPyConnection:
+        if args and isinstance(args[0], str):
+            statement = " ".join(args[0].split()).lower()
+            target_insert = (
+                f"insert into {ANNUAL_ACCOUNT_DATASET}.facts "
+                f"select * from {annual_account_financials._FACT_STAGE_TABLE}"
+            )
+            if statement == target_insert:
+                raise RuntimeError("synthetic fact publish failure")
+        return super().execute(*args, **kwargs)
 
 
 class FakeExchangeRates:
@@ -363,6 +405,193 @@ def test_duckdb_stages_preserve_documents_facts_mappings_and_validated_metrics()
     assert connection.execute(
         f"select mapping_version from {ANNUAL_ACCOUNT_DATASET}.metrics limit 1"
     ).fetchone() == (MAPPING_VERSION,)
+
+
+def test_document_and_fact_replacement_uses_arrow_and_one_set_update() -> None:
+    raw_document = json.dumps(_sample_document(), ensure_ascii=False).encode()
+    key = (
+        "norway_brreg/annual_accounts/documents/"
+        "year=2025/chunk=bucket_00/org=811725102/document.json"
+    )
+    storage = FakeAnnualAccountStorage({key: raw_document})
+    connection = duckdb.connect(":memory:")
+    tracking = TrackingDuckDbConnection(connection)
+
+    document_counts = load_annual_account_documents(
+        connection=tracking,
+        storage=storage,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="run-documents",
+    )
+    first_fact_counts = replace_annual_account_facts(
+        connection=tracking,
+        storage=storage,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="run-facts",
+    )
+    second_fact_counts = replace_annual_account_facts(
+        connection=tracking,
+        storage=storage,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="run-facts",
+    )
+
+    document_updates = [
+        statement
+        for statement in tracking.statements
+        if statement.startswith(f"update {ANNUAL_ACCOUNT_DATASET}.documents")
+    ]
+    stored_document = connection.execute(
+        f"select parse_status, fact_count from {ANNUAL_ACCOUNT_DATASET}.documents"
+    ).fetchone()
+    stored_fact_count = connection.execute(
+        f"select count(*) from {ANNUAL_ACCOUNT_DATASET}.facts"
+    ).fetchone()[0]
+
+    assert document_counts == {"document_count": 1, "json_bytes": len(raw_document)}
+    assert first_fact_counts == second_fact_counts
+    assert stored_document == ("parsed", first_fact_counts["fact_count"])
+    assert stored_fact_count == first_fact_counts["fact_count"]
+    assert len(document_updates) == 2
+    assert all(
+        f"from {annual_account_financials._FACT_COUNT_STAGE_TABLE}" in statement
+        for statement in document_updates
+    )
+    assert [batch[0] for batch in tracking.arrow_batches] == [
+        annual_account_financials._DOCUMENT_BATCH_RELATION,
+        annual_account_financials._FACT_BATCH_RELATION,
+        annual_account_financials._FACT_COUNT_BATCH_RELATION,
+        annual_account_financials._FACT_BATCH_RELATION,
+        annual_account_financials._FACT_COUNT_BATCH_RELATION,
+    ]
+
+
+def test_empty_partition_replacement_preserves_empty_metadata() -> None:
+    connection = duckdb.connect(":memory:")
+    storage = FakeAnnualAccountStorage({})
+
+    document_counts = load_annual_account_documents(
+        connection=connection,
+        storage=storage,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="run-documents",
+    )
+    fact_counts = replace_annual_account_facts(
+        connection=connection,
+        storage=storage,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="run-facts",
+    )
+
+    assert document_counts == {"document_count": 0, "json_bytes": 0}
+    assert fact_counts == {"document_count": 0, "fact_count": 0}
+
+
+def test_fact_hash_failure_preserves_previous_partition() -> None:
+    connection, storage = _loaded_sample_partition()
+    before_document = connection.execute(
+        f"select parse_status, fact_count from {ANNUAL_ACCOUNT_DATASET}.documents"
+    ).fetchone()
+    before_facts = connection.execute(
+        f"select fact_id, raw_value from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "order by fact_id"
+    ).fetchall()
+    key = next(iter(storage.objects))
+    storage.objects[key] = b"changed after document load"
+
+    with pytest.raises(RuntimeError, match="Annual-account JSON hash mismatch"):
+        replace_annual_account_facts(
+            connection=connection,
+            storage=storage,
+            filing_year=2025,
+            chunk_key="bucket_00",
+            source_run_id="failed-run",
+        )
+
+    assert connection.execute(
+        f"select parse_status, fact_count from {ANNUAL_ACCOUNT_DATASET}.documents"
+    ).fetchone() == before_document
+    assert connection.execute(
+        f"select fact_id, raw_value from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "order by fact_id"
+    ).fetchall() == before_facts
+
+
+def test_fact_publish_failure_rolls_back_and_allows_retry() -> None:
+    connection, storage = _loaded_sample_partition()
+    before_document = connection.execute(
+        f"select parse_status, fact_count from {ANNUAL_ACCOUNT_DATASET}.documents"
+    ).fetchone()
+    before_facts = connection.execute(
+        f"select fact_id, raw_value from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "order by fact_id"
+    ).fetchall()
+
+    with pytest.raises(RuntimeError, match="synthetic fact publish failure"):
+        replace_annual_account_facts(
+            connection=FailingFactPublishConnection(connection),
+            storage=storage,
+            filing_year=2025,
+            chunk_key="bucket_00",
+            source_run_id="failed-run",
+        )
+
+    assert connection.execute(
+        f"select parse_status, fact_count from {ANNUAL_ACCOUNT_DATASET}.documents"
+    ).fetchone() == before_document
+    assert connection.execute(
+        f"select fact_id, raw_value from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "order by fact_id"
+    ).fetchall() == before_facts
+
+    retry_counts = replace_annual_account_facts(
+        connection=connection,
+        storage=storage,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="retry-run",
+    )
+
+    assert retry_counts == {
+        "document_count": 1,
+        "fact_count": len(before_facts),
+    }
+
+
+def test_fact_stage_streams_500k_wide_rows_in_bounded_arrow_batches() -> None:
+    connection = duckdb.connect(":memory:")
+    ensure_annual_account_duckdb_schema(connection)
+    annual_account_financials._create_fact_stage_tables(connection)
+    tracking = TrackingDuckDbConnection(connection)
+    resolved_at = datetime(2026, 7, 25, tzinfo=UTC)
+
+    def rows() -> Iterator[tuple[Any, ...]]:
+        for index in range(500_000):
+            if index == 50_000:
+                assert tracking.arrow_batches == [
+                    (annual_account_financials._FACT_BATCH_RELATION, 50_000)
+                ]
+            yield _synthetic_fact_row(index, resolved_at=resolved_at)
+
+    inserted = annual_account_financials._append_fact_stage_rows(
+        connection=tracking,
+        rows=rows(),
+    )
+    stored = connection.execute(
+        f"select count(*), min(fact_id), max(fact_id) "
+        f"from {annual_account_financials._FACT_STAGE_TABLE}"
+    ).fetchone()
+
+    assert inserted == 500_000
+    assert stored == (500_000, "fact-000000", "fact-499999")
+    assert tracking.arrow_batches == [
+        (annual_account_financials._FACT_BATCH_RELATION, 50_000)
+    ] * 10
 
 
 def test_usd_conversion_only_updates_missing_amounts() -> None:
@@ -716,6 +945,55 @@ def _sample_document() -> dict[str, object]:
             }
         ],
     }
+
+
+def _synthetic_fact_row(
+    index: int,
+    *,
+    resolved_at: datetime,
+) -> tuple[Any, ...]:
+    return (
+        f"fact-{index:06d}",
+        f"document-{index // 10:06d}",
+        "NO",
+        annual_account_financials.SOURCE_SLUG,
+        "bulk-run",
+        "811725102",
+        2025,
+        "bucket_00",
+        index,
+        1,
+        1,
+        "income_statement",
+        "RESULTATREGNSKAP",
+        "Driftsresultat",
+        "driftsresultat",
+        "operating_result",
+        "2025",
+        2025,
+        "2025-12-31",
+        False,
+        "amount",
+        "1",
+        "1",
+        "NOK",
+        "1",
+        "1",
+        None,
+        None,
+        None,
+        None,
+        "[0.0, 0.0, 1.0, 1.0]",
+        "Driftsresultat 1",
+        95.0,
+        "tesseract_ocr",
+        "dictionary",
+        1.0,
+        "[]",
+        "a" * 64,
+        PARSER_VERSION,
+        resolved_at,
+    )
 
 
 def _word(
