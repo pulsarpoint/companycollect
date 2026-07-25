@@ -63,10 +63,34 @@ data; if one fails, the affected grain must change.
 | Relationship | Cardinality | Evidence |
 |---|---|---|
 | ISIN ↔ MIC | many-to-many | FIRDS's own grain |
-| ISIN → issuer | N:1 | 0 of 3.04M sampled ISINs had >1 LEI in the 2026-07-24 GLEIF file |
-| issuer → company | N:1 | one LEI (or national ID) identifies one legal entity |
-| company → issuer | 1:N over time | successor entities (`successor_entity_lei`) |
-| issuer → ISIN | 1:N, ~92 avg | 98,246 LEIs across 9.06M ISINs |
+| ISIN → issuer | **N:1 for equities only** | measured live 2026-07-25 — see below |
+| issuer → company | N:1 | 0 violations across 114,974 SE rows |
+| company → issuer | 1:N over time | 151 SE companies hold more than one LEI |
+| issuer → ISIN | 1:N, ~230 avg | 39,675 issuers across 9.13M ISINs (FIRDS) |
+
+**ISIN → issuer is not universally N:1.** Measured on the live
+`instrument_issuer` table: 9,129,076 rows over 9,128,155 distinct ISINs, so 917
+ISINs carry more than one issuer. The breakdown by CFI category:
+
+| CFI | Meaning | Ambiguous ISINs |
+|---|---|---|
+| `S` | Swaps | 846 |
+| `J` | Forwards | 37 |
+| `D` | Debt | 23 |
+| `E` | **Equities** | **6** |
+| `C` | Funds | 4 |
+| `H` | Non-listed options | 1 |
+
+884 of the 917 are `EZ`-prefixed — DSB-assigned OTC derivative ISINs, where the
+ISIN identifies a *product* rather than a security issued by one company, and
+each reporting counterparty attaches its own LEI. Multiple issuers there is
+correct behaviour, not corruption.
+
+For equities the assumption holds at 6 exceptions in 8.85M ISINs. This is the
+concrete justification for carrying `cfi_category` in layer A: a consumer
+answering "which companies are publicly traded" filters `cfi_category = 'E'`
+and the ambiguity disappears. A consumer that does not filter will see a
+handful of duplicated rows and must still count with `count(DISTINCT ...)`.
 
 **Consequence:** "how many companies are listed" is always
 `count(DISTINCT company_id)`, never a row count — they differ by ~2 orders of
@@ -2225,7 +2249,49 @@ FROM corpscout.company_listings WHERE is_current = 1
 GROUP BY country_code ORDER BY listed_companies DESC;
 ```
 
-- [ ] **Step 5: Record the numbers in this plan and commit**
+- [x] **Step 5: Record the numbers in this plan and commit**
+
+### Measured 2026-07-25 (migrations 000172-000175 applied, ledger at 175)
+
+Source volumes: `firds_instruments_current` 14,848,322 · `firds_instrument_events`
+18,827,937 · `gleif_lei_records` 3,348,282 · `se_companies` 3,407,809 ·
+`eodhd_symbols` 222,845 · `eodhd_symbol_mics` 471,428.
+
+| Layer | Result |
+|---|---|
+| `instrument_issuer` | 9,129,076 rows carried from `isin_lei` intact, 39,675 issuers |
+| `instrument_venues` | 15,084,101 rows (FIRDS 14,848,322 + EODHD 235,779), 8,849,331 ISINs, 25s |
+| `company_identifier` | 114,974 rows, 114,823 SE companies, 13s |
+| `company_listings` view | 114,288 rows — **below** 15,084,101 venue rows, so no fan-out |
+
+**Headline answers, one query each:**
+
+- Swedish companies with any traded instrument: **1,145**
+- Swedish companies with traded **equity**: **921**
+- …restricted to current and regulator-tier evidence: **921** (identical, as FIRDS
+  supplies every equity row)
+
+**Registration authority codes discovered empirically** — the dominant code is
+Sweden's company register, confirming what was previously only assumed:
+
+| RA code | LEIs | Companies |
+|---|---|---|
+| `RA000544` | 107,501 | 107,368 |
+| `RA000546` | 6,941 | 6,935 |
+| `RA000735` | 408 | 408 |
+| `RA000545` | 117 | 117 |
+
+Set `COUNTRY_IDENTITY_RULES["SE"].registration_authority_ids = frozenset({"RA000544"})`
+and re-materialize to move ~93% of rows from the `jurisdiction_normalized` tier
+to `registration_authority`. `authority_matched_rows` was 0 on this first run
+because the set was deliberately empty.
+
+**Equity venues by company count** — note these are pan-European MTFs, not the
+Swedish MICs. A Swedish issuer admitted on XSTO is also admitted on many
+alternative venues, which is why layer A must not be filtered by venue:
+
+`EBLX` 726 · `ENTW` 726 · `ERFQ` 726 · `FRAB` 667 · `FRAV` 666 · `XPAC` 643 ·
+`XPOS` 643 · `LNEQ` 461
 
 ---
 
