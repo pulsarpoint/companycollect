@@ -304,6 +304,11 @@ def test_duckdb_normalization_discovers_countries_and_excludes_aggregates(
                 local_snapshot=local_snapshot,
                 minimum_country_count=2,
             )
+            rerun_counts = transform.replace_world_bank_macro_observations(
+                connection=connection,
+                local_snapshot=local_snapshot,
+                minimum_country_count=2,
+            )
             rows = connection.execute(
                 f"""
                 select country_code, country_iso3, indicator_code, year, value,
@@ -322,6 +327,7 @@ def test_duckdb_normalization_discovers_countries_and_excludes_aggregates(
         "max_year": 2023,
         "source_updated_date": "2026-07-13",
     }
+    assert rerun_counts == counts
     assert rows == [
         (
             "br",

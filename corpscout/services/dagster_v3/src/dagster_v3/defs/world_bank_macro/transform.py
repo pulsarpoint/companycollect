@@ -11,6 +11,7 @@ from typing import Any
 import zipfile
 
 import duckdb
+import pyarrow as pa
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.duckdb.schema_contract import (
@@ -21,6 +22,24 @@ from dagster_v3.defs.world_bank_macro import tables
 from dagster_v3.defs.world_bank_macro.source import (
     INDICATOR_BUNDLES,
     WORLD_BANK_RAW_BUCKET,
+)
+
+_SOURCE_FILES_RELATION = "_world_bank_source_files_batch"
+_SOURCE_FILES_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("filename", pa.string(), nullable=False),
+        pa.field("bundle", pa.string(), nullable=False),
+        pa.field("source_url", pa.string(), nullable=False),
+        pa.field("source_object_key", pa.string(), nullable=False),
+        pa.field("source_payload_hash", pa.string(), nullable=False),
+        pa.field("source_run_id", pa.string(), nullable=False),
+        pa.field("pulled_at", pa.string(), nullable=False),
+        pa.field("source_updated_date", pa.string(), nullable=False),
+    ]
+)
+_INDICATORS_RELATION = "_world_bank_indicators_batch"
+_INDICATORS_ARROW_SCHEMA = pa.schema(
+    [pa.field("indicator_code", pa.string(), nullable=False)]
 )
 
 
@@ -305,7 +324,7 @@ def _create_source_file_catalog(
         """
     )
     source_dates: set[str] = set()
-    rows: list[tuple[Any, ...]] = []
+    rows: list[dict[str, str]] = []
     for observation_file in local_snapshot.observation_files:
         source_updated_date = str(
             connection.execute(
@@ -326,26 +345,39 @@ def _create_source_file_catalog(
             )
         source_dates.add(source_updated_date)
         rows.append(
-            (
-                str(observation_file.path),
-                observation_file.bundle,
-                observation_file.source_url,
-                observation_file.source_object_key,
-                observation_file.source_payload_hash,
-                local_snapshot.source_run_id,
-                local_snapshot.pulled_at,
-                source_updated_date,
-            )
+            {
+                "filename": str(observation_file.path),
+                "bundle": observation_file.bundle,
+                "source_url": observation_file.source_url,
+                "source_object_key": observation_file.source_object_key,
+                "source_payload_hash": observation_file.source_payload_hash,
+                "source_run_id": local_snapshot.source_run_id,
+                "pulled_at": local_snapshot.pulled_at,
+                "source_updated_date": source_updated_date,
+            }
         )
     if len(source_dates) != 1:
         raise ValueError(
             "World Bank observation bundles have different source update dates: "
             + ", ".join(sorted(source_dates))
         )
-    connection.executemany(
-        "insert into world_bank_source_files values (?, ?, ?, ?, ?, ?, ?, ?)",
+    source_files = pa.Table.from_pylist(
         rows,
+        schema=_SOURCE_FILES_ARROW_SCHEMA,
     )
+    connection.register(_SOURCE_FILES_RELATION, source_files)
+    try:
+        connection.execute(
+            f"""
+            insert into world_bank_source_files
+            select filename, bundle, source_url, source_object_key,
+                   source_payload_hash, source_run_id, pulled_at,
+                   source_updated_date
+            from {_SOURCE_FILES_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_SOURCE_FILES_RELATION)
 
 
 def _create_indicator_registry(connection: duckdb.DuckDBPyConnection) -> None:
@@ -356,14 +388,25 @@ def _create_indicator_registry(connection: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
-    connection.executemany(
-        "insert into world_bank_indicators values (?)",
+    indicators = pa.Table.from_pylist(
         [
-            (indicator,)
+            {"indicator_code": indicator}
             for bundle in INDICATOR_BUNDLES
             for indicator in bundle.indicators
         ],
+        schema=_INDICATORS_ARROW_SCHEMA,
     )
+    connection.register(_INDICATORS_RELATION, indicators)
+    try:
+        connection.execute(
+            f"""
+            insert into world_bank_indicators
+            select indicator_code
+            from {_INDICATORS_RELATION}
+            """
+        )
+    finally:
+        connection.unregister(_INDICATORS_RELATION)
 
 
 def _create_source_rows(
