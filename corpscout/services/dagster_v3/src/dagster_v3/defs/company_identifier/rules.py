@@ -27,20 +27,29 @@ class CountryIdentityRule:
 
 
 # Measured 2026-07-25 over 118,412 SE-jurisdiction LEIs in gleif_lei_records,
-# joined to se_companies. Four authorities issue Swedish organisationsnummer:
+# joined to se_companies. Names below are from GLEIF's Registration Authorities
+# List v1.8.1 (2024-11-20). Four authorities issue Swedish organisationsnummer:
 #
-#   RA000544  98.8% of 108,771   e.g. 556579-2248   limited companies
-#   RA000546  84.7% of   8,192   e.g. 826000-1493   associations and foundations
-#   RA000735  95.8% of     426   e.g. 8024263009
-#   RA000545  70.5% of     166   e.g. 515603-3861   financial institutions
+#   RA000544  98.8% of 108,771   556579-2248   Bolagsverket, Companies Register
+#   RA000546  84.7% of   8,192   826000-1493   Skatteverket, Swedish Tax Authority
+#   RA000735  95.8% of     426   8024263009    county foundation database
+#   RA000545  70.5% of     166   515603-3861   unnamed in the RA list
 #
 # RA000547 is excluded on purpose: 4 of its 270 SE entities resolve, on
 # identifiers averaging 5.2 digits, so those are most likely coincidental
 # collisions against a 3.4M-row register and belong in the lower tier.
 #
+# The RA list alone could not have produced this set. RA000545 and RA000547 are
+# both unnamed Swedish entries there -- 403 of its 1,114 registers carry no name
+# at all -- so nothing in the reference data separates the one whose identifiers
+# are organisationsnummer from the one whose identifiers are not. Only the
+# measured hit rate does. Treat the RA list as a source of candidate codes per
+# country and the register join as the decider.
+#
 # RA000188, RA000472 and RA000170 carry Finnish, Norwegian and Danish register
-# ids under an SE jurisdiction. They resolve at 0% and the identifier_length
-# filter already rejects them.
+# ids under an SE jurisdiction -- confirmed against the RA list as the Business
+# Information System, Register of Business Enterprises and Central Business
+# Register. They resolve at 0% and identifier_length already rejects them.
 SWEDEN_REGISTRATION_AUTHORITY_IDS = frozenset(
     {"RA000544", "RA000546", "RA000735", "RA000545"}
 )
