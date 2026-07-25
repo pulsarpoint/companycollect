@@ -29,6 +29,19 @@ def test_firds_projection_marks_regulator_evidence() -> None:
     assert "substring(upperUTF8(trimBoth(f.cfi_code)), 1, 1) AS cfi_category" in sql
 
 
+def test_firds_projection_deduplicates_the_replacing_merge_tree_source() -> None:
+    """firds_instruments_current is a ReplacingMergeTree keyed on (isin, mic).
+
+    Reading it without FINAL emits one row per unmerged part, which duplicates
+    the (isin, mic, venue_source) grain and trips the publish gate.
+    """
+    sql = build_firds_instrument_venues_sql(_STAGE)
+
+    assert "firds_current AS" in sql
+    assert "FROM corpscout.firds_instruments_current FINAL" in sql
+    assert "FROM corpscout.firds_instruments_current AS f" not in sql
+
+
 def test_firds_projection_requires_both_grain_identifiers() -> None:
     sql = build_firds_instrument_venues_sql(_STAGE)
 

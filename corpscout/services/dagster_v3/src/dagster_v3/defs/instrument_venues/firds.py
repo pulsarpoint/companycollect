@@ -7,9 +7,19 @@ def build_firds_instrument_venues_sql(stage_table: str) -> str:
     FIRDS is instrument-scoped and never filtered by country, so EU-admitted
     instruments of non-EU issuers land here too. FIRDS supplies no ticker, so
     that column is empty and EODHD fills the gap on its own rows.
+
+    firds_instruments_current is a ReplacingMergeTree keyed on (isin, mic).
+    Reading it without FINAL emits one row per unmerged part, which duplicates
+    this table's grain and trips the publish gate, so the read is deduplicated
+    at the source.
     """
     columns = ", ".join(tables.INSTRUMENT_VENUES_COLUMNS)
     return f"""INSERT INTO {stage_table} ({columns})
+WITH firds_current AS
+(
+    SELECT *
+    FROM corpscout.firds_instruments_current FINAL
+)
 SELECT
     upperUTF8(trimBoth(f.isin)) AS isin,
     upperUTF8(trimBoth(f.mic)) AS mic,
@@ -34,6 +44,6 @@ SELECT
     f.source_retrieved_at AS source_retrieved_at,
     %(source_run_id)s AS source_run_id,
     %(resolved_at)s AS resolved_at
-FROM corpscout.firds_instruments_current AS f
+FROM firds_current AS f
 WHERE trimBoth(f.isin) != ''
   AND trimBoth(f.mic) != ''"""

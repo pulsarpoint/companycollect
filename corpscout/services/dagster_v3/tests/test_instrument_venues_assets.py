@@ -23,9 +23,31 @@ def test_eodhd_projection_marks_vendor_evidence_and_needs_an_isin() -> None:
 
     assert "'eodhd' AS venue_source" in sql
     assert "'vendor' AS evidence_tier" in sql
-    assert "FROM corpscout.eodhd_symbols AS s" in sql
-    assert "INNER JOIN corpscout.eodhd_symbol_mics AS m" in sql
+    assert "FROM eodhd_symbols_current AS s" in sql
+    assert "INNER JOIN eodhd_symbol_mics_current AS m" in sql
     assert "trimBoth(ifNull(s.isin, '')) != ''" in sql
+
+
+def test_eodhd_projection_deduplicates_replacing_merge_tree_sources() -> None:
+    sql = build_eodhd_instrument_venues_sql(_STAGE)
+
+    assert "FROM corpscout.eodhd_symbols FINAL" in sql
+    assert "FROM corpscout.eodhd_symbol_mics FINAL" in sql
+    assert "FROM corpscout.eodhd_exchanges FINAL" in sql
+
+
+def test_eodhd_projection_collapses_many_symbols_per_isin_and_mic() -> None:
+    """Two EODHD symbol keys can carry the same ISIN on the same MIC.
+
+    FINAL does not help there -- the duplication is across distinct primary
+    keys -- so the projection must collapse to the (isin, mic) grain itself,
+    preferring a listed symbol, then the primary MIC, then the freshest row.
+    """
+    sql = build_eodhd_instrument_venues_sql(_STAGE)
+
+    assert "GROUP BY\n    isin,\n    mic" in sql
+    assert "argMax(" in sql
+    assert "m.is_primary" in sql
 
 
 def test_eodhd_projection_carries_delisting_into_trading_status() -> None:
