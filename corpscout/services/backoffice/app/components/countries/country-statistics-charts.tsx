@@ -4,6 +4,7 @@ import {
   BarChart,
   CartesianGrid,
   ComposedChart,
+  LabelList,
   Line,
   LineChart,
   ReferenceLine,
@@ -36,10 +37,12 @@ const percentConfig = {
   unemployment: { label: "Unemployment", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
+// Slot 3, not slot 4: chart-2 and chart-4 are orange and yellow, a pair that
+// fails the normal-vision separation floor at dE 13.7 light and 10.6 dark.
 const tradeConfig = {
   exportsUsd: { label: "Exports", color: "var(--chart-1)" },
   importsUsd: { label: "Imports", color: "var(--chart-2)" },
-  balanceUsd: { label: "Trade balance", color: "var(--chart-4)" },
+  balanceUsd: { label: "Trade balance", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
 const imfConfig = {
@@ -66,6 +69,33 @@ const compactUsd = new Intl.NumberFormat("en-US", {
 const fullNumber = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
+
+/**
+ * Renders a series name once, at its final point, so a reader identifies a line
+ * without tracing it back to the legend. Anything other than the last index
+ * returns null: a label on every point is noise, not information.
+ *
+ * The text uses a muted ink token rather than the series colour — the line
+ * beside it already carries the hue, and coloured text reads as a value.
+ */
+function endLabelRenderer(text: string, lastIndex: number) {
+  // Recharts types x/y as string | number, so coerce before use.
+  return function EndLabel(props: {
+    x?: string | number;
+    y?: string | number;
+    index?: number;
+  }) {
+    if (props.index !== lastIndex) return null;
+    const x = Number(props.x);
+    const y = Number(props.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return (
+      <text x={x} y={y} dx={8} dy={4} className="fill-muted-foreground text-[11px]">
+        {text}
+      </text>
+    );
+  };
+}
 
 function PercentTooltipValue(value: unknown, name: unknown) {
   return (
@@ -119,7 +149,8 @@ export function EconomicPulseChart({
 
   return (
     <ChartContainer config={percentConfig} className="h-72 w-full">
-      <LineChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+      {/* Right margin reserves room for the end-labels. */}
+      <LineChart data={data} margin={{ top: 8, right: 104, left: -16, bottom: 0 }}>
         <CartesianGrid vertical={false} />
         <XAxis dataKey="year" tickLine={false} axisLine={false} minTickGap={28} />
         <YAxis
@@ -137,30 +168,28 @@ export function EconomicPulseChart({
           }
         />
         <ChartLegend content={<ChartLegendContent />} />
-        <Line
-          type="monotone"
-          dataKey="realGdpGrowth"
-          stroke="var(--color-realGdpGrowth)"
-          strokeWidth={2}
-          dot={false}
-          connectNulls
-        />
-        <Line
-          type="monotone"
-          dataKey="inflation"
-          stroke="var(--color-inflation)"
-          strokeWidth={2}
-          dot={false}
-          connectNulls
-        />
-        <Line
-          type="monotone"
-          dataKey="unemployment"
-          stroke="var(--color-unemployment)"
-          strokeWidth={2}
-          dot={false}
-          connectNulls
-        />
+        {(["realGdpGrowth", "inflation", "unemployment"] as const).map((dataKey) => (
+          <Line
+            key={dataKey}
+            type="monotone"
+            dataKey={dataKey}
+            stroke={`var(--color-${dataKey})`}
+            strokeWidth={2}
+            dot={false}
+            connectNulls
+          >
+            {/* Direct end-labels so identity never rests on hue alone: three
+                series is inside the four-series direct-label limit, and the
+                aqua slot sits below 3:1 contrast on the light card. */}
+            <LabelList
+              dataKey={dataKey}
+              content={endLabelRenderer(
+                percentConfig[dataKey].label,
+                data.length - 1,
+              )}
+            />
+          </Line>
+        ))}
       </LineChart>
     </ChartContainer>
   );

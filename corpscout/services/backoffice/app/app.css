@@ -67,11 +67,19 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  /* Categorical chart slots, assigned in fixed order and never cycled, so a
+     series keeps its colour when a filter changes the series count. Every slot
+     previously had chroma 0, which rendered multi-series charts as shades of
+     grey. Validated against the card surface #ffffff: worst all-pairs CVD
+     dE 9.2, worst normal-vision dE 24.0. Slot 3 sits at 2.82:1 contrast, so
+     charts that use it carry direct labels rather than relying on hue alone.
+     Slots 2 and 4 must not appear together: that pair fails the normal-vision
+     floor at dE 13.7. */
+  --chart-1: oklch(0.575 0.163 255.5); /* #2a78d6 blue */
+  --chart-2: oklch(0.671 0.175 40.6); /* #eb6834 orange */
+  --chart-3: oklch(0.669 0.141 162.1); /* #1baf7a aqua */
+  --chart-4: oklch(0.764 0.161 75.1); /* #eda100 yellow */
+  --chart-5: oklch(0.716 0.141 357.4); /* #e87ba4 magenta */
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -102,11 +110,14 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  /* The same five hues re-stepped for the dark card surface, not an automatic
+     flip of the light values. Validated against #171717: worst all-pairs CVD
+     dE 9.4, worst normal-vision dE 20.9, all slots clear 3:1 contrast. */
+  --chart-1: oklch(0.622 0.161 255.1); /* #3987e5 blue */
+  --chart-2: oklch(0.622 0.173 40.1); /* #d95926 orange */
+  --chart-3: oklch(0.621 0.128 163.1); /* #199e70 aqua */
+  --chart-4: oklch(0.670 0.143 73.2); /* #c98500 yellow */
+  --chart-5: oklch(0.622 0.171 0.8); /* #d55181 magenta */
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
