@@ -13,18 +13,25 @@ keys, so that adding a country costs an entry in an identity table rather than a
 pipeline.
 
 **Architecture:** Three tables along their functional dependencies —
-`instrument_venues` (what trades where), `isin_lei` (who issued it),
-`company_lei` (which company that issuer is) — plus a `company_listings` view
-that joins them. Every hop is many-to-one, so the join never fans out.
+`instrument_venues` (what trades where), `instrument_issuer` (who issued it),
+`company_identifier` (which company that issuer is) — plus a `company_listings`
+view that joins them. Every hop is many-to-one, so the join never fans out.
+
+The issuer is identified by a `(issuer_scheme, issuer_id)` pair rather than by
+LEI alone. `issuer_scheme = 'lei'` covers every market with LEI adoption;
+markets without it use their own scheme (`'cnpj'`, `'cik'`, …) through the same
+two tables and the same join. A scheme-specific sibling table per market would
+turn the view into a UNION that grows with every country, which is the
+per-country-table problem one level down.
 
 ```text
 instrument_venues (isin, mic, venue_source)
         |  N:1 on isin
         v
-isin_lei (isin, lei, mapping_source)
-        |  N:1 on lei
+instrument_issuer (isin, issuer_scheme, issuer_id, mapping_source)
+        |  N:1 on (issuer_scheme, issuer_id)
         v
-company_lei (lei, country_code, company_id)
+company_identifier (issuer_scheme, issuer_id, country_code, company_id)
         |
         v
 company_listings  [VIEW]
@@ -56,10 +63,10 @@ data; if one fails, the affected grain must change.
 | Relationship | Cardinality | Evidence |
 |---|---|---|
 | ISIN ↔ MIC | many-to-many | FIRDS's own grain |
-| ISIN → LEI | N:1 | 0 of 3.04M sampled ISINs had >1 LEI in the 2026-07-24 GLEIF file |
-| LEI → company | N:1 | one LEI identifies one legal entity |
-| company → LEI | 1:N over time | successor entities (`successor_entity_lei`) |
-| LEI → ISIN | 1:N, ~92 avg | 98,246 LEIs across 9.06M ISINs |
+| ISIN → issuer | N:1 | 0 of 3.04M sampled ISINs had >1 LEI in the 2026-07-24 GLEIF file |
+| issuer → company | N:1 | one LEI (or national ID) identifies one legal entity |
+| company → issuer | 1:N over time | successor entities (`successor_entity_lei`) |
+| issuer → ISIN | 1:N, ~92 avg | 98,246 LEIs across 9.06M ISINs |
 
 **Consequence:** "how many companies are listed" is always
 `count(DISTINCT company_id)`, never a row count — they differ by ~2 orders of
@@ -73,32 +80,44 @@ magnitude. Any market-cap rollup must restrict to `cfi_category = 'E'`.
 - The Brazil resolver. Brazil has no LEI-free path in this design yet; Task 7
   measures whether it needs one (see "Known Gap").
 
-## Known Gap: non-LEI countries
+## Non-LEI countries
 
-Every path here runs through LEI. Brazil's `br_cvm_companies` gives CNPJ and
-`cvm_code` with no LEI, and Brazilian ISINs are absent from GLEIF's mapping
-file. If Task 7 shows Brazilian LEI coverage is poor, layer B needs a sibling —
-an `instrument_company` table carrying direct instrument→company edges for
-markets where no LEI bridge exists. Do not build that speculatively; the
-measurement in Task 7 decides it.
+The schema accommodates them; the resolvers are not built yet.
+
+Brazil's `br_cvm_companies` gives CNPJ and `cvm_code` with no LEI, and Brazilian
+ISINs are absent from GLEIF's ISIN mapping file (measured 2026-07-24: 0 of
+9,062,208 rows carry a `BR` ISIN). Such a market is served by adding
+`issuer_scheme = 'cnpj'` rows to `instrument_issuer` and `company_identifier` —
+no new table, no change to the view.
+
+For a national-ID scheme, `company_identifier` rows are self-referential:
+`('cnpj', '33000167000101', 'BR', '33000167000101')`. That redundancy is the
+price of one uniform join path, and it disappears for schemes where the issuer
+identifier genuinely is not the company id — SEC `cik` being the clear case.
+
+**Do not build the Brazil resolver speculatively.** B3-listed companies
+plausibly hold LEIs already, since anything traded by international investors
+needs one for EU and US reporting. Task 7 Step 3 measures the Brazilian hit rate
+against `br_companies`; record the number there and decide from it.
 
 ## File Structure
 
 | File | Responsibility |
 |---|---|
 | `clickhouse/migrations/000172_corpscout_instrument_venues.{up,down}.sql` | Layer A DDL |
-| `clickhouse/migrations/000173_corpscout_isin_lei_slim.{up,down}.sql` | Drops layer-A columns from `isin_lei` |
-| `clickhouse/migrations/000174_corpscout_company_lei.{up,down}.sql` | Layer C DDL |
+| `clickhouse/migrations/000173_corpscout_instrument_issuer.{up,down}.sql` | Replaces `isin_lei` with the scheme-keyed layer B |
+| `clickhouse/migrations/000174_corpscout_company_identifier.{up,down}.sql` | Layer C DDL |
 | `clickhouse/migrations/000175_corpscout_company_listings_view.{up,down}.sql` | The join view |
 | `clickhouse/migrations/000176_corpscout_drop_se_company_listings.{up,down}.sql` | Retires the old table (gated) |
 | `defs/instrument_venues/tables.py` | Layer A column contract |
 | `defs/instrument_venues/firds.py` | FIRDS → layer A projection |
 | `defs/instrument_venues/eodhd.py` | EODHD → layer A projection |
 | `defs/instrument_venues/assets.py` | Layer A asset + job |
-| `defs/company_lei/tables.py` | Layer C column contract |
-| `defs/company_lei/rules.py` | Per-country identity rules registry |
-| `defs/company_lei/assets.py` | Layer C asset + job |
-| `defs/isin_lei/assets.py` | Modified — drops the two layer-A columns |
+| `defs/instrument_issuer/tables.py` | Layer B column contract (renamed from `defs/isin_lei/`) |
+| `defs/instrument_issuer/assets.py` | Layer B projection, publisher, asset |
+| `defs/company_identifier/tables.py` | Layer C column contract |
+| `defs/company_identifier/rules.py` | Per-country identity rules registry |
+| `defs/company_identifier/assets.py` | Layer C asset + job |
 
 ---
 
@@ -149,33 +168,46 @@ Notes carried into the migration comment:
   per venue row because that is how sources publish it. Two rows for one ISIN
   disagreeing on CFI is a data-quality signal, not legitimate variation.
 
-### Layer B — `corpscout.isin_lei` (existing, slimmed)
+### Layer B — `corpscout.instrument_issuer`
 
-Migration `000171` created this with `venue_confirmed` and `cfi_category`. Both
-are layer-A facts and become redundant once `instrument_venues` exists — drop
-them. Final shape:
+Replaces `corpscout.isin_lei` (migration `000171`), which was keyed on `lei`
+alone and carried two venue columns that now belong to layer A.
 
 ```sql
-isin              String
-lei               String
-mapping_source    LowCardinality(String)
-first_seen_date   Date
-last_seen_date    Date
-source_run_id     String
-resolved_at       DateTime64(3, 'UTC')
+CREATE TABLE IF NOT EXISTS corpscout.instrument_issuer
+(
+    isin                         String,
+    issuer_scheme                LowCardinality(String),
+    issuer_id                    String,
+    mapping_source               LowCardinality(String),
+    first_seen_date              Date,
+    last_seen_date               Date,
+    source_run_id                String,
+    resolved_at                  DateTime64(3, 'UTC')
+)
 ENGINE = MergeTree
-ORDER BY (isin, lei, mapping_source)
+ORDER BY (isin, issuer_scheme, issuer_id, mapping_source);
 ```
 
-### Layer C — `corpscout.company_lei`
+- `issuer_scheme` ∈ `lei` | `cnpj` | `cik` | … — the namespace `issuer_id` lives
+  in. Only `lei` is populated by this plan.
+- `mapping_source` ∈ `esma_firds` | `gleif_isin_lei` | … — kept in the grain so
+  two sources disagreeing about an ISIN's issuer stays visible rather than being
+  silently resolved.
+- `venue_confirmed` and `cfi_category` from migration `000171` are **dropped**:
+  both are venue facts and live in `instrument_venues`.
 
-Grain `(lei, country_code, company_id)`. **`lei` leads the sort key** because the
-join always arrives from layer B holding an LEI; country filtering is secondary.
+### Layer C — `corpscout.company_identifier`
+
+Grain `(issuer_scheme, issuer_id, country_code, company_id)`. **The scheme and
+id lead the sort key** because the join always arrives from layer B holding that
+pair; country filtering is secondary.
 
 ```sql
-CREATE TABLE IF NOT EXISTS corpscout.company_lei
+CREATE TABLE IF NOT EXISTS corpscout.company_identifier
 (
-    lei                          String,
+    issuer_scheme                LowCardinality(String),
+    issuer_id                    String,
     country_code                 LowCardinality(String),
     company_id                   String,
     match_method                 LowCardinality(String),
@@ -183,27 +215,30 @@ CREATE TABLE IF NOT EXISTS corpscout.company_lei
     registration_authority_id    LowCardinality(String),
     registered_as_raw            String,
     company_id_normalized        String,
-    lei_entity_status            LowCardinality(String),
-    lei_registration_status      LowCardinality(String),
+    entity_status                LowCardinality(String),
+    registration_status          LowCardinality(String),
     is_current                   UInt8,
-    successor_lei                String,
+    successor_issuer_id          String,
     first_seen_date              Date,
     last_seen_date               Date,
     source_run_id                String,
     resolved_at                  DateTime64(3, 'UTC')
 )
 ENGINE = MergeTree
-ORDER BY (lei, country_code, company_id);
+ORDER BY (issuer_scheme, issuer_id, country_code, company_id);
 ```
 
 Notes:
 - `match_method` ∈ `registration_authority` (RA code corroborates the register)
-  | `jurisdiction_normalized` (jurisdiction + normalized ID only).
+  | `jurisdiction_normalized` (jurisdiction + normalized ID only)
+  | `regulator_direct` (the market regulator publishes the pairing, e.g. CVM).
 - `match_confidence` ∈ `exact` | `normalized`.
 - A row exists **only if `company_id` was found in that country's register.** The
-  register is the ground truth; an unresolvable LEI produces no row.
-- `is_current = 0` where the LEI has a `successor_lei`, so historical links stay
+  register is the ground truth; an unresolvable issuer produces no row.
+- `is_current = 0` where a `successor_issuer_id` exists, so historical links stay
   queryable without polluting current answers.
+- `entity_status` / `registration_status` are LEI-specific in practice and are
+  `''` for other schemes.
 
 ### Layer D — `corpscout.company_listings` (VIEW)
 
@@ -212,7 +247,8 @@ CREATE VIEW IF NOT EXISTS corpscout.company_listings AS
 SELECT
     c.country_code            AS country_code,
     c.company_id              AS company_id,
-    c.lei                     AS lei,
+    c.issuer_scheme           AS issuer_scheme,
+    c.issuer_id               AS issuer_id,
     v.isin                    AS isin,
     v.mic                     AS mic,
     v.operating_mic           AS operating_mic,
@@ -229,11 +265,15 @@ SELECT
     v.termination_date        AS termination_date,
     v.venue_source            AS venue_source,
     v.evidence_tier           AS evidence_tier,
+    c.match_method            AS identity_match_method,
     c.match_confidence        AS identity_confidence,
-    l.mapping_source          AS isin_lei_source
+    i.mapping_source          AS issuer_mapping_source
 FROM corpscout.instrument_venues AS v
-INNER JOIN corpscout.isin_lei AS l ON l.isin = v.isin
-INNER JOIN corpscout.company_lei AS c ON c.lei = l.lei
+INNER JOIN corpscout.instrument_issuer AS i
+    ON i.isin = v.isin
+INNER JOIN corpscout.company_identifier AS c
+    ON c.issuer_scheme = i.issuer_scheme
+   AND c.issuer_id = i.issuer_id
 WHERE c.is_current = 1;
 ```
 
@@ -400,7 +440,7 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- ISIN disagreeing on CFI is a data-quality signal, not real variation.
 --
 -- This table says nothing about which company owns the instrument. That link is
--- corpscout.isin_lei followed by corpscout.company_lei.
+-- corpscout.instrument_issuer followed by corpscout.company_identifier.
 CREATE TABLE IF NOT EXISTS corpscout.instrument_venues
 (
     isin                         String,
@@ -467,8 +507,8 @@ git commit -m "feat(corpscout): add instrument_venues table"
 - Produces: `build_firds_instrument_venues_sql(stage_table: str) -> str`.
 
 Sourced from `firds_instruments_current` (not the event history): this layer
-answers "what trades where **now**", unlike `isin_lei`, which answers a durable
-identity question and therefore reads the event history.
+answers "what trades where **now**", unlike `instrument_issuer`, which answers a
+durable identity question and therefore reads the event history.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -483,7 +523,7 @@ _STAGE = "`corpscout`.`_tmp_instrument_venues_test`"
 
 
 def test_firds_projection_reads_current_state_not_history() -> None:
-    """Layer A is current admission; identity durability lives in isin_lei."""
+    """Layer A is current admission; durable identity is instrument_issuer."""
     sql = build_firds_instrument_venues_sql(_STAGE)
 
     assert "FROM corpscout.firds_instruments_current" in sql
@@ -760,8 +800,8 @@ def build_eodhd_instrument_venues_sql(stage_table: str) -> str:
     """Project EODHD symbol/venue pairs into the shared venue contract.
 
     EODHD is the vendor tier and the only venue source for markets outside
-    FIRDS. Symbols without an ISIN cannot join corpscout.isin_lei and are
-    excluded here rather than stored unjoinable.
+    FIRDS. Symbols without an ISIN cannot join corpscout.instrument_issuer and
+    are excluded here rather than stored unjoinable.
     """
     columns = ", ".join(tables.INSTRUMENT_VENUES_COLUMNS)
     return f"""INSERT INTO {stage_table} ({columns})
@@ -998,119 +1038,360 @@ git commit -m "feat(corpscout): add EODHD venue projection and instrument_venues
 
 ---
 
-### Task 4: Slim `isin_lei` to its layer
+### Task 4: Replace `isin_lei` with scheme-keyed `instrument_issuer`
 
 **Files:**
-- Create: `corpscout/clickhouse/migrations/000173_corpscout_isin_lei_slim.{up,down}.sql`
-- Modify: `corpscout/services/dagster_v3/src/dagster_v3/defs/isin_lei/tables.py`
-- Modify: `corpscout/services/dagster_v3/src/dagster_v3/defs/isin_lei/assets.py`
-- Modify: `corpscout/services/dagster_v3/tests/test_isin_lei.py`
+- Create: `corpscout/clickhouse/migrations/000173_corpscout_instrument_issuer.{up,down}.sql`
+- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/instrument_issuer/__init__.py`
+- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/instrument_issuer/tables.py`
+- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/instrument_issuer/assets.py`
+- Create: `corpscout/services/dagster_v3/tests/test_instrument_issuer.py`
+- Delete: `corpscout/services/dagster_v3/src/dagster_v3/defs/isin_lei/`
+- Delete: `corpscout/services/dagster_v3/tests/test_isin_lei.py`
 - Modify: `corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py`
 
-`venue_confirmed` and `cfi_category` were added to `isin_lei` in migration
-`000171` before `instrument_venues` existed. Both are venue facts and now live in
-layer A. Dropping them removes the duplication and stops two tables disagreeing
-about an instrument's category.
+Three changes at once, because they cannot be separated: `lei` becomes
+`(issuer_scheme, issuer_id)`, the two venue columns move to layer A, and the
+sort key changes. **ClickHouse cannot `ALTER` a sort key to insert a column**,
+so this is a new table rather than a migration of the old one.
 
-- [ ] **Step 1: Update the failing contract test**
+**Precondition:** `corpscout.isin_lei` has never been materialized — the asset
+from migration `000171` was committed but never run. Verify before writing the
+migration:
 
-In `tests/test_isin_lei.py`, change `test_isin_lei_table_contract` to expect:
+```sql
+SELECT count() FROM corpscout.isin_lei;
+```
+
+If this returns a non-zero count, stop: someone materialized it, and the drop
+needs a data-preserving path instead.
+
+- [ ] **Step 1: Write the failing contract test**
+
+Create `tests/test_instrument_issuer.py`:
 
 ```python
-    assert tables.ISIN_LEI_COLUMNS == (
+from dagster_v3.defs.instrument_issuer import tables
+from dagster_v3.defs.instrument_issuer.assets import (
+    build_firds_instrument_issuer_sql,
+)
+
+_STAGE = "`corpscout`.`_tmp_instrument_issuer_test`"
+
+
+def test_instrument_issuer_column_contract() -> None:
+    assert tables.INSTRUMENT_ISSUER_TABLE == "instrument_issuer"
+    assert tables.INSTRUMENT_ISSUER_COLUMNS == (
         "isin",
-        "lei",
+        "issuer_scheme",
+        "issuer_id",
         "mapping_source",
         "first_seen_date",
         "last_seen_date",
         "source_run_id",
         "resolved_at",
     )
-```
 
-Delete `test_projection_keeps_latest_cfi_category_without_filtering_it`. In
-`test_replace_isin_lei_is_atomic_and_reports_ambiguity` and the other publish
-tests, the quality row is unchanged — those columns were never part of it.
+
+def test_projection_reads_firds_event_history_not_current_state() -> None:
+    """Identity is durable: a delisting must not erase who issued the ISIN."""
+    sql = build_firds_instrument_issuer_sql(_STAGE)
+
+    assert "FROM corpscout.firds_instrument_events" in sql
+    assert "firds_instruments_current" not in sql
+
+
+def test_projection_emits_the_lei_scheme() -> None:
+    sql = build_firds_instrument_issuer_sql(_STAGE)
+
+    assert "'lei' AS issuer_scheme" in sql
+    assert "'esma_firds' AS mapping_source" in sql
+
+
+def test_projection_carries_no_venue_facts() -> None:
+    """Venue and CFI facts belong to instrument_venues."""
+    sql = build_firds_instrument_issuer_sql(_STAGE)
+
+    assert "venue_confirmed" not in sql
+    assert "cfi_category" not in sql
+    assert "mic" not in sql
+
+
+def test_projection_is_neither_country_nor_cfi_filtered() -> None:
+    sql = build_firds_instrument_issuer_sql(_STAGE)
+
+    assert "competent_authority_country" not in sql
+    assert "startsWith" not in sql
+
+
+def test_projection_drops_rows_without_both_identifiers() -> None:
+    sql = build_firds_instrument_issuer_sql(_STAGE)
+
+    assert "WHERE trimBoth(e.isin) != ''" in sql
+    assert "AND trimBoth(e.issuer_lei) != ''" in sql
+```
 
 - [ ] **Step 2: Run and confirm failure**
 
-Run: `uv run pytest tests/test_isin_lei.py -v`
-Expected: FAIL on the tuple comparison
+Run: `uv run pytest tests/test_instrument_issuer.py -v`
+Expected: FAIL `ModuleNotFoundError: No module named 'dagster_v3.defs.instrument_issuer'`
 
-- [ ] **Step 3: Update `tables.py` and the projection**
+- [ ] **Step 3: Create the module contract**
 
-In `defs/isin_lei/tables.py`, remove `"venue_confirmed"` and `"cfi_category"`
-from `ISIN_LEI_COLUMNS`.
+`defs/instrument_issuer/__init__.py` — empty file.
 
-In `defs/isin_lei/assets.py`, remove these three lines from the SELECT:
+`defs/instrument_issuer/tables.py`:
 
-```sql
-    toUInt8(1) AS venue_confirmed,
-    argMax(cfi_category_observed, source_publication_date) AS cfi_category,
+```python
+CLICKHOUSE_DATABASE = "corpscout"
+GROUP_NAME = "instrument_issuer"
+
+INSTRUMENT_ISSUER_TABLE = "instrument_issuer"
+QUALIFIED_INSTRUMENT_ISSUER_TABLE = (
+    f"{CLICKHOUSE_DATABASE}.{INSTRUMENT_ISSUER_TABLE}"
+)
+
+LEI_ISSUER_SCHEME = "lei"
+FIRDS_MAPPING_SOURCE = "esma_firds"
+
+INSTRUMENT_ISSUER_COLUMNS = (
+    "isin",
+    "issuer_scheme",
+    "issuer_id",
+    "mapping_source",
+    "first_seen_date",
+    "last_seen_date",
+    "source_run_id",
+    "resolved_at",
+)
 ```
 
-and drop `cfi_category_observed` from the `firds_identity` CTE. Update the
-docstring: it no longer carries venue or category facts.
+- [ ] **Step 4: Port the projection**
 
-- [ ] **Step 4: Run and confirm passing**
+Create `defs/instrument_issuer/assets.py`. Take
+`build_isin_lei_insert_sql`, `_quality_sql`, `_validate_quality`,
+`replace_isin_lei_clickhouse`, and the asset from the file being deleted
+(`defs/isin_lei/assets.py`), renaming throughout and dropping the venue columns:
 
-Run: `uv run pytest tests/test_isin_lei.py -v`
-Expected: PASS
+```python
+def build_firds_instrument_issuer_sql(stage_table: str) -> str:
+    """Project durable ISIN to issuer identity out of FIRDS event history.
 
-- [ ] **Step 5: Write the migration**
+    Reads firds_instrument_events rather than firds_instruments_current on
+    purpose. Who issued an ISIN does not change when the instrument stops
+    trading, so sourcing identity from current state would erase the mapping on
+    every delisting. Terminated and cancelled events are retained.
 
-`000173_corpscout_isin_lei_slim.up.sql`:
-
-```sql
--- venue_confirmed and cfi_category are venue facts. They now live in
--- corpscout.instrument_venues (migration 000172), so remove the duplicates
--- here rather than let two tables disagree about one instrument.
-ALTER TABLE corpscout.isin_lei DROP COLUMN IF EXISTS venue_confirmed;
-ALTER TABLE corpscout.isin_lei DROP COLUMN IF EXISTS cfi_category;
+    Neither country nor CFI category is filtered. FIRDS is instrument-scoped, so
+    EU-admitted instruments of non-EU issuers resolve here as well.
+    """
+    columns = ", ".join(tables.INSTRUMENT_ISSUER_COLUMNS)
+    return f"""INSERT INTO {stage_table} ({columns})
+WITH firds_identity AS
+(
+    SELECT
+        upperUTF8(trimBoth(e.isin)) AS isin,
+        upperUTF8(trimBoth(e.issuer_lei)) AS issuer_id,
+        e.source_publication_date AS source_publication_date
+    FROM corpscout.firds_instrument_events AS e
+    WHERE trimBoth(e.isin) != ''
+      AND trimBoth(e.issuer_lei) != ''
+)
+SELECT
+    isin,
+    '{tables.LEI_ISSUER_SCHEME}' AS issuer_scheme,
+    issuer_id,
+    '{tables.FIRDS_MAPPING_SOURCE}' AS mapping_source,
+    min(source_publication_date) AS first_seen_date,
+    max(source_publication_date) AS last_seen_date,
+    %(source_run_id)s AS source_run_id,
+    %(resolved_at)s AS resolved_at
+FROM firds_identity
+GROUP BY
+    isin,
+    issuer_id"""
 ```
 
-`000173_corpscout_isin_lei_slim.down.sql`:
+The quality SQL keeps its columns but renames `lei` to `issuer_id`:
 
-```sql
-ALTER TABLE corpscout.isin_lei ADD COLUMN IF NOT EXISTS venue_confirmed UInt8 AFTER mapping_source;
-ALTER TABLE corpscout.isin_lei ADD COLUMN IF NOT EXISTS cfi_category LowCardinality(String) AFTER venue_confirmed;
+```python
+_QUALITY_COLUMNS = (
+    "row_count",
+    "isin_count",
+    "issuer_count",
+    "mapping_key_count",
+    "ambiguous_isin_count",
+    "invalid_identity_rows",
+    "malformed_isin_rows",
+    "malformed_issuer_rows",
+    "earliest_first_seen_date",
+    "latest_last_seen_date",
+)
+
+
+def _quality_sql(stage_table: str) -> str:
+    return f"""SELECT
+    count() AS row_count,
+    uniqExact(isin) AS isin_count,
+    uniqExact(issuer_id) AS issuer_count,
+    uniqExact((isin, issuer_scheme, issuer_id, mapping_source))
+        AS mapping_key_count,
+    (
+        SELECT count()
+        FROM
+        (
+            SELECT isin
+            FROM {stage_table}
+            GROUP BY isin
+            HAVING uniqExact((issuer_scheme, issuer_id)) > 1
+        )
+    ) AS ambiguous_isin_count,
+    countIf(isin = '' OR issuer_scheme = '' OR issuer_id = '' OR mapping_source = '')
+        AS invalid_identity_rows,
+    countIf(length(isin) != 12) AS malformed_isin_rows,
+    countIf(issuer_scheme = 'lei' AND length(issuer_id) != 20)
+        AS malformed_issuer_rows,
+    min(first_seen_date) AS earliest_first_seen_date,
+    max(last_seen_date) AS latest_last_seen_date
+FROM {stage_table}"""
 ```
 
-Add a migration test asserting both `DROP COLUMN` statements are present, and add
-`"000173_corpscout_isin_lei_slim",` to `EXPECTED_MIGRATIONS`.
+`_validate_quality` keeps its three gates with renamed messages: zero rows
+(`"FIRDS projection produced no instrument issuer mappings"`), grain mismatch on
+`mapping_key_count != row_count`, and non-zero `invalid_identity_rows`.
+Malformed counts stay metadata-only — upstream syntax noise must not blank a
+populated table. `replace_instrument_issuer_clickhouse` and the asset
+`instrument_issuer_clickhouse` keep the `deps=("esma_firds_clickhouse",)`,
+`pool="instrument_issuer_clickhouse"`, and the stage-plus-`EXCHANGE TABLES`
+shape unchanged.
 
-- [ ] **Step 6: Run the full check and commit**
+- [ ] **Step 5: Run and confirm passing**
 
-Run: `uv run pytest tests/test_isin_lei.py tests/test_clickhouse_migrations.py -q && uv run dg check defs`
+Run: `uv run pytest tests/test_instrument_issuer.py -v && uv run dg check defs`
+Expected: 6 passed, definitions load
+
+- [ ] **Step 6: Delete the superseded module**
 
 ```bash
-git add corpscout/clickhouse/migrations/000173_corpscout_isin_lei_slim.up.sql \
-        corpscout/clickhouse/migrations/000173_corpscout_isin_lei_slim.down.sql \
-        corpscout/services/dagster_v3/src/dagster_v3/defs/isin_lei/tables.py \
-        corpscout/services/dagster_v3/src/dagster_v3/defs/isin_lei/assets.py \
-        corpscout/services/dagster_v3/tests/test_isin_lei.py \
+git rm -r corpscout/services/dagster_v3/src/dagster_v3/defs/isin_lei
+git rm corpscout/services/dagster_v3/tests/test_isin_lei.py
+```
+
+- [ ] **Step 7: Write the migration**
+
+`000173_corpscout_instrument_issuer.up.sql`:
+
+```sql
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+-- Replaces corpscout.isin_lei from migration 000171. Three changes force a new
+-- table rather than an ALTER: lei becomes the (issuer_scheme, issuer_id) pair so
+-- markets without LEI adoption use the same two tables and the same join,
+-- venue_confirmed and cfi_category move to corpscout.instrument_venues where
+-- venue facts belong, and the sort key gains a column in the middle, which
+-- ClickHouse cannot ALTER.
+--
+-- isin_lei was never materialized, so dropping it loses nothing. This was
+-- verified against the live table before this migration was committed.
+--
+-- The grain keeps mapping_source so two sources disagreeing about an ISIN's
+-- issuer stays visible instead of being silently resolved.
+DROP TABLE IF EXISTS corpscout.isin_lei;
+
+CREATE TABLE IF NOT EXISTS corpscout.instrument_issuer
+(
+    isin                         String,
+    issuer_scheme                LowCardinality(String),
+    issuer_id                    String,
+    mapping_source               LowCardinality(String),
+    first_seen_date              Date,
+    last_seen_date               Date,
+    source_run_id                String,
+    resolved_at                  DateTime64(3, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (isin, issuer_scheme, issuer_id, mapping_source);
+```
+
+`000173_corpscout_instrument_issuer.down.sql`:
+
+```sql
+DROP TABLE IF EXISTS corpscout.instrument_issuer;
+
+CREATE TABLE IF NOT EXISTS corpscout.isin_lei
+(
+    isin                         String,
+    lei                          String,
+    mapping_source               LowCardinality(String),
+    venue_confirmed              UInt8,
+    cfi_category                 LowCardinality(String),
+    first_seen_date              Date,
+    last_seen_date               Date,
+    source_run_id                String,
+    resolved_at                  DateTime64(3, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (isin, lei, mapping_source);
+```
+
+- [ ] **Step 8: Update the migration tests**
+
+Replace `test_isin_lei_migration_covers_columns_in_order` with:
+
+```python
+def test_instrument_issuer_migration_replaces_isin_lei() -> None:
+    sql = _migration_sql("000173_corpscout_instrument_issuer.up.sql")
+    down_sql = _migration_sql("000173_corpscout_instrument_issuer.down.sql")
+
+    assert "DROP TABLE IF EXISTS corpscout.isin_lei" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.instrument_issuer" in sql
+    last_index = -1
+    for column_name in instrument_issuer_tables.INSTRUMENT_ISSUER_COLUMNS:
+        index = sql.index(f"    {column_name} ")
+        assert index > last_index
+        last_index = index
+
+    assert "ORDER BY (isin, issuer_scheme, issuer_id, mapping_source)" in sql
+    assert "venue_confirmed" not in sql.split("CREATE TABLE")[1]
+    assert "CREATE TABLE IF NOT EXISTS corpscout.isin_lei" in down_sql
+```
+
+Swap the import `from dagster_v3.defs.isin_lei import tables as isin_lei_tables`
+for `from dagster_v3.defs.instrument_issuer import tables as instrument_issuer_tables`,
+and add `"000173_corpscout_instrument_issuer",` to `EXPECTED_MIGRATIONS`.
+
+- [ ] **Step 9: Run the full check and commit**
+
+Run: `uv run pytest tests/test_instrument_issuer.py tests/test_clickhouse_migrations.py -q && uv run dg check defs`
+Expected: PASS
+
+```bash
+git add corpscout/clickhouse/migrations/000173_corpscout_instrument_issuer.up.sql \
+        corpscout/clickhouse/migrations/000173_corpscout_instrument_issuer.down.sql \
+        corpscout/services/dagster_v3/src/dagster_v3/defs/instrument_issuer/ \
+        corpscout/services/dagster_v3/tests/test_instrument_issuer.py \
         corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py
-git commit -m "refactor(corpscout): move venue facts out of isin_lei"
+git commit -m "refactor(corpscout): replace isin_lei with scheme-keyed instrument_issuer"
 ```
 
 ---
 
-### Task 5: Layer C — `company_lei`
+### Task 5: Layer C — `company_identifier`
 
 **Files:**
-- Create: `corpscout/clickhouse/migrations/000174_corpscout_company_lei.{up,down}.sql`
-- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_lei/__init__.py`
-- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_lei/tables.py`
-- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_lei/rules.py`
-- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_lei/assets.py`
-- Create: `corpscout/services/dagster_v3/tests/test_company_lei.py`
+- Create: `corpscout/clickhouse/migrations/000174_corpscout_company_identifier.{up,down}.sql`
+- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_identifier/__init__.py`
+- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_identifier/tables.py`
+- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_identifier/rules.py`
+- Create: `corpscout/services/dagster_v3/src/dagster_v3/defs/company_identifier/assets.py`
+- Create: `corpscout/services/dagster_v3/tests/test_company_identifier.py`
 - Modify: `corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py`
 
 **Interfaces:**
-- Produces: `tables.COMPANY_LEI_COLUMNS` (16-tuple, DDL order),
+- Produces: `tables.COMPANY_IDENTIFIER_COLUMNS` (16-tuple, DDL order),
   `rules.CountryIdentityRule`, `rules.COUNTRY_IDENTITY_RULES`,
-  `build_company_lei_insert_sql(stage_table: str, rule: CountryIdentityRule) -> str`,
-  `replace_company_lei_clickhouse(...)`, asset `company_lei_clickhouse`.
+  `build_company_identifier_insert_sql(stage_table: str, rule: CountryIdentityRule) -> str`,
+  `replace_company_identifier_clickhouse(...)`, asset `company_identifier_clickhouse`.
 
 This carries the two defect fixes from the superseded plan: the register is
 joined **deduplicated** (`se_companies` is a `ReplacingMergeTree`; an
@@ -1119,21 +1400,22 @@ per-country row floor prevents a degraded GLEIF refresh from emptying a country.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/test_company_lei.py`:
+Create `tests/test_company_identifier.py`:
 
 ```python
-from dagster_v3.defs.company_lei import tables
-from dagster_v3.defs.company_lei.assets import build_company_lei_insert_sql
-from dagster_v3.defs.company_lei.rules import COUNTRY_IDENTITY_RULES
+from dagster_v3.defs.company_identifier import tables
+from dagster_v3.defs.company_identifier.assets import build_company_identifier_insert_sql
+from dagster_v3.defs.company_identifier.rules import COUNTRY_IDENTITY_RULES
 
-_STAGE = "`corpscout`.`_tmp_company_lei_test`"
+_STAGE = "`corpscout`.`_tmp_company_identifier_test`"
 _SE = COUNTRY_IDENTITY_RULES["SE"]
 
 
-def test_company_lei_column_contract() -> None:
-    assert tables.COMPANY_LEI_TABLE == "company_lei"
-    assert tables.COMPANY_LEI_COLUMNS == (
-        "lei",
+def test_company_identifier_column_contract() -> None:
+    assert tables.COMPANY_IDENTIFIER_TABLE == "company_identifier"
+    assert tables.COMPANY_IDENTIFIER_COLUMNS == (
+        "issuer_scheme",
+        "issuer_id",
         "country_code",
         "company_id",
         "match_method",
@@ -1141,10 +1423,10 @@ def test_company_lei_column_contract() -> None:
         "registration_authority_id",
         "registered_as_raw",
         "company_id_normalized",
-        "lei_entity_status",
-        "lei_registration_status",
+        "entity_status",
+        "registration_status",
         "is_current",
-        "successor_lei",
+        "successor_issuer_id",
         "first_seen_date",
         "last_seen_date",
         "source_run_id",
@@ -1161,7 +1443,7 @@ def test_sweden_rule_declares_register_and_normalization() -> None:
 
 def test_sql_deduplicates_the_replacing_merge_tree_register() -> None:
     """se_companies is a ReplacingMergeTree; a raw join fans out."""
-    sql = build_company_lei_insert_sql(_STAGE, _SE)
+    sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
     assert "register_current AS" in sql
     assert "GROUP BY company_id" in sql
@@ -1170,14 +1452,14 @@ def test_sql_deduplicates_the_replacing_merge_tree_register() -> None:
 
 def test_sql_requires_the_identifier_to_exist_in_the_register() -> None:
     """The register is ground truth; an unresolvable LEI produces no row."""
-    sql = build_company_lei_insert_sql(_STAGE, _SE)
+    sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
     assert "INNER JOIN register_current AS r" in sql
     assert "r.company_id = g.company_id_normalized" in sql
 
 
 def test_sql_tiers_confidence_by_registration_authority() -> None:
-    sql = build_company_lei_insert_sql(_STAGE, _SE)
+    sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
     assert "registration_authority" in sql
     assert "jurisdiction_normalized" in sql
@@ -1185,7 +1467,7 @@ def test_sql_tiers_confidence_by_registration_authority() -> None:
 
 
 def test_sql_marks_superseded_leis_as_not_current() -> None:
-    sql = build_company_lei_insert_sql(_STAGE, _SE)
+    sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
     assert "successor_entity_lei" in sql
     assert "AS is_current" in sql
@@ -1229,12 +1511,12 @@ def _resource(
 def test_replace_reports_the_authority_confidence_tier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # row_count, lei_count, company_count, identity_key_count,
+    # row_count, issuer_count, company_count, identity_key_count,
     # authority_matched_rows, invalid_rows
     client = _FakeClickHouseClient((800, 800, 800, 800, 640, 0))
     resource = _resource(monkeypatch, client)
 
-    metadata = replace_company_lei_clickhouse(
+    metadata = replace_company_identifier_clickhouse(
         clickhouse=resource,
         rule=_SE,
         source_run_id="run-1",
@@ -1256,7 +1538,7 @@ def test_replace_refuses_a_degraded_gleif_refresh(
     resource = _resource(monkeypatch, client)
 
     with pytest.raises(ValueError, match="below the expected floor"):
-        replace_company_lei_clickhouse(
+        replace_company_identifier_clickhouse(
             clickhouse=resource,
             rule=_SE,
             source_run_id="run-1",
@@ -1273,7 +1555,7 @@ def test_replace_refuses_duplicate_identity_grain(
     resource = _resource(monkeypatch, client)
 
     with pytest.raises(ValueError, match="grain mismatch"):
-        replace_company_lei_clickhouse(
+        replace_company_identifier_clickhouse(
             clickhouse=resource,
             rule=_SE,
             source_run_id="run-1",
@@ -1293,22 +1575,22 @@ from datetime import UTC, datetime
 import pytest
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.company_lei import tables
-from dagster_v3.defs.company_lei.assets import (
-    build_company_lei_insert_sql,
-    replace_company_lei_clickhouse,
+from dagster_v3.defs.company_identifier import tables
+from dagster_v3.defs.company_identifier.assets import (
+    build_company_identifier_insert_sql,
+    replace_company_identifier_clickhouse,
 )
-from dagster_v3.defs.company_lei.rules import COUNTRY_IDENTITY_RULES
+from dagster_v3.defs.company_identifier.rules import COUNTRY_IDENTITY_RULES
 ```
 
 - [ ] **Step 2: Run and confirm failure**
 
-Run: `uv run pytest tests/test_company_lei.py -v`
-Expected: FAIL `ModuleNotFoundError: No module named 'dagster_v3.defs.company_lei'`
+Run: `uv run pytest tests/test_company_identifier.py -v`
+Expected: FAIL `ModuleNotFoundError: No module named 'dagster_v3.defs.company_identifier'`
 
 - [ ] **Step 3: Create the migration**
 
-`000174_corpscout_company_lei.up.sql`:
+`000174_corpscout_company_identifier.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -1323,9 +1605,10 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --
 -- One company may hold several LEIs over time through entity succession, so
 -- is_current distinguishes the live link from superseded ones.
-CREATE TABLE IF NOT EXISTS corpscout.company_lei
+CREATE TABLE IF NOT EXISTS corpscout.company_identifier
 (
-    lei                          String,
+    issuer_scheme                LowCardinality(String),
+    issuer_id                    String,
     country_code                 LowCardinality(String),
     company_id                   String,
     match_method                 LowCardinality(String),
@@ -1333,42 +1616,45 @@ CREATE TABLE IF NOT EXISTS corpscout.company_lei
     registration_authority_id    LowCardinality(String),
     registered_as_raw            String,
     company_id_normalized        String,
-    lei_entity_status            LowCardinality(String),
-    lei_registration_status      LowCardinality(String),
+    entity_status                LowCardinality(String),
+    registration_status          LowCardinality(String),
     is_current                   UInt8,
-    successor_lei                String,
+    successor_issuer_id          String,
     first_seen_date              Date,
     last_seen_date               Date,
     source_run_id                String,
     resolved_at                  DateTime64(3, 'UTC')
 )
 ENGINE = MergeTree
-ORDER BY (lei, country_code, company_id);
+ORDER BY (issuer_scheme, issuer_id, country_code, company_id);
 ```
 
-`000174_corpscout_company_lei.down.sql`:
+`000174_corpscout_company_identifier.down.sql`:
 
 ```sql
-DROP TABLE IF EXISTS corpscout.company_lei;
+DROP TABLE IF EXISTS corpscout.company_identifier;
 ```
 
-Add `"000174_corpscout_company_lei",` to `EXPECTED_MIGRATIONS` and a migration
+Add `"000174_corpscout_company_identifier",` to `EXPECTED_MIGRATIONS` and a migration
 test mirroring Task 1 Step 5, asserting
-`ORDER BY (lei, country_code, company_id)`.
+`ORDER BY (issuer_scheme, issuer_id, country_code, company_id)`.
 
 - [ ] **Step 4: Create `tables.py` and `rules.py`**
 
-`defs/company_lei/tables.py`:
+`defs/company_identifier/tables.py`:
 
 ```python
 CLICKHOUSE_DATABASE = "corpscout"
-GROUP_NAME = "company_lei"
+GROUP_NAME = "company_identifier"
 
-COMPANY_LEI_TABLE = "company_lei"
-QUALIFIED_COMPANY_LEI_TABLE = f"{CLICKHOUSE_DATABASE}.{COMPANY_LEI_TABLE}"
+COMPANY_IDENTIFIER_TABLE = "company_identifier"
+QUALIFIED_COMPANY_IDENTIFIER_TABLE = f"{CLICKHOUSE_DATABASE}.{COMPANY_IDENTIFIER_TABLE}"
 
-COMPANY_LEI_COLUMNS = (
-    "lei",
+LEI_ISSUER_SCHEME = "lei"
+
+COMPANY_IDENTIFIER_COLUMNS = (
+    "issuer_scheme",
+    "issuer_id",
     "country_code",
     "company_id",
     "match_method",
@@ -1376,10 +1662,10 @@ COMPANY_LEI_COLUMNS = (
     "registration_authority_id",
     "registered_as_raw",
     "company_id_normalized",
-    "lei_entity_status",
-    "lei_registration_status",
+    "entity_status",
+    "registration_status",
     "is_current",
-    "successor_lei",
+    "successor_issuer_id",
     "first_seen_date",
     "last_seen_date",
     "source_run_id",
@@ -1387,7 +1673,7 @@ COMPANY_LEI_COLUMNS = (
 )
 ```
 
-`defs/company_lei/rules.py`:
+`defs/company_identifier/rules.py`:
 
 ```python
 from dataclasses import dataclass
@@ -1406,6 +1692,7 @@ class CountryIdentityRule:
     """
 
     country_code: str
+    issuer_scheme: str
     register_table: str
     identifier_length: int
     min_expected_rows: int
@@ -1415,6 +1702,7 @@ class CountryIdentityRule:
 COUNTRY_IDENTITY_RULES = {
     "SE": CountryIdentityRule(
         country_code="SE",
+        issuer_scheme="lei",
         register_table="se_companies",
         identifier_length=10,
         min_expected_rows=500,
@@ -1422,12 +1710,17 @@ COUNTRY_IDENTITY_RULES = {
 }
 ```
 
+`issuer_scheme` is `"lei"` for every rule in this plan. It exists so a market
+without LEI adoption declares its own namespace — a future Brazil rule would set
+`issuer_scheme="cnpj"` and resolve from `br_cvm_companies` rather than from
+GLEIF, with no change to the table, the view, or any consumer.
+
 - [ ] **Step 5: Implement the builder in `assets.py`**
 
-Create `defs/company_lei/assets.py` with `build_company_lei_insert_sql`:
+Create `defs/company_identifier/assets.py` with `build_company_identifier_insert_sql`:
 
 ```python
-def build_company_lei_insert_sql(
+def build_company_identifier_insert_sql(
     stage_table: str,
     rule: CountryIdentityRule,
 ) -> str:
@@ -1437,7 +1730,7 @@ def build_company_lei_insert_sql(
     ReplacingMergeTree: an undeduplicated join multiplies rows for any
     company_id with unmerged parts and trips the grain check intermittently.
     """
-    columns = ", ".join(tables.COMPANY_LEI_COLUMNS)
+    columns = ", ".join(tables.COMPANY_IDENTIFIER_COLUMNS)
     authority_ids = rule.registration_authority_ids
     authority_predicate = (
         " OR ".join(f"g.registered_at_id = '{code}'" for code in sorted(authority_ids))
@@ -1461,11 +1754,11 @@ gleif_country AS
         argMax(ifNull(registered_as, ''), (resolved_at, source_run_id))
             AS registered_as_raw,
         argMax(ifNull(entity_status, ''), (resolved_at, source_run_id))
-            AS lei_entity_status,
+            AS entity_status,
         argMax(ifNull(registration_status, ''), (resolved_at, source_run_id))
-            AS lei_registration_status,
+            AS registration_status,
         argMax(ifNull(successor_entity_lei, ''), (resolved_at, source_run_id))
-            AS successor_lei,
+            AS successor_issuer_id,
         argMax(ifNull(jurisdiction, ''), (resolved_at, source_run_id))
             AS jurisdiction,
         min(toDate(resolved_at)) AS first_seen_date,
@@ -1483,7 +1776,8 @@ gleif_normalized AS
     WHERE upperUTF8(jurisdiction) = '{rule.country_code}'
 )
 SELECT
-    g.lei AS lei,
+    '{tables.LEI_ISSUER_SCHEME}' AS issuer_scheme,
+    g.lei AS issuer_id,
     '{rule.country_code}' AS country_code,
     r.company_id AS company_id,
     if({authority_predicate}, 'registration_authority', 'jurisdiction_normalized')
@@ -1492,10 +1786,10 @@ SELECT
     g.registered_at_id AS registration_authority_id,
     g.registered_as_raw AS registered_as_raw,
     g.company_id_normalized AS company_id_normalized,
-    g.lei_entity_status AS lei_entity_status,
-    g.lei_registration_status AS lei_registration_status,
-    toUInt8(g.successor_lei = '') AS is_current,
-    g.successor_lei AS successor_lei,
+    g.entity_status AS entity_status,
+    g.registration_status AS registration_status,
+    toUInt8(g.successor_issuer_id = '') AS is_current,
+    g.successor_issuer_id AS successor_issuer_id,
     g.first_seen_date AS first_seen_date,
     g.last_seen_date AS last_seen_date,
     %(source_run_id)s AS source_run_id,
@@ -1516,20 +1810,20 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.company_lei import tables
-from dagster_v3.defs.company_lei.rules import (
+from dagster_v3.defs.company_identifier import tables
+from dagster_v3.defs.company_identifier.rules import (
     COUNTRY_IDENTITY_RULES,
     CountryIdentityRule,
 )
 
-COMPANY_LEI_UPSTREAM_ASSET_KEYS = (
+COMPANY_IDENTIFIER_UPSTREAM_ASSET_KEYS = (
     "gleif_reference_clickhouse",
     "sweden_company_companies_clickhouse",
 )
 
 _QUALITY_COLUMNS = (
     "row_count",
-    "lei_count",
+    "issuer_count",
     "company_count",
     "identity_key_count",
     "authority_matched_rows",
@@ -1544,12 +1838,14 @@ def _qualified(table_name: str) -> str:
 def _quality_sql(stage_table: str) -> str:
     return f"""SELECT
     count() AS row_count,
-    uniqExact(lei) AS lei_count,
+    uniqExact(issuer_id) AS issuer_count,
     uniqExact(company_id) AS company_count,
-    uniqExact((lei, country_code, company_id)) AS identity_key_count,
+    uniqExact((issuer_scheme, issuer_id, country_code, company_id))
+        AS identity_key_count,
     countIf(match_method = 'registration_authority') AS authority_matched_rows,
     countIf(
-        lei = ''
+        issuer_scheme = ''
+        OR issuer_id = ''
         OR country_code = ''
         OR company_id = ''
         OR match_method = ''
@@ -1586,7 +1882,7 @@ def _validate_quality(
         )
 
 
-def replace_company_lei_clickhouse(
+def replace_company_identifier_clickhouse(
     *,
     clickhouse: ClickhouseResource,
     rule: CountryIdentityRule,
@@ -1598,24 +1894,24 @@ def replace_company_lei_clickhouse(
         clickhouse,
         database=tables.CLICKHOUSE_DATABASE,
         tables=(
-            tables.COMPANY_LEI_TABLE,
+            tables.COMPANY_IDENTIFIER_TABLE,
             "gleif_lei_records",
             rule.register_table,
         ),
     )
     stage_name = (
-        f"_tmp_{tables.COMPANY_LEI_TABLE}_"
+        f"_tmp_{tables.COMPANY_IDENTIFIER_TABLE}_"
         f"{rule.country_code.lower()}_{uuid.uuid4().hex}"
     )
     qualified_stage = _qualified(stage_name)
-    qualified_target = _qualified(tables.COMPANY_LEI_TABLE)
+    qualified_target = _qualified(tables.COMPANY_IDENTIFIER_TABLE)
 
     with clickhouse.get_connection() as client:
         client.execute(f"CREATE TABLE {qualified_stage} AS {qualified_target}")
         primary_error: Exception | None = None
         try:
             client.execute(
-                build_company_lei_insert_sql(qualified_stage, rule),
+                build_company_identifier_insert_sql(qualified_stage, rule),
                 {"source_run_id": source_run_id, "resolved_at": resolved_at},
             )
             row = client.execute(_quality_sql(qualified_stage))[0]
@@ -1641,29 +1937,29 @@ def replace_company_lei_clickhouse(
         **quality,
         "country_code": rule.country_code,
         "register_table": rule.register_table,
-        "table": tables.QUALIFIED_COMPANY_LEI_TABLE,
+        "table": tables.QUALIFIED_COMPANY_IDENTIFIER_TABLE,
         "source_run_id": source_run_id,
     }
 
 
 @dg.asset(
-    name="company_lei_clickhouse",
-    deps=[dg.AssetKey(key) for key in COMPANY_LEI_UPSTREAM_ASSET_KEYS],
+    name="company_identifier_clickhouse",
+    deps=[dg.AssetKey(key) for key in COMPANY_IDENTIFIER_UPSTREAM_ASSET_KEYS],
     group_name=tables.GROUP_NAME,
     kinds={"clickhouse", "sql"},
-    pool="company_lei_clickhouse",
-    metadata={"table": tables.QUALIFIED_COMPANY_LEI_TABLE},
+    pool="company_identifier_clickhouse",
+    metadata={"table": tables.QUALIFIED_COMPANY_IDENTIFIER_TABLE},
     description=(
         "Resolves GLEIF LEI records to national company identifiers by "
         "validating the normalized registered_as value against the country "
         "register. An LEI that does not resolve produces no row."
     ),
 )
-def company_lei_clickhouse(
+def company_identifier_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    metadata = replace_company_lei_clickhouse(
+    metadata = replace_company_identifier_clickhouse(
         clickhouse=clickhouse,
         rule=COUNTRY_IDENTITY_RULES["SE"],
         source_run_id=context.run_id,
@@ -1679,14 +1975,14 @@ def company_lei_clickhouse(
     return dg.MaterializeResult(metadata=metadata)
 
 
-company_lei_job = dg.define_asset_job(
-    "company_lei_job",
-    selection=dg.AssetSelection.assets("company_lei_clickhouse"),
+company_identifier_job = dg.define_asset_job(
+    "company_identifier_job",
+    selection=dg.AssetSelection.assets("company_identifier_clickhouse"),
 )
 
 defs = dg.Definitions(
-    assets=[company_lei_clickhouse],
-    jobs=[company_lei_job],
+    assets=[company_identifier_clickhouse],
+    jobs=[company_identifier_job],
 )
 ```
 
@@ -1699,18 +1995,18 @@ silently erase the first.
 
 - [ ] **Step 6: Run tests and definition checks**
 
-Run: `uv run pytest tests/test_company_lei.py tests/test_clickhouse_migrations.py -q && uv run dg check defs`
+Run: `uv run pytest tests/test_company_identifier.py tests/test_clickhouse_migrations.py -q && uv run dg check defs`
 Expected: PASS
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add corpscout/clickhouse/migrations/000174_corpscout_company_lei.up.sql \
-        corpscout/clickhouse/migrations/000174_corpscout_company_lei.down.sql \
-        corpscout/services/dagster_v3/src/dagster_v3/defs/company_lei/ \
-        corpscout/services/dagster_v3/tests/test_company_lei.py \
+git add corpscout/clickhouse/migrations/000174_corpscout_company_identifier.up.sql \
+        corpscout/clickhouse/migrations/000174_corpscout_company_identifier.down.sql \
+        corpscout/services/dagster_v3/src/dagster_v3/defs/company_identifier/ \
+        corpscout/services/dagster_v3/tests/test_company_identifier.py \
         corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py
-git commit -m "feat(corpscout): add company_lei identity layer"
+git commit -m "feat(corpscout): add company_identifier identity layer"
 ```
 
 ---
@@ -1730,8 +2026,11 @@ def test_company_listings_view_joins_the_three_layers() -> None:
 
     assert "CREATE VIEW IF NOT EXISTS corpscout.company_listings" in sql
     assert "FROM corpscout.instrument_venues AS v" in sql
-    assert "INNER JOIN corpscout.isin_lei AS l ON l.isin = v.isin" in sql
-    assert "INNER JOIN corpscout.company_lei AS c ON c.lei = l.lei" in sql
+    assert "INNER JOIN corpscout.instrument_issuer AS i" in sql
+    assert "ON i.isin = v.isin" in sql
+    assert "INNER JOIN corpscout.company_identifier AS c" in sql
+    assert "ON c.issuer_scheme = i.issuer_scheme" in sql
+    assert "AND c.issuer_id = i.issuer_id" in sql
     assert "WHERE c.is_current = 1" in sql
     assert "DROP VIEW IF EXISTS corpscout.company_listings" in down_sql
 ```
@@ -1777,15 +2076,18 @@ produces the RA codes that `rules.py` deliberately left empty.
 - [ ] **Step 1: Verify the cardinality contract**
 
 ```sql
--- ISIN -> LEI must be N:1. Expect 0 rows.
+-- ISIN -> issuer must be N:1. Expect 0 rows.
 SELECT count() FROM (
-    SELECT isin FROM corpscout.isin_lei GROUP BY isin HAVING uniqExact(lei) > 1
+    SELECT isin FROM corpscout.instrument_issuer
+    GROUP BY isin HAVING uniqExact((issuer_scheme, issuer_id)) > 1
 );
 
--- LEI -> company must be N:1 within a country. Expect 0 rows.
+-- issuer -> company must be N:1 within a country. Expect 0 rows.
 SELECT count() FROM (
-    SELECT lei, country_code FROM corpscout.company_lei WHERE is_current = 1
-    GROUP BY lei, country_code HAVING uniqExact(company_id) > 1
+    SELECT issuer_scheme, issuer_id, country_code
+    FROM corpscout.company_identifier WHERE is_current = 1
+    GROUP BY issuer_scheme, issuer_id, country_code
+    HAVING uniqExact(company_id) > 1
 );
 
 -- The view must not fan out beyond its instrument rows.
@@ -1805,7 +2107,7 @@ SELECT
     count()                         AS leis,
     uniqExact(company_id)           AS companies,
     min(first_seen_date)            AS since
-FROM corpscout.company_lei
+FROM corpscout.company_identifier
 WHERE country_code = 'SE'
 GROUP BY registration_authority_id
 ORDER BY leis DESC;
@@ -1821,17 +2123,38 @@ tier.
 ```sql
 -- What fraction of SE-jurisdiction LEIs reach a real company?
 SELECT
-    countIf(g.lei != '')                                       AS gleif_se_leis,
-    countIf(c.lei != '')                                       AS resolved_leis,
-    round(countIf(c.lei != '') / countIf(g.lei != ''), 4)       AS hit_rate
+    count()                                              AS gleif_se_leis,
+    countIf(c.issuer_id != '')                           AS resolved_leis,
+    round(countIf(c.issuer_id != '') / count(), 4)       AS hit_rate
 FROM corpscout.gleif_lei_records AS g
-LEFT JOIN corpscout.company_lei AS c ON c.lei = upperUTF8(trimBoth(g.lei))
+LEFT JOIN corpscout.company_identifier AS c
+    ON c.issuer_scheme = 'lei'
+   AND c.issuer_id = upperUTF8(trimBoth(g.lei))
 WHERE upperUTF8(ifNull(g.jurisdiction, '')) = 'SE';
 ```
 
-Repeat with `'BR'` against `br_companies`. A poor Brazilian hit rate is the
-trigger for the non-LEI sibling table described in "Known Gap" — record the
-number in that section rather than acting on intuition.
+Repeat with `'BR'`. **This is the number that decides whether Brazil needs a
+`cnpj` scheme at all.** A high hit rate means Brazilian issuers already carry
+LEIs and `issuer_scheme = 'lei'` covers them; a low one means a Brazil rule with
+`issuer_scheme="cnpj"` resolving from `br_cvm_companies` is required. Record the
+result in the "Non-LEI countries" section rather than acting on intuition.
+
+Also measure which schemes are actually in play, so the generalization is
+justified by data rather than assumed:
+
+```sql
+SELECT issuer_scheme, count() AS mappings, uniqExact(isin) AS isins
+FROM corpscout.instrument_issuer
+GROUP BY issuer_scheme ORDER BY mappings DESC;
+
+SELECT issuer_scheme, country_code, count() AS companies
+FROM corpscout.company_identifier WHERE is_current = 1
+GROUP BY issuer_scheme, country_code ORDER BY companies DESC;
+```
+
+If `lei` remains the only scheme after Brazil is measured, the compound key has
+cost one `LowCardinality` column and bought optionality — an acceptable trade.
+If a second scheme appears, it has avoided a UNION in the view.
 
 - [ ] **Step 4: Answer the questions this exists for**
 
