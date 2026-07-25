@@ -288,7 +288,17 @@ def test_person_id_catalog_requires_complete_company_detail_objects(
         )
 
 
-def test_person_id_catalog_builds_deduplicated_duckdb_input(tmp_path: Path) -> None:
+def test_person_id_catalog_builds_deduplicated_duckdb_input(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.denmark_cvr import person_details
+
+    monkeypatch.setattr(
+        person_details,
+        "DENMARK_CVR_PERSON_ID_INSERT_BATCH_ROWS",
+        1,
+    )
     first_cvr = "45448037"
     second_cvr = "22756214"
     database = tmp_path / "denmark.duckdb"

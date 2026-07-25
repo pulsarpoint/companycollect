@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlparse
 
 import dagster as dg
 import duckdb
+import pyarrow as pa
 from cloakbrowser import launch
 from dagster_duckdb import DuckDBResource
 from pydantic import model_validator
@@ -50,6 +51,7 @@ DENMARK_CVR_PERSON_DETAIL_GROUP = "denmark_cvr_person_details"
 DENMARK_CVR_PERSON_DETAIL_POOL = "denmark_cvr_person_details"
 DENMARK_CVR_PERSON_DETAIL_MAPPING_VERSION = 1
 DENMARK_CVR_PERSON_IDS_TABLE = "person_ids"
+DENMARK_CVR_PERSON_ID_INSERT_BATCH_ROWS = 50_000
 
 DATACVR_PERSON_DETAIL_SCRIPT = """
 async ({ url }) => {
@@ -355,12 +357,12 @@ def rebuild_company_detail_person_ids(
         )
         source_object_count = 0
         source_relation_count = 0
+        rows: list[tuple[str, str, str]] = []
         for partition_index, partition_key in enumerate(
             DENMARK_CVR_COMPANY_DETAIL_PARTITIONS.get_partition_keys(),
             start=1,
         ):
             cvrs = _company_partition_cvrs(connection, partition_key)
-            rows: list[tuple[str, str, str]] = []
             for cvr in cvrs:
                 if cvr in ignored_company_cvrs:
                     continue
@@ -370,17 +372,13 @@ def rebuild_company_detail_person_ids(
                     english_keys=False,
                 )
                 payload = _read_company_detail_payload(object_store, object_key, cvr)
-                rows.extend(
-                    (identity.person_id, identity.person_type, cvr)
-                    for identity in company_detail_person_identities(payload)
-                )
+                for identity in company_detail_person_identities(payload):
+                    rows.append((identity.person_id, identity.person_type, cvr))
+                    source_relation_count += 1
+                    if len(rows) >= DENMARK_CVR_PERSON_ID_INSERT_BATCH_ROWS:
+                        _insert_staged_person_id_batch(connection, rows)
+                        rows.clear()
                 source_object_count += 1
-            if rows:
-                connection.executemany(
-                    "insert into denmark_cvr_staged_person_ids values (?, ?, ?)",
-                    rows,
-                )
-            source_relation_count += len(rows)
             if log_info is not None and (
                 partition_index == 1
                 or partition_index % 8 == 0
@@ -394,6 +392,9 @@ def rebuild_company_detail_person_ids(
                     source_object_count,
                     source_relation_count,
                 )
+
+        if rows:
+            _insert_staged_person_id_batch(connection, rows)
 
         conflict = connection.execute(
             """
@@ -469,6 +470,28 @@ def rebuild_company_detail_person_ids(
         person_count=person_count,
         database_size_bytes=database_size_bytes,
     )
+
+
+def _insert_staged_person_id_batch(
+    connection: duckdb.DuckDBPyConnection,
+    rows: list[tuple[str, str, str]],
+) -> None:
+    arrow_table = pa.Table.from_arrays(
+        [
+            pa.array(values, type=pa.string())
+            for values in zip(*rows, strict=True)
+        ],
+        names=("person_id", "person_type", "company_cvr"),
+    )
+    registered_name = "_denmark_cvr_person_id_batch"
+    connection.register(registered_name, arrow_table)
+    try:
+        connection.execute(
+            "insert into denmark_cvr_staged_person_ids "
+            f"select person_id, person_type, company_cvr from {registered_name}"
+        )
+    finally:
+        connection.unregister(registered_name)
 
 
 def person_detail_bucket_key(person_id: str) -> str:
