@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterable
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -504,6 +505,127 @@ def test_history_year_download_reuses_s3_and_materializes_duckdb_table(
             "history:2026",
         ),
     ]
+
+
+def test_price_duckdb_streams_rows_through_bounded_arrow_batches(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from dagster_v3.defs.eodhd import assets
+    from dagster_v3.defs.eodhd.source import price_rows_from_payload
+
+    rows = price_rows_from_payload(
+        [
+            {
+                "date": f"2026-06-{day:02d}",
+                "open": day,
+                "high": day + 1,
+                "low": day - 1,
+                "close": day,
+                "adjusted_close": day,
+                "volume": day * 1_000,
+            }
+            for day in range(1, 6)
+        ],
+        symbol={
+            "eodhd_symbol_key": "CDR.WAR",
+            "exchange_code": "WAR",
+            "ticker": "CDR",
+            "currency": "PLN",
+        },
+        source_run_id="history:2026",
+        source_object_key="prices/history/year=2026/symbols/CDR.WAR.json.gz",
+        retrieved_at="2026-07-21T10:00:00+00:00",
+    )
+    batch_sizes: list[int] = []
+    messages: list[str] = []
+    insert_batch = assets._insert_eodhd_duckdb_batch
+
+    def record_batch(**kwargs: Any) -> None:
+        batch_sizes.append(len(kwargs["rows"]))
+        insert_batch(**kwargs)
+
+    monkeypatch.setattr(assets, "EODHD_PRICE_DUCKDB_INSERT_BATCH_SIZE", 2)
+    monkeypatch.setattr(assets, "_insert_eodhd_duckdb_batch", record_batch)
+    database_path = tmp_path / "prices.duckdb"
+
+    row_count, min_price_date, max_price_date = assets._replace_price_duckdb(
+        database_path=database_path,
+        rows=iter(rows),
+        log=lambda message, *args: messages.append(message % args),
+    )
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        stored_row_count = connection.execute(
+            "select count(*) from eodhd.eodhd_eod_prices"
+        ).fetchone()[0]
+
+    assert batch_sizes == [2, 2, 1]
+    assert row_count == 5
+    assert stored_row_count == 5
+    assert min_price_date == datetime(2026, 6, 1).date()
+    assert max_price_date == datetime(2026, 6, 5).date()
+    assert messages[0].startswith("Starting EODHD DuckDB bulk load")
+    assert "rows=2" in messages[1]
+    assert "rows=4" in messages[2]
+    assert "rows=5" in messages[3]
+    assert messages[4].startswith("Finished EODHD DuckDB bulk load")
+    assert list(tmp_path.glob(".*.tmp*")) == []
+
+
+def test_price_duckdb_keeps_existing_database_when_streaming_fails(
+    tmp_path: Path,
+) -> None:
+    from dagster_v3.defs.eodhd import assets
+    from dagster_v3.defs.eodhd.source import price_rows_from_payload
+
+    rows = price_rows_from_payload(
+        [
+            {
+                "date": "2026-06-01",
+                "open": 1,
+                "high": 2,
+                "low": 1,
+                "close": 2,
+                "adjusted_close": 2,
+                "volume": 1_000,
+            }
+        ],
+        symbol={
+            "eodhd_symbol_key": "CDR.WAR",
+            "exchange_code": "WAR",
+            "ticker": "CDR",
+            "currency": "PLN",
+        },
+        source_run_id="history:2026",
+        source_object_key="prices/history/year=2026/symbols/CDR.WAR.json.gz",
+        retrieved_at="2026-07-21T10:00:00+00:00",
+    )
+    database_path = tmp_path / "prices.duckdb"
+    assets._replace_price_duckdb(
+        database_path=database_path,
+        rows=rows,
+        log=lambda *_args: None,
+    )
+
+    def failing_rows() -> Iterable[dict[str, Any]]:
+        yield rows[0] | {"source_run_id": "replacement"}
+        raise RuntimeError("stream failed")
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        assets._replace_price_duckdb(
+            database_path=database_path,
+            rows=failing_rows(),
+            log=lambda *_args: None,
+        )
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        stored_rows = connection.execute(
+            "select source_run_id from eodhd.eodhd_eod_prices"
+        ).fetchall()
+
+    assert stored_rows == [("history:2026",)]
+    assert list(tmp_path.glob(".*.tmp*")) == []
 
 
 def test_empty_history_year_materializes_as_successful_empty_table(

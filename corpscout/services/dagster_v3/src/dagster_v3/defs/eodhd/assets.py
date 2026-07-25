@@ -1,4 +1,5 @@
 import time
+import uuid
 from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from pathlib import Path
@@ -41,6 +42,7 @@ EODHD_DUCKDB_DIRECTORY = Path("data/eodhd")
 EODHD_CLICKHOUSE_POOL = "eodhd_clickhouse"
 EODHD_PRICE_DOWNLOAD_POOL = "eodhd_price_download"
 DUCKDB_INSERT_BATCH_SIZE = 5_000
+EODHD_PRICE_DUCKDB_INSERT_BATCH_SIZE = 100_000
 EODHD_DAILY_SYMBOL_CHUNK_SIZE = 500
 EODHD_HISTORY_START_DATE = date(2020, 7, 1)
 EODHD_HISTORY_END_DATE = date(2026, 6, 30)
@@ -1198,7 +1200,39 @@ def materialize_eodhd_history_year(
     log: Callable[..., object],
 ) -> dict[str, Any]:
     eodhd_history_year_window(year)
-    rows: list[dict[str, Any]] = []
+    row_count, min_price_date, max_price_date = _replace_price_duckdb(
+        database_path=database_path,
+        rows=_iter_eodhd_history_rows(
+            object_store=object_store,
+            symbols=symbols,
+            year=year,
+            progress_interval=progress_interval,
+            log=log,
+        ),
+        log=log,
+    )
+    return {
+        "source_snapshot_id": f"history:{year}",
+        "year": year,
+        "duckdb_path": str(database_path),
+        "duckdb_schema": EODHD_DUCKDB_SCHEMA,
+        "duckdb_table": tables.EODHD_EOD_PRICES_TABLE,
+        "row_count": row_count,
+        "symbol_count": len(symbols),
+        "min_price_date": str(min_price_date) if min_price_date is not None else None,
+        "max_price_date": str(max_price_date) if max_price_date is not None else None,
+    }
+
+
+def _iter_eodhd_history_rows(
+    *,
+    object_store: ObjectStoreResource,
+    symbols: list[dict[str, Any]],
+    year: str,
+    progress_interval: int,
+    log: Callable[..., object],
+) -> Iterable[dict[str, Any]]:
+    row_count = 0
     for symbol_number, symbol in enumerate(symbols, start=1):
         object_key = history_symbol_object_key(year, str(symbol["eodhd_symbol_key"]))
         if not object_store.exists(object_key, bucket=EODHD_RAW_BUCKET):
@@ -1206,35 +1240,27 @@ def materialize_eodhd_history_year(
         envelope = read_price_envelope(
             object_store.read_bytes(object_key, bucket=EODHD_RAW_BUCKET)
         )
-        rows.extend(
-            price_rows_from_payload(
-                envelope["prices"],
-                symbol=symbol,
-                source_run_id=f"history:{year}",
-                source_object_key=object_key,
-                retrieved_at=str(envelope["retrieved_at"]),
-            )
+        symbol_rows = price_rows_from_payload(
+            envelope["prices"],
+            symbol=symbol,
+            source_run_id=f"history:{year}",
+            source_object_key=object_key,
+            retrieved_at=str(envelope["retrieved_at"]),
         )
-        if symbol_number == 1 or symbol_number % progress_interval == 0:
+        row_count += len(symbol_rows)
+        yield from symbol_rows
+        if (
+            symbol_number == 1
+            or symbol_number % progress_interval == 0
+            or symbol_number == len(symbols)
+        ):
             log(
                 "Parsed EODHD history objects: year=%s progress=%s/%s rows=%s",
                 year,
                 symbol_number,
                 len(symbols),
-                len(rows),
+                row_count,
             )
-    date_bounds = _replace_price_duckdb(database_path=database_path, rows=rows)
-    return {
-        "source_snapshot_id": f"history:{year}",
-        "year": year,
-        "duckdb_path": str(database_path),
-        "duckdb_schema": EODHD_DUCKDB_SCHEMA,
-        "duckdb_table": tables.EODHD_EOD_PRICES_TABLE,
-        "row_count": len(rows),
-        "symbol_count": len(symbols),
-        "min_price_date": str(date_bounds[0]) if date_bounds[0] is not None else None,
-        "max_price_date": str(date_bounds[1]) if date_bounds[1] is not None else None,
-    }
 
 
 def materialize_eodhd_daily_date(
@@ -1268,42 +1294,98 @@ def materialize_eodhd_daily_date(
                 retrieved_at=str(envelope["retrieved_at"]),
             )
         )
-    date_bounds = _replace_price_duckdb(database_path=database_path, rows=rows)
+    row_count, min_price_date, max_price_date = _replace_price_duckdb(
+        database_path=database_path,
+        rows=rows,
+        log=log,
+    )
     return {
         "source_snapshot_id": f"daily:{price_date}",
         "price_date": price_date,
         "duckdb_path": str(database_path),
         "duckdb_schema": EODHD_DUCKDB_SCHEMA,
         "duckdb_table": tables.EODHD_EOD_PRICES_TABLE,
-        "row_count": len(rows),
-        "min_price_date": str(date_bounds[0]) if date_bounds[0] is not None else None,
-        "max_price_date": str(date_bounds[1]) if date_bounds[1] is not None else None,
+        "row_count": row_count,
+        "min_price_date": str(min_price_date) if min_price_date is not None else None,
+        "max_price_date": str(max_price_date) if max_price_date is not None else None,
     }
 
 
 def _replace_price_duckdb(
     *,
     database_path: Path,
-    rows: list[dict[str, Any]],
-) -> tuple[Any, Any]:
+    rows: Iterable[dict[str, Any]],
+    log: Callable[..., object],
+) -> tuple[int, Any, Any]:
+    started_at = time.monotonic()
     database_path.parent.mkdir(parents=True, exist_ok=True)
     table_name = tables.EODHD_EOD_PRICES_TABLE
     columns = tables.EODHD_TABLE_COLUMNS[table_name]
     column_types = tables.EODHD_DUCKDB_COLUMN_TYPES[table_name]
     definitions = ", ".join(f'"{column}" {column_types[column]}' for column in columns)
-    placeholders = ", ".join("?" for _ in columns)
     qualified_table = f'{EODHD_DUCKDB_SCHEMA}."{table_name}"'
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema if not exists {EODHD_DUCKDB_SCHEMA}")
-        connection.execute(f"create or replace table {qualified_table} ({definitions})")
-        if rows:
-            connection.executemany(
-                f"insert into {qualified_table} values ({placeholders})",
-                [tuple(row[column] for column in columns) for row in rows],
-            )
-        return connection.execute(
-            f"select min(price_date), max(price_date) from {qualified_table}"
-        ).fetchone()
+    staging_path = database_path.with_name(
+        f".{database_path.name}.{uuid.uuid4().hex}.tmp"
+    )
+    staging_wal_path = Path(f"{staging_path}.wal")
+    row_count = 0
+    batch: list[dict[str, Any]] = []
+    log(
+        "Starting EODHD DuckDB bulk load: table=%s batch_size=%s",
+        table_name,
+        EODHD_PRICE_DUCKDB_INSERT_BATCH_SIZE,
+    )
+    try:
+        with duckdb.connect(str(staging_path)) as connection:
+            connection.execute(f"create schema if not exists {EODHD_DUCKDB_SCHEMA}")
+            connection.execute(f"create table {qualified_table} ({definitions})")
+            for row in rows:
+                batch.append(row)
+                if len(batch) < EODHD_PRICE_DUCKDB_INSERT_BATCH_SIZE:
+                    continue
+                _insert_eodhd_duckdb_batch(
+                    connection=connection,
+                    qualified_table=qualified_table,
+                    columns=columns,
+                    rows=batch,
+                )
+                row_count += len(batch)
+                batch.clear()
+                log(
+                    "Loaded EODHD DuckDB rows: table=%s rows=%s",
+                    table_name,
+                    row_count,
+                )
+            if batch:
+                _insert_eodhd_duckdb_batch(
+                    connection=connection,
+                    qualified_table=qualified_table,
+                    columns=columns,
+                    rows=batch,
+                )
+                row_count += len(batch)
+                batch.clear()
+                log(
+                    "Loaded EODHD DuckDB rows: table=%s rows=%s",
+                    table_name,
+                    row_count,
+                )
+            date_bounds = connection.execute(
+                f"select min(price_date), max(price_date) from {qualified_table}"
+            ).fetchone()
+        staging_path.replace(database_path)
+    finally:
+        staging_path.unlink(missing_ok=True)
+        staging_wal_path.unlink(missing_ok=True)
+    log(
+        "Finished EODHD DuckDB bulk load: table=%s rows=%s elapsed_seconds=%s",
+        table_name,
+        row_count,
+        round(time.monotonic() - started_at, 3),
+    )
+    if date_bounds is None:
+        raise ValueError(f"EODHD table {table_name} returned no date bounds")
+    return row_count, *date_bounds
 
 
 def _envelope_ranges(envelope: dict[str, Any]) -> list[tuple[str, str]]:
