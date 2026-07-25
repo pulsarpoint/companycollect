@@ -64,6 +64,31 @@ def test_sql_requires_the_identifier_to_exist_in_the_register() -> None:
     assert "r.company_id = g.company_id_normalized" in sql
 
 
+def test_sweden_rule_lists_every_swedish_company_register() -> None:
+    """Four RA codes issue Swedish organisationsnummer, not just Bolagsverket.
+
+    Measured 2026-07-25 against gleif_lei_records joined to se_companies:
+    RA000544 98.8% of 108,771 · RA000546 84.7% of 8,192 ·
+    RA000735 95.8% of 426 · RA000545 70.5% of 166.
+
+    RA000547 is deliberately absent: 4 of its 270 SE entities resolve, on
+    identifiers averaging 5.2 digits, so those matches are most likely
+    coincidental collisions against a 3.4M-row register and belong in the
+    lower confidence tier.
+    """
+    assert _SE.registration_authority_ids == frozenset(
+        {"RA000544", "RA000546", "RA000735", "RA000545"}
+    )
+
+
+def test_sql_tiers_all_configured_authorities() -> None:
+    sql = build_company_identifier_insert_sql(_STAGE, _SE)
+
+    for code in ("RA000544", "RA000546", "RA000735", "RA000545"):
+        assert f"g.registered_at_id = '{code}'" in sql
+    assert "RA000547" not in sql
+
+
 def test_sql_tiers_confidence_by_registration_authority() -> None:
     sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
