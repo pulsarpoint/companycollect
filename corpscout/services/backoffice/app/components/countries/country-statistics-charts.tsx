@@ -45,6 +45,11 @@ const tradeConfig = {
   balanceUsd: { label: "Trade balance", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
+const tradeSnapshotConfig = {
+  exportsUsd: { label: "Exports", color: "var(--chart-1)" },
+  importsUsd: { label: "Imports", color: "var(--chart-2)" },
+} satisfies ChartConfig;
+
 const imfConfig = {
   actual: { label: "Actual", color: "var(--chart-1)" },
   forecast: { label: "IMF estimate", color: "var(--chart-2)" },
@@ -191,6 +196,55 @@ export function EconomicPulseChart({
           </Line>
         ))}
       </LineChart>
+    </ChartContainer>
+  );
+}
+
+/**
+ * Compact exports-versus-imports view for the overview card. Grouped bars
+ * rather than lines: the question here is "how did the two compare in each
+ * year", which is a magnitude comparison, not a trend.
+ *
+ * No Y axis — the card is roughly 18rem wide and the axis would cost more
+ * space than it returns. Exact values live in the tooltip, and the headline
+ * figures for the latest year sit above the chart.
+ */
+export function TradeSnapshotChart({
+  points,
+  years = 5,
+}: {
+  points: CountryTradePoint[];
+  years?: number;
+}) {
+  const data = points
+    .filter((point) => point.exportsUsd !== null || point.importsUsd !== null)
+    .slice(-years);
+
+  if (data.length === 0) return null;
+
+  return (
+    <ChartContainer config={tradeSnapshotConfig} className="h-40 w-full">
+      <BarChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+        <CartesianGrid vertical={false} />
+        <XAxis
+          dataKey="year"
+          tickLine={false}
+          axisLine={false}
+          tickMargin={6}
+          className="text-[10px]"
+        />
+        <ChartTooltip
+          content={
+            <ChartTooltipContent
+              labelFormatter={(_, payload) => String(payload[0]?.payload?.year ?? "")}
+              formatter={CurrencyTooltipValue}
+            />
+          }
+        />
+        <ChartLegend content={<ChartLegendContent />} />
+        <Bar dataKey="exportsUsd" fill="var(--color-exportsUsd)" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="importsUsd" fill="var(--color-importsUsd)" radius={[4, 4, 0, 0]} />
+      </BarChart>
     </ChartContainer>
   );
 }

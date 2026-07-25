@@ -34,6 +34,7 @@ import {
   EconomicPulseChart,
   ImfForecastChart,
   TradeHistoryChart,
+  TradeSnapshotChart,
 } from "~/components/countries/country-statistics-charts";
 import { formatRevenueUsd } from "~/components/data-table/unified-columns";
 import { MethodologyNote } from "~/components/financials/methodology-note";
@@ -426,25 +427,28 @@ function OverviewTab({
                 Merchandise trade reported to UN Comtrade.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-2">
-              <Metric
-                label="Exports"
-                value={
-                  latestTrade?.exportsUsd === null || latestTrade?.exportsUsd === undefined
-                    ? "—"
-                    : compactUsd.format(latestTrade.exportsUsd)
-                }
-                detail={latestTrade ? String(latestTrade.year) : undefined}
-              />
-              <Metric
-                label="Imports"
-                value={
-                  latestTrade?.importsUsd === null || latestTrade?.importsUsd === undefined
-                    ? "—"
-                    : compactUsd.format(latestTrade.importsUsd)
-                }
-                detail={latestTrade ? String(latestTrade.year) : undefined}
-              />
+            <CardContent className="flex flex-col gap-4">
+              <div className="grid grid-cols-2">
+                <Metric
+                  label="Exports"
+                  value={
+                    latestTrade?.exportsUsd === null || latestTrade?.exportsUsd === undefined
+                      ? "—"
+                      : compactUsd.format(latestTrade.exportsUsd)
+                  }
+                  detail={latestTrade ? String(latestTrade.year) : undefined}
+                />
+                <Metric
+                  label="Imports"
+                  value={
+                    latestTrade?.importsUsd === null || latestTrade?.importsUsd === undefined
+                      ? "—"
+                      : compactUsd.format(latestTrade.importsUsd)
+                  }
+                  detail={latestTrade ? String(latestTrade.year) : undefined}
+                />
+              </div>
+              <TradeSnapshotChart points={trade.points} />
             </CardContent>
           </Card>
 
