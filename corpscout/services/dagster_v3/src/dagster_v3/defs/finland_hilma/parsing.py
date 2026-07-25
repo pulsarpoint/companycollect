@@ -7,9 +7,11 @@ import io
 import re
 import tempfile
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
 
+import pyarrow as pa
 from duckdb import DuckDBPyConnection
 
 from dagster_v3.defs.finland_hilma import tables
@@ -19,6 +21,16 @@ CSV_SOURCE_ENCODING = "cp1252"
 
 _WHITESPACE = re.compile(r"\s+")
 _RATE_REQUEST_BATCH = 50
+_FX_BATCH_RELATION = "_fi_hilma_fx_batch"
+_FX_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("currency", pa.string(), nullable=False),
+        pa.field("rate_date", pa.date32(), nullable=False),
+        pa.field("fx_rate", pa.string(), nullable=False),
+        pa.field("fx_rate_date", pa.date32(), nullable=False),
+        pa.field("fx_source", pa.string()),
+    ]
+)
 
 
 class ExchangeRates(Protocol):
@@ -277,7 +289,13 @@ def apply_finland_hilma_usd_conversion(
     requests = [_request(currency, str(rate_date)) for currency, rate_date in pairs]
     rates = _load_rates(exchange_rates, requests)
     fx_rows = [
-        (currency, str(rate_date), rate.rate, str(rate.rate_date), rate.source)
+        {
+            "currency": currency,
+            "rate_date": rate_date,
+            "fx_rate": str(rate.rate),
+            "fx_rate_date": _date_value(rate.rate_date),
+            "fx_source": rate.source,
+        }
         for currency, rate_date in pairs
         if (rate := rates.get((currency, str(rate_date)))) is not None
     ]
@@ -288,11 +306,17 @@ def apply_finland_hilma_usd_conversion(
         "fx_rate_date date, fx_source varchar)"
     )
     if fx_rows:
-        duckdb_connection.executemany(
-            "insert into _fi_hilma_fx values "
-            "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
-            fx_rows,
-        )
+        fx_table = pa.Table.from_pylist(fx_rows, schema=_FX_ARROW_SCHEMA)
+        duckdb_connection.register(_FX_BATCH_RELATION, fx_table)
+        try:
+            duckdb_connection.execute(
+                "insert into _fi_hilma_fx "
+                "select currency, rate_date, "
+                "cast(fx_rate as decimal(38, 12)), fx_rate_date, fx_source "
+                f"from {_FX_BATCH_RELATION}"
+            )
+        finally:
+            duckdb_connection.unregister(_FX_BATCH_RELATION)
 
     set_usd = ", ".join(
         f"{name}_amount_usd = ("
@@ -340,3 +364,9 @@ def apply_finland_hilma_usd_conversion(
             counts["procurement_values_converted"],
         )
     return counts
+
+
+def _date_value(value: date | str) -> date:
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))

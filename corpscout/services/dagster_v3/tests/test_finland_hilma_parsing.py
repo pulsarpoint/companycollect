@@ -177,16 +177,22 @@ def test_usd_conversion_per_amount(connection: duckdb.DuckDBPyConnection) -> Non
         replace=True,
     )
     build_finland_hilma_notices(duckdb_connection=connection, source_run_id="run")
+    exchange_rates = _FakeExchangeRates(
+        {
+            ("EUR", "2026-07-18"): _FakeRate(
+                rate=Decimal("1.05"), rate_date=date(2026, 7, 18), source="ecb"
+            )
+        }
+    )
     counts = apply_finland_hilma_usd_conversion(
         duckdb_connection=connection,
-        exchange_rates=_FakeExchangeRates(
-            {
-                ("EUR", "2026-07-18"): _FakeRate(
-                    rate=Decimal("1.05"), rate_date=date(2026, 7, 18), source="ecb"
-                )
-            }
-        ),
+        exchange_rates=exchange_rates,
     )
+    rerun_counts = apply_finland_hilma_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=exchange_rates,
+    )
+    assert rerun_counts == counts
     assert counts["procurement_values_converted"] == 1
 
     notices = f"{tables.DLT_DATASET_NAME}.{tables.NOTICES_TABLE}"
@@ -203,6 +209,49 @@ def test_usd_conversion_per_amount(connection: duckdb.DuckDBPyConnection) -> Non
     # Estimated value converted with its own currency; the row-level fx trio
     # reflects the (empty) procurement-value currency -> stays NULL.
     assert estimate == (Decimal("52500.00"), None)
+
+
+def test_usd_conversion_without_rates_resets_usd_values(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    newer, _ = _fixture_bytes()
+    load_export_bytes_into_raw_table(
+        duckdb_connection=connection,
+        csv_bytes=newer,
+        source_key="exports/x.csv",
+        replace=True,
+    )
+    build_finland_hilma_notices(duckdb_connection=connection, source_run_id="run")
+    apply_finland_hilma_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=_FakeExchangeRates(
+            {
+                ("EUR", "2026-07-18"): _FakeRate(
+                    rate=Decimal("1.05"),
+                    rate_date=date(2026, 7, 18),
+                    source="ecb",
+                )
+            }
+        ),
+    )
+
+    counts = apply_finland_hilma_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=_FakeExchangeRates({}),
+    )
+    notices = f"{tables.DLT_DATASET_NAME}.{tables.NOTICES_TABLE}"
+    row = connection.execute(
+        "select procurement_value_amount_usd, fx_rate_to_usd, "
+        f"fx_rate_date, fx_source from {notices} "
+        "where notice_number = '2026-053663'"
+    ).fetchone()
+
+    assert counts == {
+        "rate_pairs": 1,
+        "rates_found": 0,
+        "procurement_values_converted": 0,
+    }
+    assert row == (None, None, None, "")
 
 
 def test_notices_columns_match_contract(connection: duckdb.DuckDBPyConnection) -> None:
