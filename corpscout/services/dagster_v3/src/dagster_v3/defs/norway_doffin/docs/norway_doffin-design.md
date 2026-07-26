@@ -20,11 +20,26 @@ not, and the first one blocks the ingest entirely.
    from the portal's API definition, never inferred from a response that looks
    plausible. See `https://dof-notices-prod-api.developer.azure-api.net/apis`.
 
-2. **Is there an awarded amount per winner?** `estimatedValue` is an *estimate*
-   and sits at notice level. A notice with two winners cannot have that estimate
-   attributed to either, which is exactly Hilma's problem. If Doffin publishes
-   no per-winner amount, Norway gets `notice_value_*` and a NULL
-   `value_amount_*`, and the coverage caveat must say so.
+2. **Is there a realized amount, and at what grain?** `estimatedValue` is an
+   *estimate* at notice level, weaker on both counts than what the other
+   registers publish, and it must not be presented as a contract value.
+
+   Do not assume this is Hilma's situation -- that comparison was wrong when
+   first written here. Hilma publishes `lots_value_amount_original`, a
+   **realized** value at **lot** grain, which is one winner's amount wherever a
+   lot has a single winner (4,316 of Finland's lots). What Hilma lacked was a
+   per-*winner* figure, not a real one.
+
+   So this is two questions. Is there any realized value at all, or only the
+   estimate? And does anything sit at lot grain, given winners are already
+   nested per lot in `lots[]`? Search inside `lots[]` for a value field before
+   concluding there is none -- Hilma's better field sat beside the one first
+   used, and was missed.
+
+   If only `estimatedValue` exists it belongs in neither `value_amount_*` nor
+   `notice_value_*` as those are defined: both hold realized figures. An
+   estimate needs its own column or none, because a column mixing estimates
+   with realized values makes both untrustworthy.
 
 3. **Does `numHitsAccessible` cap results or pages?** It read 1,000 on every
    query regardless of filter, including one whose total was 31,095. Whether
