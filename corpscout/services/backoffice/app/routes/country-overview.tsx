@@ -103,7 +103,7 @@ export async function loader({ params }: Route.LoaderArgs) {
   const revenueIndustries = financials?.divisions?.slice(0, TOP_DIVISIONS_LIMIT) ?? null;
   return {
     contracts,
-    showContracts: hasContracts(country),
+    showContracts: await hasContracts(country),
     summary,
     worldBank,
     imf,

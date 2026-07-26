@@ -69,8 +69,12 @@ describe("country contracts", () => {
     }
   });
 
-  it("countries with no contracts view are not offered the tab", () => {
-    expect(hasContracts(getCountry("fi")!)).toBe(true);
-    expect(hasContracts(getCountry("ee")!)).toBe(false);
+  it("the tab follows the views that exist, not a list in the code", async () => {
+    // Brazil has no procurement source ingested, so no view and no tab. The
+    // point is that this is answered by the database: a country gains the tab
+    // by gaining a view, with no change here.
+    expect(await hasContracts(getCountry("fi")!)).toBe(true);
+    expect(await hasContracts(getCountry("br")!)).toBe(false);
+    expect(await hasContracts(getCountry("ee")!)).toBe(false);
   });
 });

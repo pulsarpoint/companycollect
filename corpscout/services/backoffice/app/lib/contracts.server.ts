@@ -3,12 +3,29 @@ import type { CountryConfig } from "~/lib/countries";
 
 /** Every country's contracts live in a view named <cc>_government_contracts
  * with an identical shape, so these queries are built from the country code
- * rather than configured per country. A country without the view simply has no
- * contracts tab. */
-const CONTRACT_COUNTRIES = new Set(["se", "fi", "no"]);
+ * rather than configured per country.
+ *
+ * Which countries have one is asked of the database rather than listed here,
+ * for the same reason the cross-country view uses merge() over the name pattern
+ * instead of a UNION ALL: adding a country should be one CREATE VIEW and
+ * nothing else. A hardcoded list here would quietly make that untrue, and the
+ * failure mode is a country having contracts that the UI refuses to show. */
+const CONTRACTS_VIEW_PATTERN = "^[a-z]{2}_government_contracts$";
 
-export function hasContracts(country: CountryConfig): boolean {
-  return CONTRACT_COUNTRIES.has(country.code);
+let contractCountries: Promise<Set<string>> | null = null;
+
+function loadContractCountries(): Promise<Set<string>> {
+  contractCountries ??= chQuery<{ name: string }>(
+    `SELECT name FROM system.tables
+     WHERE database = currentDatabase()
+       AND match(name, {pattern:String})`,
+    { pattern: CONTRACTS_VIEW_PATTERN },
+  ).then((rows) => new Set(rows.map((r) => r.name.slice(0, 2))));
+  return contractCountries;
+}
+
+export async function hasContracts(country: CountryConfig): Promise<boolean> {
+  return (await loadContractCountries()).has(country.code);
 }
 
 /** One contract in the country list. A contract, not a winner row: the view has
@@ -74,7 +91,7 @@ export async function getCountryContracts(
   country: CountryConfig,
   { limit = 200 }: { limit?: number } = {},
 ): Promise<CountryContractRow[]> {
-  if (!hasContracts(country)) return [];
+  if (!(await hasContracts(country))) return [];
   return chQuery<CountryContractRow>(
     `SELECT
        contract_ref,
@@ -139,7 +156,7 @@ export async function getContractDetail(
   country: CountryConfig,
   ref: string,
 ): Promise<ContractDetail | null> {
-  if (!hasContracts(country)) return null;
+  if (!(await hasContracts(country))) return null;
 
   const rows = await chQuery<ContractWinnerRow>(
     `SELECT
