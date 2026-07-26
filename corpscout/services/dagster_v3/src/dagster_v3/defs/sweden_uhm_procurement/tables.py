@@ -69,6 +69,7 @@ RAW_METADATA_COLUMNS = (
     "source_run_id",
     "source_line_number",
     "source_object_key",
+    "source_url",
     "source_retrieved_at",
 )
 
@@ -89,6 +90,7 @@ CANDIDATE_COLUMNS = (
     "supplier_id_normalized",
     "cpv_code",
     "advertising_database",
+    "source_url",
     "source_object_key",
     "source_retrieved_at",
     "resolved_at",
@@ -115,6 +117,7 @@ AWARDS_COLUMNS = (
     "supplier_id_normalized",
     "cpv_code",
     "advertising_database",
+    "source_url",
     "source_object_key",
     "source_retrieved_at",
     "resolved_at",

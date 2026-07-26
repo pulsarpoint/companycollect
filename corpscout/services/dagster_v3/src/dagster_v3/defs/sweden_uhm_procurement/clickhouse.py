@@ -46,6 +46,7 @@ def uhm_awards_insert_sql(*, candidate_table: str, awards_stage: str) -> str:
         u.supplier_id_normalized,
         u.cpv_code,
         u.advertising_database,
+        u.source_url,
         u.source_object_key,
         u.source_retrieved_at,
         u.resolved_at
@@ -94,6 +95,7 @@ def export_uhm_awards_clickhouse(
                 supplier_id_normalized String,
                 cpv_code String,
                 advertising_database LowCardinality(String),
+                source_url String,
                 source_object_key String,
                 source_retrieved_at DateTime64(3, 'UTC'),
                 resolved_at DateTime64(3, 'UTC'),

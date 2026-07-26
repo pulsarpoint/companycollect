@@ -90,6 +90,7 @@ def sweden_uhm_procurement_raw_duckdb(
                 csv_path=csv_path,
                 source_run_id=str(manifest["source_run_id"]),
                 source_object_key=str(manifest["object_key"]),
+                source_url=str(manifest["source_url"]),
                 source_retrieved_at=datetime.fromisoformat(
                     str(manifest["retrieved_at"])
                 ),

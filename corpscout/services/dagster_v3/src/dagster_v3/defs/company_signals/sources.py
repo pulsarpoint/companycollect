@@ -73,9 +73,10 @@ def _uhm_cte(rule: "CountryProcurementRule", cte_name: str) -> str:
                 u.source_procurement_id,
                 if(u.source_lot_id = '', '', concat(':', u.source_lot_id))
             ) AS source_reference,
-            -- UHM publishes no per-award address, only which advertising
-            -- database carried the notice. Empty is the honest answer.
-            '' AS source_url,
+            -- UHM publishes no address for an individual award, so the
+            -- document a row traces back to is the bulk CSV resource it was
+            -- parsed out of, carried per row from that snapshot's manifest.
+            any(u.source_url) AS source_url,
             u.publication_date AS publication_date,
             u.buyer_name AS buyer_name,
             u.title AS title,

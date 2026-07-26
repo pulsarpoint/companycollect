@@ -202,6 +202,7 @@ EXPECTED_MIGRATIONS = (
     "000177_corpscout_rename_government_contract_summary",
     "000178_corpscout_partition_contract_signals_by_country",
     "000179_corpscout_contract_evidence_source_urls",
+    "000180_corpscout_se_uhm_awards_source_url",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2451,12 +2452,23 @@ def test_company_procurement_signals_migration_covers_columns() -> None:
 
 
 def test_sweden_uhm_migration_covers_export_columns() -> None:
+    """Every exported column must exist in the migrated schema.
+
+    That schema now spans two migrations -- 000166 created the table, 000180
+    added source_url -- so the contract holds against their union. 000166 is
+    left unedited because the ledger is forward-only. A newly exported column
+    with no migration behind it still fails, which is the point of the test.
+    """
     sql = _migration_sql("000166_corpscout_se_uhm_procurement.up.sql")
     down_sql = _migration_sql("000166_corpscout_se_uhm_procurement.down.sql")
+    added_later = _migration_sql("000180_corpscout_se_uhm_awards_source_url.up.sql")
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.se_uhm_procurement_awards" in sql
     for column in sweden_uhm_tables.AWARDS_COLUMNS:
-        assert f"    {column} " in sql
+        assert (
+            f"    {column} " in sql
+            or f"ADD COLUMN IF NOT EXISTS {column} " in added_later
+        )
     assert "ORDER BY (\n    supplier_id_normalized,\n    source_procurement_id," in sql
     assert "DROP TABLE IF EXISTS corpscout.se_uhm_procurement_awards" in down_sql
 

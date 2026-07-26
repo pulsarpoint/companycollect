@@ -12,6 +12,9 @@ from dagster_v3.defs.sweden_uhm_procurement.normalize import (
 )
 
 
+_RAW_SOURCE_URL = "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239"
+
+
 def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(f"create schema {tables.DUCKDB_SCHEMA}")
     connection.execute(
@@ -20,6 +23,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
             source_run_id varchar,
             source_line_number ubigint,
             source_object_key varchar,
+            source_url varchar,
             source_retrieved_at timestamp,
             "Anbudsområdes-ID" varchar,
             "Annonsdatabas" varchar,
@@ -39,13 +43,14 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
     connection.executemany(
         f"""
         insert into {tables.DUCKDB_SCHEMA}.{tables.RAW_TABLE} values
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
                 "raw-run",
                 1,
                 "raw/test.csv",
+                _RAW_SOURCE_URL,
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "LOT-1",
                 "Mercell",
@@ -64,6 +69,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 "raw-run",
                 2,
                 "raw/test.csv",
+                _RAW_SOURCE_URL,
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "LOT-2",
                 "e-Avrop",
@@ -82,6 +88,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 "raw-run",
                 3,
                 "raw/test.csv",
+                _RAW_SOURCE_URL,
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "",
                 "Kommers",
@@ -100,6 +107,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 "raw-run",
                 4,
                 "raw/test.csv",
+                _RAW_SOURCE_URL,
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "",
                 "Kommers",
@@ -118,6 +126,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 "raw-run",
                 5,
                 "raw/test.csv",
+                _RAW_SOURCE_URL,
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "",
                 "Kommers",
@@ -142,6 +151,28 @@ def test_normalize_sweden_identity_preserves_person_ids() -> None:
     assert normalize_sweden_identity("195565338133") == "195565338133"
     assert normalize_sweden_identity("205565338133") == "205565338133"
     assert normalize_sweden_identity("Personuppgift") == ""
+
+
+def test_award_candidates_carry_the_download_url_each_row_came_from() -> None:
+    """UHM publishes no address for an individual award, so the document a row
+    traces back to is the bulk CSV it was parsed out of. The URL is carried per
+    row from the snapshot's own manifest rather than stamped from a constant at
+    read time, so rows keep the URL they actually came from if it ever moves.
+    """
+    connection = duckdb.connect(":memory:")
+    _raw_table(connection)
+
+    build_award_candidates(
+        connection=connection,
+        source_run_id="normalize-run",
+        resolved_at=datetime(2026, 7, 24, tzinfo=UTC),
+    )
+
+    urls = connection.execute(
+        f"select distinct source_url "
+        f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
+    ).fetchall()
+    assert urls == [(_RAW_SOURCE_URL,)]
 
 
 def test_build_award_candidates_types_and_classifies_rows() -> None:
@@ -234,6 +265,7 @@ def test_replace_raw_table_accepts_the_official_bom_semicolon_contract(
         csv_path=csv_path,
         source_run_id="raw-run",
         source_object_key="raw/test.csv",
+        source_url=_RAW_SOURCE_URL,
         source_retrieved_at=datetime(2026, 7, 23, tzinfo=UTC),
     )
 

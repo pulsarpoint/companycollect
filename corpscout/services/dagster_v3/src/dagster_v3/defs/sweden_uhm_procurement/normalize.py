@@ -27,6 +27,7 @@ def replace_raw_table(
     csv_path: Path,
     source_run_id: str,
     source_object_key: str,
+    source_url: str,
     source_retrieved_at: datetime,
 ) -> int:
     delimiter = detect_and_validate_csv(csv_path)
@@ -38,6 +39,7 @@ def replace_raw_table(
             cast(? as varchar) as source_run_id,
             row_number() over ()::ubigint as source_line_number,
             cast(? as varchar) as source_object_key,
+            cast(? as varchar) as source_url,
             cast(? as timestamp) as source_retrieved_at,
             *
         from read_csv(
@@ -54,6 +56,7 @@ def replace_raw_table(
         [
             source_run_id,
             source_object_key,
+            source_url,
             source_retrieved_at,
             str(csv_path),
             delimiter,
@@ -107,6 +110,7 @@ def build_award_candidates(
                     ''
                 ) as cpv_code,
                 coalesce(trim("Annonsdatabas"), '') as advertising_database,
+                coalesce(source_url, '') as source_url,
                 source_object_key,
                 source_retrieved_at,
                 cast(? as timestamp) as resolved_at
@@ -137,6 +141,7 @@ def build_award_candidates(
             supplier_id_normalized,
             cpv_code,
             advertising_database,
+            source_url,
             source_object_key,
             source_retrieved_at,
             resolved_at,
