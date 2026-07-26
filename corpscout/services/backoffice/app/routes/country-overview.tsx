@@ -59,6 +59,8 @@ import {
 } from "~/components/ui/empty";
 import { Skeleton } from "~/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import { CountryContractsTable } from "~/components/country/contracts-table";
+import { getCountryContracts, hasContracts } from "~/lib/contracts.server";
 import {
   Table,
   TableBody,
@@ -69,7 +71,7 @@ import {
 } from "~/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
 
-const COUNTRY_TABS = ["overview", "economy", "trade", "business"] as const;
+const COUNTRY_TABS = ["overview", "economy", "trade", "business", "contracts"] as const;
 type CountryTab = (typeof COUNTRY_TABS)[number];
 
 export async function loader({ params }: Route.LoaderArgs) {
@@ -84,6 +86,7 @@ export async function loader({ params }: Route.LoaderArgs) {
     imf,
     trade,
     eurostat,
+    contracts,
   ] = await Promise.all([
     getCountryDirectory(),
     getCountryFinancials(country.code),
@@ -92,12 +95,15 @@ export async function loader({ params }: Route.LoaderArgs) {
     getCountryImfOutlook(country.iso3),
     getCountryTradeStatistics(country.iso3),
     getCountryEurostatBusinessStats(country),
+    getCountryContracts(country),
   ]);
   const summary = directory.find((row) => row.country_code === country.code);
   if (!summary) throw new Response("Country data not found", { status: 404 });
 
   const revenueIndustries = financials?.divisions?.slice(0, TOP_DIVISIONS_LIMIT) ?? null;
   return {
+    contracts,
+    showContracts: hasContracts(country),
     summary,
     worldBank,
     imf,
@@ -222,6 +228,8 @@ export default function CountryOverview({ loaderData, params }: Route.ComponentP
     industries,
     industryMode,
     topCompanies,
+    contracts,
+    showContracts,
   } = loaderData;
   const country = getCountry(params.country)!;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -323,6 +331,9 @@ export default function CountryOverview({ loaderData, params }: Route.ComponentP
           <TabsTrigger value="economy">Economy</TabsTrigger>
           <TabsTrigger value="trade">Trade</TabsTrigger>
           <TabsTrigger value="business">Business</TabsTrigger>
+          {showContracts ? (
+            <TabsTrigger value="contracts">Contracts</TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="overview" className="flex flex-col gap-4 pt-3">
@@ -359,6 +370,12 @@ export default function CountryOverview({ loaderData, params }: Route.ComponentP
             topCompanies={topCompanies}
           />
         </TabsContent>
+
+        {showContracts ? (
+          <TabsContent value="contracts" className="pt-3">
+            <CountryContractsTable countryCode={country.code} contracts={contracts} />
+          </TabsContent>
+        ) : null}
       </Tabs>
 
       <footer className="flex flex-col gap-2 border-t pt-4">

@@ -202,6 +202,8 @@ EXPECTED_MIGRATIONS = (
     "000180_corpscout_se_uhm_awards_source_url",
     "000182_corpscout_contract_value_grain",
     "000183_corpscout_dns_records_seen_dates",
+    "000184_corpscout_contract_identity",
+    "000185_corpscout_finland_contract_link",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

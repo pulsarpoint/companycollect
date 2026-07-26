@@ -6,6 +6,7 @@ export default [
     route("companies", "routes/companies.tsx"),
     route("countries", "routes/countries.tsx"),
     route("countries/:country/companies", "routes/country-companies.tsx"),
+    route("countries/:country/contracts/:ref", "routes/country-contract-detail.tsx"),
     route("countries/:country", "routes/country-overview.tsx"),
     route("company/:country/:id", "routes/country-company-detail.tsx"),
     route("company/:country/:id/facts/:year", "routes/company-facts.tsx"),
