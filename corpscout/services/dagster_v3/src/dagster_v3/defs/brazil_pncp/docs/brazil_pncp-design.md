@@ -318,11 +318,24 @@ rather than `notice_value_*`.
 
 ## 8. Scheduling (§9)
 
-- `brazil_pncp_backfill_job` — monthly partitions, run via UI backfill, not the
-  CLI (per the guidelines' code-location caveat).
-- `brazil_pncp_refresh_job` — daily, re-reads `/contratos/atualizacao` for a
-  trailing window (start at 7 days) and upserts. This is what catches
-  amendments.
+- `brazil_pncp_backfill_job` — the monthly partitions. **Run once, and never
+  scheduled.** It loads 2022-01 to the present and afterwards exists only to
+  repair a specific month. Re-fetching a 340-page month to pick up a single
+  day's contracts would be absurd when a day is 12 pages.
+  Launch from the UI, not the CLI (the code-location caveat in the guidelines).
+- `brazil_pncp_daily_job` — daily, and the only thing on a schedule once the
+  backfill has run. It reads a trailing 7-day window from **both** endpoints:
+  `/contratos` by publication date for newly published contracts, and
+  `/contratos/atualizacao` by update date for amendments to older ones.
+
+  Querying both is deliberate belt-and-braces. It is not established whether
+  `/contratos/atualizacao` also returns newly *published* contracts — probably
+  it does, since a new contract's `dataAtualizacaoGlobal` is its creation time —
+  and reading both means never having to find out. A day is ~5,600 records, so
+  the pair costs ~24 requests. ReplacingMergeTree collapses whatever overlaps.
+
+  The 7-day window rather than 1 day absorbs a missed run without needing a
+  catch-up path.
 - `br_government_contract_signals_clickhouse` — the coverage asset, downstream,
   following the existing per-country pattern.
 - Cron minute staggered against other sources; module pool serialises its own
