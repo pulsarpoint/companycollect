@@ -154,9 +154,28 @@ niFornecedor  57423612000104   ← the establishment that won the contract
 cnpj_basico   57423612         ← the company we attribute it to
 ```
 
-Verified live 2026-07-26: `niFornecedor` → `br_establishments.cnpj` →
-`br_companies.cnpj_basico` resolves, with the supplier name matching the
-register exactly (`RLIMP SERVICOS LTDA`).
+**The join needs no lookup table.** The 8-digit base *is* the first 8 characters
+of the 14-digit CNPJ, so matching is a prefix against the company register
+directly, verified 2026-07-26:
+
+```sql
+substring(niFornecedor, 1, 8) = br_companies.cnpj_basico
+-- 57423612000104 -> 57423612 -> RLIMP SERVICOS LTDA
+```
+
+That validates the supplier against 68.6M companies in one join and works
+whether a matriz or a filial signed. `br_establishments` (71.9M rows) is
+**not** needed for matching — only later, if the specific branch's name or
+address is wanted.
+
+**Do not join `br_companies.headquarters_cnpj`.** It is 14 digits, 100%
+populated, and looks like the obvious match for `niFornecedor` — but it is the
+company's *headquarters* establishment (`ordem 0001` for 99.98% of rows), while
+`niFornecedor` is whichever establishment signed the contract. Matching on it
+silently drops every contract won by a branch, and the loss is invisible: the
+unmatched rows look like suppliers missing from the register rather than a wrong
+key. It would appear to work in spot checks, because a sampled supplier is
+usually a matriz.
 
 Both identifiers are unique — of different things. Measured in our own data:
 
@@ -294,5 +313,10 @@ contract would be nonsense.
 - **14 vs 8 digit CNPJ.** The obvious join (`niFornecedor` = company id) is
   wrong; it is an establishment. Silent, because the string still looks like a
   CNPJ and would simply match nothing.
+- **`headquarters_cnpj` is a worse trap than that one**, because it half-works.
+  It is 14 digits, 100% populated, and matches `niFornecedor` exactly whenever
+  the matriz signed the contract — which a spot check will usually hit. Every
+  branch-won contract is dropped, and the loss reads as suppliers missing from
+  the register rather than a wrong key.
 - **`Inte direktivstyrd`-class trap, Brazilian edition**: `tipoPessoa` is a
   two-letter code where `PF` and `PJ` differ by one character. Match exactly.
