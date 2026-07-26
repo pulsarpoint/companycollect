@@ -201,6 +201,7 @@ EXPECTED_MIGRATIONS = (
     "000176_corpscout_drop_se_company_listings",
     "000180_corpscout_se_uhm_awards_source_url",
     "000182_corpscout_contract_value_grain",
+    "000183_corpscout_dns_records_seen_dates",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1058,6 +1059,41 @@ def test_dns_record_sightings_cleanup_drops_only_superseded_tables() -> None:
     )
     assert "INSERT INTO" not in down_sql
     assert "CREATE MATERIALIZED VIEW" not in down_sql
+
+
+def test_dns_records_seen_dates_swaps_trigger_query_atomically() -> None:
+    sql = _migration_sql("000183_corpscout_dns_records_seen_dates.up.sql")
+    down_sql = _migration_sql("000183_corpscout_dns_records_seen_dates.down.sql")
+
+    add_column = (
+        "ADD COLUMN IF NOT EXISTS seen_dates "
+        "SimpleAggregateFunction(groupUniqArrayArray, Array(Date))"
+    )
+    modify_query = (
+        "ALTER TABLE corpscout.commoncrawl_domain_dns_records_ingest_v2_mv\n"
+        "MODIFY QUERY"
+    )
+    assert add_column in sql
+    assert modify_query in sql
+    assert "groupUniqArray(toDate(observed_at)) AS seen_dates" in sql
+    assert sql.index(add_column) < sql.index(modify_query)
+
+    # The trigger must be swapped in place. Dropping it would let ingest inserts succeed through
+    # the sibling triggers while silently skipping the records table.
+    assert "DROP VIEW" not in sql
+    assert "CREATE MATERIALIZED VIEW" not in sql
+
+    assert (
+        "CREATE OR REPLACE VIEW corpscout.commoncrawl_domain_dns_records_current" in sql
+    )
+    assert "    seen_dates,\n" in sql
+    assert "FROM corpscout.commoncrawl_domain_dns_records FINAL" in sql
+
+    assert modify_query in down_sql
+    assert "groupUniqArray(toDate(observed_at))" not in down_sql
+    drop_column = "DROP COLUMN IF EXISTS seen_dates"
+    assert drop_column in down_sql
+    assert down_sql.index(modify_query) < down_sql.index(drop_column)
 
 
 def test_sweden_company_registry_migration_covers_exported_columns() -> None:
