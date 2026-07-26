@@ -1,0 +1,282 @@
+# Brazil PNCP (government contracts) design doc
+
+> Follows `docs/data-source-guidelines.md`; deviations are called out below.
+> Status: **design only, nothing built.** Section 0 lists what must be verified
+> before writing code — one of those answers can still change the ingest shape.
+
+## 0. Open questions that gate the build
+
+Everything else here is measured. These are not, and the first one is load-bearing.
+
+1. **Does deep pagination work?** A 170k-record month is ~340 pages at 500 per
+   page. The probe that would have confirmed page 100 and page 339 was refused
+   with HTTP 429 before it ran, so *deep pagination is unverified*. If the API
+   caps pagination depth (many do, around 10k records), monthly partitions are
+   impossible and this becomes **daily** partitions — ~1,700 partitions for full
+   history instead of 55. Test this first, with backoff, before anything else.
+2. **Maximum `tamanhoPagina`.** 500 is confirmed working. 1000 was refused with
+   429 before it could be judged, so it is unknown whether 1000 is accepted.
+   Worth one probe: it halves the request count.
+3. **Are `dataInicial`/`dataFinal` inclusive at both ends?** Assumed yes.
+   Off-by-one here silently drops or double-counts a day per partition.
+4. **What distinguishes `valorInicial` / `valorGlobal` / `valorAcumulado`?** One
+   sampled record had `valorInicial == valorGlobal == 94390.8`, which
+   distinguishes nothing. Section 7 states the intended choice; validate it
+   against records where they differ before committing.
+
+## 1. Source overview
+
+- **Country / registry**: Brazil — Portal Nacional de Contratações Públicas
+  (PNCP), the national procurement portal mandated by Lei 14.133/2021. Operated
+  by Serpro. Covers federal, **state and municipal** procurement.
+- **Module**: `defs/brazil_pncp/` · DuckDB file `data/brazil_pncp_source.duckdb`
+  · pool `brazil_pncp_duckdb`
+- **ClickHouse tables**: `corpscout.br_pncp_contracts` (new migration), plus the
+  view `corpscout.br_government_contracts`
+- **Datasets used**:
+
+  | dataset | url | format | size | cadence | auth? |
+  |---|---|---|---|---|---|
+  | contracts by publication date | `GET /api/consulta/v1/contratos?dataInicial&dataFinal&pagina&tamanhoPagina` | JSON | ~3.2M records, 41 fields | continuous | none |
+  | contracts by update date | `GET /api/consulta/v1/contratos/atualizacao` | JSON | subset | continuous | none |
+
+  OpenAPI spec: `https://pncp.gov.br/api/consulta/v3/api-docs` (12 endpoints).
+
+- **Entity key**: `niFornecedor` — the supplier's **14-digit CNPJ**. Note this is
+  an *establishment*, not a company; see §5.
+- **Record count** (measured 2026-07-26, `totalRegistros` per month):
+
+  ```
+  2022-01        203      PNCP barely adopted
+  2023-01      3,343
+  2024-01     35,909
+  2025-01    116,226
+  2026-01    146,003
+  2026-06    169,574     ~5.6k/day
+  ```
+
+  Extrapolated full history ≈ **3.2M contracts**. Volume is dominated by
+  2025–2026; the early years are nearly free to backfill.
+
+- **No bulk download exists.** Verified: `portaldatransparencia.gov.br`
+  contracts download returns HTTP 500; `dadosabertos.compras.gov.br` publishes
+  `_CSV` endpoints for pesquisa-preco/pgc/uasg/orgao but **not** for
+  `modulo-contratos`, and covers federal purchasing only. Transparência Brasil
+  and the Open Contracting Partnership publicly criticise PNCP for exactly this.
+  The paginated API is the only path — this is a documented constraint, not a
+  gap in our search.
+
+## 2. Ingest mode (§2) — and *why*
+
+- **Chosen**: partitioned API incremental — `MonthlyPartitionsDefinition` on
+  `dataPublicacaoPncp`, `end_offset=1`, plus a **separate non-partitioned
+  refresh job** on `/contratos/atualizacao`.
+- **Why not bulk full-refresh**: no bulk file exists (§1). Why not
+  single-request: 3.2M records over 6,400 requests cannot be one call.
+- **Why two date axes.** Contracts are amended — the payload carries
+  `numeroRetificacao`, `dataAtualizacaoGlobal` and `temRemanejamento`. A
+  publication-date-only pipeline would ingest each contract once and never see
+  its amendments, so a contract whose value was revised keeps the original
+  figure forever. This is the same failure that produced wrong ESEF revenue
+  figures until amendment documents were read, and it is cheap to avoid:
+  backfill by publication, then a daily job re-reads `/contratos/atualizacao`
+  for a trailing window and upserts. ReplacingMergeTree on
+  `dataAtualizacaoGlobal` collapses the versions.
+- **Backfill policy**: `BackfillPolicy.multi_run(max_partitions_per_run=1)` with
+  the module pool, per guidelines. ~55 monthly partitions, ~340 requests each.
+  **Conditional on §0.1** — if deep pagination is capped, this becomes daily
+  partitions and the backfill policy matters much more.
+
+### Rate limiting
+
+Measured 2026-07-26: roughly 15 requests in a few minutes returned **HTTP 429**
+(`Limite de Requisições Excedido`). Recovery inside ~2 minutes.
+
+**The response carries no rate-limit headers at all** — no `X-RateLimit-*`, no
+`Retry-After`. A client cannot be told when to retry and must infer it. The
+exact requests-per-minute ceiling was deliberately **not** measured: finding it
+means hammering a public government service until it refuses, and adaptive
+backoff makes the number unnecessary.
+
+Mitigation is the house pattern rather than custom code:
+`dlt.sources.helpers.requests` already retries 429 with backoff, and the
+guidelines already mandate it over plain `requests`. Pace conservatively and
+treat 429 as expected, not exceptional.
+
+## 3. Loading (§3)
+
+- **Reader**: fetch pages with `dlt.sources.helpers.requests`, append each
+  page's `data` array verbatim to a per-partition **JSONL file**, then load with
+  DuckDB `read_json`. Not a Python-dict-per-row dlt resource: the guidelines
+  call that the slow path, and DuckDB's reader is set-based.
+- **Why not `read_json` straight off the URL**: the endpoint is paginated and
+  rate-limited, so page fetching has to be explicit anyway. Writing pages to
+  JSONL keeps the raw response as the checkpoint — a partition that fails at
+  page 300 does not re-fetch pages 1–299.
+- **Staging shape**: `raw_contracts` (all 41 fields as VARCHAR, plus
+  `source_run_id`, `source_url`, `source_retrieved_at`, `source_line_number`),
+  then `contract_candidates` with typed and normalised columns. Raw JSON stays
+  in DuckDB only and is **not** exported (§5).
+- **Nested objects**: `orgaoEntidade`, `unidadeOrgao`, `orgaoSubRogado`,
+  `unidadeSubRogada` are objects. Flatten the fields used (buyer CNPJ, name,
+  `poderId`, `esferaId`, UF, municipality) in DuckDB SQL; keep the whole object
+  in the raw table.
+
+## 4. Transform (§5)
+
+- **Mechanism**: set-based DuckDB SQL. No dbt — nothing here earns it.
+- **Shape**: register row-map. One row per contract per supplier, which is what
+  the endpoint already returns; there is no separate winners table to join, so
+  this is shaped like Sweden's UHM rather than TED/Hilma.
+- **Key SQL ideas**:
+  - `niFornecedor` normalised to digits only, then split: keep the full 14-digit
+    value as `supplier_establishment_cnpj`, and `substring(...,1,8)` as
+    `company_id`.
+  - `tipoPessoa` retained; matching is restricted to `'PJ'` (§5).
+  - `numeroControlePNCP`, `anoContrato`, `sequencialContrato` and the buyer CNPJ
+    give the source document URLs (§5).
+
+## 5. ClickHouse schema — and DDL deviations
+
+- **Table + grain**: `br_pncp_contracts`, one row per contract per supplier.
+- **Engine**: ReplacingMergeTree(`dataAtualizacaoGlobal`) — amendments replace
+  earlier versions of the same contract.
+- **`ORDER BY`**: `(company_id, source_notice_id, sequencial_contrato)`.
+  Non-nullable, per the `allow_nullable_key` constraint.
+
+### The identity decision (the important one)
+
+PNCP awards to a **14-digit CNPJ** (an establishment). `br_companies` keys on
+**`cnpj_basico`, 8 digits** (the company). So:
+
+```
+niFornecedor  57423612000104   ← the establishment that won the contract
+cnpj_basico   57423612         ← the company we attribute it to
+```
+
+Verified live 2026-07-26: `niFornecedor` → `br_establishments.cnpj` →
+`br_companies.cnpj_basico` resolves, with the supplier name matching the
+register exactly (`RLIMP SERVICOS LTDA`).
+
+**Decision**: `company_id` is the 8-digit base, so contracts roll up to the
+company, matching every other country and `br_companies`. The 14-digit value is
+kept as its own column — dropping it would lose which branch actually won, and
+keeping source detail is the standing rule.
+
+**`tipoPessoa`**: `PJ` is a legal entity, `PF` a natural person. PF suppliers
+must not be matched against a company register — Sweden hit exactly this and
+classifies such rows `person_keyed`. Mirror that: keep the row, mark it
+ineligible, do not fabricate a `company_id`.
+
+### Deviations
+
+- No `contracted` flag equivalent: every row in `/contratos` is an executed
+  contract, so there is nothing to filter.
+- `source_url`: PNCP publishes a real per-contract address, unlike Sweden's UHM.
+  Both verified HTTP 200 on 2026-07-26:
+  - human: `https://pncp.gov.br/app/contratos/{buyer_cnpj}/{ano}/{sequencial}`
+  - API: `https://pncp.gov.br/api/pncp/v1/orgaos/{buyer_cnpj}/contratos/{ano}/{sequencial}`
+
+  Store the human one, as with TED and Hilma.
+- **Export subset**: `BR_PNCP_CONTRACTS_EXPORT_COLUMNS` drops `raw_contract` and
+  `source_payload_hash` per guidelines.
+
+## 6. Translation (§8) — `defs/brazil_pncp/translation.py`
+
+| label | source_column | mechanism | notes |
+|---|---|---|---|
+| contract object | `contract_object_original` | LLM | `objetoContrato`, free Portuguese text |
+| contract type | `contract_type_original` | static dict | `tipoContrato`, coded |
+| process category | `process_category_original` | static dict | `categoriaProcesso`, coded |
+
+`_en` is served by the `brazil_pncp_translated` join view over `text_translations`,
+not by base-table columns. Deliberately **not** translated: supplier and buyer
+names, `processo`, contract numbers — proper nouns and identifiers.
+
+Note `objetoContrato` is high-cardinality free text at ~3.2M rows. Translating
+all of it is expensive and probably not warranted up front; translate on demand
+or restrict to contracts above a value threshold, and record which.
+
+## 6b. Contacts (§8b)
+
+**None.** The contracts payload carries no email, phone or website for either
+supplier or buyer — the 41 fields are contract attributes and party identifiers
+only. Brazilian company contacts already arrive via `br_company_contacts`
+(119.4M rows) from the CNPJ register. No `br_pncp_company_contacts` table.
+
+## 7. Currency (§7)
+
+- **Native currency**: BRL. The payload has no currency field — values are BRL
+  by definition of the register. Store `'BRL'` explicitly rather than leaving it
+  empty, so the view's `value_currency` is truthful.
+- **Which value is *the* contract value**: intended choice is `valorGlobal`
+  (total contract value) for `value_amount_original`, with `valorInicial` kept
+  as its own column. **Gated on §0.4** — validate against records where they
+  differ. `valorAcumulado`, `valorParcela` and `numeroParcelas` are kept as
+  source detail.
+- Carries `value_amount_original` + `value_amount_usd` +
+  `fx_rate_to_usd/_date/_source`, keyed on `dataAssinatura` (falling back to
+  `dataPublicacaoPncp`), converted in a separate `apply_brazil_pncp_usd_conversion`
+  step via the shared `ExchangeRateClient`. Never inline with extraction.
+
+**This is the first country where the national register publishes a value
+attributable to a single winner.** Sweden's UHM publishes none at all; Finland's
+Hilma publishes only a notice-level figure that repeats across winners. PNCP's
+value is per contract per supplier, so it populates `value_amount_*` properly
+rather than `notice_value_*`.
+
+## 8. Scheduling (§9)
+
+- `brazil_pncp_backfill_job` — monthly partitions, run via UI backfill, not the
+  CLI (per the guidelines' code-location caveat).
+- `brazil_pncp_refresh_job` — daily, re-reads `/contratos/atualizacao` for a
+  trailing window (start at 7 days) and upserts. This is what catches
+  amendments.
+- `br_government_contract_signals_clickhouse` — the coverage asset, downstream,
+  following the existing per-country pattern.
+- Cron minute staggered against other sources; module pool serialises its own
+  steps.
+
+## 9. `br_government_contracts` view
+
+A single-branch view, no `UNION ALL`: Brazil is not in the EU and has no TED
+notices, making it the mirror image of Norway (TED only, no national register).
+The per-country view design already allows this — a country is the list of
+sources it actually has.
+
+Columns follow the established shape. Country-specific columns (`emenda_parlamentar`,
+`fruto_adesao`, `numero_parcelas`, `subcontractor` fields) may be carried in
+addition — `merge()` tolerates ragged views — but **must be declared
+`Nullable`**, so that "this country does not publish it" reads as NULL rather
+than a type default indistinguishable from a real `0`.
+
+`directive_governed` has no meaning outside the EU procurement directives:
+emit `''` (unknown), not `'no'`. Claiming "below EU threshold" for a Brazilian
+contract would be nonsense.
+
+## 10. Verification
+
+- **Tests**: `tests/test_brazil_pncp_*.py` — CNPJ normalisation and the 14→8
+  split, PJ/PF classification, value/date typing, export-vs-migration column
+  contract, view shape, schedule registration.
+- **Live**: migrate → backfill one month (start with 2024-06, ~36k records, big
+  enough to be real and small enough to be cheap) → check row counts against
+  `totalRegistros` for that range → spot-check a known contract's
+  `valorGlobal × rate` and that its `source_url` returns 200 → confirm
+  `company_id` join rate against `br_companies`.
+- Run `scripts/dagster-health-check.py` afterwards.
+
+## 11. Issues found during investigation
+
+- **No bulk download, and this is known.** Confirmed against two alternative
+  portals before concluding. Do not spend more time looking.
+- **429 with no headers.** The absence of `Retry-After` is the real problem, not
+  the limit itself — a client has nothing to obey. Adaptive backoff only.
+- **The rate limit blocks investigation, not just ingestion.** Two of the four
+  open questions in §0 are unanswered *because* probing tripped the limit. Budget
+  for slow, spaced-out verification rather than an interactive session.
+- **14 vs 8 digit CNPJ.** The obvious join (`niFornecedor` = company id) is
+  wrong; it is an establishment. Silent, because the string still looks like a
+  CNPJ and would simply match nothing.
+- **`Inte direktivstyrd`-class trap, Brazilian edition**: `tipoPessoa` is a
+  two-letter code where `PF` and `PJ` differ by one character. Match exactly.
