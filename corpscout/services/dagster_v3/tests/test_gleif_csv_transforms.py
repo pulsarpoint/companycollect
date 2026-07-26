@@ -172,6 +172,83 @@ def test_delta_exactly_replaces_full_refresh_reference_tables(tmp_path: Path) ->
         ).fetchall() == [("RA000001",)]
 
 
+def test_delta_repairs_persisted_successor_column_types(tmp_path: Path) -> None:
+    database_path = tmp_path / "gleif_reference.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        seed_raw_tables(connection)
+        replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="full",
+            publish_date="2026-06-20T16:00:00+00:00",
+            run_id="run-full",
+        )
+        connection.execute(
+            """
+            update gleif_reference.gleif.gleif_lei_records
+            set successor_entity_lei = null,
+                successor_entity_name = null
+            """
+        )
+        connection.execute(
+            """
+            alter table gleif_reference.gleif.gleif_lei_records
+            alter column successor_entity_lei set data type integer
+            """
+        )
+        connection.execute(
+            """
+            alter table gleif_reference.gleif.gleif_lei_records
+            alter column successor_entity_name set data type integer
+            """
+        )
+
+        replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="delta",
+            publish_date="2026-06-21T16:00:00+00:00",
+            run_id="run-delta",
+        )
+
+        assert connection.execute(
+            """
+            select successor_entity_lei, successor_entity_name
+            from gleif_reference.gleif.gleif_lei_records
+            """
+        ).fetchall() == [("549300SUCCESSOR00001", "ACME SUCCESSOR PLC")]
+        assert connection.execute(
+            """
+            select column_name, data_type
+            from information_schema.columns
+            where table_catalog = ?
+              and table_schema = 'gleif'
+              and table_name = 'gleif_lei_records'
+              and column_name in ('successor_entity_lei', 'successor_entity_name')
+            order by column_name
+            """,
+            [database_path.stem],
+        ).fetchall() == [
+            ("successor_entity_lei", "VARCHAR"),
+            ("successor_entity_name", "VARCHAR"),
+        ]
+        assert connection.execute(
+            """
+            select column_name, data_type
+            from information_schema.columns
+            where table_catalog = ?
+              and table_schema = 'gleif'
+              and table_name = 'gleif_code_list_entries'
+              and column_name in ('valid_from', 'valid_to')
+            order by column_name
+            """,
+            [database_path.stem],
+        ).fetchall() == [
+            ("valid_from", "DATE"),
+            ("valid_to", "DATE"),
+        ]
+
+
 def test_non_nullable_strings_are_coalesced_for_clickhouse(tmp_path: Path) -> None:
     database_path = tmp_path / "gleif_reference.duckdb"
     with duckdb.connect(str(database_path)) as connection:

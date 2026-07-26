@@ -62,6 +62,13 @@ DUCKDB_COLUMN_TYPES = {
     "resolved_at": "timestamp",
 }
 
+DUCKDB_TABLE_COLUMN_TYPES = {
+    tables.GLEIF_CODE_LIST_ENTRIES_TABLE: {
+        "valid_from": "date",
+        "valid_to": "date",
+    },
+}
+
 
 def refresh_gleif_duckdb_state(
     *,
@@ -129,7 +136,7 @@ def _ensure_empty_tables(
         connection.execute(
             f"create or replace table "
             f"{_qualified_table(table_name, catalog_name=catalog_name, schema_name=schema_name)} "
-            f"({_column_sql(tables.GLEIF_TABLE_COLUMNS[table_name])})"
+            f"({_column_sql(table_name)})"
         )
 
 
@@ -141,12 +148,17 @@ def _replace_current_tables_from_schema(
 ) -> None:
     connection.execute("begin transaction")
     try:
+        _ensure_empty_tables(
+            connection,
+            catalog_name=catalog_name,
+            schema_name=DUCKDB_SCHEMA,
+        )
         for table_name in tables.GLEIF_TABLES:
             columns = ", ".join(_quote(column) for column in tables.GLEIF_TABLE_COLUMNS[table_name])
             connection.execute(
-                f"create or replace table "
+                f"insert into "
                 f"{_qualified_table(table_name, catalog_name=catalog_name, schema_name=DUCKDB_SCHEMA)} "
-                f"as select {columns} from "
+                f"select {columns} from "
                 f"{_qualified_table(table_name, catalog_name=catalog_name, schema_name=source_schema_name)}"
             )
         connection.execute("commit")
@@ -263,10 +275,57 @@ def _ensure_all_tables(
     schema_name: str,
 ) -> None:
     for table_name in tables.GLEIF_TABLES:
-        connection.execute(
-            f"create table if not exists {_qualified_table(table_name, catalog_name=catalog_name, schema_name=schema_name)} "
-            f"({_column_sql(tables.GLEIF_TABLE_COLUMNS[table_name])})"
+        qualified_table = _qualified_table(
+            table_name,
+            catalog_name=catalog_name,
+            schema_name=schema_name,
         )
+        connection.execute(
+            f"create table if not exists {qualified_table} "
+            f"({_column_sql(table_name)})"
+        )
+        _ensure_table_column_contract(
+            connection,
+            catalog_name=catalog_name,
+            schema_name=schema_name,
+            table_name=table_name,
+            qualified_table=qualified_table,
+        )
+
+
+def _ensure_table_column_contract(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    catalog_name: str,
+    schema_name: str,
+    table_name: str,
+    qualified_table: str,
+) -> None:
+    existing_types = {
+        str(column_name): str(data_type).upper()
+        for column_name, data_type in connection.execute(
+            """
+            select column_name, data_type
+            from information_schema.columns
+            where table_catalog = ?
+              and table_schema = ?
+              and table_name = ?
+            """,
+            [catalog_name, schema_name, table_name],
+        ).fetchall()
+    }
+    for column in tables.GLEIF_TABLE_COLUMNS[table_name]:
+        expected_type = _duckdb_column_type(table_name, column)
+        if column not in existing_types:
+            connection.execute(
+                f"alter table {qualified_table} "
+                f"add column {_quote(column)} {expected_type}"
+            )
+        elif existing_types[column] != expected_type.upper():
+            connection.execute(
+                f"alter table {qualified_table} "
+                f"alter column {_quote(column)} set data type {expected_type}"
+            )
 
 
 def _row_counts(
@@ -284,11 +343,17 @@ def _row_counts(
     }
 
 
-def _column_sql(columns: tuple[str, ...]) -> str:
-    return ", ".join(f'{_quote(column)} {_duckdb_column_type(column)}' for column in columns)
+def _column_sql(table_name: str) -> str:
+    return ", ".join(
+        f'{_quote(column)} {_duckdb_column_type(table_name, column)}'
+        for column in tables.GLEIF_TABLE_COLUMNS[table_name]
+    )
 
 
-def _duckdb_column_type(column: str) -> str:
+def _duckdb_column_type(table_name: str, column: str) -> str:
+    table_types = DUCKDB_TABLE_COLUMN_TYPES.get(table_name, {})
+    if column in table_types:
+        return table_types[column]
     return DUCKDB_COLUMN_TYPES.get(column, "varchar")
 
 
