@@ -120,9 +120,14 @@ def export_contracts_clickhouse(
     currently holds rows: an empty fetch is a degraded run, not a month in which
     Brazil awarded no contracts.
     """
-    qualified = f"`{tables.CLICKHOUSE_DATABASE}`.`{tables.CONTRACTS_TABLE}`"
-    stage = f"`{tables.CLICKHOUSE_DATABASE}`.`_tmp_{tables.CONTRACTS_TABLE}_{partition}`"
-    stage_candidates = f"{stage}_src"
+    def _qualified(name: str) -> str:
+        # Quote the whole identifier, never append to an already-quoted one:
+        # "`db`.`t`" + "_src" puts the suffix outside the backticks.
+        return f"`{tables.CLICKHOUSE_DATABASE}`.`{name}`"
+
+    qualified = _qualified(tables.CONTRACTS_TABLE)
+    stage = _qualified(f"_tmp_{tables.CONTRACTS_TABLE}_{partition}")
+    stage_candidates = _qualified(f"_tmp_{tables.CONTRACTS_TABLE}_{partition}_src")
 
     rows = duckdb_connection.execute(
         f"select {', '.join(tables.CANDIDATE_COLUMNS)} "
