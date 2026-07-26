@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import calendar
 import json
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
@@ -104,6 +105,7 @@ def iter_pages(
     end: str,
     page_size: int = tables.MAX_PAGE_SIZE,
     resume_from: int = 1,
+    on_page: Callable[[int, int, int], None] | None = None,
 ) -> Iterator[tuple[int, list[dict[str, Any]]]]:
     """Yield ``(page_number, records)`` from resume_from to the last page.
 
@@ -111,6 +113,11 @@ def iter_pages(
     past-the-end 400 backstops it. Both are used rather than either alone: the
     count could drift while a long month is being read, and trusting only the
     marker would mean one wasted request per partition.
+
+    ``on_page`` is called with ``(page, total_pages, records)`` after each
+    fetch, so a caller can report progress. A 340-page month is otherwise
+    silent for as long as it takes, which makes a stall indistinguishable from
+    slow going.
     """
     page = resume_from
     total_pages: int | None = None
@@ -125,6 +132,8 @@ def iter_pages(
         records = payload.get("data") or []
         if not records:
             return
+        if on_page is not None:
+            on_page(page, total_pages, len(records))
         yield page, records
         page += 1
 
@@ -137,6 +146,8 @@ def download_partition(
     start: str,
     end: str,
     page_size: int = tables.MAX_PAGE_SIZE,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
+    progress_every: int = 10,
 ) -> dict[str, int]:
     """Write each page to its own JSONL file under destination.
 
@@ -151,6 +162,29 @@ def download_partition(
 
     records = sum(1 for f in existing for _ in f.open(encoding="utf-8"))
     pages = len(existing)
+    started = time.monotonic()
+    fetched = 0
+
+    def _report(page: int, total_pages: int, page_records: int) -> None:
+        nonlocal fetched
+        fetched += 1
+        if on_progress is None:
+            return
+        if fetched % progress_every and page != total_pages:
+            return
+        elapsed = max(time.monotonic() - started, 1e-6)
+        on_progress(
+            {
+                "page": page,
+                "total_pages": total_pages,
+                "pages_fetched": fetched,
+                "records": records + page_records,
+                "elapsed_seconds": round(elapsed, 1),
+                # The useful signal. PNCP sends no rate-limit headers, so
+                # backoff is invisible except as this number falling.
+                "pages_per_minute": round(fetched / elapsed * 60, 1),
+            }
+        )
 
     for page, page_records in iter_pages(
         session,
@@ -159,6 +193,7 @@ def download_partition(
         end=end,
         page_size=page_size,
         resume_from=resume_from,
+        on_page=_report,
     ):
         target = destination / f"page-{page:05d}.jsonl"
         partial = target.with_suffix(".jsonl.partial")

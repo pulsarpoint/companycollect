@@ -142,3 +142,37 @@ def test_pages_land_as_jsonl_and_partials_are_not_left_behind(tmp_path: Path) ->
     first = (tmp_path / "page-00001.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(first) == 500
     assert json.loads(first[0])["numeroControlePNCP"] == "c-0"
+
+
+def test_progress_is_reported_during_a_long_month(tmp_path: Path) -> None:
+    """A 340-page month is otherwise silent until it finishes, so a stall looks
+    exactly like slow going. pages_per_minute is the signal: PNCP sends no
+    rate-limit headers, and backoff shows up only as that number falling."""
+    seen: list[dict] = []
+    download_partition(
+        _FakeSession(total_records=12_500),  # 25 pages
+        destination=tmp_path,
+        path="/contratos",
+        start="20260601",
+        end="20260630",
+        on_progress=seen.append,
+        progress_every=10,
+    )
+
+    # Every tenth page, plus the last one however it falls.
+    assert [p["page"] for p in seen] == [10, 20, 25]
+    assert seen[-1]["total_pages"] == 25
+    assert seen[-1]["records"] == 12_500
+    assert seen[0]["pages_per_minute"] > 0
+
+
+def test_progress_is_optional(tmp_path: Path) -> None:
+    """Nothing may depend on a caller wanting progress."""
+    result = download_partition(
+        _FakeSession(total_records=600),
+        destination=tmp_path,
+        path="/contratos",
+        start="20260601",
+        end="20260630",
+    )
+    assert result["pages"] == 2

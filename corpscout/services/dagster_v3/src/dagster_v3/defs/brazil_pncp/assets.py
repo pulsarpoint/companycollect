@@ -73,12 +73,28 @@ def brazil_pncp_raw_pages_s3(
     brazil_pncp_object_store.ensure_bucket(tables.S3_BUCKET)
     prefix = f"{tables.S3_RAW_PREFIX}/{month}"
 
+    def _log_progress(progress: dict) -> None:
+        # A 340-page month is otherwise silent until it finishes, which makes a
+        # stall indistinguishable from slow going. pages_per_minute is the
+        # signal worth watching: PNCP sends no rate-limit headers, so backoff
+        # shows up only as that number falling.
+        context.log.info(
+            "%s page %s/%s: %s records, %.1f pages/min, %.0fs elapsed",
+            month,
+            progress["page"],
+            progress["total_pages"],
+            progress["records"],
+            progress["pages_per_minute"],
+            progress["elapsed_seconds"],
+        )
+
     downloaded = download_partition(
         _session(),
         destination=scratch,
         path=tables.CONTRACTS_BY_PUBLICATION_PATH,
         start=start,
         end=end,
+        on_progress=_log_progress,
     )
 
     uploaded = 0
