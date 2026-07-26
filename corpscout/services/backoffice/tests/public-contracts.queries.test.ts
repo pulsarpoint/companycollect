@@ -13,10 +13,14 @@ describe("publicContractsQuery", () => {
     expect(getCountry("fi")?.detail?.publicContractsQuery).toBeTruthy();
   });
 
-  it("sweden declares a government contracts evidence query", () => {
-    const query = getCountry("se")?.detail?.publicContractsQuery;
-    expect(query).toContain("company_government_contract_evidence");
-    expect(query).toContain("country_code = 'SE'");
+  it("each country reads its own contracts view", () => {
+    // The country is in the view name, so the query needs no country filter --
+    // and must not silently read another country's rows.
+    for (const country of withContracts) {
+      expect(country.detail!.publicContractsQuery).toContain(
+        `FROM ${country.code}_government_contracts`,
+      );
+    }
   });
 
   it.each(withContracts.map((c) => [c.code, c] as const))(
@@ -46,9 +50,18 @@ describe("publicContractsQuery", () => {
     expect(contracts.length).toBeGreaterThan(0);
 
     for (const row of contracts) {
-      expect(["hilma", "ted"]).toContain(row.source);
+      // The canonical slugs the country view emits, not per-page labels.
+      expect(["finland_hilma_procurement", "ted_procurement"]).toContain(row.source);
       expect(row.notice_ref).not.toBe("");
       expect(row.contract_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      // Every Finnish source publishes a per-notice address, so a row that
+      // cannot be traced back to its document is a bug.
+      expect(row.source_url).toMatch(/^https:\/\//);
+      // Hilma has no per-winner amount. Presenting its notice total as this
+      // company's share is exactly the error this separation prevents.
+      if (row.source === "finland_hilma_procurement") {
+        expect(row.amount_original).toBeNull();
+      }
     }
     // Newest first.
     const dates = contracts.map((r) => r.contract_date);

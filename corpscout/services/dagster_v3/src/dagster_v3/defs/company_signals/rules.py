@@ -43,6 +43,11 @@ class CountryProcurementRule:
     sources: tuple[ProcurementSource, ...]
 
     @property
+    def contracts_view(self) -> str:
+        """The migration-owned view merging this country's sources."""
+        return f"{self.country_code.lower()}_government_contracts"
+
+    @property
     def asset_name(self) -> str:
         return f"{self.country_code.lower()}_government_contract_signals_clickhouse"
 
@@ -70,19 +75,13 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
         identifier_length=10,
         ted_winner_countries=("SE", "SWE"),
         coverage_caveat=(
-            "UHM advertised procurement and TED eForms awards; excludes "
+            "UHM advertised procurement and TED eForms awards. Excludes "
             "direct/non-advertised procurement, missing after-notices, and "
-            "many framework call-offs."
+            "many framework call-offs. UHM publishes no contract value at "
+            "all, so Swedish awards carry none."
         ),
         sources=(UHM, TED),
     ),
-    # Finland has its own register too -- fi_hilma_notice_winners, 11,265 rows --
-    # but Hilma is shaped like TED (a winners/notices pair) rather than like
-    # UHM's single flat awards table, so it cannot reuse the national-source CTE
-    # as written. Finland is therefore TED-only for now, which still resolves
-    # 39,314 of 43,731 winners to 7,067 companies (89.9%, measured 2026-07-25).
-    # Wiring Hilma in means generalizing NationalProcurementSource to a second
-    # shape, not adding a field.
     "FI": CountryProcurementRule(
         country_code="FI",
         companies_table="fi_companies",
@@ -91,9 +90,9 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
         identifier_length=9,
         ted_winner_countries=("FI", "FIN"),
         coverage_caveat=(
-            "TED eForms awards only; Hilma, Finland's national procurement "
-            "register, is ingested but not yet joined to this signal, so "
-            "contracts below the EU publication thresholds are absent."
+            "Hilma national awards and TED eForms awards. Hilma publishes no "
+            "amount per winner, so its contracts carry a notice-level value "
+            "only and no value attributable to the company."
         ),
         sources=(HILMA, TED),
     ),

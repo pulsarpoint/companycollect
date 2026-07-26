@@ -402,39 +402,23 @@ WHERE business_id = {id:String}
 ORDER BY tax_year DESC
 LIMIT 1 BY tax_year
 LIMIT 20`,
-      publicContractsQuery: `SELECT source, notice_ref, contract_date, buyer_name, title,
-  amount_original, amount_usd, currency
-FROM (
-  SELECT 'hilma' AS source, w.notice_number AS notice_ref,
-    toString(toDate(w.published_at)) AS contract_date,
-    coalesce(nullIf(n.buyer_name_fi, ''), n.buyer_name_en) AS buyer_name,
-    coalesce(nullIf(n.lot_name_fi, ''), n.notice_name_fi) AS title,
-    toFloat64(coalesce(n.lots_value_amount_original, n.procurement_value_amount_original)) AS amount_original,
-    toFloat64(coalesce(n.lots_value_amount_usd, n.procurement_value_amount_usd)) AS amount_usd,
-    coalesce(nullIf(n.lots_value_currency, ''), n.procurement_value_currency) AS currency
-  FROM fi_hilma_notice_winners w
-  JOIN fi_hilma_notices n ON n.notice_number = w.notice_number AND n.lot_id = w.lot_id
-  WHERE w.winner_business_id = {id:String} AND w.is_award = 1
-  UNION ALL
-  SELECT 'ted' AS source, w.publication_number AS notice_ref,
-    toString(w.publication_date) AS contract_date,
-    n.buyer_name AS buyer_name,
-    n.notice_title AS title,
-    toFloat64(w.awarded_amount_original) AS amount_original,
-    toFloat64(w.awarded_amount_usd) AS amount_usd,
-    w.awarded_currency AS currency
-  FROM ted_notice_winners w
-  JOIN ted_notices n ON n.country_iso2 = w.country_iso2
-    AND n.publication_number = w.publication_number
-  WHERE w.country_iso2 = 'FI'
-    AND w.winner_national_id = {id:String}
-    AND w.publication_number NOT IN (
-      SELECT replaceRegexpOne(ted_number, '^0+', '')
-      FROM fi_hilma_notices WHERE ted_number != ''
-    )
-)
-ORDER BY contract_date DESC, notice_ref DESC
-LIMIT 50`,
+      publicContractsQuery: `SELECT
+  source_slug AS source,
+  concat(source_notice_id, if(source_lot_id = '', '', concat(':', source_lot_id))) AS notice_ref,
+  coalesce(toString(publication_date), '') AS contract_date,
+  buyer_name,
+  title,
+  toFloat64(value_amount_original) AS amount_original,
+  toFloat64(value_amount_usd) AS amount_usd,
+  value_currency AS currency,
+  toFloat64(notice_value_amount_original) AS notice_amount_original,
+  toFloat64(notice_value_amount_usd) AS notice_amount_usd,
+  notice_value_currency AS notice_currency,
+  source_url
+FROM fi_government_contracts
+WHERE company_id = {id:String}
+ORDER BY publication_date DESC NULLS LAST, contract_id
+LIMIT 100`,
     },
     financialsLatest: { table: "fi_company_financials_latest", companyKeyExpr: "business_id" },
   },
@@ -803,17 +787,21 @@ WHERE company_id IN (SELECT company_id FROM se_companies WHERE registration_numb
 ORDER BY address_type
 LIMIT 10`,
       publicContractsQuery: `SELECT
-  arrayStringConcat(source_slugs, ' + ') AS source,
-  arrayStringConcat(source_references, ', ') AS notice_ref,
+  source_slug AS source,
+  concat(source_notice_id, if(source_lot_id = '', '', concat(':', source_lot_id))) AS notice_ref,
   coalesce(toString(publication_date), '') AS contract_date,
   buyer_name,
   title,
-  CAST(NULL AS Nullable(Float64)) AS amount_original,
-  CAST(NULL AS Nullable(Float64)) AS amount_usd,
-  '' AS currency
-FROM company_government_contract_evidence
-WHERE country_code = 'SE' AND company_id = {id:String}
-ORDER BY publication_date DESC NULLS LAST, evidence_id
+  toFloat64(value_amount_original) AS amount_original,
+  toFloat64(value_amount_usd) AS amount_usd,
+  value_currency AS currency,
+  toFloat64(notice_value_amount_original) AS notice_amount_original,
+  toFloat64(notice_value_amount_usd) AS notice_amount_usd,
+  notice_value_currency AS notice_currency,
+  source_url
+FROM se_government_contracts
+WHERE company_id = {id:String}
+ORDER BY publication_date DESC NULLS LAST, contract_id
 LIMIT 100`,
     },
     financialsLatest: { table: "se_company_financials_latest", companyKeyExpr: "company_id" },

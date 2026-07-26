@@ -1,35 +1,15 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE IF NOT EXISTS corpscout.company_government_contract_evidence
-(
-    country_code LowCardinality(String),
-    company_id String,
-    evidence_id String,
-    source_slugs Array(String),
-    source_references Array(String),
-    publication_date Nullable(Date),
-    buyer_name String,
-    title String,
-    agreement_type LowCardinality(String),
-    source_updated_at DateTime64(3, 'UTC'),
-    resolved_at DateTime64(3, 'UTC')
-)
-ENGINE = MergeTree
-ORDER BY (country_code, company_id, evidence_id);
-
-CREATE TABLE IF NOT EXISTS corpscout.company_public_procurement_summary
-(
-    country_code LowCardinality(String),
-    company_id String,
-    public_award_count UInt32,
-    public_award_last_date Nullable(Date),
-    source_slugs Array(String),
-    source_updated_at DateTime64(3, 'UTC'),
-    resolved_at DateTime64(3, 'UTC')
-)
-ENGINE = MergeTree
-ORDER BY (country_code, company_id);
-
+-- What a country's procurement sources do and do not cover.
+--
+-- This is the one part of the government-contract signal that is materialized
+-- rather than derived. Coverage carries editorial prose -- "Doffin, Norway's
+-- national procurement register, is not ingested, so contracts below the EU
+-- publication thresholds are absent entirely" -- which no query over the rows
+-- can produce. The contracts themselves are views over the source tables, in a
+-- later migration.
+--
+-- Partitioned by country so each country's asset replaces only its own row.
 CREATE TABLE IF NOT EXISTS corpscout.company_signal_coverage
 (
     country_code LowCardinality(String),
@@ -43,4 +23,5 @@ CREATE TABLE IF NOT EXISTS corpscout.company_signal_coverage
     caveat String
 )
 ENGINE = MergeTree
+PARTITION BY country_code
 ORDER BY (country_code, signal_name);

@@ -169,9 +169,19 @@ export interface PublicContractRow {
   contract_date: string;
   buyer_name: string;
   title: string;
+  /** Attributable to this winner. Null where the source publishes no
+   * per-winner figure -- Hilma and Sweden's UHM both do not. */
   amount_original: number | null;
   amount_usd: number | null;
   currency: string;
+  /** The whole notice's value, repeated across its winners. Shown as a
+   * fallback and labelled as such; summing it across rows is meaningless. */
+  notice_amount_original: number | null;
+  notice_amount_usd: number | null;
+  notice_currency: string;
+  /** The source document this row came from. Empty when the source publishes
+   * no per-contract address (Sweden's UHM is a bulk CSV). */
+  source_url: string;
 }
 
 export interface TaxRecordRow {

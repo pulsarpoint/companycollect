@@ -334,7 +334,10 @@ SELECT
   toUInt8(proc.company_id != '') AS has_government_contract,
   proc.public_award_count AS public_award_count,
   proc.public_award_last_date AS public_award_last_date,
-  coalesce(proc.resolved_at, now64(3)) AS signals_resolved_at,
+  -- The contract summary is a view, so there is no resolve time to read:
+  -- it is always current. The informative stamp is when the underlying
+  -- source data last changed.
+  coalesce(proc.source_updated_at, now64(3)) AS signals_resolved_at,
   now64(3) AS resolved_at
 FROM corpscout.{companies_table} AS c
 LEFT JOIN ({industry_subquery}) AS ind ON ind.company_id = toString({industry_join_key})
@@ -366,7 +369,10 @@ SELECT
   toUInt8(proc.company_id != '') AS has_government_contract,
   proc.public_award_count AS public_award_count,
   proc.public_award_last_date AS public_award_last_date,
-  coalesce(proc.resolved_at, now64(3)) AS signals_resolved_at,
+  -- The contract summary is a view, so there is no resolve time to read:
+  -- it is always current. The informative stamp is when the underlying
+  -- source data last changed.
+  coalesce(proc.source_updated_at, now64(3)) AS signals_resolved_at,
   now64(3) AS resolved_at
 FROM corpscout.{companies_table} AS c
 LEFT JOIN ({industry_subquery}) AS ind ON ind.company_id = toString({industry_join_key})

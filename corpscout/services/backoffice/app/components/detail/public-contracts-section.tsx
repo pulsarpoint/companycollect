@@ -86,16 +86,44 @@ export function PublicContractsSection({
                   <TableCell className="align-top">{c.buyer_name}</TableCell>
                   <TableCell className="align-top">{c.title}</TableCell>
                   <TableCell className="text-right tabular-nums align-top">
-                    <MoneyPair
-                      original={c.amount_original}
-                      usd={c.amount_usd}
-                      currency={c.currency}
-                    />
+                    {c.amount_original != null || c.notice_amount_original == null ? (
+                      <MoneyPair
+                        original={c.amount_original}
+                        usd={c.amount_usd}
+                        currency={c.currency}
+                      />
+                    ) : (
+                      // No per-winner figure from this source. The notice total
+                      // is the whole procurement across every winner, so it is
+                      // shown labelled rather than passed off as this
+                      // company's share.
+                      <div className="flex flex-col items-end gap-0.5">
+                        <MoneyPair
+                          original={c.notice_amount_original}
+                          usd={c.notice_amount_usd}
+                          currency={c.notice_currency}
+                        />
+                        <span className="text-muted-foreground text-xs">
+                          whole notice
+                        </span>
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="align-top">
                     <div className="flex flex-col items-start gap-0.5">
                       <Badge variant="secondary">{c.source}</Badge>
-                      <span className="text-muted-foreground text-xs">{c.notice_ref}</span>
+                      {c.source_url === "" ? (
+                        <span className="text-muted-foreground text-xs">{c.notice_ref}</span>
+                      ) : (
+                        <a
+                          href={c.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2"
+                        >
+                          {c.notice_ref}
+                        </a>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -106,7 +134,8 @@ export function PublicContractsSection({
         <p className="text-muted-foreground text-xs">
           Contract award notices where this company is a named winner, from the
           national procurement portal and TED (EU). Framework agreements are
-          often published without a value.
+          often published without a value, and some registers publish only a
+          value for the whole notice rather than per winner.
         </p>
       </CardContent>
     </Card>

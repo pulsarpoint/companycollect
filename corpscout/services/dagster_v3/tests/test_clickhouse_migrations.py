@@ -199,10 +199,8 @@ EXPECTED_MIGRATIONS = (
     "000174_corpscout_company_identifier",
     "000175_corpscout_company_listings_view",
     "000176_corpscout_drop_se_company_listings",
-    "000177_corpscout_rename_government_contract_summary",
-    "000178_corpscout_partition_contract_signals_by_country",
-    "000179_corpscout_contract_evidence_source_urls",
     "000180_corpscout_se_uhm_awards_source_url",
+    "000182_corpscout_contract_value_grain",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2416,39 +2414,47 @@ def test_instrument_venues_migration_covers_columns_in_order() -> None:
 
 
 def test_company_procurement_signals_migration_covers_columns() -> None:
+    """Coverage is the only materialized part of the signal.
+
+    The contracts themselves became views in 000182, and the migrations that
+    built the old evidence and summary tables were removed rather than left in
+    the ledger as history for tables that no longer exist.
+    """
     sql = _migration_sql("000165_corpscout_company_procurement_signals.up.sql")
     down_sql = _migration_sql("000165_corpscout_company_procurement_signals.down.sql")
 
-    contracts = (
-        (
-            "company_government_contract_evidence",
-            # source_urls was added later by 000179, so it is absent here.
-            tuple(
-                c
-                for c in company_signals_tables.GOVERNMENT_CONTRACT_EVIDENCE_COLUMNS
-                if c != "source_urls"
-            ),
-            "ORDER BY (country_code, company_id, evidence_id)",
-        ),
-        (
-            # 000165 created this as company_public_procurement_summary.
-            # 000177 renamed it; this migration keeps its original name.
-            "company_public_procurement_summary",
-            company_signals_tables.GOVERNMENT_CONTRACT_SUMMARY_COLUMNS,
-            "ORDER BY (country_code, company_id)",
-        ),
-        (
-            "company_signal_coverage",
-            company_signals_tables.SIGNAL_COVERAGE_COLUMNS,
-            "ORDER BY (country_code, signal_name)",
-        ),
-    )
-    for table, columns, order_by in contracts:
-        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in sql
-        for column in columns:
-            assert f"    {column} " in sql
-        assert order_by in sql
-        assert f"DROP TABLE IF EXISTS corpscout.{table}" in down_sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.company_signal_coverage" in sql
+    for column in company_signals_tables.SIGNAL_COVERAGE_COLUMNS:
+        assert f"    {column} " in sql
+    # Replaced per country, so it must be partitioned by country.
+    assert "PARTITION BY country_code" in sql
+    assert "ORDER BY (country_code, signal_name)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.company_signal_coverage" in down_sql
+
+    # The tables that became views must not be recreated here.
+    assert "company_government_contract_evidence" not in sql
+    assert "company_public_procurement_summary" not in sql
+
+
+def test_government_contract_views_replace_the_materialized_tables() -> None:
+    """The view migration must also clean up the tables it supersedes.
+
+    A database still carrying them would otherwise keep a stale copy sitting
+    next to the view that replaced it, under a name close enough to confuse.
+    """
+    sql = _migration_sql("000182_corpscout_contract_value_grain.up.sql")
+
+    assert "DROP TABLE IF EXISTS corpscout.company_government_contract_evidence" in sql
+    assert "DROP TABLE IF EXISTS corpscout.company_government_contract_summary" in sql
+    for view in (
+        "se_government_contracts",
+        "fi_government_contracts",
+        "no_government_contracts",
+        "company_government_contracts",
+        "company_government_contract_summary",
+    ):
+        assert f"CREATE VIEW corpscout.{view} AS" in sql
+        assert f"DROP VIEW IF EXISTS corpscout.{view}" in sql
 
 
 def test_sweden_uhm_migration_covers_export_columns() -> None:

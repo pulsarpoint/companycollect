@@ -1,3 +1,5 @@
+import pathlib
+
 from dagster_v3.defs.company_signals.rules import COUNTRY_PROCUREMENT_RULES
 from dagster_v3.defs.company_signals.sources import (
     HILMA_SOURCE_SLUG,
@@ -78,58 +80,85 @@ def test_required_tables_follow_the_rule() -> None:
         assert "ted_notices" in tables_needed
 
 
-# --- evidence SQL is built from the rule ------------------------------------
-
-from dagster_v3.defs.company_signals.procurement import (  # noqa: E402
-    procurement_evidence_insert_sql,
-)
+# --- the country views the rules point at -----------------------------------
 
 
-def test_sweden_sql_reads_both_sources() -> None:
-    sql = procurement_evidence_insert_sql("stage", COUNTRY_PROCUREMENT_RULES["SE"])
+def _view_migration() -> str:
+    root = pathlib.Path(__file__).resolve().parents[3]
+    return (
+        root
+        / "clickhouse"
+        / "migrations"
+        / "000182_corpscout_contract_value_grain.up.sql"
+    ).read_text()
 
-    assert "sweden_uhm_procurement_base AS" in sql
+
+def test_every_country_rule_has_a_view_in_the_migration() -> None:
+    """A rule that names a view nothing creates would fail only at run time."""
+    sql = _view_migration()
+
+    for rule in COUNTRY_PROCUREMENT_RULES.values():
+        assert f"CREATE VIEW corpscout.{rule.contracts_view} AS" in sql
+
+
+def test_sweden_view_reads_both_its_sources() -> None:
+    sql = _view_migration().split("CREATE VIEW corpscout.se_government_contracts")[1]
+    sql = sql.split("CREATE VIEW")[0]
+
     assert "corpscout.se_uhm_procurement_awards" in sql
-    assert "SELECT * FROM sweden_uhm_procurement_base" in sql
+    assert "corpscout.ted_notice_winners" in sql
     assert "corpscout.se_companies" in sql
-    assert "length(w.winner_national_id) = 10" in sql
-    assert "IN ('SE', 'SWE')" in sql
 
 
-def test_norway_sql_is_ted_only_and_uses_its_own_register() -> None:
-    """No national register means no UHM CTE at all, not an empty one."""
-    sql = procurement_evidence_insert_sql("stage", COUNTRY_PROCUREMENT_RULES["NO"])
+def test_norway_view_is_ted_only_and_uses_its_own_register() -> None:
+    sql = _view_migration().split("CREATE VIEW corpscout.no_government_contracts")[1]
+    sql = sql.split("CREATE VIEW")[0]
 
-    assert "sweden_uhm_procurement_base" not in sql
-    assert "se_uhm_procurement_awards" not in sql
-    assert "fi_hilma" not in sql
-    assert "se_companies" not in sql
-    # Norway's register keys on org_number and its ids are 9 digits.
     assert "corpscout.no_companies" in sql
     assert "c.org_number = w.winner_national_id" in sql
-    assert "length(w.winner_national_id) = 9" in sql
-    assert "IN ('NO', 'NOR')" in sql
-    assert "'NO' AS country_code" in sql
+    # Norway must not read a source it does not have.
+    assert "se_uhm_procurement_awards" not in sql
+    assert "fi_hilma" not in sql
 
 
-def test_finland_sql_unions_hilma_and_ted() -> None:
-    """The builder is shape-agnostic: two pair-shaped sources, one union."""
-    sql = procurement_evidence_insert_sql("stage", COUNTRY_PROCUREMENT_RULES["FI"])
+def test_finland_view_merges_hilma_and_ted() -> None:
+    sql = _view_migration().split("CREATE VIEW corpscout.fi_government_contracts")[1]
+    sql = sql.split("CREATE VIEW")[0]
 
-    assert "finland_hilma_procurement_base AS" in sql
-    assert "ted_procurement_base AS" in sql
     assert "corpscout.fi_hilma_notice_winners" in sql
-    assert "corpscout.fi_hilma_notices" in sql
-    assert sql.count("SELECT * FROM ") >= 2
-    # Finland keys on business_id in both sources.
-    assert "c.business_id = w.winner_business_id" in sql
+    assert "corpscout.ted_notice_winners" in sql
+    assert sql.count("UNION ALL") == 1
 
 
-def test_cross_source_dedup_is_slug_agnostic() -> None:
-    """Dedup must catch any two sources agreeing, not just UHM and TED."""
-    for code in ("SE", "FI"):
-        sql = procurement_evidence_insert_sql("stage", COUNTRY_PROCUREMENT_RULES[code])
-        assert "uniqExact(source_slug) AS source_count" in sql
-        assert "HAVING source_count > 1" in sql
-        assert "WHERE row_count = source_count" in sql
-        assert "uhm_rows" not in sql
+def test_cross_country_view_needs_no_edit_to_add_a_country() -> None:
+    """The point of the naming convention.
+
+    merge() resolves the pattern at query time, so a new country is one
+    CREATE VIEW and nothing downstream changes. A UNION ALL would need editing,
+    and a migration, for every country added.
+    """
+    sql = _view_migration()
+
+    assert "merge(corpscout, '^[a-z]{2}_government_contracts$')" in sql
+    for rule in COUNTRY_PROCUREMENT_RULES.values():
+        assert rule.contracts_view.endswith("_government_contracts")
+        assert len(rule.contracts_view.split("_")[0]) == 2
+
+
+def test_only_winner_attributable_value_is_summed() -> None:
+    """Hilma's value is notice-level and repeats across a notice's winners.
+
+    Summing it per company multiplies one procurement by its winner count, so
+    the two must stay in separate columns and only one may be summed.
+    """
+    sql = _view_migration()
+    summary = sql.split("CREATE VIEW corpscout.company_government_contract_summary")[1]
+
+    assert "sum(value_amount_usd)" in summary
+    assert "notice_value_amount_usd" not in summary
+
+    hilma = sql.split("CREATE VIEW corpscout.fi_government_contracts")[1]
+    hilma = hilma.split("UNION ALL")[0]
+    assert "AS notice_value_amount_original" in hilma
+    # Nothing from Hilma is attributable to a single winner.
+    assert "CAST(NULL AS Nullable(Decimal(38, 2))) AS value_amount_original" in hilma
