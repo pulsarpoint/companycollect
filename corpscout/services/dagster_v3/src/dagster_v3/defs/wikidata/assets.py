@@ -1002,11 +1002,10 @@ def _validate_wikidata_clickhouse_snapshot(
     row_counts: dict[str, int] = {}
     with clickhouse.get_connection() as client:
         for table_name in tables.WIKIDATA_TABLES:
-            result = client.query(
+            rows = client.execute(
                 f"select source_run_id, count() from {RESOLVED_DATABASE}.{table_name} "
                 "group by source_run_id order by source_run_id limit 2"
             )
-            rows = result.result_rows
             row_counts[table_name] = sum(int(row[1]) for row in rows)
             if not rows and table_name in WIKIDATA_EMPTY_ALLOWED_TABLES:
                 continue
@@ -1016,14 +1015,14 @@ def _validate_wikidata_clickhouse_snapshot(
                 )
             source_run_ids.add(str(rows[0][0]))
 
-        missing_exchange_ids = client.query(
+        missing_exchange_ids = client.execute(
             f"select distinct listings.exchange_wikidata_id "
             f"from {RESOLVED_DATABASE}.{tables.WIKIDATA_COMPANY_LISTINGS_TABLE} as listings "
             f"left join {RESOLVED_DATABASE}.{tables.WIKIDATA_EXCHANGES_TABLE} as exchanges "
             "on exchanges.exchange_wikidata_id = listings.exchange_wikidata_id "
             "where exchanges.exchange_wikidata_id is null "
             "order by listings.exchange_wikidata_id limit 10"
-        ).result_rows
+        )
     if missing_exchange_ids:
         values = ", ".join(str(row[0]) for row in missing_exchange_ids)
         raise ValueError(f"Wikidata listings reference missing exchanges: {values}")

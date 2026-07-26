@@ -104,18 +104,14 @@ def test_wikidata_tables_use_distinct_duckdb_files(monkeypatch, tmp_path: Path) 
 def test_wikidata_completion_verifies_one_source_run(monkeypatch) -> None:
     from dagster_v3.defs.wikidata import assets
 
-    class QueryResult:
-        def __init__(self, rows: list[tuple[Any, ...]]) -> None:
-            self.result_rows = rows
-
     class Client:
-        def query(self, query: str) -> QueryResult:
+        def execute(self, query: str) -> list[tuple[Any, ...]]:
             if "listings.exchange_wikidata_id" in query:
-                return QueryResult([])
+                return []
             table_name = query.split("from corpscout.", 1)[1].split(" ", 1)[0]
             if table_name in assets.WIKIDATA_EMPTY_ALLOWED_TABLES:
-                return QueryResult([])
-            return QueryResult([("run-1", 3)])
+                return []
+            return [("run-1", 3)]
 
     class ConnectionContext:
         def __enter__(self) -> Client:
@@ -142,21 +138,17 @@ def test_wikidata_completion_verifies_one_source_run(monkeypatch) -> None:
 def test_wikidata_completion_rejects_mixed_source_runs(monkeypatch) -> None:
     from dagster_v3.defs.wikidata import assets
 
-    class QueryResult:
-        def __init__(self, rows: list[tuple[Any, ...]]) -> None:
-            self.result_rows = rows
-
     class Client:
-        def query(self, query: str) -> QueryResult:
+        def execute(self, query: str) -> list[tuple[Any, ...]]:
             if "listings.exchange_wikidata_id" in query:
-                return QueryResult([])
+                return []
             table_name = query.split("from corpscout.", 1)[1].split(" ", 1)[0]
             source_run_id = (
                 "run-2"
                 if table_name == tables.WIKIDATA_COMPANY_WEBSITES_TABLE
                 else "run-1"
             )
-            return QueryResult([(source_run_id, 3)])
+            return [(source_run_id, 3)]
 
     class ConnectionContext:
         def __enter__(self) -> Client:
