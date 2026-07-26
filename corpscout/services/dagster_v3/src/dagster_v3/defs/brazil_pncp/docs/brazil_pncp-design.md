@@ -129,9 +129,13 @@ treat 429 as expected, not exceptional.
   the endpoint already returns; there is no separate winners table to join, so
   this is shaped like Sweden's UHM rather than TED/Hilma.
 - **Key SQL ideas**:
-  - `niFornecedor` normalised to digits only, then split: keep the full 14-digit
-    value as `supplier_establishment_cnpj`, and `substring(...,1,8)` as
-    `company_id`.
+  - `niFornecedor` normalised to digits only and joined to
+    `br_establishments.cnpj`. `supplier_cnpj` keeps the 14-digit establishment;
+    `company_id` is the **joined** `cnpj_basico`, not a substring of the input.
+    The difference is validation: a substring proves only that some company owns
+    that prefix, so a CNPJ with a valid base and an establishment we do not have
+    would be silently attributed to the parent. Taking company_id out of the
+    join means it is populated only when the establishment genuinely exists.
   - `tipoPessoa` retained; matching is restricted to `'PJ'` (§5).
   - `numeroControlePNCP`, `anoContrato`, `sequencialContrato` and the buyer CNPJ
     give the source document URLs (§5).
@@ -288,6 +292,51 @@ than a type default indistinguishable from a real `0`.
 `directive_governed` has no meaning outside the EU procurement directives:
 emit `''` (unknown), not `'no'`. Claiming "below EU threshold" for a Brazilian
 contract would be nonsense.
+
+## 9b. UI: establishments are shown, not hidden
+
+Storing the establishment is pointless if every surface collapses it. Two
+decisions, and the first does **not** depend on PNCP at all.
+
+### The country company list — independent of this source
+
+`/countries/br/companies` lists companies. Brazil's register already has the
+structure to show branches: `br_establishments` is 71.9M rows keyed on the
+14-digit CNPJ, loaded today, with its own address and status per branch.
+
+- **Default: grouped.** One group per company (`cnpj_basico`), its
+  establishments nested beneath.
+- **A toggle flattens it**: one row per establishment, and in that mode a column
+  carries the parent **company name + `cnpj_basico`**, so a row is never
+  orphaned from its company.
+- **Ordering keeps a company's establishments contiguous** in both modes. Flat
+  never means scattered.
+
+Note this changes a component shared by all 10 countries, and only Brazil
+currently has a branch register of this shape. It should degrade to today's
+behaviour where a country has no establishment table — the grouping is a
+capability a country either has or does not, like `features: ["financials"]`.
+
+**Sequencing**: this needs no PNCP data and could ship before any of it. Worth
+doing separately rather than bundling into the procurement work.
+
+### A company's government contracts — needs this source
+
+On the company detail page, group contracts by the winning establishment:
+
+```
+RLIMP SERVICOS LTDA  (57423612)
+  matriz  57423612000104     12 contracts
+  filial  57423612000201      3 contracts
+                             15 total for the company
+```
+
+This is the question the 14-digit key uniquely answers — *which of our branches
+sells to government* — and it is invisible if contracts are only ever attributed
+to the parent. It is also the reason `supplier_cnpj` is stored rather than
+derived: a rollup can be computed from the establishment, but the establishment
+cannot be recovered from a rollup.
+
 
 ## 10. Verification
 
