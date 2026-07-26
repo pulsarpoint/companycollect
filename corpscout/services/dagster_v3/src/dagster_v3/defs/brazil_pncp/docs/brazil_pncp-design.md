@@ -158,6 +158,22 @@ Verified live 2026-07-26: `niFornecedor` → `br_establishments.cnpj` →
 `br_companies.cnpj_basico` resolves, with the supplier name matching the
 register exactly (`RLIMP SERVICOS LTDA`).
 
+Both identifiers are unique — of different things. Measured in our own data:
+
+```
+br_companies       68,629,147 rows = 68,629,147 distinct cnpj_basico
+br_establishments  71,874,448 rows = 71,874,448 distinct 14-digit cnpj
+                                     across 68,629,147 companies
+```
+
+97.96% of companies (67,227,845) have exactly one establishment, so for almost
+every entity the distinction is invisible. It is the remaining 2.04% —
+1,401,302 companies — where it decides correctness, and those are the large
+organisations most likely to win public contracts. One company has 9,999
+establishments, the ceiling of the 4-digit `cnpj_ordem` field. Keyed on 14
+digits, such an organisation would appear as thousands of separate companies and
+its government business would never aggregate.
+
 **Decision**: `company_id` is the 8-digit base, so contracts roll up to the
 company, matching every other country and `br_companies`. The 14-digit value is
 kept as its own column — dropping it would lose which branch actually won, and
