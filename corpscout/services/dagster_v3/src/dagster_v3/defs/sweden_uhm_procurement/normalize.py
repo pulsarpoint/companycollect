@@ -110,6 +110,17 @@ def build_award_candidates(
                     ''
                 ) as cpv_code,
                 coalesce(trim("Annonsdatabas"), '') as advertising_database,
+                -- Whether the EU procurement directives govern this contract,
+                -- which is what decides if it is also published in TED. The
+                -- negative value contains the positive one as a substring
+                -- ("Inte direktivstyrd"), so this matches exactly rather than
+                -- with a LIKE, and unknown stays unknown rather than becoming
+                -- a false "no".
+                case lower(trim(coalesce("Direktivstyrd", '')))
+                    when 'direktivstyrd' then 'yes'
+                    when 'inte direktivstyrd' then 'no'
+                    else ''
+                end as directive_governed,
                 coalesce(source_url, '') as source_url,
                 source_object_key,
                 source_retrieved_at,
@@ -141,6 +152,7 @@ def build_award_candidates(
             supplier_id_normalized,
             cpv_code,
             advertising_database,
+            directive_governed,
             source_url,
             source_object_key,
             source_retrieved_at,

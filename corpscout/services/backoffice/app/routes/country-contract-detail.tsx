@@ -6,6 +6,7 @@ import {
   type ContractWinnerRow,
   type SourceRecord,
 } from "~/lib/contracts.server";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -112,6 +113,10 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
     }
   }
 
+  const noAmount = detail.rows.every(
+    (r) => r.amount_original == null && r.notice_amount_original == null,
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
@@ -195,6 +200,25 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
           </div>
         </CardContent>
       </Card>
+
+      {noAmount ? (
+        <Alert>
+          <AlertTitle>
+            {first.directive_governed === "no"
+              ? "No contract value is published for this contract"
+              : first.directive_governed === "yes"
+                ? "The award amount is published in TED, which is not loaded for this country"
+                : "No contract value is available for this contract"}
+          </AlertTitle>
+          <AlertDescription>
+            {first.directive_governed === "no"
+              ? "It falls below the EU procurement thresholds, so it is published only in the national register — and that register publishes no monetary value in any of its 44 fields. No amount exists to load."
+              : first.directive_governed === "yes"
+                ? "EU procurement directives govern it, so the same contract is also published in TED with a per-winner awarded amount. TED has not been backfilled for this country, so the figure is missing here rather than missing at source."
+                : "The register does not say whether EU procurement thresholds apply, so it is unknown whether an amount exists in TED."}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <Card>
         <CardHeader>

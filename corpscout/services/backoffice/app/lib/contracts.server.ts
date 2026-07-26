@@ -26,6 +26,10 @@ export interface CountryContractRow {
    * in both a national register and TED. */
   amount_usd: number | null;
   notice_amount_usd: number | null;
+  /** "yes" when the EU procurement directives govern the contract, which means
+   * it is also published in TED and TED carries an award amount. "no" means no
+   * value exists in any register. Empty means the source does not say. */
+  directive_governed: string;
 }
 
 /** One (source, winner) row of a single contract. */
@@ -48,6 +52,7 @@ export interface ContractWinnerRow {
   notice_amount_original: number | null;
   notice_amount_usd: number | null;
   notice_currency: string;
+  directive_governed: string;
 }
 
 /** A raw row from a source table, rendered generically -- the columns differ
@@ -79,7 +84,8 @@ export async function getCountryContracts(
        sources,
        winner_count,
        amount_usd,
-       notice_amount_usd
+       notice_amount_usd,
+       directive_governed
      FROM (
        SELECT
          contract_ref,
@@ -89,7 +95,11 @@ export async function getCountryContracts(
          arraySort(groupUniqArrayArray([source])) AS sources,
          max(source_winners) AS winner_count,
          max(source_amount_usd) AS amount_usd,
-         max(source_notice_usd) AS notice_amount_usd
+         max(source_notice_usd) AS notice_amount_usd,
+         -- A yes from any source settles it: the contract is above the
+         -- threshold, whatever the other sources leave unsaid.
+         if(has(groupArray(source_directive), 'yes'), 'yes',
+            if(has(groupArray(source_directive), 'no'), 'no', '')) AS directive_governed
        FROM (
          SELECT
            ${REF} AS contract_ref,
@@ -100,7 +110,8 @@ export async function getCountryContracts(
            count() AS source_rows,
            uniqExact(if(company_id != '', company_id, winner_name)) AS source_winners,
            sum(value_amount_usd) AS source_amount_usd,
-           max(notice_value_amount_usd) AS source_notice_usd
+           max(notice_value_amount_usd) AS source_notice_usd,
+           anyIf(directive_governed, directive_governed != '') AS source_directive
          FROM ${country.code}_government_contracts
          GROUP BY contract_ref, source
        )
@@ -149,7 +160,8 @@ export async function getContractDetail(
        value_currency AS currency,
        toFloat64(notice_value_amount_original) AS notice_amount_original,
        toFloat64(notice_value_amount_usd) AS notice_amount_usd,
-       notice_value_currency AS notice_currency
+       notice_value_currency AS notice_currency,
+       directive_governed
      FROM ${country.code}_government_contracts
      WHERE ${REF} = {ref:String}
      ORDER BY source_slug, source_lot_id, source_winner_ordinal

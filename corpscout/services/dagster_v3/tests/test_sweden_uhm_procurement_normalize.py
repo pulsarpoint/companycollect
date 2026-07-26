@@ -27,6 +27,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
             source_retrieved_at timestamp,
             "Anbudsområdes-ID" varchar,
             "Annonsdatabas" varchar,
+            "Direktivstyrd" varchar,
             "Typ av avtal" varchar,
             "Huvudsaklig CPV-kod" varchar,
             "Publiceringsdatum" varchar,
@@ -43,7 +44,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
     connection.executemany(
         f"""
         insert into {tables.DUCKDB_SCHEMA}.{tables.RAW_TABLE} values
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -54,6 +55,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "LOT-1",
                 "Mercell",
+                "Direktivstyrd",
                 "Kontrakt",
                 "92311000 Konstverk",
                 "2024-02-03",
@@ -73,6 +75,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "LOT-2",
                 "e-Avrop",
+                "Inte direktivstyrd ",
                 "Ramavtal",
                 "72000000 IT-tjänster",
                 "bad-date",
@@ -92,6 +95,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "",
                 "Kommers",
+                "",
                 "Kontrakt",
                 "",
                 "2024-04-05",
@@ -111,6 +115,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "",
                 "Kommers",
+                "",
                 "Kontrakt",
                 "",
                 "2024-05-06",
@@ -130,6 +135,7 @@ def _raw_table(connection: duckdb.DuckDBPyConnection) -> None:
                 datetime(2026, 7, 23, tzinfo=UTC),
                 "",
                 "Kommers",
+                "Inte direktivstyrd",
                 "Kontrakt",
                 "",
                 "2024-05-07",
@@ -173,6 +179,30 @@ def test_award_candidates_carry_the_download_url_each_row_came_from() -> None:
         f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
     ).fetchall()
     assert urls == [(_RAW_SOURCE_URL,)]
+
+
+def test_directive_flag_separates_no_value_from_value_elsewhere() -> None:
+    """Whether the EU directives govern a contract decides if TED also carries
+    it -- and TED publishes the award amount UHM never does. Unknown must stay
+    unknown: absence of the flag is not evidence of being below the threshold.
+    """
+    connection = duckdb.connect(":memory:")
+    _raw_table(connection)
+
+    build_award_candidates(
+        connection=connection,
+        source_run_id="normalize-run",
+        resolved_at=datetime(2026, 7, 24, tzinfo=UTC),
+    )
+
+    rows = connection.execute(
+        f"select source_line_number, directive_governed "
+        f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} "
+        f"order by source_line_number"
+    ).fetchall()
+    # "Inte direktivstyrd" contains "direktivstyrd", so a LIKE would call the
+    # negative rows positive. The trailing space is what the real file writes.
+    assert [row[1] for row in rows] == ["yes", "no", "", "", "no"]
 
 
 def test_build_award_candidates_types_and_classifies_rows() -> None:
