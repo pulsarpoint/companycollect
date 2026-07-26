@@ -167,8 +167,15 @@ treat 429 as expected, not exceptional.
 - **Table + grain**: `br_pncp_contracts`, one row per contract per supplier.
 - **Engine**: ReplacingMergeTree(`dataAtualizacaoGlobal`) — amendments replace
   earlier versions of the same contract.
-- **`ORDER BY`**: `(company_id, source_notice_id, sequencial_contrato)`.
-  Non-nullable, per the `allow_nullable_key` constraint.
+- **`ORDER BY`**: `(company_id, numero_controle_pncp, supplier_cnpj)` — all
+  non-nullable, per the `allow_nullable_key` constraint.
+- **`PARTITION BY toYYYYMM(ifNull(data_publicacao_pncp, toDate('1970-01-01')))`**.
+  The ingest asset is monthly-partitioned, so re-running a month must replace it
+  rather than insert a second copy; without a partition key there is nothing to
+  replace and duplicates sit until a merge happens to collapse them. The
+  `ifNull` is forced by `allow_nullable_key` being off — a row with no
+  publication date lands in an obviously wrong 197001 partition rather than
+  being hidden inside a real month.
 
 ### The identity decision (the important one)
 
@@ -380,6 +387,22 @@ shape actually is.
 
 What is *not* deferred is the storage: `supplier_cnpj` is kept regardless, so
 whenever that list is designed the data is already there to group by.
+
+### The winner block on a contract page
+
+Everything below comes from stored columns plus the `br_companies` join — no
+extra storage, and no computing what the register already publishes:
+
+```
+ESTADO DE SAO PAULO
+  Company        60746948           company_id (cnpj_basico)
+  Head office    60746948000112     br_companies.headquarters_cnpj
+  Won by branch  60746948000201     supplier_cnpj, as PNCP reported it
+```
+
+Do **not** derive the head office CNPJ by appending `0001` to the base: the last
+two digits are check digits recomputed per establishment, so it is not string
+concatenation, and `br_companies` already stores the value.
 
 ### A company's government contracts — needs this source
 

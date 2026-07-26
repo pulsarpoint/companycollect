@@ -6,7 +6,7 @@ from dagster_v3.defs.brazil_pncp import tables
 def _migration_sql() -> str:
     root = Path(__file__).resolve().parents[3]
     return (
-        root / "clickhouse" / "migrations" / "000190_corpscout_br_pncp_contracts.up.sql"
+        root / "clickhouse" / "migrations" / "000192_corpscout_br_pncp_partition_by_month.up.sql"
     ).read_text()
 
 
@@ -27,6 +27,12 @@ def test_amendments_replace_rather_than_accumulate() -> None:
     assert "ENGINE = ReplacingMergeTree(data_atualizacao_global)" in sql
     # ORDER BY cannot contain Nullable columns; these three are all String.
     assert "ORDER BY (company_id, numero_controle_pncp, supplier_cnpj)" in sql
+    # A monthly asset must be able to REPLACE its month rather than append a
+    # second copy of it. allow_nullable_key is off, hence the ifNull.
+    assert (
+        "PARTITION BY toYYYYMM(ifNull(data_publicacao_pncp, toDate('1970-01-01')))"
+        in sql
+    )
 
 
 def test_all_five_value_fields_are_stored() -> None:
