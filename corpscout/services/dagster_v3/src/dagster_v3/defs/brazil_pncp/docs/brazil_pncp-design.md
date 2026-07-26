@@ -6,23 +6,18 @@
 
 ## 0. Open questions that gate the build
 
-Everything else here is measured. These are not, and the first one is load-bearing.
+Three of the original four were settled by probe on 2026-07-26 (§2). One remains.
 
-1. **Does deep pagination work?** A 170k-record month is ~340 pages at 500 per
-   page. The probe that would have confirmed page 100 and page 339 was refused
-   with HTTP 429 before it ran, so *deep pagination is unverified*. If the API
-   caps pagination depth (many do, around 10k records), monthly partitions are
-   impossible and this becomes **daily** partitions — ~1,700 partitions for full
-   history instead of 55. Test this first, with backoff, before anything else.
-2. **Maximum `tamanhoPagina`.** 500 is confirmed working. 1000 was refused with
-   429 before it could be judged, so it is unknown whether 1000 is accepted.
-   Worth one probe: it halves the request count.
-3. **Are `dataInicial`/`dataFinal` inclusive at both ends?** Assumed yes.
-   Off-by-one here silently drops or double-counts a day per partition.
-4. **What distinguishes `valorInicial` / `valorGlobal` / `valorAcumulado`?** One
+1. **What distinguishes `valorInicial` / `valorGlobal` / `valorAcumulado`?** One
    sampled record had `valorInicial == valorGlobal == 94390.8`, which
-   distinguishes nothing. Section 7 states the intended choice; validate it
-   against records where they differ before committing.
+   distinguishes nothing. §7 states the intended choice; validate it against
+   records where they differ before committing. This does not gate the ingest
+   shape — only which column feeds `value_amount_original`.
+
+**Resolved:** deep pagination works to the last page (page 341 of 340 returns a
+clean `Página 341 inexistente`, not silent truncation), so monthly partitions
+stand. Max `tamanhoPagina` is 500 — 1000 is rejected. Date bounds are inclusive
+at both ends, verified arithmetically.
 
 ## 1. Source overview
 
@@ -83,9 +78,36 @@ Everything else here is measured. These are not, and the first one is load-beari
   for a trailing window and upserts. ReplacingMergeTree on
   `dataAtualizacaoGlobal` collapses the versions.
 - **Backfill policy**: `BackfillPolicy.multi_run(max_partitions_per_run=1)` with
-  the module pool, per guidelines. ~55 monthly partitions, ~340 requests each.
-  **Conditional on §0.1** — if deep pagination is capped, this becomes daily
-  partitions and the backfill policy matters much more.
+  the module pool, per guidelines. ~55 monthly partitions, ~340 requests each,
+  ~6,400 for full history.
+
+### Pagination and date bounds — measured 2026-07-26
+
+```
+tamanhoPagina=1000            HTTP 400  "Tamanho de página inválido"
+tamanhoPagina=500             accepted            <- the maximum
+2026-06, page 1     of 340    500 records
+2026-06, page 100   of 340    500 records         <- no depth cap
+2026-06, page 340   of 340     74 records         <- exact remainder
+2026-06, page 341   of 340    HTTP 400 "Página 341 inexistente."
+```
+
+Deep pagination works to the end, and the arithmetic is self-consistent:
+169,574 records over 340 pages leaves 74 on the last, which is what came back.
+Past the end the API says so explicitly rather than returning an empty page, so
+a pager can trust `totalPaginas` and still has an unambiguous stop condition.
+
+Date bounds are **inclusive at both ends**, verified by arithmetic rather than
+assumption:
+
+```
+2026-06-01 alone      5,936
+2026-06-02 alone      8,888
+2026-06-01..06-02    14,824  = 5,936 + 8,888   exactly
+```
+
+So a monthly partition is [first day, last day] with no overlap adjustment, and
+consecutive partitions neither drop nor double-count a day.
 
 ### Rate limiting
 
