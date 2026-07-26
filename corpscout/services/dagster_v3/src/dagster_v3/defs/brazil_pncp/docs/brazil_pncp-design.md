@@ -270,11 +270,41 @@ only. Brazilian company contacts already arrive via `br_company_contacts`
 - **Native currency**: BRL. The payload has no currency field — values are BRL
   by definition of the register. Store `'BRL'` explicitly rather than leaving it
   empty, so the view's `value_currency` is truthful.
-- **Which value is *the* contract value**: intended choice is `valorGlobal`
-  (total contract value) for `value_amount_original`, with `valorInicial` kept
-  as its own column. **Gated on §0.4** — validate against records where they
-  differ. `valorAcumulado`, `valorParcela` and `numeroParcelas` are kept as
-  source detail.
+- **All five value fields are stored**, not one. `br_pncp_contracts` keeps
+  `valor_inicial`, `valor_global`, `valor_acumulado`, `valor_parcela` and
+  `numero_parcelas` as their own columns. Choosing one at ingest and dropping
+  the rest is the lossy move being removed everywhere else in this design — the
+  source table keeps what the register publishes, and the view selects.
+
+  The API documents none of them: `RecuperarContratoDTO` types all five and
+  gives no description. Their meaning is the Brazilian public-contracting
+  convention, not a documented contract:
+
+  | field | meaning by convention |
+  |---|---|
+  | `valorInicial` | value as originally signed |
+  | `valorGlobal` | total over the full term, usually `valorParcela × numeroParcelas` |
+  | `valorAcumulado` | running total after amendments (*aditivos*) and adjustments (*reajustes*) |
+
+  Two falsifiable predictions to check against a page of real records, since a
+  sampled contract had `valorInicial == valorGlobal` and so confirmed nothing:
+  `valorParcela × numeroParcelas == valorGlobal` for instalment contracts, and
+  `valorAcumulado >= valorInicial` wherever `numeroRetificacao > 0`. If the
+  second holds it also demonstrates that the amendment-refresh job in §2 is
+  necessary in fact, not just in theory.
+
+- **The view names the column it used.** `value_amount_original` is
+  `valorGlobal`, and the view carries `value_source_field = 'valorGlobal'`
+  alongside it, so a displayed figure states its own origin. A value with no
+  stated source cannot be checked against the register — the same reason
+  `source_url` exists, applied to fields instead of documents.
+
+  **This generalises to the countries already built**, and is worth adding
+  there: TED's figure is `awarded_amount`, Hilma's is `procurement_value` (and
+  is notice-level), Sweden's is absent entirely. Today the UI can say only
+  "Value" and, for Hilma, "whole notice". With `value_source_field` it can name
+  the register's own field, which is what someone verifying a number needs.
+
 - Carries `value_amount_original` + `value_amount_usd` +
   `fx_rate_to_usd/_date/_source`, keyed on `dataAssinatura` (falling back to
   `dataPublicacaoPncp`), converted in a separate `apply_brazil_pncp_usd_conversion`
