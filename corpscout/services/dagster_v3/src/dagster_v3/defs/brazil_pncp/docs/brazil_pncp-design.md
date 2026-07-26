@@ -295,30 +295,26 @@ contract would be nonsense.
 
 ## 9b. UI: establishments are shown, not hidden
 
-Storing the establishment is pointless if every surface collapses it. Two
-decisions, and the first does **not** depend on PNCP at all.
+Storing the establishment is pointless if every surface collapses it — but only
+one surface is in scope here.
 
-### The country company list — independent of this source
+### The country company list — deliberately not designed yet
 
-`/countries/br/companies` lists companies. Brazil's register already has the
-structure to show branches: `br_establishments` is 71.9M rows keyed on the
-14-digit CNPJ, loaded today, with its own address and status per branch.
+Brazil's register could support a grouped company list: `br_establishments` is
+71.9M rows keyed on the 14-digit CNPJ, loaded today, with its own address and
+status per branch. Grouping by company with branches nested, a toggle to flatten
+that keeps a parent-company column — all buildable now, without any PNCP data.
 
-- **Default: grouped.** One group per company (`cnpj_basico`), its
-  establishments nested beneath.
-- **A toggle flattens it**: one row per establishment, and in that mode a column
-  carries the parent **company name + `cnpj_basico`**, so a row is never
-  orphaned from its company.
-- **Ordering keeps a company's establishments contiguous** in both modes. Flat
-  never means scattered.
+**It is deliberately out of scope.** `/countries/:country/companies` is shared by
+all ten countries, and Brazil is currently the only one with a branch register of
+this shape. Designing that surface around a single country's structure is how it
+ends up fitting none of them — the same reason the unified companies table is
+being left alone until more countries have proper per-country tables to
+generalise from. Revisit when a second and third country show what the shared
+shape actually is.
 
-Note this changes a component shared by all 10 countries, and only Brazil
-currently has a branch register of this shape. It should degrade to today's
-behaviour where a country has no establishment table — the grouping is a
-capability a country either has or does not, like `features: ["financials"]`.
-
-**Sequencing**: this needs no PNCP data and could ship before any of it. Worth
-doing separately rather than bundling into the procurement work.
+What is *not* deferred is the storage: `supplier_cnpj` is kept regardless, so
+whenever that list is designed the data is already there to group by.
 
 ### A company's government contracts — needs this source
 
