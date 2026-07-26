@@ -262,9 +262,17 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
                     ),
                     rows[0].currency,
                   )}
+                  {/* Name the register field, so the figure can be checked
+                      against the source rather than taken on trust. */}
+                  {rows[0].value_source_field !== ""
+                    ? ` (${rows[0].value_source_field})`
+                    : ""}
                 </span>
                 <span>
                   Whole notice: {money(rows[0].notice_amount_original, rows[0].notice_currency)}
+                  {rows[0].notice_value_source_field !== ""
+                    ? ` (${rows[0].notice_value_source_field})`
+                    : ""}
                 </span>
                 {rows[0].cpv_code ? <span>CPV {rows[0].cpv_code}</span> : null}
                 {rows[0].agreement_type ? <span>{rows[0].agreement_type}</span> : null}

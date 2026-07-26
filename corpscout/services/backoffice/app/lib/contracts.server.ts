@@ -70,6 +70,10 @@ export interface ContractWinnerRow {
   notice_amount_usd: number | null;
   notice_currency: string;
   directive_governed: string;
+  /** The register field each figure was read from, so a displayed number can
+   * be checked against the source. Empty exactly when the figure is null. */
+  value_source_field: string;
+  notice_value_source_field: string;
 }
 
 /** A raw row from a source table, rendered generically -- the columns differ
@@ -178,7 +182,9 @@ export async function getContractDetail(
        toFloat64(notice_value_amount_original) AS notice_amount_original,
        toFloat64(notice_value_amount_usd) AS notice_amount_usd,
        notice_value_currency AS notice_currency,
-       directive_governed
+       directive_governed,
+       value_source_field,
+       notice_value_source_field
      FROM ${country.code}_government_contracts
      WHERE ${REF} = {ref:String}
      ORDER BY source_slug, source_lot_id, source_winner_ordinal

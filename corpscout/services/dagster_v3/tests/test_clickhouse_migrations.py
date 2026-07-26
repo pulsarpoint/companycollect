@@ -209,6 +209,7 @@ EXPECTED_MIGRATIONS = (
     "000188_corpscout_per_country_contract_summaries",
     "000189_corpscout_restore_contract_summary_union",
     "000190_corpscout_br_pncp_contracts",
+    "000191_corpscout_contract_value_provenance",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
