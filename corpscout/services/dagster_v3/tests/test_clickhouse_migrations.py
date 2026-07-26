@@ -205,6 +205,9 @@ EXPECTED_MIGRATIONS = (
     "000184_corpscout_contract_identity",
     "000185_corpscout_finland_contract_link",
     "000186_corpscout_contract_directive_flag",
+    "000187_corpscout_drop_cross_country_contracts_view",
+    "000188_corpscout_per_country_contract_summaries",
+    "000189_corpscout_restore_contract_summary_union",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2490,7 +2493,6 @@ def test_government_contract_views_replace_the_materialized_tables() -> None:
         "fi_government_contracts",
         "no_government_contracts",
         "company_government_contracts",
-        "company_government_contract_summary",
     ):
         assert f"CREATE VIEW corpscout.{view} AS" in sql
         assert f"DROP VIEW IF EXISTS corpscout.{view}" in sql

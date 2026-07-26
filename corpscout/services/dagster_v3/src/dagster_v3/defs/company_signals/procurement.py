@@ -2,8 +2,13 @@
 
 The contracts themselves are no longer materialized. Each country has a view --
 ``se_government_contracts``, ``fi_government_contracts`` -- merging its own
-sources, and ``company_government_contracts`` merges those across countries. The
-migration owns all of it, so nothing here copies rows and nothing goes stale.
+sources, plus a summary view over it. The migration owns all of it, so nothing
+here copies rows and nothing goes stale.
+
+There is deliberately no cross-country contracts view. Countries publish
+genuinely different things, and one object spanning them is either unmanageably
+wide or lossy -- the lossy version is what the old materialized evidence table
+was, and it is how contract value went missing for every country at once.
 
 What remains is coverage: one row per country stating what its sources do and do
 not include. That cannot be derived, because the useful part is prose ("Doffin
