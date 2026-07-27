@@ -1,14 +1,22 @@
-import { Form, Link } from "react-router";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Link } from "react-router";
 import type { Route } from "./+types/procurement-source";
 import {
   countRows,
   getCoverage,
+  getFilterOptions,
   getRegisterByPath,
   listSourceRecords,
+  matchCompanies,
+  type SourceQuery,
   type SourceRow,
 } from "~/lib/procurements.server";
 import { sourceSlugToPath } from "~/lib/procurement-paths";
 import { formatMoneyField } from "~/lib/money";
+import { visibleColumns } from "~/lib/procurement-columns";
+import { DataTable } from "~/components/data-table/data-table";
+import { DataTablePagination } from "~/components/data-table/pagination";
+import { ProcurementFilterSheet } from "~/components/procurements/filter-sheet";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -18,41 +26,68 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
-import { Input } from "~/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
 
 const nf = new Intl.NumberFormat("en-US");
-const PAGE_SIZE = 50;
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const register = await getRegisterByPath(params.source);
   if (!register) throw new Response("Source not found", { status: 404 });
 
   const url = new URL(request.url);
-  const table = url.searchParams.get("table") ?? register.notice_table;
-  const page = Math.max(Number(url.searchParams.get("page") ?? "1"), 1);
+  const q = (name: string) =>
+    url.searchParams.get("clear") === "1" ? "" : (url.searchParams.get(name) ?? "");
+  const num = (name: string) => {
+    const parsed = Number.parseFloat(q(name));
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+  const table = url.searchParams.get("table") ?? undefined;
+  const page = Math.max(1, Number.parseInt(q("page") || "1", 10) || 1);
+  const pageSize = Math.min(200, Math.max(10, Number.parseInt(q("pageSize") || "50", 10) || 50));
 
-  const [records, coverage, counts] = await Promise.all([
-    listSourceRecords(register, {
-      table,
-      country: url.searchParams.get("country") ?? undefined,
-      from: url.searchParams.get("from") ?? undefined,
-      to: url.searchParams.get("to") ?? undefined,
-      limit: PAGE_SIZE,
-      offset: (page - 1) * PAGE_SIZE,
-    }),
+  const query: SourceQuery = {
+    table,
+    country: q("country"),
+    from: q("from"),
+    to: q("to"),
+    buyer: q("buyer"),
+    winner: q("winner"),
+    noticeType: q("noticeType"),
+    awardResult: q("awardResult"),
+    valueMin: num("valueMin"),
+    valueMax: num("valueMax"),
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  };
+
+  const [records, filterOptions, coverage, counts] = await Promise.all([
+    listSourceRecords(register, query),
+    getFilterOptions(register, table),
     getCoverage(register),
     countRows(register.source_tables),
   ]);
 
-  return { register, records, coverage, counts, table, page };
+  // Batch-resolve buyer/winner ids on this page to company pages.
+  const idColumns = ["buyer_national_id", "buyer_org_number", "buyer_business_id",
+    "winner_national_id", "winner_org_number", "winner_business_id", "buyer_cnpj",
+  ].filter((c) => records.columns.includes(c));
+  const ids = records.rows.flatMap((row) =>
+    idColumns.map((c) => String(row[c] ?? "")).filter((v) => v !== ""),
+  );
+  const companyLinks = await matchCompanies(ids);
+
+  return {
+    register,
+    records,
+    filterOptions,
+    coverage,
+    counts,
+    companyLinks,
+    idColumns,
+    page,
+    pageSize,
+    table: records.columns.length > 0 ? (table ?? register.notice_table) : register.notice_table,
+    query,
+  };
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
@@ -60,7 +95,17 @@ export function meta({ loaderData }: Route.MetaArgs) {
   return [{ title: `${name} – CompanyCollect Backoffice` }];
 }
 
-function cell(column: string, value: unknown): string {
+const ID_TO_NAME_COLUMN: Record<string, string> = {
+  buyer_national_id: "buyer_name",
+  buyer_org_number: "buyer_name",
+  buyer_business_id: "buyer_name",
+  buyer_cnpj: "buyer_name",
+  winner_national_id: "winner_name",
+  winner_org_number: "winner_name",
+  winner_business_id: "winner_name",
+};
+
+function cellText(column: string, value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : "—";
   if (typeof value === "object") return JSON.stringify(value);
@@ -70,10 +115,77 @@ function cell(column: string, value: unknown): string {
   return text === "" ? "—" : text;
 }
 
+function buildColumns(args: {
+  columns: string[];
+  keyColumn: string;
+  path: string;
+  companyLinks: Record<string, { country_code: string; company_id: string }>;
+}): ColumnDef<SourceRow, unknown>[] {
+  const { columns, keyColumn, path, companyLinks } = args;
+  return visibleColumns(columns).map((column) => ({
+    id: column,
+    accessorFn: (row: SourceRow) => row[column],
+    header: column,
+    cell: ({ row }) => {
+      const value = row.original[column];
+      const text = cellText(column, value);
+      if (column === keyColumn && text !== "—") {
+        return (
+          <Link
+            to={`/procurements/${path}/${encodeURIComponent(text)}`}
+            className="underline underline-offset-2"
+          >
+            {text}
+          </Link>
+        );
+      }
+      // Buyer/winner names link to the matched company page.
+      const idColumn = Object.entries(ID_TO_NAME_COLUMN).find(
+        ([, nameCol]) => nameCol === column,
+      );
+      if (idColumn) {
+        for (const [idCol, nameCol] of Object.entries(ID_TO_NAME_COLUMN)) {
+          if (nameCol !== column) continue;
+          const match = companyLinks[String(row.original[idCol] ?? "")];
+          if (match) {
+            return (
+              <Link
+                to={`/company/${match.country_code.toLowerCase()}/${encodeURIComponent(match.company_id)}`}
+                className="underline underline-offset-2"
+              >
+                {text}
+              </Link>
+            );
+          }
+        }
+      }
+      const isMoney = formatMoneyField(column, value) !== null;
+      return (
+        <span
+          className={`block max-w-[22rem] truncate ${isMoney ? "text-right tabular-nums" : ""}`}
+          title={text}
+        >
+          {text}
+        </span>
+      );
+    },
+  }));
+}
+
 export default function ProcurementSource({ loaderData }: Route.ComponentProps) {
-  const { register, records, coverage, counts, table, page } = loaderData;
+  const {
+    register,
+    records,
+    filterOptions,
+    coverage,
+    counts,
+    companyLinks,
+    page,
+    pageSize,
+    table,
+    query,
+  } = loaderData;
   const path = sourceSlugToPath(register.source_slug);
-  const pages = Math.max(Math.ceil(records.total / PAGE_SIZE), 1);
   const keyColumn = register.notice_key_column;
 
   return (
@@ -234,103 +346,38 @@ export default function ProcurementSource({ loaderData }: Route.ComponentProps) 
             </div>
           ) : null}
 
-          <Form method="get" className="flex flex-wrap items-end gap-2">
-            <input type="hidden" name="table" value={table} />
-            {records.filters.country ? (
-              <label className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">Country</span>
-                <Input name="country" placeholder="SE" className="w-24" />
-              </label>
-            ) : null}
-            {records.filters.date ? (
-              <>
-                <label className="flex flex-col gap-1 text-xs">
-                  <span className="text-muted-foreground">
-                    From ({records.filters.date})
-                  </span>
-                  <Input name="from" type="date" className="w-40" />
-                </label>
-                <label className="flex flex-col gap-1 text-xs">
-                  <span className="text-muted-foreground">To</span>
-                  <Input name="to" type="date" className="w-40" />
-                </label>
-              </>
-            ) : null}
-            <Button type="submit" size="sm">
-              Filter
-            </Button>
-          </Form>
-
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {records.columns.map((column) => (
-                    <TableHead key={column} className="whitespace-nowrap">
-                      {column}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {records.rows.map((row: SourceRow, index) => {
-                  const key = keyColumn ? String(row[keyColumn] ?? "") : "";
-                  return (
-                    <TableRow key={`${key}-${index}`}>
-                      {records.columns.map((column) => (
-                        <TableCell
-                          key={column}
-                          className="max-w-[22rem] truncate align-top text-xs"
-                          title={cell(column, row[column])}
-                        >
-                          {column === keyColumn && key !== "" ? (
-                            <Link
-                              to={`/procurements/${path}/${encodeURIComponent(key)}`}
-                              className="underline underline-offset-2"
-                            >
-                              {key}
-                            </Link>
-                          ) : (
-                            cell(column, row[column])
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+          <div className="flex items-center justify-between gap-2">
+            <ProcurementFilterSheet
+              values={{
+                country: query.country ?? "",
+                from: query.from ?? "",
+                to: query.to ?? "",
+                buyer: query.buyer ?? "",
+                winner: query.winner ?? "",
+                noticeType: query.noticeType ?? "",
+                awardResult: query.awardResult ?? "",
+                valueMin: query.valueMin != null ? String(query.valueMin) : "",
+                valueMax: query.valueMax != null ? String(query.valueMax) : "",
+              }}
+              available={{
+                country: records.filters.country !== null,
+                date: records.filters.date !== null,
+                buyer: records.filters.buyerName !== null,
+                winner: records.filters.winnerName !== null || records.filters.winnerId !== null,
+                noticeType: records.filters.noticeType !== null,
+                awardResult: records.filters.awardResult !== null,
+                usdValue: records.filters.usdValue !== null,
+              }}
+              options={filterOptions}
+              table={table}
+            />
           </div>
-
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">
-              Page {page} of {nf.format(pages)}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page <= 1}
-                nativeButton={false}
-                render={
-                  <Link to={`/procurements/${path}?table=${table}&page=${page - 1}`} />
-                }
-              >
-                Previous
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page >= pages}
-                nativeButton={false}
-                render={
-                  <Link to={`/procurements/${path}?table=${table}&page=${page + 1}`} />
-                }
-              >
-                Next
-              </Button>
-            </div>
-          </div>
+          <DataTable
+            columns={buildColumns({ columns: records.columns, keyColumn, path, companyLinks })}
+            data={records.rows}
+            emptyText="No records match these filters."
+          />
+          <DataTablePagination total={records.total} page={page} pageSize={pageSize} itemsLabel="records" />
         </CardContent>
       </Card>
     </div>
