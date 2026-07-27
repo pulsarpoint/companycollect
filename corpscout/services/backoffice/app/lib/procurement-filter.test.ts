@@ -13,6 +13,17 @@ const DOFFIN = [
 const TED_WINNERS = [
   "publication_number", "winner_name", "winner_national_id", "awarded_amount_usd",
 ];
+// Shape of se_uhm_procurement_awards (migration 000166): no winner_* columns
+// at all, buyer/winner concepts named buyer_* / supplier_* instead.
+const UHM_AWARDS = [
+  "source_procurement_id", "publication_date", "buyer_name", "buyer_id_normalized",
+  "supplier_name", "supplier_id_normalized",
+];
+// Shape of br_pncp_contracts (migration 000190): supplier_cnpj but no
+// supplier_id_normalized, so winnerId should fall back to it.
+const PNCP_CONTRACTS = [
+  "data_publicacao_pncp", "buyer_name", "buyer_cnpj", "supplier_name", "supplier_cnpj",
+];
 
 describe("filterColumns", () => {
   it("discovers per-table filter columns", () => {
@@ -32,6 +43,19 @@ describe("filterColumns", () => {
     expect(winners.winnerId).toBe("winner_national_id");
     expect(winners.usdValue).toBe("awarded_amount_usd");
     expect(winners.buyerName).toBeNull();
+  });
+
+  it("discovers UHM's supplier_* columns as the winner name/id", () => {
+    const uhm = filterColumns(UHM_AWARDS);
+    expect(uhm.buyerName).toBe("buyer_name");
+    expect(uhm.winnerName).toBe("supplier_name");
+    expect(uhm.winnerId).toBe("supplier_id_normalized");
+  });
+
+  it("falls back to supplier_cnpj for PNCP, which has no supplier_id_normalized", () => {
+    const pncp = filterColumns(PNCP_CONTRACTS);
+    expect(pncp.winnerName).toBe("supplier_name");
+    expect(pncp.winnerId).toBe("supplier_cnpj");
   });
 });
 

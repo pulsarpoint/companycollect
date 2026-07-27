@@ -1,4 +1,4 @@
-import { Form } from "react-router";
+import { Form, Link } from "react-router";
 import { ListFilter } from "lucide-react";
 import { EU_EEA_COUNTRIES } from "~/lib/eu-countries";
 import { Badge } from "~/components/ui/badge";
@@ -155,12 +155,9 @@ export function ProcurementFilterSheet({
           <SheetFooter className="px-0">
             <Button type="submit">Apply filters</Button>
             <Button
-              type="submit"
               variant="ghost"
-              name="clear"
-              value="1"
-              formAction="?"
-              formMethod="get"
+              nativeButton={false}
+              render={<Link to={"?table=" + encodeURIComponent(table)} preventScrollReset />}
             >
               Clear all
             </Button>

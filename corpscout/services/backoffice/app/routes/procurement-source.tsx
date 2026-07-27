@@ -35,8 +35,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   if (!register) throw new Response("Source not found", { status: 404 });
 
   const url = new URL(request.url);
-  const q = (name: string) =>
-    url.searchParams.get("clear") === "1" ? "" : (url.searchParams.get(name) ?? "");
+  const q = (name: string) => url.searchParams.get(name) ?? "";
   const num = (name: string) => {
     const parsed = Number.parseFloat(q(name));
     return Number.isFinite(parsed) ? parsed : undefined;
@@ -67,10 +66,10 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     countRows(register.source_tables),
   ]);
 
-  // Batch-resolve buyer/winner ids on this page to company pages.
-  const idColumns = ["buyer_national_id", "buyer_org_number", "buyer_business_id",
-    "winner_national_id", "winner_org_number", "winner_business_id", "buyer_cnpj",
-  ].filter((c) => records.columns.includes(c));
+  // Batch-resolve buyer/winner/supplier ids on this page to company pages.
+  const idColumns = ID_NAME_PAIRS.map(([idCol]) => idCol).filter((c) =>
+    records.columns.includes(c),
+  );
   const ids = records.rows.flatMap((row) =>
     idColumns.map((c) => String(row[c] ?? "")).filter((v) => v !== ""),
   );
@@ -96,15 +95,22 @@ export function meta({ loaderData }: Route.MetaArgs) {
   return [{ title: `${name} – CompanyCollect Backoffice` }];
 }
 
-const ID_TO_NAME_COLUMN: Record<string, string> = {
-  buyer_national_id: "buyer_name",
-  buyer_org_number: "buyer_name",
-  buyer_business_id: "buyer_name",
-  buyer_cnpj: "buyer_name",
-  winner_national_id: "winner_name",
-  winner_org_number: "winner_name",
-  winner_business_id: "winner_name",
-};
+/** Which id column names to the name column its register actually renders it
+ * as. Pairs rather than a Record because an id can recur across registers
+ * under a different name column: Hilma's buyer_business_id has no buyer_name,
+ * only buyer_name_fi. */
+const ID_NAME_PAIRS: [idColumn: string, nameColumn: string][] = [
+  ["buyer_national_id", "buyer_name"], // TED
+  ["buyer_org_number", "buyer_name"], // Doffin
+  ["buyer_business_id", "buyer_name_fi"], // Hilma
+  ["buyer_cnpj", "buyer_name"], // PNCP
+  ["buyer_id_normalized", "buyer_name"], // UHM
+  ["winner_national_id", "winner_name"], // TED
+  ["winner_org_number", "winner_name"], // Doffin
+  ["winner_business_id", "winner_name"], // Hilma (fi_hilma_notice_winners)
+  ["supplier_id_normalized", "supplier_name"], // UHM
+  ["supplier_cnpj", "supplier_name"], // PNCP
+];
 
 function cellText(column: string, value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -140,31 +146,30 @@ function buildColumns(args: {
           </Link>
         );
       }
-      // Buyer/winner names link to the matched company page, but only when
-      // the row's country picks out exactly one candidate: national
-      // org-number formats collide across registers, so an id alone is not
-      // enough (see ~/lib/company-match.ts).
-      const idColumn = Object.entries(ID_TO_NAME_COLUMN).find(
-        ([, nameCol]) => nameCol === column,
-      );
-      if (idColumn) {
-        for (const [idCol, nameCol] of Object.entries(ID_TO_NAME_COLUMN)) {
-          if (nameCol !== column) continue;
-          const candidates = companyLinks[String(row.original[idCol] ?? "")];
-          const countryColumn = idCol.startsWith("buyer_") ? "buyer_country" : "winner_country";
-          const rawCountry = row.original[countryColumn];
-          const rowCountry = typeof rawCountry === "string" ? rawCountry : null;
-          const match = pickCompanyMatch(candidates, rowCountry);
-          if (match) {
-            return (
-              <Link
-                to={`/company/${match.country_code.toLowerCase()}/${encodeURIComponent(match.company_id)}`}
-                className="underline underline-offset-2"
-              >
-                {text}
-              </Link>
-            );
-          }
+      // Buyer/winner/supplier names link to the matched company page, but
+      // only when the row's country picks out exactly one candidate:
+      // national org-number formats collide across registers, so an id alone
+      // is not enough (see ~/lib/company-match.ts).
+      for (const [idCol, nameCol] of ID_NAME_PAIRS) {
+        if (nameCol !== column) continue;
+        const candidates = companyLinks[String(row.original[idCol] ?? "")];
+        const countryColumn = idCol.startsWith("buyer_")
+          ? "buyer_country"
+          : idCol.startsWith("supplier_")
+            ? "supplier_country_code"
+            : "winner_country";
+        const rawCountry = row.original[countryColumn];
+        const rowCountry = typeof rawCountry === "string" ? rawCountry : null;
+        const match = pickCompanyMatch(candidates, rowCountry);
+        if (match) {
+          return (
+            <Link
+              to={`/company/${match.country_code.toLowerCase()}/${encodeURIComponent(match.company_id)}`}
+              className="underline underline-offset-2"
+            >
+              {text}
+            </Link>
+          );
         }
       }
       const isMoney = formatMoneyField(column, value) !== null;
