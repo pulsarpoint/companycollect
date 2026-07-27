@@ -223,13 +223,48 @@ def ted_monthly_duckdb(
         if line.strip()
     ]
 
-    docs: list[tuple[str, str]] = []
+    docs: list[tuple] = []
     orgs: list[tuple[str, str, str, str, str, str]] = []
-    winner_links: list[tuple[str, str, str, int, str, str, str]] = []
+    winner_links: list[tuple] = []
+    lot_rows: list[tuple] = []
     for entry in manifest:
         publication_number = entry["publication_number"]
         parsed = parse_award_notice_xml(ted_object_store.read_bytes(entry["xml_key"]))
-        docs.append((publication_number, parsed.buyer_org_ref))
+        values = parsed.notice_values
+        docs.append(
+            (
+                publication_number,
+                parsed.buyer_org_ref,
+                values.estimated_value_amount,
+                values.estimated_value_currency,
+                values.framework_maximum_amount,
+                values.framework_maximum_currency,
+                values.framework_total_maximum_amount,
+                values.framework_total_maximum_currency,
+                values.framework_total_approximate_amount,
+                values.framework_total_approximate_currency,
+            )
+        )
+        for lot in parsed.lots:
+            lot_rows.append(
+                (
+                    publication_number,
+                    lot.lot_id,
+                    lot.lot_title,
+                    lot.estimated_value_amount,
+                    lot.estimated_value_currency,
+                    lot.framework_maximum_amount,
+                    lot.framework_maximum_currency,
+                    lot.framework_value_maximum_amount,
+                    lot.framework_value_maximum_currency,
+                    lot.framework_value_reestimated_amount,
+                    lot.framework_value_reestimated_currency,
+                    lot.lower_tender_amount,
+                    lot.lower_tender_currency,
+                    lot.higher_tender_amount,
+                    lot.higher_tender_currency,
+                )
+            )
         for org in parsed.organizations:
             orgs.append(
                 (
@@ -251,6 +286,8 @@ def ted_monthly_duckdb(
                     winner.org_ref,
                     winner.awarded_amount,
                     winner.awarded_currency,
+                    winner.subcontracting_amount,
+                    winner.subcontracting_currency,
                 )
             )
 
@@ -258,60 +295,43 @@ def ted_monthly_duckdb(
     target.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(target))
     try:
-        connection.execute(
-            "create or replace table listing (publication_number varchar, "
-            "publication_date varchar, notice_type varchar, buyer_name varchar, "
-            "notice_title varchar, total_value varchar, total_value_currency varchar, "
-            "country_iso2 varchar, place_country varchar)"
-        )
-        if listing:
-            connection.executemany(
-                "insert into listing values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        row["publication_number"],
-                        row["publication_date"],
-                        row["notice_type"],
-                        row["buyer_name"],
-                        row["notice_title"],
-                        row["total_value"],
-                        row["total_value_currency"],
-                        row["country_iso2"],
-                        row["place_country"],
-                    )
-                    for row in listing
-                ],
+        listing_rows = [
+            (
+                row["publication_number"],
+                row["publication_date"],
+                row["notice_type"],
+                row["buyer_name"],
+                row["notice_title"],
+                row["total_value"],
+                row["total_value_currency"],
+                row["country_iso2"],
+                row["place_country"],
             )
-        connection.execute(
-            "create or replace table notice_docs (publication_number varchar, "
-            "buyer_org_ref varchar)"
-        )
-        if docs:
-            connection.executemany("insert into notice_docs values (?, ?)", docs)
-        connection.execute(
-            "create or replace table organizations (publication_number varchar, "
-            "org_ref varchar, name varchar, national_id_raw varchar, "
-            "national_id varchar, country varchar)"
-        )
-        if orgs:
-            connection.executemany(
-                "insert into organizations values (?, ?, ?, ?, ?, ?)", orgs
+            for row in listing
+        ]
+        for table, rows in (
+            ("listing", listing_rows),
+            ("notice_docs", docs),
+            ("organizations", orgs),
+            ("lots", lot_rows),
+            ("winner_links", winner_links),
+        ):
+            connection.execute(
+                f"create or replace table {table} "
+                f"({tables.PARTITION_TABLE_DDL[table]})"
             )
-        connection.execute(
-            "create or replace table winner_links (publication_number varchar, "
-            "lot_id varchar, tender_id varchar, winner_ordinal integer, "
-            "org_ref varchar, awarded_amount varchar, awarded_currency varchar)"
-        )
-        if winner_links:
-            connection.executemany(
-                "insert into winner_links values (?, ?, ?, ?, ?, ?, ?)", winner_links
-            )
+            if rows:
+                placeholders = ", ".join("?" * tables.partition_column_count(table))
+                connection.executemany(
+                    f"insert into {table} values ({placeholders})", rows
+                )
     finally:
         connection.close()
     return dg.MaterializeResult(
         metadata={
             "notices": len(listing),
             "organizations": len(orgs),
+            "lots": len(lot_rows),
             "winner_links": len(winner_links),
             "duckdb_path": str(target),
         }
@@ -327,12 +347,14 @@ def ted_monthly_duckdb(
     metadata={
         "tables": [
             tables.QUALIFIED_TED_NOTICES_TABLE,
+            tables.QUALIFIED_TED_NOTICE_LOTS_TABLE,
             tables.QUALIFIED_TED_NOTICE_WINNERS_TABLE,
         ]
     },
     description=(
         "Unions every parsed monthly partition, resolves buyer/winner "
-        "organizations, converts to USD and replaces corpscout.ted_notices + "
+        "organizations, converts every published amount to USD and replaces "
+        "corpscout.ted_notices + corpscout.ted_notice_lots + "
         "corpscout.ted_notice_winners."
     ),
 )

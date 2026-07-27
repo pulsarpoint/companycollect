@@ -93,6 +93,7 @@ def build_publish_tables(
             ("_ted_listing_all", "listing"),
             ("_ted_docs_all", "notice_docs"),
             ("_ted_orgs_all", "organizations"),
+            ("_ted_lots_all", "lots"),
             ("_ted_winners_all", "winner_links"),
         ):
             verb = (
@@ -140,6 +141,29 @@ def build_publish_tables(
             try_cast(l.total_value as decimal(38, 2)) as total_value_amount_original,
             cast(null as decimal(38, 2)) as total_value_amount_usd,
             upper(coalesce(l.total_value_currency, '')) as total_value_currency,
+            -- BT-27 / BT-709 / BT-118 / BT-1118, each in its own column. An
+            -- estimate, a ceiling and a realized award are different claims;
+            -- one column holding whichever was present makes all of them
+            -- unreadable, and a ceiling summed as spend overstates it wildly.
+            try_cast(nd.estimated_value as decimal(38, 2))
+                as estimated_value_amount_original,
+            cast(null as decimal(38, 2)) as estimated_value_amount_usd,
+            upper(coalesce(nd.estimated_value_currency, '')) as estimated_value_currency,
+            try_cast(nd.framework_maximum as decimal(38, 2))
+                as framework_maximum_amount_original,
+            cast(null as decimal(38, 2)) as framework_maximum_amount_usd,
+            upper(coalesce(nd.framework_maximum_currency, ''))
+                as framework_maximum_currency,
+            try_cast(nd.framework_total_maximum as decimal(38, 2))
+                as framework_total_maximum_amount_original,
+            cast(null as decimal(38, 2)) as framework_total_maximum_amount_usd,
+            upper(coalesce(nd.framework_total_maximum_currency, ''))
+                as framework_total_maximum_currency,
+            try_cast(nd.framework_total_approximate as decimal(38, 2))
+                as framework_total_approximate_amount_original,
+            cast(null as decimal(38, 2)) as framework_total_approximate_amount_usd,
+            upper(coalesce(nd.framework_total_approximate_currency, ''))
+                as framework_total_approximate_currency,
             cast(null as decimal(38, 12)) as fx_rate_to_usd,
             cast(null as date) as fx_rate_date,
             '' as fx_source,
@@ -153,6 +177,61 @@ def build_publish_tables(
             from _ted_orgs_all
         ) b on b.publication_number = l.publication_number
            and b.org_ref = nd.buyer_org_ref
+        """,
+        [source_run_id],
+    )
+
+    lots = f"{DLT_DATASET_NAME}.{tables.NOTICE_LOTS_TABLE}"
+    duckdb_connection.execute(
+        f"""
+        create or replace table {lots} as
+        with deduped as (
+            select * from _ted_lots_all
+            qualify row_number() over (
+                partition by publication_number, lot_id
+                order by partition_key desc
+            ) = 1
+        )
+        select
+            n.country_iso2,
+            '{tables.SOURCE_SLUG}' as source_slug,
+            cast(? as varchar) as source_run_id,
+            t.publication_number,
+            t.lot_id,
+            t.lot_title,
+            try_cast(t.estimated_value as decimal(38, 2))
+                as estimated_value_amount_original,
+            cast(null as decimal(38, 2)) as estimated_value_amount_usd,
+            upper(coalesce(t.estimated_value_currency, '')) as estimated_value_currency,
+            try_cast(t.framework_maximum as decimal(38, 2))
+                as framework_maximum_amount_original,
+            cast(null as decimal(38, 2)) as framework_maximum_amount_usd,
+            upper(coalesce(t.framework_maximum_currency, ''))
+                as framework_maximum_currency,
+            try_cast(t.framework_value_maximum as decimal(38, 2))
+                as framework_value_maximum_amount_original,
+            cast(null as decimal(38, 2)) as framework_value_maximum_amount_usd,
+            upper(coalesce(t.framework_value_maximum_currency, ''))
+                as framework_value_maximum_currency,
+            try_cast(t.framework_value_reestimated as decimal(38, 2))
+                as framework_value_reestimated_amount_original,
+            cast(null as decimal(38, 2)) as framework_value_reestimated_amount_usd,
+            upper(coalesce(t.framework_value_reestimated_currency, ''))
+                as framework_value_reestimated_currency,
+            try_cast(t.lower_tender as decimal(38, 2)) as lower_tender_amount_original,
+            cast(null as decimal(38, 2)) as lower_tender_amount_usd,
+            upper(coalesce(t.lower_tender_currency, '')) as lower_tender_currency,
+            try_cast(t.higher_tender as decimal(38, 2)) as higher_tender_amount_original,
+            cast(null as decimal(38, 2)) as higher_tender_amount_usd,
+            upper(coalesce(t.higher_tender_currency, '')) as higher_tender_currency,
+            cast(null as decimal(38, 12)) as fx_rate_to_usd,
+            cast(null as date) as fx_rate_date,
+            '' as fx_source,
+            n.publication_date,
+            t.partition_key,
+            cast(now() as timestamp) as resolved_at
+        from deduped t
+        join {notices} n on n.publication_number = t.publication_number
         """,
         [source_run_id],
     )
@@ -183,6 +262,13 @@ def build_publish_tables(
             try_cast(w.awarded_amount as decimal(38, 2)) as awarded_amount_original,
             cast(null as decimal(38, 2)) as awarded_amount_usd,
             upper(coalesce(w.awarded_currency, '')) as awarded_currency,
+            -- BT-553: the share this winner subcontracts away. Its own column,
+            -- never netted off the award -- the winner was still paid the whole
+            -- amount.
+            try_cast(w.subcontracting_amount as decimal(38, 2))
+                as subcontracting_amount_original,
+            cast(null as decimal(38, 2)) as subcontracting_amount_usd,
+            upper(coalesce(w.subcontracting_currency, '')) as subcontracting_currency,
             n.buyer_national_id,
             n.place_country,
             n.publication_date,
@@ -207,6 +293,9 @@ def build_publish_tables(
         "partitions": len(partitions),
         "notices": int(
             duckdb_connection.execute(f"select count(*) from {notices}").fetchone()[0]
+        ),
+        "lots": int(
+            duckdb_connection.execute(f"select count(*) from {lots}").fetchone()[0]
         ),
         "winners": int(
             duckdb_connection.execute(f"select count(*) from {winners}").fetchone()[0]
@@ -251,21 +340,43 @@ def apply_ted_usd_conversion(
     exchange_rates: ExchangeRates,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Fill *_usd + fx columns on both publish tables, keyed on publication date."""
-    notices = f"{DLT_DATASET_NAME}.{tables.NOTICES_TABLE}"
-    winners = f"{DLT_DATASET_NAME}.{tables.NOTICE_WINNERS_TABLE}"
-    pairs = duckdb_connection.execute(
+    """Fill every *_usd + the fx columns on all three publish tables.
+
+    Driven off the metric tuples in ``tables`` rather than a hardcoded pair, so
+    a newly parsed amount is converted the moment it is stored. Converting a
+    subset would leave the rest answerable in the notice's own currency only,
+    which for a cross-country product is the same as not storing them.
+
+    Each amount is converted with **its own** currency column: a notice can
+    quote a Danish framework ceiling beside a Swedish award, and one shared
+    currency would mislabel one of them.
+    """
+    targets = (
+        (
+            f"{DLT_DATASET_NAME}.{tables.NOTICES_TABLE}",
+            tables.TED_NOTICE_VALUE_METRICS,
+        ),
+        (
+            f"{DLT_DATASET_NAME}.{tables.NOTICE_LOTS_TABLE}",
+            tables.TED_LOT_VALUE_METRICS,
+        ),
+        (
+            f"{DLT_DATASET_NAME}.{tables.NOTICE_WINNERS_TABLE}",
+            tables.TED_WINNER_VALUE_METRICS,
+        ),
+    )
+
+    pair_query = "\nunion\n".join(
         f"""
-        select distinct total_value_currency as currency,
+        select distinct {metric}_currency as currency,
                cast(publication_date as varchar) as rate_date
-        from {notices}
-        where total_value_currency <> '' and publication_date is not null
-        union
-        select distinct awarded_currency, cast(publication_date as varchar)
-        from {winners}
-        where awarded_currency <> '' and publication_date is not null
+        from {qualified}
+        where {metric}_currency <> '' and publication_date is not null
         """
-    ).fetchall()
+        for qualified, metrics in targets
+        for metric, _ in metrics
+    )
+    pairs = duckdb_connection.execute(pair_query).fetchall()
     requests = [_request(currency, rate_date) for currency, rate_date in pairs]
     rates = _load_rates(exchange_rates, requests)
     fx_rows = [
@@ -284,42 +395,33 @@ def apply_ted_usd_conversion(
             "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
             fx_rows,
         )
-    for qualified, amount, currency_col in (
-        (notices, "total_value", "total_value_currency"),
-        (winners, "awarded", "awarded_currency"),
-    ):
-        original = (
-            "total_value_amount_original"
-            if amount == "total_value"
-            else "awarded_amount_original"
-        )
-        usd = (
-            "total_value_amount_usd"
-            if amount == "total_value"
-            else "awarded_amount_usd"
-        )
-        duckdb_connection.execute(
-            f"""
-            update {qualified} as records
-            set {usd} = cast(records.{original} * fx.fx_rate as decimal(38, 2)),
-                fx_rate_to_usd = fx.fx_rate,
-                fx_rate_date = fx.fx_rate_date,
-                fx_source = fx.fx_source
-            from _ted_fx as fx
-            where fx.currency = records.{currency_col}
-              and fx.rate_date = records.publication_date
-            """
-        )
-    converted = int(
-        duckdb_connection.execute(
-            f"select count(*) from {winners} where awarded_amount_usd is not null"
-        ).fetchone()[0]
-    )
-    counts = {
-        "rate_pairs": len(pairs),
-        "rates_found": len(fx_rows),
-        "winner_amounts_converted": converted,
-    }
+
+    counts = {"rate_pairs": len(pairs), "rates_found": len(fx_rows)}
+    for qualified, metrics in targets:
+        for metric, _ in metrics:
+            duckdb_connection.execute(
+                f"""
+                update {qualified} as records
+                set {metric}_amount_usd = cast(
+                        records.{metric}_amount_original * fx.fx_rate as decimal(38, 2)
+                    ),
+                    fx_rate_to_usd = fx.fx_rate,
+                    fx_rate_date = fx.fx_rate_date,
+                    fx_source = fx.fx_source
+                from _ted_fx as fx
+                where fx.currency = records.{metric}_currency
+                  and fx.rate_date = records.publication_date
+                """
+            )
+            # Per metric, so a figure that silently stops converting shows up in
+            # the asset's metadata rather than only in whatever the view reads.
+            table_name = qualified.split(".")[-1]
+            counts[f"{table_name}.{metric}_converted"] = int(
+                duckdb_connection.execute(
+                    f"select count(*) from {qualified} "
+                    f"where {metric}_amount_usd is not null"
+                ).fetchone()[0]
+            )
     if log is not None:
         log("Applied TED USD conversion: %s", counts)
     return counts
@@ -334,7 +436,11 @@ def export_ted_clickhouse(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.TED_PROCUREMENT_DATABASE,
-        tables=(tables.TED_NOTICES_TABLE, tables.TED_NOTICE_WINNERS_TABLE),
+        tables=(
+            tables.TED_NOTICES_TABLE,
+            tables.TED_NOTICE_LOTS_TABLE,
+            tables.TED_NOTICE_WINNERS_TABLE,
+        ),
     )
     counts: dict[str, int] = {}
     with clickhouse.get_connection() as client:
@@ -343,6 +449,11 @@ def export_ted_clickhouse(
                 tables.NOTICES_TABLE,
                 tables.TED_NOTICES_TABLE,
                 tables.TED_NOTICES_COLUMNS,
+            ),
+            (
+                tables.NOTICE_LOTS_TABLE,
+                tables.TED_NOTICE_LOTS_TABLE,
+                tables.TED_NOTICE_LOTS_COLUMNS,
             ),
             (
                 tables.NOTICE_WINNERS_TABLE,

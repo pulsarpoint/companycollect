@@ -215,6 +215,7 @@ EXPECTED_MIGRATIONS = (
     "000194_corpscout_finland_lot_value",
     "000195_corpscout_contract_value_counted_once",
     "000196_corpscout_br_pncp_all_values_usd",
+    "000197_corpscout_ted_all_notice_values",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2332,14 +2333,26 @@ def test_companies_all_migration_covers_columns() -> None:
 def test_ted_procurement_migration_covers_export_columns() -> None:
     sql = _migration_sql("000148_corpscout_ted_procurement.up.sql")
     down_sql = _migration_sql("000148_corpscout_ted_procurement.down.sql")
+    # The schema as the ledger leaves it: the CREATE plus every later migration
+    # that alters these tables. Reading only the CREATE would report a column
+    # missing that a subsequent ALTER added.
+    schema = "\n".join(
+        path.read_text()
+        for path in sorted(MIGRATIONS_DIR.glob("*.up.sql"))
+        if "ted_notice" in path.read_text()
+    )
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.ted_notices" in sql
     for column_name in ted_procurement_tables.TED_NOTICES_COLUMNS:
-        assert f"    {column_name} " in sql
+        assert f" {column_name} " in schema, column_name
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.ted_notice_winners" in sql
     for column_name in ted_procurement_tables.TED_NOTICE_WINNERS_COLUMNS:
-        assert f"    {column_name} " in sql
+        assert f" {column_name} " in schema, column_name
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.ted_notice_lots" in schema
+    for column_name in ted_procurement_tables.TED_NOTICE_LOTS_COLUMNS:
+        assert f" {column_name} " in schema, column_name
 
     assert "ORDER BY (publication_number)" in sql
     assert (

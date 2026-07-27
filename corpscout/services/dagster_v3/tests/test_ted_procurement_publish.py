@@ -55,24 +55,10 @@ def _write_partition(tmp_path: Path, key: str, fixture_names: list[str]) -> Path
     target = tmp_path / f"partition_key={key}" / "data.duckdb"
     target.parent.mkdir(parents=True)
     con = duckdb.connect(str(target))
-    con.execute(
-        "create table listing (publication_number varchar, publication_date varchar, "
-        "notice_type varchar, buyer_name varchar, notice_title varchar, "
-        "total_value varchar, total_value_currency varchar, country_iso2 varchar, "
-        "place_country varchar)"
-    )
-    con.execute(
-        "create table notice_docs (publication_number varchar, buyer_org_ref varchar)"
-    )
-    con.execute(
-        "create table organizations (publication_number varchar, org_ref varchar, "
-        "name varchar, national_id_raw varchar, national_id varchar, country varchar)"
-    )
-    con.execute(
-        "create table winner_links (publication_number varchar, lot_id varchar, "
-        "tender_id varchar, winner_ordinal integer, org_ref varchar, "
-        "awarded_amount varchar, awarded_currency varchar)"
-    )
+    # The same DDL the asset writes. Spelled out here once, it drifted the
+    # moment a table was added, so both sides now read it from one place.
+    for table, columns in tables.PARTITION_TABLE_DDL.items():
+        con.execute(f"create table {table} ({columns})")
     for name in fixture_names:
         number = name.removesuffix(".xml")
         parsed = parse_award_notice_xml((FIXTURES / name).read_bytes())
@@ -83,12 +69,27 @@ def _write_partition(tmp_path: Path, key: str, fixture_names: list[str]) -> Path
             "'Buyer', 'Title', '1000000', 'EUR', ?, ?)",
             [number, country, place],
         )
-        con.execute(
-            "insert into notice_docs values (?, ?)", [number, parsed.buyer_org_ref]
+        values = parsed.notice_values
+        _insert(
+            con,
+            "notice_docs",
+            [
+                number,
+                parsed.buyer_org_ref,
+                values.estimated_value_amount,
+                values.estimated_value_currency,
+                values.framework_maximum_amount,
+                values.framework_maximum_currency,
+                values.framework_total_maximum_amount,
+                values.framework_total_maximum_currency,
+                values.framework_total_approximate_amount,
+                values.framework_total_approximate_currency,
+            ],
         )
         for org in parsed.organizations:
-            con.execute(
-                "insert into organizations values (?, ?, ?, ?, ?, ?)",
+            _insert(
+                con,
+                "organizations",
                 [
                     number,
                     org.org_ref,
@@ -98,9 +99,32 @@ def _write_partition(tmp_path: Path, key: str, fixture_names: list[str]) -> Path
                     org.country,
                 ],
             )
+        for lot in parsed.lots:
+            _insert(
+                con,
+                "lots",
+                [
+                    number,
+                    lot.lot_id,
+                    lot.lot_title,
+                    lot.estimated_value_amount,
+                    lot.estimated_value_currency,
+                    lot.framework_maximum_amount,
+                    lot.framework_maximum_currency,
+                    lot.framework_value_maximum_amount,
+                    lot.framework_value_maximum_currency,
+                    lot.framework_value_reestimated_amount,
+                    lot.framework_value_reestimated_currency,
+                    lot.lower_tender_amount,
+                    lot.lower_tender_currency,
+                    lot.higher_tender_amount,
+                    lot.higher_tender_currency,
+                ],
+            )
         for w in parsed.winners:
-            con.execute(
-                "insert into winner_links values (?, ?, ?, ?, ?, ?, ?)",
+            _insert(
+                con,
+                "winner_links",
                 [
                     number,
                     w.lot_id,
@@ -109,10 +133,17 @@ def _write_partition(tmp_path: Path, key: str, fixture_names: list[str]) -> Path
                     w.org_ref,
                     w.awarded_amount,
                     w.awarded_currency,
+                    w.subcontracting_amount,
+                    w.subcontracting_currency,
                 ],
             )
     con.close()
     return target
+
+
+def _insert(con, table: str, row: list) -> None:
+    placeholders = ", ".join("?" * tables.partition_column_count(table))
+    con.execute(f"insert into {table} values ({placeholders})", row)
 
 
 @dataclass
@@ -183,7 +214,7 @@ def test_build_publish_tables_and_usd(publish_connection) -> None:
     fx = apply_ted_usd_conversion(
         duckdb_connection=con, exchange_rates=_FakeExchangeRates()
     )
-    assert fx["winner_amounts_converted"] > 0
+    assert fx["notice_winners.awarded_converted"] > 0
     converted = con.execute(
         f"select awarded_amount_usd from {winners} "
         f"where publication_number = '492374-2026'"
@@ -193,6 +224,7 @@ def test_build_publish_tables_and_usd(publish_connection) -> None:
     # Column contracts match the migration order.
     for duckdb_table, contract in (
         (tables.NOTICES_TABLE, tables.TED_NOTICES_COLUMNS),
+        (tables.NOTICE_LOTS_TABLE, tables.TED_NOTICE_LOTS_COLUMNS),
         (tables.NOTICE_WINNERS_TABLE, tables.TED_NOTICE_WINNERS_COLUMNS),
     ):
         columns = tuple(

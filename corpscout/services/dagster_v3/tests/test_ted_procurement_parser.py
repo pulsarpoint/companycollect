@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from dagster_v3.defs.ted_procurement import tables
 from dagster_v3.defs.ted_procurement.parser import parse_award_notice_xml
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ted_procurement"
@@ -66,6 +67,89 @@ def test_all_fixture_notices_have_winners() -> None:
         parsed = parse_award_notice_xml(fixture.read_bytes())
         assert parsed.winners, fixture.name
         assert parsed.organizations, fixture.name
+
+
+def test_the_estimated_value_is_read_at_both_grains() -> None:
+    """BT-27 is the most commonly published amount in the register -- 57 of 100
+    sampled notices -- and was dropped entirely. It is published once for the
+    procedure and again per lot; on a single-lot notice the two coincide, which
+    is exactly why they must be stored separately rather than deduplicated."""
+    parsed = _parse("492374-2026.xml")
+
+    assert parsed.notice_values.estimated_value_amount == "617000"
+    assert parsed.notice_values.estimated_value_currency == "EUR"
+    assert len(parsed.lots) == 1
+    assert parsed.lots[0].estimated_value_amount == "617000"
+    assert parsed.lots[0].estimated_value_currency == "EUR"
+    # ...and it is not the awarded amount, which is what the product currently
+    # shows. Conflating them would report an estimate as a contract value.
+    assert parsed.winners[0].awarded_amount == "735000"
+
+
+def test_framework_ceilings_are_kept_apart_from_realized_values() -> None:
+    """A framework ceiling is not money anyone spent. Folding BT-118/BT-1118/
+    BT-271/BT-660 into a value column would overstate spend wildly, so each
+    keeps its own field."""
+    parsed = _parse("494783-2026.xml")
+    values = parsed.notice_values
+
+    assert values.framework_total_maximum_amount != ""
+    assert values.framework_total_approximate_amount != ""
+    # ...and they are genuinely different figures, not one value copied around.
+    assert (
+        values.framework_total_maximum_amount
+        != values.framework_total_approximate_amount
+    )
+
+    lot = parsed.lots[0]
+    assert lot.framework_value_maximum_amount != ""
+    assert lot.framework_value_reestimated_amount != ""
+    assert lot.framework_value_maximum_amount != lot.framework_value_reestimated_amount
+
+
+def test_the_tender_range_is_read_off_the_lot_result() -> None:
+    """BT-710/BT-711 say how competitive a lot was. Neither is an award."""
+    lot = _parse("492374-2026.xml").lots[0]
+
+    assert lot.lower_tender_amount != ""
+    assert lot.higher_tender_amount != ""
+
+
+def test_every_lot_is_emitted_even_without_an_amount() -> None:
+    """A lot with no published figure is still a lot. Emitting only the priced
+    ones would make a lot count a count of priced lots, and this notice is the
+    case that catches it: six lots, none of them priced, with the notice's
+    single estimate sitting at procedure level above them."""
+    parsed = _parse("494092-2026.xml")
+
+    assert len(parsed.lots) == 6
+    assert all(lot.lot_id.startswith("LOT-") for lot in parsed.lots)
+    assert all(lot.estimated_value_amount == "" for lot in parsed.lots)
+    assert parsed.notice_values.estimated_value_amount == "470000"
+
+
+def test_currency_comes_from_each_amount_not_a_notice_default() -> None:
+    """A notice can quote a framework in one currency and an award in another;
+    a single shared currency column would mislabel one of them."""
+    parsed = _parse("492374-2026.xml")
+
+    assert parsed.notice_values.estimated_value_currency == "EUR"
+    assert parsed.lots[0].lower_tender_currency == "EUR"
+    assert parsed.winners[0].awarded_currency == "EUR"
+
+
+def test_the_partition_ddl_is_the_only_copy() -> None:
+    """The asset and the publish test both build this schema. When each spelled
+    it out, adding a table broke the pair silently."""
+    assert set(tables.PARTITION_TABLE_DDL) == {
+        "listing",
+        "notice_docs",
+        "organizations",
+        "lots",
+        "winner_links",
+    }
+    assert tables.partition_column_count("winner_links") == 9
+    assert tables.partition_column_count("lots") == 15
 
 
 @pytest.mark.parametrize("name", ["495544-2026.xml"])

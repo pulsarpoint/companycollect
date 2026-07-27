@@ -18,14 +18,67 @@ S3_BUCKET = "source-ted-procurement"
 
 TED_PROCUREMENT_DATABASE = "corpscout"
 TED_NOTICES_TABLE = "ted_notices"
+TED_NOTICE_LOTS_TABLE = "ted_notice_lots"
 TED_NOTICE_WINNERS_TABLE = "ted_notice_winners"
 QUALIFIED_TED_NOTICES_TABLE = f"{TED_PROCUREMENT_DATABASE}.{TED_NOTICES_TABLE}"
+QUALIFIED_TED_NOTICE_LOTS_TABLE = (
+    f"{TED_PROCUREMENT_DATABASE}.{TED_NOTICE_LOTS_TABLE}"
+)
 QUALIFIED_TED_NOTICE_WINNERS_TABLE = (
     f"{TED_PROCUREMENT_DATABASE}.{TED_NOTICE_WINNERS_TABLE}"
 )
 
 NOTICES_TABLE = "notices"
+NOTICE_LOTS_TABLE = "notice_lots"
 NOTICE_WINNERS_TABLE = "notice_winners"
+
+# The per-partition DuckDB that ted_monthly_duckdb writes and build_publish_tables
+# reads. Declared once because it was previously spelled out in both the asset and
+# the test fixture, and the two drifted the moment a table was added.
+#
+# Everything is varchar: this is the parser's output held verbatim, and casting
+# happens in the publish SQL where a bad value becomes NULL via try_cast rather
+# than failing a month's load.
+PARTITION_TABLE_DDL: dict[str, str] = {
+    "listing": (
+        "publication_number varchar, publication_date varchar, notice_type varchar, "
+        "buyer_name varchar, notice_title varchar, total_value varchar, "
+        "total_value_currency varchar, country_iso2 varchar, place_country varchar"
+    ),
+    "notice_docs": (
+        "publication_number varchar, buyer_org_ref varchar, "
+        "estimated_value varchar, estimated_value_currency varchar, "
+        "framework_maximum varchar, framework_maximum_currency varchar, "
+        "framework_total_maximum varchar, framework_total_maximum_currency varchar, "
+        "framework_total_approximate varchar, "
+        "framework_total_approximate_currency varchar"
+    ),
+    "organizations": (
+        "publication_number varchar, org_ref varchar, name varchar, "
+        "national_id_raw varchar, national_id varchar, country varchar"
+    ),
+    "lots": (
+        "publication_number varchar, lot_id varchar, lot_title varchar, "
+        "estimated_value varchar, estimated_value_currency varchar, "
+        "framework_maximum varchar, framework_maximum_currency varchar, "
+        "framework_value_maximum varchar, framework_value_maximum_currency varchar, "
+        "framework_value_reestimated varchar, "
+        "framework_value_reestimated_currency varchar, "
+        "lower_tender varchar, lower_tender_currency varchar, "
+        "higher_tender varchar, higher_tender_currency varchar"
+    ),
+    "winner_links": (
+        "publication_number varchar, lot_id varchar, tender_id varchar, "
+        "winner_ordinal integer, org_ref varchar, awarded_amount varchar, "
+        "awarded_currency varchar, subcontracting_amount varchar, "
+        "subcontracting_currency varchar"
+    ),
+}
+
+
+def partition_column_count(table: str) -> int:
+    """How many placeholders an insert into a partition table needs."""
+    return PARTITION_TABLE_DDL[table].count(",") + 1
 
 SEARCH_API_URL = "https://api.ted.europa.eu/v3/notices/search"
 NOTICE_XML_URL_TEMPLATE = "https://ted.europa.eu/en/notice/{publication_number}/xml"
@@ -89,6 +142,51 @@ def s3_partition_prefix(*, country_iso2: str, month: str) -> str:
     return f"monthly/country={country_iso2}/partition={month}/"
 
 
+# Every monetary figure the notice publishes, as (metric, eForms business term).
+# Each becomes <metric>_amount_original + <metric>_amount_usd + <metric>_currency.
+# Driving the schema off these tuples rather than listing columns by hand is what
+# keeps "store all of them" structural: adding a business term is one line.
+#
+# total_value arrives from the search API's listing rather than the XML; the rest
+# are parsed. They are deliberately separate columns and never coalesced --
+# an estimate, a ceiling and a realized award are different claims, and a column
+# holding whichever happened to be present makes all three unreadable.
+TED_NOTICE_VALUE_METRICS = (
+    ("total_value", "BT-161 notice value, realized"),
+    ("estimated_value", "BT-27 estimated value of the procedure"),
+    ("framework_maximum", "BT-709 framework maximum value"),
+    ("framework_total_maximum", "BT-118 maximum of all framework contracts"),
+    ("framework_total_approximate", "BT-1118 approximate total of framework contracts"),
+)
+
+TED_LOT_VALUE_METRICS = (
+    ("estimated_value", "BT-27 estimated value of this lot"),
+    ("framework_maximum", "BT-709 framework maximum for this lot"),
+    ("framework_value_maximum", "BT-271 framework ceiling stated on the award"),
+    ("framework_value_reestimated", "BT-660 revised framework estimate"),
+    ("lower_tender", "BT-710 lowest admissible tender received"),
+    ("higher_tender", "BT-711 highest admissible tender received"),
+)
+
+TED_WINNER_VALUE_METRICS = (
+    ("awarded", "BT-720 tender value, realized, per winner"),
+    ("subcontracting", "BT-553 value to be subcontracted"),
+)
+
+
+def value_columns(metrics: tuple[tuple[str, str], ...]) -> tuple[str, ...]:
+    """The three columns each monetary metric contributes, in schema order."""
+    return tuple(
+        column
+        for metric, _ in metrics
+        for column in (
+            f"{metric}_amount_original",
+            f"{metric}_amount_usd",
+            f"{metric}_currency",
+        )
+    )
+
+
 # Column order must match the DuckDB notices table and the 000148 migration.
 TED_NOTICES_COLUMNS = (
     "country_iso2",
@@ -104,12 +202,26 @@ TED_NOTICES_COLUMNS = (
     "buyer_national_id",
     "buyer_country",
     "notice_title",
-    "total_value_amount_original",
-    "total_value_amount_usd",
-    "total_value_currency",
+    *value_columns(TED_NOTICE_VALUE_METRICS),
     "fx_rate_to_usd",
     "fx_rate_date",
     "fx_source",
+    "partition_key",
+    "resolved_at",
+)
+
+TED_NOTICE_LOTS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "publication_number",
+    "lot_id",
+    "lot_title",
+    *value_columns(TED_LOT_VALUE_METRICS),
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "publication_date",
     "partition_key",
     "resolved_at",
 )
@@ -127,9 +239,7 @@ TED_NOTICE_WINNERS_COLUMNS = (
     "winner_national_id_raw",
     "winner_national_id",
     "winner_country",
-    "awarded_amount_original",
-    "awarded_amount_usd",
-    "awarded_currency",
+    *value_columns(TED_WINNER_VALUE_METRICS),
     "buyer_national_id",
     "place_country",
     "publication_date",
