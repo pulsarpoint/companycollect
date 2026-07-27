@@ -113,30 +113,58 @@ def test_the_download_resumes_from_the_snapshot_not_only_local_scratch() -> None
     """download_partition resumes at (pages on disk + 1), and on any machine
     that did not itself fetch this month that disk is empty -- a fresh deploy,
     another host, or a month whose scratch the cleanup asset already cleared.
-    Without hydrating from S3 first, re-materializing a snapshotted month
-    silently re-paid for every page: ~3,000 rate-limited requests to rebuild the
-    37 months already stored."""
+    Without consulting S3 first, re-materializing a snapshotted month silently
+    re-paid for every page: ~3,000 rate-limited requests to rebuild the 37
+    months already stored."""
     source = inspect.getsource(brazil_pncp_raw_pages_s3.op.compute_fn.decorated_fn)
-    # Everything before the fetch call. Hydrating after it would do nothing, so
-    # the check is that these appear in this half of the function.
+    # Everything before the fetch call. Checking afterwards would do nothing.
     before_fetch = source.split("download_partition(")[0]
 
     assert "list_keys" in before_fetch
-    assert "download_file" in before_fetch
-    # The metadata has to distinguish the two, or a month that quietly
-    # re-downloaded looks identical to one served from the snapshot.
-    assert "pages_fetched_from_api" in source
+    assert "already_snapshotted=len(snapshotted)" in source
+    # Only the count is needed, so the pages must NOT be copied back down.
+    assert "download_file" not in source
+    # The metadata has to distinguish stored from fetched, or a month that
+    # quietly re-downloaded looks identical to one served from the snapshot.
+    assert "pages_already_snapshotted" in source
+    assert "pages_reused" in source
+
+
+def test_a_page_already_in_the_snapshot_is_not_uploaded_again() -> None:
+    """Rewriting an identical object is the same waste as re-downloading it, and
+    the stored history is 2.6 GB of them. Mirrors what ted_monthly_snapshot
+    already does per notice XML."""
+    source = inspect.getsource(brazil_pncp_raw_pages_s3.op.compute_fn.decorated_fn)
+    upload = source.split("uploaded = reused = 0")[1]
+
+    assert "if _page_number(page_file.name) in set(snapshotted)" in upload
+    assert "continue" in upload
+
+
+def test_resuming_past_a_gap_is_refused() -> None:
+    """Resuming after N pages is only sound if those pages ARE 1..N. A missing
+    earlier page would leave a hole that nothing downstream could detect -- the
+    month would simply come out short, with every later page present."""
+    source = inspect.getsource(brazil_pncp_raw_pages_s3.op.compute_fn.decorated_fn)
+
+    assert "refusing to resume past a gap" in source
+    assert "raise ValueError" in source.split("download_partition(")[0]
 
 
 def test_a_retry_resumes_from_the_pages_already_paid_for() -> None:
-    """The retry above is only cheap because of this: the downloader counts the
-    page files already on disk and starts after them. If it ever restarted at
-    page 1, three retries of a 340-page month would cost 1,360 requests."""
+    """The retry above is only cheap because of this: the downloader starts
+    after the pages already accounted for, whether they are on disk or in the
+    snapshot. If it ever restarted at page 1, three retries of a 340-page month
+    would cost 1,360 requests.
+
+    The behaviour itself is covered in test_brazil_pncp_resources; this pins
+    that the two are wired together, which the asset alone can get wrong.
+    """
     from dagster_v3.defs.brazil_pncp.resources import download_partition
 
-    source = inspect.getsource(download_partition)
-
-    assert "resume_from = len(existing) + 1" in source
+    assert "already_snapshotted" in inspect.signature(download_partition).parameters
+    source = inspect.getsource(brazil_pncp_raw_pages_s3.op.compute_fn.decorated_fn)
+    assert "already_snapshotted=len(snapshotted)" in source
 
 
 def test_the_backfill_is_not_scheduled() -> None:

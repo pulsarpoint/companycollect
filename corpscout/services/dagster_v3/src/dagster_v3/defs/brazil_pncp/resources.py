@@ -148,6 +148,7 @@ def download_partition(
     page_size: int = tables.MAX_PAGE_SIZE,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
     progress_every: int = 10,
+    already_snapshotted: int = 0,
 ) -> dict[str, int]:
     """Write each page to its own JSONL file under destination.
 
@@ -155,13 +156,25 @@ def download_partition(
     already on disk is skipped, with no progress marker to keep in step with the
     files themselves. Written to a temporary name and renamed, so a partial file
     from a killed run is never mistaken for a complete page.
+
+    ``already_snapshotted`` is how many contiguous pages the durable store
+    already holds. Local scratch is not the record -- it is cleared once a month
+    reaches ClickHouse, and a different host never had it -- so a caller that
+    knows the snapshot's page count passes it here and resumes after those pages
+    without first copying them back down just to be counted.
     """
     destination.mkdir(parents=True, exist_ok=True)
     existing = sorted(destination.glob("page-*.jsonl"))
-    resume_from = len(existing) + 1
+    resume_from = max(already_snapshotted, len(existing)) + 1
 
-    records = sum(1 for f in existing for _ in f.open(encoding="utf-8"))
-    pages = len(existing)
+    # Strictly what this run fetched, so the number means the same thing however
+    # the partition resumed. Counting records already held would require reading
+    # them, and pages resumed past via already_snapshotted are deliberately never
+    # pulled down -- reporting a total would mean either lying or downloading
+    # 181 MB to say a number nobody asked for. `pages` still gives the month's
+    # size; a re-run that fetched nothing is honestly 0.
+    records_fetched = 0
+    pages = max(already_snapshotted, len(existing))
     started = time.monotonic()
     fetched = 0
 
@@ -178,7 +191,7 @@ def download_partition(
                 "page": page,
                 "total_pages": total_pages,
                 "pages_fetched": fetched,
-                "records": records + page_records,
+                "records_fetched": records_fetched + page_records,
                 "elapsed_seconds": round(elapsed, 1),
                 # The useful signal. PNCP sends no rate-limit headers, so
                 # backoff is invisible except as this number falling.
@@ -202,6 +215,10 @@ def download_partition(
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         partial.rename(target)
         pages += 1
-        records += len(page_records)
+        records_fetched += len(page_records)
 
-    return {"pages": pages, "records": records, "resumed_from_page": resume_from}
+    return {
+        "pages": pages,
+        "records_fetched": records_fetched,
+        "resumed_from_page": resume_from,
+    }

@@ -1,3 +1,4 @@
+import re
 import shutil
 import tempfile
 import uuid
@@ -33,6 +34,12 @@ PAGE_SCRATCH = Path("data") / "brazil_pncp_pages"
 CONTRACTS_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date="2022-01-01", end_offset=1
 )
+
+
+def _page_number(key: str) -> int | None:
+    """The page number in a ``page-00042.jsonl`` name or S3 key, if it is one."""
+    match = re.search(r"page-(\d+)\.jsonl$", key)
+    return int(match.group(1)) if match else None
 
 
 def _session():
@@ -81,28 +88,38 @@ def brazil_pncp_raw_pages_s3(
     brazil_pncp_object_store.ensure_bucket(tables.S3_BUCKET)
     prefix = f"{tables.S3_RAW_PREFIX}/{month}"
 
-    # Resume from the SNAPSHOT, not just from local scratch. download_partition
+    # Resume from the SNAPSHOT, not from local scratch. download_partition
     # resumes at (pages on disk + 1), and on a machine that never fetched this
-    # month -- a fresh deploy, another host, or any month downloaded weeks ago
-    # and since cleaned up by brazil_pncp_page_cache_cleanup -- that disk is
+    # month -- a fresh deploy, another host, or any month whose scratch
+    # brazil_pncp_page_cache_cleanup already cleared by design -- that disk is
     # empty, so a re-materialization silently re-paid for every page. With 37
     # months already snapshotted that was ~3,000 rate-limited requests to
     # rebuild data we already had.
     #
-    # Hydrating first makes the asset genuinely idempotent: a complete month
-    # costs one request (the page past the end, which the API rejects
-    # explicitly), and an interrupted one resumes exactly where it stopped.
-    hydrated = 0
-    for key in brazil_pncp_object_store.list_keys(prefix, bucket=tables.S3_BUCKET):
-        target = scratch / Path(key).name
-        if not target.exists():
-            brazil_pncp_object_store.download_file(
-                key, target, bucket=tables.S3_BUCKET
-            )
-            hydrated += 1
-    if hydrated:
+    # Only the page COUNT is needed to resume, so the pages themselves are left
+    # in S3 rather than copied down and pushed straight back up: for the stored
+    # history that round trip is ~2.6 GB each way for nothing. A complete month
+    # now costs one list call and one request -- the page past the end, which
+    # PNCP rejects explicitly rather than returning empty.
+    snapshotted = sorted(
+        _page_number(key)
+        for key in brazil_pncp_object_store.list_keys(prefix, bucket=tables.S3_BUCKET)
+        if _page_number(key)
+    )
+    # Resuming after N pages is only sound if those pages ARE 1..N. A gap means
+    # some earlier page is missing, and continuing past it would leave a hole
+    # that nothing downstream could detect -- the month would simply be short.
+    if snapshotted and snapshotted != list(range(1, len(snapshotted) + 1)):
+        missing = sorted(set(range(1, max(snapshotted) + 1)) - set(snapshotted))
+        raise ValueError(
+            f"PNCP snapshot for {month} is missing page(s) {missing[:10]} of "
+            f"{max(snapshotted)}; refusing to resume past a gap. Delete the "
+            f"partition's objects under {prefix} to re-fetch it cleanly."
+        )
+    if snapshotted:
         context.log.info(
-            "%s: hydrated %s pages from the snapshot before resuming", month, hydrated
+            "%s: %s pages already snapshotted, resuming at %s",
+            month, len(snapshotted), len(snapshotted) + 1,
         )
 
     def _log_progress(progress: dict) -> None:
@@ -111,11 +128,11 @@ def brazil_pncp_raw_pages_s3(
         # signal worth watching: PNCP sends no rate-limit headers, so backoff
         # shows up only as that number falling.
         context.log.info(
-            "%s page %s/%s: %s records, %.1f pages/min, %.0fs elapsed",
+            "%s page %s/%s: %s records fetched, %.1f pages/min, %.0fs elapsed",
             month,
             progress["page"],
             progress["total_pages"],
-            progress["records"],
+            progress["records_fetched"],
             progress["pages_per_minute"],
             progress["elapsed_seconds"],
         )
@@ -127,27 +144,34 @@ def brazil_pncp_raw_pages_s3(
         start=start,
         end=end,
         on_progress=_log_progress,
+        already_snapshotted=len(snapshotted),
     )
 
-    uploaded = 0
+    # Only pages this run actually fetched. Re-uploading a page that is already
+    # in S3 rewrites an identical object -- the same waste as re-downloading it,
+    # and the whole history is 2.6 GB of them.
+    uploaded = reused = 0
     for page_file in sorted(scratch.glob("page-*.jsonl")):
+        if _page_number(page_file.name) in set(snapshotted):
+            reused += 1
+            continue
         brazil_pncp_object_store.upload_file(
             f"{prefix}/{page_file.name}", page_file, bucket=tables.S3_BUCKET
         )
         uploaded += 1
 
     context.log.info(
-        "PNCP %s..%s: %s records over %s pages (%s hydrated from S3, resumed "
-        "from page %s), %s uploaded",
-        start, end, downloaded["records"], downloaded["pages"],
-        hydrated, downloaded["resumed_from_page"], uploaded,
+        "PNCP %s..%s: %s pages total (%s already snapshotted, resumed from page "
+        "%s), %s newly uploaded, %s reused",
+        start, end, downloaded["pages"], len(snapshotted),
+        downloaded["resumed_from_page"], uploaded, reused,
     )
     return dg.MaterializeResult(
         metadata={
             **downloaded,
-            "pages_hydrated_from_s3": hydrated,
-            "pages_fetched_from_api": downloaded["pages"] - hydrated,
+            "pages_already_snapshotted": len(snapshotted),
             "pages_uploaded": uploaded,
+            "pages_reused": reused,
             "s3_prefix": prefix,
         }
     )

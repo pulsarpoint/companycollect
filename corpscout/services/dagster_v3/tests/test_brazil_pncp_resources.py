@@ -124,7 +124,77 @@ def test_a_resumed_partition_does_not_refetch_what_it_has(tmp_path: Path) -> Non
 
     # Everything was already on disk, so only the past-the-end probe is made.
     assert resumed.requested == [4]
-    assert result == {"pages": 3, "records": 1250, "resumed_from_page": 4}
+    assert result == {"pages": 3, "records_fetched": 0, "resumed_from_page": 4}
+
+
+def test_a_snapshotted_month_resumes_without_the_files_on_disk(tmp_path: Path) -> None:
+    """The durable record is S3, not local scratch -- which is cleared once a
+    month reaches ClickHouse, and never existed on another host. Given the
+    snapshot's page count, resume must land past those pages without the caller
+    first copying 2.6 GB back down just so they can be counted."""
+    session = _FakeSession(total_records=1250)
+
+    result = download_partition(
+        session,
+        destination=tmp_path,
+        path="/contratos",
+        start="20260601",
+        end="20260630",
+        already_snapshotted=3,
+    )
+
+    # Only the past-the-end probe, exactly as if the files were present.
+    assert session.requested == [4]
+    assert result["resumed_from_page"] == 4
+    assert result["pages"] == 3
+    assert not list(tmp_path.glob("page-*.jsonl"))
+
+
+def test_a_partly_snapshotted_month_fetches_only_the_rest(tmp_path: Path) -> None:
+    session = _FakeSession(total_records=1250)
+
+    result = download_partition(
+        session,
+        destination=tmp_path,
+        path="/contratos",
+        start="20260601",
+        end="20260630",
+        already_snapshotted=1,
+    )
+
+    # No past-the-end probe here: totalPaginas from page 2 bounds the walk, and
+    # only a resume that starts beyond the last page has to ask.
+    assert session.requested == [2, 3]
+    # Only the newly fetched pages land locally, so only they get uploaded.
+    assert sorted(p.name for p in tmp_path.glob("page-*.jsonl")) == [
+        "page-00002.jsonl",
+        "page-00003.jsonl",
+    ]
+    assert result["resumed_from_page"] == 2
+
+
+def test_local_scratch_still_wins_when_it_is_further_ahead(tmp_path: Path) -> None:
+    """A run that died after uploading nothing leaves pages on disk that S3 does
+    not have. Resuming from the smaller S3 count would re-fetch them."""
+    download_partition(
+        _FakeSession(total_records=1250),
+        destination=tmp_path,
+        path="/contratos",
+        start="20260601",
+        end="20260630",
+    )
+
+    session = _FakeSession(total_records=1250)
+    download_partition(
+        session,
+        destination=tmp_path,
+        path="/contratos",
+        start="20260601",
+        end="20260630",
+        already_snapshotted=1,
+    )
+
+    assert session.requested == [4]
 
 
 def test_pages_land_as_jsonl_and_partials_are_not_left_behind(tmp_path: Path) -> None:
@@ -162,7 +232,7 @@ def test_progress_is_reported_during_a_long_month(tmp_path: Path) -> None:
     # Every tenth page, plus the last one however it falls.
     assert [p["page"] for p in seen] == [10, 20, 25]
     assert seen[-1]["total_pages"] == 25
-    assert seen[-1]["records"] == 12_500
+    assert seen[-1]["records_fetched"] == 12_500
     assert seen[0]["pages_per_minute"] > 0
 
 
