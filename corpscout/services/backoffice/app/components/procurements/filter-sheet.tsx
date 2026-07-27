@@ -96,7 +96,8 @@ export function ProcurementFilterSheet({
         <SheetHeader>
           <SheetTitle>Filter records</SheetTitle>
         </SheetHeader>
-        <Form method="get" className="space-y-4 px-4 pb-6">
+        {/* Keyed on the applied values so navigation remounts the uncontrolled fields — otherwise Clear all would leave stale DOM values in the still-mounted sheet. */}
+        <Form key={JSON.stringify(values)} method="get" className="space-y-4 px-4 pb-6">
           <input type="hidden" name="table" value={table} />
           {available.country ? (
             <Field label="Country">
