@@ -81,6 +81,30 @@ def brazil_pncp_raw_pages_s3(
     brazil_pncp_object_store.ensure_bucket(tables.S3_BUCKET)
     prefix = f"{tables.S3_RAW_PREFIX}/{month}"
 
+    # Resume from the SNAPSHOT, not just from local scratch. download_partition
+    # resumes at (pages on disk + 1), and on a machine that never fetched this
+    # month -- a fresh deploy, another host, or any month downloaded weeks ago
+    # and since cleaned up by brazil_pncp_page_cache_cleanup -- that disk is
+    # empty, so a re-materialization silently re-paid for every page. With 37
+    # months already snapshotted that was ~3,000 rate-limited requests to
+    # rebuild data we already had.
+    #
+    # Hydrating first makes the asset genuinely idempotent: a complete month
+    # costs one request (the page past the end, which the API rejects
+    # explicitly), and an interrupted one resumes exactly where it stopped.
+    hydrated = 0
+    for key in brazil_pncp_object_store.list_keys(prefix, bucket=tables.S3_BUCKET):
+        target = scratch / Path(key).name
+        if not target.exists():
+            brazil_pncp_object_store.download_file(
+                key, target, bucket=tables.S3_BUCKET
+            )
+            hydrated += 1
+    if hydrated:
+        context.log.info(
+            "%s: hydrated %s pages from the snapshot before resuming", month, hydrated
+        )
+
     def _log_progress(progress: dict) -> None:
         # A 340-page month is otherwise silent until it finishes, which makes a
         # stall indistinguishable from slow going. pages_per_minute is the
@@ -113,12 +137,19 @@ def brazil_pncp_raw_pages_s3(
         uploaded += 1
 
     context.log.info(
-        "PNCP %s..%s: %s records over %s pages (resumed from page %s), %s uploaded",
+        "PNCP %s..%s: %s records over %s pages (%s hydrated from S3, resumed "
+        "from page %s), %s uploaded",
         start, end, downloaded["records"], downloaded["pages"],
-        downloaded["resumed_from_page"], uploaded,
+        hydrated, downloaded["resumed_from_page"], uploaded,
     )
     return dg.MaterializeResult(
-        metadata={**downloaded, "pages_uploaded": uploaded, "s3_prefix": prefix}
+        metadata={
+            **downloaded,
+            "pages_hydrated_from_s3": hydrated,
+            "pages_fetched_from_api": downloaded["pages"] - hydrated,
+            "pages_uploaded": uploaded,
+            "s3_prefix": prefix,
+        }
     )
 
 

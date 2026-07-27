@@ -8,6 +8,7 @@ from dagster_v3.defs.brazil_pncp.assets import (
     brazil_pncp_backfill_job,
     brazil_pncp_contracts_duckdb,
     brazil_pncp_page_cache_cleanup,
+    brazil_pncp_raw_pages_s3,
     defs,
 )
 
@@ -106,6 +107,25 @@ def test_the_download_retries_so_an_overnight_backfill_survives() -> None:
     # Long enough to outlast a rate-limit window, not a network blip.
     assert policy.delay == 60
     assert policy.backoff == dg.Backoff.EXPONENTIAL
+
+
+def test_the_download_resumes_from_the_snapshot_not_only_local_scratch() -> None:
+    """download_partition resumes at (pages on disk + 1), and on any machine
+    that did not itself fetch this month that disk is empty -- a fresh deploy,
+    another host, or a month whose scratch the cleanup asset already cleared.
+    Without hydrating from S3 first, re-materializing a snapshotted month
+    silently re-paid for every page: ~3,000 rate-limited requests to rebuild the
+    37 months already stored."""
+    source = inspect.getsource(brazil_pncp_raw_pages_s3.op.compute_fn.decorated_fn)
+    # Everything before the fetch call. Hydrating after it would do nothing, so
+    # the check is that these appear in this half of the function.
+    before_fetch = source.split("download_partition(")[0]
+
+    assert "list_keys" in before_fetch
+    assert "download_file" in before_fetch
+    # The metadata has to distinguish the two, or a month that quietly
+    # re-downloaded looks identical to one served from the snapshot.
+    assert "pages_fetched_from_api" in source
 
 
 def test_a_retry_resumes_from_the_pages_already_paid_for() -> None:
