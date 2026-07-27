@@ -1,23 +1,66 @@
 # Brazil PNCP (government contracts) design doc
 
 > Follows `docs/data-source-guidelines.md`; deviations are called out below.
-> Status: **design only, nothing built.** Section 0 lists what must be verified
-> before writing code — one of those answers can still change the ingest shape.
+> Status: **built; backfill and FX outstanding.** Section 0 is closed.
 
-## 0. Open questions that gate the build
+## 0. Open questions that gated the build — all closed
 
-Three of the original four were settled by probe on 2026-07-26 (§2). One remains.
+Three of the original four were settled by probe on 2026-07-26 (§2). The fourth
+was settled on 2026-07-27 against **17,538 real contracts** read out of the S3
+snapshot — no new rate-limited requests, which is the whole reason the raw pages
+are kept.
 
-1. **What distinguishes `valorInicial` / `valorGlobal` / `valorAcumulado`?** One
-   sampled record had `valorInicial == valorGlobal == 94390.8`, which
-   distinguishes nothing. §7 states the intended choice; validate it against
-   records where they differ before committing. This does not gate the ingest
-   shape — only which column feeds `value_amount_original`.
+### `valorGlobal` is the contract value. Confirmed, not assumed.
 
-**Resolved:** deep pagination works to the last page (page 341 of 340 returns a
-clean `Página 341 inexistente`, not silent truncation), so monthly partitions
-stand. Max `tamanhoPagina` is 500 — 1000 is rejected. Date bounds are inclusive
-at both ends, verified arithmetically.
+Sample: 36 pages spread over 2022-06, 2023-08, 2024-06 and 2025-01, so adoption,
+ramp-up and steady state are all represented.
+
+```
+                       non-zero / 17,538
+valorGlobal              17,391   99.2%     <- the value
+valorInicial             17,372   99.1%
+valorParcela             15,316   87.3%
+valorAcumulado            8,608   49.1%     <- zero half the time
+
+valorInicial == valorGlobal on 17,094 (97.5%) -- which is why one sampled
+record distinguished nothing
+```
+
+The instalment identity decides it. Restricted to contracts genuinely paid in
+instalments (`numeroParcelas > 1`, 1,486 rows), `valorParcela × numeroParcelas`
+reproduces:
+
+```
+valorGlobal      1,095   73.7%     <- best
+valorInicial     1,035   69.6%
+valorAcumulado     149   10.0%
+```
+
+### `valorAcumulado` is **not** the amended running total
+
+The hypothesis written here — "running total after amendments (*aditivos*) and
+adjustments (*reajustes*)", testable as `valorAcumulado >= valorInicial` wherever
+`numeroRetificacao > 0` — **fails against the data**:
+
+```
+amended contracts (numeroRetificacao > 0)          1,078
+  of which valorAcumulado >= valorInicial            274   25%
+  of which valorAcumulado >  valorInicial             40    4%
+valorAcumulado exceeds valorGlobal, anywhere          40
+valorAcumulado is exactly zero                     8,930   51%
+```
+
+A field that is zero half the time and exceeds the initial value on 4% of
+amended contracts is not a cumulative total. It looks more like accumulated
+*execution/payment*, largely unreported. Whatever it is, it must not feed
+`value_amount_original`: doing so would zero out half of Brazil's contracts.
+
+**Two refinements this surfaced, not yet implemented — see §9.**
+
+**Resolved earlier:** deep pagination works to the last page (page 341 of 340
+returns a clean `Página 341 inexistente`, not silent truncation), so monthly
+partitions stand. Max `tamanhoPagina` is 500 — 1000 is rejected. Date bounds are
+inclusive at both ends, verified arithmetically.
 
 ## 1. Source overview
 
@@ -287,18 +330,17 @@ only. Brazilian company contacts already arrive via `br_company_contacts`
   gives no description. Their meaning is the Brazilian public-contracting
   convention, not a documented contract:
 
-  | field | meaning by convention |
-  |---|---|
-  | `valorInicial` | value as originally signed |
-  | `valorGlobal` | total over the full term, usually `valorParcela × numeroParcelas` |
-  | `valorAcumulado` | running total after amendments (*aditivos*) and adjustments (*reajustes*) |
+  | field | meaning by convention | what 17,538 records showed |
+  |---|---|---|
+  | `valorInicial` | value as originally signed | holds; equals `valorGlobal` 97.5% of the time |
+  | `valorGlobal` | total over the full term, usually `valorParcela × numeroParcelas` | **holds** — best coverage and best instalment fit |
+  | `valorAcumulado` | running total after amendments (*aditivos*) and adjustments (*reajustes*) | **false** — zero 51% of the time, exceeds `valorInicial` on 4% of amended contracts |
 
-  Two falsifiable predictions to check against a page of real records, since a
-  sampled contract had `valorInicial == valorGlobal` and so confirmed nothing:
-  `valorParcela × numeroParcelas == valorGlobal` for instalment contracts, and
-  `valorAcumulado >= valorInicial` wherever `numeroRetificacao > 0`. If the
-  second holds it also demonstrates that the amendment-refresh job in §2 is
-  necessary in fact, not just in theory.
+  Both predictions were tested (§0). The first held and picked `valorGlobal`. The
+  second failed, which also means it does **not** demonstrate the
+  amendment-refresh job is necessary — that job's justification has to come from
+  somewhere else, and §2's "cheaper to read both endpoints than to find out"
+  reasoning is now the only one standing.
 
 - **The view names the column it used.** `value_amount_original` is
   `valorGlobal`, and the view carries `value_source_field = 'valorGlobal'`
@@ -364,6 +406,26 @@ than a type default indistinguishable from a real `0`.
 `directive_governed` has no meaning outside the EU procurement directives:
 emit `''` (unknown), not `'no'`. Claiming "below EU threshold" for a Brazilian
 contract would be nonsense.
+
+### 9a. Two refinements the value analysis surfaced — open
+
+Both come out of the 17,538-record sample in §0, neither is implemented, and
+both need a migration because the view is migration-owned.
+
+1. **`receita = true` contracts are revenue, not spend.** 193 of 17,538 rows
+   (1.1%) are contracts where money flows *to* the state — concessions, asset
+   disposals, rents — carrying R$0.54bn against the sample's R$8.7bn of actual
+   spend. The view sums them together today, so "what this buyer spent" is
+   overstated. `receita` is already stored on `br_pncp_contracts`; the view
+   should either exclude those rows or expose the flag so a summary can.
+
+2. **`valorGlobal` is zero on 102 rows where `valorInicial` is not** (0.6%),
+   and 121 rows are the reverse. 45 rows have neither. A
+   `coalesce(valorGlobal, valorInicial)` fallback recovers the first group, but
+   it must set `value_source_field` **per row** rather than the constant
+   `'valorGlobal'` the view emits now — the entire point of that column is that
+   a displayed figure states its own origin, and a fallback that lies about
+   which field it came from is worse than the missing value.
 
 ## 9b. UI: establishments are shown, not hidden
 
