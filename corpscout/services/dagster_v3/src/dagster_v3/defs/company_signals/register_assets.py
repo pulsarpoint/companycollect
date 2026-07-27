@@ -18,6 +18,11 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.company_signals import tables
+from dagster_v3.defs.company_signals.entity_types import (
+    LEGAL_FORM_MAPPINGS,
+    is_public_sector,
+    label_for,
+)
 from dagster_v3.defs.company_signals.registers import PROCUREMENT_REGISTERS
 
 REGISTERS_TABLE = "procurement_registers"
@@ -121,5 +126,85 @@ def procurement_registers_clickhouse(
             "countries": sorted(
                 {code for r in PROCUREMENT_REGISTERS for code in r.country_codes}
             ),
+        }
+    )
+
+
+ENTITY_TYPES_TABLE = "company_entity_types"
+ENTITY_TYPE_COLUMNS = (
+    "country_code",
+    "legal_form_code",
+    "entity_type",
+    "entity_type_label",
+    "source_label",
+    "is_public_sector",
+    "resolved_at",
+)
+
+
+@dg.asset(
+    name="company_entity_types_clickhouse",
+    group_name=tables.GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    metadata={"tables": [f"{tables.CLICKHOUSE_DATABASE}.{ENTITY_TYPES_TABLE}"]},
+    description=(
+        "Normalised entity type per (country, legal form), so a municipality "
+        "in a company register can be labelled as one and excluded from a "
+        "company count deliberately rather than silently. Reference data, "
+        "replaced wholesale."
+    ),
+)
+def company_entity_types_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.CLICKHOUSE_DATABASE,
+        tables=(ENTITY_TYPES_TABLE,),
+    )
+    qualified = f"`{tables.CLICKHOUSE_DATABASE}`.`{ENTITY_TYPES_TABLE}`"
+    stage = (
+        f"`{tables.CLICKHOUSE_DATABASE}`.`_tmp_{ENTITY_TYPES_TABLE}_{uuid.uuid4().hex}`"
+    )
+
+    resolved_at = datetime.now(UTC)
+    rows = [
+        (
+            mapping.country_code,
+            mapping.legal_form_code,
+            mapping.entity_type,
+            label_for(mapping.entity_type),
+            mapping.source_label,
+            1 if is_public_sector(mapping.entity_type) else 0,
+            resolved_at,
+        )
+        for mapping in LEGAL_FORM_MAPPINGS
+    ]
+    if not rows:
+        raise ValueError("No legal form mappings declared; refusing to blank the table")
+
+    with clickhouse.get_connection() as client:
+        client.execute(f"CREATE TABLE {stage} AS {qualified}")
+        try:
+            client.execute(
+                f"INSERT INTO {stage} ({', '.join(ENTITY_TYPE_COLUMNS)}) VALUES", rows
+            )
+            client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
+
+    public = sum(1 for row in rows if row[5] == 1)
+    context.log.info(
+        "Published %s legal form mappings across %s countries; %s are public sector",
+        len(rows),
+        len({row[0] for row in rows}),
+        public,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "mappings": len(rows),
+            "countries": sorted({row[0] for row in rows}),
+            "public_sector_forms": public,
         }
     )

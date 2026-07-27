@@ -218,6 +218,9 @@ EXPECTED_MIGRATIONS = (
     "000197_corpscout_ted_all_notice_values",
     "000198_corpscout_no_doffin_notices",
     "000199_corpscout_procurement_registers",
+    "000200_corpscout_company_entity_types",
+    "000200_corpscout_fr_sk_ted_procurement",
+    "000201_corpscout_lv_ted_procurement",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2455,9 +2458,7 @@ def test_company_identifier_migration_covers_columns_in_order() -> None:
         last_index = index
 
     assert "ENGINE = MergeTree" in sql
-    assert (
-        "ORDER BY (issuer_scheme, issuer_id, country_code, company_id)" in sql
-    )
+    assert "ORDER BY (issuer_scheme, issuer_id, country_code, company_id)" in sql
     assert "DROP TABLE IF EXISTS corpscout.company_identifier" in down_sql
 
 
