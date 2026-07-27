@@ -152,11 +152,63 @@ answers "what was awarded", nothing answers "where do I find open offers".
 caveat) and is **unused in the UI** — the source panel should read it rather
 than duplicating it.
 
-### 3.4 Show each source as itself
+### 3.4 Show each source as itself — `/procurements/{source}`
 
-Contracts tab: a source panel per country from `company_signal_coverage` plus
-the metadata table. A dedicated procurement-sources page describing each
-register and linking to where open tenders are published.
+**This is the centrepiece of Phase 1, not a footnote.** One page per source,
+listing everything that source publishes, read from the *source tables* rather
+than the country views:
+
+```
+/procurements/ted                    ted_notices + ted_notice_winners
+/procurements/sweden-uhm             se_uhm_procurement_awards
+/procurements/finland-hilma          fi_hilma_notices + fi_hilma_notice_winners
+/procurements/brazil-pncp            br_pncp_contracts
+/procurements/norway-doffin          (once built)
+```
+
+Clicking a procurement opens what we actually pulled from that API: the fields
+as the source publishes them, in its own shape and vocabulary, not flattened to
+the canonical columns. The contract detail page already does this per contract
+with `SELECT *`; these pages do it for the source as a whole.
+
+**Why this matters more than it looks.** These pages are not country-scoped, and
+that is the point:
+
+- **They make §4.1's dropped rows visible.** A country view shows only contracts
+  won by that country's companies, so the 4,304 cross-border wins appear on no
+  page at all today. A TED page shows every TED notice — including the Danish
+  company that won in Sweden — because it is showing TED, not Sweden.
+- **They show the source's own fidelity.** The country views expose 26 canonical
+  columns; TED publishes far more, Hilma has trilingual names and NUTS regions,
+  PNCP has 41 fields including subcontractors and parliamentary amendments. The
+  canonical shape is a projection *for comparison*, and comparison is Phase 3's
+  problem. Phase 1 shows what is there.
+- **They are how a source is verified.** "Did we pull TED correctly" is
+  answerable by looking at the TED page against ted.europa.eu. It is not
+  answerable from a country view, which has already filtered, joined and
+  projected the data three times.
+- **They do not depend on company matching.** A procurement with an unmatched
+  winner still belongs on its source page. Only the *link to a company* is
+  conditional, exactly as the contract detail page already handles winners with
+  no registry match.
+
+**Shape per source page:**
+
+```
+header      what this source is, who runs it, what it covers, licence,
+            where open tenders are published  (from the metadata table, §3.3)
+coverage    date span, row counts, last refreshed  (company_signal_coverage)
+list        the source's own natural grain, its own columns, filterable by
+            country and date
+detail      every field the source publishes for that record, plus a link to
+            the source document, plus links to any companies matched
+```
+
+The country Contracts tab keeps its source panel (from
+`company_signal_coverage` plus §3.3's metadata), with each source badge linking
+through to its `/procurements/{source}` page. The country page answers "what did
+this country buy"; the source page answers "what does this register contain and
+did we read it correctly". Both are needed and they are not the same question.
 
 ---
 
@@ -190,7 +242,9 @@ Phase 3 exists to answer** and cannot be fixed by editing a filter, because the
 winner's register may not be loaded at all.
 
 **Do now, cheaply:** state it in the coverage caveat, so the gap is visible while
-the real answer waits.
+the real answer waits. The source pages in §3.4 also surface these rows for the
+first time — a TED page shows every TED winner regardless of nationality, which
+is the difference between a gap that is documented and one that is observable.
 
 ### 4.2 Sweden's two sources are not deduplicated — OPEN
 
