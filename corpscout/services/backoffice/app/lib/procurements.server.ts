@@ -350,3 +350,51 @@ export async function countRows(tables: string[]): Promise<Record<string, number
   );
   return Object.fromEntries(rows.map((r) => [r.table, Number(r.rows)]));
 }
+
+/** Distinct values for the sheet's enum dropdowns plus which countries have
+ * rows. One grouped query per column, bounded: these are LowCardinality
+ * columns with a handful of values. */
+export async function getFilterOptions(
+  register: ProcurementRegister,
+  table?: string,
+): Promise<{ noticeTypes: string[]; awardResults: string[]; activeCountries: string[] }> {
+  const safeTable = assertKnownTable(register, table ?? register.notice_table);
+  const cols = filterColumns(await columnsOf(safeTable));
+
+  async function distinct(column: string | null): Promise<string[]> {
+    if (!column) return [];
+    const rows = await chQuery<{ v: string }>(
+      `SELECT DISTINCT ${column} AS v FROM ${safeTable}
+       WHERE ${column} != '' ORDER BY v LIMIT 100`,
+    );
+    return rows.map((r) => r.v);
+  }
+
+  const [noticeTypes, awardResults, activeCountries] = await Promise.all([
+    distinct(cols.noticeType),
+    distinct(cols.awardResult),
+    distinct(cols.country).then((codes) => codes.map((c) => c.toUpperCase())),
+  ]);
+  return { noticeTypes, awardResults, activeCountries };
+}
+
+/** Which of these org ids exist in the company register, and where their
+ * company pages live. Buyers are mostly public institutions, but their org
+ * numbers are in the national registers (SE ~98%, NO ~95% measured), so the
+ * company page doubles as the buyer page. */
+export async function matchCompanies(
+  ids: string[],
+): Promise<Record<string, { country_code: string; company_id: string }>> {
+  const unique = [...new Set(ids.filter((id) => id !== ""))];
+  if (unique.length === 0) return {};
+  const rows = await chQuery<{ company_id: string; country_code: string }>(
+    `SELECT company_id, any(country_code) AS country_code
+     FROM companies_all
+     WHERE company_id IN {ids:Array(String)}
+     GROUP BY company_id`,
+    { ids: unique },
+  );
+  return Object.fromEntries(
+    rows.map((r) => [r.company_id, { country_code: r.country_code, company_id: r.company_id }]),
+  );
+}
