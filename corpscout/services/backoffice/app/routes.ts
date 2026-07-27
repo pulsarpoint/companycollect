@@ -13,6 +13,11 @@ export default [
     route("company/:country/:id/facts/:year/document", "routes/company-facts-document.ts"),
     route("company/:country/geocode", "routes/country-geocode.ts"),
     route("facet-options", "routes/facet-options.ts"),
+    // Deliberately not nested under a country: a source page shows the whole
+    // register, including the winners no country view will ever carry.
+    route("procurements", "routes/procurements.tsx"),
+    route("procurements/:source", "routes/procurement-source.tsx"),
+    route("procurements/:source/:key", "routes/procurement-record.tsx"),
     route("people", "routes/people.tsx"),
     route("person/:name", "routes/person.tsx"),
     route("financials", "routes/financials.tsx"),

@@ -57,10 +57,12 @@ describe("publicContractsQuery", () => {
       // Every Finnish source publishes a per-notice address, so a row that
       // cannot be traced back to its document is a bug.
       expect(row.source_url).toMatch(/^https:\/\//);
-      // Hilma has no per-winner amount. Presenting its notice total as this
-      // company's share is exactly the error this separation prevents.
-      if (row.source === "finland_hilma_procurement") {
-        expect(row.amount_original).toBeNull();
+      // The two figures stay in their own columns whatever their values. On a
+      // single-winner lot they legitimately coincide, so equality proves
+      // nothing either way -- what must never happen is the notice total
+      // silently standing in for a missing per-winner amount.
+      if (row.amount_original === null) {
+        expect(row.amount_usd).toBeNull();
       }
     }
     // Newest first.

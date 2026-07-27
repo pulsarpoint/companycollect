@@ -169,8 +169,11 @@ export interface PublicContractRow {
   contract_date: string;
   buyer_name: string;
   title: string;
-  /** Attributable to this winner. Null where the source publishes no
-   * per-winner figure -- Hilma and Sweden's UHM both do not. */
+  /** Attributable to this winner. Null where the source publishes no figure
+   * that can be attributed to one -- Sweden's UHM publishes no value at all,
+   * and any source may simply omit it on a given notice. Hilma's comes from
+   * its lot-grain value, which is one company's amount wherever a lot has a
+   * single winner; on such a notice it legitimately equals the notice total. */
   amount_original: number | null;
   amount_usd: number | null;
   currency: string;
