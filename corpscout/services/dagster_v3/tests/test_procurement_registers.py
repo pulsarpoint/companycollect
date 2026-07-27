@@ -1,0 +1,144 @@
+"""Register descriptions: the metadata the UI should read instead of holding.
+
+These are prose, so most of what can be tested is that they are present,
+consistent with the rest of the pipeline, and not quietly stale.
+"""
+
+from pathlib import Path
+
+from dagster_v3.defs.company_signals.register_assets import (
+    REGISTER_COLUMNS,
+    REGISTERS_TABLE,
+    procurement_registers_clickhouse,
+)
+from dagster_v3.defs.company_signals.registers import (
+    PROCUREMENT_REGISTERS,
+    register_for,
+)
+from dagster_v3.defs.company_signals.rules import COUNTRY_PROCUREMENT_RULES
+
+
+def _migration_sql() -> str:
+    root = Path(__file__).resolve().parents[3]
+    return (
+        root / "clickhouse" / "migrations"
+        / "000199_corpscout_procurement_registers.up.sql"
+    ).read_text()
+
+
+def test_every_source_a_country_reads_has_a_register_description() -> None:
+    """A source in a country's rules with no register row would leave the UI
+    with a slug and nothing to say about it."""
+    declared = {register.source_slug for register in PROCUREMENT_REGISTERS}
+    used = {
+        source.slug
+        for rule in COUNTRY_PROCUREMENT_RULES.values()
+        for source in rule.sources
+    }
+
+    assert used <= declared, used - declared
+
+
+def test_the_countries_match_the_rules_that_read_each_source() -> None:
+    """The array is the whole reason this is one row per source rather than per
+    country, so it must actually agree with who reads what."""
+    expected: dict[str, set[str]] = {}
+    for rule in COUNTRY_PROCUREMENT_RULES.values():
+        for source in rule.sources:
+            expected.setdefault(source.slug, set()).add(rule.country_code)
+
+    for register in PROCUREMENT_REGISTERS:
+        assert set(register.country_codes) == expected[register.source_slug], (
+            register.source_slug
+        )
+
+
+def test_ted_is_one_row_serving_three_countries() -> None:
+    """The case the grain exists for. Per-country rows would hold its licence
+    three times and let them drift."""
+    ted = register_for("ted_procurement")
+
+    assert ted.country_codes == ("FI", "NO", "SE")
+    assert len([r for r in PROCUREMENT_REGISTERS if r.source_slug == "ted_procurement"]) == 1
+
+
+def test_every_register_either_says_where_open_tenders_are_or_why_it_cannot() -> None:
+    """The question nothing else in the product answers. Everything built so far
+    describes what was awarded, which is no use to a supplier looking for work.
+
+    An empty URL is allowed but must be explained, because for Sweden the
+    absence IS the answer: there is no single national portal, and our own data
+    shows the notices spread across five competing ad databases. A guessed URL
+    would send a supplier to a fraction of the market -- the first one tried
+    here 404'd, which is how this was noticed.
+    """
+    for register in PROCUREMENT_REGISTERS:
+        if register.open_tenders_url:
+            assert register.open_tenders_url.startswith("https://"), register.source_slug
+            # ...and it must not just be the homepage again.
+            assert register.open_tenders_url != register.homepage_url, (
+                register.source_slug
+            )
+        else:
+            assert "no single national tender portal" in register.notes, (
+                register.source_slug
+            )
+
+
+def test_every_register_carries_a_licence_and_an_operator() -> None:
+    for register in PROCUREMENT_REGISTERS:
+        assert register.licence, register.source_slug
+        assert register.operator, register.source_slug
+        assert register.homepage_url.startswith("https://"), register.source_slug
+
+
+def test_the_source_tables_are_the_ones_the_country_rules_require() -> None:
+    """A source page reads these directly, so a typo would show an empty page
+    rather than fail."""
+    for rule in COUNTRY_PROCUREMENT_RULES.values():
+        for source in rule.sources:
+            register = register_for(source.slug)
+            assert set(source.required_tables) <= set(register.source_tables), (
+                source.slug
+            )
+
+
+def test_the_notice_lookup_names_a_table_it_actually_lists() -> None:
+    for register in PROCUREMENT_REGISTERS:
+        assert register.notice_table in register.source_tables, register.source_slug
+        assert register.notice_key_column, register.source_slug
+
+
+def test_coverage_description_describes_the_register_not_our_ingest() -> None:
+    """The distinction the two tables exist to keep. 'Below-threshold contracts
+    are absent' is a fact about TED; 'we have not loaded 2019' is a fact about
+    us and belongs in company_signal_coverage."""
+    for register in PROCUREMENT_REGISTERS:
+        text = register.coverage_description.lower()
+        assert "not ingested" not in text, register.source_slug
+        assert "we have" not in text, register.source_slug
+        assert len(register.coverage_description) > 80, register.source_slug
+
+
+def test_the_migration_covers_every_written_column() -> None:
+    sql = _migration_sql()
+
+    assert f"CREATE TABLE IF NOT EXISTS corpscout.{REGISTERS_TABLE}" in sql
+    for column in REGISTER_COLUMNS:
+        assert f"    {column} " in sql, column
+    assert "ORDER BY source_slug" in sql
+
+
+def test_the_table_is_replaced_atomically() -> None:
+    """A reader must never see it mid-replacement, which a truncate-then-insert
+    would allow."""
+    import inspect
+
+    source = inspect.getsource(
+        procurement_registers_clickhouse.op.compute_fn.decorated_fn
+    )
+
+    assert "EXCHANGE TABLES" in source
+    assert "TRUNCATE" not in source
+    # And an empty declaration must not silently blank the table.
+    assert "refusing to blank" in source
