@@ -22,7 +22,14 @@ CREATE TABLE IF NOT EXISTS corpscout.procurement_registers
     -- Every country whose contracts view reads this register.
     country_codes Array(String),
     homepage_url String,
+    -- The artifact actually read: the exact endpoint or file, never the
+    -- publisher's landing page. A catalogue page that merely links to the
+    -- data does not answer "where did these rows come from".
     api_or_download_url String,
+    -- How it arrives, which is not always "we call an API". Hilma is a CSV a
+    -- human exports and uploads, so its freshness is whenever someone last
+    -- did that. A reader checking a number needs to know which.
+    retrieval_method String,
     documentation_url String,
     licence String,
     -- The register's own scope. "Below-threshold contracts are absent" is a

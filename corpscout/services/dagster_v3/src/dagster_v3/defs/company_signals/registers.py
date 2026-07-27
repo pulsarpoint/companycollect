@@ -39,15 +39,25 @@ class ProcurementRegister:
     operator: str
     country_codes: tuple[str, ...]
     homepage_url: str
+    # The artifact we actually read -- the exact API endpoint or file, not the
+    # publisher's landing page. This is the provenance answer: "where did the
+    # rows in this table come from". A catalogue page that merely links to the
+    # data is not an answer.
     api_or_download_url: str
+    # How it arrives, because that is not always "we call an API". Hilma is a
+    # CSV a human exports and uploads; UHM is a file download; the other three
+    # are fetched. A reader checking a number needs to know which.
+    retrieval_method: str
     licence: str
     # What this register does and does not include -- the register's own scope,
     # not our ingest's. "Below-threshold contracts are absent" is a fact about
     # TED; "we have not loaded 2019" is a fact about us and belongs in coverage.
     coverage_description: str
-    # Where someone wanting to BID goes. Everything built so far answers "what
-    # was awarded"; nothing answers this, and it is the question a supplier
-    # actually has.
+    # Where someone wanting to BID goes, where such a place exists. Empty is a
+    # perfectly good answer: Hilma and Doffin are notice portals that advertise
+    # and then report awards, so one address serves both, while UHM is a
+    # statistics agency that never advertises anything. Not every register has
+    # this, and inventing one is worse than leaving it blank.
     open_tenders_url: str
     # The natural grain of a row in this source's own tables, which is what the
     # source page lists.
@@ -69,6 +79,11 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         country_codes=("FI", "NO", "SE"),
         homepage_url="https://ted.europa.eu",
         api_or_download_url="https://api.ted.europa.eu/v3/notices/search",
+        retrieval_method=(
+            "Fetched. Search API for the notice listing, then one eForms UBL "
+            "XML per notice from ted.europa.eu/en/notice/{id}/xml. Both are "
+            "snapshotted to S3 before parsing."
+        ),
         documentation_url="https://docs.ted.europa.eu/api/index.html",
         licence="Reuse permitted under Decision 2011/833/EU, attribution required",
         coverage_description=(
@@ -95,8 +110,14 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         country_codes=("SE",),
         homepage_url="https://www.upphandlingsmyndigheten.se",
         api_or_download_url=(
-            "https://www.upphandlingsmyndigheten.se/statistik/statistikdatabasen/"
+            "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239"
         ),
+        retrieval_method=(
+            "Downloaded. A single bulk CSV of every advertised procurement, "
+            "44 columns, replaced wholesale each refresh. This file is the "
+            "entire Swedish source -- there is no API behind it."
+        ),
+        documentation_url="https://www.upphandlingsmyndigheten.se/om-oss/var-oppna-data/",
         licence="Swedish public sector open data",
         coverage_description=(
             "Advertised Swedish procurement. Excludes direct and "
@@ -131,7 +152,15 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         operator="Ministry of Finance, Finland",
         country_codes=("FI",),
         homepage_url="https://www.hankintailmoitukset.fi",
-        api_or_download_url="https://api.hankintailmoitukset.fi/",
+        api_or_download_url=(
+            "https://www.hankintailmoitukset.fi/ (search results CSV export)"
+        ),
+        retrieval_method=(
+            "MANUAL. A human logs in, exports the search results CSV with the "
+            "full column set, and uploads it with scripts/upload_hilma_export.py. "
+            "Nothing fetches Hilma on a schedule, so its freshness is whenever "
+            "someone last did that."
+        ),
         licence="CC BY 4.0",
         coverage_description=(
             "Finnish national procurement notices, including contracts below "
@@ -156,6 +185,11 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         country_codes=("NO",),
         homepage_url="https://doffin.no",
         api_or_download_url="https://api.doffin.no/public/v2/search",
+        retrieval_method=(
+            "Fetched. Search API sliced by issue date, then one eForms UBL XML "
+            "per notice from /v2/download/{doffinId} -- the search alone "
+            "carries no realized value. Requires a subscription key."
+        ),
         documentation_url="https://dof-notices-prod-api.developer.azure-api.net/apis",
         licence="Norwegian Licence for Open Government Data (NLOD)",
         coverage_description=(
@@ -184,6 +218,11 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         country_codes=("BR",),
         homepage_url="https://www.gov.br/pncp/",
         api_or_download_url="https://pncp.gov.br/api/consulta/v1/contratos",
+        retrieval_method=(
+            "Fetched. Paginated consultation API, 500 records a page, read by "
+            "publication month and then daily by publication and update date. "
+            "No bulk download exists."
+        ),
         documentation_url=(
             "https://www.gov.br/pncp/pt-br/acesso-a-informacao/dados-abertos"
         ),

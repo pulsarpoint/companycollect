@@ -92,6 +92,39 @@ def test_every_register_carries_a_licence_and_an_operator() -> None:
         assert register.homepage_url.startswith("https://"), register.source_slug
 
 
+def test_every_register_names_the_artifact_it_is_actually_read_from() -> None:
+    """The provenance question: where did the rows in this table come from. A
+    publisher's landing page that merely links to the data is not an answer, so
+    the URL must be more specific than the homepage."""
+    for register in PROCUREMENT_REGISTERS:
+        assert register.api_or_download_url, register.source_slug
+        assert register.api_or_download_url != register.homepage_url, (
+            register.source_slug
+        )
+        assert register.retrieval_method, register.source_slug
+
+
+def test_a_manually_uploaded_source_says_so() -> None:
+    """Hilma is not fetched. A human exports a CSV from the portal and uploads
+    it, so its freshness is whenever someone last did that -- and a page that
+    implied an API would misrepresent how current the data is."""
+    hilma = register_for("finland_hilma_procurement")
+
+    assert hilma.retrieval_method.startswith("MANUAL")
+    assert "upload_hilma_export.py" in hilma.retrieval_method
+    # ...and it must not claim an API it does not use.
+    assert "api.hankintailmoitukset.fi" not in hilma.api_or_download_url
+
+
+def test_the_swedish_source_is_the_csv_resource_not_the_catalogue_page() -> None:
+    """The whole Swedish register is one bulk CSV; there is no API behind it,
+    and the statistics landing page is not the file."""
+    uhm = register_for("sweden_uhm_procurement")
+
+    assert uhm.api_or_download_url.startswith("https://catalog.upphandlingsmyndigheten.se")
+    assert uhm.retrieval_method.startswith("Downloaded")
+
+
 def test_the_source_tables_are_the_ones_the_country_rules_require() -> None:
     """A source page reads these directly, so a typo would show an empty page
     rather than fail."""
