@@ -236,17 +236,17 @@ export default function ProcurementSource({ loaderData }: Route.ComponentProps) 
 
           <Form method="get" className="flex flex-wrap items-end gap-2">
             <input type="hidden" name="table" value={table} />
-            {records.countryColumn ? (
+            {records.filters.country ? (
               <label className="flex flex-col gap-1 text-xs">
                 <span className="text-muted-foreground">Country</span>
                 <Input name="country" placeholder="SE" className="w-24" />
               </label>
             ) : null}
-            {records.dateColumn ? (
+            {records.filters.date ? (
               <>
                 <label className="flex flex-col gap-1 text-xs">
                   <span className="text-muted-foreground">
-                    From ({records.dateColumn})
+                    From ({records.filters.date})
                   </span>
                   <Input name="from" type="date" className="w-40" />
                 </label>

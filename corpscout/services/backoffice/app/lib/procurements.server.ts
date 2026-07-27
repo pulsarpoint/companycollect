@@ -149,38 +149,136 @@ export interface SourceQuery {
   country?: string;
   from?: string;
   to?: string;
+  buyer?: string;
+  winner?: string;
+  noticeType?: string;
+  awardResult?: string;
+  valueMin?: number;
+  valueMax?: number;
   limit?: number;
   offset?: number;
+}
+
+export interface FilterColumns {
+  date: string | null;
+  country: string | null;
+  buyerName: string | null;
+  winnerName: string | null;
+  winnerId: string | null;
+  noticeType: string | null;
+  awardResult: string | null;
+  usdValue: string | null;
+}
+
+function firstPresent(columns: string[], candidates: string[]): string | null {
+  for (const candidate of candidates) {
+    if (columns.includes(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** Column discovery per register table. Candidate lists, like dateColumn's,
+ * because the registers publish the same concepts under different names. */
+export function filterColumns(columns: string[]): FilterColumns {
+  return {
+    date: dateColumn(columns),
+    country: countryColumn(columns),
+    buyerName: firstPresent(columns, ["buyer_name", "buyer_name_fi", "buyer_unit_name"]),
+    winnerName: firstPresent(columns, ["winner_name"]),
+    winnerId: firstPresent(columns, [
+      "winner_org_number",
+      "winner_national_id",
+      "winner_business_id",
+    ]),
+    noticeType: firstPresent(columns, ["notice_type", "procedure_type"]),
+    awardResult: firstPresent(columns, ["award_result"]),
+    usdValue: firstPresent(columns, [
+      "value_amount_usd",
+      "awarded_amount_usd",
+      "total_value_amount_usd",
+      "procurement_value_amount_usd",
+      "valor_global_usd",
+    ]),
+  };
+}
+
+function nonEmpty(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed === "" ? null : trimmed;
+}
+
+export function buildSourceFilter(
+  columns: string[],
+  query: SourceQuery,
+): { where: string[]; params: Record<string, unknown> } {
+  const cols = filterColumns(columns);
+  const where: string[] = [];
+  const params: Record<string, unknown> = {};
+
+  const country = nonEmpty(query.country);
+  if (cols.country && country) {
+    where.push(`upper(${cols.country}) = upper({country:String})`);
+    params.country = country;
+  }
+  const from = nonEmpty(query.from);
+  if (cols.date && from) {
+    where.push(`${cols.date} >= toDate({from:String})`);
+    params.from = from;
+  }
+  const to = nonEmpty(query.to);
+  if (cols.date && to) {
+    where.push(`${cols.date} <= toDate({to:String})`);
+    params.to = to;
+  }
+  const buyer = nonEmpty(query.buyer);
+  if (cols.buyerName && buyer) {
+    where.push(`positionCaseInsensitiveUTF8(${cols.buyerName}, {buyer:String}) > 0`);
+    params.buyer = buyer;
+  }
+  const winner = nonEmpty(query.winner);
+  if ((cols.winnerName || cols.winnerId) && winner) {
+    const parts: string[] = [];
+    if (cols.winnerName) {
+      parts.push(`positionCaseInsensitiveUTF8(${cols.winnerName}, {winner:String}) > 0`);
+    }
+    if (cols.winnerId) parts.push(`${cols.winnerId} = {winner:String}`);
+    where.push(parts.length > 1 ? `(${parts.join(" OR ")})` : parts[0]);
+    params.winner = winner;
+  }
+  const noticeType = nonEmpty(query.noticeType);
+  if (cols.noticeType && noticeType) {
+    where.push(`${cols.noticeType} = {noticeType:String}`);
+    params.noticeType = noticeType;
+  }
+  const awardResult = nonEmpty(query.awardResult);
+  if (cols.awardResult && awardResult) {
+    where.push(`${cols.awardResult} = {awardResult:String}`);
+    params.awardResult = awardResult;
+  }
+  if (cols.usdValue && query.valueMin != null && Number.isFinite(query.valueMin)) {
+    where.push(`${cols.usdValue} >= {valueMin:Float64}`);
+    params.valueMin = query.valueMin;
+  }
+  if (cols.usdValue && query.valueMax != null && Number.isFinite(query.valueMax)) {
+    where.push(`${cols.usdValue} <= {valueMax:Float64}`);
+    params.valueMax = query.valueMax;
+  }
+  return { where, params };
 }
 
 export async function listSourceRecords(
   register: ProcurementRegister,
   query: SourceQuery = {},
-): Promise<SourceRecords & { dateColumn: string | null; countryColumn: string | null }> {
+): Promise<SourceRecords & { filters: FilterColumns }> {
   const table = assertKnownTable(register, query.table ?? register.notice_table);
   const columns = await columnsOf(table);
-  const dateCol = dateColumn(columns);
-  const countryCol = countryColumn(columns);
+  const cols = filterColumns(columns);
 
-  const where: string[] = [];
-  const params: Record<string, unknown> = {
-    limit: Math.min(query.limit ?? 50, 200),
-    offset: Math.max(query.offset ?? 0, 0),
-  };
-  if (countryCol && query.country) {
-    where.push(`upper(${countryCol}) = upper({country:String})`);
-    params.country = query.country;
-  }
-  if (dateCol && query.from) {
-    where.push(`${dateCol} >= toDate({from:String})`);
-    params.from = query.from;
-  }
-  if (dateCol && query.to) {
-    where.push(`${dateCol} <= toDate({to:String})`);
-    params.to = query.to;
-  }
+  const { where, params } = buildSourceFilter(columns, query);
+  params.limit = Math.min(query.limit ?? 50, 200);
+  params.offset = Math.max(query.offset ?? 0, 0);
   const filter = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-  const order = dateCol ? `ORDER BY ${dateCol} DESC` : "";
+  const order = cols.date ? `ORDER BY ${cols.date} DESC` : "";
 
   const [rows, counted] = await Promise.all([
     chQuery<SourceRow>(
@@ -194,13 +292,7 @@ export async function listSourceRecords(
     ),
   ]);
 
-  return {
-    columns,
-    rows,
-    total: Number(counted[0]?.total ?? 0),
-    dateColumn: dateCol,
-    countryColumn: countryCol,
-  };
+  return { columns, rows, total: Number(counted[0]?.total ?? 0), filters: cols };
 }
 
 /** Every field the source publishes for one record, plus the other tables that
