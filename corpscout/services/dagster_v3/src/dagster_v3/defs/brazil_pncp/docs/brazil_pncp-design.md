@@ -404,8 +404,36 @@ rather than `notice_value_*`.
   Querying both is deliberate belt-and-braces. It is not established whether
   `/contratos/atualizacao` also returns newly *published* contracts — probably
   it does, since a new contract's `dataAtualizacaoGlobal` is its creation time —
-  and reading both means never having to find out. A day is ~5,600 records, so
-  the pair costs ~24 requests. ReplacingMergeTree collapses whatever overlaps.
+  and reading both means never having to find out.
+
+  **Measured 2026-07-27 over 2026-07-14..20, and it corrects the cost above.**
+  Both endpoints take the same `dataInicial`/`dataFinal`/`pagina`/
+  `tamanhoPagina` parameters, so the window is expressed identically:
+
+  ```
+  /contratos              33,205 records    67 pages at tamanhoPagina=500
+  /contratos/atualizacao  72,560 records   146 pages
+                                          ---
+                                          213 pages per daily run, ~35 min
+  ```
+
+  The earlier "~24 requests" figure was for a **single day**, not the 7-day
+  window this job actually reads. 213 requests a day is still cheap against a
+  register with no bulk download, but it is an order of magnitude more than the
+  design claimed, and worth knowing before adding a second such job.
+
+  The hypothesis is also now confirmed rather than assumed: the update endpoint
+  **does** return newly published contracts. Its first page and the publication
+  endpoint's share 464 of 500 ids, and its top record has
+  `dataPublicacaoPncp == dataAtualizacaoGlobal` with `numeroRetificacao = 0` —
+  a brand-new contract. It is also the wider feed (72,560 vs 33,205), because it
+  additionally catches contracts published earlier and amended inside the
+  window. That is the half the publication endpoint structurally cannot see.
+
+  Reading both stays, because 464/500 is an overlap on one page under two
+  different sort orders, not a proof of containment — but the measurement means
+  dropping `/contratos` is now a decision that can be made on evidence rather
+  than a leap.
 
   The 7-day window rather than 1 day absorbs a missed run without needing a
   catch-up path.

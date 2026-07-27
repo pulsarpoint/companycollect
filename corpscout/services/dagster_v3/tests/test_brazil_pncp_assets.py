@@ -24,15 +24,30 @@ def test_partitions_are_monthly_from_pncps_first_contracts() -> None:
     assert len(keys) > 50
 
 
-def test_every_asset_throttles_its_own_backfill() -> None:
+def test_every_partitioned_asset_throttles_its_own_backfill() -> None:
     """One partition per run, so a backfill of 55 months does not open 55
-    concurrent runs against a rate-limited API."""
-    for asset in defs.assets:
-        spec = asset.specs_by_key[asset.key]
+    concurrent runs against a rate-limited API.
+
+    Scoped to the partitioned assets: the daily chain reads a rolling window,
+    which is deliberately not a partition (see test_brazil_pncp_daily)."""
+    partitioned = [
+        asset
+        for asset in defs.assets
+        if asset.specs_by_key[asset.key].partitions_def is not None
+    ]
+    assert {asset.key.to_user_string() for asset in partitioned} == {
+        "brazil_pncp_raw_pages_s3",
+        "brazil_pncp_contracts_duckdb",
+        "brazil_pncp_contracts_usd",
+        "brazil_pncp_contracts_clickhouse",
+        "brazil_pncp_page_cache_cleanup",
+    }
+
+    for asset in partitioned:
         policy = asset.backfill_policy
         assert policy is not None, asset.key
         assert policy.max_partitions_per_run == 1, asset.key
-        assert spec.partitions_def == CONTRACTS_PARTITIONS
+        assert asset.specs_by_key[asset.key].partitions_def == CONTRACTS_PARTITIONS
 
 
 def test_the_duckdb_writers_share_one_pool() -> None:
@@ -169,6 +184,10 @@ def test_a_retry_resumes_from_the_pages_already_paid_for() -> None:
 
 def test_the_backfill_is_not_scheduled() -> None:
     """It loads history once and is then a repair tool. Re-fetching a 340-page
-    month to pick up one day's contracts would be absurd when a day is 12."""
+    month to pick up one day's contracts would be absurd when a day is 12 --
+    that is the daily job's work, and only it is on a schedule."""
     assert brazil_pncp_backfill_job.name == "brazil_pncp_backfill_job"
-    assert list(defs.schedules or []) == []
+
+    scheduled_jobs = {schedule.job.name for schedule in defs.schedules or []}
+    assert brazil_pncp_backfill_job.name not in scheduled_jobs
+    assert scheduled_jobs == {"brazil_pncp_daily_job"}

@@ -11,12 +11,19 @@ from dagster_duckdb import DuckDBResource
 from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.brazil_pncp import tables
-from dagster_v3.defs.brazil_pncp.clickhouse import export_contracts_clickhouse
+from dagster_v3.defs.brazil_pncp.clickhouse import (
+    export_contracts_clickhouse,
+    insert_contracts_clickhouse,
+)
 from dagster_v3.defs.brazil_pncp.normalize import (
     build_contract_candidates,
     load_raw_pages,
 )
-from dagster_v3.defs.brazil_pncp.resources import download_partition, month_bounds
+from dagster_v3.defs.brazil_pncp.resources import (
+    download_partition,
+    month_bounds,
+    trailing_window,
+)
 from dagster_v3.defs.brazil_pncp.usd_conversion import apply_brazil_pncp_usd_conversion
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
@@ -340,6 +347,194 @@ def brazil_pncp_page_cache_cleanup(
     return dg.MaterializeResult(metadata={"freed_bytes": freed})
 
 
+@dg.asset(
+    name="brazil_pncp_daily_pages_s3",
+    pool=tables.DUCKDB_POOL,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "json", "s3"},
+    retry_policy=dg.RetryPolicy(
+        max_retries=3, delay=60, backoff=dg.Backoff.EXPONENTIAL
+    ),
+    description=(
+        "A trailing 7-day window from BOTH PNCP endpoints, snapshotted to S3. "
+        "/contratos finds newly published contracts; /contratos/atualizacao "
+        "finds amendments to older ones, which the publication feed "
+        "structurally cannot see. ~213 pages a run."
+    ),
+)
+def brazil_pncp_daily_pages_s3(
+    context: dg.AssetExecutionContext,
+    brazil_pncp_object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    today = datetime.now(UTC).date()
+    start, end = trailing_window(today, days=tables.DAILY_WINDOW_DAYS)
+    brazil_pncp_object_store.ensure_bucket(tables.S3_BUCKET)
+
+    session = _session()
+    metadata: dict[str, object] = {"window_start": start, "window_end": end}
+    total_pages = 0
+    for label, path in (
+        ("publication", tables.CONTRACTS_BY_PUBLICATION_PATH),
+        ("update", tables.CONTRACTS_BY_UPDATE_PATH),
+    ):
+        scratch = PAGE_SCRATCH / "daily" / f"{today.isoformat()}-{label}"
+        # A retry re-enters here, so the window must be re-read from scratch
+        # that this run wrote, never from a previous day's leftovers.
+        shutil.rmtree(scratch, ignore_errors=True)
+        prefix = f"{tables.S3_DAILY_PREFIX}/{today.isoformat()}/{label}"
+
+        def _log(progress: dict, label: str = label) -> None:
+            context.log.info(
+                "%s %s..%s page %s/%s: %s records, %.1f pages/min",
+                label, start, end, progress["page"], progress["total_pages"],
+                progress["records_fetched"], progress["pages_per_minute"],
+            )
+
+        downloaded = download_partition(
+            session,
+            destination=scratch,
+            path=path,
+            start=start,
+            end=end,
+            on_progress=_log,
+        )
+        for page_file in sorted(scratch.glob("page-*.jsonl")):
+            brazil_pncp_object_store.upload_file(
+                f"{prefix}/{page_file.name}", page_file, bucket=tables.S3_BUCKET
+            )
+        total_pages += downloaded["pages"]
+        metadata[f"{label}_pages"] = downloaded["pages"]
+        metadata[f"{label}_records"] = downloaded["records_fetched"]
+        metadata[f"{label}_prefix"] = prefix
+
+    # Both endpoints returning nothing across a whole week is a broken fetch,
+    # not a quiet week in Brazilian public procurement.
+    if total_pages == 0:
+        raise ValueError(
+            f"PNCP returned no contracts at all for {start}..{end} from either "
+            f"endpoint; refusing to treat that as a quiet week"
+        )
+    return dg.MaterializeResult(metadata=metadata)
+
+
+@dg.asset(
+    name="brazil_pncp_daily_duckdb",
+    deps=[dg.AssetKey("brazil_pncp_daily_pages_s3")],
+    pool=tables.DUCKDB_POOL,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "json", "duckdb"},
+    description=(
+        "Normalises the day's window into typed candidates, reading both "
+        "endpoints' pages together so a contract seen by both is normalised "
+        "once."
+    ),
+)
+def brazil_pncp_daily_duckdb(
+    context: dg.AssetExecutionContext,
+    brazil_pncp_duckdb: DuckDBResource,
+    brazil_pncp_object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    today = datetime.now(UTC).date()
+    prefix = f"{tables.S3_DAILY_PREFIX}/{today.isoformat()}"
+    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    keys = brazil_pncp_object_store.list_keys(prefix, bucket=tables.S3_BUCKET)
+    if not keys:
+        raise ValueError(
+            f"No snapshotted pages under {prefix}; refusing to normalise a "
+            f"window whose raw data was never stored"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="brazil_pncp_daily_") as temp_dir:
+        page_dir = Path(temp_dir)
+        for key in keys:
+            # Both endpoints number their pages from 1, so the filenames
+            # collide. Qualify by endpoint or half the window is overwritten.
+            endpoint = Path(key).parent.name
+            brazil_pncp_object_store.download_file(
+                key, page_dir / f"{endpoint}-{Path(key).name}", bucket=tables.S3_BUCKET
+            )
+
+        source_run_id = uuid.uuid4().hex
+        now = datetime.now(UTC)
+        with brazil_pncp_duckdb.get_connection() as connection:
+            raw_rows = load_raw_pages(
+                connection=connection,
+                page_dir=page_dir,
+                source_run_id=source_run_id,
+                source_retrieved_at=now,
+            )
+            counts = build_contract_candidates(
+                connection=connection, source_run_id=source_run_id, resolved_at=now
+            )
+
+    return dg.MaterializeResult(
+        metadata={"raw_rows": raw_rows, "pages_read": len(keys), **counts}
+    )
+
+
+@dg.asset(
+    name="brazil_pncp_daily_usd",
+    deps=[dg.AssetKey("brazil_pncp_daily_duckdb")],
+    pool=tables.DUCKDB_POOL,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb"},
+    description="Converts the day's window to USD, as for the backfill.",
+)
+def brazil_pncp_daily_usd(
+    context: dg.AssetExecutionContext,
+    brazil_pncp_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    with brazil_pncp_duckdb.get_connection() as connection:
+        counts = apply_brazil_pncp_usd_conversion(
+            duckdb_connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    name="brazil_pncp_daily_clickhouse",
+    deps=[dg.AssetKey("brazil_pncp_daily_usd")],
+    pool=tables.DUCKDB_POOL,
+    group_name=tables.GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    metadata={"tables": [tables.QUALIFIED_CONTRACTS_TABLE]},
+    description=(
+        "Appends the day's window to br_pncp_contracts. Appends rather than "
+        "replacing a partition: the window is a slice of a month, and "
+        "replacing 202607 with seven days of it would delete the other three "
+        "weeks. ReplacingMergeTree collapses what overlaps."
+    ),
+)
+def brazil_pncp_daily_clickhouse(
+    context: dg.AssetExecutionContext,
+    brazil_pncp_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.CLICKHOUSE_DATABASE,
+        tables=(tables.CONTRACTS_TABLE, "br_companies"),
+    )
+    with brazil_pncp_duckdb.get_connection() as connection, (
+        clickhouse.get_connection()
+    ) as client:
+        result = insert_contracts_clickhouse(
+            duckdb_connection=connection, clickhouse_client=client
+        )
+    matched = result["matched_companies"]
+    total = result["contract_rows"]
+    context.log.info(
+        "daily window: %s contracts appended, %s matched to a company (%.1f%%)",
+        total, matched, (matched / total * 100) if total else 0.0,
+    )
+    return dg.MaterializeResult(metadata=result)
+
+
 brazil_pncp_backfill_job = dg.define_asset_job(
     "brazil_pncp_backfill_job",
     selection=dg.AssetSelection.assets(
@@ -357,6 +552,27 @@ brazil_pncp_backfill_job = dg.define_asset_job(
 # 12 pages. Launch it from the UI, not the CLI: the raw `dagster` CLI tags runs
 # with a code-location name that does not match `dg dev`'s, orphaning them.
 
+brazil_pncp_daily_job = dg.define_asset_job(
+    "brazil_pncp_daily_job",
+    selection=dg.AssetSelection.assets(
+        "brazil_pncp_daily_pages_s3",
+        "brazil_pncp_daily_duckdb",
+        "brazil_pncp_daily_usd",
+        "brazil_pncp_daily_clickhouse",
+    ),
+)
+
+# 04:20 UTC = 01:20 in Brasilia, so the window closes on a finished Brazilian
+# day rather than mid-afternoon. The odd minute is the staggering the
+# guidelines ask for: at 100+ sources, every schedule on :00 is a thundering
+# herd against one Postgres.
+brazil_pncp_daily_schedule = dg.ScheduleDefinition(
+    name="brazil_pncp_daily_schedule",
+    job=brazil_pncp_daily_job,
+    cron_schedule="20 4 * * *",
+    execution_timezone="UTC",
+)
+
 defs = dg.Definitions(
     assets=[
         brazil_pncp_raw_pages_s3,
@@ -364,8 +580,13 @@ defs = dg.Definitions(
         brazil_pncp_contracts_usd,
         brazil_pncp_contracts_clickhouse,
         brazil_pncp_page_cache_cleanup,
+        brazil_pncp_daily_pages_s3,
+        brazil_pncp_daily_duckdb,
+        brazil_pncp_daily_usd,
+        brazil_pncp_daily_clickhouse,
     ],
-    jobs=[brazil_pncp_backfill_job],
+    jobs=[brazil_pncp_backfill_job, brazil_pncp_daily_job],
+    schedules=[brazil_pncp_daily_schedule],
     resources={
         "brazil_pncp_duckdb": duckdb_resource(DUCKDB_PATH),
         "brazil_pncp_object_store": ObjectStoreResource(bucket=tables.S3_BUCKET),

@@ -19,6 +19,19 @@ CONTRACT_URL_TEMPLATE = "https://pncp.gov.br/app/contratos/{buyer_cnpj}/{year}/{
 
 S3_BUCKET = "source-brazil-pncp"
 S3_RAW_PREFIX = "raw"
+# The daily window's pages. Kept separate from the monthly snapshot rather than
+# merged into it: the monthly prefix is contiguous pages 1..N of one month, and
+# the resume logic depends on that being true. A rolling window's pages are a
+# different slicing of the same register and would break the contiguity the
+# backfill relies on.
+#
+# They are the durable raw record for everything published since the backfill
+# ran, so they are kept, not cleaned up.
+S3_DAILY_PREFIX = "daily"
+
+# The daily job reads both endpoints. Measured over 2026-07-14..20: publication
+# 33,205 records over 67 pages, update 72,560 over 146 -- so ~213 pages a run.
+DAILY_WINDOW_DAYS = 7
 
 DUCKDB_FILE_NAME = "brazil_pncp_source.duckdb"
 DUCKDB_SCHEMA = "brazil_pncp"

@@ -121,6 +121,80 @@ def contracts_insert_sql(*, target_table: str, stage_table: str) -> str:
     """
 
 
+def insert_contracts_clickhouse(
+    *,
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    batch_size: int = 50_000,
+) -> dict[str, int]:
+    """Append the candidates currently in DuckDB, for the rolling daily window.
+
+    **Appends rather than REPLACE PARTITION, and that is the whole point.** The
+    daily job reads a trailing 7 days, which is a slice of a month, not a month.
+    Replacing partition 202607 with seven days of it would delete the other
+    three weeks -- and because the guard against blanking only fires on an empty
+    input, a full-looking batch would have sailed straight through it.
+
+    Correctness rests on the table being
+    ``ReplacingMergeTree(data_atualizacao_global)`` keyed on
+    ``(company_id, numero_controle_pncp, supplier_cnpj)``: a contract seen again
+    -- by both endpoints in one run, or on successive days while it stays in the
+    window -- collapses to its newest version. Deduplication is per partition,
+    and a contract's publication date never changes, so it always lands in the
+    same one.
+
+    The single case that does not collapse is a contract whose ``company_id``
+    changes, since that is part of the sort key. In practice that is a supplier
+    going unmatched -> matched when ``br_companies`` refreshes, and
+    ``br_government_contracts`` already filters ``company_id != ''``, so the
+    stale row it leaves behind is invisible downstream rather than
+    double-counted.
+    """
+    def _qualified(name: str) -> str:
+        return f"`{tables.CLICKHOUSE_DATABASE}`.`{name}`"
+
+    qualified = _qualified(tables.CONTRACTS_TABLE)
+    stage_candidates = _qualified(f"_tmp_{tables.CONTRACTS_TABLE}_daily_src")
+
+    usd_conversion.ensure_usd_columns(duckdb_connection)
+    stage_columns = (*tables.CANDIDATE_COLUMNS, *FX_COLUMNS)
+    rows = duckdb_connection.execute(
+        f"select {', '.join(stage_columns)} "
+        f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
+    ).fetchall()
+
+    if not rows:
+        # Unlike the monthly export there is nothing to protect here -- an
+        # append of nothing removes nothing -- but a window that returns no
+        # contracts at all means the fetch failed rather than that Brazil
+        # awarded none in a week.
+        raise ValueError(
+            "Brazil PNCP daily window produced no contracts; refusing to treat "
+            "an empty fetch as a quiet week"
+        )
+
+    clickhouse_client.execute(f"DROP TABLE IF EXISTS {stage_candidates}")
+    clickhouse_client.execute(candidate_stage_ddl(stage_candidates))
+    try:
+        for start in range(0, len(rows), batch_size):
+            clickhouse_client.execute(
+                f"INSERT INTO {stage_candidates} "
+                f"({', '.join(stage_columns)}) VALUES",
+                rows[start : start + batch_size],
+            )
+        clickhouse_client.execute(
+            contracts_insert_sql(target_table=qualified, stage_table=stage_candidates)
+        )
+        inserted = clickhouse_client.execute(
+            f"SELECT count(), countIf(company_match_status = 'exact') "
+            f"FROM {stage_candidates}"
+        )[0]
+    finally:
+        clickhouse_client.execute(f"DROP TABLE IF EXISTS {stage_candidates}")
+
+    return {"contract_rows": int(inserted[0]), "matched_companies": int(inserted[1])}
+
+
 def export_contracts_clickhouse(
     *,
     duckdb_connection: Any,

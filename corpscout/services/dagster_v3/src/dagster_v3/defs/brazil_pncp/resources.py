@@ -21,7 +21,7 @@ import calendar
 import json
 import time
 from collections.abc import Callable, Iterator
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -54,6 +54,20 @@ def month_bounds(partition_key: str) -> tuple[str, str]:
     start = date.fromisoformat(partition_key).replace(day=1)
     last_day = calendar.monthrange(start.year, start.month)[1]
     return start.strftime("%Y%m%d"), start.replace(day=last_day).strftime("%Y%m%d")
+
+
+def trailing_window(end_date: date, *, days: int = 7) -> tuple[str, str]:
+    """The API's inclusive ``YYYYMMDD`` bounds for the last ``days`` days.
+
+    Seven rather than one so a missed run heals itself on the next one, with no
+    catch-up path to write, get wrong, and only exercise during an incident.
+    Both bounds are inclusive (see month_bounds), so a 7-day window is
+    end_date - 6 .. end_date.
+    """
+    if days < 1:
+        raise ValueError(f"trailing window must cover at least one day, got {days}")
+    start = end_date - timedelta(days=days - 1)
+    return start.strftime("%Y%m%d"), end_date.strftime("%Y%m%d")
 
 
 def fetch_page(
