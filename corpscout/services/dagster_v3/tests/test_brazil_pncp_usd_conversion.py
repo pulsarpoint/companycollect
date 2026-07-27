@@ -15,6 +15,7 @@ import pytest
 from dagster_v3.defs.brazil_pncp import tables
 from dagster_v3.defs.brazil_pncp.usd_conversion import (
     CONTRACT_CURRENCY,
+    VALUE_COLUMNS,
     apply_brazil_pncp_usd_conversion,
 )
 
@@ -59,7 +60,10 @@ def connection():
         f"""
         create table {QUALIFIED} (
             numero_controle_pncp varchar,
+            valor_inicial decimal(38, 2),
+            valor_parcela decimal(38, 2),
             valor_global decimal(38, 2),
+            valor_acumulado decimal(38, 2),
             data_assinatura date,
             data_publicacao_pncp date
         )
@@ -70,7 +74,14 @@ def connection():
 
 
 def _insert(connection, rows):
-    connection.executemany(f"insert into {QUALIFIED} values (?, ?, ?, ?)", rows)
+    """Rows are (id, valor_global, data_assinatura, data_publicacao) for the
+    tests that only care about the primary figure; the others set all four."""
+    connection.executemany(
+        f"insert into {QUALIFIED} "
+        f"(numero_controle_pncp, valor_global, data_assinatura, data_publicacao_pncp) "
+        f"values (?, ?, ?, ?)",
+        rows,
+    )
 
 
 def _read(connection):
@@ -210,6 +221,80 @@ def test_a_contract_with_no_usable_date_is_counted_not_hidden(connection) -> Non
     assert counts["rows_missing_rate_date"] == 1
     assert counts["rows_with_value"] == 1
     assert counts["rows_converted"] == 0
+
+
+def test_converts_every_value_the_register_publishes_not_just_the_shown_one(
+    connection,
+) -> None:
+    """PNCP publishes four figures and the ingest keeps all four. Converting
+    only valor_global would leave the other three usable in BRL alone, which is
+    the same loss as not storing them, deferred one layer. Which figure a reader
+    is shown is a presentation decision, not the pipeline's to make."""
+    connection.execute(
+        f"insert into {QUALIFIED} values "
+        f"('c1', 100.00, 10.00, 120.00, 60.00, DATE '2024-06-10', NULL)"
+    )
+
+    apply_brazil_pncp_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=FakeExchangeRates({"2024-06-10": "0.20"}),
+    )
+
+    row = connection.execute(
+        f"select {', '.join(usd for _, usd in VALUE_COLUMNS)} from {QUALIFIED}"
+    ).fetchone()
+    assert dict(zip((usd for _, usd in VALUE_COLUMNS), row)) == {
+        "valor_inicial_usd": Decimal("20.00"),
+        "valor_parcela_usd": Decimal("2.00"),
+        "valor_global_usd": Decimal("24.00"),
+        "valor_acumulado_usd": Decimal("12.00"),
+    }
+
+
+def test_a_figure_the_contract_omits_stays_null_rather_than_becoming_zero(
+    connection,
+) -> None:
+    """valorAcumulado is absent on 51% of contracts. A zero USD figure would be
+    indistinguishable from a contract genuinely worth nothing."""
+    connection.execute(
+        f"insert into {QUALIFIED} values "
+        f"('c1', 100.00, NULL, 100.00, NULL, DATE '2024-06-10', NULL)"
+    )
+
+    counts = apply_brazil_pncp_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=FakeExchangeRates({"2024-06-10": "0.20"}),
+    )
+
+    row = connection.execute(
+        f"select valor_parcela_usd, valor_acumulado_usd, valor_inicial_usd from {QUALIFIED}"
+    ).fetchone()
+    assert row == (None, None, Decimal("20.00"))
+    # And the per-figure counts make a field that stops converting visible.
+    assert counts["converted_valor_inicial_usd"] == 1
+    assert counts["converted_valor_acumulado_usd"] == 0
+    assert counts["present_valor_acumulado"] == 0
+
+
+def test_a_contract_with_only_a_secondary_figure_still_gets_a_rate(
+    connection,
+) -> None:
+    """Keying the date lookup off valor_global alone would skip a contract that
+    publishes valorInicial and nothing else."""
+    connection.execute(
+        f"insert into {QUALIFIED} values "
+        f"('c1', 500.00, NULL, NULL, NULL, DATE '2024-06-10', NULL)"
+    )
+
+    counts = apply_brazil_pncp_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=FakeExchangeRates({"2024-06-10": "0.20"}),
+    )
+
+    assert counts["rate_dates"] == 1
+    assert connection.execute(
+        f"select valor_inicial_usd from {QUALIFIED}"
+    ).fetchone()[0] == Decimal("100.00")
 
 
 def test_refuses_to_run_before_the_candidates_are_built() -> None:

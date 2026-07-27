@@ -161,6 +161,22 @@ configure it + supply a mapping table, rather than re-implementing a parser.
   `period_end_date`) as a **separate, re-runnable step** — never inline with the native build, so
   metrics can land before rates exist. Fill `fx_rate_to_usd` / `fx_rate_date` / `fx_source`.
 - **The metrics DDL always carries the `_original` + `_usd` pair per metric + the three fx columns.**
+- **EVERY monetary figure the source publishes gets the pair — not just the one the view reads.**
+  Storing four native amounts and converting one is the *same* loss as storing one, moved a layer
+  down: the unconverted three can only ever answer a single-country question. Drive the conversion
+  off a `VALUE_COLUMNS` tuple of `(native, usd)` pairs rather than naming a column inline, so
+  "convert all of them" is structural instead of something to remember. `fi_hilma_notices` (four
+  value fields, each with `_original` + `_usd`) and `br_pncp_contracts` are the reference shapes.
+  One rate covers every figure on the same record, so the three fx columns stay **singular** rather
+  than being repeated per figure.
+- **Nothing is merged, coalesced, filtered or dropped on the way in.** No `coalesce(a, b)` picking a
+  "best" amount, no excluding rows whose amounts are the wrong kind (Brazil's `receita` revenue
+  contracts), no collapsing two grains into one. Which figure a reader is *shown*, and what a total
+  sums, is decided in the **view and the UI**, where the choice can be labelled and where
+  `value_source_field` can name the register field behind the number. A pipeline that picks silently
+  makes the number uncheckable.
+- **A figure the record omits stays NULL, never `0`.** Half of PNCP's contracts omit
+  `valorAcumulado`; a zero there is indistinguishable from a real zero.
 - **Batch the rate requests** (`_load_rates`, ≤50/call). Currencies absent from the ECB set (e.g.
   legacy LVL) keep native-only (`_usd` NULL) — document it. Mirror `latvia_ur`/`estonia_ar` metrics.
 

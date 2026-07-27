@@ -326,6 +326,30 @@ only. Brazilian company contacts already arrive via `br_company_contacts`
   the rest is the lossy move being removed everywhere else in this design — the
   source table keeps what the register publishes, and the view selects.
 
+### 7a. Storing a value means storing it in USD too
+
+The rule, which migration `000196` brought this source into line with:
+
+> Every numeric figure the register publishes is stored **and converted**, per
+> source. Nothing is merged, coalesced, filtered or dropped on the way in. What
+> a reader is shown — which figure, whether revenue is netted off, what a total
+> sums — is decided in the view and the UI, where the choice can be labelled.
+
+Storing four native figures and converting one is the *same* loss as storing
+one, moved a layer down: `valor_inicial`, `valor_parcela` and `valor_acumulado`
+existed only in BRL, so any cross-country question could still only be answered
+about `valor_global`. `br_pncp_contracts` now carries `valor_inicial_usd`,
+`valor_parcela_usd`, `valor_global_usd` and `valor_acumulado_usd`.
+
+One rate covers all four — same contract, same date — so `fx_rate_to_usd`,
+`fx_rate_date` and `fx_source` stay single columns rather than being repeated
+per figure. `fi_hilma_notices` is the shape being matched: four value fields,
+each with its own `_original` and `_usd`.
+
+A figure the contract omits stays NULL rather than becoming `0.00`. Half of
+PNCP's contracts omit `valorAcumulado`, and a zero there would be
+indistinguishable from a contract genuinely accumulating nothing.
+
   The API documents none of them: `RecuperarContratoDTO` types all five and
   gives no description. Their meaning is the Brazilian public-contracting
   convention, not a documented contract:
@@ -407,25 +431,32 @@ than a type default indistinguishable from a real `0`.
 emit `''` (unknown), not `'no'`. Claiming "below EU threshold" for a Brazilian
 contract would be nonsense.
 
-### 9a. Two refinements the value analysis surfaced — open
+### 9a. Two refinements the value analysis surfaced — both are *view* problems
 
-Both come out of the 17,538-record sample in §0, neither is implemented, and
-both need a migration because the view is migration-owned.
+Both come out of the 17,538-record sample in §0. Neither is a pipeline change:
+the storage rule is that **everything the register publishes is stored and
+converted, and nothing is merged or dropped on the way in** (§7a). Both of
+these are decisions about what to *show*, which is the view's and the UI's job,
+where the choice can be labelled.
 
 1. **`receita = true` contracts are revenue, not spend.** 193 of 17,538 rows
    (1.1%) are contracts where money flows *to* the state — concessions, asset
    disposals, rents — carrying R$0.54bn against the sample's R$8.7bn of actual
-   spend. The view sums them together today, so "what this buyer spent" is
-   overstated. `receita` is already stored on `br_pncp_contracts`; the view
-   should either exclude those rows or expose the flag so a summary can.
+   spend. `is_revenue_contract` is already stored, so nothing is lost; what is
+   wrong is that the view sums both together, so "what this buyer spent" is
+   overstated. The view should **expose the flag** rather than silently drop
+   the rows — a revenue contract is a real contract and belongs on the source
+   page (§3.4 of the plan); it just must not be added to a spend total.
 
 2. **`valorGlobal` is zero on 102 rows where `valorInicial` is not** (0.6%),
-   and 121 rows are the reverse. 45 rows have neither. A
-   `coalesce(valorGlobal, valorInicial)` fallback recovers the first group, but
-   it must set `value_source_field` **per row** rather than the constant
-   `'valorGlobal'` the view emits now — the entire point of that column is that
-   a displayed figure states its own origin, and a fallback that lies about
-   which field it came from is worse than the missing value.
+   121 rows are the reverse, and 45 have neither. Do **not** resolve this with
+   a `coalesce()` in the pipeline. All four figures and all four USD
+   counterparts are stored (§7a), so the view can pick, and whatever it picks
+   must set `value_source_field` **per row** rather than the constant
+   `'valorGlobal'` it emits now. The entire point of that column is that a
+   displayed figure states its own origin; a fallback that reports a value from
+   `valorInicial` while labelling it `valorGlobal` is worse than the gap it
+   fills.
 
 ## 9b. UI: establishments are shown, not hidden
 

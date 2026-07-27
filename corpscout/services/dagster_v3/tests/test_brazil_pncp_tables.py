@@ -3,20 +3,55 @@ from pathlib import Path
 from dagster_v3.defs.brazil_pncp import tables
 
 
-def _migration_sql() -> str:
-    root = Path(__file__).resolve().parents[3]
-    return (
-        root / "clickhouse" / "migrations" / "000192_corpscout_br_pncp_partition_by_month.up.sql"
-    ).read_text()
+def _migrations_dir() -> Path:
+    return Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+
+
+def _migration_sql(
+    name: str = "000192_corpscout_br_pncp_partition_by_month.up.sql",
+) -> str:
+    return (_migrations_dir() / name).read_text()
+
+
+def _schema_sql() -> str:
+    """The table's schema as the ledger leaves it: the CREATE, plus every later
+    migration that alters it. Reading only the CREATE would call a column
+    missing that a subsequent ALTER added."""
+    return "\n".join(
+        path.read_text()
+        for path in sorted(_migrations_dir().glob("*.up.sql"))
+        if tables.CONTRACTS_TABLE in path.read_text()
+    )
 
 
 def test_migration_covers_every_exported_column() -> None:
     """The migration owns the schema and the export must not drift from it."""
-    sql = _migration_sql()
+    assert (
+        f"CREATE TABLE IF NOT EXISTS corpscout.{tables.CONTRACTS_TABLE}"
+        in _migration_sql()
+    )
 
-    assert f"CREATE TABLE IF NOT EXISTS corpscout.{tables.CONTRACTS_TABLE}" in sql
+    sql = _schema_sql()
     for column in tables.CONTRACTS_COLUMNS:
-        assert f"    {column} " in sql, column
+        assert f" {column} " in sql, column
+
+
+def test_every_native_value_has_a_usd_counterpart() -> None:
+    """PNCP publishes four figures and all four are stored, so all four must be
+    convertible. A value that exists only in BRL is unusable in any
+    cross-country context -- the same loss as not storing it, deferred a layer.
+    """
+    native = [column for column in tables.CANDIDATE_COLUMNS if column.startswith("valor_")]
+
+    assert sorted(f"{column}_usd" for column in native) == sorted(
+        tables.USD_VALUE_COLUMNS
+    )
+    # One rate per contract covers all four: same contract, same date.
+    assert tables.FX_PROVENANCE_COLUMNS == (
+        "fx_rate_to_usd",
+        "fx_rate_date",
+        "fx_source",
+    )
 
 
 def test_amendments_replace_rather_than_accumulate() -> None:

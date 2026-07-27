@@ -131,16 +131,28 @@ CANDIDATE_COLUMNS = (
     "resolved_at",
 )
 
+# Every native value gets a USD counterpart. Converting only the one the view
+# reads would put the other three beyond reach of any cross-country comparison,
+# which is the same loss as not storing them -- deferred one layer. Which figure
+# is *shown* is decided in the view and the UI, where it can be labelled.
+USD_VALUE_COLUMNS = (
+    "valor_global_usd",
+    "valor_inicial_usd",
+    "valor_parcela_usd",
+    "valor_acumulado_usd",
+)
+
+# One rate per contract covers all four figures: same contract, same date.
+FX_PROVENANCE_COLUMNS = ("fx_rate_to_usd", "fx_rate_date", "fx_source")
+
 # The export adds the resolved company and its FX conversion, and drops nothing:
 # there is no raw payload column to exclude because the raw JSON stays in DuckDB.
 CONTRACTS_COLUMNS = (
     "company_id",
     "company_match_status",
     *CANDIDATE_COLUMNS,
-    "valor_global_usd",
-    "fx_rate_to_usd",
-    "fx_rate_date",
-    "fx_source",
+    *USD_VALUE_COLUMNS,
+    *FX_PROVENANCE_COLUMNS,
 )
 
 # tipoPessoa: PJ is a legal entity, PF a natural person. They differ by one

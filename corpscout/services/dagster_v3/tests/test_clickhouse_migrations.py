@@ -214,6 +214,7 @@ EXPECTED_MIGRATIONS = (
     "000193_corpscout_br_government_contracts",
     "000194_corpscout_finland_lot_value",
     "000195_corpscout_contract_value_counted_once",
+    "000196_corpscout_br_pncp_all_values_usd",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

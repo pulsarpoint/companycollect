@@ -40,11 +40,11 @@ _STAGE_COLUMN_TYPES = {
 
 # Read out of DuckDB alongside the candidates. Listed separately from
 # CANDIDATE_COLUMNS because a different asset writes them.
-FX_COLUMNS = ("valor_global_usd", "fx_rate_to_usd", "fx_rate_date", "fx_source")
+FX_COLUMNS = (*tables.USD_VALUE_COLUMNS, *tables.FX_PROVENANCE_COLUMNS)
 
 _STAGE_COLUMN_TYPES.update(
     {
-        "valor_global_usd": "Nullable(Decimal(38, 2))",
+        **{column: "Nullable(Decimal(38, 2))" for column in tables.USD_VALUE_COLUMNS},
         "fx_rate_to_usd": "Nullable(Decimal(24, 10))",
         "fx_rate_date": "Nullable(Date)",
         "fx_source": "String",
@@ -79,6 +79,7 @@ def candidate_stage_ddl(stage_table: str) -> str:
 def contracts_insert_sql(*, target_table: str, stage_table: str) -> str:
     """Resolve the company and project into the contracts table's column order."""
     passthrough = ",\n        ".join(f"u.{name}" for name in tables.CANDIDATE_COLUMNS)
+    fx_passthrough = ",\n        ".join(f"u.{name}" for name in FX_COLUMNS)
     return f"""
     INSERT INTO {target_table} ({", ".join(tables.CONTRACTS_COLUMNS)})
     SELECT
@@ -99,10 +100,7 @@ def contracts_insert_sql(*, target_table: str, stage_table: str) -> str:
         -- Written by the separate USD conversion step, keyed on the contract
         -- date. Never inlined with extraction, per the currency guidelines.
         -- NULL here means that step has not run for this partition.
-        u.valor_global_usd,
-        u.fx_rate_to_usd,
-        u.fx_rate_date,
-        u.fx_source
+        {fx_passthrough}
     FROM {stage_table} AS u
     -- The 8-digit base, never headquarters_cnpj: that is the head office only,
     -- so it matches when a matriz signed and silently misses every branch.
