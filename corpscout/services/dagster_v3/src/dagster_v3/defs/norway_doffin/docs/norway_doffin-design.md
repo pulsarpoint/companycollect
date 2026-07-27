@@ -279,8 +279,18 @@ both exist it can differ from the realized figure by 40%. A column that
 sometimes holds an estimate and sometimes a realized value makes both
 untrustworthy, so they stay apart and the UI can say which it is showing.
 
-Currency is `NOK` in every sample; convert to USD in the separate FX step keyed
-on `issueDate`, per the guidelines, rather than inline.
+**All three get `_original` *and* `_usd`**, per the currency guideline — not
+just whichever one the view ends up reading. `prizeValue` too, if any Norwegian
+design contest turns out to publish it. Converting a subset would leave the
+rest answerable only in NOK, which is the same loss as not storing them.
+Currency is `NOK` in every sample; convert in the separate FX step keyed on
+`issueDate`, rather than inline.
+
+Nothing is coalesced on the way in: a notice with an estimate and no realized
+value keeps `value_amount_original` NULL rather than borrowing the estimate.
+The view decides what to show and `value_source_field` names which eForms
+business term it came from (`BT-720`, `BT-161`, `BT-27`), so a displayed figure
+can be checked against the notice.
 
 ## 5. The `no_government_contracts` view
 
