@@ -72,3 +72,38 @@ def test_coverage_caveats_state_what_the_country_is_missing() -> None:
     assert "no contract value" in COUNTRY_PROCUREMENT_RULES["SE"].coverage_caveat
     assert "Doffin" in COUNTRY_PROCUREMENT_RULES["NO"].coverage_caveat
     assert "no TED" in COUNTRY_PROCUREMENT_RULES["BR"].coverage_caveat
+
+
+def test_sweden_admits_its_counts_are_notices_not_contracts() -> None:
+    """Sweden's two registers publish no reference to each other, so a contract
+    advertised in both is counted twice -- checked, not assumed: UHM carries no
+    TED number, Swedish TED notices carry no Upphandlings-ID, and a
+    buyer/date/title hash matched zero of 242,699 rows.
+
+    A page whose purpose is explaining where data comes from must not carry a
+    caveat that misleads, so this has to be said before any provenance UI ships.
+    """
+    sweden = COUNTRY_PROCUREMENT_RULES["SE"].coverage_caveat
+
+    assert "counted twice" in sweden
+    assert "notices, not of distinct contracts" in sweden
+
+    # Finland is the contrast, and must not be given Sweden's warning: its
+    # published ted_number does collapse the duplicates.
+    finland = COUNTRY_PROCUREMENT_RULES["FI"].coverage_caveat
+    assert "counted twice" not in finland
+    assert "counted once" in finland
+
+
+def test_every_ted_country_admits_it_drops_foreign_winners() -> None:
+    """Each country view joins only its own company register, so a contract won
+    by a foreign company lands in no view at all -- not the notice country's,
+    and not the winner's, whose register may not even be loaded. Unlike a NULL
+    nothing marks the gap, which is why it has to be said in words.
+
+    Measured 2026-07-27: 3,354 SE + 2,266 FI + 1,059 NO winner rows.
+    """
+    for country in ("SE", "FI", "NO"):
+        caveat = COUNTRY_PROCUREMENT_RULES[country].coverage_caveat
+        assert "absent" in caveat, country
+        assert "companies are" in caveat, country

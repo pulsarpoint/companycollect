@@ -7,6 +7,27 @@ its national procurement register alongside TED, Norway has no ingested national
 source and reads TED alone. Dagster declares deps per asset, not per partition,
 so a partitioned asset would make Norway falsely depend on Swedish UHM data and
 hold it back whenever that source is stale.
+
+**A count here is not always a count of contracts.** Where a country reads two
+registers, the same contract can appear in both, and whether it is collapsed
+depends on the registers publishing a reference to each other:
+
+* Finland's Hilma publishes ``ted_number``, so its two sources collapse.
+* Sweden's UHM and TED publish no reference to each other. This was checked
+  rather than assumed: UHM's 44 columns carry no TED number, and across sampled
+  Swedish TED notices the only procurement-level identifier is
+  ``cbc:ContractFolderID``, a UUID, with ``cbc:ID[InternalID]`` holding the
+  buyer's own label (``22/137``) -- neither is a UHM ``Upphandlings-ID``
+  (``SE75790``). A buyer/date/title hash matched zero of 242,699 rows.
+
+So Swedish figures count *notices*, and the caveat says so. Fixing it means
+answering "what is a contract across sources", which is the deferred
+unification phase's job, not a filter change here.
+
+The other structural gap the caveats now name: every country view joins only
+its own company register, so a contract won by a foreign company appears in no
+country's view at all. Unlike a NULL, nothing marks it -- which is why it has
+to be said in words.
 """
 
 from __future__ import annotations
@@ -75,11 +96,18 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
         company_id_column="company_id",
         identifier_length=10,
         ted_winner_countries=("SE", "SWE"),
+        # Sweden is the one country whose two registers cannot be deduplicated,
+        # so its counts mean something different from the others'. Saying which
+        # is the point -- see the module docstring on notices vs contracts.
         coverage_caveat=(
             "UHM advertised procurement and TED eForms awards. Excludes "
             "direct/non-advertised procurement, missing after-notices, and "
             "many framework call-offs. UHM publishes no contract value at "
-            "all, so Swedish awards carry none."
+            "all, so Swedish awards carry none. Neither register publishes a "
+            "reference to the other, so a contract advertised in both is "
+            "counted twice: Swedish figures are counts of notices, not of "
+            "distinct contracts. Contracts won by non-Swedish companies are "
+            "absent entirely."
         ),
         sources=(UHM, TED),
     ),
@@ -94,7 +122,9 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
             "Hilma national awards and TED eForms awards. Hilma publishes a "
             "realized value per lot, which is one company's amount where a lot "
             "has a single winner and a shared figure where several split it. "
-            "TED adds an amount per winner."
+            "TED adds an amount per winner. Hilma publishes its TED number, so "
+            "a contract in both registers is counted once. Contracts won by "
+            "non-Finnish companies are absent entirely."
         ),
         sources=(HILMA, TED),
     ),
@@ -111,7 +141,8 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
         coverage_caveat=(
             "TED eForms awards only; Doffin, Norway's national procurement "
             "register, is not ingested, so contracts below the EU publication "
-            "thresholds are absent entirely."
+            "thresholds are absent entirely. Contracts won by non-Norwegian "
+            "companies are also absent."
         ),
         sources=(TED,),
     ),
