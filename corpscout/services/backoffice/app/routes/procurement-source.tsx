@@ -14,7 +14,7 @@ import {
 import { sourceSlugToPath } from "~/lib/procurement-paths";
 import { pickCompanyMatch } from "~/lib/company-match";
 import { formatMoneyField } from "~/lib/money";
-import { visibleColumns } from "~/lib/procurement-columns";
+import { columnLabel, visibleColumns } from "~/lib/procurement-columns";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import { ProcurementFilterSheet } from "~/components/procurements/filter-sheet";
@@ -132,7 +132,7 @@ function buildColumns(args: {
   return visibleColumns(columns).map((column) => ({
     id: column,
     accessorFn: (row: SourceRow) => row[column],
-    header: column,
+    header: columnLabel(column),
     cell: ({ row }) => {
       const value = row.original[column];
       const text = cellText(column, value);

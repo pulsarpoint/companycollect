@@ -7,6 +7,7 @@ import {
 } from "~/lib/procurements.server";
 import { sourceSlugToPath } from "~/lib/procurement-paths";
 import { formatMoneyField } from "~/lib/money";
+import { columnLabel } from "~/lib/procurement-columns";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -61,7 +62,7 @@ function Fields({ row }: { row: SourceRow }) {
         const text = display(key, value);
         return (
           <div key={key} className="flex flex-col gap-0.5 overflow-hidden">
-            <dt className="text-muted-foreground text-xs">{key}</dt>
+            <dt className="text-muted-foreground text-xs">{columnLabel(key)}</dt>
             <dd
               className={`truncate text-sm ${text === "—" ? "text-muted-foreground" : ""}`}
               title={text}
