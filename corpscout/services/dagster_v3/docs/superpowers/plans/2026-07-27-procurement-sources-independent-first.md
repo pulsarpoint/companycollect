@@ -246,6 +246,40 @@ the real answer waits. The source pages in §3.4 also surface these rows for the
 first time — a TED page shows every TED winner regardless of nationality, which
 is the difference between a gap that is documented and one that is observable.
 
+### 4.1b TED discards most of the money it publishes — OPEN
+
+Found 2026-07-27 while bringing Brazil into line with the storage rule (§4.4).
+Across 30 sampled Swedish, Finnish and Norwegian TED notices, the eForms XML
+carries **eight** distinct monetary elements. `ted_notices` and
+`ted_notice_winners` store **two**:
+
+```
+element                                            notices   stored?
+efbc:StatisticsNumeric (bid counts, not money)          30   partly
+cbc:TotalAmount                          BT-161         21   YES -> total_value_amount_original
+cbc:EstimatedOverallContractAmount       BT-27          15   no
+cbc:PayableAmount                        BT-720          6   YES -> awarded_amount_original
+cbc:MaximumValueAmount                   BT-271          5   no
+efbc:FrameworkMaximumAmount              BT-709          5   no
+efbc:OverallApproximateFrameworkContractsAmount BT-1118  4   no
+efbc:ReestimatedValueAmount              BT-660          4   no
+efbc:OverallMaximumFrameworkContractsAmount BT-118       3   no
+efbc:TermAmount                                          1   no
+```
+
+The severity is in the second and third rows: the per-winner awarded amount we
+treat as *the* value is present on only 6 of 30 notices, while an estimated
+contract amount we discard is present on 15. So for most TED notices we hold
+monetary information in S3 and expose none of it.
+
+**This is cheap to fix and that is the point** — every TED notice XML is
+already snapshotted to S3, so re-parsing all 41,357 notices costs zero requests
+to ted.europa.eu. The work is a parser change, a migration adding the columns,
+and a re-run of the existing parse assets.
+
+Framework maxima must land in their own columns and never be merged into a
+realized value: a framework ceiling is not money anyone spent.
+
 ### 4.2 Sweden's two sources are not deduplicated — OPEN
 
 Zero cross-source matches across 242,699 rows. A Swedish contract in both
@@ -258,6 +292,21 @@ explaining where data comes from must not carry a caveat that misleads. Check
 whether Swedish TED notices carry a national reference to UHM procurement ids
 (Finland's `ted_number` gave 2,237 matches); if none exists, say plainly that
 Swedish counts are of notices, not distinct contracts.
+
+### 4.4 The storage rule these keep violating
+
+Stated once, because §4.1b and Brazil's converted-one-of-four were the same
+mistake in two places:
+
+> Every numeric figure a register publishes is stored **and converted**, per
+> source. Nothing is merged, coalesced, filtered or dropped on the way in. What
+> a reader is shown — which figure, whether revenue is netted off, what a total
+> sums — is decided in the view and the UI, where the choice can be labelled.
+
+Now in `docs/data-source-guidelines.md` §7 so new sources inherit it. The
+failure mode it prevents is subtle: storing every native figure but converting
+only one looks like compliance, and leaves the rest answerable in one currency
+only — which for a cross-country product is the same as not storing them.
 
 ### 4.3 Corrected this session, recorded so they are not repeated
 
