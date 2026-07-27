@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="UTF-8"?><ContractAwardNotice xmlns="urn:oasis:names:specification:ubl:schema:xsd:ContractAwardNotice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:efac="http://data.europa.eu/p27/eforms-ubl-extension-aggregate-components/1" xmlns:efbc="http://data.europa.eu/p27/eforms-ubl-extension-basic-components/1" xmlns:efext="http://data.europa.eu/p27/eforms-ubl-extensions/1" xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2">
+  <ext:UBLExtensions>
+    <ext:UBLExtension>
+      <ext:ExtensionContent>
+        <efext:EformsExtension>
+          <efbc:TransmissionDate>2025-11-27+00:00</efbc:TransmissionDate>
+          <efbc:TransmissionTime>03:00:53+00:00</efbc:TransmissionTime>
+          <efac:NoticeResult>
+            <efbc:OverallApproximateFrameworkContractsAmount currencyID="NOK">12000000</efbc:OverallApproximateFrameworkContractsAmount>
+            <efbc:OverallMaximumFrameworkContractsAmount currencyID="NOK">18000000</efbc:OverallMaximumFrameworkContractsAmount>
+            <efac:LotResult>
+              <cbc:ID schemeName="result">RES-0001</cbc:ID>
+              <cbc:TenderResultCode listName="winner-selection-status">selec-w</cbc:TenderResultCode>
+              <efac:AppealRequestsStatistics>
+                <efbc:StatisticsCode listName="review-type">complainants</efbc:StatisticsCode>
+                <efbc:StatisticsNumeric>0</efbc:StatisticsNumeric>
+              </efac:AppealRequestsStatistics>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0001</cbc:ID>
+              </efac:LotTender>
+              <efac:FrameworkAgreementValues>
+                <cbc:MaximumValueAmount currencyID="NOK">18000000</cbc:MaximumValueAmount>
+                <efbc:ReestimatedValueAmount currencyID="NOK">12000000</efbc:ReestimatedValueAmount>
+              </efac:FrameworkAgreementValues>
+              <efac:ReceivedSubmissionsStatistics>
+                <efbc:StatisticsCode listName="received-submission-type">t-esubm</efbc:StatisticsCode>
+                <efbc:StatisticsNumeric>2</efbc:StatisticsNumeric>
+              </efac:ReceivedSubmissionsStatistics>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0001</cbc:ID>
+              </efac:SettledContract>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+            </efac:LotResult>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0001</cbc:ID>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0001</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Service, vedlikehold og EU-godkjenning (PKK) av kjøretøy - MEKONOMEN AS</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0001</cbc:ID>
+              <cbc:AwardDate>2025-10-29Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-13Z</cbc:IssueDate>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>Service, vedlikehold og EU-godkjenning (PKK) av kjøretøy - MEKONOMEN AS</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0001</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0001</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0003</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+          </efac:NoticeResult>
+          <efac:NoticeSubType>
+            <cbc:SubTypeCode listName="notice-subtype">29</cbc:SubTypeCode>
+          </efac:NoticeSubType>
+          <efac:Organizations>
+            <efac:Organization>
+              <efac:Company>
+                <cbc:WebsiteURI>https://www.toll.no</cbc:WebsiteURI>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Tolletaten</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Tolletaten</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Tollbugata 1A</cbc:StreetName>
+                  <cbc:CityName>OSLO</cbc:CityName>
+                  <cbc:PostalZone>0152</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO081</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">880455702</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Alicia Sandgren</cbc:Name>
+                  <cbc:Telephone>+47 98904694</cbc:Telephone>
+                  <cbc:ElectronicMail>ALICIA.SANDGREN@TOLL.NO</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efac:Company>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0002</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Oslo Tingrett</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Oslo Tingrett</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:CityName>Oslo</cbc:CityName>
+                  <cbc:PostalZone>0164</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO081</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">926 725 939</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Telephone>+47 22035200</cbc:Telephone>
+                  <cbc:ElectronicMail>oslo.tingrett@domstol.no</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">sme</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0003</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">MEKONOMEN AS (Meko Norway AS)</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">MEKONOMEN AS (Meko Norway AS)</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Rosenholmveien 25</cbc:StreetName>
+                  <cbc:CityName>Kolbotn</cbc:CityName>
+                  <cbc:PostalZone>1411</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO084</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">980748669</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+              </efac:Company>
+            </efac:Organization>
+          </efac:Organizations>
+        </efext:EformsExtension>
+      </ext:ExtensionContent>
+    </ext:UBLExtension>
+  </ext:UBLExtensions>
+  <cbc:UBLVersionID>2.3</cbc:UBLVersionID>
+  <cbc:CustomizationID>eforms-sdk-1.13#extended#urn:fdc:anskaffelser.no:2023:eforms:eu</cbc:CustomizationID>
+  <cbc:ID schemeName="notice-id">f1c9b6b5-e259-4b8e-8e18-852a22a09f5f</cbc:ID>
+  <cbc:ContractFolderID>d2a72c31-6289-43dc-8078-89d87ed32beb</cbc:ContractFolderID>
+  <cbc:IssueDate>2025-11-26+00:00</cbc:IssueDate>
+  <cbc:IssueTime>10:08:37+00:00</cbc:IssueTime>
+  <cbc:VersionID>01</cbc:VersionID>
+  <cbc:RequestedPublicationDate>2025-11-27Z</cbc:RequestedPublicationDate>
+  <cbc:RegulatoryDomain>32014L0024</cbc:RegulatoryDomain>
+  <cbc:NoticeTypeCode listName="result">can-standard</cbc:NoticeTypeCode>
+  <cbc:NoticeLanguageCode>NOR</cbc:NoticeLanguageCode>
+  <cac:AdditionalNoticeLanguage>
+    <cbc:ID>ENG</cbc:ID>
+  </cac:AdditionalNoticeLanguage>
+  <cac:ContractingParty>
+    <cbc:BuyerProfileURI>https://eu.eu-supply.com/ctm/company/companyinformation/index/340239</cbc:BuyerProfileURI>
+    <cac:ContractingPartyType>
+      <cbc:PartyTypeCode listName="buyer-legal-type">body-pl-cga</cbc:PartyTypeCode>
+    </cac:ContractingPartyType>
+    <cac:ContractingActivity>
+      <cbc:ActivityTypeCode listName="authority-activity">pub-os</cbc:ActivityTypeCode>
+    </cac:ContractingActivity>
+    <cac:Party>
+      <cac:PartyIdentification>
+        <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+      </cac:PartyIdentification>
+    </cac:Party>
+  </cac:ContractingParty>
+  <cac:TenderingProcess>
+    <cbc:ProcedureCode listName="procurement-procedure-type">open</cbc:ProcedureCode>
+    <cbc:TerminatedIndicator>true</cbc:TerminatedIndicator>
+    <cac:NoticeDocumentReference>
+      <cbc:ID schemeName="notice-id-ref">a8fd8b89-1745-43ef-a654-4102216c3e5d-01</cbc:ID>
+    </cac:NoticeDocumentReference>
+    <cac:ProcessJustification>
+      <cbc:ProcessReasonCode listName="accelerated-procedure">false</cbc:ProcessReasonCode>
+    </cac:ProcessJustification>
+  </cac:TenderingProcess>
+  <cac:ProcurementProject>
+    <cbc:ID>25/43724</cbc:ID>
+    <cbc:Name languageID="NOR">Service, vedlikehold og EU-godkjenning (PKK) av kjøretøy</cbc:Name>
+    <cbc:Name languageID="ENG">Service, maintenance and EU certification (PKK) of vehicles.</cbc:Name>
+    <cbc:Description languageID="NOR">Formålet er å sikre en landsdekkende rammeavtale som ved behov skal dekke periodisk service, vedlikehold og EU-godkjenning (PKK) av Tolletatens kjøretøy i henhold til Tolletatens retningslinjer for bilforvaltning innenfor den til enhver tid gjeldende kjøretøypark Tolletaten disponerer.  
+
+Service, vedlikeholdsarbeidene (herunder enkelt karosseriarbeider m.m.) og EU-godkjenning (PKK) skal utføres av autoriserte verksteder slik at nybilgarantier opprettholdes og at kjøretøyene til enhver tid holder tilfredsstillende teknisk standard med hensyn til myndighetskrav for kjøretøy. 
+
+Anskaffelsen omhandler ikke; Garantileveranser som følge av nybilgaranti, utbedringer som følge av forsikringssaker hvor Tolletaten ikke har skyldansvar, større karosseriarbeider, bilberging, dekk og dekkhotell, glassruter, drivstoff og bilrekvisita, vask og polering.</cbc:Description>
+    <cbc:Description languageID="ENG">The aim is to ensure a nationwide framework agreement that, if needed, shall cover periodical service, maintenance and EU certification (PKK) of the Norwegian Customs ́s vehicles in accordance with the Norwegian Customs ́s guidelines for vehicle management within the at any given time applicable vehicle park that the Norwegian Customs has at its disposal.  
+
+Service, maintenance work (including individual body work etc.) and EU certification (PKK) shall be carried out by authorised workshops so that new vehicle guarantees are maintained and that the vehicles always have a satisfactory technical standard as regards the authority requirements for vehicles. 
+
+The procurement does not include; Guarantee deliveries resulting from a new vehicle guarantee, improvements due to insurance cases where the Norwegian Customs is not responsible, major body work, vehicle stalling, tyres and tyre hotel, glass panes, fuel and car accessories, washing and polishing.</cbc:Description>
+    <cbc:ProcurementTypeCode listName="contract-nature">services</cbc:ProcurementTypeCode>
+    <cac:RequestedTenderTotal>
+      <ext:UBLExtensions>
+        <ext:UBLExtension>
+          <ext:ExtensionContent>
+            <efext:EformsExtension>
+              <efbc:FrameworkMaximumAmount currencyID="NOK">18000000</efbc:FrameworkMaximumAmount>
+            </efext:EformsExtension>
+          </ext:ExtensionContent>
+        </ext:UBLExtension>
+      </ext:UBLExtensions>
+      <cbc:EstimatedOverallContractAmount currencyID="NOK">12000000</cbc:EstimatedOverallContractAmount>
+    </cac:RequestedTenderTotal>
+    <cac:MainCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50100000</cbc:ItemClassificationCode>
+    </cac:MainCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50110000</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50112000</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50112100</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50112200</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50116000</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50116200</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50116300</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50532000</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">50532100</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">71631200</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:RealizedLocation>
+      <cac:Address>
+        <cbc:Region>anyw-cou</cbc:Region>
+        <cac:Country>
+          <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:Address>
+    </cac:RealizedLocation>
+  </cac:ProcurementProject>
+  <cac:ProcurementProjectLot>
+    <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+    <cac:TenderingTerms>
+      <cbc:FundingProgramCode listName="eu-funded">no-eu-funds</cbc:FundingProgramCode>
+      <cac:AwardingTerms>
+        <cac:AwardingCriterion>
+          <cac:SubordinateAwardingCriterion>
+            <ext:UBLExtensions>
+              <ext:UBLExtension>
+                <ext:ExtensionContent>
+                  <efext:EformsExtension>
+                    <efac:AwardCriterionParameter>
+                      <efbc:ParameterCode listName="number-weight">per-exa</efbc:ParameterCode>
+                      <efbc:ParameterNumeric>100</efbc:ParameterNumeric>
+                    </efac:AwardCriterionParameter>
+                  </efext:EformsExtension>
+                </ext:ExtensionContent>
+              </ext:UBLExtension>
+            </ext:UBLExtensions>
+            <cbc:AwardingCriterionTypeCode listName="award-criterion-type">cost</cbc:AwardingCriterionTypeCode>
+            <cbc:Description languageID="NOR">Lavest kostnad</cbc:Description>
+            <cbc:Description languageID="ENG">Lowest cost</cbc:Description>
+          </cac:SubordinateAwardingCriterion>
+        </cac:AwardingCriterion>
+      </cac:AwardingTerms>
+      <cac:AppealTerms>
+        <cac:PresentationPeriod>
+          <cbc:Description languageID="NOR">10 dagars karensperiode.</cbc:Description>
+          <cbc:Description languageID="ENG">Ten days waiting period.</cbc:Description>
+        </cac:PresentationPeriod>
+        <cac:AppealReceiverParty>
+          <cac:PartyIdentification>
+            <cbc:ID schemeName="organization">ORG-0002</cbc:ID>
+          </cac:PartyIdentification>
+        </cac:AppealReceiverParty>
+      </cac:AppealTerms>
+    </cac:TenderingTerms>
+    <cac:TenderingProcess>
+      <cbc:GovernmentAgreementConstraintIndicator>true</cbc:GovernmentAgreementConstraintIndicator>
+      <cac:AuctionTerms>
+        <cbc:AuctionConstraintIndicator>false</cbc:AuctionConstraintIndicator>
+      </cac:AuctionTerms>
+      <cac:ContractingSystem>
+        <cbc:ContractingSystemTypeCode listName="dps-usage">none</cbc:ContractingSystemTypeCode>
+      </cac:ContractingSystem>
+      <cac:ContractingSystem>
+        <cbc:ContractingSystemTypeCode listName="framework-agreement">fa-wo-rc</cbc:ContractingSystemTypeCode>
+      </cac:ContractingSystem>
+    </cac:TenderingProcess>
+    <cac:ProcurementProject>
+      <cbc:ID>25/43724</cbc:ID>
+      <cbc:Name languageID="NOR">Service, vedlikehold og EU-godkjenning (PKK) av kjøretøy</cbc:Name>
+      <cbc:Name languageID="ENG">Service, maintenance and EU certification (PKK) of vehicles.</cbc:Name>
+      <cbc:Description languageID="NOR">Formålet er å sikre en landsdekkende rammeavtale som ved behov skal dekke periodisk service, vedlikehold og EU-godkjenning (PKK) av Tolletatens kjøretøy i henhold til Tolletatens retningslinjer for bilforvaltning innenfor den til enhver tid gjeldende kjøretøypark Tolletaten disponerer.  
+
+Service, vedlikeholdsarbeidene (herunder enkelt karosseriarbeider m.m.) og EU-godkjenning (PKK) skal utføres av autoriserte verksteder slik at nybilgarantier opprettholdes og at kjøretøyene til enhver tid holder tilfredsstillende teknisk standard med hensyn til myndighetskrav for kjøretøy. 
+
+Anskaffelsen omhandler ikke; Garantileveranser som følge av nybilgaranti, utbedringer som følge av forsikringssaker hvor Tolletaten ikke har skyldansvar, større karosseriarbeider, bilberging, dekk og dekkhotell, glassruter, drivstoff og bilrekvisita, vask og polering.</cbc:Description>
+      <cbc:Description languageID="ENG">The aim is to ensure a nationwide framework agreement that, if needed, shall cover periodical service, maintenance and EU certification (PKK) of the Norwegian Customs ́s vehicles in accordance with the Norwegian Customs ́s guidelines for vehicle management within the at any given time applicable vehicle park that the Norwegian Customs has at its disposal.  
+
+Service, maintenance work (including individual body work etc.) and EU certification (PKK) shall be carried out by authorised workshops so that new vehicle guarantees are maintained and that the vehicles always have a satisfactory technical standard as regards the authority requirements for vehicles. 
+
+The procurement does not include; Guarantee deliveries resulting from a new vehicle guarantee, improvements due to insurance cases where the Norwegian Customs is not responsible, major body work, vehicle stalling, tyres and tyre hotel, glass panes, fuel and car accessories, washing and polishing.</cbc:Description>
+      <cbc:ProcurementTypeCode listName="contract-nature">services</cbc:ProcurementTypeCode>
+      <cac:RequestedTenderTotal>
+        <ext:UBLExtensions>
+          <ext:UBLExtension>
+            <ext:ExtensionContent>
+              <efext:EformsExtension>
+                <efbc:FrameworkMaximumAmount currencyID="NOK">18000000</efbc:FrameworkMaximumAmount>
+              </efext:EformsExtension>
+            </ext:ExtensionContent>
+          </ext:UBLExtension>
+        </ext:UBLExtensions>
+        <cbc:EstimatedOverallContractAmount currencyID="NOK">12000000</cbc:EstimatedOverallContractAmount>
+      </cac:RequestedTenderTotal>
+      <cac:MainCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50100000</cbc:ItemClassificationCode>
+      </cac:MainCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50110000</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50112000</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50112100</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50112200</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50116000</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50116200</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50116300</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50532000</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">50532100</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">71631200</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:RealizedLocation>
+        <cac:Address>
+          <cbc:Region>anyw-cou</cbc:Region>
+          <cac:Country>
+            <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+          </cac:Country>
+        </cac:Address>
+      </cac:RealizedLocation>
+      <cac:PlannedPeriod>
+        <cbc:DurationMeasure unitCode="YEAR">2</cbc:DurationMeasure>
+      </cac:PlannedPeriod>
+      <cac:ContractExtension>
+        <cbc:OptionsDescription languageID="NOR">2</cbc:OptionsDescription>
+        <cbc:OptionsDescription languageID="ENG">2</cbc:OptionsDescription>
+      </cac:ContractExtension>
+    </cac:ProcurementProject>
+  </cac:ProcurementProjectLot>
+  <cac:TenderResult>
+    <cbc:AwardDate>2000-01-01Z</cbc:AwardDate>
+  </cac:TenderResult>
+</ContractAwardNotice>

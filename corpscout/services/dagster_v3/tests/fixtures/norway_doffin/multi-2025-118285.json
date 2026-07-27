@@ -1,0 +1,137 @@
+{
+ "id": "2025-118285",
+ "buyer": [
+  {
+   "id": "7fcceaaff6948f767e629e00b5fcc8d1",
+   "organizationId": "916879067",
+   "name": "SYKEHUSINNKJØP HF"
+  }
+ ],
+ "heading": "Kontraktstildeling: Diatermi forbruksmateriell til sykehusene i Helse Sør-Øst",
+ "description": "Sykehusinnkjøp HF, har på vegne av Helse Sør-Øst og underliggende helseforetak gjennomført en anskaffelse av diatermiprodukter til sykehusene i Helse Sør-Øst.Anskaffelsen omfatter følgende delkontrakter:Diatermiplater med splitt, med og uten premontert kabelDiatermiplater med splitt til barn, med integrert kabelEngangs diatermipenn med integrert røykavsug, men vanlig spiss og løse engangs elektroderEngangs diatermipenn med integrert røykavsug, med teleskopspiss og løse engangs elektroderBipolare pinsetter og kablerElektroderensere til diatermiAntiklebemiddel til diatermiLaparoskopisk diatermikrok med integrert røykavsug",
+ "locationId": [
+  "NO085",
+  "NO084",
+  "NO083",
+  "NO094",
+  "NO093",
+  "NO081",
+  "NO092"
+ ],
+ "estimatedValue": {
+  "currencyCode": "NOK",
+  "amount": 70000000.0
+ },
+ "type": "ANNOUNCEMENT_OF_CONCLUSION_OF_CONTRACT",
+ "allTypes": [
+  "RESULT",
+  "ANNOUNCEMENT_OF_CONCLUSION_OF_CONTRACT"
+ ],
+ "status": null,
+ "issueDate": "2025-11-26T14:29:52Z",
+ "deadline": "2029-11-08T00:00:00Z",
+ "publicationDate": "2025-11-28",
+ "receivedTenders": 16,
+ "allReceivedTenders": [
+  {
+   "type": "tenders",
+   "total": 16
+  },
+  {
+   "type": "t-esubm",
+   "total": 0
+  }
+ ],
+ "cpvCodes": [
+  "33161000",
+  "33160000",
+  "33140000",
+  "33100000",
+  "33000000"
+ ],
+ "limitedDataFlag": null,
+ "doffinClassicUrl": null,
+ "lots": [
+  {
+   "heading": "Delkontrakt 1-8 Diatermi forbruksmateriell til sykehusene i Helse Sør-Øst",
+   "description": "Sykehusinnkjøp HF, skal på vegne av Helse Sør-Øst og underliggende helseforetak gjennomføre en anskaffelse av diatermiprodukter til sykehusene i Helse Sør-Øst.Anskaffelsen omfatter følgende delkontrakter:Diatermiplater med splitt, med og uten premontert kabelDiatermiplater med splitt til barn, med integrert kabelEngangs diatermipenn med integrert røykavsug, men vanlig spiss og løse engangs elektroderEngangs diatermipenn med integrert røykavsug, med teleskopspiss og løse engangs elektroderBipolare pinsetter og kablerElektroderensere til diatermiAntiklebemiddel til diatermiLaparoskopisk diatermikrok med integrert røykavsug",
+   "winner": [
+    {
+     "id": "035e6ebcc849f85d4f55e2a95f1d4eef",
+     "organizationId": "976501578",
+     "name": "Modul Nordic AS"
+    },
+    {
+     "id": "31025387b42205edd0cb61c253809a04",
+     "organizationId": "988885614",
+     "name": "KCI MEDICAL AS"
+    },
+    {
+     "id": "33302b1e289e788bc47c7b3d1369e769",
+     "organizationId": "975806529",
+     "name": "Medtronic Norge AS"
+    },
+    {
+     "id": "f5bedde7f4b23907c067ca2bf914fea6",
+     "organizationId": "912580539",
+     "name": "Medero AS"
+    },
+    {
+     "id": "70f27d4617e703aae4e62831157094c5",
+     "organizationId": "556516-1352",
+     "name": "Stryker AB"
+    },
+    {
+     "id": "87986daeb6db56304209e2b620614351",
+     "organizationId": "819807892",
+     "name": "Medivatus AS"
+    },
+    {
+     "id": "f5bedde7f4b23907c067ca2bf914fea6",
+     "organizationId": "912580539",
+     "name": "Medero AS"
+    },
+    {
+     "id": "87986daeb6db56304209e2b620614351",
+     "organizationId": "819807892",
+     "name": "Medivatus AS"
+    },
+    {
+     "id": "70f27d4617e703aae4e62831157094c5",
+     "organizationId": "556516-1352",
+     "name": "Stryker AB"
+    },
+    {
+     "id": "f7093275f9e08c60fe6a874cebd96af8",
+     "organizationId": "958103425",
+     "name": "Endotech AS"
+    },
+    {
+     "id": "718efc1c213dec5c682cb5a63a0d6a6c",
+     "organizationId": "941668844",
+     "name": "Kebomed AS"
+    },
+    {
+     "id": "33302b1e289e788bc47c7b3d1369e769",
+     "organizationId": "975806529",
+     "name": "Medtronic Norge AS"
+    },
+    {
+     "id": "33302b1e289e788bc47c7b3d1369e769",
+     "organizationId": "975806529",
+     "name": "Medtronic Norge AS"
+    },
+    {
+     "id": "87986daeb6db56304209e2b620614351",
+     "organizationId": "819807892",
+     "name": "Medivatus AS"
+    },
+    {
+     "id": "87986daeb6db56304209e2b620614351",
+     "organizationId": "819807892",
+     "name": "Medivatus AS"
+    }
+   ]
+  }
+ ]
+}

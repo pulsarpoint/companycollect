@@ -1,0 +1,1158 @@
+<?xml version="1.0" encoding="UTF-8"?><ContractAwardNotice xmlns="urn:oasis:names:specification:ubl:schema:xsd:ContractAwardNotice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:efac="http://data.europa.eu/p27/eforms-ubl-extension-aggregate-components/1" xmlns:efbc="http://data.europa.eu/p27/eforms-ubl-extension-basic-components/1" xmlns:efext="http://data.europa.eu/p27/eforms-ubl-extensions/1" xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2">
+  <ext:UBLExtensions>
+    <ext:UBLExtension>
+      <ext:ExtensionContent>
+        <efext:EformsExtension>
+          <efbc:TransmissionDate>2025-11-26+00:00</efbc:TransmissionDate>
+          <efbc:TransmissionTime>20:25:30+00:00</efbc:TransmissionTime>
+          <efac:NoticeResult>
+            <efbc:OverallApproximateFrameworkContractsAmount currencyID="NOK">70000000</efbc:OverallApproximateFrameworkContractsAmount>
+            <efbc:OverallMaximumFrameworkContractsAmount currencyID="NOK">75000000</efbc:OverallMaximumFrameworkContractsAmount>
+            <efac:LotResult>
+              <cbc:ID schemeName="result">RES-0001</cbc:ID>
+              <cbc:HigherTenderAmount currencyID="NOK">80000000</cbc:HigherTenderAmount>
+              <cbc:LowerTenderAmount currencyID="NOK">60000000</cbc:LowerTenderAmount>
+              <cbc:TenderResultCode listName="winner-selection-status">selec-w</cbc:TenderResultCode>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0001</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0002</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0003</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0004</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0005</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0006</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0007</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0008</cbc:ID>
+              </efac:LotTender>
+              <efac:FrameworkAgreementValues>
+                <cbc:MaximumValueAmount currencyID="NOK">75000000</cbc:MaximumValueAmount>
+                <efbc:ReestimatedValueAmount currencyID="NOK">70000000</efbc:ReestimatedValueAmount>
+              </efac:FrameworkAgreementValues>
+              <efac:ReceivedSubmissionsStatistics>
+                <efbc:StatisticsCode listName="received-submission-type">tenders</efbc:StatisticsCode>
+                <efbc:StatisticsNumeric>16</efbc:StatisticsNumeric>
+              </efac:ReceivedSubmissionsStatistics>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0001</cbc:ID>
+              </efac:SettledContract>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0002</cbc:ID>
+              </efac:SettledContract>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0003</cbc:ID>
+              </efac:SettledContract>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0004</cbc:ID>
+              </efac:SettledContract>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0005</cbc:ID>
+              </efac:SettledContract>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0006</cbc:ID>
+              </efac:SettledContract>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0007</cbc:ID>
+              </efac:SettledContract>
+              <efac:SettledContract>
+                <cbc:ID schemeName="contract">CON-0008</cbc:ID>
+              </efac:SettledContract>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+            </efac:LotResult>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0001</cbc:ID>
+              <cbc:RankCode>1</cbc:RankCode>
+              <efbc:TenderRankedIndicator>true</efbc:TenderRankedIndicator>
+              <efbc:TenderVariantIndicator>false</efbc:TenderVariantIndicator>
+              <cac:LegalMonetaryTotal>
+                <cbc:PayableAmount currencyID="NOK">8000000</cbc:PayableAmount>
+              </cac:LegalMonetaryTotal>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0001</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Diatermi forbruksmateriell Endotech</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0002</cbc:ID>
+              <cbc:RankCode>2</cbc:RankCode>
+              <efbc:TenderRankedIndicator>true</efbc:TenderRankedIndicator>
+              <efbc:TenderVariantIndicator>false</efbc:TenderVariantIndicator>
+              <cac:LegalMonetaryTotal>
+                <cbc:PayableAmount currencyID="NOK">200000</cbc:PayableAmount>
+              </cac:LegalMonetaryTotal>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0002</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Diatermi forbruksmateriell KCI</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0003</cbc:ID>
+              <cbc:RankCode>2</cbc:RankCode>
+              <efbc:TenderRankedIndicator>true</efbc:TenderRankedIndicator>
+              <efbc:TenderVariantIndicator>false</efbc:TenderVariantIndicator>
+              <cac:LegalMonetaryTotal>
+                <cbc:PayableAmount currencyID="NOK">100000</cbc:PayableAmount>
+              </cac:LegalMonetaryTotal>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0003</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Diatermi forbruksmateriell Kebo</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0004</cbc:ID>
+              <cbc:RankCode>2</cbc:RankCode>
+              <efbc:TenderRankedIndicator>true</efbc:TenderRankedIndicator>
+              <efbc:TenderVariantIndicator>false</efbc:TenderVariantIndicator>
+              <cac:LegalMonetaryTotal>
+                <cbc:PayableAmount currencyID="NOK">5000000</cbc:PayableAmount>
+              </cac:LegalMonetaryTotal>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0004</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Diatermi forbruksmateriell Medero</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0005</cbc:ID>
+              <cbc:RankCode>1</cbc:RankCode>
+              <efbc:TenderRankedIndicator>true</efbc:TenderRankedIndicator>
+              <efbc:TenderVariantIndicator>false</efbc:TenderVariantIndicator>
+              <cac:LegalMonetaryTotal>
+                <cbc:PayableAmount currencyID="NOK">25000000</cbc:PayableAmount>
+              </cac:LegalMonetaryTotal>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0005</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Diatermi forbruksmateriell Medivatus</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0006</cbc:ID>
+              <efbc:TenderRankedIndicator>false</efbc:TenderRankedIndicator>
+              <efbc:TenderVariantIndicator>false</efbc:TenderVariantIndicator>
+              <cac:LegalMonetaryTotal>
+                <cbc:PayableAmount currencyID="NOK">200000</cbc:PayableAmount>
+              </cac:LegalMonetaryTotal>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0006</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Diatermi forbruksmateriell Medtronic</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0007</cbc:ID>
+              <cbc:RankCode>1</cbc:RankCode>
+              <efbc:TenderRankedIndicator>true</efbc:TenderRankedIndicator>
+              <efbc:TenderVariantIndicator>false</efbc:TenderVariantIndicator>
+              <cac:LegalMonetaryTotal>
+                <cbc:PayableAmount currencyID="NOK">3000000</cbc:PayableAmount>
+              </cac:LegalMonetaryTotal>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0007</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Diatermi forbruksmateriell Modul Nordic</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:LotTender>
+              <cbc:ID schemeName="tender">TEN-0008</cbc:ID>
+              <cbc:RankCode>1</cbc:RankCode>
+              <efbc:TenderRankedIndicator>true</efbc:TenderRankedIndicator>
+              <efbc:TenderVariantIndicator>false</efbc:TenderVariantIndicator>
+              <cac:LegalMonetaryTotal>
+                <cbc:PayableAmount currencyID="NOK">30000000</cbc:PayableAmount>
+              </cac:LegalMonetaryTotal>
+              <efac:SubcontractingTerm>
+                <efbc:TermCode listName="applicability">no</efbc:TermCode>
+              </efac:SubcontractingTerm>
+              <efac:TenderingParty>
+                <cbc:ID schemeName="tendering-party">TPA-0008</cbc:ID>
+              </efac:TenderingParty>
+              <efac:TenderLot>
+                <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+              </efac:TenderLot>
+              <efac:TenderReference>
+                <cbc:ID>Diatermi forbruksmateriell Stryker</cbc:ID>
+              </efac:TenderReference>
+            </efac:LotTender>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0001</cbc:ID>
+              <cbc:AwardDate>2025-06-02Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-08Z</cbc:IssueDate>
+              <cbc:Title languageID="NOR">1 Diatermiplater med splitt, med og uten premontert kabel</cbc:Title>
+              <cbc:Title languageID="ENG">1 Diathermy plates with split, with and without preassembled cable</cbc:Title>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>1 Diatermiplater med splitt, med og uten premontert kabel</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0007</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0002</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0002</cbc:ID>
+              <cbc:AwardDate>2025-06-02Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-08Z</cbc:IssueDate>
+              <cbc:Title languageID="NOR">2 Diatermiplater med splitt til barn, med integrert kabel</cbc:Title>
+              <cbc:Title languageID="ENG">2 Diathermy plates with split for children, with integrated cable</cbc:Title>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>2 Diatermiplater med splitt til barn, med integrert kabel</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0006</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0003</cbc:ID>
+              <cbc:AwardDate>2025-06-02Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-08Z</cbc:IssueDate>
+              <cbc:Title languageID="NOR">3 Engangs diatermipenn med integrert røykavsug, med vanlig spiss og løse engangs elektroder</cbc:Title>
+              <cbc:Title languageID="ENG">3 Disposable diathermy pen with integrated smoke suction, with normal pointed and loose disposable electrodes</cbc:Title>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>3 Engangs diatermipenn med integrert røykavsug, med vanlig spiss og løse engangs elektroder</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0004</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0008</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0005</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0004</cbc:ID>
+              <cbc:AwardDate>2025-06-02Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-08Z</cbc:IssueDate>
+              <cbc:Title languageID="NOR">4 Engangs diatermipenn med integrert røykavsug, med teleskopspiss og løse engangs elektroder</cbc:Title>
+              <cbc:Title languageID="ENG">4 Disposable diathermy pen with integrated smoke suction, with a telescope tip and loose disposable electrodes.</cbc:Title>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>4 Engangs diatermipenn med integrert røykavsug, med teleskopspiss og løse engangs elektroder</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0004</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0005</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0008</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0005</cbc:ID>
+              <cbc:AwardDate>2025-06-02Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-08Z</cbc:IssueDate>
+              <cbc:Title languageID="NOR">5 Bipolare pinsetter og kabler</cbc:Title>
+              <cbc:Title languageID="ENG">5 Bipolar forceps and cables</cbc:Title>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>5 Bipolare pinsetter og kabler</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0001</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0003</cbc:ID>
+              </efac:LotTender>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0006</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0006</cbc:ID>
+              <cbc:AwardDate>2025-06-02Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-08Z</cbc:IssueDate>
+              <cbc:Title languageID="NOR">6 Elektroderensere til diatermi</cbc:Title>
+              <cbc:Title languageID="ENG">6 Electrode cleaners for diathermy</cbc:Title>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>6 Elektroderensere til diatermi</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0006</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0007</cbc:ID>
+              <cbc:AwardDate>2025-06-02Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-08Z</cbc:IssueDate>
+              <cbc:Title languageID="NOR">7 Antiklebemiddel til diatermi</cbc:Title>
+              <cbc:Title languageID="ENG">7 Anticletic agents for diathermy</cbc:Title>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>7 Antiklebemiddel til diatermi</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0005</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:SettledContract>
+              <cbc:ID schemeName="contract">CON-0008</cbc:ID>
+              <cbc:AwardDate>2025-06-02Z</cbc:AwardDate>
+              <cbc:IssueDate>2025-11-08Z</cbc:IssueDate>
+              <cbc:Title languageID="NOR">8 Laparoskopisk diatermikrok med integrert røykavsug</cbc:Title>
+              <cbc:Title languageID="ENG">8 Laparoscopic diathermy hook with integrated smoke suction</cbc:Title>
+              <efbc:ContractFrameworkIndicator>false</efbc:ContractFrameworkIndicator>
+              <cac:SignatoryParty>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+              </cac:SignatoryParty>
+              <efac:ContractReference>
+                <cbc:ID>8 Laparoskopisk diatermikrok med integrert røykavsug</cbc:ID>
+              </efac:ContractReference>
+              <efac:LotTender>
+                <cbc:ID schemeName="tender">TEN-0005</cbc:ID>
+              </efac:LotTender>
+            </efac:SettledContract>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0001</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0006</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0002</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0010</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0003</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0003</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0004</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0008</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0005</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0009</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0006</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0004</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0007</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0005</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+            <efac:TenderingParty>
+              <cbc:ID schemeName="tendering-party">TPA-0008</cbc:ID>
+              <efac:Tenderer>
+                <cbc:ID schemeName="organization">ORG-0007</cbc:ID>
+              </efac:Tenderer>
+            </efac:TenderingParty>
+          </efac:NoticeResult>
+          <efac:NoticeSubType>
+            <cbc:SubTypeCode listName="notice-subtype">29</cbc:SubTypeCode>
+          </efac:NoticeSubType>
+          <efac:Organizations>
+            <efac:Organization>
+              <efac:Company>
+                <cbc:WebsiteURI>http://www.sykehusinnkjop.no</cbc:WebsiteURI>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">SYKEHUSINNKJØP HF</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">SYKEHUSINNKJØP HF</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Postboks 40</cbc:StreetName>
+                  <cbc:CityName>VADSØ</cbc:CityName>
+                  <cbc:PostalZone>9811</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO073</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">916879067</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Postmottak Sykehusinnkjøp</cbc:Name>
+                  <cbc:Telephone>+47 78950700</cbc:Telephone>
+                  <cbc:ElectronicMail>post@sykehusinnkjop.no</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efac:Company>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0002</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">INDRE OG ØSTRE FINNMARK TINGRETT</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">INDRE OG ØSTRE FINNMARK TINGRETT</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Postboks 54</cbc:StreetName>
+                  <cbc:CityName>Vadsø</cbc:CityName>
+                  <cbc:PostalZone>9811</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO073</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">926722840</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Telephone>78011700</cbc:Telephone>
+                  <cbc:ElectronicMail>indre.og.ostre.finnmark.tingrett@domstol.no</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">small</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0003</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Kebomed AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Kebomed AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Midtunhaugen 17</cbc:StreetName>
+                  <cbc:CityName>Nesttun</cbc:CityName>
+                  <cbc:PostalZone>5224</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO0A2</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">941668844</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Kebomed AS</cbc:Name>
+                  <cbc:Telephone>55987700</cbc:Telephone>
+                  <cbc:Telefax>55987701</cbc:Telefax>
+                  <cbc:ElectronicMail>info@kebomed.no</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efbc:ListedOnRegulatedMarketIndicator>true</efbc:ListedOnRegulatedMarketIndicator>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">medium</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0004</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Medtronic Norge AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Medtronic Norge AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Postboks 458</cbc:StreetName>
+                  <cbc:CityName>LYSAKER</cbc:CityName>
+                  <cbc:PostalZone>1327</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO081</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">975806529</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Medtronic Norge AS</cbc:Name>
+                  <cbc:Telephone>67103200</cbc:Telephone>
+                  <cbc:Telefax>67103205</cbc:Telefax>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efbc:ListedOnRegulatedMarketIndicator>true</efbc:ListedOnRegulatedMarketIndicator>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">small</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0005</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Modul Nordic AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Modul Nordic AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Dalstuvegen 18</cbc:StreetName>
+                  <cbc:CityName>LØTEN</cbc:CityName>
+                  <cbc:PostalZone>2340</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO020</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">976501578</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Modul Nordic AS</cbc:Name>
+                  <cbc:Telephone>62547110</cbc:Telephone>
+                  <cbc:Telefax>62547119</cbc:Telefax>
+                  <cbc:ElectronicMail>post@modulnordic.no</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efbc:ListedOnRegulatedMarketIndicator>true</efbc:ListedOnRegulatedMarketIndicator>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">small</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0006</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Endotech AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Endotech AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Snarøyveien 36</cbc:StreetName>
+                  <cbc:CityName>OSLO</cbc:CityName>
+                  <cbc:PostalZone>1364</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO081</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">958103425</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Endotech AS</cbc:Name>
+                  <cbc:Telephone>23304920</cbc:Telephone>
+                  <cbc:Telefax>23304921</cbc:Telefax>
+                  <cbc:ElectronicMail>endotech@endotech.no</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efbc:ListedOnRegulatedMarketIndicator>true</efbc:ListedOnRegulatedMarketIndicator>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">medium</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0007</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Stryker AB</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Stryker AB</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Långhusgatan 5B</cbc:StreetName>
+                  <cbc:CityName>Malmö</cbc:CityName>
+                  <cbc:PostalZone>21586</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">SE232</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">SWE</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">556516-1352</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Stryker AB</cbc:Name>
+                  <cbc:Telephone>0406918171</cbc:Telephone>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efbc:ListedOnRegulatedMarketIndicator>true</efbc:ListedOnRegulatedMarketIndicator>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">small</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0008</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Medero AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Medero AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Bryggevegen 9</cbc:StreetName>
+                  <cbc:CityName>Gjøvik</cbc:CityName>
+                  <cbc:PostalZone>2821</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO020</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">912580539</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Medero AS</cbc:Name>
+                  <cbc:Telephone>45227671</cbc:Telephone>
+                  <cbc:ElectronicMail>andre@medero.no</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efbc:ListedOnRegulatedMarketIndicator>true</efbc:ListedOnRegulatedMarketIndicator>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">small</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0009</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">Medivatus AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">Medivatus AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Orkidehøgda 3</cbc:StreetName>
+                  <cbc:CityName>Mjøndalen</cbc:CityName>
+                  <cbc:PostalZone>3050</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO085</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">819807892</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>Medivatus AS</cbc:Name>
+                  <cbc:Telephone>91380080</cbc:Telephone>
+                  <cbc:ElectronicMail>edoc@medivatus.com</cbc:ElectronicMail>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+            <efac:Organization>
+              <efbc:ListedOnRegulatedMarketIndicator>true</efbc:ListedOnRegulatedMarketIndicator>
+              <efac:Company>
+                <efbc:CompanySizeCode listName="economic-operator-size">small</efbc:CompanySizeCode>
+                <cac:PartyIdentification>
+                  <cbc:ID schemeName="organization">ORG-0010</cbc:ID>
+                </cac:PartyIdentification>
+                <cac:PartyName>
+                  <cbc:Name languageID="NOR">KCI MEDICAL AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PartyName>
+                  <cbc:Name languageID="ENG">KCI MEDICAL AS</cbc:Name>
+                </cac:PartyName>
+                <cac:PostalAddress>
+                  <cbc:StreetName>Karvesvingen </cbc:StreetName>
+                  <cbc:CityName>OSLO</cbc:CityName>
+                  <cbc:PostalZone>0579</cbc:PostalZone>
+                  <cbc:CountrySubentityCode listName="nuts">NO081</cbc:CountrySubentityCode>
+                  <cac:Country>
+                    <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+                  </cac:Country>
+                </cac:PostalAddress>
+                <cac:PartyLegalEntity>
+                  <cbc:CompanyID schemeID="002">988885614</cbc:CompanyID>
+                </cac:PartyLegalEntity>
+                <cac:Contact>
+                  <cbc:Name>KCI MEDICAL AS</cbc:Name>
+                </cac:Contact>
+              </efac:Company>
+            </efac:Organization>
+          </efac:Organizations>
+        </efext:EformsExtension>
+      </ext:ExtensionContent>
+    </ext:UBLExtension>
+  </ext:UBLExtensions>
+  <cbc:UBLVersionID>2.3</cbc:UBLVersionID>
+  <cbc:CustomizationID>eforms-sdk-1.13#extended#urn:fdc:anskaffelser.no:2023:eforms:eu</cbc:CustomizationID>
+  <cbc:ID schemeName="notice-id">0ab8ec1b-23d8-4243-8929-eceaf090c826</cbc:ID>
+  <cbc:ContractFolderID>27f88de6-1698-4fe7-873f-f112c00e3c6c</cbc:ContractFolderID>
+  <cbc:IssueDate>2025-11-26+00:00</cbc:IssueDate>
+  <cbc:IssueTime>14:29:52+00:00</cbc:IssueTime>
+  <cbc:VersionID>01</cbc:VersionID>
+  <cbc:RequestedPublicationDate>2025-11-27Z</cbc:RequestedPublicationDate>
+  <cbc:RegulatoryDomain>32014L0024</cbc:RegulatoryDomain>
+  <cbc:NoticeTypeCode listName="result">can-standard</cbc:NoticeTypeCode>
+  <cbc:NoticeLanguageCode>NOR</cbc:NoticeLanguageCode>
+  <cac:AdditionalNoticeLanguage>
+    <cbc:ID>ENG</cbc:ID>
+  </cac:AdditionalNoticeLanguage>
+  <cac:ContractingParty>
+    <cac:ContractingPartyType>
+      <cbc:PartyTypeCode listName="buyer-legal-type">grp-p-aut</cbc:PartyTypeCode>
+    </cac:ContractingPartyType>
+    <cac:ContractingActivity>
+      <cbc:ActivityTypeCode listName="authority-activity">health</cbc:ActivityTypeCode>
+    </cac:ContractingActivity>
+    <cac:Party>
+      <cac:PartyIdentification>
+        <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+      </cac:PartyIdentification>
+    </cac:Party>
+  </cac:ContractingParty>
+  <cac:TenderingTerms>
+    <cac:ProcurementLegislationDocumentReference>
+      <cbc:ID>Anskaffelsesforskriften</cbc:ID>
+      <cbc:DocumentDescription languageID="NOR">Standard hyllevarer og verdi over EØS terskelverdi</cbc:DocumentDescription>
+      <cbc:DocumentDescription languageID="ENG">Standard off-the-shelf goods and value above the EEA threshold value.</cbc:DocumentDescription>
+    </cac:ProcurementLegislationDocumentReference>
+  </cac:TenderingTerms>
+  <cac:TenderingProcess>
+    <ext:UBLExtensions>
+      <ext:UBLExtension>
+        <ext:ExtensionContent>
+          <efext:EformsExtension>
+            <efbc:ProcedureRelaunchIndicator>false</efbc:ProcedureRelaunchIndicator>
+          </efext:EformsExtension>
+        </ext:ExtensionContent>
+      </ext:UBLExtension>
+    </ext:UBLExtensions>
+    <cbc:Description languageID="NOR">Sykehusinnkjøp HF, har på vegne av Helse Sør-Øst og underliggende helseforetak gjennomført en anskaffelse av diatermiprodukter til sykehusene i Helse Sør-Øst.Anskaffelsen omfatter følgende delkontrakter:Diatermiplater med splitt, med og uten premontert kabelDiatermiplater med splitt til barn, med integrert kabelEngangs diatermipenn med integrert røykavsug, men vanlig spiss og løse engangs elektroderEngangs diatermipenn med integrert røykavsug, med teleskopspiss og løse engangs elektroderBipolare pinsetter og kablerElektroderensere til diatermiAntiklebemiddel til diatermiLaparoskopisk diatermikrok med integrert røykavsug</cbc:Description>
+    <cbc:Description languageID="ENG">Sykehusinnkjøp HF, on behalf of Helse Sør-Øst and underlying health companies, has implemented a procurement of diathermy products for the hospitals in Helse Sør-Øst.The procurement includes the following sub-contracts: Diathermy plates with split, with and without preassembled cableDiathermy plates with split for children, with integrated cableEnd diathermy pen with integrated smoke suction, but normal pointed and loose disposable electrodesEngangs diathermy pen with integrated smoke suction, with telescopic tip and loose disposable electrodes Bipolar forceps and cables Electrode cleaners for diathermy Anti-adhesive for diathermyLaparoscopic diathermy hook with integrated smoke suction.</cbc:Description>
+    <cbc:ProcedureCode listName="procurement-procedure-type">open</cbc:ProcedureCode>
+    <cbc:TerminatedIndicator>true</cbc:TerminatedIndicator>
+    <cac:NoticeDocumentReference>
+      <cbc:ID schemeName="notice-id-ref">61978bf4-38c1-44e7-9118-ae2cc5c6a5ac-01</cbc:ID>
+    </cac:NoticeDocumentReference>
+    <cac:ProcessJustification>
+      <cbc:ProcessReasonCode listName="accelerated-procedure">false</cbc:ProcessReasonCode>
+    </cac:ProcessJustification>
+  </cac:TenderingProcess>
+  <cac:ProcurementProject>
+    <cbc:ID>2022/8220</cbc:ID>
+    <cbc:Name languageID="NOR">Kontraktstildeling: Diatermi forbruksmateriell til sykehusene i Helse Sør-Øst</cbc:Name>
+    <cbc:Name languageID="ENG">Contract award: Diathermy consumables for the hospitals in Helse Sør-Øst</cbc:Name>
+    <cbc:Description languageID="NOR">Sykehusinnkjøp HF, har på vegne av Helse Sør-Øst og underliggende helseforetak gjennomført en anskaffelse av diatermiprodukter til sykehusene i Helse Sør-Øst.Anskaffelsen omfatter følgende delkontrakter:Diatermiplater med splitt, med og uten premontert kabelDiatermiplater med splitt til barn, med integrert kabelEngangs diatermipenn med integrert røykavsug, men vanlig spiss og løse engangs elektroderEngangs diatermipenn med integrert røykavsug, med teleskopspiss og løse engangs elektroderBipolare pinsetter og kablerElektroderensere til diatermiAntiklebemiddel til diatermiLaparoskopisk diatermikrok med integrert røykavsug</cbc:Description>
+    <cbc:Description languageID="ENG">Sykehusinnkjøp HF, on behalf of Helse Sør-Øst and underlying health companies, has implemented a procurement of diathermy products for the hospitals in Helse Sør-Øst.The procurement includes the following sub-contracts: Diathermy plates with split, with and without preassembled cableDiathermy plates with split for children, with integrated cableEnd diathermy pen with integrated smoke suction, but normal pointed and loose disposable electrodesEngangs diathermy pen with integrated smoke suction, with telescopic tip and loose disposable electrodes Bipolar forceps and cables Electrode cleaners for diathermy Anti-adhesive for diathermyLaparoscopic diathermy hook with integrated smoke suction.</cbc:Description>
+    <cbc:ProcurementTypeCode listName="contract-nature">supplies</cbc:ProcurementTypeCode>
+    <cac:RequestedTenderTotal>
+      <ext:UBLExtensions>
+        <ext:UBLExtension>
+          <ext:ExtensionContent>
+            <efext:EformsExtension>
+              <efbc:FrameworkMaximumAmount currencyID="NOK">75000000</efbc:FrameworkMaximumAmount>
+            </efext:EformsExtension>
+          </ext:ExtensionContent>
+        </ext:UBLExtension>
+      </ext:UBLExtensions>
+      <cbc:EstimatedOverallContractAmount currencyID="NOK">70000000.00</cbc:EstimatedOverallContractAmount>
+    </cac:RequestedTenderTotal>
+    <cac:MainCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">33161000</cbc:ItemClassificationCode>
+    </cac:MainCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">33100000</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:AdditionalCommodityClassification>
+      <cbc:ItemClassificationCode listName="cpv">33140000</cbc:ItemClassificationCode>
+    </cac:AdditionalCommodityClassification>
+    <cac:RealizedLocation>
+      <cac:Address>
+        <cbc:CountrySubentityCode listName="nuts">NO081</cbc:CountrySubentityCode>
+        <cac:Country>
+          <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:Address>
+    </cac:RealizedLocation>
+    <cac:RealizedLocation>
+      <cac:Address>
+        <cbc:CountrySubentityCode listName="nuts">NO083</cbc:CountrySubentityCode>
+        <cac:Country>
+          <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:Address>
+    </cac:RealizedLocation>
+    <cac:RealizedLocation>
+      <cac:Address>
+        <cbc:CountrySubentityCode listName="nuts">NO084</cbc:CountrySubentityCode>
+        <cac:Country>
+          <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:Address>
+    </cac:RealizedLocation>
+    <cac:RealizedLocation>
+      <cac:Address>
+        <cbc:CountrySubentityCode listName="nuts">NO085</cbc:CountrySubentityCode>
+        <cac:Country>
+          <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:Address>
+    </cac:RealizedLocation>
+    <cac:RealizedLocation>
+      <cac:Address>
+        <cbc:CountrySubentityCode listName="nuts">NO092</cbc:CountrySubentityCode>
+        <cac:Country>
+          <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:Address>
+    </cac:RealizedLocation>
+    <cac:RealizedLocation>
+      <cac:Address>
+        <cbc:CountrySubentityCode listName="nuts">NO093</cbc:CountrySubentityCode>
+        <cac:Country>
+          <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:Address>
+    </cac:RealizedLocation>
+    <cac:RealizedLocation>
+      <cac:Address>
+        <cbc:CountrySubentityCode listName="nuts">NO094</cbc:CountrySubentityCode>
+        <cac:Country>
+          <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+        </cac:Country>
+      </cac:Address>
+    </cac:RealizedLocation>
+  </cac:ProcurementProject>
+  <cac:ProcurementProjectLot>
+    <cbc:ID schemeName="Lot">LOT-0000</cbc:ID>
+    <cac:TenderingTerms>
+      <cbc:FundingProgramCode listName="eu-funded">no-eu-funds</cbc:FundingProgramCode>
+      <cac:AwardingTerms>
+        <cac:AwardingCriterion>
+          <cac:SubordinateAwardingCriterion>
+            <ext:UBLExtensions>
+              <ext:UBLExtension>
+                <ext:ExtensionContent>
+                  <efext:EformsExtension>
+                    <efac:AwardCriterionParameter>
+                      <efbc:ParameterCode listName="number-weight">poi-exa</efbc:ParameterCode>
+                      <efbc:ParameterNumeric>1</efbc:ParameterNumeric>
+                    </efac:AwardCriterionParameter>
+                  </efext:EformsExtension>
+                </ext:ExtensionContent>
+              </ext:UBLExtension>
+            </ext:UBLExtensions>
+            <cbc:AwardingCriterionTypeCode listName="award-criterion-type">quality</cbc:AwardingCriterionTypeCode>
+            <cbc:Name languageID="NOR">Kvalitet</cbc:Name>
+            <cbc:Name languageID="ENG">Quality</cbc:Name>
+            <cbc:Description languageID="NOR">Kvalitet vil bli evaluert på bakgrunn av tilbudets oppfyllelse av de krav Oppdragsgiver har stilt i kravspesifikasjonen. Dette omfatter både generelle krav og spesifikke krav til de enkelte delkontraktene. Generelle krav må alltid fylles ut, og spesifikke krav må fylles ut for de delkontraktene som tilbys.
+
+Under de spesifikke kravene vil Oppdragsgiver, der produktets art tilsier at det er relevant, evaluere brukervennlighet, funksjonalitet, materialkvalitet (BFM), miljø (M), sortimentsbredde (SB) og emballasjeløsning/lager (EL), slik som angitt i kravspesifikasjonen per delkontrakt (se konkurransegrunnlagets Kravspesifikasjon).
+
+Kvalitetsevalueringen vil bli gjennomført av fagpersoner fra helseforetakene basert på Tilbyders besvarelse i tilbudets Kravspesifikasjon, arkfane Generelle krav, kolonne G "Besvarelse/henvisning til vedlegg" og arkfane Spesifikke krav, kolonne F "Besvarelse/henvisning til vedlegg", eventuelle innleverte vareprøver, og fagpersonenes eventuelle tidligere erfaring med tilbudte produkter fra klinisk virksomhet
+evt. demonstrasjon og evt. ytterligere klinisk utprøving av produktene.
+
+Tilbud med høyest poengsum for kvalitet oppnår karakteren 6. Karakterene for de øvrige tilbud beregnes etter følgende formel:
+
+[(Poengsum tilbud X)/(Poengsum beste tilbud)]*6=kvalitetskarakter tilbud X.</cbc:Description>
+            <cbc:Description languageID="ENG">The quality will be evaluated based on the tender's fulfilment of the requirements that the Contracting Authority has set in the requirement specification. This includes both general requirements and specific requirements for each sub-contract. General requirements must always be filled in, and specific requirements must be filled in for the offered sub-contracts.
+
+Under the specific requirements, the Contracting Authority will, where the product ́s nature suggests that it is relevant, evaluate user friendliness, functionality, material quality (BFM), environment (M), assortment breadth (SB) and packaging system/stores (EL), as stated in the requirement specification per sub-contract (see the tender documentation's Requirement Specification).
+
+The quality evaluation will be carried out by professionals from the health companies based on the tenderer ́s response in the tender requirement specification, tab General Requirements, column G "Response/referral to annex" and tab Specific Requirements, column F "Response/referral to annex", any submitted product samples, and the professionals ́expression of any previous experience with offered products from clinical activities.
+demonstration and any further clinical testing of the products.
+
+Tenders with the highest score for quality will achieve a grade of 6. The ratings for the other tender offers are calculated according to the following formula:
+
+[(Score tender X)/(Score best tender)]*6=quality character tender X.</cbc:Description>
+          </cac:SubordinateAwardingCriterion>
+          <cac:SubordinateAwardingCriterion>
+            <ext:UBLExtensions>
+              <ext:UBLExtension>
+                <ext:ExtensionContent>
+                  <efext:EformsExtension>
+                    <efac:AwardCriterionParameter>
+                      <efbc:ParameterCode listName="number-weight">poi-exa</efbc:ParameterCode>
+                      <efbc:ParameterNumeric>2</efbc:ParameterNumeric>
+                    </efac:AwardCriterionParameter>
+                  </efext:EformsExtension>
+                </ext:ExtensionContent>
+              </ext:UBLExtension>
+            </ext:UBLExtensions>
+            <cbc:AwardingCriterionTypeCode listName="award-criterion-type">price</cbc:AwardingCriterionTypeCode>
+            <cbc:Name languageID="NOR">Pris</cbc:Name>
+            <cbc:Name languageID="ENG">Price</cbc:Name>
+            <cbc:Description languageID="NOR">Pris vil bli evaluert ut fra totalpris per delkontrakt, basert på tilbudte priser på de oppstilte referanseartiklene i tilbudets Prisskjema, arkfane Prisinformasjon.
+
+Det skal gis én pris for levering direkte til helseforetakene i kolonne L, og én pris for levering til regional forsyningsløsning i Helse Sør-Øst (Forsyningssenteret, FS) i kolonne M. Inngitt pris ved levering direkte til helseforetakene og inngitt pris ved levering til FS vektes hhv. 30% og 70%, ved utregningen i forhold til antatt mengde pr år i kolonne J.
+
+Pris evalueres i henhold til den forholdsmessige metoden. Tilbud med lavest totalsum for pris oppnår karakteren 6. Karakterene for de øvrige tilbud beregnes etter følgende formel:
+
+[(Sum beste tilbud)/(Sum tilbud X)]*6= Priskarakter tilbud X.
+
+Det er ikke satt krav i konkurransen at man skal kunne tilby på alle etterspurte referanseartikler. Prisevalueringen vil baseres på sammenliknbare tilbudte produkter fra de forskjellige tilbyderne. Manglende tilbud på referanseartikler vil være en del av evalueringen av sortimentsbredde. 
+
+Størrelser etc. som er oppgitt i prisskjema er ment veiledende. Tilbyder tilbyr det produktet i sitt sortiment som er nærmest oppgitte mål. 
+
+Dersom samme produkt i tilbyders sortiment tilsvarer flere referanseartikler er det mulig å tilby samme produkt på flere linjer. 
+I de tilfeller tilbyder har flere produkter som samsvarer med oppgitte spesifikasjoner på en referanseartikkel, skal tilbyder velge ett referanseprodukt som oppgis på linjen for referanseartikkel (tilbyders anbefalte produkt eller det produktet i sitt sortiment med størst forventet omsetning). Øvrige varianter oppgis under "Tilleggssortiment". Produkter tilbud under "Tilleggssortiment" tilbys med samme priskalkyle som referanseproduktene. 
+
+Dersom tilbyder i sitt sortiment har produktserier fra ulike produsenter for samme delleveranse kan dette tilbys som parallelle tilbud jf. konkurransebestemmelsenes punkt 3.4.</cbc:Description>
+            <cbc:Description languageID="ENG">The price will be evaluated based on the total price per sub-contract, based on the offered prices for the listed reference articles in the tender's Price Form, tab Price Information.
+
+One price shall be given for delivery directly to the health companies in column L and one price for delivery to the regional supply system in Helse Sør-Øst (The Supply Centre, FS) in column M. Submitted price on delivery directly to the health companies and submitted a price for delivery to FS is weighted 30% and 70%, respectively, by calculation as regards the estimated amount per year in column J.
+
+Price will be evaluated according to the relative method. Tenders with the lowest total sum for price will achieve grade 6. The ratings for the other tender offers are calculated according to the following formula:
+
+[(Total best tenders)/(Total tender X)]*6= Price character tender X.
+
+The tender contest does not require tenders for all the requested reference articles. The price evaluation will be based on comparable offered products from the different tenderers. Missing tenders for reference articles will be a part of the evaluation of assortment breadth. 
+
+The sizes etc. stated in the price form are intended as a guideline. Tenderers offer the product in their assortment that is closest to the stated measurements. 
+
+If the same product in the tenderer ́s assortment corresponds to several reference articles, it is possible to offer the same product on several lines. 
+In cases where the tenderer has several products that correspond to the stated specifications on a reference article, the tenderer should choose one reference product that is stated on the reference article line (the tenderer's recommended product or product in its assortment with the largest expected turnover). Other varieties are stated in the "Additional Assortment". Products offered under "Additional Assortment" are offered with the same price calculation as the reference products. 
+
+If the tenderer has, in their assortment, product series from different manufacturers for the same lot, this can be offered as parallel tender offers, cf. the competition provisions 3.4.</cbc:Description>
+          </cac:SubordinateAwardingCriterion>
+        </cac:AwardingCriterion>
+      </cac:AwardingTerms>
+      <cac:AppealTerms>
+        <cac:AppealInformationParty>
+          <cac:PartyIdentification>
+            <cbc:ID schemeName="organization">ORG-0001</cbc:ID>
+          </cac:PartyIdentification>
+        </cac:AppealInformationParty>
+        <cac:AppealReceiverParty>
+          <cac:PartyIdentification>
+            <cbc:ID schemeName="organization">ORG-0002</cbc:ID>
+          </cac:PartyIdentification>
+        </cac:AppealReceiverParty>
+        <cac:MediationParty>
+          <cac:PartyIdentification>
+            <cbc:ID schemeName="organization">ORG-0002</cbc:ID>
+          </cac:PartyIdentification>
+        </cac:MediationParty>
+      </cac:AppealTerms>
+    </cac:TenderingTerms>
+    <cac:TenderingProcess>
+      <cbc:GovernmentAgreementConstraintIndicator>true</cbc:GovernmentAgreementConstraintIndicator>
+      <cac:AuctionTerms>
+        <cbc:AuctionConstraintIndicator>false</cbc:AuctionConstraintIndicator>
+      </cac:AuctionTerms>
+      <cac:ContractingSystem>
+        <cbc:ContractingSystemTypeCode listName="dps-usage">none</cbc:ContractingSystemTypeCode>
+      </cac:ContractingSystem>
+      <cac:ContractingSystem>
+        <cbc:ContractingSystemTypeCode listName="framework-agreement">fa-wo-rc</cbc:ContractingSystemTypeCode>
+      </cac:ContractingSystem>
+    </cac:TenderingProcess>
+    <cac:ProcurementProject>
+      <cbc:ID>2022/8220-1</cbc:ID>
+      <cbc:Name languageID="NOR">Delkontrakt 1-8 Diatermi forbruksmateriell til sykehusene i Helse Sør-Øst</cbc:Name>
+      <cbc:Name languageID="ENG">Sub-contract 1-8 Diathermy consumables for the hospitals in Helse Sør-Øst</cbc:Name>
+      <cbc:Description languageID="NOR">Sykehusinnkjøp HF, skal på vegne av Helse Sør-Øst og underliggende helseforetak gjennomføre en anskaffelse av diatermiprodukter til sykehusene i Helse Sør-Øst.Anskaffelsen omfatter følgende delkontrakter:Diatermiplater med splitt, med og uten premontert kabelDiatermiplater med splitt til barn, med integrert kabelEngangs diatermipenn med integrert røykavsug, men vanlig spiss og løse engangs elektroderEngangs diatermipenn med integrert røykavsug, med teleskopspiss og løse engangs elektroderBipolare pinsetter og kablerElektroderensere til diatermiAntiklebemiddel til diatermiLaparoskopisk diatermikrok med integrert røykavsug</cbc:Description>
+      <cbc:Description languageID="ENG">Sykehusinnkjøp HF shall, on behalf of Helse Sør-Øst and underlying health companies, procure diathermy products for the hospitals in Helse Sør-Øst.The procurement includes the following sub-contracts: Diathermy plates with split, with and without preassembled cableDiathermy plates with split for children, with integrated cableEnd diathermy pen with integrated smoke suction, but normal pointed and loose disposable electrodesEngangs diathermy pen with integrated smoke suction, with telescopic tip and loose disposable electrodesBipolar forceps and cables Electrode cleaners for diathermy Anti-adhesive for diathermyLaparoscopic diathermy hook with integrated smoke suction.</cbc:Description>
+      <cbc:ProcurementTypeCode listName="contract-nature">supplies</cbc:ProcurementTypeCode>
+      <cac:ProcurementAdditionalType>
+        <cbc:ProcurementTypeCode listName="environmental-impact">other</cbc:ProcurementTypeCode>
+      </cac:ProcurementAdditionalType>
+      <cac:ProcurementAdditionalType>
+        <cbc:ProcurementTypeCode listName="gpp-criteria">other</cbc:ProcurementTypeCode>
+      </cac:ProcurementAdditionalType>
+      <cac:ProcurementAdditionalType>
+        <cbc:ProcurementTypeCode listName="social-objective">hum-right</cbc:ProcurementTypeCode>
+      </cac:ProcurementAdditionalType>
+      <cac:ProcurementAdditionalType>
+        <cbc:ProcurementTypeCode listName="social-objective">work-cond</cbc:ProcurementTypeCode>
+      </cac:ProcurementAdditionalType>
+      <cac:RequestedTenderTotal>
+        <ext:UBLExtensions>
+          <ext:UBLExtension>
+            <ext:ExtensionContent>
+              <efext:EformsExtension>
+                <efbc:FrameworkMaximumAmount currencyID="NOK">75000000</efbc:FrameworkMaximumAmount>
+              </efext:EformsExtension>
+            </ext:ExtensionContent>
+          </ext:UBLExtension>
+        </ext:UBLExtensions>
+        <cbc:EstimatedOverallContractAmount currencyID="NOK">72000000.00</cbc:EstimatedOverallContractAmount>
+      </cac:RequestedTenderTotal>
+      <cac:MainCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">33161000</cbc:ItemClassificationCode>
+      </cac:MainCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">33100000</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:AdditionalCommodityClassification>
+        <cbc:ItemClassificationCode listName="cpv">33140000</cbc:ItemClassificationCode>
+      </cac:AdditionalCommodityClassification>
+      <cac:RealizedLocation>
+        <cac:Address>
+          <cbc:CountrySubentityCode listName="nuts">NO081</cbc:CountrySubentityCode>
+          <cac:Country>
+            <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+          </cac:Country>
+        </cac:Address>
+      </cac:RealizedLocation>
+      <cac:RealizedLocation>
+        <cac:Address>
+          <cbc:CountrySubentityCode listName="nuts">NO083</cbc:CountrySubentityCode>
+          <cac:Country>
+            <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+          </cac:Country>
+        </cac:Address>
+      </cac:RealizedLocation>
+      <cac:RealizedLocation>
+        <cac:Address>
+          <cbc:CountrySubentityCode listName="nuts">NO084</cbc:CountrySubentityCode>
+          <cac:Country>
+            <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+          </cac:Country>
+        </cac:Address>
+      </cac:RealizedLocation>
+      <cac:RealizedLocation>
+        <cac:Address>
+          <cbc:CountrySubentityCode listName="nuts">NO085</cbc:CountrySubentityCode>
+          <cac:Country>
+            <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+          </cac:Country>
+        </cac:Address>
+      </cac:RealizedLocation>
+      <cac:RealizedLocation>
+        <cac:Address>
+          <cbc:CountrySubentityCode listName="nuts">NO092</cbc:CountrySubentityCode>
+          <cac:Country>
+            <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+          </cac:Country>
+        </cac:Address>
+      </cac:RealizedLocation>
+      <cac:RealizedLocation>
+        <cac:Address>
+          <cbc:CountrySubentityCode listName="nuts">NO093</cbc:CountrySubentityCode>
+          <cac:Country>
+            <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+          </cac:Country>
+        </cac:Address>
+      </cac:RealizedLocation>
+      <cac:RealizedLocation>
+        <cac:Address>
+          <cbc:CountrySubentityCode listName="nuts">NO094</cbc:CountrySubentityCode>
+          <cac:Country>
+            <cbc:IdentificationCode listName="country">NOR</cbc:IdentificationCode>
+          </cac:Country>
+        </cac:Address>
+      </cac:RealizedLocation>
+      <cac:PlannedPeriod>
+        <cbc:StartDate>2025-11-07Z</cbc:StartDate>
+        <cbc:EndDate>2029-11-08Z</cbc:EndDate>
+      </cac:PlannedPeriod>
+    </cac:ProcurementProject>
+  </cac:ProcurementProjectLot>
+  <cac:TenderResult>
+    <cbc:AwardDate>2000-01-01Z</cbc:AwardDate>
+  </cac:TenderResult>
+</ContractAwardNotice>

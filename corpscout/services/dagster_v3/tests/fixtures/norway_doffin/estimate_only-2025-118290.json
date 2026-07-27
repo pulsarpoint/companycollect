@@ -1,0 +1,74 @@
+{
+ "id": "2025-118290",
+ "buyer": [
+  {
+   "id": "4a34e822b13e5448e2ff2d18405e3c69",
+   "organizationId": "880455702",
+   "name": "Tolletaten"
+  }
+ ],
+ "heading": "Service, vedlikehold og EU-godkjenning (PKK) av kjøretøy",
+ "description": "Formålet er å sikre en landsdekkende rammeavtale som ved behov skal dekke periodisk service, vedlikehold og EU-godkjenning (PKK) av Tolletatens kjøretøy i henhold til Tolletatens retningslinjer for bilforvaltning innenfor den til enhver tid gjeldende kjøretøypark Tolletaten disponerer.  \n\nService, vedlikeholdsarbeidene (herunder enkelt karosseriarbeider m.m.) og EU-godkjenning (PKK) skal utføres av autoriserte verksteder slik at nybilgarantier opprettholdes og at kjøretøyene til enhver tid holder tilfredsstillende teknisk standard med hensyn til myndighetskrav for kjøretøy. \n\nAnskaffelsen omhandler ikke; Garantileveranser som følge av nybilgaranti, utbedringer som følge av forsikringssaker hvor Tolletaten ikke har skyldansvar, større karosseriarbeider, bilberging, dekk og dekkhotell, glassruter, drivstoff og bilrekvisita, vask og polering.",
+ "locationId": [
+  "anyw"
+ ],
+ "estimatedValue": {
+  "currencyCode": "NOK",
+  "amount": 12000000.0
+ },
+ "type": "ANNOUNCEMENT_OF_CONCLUSION_OF_CONTRACT",
+ "allTypes": [
+  "RESULT",
+  "ANNOUNCEMENT_OF_CONCLUSION_OF_CONTRACT"
+ ],
+ "status": null,
+ "issueDate": "2025-11-26T10:08:37Z",
+ "deadline": null,
+ "publicationDate": "2025-11-28",
+ "receivedTenders": 0,
+ "allReceivedTenders": [
+  {
+   "type": "tenders",
+   "total": 0
+  },
+  {
+   "type": "t-esubm",
+   "total": 2
+  }
+ ],
+ "cpvCodes": [
+  "50500000",
+  "50116200",
+  "71631200",
+  "50530000",
+  "71600000",
+  "50116000",
+  "50112000",
+  "50112100",
+  "50116300",
+  "50112200",
+  "71630000",
+  "71631000",
+  "71000000",
+  "50110000",
+  "50532000",
+  "50000000",
+  "50532100",
+  "50100000"
+ ],
+ "limitedDataFlag": null,
+ "doffinClassicUrl": null,
+ "lots": [
+  {
+   "heading": "Service, vedlikehold og EU-godkjenning (PKK) av kjøretøy",
+   "description": "Formålet er å sikre en landsdekkende rammeavtale som ved behov skal dekke periodisk service, vedlikehold og EU-godkjenning (PKK) av Tolletatens kjøretøy i henhold til Tolletatens retningslinjer for bilforvaltning innenfor den til enhver tid gjeldende kjøretøypark Tolletaten disponerer.  \n\nService, vedlikeholdsarbeidene (herunder enkelt karosseriarbeider m.m.) og EU-godkjenning (PKK) skal utføres av autoriserte verksteder slik at nybilgarantier opprettholdes og at kjøretøyene til enhver tid holder tilfredsstillende teknisk standard med hensyn til myndighetskrav for kjøretøy. \n\nAnskaffelsen omhandler ikke; Garantileveranser som følge av nybilgaranti, utbedringer som følge av forsikringssaker hvor Tolletaten ikke har skyldansvar, større karosseriarbeider, bilberging, dekk og dekkhotell, glassruter, drivstoff og bilrekvisita, vask og polering.",
+   "winner": [
+    {
+     "id": "27df8920a8d64f3fed0ef3c7c8ea1306",
+     "organizationId": "980748669",
+     "name": "MEKONOMEN AS (Meko Norway AS)"
+    }
+   ]
+  }
+ ]
+}
