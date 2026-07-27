@@ -21,6 +21,7 @@
  * the reason §3.3 exists.
  */
 import { chQuery } from "./clickhouse.server";
+import { sourceSlugToPath } from "./procurement-paths";
 
 export interface ProcurementRegister {
   source_slug: string;
@@ -39,13 +40,6 @@ export interface ProcurementRegister {
   notice_table: string;
   notice_key_column: string;
   notes: string;
-}
-
-/** URL slug for a source: `sweden_uhm_procurement` → `sweden-uhm`. Kept out of
- * the database because it is a routing concern, and derived rather than stored
- * so the two cannot drift. */
-export function sourceSlugToPath(sourceSlug: string): string {
-  return sourceSlug.replace(/_procurement$/, "").replace(/_/g, "-");
 }
 
 const REGISTER_COLUMNS = `

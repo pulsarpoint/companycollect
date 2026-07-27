@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sourceSlugToPath } from "./procurements.server";
+import { sourceSlugToPath } from "./procurement-paths";
 
 describe("sourceSlugToPath", () => {
   it("drops the _procurement suffix and hyphenates", () => {

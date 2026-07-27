@@ -5,9 +5,9 @@ import {
   getCoverage,
   getRegisterByPath,
   listSourceRecords,
-  sourceSlugToPath,
   type SourceRow,
 } from "~/lib/procurements.server";
+import { sourceSlugToPath } from "~/lib/procurement-paths";
 import { formatMoneyField } from "~/lib/money";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";

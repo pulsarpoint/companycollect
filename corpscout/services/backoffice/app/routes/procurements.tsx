@@ -1,10 +1,7 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/procurements";
-import {
-  countRows,
-  listRegisters,
-  sourceSlugToPath,
-} from "~/lib/procurements.server";
+import { countRows, listRegisters } from "~/lib/procurements.server";
+import { sourceSlugToPath } from "~/lib/procurement-paths";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
