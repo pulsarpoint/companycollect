@@ -96,7 +96,7 @@ export function CompanyListPage({
       <p className="text-muted-foreground text-sm">
         {nf.format(result.total)} companies{q ? ` matching “${q}”` : ""}
       </p>
-      <DataTable columns={columns} data={result.rows} />
+      <DataTable columns={columns} data={result.rows} emptyText="No companies found." />
       <DataTablePagination total={result.total} page={result.page} pageSize={result.pageSize} />
     </div>
   );

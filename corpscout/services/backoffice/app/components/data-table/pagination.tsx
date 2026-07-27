@@ -23,10 +23,12 @@ export function DataTablePagination({
   total,
   page,
   pageSize,
+  itemsLabel = "companies",
 }: {
   total: number;
   page: number;
   pageSize: number;
+  itemsLabel?: string;
 }) {
   const searchParams = useEffectiveSearchParams();
   const navigate = useNavigate();
@@ -56,7 +58,7 @@ export function DataTablePagination({
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <span className="text-muted-foreground text-sm tabular-nums">
-        {nf.format(total)} companies
+        {nf.format(total)} {itemsLabel}
       </span>
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">

@@ -16,9 +16,11 @@ import {
 export function DataTable<TData>({
   columns,
   data,
+  emptyText = "No results.",
 }: {
   columns: ColumnDef<TData, unknown>[];
   data: TData[];
+  emptyText?: string;
 }) {
   const table = useReactTable({
     data,
@@ -52,7 +54,7 @@ export function DataTable<TData>({
                 colSpan={columns.length}
                 className="text-muted-foreground h-24 text-center"
               >
-                No companies found.
+                {emptyText}
               </TableCell>
             </TableRow>
           ) : (
