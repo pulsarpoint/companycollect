@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from dagster_v3.defs.company_signals.sources import (
     HILMA,
+    PNCP,
     TED,
     UHM,
     ProcurementSource,
@@ -90,9 +91,10 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
         identifier_length=9,
         ted_winner_countries=("FI", "FIN"),
         coverage_caveat=(
-            "Hilma national awards and TED eForms awards. Hilma publishes no "
-            "amount per winner, so its contracts carry a notice-level value "
-            "only and no value attributable to the company."
+            "Hilma national awards and TED eForms awards. Hilma publishes a "
+            "realized value per lot, which is one company's amount where a lot "
+            "has a single winner and a shared figure where several split it. "
+            "TED adds an amount per winner."
         ),
         sources=(HILMA, TED),
     ),
@@ -112,5 +114,23 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
             "thresholds are absent entirely."
         ),
         sources=(TED,),
+    ),
+    # Brazil is the mirror of Norway: a national register and no TED, because
+    # it is not in the EU. The per-country design allows either.
+    "BR": CountryProcurementRule(
+        country_code="BR",
+        companies_table="br_companies",
+        company_id_column="cnpj_basico",
+        # The 8-digit company base. Contracts name a 14-digit establishment,
+        # resolved to its company at export.
+        identifier_length=8,
+        ted_winner_countries=(),
+        coverage_caveat=(
+            "PNCP contract records only. Brazil is not in the EU, so there is "
+            "no TED to complement it. PNCP publishes a value per contract per "
+            "supplier, so Brazilian awards carry an amount attributable to the "
+            "company rather than a notice-level total."
+        ),
+        sources=(PNCP,),
     ),
 }

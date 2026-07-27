@@ -63,6 +63,7 @@ def test_each_country_gets_its_own_asset_name() -> None:
         "se_government_contract_signals_clickhouse",
         "fi_government_contract_signals_clickhouse",
         "no_government_contract_signals_clickhouse",
+        "br_government_contract_signals_clickhouse",
     }
 
 
@@ -95,10 +96,13 @@ def _view_migration() -> str:
 
 def test_every_country_rule_has_a_view_in_the_migration() -> None:
     """A rule that names a view nothing creates would fail only at run time."""
-    sql = _view_migration()
+    # Views are spread across migrations as countries were added, so the
+    # contract holds against the ledger rather than against one file.
+    root = pathlib.Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+    ledger = "\n".join(f.read_text() for f in sorted(root.glob("*.up.sql")))
 
     for rule in COUNTRY_PROCUREMENT_RULES.values():
-        assert f"CREATE VIEW corpscout.{rule.contracts_view} AS" in sql
+        assert f"CREATE VIEW corpscout.{rule.contracts_view} AS" in ledger
 
 
 def test_sweden_view_reads_both_its_sources() -> None:

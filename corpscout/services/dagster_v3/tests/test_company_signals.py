@@ -49,6 +49,10 @@ def test_each_country_asset_depends_only_on_the_sources_it_reads() -> None:
     assert deps["no_government_contract_signals_clickhouse"] == {
         dg.AssetKey("ted_publish_clickhouse"),
     }
+    # Brazil has no TED at all, being outside the EU.
+    assert deps["br_government_contract_signals_clickhouse"] == {
+        dg.AssetKey("brazil_pncp_contracts_clickhouse"),
+    }
 
 
 def test_coverage_caveats_state_what_the_country_is_missing() -> None:
@@ -59,9 +63,12 @@ def test_coverage_caveats_state_what_the_country_is_missing() -> None:
     finland = COUNTRY_PROCUREMENT_RULES["FI"].coverage_caveat
     assert "not yet joined" not in finland
     assert "Hilma" in finland
+    # Hilma does publish a realized lot value, so a caveat saying otherwise is
+    # not merely vague -- it asserts something untrue.
+    assert "no amount per winner" not in finland
+    assert "realized value per lot" in finland
 
-    # Both national registers publish no per-winner amount, and the coverage
-    # row is where a reader finds that out.
-    assert "no amount per winner" in finland
+    # What each country's reader most needs to know about its values.
     assert "no contract value" in COUNTRY_PROCUREMENT_RULES["SE"].coverage_caveat
     assert "Doffin" in COUNTRY_PROCUREMENT_RULES["NO"].coverage_caveat
+    assert "no TED" in COUNTRY_PROCUREMENT_RULES["BR"].coverage_caveat
