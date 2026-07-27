@@ -47,6 +47,7 @@ def test_each_country_asset_depends_only_on_the_sources_it_reads() -> None:
     }
     # Norway declaring a Swedish dependency would stall it on unrelated data.
     assert deps["no_government_contract_signals_clickhouse"] == {
+        dg.AssetKey("norway_doffin_notices_clickhouse"),
         dg.AssetKey("ted_publish_clickhouse"),
     }
     # Brazil has no TED at all, being outside the EU.

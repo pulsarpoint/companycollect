@@ -1,8 +1,43 @@
 # Norway Doffin (government contracts) design doc
 
 > Follows `docs/data-source-guidelines.md`; deviations are called out below.
-> Status: **design settled, build unblocked.** Section 0 records how each of the
-> four gating questions was answered on 2026-07-27.
+> Status: **built.** Section 0 records how each of the four gating questions was
+> answered on 2026-07-27; §8 records what the built chain produced.
+
+## 8. What it produced — 2025-11, end to end
+
+Fetch → normalise → USD, run against the live API before any export:
+
+```
+256 award notices  ->  505 (notice, lot, winner) rows
+
+winners        462 Norwegian, 34 foreign
+realized value 252 rows carry BT-720
+notice value   179 rows carry BT-161
+estimate       327 rows carry BT-27
+FX             30 (currency, date) pairs, all resolved
+directive      468 'yes', 37 'no'   -- read from RegulatoryDomain, not inferred
+```
+
+**The design's central claim, now measured.** Of the 154 rows carrying *both* an
+estimate and a realized value, **113 differ** — 73%. Merging the two, or falling
+back to the estimate where the realized figure is missing, would have been wrong
+about the contract value three times in four. That is why they occupy separate
+columns and why an unpriced notice keeps `value_amount_original` NULL.
+
+Largest awards in the month, as a sanity check that the amounts are real:
+
+```
+Strawberry Services AS   996099784   NOK 1,750,000,000  ->  USD 174,175,518
+Norwegian Air AS         926283227   NOK 1,225,000,000  ->  USD 120,478,616
+Knowit AS                997725646   NOK 1,158,465,000  ->  USD 113,611,566
+```
+
+The 34 foreign winners are the register behaving as the design predicted:
+Swedish, Danish, Spanish and British numbers all appear inside one month. Their
+money is stored; only the company match is lost, and `company_match_status`
+says `foreign_winner` rather than `unmatched_company` so the two are not
+confused.
 
 ## 0. The questions that gated the build — all four resolved
 

@@ -216,6 +216,7 @@ EXPECTED_MIGRATIONS = (
     "000195_corpscout_contract_value_counted_once",
     "000196_corpscout_br_pncp_all_values_usd",
     "000197_corpscout_ted_all_notice_values",
+    "000198_corpscout_no_doffin_notices",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

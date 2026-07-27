@@ -17,6 +17,7 @@ UHM_SOURCE_SLUG = "sweden_uhm_procurement"
 TED_SOURCE_SLUG = "ted_procurement"
 HILMA_SOURCE_SLUG = "finland_hilma_procurement"
 PNCP_SOURCE_SLUG = "brazil_pncp_procurement"
+DOFFIN_SOURCE_SLUG = "norway_doffin_procurement"
 
 
 @dataclass(frozen=True)
@@ -55,4 +56,11 @@ PNCP = ProcurementSource(
     slug=PNCP_SOURCE_SLUG,
     upstream_asset_key="brazil_pncp_contracts_clickhouse",
     required_tables=("br_pncp_contracts",),
+)
+
+
+DOFFIN = ProcurementSource(
+    slug=DOFFIN_SOURCE_SLUG,
+    upstream_asset_key="norway_doffin_notices_clickhouse",
+    required_tables=("no_doffin_notices",),
 )

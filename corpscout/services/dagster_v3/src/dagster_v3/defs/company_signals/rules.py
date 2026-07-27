@@ -2,11 +2,11 @@
 
 One country = one entry here plus one asset built from it by the factory in
 ``procurement.py``. Countries are separate assets rather than partitions of a
-single asset because their upstream dependencies genuinely differ: Sweden reads
-its national procurement register alongside TED, Norway has no ingested national
-source and reads TED alone. Dagster declares deps per asset, not per partition,
-so a partitioned asset would make Norway falsely depend on Swedish UHM data and
-hold it back whenever that source is stale.
+single asset because their upstream dependencies genuinely differ: Sweden,
+Finland and Norway each read a national register alongside TED, Brazil reads
+one and no TED at all. Dagster declares deps per asset, not per partition, so a
+partitioned asset would make Norway falsely depend on Swedish UHM data and hold
+it back whenever that source is stale.
 
 **A count here is not always a count of contracts.** Where a country reads two
 registers, the same contract can appear in both, and whether it is collapsed
@@ -35,6 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from dagster_v3.defs.company_signals.sources import (
+    DOFFIN,
     HILMA,
     PNCP,
     TED,
@@ -134,17 +135,22 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
         company_id_column="org_number",
         identifier_length=9,
         ted_winner_countries=("NO", "NOR"),
-        # Deliberately blunt: with no national source ingested, a Norwegian
-        # company showing no contracts is indistinguishable from one whose
-        # contracts all sat below the EU threshold. Saying so is the whole
-        # point of the coverage row.
+        # Doffin closes the below-threshold gap this caveat used to describe.
+        # What it does not close is deduplication: like Sweden, the two
+        # registers publish no reference to each other. Unlike Sweden the hash
+        # has a real chance -- both sides are eForms -- so this says 'may be'
+        # until it is measured against loaded data.
         coverage_caveat=(
-            "TED eForms awards only; Doffin, Norway's national procurement "
-            "register, is not ingested, so contracts below the EU publication "
-            "thresholds are absent entirely. Contracts won by non-Norwegian "
-            "companies are also absent."
+            "Doffin national awards and TED eForms awards. Doffin publishes a "
+            "realized value per winner, so a Norwegian award carries an amount "
+            "attributable to the company rather than a notice-level total; "
+            "where it publishes only an estimate the value is left empty "
+            "rather than filled with the estimate. Neither register publishes "
+            "a reference to the other, so a contract advertised in both may be "
+            "counted twice. Contracts won by non-Norwegian companies are "
+            "absent."
         ),
-        sources=(TED,),
+        sources=(DOFFIN, TED),
     ),
     # Brazil is the mirror of Norway: a national register and no TED, because
     # it is not in the EU. The per-country design allows either.

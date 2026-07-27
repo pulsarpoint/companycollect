@@ -22,18 +22,25 @@ def test_sweden_reads_its_national_register_alongside_ted() -> None:
     )
 
 
-def test_norway_is_ted_only_and_says_so() -> None:
-    """Norway has no ingested national register, and that must not be silent."""
+def test_norway_reads_doffin_alongside_ted() -> None:
+    """Doffin closes the below-threshold gap the caveat used to describe. What
+    it does not close is deduplication, and the caveat has to keep saying so."""
     rule = COUNTRY_PROCUREMENT_RULES["NO"]
 
     assert rule.companies_table == "no_companies"
     # The register keys on org_number, not company_id -- the two differ.
     assert rule.company_id_column == "org_number"
     assert rule.identifier_length == 9
-    assert rule.source_slugs == (TED_SOURCE_SLUG,)
+    assert rule.source_slugs == ("norway_doffin_procurement", TED_SOURCE_SLUG)
     # No UHM dependency: declaring one would make Norway wait on Swedish data.
-    assert rule.upstream_asset_keys == ("ted_publish_clickhouse",)
+    assert rule.upstream_asset_keys == (
+        "norway_doffin_notices_clickhouse",
+        "ted_publish_clickhouse",
+    )
     assert "Doffin" in rule.coverage_caveat
+    # The gap that is now stale must not still be claimed.
+    assert "is not ingested" not in rule.coverage_caveat
+    assert "may be" in rule.coverage_caveat
 
 
 def test_finland_reads_hilma_and_ted() -> None:
