@@ -8,6 +8,7 @@ import {
   sourceSlugToPath,
   type SourceRow,
 } from "~/lib/procurements.server";
+import { formatMoneyField } from "~/lib/money";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -59,10 +60,12 @@ export function meta({ loaderData }: Route.MetaArgs) {
   return [{ title: `${name} – CompanyCollect Backoffice` }];
 }
 
-function cell(value: unknown): string {
+function cell(column: string, value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : "—";
   if (typeof value === "object") return JSON.stringify(value);
+  const money = formatMoneyField(column, value);
+  if (money !== null) return money;
   const text = String(value);
   return text === "" ? "—" : text;
 }
@@ -278,7 +281,7 @@ export default function ProcurementSource({ loaderData }: Route.ComponentProps) 
                         <TableCell
                           key={column}
                           className="max-w-[22rem] truncate align-top text-xs"
-                          title={cell(row[column])}
+                          title={cell(column, row[column])}
                         >
                           {column === keyColumn && key !== "" ? (
                             <Link
@@ -288,7 +291,7 @@ export default function ProcurementSource({ loaderData }: Route.ComponentProps) 
                               {key}
                             </Link>
                           ) : (
-                            cell(row[column])
+                            cell(column, row[column])
                           )}
                         </TableCell>
                       ))}

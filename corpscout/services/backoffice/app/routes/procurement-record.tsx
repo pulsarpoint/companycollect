@@ -6,6 +6,7 @@ import {
   sourceSlugToPath,
   type SourceRow,
 } from "~/lib/procurements.server";
+import { formatMoneyField } from "~/lib/money";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -36,10 +37,12 @@ export function meta({ loaderData }: Route.MetaArgs) {
   ];
 }
 
-function display(value: unknown): string {
+function display(key: string, value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : "—";
   if (typeof value === "object") return JSON.stringify(value, null, 1);
+  const money = formatMoneyField(key, value);
+  if (money !== null) return money;
   const text = String(value);
   return text === "" ? "—" : text;
 }
@@ -55,7 +58,7 @@ function Fields({ row }: { row: SourceRow }) {
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
       {Object.entries(row).map(([key, value]) => {
-        const text = display(value);
+        const text = display(key, value);
         return (
           <div key={key} className="flex flex-col gap-0.5 overflow-hidden">
             <dt className="text-muted-foreground text-xs">{key}</dt>
