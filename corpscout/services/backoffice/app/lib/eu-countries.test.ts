@@ -7,6 +7,10 @@ describe("EU_EEA_COUNTRIES", () => {
     expect(new Set(EU_EEA_COUNTRIES.map((c) => c.iso2)).size).toBe(30);
   });
 
+  it("has unique iso3 codes", () => {
+    expect(new Set(EU_EEA_COUNTRIES.map((c) => c.iso3)).size).toBe(30);
+  });
+
   it("includes the loaded TED countries and sorts by name", () => {
     const codes = EU_EEA_COUNTRIES.map((c) => c.iso2);
     for (const code of ["SE", "FI", "NO"]) expect(codes).toContain(code);

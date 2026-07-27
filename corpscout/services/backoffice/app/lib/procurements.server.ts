@@ -378,23 +378,31 @@ export async function getFilterOptions(
   return { noticeTypes, awardResults, activeCountries };
 }
 
-/** Which of these org ids exist in the company register, and where their
- * company pages live. Buyers are mostly public institutions, but their org
+/** Which of these org ids exist in the company register, and every register
+ * they exist in. Buyers are mostly public institutions, but their org
  * numbers are in the national registers (SE ~98%, NO ~95% measured), so the
- * company page doubles as the buyer page. */
+ * company page doubles as the buyer page.
+ *
+ * National org-number formats collide across countries — the same digits
+ * are a valid id in more than one register (a Czech ICO equalling a
+ * Brazilian id was observed live) — so this returns every hit per id rather
+ * than picking one with `any(country_code)`. Which hit, if any, a cell links
+ * to is decided by `pickCompanyMatch` in `~/lib/company-match.ts`, using the
+ * row's own country when it has one. */
 export async function matchCompanies(
   ids: string[],
-): Promise<Record<string, { country_code: string; company_id: string }>> {
+): Promise<Record<string, { country_code: string; company_id: string }[]>> {
   const unique = [...new Set(ids.filter((id) => id !== ""))];
   if (unique.length === 0) return {};
   const rows = await chQuery<{ company_id: string; country_code: string }>(
-    `SELECT company_id, any(country_code) AS country_code
+    `SELECT DISTINCT company_id, country_code
      FROM companies_all
-     WHERE company_id IN {ids:Array(String)}
-     GROUP BY company_id`,
+     WHERE company_id IN {ids:Array(String)}`,
     { ids: unique },
   );
-  return Object.fromEntries(
-    rows.map((r) => [r.company_id, { country_code: r.country_code, company_id: r.company_id }]),
-  );
+  const matches: Record<string, { country_code: string; company_id: string }[]> = {};
+  for (const row of rows) {
+    (matches[row.company_id] ??= []).push(row);
+  }
+  return matches;
 }

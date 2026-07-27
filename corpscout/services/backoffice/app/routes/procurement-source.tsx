@@ -12,6 +12,7 @@ import {
   type SourceRow,
 } from "~/lib/procurements.server";
 import { sourceSlugToPath } from "~/lib/procurement-paths";
+import { pickCompanyMatch } from "~/lib/company-match";
 import { formatMoneyField } from "~/lib/money";
 import { visibleColumns } from "~/lib/procurement-columns";
 import { DataTable } from "~/components/data-table/data-table";
@@ -119,7 +120,7 @@ function buildColumns(args: {
   columns: string[];
   keyColumn: string;
   path: string;
-  companyLinks: Record<string, { country_code: string; company_id: string }>;
+  companyLinks: Record<string, { country_code: string; company_id: string }[]>;
 }): ColumnDef<SourceRow, unknown>[] {
   const { columns, keyColumn, path, companyLinks } = args;
   return visibleColumns(columns).map((column) => ({
@@ -139,14 +140,21 @@ function buildColumns(args: {
           </Link>
         );
       }
-      // Buyer/winner names link to the matched company page.
+      // Buyer/winner names link to the matched company page, but only when
+      // the row's country picks out exactly one candidate: national
+      // org-number formats collide across registers, so an id alone is not
+      // enough (see ~/lib/company-match.ts).
       const idColumn = Object.entries(ID_TO_NAME_COLUMN).find(
         ([, nameCol]) => nameCol === column,
       );
       if (idColumn) {
         for (const [idCol, nameCol] of Object.entries(ID_TO_NAME_COLUMN)) {
           if (nameCol !== column) continue;
-          const match = companyLinks[String(row.original[idCol] ?? "")];
+          const candidates = companyLinks[String(row.original[idCol] ?? "")];
+          const countryColumn = idCol.startsWith("buyer_") ? "buyer_country" : "winner_country";
+          const rawCountry = row.original[countryColumn];
+          const rowCountry = typeof rawCountry === "string" ? rawCountry : null;
+          const match = pickCompanyMatch(candidates, rowCountry);
           if (match) {
             return (
               <Link
