@@ -52,6 +52,13 @@ def _session():
     pool=tables.DUCKDB_POOL,
     group_name=tables.GROUP_NAME,
     kinds={"python", "json", "s3"},
+    # A transient failure already occurred inside the first 80 pages. Over the
+    # ~6,400 requests a full backfill costs they are routine, and without this
+    # an overnight run is found stalled rather than done. Retrying is cheap
+    # because the per-page cache makes a retry resume rather than re-fetch.
+    retry_policy=dg.RetryPolicy(
+        max_retries=3, delay=60, backoff=dg.Backoff.EXPONENTIAL
+    ),
     description=(
         "One month of PNCP contracts, page by page, snapshotted to S3. The "
         "snapshot is the point: re-fetching a month is hundreds of "

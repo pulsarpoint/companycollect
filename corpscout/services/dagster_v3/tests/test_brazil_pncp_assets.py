@@ -88,6 +88,32 @@ def test_the_snapshot_outlives_the_cleanup() -> None:
     assert "shutil.rmtree" in source
 
 
+def test_the_download_retries_so_an_overnight_backfill_survives() -> None:
+    """A transient failure already happened inside the first 80 pages; over the
+    ~6,400 a full backfill costs they are routine. Without a retry the run is
+    found stalled in the morning rather than done, and the whole point of the
+    per-page cache is that retrying resumes rather than re-fetches."""
+    by_key = {a.key.to_user_string(): a for a in defs.assets}
+    policy = by_key["brazil_pncp_raw_pages_s3"].op.retry_policy
+
+    assert policy is not None
+    assert policy.max_retries == 3
+    # Long enough to outlast a rate-limit window, not a network blip.
+    assert policy.delay == 60
+    assert policy.backoff == dg.Backoff.EXPONENTIAL
+
+
+def test_a_retry_resumes_from_the_pages_already_paid_for() -> None:
+    """The retry above is only cheap because of this: the downloader counts the
+    page files already on disk and starts after them. If it ever restarted at
+    page 1, three retries of a 340-page month would cost 1,360 requests."""
+    from dagster_v3.defs.brazil_pncp.resources import download_partition
+
+    source = inspect.getsource(download_partition)
+
+    assert "resume_from = len(existing) + 1" in source
+
+
 def test_the_backfill_is_not_scheduled() -> None:
     """It loads history once and is then a repair tool. Re-fetching a 340-page
     month to pick up one day's contracts would be absurd when a day is 12."""
