@@ -61,13 +61,19 @@ def test_a_company_id_is_only_set_when_the_match_actually_happened() -> None:
     assert "u.match_eligibility != 'eligible', u.match_eligibility" in sql
 
 
-def test_usd_columns_are_left_for_the_separate_conversion_step() -> None:
-    """Currency guidelines: conversion is its own step keyed on the report
-    date, never inlined with extraction."""
+def test_usd_columns_are_carried_from_the_separate_conversion_step() -> None:
+    """Currency guidelines: conversion is its own step keyed on the contract
+    date, never inlined with extraction. The export carries what that step
+    wrote into DuckDB -- it neither computes a rate nor hardcodes NULL, so a
+    partition exported before the conversion runs reads NULL, which is the
+    honest reading of "not converted yet"."""
     sql = _insert_sql()
 
-    assert "CAST(NULL AS Nullable(Decimal(38, 2))) AS valor_global_usd" in sql
-    assert "CAST(NULL AS Nullable(Date)) AS fx_rate_date" in sql
+    for column in ("valor_global_usd", "fx_rate_to_usd", "fx_rate_date", "fx_source"):
+        assert f"u.{column}" in sql
+    # Carried, not computed: no rate table is consulted here.
+    assert "exchange_rate" not in sql
+    assert "usd_rate" not in sql
 
 
 def test_insert_projects_the_declared_column_order() -> None:

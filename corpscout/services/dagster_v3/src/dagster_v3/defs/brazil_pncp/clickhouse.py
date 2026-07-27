@@ -8,15 +8,16 @@ it would pass a spot check and silently drop every one of the 3.2M branch-won
 contracts. Matching on the base reaches the company whichever establishment won.
 
 USD conversion is deliberately not done here. It is a separate step keyed on the
-contract date, per the currency guidelines, so the ``_usd`` columns land NULL and
-are filled afterwards.
+contract date, per the currency guidelines; this module only carries the columns
+that step already wrote into DuckDB. A partition exported before the conversion
+runs lands them NULL, which is the honest reading of "not converted yet".
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from dagster_v3.defs.brazil_pncp import tables
+from dagster_v3.defs.brazil_pncp import tables, usd_conversion
 
 _STAGE_COLUMN_TYPES = {
     "ano_contrato": "Nullable(UInt16)",
@@ -37,6 +38,20 @@ _STAGE_COLUMN_TYPES = {
 }
 
 
+# Read out of DuckDB alongside the candidates. Listed separately from
+# CANDIDATE_COLUMNS because a different asset writes them.
+FX_COLUMNS = ("valor_global_usd", "fx_rate_to_usd", "fx_rate_date", "fx_source")
+
+_STAGE_COLUMN_TYPES.update(
+    {
+        "valor_global_usd": "Nullable(Decimal(38, 2))",
+        "fx_rate_to_usd": "Nullable(Decimal(24, 10))",
+        "fx_rate_date": "Nullable(Date)",
+        "fx_source": "String",
+    }
+)
+
+
 def _stage_column_type(name: str) -> str:
     if name in _STAGE_COLUMN_TYPES:
         return _STAGE_COLUMN_TYPES[name]
@@ -48,7 +63,8 @@ def _stage_column_type(name: str) -> str:
 def candidate_stage_ddl(stage_table: str) -> str:
     """A staging table shaped like the DuckDB candidates, for the join to read."""
     columns = ",\n    ".join(
-        f"{name} {_stage_column_type(name)}" for name in tables.CANDIDATE_COLUMNS
+        f"{name} {_stage_column_type(name)}"
+        for name in (*tables.CANDIDATE_COLUMNS, *FX_COLUMNS)
     )
     return f"""
     CREATE TABLE {stage_table}
@@ -80,12 +96,13 @@ def contracts_insert_sql(*, target_table: str, stage_table: str) -> str:
             'unmatched_company'
         ) AS company_match_status,
         {passthrough},
-        -- Filled by the separate USD conversion step, keyed on the contract
+        -- Written by the separate USD conversion step, keyed on the contract
         -- date. Never inlined with extraction, per the currency guidelines.
-        CAST(NULL AS Nullable(Decimal(38, 2))) AS valor_global_usd,
-        CAST(NULL AS Nullable(Decimal(24, 10))) AS fx_rate_to_usd,
-        CAST(NULL AS Nullable(Date)) AS fx_rate_date,
-        '' AS fx_source
+        -- NULL here means that step has not run for this partition.
+        u.valor_global_usd,
+        u.fx_rate_to_usd,
+        u.fx_rate_date,
+        u.fx_source
     FROM {stage_table} AS u
     -- The 8-digit base, never headquarters_cnpj: that is the head office only,
     -- so it matches when a matriz signed and silently misses every branch.
@@ -129,8 +146,13 @@ def export_contracts_clickhouse(
     stage = _qualified(f"_tmp_{tables.CONTRACTS_TABLE}_{partition}")
     stage_candidates = _qualified(f"_tmp_{tables.CONTRACTS_TABLE}_{partition}_src")
 
+    # The FX columns may predate this partition's build, so make sure they
+    # exist before selecting them -- an old DuckDB file would otherwise fail
+    # here rather than simply exporting NULLs.
+    usd_conversion.ensure_usd_columns(duckdb_connection)
+    stage_columns = (*tables.CANDIDATE_COLUMNS, *FX_COLUMNS)
     rows = duckdb_connection.execute(
-        f"select {', '.join(tables.CANDIDATE_COLUMNS)} "
+        f"select {', '.join(stage_columns)} "
         f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
     ).fetchall()
 
@@ -154,7 +176,7 @@ def export_contracts_clickhouse(
         for start in range(0, len(rows), batch_size):
             clickhouse_client.execute(
                 f"INSERT INTO {stage_candidates} "
-                f"({', '.join(tables.CANDIDATE_COLUMNS)}) VALUES",
+                f"({', '.join(stage_columns)}) VALUES",
                 rows[start : start + batch_size],
             )
         clickhouse_client.execute(

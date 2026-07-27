@@ -16,6 +16,7 @@ from dagster_v3.defs.brazil_pncp.normalize import (
     load_raw_pages,
 )
 from dagster_v3.defs.brazil_pncp.resources import download_partition, month_bounds
+from dagster_v3.defs.brazil_pncp.usd_conversion import apply_brazil_pncp_usd_conversion
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
@@ -177,8 +178,40 @@ def brazil_pncp_contracts_duckdb(
 
 
 @dg.asset(
-    name="brazil_pncp_contracts_clickhouse",
+    name="brazil_pncp_contracts_usd",
     deps=[dg.AssetKey("brazil_pncp_contracts_duckdb")],
+    partitions_def=CONTRACTS_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=tables.DUCKDB_POOL,
+    group_name=tables.GROUP_NAME,
+    kinds={"python", "duckdb"},
+    description=(
+        "Converts each contract's valor_global to USD via the shared "
+        "ExchangeRateClient, keyed on the signature date and falling back to "
+        "the publication date. A separate step from extraction so a rate "
+        "correction never means re-parsing contracts. Until it runs, every "
+        "Brazilian value is BRL with a NULL USD and cannot be ranked against "
+        "another country."
+    ),
+)
+def brazil_pncp_contracts_usd(
+    context: dg.AssetExecutionContext,
+    brazil_pncp_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    with brazil_pncp_duckdb.get_connection() as connection:
+        counts = apply_brazil_pncp_usd_conversion(
+            duckdb_connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    name="brazil_pncp_contracts_clickhouse",
+    deps=[dg.AssetKey("brazil_pncp_contracts_usd")],
     partitions_def=CONTRACTS_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=tables.DUCKDB_POOL,
@@ -257,6 +290,7 @@ brazil_pncp_backfill_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets(
         "brazil_pncp_raw_pages_s3",
         "brazil_pncp_contracts_duckdb",
+        "brazil_pncp_contracts_usd",
         "brazil_pncp_contracts_clickhouse",
         "brazil_pncp_page_cache_cleanup",
     ),
@@ -272,6 +306,7 @@ defs = dg.Definitions(
     assets=[
         brazil_pncp_raw_pages_s3,
         brazil_pncp_contracts_duckdb,
+        brazil_pncp_contracts_usd,
         brazil_pncp_contracts_clickhouse,
         brazil_pncp_page_cache_cleanup,
     ],

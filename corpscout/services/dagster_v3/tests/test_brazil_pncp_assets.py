@@ -58,8 +58,13 @@ def test_the_chain_runs_snapshot_then_normalise_then_export() -> None:
     assert deps("brazil_pncp_contracts_duckdb") == {
         dg.AssetKey("brazil_pncp_raw_pages_s3")
     }
-    assert deps("brazil_pncp_contracts_clickhouse") == {
+    # USD conversion sits between normalisation and export, so the exported
+    # rows carry a rate rather than needing a second pass over ClickHouse.
+    assert deps("brazil_pncp_contracts_usd") == {
         dg.AssetKey("brazil_pncp_contracts_duckdb")
+    }
+    assert deps("brazil_pncp_contracts_clickhouse") == {
+        dg.AssetKey("brazil_pncp_contracts_usd")
     }
 
 
