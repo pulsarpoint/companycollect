@@ -4,6 +4,10 @@ import { ArrowLeft } from "lucide-react";
 import type { Route } from "./+types/country-company-detail";
 import { getCountry } from "~/lib/countries";
 import { getCompanyDetail } from "~/lib/queries.server";
+import {
+  getEntityType,
+  legalFormCodeOf,
+} from "~/lib/entity-type.server";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -38,7 +42,13 @@ export async function loader({ params }: Route.LoaderArgs) {
   if (!country) throw new Response("Not found", { status: 404 });
   const detail = await getCompanyDetail(country, params.id);
   if (!detail) throw new Response("Company not found", { status: 404 });
-  return { detail };
+  // The register row is already fetched, so the legal form code comes free and
+  // only the classification needs a lookup.
+  const entityType = await getEntityType(
+    country.code,
+    legalFormCodeOf(country.code, detail.record),
+  );
+  return { detail, entityType };
 }
 
 export function meta({ loaderData, params }: Route.MetaArgs) {
@@ -47,7 +57,7 @@ export function meta({ loaderData, params }: Route.MetaArgs) {
 }
 
 export default function CompanyDetail({ loaderData, params }: Route.ComponentProps) {
-  const { detail } = loaderData;
+  const { detail, entityType } = loaderData;
   const country = getCountry(params.country)!;
   const { company } = detail;
   const status = country.columns.find((c) => c.kind === "status");
@@ -85,6 +95,18 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
         <span className="text-muted-foreground font-mono text-sm">
           {String(company.id)}
         </span>
+        {entityType ? (
+          // Says what the row IS, because a register of legal entities holds
+          // municipalities and ministries beside businesses. The register's own
+          // wording is the tooltip so the label can be checked, not just
+          // trusted.
+          <Badge
+            variant={entityType.is_public_sector ? "secondary" : "outline"}
+            title={entityType.source_label}
+          >
+            {entityType.entity_type_label}
+          </Badge>
+        ) : null}
         {country.code === "fi" ? <FiRegistryBadges record={detail.record} /> : null}
         <LangToggle lang={lang} pairCount={pairCount} />
       </div>
