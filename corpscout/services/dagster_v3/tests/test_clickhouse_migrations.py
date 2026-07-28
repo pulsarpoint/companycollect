@@ -221,7 +221,7 @@ EXPECTED_MIGRATIONS = (
     "000204_corpscout_procurement_registers_repair",
     "000205_corpscout_drop_companies_all",
     "000206_corpscout_ee_national_procurement",
-    "000207_corpscout_fr_sk_national_procurement",
+    "000201_corpscout_fr_sk_national_procurement",
     "000208_corpscout_br_company_relations",
 )
 
