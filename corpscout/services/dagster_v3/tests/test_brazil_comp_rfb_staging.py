@@ -243,3 +243,30 @@ def test_load_raw_family_refuses_empty_csv(tmp_path: Path) -> None:
                 family="empresas",
                 source_run_id="run-1",
             )
+
+
+def test_load_raw_family_rejects_layout_with_an_extra_column(tmp_path: Path) -> None:
+    """I4: DuckDB's read_csv(names=..., header=false) silently binds declared
+    names to the first N positions and drops the rest when a file has MORE
+    columns than declared -- every value past the added column shifts with
+    no error. The Socios layout was never verified against a real archive,
+    so this must fail loudly instead of loading corrupted data."""
+    # "empresas" declares 7 columns; this row has 8 (one extra field appended).
+    csv_path = tmp_path / "empresas.csv"
+    csv_path.write_bytes(b"12345678;ACME LTDA;2062;49;1000,00;01;;EXTRA\n")
+    manifest_path = tmp_path / "br_manifest.duckdb"
+    raw_path = tmp_path / "br_empresas.duckdb"
+    _write_manifest_database(manifest_path, csv_path)
+
+    with duckdb.connect(str(raw_path)) as connection:
+        with pytest.raises(ValueError, match="empresas") as exc_info:
+            staging.load_raw_family_from_manifest(
+                connection=connection,
+                manifest_database_path=manifest_path,
+                family="empresas",
+                source_run_id="run-1",
+            )
+
+    message = str(exc_info.value)
+    assert "7" in message
+    assert "8" in message

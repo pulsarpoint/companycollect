@@ -19,6 +19,31 @@ def _list_literal(values: tuple[str, ...]) -> str:
     return "[" + ", ".join(_sql_literal(value) for value in values) + "]"
 
 
+def _actual_csv_column_count(
+    connection: duckdb.DuckDBPyConnection,
+    csv_path: str,
+) -> int:
+    """Sniff the file's real column count the same way DuckDB parses it
+    (delimiter/quote/escape aware), without the explicit `names=` tuple that
+    would otherwise mask a layout drift."""
+    relation = connection.execute(
+        """
+        select * from read_csv(
+            ?,
+            header = false,
+            all_varchar = true,
+            delim = ';',
+            quote = '"',
+            escape = '"',
+            encoding = 'utf-8'
+        )
+        limit 0
+        """,
+        [csv_path],
+    )
+    return len(relation.description)
+
+
 def load_raw_family_from_manifest(
     *,
     connection: duckdb.DuckDBPyConnection,
@@ -60,6 +85,18 @@ def load_raw_family_from_manifest(
     csv_paths = tuple(
         str(source.normalize_csv_for_duckdb(csv_path)) for csv_path in raw_csv_paths
     )
+    expected_column_count = len(column_names)
+    for csv_path in csv_paths:
+        actual_column_count = _actual_csv_column_count(connection, csv_path)
+        if actual_column_count != expected_column_count:
+            raise ValueError(
+                f"Brazil RFB family {family!r} CSV layout mismatch: {csv_path} has "
+                f"{actual_column_count} columns, expected {expected_column_count} "
+                f"declared in RAW_COLUMNS_BY_FAMILY[{family!r}]. DuckDB's "
+                "read_csv(names=..., header=false) silently drops trailing "
+                "columns or shifts values when the real layout doesn't match "
+                "the declared tuple -- refusing to load."
+            )
     read_csv_paths = _list_literal(csv_paths)
     read_csv_columns = _list_literal(column_names)
     manifest_values = ", ".join(
