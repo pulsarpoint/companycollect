@@ -127,8 +127,9 @@ function buildColumns(args: {
   keyColumn: string;
   path: string;
   companyLinks: Record<string, { country_code: string; company_id: string }[]>;
+  registerCountry: string | null;
 }): ColumnDef<SourceRow, unknown>[] {
-  const { columns, keyColumn, path, companyLinks } = args;
+  const { columns, keyColumn, path, companyLinks, registerCountry } = args;
   return visibleColumns(columns).map((column) => ({
     id: column,
     accessorFn: (row: SourceRow) => row[column],
@@ -159,7 +160,17 @@ function buildColumns(args: {
             ? "supplier_country_code"
             : "winner_country";
         const rawCountry = row.original[countryColumn];
-        const rowCountry = typeof rawCountry === "string" ? rawCountry : null;
+        let rowCountry = typeof rawCountry === "string" && rawCountry !== "" ? rawCountry : null;
+        // In a single-country register the register's own country stands in
+        // when the row carries no country column (Hilma, UHM). For buyers it
+        // is near-certain (they are that country's authorities); for
+        // suppliers it deliberately blocks the lone-candidate fallback from
+        // linking an implausible country — a Finnish supplier's dash-less
+        // business id matching only a Brazilian register entry was observed
+        // live. A missing link beats a wrong one.
+        if (rowCountry === null) {
+          rowCountry = registerCountry;
+        }
         const match = pickCompanyMatch(candidates, rowCountry);
         if (match) {
           return (
@@ -386,7 +397,14 @@ export default function ProcurementSource({ loaderData }: Route.ComponentProps) 
             />
           </div>
           <DataTable
-            columns={buildColumns({ columns: records.columns, keyColumn, path, companyLinks })}
+            columns={buildColumns({
+              columns: records.columns,
+              keyColumn,
+              path,
+              companyLinks,
+              registerCountry:
+                register.country_codes.length === 1 ? register.country_codes[0] : null,
+            })}
             data={records.rows}
             emptyText="No records match these filters."
           />
