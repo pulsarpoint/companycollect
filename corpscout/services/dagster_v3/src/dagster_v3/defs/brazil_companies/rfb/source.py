@@ -14,6 +14,7 @@ from typing import Any, Protocol
 from urllib.parse import urljoin
 
 import dlt
+from botocore.exceptions import ClientError
 from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
 from dlt.sources.helpers import requests as dlt_requests
@@ -251,7 +252,12 @@ def resolve_snapshot_remote_files_from_object_store(
     clean_year_month = validate_snapshot_year_month(snapshot_year_month)
     wanted = set(families)
     prefix = f"brazil_rfb/raw_archives/snapshot={clean_year_month}/"
-    keys = object_store.list_keys(prefix, bucket=BRAZIL_RFB_RAW_BUCKET)
+    try:
+        keys = object_store.list_keys(prefix, bucket=BRAZIL_RFB_RAW_BUCKET)
+    except ClientError as exc:
+        if _s3_error_code(exc) not in {"NoSuchBucket", "404"}:
+            raise
+        keys = []
     files: list[BrazilRfbRemoteFile] = []
     for key in keys:
         if key.endswith(".metadata.json"):
@@ -686,6 +692,46 @@ def sync_snapshot_archives_to_object_store(
     log: LogFn | None = None,
 ) -> BrazilRfbSnapshotSyncResult:
     clean_year_month = validate_snapshot_year_month(snapshot_year_month)
+
+    # RFB discovers archives by scraping the origin's directory-listing HTML
+    # (unlike PGFN, which computes URLs deterministically), so a snapshot
+    # already fully synced to object storage must be reused as-is instead of
+    # re-scraping the origin -- otherwise this asset (which every normal
+    # rebuild runs first) would still fail once RFB stops publishing that
+    # month. Only the *first* sync of a partition needs the origin. A
+    # partial sync (e.g. a prior run crashed after some but not all
+    # families) is a resumable state, not a complete one -- fall through to
+    # the origin-backed path below, whose per-archive `object_store.exists`
+    # check reuses whatever is already there and downloads only the rest.
+    try:
+        existing_files = resolve_snapshot_remote_files_from_object_store(
+            snapshot_year_month=clean_year_month,
+            object_store=object_store,
+            families=families,
+        )
+    except LookupError:
+        existing_files = []
+    if existing_files:
+        _log_progress(
+            log,
+            "Brazil RFB object store already holds a complete snapshot sync: "
+            "snapshot_year_month=%s file_count=%s -- no origin request needed",
+            clean_year_month,
+            len(existing_files),
+        )
+        archives = tuple(
+            _reused_archive_sync_result(
+                remote_file=remote_file,
+                snapshot_year_month=clean_year_month,
+                object_store=object_store,
+            )
+            for remote_file in existing_files
+        )
+        return BrazilRfbSnapshotSyncResult(
+            snapshot_year_month=clean_year_month,
+            archives=archives,
+        )
+
     object_store.ensure_bucket(BRAZIL_RFB_RAW_BUCKET)
     remote_files = fetch_snapshot_remote_files(
         snapshot_year_month=clean_year_month,
@@ -707,6 +753,39 @@ def sync_snapshot_archives_to_object_store(
     return BrazilRfbSnapshotSyncResult(
         snapshot_year_month=clean_year_month,
         archives=archives,
+    )
+
+
+def _reused_archive_sync_result(
+    *,
+    remote_file: BrazilRfbRemoteFile,
+    snapshot_year_month: str,
+    object_store: ObjectStoreResource,
+) -> BrazilRfbArchiveSyncResult:
+    """Build a fully-reused sync result for an archive object storage already
+    has, without touching the origin. `remote_file.url` here is the
+    `s3://...` URL from `resolve_snapshot_remote_files_from_object_store`;
+    the true origin URL (if any) lives in the archive's stored metadata
+    sidecar from when it was first synced."""
+    object_key = rfb_archive_object_key(
+        snapshot_year_month, remote_file.family, remote_file.archive_name
+    )
+    metadata_key = rfb_metadata_object_key(
+        snapshot_year_month, remote_file.family, remote_file.archive_name
+    )
+    stored_metadata = _read_stored_metadata(object_store, metadata_key)
+    archive_url = _metadata_str(stored_metadata, "archive_url") or remote_file.url
+    return BrazilRfbArchiveSyncResult(
+        family=remote_file.family,
+        archive_name=remote_file.archive_name,
+        archive_url=archive_url,
+        object_key=object_key,
+        metadata_key=metadata_key,
+        downloaded=False,
+        reused_existing=True,
+        size_bytes=_metadata_int(stored_metadata, "size_bytes"),
+        sha256=_metadata_str(stored_metadata, "sha256") or None,
+        synced_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -819,6 +898,10 @@ def _metadata_int(metadata: dict[str, object], key: str) -> int | None:
 def _metadata_str(metadata: dict[str, object], key: str) -> str:
     value = metadata.get(key)
     return "" if value is None else str(value)
+
+
+def _s3_error_code(exc: ClientError) -> str:
+    return str(exc.response.get("Error", {}).get("Code", ""))
 
 
 def _response_content_length(response: Any) -> int | None:

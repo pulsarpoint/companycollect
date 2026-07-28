@@ -179,10 +179,15 @@ class BrazilCompRfbDltTranslator(DagsterDltTranslator):
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     description=(
         "Downloads Brazil RFB monthly CNPJ open-data ZIP archives into object "
-        "storage, skipping archives already synced for the snapshot. Snapshots "
-        "the raw archives before the manifest asset extracts and discards them, "
-        "so a re-run of an older partition never depends on RFB's mirror still "
-        "publishing that month."
+        "storage, skipping archives already synced for the snapshot, and "
+        "snapshots them before the manifest asset extracts and discards them. "
+        "The first sync of a partition still requires RFB's mirror to be "
+        "publishing that month -- RFB archives are discovered by scraping the "
+        "origin's directory listing, so this cannot be avoided on a cold "
+        "partition. Once a partition is fully synced, both this asset and the "
+        "downstream manifest asset resolve entirely from object storage, so a "
+        "later re-run of that partition never depends on RFB's mirror still "
+        "publishing it."
     ),
 )
 def brazil_comp_rfb_raw_archives_s3(

@@ -100,7 +100,8 @@ ingested stays visible instead of silently becoming empty.
 
 ## 5. ClickHouse schema
 
-`corpscout.br_company_relations`, next migration in sequence after `000206`.
+`corpscout.br_company_relations`, shipped as migration `000208` (`000207` was
+left free for another in-flight session).
 
 ```
 country_iso2, source_slug, source_run_id, source_record_id

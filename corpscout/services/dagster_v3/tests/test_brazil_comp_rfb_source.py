@@ -4,6 +4,7 @@ import json
 import zipfile
 from pathlib import Path
 
+from botocore.exceptions import ClientError
 from requests import HTTPError
 
 from dagster_v3.defs.brazil_companies.rfb import source
@@ -532,14 +533,9 @@ def test_sync_snapshot_archives_downloads_missing_archives_to_object_store() -> 
 
 
 def test_sync_snapshot_archives_skips_existing_object_store_keys() -> None:
-    base_url = "https://example.test/arquivos/"
-    month_url = "https://example.test/arquivos/2026-07/"
-    html = """
-    <html><body>
-      <a href="Empresas0.zip">empresas</a>
-    </body></html>
-    """
-    session = FakeSession({month_url: FakeResponse(html.encode("utf-8"))})
+    """When the requested families are already fully present in object
+    storage, the sync resolves entirely from there -- no origin request at
+    all, not even the directory listing (see Finding 1 / C1)."""
     object_store = FakeObjectStore()
     object_key = source.rfb_archive_object_key("2026-07", "empresas", "Empresas0.zip")
     metadata_key = source.rfb_metadata_object_key(
@@ -557,9 +553,8 @@ def test_sync_snapshot_archives_skips_existing_object_store_keys() -> None:
     result = source.sync_snapshot_archives_to_object_store(
         snapshot_year_month="2026-07",
         object_store=object_store,
-        base_url=base_url,
         families=("empresas",),
-        session=session,
+        session=NoDownloadSession(),
     )
 
     assert len(result.archives) == 1
@@ -568,8 +563,102 @@ def test_sync_snapshot_archives_skips_existing_object_store_keys() -> None:
     assert archive.reused_existing is True
     assert archive.size_bytes == len(existing_body)
     assert archive.sha256 == hashlib.sha256(existing_body).hexdigest()
-    # Only the directory-listing request was made; no archive bytes refetched.
-    assert session.calls == [(month_url, False)]
+
+
+def test_sync_snapshot_archives_resumes_from_origin_on_partial_object_store_state() -> (
+    None
+):
+    """A prior sync that crashed after uploading only some families leaves a
+    *partial* object store state -- that is a resumable condition, not a
+    complete one. The sync must fall through to the origin-backed path
+    (whose per-archive `object_store.exists` check reuses what is already
+    there) rather than raising the LookupError that
+    `resolve_snapshot_remote_files_from_object_store` uses to flag partial
+    syncs to its other caller, the manifest builder."""
+    base_url = "https://example.test/arquivos/"
+    month_url = "https://example.test/arquivos/2026-07/"
+    cnaes_url = "https://example.test/arquivos/2026-07/Cnaes.zip"
+    html = """
+    <html><body>
+      <a href="Empresas0.zip">empresas</a>
+      <a href="Cnaes.zip">cnaes</a>
+    </body></html>
+    """
+    cnaes_body = b"cnaes-zip-bytes"
+    session = FakeSession(
+        {
+            month_url: FakeResponse(html.encode("utf-8")),
+            cnaes_url: FakeResponse(cnaes_body),
+        }
+    )
+    object_store = FakeObjectStore()
+    empresas_key = source.rfb_archive_object_key("2026-07", "empresas", "Empresas0.zip")
+    existing_body = b"already-synced-zip-bytes"
+    object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, empresas_key)] = existing_body
+
+    result = source.sync_snapshot_archives_to_object_store(
+        snapshot_year_month="2026-07",
+        object_store=object_store,
+        base_url=base_url,
+        families=("empresas", "cnaes"),
+        session=session,
+    )
+
+    by_family = {archive.family: archive for archive in result.archives}
+    assert by_family["empresas"].reused_existing is True
+    assert by_family["empresas"].downloaded is False
+    assert by_family["cnaes"].reused_existing is False
+    assert by_family["cnaes"].downloaded is True
+    assert by_family["cnaes"].sha256 == hashlib.sha256(cnaes_body).hexdigest()
+
+
+def test_sync_snapshot_archives_to_object_store_resolves_from_object_store_with_no_http_at_all() -> (
+    None
+):
+    """C1 (upstream half): brazil_comp_rfb_raw_archives_s3 runs before the
+    manifest asset on every normal rebuild path. When the bucket already
+    holds a complete partition, the sync asset itself -- not just the
+    downstream manifest asset -- must resolve entirely from the bucket,
+    zero HTTP requests, so a month RFB has stopped publishing is still
+    rebuildable from storage. A session that raises on any .get() proves
+    it."""
+    object_store = FakeObjectStore()
+    for family, archive_name in (
+        ("empresas", "Empresas0.zip"),
+        ("cnaes", "Cnaes.zip"),
+    ):
+        object_key = source.rfb_archive_object_key("2026-07", family, archive_name)
+        metadata_key = source.rfb_metadata_object_key("2026-07", family, archive_name)
+        body = f"{family}-zip-bytes".encode("utf-8")
+        object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, object_key)] = body
+        object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, metadata_key)] = (
+            json.dumps(
+                {
+                    "size_bytes": len(body),
+                    "sha256": hashlib.sha256(body).hexdigest(),
+                    "archive_url": (
+                        f"https://example.test/arquivos/2026-07/{archive_name}"
+                    ),
+                }
+            ).encode("utf-8")
+        )
+
+    result = source.sync_snapshot_archives_to_object_store(
+        snapshot_year_month="2026-07",
+        object_store=object_store,
+        families=("empresas", "cnaes"),
+        session=NoDownloadSession(),
+    )
+
+    assert len(result.archives) == 2
+    assert {archive.family for archive in result.archives} == {"empresas", "cnaes"}
+    for archive in result.archives:
+        assert archive.downloaded is False
+        assert archive.reused_existing is True
+        assert archive.sha256 is not None
+    # No new bucket-creation call either -- the bucket obviously already
+    # exists, since we just listed keys from it.
+    assert object_store.created_buckets == []
 
 
 def test_download_extract_reads_archive_from_object_store_and_deletes_local_zip(
@@ -691,6 +780,36 @@ def test_resolve_snapshot_remote_files_from_object_store_raises_on_partial_sync(
         assert "cnaes" in str(exc)
     else:
         raise AssertionError("expected partial object store sync to fail")
+
+
+class MissingBucketObjectStore:
+    """A fake object store whose bucket has never been created: `list_keys`
+    reproduces boto3's real `NoSuchBucket` ClientError instead of an empty
+    list."""
+
+    def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        assert bucket is not None
+        raise ClientError(
+            {"Error": {"Code": "NoSuchBucket"}},
+            operation_name="ListObjectsV2",
+        )
+
+
+def test_resolve_snapshot_remote_files_from_object_store_returns_empty_when_bucket_missing() -> (
+    None
+):
+    """The docstring promises an empty list -- and a fallback to origin
+    discovery -- when the bucket holds nothing for this snapshot. A bucket
+    that does not exist yet (e.g. `source-brazil-rfb` before its first sync)
+    must honor that same contract instead of propagating boto3's raw
+    NoSuchBucket error."""
+    files = source.resolve_snapshot_remote_files_from_object_store(
+        snapshot_year_month="2026-07",
+        object_store=MissingBucketObjectStore(),
+        families=("empresas", "cnaes"),
+    )
+
+    assert files == []
 
 
 def test_brazil_rfb_source_resolves_from_object_store_with_no_http_at_all(

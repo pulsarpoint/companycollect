@@ -141,6 +141,26 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert cleanup_asset.op.pool is None
 
 
+def test_brazil_comp_rfb_raw_archives_s3_description_does_not_overclaim() -> None:
+    """C2: brazil_comp_rfb_raw_archives_s3 itself still hits the origin the
+    first time a partition is synced -- only a *subsequent* re-run resolves
+    from object storage without the origin. The description must say so
+    instead of promising a blanket guarantee it does not deliver on its own
+    first run."""
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    asset_key = dg.AssetKey("brazil_comp_rfb_raw_archives_s3")
+    description = repo.assets_defs_by_key[asset_key].descriptions_by_key[asset_key]
+
+    assert description is not None
+    # Must still disclose the first-sync origin dependency, not just the
+    # steady-state guarantee.
+    assert "first" in description.lower()
+    assert "RFB" in description
+    assert "re-run" in description or "later" in description
+
+
 def test_brazil_comp_rfb_company_relations_clickhouse_never_creates_relations_db(
     tmp_path, monkeypatch
 ) -> None:
