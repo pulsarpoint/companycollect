@@ -22,6 +22,7 @@ WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
 RAW_TABLE_BY_FAMILY = {
     "empresas": "empresas_raw",
     "estabelecimentos": "estabelecimentos_raw",
+    "socios": "socios_raw",
     "simples": "simples_raw",
     "cnaes": "cnaes_raw",
     "naturezas": "naturezas_raw",
@@ -72,6 +73,19 @@ RAW_COLUMNS_BY_FAMILY = {
         "correio_eletronico",
         "situacao_especial",
         "data_situacao_especial",
+    ),
+    "socios": (
+        "cnpj_basico",
+        "identificador_socio",
+        "nome_socio_razao_social",
+        "cnpj_cpf_socio",
+        "qualificacao_socio",
+        "data_entrada_sociedade",
+        "pais",
+        "representante_legal",
+        "nome_representante",
+        "qualificacao_representante",
+        "faixa_etaria",
     ),
     "simples": (
         "cnpj_basico",

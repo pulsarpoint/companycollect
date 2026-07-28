@@ -34,6 +34,7 @@ GROUP_NAME = "brazil_comp_rfb"
 BRAZIL_COMP_RFB_MANIFEST_DUCKDB_POOL = "brazil_comp_rfb_manifest_duckdb"
 BRAZIL_COMP_RFB_EMPRESAS_DUCKDB_POOL = "brazil_comp_rfb_empresas_duckdb"
 BRAZIL_COMP_RFB_ESTABELECIMENTOS_DUCKDB_POOL = "brazil_comp_rfb_estabelecimentos_duckdb"
+BRAZIL_COMP_RFB_SOCIOS_DUCKDB_POOL = "brazil_comp_rfb_socios_duckdb"
 BRAZIL_COMP_RFB_SIMPLES_DUCKDB_POOL = "brazil_comp_rfb_simples_duckdb"
 BRAZIL_COMP_RFB_REFERENCE_DUCKDB_POOL = "brazil_comp_rfb_reference_duckdb"
 BRAZIL_COMP_RFB_COMPANIES_DUCKDB_POOL = "brazil_comp_rfb_companies_duckdb"
@@ -48,6 +49,7 @@ BRAZIL_COMP_RFB_DOWNLOAD_DIR = Path("data/brazil_rfb_downloads")
 SNAPSHOT_FILES_ASSET_KEY = "brazil_comp_rfb_snapshot_files_duckdb"
 EMPRESAS_ASSET_KEY = "brazil_comp_rfb_empresas_duckdb"
 ESTABELECIMENTOS_ASSET_KEY = "brazil_comp_rfb_estabelecimentos_duckdb"
+SOCIOS_ASSET_KEY = "brazil_comp_rfb_socios_duckdb"
 SIMPLES_ASSET_KEY = "brazil_comp_rfb_simples_duckdb"
 REFERENCE_ASSET_KEY = "brazil_comp_rfb_reference_duckdb"
 COMPANIES_ASSET_KEY = "brazil_comp_rfb_companies_duckdb"
@@ -75,6 +77,7 @@ class BrazilCompRfbStagePaths:
     manifest: Path
     empresas: Path
     estabelecimentos: Path
+    socios: Path
     simples: Path
     reference: Path
     companies: Path
@@ -100,6 +103,7 @@ def brazil_comp_rfb_stage_paths(snapshot_year_month: str) -> BrazilCompRfbStageP
         manifest=root / "manifest.duckdb",
         empresas=root / "empresas.duckdb",
         estabelecimentos=root / "estabelecimentos.duckdb",
+        socios=root / "socios.duckdb",
         simples=root / "simples.duckdb",
         reference=root / "reference.duckdb",
         companies=root / "companies.duckdb",
@@ -295,6 +299,39 @@ def brazil_comp_rfb_estabelecimentos_duckdb(
         )
     context.log.info("Loaded Brazil RFB Estabelecimentos raw CSV files: rows=%s", rows)
     return dg.MaterializeResult(metadata={"estabelecimentos": rows})
+
+
+@dg.asset(
+    name=SOCIOS_ASSET_KEY,
+    deps=[dg.AssetKey(SNAPSHOT_FILES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=BRAZIL_COMP_RFB_SOCIOS_DUCKDB_POOL,
+    description="Brazil RFB Socios raw CSV files loaded into a stage DuckDB file.",
+)
+def brazil_comp_rfb_socios_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    stage_paths = _stage_paths_for_context(context)
+    stage_paths.ensure_root()
+    table_name = tables.RAW_TABLE_BY_FAMILY["socios"]
+    existing_counts = resume.stage_table_counts(stage_paths.socios, (table_name,))
+    if existing_counts is not None:
+        counts = {"socios": existing_counts[table_name]}
+        _log_reused_stage(context, "Socios", counts)
+        return dg.MaterializeResult(metadata=_metadata_reused(counts))
+
+    with duckdb_resource(stage_paths.socios).get_connection() as connection:
+        rows = staging.load_raw_family_from_manifest(
+            connection=connection,
+            manifest_database_path=stage_paths.manifest,
+            family="socios",
+            source_run_id=context.run_id,
+        )
+    context.log.info("Loaded Brazil RFB Socios raw CSV files: rows=%s", rows)
+    return dg.MaterializeResult(metadata={"socios": rows})
 
 
 @dg.asset(

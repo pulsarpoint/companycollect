@@ -10,6 +10,7 @@ def test_rfb_raw_column_layouts_match_published_file_families() -> None:
     assert tables.RAW_TABLE_BY_FAMILY == {
         "empresas": "empresas_raw",
         "estabelecimentos": "estabelecimentos_raw",
+        "socios": "socios_raw",
         "simples": "simples_raw",
         "cnaes": "cnaes_raw",
         "naturezas": "naturezas_raw",
@@ -67,6 +68,24 @@ def test_rfb_raw_column_layouts_match_published_file_families() -> None:
         "opcao_mei",
         "data_opcao_mei",
         "data_exclusao_mei",
+    )
+
+
+def test_socios_raw_layout_is_the_published_column_order() -> None:
+    """Headerless CSV: the tuple IS the layout. A wrong order silently shifts
+    every value one column left and nothing errors."""
+    assert tables.RAW_COLUMNS_BY_FAMILY["socios"] == (
+        "cnpj_basico",
+        "identificador_socio",
+        "nome_socio_razao_social",
+        "cnpj_cpf_socio",
+        "qualificacao_socio",
+        "data_entrada_sociedade",
+        "pais",
+        "representante_legal",
+        "nome_representante",
+        "qualificacao_representante",
+        "faixa_etaria",
     )
 
 

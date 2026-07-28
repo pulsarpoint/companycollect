@@ -89,7 +89,16 @@ def test_family_from_archive_name_matches_rfb_patterns() -> None:
     assert source.family_from_archive_name("Qualificacoes.zip") == "qualificacoes"
     assert source.family_from_archive_name("F.K03200$Z.D30612.MOTICSV.zip") == "motivos"
     assert source.family_from_archive_name("Motivos.zip") == "motivos"
-    assert source.family_from_archive_name("SOCIOCSV.zip") == ""
+    assert source.family_from_archive_name("SOCIOCSV.zip") == "socios"
+
+
+def test_family_from_archive_name_matches_socios_patterns() -> None:
+    assert (
+        source.family_from_archive_name("F.K03200$W.SIMPLES.CSV.D30612.SOCIOCSV.zip")
+        == "socios"
+    )
+    assert source.family_from_archive_name("Socios0.zip") == "socios"
+    assert source.family_from_archive_name("Socios.zip") == "socios"
 
 
 def test_discover_snapshot_zip_urls_from_directory_html() -> None:
@@ -132,7 +141,7 @@ def test_discover_current_snapshot_zip_urls_from_mirror_html() -> None:
       <a href="Paises.zip">paises</a>
       <a href="Qualificacoes.zip">qualificacoes</a>
       <a href="Motivos.zip">motivos</a>
-      <a href="Socios0.zip">ignored socios</a>
+      <a href="Socios0.zip">socios</a>
     </body></html>
     """
 
@@ -142,7 +151,7 @@ def test_discover_current_snapshot_zip_urls_from_mirror_html() -> None:
         families=source.DEFAULT_FAMILIES,
     )
 
-    assert len(files) == 10
+    assert len(files) == 11
     assert (
         source.BrazilRfbRemoteFile(
             family="empresas",
@@ -156,6 +165,14 @@ def test_discover_current_snapshot_zip_urls_from_mirror_html() -> None:
             family="estabelecimentos",
             url="https://example.test/arquivos/2026-05-10/Estabelecimentos0.zip",
             archive_name="Estabelecimentos0.zip",
+        )
+        in files
+    )
+    assert (
+        source.BrazilRfbRemoteFile(
+            family="socios",
+            url="https://example.test/arquivos/2026-05-10/Socios0.zip",
+            archive_name="Socios0.zip",
         )
         in files
     )

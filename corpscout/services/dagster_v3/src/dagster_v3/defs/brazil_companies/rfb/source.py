@@ -71,6 +71,7 @@ _FAMILY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "estabelecimentos",
         re.compile(r"(ESTABELE|Estabelecimentos\d*)\.zip$", re.IGNORECASE),
     ),
+    ("socios", re.compile(r"(SOCIOCSV|Socios\d*)\.zip$", re.IGNORECASE)),
     ("simples", re.compile(r"(SIMPLES\.CSV|Simples)\.zip$", re.IGNORECASE)),
     ("cnaes", re.compile(r"(CNAECSV|Cnaes)\.zip$", re.IGNORECASE)),
     ("naturezas", re.compile(r"(NATJUCSV|Naturezas)\.zip$", re.IGNORECASE)),
