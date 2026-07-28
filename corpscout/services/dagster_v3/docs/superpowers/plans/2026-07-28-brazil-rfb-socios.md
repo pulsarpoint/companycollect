@@ -1000,9 +1000,11 @@ SELECT related_entity_kind, count() AS edges, uniqExact(cnpj_basico) AS companie
 FROM corpscout.br_company_relations GROUP BY related_entity_kind;
 
 -- do corporate partners resolve to the register we hold?
+-- related_tax_id is the full 14-digit CNPJ; br_companies.cnpj_basico is only
+-- the 8-digit root, so the join must take the first 8 digits of related_tax_id.
 SELECT countIf(c.cnpj_basico != '') AS resolves, count() AS corporate_edges
 FROM corpscout.br_company_relations AS r
-LEFT ANY JOIN corpscout.br_companies AS c ON c.cnpj_basico = r.related_tax_id
+LEFT ANY JOIN corpscout.br_companies AS c ON c.cnpj_basico = substr(r.related_tax_id, 1, 8)
 WHERE r.related_entity_kind = '1';
 
 -- graph density: the most connected partners

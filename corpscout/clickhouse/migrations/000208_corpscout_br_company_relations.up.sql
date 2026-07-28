@@ -17,7 +17,10 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --
 -- `related_tax_id` holds a CNPJ when kind is 1 and a MASKED CPF when kind is 2,
 -- discriminated by related_entity_kind. Any join to br_companies must carry
--- that predicate or it silently matches nothing.
+-- that predicate or it silently matches nothing. `related_tax_id` is also the
+-- full 14-digit CNPJ, while br_companies.cnpj_basico is only the 8-digit CNPJ
+-- root -- the join is substr(related_tax_id, 1, 8) = br_companies.cnpj_basico,
+-- not a direct equality, or it silently matches nothing too.
 CREATE TABLE IF NOT EXISTS corpscout.br_company_relations
 (
     country_iso2 LowCardinality(String),

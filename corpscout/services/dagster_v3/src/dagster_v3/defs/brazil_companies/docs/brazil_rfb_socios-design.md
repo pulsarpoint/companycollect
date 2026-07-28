@@ -91,8 +91,11 @@ Verbatim. Trim, parse `data_entrada_sociedade` to `Date32`, coalesce every
 String to `''`. No joins, no resolution, no bucketing, no vocabulary mapping.
 
 **`related_tax_id` is deliberately not resolved to a company at ingest.** When
-`related_entity_kind = '1'` it is a CNPJ that joins `br_companies.cnpj_basico`,
-but that join belongs in a view: a partner pointing at a company we have not
+`related_entity_kind = '1'` it is a full 14-digit CNPJ, while
+`br_companies.cnpj_basico` is only the 8-digit CNPJ root (`cnpj_basico` +
+`cnpj_ordem` + `cnpj_dv` makes the 14-digit CNPJ, see `transforms.py`). The
+join is therefore `substr(related_tax_id, 1, 8) = br_companies.cnpj_basico`,
+and it belongs in a view: a partner pointing at a company we have not
 ingested stays visible instead of silently becoming empty.
 
 ## 5. ClickHouse schema
