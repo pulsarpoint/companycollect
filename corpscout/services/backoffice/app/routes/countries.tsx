@@ -4,7 +4,7 @@ import { Search } from "lucide-react";
 import type { Route } from "./+types/countries";
 import { getCountryDirectory } from "~/lib/countries-overview.server";
 import { CountryWorldMap } from "~/components/countries/country-world-map";
-import { formatRevenueUsd } from "~/components/data-table/unified-columns";
+import { formatRevenueUsd } from "~/lib/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Field, FieldLabel } from "~/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";

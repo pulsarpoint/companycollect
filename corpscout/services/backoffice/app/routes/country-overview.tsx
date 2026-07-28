@@ -36,7 +36,7 @@ import {
   TradeHistoryChart,
   TradeSnapshotChart,
 } from "~/components/countries/country-statistics-charts";
-import { formatRevenueUsd } from "~/components/data-table/unified-columns";
+import { formatRevenueUsd } from "~/lib/money";
 import { MethodologyNote } from "~/components/financials/methodology-note";
 import { RevenueBarChart } from "~/components/financials/revenue-bar-chart";
 import { TopCompaniesTable } from "~/components/financials/top-companies-table";

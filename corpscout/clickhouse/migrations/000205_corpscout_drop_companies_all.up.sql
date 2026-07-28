@@ -1,0 +1,32 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+-- Remove companies_all: the universal company schema, retired 2026-07-28.
+--
+-- The decision (recorded in the company-entity-identity plan and memory): no
+-- cross-country unification until at least 15 countries are fully processed
+-- and analyzed. This table was the unification, built at 10, and measured
+-- against its own contents it could not be filled. `size` was populated for
+-- one country of ten. `place` was empty for SE, NO and FI. `legal_form` was
+-- empty for Brazil's 68.6M rows -- 59% of the table. 85% of rows were the two
+-- countries able to fill the least of the schema. Adding one facet cost three
+-- lockstep changes plus a rebuild of all 7.3 GiB, which is why the last facet
+-- attempted was abandoned instead of built.
+--
+-- What actually unified -- name search over country, id, name and status --
+-- may return one day as a deliberately narrow search index. That design is
+-- deferred to the 15-country gate, where it can be shaped by evidence instead
+-- of by the first ten countries' accidents.
+--
+-- DESTRUCTIVE -- gates, checked before this ships:
+--   1. No readers. The backoffice unified search, facets, country directory
+--      and matchCompanies were removed or rewritten onto per-country tables
+--      in the same change set, and the Dagster module (companies_all_clickhouse
+--      plus its 07:15 schedule) is deleted, so nothing rebuilds or reads this.
+--      Deploy that code BEFORE running this migration -- old backoffice code
+--      against a post-205 database breaks on /companies.
+--   2. Contents are 100% derived -- rebuilt nightly from the per-country
+--      companies tables until today. Nothing is lost that its sources do not
+--      still hold. Recovery = revert the commit and re-run the build asset.
+--   3. UNDROP TABLE works for ~480s after the drop if this fires on the
+--      wrong database.
+DROP TABLE IF EXISTS corpscout.companies_all;

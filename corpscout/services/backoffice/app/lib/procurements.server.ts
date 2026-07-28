@@ -21,6 +21,7 @@
  * the reason §3.3 exists.
  */
 import { chQuery } from "./clickhouse.server";
+import { COUNTRIES } from "./countries";
 import { sourceSlugToPath } from "./procurement-paths";
 
 export interface ProcurementRegister {
@@ -396,10 +397,18 @@ export async function matchCompanies(
 ): Promise<Record<string, { country_code: string; company_id: string }[]>> {
   const unique = [...new Set(ids.filter((id) => id !== ""))];
   if (unique.length === 0) return {};
+  // One UNION leg per register, each keyed on that register's own id column —
+  // the same per-country id expressions the retired companies_all build used,
+  // so match semantics are unchanged. Every register hit is returned;
+  // pickCompanyMatch decides which (if any) is linkable.
+  const perRegisterSql = COUNTRIES.map(
+    (c) =>
+      `SELECT DISTINCT toString(${c.idColumn}) AS company_id, '${c.code}' AS country_code
+       FROM ${c.companiesTable}
+       WHERE toString(${c.idColumn}) IN {ids:Array(String)}`,
+  ).join("\nUNION ALL\n");
   const rows = await chQuery<{ company_id: string; country_code: string }>(
-    `SELECT DISTINCT company_id, country_code
-     FROM companies_all
-     WHERE company_id IN {ids:Array(String)}`,
+    perRegisterSql,
     { ids: unique },
   );
   const matches: Record<string, { country_code: string; company_id: string }[]> = {};

@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useFetcher, useNavigate } from "react-router";
 import { Check, ListFilter } from "lucide-react";
+import type { CountryConfig } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
-import { UNIFIED_FACET_KEYS, UNIFIED_FACET_LABELS } from "~/lib/filters";
+import { filterableFacetKeys } from "~/lib/filters";
 import type { FacetOption } from "~/lib/facets.server";
 import { toggleFilterValue } from "~/components/data-table/url";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { Checkbox } from "~/components/ui/checkbox";
 import {
   Command,
   CommandEmpty,
@@ -31,27 +31,26 @@ import {
 
 const nf = new Intl.NumberFormat("en-US");
 
-export function facetLabel(key: string): string {
-  return UNIFIED_FACET_LABELS[key] ?? key;
+export function facetLabel(country: CountryConfig, key: string): string {
+  if (key === "industry") return "Industry";
+  return country.columns.find((c) => c.key === key)?.label ?? key;
 }
 
 function FacetCombobox({
+  country,
   facetKey,
-  label,
   selected,
-  lockedCountry,
 }: {
+  country: CountryConfig;
   facetKey: string;
-  label: string;
   selected: string[];
-  lockedCountry?: string;
 }) {
   const fetcher = useFetcher<{ options: FacetOption[] }>();
   const navigate = useNavigate();
   const effectiveParams = useEffectiveSearchParams();
   const [open, setOpen] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const base = `/facet-options?column=${facetKey}${lockedCountry ? `&country=${lockedCountry}` : ""}`;
+  const base = `/countries/${country.code}/facet-options?column=${facetKey}`;
 
   function onOpenChange(next: boolean) {
     // Cancel any pending debounced query fetch so a stale `q=` result can't
@@ -74,7 +73,7 @@ function FacetCombobox({
 
   return (
     <div className="space-y-1.5">
-      <p className="text-sm font-medium">{label}</p>
+      <p className="text-sm font-medium">{facetLabel(country, facetKey)}</p>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger
           render={
@@ -132,42 +131,14 @@ function FacetCombobox({
   );
 }
 
-function FacetToggle({
-  label,
-  active,
-  onToggle,
-}: {
-  label: string;
-  active: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-accent"
-    >
-      <span>{label}</span>
-      <Checkbox checked={active} className="pointer-events-none" />
-    </button>
-  );
-}
-
-// has_financials is a synthetic semi-join filter, not a categorical column
-// with a value list — it renders as a single on/off FacetToggle above,
-// never as a value-search FacetCombobox.
-const COMBOBOX_FACET_KEYS = UNIFIED_FACET_KEYS.filter((key) => key !== "has_financials");
-
 export function FilterSidebar({
+  country,
   filters,
-  lockedCountry,
 }: {
+  country: CountryConfig;
   filters: CompanyFilters;
-  lockedCountry?: string;
 }) {
   const activeCount = Object.values(filters).reduce((n, v) => n + v.length, 0);
-  const navigate = useNavigate();
-  const searchParams = useEffectiveSearchParams();
   return (
     <Sheet>
       <SheetTrigger render={<Button variant="outline" size="sm" />}>
@@ -180,22 +151,12 @@ export function FilterSidebar({
           <SheetTitle>Filter companies</SheetTitle>
         </SheetHeader>
         <div className="space-y-4 px-4 pb-6">
-          <FacetToggle
-            label="Has financials"
-            active={filters.has_financials?.includes("true") ?? false}
-            onToggle={() =>
-              navigate(toggleFilterValue(searchParams, "has_financials", "true"), {
-                preventScrollReset: true,
-              })
-            }
-          />
-          {COMBOBOX_FACET_KEYS.filter((key) => !(lockedCountry && key === "country")).map((key) => (
+          {filterableFacetKeys(country).map((key) => (
             <FacetCombobox
               key={key}
+              country={country}
               facetKey={key}
-              label={facetLabel(key)}
               selected={filters[key] ?? []}
-              lockedCountry={lockedCountry}
             />
           ))}
         </div>

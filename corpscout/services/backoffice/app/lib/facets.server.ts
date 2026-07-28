@@ -1,6 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
 import type { CountryConfig } from "~/lib/countries";
-import { FACET_COLUMN } from "~/lib/filters";
 
 export interface FacetOption {
   value: string;
@@ -51,26 +50,21 @@ export function rankFacetOptions(
   return [...prefix, ...substring].slice(0, limit);
 }
 
-const COMPANIES_ALL = "companies_all";
-
-// Country-scoped facets against companies_all. Column NAMES only ever come
-// from the fixed FACET_COLUMN map (never a user-supplied facetKey); the
-// country code is always bound via the {code:String} named param.
-function facetSql(column: string): string {
-  return `SELECT ${column} AS value, ${column} AS label, count() AS cnt
-FROM ${COMPANIES_ALL}
-WHERE country_code = {code:String} AND ${column} != ''
+function facetSql(country: CountryConfig, facetKey: string): string {
+  const column = country.columns.find(
+    (c) => c.filterable && c.key === facetKey,
+  );
+  if (!column) throw new Error(`unknown facet: ${facetKey}`);
+  // Identifiers/expressions come from the static registry only.
+  return `SELECT toString(${column.expr}) AS value,
+       toString(${column.expr}) AS label,
+       count() AS cnt
+FROM ${country.companiesTable}
+WHERE toString(${column.expr}) != ''
 GROUP BY value
 ORDER BY cnt DESC
 LIMIT 50000`;
 }
-
-const INDUSTRY_SQL = `SELECT industry_code AS value, any(industry_label) AS label, count() AS cnt
-FROM ${COMPANIES_ALL}
-WHERE country_code = {code:String} AND industry_code != ''
-GROUP BY value
-ORDER BY cnt DESC
-LIMIT 50000`;
 
 export async function getFacetOptions(
   country: CountryConfig,
@@ -82,15 +76,12 @@ export async function getFacetOptions(
 
   let sql: string;
   if (facetKey === "industry") {
-    sql = INDUSTRY_SQL;
+    if (!country.industryFacetQuery) throw new Error(`unknown facet: ${facetKey}`);
+    sql = country.industryFacetQuery;
   } else {
-    const column = Object.hasOwn(FACET_COLUMN, facetKey) ? FACET_COLUMN[facetKey] : undefined;
-    if (!column) throw new Error(`unknown facet: ${facetKey}`);
-    sql = facetSql(column);
+    sql = facetSql(country, facetKey);
   }
-  const rows = await chQuery<{ value: string; label: string; cnt: string }>(sql, {
-    code: country.code,
-  });
+  const rows = await chQuery<{ value: string; label: string; cnt: string }>(sql);
   const options: FacetOption[] = rows.map((r) => ({
     value: r.value,
     label: r.label,

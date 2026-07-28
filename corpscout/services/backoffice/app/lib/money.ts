@@ -19,6 +19,20 @@ const moneyFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 })
  * monetary. ClickHouse serializes Decimal columns as strings, so numeric
  * strings are accepted alongside numbers. Values beyond Number's safe integer
  * range are left untouched rather than formatted with silent precision loss. */
+const compactUsd = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/** Compact latest-revenue display: "$1.2M (2024)". Client-safe (no server deps). */
+export function formatRevenueUsd(
+  value: number | null | undefined,
+  fiscalYear: number | null | undefined,
+): string {
+  if (value == null) return "—";
+  return `$${compactUsd.format(value)}${fiscalYear != null ? ` (${fiscalYear})` : ""}`;
+}
+
 export function formatMoneyField(key: string, value: unknown): string | null {
   if (!MONEY_KEY.test(key) || NOT_MONEY_KEY.test(key)) return null;
 

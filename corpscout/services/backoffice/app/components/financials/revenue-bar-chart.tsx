@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import type { YAxisTickContentProps } from "recharts";
-import { formatRevenueUsd } from "~/components/data-table/unified-columns";
+import { formatRevenueUsd } from "~/lib/money";
 import {
   ChartContainer,
   ChartTooltip,

@@ -5,7 +5,6 @@ from dagster_v3.defs.brazil_companies.cgu import tables as brazil_cgu_tables
 from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
-from dagster_v3.defs.companies_all import tables as companies_all_tables
 from dagster_v3.defs.company_signals import tables as company_signals_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
@@ -223,6 +222,8 @@ EXPECTED_MIGRATIONS = (
     "000202_corpscout_lv_national_procurement",
     "000203_corpscout_se_uhm_party_descriptions",
     "000204_corpscout_procurement_registers_repair",
+    "000205_corpscout_drop_companies_all",
+    "000206_corpscout_ee_national_procurement",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2314,29 +2315,6 @@ def test_commoncrawl_jsonld_keeps_each_page_entity() -> None:
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_jsonld" in down_sql
 
 
-def test_companies_all_migration_covers_columns() -> None:
-    sql = _migration_sql("000139_corpscout_companies_all.up.sql")
-    signal_sql = _migration_sql(
-        "000168_corpscout_companies_all_government_contract.up.sql"
-    )
-    down_sql = _migration_sql("000139_corpscout_companies_all.down.sql")
-
-    assert "CREATE TABLE IF NOT EXISTS corpscout.companies_all" in sql
-    for column_name in companies_all_tables.COMPANIES_ALL_COLUMNS:
-        assert (
-            f"    {column_name} " in sql
-            or f"ADD COLUMN IF NOT EXISTS {column_name} " in signal_sql
-        )
-
-    assert (
-        "INDEX idx_name_ngram name_normalized TYPE ngrambf_v1(3, 262144, 3, 0) GRANULARITY 4"
-        in sql
-    )
-    assert "ORDER BY (country_code, company_id)" in sql
-    assert "ENGINE = MergeTree" in sql
-    assert "DROP TABLE IF EXISTS corpscout.companies_all" in down_sql
-
-
 def test_ted_procurement_migration_covers_export_columns() -> None:
     sql = _migration_sql("000148_corpscout_ted_procurement.up.sql")
     down_sql = _migration_sql("000148_corpscout_ted_procurement.down.sql")
@@ -2557,22 +2535,6 @@ def test_ted_country_grain_migration_is_country_safe() -> None:
     assert "INSERT INTO corpscout._tmp_ted_notices_country_grain" in sql
     assert "INSERT INTO corpscout._tmp_ted_notice_winners_country_grain" in sql
     assert sql.count("EXCHANGE TABLES") == 2
-
-
-def test_companies_all_government_contract_migration_covers_columns() -> None:
-    sql = _migration_sql("000168_corpscout_companies_all_government_contract.up.sql")
-    down_sql = _migration_sql(
-        "000168_corpscout_companies_all_government_contract.down.sql"
-    )
-
-    for column in (
-        "has_government_contract",
-        "public_award_count",
-        "public_award_last_date",
-        "signals_resolved_at",
-    ):
-        assert f"ADD COLUMN IF NOT EXISTS {column} " in sql
-        assert f"DROP COLUMN IF EXISTS {column}" in down_sql
 
 
 def test_denmark_cvr_company_detail_failure_migration_is_auditable() -> None:

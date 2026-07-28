@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { getCountry } from "~/lib/countries";
 import type { TopCompany } from "~/lib/financial-aggregates.server";
-import { formatRevenueUsd } from "~/components/data-table/unified-columns";
+import { formatRevenueUsd } from "~/lib/money";
 import { Badge } from "~/components/ui/badge";
 import {
   Table,

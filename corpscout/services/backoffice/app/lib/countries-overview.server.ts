@@ -1,5 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import { COUNTRIES } from "~/lib/countries";
+import { COUNTRIES, getCountry } from "~/lib/countries";
 import { getAllCountryFinancialTotals } from "~/lib/financial-aggregates.server";
 
 export type CountryDirectoryRow = {
@@ -25,15 +25,35 @@ type RawDirectoryRow = {
 };
 
 export async function getCountryDirectory(): Promise<CountryDirectoryRow[]> {
-  const [registryRows, financialRows] = await Promise.all([
-    chQuery<RawDirectoryRow>(`
-SELECT country_code,
-  toUInt64(count()) AS total_companies,
-  toUInt64(countIf(has_financials = 1)) AS companies_with_financials
-FROM companies_all
-GROUP BY country_code`),
+  // One UNION leg per country, against that country's own tables. Table names
+  // and code literals come from the static registry only. A company "has
+  // financials" when its country's latest-financials summary holds a row for
+  // it — countries without a summary table report 0, which is the truth.
+  const totalsSql = COUNTRIES.map(
+    (c) =>
+      `SELECT '${c.code}' AS country_code, toUInt64(count()) AS total_companies FROM ${c.companiesTable}`,
+  ).join("\nUNION ALL\n");
+  const financialsCountSql = COUNTRIES.filter((c) => c.financialsLatest)
+    .map(
+      (c) =>
+        `SELECT '${c.code}' AS country_code, toUInt64(count()) AS companies_with_financials FROM ${c.financialsLatest!.table}`,
+    )
+    .join("\nUNION ALL\n");
+
+  const [totalRows, financialCountRows, financialRows] = await Promise.all([
+    chQuery<{ country_code: string; total_companies: number | string }>(totalsSql),
+    chQuery<{ country_code: string; companies_with_financials: number | string }>(
+      financialsCountSql,
+    ),
     getAllCountryFinancialTotals(),
   ]);
+  const registryRows: RawDirectoryRow[] = totalRows.map((row) => ({
+    country_code: row.country_code,
+    total_companies: row.total_companies,
+    companies_with_financials:
+      financialCountRows.find((f) => f.country_code === row.country_code)
+        ?.companies_with_financials ?? 0,
+  }));
 
   const registryByCode = new Map(registryRows.map((row) => [row.country_code, row]));
   const financialByCode = new Map(financialRows.map((row) => [row.country_code, row]));
@@ -54,25 +74,19 @@ GROUP BY country_code`),
 }
 
 export async function getCountryIndustryGroups(code: string): Promise<CountryIndustryGroup[]> {
-  const rows = await chQuery<{
-    code: string;
-    label: string;
-    companies: number | string;
-  }>(
-    `SELECT industry_code AS code,
-       any(industry_label) AS label,
-       toUInt64(count()) AS companies
-     FROM companies_all
-     WHERE country_code = {code:String} AND industry_code != ''
-     GROUP BY code
-     ORDER BY companies DESC, code ASC
-     LIMIT 15`,
-    { code },
+  // The country's own facet query (value, label, cnt — count-sorted, no
+  // params) is exactly this breakdown. A country that publishes no industry
+  // axis has no query and honestly reports nothing.
+  const country = getCountry(code);
+  if (!country?.industryFacetQuery) return [];
+
+  const rows = await chQuery<{ value: string; label: string; cnt: number | string }>(
+    country.industryFacetQuery,
   );
 
-  return rows.map((row) => ({
-    code: row.code,
-    label: row.label || row.code,
-    companies: Number(row.companies),
+  return rows.slice(0, 15).map((row) => ({
+    code: row.value,
+    label: row.label || row.value,
+    companies: Number(row.cnt),
   }));
 }
