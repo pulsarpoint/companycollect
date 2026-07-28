@@ -308,6 +308,56 @@ UHM re-materialization — no new requests, since the CSV is snapshotted.
 Blocks: a distinct page treatment for government-owned entities, which cannot
 be built from legal form alone.
 
+### 4.1d Company attributes: describe what an entity IS — OPEN, designed
+
+The ask (user, 2026-07-28): *"add company attributes that are descriptive
+enough so we can properly present what a company represents to the user"*, with
+legal form **and** ownership both taken into account rather than one replacing
+the other.
+
+That resolves the modelling question 4.1c raised. Sector is published per award
+row, describing an entity *in a role*, so it cannot become a scalar column on
+the company without inventing an answer for a company that is both buyer and
+supplier, or that shows different sectors across rows. Keep it as attributes,
+not columns:
+
+```
+company_attributes
+  country_code, company_id
+  attribute        legal_form | sector | subsector | size | industry_division
+  value            normalised
+  value_label      display
+  source_slug      se_companies | sweden_uhm_procurement | ...
+  observed_in_role buyer | supplier | ''      -- '' for register facts
+  observations     rows evidencing it
+  first_seen, last_seen
+```
+
+**One row per (attribute, value, source, role).** A company seen as a municipal
+buyer and a private supplier keeps both rows and the page shows both; nothing
+picks a winner. A register fact and a procurement observation that disagree
+stay side by side with their sources, which is the §4.4 rule applied to
+attributes rather than amounts.
+
+What that buys, on Hässleholm Miljö AB (5565550349):
+
+```
+legal_form  Aktiebolag                   se_companies              (role '')
+sector      Kommun                       sweden_uhm_procurement    (role buyer)
+subsector   Kommunalt ägd organisation   sweden_uhm_procurement    (role buyer)
+industry    E Vattenförsörjning…         sweden_uhm_procurement    (role buyer)
+```
+
+Legally a company, municipally owned, operating water and waste — which is what
+the entity actually *is*, and none of those four facts alone says it.
+
+**Then** the distinct page treatment: composed from these attributes rather than
+from a single type flag, so a municipal AB can read differently from both a
+ministry and a private AB without any of them being mislabelled.
+
+Depends on 4.1c: the attributes cannot be built while the columns carrying them
+are discarded at ingest.
+
 ### 4.2 Sweden's two sources are not deduplicated — OPEN
 
 Zero cross-source matches across 242,699 rows. A Swedish contract in both
