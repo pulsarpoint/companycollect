@@ -45,9 +45,28 @@ The transform gets its own `relations.py` rather than joining `transforms.py`: t
 
 ---
 
-## Task 1: Verify the published column layout
+## Task 1: Verify the published column layout — DEPLOYMENT GATE, NOT A LOCAL TASK
 
-**This task writes no production code.** It replaces an assumption with a measurement, and every later task depends on its output. The design doc's §1 layout was written from knowledge of the RFB format, not read from the file.
+> **Do not run this locally.** The archive is multi-GB and heavy runs belong on
+> the prod server. This task is **deferred to deployment** (see Deployment
+> below) and is NOT dispatched to an implementer subagent.
+>
+> Tasks 2–4 are written against the documented 11-column layout. **The risk this
+> gate exists to catch is live until it runs**: the CSV is headerless, so a
+> wrong column tuple shifts every value one place left and nothing errors —
+> `related_name` would silently hold tax ids, `relation_code` would hold dates.
+>
+> **Run it on prod before the first `brazil_comp_rfb_socios_duckdb`
+> materialization.** If the column count is not 11, stop: Task 2's tuple and
+> Task 3's transform both need revising.
+>
+> A cheap way to do it without the full download: the first member's local file
+> header sits at the *start* of a ZIP, so an HTTP range request for the first
+> few MB can be stream-decompressed far enough to read several rows. Worth
+> trying before pulling the whole archive.
+
+The steps below are the procedure to run **on prod**, kept here so it is not
+re-derived.
 
 **Files:**
 - Modify: `src/dagster_v3/defs/brazil_companies/docs/brazil_rfb_socios-design.md`
@@ -311,6 +330,7 @@ Create `tests/test_brazil_comp_rfb_relations.py`:
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.brazil_companies.rfb import relations, tables
 
@@ -455,8 +475,6 @@ def test_relations_refuse_an_empty_source(tmp_path: Path) -> None:
         f"faixa_etaria varchar)"
     )
     connection.close()
-
-    import pytest
 
     with pytest.raises(ValueError, match="no company relations"):
         relations.build_brazil_rfb_company_relations(
@@ -936,6 +954,10 @@ git commit -m "feat(corpscout): publish Brazil company relation edges to ClickHo
 ---
 
 ## Deployment
+
+**Gate first: run Task 1's layout verification on prod** before materializing
+anything. Tasks 2–4 ship code written against an unverified layout; this is the
+step that confirms it. A wrong column order produces no error, only wrong data.
 
 Migrations run **before** code deploy (the export asserts the table exists).
 Then materialize the chain for one partition on the **prod Dagster UI**, not
