@@ -490,6 +490,7 @@ def test_brazil_comp_rfb_cleanup_depends_on_clickhouse_exports() -> None:
     assert parents == {
         "brazil_comp_rfb_clickhouse_companies",
         "brazil_comp_rfb_clickhouse_establishments",
+        "brazil_comp_rfb_company_relations_clickhouse",
         "brazil_comp_rfb_clickhouse_company_contacts",
         "brazil_comp_rfb_clickhouse_company_domains",
         "brazil_comp_rfb_clickhouse_websites",

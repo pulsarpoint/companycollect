@@ -22,6 +22,7 @@ class FakeClickHouseClient:
             return [
                 (tables.BR_COMPANIES_TABLE_CH,),
                 (tables.BR_ESTABLISHMENTS_TABLE_CH,),
+                (tables.BR_COMPANY_RELATIONS_TABLE_CH,),
                 (tables.BR_COMPANY_CONTACTS_TABLE_CH,),
                 (tables.BR_COMPANY_DOMAINS_TABLE_CH,),
                 (tables.BR_WEBSITES_TABLE_CH,),
@@ -133,6 +134,54 @@ def test_clickhouse_company_exports_null_dates_outside_date32_range(
     assert company_rows[0][company_activity_date_index] is None
     assert establishment_rows[0][establishment_status_date_index] is None
     assert establishment_rows[0][establishment_activity_date_index] is None
+
+
+def test_clickhouse_exports_replace_company_relations(tmp_path: Path) -> None:
+    relations_path = tmp_path / "br_company_relations.duckdb"
+    fake_client = FakeClickHouseClient()
+    fake_resource = FakeClickHouseResource(fake_client)
+
+    with duckdb.connect(str(relations_path)) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.COMPANY_RELATIONS_TABLE} as
+            select * from (values
+                ('BR', 'brazil_rfb', 'run-1', 'rec-1', '202501', '12345678', '1',
+                 'PARENT HOLDING LTDA', '11111111000191', '22', date '2010-05-01',
+                 '', '', '', '', '', now()),
+                ('BR', 'brazil_rfb', 'run-1', 'rec-2', '202501', '12345678', '2',
+                 'JOAO DA SILVA', '***123456**', '49', date '2015-03-10',
+                 '', '', '', '', '', now())
+            ) as t(country_iso2, source_slug, source_run_id, source_record_id,
+                   snapshot_year_month, cnpj_basico, related_entity_kind, related_name,
+                   related_tax_id, relation_code, relation_since, related_country,
+                   representative_tax_id, representative_name, representative_code,
+                   age_band, resolved_at)
+            """
+        )
+        relation_rows = (
+            clickhouse.export_brazil_comp_rfb_clickhouse_company_relations(
+                duckdb_connection=connection,
+                clickhouse=fake_resource,
+            )
+        )
+
+    assert relation_rows == 2
+    assert (
+        sum("EXCHANGE TABLES" in statement for statement in fake_client.statements) == 1
+    )
+    assert len(fake_client.inserts) == 1
+    relations_insert_sql, relations_insert_rows = fake_client.inserts[0]
+    assert tables.BR_COMPANY_RELATIONS_TABLE_CH in relations_insert_sql
+    assert len(relations_insert_rows[0]) == len(
+        tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS
+    )
+    related_kind_index = tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS.index(
+        "related_entity_kind"
+    )
+    shipped_kinds = {row[related_kind_index] for row in relations_insert_rows}
+    assert shipped_kinds == {"1", "2"}
 
 
 def test_clickhouse_exports_replace_company_contacts_domains_and_websites(

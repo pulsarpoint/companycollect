@@ -739,6 +739,7 @@ def brazil_comp_rfb_company_relations_clickhouse(
     deps=[
         dg.AssetKey(CLICKHOUSE_COMPANIES_ASSET_KEY),
         dg.AssetKey(CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY),
+        dg.AssetKey(CLICKHOUSE_COMPANY_RELATIONS_ASSET_KEY),
         dg.AssetKey(CLICKHOUSE_COMPANY_CONTACTS_ASSET_KEY),
         dg.AssetKey(CLICKHOUSE_COMPANY_DOMAINS_ASSET_KEY),
         dg.AssetKey(CLICKHOUSE_WEBSITES_ASSET_KEY),

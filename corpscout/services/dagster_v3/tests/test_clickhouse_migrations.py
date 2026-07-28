@@ -216,12 +216,12 @@ EXPECTED_MIGRATIONS = (
     "000198_corpscout_no_doffin_notices",
     "000199_corpscout_procurement_registers",
     "000200_corpscout_company_entity_types",
+    "000201_corpscout_fr_sk_national_procurement",
     "000202_corpscout_lv_national_procurement",
     "000203_corpscout_se_uhm_party_descriptions",
     "000204_corpscout_procurement_registers_repair",
     "000205_corpscout_drop_companies_all",
     "000206_corpscout_ee_national_procurement",
-    "000201_corpscout_fr_sk_national_procurement",
     "000208_corpscout_br_company_relations",
 )
 
