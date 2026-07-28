@@ -276,7 +276,7 @@ def resolve_snapshot_remote_files_from_object_store(
 ) -> list[BrazilRfbRemoteFile]:
     """Rebuild the partition's remote-file list from the S3 bucket alone.
 
-    The archive keys already embed `snapshot=<YYYY-MM>/family=<family>/<archive_name>`,
+    The archive keys already embed `family=<family>/snapshot=<YYYY-MM>/<archive_name>`,
     so a synced partition never needs to touch the origin mirror to be
     re-manifested. Returns an empty list when the bucket holds nothing for
     this snapshot (the caller falls back to origin discovery in that case).

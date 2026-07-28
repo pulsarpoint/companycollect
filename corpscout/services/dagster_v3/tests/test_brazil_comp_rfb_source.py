@@ -513,6 +513,13 @@ def test_socios_retention_rule_expires_only_the_personal_data_family() -> None:
     assert rule["Expiration"]["Days"] == 90
     assert rule["Status"] == "Enabled"
 
+    # ...and it must expire ONLY socios. The other nine families are kept
+    # indefinitely, which is where the rebuildability guarantee lives.
+    for family in ("empresas", "estabelecimentos", "simples", "cnaes"):
+        assert not source.rfb_archive_object_key(
+            "2026-07", family, "Archive0.zip"
+        ).startswith(source.RFB_SOCIOS_RETENTION_PREFIX)
+
 
 def test_sync_snapshot_archives_downloads_missing_archives_to_object_store() -> None:
     base_url = "https://example.test/arquivos/"
@@ -547,6 +554,13 @@ def test_sync_snapshot_archives_downloads_missing_archives_to_object_store() -> 
     )
 
     assert object_store.created_buckets == [source.BRAZIL_RFB_RAW_BUCKET]
+    # The 90-day personal-data expiry is applied whenever the bucket is
+    # ensured. Without this assertion, deleting the apply_lifecycle_rules call
+    # leaves every test passing -- verified by mutation -- so the privacy
+    # control the design doc promises would have no guard at all.
+    assert object_store.lifecycle_rules == [
+        (source.BRAZIL_RFB_RAW_BUCKET, [source.rfb_socios_retention_rule()])
+    ]
     assert len(result.archives) == 2
     for archive in result.archives:
         body = body_by_url[archive.archive_url]

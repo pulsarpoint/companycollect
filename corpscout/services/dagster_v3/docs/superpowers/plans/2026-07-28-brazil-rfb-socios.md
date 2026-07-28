@@ -1056,7 +1056,7 @@ brazil_comp_rfb_snapshot_files_duckdb  CHANGED: s3 -> local -> extract -> delete
 **Key layout**, following PGFN's `brazil_pgfn/raw_archives/snapshot=…/…`:
 
 ```
-brazil_rfb/raw_archives/snapshot=<YYYY-MM>/family=<family>/<archive_name>
+brazil_rfb/raw_archives/family=<family>/snapshot=<YYYY-MM>/<archive_name>
 ```
 
 - [ ] **Step 1: Write the failing test for the object key**
@@ -1069,7 +1069,7 @@ def test_rfb_archive_object_key_is_partitioned_by_snapshot_and_family() -> None:
     key so `exists` short-circuits the download."""
     assert source.rfb_archive_object_key(
         "2026-07", "socios", "Socios0.zip"
-    ) == "brazil_rfb/raw_archives/snapshot=2026-07/family=socios/Socios0.zip"
+    ) == "brazil_rfb/raw_archives/family=socios/snapshot=2026-07/Socios0.zip"
 ```
 
 - [ ] **Step 2: Run it, confirm it fails**
