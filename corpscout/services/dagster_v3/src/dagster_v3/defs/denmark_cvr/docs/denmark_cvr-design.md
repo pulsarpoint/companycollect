@@ -78,27 +78,30 @@ retry can repair a missing `_en` object from the existing original without makin
 another DataCVR request. Unknown source keys fail with their structural path so
 the mapping can be reviewed without logging source values.
 
-HTTP 429 and transient 5xx responses are retried for the affected CVR in the
-same browser session, using bounded `Retry-After` or exponential backoff. An
-exhausted 500/502/503/504 response is recorded by CVR, HTTP status, and UTC
-timestamp in `data/denmark_cvr_company_detail_failures.sqlite3`. Exhausted 429
-rate limits still fail normally because they are not company-specific.
+HTTP 429 and transient 5xx responses are attempted three times for the affected
+CVR in the same browser session. The default exponential delays before attempts
+two and three are 30 and 60 seconds; a bounded `Retry-After` header takes
+precedence. Exhausted 429 rate limits still fail normally because they are not
+company-specific.
 
-The first occurrence, and repeated occurrences less than 24 hours after the
-first, still fail the partition. Once the same CVR and status recur at least 24
-hours after the first unresolved occurrence, the asset:
+An exhausted 500/502/503/504 response never fails the partition. The asset
+immediately:
 
 - writes
   `denmark_cvr/company_details/bucket_NNN/cvr=<CVR>/company_error.json`;
-- logs the attempt and `ignore_company` decision in
+- records the CVR, HTTP status, request-attempt count, and UTC timestamp in
+  `data/denmark_cvr_company_detail_failures.sqlite3`;
+- logs the exhausted failure and `ignore_company` decision in
   `corpscout.dk_cvr_company_detail_failures`;
 - continues downloading the remaining companies in the browser session.
 
 The marker contains only safe audit fields, never the response body, cookies, or
 browser state. A later successful response clears that CVR's unresolved local
 failure history. Existing markers are terminal inputs for the static snapshot,
-so retries do not repeatedly call a company endpoint already classified as
-unavailable.
+so later materializations do not repeatedly call a company endpoint already
+classified as unavailable. Materialization metadata reports
+`skipped_company_count`, `already_skipped_company_count`, and
+`skipped_request_attempt_count`.
 
 ### Local company-detail smoke test
 
@@ -130,7 +133,7 @@ stored in a date-versioned namespace:
 - `denmark_cvr/company_details/updates/date=<X>/bucket_NNN/cvr=<CVR>/company.json`
 - `denmark_cvr/company_details/updates/date=<X>/bucket_NNN/cvr=<CVR>/company_en.json`
 - `denmark_cvr/company_details/updates/date=<X>/bucket_NNN/cvr=<CVR>/company_error.json`
-  for a repeated company-specific HTTP failure.
+  for a company-specific server error that remains after three attempts.
 
 Date-versioned keys keep refresh inputs reproducible and prevent an initial
 snapshot from hiding a later refresh. With the current upstream search policy,

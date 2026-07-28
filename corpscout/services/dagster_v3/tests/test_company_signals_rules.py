@@ -2,8 +2,11 @@ import pathlib
 
 from dagster_v3.defs.company_signals.rules import COUNTRY_PROCUREMENT_RULES
 from dagster_v3.defs.company_signals.sources import (
+    DECP_SOURCE_SLUG,
     HILMA_SOURCE_SLUG,
+    IUB_SOURCE_SLUG,
     TED_SOURCE_SLUG,
+    UVO_SOURCE_SLUG,
     UHM_SOURCE_SLUG,
 )
 
@@ -63,6 +66,41 @@ def test_finland_reads_hilma_and_ted() -> None:
     assert rule.identifier_length == 9
 
 
+def test_france_slovakia_and_latvia_read_national_sources_and_ted() -> None:
+    france = COUNTRY_PROCUREMENT_RULES["FR"]
+    slovakia = COUNTRY_PROCUREMENT_RULES["SK"]
+    latvia = COUNTRY_PROCUREMENT_RULES["LV"]
+
+    assert france.companies_table == "fr_companies"
+    assert france.company_id_column == "siren"
+    assert france.identifier_length == 9
+    assert france.ted_winner_countries == ("FR", "FRA")
+    assert france.source_slugs == tuple(sorted((DECP_SOURCE_SLUG, TED_SOURCE_SLUG)))
+    assert france.upstream_asset_keys == (
+        "france_decp_contract_holders_clickhouse",
+        "ted_publish_clickhouse",
+    )
+
+    assert slovakia.companies_table == "sk_companies"
+    assert slovakia.company_id_column == "ico"
+    assert slovakia.identifier_length == 8
+    assert slovakia.ted_winner_countries == ("SK", "SVK")
+    assert slovakia.source_slugs == tuple(sorted((TED_SOURCE_SLUG, UVO_SOURCE_SLUG)))
+    assert slovakia.upstream_asset_keys == (
+        "slovakia_uvo_procurement_notices_clickhouse",
+        "ted_publish_clickhouse",
+    )
+
+    assert latvia.companies_table == "lv_companies"
+    assert latvia.company_id_column == "regcode"
+    assert latvia.identifier_length == 11
+    assert latvia.ted_winner_countries == ("LV", "LVA")
+    assert latvia.source_slugs == tuple(sorted((IUB_SOURCE_SLUG, TED_SOURCE_SLUG)))
+    assert latvia.upstream_asset_keys == (
+        "latvia_iub_procurement_clickhouse",
+        "ted_publish_clickhouse",
+    )
+
 
 def test_each_country_gets_its_own_asset_name() -> None:
     names = {rule.asset_name for rule in COUNTRY_PROCUREMENT_RULES.values()}
@@ -71,6 +109,9 @@ def test_each_country_gets_its_own_asset_name() -> None:
         "fi_government_contract_signals_clickhouse",
         "no_government_contract_signals_clickhouse",
         "br_government_contract_signals_clickhouse",
+        "fr_government_contract_signals_clickhouse",
+        "sk_government_contract_signals_clickhouse",
+        "lv_government_contract_signals_clickhouse",
     }
 
 
@@ -87,6 +128,25 @@ def test_required_tables_follow_the_rule() -> None:
         assert "ted_notice_winners" in tables_needed
         assert "ted_notices" in tables_needed
 
+    for country, company_table in (
+        ("FR", "fr_companies"),
+        ("SK", "sk_companies"),
+        ("LV", "lv_companies"),
+    ):
+        required = COUNTRY_PROCUREMENT_RULES[country].required_clickhouse_tables
+        assert company_table in required
+        assert "ted_notice_winners" in required
+        assert "ted_notices" in required
+    assert "fr_decp_contract_holders" in (
+        COUNTRY_PROCUREMENT_RULES["FR"].required_clickhouse_tables
+    )
+    assert "sk_uvo_procurement_notices" in (
+        COUNTRY_PROCUREMENT_RULES["SK"].required_clickhouse_tables
+    )
+    assert "lv_iub_notice_winners_current" in (
+        COUNTRY_PROCUREMENT_RULES["LV"].required_clickhouse_tables
+    )
+
 
 # --- the country views the rules point at -----------------------------------
 
@@ -98,6 +158,26 @@ def _view_migration() -> str:
         / "clickhouse"
         / "migrations"
         / "000182_corpscout_contract_value_grain.up.sql"
+    ).read_text()
+
+
+def _fr_sk_view_migration() -> str:
+    root = pathlib.Path(__file__).resolve().parents[3]
+    return (
+        root
+        / "clickhouse"
+        / "migrations"
+        / "000201_corpscout_fr_sk_national_procurement.up.sql"
+    ).read_text()
+
+
+def _lv_view_migration() -> str:
+    root = pathlib.Path(__file__).resolve().parents[3]
+    return (
+        root
+        / "clickhouse"
+        / "migrations"
+        / "000202_corpscout_lv_national_procurement.up.sql"
     ).read_text()
 
 
@@ -139,6 +219,57 @@ def test_finland_view_merges_hilma_and_ted() -> None:
     assert "corpscout.fi_hilma_notice_winners" in sql
     assert "corpscout.ted_notice_winners" in sql
     assert sql.count("UNION ALL") == 1
+
+
+def test_france_and_slovakia_views_join_their_domestic_company_registers() -> None:
+    sql = _fr_sk_view_migration()
+    france = sql.split("CREATE VIEW corpscout.fr_government_contracts AS")[1]
+    france = france.split("CREATE VIEW")[0]
+    slovakia = sql.split("CREATE VIEW corpscout.sk_government_contracts AS")[1]
+    slovakia = slovakia.split("CREATE VIEW")[0]
+
+    assert "corpscout.fr_companies AS c" in france
+    assert "c.siren = w.winner_national_id" in france
+    assert "w.country_iso2 = 'FR'" in france
+    assert "upper(w.winner_country) IN ('FR', 'FRA')" in france
+    assert "corpscout.fr_decp_contract_holders" in france
+
+    assert "corpscout.sk_companies AS c" in slovakia
+    assert "c.ico = w.winner_national_id" in slovakia
+    assert "w.country_iso2 = 'SK'" in slovakia
+    assert "upper(w.winner_country) IN ('SK', 'SVK')" in slovakia
+    assert "corpscout.sk_uvo_procurement_notices" in slovakia
+
+
+def test_cross_country_summary_includes_france_and_slovakia() -> None:
+    sql = _fr_sk_view_migration()
+    summary = sql.split("CREATE VIEW corpscout.company_government_contract_summary AS")[
+        1
+    ]
+
+    assert "fr_government_contract_summary" in summary
+    assert "sk_government_contract_summary" in summary
+
+
+def test_latvia_view_joins_its_domestic_company_register() -> None:
+    sql = _lv_view_migration()
+    latvia = sql.split("CREATE VIEW corpscout.lv_government_contracts AS")[1]
+    latvia = latvia.split("CREATE VIEW")[0]
+
+    assert "corpscout.lv_companies AS c" in latvia
+    assert "c.regcode = w.winner_national_id" in latvia
+    assert "w.country_iso2 = 'LV'" in latvia
+    assert "upper(w.winner_country) IN ('LV', 'LVA')" in latvia
+    assert "corpscout.lv_iub_notice_winners_current" in latvia
+
+
+def test_cross_country_summary_includes_latvia() -> None:
+    sql = _lv_view_migration()
+    summary = sql.split("CREATE VIEW corpscout.company_government_contract_summary AS")[
+        1
+    ]
+
+    assert "lv_government_contract_summary" in summary
 
 
 def test_cross_country_view_needs_no_edit_to_add_a_country() -> None:

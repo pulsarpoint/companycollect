@@ -1,5 +1,6 @@
 import json
-from datetime import UTC, datetime, timedelta
+import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -134,11 +135,13 @@ def _http_failure(
     cvr: str,
     *,
     status: int = 500,
+    attempt_count: int = 3,
 ) -> DenmarkCvrCompanyDetailHttpFailure:
     return DenmarkCvrCompanyDetailHttpFailure(
         cvr=cvr,
         source_url=company_detail_api_url("https://datacvr.virk.dk", cvr),
         status=status,
+        attempt_count=attempt_count,
         response_headers={"content-type": "application/json"},
     )
 
@@ -160,6 +163,14 @@ def test_company_detail_urls_are_exact_https_endpoints() -> None:
         company_detail_api_url("http://datacvr.virk.dk", "45448037")
     with pytest.raises(ValueError, match="eight digits"):
         company_detail_api_url("https://datacvr.virk.dk", "4544")
+
+
+def test_company_detail_resource_defaults_to_three_wider_backoff_attempts() -> None:
+    resource = DenmarkCvrCompanyDetailResource()
+
+    assert resource.max_attempts == 3
+    assert resource.retry_base_delay_seconds == 30
+    assert resource.retry_max_delay_seconds == 120
 
 
 def test_detail_resource_reuses_one_https_browser_session() -> None:
@@ -284,6 +295,12 @@ def test_detail_resource_returns_exhausted_500_and_continues_batch() -> None:
                 "body": "",
             },
             {
+                "ok": False,
+                "status": 500,
+                "headers": {"content-type": "application/json"},
+                "body": "",
+            },
+            {
                 "ok": True,
                 "status": 200,
                 "headers": {"content-type": "application/json"},
@@ -292,25 +309,27 @@ def test_detail_resource_returns_exhausted_500_and_continues_batch() -> None:
         ]
     )
     browser = FakeBrowser(page)
+    sleeps: list[float] = []
 
     results = list(
         DenmarkCvrCompanyDetailResource(
             min_delay_ms=0,
             max_delay_ms=0,
-            max_attempts=2,
-            retry_base_delay_seconds=0,
-            retry_max_delay_seconds=0,
+            max_attempts=3,
+            retry_base_delay_seconds=30,
+            retry_max_delay_seconds=120,
         ).iter_company_details(
             (failed_cvr, successful_cvr),
             launcher=lambda: browser,
-            sleep=lambda _: None,
+            sleep=sleeps.append,
         )
     )
 
     assert results[0] == _http_failure(failed_cvr)
     assert isinstance(results[1], DenmarkCvrCompanyDetailDownload)
     assert results[1].payload == successful_payload
-    assert len(page.evaluate_calls) == 3
+    assert len(page.evaluate_calls) == 4
+    assert sleeps == [30, 60, 0]
     assert browser.closed is True
 
 
@@ -347,7 +366,7 @@ def test_detail_resource_does_not_suppress_exhausted_rate_limit() -> None:
     assert browser.closed is True
 
 
-def test_company_detail_failure_is_ignored_only_after_24_hours(
+def test_company_detail_failure_is_skipped_immediately_after_retries(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "company-detail-failures.sqlite3"
@@ -358,7 +377,6 @@ def test_company_detail_failure_is_ignored_only_after_24_hours(
         database_path,
         failure=failure,
         failed_at=first_failed_at,
-        suppression_age=timedelta(hours=24),
         source_asset="denmark_cvr_company_details_s3",
         source_partition_key=company_detail_bucket_key(failure.cvr),
         source_run_id="run-1",
@@ -367,78 +385,129 @@ def test_company_detail_failure_is_ignored_only_after_24_hours(
     second = record_company_detail_http_failure(
         database_path,
         failure=failure,
-        failed_at=first_failed_at + timedelta(hours=23),
-        suppression_age=timedelta(hours=24),
+        failed_at=datetime(2026, 7, 22, 9, tzinfo=UTC),
         source_asset="denmark_cvr_company_details_s3",
         source_partition_key=company_detail_bucket_key(failure.cvr),
         source_run_id="run-2",
         failure_object_key="failure-2.json",
     )
-    third = record_company_detail_http_failure(
-        database_path,
-        failure=failure,
-        failed_at=first_failed_at + timedelta(hours=25),
-        suppression_age=timedelta(hours=24),
-        source_asset="denmark_cvr_company_details_s3",
-        source_partition_key=company_detail_bucket_key(failure.cvr),
-        source_run_id="run-3",
-        failure_object_key="failure-3.json",
-    )
 
-    assert first.decision == "fail_partition"
+    assert first.decision == "ignore_company"
     assert first.failure_count == 1
-    assert second.decision == "fail_partition"
+    assert first.request_attempt_count == 3
+    assert second.decision == "ignore_company"
     assert second.failure_count == 2
-    assert third.decision == "ignore_company"
-    assert third.failure_count == 3
-    assert third.first_failed_at == first_failed_at
+    assert second.first_failed_at == first_failed_at
+    with sqlite3.connect(database_path) as connection:
+        stored_attempt_counts = connection.execute(
+            """
+            SELECT request_attempt_count
+            FROM company_detail_http_failures
+            ORDER BY id
+            """
+        ).fetchall()
+    assert stored_attempt_counts == [(3,), (3,)]
 
     clear_company_detail_failure_history(database_path, failure.cvr)
     reset = record_company_detail_http_failure(
         database_path,
         failure=failure,
-        failed_at=first_failed_at + timedelta(hours=26),
-        suppression_age=timedelta(hours=24),
+        failed_at=datetime(2026, 7, 22, 10, tzinfo=UTC),
         source_asset="denmark_cvr_company_details_s3",
         source_partition_key=company_detail_bucket_key(failure.cvr),
-        source_run_id="run-4",
-        failure_object_key="failure-4.json",
+        source_run_id="run-3",
+        failure_object_key="failure-3.json",
     )
-    assert reset.decision == "fail_partition"
+    assert reset.decision == "ignore_company"
     assert reset.failure_count == 1
 
 
-def test_partition_writer_records_first_failure_before_failing(
+def test_company_detail_failure_database_adds_request_attempt_count(
     tmp_path: Path,
 ) -> None:
-    failed_cvr = "41387971"
-    partition_key = company_detail_bucket_key(failed_cvr)
-    failure = _http_failure(failed_cvr)
-    store = FakeObjectStore()
-    failure_records = []
-
-    with pytest.raises(
-        RuntimeError,
-        match="persistent failure attempt 1 was recorded",
-    ):
-        write_company_detail_partition(
-            object_store=store,
-            details=FakeDetailResource({failed_cvr: failure}),
-            partition_key=partition_key,
-            cvrs=(failed_cvr,),
-            failure_database_path=(tmp_path / "company-detail-failures.sqlite3"),
-            failure_suppression_age=timedelta(hours=24),
-            observed_at=datetime(2026, 7, 22, 8, tzinfo=UTC),
-            source_run_id="run-1",
-            record_failure=failure_records.append,
+    database_path = tmp_path / "company-detail-failures.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE company_detail_http_failures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cvr TEXT NOT NULL,
+                http_status INTEGER NOT NULL,
+                failed_at TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                source_asset TEXT NOT NULL,
+                source_partition_key TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                source_run_id TEXT NOT NULL,
+                failure_object_key TEXT NOT NULL,
+                response_headers TEXT NOT NULL
+            )
+            """
         )
 
-    assert len(failure_records) == 1
-    assert failure_records[0].decision == "fail_partition"
-    assert (
-        company_detail_failure_object_key(partition_key, failed_cvr)
-        not in store.objects
+    failure = _http_failure("41387971")
+    record_company_detail_http_failure(
+        database_path,
+        failure=failure,
+        failed_at=datetime(2026, 7, 22, 8, tzinfo=UTC),
+        source_asset="denmark_cvr_company_details_s3",
+        source_partition_key=company_detail_bucket_key(failure.cvr),
+        source_run_id="run-1",
+        failure_object_key="failure-1.json",
     )
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(company_detail_http_failures)"
+            ).fetchall()
+        }
+        stored_attempt_count = connection.execute(
+            "SELECT request_attempt_count FROM company_detail_http_failures"
+        ).fetchone()[0]
+    assert "request_attempt_count" in columns
+    assert stored_attempt_count == 3
+
+
+def test_partition_writer_skips_first_failure_and_continues(
+    tmp_path: Path,
+) -> None:
+    partition_key = "bucket_039"
+    failed_cvr = "10000218"
+    successful_cvr = "10000356"
+    failure = _http_failure(failed_cvr)
+    store = FakeObjectStore()
+    detail_resource = FakeDetailResource(
+        {
+            failed_cvr: failure,
+            successful_cvr: _download(
+                successful_cvr,
+                {"stamdata": {"cvrnummer": successful_cvr, "navn": "Success"}},
+            ),
+        }
+    )
+    failure_records = []
+
+    summary = write_company_detail_partition(
+        object_store=store,
+        details=detail_resource,
+        partition_key=partition_key,
+        cvrs=(failed_cvr, successful_cvr),
+        failure_database_path=(tmp_path / "company-detail-failures.sqlite3"),
+        observed_at=datetime(2026, 7, 22, 8, tzinfo=UTC),
+        source_run_id="run-1",
+        record_failure=failure_records.append,
+    )
+
+    assert detail_resource.requested_cvrs == [failed_cvr, successful_cvr]
+    assert summary.complete_company_count == 1
+    assert summary.skipped_company_count == 1
+    assert summary.skipped_request_attempt_count == 3
+    assert summary.resolved_company_count == 2
+    assert len(failure_records) == 1
+    assert failure_records[0].decision == "ignore_company"
+    assert company_detail_failure_object_key(partition_key, failed_cvr) in store.objects
 
 
 def test_partition_writer_marks_repeated_failure_and_continues(
@@ -455,7 +524,6 @@ def test_partition_writer_marks_repeated_failure_and_continues(
         database_path,
         failure=failure,
         failed_at=first_failed_at,
-        suppression_age=timedelta(hours=24),
         source_asset="denmark_cvr_company_details_s3",
         source_partition_key=partition_key,
         source_run_id="run-1",
@@ -479,21 +547,22 @@ def test_partition_writer_marks_repeated_failure_and_continues(
         partition_key=partition_key,
         cvrs=(failed_cvr, successful_cvr),
         failure_database_path=database_path,
-        failure_suppression_age=timedelta(hours=24),
-        observed_at=first_failed_at + timedelta(hours=25),
+        observed_at=datetime(2026, 7, 22, 9, tzinfo=UTC),
         source_run_id="run-2",
         record_failure=failure_records.append,
     )
 
     assert detail_resource.requested_cvrs == [failed_cvr, successful_cvr]
     assert summary.complete_company_count == 1
-    assert summary.ignored_company_count == 1
+    assert summary.skipped_company_count == 1
+    assert summary.skipped_request_attempt_count == 3
     assert summary.resolved_company_count == 2
     assert len(failure_records) == 1
     assert failure_records[0].decision == "ignore_company"
     marker = json.loads(store.objects[failure_key])
     assert marker["cvr"] == failed_cvr
     assert marker["http_status"] == 500
+    assert marker["request_attempt_count"] == 3
     assert marker["failure_count"] == 2
     assert "body" not in marker
     assert (
@@ -515,7 +584,6 @@ def test_clickhouse_failure_record_contains_auditable_safe_fields(
         database_path,
         failure=failure,
         failed_at=datetime(2026, 7, 23, 9, tzinfo=UTC),
-        suppression_age=timedelta(hours=24),
         source_asset="denmark_cvr_company_details_s3",
         source_partition_key=company_detail_bucket_key(failure.cvr),
         source_run_id="run-1",
@@ -795,7 +863,6 @@ def test_daily_detail_writer_versions_objects_by_update_date(tmp_path: Path) -> 
         update_date=update_date,
         cvrs=(first_cvr, second_cvr),
         failure_database_path=tmp_path / "company-detail-failures.sqlite3",
-        failure_suppression_age=timedelta(hours=24),
         observed_at=datetime(2026, 7, 17, tzinfo=UTC),
         source_run_id="test-run",
         record_failure=lambda _: None,
@@ -863,7 +930,6 @@ def test_partition_writer_reuses_original_json_and_checkpoints_each_download(
         partition_key=partition_key,
         cvrs=(complete_cvr, original_only_cvr, download_cvr),
         failure_database_path=tmp_path / "company-detail-failures.sqlite3",
-        failure_suppression_age=timedelta(hours=24),
         observed_at=datetime(2026, 7, 17, tzinfo=UTC),
         source_run_id="test-run",
         record_failure=lambda _: None,

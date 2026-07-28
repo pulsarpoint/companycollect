@@ -36,10 +36,20 @@ DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
 ENTITY_PROGRESS_LOG_EVERY_ROWS = 1000
 UPDATE_MAX_RESULT_WINDOW = 10_000
 ANNUAL_ACCOUNT_PDF_REQUEST_DELAY_SECONDS = 1.0
-ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS = 8
+ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS = 3
 ANNUAL_ACCOUNT_PDF_RETRY_INITIAL_SECONDS = 5.0
 ANNUAL_ACCOUNT_PDF_RETRY_MAX_SECONDS = 60.0
 ANNUAL_ACCOUNT_PDF_RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+ANNUAL_ACCOUNT_PDF_SUPPRESSIBLE_STATUS_CODES = frozenset({500, 502, 503, 504})
+ANNUAL_ACCOUNT_PDF_SAFE_RESPONSE_HEADERS = frozenset(
+    {
+        "content-type",
+        "date",
+        "retry-after",
+        "x-correlation-id",
+        "x-request-id",
+    }
+)
 LOGGER = logging.getLogger(__name__)
 
 BRREG_ENTITIES_COLUMNS = tables.BRREG_ENTITIES_COLUMNS
@@ -49,6 +59,16 @@ BRREG_ENTITIES_COLUMNS = tables.BRREG_ENTITIES_COLUMNS
 class BrregAnnualAccountPdf:
     source_url: str
     body: bytes
+
+
+@dataclass(frozen=True)
+class BrregAnnualAccountPdfFailure:
+    source_url: str
+    http_status: int | None
+    attempt_count: int
+    error_type: str
+    error_message: str
+    response_headers: dict[str, str]
 
 
 BRREG_LEGAL_FORM_DESCRIPTION_EN_BY_CODE = {
@@ -135,14 +155,38 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         *,
         org_number: str,
         filing_year: int,
-    ) -> BrregAnnualAccountPdf | None:
+    ) -> BrregAnnualAccountPdf | BrregAnnualAccountPdfFailure | None:
         source_url = f"{BRREG_ANNUAL_ACCOUNTS_BASE_URL}/kopi/{org_number}/{filing_year}"
         for attempt in range(1, ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS + 1):
             time.sleep(ANNUAL_ACCOUNT_PDF_REQUEST_DELAY_SECONDS)
-            response = self.session().get(
-                source_url,
-                timeout=self.timeout_seconds,
-            )
+            try:
+                response = self.session().get(
+                    source_url,
+                    timeout=self.timeout_seconds,
+                )
+            except (requests.ConnectionError, requests.Timeout) as error:
+                if attempt < ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS:
+                    wait_seconds = _annual_account_pdf_retry_seconds(None, attempt)
+                    LOGGER.warning(
+                        "Norway BRREG annual-account PDF request failed; retrying: "
+                        "org=%s year=%s error_type=%s attempt=%s/%s wait_seconds=%s",
+                        org_number,
+                        filing_year,
+                        type(error).__name__,
+                        attempt,
+                        ANNUAL_ACCOUNT_PDF_MAX_ATTEMPTS,
+                        wait_seconds,
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+                return BrregAnnualAccountPdfFailure(
+                    source_url=source_url,
+                    http_status=None,
+                    attempt_count=attempt,
+                    error_type=type(error).__name__,
+                    error_message=_bounded_error_message(error),
+                    response_headers={},
+                )
             if response.status_code == 404:
                 return None
             if (
@@ -164,6 +208,20 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
                 time.sleep(wait_seconds)
                 continue
 
+            if (
+                response.status_code
+                in ANNUAL_ACCOUNT_PDF_SUPPRESSIBLE_STATUS_CODES
+            ):
+                return BrregAnnualAccountPdfFailure(
+                    source_url=source_url,
+                    http_status=int(response.status_code),
+                    attempt_count=attempt,
+                    error_type="http_error",
+                    error_message=f"HTTP {response.status_code}",
+                    response_headers=_annual_account_pdf_safe_response_headers(
+                        response
+                    ),
+                )
             _raise_for_status(response)
             body = bytes(response.content)
             if not body.startswith(b"%PDF-"):
@@ -538,8 +596,8 @@ def _raise_for_status(response: Any) -> None:
         raise RuntimeError(f"HTTP {status_code}")
 
 
-def _annual_account_pdf_retry_seconds(response: Any, attempt: int) -> float:
-    headers = getattr(response, "headers", {})
+def _annual_account_pdf_retry_seconds(response: Any | None, attempt: int) -> float:
+    headers = getattr(response, "headers", {}) if response is not None else {}
     retry_after = headers.get("Retry-After") if isinstance(headers, Mapping) else None
     if retry_after is not None:
         try:
@@ -550,6 +608,22 @@ def _annual_account_pdf_retry_seconds(response: Any, attempt: int) -> float:
         ANNUAL_ACCOUNT_PDF_RETRY_INITIAL_SECONDS * (2 ** (attempt - 1)),
         ANNUAL_ACCOUNT_PDF_RETRY_MAX_SECONDS,
     )
+
+
+def _annual_account_pdf_safe_response_headers(response: Any) -> dict[str, str]:
+    headers = getattr(response, "headers", {})
+    if not isinstance(headers, Mapping):
+        return {}
+    return {
+        str(name).lower(): str(value)
+        for name, value in headers.items()
+        if str(name).lower() in ANNUAL_ACCOUNT_PDF_SAFE_RESPONSE_HEADERS
+    }
+
+
+def _bounded_error_message(error: Exception) -> str:
+    message = str(error).strip() or type(error).__name__
+    return message[:1_000]
 
 
 def _exception_has_http_status(exc: Exception, status_code: int) -> bool:

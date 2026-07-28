@@ -1,10 +1,13 @@
 # TED procurement source — design
 
 Status: **implemented 2026-07-19** (`defs/ted_procurement/`). Countries configured:
-FIN/FI and SWE/SE. First verified Finland partition: 2026-06 — 578 notices,
+FIN/FI, SWE/SE, NOR/NO, FRA/FR, SVK/SK, LVA/LV, and DNK/DK. First verified Finland partition:
+2026-06 — 578 notices,
 1,873 winner rows (100% with national ids, 91% joining `fi_companies`), published
 to `corpscout.ted_notices` + `corpscout.ted_notice_winners` (migration 000148).
-Sweden was enabled on 2026-07-23 for the shared government-contract signal.
+Sweden was enabled on 2026-07-23; France, Slovakia, Latvia, and Denmark were
+enabled on 2026-07-27. Denmark is ingested into TED but cannot yet expose the
+company signal because its CVR spine is not exported from DuckDB to ClickHouse.
 
 ## Why
 
@@ -52,8 +55,8 @@ scale-up path if we ever want every country at once). Therefore:
 - Notice types v1: award-carrying forms only (`can-standard`, `can-social`,
   `can-desg`, `can-modif` candidates — final list fixed during implementation from the
   type facet). Contract notices (pre-award) are Hilma/TED noise for our purpose.
-- Countries: `FIN/FI` and `SWE/SE` — a module-level tuple; adding a country =
-  extending it. A notice returned for more than one country scope is stored once
+- Countries are a module-level tuple; adding a country means extending it. A
+  notice returned for more than one country scope is stored once
   per `(country_iso2, publication_number)` while its XML is downloaded and parsed
   only once.
 
@@ -65,29 +68,36 @@ search index (monthly partition, per country)
   -> per-notice eForms XML -> s3://source-ted-procurement/xml/...
   -> lxml parse: notices + organizations + lot_results (award values) + winner links
   -> DuckDB partition tables
-  -> corpscout.ted_notices + corpscout.ted_notice_winners (atomic replace from all partitions)
+  -> corpscout.ted_notices + ted_notice_lots + ted_notice_winners
   -> exact national-id match to country company tables
-  -> company_government_contract_evidence + company_government_contract_summary
+  -> per-country government-contract views + company_government_contract_summary
   -> USD step (per-amount currency, publication-date FX key)
 ```
 
 - **Parser output is generic** (§5b spirit): organizations with
   `(registration_name, company_id, company_id_scheme, country)` and lot results with
   awarded values; the winner join resolves TenderingParty → Company. National-id
-  normalization happens after parsing: Finland strips the `FI` VAT prefix and
-  validates Y-tunnus shape; Sweden strips separators and only the legal-entity
-  `16` century prefix. Swedish 12-digit `19`/`20` personal identities are retained
-  as non-company identifiers and never truncated into false company matches.
+  normalization happens after parsing. Finland strips the `FI` VAT prefix;
+  Sweden strips separators and only the legal-entity `16` century prefix;
+  France maps SIRET and French VAT forms to SIREN; Slovakia accepts only the
+  eight-digit IČO shape; Latvia accepts an 11-digit registration code and the
+  equivalent `LV`-prefixed VAT form; Denmark accepts an eight-digit CVR and the
+  equivalent `DK`-prefixed VAT form. Personal, consortium, unrelated VAT, and
+  malformed identifiers are retained but never coerced into false company
+  matches.
 - `ted_notice_winners` mirrors the `fi_hilma_notice_winners` shape
   so consumers query both the same way; plus `place_country` and
   `winner_country`. Its physical key includes `country_iso2`, because the same TED
   notice can legitimately occur in several country search scopes.
 
-## ClickHouse (migration `0001XX`, next free number at implementation time)
+## ClickHouse (migrations `000148`, `000167`, and `000197`)
 
-- `ted_notices` — 1 row per (publication_number, lot_id): buyer name/id, titles,
-  CPV, NUTS, type, publication/deadline dates, awarded + estimated values
-  (`*_amount_original/_usd/_currency`), fx trio, provenance.
+- `ted_notices` — 1 row per `(country_iso2, publication_number)`: buyer
+  name/id, title, notice type, publication date, notice/procedure values
+  (`*_amount_original/_usd/_currency`), fx data, and provenance.
+- `ted_notice_lots` — 1 row per `(country_iso2, publication_number, lot_id)`:
+  title, estimate, framework ceilings, revised estimates, and received-tender
+  value range.
 - `ted_notice_winners` — 1 row per (publication_number, lot_id, winner_ordinal):
   winner_name, winner_national_id (normalized), winner_country, buyer id,
   published_at. ORDER BY (winner_national_id, publication_number, lot_id,

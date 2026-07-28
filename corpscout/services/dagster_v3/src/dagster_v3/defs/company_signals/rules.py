@@ -2,11 +2,11 @@
 
 One country = one entry here plus one asset built from it by the factory in
 ``procurement.py``. Countries are separate assets rather than partitions of a
-single asset because their upstream dependencies genuinely differ: Sweden,
-Finland and Norway each read a national register alongside TED, Brazil reads
-one and no TED at all. Dagster declares deps per asset, not per partition, so a
-partitioned asset would make Norway falsely depend on Swedish UHM data and hold
-it back whenever that source is stale.
+single asset because their upstream dependencies genuinely differ: each
+European country reads its own national register alongside TED, while Brazil
+reads one national source without TED.
+Dagster declares deps per asset, not per partition, so a partitioned asset
+would make one country falsely depend on another country's source.
 
 **A count here is not always a count of contracts.** Where a country reads two
 registers, the same contract can appear in both, and whether it is collapsed
@@ -35,10 +35,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from dagster_v3.defs.company_signals.sources import (
+    DECP,
     DOFFIN,
     HILMA,
+    IUB,
     PNCP,
     TED,
+    UVO,
     UHM,
     ProcurementSource,
 )
@@ -152,8 +155,60 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
         ),
         sources=(DOFFIN, TED),
     ),
-    # Brazil is the mirror of Norway: a national register and no TED, because
-    # it is not in the EU. The per-country design allows either.
+    "FR": CountryProcurementRule(
+        country_code="FR",
+        companies_table="fr_companies",
+        company_id_column="siren",
+        identifier_length=9,
+        ted_winner_countries=("FR", "FRA"),
+        coverage_caveat=(
+            "DECP national and below-threshold contracts plus TED eForms "
+            "awards. DECP's montant is published once per contract and may be "
+            "shared by several holders, so it is retained as contract value "
+            "but never counted as one holder's spend. DECP publishes no "
+            "reliable TED cross-reference, so directive-level contracts "
+            "present in both sources may be counted twice. Malformed "
+            "identifiers and contracts won by non-French companies are absent "
+            "from company summaries."
+        ),
+        sources=(DECP, TED),
+    ),
+    "SK": CountryProcurementRule(
+        country_code="SK",
+        companies_table="sk_companies",
+        company_id_column="ico",
+        identifier_length=8,
+        ted_winner_countries=("SK", "SVK"),
+        coverage_caveat=(
+            "UVO national and below-threshold result notices plus TED eForms "
+            "awards. The company view reads only UVO notices identified as "
+            "national-law awards, avoiding directive-level duplication with "
+            "TED. UVO collection remains operationally blocked until "
+            "machine-reuse permission is confirmed. VAT identifiers cannot "
+            "be converted to IČO, malformed IČO values remain unmatched, and "
+            "contracts won by foreign companies are absent from company "
+            "summaries."
+        ),
+        sources=(TED, UVO),
+    ),
+    "LV": CountryProcurementRule(
+        country_code="LV",
+        companies_table="lv_companies",
+        company_id_column="regcode",
+        identifier_length=11,
+        ted_winner_countries=("LV", "LVA"),
+        coverage_caveat=(
+            "IUB national and below-threshold result notices plus TED eForms "
+            "awards. The company view reads the latest IUB notice version and "
+            "only national-law awards, while contract execution notices "
+            "remain separate and do not create duplicate awards. Invalid "
+            "registration codes remain unmatched and contracts won by "
+            "non-Latvian companies are absent from company summaries."
+        ),
+        sources=(IUB, TED),
+    ),
+    # Brazil reads a national register and no TED because it is not in the EU.
+    # The per-country design allows either source shape.
     "BR": CountryProcurementRule(
         country_code="BR",
         companies_table="br_companies",

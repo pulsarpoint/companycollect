@@ -27,7 +27,7 @@ from dagster_v3.defs.norway_brreg_financial.models import (
 ANNUAL_ACCOUNT_DATASET = "annual_accounts"
 PARSER_VERSION = "norway-annual-account-geometry-v2"
 MAPPING_VERSION = "norway-annual-account-concepts-v2"
-LLM_PROMPT_VERSION = "norway-annual-account-label-map-v2"
+LLM_PROMPT_VERSION = "norway-annual-account-label-map-v3"
 LLM_MAX_TOKENS = 4_096
 LLM_MAX_BATCH_SIZE = 2
 SOURCE_SLUG = "norway_brreg_annual_accounts_pdf"
@@ -873,7 +873,7 @@ def apply_annual_account_usd_conversion(
             f"""
             update {ANNUAL_ACCOUNT_DATASET}.facts as facts
             set amount_usd = cast(
-                    facts.amount_original * fx.fx_rate
+                    cast(facts.amount_original as decimal(38, 6)) * fx.fx_rate
                     as decimal(38, 10)
                 ),
                 fx_rate_to_usd = fx.fx_rate,
@@ -1163,17 +1163,23 @@ def _replace_fx_stage_rows(
 
 
 def llm_settings() -> tuple[str, str, str]:
-    return (
-        os.getenv(
-            "NORWAY_ANNUAL_ACCOUNT_LLM_BASE_URL",
-            "http://100.77.62.33:8888/v1",
-        ),
-        os.getenv(
-            "NORWAY_ANNUAL_ACCOUNT_LLM_MODEL",
-            "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
-        ),
-        os.getenv("NORWAY_ANNUAL_ACCOUNT_LLM_API_KEY", "x"),
-    )
+    base_url = os.getenv("DEEPSEEK_URL", "").strip()
+    model = os.getenv("DEEPSEEK_MODEL", "").strip()
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    missing = [
+        name
+        for name, value in (
+            ("DEEPSEEK_URL", base_url),
+            ("DEEPSEEK_MODEL", model),
+            ("DEEPSEEK_API_KEY", api_key),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Missing required DeepSeek configuration: {', '.join(missing)}"
+        )
+    return base_url, model, api_key
 
 
 def _page_facts(
@@ -1777,7 +1783,10 @@ def _request_llm_mappings(
                     "capital is not total equity, an individual receivable is not total "
                     "receivables, tax payable is not tax expense, and an individual liability "
                     "is not total liabilities. Use null only for headings, notes, company "
-                    "names, or text that is not a financial concept."
+                    "names, or text that is not a financial concept. Return only a JSON object "
+                    "with exactly one mapping for every input_id, using this shape: "
+                    '{"mappings":[{"input_id":0,"canonical_concept":"share_capital",'
+                    '"confidence":0.99}]}.'
                 ),
             },
             {
@@ -1790,15 +1799,8 @@ def _request_llm_mappings(
         ],
         temperature=0,
         max_tokens=LLM_MAX_TOKENS,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "annual_account_concept_mappings",
-                "schema": AnnualAccountConceptMappingResponse.model_json_schema(),
-                "strict": True,
-            },
-        },
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        response_format={"type": "json_object"},
+        extra_body={"thinking": {"type": "disabled"}},
     )
     content = response.choices[0].message.content
     if content is None:

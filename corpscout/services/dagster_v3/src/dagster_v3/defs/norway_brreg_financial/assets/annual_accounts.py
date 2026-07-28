@@ -71,7 +71,9 @@ ORDER BY org_number
     description=(
         "For one accounting year and stable company bucket, downloads only "
         "unprocessed BRREG annual-account PDFs to S3 and writes a Parquet catalog. "
-        "This asset performs no PDF parsing or OCR."
+        "Exhausted document-specific backend failures are recorded as durable S3 "
+        "markers and skipped without failing the partition. This asset performs no "
+        "PDF parsing or OCR."
     ),
 )
 def norway_brreg_annual_account_pdfs(
@@ -96,6 +98,7 @@ def norway_brreg_annual_account_pdfs(
         api=norway_brreg_api,
         storage=norway_brreg_financial_storage,
         log=context.log.info,
+        log_warning=context.log.warning,
     )
     return dg.MaterializeResult(
         metadata={

@@ -16,12 +16,15 @@ from dagster_v3.defs.company_signals.registers import (
     register_for,
 )
 from dagster_v3.defs.company_signals.rules import COUNTRY_PROCUREMENT_RULES
+from dagster_v3.defs.ted_procurement.tables import COUNTRIES as TED_COUNTRIES
 
 
 def _migration_sql() -> str:
     root = Path(__file__).resolve().parents[3]
     return (
-        root / "clickhouse" / "migrations"
+        root
+        / "clickhouse"
+        / "migrations"
         / "000199_corpscout_procurement_registers.up.sql"
     ).read_text()
 
@@ -39,27 +42,36 @@ def test_every_source_a_country_reads_has_a_register_description() -> None:
     assert used <= declared, used - declared
 
 
-def test_the_countries_match_the_rules_that_read_each_source() -> None:
-    """The array is the whole reason this is one row per source rather than per
-    country, so it must actually agree with who reads what."""
+def test_register_countries_cover_the_rules_that_read_each_source() -> None:
+    """A register may be ingested before a country can expose company signals,
+    but it must include every country whose rule already consumes it."""
     expected: dict[str, set[str]] = {}
     for rule in COUNTRY_PROCUREMENT_RULES.values():
         for source in rule.sources:
             expected.setdefault(source.slug, set()).add(rule.country_code)
 
     for register in PROCUREMENT_REGISTERS:
-        assert set(register.country_codes) == expected[register.source_slug], (
+        assert expected[register.source_slug] <= set(register.country_codes), (
             register.source_slug
         )
 
 
-def test_ted_is_one_row_serving_three_countries() -> None:
-    """The case the grain exists for. Per-country rows would hold its licence
-    three times and let them drift."""
+def test_ted_register_countries_match_the_ingestion_config() -> None:
     ted = register_for("ted_procurement")
 
-    assert ted.country_codes == ("FI", "NO", "SE")
-    assert len([r for r in PROCUREMENT_REGISTERS if r.source_slug == "ted_procurement"]) == 1
+    assert set(ted.country_codes) == {country.country_iso2 for country in TED_COUNTRIES}
+
+
+def test_ted_is_one_row_serving_seven_countries() -> None:
+    """The case the grain exists for. Per-country rows would hold its licence
+    seven times and let them drift."""
+    ted = register_for("ted_procurement")
+
+    assert ted.country_codes == ("DK", "FI", "FR", "LV", "NO", "SE", "SK")
+    assert (
+        len([r for r in PROCUREMENT_REGISTERS if r.source_slug == "ted_procurement"])
+        == 1
+    )
 
 
 def test_every_register_either_says_where_open_tenders_are_or_why_it_cannot() -> None:
@@ -74,7 +86,9 @@ def test_every_register_either_says_where_open_tenders_are_or_why_it_cannot() ->
     """
     for register in PROCUREMENT_REGISTERS:
         if register.open_tenders_url:
-            assert register.open_tenders_url.startswith("https://"), register.source_slug
+            assert register.open_tenders_url.startswith("https://"), (
+                register.source_slug
+            )
             # ...and it must not just be the homepage again.
             assert register.open_tenders_url != register.homepage_url, (
                 register.source_slug
@@ -121,7 +135,9 @@ def test_the_swedish_source_is_the_csv_resource_not_the_catalogue_page() -> None
     and the statistics landing page is not the file."""
     uhm = register_for("sweden_uhm_procurement")
 
-    assert uhm.api_or_download_url.startswith("https://catalog.upphandlingsmyndigheten.se")
+    assert uhm.api_or_download_url.startswith(
+        "https://catalog.upphandlingsmyndigheten.se"
+    )
     assert uhm.retrieval_method.startswith("Downloaded")
 
 

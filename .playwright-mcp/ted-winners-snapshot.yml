@@ -1,0 +1,1292 @@
+- generic [ref=f2e2]:
+  - generic [ref=f2e5]:
+    - list [ref=f2e7]:
+      - listitem [ref=f2e8]:
+        - link "CompanyCollect" [ref=f2e9] [cursor=pointer]:
+          - /url: /companies
+    - list [ref=f2e14]:
+      - listitem [ref=f2e15]:
+        - link "Companies" [ref=f2e16] [cursor=pointer]:
+          - /url: /companies
+      - listitem [ref=f2e22]:
+        - link "Countries" [ref=f2e23] [cursor=pointer]:
+          - /url: /countries
+      - listitem [ref=f2e30]:
+        - link "Procurement" [ref=f2e31] [cursor=pointer]:
+          - /url: /procurements
+      - listitem [ref=f2e39]:
+        - link "People" [ref=f2e40] [cursor=pointer]:
+          - /url: /people
+      - listitem [ref=f2e47]:
+        - link "Financials" [ref=f2e48] [cursor=pointer]:
+          - /url: /financials
+  - main [ref=f2e52]:
+    - generic [ref=f2e53]:
+      - button "Toggle Sidebar" [ref=f2e54]
+      - separator [ref=f2e56]
+      - generic [ref=f2e57]: CompanyCollect Backoffice
+    - generic [ref=f2e59]:
+      - generic [ref=f2e60]:
+        - button "← Procurement sources" [ref=f2e61] [cursor=pointer]
+        - heading "Tenders Electronic Daily (TED)" [level=1] [ref=f2e62]
+        - generic [ref=f2e63]:
+          - generic [ref=f2e64]: Publications Office of the European Union
+          - generic [ref=f2e65]: FI
+          - generic [ref=f2e66]: "NO"
+          - generic [ref=f2e67]: SE
+      - generic [ref=f2e68]:
+        - generic [ref=f2e69]:
+          - generic [ref=f2e70]: About this register
+          - generic [ref=f2e71]: EU-wide publication of procurement above the directive thresholds. A contract below its country's threshold is not published here at all, so TED alone understates any country's procurement -- which is why each country pairs it with a national register.
+        - generic [ref=f2e73]:
+          - generic [ref=f2e74]:
+            - term [ref=f2e75]: Grain
+            - definition [ref=f2e76]: one row per (notice, lot, winning tenderer)
+          - generic [ref=f2e77]:
+            - term [ref=f2e78]: Licence
+            - definition [ref=f2e79]: Reuse permitted under Decision 2011/833/EU, attribution required
+          - generic [ref=f2e80]:
+            - term [ref=f2e81]: How we obtain it
+            - definition [ref=f2e82]: "Fetched. Search API for the notice listing, then one eForms UBL XML per notice from ted.europa.eu/en/notice/{id}/xml. Both are snapshotted to S3 before parsing."
+          - generic [ref=f2e83]:
+            - term [ref=f2e84]: Read from
+            - definition [ref=f2e85]:
+              - link "https://api.ted.europa.eu/v3/notices/search" [ref=f2e86] [cursor=pointer]:
+                - /url: https://api.ted.europa.eu/v3/notices/search
+          - generic [ref=f2e87]:
+            - term [ref=f2e88]: Homepage
+            - definition [ref=f2e89]:
+              - link "https://ted.europa.eu" [ref=f2e90] [cursor=pointer]:
+                - /url: https://ted.europa.eu
+          - generic [ref=f2e91]:
+            - term [ref=f2e92]: Open tenders
+            - definition [ref=f2e93]:
+              - link "https://ted.europa.eu/en/search/result" [ref=f2e94] [cursor=pointer]:
+                - /url: https://ted.europa.eu/en/search/result
+          - generic [ref=f2e95]:
+            - term [ref=f2e96]: Notes
+            - definition [ref=f2e97]: eForms UBL XML per notice. Publishes ten distinct monetary elements across notice, lot and winner grain, including framework ceilings that are not spend.
+      - generic [ref=f2e98]:
+        - generic [ref=f2e99]:
+          - generic [ref=f2e100]: What we hold
+          - generic [ref=f2e101]: Per country, because a register serving several is loaded to a different depth in each. The caveat is about our coverage, not the register's scope.
+        - generic [ref=f2e102]:
+          - generic [ref=f2e103]:
+            - generic [ref=f2e104]:
+              - generic [ref=f2e105]: FI
+              - generic [ref=f2e106]: 2024-01-02 → 2026-07-24
+            - paragraph [ref=f2e107]: Hilma national awards and TED eForms awards. Hilma publishes a realized value per lot, which is one company's amount where a lot has a single winner and a shared figure where several split it. TED adds an amount per winner.
+          - generic [ref=f2e108]:
+            - generic [ref=f2e109]:
+              - generic [ref=f2e110]: "NO"
+              - generic [ref=f2e111]: 2024-01-03 → 2026-07-24
+            - paragraph [ref=f2e112]: TED eForms awards only; Doffin, Norway's national procurement register, is not ingested, so contracts below the EU publication thresholds are absent entirely.
+          - generic [ref=f2e113]:
+            - generic [ref=f2e114]:
+              - generic [ref=f2e115]: SE
+              - generic [ref=f2e116]: 2021-01-01 → 2026-07-24
+            - paragraph [ref=f2e117]: UHM advertised procurement and TED eForms awards. Excludes direct/non-advertised procurement, missing after-notices, and many framework call-offs. UHM publishes no contract value at all, so Swedish awards carry none.
+      - generic [ref=f2e118]:
+        - generic [ref=f2e119]:
+          - generic [ref=f2e120]: Records
+          - generic [ref=f2e121]:
+            - text: 222,819 rows in
+            - code [ref=f2e122]: ted_notice_winners
+            - text: ", at this register's own grain and in its own columns — not the canonical projection the country views expose."
+        - generic [ref=f2e123]:
+          - generic [ref=f2e124]:
+            - button "ted_notices 41,357" [ref=f2e125] [cursor=pointer]:
+              - text: ted_notices
+              - generic [ref=f2e126]: 41,357
+            - button "ted_notice_lots 0" [ref=f2e127] [cursor=pointer]:
+              - text: ted_notice_lots
+              - generic [ref=f2e128]: "0"
+            - button "ted_notice_winners 222,819" [ref=f2e129] [cursor=pointer]:
+              - text: ted_notice_winners
+              - generic [ref=f2e130]: 222,819
+          - button "Filters" [ref=f2e132]
+          - table [ref=f2e135]:
+            - rowgroup [ref=f2e136]:
+              - row [ref=f2e137]:
+                - columnheader "country_iso2" [ref=f2e138]
+                - columnheader "publication_number" [ref=f2e139]
+                - columnheader "lot_id" [ref=f2e140]
+                - columnheader "tender_id" [ref=f2e141]
+                - columnheader "winner_ordinal" [ref=f2e142]
+                - columnheader "winner_name" [ref=f2e143]
+                - columnheader "winner_national_id_raw" [ref=f2e144]
+                - columnheader "winner_national_id" [ref=f2e145]
+                - columnheader "winner_country" [ref=f2e146]
+                - columnheader "awarded_amount_original" [ref=f2e147]
+                - columnheader "awarded_amount_usd" [ref=f2e148]
+                - columnheader "awarded_currency" [ref=f2e149]
+                - columnheader "subcontracting_amount_original" [ref=f2e150]
+                - columnheader "subcontracting_amount_usd" [ref=f2e151]
+                - columnheader "subcontracting_currency" [ref=f2e152]
+                - columnheader "buyer_national_id" [ref=f2e153]
+                - columnheader "place_country" [ref=f2e154]
+                - columnheader "publication_date" [ref=f2e155]
+            - rowgroup [ref=f2e156]:
+              - row [ref=f2e157]:
+                - cell "NO" [ref=f2e158]
+                - cell [ref=f2e160]:
+                  - link "513263-2026" [ref=f2e161] [cursor=pointer]:
+                    - /url: /procurements/ted/513263-2026
+                - cell "LOT-0002" [ref=f2e162]
+                - cell "TEN-0002" [ref=f2e164]
+                - cell "1" [ref=f2e166]
+                - cell [ref=f2e168]:
+                  - link "KONGSBERG MARITIME AS" [ref=f2e169] [cursor=pointer]:
+                    - /url: /company/no/979750730
+                - cell "979750730" [ref=f2e170]
+                - cell "979750730" [ref=f2e172]
+                - cell "NOR" [ref=f2e174]
+                - cell "3,336,250" [ref=f2e176]
+                - cell "339,000.3" [ref=f2e178]
+                - cell "NOK" [ref=f2e180]
+                - cell "—" [ref=f2e182]
+                - cell "—" [ref=f2e184]
+                - cell "—" [ref=f2e186]
+                - cell "971045698" [ref=f2e188]
+                - cell "NOR" [ref=f2e190]
+                - cell "2026-07-24" [ref=f2e192]
+              - row [ref=f2e194]:
+                - cell "NO" [ref=f2e195]
+                - cell [ref=f2e197]:
+                  - link "513263-2026" [ref=f2e198] [cursor=pointer]:
+                    - /url: /procurements/ted/513263-2026
+                - cell "LOT-0001" [ref=f2e199]
+                - cell "TEN-0001" [ref=f2e201]
+                - cell "1" [ref=f2e203]
+                - cell [ref=f2e205]:
+                  - link "KONGSBERG MARITIME AS" [ref=f2e206] [cursor=pointer]:
+                    - /url: /company/no/979750730
+                - cell "979750730" [ref=f2e207]
+                - cell "979750730" [ref=f2e209]
+                - cell "NOR" [ref=f2e211]
+                - cell "4,140,000" [ref=f2e213]
+                - cell "420,670.29" [ref=f2e215]
+                - cell "NOK" [ref=f2e217]
+                - cell "—" [ref=f2e219]
+                - cell "—" [ref=f2e221]
+                - cell "—" [ref=f2e223]
+                - cell "971045698" [ref=f2e225]
+                - cell "NOR" [ref=f2e227]
+                - cell "2026-07-24" [ref=f2e229]
+              - row [ref=f2e231]:
+                - cell "NO" [ref=f2e232]
+                - cell [ref=f2e234]:
+                  - link "513532-2026" [ref=f2e235] [cursor=pointer]:
+                    - /url: /procurements/ted/513532-2026
+                - cell "LOT-0001" [ref=f2e236]
+                - cell "TEN-0001" [ref=f2e238]
+                - cell "1" [ref=f2e240]
+                - cell [ref=f2e242]:
+                  - link "Røhneselmer AS" [ref=f2e243] [cursor=pointer]:
+                    - /url: /company/no/933823970
+                - cell "933823970" [ref=f2e244]
+                - cell "933823970" [ref=f2e246]
+                - cell "NOR" [ref=f2e248]
+                - cell "0" [ref=f2e250]
+                - cell "0" [ref=f2e252]
+                - cell "NOK" [ref=f2e254]
+                - cell "—" [ref=f2e256]
+                - cell "—" [ref=f2e258]
+                - cell "—" [ref=f2e260]
+                - cell "971185589" [ref=f2e262]
+                - cell "NOR" [ref=f2e264]
+                - cell "2026-07-24" [ref=f2e266]
+              - row [ref=f2e268]:
+                - cell "FI" [ref=f2e269]
+                - cell [ref=f2e271]:
+                  - link "514568-2026" [ref=f2e272] [cursor=pointer]:
+                    - /url: /procurements/ted/514568-2026
+                - cell "LOT-0000" [ref=f2e273]
+                - cell "TEN-0002" [ref=f2e275]
+                - cell "2" [ref=f2e277]
+                - cell [ref=f2e279]:
+                  - link "Solventum Finland Oy" [ref=f2e280] [cursor=pointer]:
+                    - /url: /company/fi/3365485-2
+                - cell "3365485-2" [ref=f2e281]
+                - cell "3365485-2" [ref=f2e283]
+                - cell "FIN" [ref=f2e285]
+                - cell "1,500,000" [ref=f2e287]
+                - cell "1,712,250" [ref=f2e289]
+                - cell "EUR" [ref=f2e291]
+                - cell "—" [ref=f2e293]
+                - cell "—" [ref=f2e295]
+                - cell "—" [ref=f2e297]
+                - cell "1567535-0" [ref=f2e299]
+                - cell "FIN" [ref=f2e301]
+                - cell "2026-07-24" [ref=f2e303]
+              - row [ref=f2e305]:
+                - cell "FI" [ref=f2e306]
+                - cell [ref=f2e308]:
+                  - link "512681-2026" [ref=f2e309] [cursor=pointer]:
+                    - /url: /procurements/ted/512681-2026
+                - cell "LOT-0000" [ref=f2e310]
+                - cell "TEN-0002" [ref=f2e312]
+                - cell "3" [ref=f2e314]
+                - cell [ref=f2e316]:
+                  - link "Applied Medical Oy" [ref=f2e317] [cursor=pointer]:
+                    - /url: /company/fi/3289551-5
+                - cell "3289551-5" [ref=f2e318]
+                - cell "3289551-5" [ref=f2e320]
+                - cell "FIN" [ref=f2e322]
+                - cell "71,833" [ref=f2e324]
+                - cell "81,997.37" [ref=f2e326]
+                - cell "EUR" [ref=f2e328]
+                - cell "—" [ref=f2e330]
+                - cell "—" [ref=f2e332]
+                - cell "—" [ref=f2e334]
+                - cell "2947618-4" [ref=f2e336]
+                - cell "FIN" [ref=f2e338]
+                - cell "2026-07-24" [ref=f2e340]
+              - row [ref=f2e342]:
+                - cell "FI" [ref=f2e343]
+                - cell [ref=f2e345]:
+                  - link "513686-2026" [ref=f2e346] [cursor=pointer]:
+                    - /url: /procurements/ted/513686-2026
+                - cell "LOT-0000" [ref=f2e347]
+                - cell "TEN-0001" [ref=f2e349]
+                - cell "1" [ref=f2e351]
+                - cell [ref=f2e353]:
+                  - link "Luotea Siivous Oy" [ref=f2e354] [cursor=pointer]:
+                    - /url: /company/fi/3155982-7
+                - cell "3155982-7" [ref=f2e355]
+                - cell "3155982-7" [ref=f2e357]
+                - cell "FIN" [ref=f2e359]
+                - cell "767,089" [ref=f2e361]
+                - cell "875,632.09" [ref=f2e363]
+                - cell "EUR" [ref=f2e365]
+                - cell "—" [ref=f2e367]
+                - cell "—" [ref=f2e369]
+                - cell "—" [ref=f2e371]
+                - cell "3455818-4" [ref=f2e373]
+                - cell "FIN" [ref=f2e375]
+                - cell "2026-07-24" [ref=f2e377]
+              - row [ref=f2e379]:
+                - cell "FI" [ref=f2e380]
+                - cell [ref=f2e382]:
+                  - link "514987-2026" [ref=f2e383] [cursor=pointer]:
+                    - /url: /procurements/ted/514987-2026
+                - cell "LOT-0001" [ref=f2e384]
+                - cell "TEN-0001" [ref=f2e386]
+                - cell "1" [ref=f2e388]
+                - cell [ref=f2e390]:
+                  - link "Ilikrina oy" [ref=f2e391] [cursor=pointer]:
+                    - /url: /company/fi/3108868-2
+                - cell "3108868-2" [ref=f2e392]
+                - cell "3108868-2" [ref=f2e394]
+                - cell "FIN" [ref=f2e396]
+                - cell "—" [ref=f2e398]
+                - cell "—" [ref=f2e400]
+                - cell "—" [ref=f2e402]
+                - cell "—" [ref=f2e404]
+                - cell "—" [ref=f2e406]
+                - cell "—" [ref=f2e408]
+                - cell "1068322-0" [ref=f2e410]
+                - cell "FIN" [ref=f2e412]
+                - cell "2026-07-24" [ref=f2e414]
+              - row [ref=f2e416]:
+                - cell "FI" [ref=f2e417]
+                - cell [ref=f2e419]:
+                  - link "513984-2026" [ref=f2e420] [cursor=pointer]:
+                    - /url: /procurements/ted/513984-2026
+                - cell "LOT-0000" [ref=f2e421]
+                - cell "TEN-0001" [ref=f2e423]
+                - cell "1" [ref=f2e425]
+                - cell [ref=f2e427]:
+                  - link "Alltime Suomi Oy" [ref=f2e428] [cursor=pointer]:
+                    - /url: /company/fi/2973031-4
+                - cell "2973031-4" [ref=f2e429]
+                - cell "2973031-4" [ref=f2e431]
+                - cell "FIN" [ref=f2e433]
+                - cell "292,230" [ref=f2e435]
+                - cell "333,580.55" [ref=f2e437]
+                - cell "EUR" [ref=f2e439]
+                - cell "—" [ref=f2e441]
+                - cell "—" [ref=f2e443]
+                - cell "—" [ref=f2e445]
+                - cell "3022425-9" [ref=f2e447]
+                - cell "FIN" [ref=f2e449]
+                - cell "2026-07-24" [ref=f2e451]
+              - row [ref=f2e453]:
+                - cell "FI" [ref=f2e454]
+                - cell [ref=f2e456]:
+                  - link "512092-2026" [ref=f2e457] [cursor=pointer]:
+                    - /url: /procurements/ted/512092-2026
+                - cell "LOT-0000" [ref=f2e458]
+                - cell "TEN-0001" [ref=f2e460]
+                - cell "1" [ref=f2e462]
+                - cell [ref=f2e464]:
+                  - link "Jatke Pirkanmaa Oy" [ref=f2e465] [cursor=pointer]:
+                    - /url: /company/fi/2951086-4
+                - cell "2951086-4" [ref=f2e466]
+                - cell "2951086-4" [ref=f2e468]
+                - cell "FIN" [ref=f2e470]
+                - cell "9,147,760" [ref=f2e472]
+                - cell "10,442,168.04" [ref=f2e474]
+                - cell "EUR" [ref=f2e476]
+                - cell "—" [ref=f2e478]
+                - cell "—" [ref=f2e480]
+                - cell "—" [ref=f2e482]
+                - cell "3221308-6" [ref=f2e484]
+                - cell "FIN" [ref=f2e486]
+                - cell "2026-07-24" [ref=f2e488]
+              - row [ref=f2e490]:
+                - cell "FI" [ref=f2e491]
+                - cell [ref=f2e493]:
+                  - link "512681-2026" [ref=f2e494] [cursor=pointer]:
+                    - /url: /procurements/ted/512681-2026
+                - cell "LOT-0000" [ref=f2e495]
+                - cell "TEN-0005" [ref=f2e497]
+                - cell "4" [ref=f2e499]
+                - cell [ref=f2e501]:
+                  - link "Endomed Oy" [ref=f2e502] [cursor=pointer]:
+                    - /url: /company/fi/2649138-9
+                - cell "2649138-9" [ref=f2e503]
+                - cell "2649138-9" [ref=f2e505]
+                - cell "FIN" [ref=f2e507]
+                - cell "71,833" [ref=f2e509]
+                - cell "81,997.37" [ref=f2e511]
+                - cell "EUR" [ref=f2e513]
+                - cell "—" [ref=f2e515]
+                - cell "—" [ref=f2e517]
+                - cell "—" [ref=f2e519]
+                - cell "2947618-4" [ref=f2e521]
+                - cell "FIN" [ref=f2e523]
+                - cell "2026-07-24" [ref=f2e525]
+              - row [ref=f2e527]:
+                - cell "FI" [ref=f2e528]
+                - cell [ref=f2e530]:
+                  - link "512208-2026" [ref=f2e531] [cursor=pointer]:
+                    - /url: /procurements/ted/512208-2026
+                - cell "LOT-0000" [ref=f2e532]
+                - cell "TEN-0001" [ref=f2e534]
+                - cell "1" [ref=f2e536]
+                - cell [ref=f2e538]:
+                  - link "BCC Solutions Oy" [ref=f2e539] [cursor=pointer]:
+                    - /url: /company/fi/2562227-9
+                - cell "2562227-9" [ref=f2e540]
+                - cell "2562227-9" [ref=f2e542]
+                - cell "FIN" [ref=f2e544]
+                - cell "300,000" [ref=f2e546]
+                - cell "342,450" [ref=f2e548]
+                - cell "EUR" [ref=f2e550]
+                - cell "—" [ref=f2e552]
+                - cell "—" [ref=f2e554]
+                - cell "—" [ref=f2e556]
+                - cell "0952029-9" [ref=f2e558]
+                - cell "FIN" [ref=f2e560]
+                - cell "2026-07-24" [ref=f2e562]
+              - row [ref=f2e564]:
+                - cell "FI" [ref=f2e565]
+                - cell [ref=f2e567]:
+                  - link "514568-2026" [ref=f2e568] [cursor=pointer]:
+                    - /url: /procurements/ted/514568-2026
+                - cell "LOT-0000" [ref=f2e569]
+                - cell "TEN-0001" [ref=f2e571]
+                - cell "1" [ref=f2e573]
+                - cell [ref=f2e575]:
+                  - link "Medidyne Oy" [ref=f2e576] [cursor=pointer]:
+                    - /url: /company/fi/2505001-2
+                - cell "2505001-2" [ref=f2e577]
+                - cell "2505001-2" [ref=f2e579]
+                - cell "FIN" [ref=f2e581]
+                - cell "1,500,000" [ref=f2e583]
+                - cell "1,712,250" [ref=f2e585]
+                - cell "EUR" [ref=f2e587]
+                - cell "—" [ref=f2e589]
+                - cell "—" [ref=f2e591]
+                - cell "—" [ref=f2e593]
+                - cell "1567535-0" [ref=f2e595]
+                - cell "FIN" [ref=f2e597]
+                - cell "2026-07-24" [ref=f2e599]
+              - row [ref=f2e601]:
+                - cell "FI" [ref=f2e602]
+                - cell [ref=f2e604]:
+                  - link "514987-2026" [ref=f2e605] [cursor=pointer]:
+                    - /url: /procurements/ted/514987-2026
+                - cell "LOT-0002" [ref=f2e606]
+                - cell "TEN-0002" [ref=f2e608]
+                - cell "1" [ref=f2e610]
+                - cell "Trans Svahn" [ref=f2e612]
+                - cell "1933693-8" [ref=f2e614]
+                - cell "1933693-8" [ref=f2e616]
+                - cell "FIN" [ref=f2e618]
+                - cell "—" [ref=f2e620]
+                - cell "—" [ref=f2e622]
+                - cell "—" [ref=f2e624]
+                - cell "—" [ref=f2e626]
+                - cell "—" [ref=f2e628]
+                - cell "—" [ref=f2e630]
+                - cell "1068322-0" [ref=f2e632]
+                - cell "FIN" [ref=f2e634]
+                - cell "2026-07-24" [ref=f2e636]
+              - row [ref=f2e638]:
+                - cell "FI" [ref=f2e639]
+                - cell [ref=f2e641]:
+                  - link "513768-2026" [ref=f2e642] [cursor=pointer]:
+                    - /url: /procurements/ted/513768-2026
+                - cell "LOT-0000" [ref=f2e643]
+                - cell "TEN-0001" [ref=f2e645]
+                - cell "1" [ref=f2e647]
+                - cell [ref=f2e649]:
+                  - link "NK-Yhtymä Oy" [ref=f2e650] [cursor=pointer]:
+                    - /url: /company/fi/1805475-2
+                - cell "1805475-2" [ref=f2e651]
+                - cell "1805475-2" [ref=f2e653]
+                - cell "FIN" [ref=f2e655]
+                - cell "688,000" [ref=f2e657]
+                - cell "785,352" [ref=f2e659]
+                - cell "EUR" [ref=f2e661]
+                - cell "—" [ref=f2e663]
+                - cell "—" [ref=f2e665]
+                - cell "—" [ref=f2e667]
+                - cell "0952029-9" [ref=f2e669]
+                - cell "FIN" [ref=f2e671]
+                - cell "2026-07-24" [ref=f2e673]
+              - row [ref=f2e675]:
+                - cell "FI" [ref=f2e676]
+                - cell [ref=f2e678]:
+                  - link "512681-2026" [ref=f2e679] [cursor=pointer]:
+                    - /url: /procurements/ted/512681-2026
+                - cell "LOT-0000" [ref=f2e680]
+                - cell "TEN-0006" [ref=f2e682]
+                - cell "6" [ref=f2e684]
+                - cell [ref=f2e686]:
+                  - link "Medtronic Finland Oy" [ref=f2e687] [cursor=pointer]:
+                    - /url: /company/fi/1514187-7
+                - cell "1514187-7" [ref=f2e688]
+                - cell "1514187-7" [ref=f2e690]
+                - cell "FIN" [ref=f2e692]
+                - cell "71,833" [ref=f2e694]
+                - cell "81,997.37" [ref=f2e696]
+                - cell "EUR" [ref=f2e698]
+                - cell "—" [ref=f2e700]
+                - cell "—" [ref=f2e702]
+                - cell "—" [ref=f2e704]
+                - cell "2947618-4" [ref=f2e706]
+                - cell "FIN" [ref=f2e708]
+                - cell "2026-07-24" [ref=f2e710]
+              - row [ref=f2e712]:
+                - cell "FI" [ref=f2e713]
+                - cell [ref=f2e715]:
+                  - link "513707-2026" [ref=f2e716] [cursor=pointer]:
+                    - /url: /procurements/ted/513707-2026
+                - cell "LOT-0000" [ref=f2e717]
+                - cell "TEN-0001" [ref=f2e719]
+                - cell "1" [ref=f2e721]
+                - cell [ref=f2e723]:
+                  - link "Lingsoft Language Services Oy" [ref=f2e724] [cursor=pointer]:
+                    - /url: /company/fi/0961030-7
+                - cell "0961030-7" [ref=f2e725]
+                - cell "0961030-7" [ref=f2e727]
+                - cell "FIN" [ref=f2e729]
+                - cell "500,000" [ref=f2e731]
+                - cell "570,750" [ref=f2e733]
+                - cell "EUR" [ref=f2e735]
+                - cell "—" [ref=f2e737]
+                - cell "—" [ref=f2e739]
+                - cell "—" [ref=f2e741]
+                - cell "1010547-1" [ref=f2e743]
+                - cell "FIN" [ref=f2e745]
+                - cell "2026-07-24" [ref=f2e747]
+              - row [ref=f2e749]:
+                - cell "FI" [ref=f2e750]
+                - cell [ref=f2e752]:
+                  - link "512681-2026" [ref=f2e753] [cursor=pointer]:
+                    - /url: /procurements/ted/512681-2026
+                - cell "LOT-0000" [ref=f2e754]
+                - cell "TEN-0003" [ref=f2e756]
+                - cell "5" [ref=f2e758]
+                - cell [ref=f2e760]:
+                  - link "Janssen-Cilag" [ref=f2e761] [cursor=pointer]:
+                    - /url: /company/fi/0922140-8
+                - cell "0922140-8" [ref=f2e762]
+                - cell "0922140-8" [ref=f2e764]
+                - cell "FIN" [ref=f2e766]
+                - cell "71,833" [ref=f2e768]
+                - cell "81,997.37" [ref=f2e770]
+                - cell "EUR" [ref=f2e772]
+                - cell "—" [ref=f2e774]
+                - cell "—" [ref=f2e776]
+                - cell "—" [ref=f2e778]
+                - cell "2947618-4" [ref=f2e780]
+                - cell "FIN" [ref=f2e782]
+                - cell "2026-07-24" [ref=f2e784]
+              - row [ref=f2e786]:
+                - cell "FI" [ref=f2e787]
+                - cell [ref=f2e789]:
+                  - link "513088-2026" [ref=f2e790] [cursor=pointer]:
+                    - /url: /procurements/ted/513088-2026
+                - cell "LOT-0000" [ref=f2e791]
+                - cell "TEN-0001" [ref=f2e793]
+                - cell "1" [ref=f2e795]
+                - cell [ref=f2e797]:
+                  - link "ETS-Lindgren oy" [ref=f2e798] [cursor=pointer]:
+                    - /url: /company/fi/0132213-2
+                - cell "FI01322132" [ref=f2e799]
+                - cell "0132213-2" [ref=f2e801]
+                - cell "FIN" [ref=f2e803]
+                - cell "1,097,000" [ref=f2e805]
+                - cell "1,252,225.5" [ref=f2e807]
+                - cell "EUR" [ref=f2e809]
+                - cell "—" [ref=f2e811]
+                - cell "—" [ref=f2e813]
+                - cell "—" [ref=f2e815]
+                - cell "0952029-9" [ref=f2e817]
+                - cell "FIN" [ref=f2e819]
+                - cell "2026-07-24" [ref=f2e821]
+              - row [ref=f2e823]:
+                - cell "FI" [ref=f2e824]
+                - cell [ref=f2e826]:
+                  - link "512681-2026" [ref=f2e827] [cursor=pointer]:
+                    - /url: /procurements/ted/512681-2026
+                - cell "LOT-0000" [ref=f2e828]
+                - cell "TEN-0001" [ref=f2e830]
+                - cell "1" [ref=f2e832]
+                - cell [ref=f2e834]:
+                  - link "B. Braun Medical Oy" [ref=f2e835] [cursor=pointer]:
+                    - /url: /company/fi/0111467-5
+                - cell "0111467-5" [ref=f2e836]
+                - cell "0111467-5" [ref=f2e838]
+                - cell "FIN" [ref=f2e840]
+                - cell "71,833" [ref=f2e842]
+                - cell "81,997.37" [ref=f2e844]
+                - cell "EUR" [ref=f2e846]
+                - cell "—" [ref=f2e848]
+                - cell "—" [ref=f2e850]
+                - cell "—" [ref=f2e852]
+                - cell "2947618-4" [ref=f2e854]
+                - cell "FIN" [ref=f2e856]
+                - cell "2026-07-24" [ref=f2e858]
+              - row [ref=f2e860]:
+                - cell "FI" [ref=f2e861]
+                - cell [ref=f2e863]:
+                  - link "512681-2026" [ref=f2e864] [cursor=pointer]:
+                    - /url: /procurements/ted/512681-2026
+                - cell "LOT-0000" [ref=f2e865]
+                - cell "TEN-0004" [ref=f2e867]
+                - cell "2" [ref=f2e869]
+                - cell [ref=f2e871]:
+                  - link "Berner Oy" [ref=f2e872] [cursor=pointer]:
+                    - /url: /company/fi/0107011-5
+                - cell "0107011-5" [ref=f2e873]
+                - cell "0107011-5" [ref=f2e875]
+                - cell "FIN" [ref=f2e877]
+                - cell "71,833" [ref=f2e879]
+                - cell "81,997.37" [ref=f2e881]
+                - cell "EUR" [ref=f2e883]
+                - cell "—" [ref=f2e885]
+                - cell "—" [ref=f2e887]
+                - cell "—" [ref=f2e889]
+                - cell "2947618-4" [ref=f2e891]
+                - cell "FIN" [ref=f2e893]
+                - cell "2026-07-24" [ref=f2e895]
+              - row [ref=f2e897]:
+                - cell "SE" [ref=f2e898]
+                - cell [ref=f2e900]:
+                  - link "512598-2026" [ref=f2e901] [cursor=pointer]:
+                    - /url: /procurements/ted/512598-2026
+                - cell "LOT-0000" [ref=f2e902]
+                - cell "TEN-0004" [ref=f2e904]
+                - cell "4" [ref=f2e906]
+                - cell [ref=f2e908]:
+                  - link "Spis och Servis AB" [ref=f2e909] [cursor=pointer]:
+                    - /url: /company/se/5564979069
+                - cell "5564979069" [ref=f2e910]
+                - cell "5564979069" [ref=f2e912]
+                - cell "SWE" [ref=f2e914]
+                - cell "—" [ref=f2e916]
+                - cell "—" [ref=f2e918]
+                - cell "—" [ref=f2e920]
+                - cell "—" [ref=f2e922]
+                - cell "—" [ref=f2e924]
+                - cell "—" [ref=f2e926]
+                - cell "2120002528" [ref=f2e928]
+                - cell "SWE" [ref=f2e930]
+                - cell "2026-07-24" [ref=f2e932]
+              - row [ref=f2e934]:
+                - cell "SE" [ref=f2e935]
+                - cell [ref=f2e937]:
+                  - link "512592-2026" [ref=f2e938] [cursor=pointer]:
+                    - /url: /procurements/ted/512592-2026
+                - cell "LOT-0000" [ref=f2e939]
+                - cell "TEN-0001" [ref=f2e941]
+                - cell "1" [ref=f2e943]
+                - cell [ref=f2e945]:
+                  - link "HumaNova Utbildning Aktiebolag" [ref=f2e946] [cursor=pointer]:
+                    - /url: /company/se/5564001443
+                - cell "5564001443" [ref=f2e947]
+                - cell "5564001443" [ref=f2e949]
+                - cell "SWE" [ref=f2e951]
+                - cell "8,000,000" [ref=f2e953]
+                - cell "829,051.29" [ref=f2e955]
+                - cell "SEK" [ref=f2e957]
+                - cell "—" [ref=f2e959]
+                - cell "—" [ref=f2e961]
+                - cell "—" [ref=f2e963]
+                - cell "2021005182" [ref=f2e965]
+                - cell "SWE" [ref=f2e967]
+                - cell "2026-07-24" [ref=f2e969]
+              - row [ref=f2e971]:
+                - cell "SE" [ref=f2e972]
+                - cell [ref=f2e974]:
+                  - link "514040-2026" [ref=f2e975] [cursor=pointer]:
+                    - /url: /procurements/ted/514040-2026
+                - cell "LOT-0001" [ref=f2e976]
+                - cell "TEN-0001" [ref=f2e978]
+                - cell "1" [ref=f2e980]
+                - cell [ref=f2e982]:
+                  - link "Börjessons Lastbilar Aktiebolag" [ref=f2e983] [cursor=pointer]:
+                    - /url: /company/se/5563841120
+                - cell "556384-1120" [ref=f2e984]
+                - cell "5563841120" [ref=f2e986]
+                - cell "SWE" [ref=f2e988]
+                - cell "—" [ref=f2e990]
+                - cell "—" [ref=f2e992]
+                - cell "—" [ref=f2e994]
+                - cell "—" [ref=f2e996]
+                - cell "—" [ref=f2e998]
+                - cell "—" [ref=f2e1000]
+                - cell "5565550349" [ref=f2e1002]
+                - cell "SWE" [ref=f2e1004]
+                - cell "2026-07-24" [ref=f2e1006]
+              - row [ref=f2e1008]:
+                - cell "SE" [ref=f2e1009]
+                - cell [ref=f2e1011]:
+                  - link "514040-2026" [ref=f2e1012] [cursor=pointer]:
+                    - /url: /procurements/ted/514040-2026
+                - cell "LOT-0001" [ref=f2e1013]
+                - cell "TEN-0002" [ref=f2e1015]
+                - cell "2" [ref=f2e1017]
+                - cell [ref=f2e1019]:
+                  - link "Göinge Bil Lastvagnar Aktiebolag" [ref=f2e1020] [cursor=pointer]:
+                    - /url: /company/se/5562438738
+                - cell "556243-8738" [ref=f2e1021]
+                - cell "5562438738" [ref=f2e1023]
+                - cell "SWE" [ref=f2e1025]
+                - cell "—" [ref=f2e1027]
+                - cell "—" [ref=f2e1029]
+                - cell "—" [ref=f2e1031]
+                - cell "—" [ref=f2e1033]
+                - cell "—" [ref=f2e1035]
+                - cell "—" [ref=f2e1037]
+                - cell "5565550349" [ref=f2e1039]
+                - cell "SWE" [ref=f2e1041]
+                - cell "2026-07-24" [ref=f2e1043]
+              - row [ref=f2e1045]:
+                - cell "SE" [ref=f2e1046]
+                - cell [ref=f2e1048]:
+                  - link "514265-2026" [ref=f2e1049] [cursor=pointer]:
+                    - /url: /procurements/ted/514265-2026
+                - cell "LOT-0001" [ref=f2e1050]
+                - cell "TEN-0003" [ref=f2e1052]
+                - cell "3" [ref=f2e1054]
+                - cell [ref=f2e1056]:
+                  - link "Combitech Aktiebolag" [ref=f2e1057] [cursor=pointer]:
+                    - /url: /company/se/5562186790
+                - cell "556218-6790" [ref=f2e1058]
+                - cell "5562186790" [ref=f2e1060]
+                - cell "SWE" [ref=f2e1062]
+                - cell "—" [ref=f2e1064]
+                - cell "—" [ref=f2e1066]
+                - cell "—" [ref=f2e1068]
+                - cell "—" [ref=f2e1070]
+                - cell "—" [ref=f2e1072]
+                - cell "—" [ref=f2e1074]
+                - cell "2021000340" [ref=f2e1076]
+                - cell "SWE" [ref=f2e1078]
+                - cell "2026-07-24" [ref=f2e1080]
+              - row [ref=f2e1082]:
+                - cell "SE" [ref=f2e1083]
+                - cell [ref=f2e1085]:
+                  - link "513000-2026" [ref=f2e1086] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0006" [ref=f2e1087]
+                - cell "TEN-0026" [ref=f2e1089]
+                - cell "1" [ref=f2e1091]
+                - cell [ref=f2e1093]:
+                  - link "AB Karl Hedin Bygghandel" [ref=f2e1094] [cursor=pointer]:
+                    - /url: /company/se/5561141812
+                - cell "5561141812" [ref=f2e1095]
+                - cell "5561141812" [ref=f2e1097]
+                - cell "SWE" [ref=f2e1099]
+                - cell "—" [ref=f2e1101]
+                - cell "—" [ref=f2e1103]
+                - cell "—" [ref=f2e1105]
+                - cell "—" [ref=f2e1107]
+                - cell "—" [ref=f2e1109]
+                - cell "—" [ref=f2e1111]
+                - cell "2120002528" [ref=f2e1113]
+                - cell "SWE" [ref=f2e1115]
+                - cell "2026-07-24" [ref=f2e1117]
+              - row [ref=f2e1119]:
+                - cell "SE" [ref=f2e1120]
+                - cell [ref=f2e1122]:
+                  - link "513000-2026" [ref=f2e1123] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0005" [ref=f2e1124]
+                - cell "TEN-0021" [ref=f2e1126]
+                - cell "1" [ref=f2e1128]
+                - cell [ref=f2e1130]:
+                  - link "AB Karl Hedin Bygghandel" [ref=f2e1131] [cursor=pointer]:
+                    - /url: /company/se/5561141812
+                - cell "5561141812" [ref=f2e1132]
+                - cell "5561141812" [ref=f2e1134]
+                - cell "SWE" [ref=f2e1136]
+                - cell "—" [ref=f2e1138]
+                - cell "—" [ref=f2e1140]
+                - cell "—" [ref=f2e1142]
+                - cell "—" [ref=f2e1144]
+                - cell "—" [ref=f2e1146]
+                - cell "—" [ref=f2e1148]
+                - cell "2120002528" [ref=f2e1150]
+                - cell "SWE" [ref=f2e1152]
+                - cell "2026-07-24" [ref=f2e1154]
+              - row [ref=f2e1156]:
+                - cell "SE" [ref=f2e1157]
+                - cell [ref=f2e1159]:
+                  - link "513000-2026" [ref=f2e1160] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0004" [ref=f2e1161]
+                - cell "TEN-0016" [ref=f2e1163]
+                - cell "1" [ref=f2e1165]
+                - cell [ref=f2e1167]:
+                  - link "AB Karl Hedin Bygghandel" [ref=f2e1168] [cursor=pointer]:
+                    - /url: /company/se/5561141812
+                - cell "5561141812" [ref=f2e1169]
+                - cell "5561141812" [ref=f2e1171]
+                - cell "SWE" [ref=f2e1173]
+                - cell "—" [ref=f2e1175]
+                - cell "—" [ref=f2e1177]
+                - cell "—" [ref=f2e1179]
+                - cell "—" [ref=f2e1181]
+                - cell "—" [ref=f2e1183]
+                - cell "—" [ref=f2e1185]
+                - cell "2120002528" [ref=f2e1187]
+                - cell "SWE" [ref=f2e1189]
+                - cell "2026-07-24" [ref=f2e1191]
+              - row [ref=f2e1193]:
+                - cell "SE" [ref=f2e1194]
+                - cell [ref=f2e1196]:
+                  - link "513000-2026" [ref=f2e1197] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0003" [ref=f2e1198]
+                - cell "TEN-0011" [ref=f2e1200]
+                - cell "1" [ref=f2e1202]
+                - cell [ref=f2e1204]:
+                  - link "AB Karl Hedin Bygghandel" [ref=f2e1205] [cursor=pointer]:
+                    - /url: /company/se/5561141812
+                - cell "5561141812" [ref=f2e1206]
+                - cell "5561141812" [ref=f2e1208]
+                - cell "SWE" [ref=f2e1210]
+                - cell "—" [ref=f2e1212]
+                - cell "—" [ref=f2e1214]
+                - cell "—" [ref=f2e1216]
+                - cell "—" [ref=f2e1218]
+                - cell "—" [ref=f2e1220]
+                - cell "—" [ref=f2e1222]
+                - cell "2120002528" [ref=f2e1224]
+                - cell "SWE" [ref=f2e1226]
+                - cell "2026-07-24" [ref=f2e1228]
+              - row [ref=f2e1230]:
+                - cell "SE" [ref=f2e1231]
+                - cell [ref=f2e1233]:
+                  - link "513000-2026" [ref=f2e1234] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0002" [ref=f2e1235]
+                - cell "TEN-0006" [ref=f2e1237]
+                - cell "1" [ref=f2e1239]
+                - cell [ref=f2e1241]:
+                  - link "AB Karl Hedin Bygghandel" [ref=f2e1242] [cursor=pointer]:
+                    - /url: /company/se/5561141812
+                - cell "5561141812" [ref=f2e1243]
+                - cell "5561141812" [ref=f2e1245]
+                - cell "SWE" [ref=f2e1247]
+                - cell "—" [ref=f2e1249]
+                - cell "—" [ref=f2e1251]
+                - cell "—" [ref=f2e1253]
+                - cell "—" [ref=f2e1255]
+                - cell "—" [ref=f2e1257]
+                - cell "—" [ref=f2e1259]
+                - cell "2120002528" [ref=f2e1261]
+                - cell "SWE" [ref=f2e1263]
+                - cell "2026-07-24" [ref=f2e1265]
+              - row [ref=f2e1267]:
+                - cell "SE" [ref=f2e1268]
+                - cell [ref=f2e1270]:
+                  - link "513000-2026" [ref=f2e1271] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0001" [ref=f2e1272]
+                - cell "TEN-0001" [ref=f2e1274]
+                - cell "1" [ref=f2e1276]
+                - cell [ref=f2e1278]:
+                  - link "AB Karl Hedin Bygghandel" [ref=f2e1279] [cursor=pointer]:
+                    - /url: /company/se/5561141812
+                - cell "5561141812" [ref=f2e1280]
+                - cell "5561141812" [ref=f2e1282]
+                - cell "SWE" [ref=f2e1284]
+                - cell "—" [ref=f2e1286]
+                - cell "—" [ref=f2e1288]
+                - cell "—" [ref=f2e1290]
+                - cell "—" [ref=f2e1292]
+                - cell "—" [ref=f2e1294]
+                - cell "—" [ref=f2e1296]
+                - cell "2120002528" [ref=f2e1298]
+                - cell "SWE" [ref=f2e1300]
+                - cell "2026-07-24" [ref=f2e1302]
+              - row [ref=f2e1304]:
+                - cell "SE" [ref=f2e1305]
+                - cell [ref=f2e1307]:
+                  - link "513000-2026" [ref=f2e1308] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0006" [ref=f2e1309]
+                - cell "TEN-0030" [ref=f2e1311]
+                - cell "5" [ref=f2e1313]
+                - cell [ref=f2e1315]:
+                  - link "K-Bygg Sverige AB" [ref=f2e1316] [cursor=pointer]:
+                    - /url: /company/se/5560877325
+                - cell "5560877325" [ref=f2e1317]
+                - cell "5560877325" [ref=f2e1319]
+                - cell "SWE" [ref=f2e1321]
+                - cell "—" [ref=f2e1323]
+                - cell "—" [ref=f2e1325]
+                - cell "—" [ref=f2e1327]
+                - cell "—" [ref=f2e1329]
+                - cell "—" [ref=f2e1331]
+                - cell "—" [ref=f2e1333]
+                - cell "2120002528" [ref=f2e1335]
+                - cell "SWE" [ref=f2e1337]
+                - cell "2026-07-24" [ref=f2e1339]
+              - row [ref=f2e1341]:
+                - cell "SE" [ref=f2e1342]
+                - cell [ref=f2e1344]:
+                  - link "513000-2026" [ref=f2e1345] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0005" [ref=f2e1346]
+                - cell "TEN-0025" [ref=f2e1348]
+                - cell "5" [ref=f2e1350]
+                - cell [ref=f2e1352]:
+                  - link "K-Bygg Sverige AB" [ref=f2e1353] [cursor=pointer]:
+                    - /url: /company/se/5560877325
+                - cell "5560877325" [ref=f2e1354]
+                - cell "5560877325" [ref=f2e1356]
+                - cell "SWE" [ref=f2e1358]
+                - cell "—" [ref=f2e1360]
+                - cell "—" [ref=f2e1362]
+                - cell "—" [ref=f2e1364]
+                - cell "—" [ref=f2e1366]
+                - cell "—" [ref=f2e1368]
+                - cell "—" [ref=f2e1370]
+                - cell "2120002528" [ref=f2e1372]
+                - cell "SWE" [ref=f2e1374]
+                - cell "2026-07-24" [ref=f2e1376]
+              - row [ref=f2e1378]:
+                - cell "SE" [ref=f2e1379]
+                - cell [ref=f2e1381]:
+                  - link "513000-2026" [ref=f2e1382] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0004" [ref=f2e1383]
+                - cell "TEN-0020" [ref=f2e1385]
+                - cell "5" [ref=f2e1387]
+                - cell [ref=f2e1389]:
+                  - link "K-Bygg Sverige AB" [ref=f2e1390] [cursor=pointer]:
+                    - /url: /company/se/5560877325
+                - cell "5560877325" [ref=f2e1391]
+                - cell "5560877325" [ref=f2e1393]
+                - cell "SWE" [ref=f2e1395]
+                - cell "—" [ref=f2e1397]
+                - cell "—" [ref=f2e1399]
+                - cell "—" [ref=f2e1401]
+                - cell "—" [ref=f2e1403]
+                - cell "—" [ref=f2e1405]
+                - cell "—" [ref=f2e1407]
+                - cell "2120002528" [ref=f2e1409]
+                - cell "SWE" [ref=f2e1411]
+                - cell "2026-07-24" [ref=f2e1413]
+              - row [ref=f2e1415]:
+                - cell "SE" [ref=f2e1416]
+                - cell [ref=f2e1418]:
+                  - link "513000-2026" [ref=f2e1419] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0003" [ref=f2e1420]
+                - cell "TEN-0015" [ref=f2e1422]
+                - cell "5" [ref=f2e1424]
+                - cell [ref=f2e1426]:
+                  - link "K-Bygg Sverige AB" [ref=f2e1427] [cursor=pointer]:
+                    - /url: /company/se/5560877325
+                - cell "5560877325" [ref=f2e1428]
+                - cell "5560877325" [ref=f2e1430]
+                - cell "SWE" [ref=f2e1432]
+                - cell "—" [ref=f2e1434]
+                - cell "—" [ref=f2e1436]
+                - cell "—" [ref=f2e1438]
+                - cell "—" [ref=f2e1440]
+                - cell "—" [ref=f2e1442]
+                - cell "—" [ref=f2e1444]
+                - cell "2120002528" [ref=f2e1446]
+                - cell "SWE" [ref=f2e1448]
+                - cell "2026-07-24" [ref=f2e1450]
+              - row [ref=f2e1452]:
+                - cell "SE" [ref=f2e1453]
+                - cell [ref=f2e1455]:
+                  - link "513000-2026" [ref=f2e1456] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0002" [ref=f2e1457]
+                - cell "TEN-0010" [ref=f2e1459]
+                - cell "5" [ref=f2e1461]
+                - cell [ref=f2e1463]:
+                  - link "K-Bygg Sverige AB" [ref=f2e1464] [cursor=pointer]:
+                    - /url: /company/se/5560877325
+                - cell "5560877325" [ref=f2e1465]
+                - cell "5560877325" [ref=f2e1467]
+                - cell "SWE" [ref=f2e1469]
+                - cell "—" [ref=f2e1471]
+                - cell "—" [ref=f2e1473]
+                - cell "—" [ref=f2e1475]
+                - cell "—" [ref=f2e1477]
+                - cell "—" [ref=f2e1479]
+                - cell "—" [ref=f2e1481]
+                - cell "2120002528" [ref=f2e1483]
+                - cell "SWE" [ref=f2e1485]
+                - cell "2026-07-24" [ref=f2e1487]
+              - row [ref=f2e1489]:
+                - cell "SE" [ref=f2e1490]
+                - cell [ref=f2e1492]:
+                  - link "513000-2026" [ref=f2e1493] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0001" [ref=f2e1494]
+                - cell "TEN-0005" [ref=f2e1496]
+                - cell "5" [ref=f2e1498]
+                - cell [ref=f2e1500]:
+                  - link "K-Bygg Sverige AB" [ref=f2e1501] [cursor=pointer]:
+                    - /url: /company/se/5560877325
+                - cell "5560877325" [ref=f2e1502]
+                - cell "5560877325" [ref=f2e1504]
+                - cell "SWE" [ref=f2e1506]
+                - cell "—" [ref=f2e1508]
+                - cell "—" [ref=f2e1510]
+                - cell "—" [ref=f2e1512]
+                - cell "—" [ref=f2e1514]
+                - cell "—" [ref=f2e1516]
+                - cell "—" [ref=f2e1518]
+                - cell "2120002528" [ref=f2e1520]
+                - cell "SWE" [ref=f2e1522]
+                - cell "2026-07-24" [ref=f2e1524]
+              - row [ref=f2e1526]:
+                - cell "SE" [ref=f2e1527]
+                - cell [ref=f2e1529]:
+                  - link "512598-2026" [ref=f2e1530] [cursor=pointer]:
+                    - /url: /procurements/ted/512598-2026
+                - cell "LOT-0000" [ref=f2e1531]
+                - cell "TEN-0001" [ref=f2e1533]
+                - cell "1" [ref=f2e1535]
+                - cell [ref=f2e1537]:
+                  - link "Svensk Cater AB" [ref=f2e1538] [cursor=pointer]:
+                    - /url: /company/se/5560689738
+                - cell "5560689738" [ref=f2e1539]
+                - cell "5560689738" [ref=f2e1541]
+                - cell "SWE" [ref=f2e1543]
+                - cell "—" [ref=f2e1545]
+                - cell "—" [ref=f2e1547]
+                - cell "—" [ref=f2e1549]
+                - cell "—" [ref=f2e1551]
+                - cell "—" [ref=f2e1553]
+                - cell "—" [ref=f2e1555]
+                - cell "2120002528" [ref=f2e1557]
+                - cell "SWE" [ref=f2e1559]
+                - cell "2026-07-24" [ref=f2e1561]
+              - row [ref=f2e1563]:
+                - cell "SE" [ref=f2e1564]
+                - cell [ref=f2e1566]:
+                  - link "514265-2026" [ref=f2e1567] [cursor=pointer]:
+                    - /url: /procurements/ted/514265-2026
+                - cell "LOT-0001" [ref=f2e1568]
+                - cell "TEN-0004" [ref=f2e1570]
+                - cell "4" [ref=f2e1572]
+                - cell [ref=f2e1574]:
+                  - link "Rejlers Sverige AB" [ref=f2e1575] [cursor=pointer]:
+                    - /url: /company/se/5560510272
+                - cell "556051-0272" [ref=f2e1576]
+                - cell "5560510272" [ref=f2e1578]
+                - cell "SWE" [ref=f2e1580]
+                - cell "—" [ref=f2e1582]
+                - cell "—" [ref=f2e1584]
+                - cell "—" [ref=f2e1586]
+                - cell "—" [ref=f2e1588]
+                - cell "—" [ref=f2e1590]
+                - cell "—" [ref=f2e1592]
+                - cell "2021000340" [ref=f2e1594]
+                - cell "SWE" [ref=f2e1596]
+                - cell "2026-07-24" [ref=f2e1598]
+              - row [ref=f2e1600]:
+                - cell "SE" [ref=f2e1601]
+                - cell [ref=f2e1603]:
+                  - link "512598-2026" [ref=f2e1604] [cursor=pointer]:
+                    - /url: /procurements/ted/512598-2026
+                - cell "LOT-0000" [ref=f2e1605]
+                - cell "TEN-0003" [ref=f2e1607]
+                - cell "3" [ref=f2e1609]
+                - cell [ref=f2e1611]:
+                  - link "Menigo Foodservice AB" [ref=f2e1612] [cursor=pointer]:
+                    - /url: /company/se/5560444647
+                - cell "5560444647" [ref=f2e1613]
+                - cell "5560444647" [ref=f2e1615]
+                - cell "SWE" [ref=f2e1617]
+                - cell "—" [ref=f2e1619]
+                - cell "—" [ref=f2e1621]
+                - cell "—" [ref=f2e1623]
+                - cell "—" [ref=f2e1625]
+                - cell "—" [ref=f2e1627]
+                - cell "—" [ref=f2e1629]
+                - cell "2120002528" [ref=f2e1631]
+                - cell "SWE" [ref=f2e1633]
+                - cell "2026-07-24" [ref=f2e1635]
+              - row [ref=f2e1637]:
+                - cell "SE" [ref=f2e1638]
+                - cell [ref=f2e1640]:
+                  - link "513000-2026" [ref=f2e1641] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0006" [ref=f2e1642]
+                - cell "TEN-0027" [ref=f2e1644]
+                - cell "2" [ref=f2e1646]
+                - cell [ref=f2e1648]:
+                  - link "Ahlsell Sverige AB" [ref=f2e1649] [cursor=pointer]:
+                    - /url: /company/se/5560129206
+                - cell "5560129206" [ref=f2e1650]
+                - cell "5560129206" [ref=f2e1652]
+                - cell "SWE" [ref=f2e1654]
+                - cell "—" [ref=f2e1656]
+                - cell "—" [ref=f2e1658]
+                - cell "—" [ref=f2e1660]
+                - cell "—" [ref=f2e1662]
+                - cell "—" [ref=f2e1664]
+                - cell "—" [ref=f2e1666]
+                - cell "2120002528" [ref=f2e1668]
+                - cell "SWE" [ref=f2e1670]
+                - cell "2026-07-24" [ref=f2e1672]
+              - row [ref=f2e1674]:
+                - cell "SE" [ref=f2e1675]
+                - cell [ref=f2e1677]:
+                  - link "513000-2026" [ref=f2e1678] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0005" [ref=f2e1679]
+                - cell "TEN-0022" [ref=f2e1681]
+                - cell "2" [ref=f2e1683]
+                - cell [ref=f2e1685]:
+                  - link "Ahlsell Sverige AB" [ref=f2e1686] [cursor=pointer]:
+                    - /url: /company/se/5560129206
+                - cell "5560129206" [ref=f2e1687]
+                - cell "5560129206" [ref=f2e1689]
+                - cell "SWE" [ref=f2e1691]
+                - cell "—" [ref=f2e1693]
+                - cell "—" [ref=f2e1695]
+                - cell "—" [ref=f2e1697]
+                - cell "—" [ref=f2e1699]
+                - cell "—" [ref=f2e1701]
+                - cell "—" [ref=f2e1703]
+                - cell "2120002528" [ref=f2e1705]
+                - cell "SWE" [ref=f2e1707]
+                - cell "2026-07-24" [ref=f2e1709]
+              - row [ref=f2e1711]:
+                - cell "SE" [ref=f2e1712]
+                - cell [ref=f2e1714]:
+                  - link "513000-2026" [ref=f2e1715] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0004" [ref=f2e1716]
+                - cell "TEN-0017" [ref=f2e1718]
+                - cell "2" [ref=f2e1720]
+                - cell [ref=f2e1722]:
+                  - link "Ahlsell Sverige AB" [ref=f2e1723] [cursor=pointer]:
+                    - /url: /company/se/5560129206
+                - cell "5560129206" [ref=f2e1724]
+                - cell "5560129206" [ref=f2e1726]
+                - cell "SWE" [ref=f2e1728]
+                - cell "—" [ref=f2e1730]
+                - cell "—" [ref=f2e1732]
+                - cell "—" [ref=f2e1734]
+                - cell "—" [ref=f2e1736]
+                - cell "—" [ref=f2e1738]
+                - cell "—" [ref=f2e1740]
+                - cell "2120002528" [ref=f2e1742]
+                - cell "SWE" [ref=f2e1744]
+                - cell "2026-07-24" [ref=f2e1746]
+              - row [ref=f2e1748]:
+                - cell "SE" [ref=f2e1749]
+                - cell [ref=f2e1751]:
+                  - link "513000-2026" [ref=f2e1752] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0003" [ref=f2e1753]
+                - cell "TEN-0012" [ref=f2e1755]
+                - cell "2" [ref=f2e1757]
+                - cell [ref=f2e1759]:
+                  - link "Ahlsell Sverige AB" [ref=f2e1760] [cursor=pointer]:
+                    - /url: /company/se/5560129206
+                - cell "5560129206" [ref=f2e1761]
+                - cell "5560129206" [ref=f2e1763]
+                - cell "SWE" [ref=f2e1765]
+                - cell "—" [ref=f2e1767]
+                - cell "—" [ref=f2e1769]
+                - cell "—" [ref=f2e1771]
+                - cell "—" [ref=f2e1773]
+                - cell "—" [ref=f2e1775]
+                - cell "—" [ref=f2e1777]
+                - cell "2120002528" [ref=f2e1779]
+                - cell "SWE" [ref=f2e1781]
+                - cell "2026-07-24" [ref=f2e1783]
+              - row [ref=f2e1785]:
+                - cell "SE" [ref=f2e1786]
+                - cell [ref=f2e1788]:
+                  - link "513000-2026" [ref=f2e1789] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0002" [ref=f2e1790]
+                - cell "TEN-0007" [ref=f2e1792]
+                - cell "2" [ref=f2e1794]
+                - cell [ref=f2e1796]:
+                  - link "Ahlsell Sverige AB" [ref=f2e1797] [cursor=pointer]:
+                    - /url: /company/se/5560129206
+                - cell "5560129206" [ref=f2e1798]
+                - cell "5560129206" [ref=f2e1800]
+                - cell "SWE" [ref=f2e1802]
+                - cell "—" [ref=f2e1804]
+                - cell "—" [ref=f2e1806]
+                - cell "—" [ref=f2e1808]
+                - cell "—" [ref=f2e1810]
+                - cell "—" [ref=f2e1812]
+                - cell "—" [ref=f2e1814]
+                - cell "2120002528" [ref=f2e1816]
+                - cell "SWE" [ref=f2e1818]
+                - cell "2026-07-24" [ref=f2e1820]
+              - row [ref=f2e1822]:
+                - cell "SE" [ref=f2e1823]
+                - cell [ref=f2e1825]:
+                  - link "513000-2026" [ref=f2e1826] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0001" [ref=f2e1827]
+                - cell "TEN-0002" [ref=f2e1829]
+                - cell "2" [ref=f2e1831]
+                - cell [ref=f2e1833]:
+                  - link "Ahlsell Sverige AB" [ref=f2e1834] [cursor=pointer]:
+                    - /url: /company/se/5560129206
+                - cell "5560129206" [ref=f2e1835]
+                - cell "5560129206" [ref=f2e1837]
+                - cell "SWE" [ref=f2e1839]
+                - cell "—" [ref=f2e1841]
+                - cell "—" [ref=f2e1843]
+                - cell "—" [ref=f2e1845]
+                - cell "—" [ref=f2e1847]
+                - cell "—" [ref=f2e1849]
+                - cell "—" [ref=f2e1851]
+                - cell "2120002528" [ref=f2e1853]
+                - cell "SWE" [ref=f2e1855]
+                - cell "2026-07-24" [ref=f2e1857]
+              - row [ref=f2e1859]:
+                - cell "SE" [ref=f2e1860]
+                - cell [ref=f2e1862]:
+                  - link "513000-2026" [ref=f2e1863] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0006" [ref=f2e1864]
+                - cell "TEN-0028" [ref=f2e1866]
+                - cell "3" [ref=f2e1868]
+                - cell [ref=f2e1870]:
+                  - link "Beijer Byggmaterial Aktiebolag" [ref=f2e1871] [cursor=pointer]:
+                    - /url: /company/se/5560125220
+                - cell "5560125220" [ref=f2e1872]
+                - cell "5560125220" [ref=f2e1874]
+                - cell "SWE" [ref=f2e1876]
+                - cell "—" [ref=f2e1878]
+                - cell "—" [ref=f2e1880]
+                - cell "—" [ref=f2e1882]
+                - cell "—" [ref=f2e1884]
+                - cell "—" [ref=f2e1886]
+                - cell "—" [ref=f2e1888]
+                - cell "2120002528" [ref=f2e1890]
+                - cell "SWE" [ref=f2e1892]
+                - cell "2026-07-24" [ref=f2e1894]
+              - row [ref=f2e1896]:
+                - cell "SE" [ref=f2e1897]
+                - cell [ref=f2e1899]:
+                  - link "513000-2026" [ref=f2e1900] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0005" [ref=f2e1901]
+                - cell "TEN-0023" [ref=f2e1903]
+                - cell "3" [ref=f2e1905]
+                - cell [ref=f2e1907]:
+                  - link "Beijer Byggmaterial Aktiebolag" [ref=f2e1908] [cursor=pointer]:
+                    - /url: /company/se/5560125220
+                - cell "5560125220" [ref=f2e1909]
+                - cell "5560125220" [ref=f2e1911]
+                - cell "SWE" [ref=f2e1913]
+                - cell "—" [ref=f2e1915]
+                - cell "—" [ref=f2e1917]
+                - cell "—" [ref=f2e1919]
+                - cell "—" [ref=f2e1921]
+                - cell "—" [ref=f2e1923]
+                - cell "—" [ref=f2e1925]
+                - cell "2120002528" [ref=f2e1927]
+                - cell "SWE" [ref=f2e1929]
+                - cell "2026-07-24" [ref=f2e1931]
+              - row [ref=f2e1933]:
+                - cell "SE" [ref=f2e1934]
+                - cell [ref=f2e1936]:
+                  - link "513000-2026" [ref=f2e1937] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0004" [ref=f2e1938]
+                - cell "TEN-0018" [ref=f2e1940]
+                - cell "3" [ref=f2e1942]
+                - cell [ref=f2e1944]:
+                  - link "Beijer Byggmaterial Aktiebolag" [ref=f2e1945] [cursor=pointer]:
+                    - /url: /company/se/5560125220
+                - cell "5560125220" [ref=f2e1946]
+                - cell "5560125220" [ref=f2e1948]
+                - cell "SWE" [ref=f2e1950]
+                - cell "—" [ref=f2e1952]
+                - cell "—" [ref=f2e1954]
+                - cell "—" [ref=f2e1956]
+                - cell "—" [ref=f2e1958]
+                - cell "—" [ref=f2e1960]
+                - cell "—" [ref=f2e1962]
+                - cell "2120002528" [ref=f2e1964]
+                - cell "SWE" [ref=f2e1966]
+                - cell "2026-07-24" [ref=f2e1968]
+              - row [ref=f2e1970]:
+                - cell "SE" [ref=f2e1971]
+                - cell [ref=f2e1973]:
+                  - link "513000-2026" [ref=f2e1974] [cursor=pointer]:
+                    - /url: /procurements/ted/513000-2026
+                - cell "LOT-0003" [ref=f2e1975]
+                - cell "TEN-0013" [ref=f2e1977]
+                - cell "3" [ref=f2e1979]
+                - cell [ref=f2e1981]:
+                  - link "Beijer Byggmaterial Aktiebolag" [ref=f2e1982] [cursor=pointer]:
+                    - /url: /company/se/5560125220
+                - cell "5560125220" [ref=f2e1983]
+                - cell "5560125220" [ref=f2e1985]
+                - cell "SWE" [ref=f2e1987]
+                - cell "—" [ref=f2e1989]
+                - cell "—" [ref=f2e1991]
+                - cell "—" [ref=f2e1993]
+                - cell "—" [ref=f2e1995]
+                - cell "—" [ref=f2e1997]
+                - cell "—" [ref=f2e1999]
+                - cell "2120002528" [ref=f2e2001]
+                - cell "SWE" [ref=f2e2003]
+                - cell "2026-07-24" [ref=f2e2005]
+          - generic [ref=f2e2007]:
+            - generic [ref=f2e2008]: 222,819 records
+            - generic [ref=f2e2009]:
+              - generic [ref=f2e2010]:
+                - generic [ref=f2e2011]: Rows per page
+                - combobox [ref=f2e2012]:
+                  - generic [ref=f2e2013]: "50"
+                  - img: ▼
+                - textbox [ref=f2e2014]: "50"
+              - generic [ref=f2e2015]: Page 1 of 4,457
+              - generic [ref=f2e2016]:
+                - button "First page" [disabled]
+                - button "Previous page" [disabled]
+                - button "Next page" [ref=f2e2017] [cursor=pointer]
+                - button "Last page" [ref=f2e2018] [cursor=pointer]

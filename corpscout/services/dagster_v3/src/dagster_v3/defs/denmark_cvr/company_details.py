@@ -4,7 +4,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from random import randint
 from typing import Any, Literal, Self
@@ -50,10 +50,7 @@ DENMARK_CVR_COMPANY_DETAIL_FAILURES_CLICKHOUSE_TABLE = (
 DATACVR_COMPANY_DETAIL_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 DATACVR_COMPANY_DETAIL_SUPPRESSIBLE_STATUSES = frozenset({500, 502, 503, 504})
 
-type DenmarkCvrCompanyDetailFailureDecision = Literal[
-    "fail_partition",
-    "ignore_company",
-]
+type DenmarkCvrCompanyDetailFailureDecision = Literal["ignore_company"]
 
 INSERT_COMPANY_DETAIL_FAILURE_SQL = f"""
 INSERT INTO {DENMARK_CVR_COMPANY_DETAIL_FAILURES_CLICKHOUSE_TABLE} (
@@ -310,6 +307,7 @@ class DenmarkCvrCompanyDetailHttpFailure:
     cvr: str
     source_url: str
     status: int
+    attempt_count: int
     response_headers: dict[str, str]
 
 
@@ -320,6 +318,7 @@ class DenmarkCvrCompanyDetailFailureRecord:
     first_failed_at: datetime
     failed_at: datetime
     failure_count: int
+    request_attempt_count: int
     decision: DenmarkCvrCompanyDetailFailureDecision
     source_asset: str
     source_partition_key: str
@@ -334,8 +333,9 @@ class DenmarkCvrCompanyDetailSummary:
     partition_key: str
     selected_company_count: int
     complete_company_count: int
-    ignored_company_count: int
-    already_ignored_company_count: int
+    skipped_company_count: int
+    already_skipped_company_count: int
+    skipped_request_attempt_count: int
     already_complete_company_count: int
     translated_existing_company_count: int
     downloaded_company_count: int
@@ -346,8 +346,8 @@ class DenmarkCvrCompanyDetailSummary:
     def resolved_company_count(self) -> int:
         return (
             self.complete_company_count
-            + self.ignored_company_count
-            + self.already_ignored_company_count
+            + self.skipped_company_count
+            + self.already_skipped_company_count
         )
 
 
@@ -364,11 +364,10 @@ class DenmarkCvrCompanyDetailResource(dg.ConfigurableResource):
     locale: str = "en"
     min_delay_ms: int = 100
     max_delay_ms: int = 800
-    max_attempts: int = 5
-    retry_base_delay_seconds: float = 5.0
+    max_attempts: int = 3
+    retry_base_delay_seconds: float = 30.0
     retry_max_delay_seconds: float = 120.0
     failure_database_path: str = str(DENMARK_CVR_COMPANY_DETAIL_FAILURE_DB_PATH)
-    failure_suppression_hours: float = 24.0
 
     @model_validator(mode="after")
     def validate_configuration(self) -> Self:
@@ -387,8 +386,6 @@ class DenmarkCvrCompanyDetailResource(dg.ConfigurableResource):
             raise ValueError(
                 "retry_base_delay_seconds must not exceed retry_max_delay_seconds"
             )
-        if self.failure_suppression_hours <= 0:
-            raise ValueError("failure_suppression_hours must be greater than zero")
         if self.failure_database_path.strip() == "":
             raise ValueError("failure_database_path must not be blank")
         return self
@@ -435,6 +432,7 @@ class DenmarkCvrCompanyDetailResource(dg.ConfigurableResource):
                         cvr=cvr,
                         source_url=source_url,
                         result=result,
+                        attempt_count=self.max_attempts,
                     )
                     continue
                 yield _validated_company_detail_download(
@@ -645,7 +643,6 @@ def record_company_detail_http_failure(
     *,
     failure: DenmarkCvrCompanyDetailHttpFailure,
     failed_at: datetime,
-    suppression_age: timedelta,
     source_asset: str,
     source_partition_key: str,
     source_run_id: str,
@@ -653,8 +650,8 @@ def record_company_detail_http_failure(
 ) -> DenmarkCvrCompanyDetailFailureRecord:
     if failed_at.utcoffset() is None:
         raise ValueError("Company-detail failure timestamp must include a timezone")
-    if suppression_age <= timedelta(0):
-        raise ValueError("Company-detail failure suppression age must be positive")
+    if failure.attempt_count <= 0:
+        raise ValueError("Company-detail failure attempt count must be positive")
     if source_asset.strip() == "":
         raise ValueError("Company-detail failure source asset must not be blank")
     if source_partition_key.strip() == "":
@@ -687,18 +684,14 @@ def record_company_detail_http_failure(
             else normalized_failed_at
         )
         failure_count = previous_failure_count + 1
-        decision: DenmarkCvrCompanyDetailFailureDecision = (
-            "ignore_company"
-            if previous_failure_count > 0
-            and normalized_failed_at - first_failed_at >= suppression_age
-            else "fail_partition"
-        )
+        decision: DenmarkCvrCompanyDetailFailureDecision = "ignore_company"
         connection.execute(
             """
             INSERT INTO company_detail_http_failures (
                 cvr,
                 http_status,
                 failed_at,
+                request_attempt_count,
                 decision,
                 source_asset,
                 source_partition_key,
@@ -706,12 +699,13 @@ def record_company_detail_http_failure(
                 source_run_id,
                 failure_object_key,
                 response_headers
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 failure.cvr,
                 failure.status,
                 normalized_failed_at.isoformat(timespec="microseconds"),
+                failure.attempt_count,
                 decision,
                 source_asset,
                 source_partition_key,
@@ -732,6 +726,7 @@ def record_company_detail_http_failure(
         first_failed_at=first_failed_at,
         failed_at=normalized_failed_at,
         failure_count=failure_count,
+        request_attempt_count=failure.attempt_count,
         decision=decision,
         source_asset=source_asset,
         source_partition_key=source_partition_key,
@@ -796,7 +791,6 @@ def write_company_detail_partition(
     partition_key: str,
     cvrs: Sequence[str],
     failure_database_path: Path,
-    failure_suppression_age: timedelta,
     observed_at: datetime,
     source_run_id: str,
     record_failure: Callable[[DenmarkCvrCompanyDetailFailureRecord], object],
@@ -826,7 +820,6 @@ def write_company_detail_partition(
         object_prefix=partition_prefix,
         object_keys=object_keys,
         failure_database_path=failure_database_path,
-        failure_suppression_age=failure_suppression_age,
         observed_at=observed_at,
         source_run_id=source_run_id,
         record_failure=record_failure,
@@ -842,7 +835,6 @@ def write_company_detail_updates(
     update_date: str,
     cvrs: Sequence[str],
     failure_database_path: Path,
-    failure_suppression_age: timedelta,
     observed_at: datetime,
     source_run_id: str,
     record_failure: Callable[[DenmarkCvrCompanyDetailFailureRecord], object],
@@ -878,7 +870,6 @@ def write_company_detail_updates(
         object_prefix=object_prefix,
         object_keys=object_keys,
         failure_database_path=failure_database_path,
-        failure_suppression_age=failure_suppression_age,
         observed_at=observed_at,
         source_run_id=source_run_id,
         record_failure=record_failure,
@@ -896,7 +887,6 @@ def _write_company_details(
     object_prefix: str,
     object_keys: Mapping[str, tuple[str, str, str]],
     failure_database_path: Path,
-    failure_suppression_age: timedelta,
     observed_at: datetime,
     source_run_id: str,
     record_failure: Callable[[DenmarkCvrCompanyDetailFailureRecord], object],
@@ -905,8 +895,6 @@ def _write_company_details(
 ) -> DenmarkCvrCompanyDetailSummary:
     if observed_at.utcoffset() is None:
         raise ValueError("Company-detail observation timestamp must include a timezone")
-    if failure_suppression_age <= timedelta(0):
-        raise ValueError("Company-detail failure suppression age must be positive")
     if source_run_id.strip() == "":
         raise ValueError("Company-detail source run ID must not be blank")
 
@@ -917,7 +905,7 @@ def _write_company_details(
     failure_cvrs = _company_detail_failure_cvrs(failure_database_path)
 
     already_complete_count = 0
-    already_ignored_count = 0
+    already_skipped_count = 0
     translated_existing_count = 0
     written_object_count = 0
     cvrs_to_download: list[str] = []
@@ -933,7 +921,7 @@ def _write_company_details(
             and original_key not in existing_keys
             and english_key not in existing_keys
         ):
-            already_ignored_count += 1
+            already_skipped_count += 1
             continue
         if original_key in existing_keys:
             raw_body = object_store.read_bytes(
@@ -956,7 +944,8 @@ def _write_company_details(
         cvrs_to_download.append(cvr)
 
     downloaded_count = 0
-    ignored_count = 0
+    skipped_count = 0
+    skipped_request_attempt_count = 0
     downloaded_size_bytes = 0
     for result in details.iter_company_details(tuple(cvrs_to_download)):
         original_key, english_key, failure_key = object_keys[result.cvr]
@@ -965,35 +954,31 @@ def _write_company_details(
                 failure_database_path,
                 failure=result,
                 failed_at=observed_at,
-                suppression_age=failure_suppression_age,
                 source_asset=source_asset,
                 source_partition_key=result_partition_key,
                 source_run_id=source_run_id,
                 failure_object_key=failure_key,
             )
             record_failure(failure_record)
-            if failure_record.decision == "fail_partition":
-                raise DenmarkCvrCompanyDetailRequestError(
-                    "DataCVR company-detail request returned HTTP "
-                    f"{result.status} for CVR {result.cvr}; persistent failure "
-                    f"attempt {failure_record.failure_count} was recorded"
-                )
             marker_body = _company_detail_failure_marker_bytes(failure_record)
             object_store.write_bytes(
                 failure_key,
                 marker_body,
                 bucket=DENMARK_CVR_BUCKET,
             )
-            ignored_count += 1
+            skipped_count += 1
+            skipped_request_attempt_count += result.attempt_count
             written_object_count += 1
             if log_warning is not None:
                 log_warning(
-                    "Ignoring repeated DataCVR company-detail failure: "
-                    "partition=%s cvr=%s http_status=%s failure_count=%s "
+                    "Skipping DataCVR company detail after exhausted retries: "
+                    "partition=%s cvr=%s http_status=%s request_attempts=%s "
+                    "failure_count=%s "
                     "first_failed_at=%s failed_at=%s marker=%s",
                     result_partition_key,
                     result.cvr,
                     result.status,
+                    result.attempt_count,
                     failure_record.failure_count,
                     failure_record.first_failed_at.isoformat(),
                     failure_record.failed_at.isoformat(),
@@ -1039,7 +1024,7 @@ def _write_company_details(
         already_complete_count + translated_existing_count + downloaded_count
     )
     resolved_company_count = (
-        complete_company_count + already_ignored_count + ignored_count
+        complete_company_count + already_skipped_count + skipped_count
     )
     if resolved_company_count != len(object_keys):
         raise DenmarkCvrCompanyDetailRequestError(
@@ -1050,8 +1035,9 @@ def _write_company_details(
         partition_key=result_partition_key,
         selected_company_count=len(object_keys),
         complete_company_count=complete_company_count,
-        ignored_company_count=ignored_count,
-        already_ignored_company_count=already_ignored_count,
+        skipped_company_count=skipped_count,
+        already_skipped_company_count=already_skipped_count,
+        skipped_request_attempt_count=skipped_request_attempt_count,
         already_complete_company_count=already_complete_count,
         translated_existing_company_count=translated_existing_count,
         downloaded_company_count=downloaded_count,
@@ -1078,8 +1064,8 @@ def _write_company_details(
         "Reads one stable hash bucket of CVR numbers from the Denmark company "
         "DuckDB table, downloads each HTTPS DataCVR company-detail response, and "
         "checkpoints an original Danish-key JSON object plus an _en object whose "
-        "keys are translated to English without changing values. Repeated "
-        "company-specific HTTP failures are checkpointed explicitly."
+        "keys are translated to English without changing values. Company-specific "
+        "server errors are skipped and checkpointed after three failed attempts."
     ),
 )
 def denmark_cvr_company_details_s3(
@@ -1103,9 +1089,6 @@ def denmark_cvr_company_details_s3(
         partition_key=partition_key,
         cvrs=cvrs,
         failure_database_path=Path(denmark_cvr_company_details.failure_database_path),
-        failure_suppression_age=timedelta(
-            hours=denmark_cvr_company_details.failure_suppression_hours
-        ),
         observed_at=observed_at,
         source_run_id=context.run_id,
         record_failure=lambda record: publish_company_detail_failure_record(
@@ -1122,8 +1105,9 @@ def denmark_cvr_company_details_s3(
             "selected_company_count": summary.selected_company_count,
             "complete_company_count": summary.complete_company_count,
             "resolved_company_count": summary.resolved_company_count,
-            "ignored_company_count": summary.ignored_company_count,
-            "already_ignored_company_count": summary.already_ignored_company_count,
+            "skipped_company_count": summary.skipped_company_count,
+            "already_skipped_company_count": summary.already_skipped_company_count,
+            "skipped_request_attempt_count": (summary.skipped_request_attempt_count),
             "already_complete_company_count": summary.already_complete_company_count,
             "translated_existing_company_count": (
                 summary.translated_existing_company_count
@@ -1134,8 +1118,12 @@ def denmark_cvr_company_details_s3(
             "failure_database_path": str(
                 denmark_cvr_company_details.failure_database_path
             ),
-            "failure_suppression_hours": (
-                denmark_cvr_company_details.failure_suppression_hours
+            "max_request_attempts": denmark_cvr_company_details.max_attempts,
+            "retry_base_delay_seconds": (
+                denmark_cvr_company_details.retry_base_delay_seconds
+            ),
+            "retry_max_delay_seconds": (
+                denmark_cvr_company_details.retry_max_delay_seconds
             ),
             "failure_clickhouse_table": (
                 DENMARK_CVR_COMPANY_DETAIL_FAILURES_CLICKHOUSE_TABLE
@@ -1168,7 +1156,8 @@ def denmark_cvr_company_details_s3(
     description=(
         "Reads companies assigned to one active DuckDB source date, downloads "
         "their current HTTPS DataCVR details in one browser session, and writes "
-        "date-versioned original and English-key JSON objects."
+        "date-versioned original and English-key JSON objects. Company-specific "
+        "server errors are skipped and checkpointed after three failed attempts."
     ),
 )
 def denmark_cvr_company_detail_updates_s3(
@@ -1187,9 +1176,6 @@ def denmark_cvr_company_detail_updates_s3(
         update_date=update_date,
         cvrs=cvrs,
         failure_database_path=Path(denmark_cvr_company_details.failure_database_path),
-        failure_suppression_age=timedelta(
-            hours=denmark_cvr_company_details.failure_suppression_hours
-        ),
         observed_at=observed_at,
         source_run_id=context.run_id,
         record_failure=lambda record: publish_company_detail_failure_record(
@@ -1205,8 +1191,9 @@ def denmark_cvr_company_detail_updates_s3(
             "selected_company_count": summary.selected_company_count,
             "complete_company_count": summary.complete_company_count,
             "resolved_company_count": summary.resolved_company_count,
-            "ignored_company_count": summary.ignored_company_count,
-            "already_ignored_company_count": summary.already_ignored_company_count,
+            "skipped_company_count": summary.skipped_company_count,
+            "already_skipped_company_count": summary.already_skipped_company_count,
+            "skipped_request_attempt_count": (summary.skipped_request_attempt_count),
             "already_complete_company_count": (summary.already_complete_company_count),
             "translated_existing_company_count": (
                 summary.translated_existing_company_count
@@ -1217,8 +1204,12 @@ def denmark_cvr_company_detail_updates_s3(
             "failure_database_path": str(
                 denmark_cvr_company_details.failure_database_path
             ),
-            "failure_suppression_hours": (
-                denmark_cvr_company_details.failure_suppression_hours
+            "max_request_attempts": denmark_cvr_company_details.max_attempts,
+            "retry_base_delay_seconds": (
+                denmark_cvr_company_details.retry_base_delay_seconds
+            ),
+            "retry_max_delay_seconds": (
+                denmark_cvr_company_details.retry_max_delay_seconds
             ),
             "failure_clickhouse_table": (
                 DENMARK_CVR_COMPANY_DETAIL_FAILURES_CLICKHOUSE_TABLE
@@ -1276,6 +1267,7 @@ def _company_detail_http_failure(
     cvr: str,
     source_url: str,
     result: Any,
+    attempt_count: int,
 ) -> DenmarkCvrCompanyDetailHttpFailure:
     if not isinstance(result, Mapping):
         raise DenmarkCvrCompanyDetailRequestError(
@@ -1288,6 +1280,10 @@ def _company_detail_http_failure(
     ):
         raise DenmarkCvrCompanyDetailRequestError(
             f"DataCVR returned an invalid retryable result for CVR {cvr}"
+        )
+    if attempt_count <= 0:
+        raise DenmarkCvrCompanyDetailRequestError(
+            f"DataCVR returned an invalid attempt count for CVR {cvr}"
         )
     headers = result.get("headers")
     response_headers = (
@@ -1303,6 +1299,7 @@ def _company_detail_http_failure(
         cvr=cvr,
         source_url=source_url,
         status=status,
+        attempt_count=attempt_count,
         response_headers=response_headers,
     )
 
@@ -1410,6 +1407,7 @@ def _ensure_company_detail_failure_table(
             cvr TEXT NOT NULL,
             http_status INTEGER NOT NULL,
             failed_at TEXT NOT NULL,
+            request_attempt_count INTEGER NOT NULL,
             decision TEXT NOT NULL,
             source_asset TEXT NOT NULL,
             source_partition_key TEXT NOT NULL,
@@ -1419,10 +1417,25 @@ def _ensure_company_detail_failure_table(
             response_headers TEXT NOT NULL,
             CHECK (length(cvr) = 8),
             CHECK (http_status BETWEEN 100 AND 599),
-            CHECK (decision IN ('fail_partition', 'ignore_company'))
+            CHECK (request_attempt_count > 0),
+            CHECK (decision = 'ignore_company')
         )
         """
     )
+    columns = {
+        str(row[1])
+        for row in connection.execute(
+            "PRAGMA table_info(company_detail_http_failures)"
+        ).fetchall()
+    }
+    if "request_attempt_count" not in columns:
+        connection.execute(
+            """
+            ALTER TABLE company_detail_http_failures
+            ADD COLUMN request_attempt_count INTEGER NOT NULL DEFAULT 1
+            CHECK (request_attempt_count > 0)
+            """
+        )
     connection.execute(
         """
         CREATE INDEX IF NOT EXISTS
@@ -1442,6 +1455,7 @@ def _company_detail_failure_marker_bytes(
             "first_failed_at": record.first_failed_at.isoformat(),
             "last_failed_at": record.failed_at.isoformat(),
             "failure_count": record.failure_count,
+            "request_attempt_count": record.request_attempt_count,
             "decision": record.decision,
             "source_asset": record.source_asset,
             "source_partition_key": record.source_partition_key,

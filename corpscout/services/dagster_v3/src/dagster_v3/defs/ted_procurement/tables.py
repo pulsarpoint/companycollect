@@ -21,9 +21,7 @@ TED_NOTICES_TABLE = "ted_notices"
 TED_NOTICE_LOTS_TABLE = "ted_notice_lots"
 TED_NOTICE_WINNERS_TABLE = "ted_notice_winners"
 QUALIFIED_TED_NOTICES_TABLE = f"{TED_PROCUREMENT_DATABASE}.{TED_NOTICES_TABLE}"
-QUALIFIED_TED_NOTICE_LOTS_TABLE = (
-    f"{TED_PROCUREMENT_DATABASE}.{TED_NOTICE_LOTS_TABLE}"
-)
+QUALIFIED_TED_NOTICE_LOTS_TABLE = f"{TED_PROCUREMENT_DATABASE}.{TED_NOTICE_LOTS_TABLE}"
 QUALIFIED_TED_NOTICE_WINNERS_TABLE = (
     f"{TED_PROCUREMENT_DATABASE}.{TED_NOTICE_WINNERS_TABLE}"
 )
@@ -80,6 +78,7 @@ def partition_column_count(table: str) -> int:
     """How many placeholders an insert into a partition table needs."""
     return PARTITION_TABLE_DDL[table].count(",") + 1
 
+
 SEARCH_API_URL = "https://api.ted.europa.eu/v3/notices/search"
 NOTICE_XML_URL_TEMPLATE = "https://ted.europa.eu/en/notice/{publication_number}/xml"
 SEARCH_PAGE_LIMIT = 250
@@ -112,6 +111,10 @@ COUNTRIES: tuple[TedCountry, ...] = (
     TedCountry(place_code="FIN", country_iso2="FI"),
     TedCountry(place_code="SWE", country_iso2="SE"),
     TedCountry(place_code="NOR", country_iso2="NO"),
+    TedCountry(place_code="FRA", country_iso2="FR"),
+    TedCountry(place_code="SVK", country_iso2="SK"),
+    TedCountry(place_code="LVA", country_iso2="LV"),
+    TedCountry(place_code="DNK", country_iso2="DK"),
 )
 
 # National-id normalization rules keyed by the organization's country code as

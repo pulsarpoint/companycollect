@@ -114,8 +114,8 @@ def norway_brreg_annual_account_facts_duckdb(
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=ANNUAL_ACCOUNT_DUCKDB_POOL,
     description=(
-        "Applies deterministic Norwegian accounting mappings, then asks the local "
-        "Qwen model to preserve remaining meaningful labels as core or extended concepts."
+        "Applies deterministic Norwegian accounting mappings, then asks DeepSeek "
+        "to preserve remaining meaningful labels as core or extended concepts."
     ),
 )
 def norway_brreg_annual_account_fact_mappings_duckdb(

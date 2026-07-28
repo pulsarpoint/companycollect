@@ -40,13 +40,59 @@ def test_normalize_national_id() -> None:
     assert normalize_national_id("FIN", "") == ""
 
 
-def test_ted_countries_include_sweden_and_norway() -> None:
+@pytest.mark.parametrize(
+    ("country", "raw", "expected"),
+    [
+        # Live TED 47-2026: the winning French organization publishes a
+        # whitespace-grouped SIRET. The company spine is keyed by SIREN.
+        ("FRA", "530 796 176 00028", "530796176"),
+        ("FR", "53079617600028", "530796176"),
+        ("FRA", "530796176", "530796176"),
+        ("FR", "FR40530796176", "530796176"),
+        # Live TED 110-2026 and 147-2026 carry malformed legacy identifiers;
+        # neither may be coerced into a plausible SIREN.
+        ("FRA", "1710451-1-2-1", "1710451-1-2-1"),
+        ("FRA", "4137512310049", "4137512310049"),
+        # Live TED 59-2026 publishes an IČO directly. Whitespace is harmless,
+        # while the VAT number from 1419-2026 is a different identifier and
+        # cannot safely be mapped to sk_companies.ico.
+        ("SVK", "36379913", "36379913"),
+        ("SK", "36 379 913", "36379913"),
+        ("SVK", "SK2022354598", "SK2022354598"),
+        # Live TED 507-2026 publishes the Latvian winner's 11-digit company
+        # registration code directly. Latvia's VAT form is the same code with
+        # an LV prefix, so both forms can safely join lv_companies.regcode.
+        ("LVA", "40103250317", "40103250317"),
+        ("LV", "40 103 250 317", "40103250317"),
+        ("LVA", "LV40103250317", "40103250317"),
+        ("LV", "LV4010325031", "LV4010325031"),
+        # Live TED 7015-2026 publishes the Danish winner's CVR in VAT form.
+        # CVR itself is eight digits; consortium and name-shaped identifiers
+        # must stay raw because neither identifies exactly one Danish company.
+        ("DNK", "DK26527791", "26527791"),
+        ("DK", "25 05 00 53", "25050053"),
+        ("DNK", "26527791", "26527791"),
+        ("DK", "79095311/ 26369126", "79095311/ 26369126"),
+        ("DNK", "Protector Forsikring Danmark", "Protector Forsikring Danmark"),
+    ],
+)
+def test_normalize_live_country_identifiers(
+    country: str, raw: str, expected: str
+) -> None:
+    assert normalize_national_id(country, raw) == expected
+
+
+def test_ted_countries_include_all_supported_european_markets() -> None:
     assert {
         (country.place_code, country.country_iso2) for country in tables.COUNTRIES
     } == {
         ("FIN", "FI"),
         ("SWE", "SE"),
         ("NOR", "NO"),
+        ("FRA", "FR"),
+        ("SVK", "SK"),
+        ("LVA", "LV"),
+        ("DNK", "DK"),
     }
 
 
@@ -316,7 +362,9 @@ def test_s3_prefix_and_duckdb_path_separate_countries() -> None:
     assert "country=SE" in str(se_path)
 
 
-def test_list_parsed_partitions_reports_country_and_month(tmp_path, monkeypatch) -> None:
+def test_list_parsed_partitions_reports_country_and_month(
+    tmp_path, monkeypatch
+) -> None:
     from dagster_v3.defs.ted_procurement import publish as publish_module
 
     monkeypatch.setattr(publish_module, "PARTITION_DUCKDB_ROOT", tmp_path)
@@ -326,6 +374,7 @@ def test_list_parsed_partitions_reports_country_and_month(tmp_path, monkeypatch)
         target.write_bytes(b"")
 
     found = {
-        (country, month) for country, month, _ in publish_module.list_parsed_partitions()
+        (country, month)
+        for country, month, _ in publish_module.list_parsed_partitions()
     }
     assert found == {("SE", "2024-01-01"), ("FI", "2024-02-01")}

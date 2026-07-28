@@ -685,6 +685,32 @@ def test_usd_conversion_limits_rate_scale_before_multiplication() -> None:
     assert stored_rate == Decimal("0.095123456789")
 
 
+def test_usd_conversion_handles_large_decimal_amount() -> None:
+    connection, _storage = _loaded_sample_partition()
+    amount_original = Decimal("9222115557579215352")
+    exchange_rate = Decimal("0.099214725998")
+    connection.execute(
+        f"update {ANNUAL_ACCOUNT_DATASET}.facts "
+        "set amount_original = ?, amount_usd = null "
+        "where raw_label = 'Driftsresultat'",
+        [amount_original],
+    )
+
+    counts = apply_annual_account_usd_conversion(
+        connection=connection,
+        exchange_rates=FakeExchangeRates(exchange_rate),
+        filing_year=2025,
+        chunk_key="bucket_00",
+    )
+
+    amount_usd = connection.execute(
+        f"select amount_usd from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "where raw_label = 'Driftsresultat' limit 1"
+    ).fetchone()[0]
+    assert counts["unconverted_fact_count"] == 0
+    assert amount_usd == Decimal("914969668167114843.3285151213")
+
+
 def test_llm_mapping_preserves_extended_concepts(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -774,6 +800,66 @@ def test_llm_mapping_preserves_extended_concepts(
         annual_account_financials._CONCEPT_MAPPING_BATCH_RELATION,
         annual_account_financials._CONCEPT_MAPPING_BATCH_RELATION,
     ]
+
+
+def test_llm_settings_use_required_deepseek_environment(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_URL", "https://api.deepseek.example")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+
+    assert annual_account_financials.llm_settings() == (
+        "https://api.deepseek.example",
+        "deepseek-v4-flash",
+        "test-key",
+    )
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        annual_account_financials.llm_settings()
+
+
+def test_llm_request_uses_deepseek_json_mode() -> None:
+    captured_request: dict[str, Any] = {}
+    response_data = {
+        "mappings": [
+            {
+                "input_id": 0,
+                "canonical_concept": "share_capital",
+                "confidence": 0.99,
+            }
+        ]
+    }
+    raw_response = json.dumps(response_data)
+
+    def create_completion(**kwargs: Any) -> SimpleNamespace:
+        captured_request.update(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=raw_response),
+                )
+            ]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create_completion),
+        )
+    )
+
+    response, returned_raw_response = annual_account_financials._request_llm_mappings(
+        client,
+        batch=[("aksjekapital", "balance_sheet")],
+        model="deepseek-v4-flash",
+    )
+
+    assert returned_raw_response == raw_response
+    assert response == AnnualAccountConceptMappingResponse.model_validate(response_data)
+    assert captured_request["response_format"] == {"type": "json_object"}
+    assert captured_request["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert "JSON object" in captured_request["messages"][0]["content"]
 
 
 def test_metric_validation_keeps_ambiguous_facts_and_marks_review() -> None:

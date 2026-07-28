@@ -6,8 +6,12 @@ from typing import Any
 
 import requests
 from botocore.exceptions import ClientError
+import pytest
 
-from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
+from dagster_v3.defs.norway_brreg.resources import (
+    BrregAnnualAccountPdfFailure,
+    NorwayBrregApiResource,
+)
 
 
 EXPECTED_ENTITY_RECORD_KEYS = {
@@ -100,7 +104,7 @@ class ParamAwareFakeHttpSession:
 
 
 class SequentialFakeHttpSession:
-    def __init__(self, responses: list[FakeResponse]) -> None:
+    def __init__(self, responses: list[FakeResponse | Exception]) -> None:
         self.responses = responses
         self.calls: list[tuple[str, dict[str, Any] | None, int, bool]] = []
         self.headers: dict[str, str] = {}
@@ -114,7 +118,10 @@ class SequentialFakeHttpSession:
         stream: bool = False,
     ) -> FakeResponse:
         self.calls.append((url, params, timeout, stream))
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class FakeDagsterS3Resource:
@@ -322,6 +329,103 @@ def test_annual_account_pdf_slows_requests_and_retries_rate_limit(
     assert result.body == b"%PDF-1.7 annual account"
     assert len(session.calls) == 2
     assert sleeps == [1.0, 7.0, 1.0]
+
+
+def test_annual_account_pdf_returns_failure_after_three_backend_timeouts(
+    monkeypatch,
+) -> None:
+    session = SequentialFakeHttpSession(
+        [
+            FakeResponse(status_code=504),
+            FakeResponse(status_code=504),
+            FakeResponse(
+                status_code=504,
+                headers={
+                    "Content-Type": "text/html",
+                    "Set-Cookie": "secret",
+                    "X-Request-ID": "request-3",
+                },
+            ),
+        ]
+    )
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "dagster_v3.defs.norway_brreg.resources.time.sleep", sleeps.append
+    )
+
+    result = NorwayBrregApiResource(session=session).annual_account_pdf(
+        org_number="935873371",
+        filing_year=2025,
+    )
+
+    assert result == BrregAnnualAccountPdfFailure(
+        source_url=(
+            "https://data.brreg.no/regnskapsregisteret/regnskap/"
+            "aarsregnskap/kopi/935873371/2025"
+        ),
+        http_status=504,
+        attempt_count=3,
+        error_type="http_error",
+        error_message="HTTP 504",
+        response_headers={
+            "content-type": "text/html",
+            "x-request-id": "request-3",
+        },
+    )
+    assert len(session.calls) == 3
+    assert sleeps == [1.0, 5.0, 1.0, 10.0, 1.0]
+
+
+def test_annual_account_pdf_returns_failure_after_three_request_timeouts(
+    monkeypatch,
+) -> None:
+    session = SequentialFakeHttpSession(
+        [
+            requests.ReadTimeout("backend timed out"),
+            requests.ReadTimeout("backend timed out"),
+            requests.ReadTimeout("backend timed out"),
+        ]
+    )
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "dagster_v3.defs.norway_brreg.resources.time.sleep", sleeps.append
+    )
+
+    result = NorwayBrregApiResource(session=session).annual_account_pdf(
+        org_number="935873371",
+        filing_year=2025,
+    )
+
+    assert isinstance(result, BrregAnnualAccountPdfFailure)
+    assert result.http_status is None
+    assert result.attempt_count == 3
+    assert result.error_type == "ReadTimeout"
+    assert result.error_message == "backend timed out"
+    assert len(session.calls) == 3
+    assert sleeps == [1.0, 5.0, 1.0, 10.0, 1.0]
+
+
+def test_annual_account_pdf_does_not_suppress_exhausted_rate_limit(
+    monkeypatch,
+) -> None:
+    session = SequentialFakeHttpSession(
+        [
+            FakeResponse(status_code=429),
+            FakeResponse(status_code=429),
+            FakeResponse(status_code=429),
+        ]
+    )
+    monkeypatch.setattr(
+        "dagster_v3.defs.norway_brreg.resources.time.sleep", lambda _: None
+    )
+
+    with pytest.raises(requests.HTTPError):
+        NorwayBrregApiResource(session=session).annual_account_pdf(
+            org_number="935873371",
+            filing_year=2025,
+        )
+
+    assert len(session.calls) == 3
 
 
 def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities() -> (

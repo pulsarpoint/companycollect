@@ -139,6 +139,51 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             )
         )
 
+    def annual_account_pdf_failure_exists(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+    ) -> bool:
+        return self.response_exists(
+            annual_account_pdf_failure_object_key(
+                filing_year,
+                chunk_key,
+                org_number,
+            )
+        )
+
+    def write_annual_account_pdf_failure(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+        failure: dict[str, Any],
+    ) -> str:
+        key = annual_account_pdf_failure_object_key(
+            filing_year,
+            chunk_key,
+            org_number,
+        )
+        return self.write_json_object(key, failure)
+
+    def read_annual_account_pdf_failure(
+        self,
+        *,
+        filing_year: int,
+        chunk_key: str,
+        org_number: str,
+    ) -> dict[str, Any]:
+        return self.read_json_object(
+            annual_account_pdf_failure_object_key(
+                filing_year,
+                chunk_key,
+                org_number,
+            )
+        )
+
     def delete_annual_account_pdfs(self, object_keys: list[str]) -> int:
         return self.object_store.delete_keys(
             object_keys,
@@ -510,6 +555,17 @@ def annual_account_pdf_object_key(
     return (
         f"{annual_account_pdf_partition_prefix(filing_year, chunk_key)}"
         f"org={_safe_key_component(org_number)}/annual-account.pdf"
+    )
+
+
+def annual_account_pdf_failure_object_key(
+    filing_year: int,
+    chunk_key: str,
+    org_number: str,
+) -> str:
+    return (
+        f"{annual_account_pdf_partition_prefix(filing_year, chunk_key)}"
+        f"org={_safe_key_component(org_number)}/download-failure.json"
     )
 
 

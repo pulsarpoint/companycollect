@@ -1,0 +1,1520 @@
+- generic [ref=e2]:
+  - generic [ref=e5]:
+    - list [ref=e7]:
+      - listitem [ref=e8]:
+        - link "CompanyCollect" [ref=e9] [cursor=pointer]:
+          - /url: /companies
+    - list [ref=e14]:
+      - listitem [ref=e15]:
+        - link "Companies" [ref=e16] [cursor=pointer]:
+          - /url: /companies
+      - listitem [ref=e22]:
+        - link "Countries" [ref=e23] [cursor=pointer]:
+          - /url: /countries
+      - listitem [ref=e30]:
+        - link "Procurement" [ref=e31] [cursor=pointer]:
+          - /url: /procurements
+      - listitem [ref=e39]:
+        - link "People" [ref=e40] [cursor=pointer]:
+          - /url: /people
+      - listitem [ref=e47]:
+        - link "Financials" [ref=e48] [cursor=pointer]:
+          - /url: /financials
+  - main [ref=e52]:
+    - generic [ref=e53]:
+      - button "Toggle Sidebar" [ref=e54]
+      - separator [ref=e56]
+      - generic [ref=e57]: CompanyCollect Backoffice
+    - generic [ref=e59]:
+      - generic [ref=e60]:
+        - button "← Procurement sources" [ref=e61] [cursor=pointer]
+        - heading "Upphandlingsmyndigheten statistics" [level=1] [ref=e62]
+        - generic [ref=e63]:
+          - generic [ref=e64]: Upphandlingsmyndigheten (Swedish National Agency for Public Procurement)
+          - generic [ref=e65]: SE
+      - generic [ref=e66]:
+        - generic [ref=e67]:
+          - generic [ref=e68]: About this register
+          - generic [ref=e69]: Advertised Swedish procurement. Excludes direct and non-advertised procurement, missing after-notices, and many framework call-offs. Publishes no contract value at all -- none of its 44 columns is monetary.
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - term [ref=e73]: Grain
+            - definition [ref=e74]: one row per (procurement, lot, supplier)
+          - generic [ref=e75]:
+            - term [ref=e76]: Licence
+            - definition [ref=e77]: Swedish public sector open data
+          - generic [ref=e78]:
+            - term [ref=e79]: How we obtain it
+            - definition [ref=e80]: Downloaded. A single bulk CSV of every advertised procurement, 44 columns, replaced wholesale each refresh. This file is the entire Swedish source -- there is no API behind it.
+          - generic [ref=e81]:
+            - term [ref=e82]: Read from
+            - definition [ref=e83]:
+              - link "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e84] [cursor=pointer]:
+                - /url: https://catalog.upphandlingsmyndigheten.se/store/12/resource/239
+          - generic [ref=e85]:
+            - term [ref=e86]: Homepage
+            - definition [ref=e87]:
+              - link "https://www.upphandlingsmyndigheten.se" [ref=e88] [cursor=pointer]:
+                - /url: https://www.upphandlingsmyndigheten.se
+          - generic [ref=e89]:
+            - term [ref=e90]: Open tenders
+            - definition [ref=e91]: No single portal — see notes
+          - generic [ref=e92]:
+            - term [ref=e93]: Notes
+            - definition [ref=e94]: "Sweden has no single national tender portal: notices are spread across registered commercial ad databases, chiefly Mercell, e-Avrop and KommersAnnons, which is why every award here names the database it was advertised in. Suppliers may be natural persons as well as companies, so rows carry a person/company classification and only companies are matched to the register."
+      - generic [ref=e95]:
+        - generic [ref=e96]:
+          - generic [ref=e97]: What we hold
+          - generic [ref=e98]: Per country, because a register serving several is loaded to a different depth in each. The caveat is about our coverage, not the register's scope.
+        - generic [ref=e100]:
+          - generic [ref=e101]:
+            - generic [ref=e102]: SE
+            - generic [ref=e103]: 2021-01-01 → 2026-07-24
+          - paragraph [ref=e104]: UHM advertised procurement and TED eForms awards. Excludes direct/non-advertised procurement, missing after-notices, and many framework call-offs. UHM publishes no contract value at all, so Swedish awards carry none.
+      - generic [ref=e105]:
+        - generic [ref=e106]:
+          - generic [ref=e107]: Records
+          - generic [ref=e108]:
+            - text: 102,785 rows in
+            - code [ref=e109]: se_uhm_procurement_awards
+            - text: ", at this register's own grain and in its own columns — not the canonical projection the country views expose."
+        - generic [ref=e110]:
+          - button "Filters" [ref=e112]
+          - table [ref=e115]:
+            - rowgroup [ref=e116]:
+              - row [ref=e117]:
+                - columnheader "Company ID" [ref=e118]
+                - columnheader "Company match status" [ref=e119]
+                - columnheader "Match eligibility" [ref=e120]
+                - columnheader "Source record ID" [ref=e121]
+                - columnheader "Source line number" [ref=e122]
+                - columnheader "Source procurement ID" [ref=e123]
+                - columnheader "Source lot ID" [ref=e124]
+                - columnheader "Publication date" [ref=e125]
+                - columnheader "Title" [ref=e126]
+                - columnheader "Agreement type" [ref=e127]
+                - columnheader "Contracted" [ref=e128]
+                - columnheader "Buyer name" [ref=e129]
+                - columnheader "Buyer ID normalized" [ref=e130]
+                - columnheader "Supplier name" [ref=e131]
+                - columnheader "Supplier ID normalized" [ref=e132]
+                - columnheader "CPV code" [ref=e133]
+                - columnheader "Advertising database" [ref=e134]
+                - columnheader "Directive governed" [ref=e135]
+                - columnheader "Source URL" [ref=e136]
+                - columnheader "Source object key" [ref=e137]
+                - columnheader "Source retrieved at" [ref=e138]
+            - rowgroup [ref=e139]:
+              - row [ref=e140]:
+                - cell "5565980694" [ref=e141]
+                - cell "exact" [ref=e143]
+                - cell "eligible" [ref=e145]
+                - cell "4cc527088f9d01e78825b53082256c6b7ea86d79ba867924a84001426f1fc4ae" [ref=e147]
+                - cell "75329" [ref=e149]
+                - cell [ref=e151]:
+                  - link "MT65677" [ref=e152] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65677
+                - cell "MT65677_8e3fc74f-6ab3-458a-b128-7a743ba45e76_LOT-0000" [ref=e153]
+                - cell "2024-12-30" [ref=e155]
+                - cell "Operationstextilier av engångsmaterial DEL 3" [ref=e157]
+                - cell "Ramavtal" [ref=e159]
+                - cell "1" [ref=e161]
+                - cell [ref=e163]:
+                  - link "REGION SKÅNE" [ref=e164] [cursor=pointer]:
+                    - /url: /company/se/2321000255
+                - cell "2321000255" [ref=e165]
+                - cell [ref=e167]:
+                  - link "KCI MEDICAL AB" [ref=e168] [cursor=pointer]:
+                    - /url: /company/se/5565980694
+                - cell "5565980694" [ref=e169]
+                - cell "33140000" [ref=e171]
+                - cell "Mercell Annonsdatabas" [ref=e173]
+                - cell "yes" [ref=e175]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e177]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e179]
+                - cell "2026-07-26 10:52:58.293" [ref=e181]
+              - row [ref=e183]:
+                - cell "5565839015" [ref=e184]
+                - cell "exact" [ref=e186]
+                - cell "eligible" [ref=e188]
+                - cell "7129b99e9587f6299445410a1be52a3a21670ffbe2884a923956e7529f31873c" [ref=e190]
+                - cell "71997" [ref=e192]
+                - cell [ref=e194]:
+                  - link "KA18794" [ref=e195] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/KA18794
+                - cell "KA18794_AN12849_LOT-0001" [ref=e196]
+                - cell "2024-12-30" [ref=e198]
+                - cell "Släckbilar" [ref=e200]
+                - cell "Kontrakt" [ref=e202]
+                - cell "1" [ref=e204]
+                - cell [ref=e206]:
+                  - link "RÄDDNINGSTJÄNSTEN SKÅNE NORDVÄST" [ref=e207] [cursor=pointer]:
+                    - /url: /company/se/2220003087
+                - cell "2220003087" [ref=e208]
+                - cell [ref=e210]:
+                  - link "FLOBY RESCUE AB" [ref=e211] [cursor=pointer]:
+                    - /url: /company/se/5565839015
+                - cell "5565839015" [ref=e212]
+                - cell "34114110" [ref=e214]
+                - cell "KommersAnnons.se" [ref=e216]
+                - cell "yes" [ref=e218]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e220]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e222]
+                - cell "2026-07-26 10:52:58.293" [ref=e224]
+              - row [ref=e226]:
+                - cell "5565671152" [ref=e227]
+                - cell "exact" [ref=e229]
+                - cell "eligible" [ref=e231]
+                - cell "a1e6ced776d4d41a419ef743192aa3923482a95369bb3d599aa8bdfd6b66826f" [ref=e233]
+                - cell "100266" [ref=e235]
+                - cell [ref=e237]:
+                  - link "MT65681" [ref=e238] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65681
+                - cell "MT65681_67b3595471740ab7e35bd97b_LOT-0000" [ref=e239]
+                - cell "2024-12-30" [ref=e241]
+                - cell "Byggplåt- och takarbeten" [ref=e243]
+                - cell "Ramavtal" [ref=e245]
+                - cell "1" [ref=e247]
+                - cell [ref=e249]:
+                  - link "AKTIEBOLAGET STÅNGÅSTADEN" [ref=e250] [cursor=pointer]:
+                    - /url: /company/se/5560416850
+                - cell "5560416850" [ref=e251]
+                - cell [ref=e253]:
+                  - link "TERNSTEDT INVENT AB" [ref=e254] [cursor=pointer]:
+                    - /url: /company/se/5565671152
+                - cell "5565671152" [ref=e255]
+                - cell "45000000" [ref=e257]
+                - cell "Mercell Annonsdatabas" [ref=e259]
+                - cell "no" [ref=e261]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e263]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e265]
+                - cell "2026-07-26 10:52:58.293" [ref=e267]
+              - row [ref=e269]:
+                - cell "5565536272" [ref=e270]
+                - cell "exact" [ref=e272]
+                - cell "eligible" [ref=e274]
+                - cell "a41ec192d700c08f602a0479541ad4ecbecb03170195e8dcd6a8565d80380fe9" [ref=e276]
+                - cell "100260" [ref=e278]
+                - cell [ref=e280]:
+                  - link "MT65681" [ref=e281] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65681
+                - cell "MT65681_67b3595471740ab7e35bd97b_LOT-0000" [ref=e282]
+                - cell "2024-12-30" [ref=e284]
+                - cell "Byggplåt- och takarbeten" [ref=e286]
+                - cell "Ramavtal" [ref=e288]
+                - cell "1" [ref=e290]
+                - cell [ref=e292]:
+                  - link "AKTIEBOLAGET STÅNGÅSTADEN" [ref=e293] [cursor=pointer]:
+                    - /url: /company/se/5560416850
+                - cell "5560416850" [ref=e294]
+                - cell [ref=e296]:
+                  - link "BALCKS & HJELMGRENS PLÅT OCH SMIDE AB" [ref=e297] [cursor=pointer]:
+                    - /url: /company/se/5565536272
+                - cell "5565536272" [ref=e298]
+                - cell "45000000" [ref=e300]
+                - cell "Mercell Annonsdatabas" [ref=e302]
+                - cell "no" [ref=e304]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e306]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e308]
+                - cell "2026-07-26 10:52:58.293" [ref=e310]
+              - row [ref=e312]:
+                - cell "5565477758" [ref=e313]
+                - cell "exact" [ref=e315]
+                - cell "eligible" [ref=e317]
+                - cell "b2a7d1e42dea9e218ac5dfa933a5c8192d92b62f597f77260f84f6bd31e45fab" [ref=e319]
+                - cell "100265" [ref=e321]
+                - cell [ref=e323]:
+                  - link "MT65681" [ref=e324] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65681
+                - cell "MT65681_67b3595471740ab7e35bd97b_LOT-0000" [ref=e325]
+                - cell "2024-12-30" [ref=e327]
+                - cell "Byggplåt- och takarbeten" [ref=e329]
+                - cell "Ramavtal" [ref=e331]
+                - cell "1" [ref=e333]
+                - cell [ref=e335]:
+                  - link "AKTIEBOLAGET STÅNGÅSTADEN" [ref=e336] [cursor=pointer]:
+                    - /url: /company/se/5560416850
+                - cell "5560416850" [ref=e337]
+                - cell [ref=e339]:
+                  - link "SVENSKA HANTVERKSPLÅTSLAGERIET AB" [ref=e340] [cursor=pointer]:
+                    - /url: /company/se/5565477758
+                - cell "5565477758" [ref=e341]
+                - cell "45000000" [ref=e343]
+                - cell "Mercell Annonsdatabas" [ref=e345]
+                - cell "no" [ref=e347]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e349]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e351]
+                - cell "2026-07-26 10:52:58.293" [ref=e353]
+              - row [ref=e355]:
+                - cell "5565475489" [ref=e356]
+                - cell "exact" [ref=e358]
+                - cell "eligible" [ref=e360]
+                - cell "b8d7d5ba40dcce6bfbfdc93c1ffaa237d1fa060240b909e992635494f8f447a2" [ref=e362]
+                - cell "75330" [ref=e364]
+                - cell [ref=e366]:
+                  - link "MT65677" [ref=e367] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65677
+                - cell "MT65677_8e3fc74f-6ab3-458a-b128-7a743ba45e76_LOT-0000" [ref=e368]
+                - cell "2024-12-30" [ref=e370]
+                - cell "Operationstextilier av engångsmaterial DEL 3" [ref=e372]
+                - cell "Ramavtal" [ref=e374]
+                - cell "1" [ref=e376]
+                - cell [ref=e378]:
+                  - link "REGION SKÅNE" [ref=e379] [cursor=pointer]:
+                    - /url: /company/se/2321000255
+                - cell "2321000255" [ref=e380]
+                - cell [ref=e382]:
+                  - link "MÖLNLYCKE HEALTH CARE AB" [ref=e383] [cursor=pointer]:
+                    - /url: /company/se/5565475489
+                - cell "5565475489" [ref=e384]
+                - cell "33140000" [ref=e386]
+                - cell "Mercell Annonsdatabas" [ref=e388]
+                - cell "yes" [ref=e390]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e392]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e394]
+                - cell "2026-07-26 10:52:58.293" [ref=e396]
+              - row [ref=e398]:
+                - cell "5565361614" [ref=e399]
+                - cell "exact" [ref=e401]
+                - cell "eligible" [ref=e403]
+                - cell "c0100b3a2e9dd31e3506905126b3568eb28cdb6cb6b76ae0e45713d82fd3054b" [ref=e405]
+                - cell "100263" [ref=e407]
+                - cell [ref=e409]:
+                  - link "MT65681" [ref=e410] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65681
+                - cell "MT65681_67b3595471740ab7e35bd97b_LOT-0000" [ref=e411]
+                - cell "2024-12-30" [ref=e413]
+                - cell "Byggplåt- och takarbeten" [ref=e415]
+                - cell "Ramavtal" [ref=e417]
+                - cell "1" [ref=e419]
+                - cell [ref=e421]:
+                  - link "AKTIEBOLAGET STÅNGÅSTADEN" [ref=e422] [cursor=pointer]:
+                    - /url: /company/se/5560416850
+                - cell "5560416850" [ref=e423]
+                - cell [ref=e425]:
+                  - link "MÅLERI-HANTVERKARNA I LINKÖPING AB" [ref=e426] [cursor=pointer]:
+                    - /url: /company/se/5565361614
+                - cell "5565361614" [ref=e427]
+                - cell "45000000" [ref=e429]
+                - cell "Mercell Annonsdatabas" [ref=e431]
+                - cell "no" [ref=e433]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e435]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e437]
+                - cell "2026-07-26 10:52:58.293" [ref=e439]
+              - row [ref=e441]:
+                - cell "5565341830" [ref=e442]
+                - cell "exact" [ref=e444]
+                - cell "eligible" [ref=e446]
+                - cell "53554751abc6265fb897f49f1516e8398350da6a72ad1a9c56172629fffc9a71" [ref=e448]
+                - cell "72332" [ref=e450]
+                - cell [ref=e452]:
+                  - link "SE106985" [ref=e453] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0018" [ref=e454]
+                - cell "2024-12-30" [ref=e456]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e458]
+                - cell "Kontrakt" [ref=e460]
+                - cell "1" [ref=e462]
+                - cell [ref=e464]:
+                  - link "VELLINGE KOMMUN" [ref=e465] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e466]
+                - cell [ref=e468]:
+                  - link "INPUT INTERIÖR KC AKTIEBOLAG" [ref=e469] [cursor=pointer]:
+                    - /url: /company/se/5565341830
+                - cell "5565341830" [ref=e470]
+                - cell "39100000" [ref=e472]
+                - cell "e-Avrop" [ref=e474]
+                - cell "yes" [ref=e476]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e478]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e480]
+                - cell "2026-07-26 10:52:58.293" [ref=e482]
+              - row [ref=e484]:
+                - cell "5565341830" [ref=e485]
+                - cell "exact" [ref=e487]
+                - cell "eligible" [ref=e489]
+                - cell "c253764a0b98cedffc2bd44d269f3b31320b2ab82b0bd80863812e1487405297" [ref=e491]
+                - cell "72331" [ref=e493]
+                - cell [ref=e495]:
+                  - link "SE106985" [ref=e496] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0017" [ref=e497]
+                - cell "2024-12-30" [ref=e499]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e501]
+                - cell "Kontrakt" [ref=e503]
+                - cell "1" [ref=e505]
+                - cell [ref=e507]:
+                  - link "VELLINGE KOMMUN" [ref=e508] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e509]
+                - cell [ref=e511]:
+                  - link "INPUT INTERIÖR KC AKTIEBOLAG" [ref=e512] [cursor=pointer]:
+                    - /url: /company/se/5565341830
+                - cell "5565341830" [ref=e513]
+                - cell "39100000" [ref=e515]
+                - cell "e-Avrop" [ref=e517]
+                - cell "yes" [ref=e519]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e521]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e523]
+                - cell "2026-07-26 10:52:58.293" [ref=e525]
+              - row [ref=e527]:
+                - cell "5565341830" [ref=e528]
+                - cell "exact" [ref=e530]
+                - cell "eligible" [ref=e532]
+                - cell "b67ded7c7fc4008fe16324ecd979d452b6b96134ce371b72592ec24a6fdfebe1" [ref=e534]
+                - cell "72326" [ref=e536]
+                - cell [ref=e538]:
+                  - link "SE106985" [ref=e539] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0012" [ref=e540]
+                - cell "2024-12-30" [ref=e542]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e544]
+                - cell "Kontrakt" [ref=e546]
+                - cell "1" [ref=e548]
+                - cell [ref=e550]:
+                  - link "VELLINGE KOMMUN" [ref=e551] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e552]
+                - cell [ref=e554]:
+                  - link "INPUT INTERIÖR KC AKTIEBOLAG" [ref=e555] [cursor=pointer]:
+                    - /url: /company/se/5565341830
+                - cell "5565341830" [ref=e556]
+                - cell "39100000" [ref=e558]
+                - cell "e-Avrop" [ref=e560]
+                - cell "yes" [ref=e562]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e564]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e566]
+                - cell "2026-07-26 10:52:58.293" [ref=e568]
+              - row [ref=e570]:
+                - cell "5565341830" [ref=e571]
+                - cell "exact" [ref=e573]
+                - cell "eligible" [ref=e575]
+                - cell "9f07fcaa92a8fa9902e020f30120fb618f235043af6e32e95a3175944b523921" [ref=e577]
+                - cell "72319" [ref=e579]
+                - cell [ref=e581]:
+                  - link "SE106985" [ref=e582] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0005" [ref=e583]
+                - cell "2024-12-30" [ref=e585]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e587]
+                - cell "Kontrakt" [ref=e589]
+                - cell "1" [ref=e591]
+                - cell [ref=e593]:
+                  - link "VELLINGE KOMMUN" [ref=e594] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e595]
+                - cell [ref=e597]:
+                  - link "INPUT INTERIÖR KC AKTIEBOLAG" [ref=e598] [cursor=pointer]:
+                    - /url: /company/se/5565341830
+                - cell "5565341830" [ref=e599]
+                - cell "39100000" [ref=e601]
+                - cell "e-Avrop" [ref=e603]
+                - cell "yes" [ref=e605]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e607]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e609]
+                - cell "2026-07-26 10:52:58.293" [ref=e611]
+              - row [ref=e613]:
+                - cell "5565341830" [ref=e614]
+                - cell "exact" [ref=e616]
+                - cell "eligible" [ref=e618]
+                - cell "592a2b7573f578cc7019977e24fd2fdd82a3f5228cd2a8842c26a4ee34420bfd" [ref=e620]
+                - cell "72318" [ref=e622]
+                - cell [ref=e624]:
+                  - link "SE106985" [ref=e625] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0004" [ref=e626]
+                - cell "2024-12-30" [ref=e628]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e630]
+                - cell "Kontrakt" [ref=e632]
+                - cell "1" [ref=e634]
+                - cell [ref=e636]:
+                  - link "VELLINGE KOMMUN" [ref=e637] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e638]
+                - cell [ref=e640]:
+                  - link "INPUT INTERIÖR KC AKTIEBOLAG" [ref=e641] [cursor=pointer]:
+                    - /url: /company/se/5565341830
+                - cell "5565341830" [ref=e642]
+                - cell "39100000" [ref=e644]
+                - cell "e-Avrop" [ref=e646]
+                - cell "yes" [ref=e648]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e650]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e652]
+                - cell "2026-07-26 10:52:58.293" [ref=e654]
+              - row [ref=e656]:
+                - cell "5565341830" [ref=e657]
+                - cell "exact" [ref=e659]
+                - cell "eligible" [ref=e661]
+                - cell "31b3053ad61eed6a5e061704fd074cf01507b24e400214327e22890cdcf9be0b" [ref=e663]
+                - cell "72317" [ref=e665]
+                - cell [ref=e667]:
+                  - link "SE106985" [ref=e668] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0003" [ref=e669]
+                - cell "2024-12-30" [ref=e671]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e673]
+                - cell "Kontrakt" [ref=e675]
+                - cell "1" [ref=e677]
+                - cell [ref=e679]:
+                  - link "VELLINGE KOMMUN" [ref=e680] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e681]
+                - cell [ref=e683]:
+                  - link "INPUT INTERIÖR KC AKTIEBOLAG" [ref=e684] [cursor=pointer]:
+                    - /url: /company/se/5565341830
+                - cell "5565341830" [ref=e685]
+                - cell "39100000" [ref=e687]
+                - cell "e-Avrop" [ref=e689]
+                - cell "yes" [ref=e691]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e693]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e695]
+                - cell "2026-07-26 10:52:58.293" [ref=e697]
+              - row [ref=e699]:
+                - cell "5565341830" [ref=e700]
+                - cell "exact" [ref=e702]
+                - cell "eligible" [ref=e704]
+                - cell "c36a1acde181f0b0de45727e96f0ad47acc76d5799626594d892a9f897aa3811" [ref=e706]
+                - cell "72316" [ref=e708]
+                - cell [ref=e710]:
+                  - link "SE106985" [ref=e711] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0002" [ref=e712]
+                - cell "2024-12-30" [ref=e714]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e716]
+                - cell "Kontrakt" [ref=e718]
+                - cell "1" [ref=e720]
+                - cell [ref=e722]:
+                  - link "VELLINGE KOMMUN" [ref=e723] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e724]
+                - cell [ref=e726]:
+                  - link "INPUT INTERIÖR KC AKTIEBOLAG" [ref=e727] [cursor=pointer]:
+                    - /url: /company/se/5565341830
+                - cell "5565341830" [ref=e728]
+                - cell "39100000" [ref=e730]
+                - cell "e-Avrop" [ref=e732]
+                - cell "yes" [ref=e734]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e736]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e738]
+                - cell "2026-07-26 10:52:58.293" [ref=e740]
+              - row [ref=e742]:
+                - cell "5565341830" [ref=e743]
+                - cell "exact" [ref=e745]
+                - cell "eligible" [ref=e747]
+                - cell "e20687e37d87561f81281f24488604475fdedd538f929ad7e2079cd19213de24" [ref=e749]
+                - cell "72315" [ref=e751]
+                - cell [ref=e753]:
+                  - link "SE106985" [ref=e754] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0001" [ref=e755]
+                - cell "2024-12-30" [ref=e757]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e759]
+                - cell "Kontrakt" [ref=e761]
+                - cell "1" [ref=e763]
+                - cell [ref=e765]:
+                  - link "VELLINGE KOMMUN" [ref=e766] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e767]
+                - cell [ref=e769]:
+                  - link "INPUT INTERIÖR KC AKTIEBOLAG" [ref=e770] [cursor=pointer]:
+                    - /url: /company/se/5565341830
+                - cell "5565341830" [ref=e771]
+                - cell "39100000" [ref=e773]
+                - cell "e-Avrop" [ref=e775]
+                - cell "yes" [ref=e777]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e779]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e781]
+                - cell "2026-07-26 10:52:58.293" [ref=e783]
+              - row [ref=e785]:
+                - cell "5564523453" [ref=e786]
+                - cell "exact" [ref=e788]
+                - cell "eligible" [ref=e790]
+                - cell "f253397e8849e0b2accc11beb92a9eb5613b0fe38ee969a0df802a26e3b343d1" [ref=e792]
+                - cell "100261" [ref=e794]
+                - cell [ref=e796]:
+                  - link "MT65681" [ref=e797] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65681
+                - cell "MT65681_67b3595471740ab7e35bd97b_LOT-0000" [ref=e798]
+                - cell "2024-12-30" [ref=e800]
+                - cell "Byggplåt- och takarbeten" [ref=e802]
+                - cell "Ramavtal" [ref=e804]
+                - cell "1" [ref=e806]
+                - cell [ref=e808]:
+                  - link "AKTIEBOLAGET STÅNGÅSTADEN" [ref=e809] [cursor=pointer]:
+                    - /url: /company/se/5560416850
+                - cell "5560416850" [ref=e810]
+                - cell [ref=e812]:
+                  - link "HAMI AB" [ref=e813] [cursor=pointer]:
+                    - /url: /company/se/5564523453
+                - cell "5564523453" [ref=e814]
+                - cell "45000000" [ref=e816]
+                - cell "Mercell Annonsdatabas" [ref=e818]
+                - cell "no" [ref=e820]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e822]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e824]
+                - cell "2026-07-26 10:52:58.293" [ref=e826]
+              - row [ref=e828]:
+                - cell "5563513307" [ref=e829]
+                - cell "exact" [ref=e831]
+                - cell "eligible" [ref=e833]
+                - cell "96adcfa121e44e10484bbb208312d0d8cc0894c2527599a2e103abb7a9ae2915" [ref=e835]
+                - cell "71487" [ref=e837]
+                - cell [ref=e839]:
+                  - link "SE107773" [ref=e840] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE107773
+                - cell "SE107773_37042_LOT-0001" [ref=e841]
+                - cell "2024-12-30" [ref=e843]
+                - cell "Sprängarbeten" [ref=e845]
+                - cell "Ramavtal" [ref=e847]
+                - cell "1" [ref=e849]
+                - cell [ref=e851]:
+                  - link "VÄRNAMO KOMMUN" [ref=e852] [cursor=pointer]:
+                    - /url: /company/se/2120000555
+                - cell "2120000555" [ref=e853]
+                - cell [ref=e855]:
+                  - link "VÄRNAMO SPRÄNGTJÄNST AB" [ref=e856] [cursor=pointer]:
+                    - /url: /company/se/5563513307
+                - cell "5563513307" [ref=e857]
+                - cell "45111210" [ref=e859]
+                - cell "e-Avrop" [ref=e861]
+                - cell "no" [ref=e863]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e865]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e867]
+                - cell "2026-07-26 10:52:58.293" [ref=e869]
+              - row [ref=e871]:
+                - cell "5562566736" [ref=e872]
+                - cell "exact" [ref=e874]
+                - cell "eligible" [ref=e876]
+                - cell "6d813fd4f74568f50329934d5d7e50d01f65f13971a23ff0d4f0abceab8851f8" [ref=e878]
+                - cell "72336" [ref=e880]
+                - cell [ref=e882]:
+                  - link "SE106985" [ref=e883] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0022" [ref=e884]
+                - cell "2024-12-30" [ref=e886]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e888]
+                - cell "Kontrakt" [ref=e890]
+                - cell "1" [ref=e892]
+                - cell [ref=e894]:
+                  - link "VELLINGE KOMMUN" [ref=e895] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e896]
+                - cell [ref=e898]:
+                  - link "KINNARPS AB" [ref=e899] [cursor=pointer]:
+                    - /url: /company/se/5562566736
+                - cell "5562566736" [ref=e900]
+                - cell "39100000" [ref=e902]
+                - cell "e-Avrop" [ref=e904]
+                - cell "yes" [ref=e906]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e908]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e910]
+                - cell "2026-07-26 10:52:58.293" [ref=e912]
+              - row [ref=e914]:
+                - cell "5562566736" [ref=e915]
+                - cell "exact" [ref=e917]
+                - cell "eligible" [ref=e919]
+                - cell "94703cfbafb4511fcf3f04faefa80b92a5d46cd65b821c3a858340d730e0f334" [ref=e921]
+                - cell "72333" [ref=e923]
+                - cell [ref=e925]:
+                  - link "SE106985" [ref=e926] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0019" [ref=e927]
+                - cell "2024-12-30" [ref=e929]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e931]
+                - cell "Kontrakt" [ref=e933]
+                - cell "1" [ref=e935]
+                - cell [ref=e937]:
+                  - link "VELLINGE KOMMUN" [ref=e938] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e939]
+                - cell [ref=e941]:
+                  - link "KINNARPS AB" [ref=e942] [cursor=pointer]:
+                    - /url: /company/se/5562566736
+                - cell "5562566736" [ref=e943]
+                - cell "39100000" [ref=e945]
+                - cell "e-Avrop" [ref=e947]
+                - cell "yes" [ref=e949]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e951]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e953]
+                - cell "2026-07-26 10:52:58.293" [ref=e955]
+              - row [ref=e957]:
+                - cell "5562566736" [ref=e958]
+                - cell "exact" [ref=e960]
+                - cell "eligible" [ref=e962]
+                - cell "df80148f20fa3538eef91bba09937c9f5a9512537b2bd8015fef2d7a5015f870" [ref=e964]
+                - cell "72325" [ref=e966]
+                - cell [ref=e968]:
+                  - link "SE106985" [ref=e969] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0011" [ref=e970]
+                - cell "2024-12-30" [ref=e972]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e974]
+                - cell "Kontrakt" [ref=e976]
+                - cell "1" [ref=e978]
+                - cell [ref=e980]:
+                  - link "VELLINGE KOMMUN" [ref=e981] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e982]
+                - cell [ref=e984]:
+                  - link "KINNARPS AB" [ref=e985] [cursor=pointer]:
+                    - /url: /company/se/5562566736
+                - cell "5562566736" [ref=e986]
+                - cell "39100000" [ref=e988]
+                - cell "e-Avrop" [ref=e990]
+                - cell "yes" [ref=e992]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e994]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e996]
+                - cell "2026-07-26 10:52:58.293" [ref=e998]
+              - row [ref=e1000]:
+                - cell "5562566736" [ref=e1001]
+                - cell "exact" [ref=e1003]
+                - cell "eligible" [ref=e1005]
+                - cell "3e55788cc94ef3df6c85069d6914e2e8d5747fb3055ff2899a6145f97b7d5754" [ref=e1007]
+                - cell "72324" [ref=e1009]
+                - cell [ref=e1011]:
+                  - link "SE106985" [ref=e1012] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0010" [ref=e1013]
+                - cell "2024-12-30" [ref=e1015]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1017]
+                - cell "Kontrakt" [ref=e1019]
+                - cell "1" [ref=e1021]
+                - cell [ref=e1023]:
+                  - link "VELLINGE KOMMUN" [ref=e1024] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1025]
+                - cell [ref=e1027]:
+                  - link "KINNARPS AB" [ref=e1028] [cursor=pointer]:
+                    - /url: /company/se/5562566736
+                - cell "5562566736" [ref=e1029]
+                - cell "39100000" [ref=e1031]
+                - cell "e-Avrop" [ref=e1033]
+                - cell "yes" [ref=e1035]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1037]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1039]
+                - cell "2026-07-26 10:52:58.293" [ref=e1041]
+              - row [ref=e1043]:
+                - cell "5562566736" [ref=e1044]
+                - cell "exact" [ref=e1046]
+                - cell "eligible" [ref=e1048]
+                - cell "2c80bab77c7dc45a847f8d94784529366f054907f258b2b9c832e8974fecc138" [ref=e1050]
+                - cell "72323" [ref=e1052]
+                - cell [ref=e1054]:
+                  - link "SE106985" [ref=e1055] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0009" [ref=e1056]
+                - cell "2024-12-30" [ref=e1058]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1060]
+                - cell "Kontrakt" [ref=e1062]
+                - cell "1" [ref=e1064]
+                - cell [ref=e1066]:
+                  - link "VELLINGE KOMMUN" [ref=e1067] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1068]
+                - cell [ref=e1070]:
+                  - link "KINNARPS AB" [ref=e1071] [cursor=pointer]:
+                    - /url: /company/se/5562566736
+                - cell "5562566736" [ref=e1072]
+                - cell "39100000" [ref=e1074]
+                - cell "e-Avrop" [ref=e1076]
+                - cell "yes" [ref=e1078]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1080]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1082]
+                - cell "2026-07-26 10:52:58.293" [ref=e1084]
+              - row [ref=e1086]:
+                - cell "5562566736" [ref=e1087]
+                - cell "exact" [ref=e1089]
+                - cell "eligible" [ref=e1091]
+                - cell "5b8d9d378c873af54bd1f4429947df06b838151e222ed611e6b7949f847b10b8" [ref=e1093]
+                - cell "72322" [ref=e1095]
+                - cell [ref=e1097]:
+                  - link "SE106985" [ref=e1098] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0008" [ref=e1099]
+                - cell "2024-12-30" [ref=e1101]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1103]
+                - cell "Kontrakt" [ref=e1105]
+                - cell "1" [ref=e1107]
+                - cell [ref=e1109]:
+                  - link "VELLINGE KOMMUN" [ref=e1110] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1111]
+                - cell [ref=e1113]:
+                  - link "KINNARPS AB" [ref=e1114] [cursor=pointer]:
+                    - /url: /company/se/5562566736
+                - cell "5562566736" [ref=e1115]
+                - cell "39100000" [ref=e1117]
+                - cell "e-Avrop" [ref=e1119]
+                - cell "yes" [ref=e1121]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1123]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1125]
+                - cell "2026-07-26 10:52:58.293" [ref=e1127]
+              - row [ref=e1129]:
+                - cell "5562566736" [ref=e1130]
+                - cell "exact" [ref=e1132]
+                - cell "eligible" [ref=e1134]
+                - cell "90c384d91114ec1dc1d1f0c4d7e5d1f920a43dabbfeb058dd709ce77e02c049d" [ref=e1136]
+                - cell "72321" [ref=e1138]
+                - cell [ref=e1140]:
+                  - link "SE106985" [ref=e1141] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0007" [ref=e1142]
+                - cell "2024-12-30" [ref=e1144]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1146]
+                - cell "Kontrakt" [ref=e1148]
+                - cell "1" [ref=e1150]
+                - cell [ref=e1152]:
+                  - link "VELLINGE KOMMUN" [ref=e1153] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1154]
+                - cell [ref=e1156]:
+                  - link "KINNARPS AB" [ref=e1157] [cursor=pointer]:
+                    - /url: /company/se/5562566736
+                - cell "5562566736" [ref=e1158]
+                - cell "39100000" [ref=e1160]
+                - cell "e-Avrop" [ref=e1162]
+                - cell "yes" [ref=e1164]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1166]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1168]
+                - cell "2026-07-26 10:52:58.293" [ref=e1170]
+              - row [ref=e1172]:
+                - cell "5562566736" [ref=e1173]
+                - cell "exact" [ref=e1175]
+                - cell "eligible" [ref=e1177]
+                - cell "bae3d139d34d0c52c31d1a1479965c95b76f13a935e278566921a108927f42e4" [ref=e1179]
+                - cell "72320" [ref=e1181]
+                - cell [ref=e1183]:
+                  - link "SE106985" [ref=e1184] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0006" [ref=e1185]
+                - cell "2024-12-30" [ref=e1187]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1189]
+                - cell "Kontrakt" [ref=e1191]
+                - cell "1" [ref=e1193]
+                - cell [ref=e1195]:
+                  - link "VELLINGE KOMMUN" [ref=e1196] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1197]
+                - cell [ref=e1199]:
+                  - link "KINNARPS AB" [ref=e1200] [cursor=pointer]:
+                    - /url: /company/se/5562566736
+                - cell "5562566736" [ref=e1201]
+                - cell "39100000" [ref=e1203]
+                - cell "e-Avrop" [ref=e1205]
+                - cell "yes" [ref=e1207]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1209]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1211]
+                - cell "2026-07-26 10:52:58.293" [ref=e1213]
+              - row [ref=e1215]:
+                - cell "5562104124" [ref=e1216]
+                - cell "exact" [ref=e1218]
+                - cell "eligible" [ref=e1220]
+                - cell "4ada994c6183ebb878c1f2d6c36abb642fe00b7e7f15a234670b01d8850bc4ed" [ref=e1222]
+                - cell "76731" [ref=e1224]
+                - cell [ref=e1226]:
+                  - link "MT65679" [ref=e1227] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65679
+                - cell "MT65679_76ee0600-351a-4878-a2ff-222a3a3da7d9_LOT-0000" [ref=e1228]
+                - cell "2024-12-30" [ref=e1230]
+                - cell "Personbil till kultur- och fritidsförvaltningen, elfordon" [ref=e1232]
+                - cell "Kontrakt" [ref=e1234]
+                - cell "1" [ref=e1236]
+                - cell [ref=e1238]:
+                  - link "TRANÅS KOMMUN" [ref=e1239] [cursor=pointer]:
+                    - /url: /company/se/2120000597
+                - cell "2120000597" [ref=e1240]
+                - cell [ref=e1242]:
+                  - link "ATTEVIKS BIL AB" [ref=e1243] [cursor=pointer]:
+                    - /url: /company/se/5562104124
+                - cell "5562104124" [ref=e1244]
+                - cell "34100000" [ref=e1246]
+                - cell "Mercell Annonsdatabas" [ref=e1248]
+                - cell "yes" [ref=e1250]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1252]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1254]
+                - cell "2026-07-26 10:52:58.293" [ref=e1256]
+              - row [ref=e1258]:
+                - cell "5561521658" [ref=e1259]
+                - cell "exact" [ref=e1261]
+                - cell "eligible" [ref=e1263]
+                - cell "81a92a540f4c961bfeedfd5f4fc4585b1b85e509b54d7a2bf4c8f5774f2dd3bc" [ref=e1265]
+                - cell "100259" [ref=e1267]
+                - cell [ref=e1269]:
+                  - link "MT65681" [ref=e1270] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65681
+                - cell "MT65681_67b3595471740ab7e35bd97b_LOT-0000" [ref=e1271]
+                - cell "2024-12-30" [ref=e1273]
+                - cell "Byggplåt- och takarbeten" [ref=e1275]
+                - cell "Ramavtal" [ref=e1277]
+                - cell "1" [ref=e1279]
+                - cell [ref=e1281]:
+                  - link "AKTIEBOLAGET STÅNGÅSTADEN" [ref=e1282] [cursor=pointer]:
+                    - /url: /company/se/5560416850
+                - cell "5560416850" [ref=e1283]
+                - cell [ref=e1285]:
+                  - link "AQUASOL AB" [ref=e1286] [cursor=pointer]:
+                    - /url: /company/se/5561521658
+                - cell "5561521658" [ref=e1287]
+                - cell "45000000" [ref=e1289]
+                - cell "Mercell Annonsdatabas" [ref=e1291]
+                - cell "no" [ref=e1293]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1295]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1297]
+                - cell "2026-07-26 10:52:58.293" [ref=e1299]
+              - row [ref=e1301]:
+                - cell "5560808841" [ref=e1302]
+                - cell "exact" [ref=e1304]
+                - cell "eligible" [ref=e1306]
+                - cell "ea71606c308b8cb352da1a60e2236c19bd9821f905d61d41915f27e62eece38f" [ref=e1308]
+                - cell "75328" [ref=e1310]
+                - cell [ref=e1312]:
+                  - link "MT65677" [ref=e1313] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65677
+                - cell "MT65677_8e3fc74f-6ab3-458a-b128-7a743ba45e76_LOT-0000" [ref=e1314]
+                - cell "2024-12-30" [ref=e1316]
+                - cell "Operationstextilier av engångsmaterial DEL 3" [ref=e1318]
+                - cell "Ramavtal" [ref=e1320]
+                - cell "1" [ref=e1322]
+                - cell [ref=e1324]:
+                  - link "REGION SKÅNE" [ref=e1325] [cursor=pointer]:
+                    - /url: /company/se/2321000255
+                - cell "2321000255" [ref=e1326]
+                - cell [ref=e1328]:
+                  - link "CODAN TRIPLUS AB" [ref=e1329] [cursor=pointer]:
+                    - /url: /company/se/5560808841
+                - cell "5560808841" [ref=e1330]
+                - cell "33140000" [ref=e1332]
+                - cell "Mercell Annonsdatabas" [ref=e1334]
+                - cell "yes" [ref=e1336]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1338]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1340]
+                - cell "2026-07-26 10:52:58.293" [ref=e1342]
+              - row [ref=e1344]:
+                - cell "5560327131" [ref=e1345]
+                - cell "exact" [ref=e1347]
+                - cell "eligible" [ref=e1349]
+                - cell "8374f372d4f924798fb23f961e9e4e8419184b0e87219a56aadb305ebebc0b39" [ref=e1351]
+                - cell "100262" [ref=e1353]
+                - cell [ref=e1355]:
+                  - link "MT65681" [ref=e1356] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65681
+                - cell "MT65681_67b3595471740ab7e35bd97b_LOT-0000" [ref=e1357]
+                - cell "2024-12-30" [ref=e1359]
+                - cell "Byggplåt- och takarbeten" [ref=e1361]
+                - cell "Ramavtal" [ref=e1363]
+                - cell "1" [ref=e1365]
+                - cell [ref=e1367]:
+                  - link "AKTIEBOLAGET STÅNGÅSTADEN" [ref=e1368] [cursor=pointer]:
+                    - /url: /company/se/5560416850
+                - cell "5560416850" [ref=e1369]
+                - cell [ref=e1371]:
+                  - link "LINDSKOG & GYLLSTRÖM AKTIEBOLAG" [ref=e1372] [cursor=pointer]:
+                    - /url: /company/se/5560327131
+                - cell "5560327131" [ref=e1373]
+                - cell "45000000" [ref=e1375]
+                - cell "Mercell Annonsdatabas" [ref=e1377]
+                - cell "no" [ref=e1379]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1381]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1383]
+                - cell "2026-07-26 10:52:58.293" [ref=e1385]
+              - row [ref=e1387]:
+                - cell "—" [ref=e1388]
+                - cell "invalid_supplier_id" [ref=e1390]
+                - cell "invalid_supplier_id" [ref=e1392]
+                - cell "2e90fd0f10d2a6966e3121a81a75925a75456c7f1a63acdc4041fd464d26bc46" [ref=e1394]
+                - cell "74781" [ref=e1396]
+                - cell [ref=e1398]:
+                  - link "MT64655" [ref=e1399] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT64655
+                - cell "MT64655_a15aca2a-c781-4162-85c6-b13611fb5b1b_LOT-0002" [ref=e1400]
+                - cell "2024-12-30" [ref=e1402]
+                - cell "Spirometrier" [ref=e1404]
+                - cell "Ramavtal" [ref=e1406]
+                - cell "1" [ref=e1408]
+                - cell [ref=e1410]:
+                  - link "REGION SÖRMLAND" [ref=e1411] [cursor=pointer]:
+                    - /url: /company/se/2321000032
+                - cell "2321000032" [ref=e1412]
+                - cell [ref=e1414]:
+                  - link "MEDIKRO OY" [ref=e1415] [cursor=pointer]:
+                    - /url: /company/br/02886917
+                - cell "02886917" [ref=e1416]
+                - cell "33000000" [ref=e1418]
+                - cell "Mercell Annonsdatabas" [ref=e1420]
+                - cell "yes" [ref=e1422]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1424]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1426]
+                - cell "2026-07-26 10:52:58.293" [ref=e1428]
+              - row [ref=e1430]:
+                - cell "—" [ref=e1431]
+                - cell "invalid_supplier_id" [ref=e1433]
+                - cell "invalid_supplier_id" [ref=e1435]
+                - cell "105ad886e64ef94ac77c2d104de0521d01b0383cbb4713c882407a2aff402941" [ref=e1437]
+                - cell "74780" [ref=e1439]
+                - cell [ref=e1441]:
+                  - link "MT64655" [ref=e1442] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT64655
+                - cell "MT64655_a15aca2a-c781-4162-85c6-b13611fb5b1b_LOT-0001" [ref=e1443]
+                - cell "2024-12-30" [ref=e1445]
+                - cell "Spirometrier" [ref=e1447]
+                - cell "Ramavtal" [ref=e1449]
+                - cell "1" [ref=e1451]
+                - cell [ref=e1453]:
+                  - link "REGION SÖRMLAND" [ref=e1454] [cursor=pointer]:
+                    - /url: /company/se/2321000032
+                - cell "2321000032" [ref=e1455]
+                - cell [ref=e1457]:
+                  - link "MEDIKRO OY" [ref=e1458] [cursor=pointer]:
+                    - /url: /company/br/02886917
+                - cell "02886917" [ref=e1459]
+                - cell "33000000" [ref=e1461]
+                - cell "Mercell Annonsdatabas" [ref=e1463]
+                - cell "yes" [ref=e1465]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1467]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1469]
+                - cell "2026-07-26 10:52:58.293" [ref=e1471]
+              - row [ref=e1473]:
+                - cell "5568073539" [ref=e1474]
+                - cell "exact" [ref=e1476]
+                - cell "eligible" [ref=e1478]
+                - cell "a1dd07a02d9df05f8d6ae5773770e697eaa9f567b0f9c217fa4d85a50c1559a3" [ref=e1480]
+                - cell "72921" [ref=e1482]
+                - cell [ref=e1484]:
+                  - link "KA18656" [ref=e1485] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/KA18656
+                - cell "KA18656_AN13175_LOT-0001" [ref=e1486]
+                - cell "2024-12-30" [ref=e1488]
+                - cell "Storvik-Ryggen, hastighetshöjande åtgärder" [ref=e1490]
+                - cell "Kontrakt" [ref=e1492]
+                - cell "1" [ref=e1494]
+                - cell [ref=e1496]:
+                  - link "TRAFIKVERKET" [ref=e1497] [cursor=pointer]:
+                    - /url: /company/se/2021006297
+                - cell "2021006297" [ref=e1498]
+                - cell [ref=e1500]:
+                  - link "SVISAB AB" [ref=e1501] [cursor=pointer]:
+                    - /url: /company/se/5568073539
+                - cell "5568073539" [ref=e1502]
+                - cell "45234100" [ref=e1504]
+                - cell "KommersAnnons.se" [ref=e1506]
+                - cell "no" [ref=e1508]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1510]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1512]
+                - cell "2026-07-26 10:52:58.293" [ref=e1514]
+              - row [ref=e1516]:
+                - cell "5593178584" [ref=e1517]
+                - cell "exact" [ref=e1519]
+                - cell "eligible" [ref=e1521]
+                - cell "75111f88eaae11954fb91e2a2c5c85e65aab544a335718279e8a65a5e9c48bda" [ref=e1523]
+                - cell "72335" [ref=e1525]
+                - cell [ref=e1527]:
+                  - link "SE106985" [ref=e1528] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0021" [ref=e1529]
+                - cell "2024-12-30" [ref=e1531]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1533]
+                - cell "Kontrakt" [ref=e1535]
+                - cell "1" [ref=e1537]
+                - cell [ref=e1539]:
+                  - link "VELLINGE KOMMUN" [ref=e1540] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1541]
+                - cell [ref=e1543]:
+                  - link "AB YLLW" [ref=e1544] [cursor=pointer]:
+                    - /url: /company/se/5593178584
+                - cell "5593178584" [ref=e1545]
+                - cell "39100000" [ref=e1547]
+                - cell "e-Avrop" [ref=e1549]
+                - cell "yes" [ref=e1551]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1553]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1555]
+                - cell "2026-07-26 10:52:58.293" [ref=e1557]
+              - row [ref=e1559]:
+                - cell "5593178584" [ref=e1560]
+                - cell "exact" [ref=e1562]
+                - cell "eligible" [ref=e1564]
+                - cell "4855032844865e80d4a1b49e945fa9e19d26080612a28828bbe07c86b9000815" [ref=e1566]
+                - cell "72334" [ref=e1568]
+                - cell [ref=e1570]:
+                  - link "SE106985" [ref=e1571] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0020" [ref=e1572]
+                - cell "2024-12-30" [ref=e1574]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1576]
+                - cell "Kontrakt" [ref=e1578]
+                - cell "1" [ref=e1580]
+                - cell [ref=e1582]:
+                  - link "VELLINGE KOMMUN" [ref=e1583] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1584]
+                - cell [ref=e1586]:
+                  - link "AB YLLW" [ref=e1587] [cursor=pointer]:
+                    - /url: /company/se/5593178584
+                - cell "5593178584" [ref=e1588]
+                - cell "39100000" [ref=e1590]
+                - cell "e-Avrop" [ref=e1592]
+                - cell "yes" [ref=e1594]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1596]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1598]
+                - cell "2026-07-26 10:52:58.293" [ref=e1600]
+              - row [ref=e1602]:
+                - cell "5593178584" [ref=e1603]
+                - cell "exact" [ref=e1605]
+                - cell "eligible" [ref=e1607]
+                - cell "7ab9b9c0427dd05b811d28f4b6296e561628f7c51a59f24cc1bacd8ce2773410" [ref=e1609]
+                - cell "72330" [ref=e1611]
+                - cell [ref=e1613]:
+                  - link "SE106985" [ref=e1614] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0016" [ref=e1615]
+                - cell "2024-12-30" [ref=e1617]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1619]
+                - cell "Kontrakt" [ref=e1621]
+                - cell "1" [ref=e1623]
+                - cell [ref=e1625]:
+                  - link "VELLINGE KOMMUN" [ref=e1626] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1627]
+                - cell [ref=e1629]:
+                  - link "AB YLLW" [ref=e1630] [cursor=pointer]:
+                    - /url: /company/se/5593178584
+                - cell "5593178584" [ref=e1631]
+                - cell "39100000" [ref=e1633]
+                - cell "e-Avrop" [ref=e1635]
+                - cell "yes" [ref=e1637]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1639]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1641]
+                - cell "2026-07-26 10:52:58.293" [ref=e1643]
+              - row [ref=e1645]:
+                - cell "5593178584" [ref=e1646]
+                - cell "exact" [ref=e1648]
+                - cell "eligible" [ref=e1650]
+                - cell "8e686235b0feeeea8240bac13ce922e4bf7b6044884074448c7aef7398b70b1c" [ref=e1652]
+                - cell "72329" [ref=e1654]
+                - cell [ref=e1656]:
+                  - link "SE106985" [ref=e1657] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0015" [ref=e1658]
+                - cell "2024-12-30" [ref=e1660]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1662]
+                - cell "Kontrakt" [ref=e1664]
+                - cell "1" [ref=e1666]
+                - cell [ref=e1668]:
+                  - link "VELLINGE KOMMUN" [ref=e1669] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1670]
+                - cell [ref=e1672]:
+                  - link "AB YLLW" [ref=e1673] [cursor=pointer]:
+                    - /url: /company/se/5593178584
+                - cell "5593178584" [ref=e1674]
+                - cell "39100000" [ref=e1676]
+                - cell "e-Avrop" [ref=e1678]
+                - cell "yes" [ref=e1680]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1682]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1684]
+                - cell "2026-07-26 10:52:58.293" [ref=e1686]
+              - row [ref=e1688]:
+                - cell "5593178584" [ref=e1689]
+                - cell "exact" [ref=e1691]
+                - cell "eligible" [ref=e1693]
+                - cell "225a019a1dda78ca505afe32f9b31872f678a7abe51c2c1beef6c89e2887cc08" [ref=e1695]
+                - cell "72328" [ref=e1697]
+                - cell [ref=e1699]:
+                  - link "SE106985" [ref=e1700] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0014" [ref=e1701]
+                - cell "2024-12-30" [ref=e1703]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1705]
+                - cell "Kontrakt" [ref=e1707]
+                - cell "1" [ref=e1709]
+                - cell [ref=e1711]:
+                  - link "VELLINGE KOMMUN" [ref=e1712] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1713]
+                - cell [ref=e1715]:
+                  - link "AB YLLW" [ref=e1716] [cursor=pointer]:
+                    - /url: /company/se/5593178584
+                - cell "5593178584" [ref=e1717]
+                - cell "39100000" [ref=e1719]
+                - cell "e-Avrop" [ref=e1721]
+                - cell "yes" [ref=e1723]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1725]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1727]
+                - cell "2026-07-26 10:52:58.293" [ref=e1729]
+              - row [ref=e1731]:
+                - cell "5593178584" [ref=e1732]
+                - cell "exact" [ref=e1734]
+                - cell "eligible" [ref=e1736]
+                - cell "57dbeac77ddb585b3eef6ec9fa89674dad27676c64c27ba483ac696b3e522776" [ref=e1738]
+                - cell "72327" [ref=e1740]
+                - cell [ref=e1742]:
+                  - link "SE106985" [ref=e1743] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE106985
+                - cell "SE106985_39124_LOT-0013" [ref=e1744]
+                - cell "2024-12-30" [ref=e1746]
+                - cell "Möbler och inredning till Henriksdalskolan" [ref=e1748]
+                - cell "Kontrakt" [ref=e1750]
+                - cell "1" [ref=e1752]
+                - cell [ref=e1754]:
+                  - link "VELLINGE KOMMUN" [ref=e1755] [cursor=pointer]:
+                    - /url: /company/se/2120001033
+                - cell "2120001033" [ref=e1756]
+                - cell [ref=e1758]:
+                  - link "AB YLLW" [ref=e1759] [cursor=pointer]:
+                    - /url: /company/se/5593178584
+                - cell "5593178584" [ref=e1760]
+                - cell "39100000" [ref=e1762]
+                - cell "e-Avrop" [ref=e1764]
+                - cell "yes" [ref=e1766]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1768]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1770]
+                - cell "2026-07-26 10:52:58.293" [ref=e1772]
+              - row [ref=e1774]:
+                - cell "—" [ref=e1775]
+                - cell "unmatched_company" [ref=e1777]
+                - cell "eligible" [ref=e1779]
+                - cell "e4a60461b74687e9337073f4968e338f14d8569c3fabc0d5109366e691a6f0bb" [ref=e1781]
+                - cell "73123" [ref=e1783]
+                - cell [ref=e1785]:
+                  - link "SE107267" [ref=e1786] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE107267
+                - cell "SE107267_48851_LOT-0001" [ref=e1787]
+                - cell "2024-12-30" [ref=e1789]
+                - cell "Ramavtal för anskaffning av bussar" [ref=e1791]
+                - cell "Ramavtal" [ref=e1793]
+                - cell "1" [ref=e1795]
+                - cell [ref=e1797]:
+                  - link "SKELLEFTEÅ BUSS AB" [ref=e1798] [cursor=pointer]:
+                    - /url: /company/se/5560412370
+                - cell "5560412370" [ref=e1799]
+                - cell "VOLVO BUSSAR AB" [ref=e1801]
+                - cell "6990724798" [ref=e1803]
+                - cell "34121000" [ref=e1805]
+                - cell "e-Avrop" [ref=e1807]
+                - cell "yes" [ref=e1809]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1811]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1813]
+                - cell "2026-07-26 10:52:58.293" [ref=e1815]
+              - row [ref=e1817]:
+                - cell "5568369515" [ref=e1818]
+                - cell "exact" [ref=e1820]
+                - cell "eligible" [ref=e1822]
+                - cell "4e57be4b4236066792db64e34851f7fc870e8c1cce905b2cfdb4b68c1aa8e746" [ref=e1824]
+                - cell "100264" [ref=e1826]
+                - cell [ref=e1828]:
+                  - link "MT65681" [ref=e1829] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65681
+                - cell "MT65681_67b3595471740ab7e35bd97b_LOT-0000" [ref=e1830]
+                - cell "2024-12-30" [ref=e1832]
+                - cell "Byggplåt- och takarbeten" [ref=e1834]
+                - cell "Ramavtal" [ref=e1836]
+                - cell "1" [ref=e1838]
+                - cell [ref=e1840]:
+                  - link "AKTIEBOLAGET STÅNGÅSTADEN" [ref=e1841] [cursor=pointer]:
+                    - /url: /company/se/5560416850
+                - cell "5560416850" [ref=e1842]
+                - cell [ref=e1844]:
+                  - link "RHEL-GRUPPEN AB" [ref=e1845] [cursor=pointer]:
+                    - /url: /company/se/5568369515
+                - cell "5568369515" [ref=e1846]
+                - cell "45000000" [ref=e1848]
+                - cell "Mercell Annonsdatabas" [ref=e1850]
+                - cell "no" [ref=e1852]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1854]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1856]
+                - cell "2026-07-26 10:52:58.293" [ref=e1858]
+              - row [ref=e1860]:
+                - cell "5564788346" [ref=e1861]
+                - cell "exact" [ref=e1863]
+                - cell "eligible" [ref=e1865]
+                - cell "f54ab75d3fc4df3babffb709a1c8c185357c6faa2a4bbb1d37df6d797c7b0a82" [ref=e1867]
+                - cell "74216" [ref=e1869]
+                - cell [ref=e1871]:
+                  - link "MT65671" [ref=e1872] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65671
+                - cell "MT65671_a437fa77-1f65-4e17-b783-014f245c2589_LOT-0000" [ref=e1873]
+                - cell "2024-12-27" [ref=e1875]
+                - cell "Broreparationer" [ref=e1877]
+                - cell "Kontrakt" [ref=e1879]
+                - cell "1" [ref=e1881]
+                - cell [ref=e1883]:
+                  - link "KARLSKOGA KOMMUN" [ref=e1884] [cursor=pointer]:
+                    - /url: /company/se/2120001991
+                - cell "2120001991" [ref=e1885]
+                - cell [ref=e1887]:
+                  - link "CREO INFRASTRUKTUR AB" [ref=e1888] [cursor=pointer]:
+                    - /url: /company/se/5564788346
+                - cell "5564788346" [ref=e1889]
+                - cell "45221000" [ref=e1891]
+                - cell "Mercell Annonsdatabas" [ref=e1893]
+                - cell "no" [ref=e1895]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1897]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1899]
+                - cell "2026-07-26 10:52:58.293" [ref=e1901]
+              - row [ref=e1903]:
+                - cell "5561401018" [ref=e1904]
+                - cell "exact" [ref=e1906]
+                - cell "eligible" [ref=e1908]
+                - cell "faa97e0ff7e3d426b3a7235e9c07a0313ae5ae49bf0b1af636f869aa862b680c" [ref=e1910]
+                - cell "76139" [ref=e1912]
+                - cell [ref=e1914]:
+                  - link "MT65675" [ref=e1915] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65675
+                - cell "MT65675_ec0a380a-d6eb-4c05-8e2f-fb3eb8cc75e5_LOT-0000" [ref=e1916]
+                - cell "2024-12-27" [ref=e1918]
+                - cell "Generalkonsultuppdrag för projektering nybyggnation av förskolorna Fredagstomten 23 och Solvädersbyn 60" [ref=e1920]
+                - cell "Kontrakt" [ref=e1922]
+                - cell "1" [ref=e1924]
+                - cell [ref=e1926]:
+                  - link "GÖTEBORGS KOMMUN" [ref=e1927] [cursor=pointer]:
+                    - /url: /company/se/2120001355
+                - cell "2120001355" [ref=e1928]
+                - cell [ref=e1930]:
+                  - link "WHITE ARKITEKTER AKTIEBOLAG" [ref=e1931] [cursor=pointer]:
+                    - /url: /company/se/5561401018
+                - cell "5561401018" [ref=e1932]
+                - cell "71310000" [ref=e1934]
+                - cell "Mercell Annonsdatabas" [ref=e1936]
+                - cell "yes" [ref=e1938]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1940]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1942]
+                - cell "2026-07-26 10:52:58.293" [ref=e1944]
+              - row [ref=e1946]:
+                - cell "5590220173" [ref=e1947]
+                - cell "exact" [ref=e1949]
+                - cell "eligible" [ref=e1951]
+                - cell "4e1fc315e6414efdd30fd2d8696f925144d0ba45b4682a06a20e6308daf766ba" [ref=e1953]
+                - cell "71387" [ref=e1955]
+                - cell [ref=e1957]:
+                  - link "KA18793" [ref=e1958] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/KA18793
+                - cell "KA18793_AN12748_LOT-0001" [ref=e1959]
+                - cell "2024-12-27" [ref=e1961]
+                - cell "Gångräcke" [ref=e1963]
+                - cell "Kontrakt" [ref=e1965]
+                - cell "1" [ref=e1967]
+                - cell [ref=e1969]:
+                  - link "TRAFIKVERKET" [ref=e1970] [cursor=pointer]:
+                    - /url: /company/se/2021006297
+                - cell "2021006297" [ref=e1971]
+                - cell [ref=e1973]:
+                  - link "NORDIC ROAD SAFETY AB" [ref=e1974] [cursor=pointer]:
+                    - /url: /company/se/5590220173
+                - cell "5590220173" [ref=e1975]
+                - cell "34928310" [ref=e1977]
+                - cell "KommersAnnons.se" [ref=e1979]
+                - cell "no" [ref=e1981]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e1983]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e1985]
+                - cell "2026-07-26 10:52:58.293" [ref=e1987]
+              - row [ref=e1989]:
+                - cell "5590117155" [ref=e1990]
+                - cell "exact" [ref=e1992]
+                - cell "eligible" [ref=e1994]
+                - cell "a19facdf7796854a73158289619cc1e1a0121ce13a83f87e996f1a31af5c89d8" [ref=e1996]
+                - cell "67926" [ref=e1998]
+                - cell [ref=e2000]:
+                  - link "MT65667" [ref=e2001] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65667
+                - cell "MT65667_67862a719364058cbc3dec3c_LOT-0000" [ref=e2002]
+                - cell "2024-12-27" [ref=e2004]
+                - cell "Konsultupphandling avseende Interimschef" [ref=e2006]
+                - cell "Kontrakt" [ref=e2008]
+                - cell "1" [ref=e2010]
+                - cell [ref=e2012]:
+                  - link "TOMELILLA KOMMUN" [ref=e2013] [cursor=pointer]:
+                    - /url: /company/se/2120000886
+                - cell "2120000886" [ref=e2014]
+                - cell [ref=e2016]:
+                  - link "SOCIONOMKRAFT AB" [ref=e2017] [cursor=pointer]:
+                    - /url: /company/se/5590117155
+                - cell "5590117155" [ref=e2018]
+                - cell "79420000" [ref=e2020]
+                - cell "Mercell Annonsdatabas" [ref=e2022]
+                - cell "no" [ref=e2024]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e2026]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e2028]
+                - cell "2026-07-26 10:52:58.293" [ref=e2030]
+              - row [ref=e2032]:
+                - cell "5591170120" [ref=e2033]
+                - cell "exact" [ref=e2035]
+                - cell "eligible" [ref=e2037]
+                - cell "e35168f2b9ab611796a9315f6929708d5785d29c50d0d78646db4cc6ea8a37bf" [ref=e2039]
+                - cell "75305" [ref=e2041]
+                - cell [ref=e2043]:
+                  - link "MT65662" [ref=e2044] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/MT65662
+                - cell "MT65662_67d16bd5ac706ac0924db290_LOT-0000" [ref=e2045]
+                - cell "2024-12-26" [ref=e2047]
+                - cell "Projektör inför entreprenad Hällsboskolan Umeå" [ref=e2049]
+                - cell "Kontrakt" [ref=e2051]
+                - cell "1" [ref=e2053]
+                - cell [ref=e2055]:
+                  - link "SPECIALPEDAGOGISKA SKOLMYNDIGHETEN" [ref=e2056] [cursor=pointer]:
+                    - /url: /company/se/2021005745
+                - cell "2021005745" [ref=e2057]
+                - cell [ref=e2059]:
+                  - link "MANA PROJEKTBYRÅ I UMEÅ AB" [ref=e2060] [cursor=pointer]:
+                    - /url: /company/se/5591170120
+                - cell "5591170120" [ref=e2061]
+                - cell "71000000" [ref=e2063]
+                - cell "Mercell Annonsdatabas" [ref=e2065]
+                - cell "no" [ref=e2067]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e2069]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e2071]
+                - cell "2026-07-26 10:52:58.293" [ref=e2073]
+              - row [ref=e2075]:
+                - cell "5561321752" [ref=e2076]
+                - cell "exact" [ref=e2078]
+                - cell "eligible" [ref=e2080]
+                - cell "51fb04ccd56e008460430eb7825e5bcd37452211f2fcba904146628d33daf4d3" [ref=e2082]
+                - cell "71498" [ref=e2084]
+                - cell [ref=e2086]:
+                  - link "SE104396" [ref=e2087] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE104396
+                - cell "SE104396_40332_LOT-0001" [ref=e2088]
+                - cell "2024-12-24" [ref=e2090]
+                - cell "Mottagning och avsättning av gips, planglas och hårdplast från kommunala ÅVC" [ref=e2092]
+                - cell "Ramavtal" [ref=e2094]
+                - cell "1" [ref=e2096]
+                - cell [ref=e2098]:
+                  - link "UMEÅ KOMMUN" [ref=e2099] [cursor=pointer]:
+                    - /url: /company/se/2120002627
+                - cell "2120002627" [ref=e2100]
+                - cell [ref=e2102]:
+                  - link "STENA RECYCLING AB" [ref=e2103] [cursor=pointer]:
+                    - /url: /company/se/5561321752
+                - cell "5561321752" [ref=e2104]
+                - cell "90510000" [ref=e2106]
+                - cell "e-Avrop" [ref=e2108]
+                - cell "yes" [ref=e2110]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e2112]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e2114]
+                - cell "2026-07-26 10:52:58.293" [ref=e2116]
+              - row [ref=e2118]:
+                - cell "5560573452" [ref=e2119]
+                - cell "exact" [ref=e2121]
+                - cell "eligible" [ref=e2123]
+                - cell "5fa36effea8b0fca78ca22623af5130adbb5cc0686fa2d40ed6134276387276c" [ref=e2125]
+                - cell "71499" [ref=e2127]
+                - cell [ref=e2129]:
+                  - link "SE104396" [ref=e2130] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE104396
+                - cell "SE104396_40332_LOT-0002" [ref=e2131]
+                - cell "2024-12-24" [ref=e2133]
+                - cell "Mottagning och avsättning av gips, planglas och hårdplast från kommunala ÅVC" [ref=e2135]
+                - cell "Ramavtal" [ref=e2137]
+                - cell "1" [ref=e2139]
+                - cell [ref=e2141]:
+                  - link "UMEÅ KOMMUN" [ref=e2142] [cursor=pointer]:
+                    - /url: /company/se/2120002627
+                - cell "2120002627" [ref=e2143]
+                - cell [ref=e2145]:
+                  - link "RAGN-SELLS RECYCLING AB" [ref=e2146] [cursor=pointer]:
+                    - /url: /company/se/5560573452
+                - cell "5560573452" [ref=e2147]
+                - cell "90510000" [ref=e2149]
+                - cell "e-Avrop" [ref=e2151]
+                - cell "yes" [ref=e2153]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e2155]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e2157]
+                - cell "2026-07-26 10:52:58.293" [ref=e2159]
+              - row [ref=e2161]:
+                - cell "5560537168" [ref=e2162]
+                - cell "exact" [ref=e2164]
+                - cell "eligible" [ref=e2166]
+                - cell "1cabd77916426d000c253195278d7f4b564fe014ad35af57edba2494b45600ae" [ref=e2168]
+                - cell "75569" [ref=e2170]
+                - cell [ref=e2172]:
+                  - link "KA18775" [ref=e2173] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/KA18775
+                - cell "KA18775_AN16362_LOT-0001" [ref=e2174]
+                - cell "2024-12-24" [ref=e2176]
+                - cell "Tjänstekoncession avseende Luleå Hamn" [ref=e2178]
+                - cell "Kontrakt" [ref=e2180]
+                - cell "1" [ref=e2182]
+                - cell [ref=e2184]:
+                  - link "LULEÅ KOMMUN" [ref=e2185] [cursor=pointer]:
+                    - /url: /company/se/2120002742
+                - cell "2120002742" [ref=e2186]
+                - cell [ref=e2188]:
+                  - link "SHORELINK AB" [ref=e2189] [cursor=pointer]:
+                    - /url: /company/se/5560537168
+                - cell "5560537168" [ref=e2190]
+                - cell "63721200" [ref=e2192]
+                - cell "KommersAnnons.se" [ref=e2194]
+                - cell "yes" [ref=e2196]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e2198]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e2200]
+                - cell "2026-07-26 10:52:58.293" [ref=e2202]
+              - row [ref=e2204]:
+                - cell "5568608797" [ref=e2205]
+                - cell "exact" [ref=e2207]
+                - cell "eligible" [ref=e2209]
+                - cell "e6ac31c5a9071af3e2d43adefa63e74497633ab841310edd50c01929868d955c" [ref=e2211]
+                - cell "101844" [ref=e2213]
+                - cell [ref=e2215]:
+                  - link "SE105911" [ref=e2216] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE105911
+                - cell "SE105911_49923_LOT-0001" [ref=e2217]
+                - cell "2024-12-24" [ref=e2219]
+                - cell "Hyresvärdsupphandling Kultopia" [ref=e2221]
+                - cell "Kontrakt" [ref=e2223]
+                - cell "1" [ref=e2225]
+                - cell [ref=e2227]:
+                  - link "HUDDINGE KOMMUN" [ref=e2228] [cursor=pointer]:
+                    - /url: /company/se/2120000068
+                - cell "2120000068" [ref=e2229]
+                - cell [ref=e2231]:
+                  - link "FLEMINGSDAL FASTIGHETER 3 AB" [ref=e2232] [cursor=pointer]:
+                    - /url: /company/se/5568608797
+                - cell "5568608797" [ref=e2233]
+                - cell "45000000" [ref=e2235]
+                - cell "e-Avrop" [ref=e2237]
+                - cell "yes" [ref=e2239]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e2241]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e2243]
+                - cell "2026-07-26 10:52:58.293" [ref=e2245]
+              - row [ref=e2247]:
+                - cell "5568608797" [ref=e2248]
+                - cell "exact" [ref=e2250]
+                - cell "eligible" [ref=e2252]
+                - cell "80427c2f9ff0820f157669fdcecb2a07760e74ce07ba252e8af5c96ca7d1794c" [ref=e2254]
+                - cell "101843" [ref=e2256]
+                - cell [ref=e2258]:
+                  - link "SE105911" [ref=e2259] [cursor=pointer]:
+                    - /url: /procurements/sweden-uhm/SE105911
+                - cell "SE105911_49923_LOT-0001" [ref=e2260]
+                - cell "2024-12-24" [ref=e2262]
+                - cell "Hyresvärdsupphandling Kultopia" [ref=e2264]
+                - cell "Kontrakt" [ref=e2266]
+                - cell "1" [ref=e2268]
+                - cell [ref=e2270]:
+                  - link "HUDDINGE KOMMUN" [ref=e2271] [cursor=pointer]:
+                    - /url: /company/se/2120000068
+                - cell "2120000068" [ref=e2272]
+                - cell [ref=e2274]:
+                  - link "FLEMINGSDAL FASTIGHETER 3 AB" [ref=e2275] [cursor=pointer]:
+                    - /url: /company/se/5568608797
+                - cell "5568608797" [ref=e2276]
+                - cell "45000000" [ref=e2278]
+                - cell "e-Avrop" [ref=e2280]
+                - cell "yes" [ref=e2282]
+                - cell "https://catalog.upphandlingsmyndigheten.se/store/12/resource/239" [ref=e2284]
+                - cell "raw/retrieved_date=2026-07-26/sha256=4731f86f6930e346f3d0a888cf7e770ef91d1cd3946cf6371ad4c9372d40ed62/awards.csv" [ref=e2286]
+                - cell "2026-07-26 10:52:58.293" [ref=e2288]
+          - generic [ref=e2290]:
+            - generic [ref=e2291]: 102,785 records
+            - generic [ref=e2292]:
+              - generic [ref=e2293]:
+                - generic [ref=e2294]: Rows per page
+                - combobox [ref=e2295]:
+                  - generic [ref=e2296]: "50"
+                  - img: ▼
+                - textbox [ref=e2297]: "50"
+              - generic [ref=e2298]: Page 1 of 2,056
+              - generic [ref=e2299]:
+                - button "First page" [disabled]
+                - button "Previous page" [disabled]
+                - button "Next page" [ref=e2300] [cursor=pointer]
+                - button "Last page" [ref=e2301] [cursor=pointer]

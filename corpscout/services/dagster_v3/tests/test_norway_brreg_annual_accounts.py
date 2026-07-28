@@ -12,7 +12,10 @@ import dagster as dg
 import pymupdf
 import pytest
 
-from dagster_v3.defs.norway_brreg.resources import BrregAnnualAccountPdf
+from dagster_v3.defs.norway_brreg.resources import (
+    BrregAnnualAccountPdf,
+    BrregAnnualAccountPdfFailure,
+)
 from dagster_v3.defs.norway_brreg_financial import annual_account_pdf
 from dagster_v3.defs.norway_brreg_financial import annual_account_pipeline
 from dagster_v3.defs.norway_brreg_financial.annual_account_pdf import (
@@ -35,6 +38,7 @@ from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
     annual_account_document_object_key,
     annual_account_pdf_catalog_object_key,
+    annual_account_pdf_failure_object_key,
     annual_account_pdf_object_key,
 )
 
@@ -116,6 +120,32 @@ class FailingSecondAnnualAccountApi:
         self.calls.append((org_number, filing_year))
         if len(self.calls) == 2:
             raise RuntimeError("rate limited")
+        return BrregAnnualAccountPdf(
+            source_url=f"https://example.test/{org_number}/{filing_year}",
+            body=f"%PDF-1.7 {org_number}".encode(),
+        )
+
+
+class FailedFirstAnnualAccountApi:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def annual_account_pdf(
+        self,
+        *,
+        org_number: str,
+        filing_year: int,
+    ) -> BrregAnnualAccountPdf | BrregAnnualAccountPdfFailure:
+        self.calls.append((org_number, filing_year))
+        if org_number == "111111111":
+            return BrregAnnualAccountPdfFailure(
+                source_url=f"https://example.test/{org_number}/{filing_year}",
+                http_status=504,
+                attempt_count=3,
+                error_type="http_error",
+                error_message="HTTP 504",
+                response_headers={"x-request-id": "failed-request"},
+            )
         return BrregAnnualAccountPdf(
             source_url=f"https://example.test/{org_number}/{filing_year}",
             body=f"%PDF-1.7 {org_number}".encode(),
@@ -244,6 +274,11 @@ def test_pdf_download_stages_pdf_and_catalog_without_processing(monkeypatch) -> 
             "pdf_size_bytes": len(pdf_body),
             "fetch_status": "success",
             "capture_method": "http_download",
+            "failure_object_key": None,
+            "http_status": None,
+            "request_attempt_count": None,
+            "failure_type": None,
+            "failure_message": None,
             "fetched_at": catalog["fetched_at"][0],
         }
     ]
@@ -315,6 +350,120 @@ def test_pdf_download_reuses_staged_pdf_without_http_request() -> None:
     assert api.calls == []
     assert metadata["staged_reused_count"] == 1
     assert metadata["downloaded_count"] == 0
+
+
+def test_pdf_download_records_exhausted_failure_and_continues_batch() -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    candidates = [
+        {"org_number": "111111111", "legal_name": "FAILED AS"},
+        {"org_number": "222222222", "legal_name": "SUCCESS AS"},
+    ]
+    api = FailedFirstAnnualAccountApi()
+    warnings: list[str] = []
+
+    metadata = download_annual_account_pdfs(
+        candidates=candidates,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="download-run",
+        api=api,
+        storage=storage,
+        log=None,
+        log_warning=lambda message, *args: warnings.append(message % args),
+    )
+
+    failure_key = annual_account_pdf_failure_object_key(
+        2025,
+        "bucket_00",
+        "111111111",
+    )
+    assert api.calls == [("111111111", 2025), ("222222222", 2025)]
+    assert metadata["failed_count"] == 1
+    assert metadata["failed_request_attempt_count"] == 3
+    assert metadata["downloaded_count"] == 1
+    assert "HTTP 504" not in warnings[0]
+    assert "http_status=504" in warnings[0]
+    assert f"marker={failure_key}" in warnings[0]
+
+    failure = storage.read_annual_account_pdf_failure(
+        filing_year=2025,
+        chunk_key="bucket_00",
+        org_number="111111111",
+    )
+    assert failure == {
+        "schema_version": 1,
+        "org_number": "111111111",
+        "legal_name": "FAILED AS",
+        "filing_year": 2025,
+        "source_url": "https://example.test/111111111/2025",
+        "http_status": 504,
+        "request_attempt_count": 3,
+        "failure_type": "http_error",
+        "failure_message": "HTTP 504",
+        "response_headers": {"x-request-id": "failed-request"},
+        "decision": "skip_document",
+        "source_asset": "norway_brreg_annual_account_pdfs",
+        "source_partition_key": "bucket_00|2025",
+        "source_run_id": "download-run",
+        "failure_object_key": failure_key,
+        "first_failed_at": failure["first_failed_at"],
+        "last_failed_at": failure["last_failed_at"],
+        "failure_count": 1,
+    }
+    catalog = storage.read_annual_account_pdf_catalog(
+        filing_year=2025,
+        chunk_key="bucket_00",
+    )
+    failed_row = next(
+        row for row in catalog.to_dicts() if row["org_number"] == "111111111"
+    )
+    assert failed_row["source_url"] == "https://example.test/111111111/2025"
+    assert failed_row["fetch_status"] == "failed"
+    assert failed_row["capture_method"] == "http_failure"
+    assert failed_row["failure_object_key"] == failure_key
+    assert failed_row["http_status"] == 504
+    assert failed_row["request_attempt_count"] == 3
+
+
+def test_pdf_download_reuses_failure_marker_without_another_request() -> None:
+    object_store = FakeObjectStore()
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+    candidates = [{"org_number": "111111111", "legal_name": "FAILED AS"}]
+    first_api = FailedFirstAnnualAccountApi()
+    download_annual_account_pdfs(
+        candidates=candidates,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="first-run",
+        api=first_api,
+        storage=storage,
+        log=None,
+    )
+    second_api = FakeAnnualAccountApi(None)
+
+    metadata = download_annual_account_pdfs(
+        candidates=candidates,
+        filing_year=2025,
+        chunk_key="bucket_00",
+        source_run_id="second-run",
+        api=second_api,
+        storage=storage,
+        log=None,
+    )
+
+    assert first_api.calls == [("111111111", 2025)]
+    assert second_api.calls == []
+    assert metadata["failed_count"] == 1
+    assert metadata["failure_marker_reused_count"] == 1
+    assert metadata["failed_request_attempt_count"] == 0
+    [record] = storage.read_annual_account_pdf_catalog(
+        filing_year=2025,
+        chunk_key="bucket_00",
+    ).to_dicts()
+    assert record["fetch_status"] == "failed"
+    assert record["capture_method"] == "failure_marker_reuse"
+    assert record["source_run_id"] == "second-run"
 
 
 def test_pdf_download_resumes_after_failure_without_redownloading_completed_pdf() -> (

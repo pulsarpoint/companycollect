@@ -18,6 +18,9 @@ TED_SOURCE_SLUG = "ted_procurement"
 HILMA_SOURCE_SLUG = "finland_hilma_procurement"
 PNCP_SOURCE_SLUG = "brazil_pncp_procurement"
 DOFFIN_SOURCE_SLUG = "norway_doffin_procurement"
+DECP_SOURCE_SLUG = "france_decp_procurement"
+UVO_SOURCE_SLUG = "slovakia_uvo_procurement"
+IUB_SOURCE_SLUG = "latvia_iub_procurement"
 
 
 @dataclass(frozen=True)
@@ -63,4 +66,25 @@ DOFFIN = ProcurementSource(
     slug=DOFFIN_SOURCE_SLUG,
     upstream_asset_key="norway_doffin_notices_clickhouse",
     required_tables=("no_doffin_notices",),
+)
+
+DECP = ProcurementSource(
+    slug=DECP_SOURCE_SLUG,
+    upstream_asset_key="france_decp_contract_holders_clickhouse",
+    required_tables=("fr_decp_contract_holders",),
+)
+
+UVO = ProcurementSource(
+    slug=UVO_SOURCE_SLUG,
+    upstream_asset_key="slovakia_uvo_procurement_notices_clickhouse",
+    required_tables=("sk_uvo_procurement_notices",),
+)
+
+IUB = ProcurementSource(
+    slug=IUB_SOURCE_SLUG,
+    upstream_asset_key="latvia_iub_procurement_clickhouse",
+    required_tables=(
+        "lv_iub_notices_current",
+        "lv_iub_notice_winners_current",
+    ),
 )

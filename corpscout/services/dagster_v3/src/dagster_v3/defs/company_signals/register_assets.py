@@ -5,7 +5,7 @@ here so the UI can read it from the warehouse instead of carrying its own copy
 -- which is the point of §3.3: the source panel and the source pages should not
 each hold a private map of what TED is.
 
-The whole table is replaced each run. It is five rows of prose; there is nothing
+The whole table is replaced each run. It is a small set of prose rows; there is nothing
 to preserve incrementally, and replacing wholesale means a register removed from
 the declaration actually disappears rather than lingering.
 """
@@ -56,7 +56,7 @@ REGISTER_COLUMNS = (
         "What each procurement register is: operator, licence, what it covers, "
         "its own grain, and where open tenders are advertised. One row per "
         "source rather than per country, because TED is one register serving "
-        "three. Deliberately not coverage -- how much of it we hold is per "
+        "several. Deliberately not coverage -- how much of it we hold is per "
         "country and lives in company_signal_coverage."
     ),
 )
@@ -70,7 +70,9 @@ def procurement_registers_clickhouse(
         tables=(REGISTERS_TABLE,),
     )
     qualified = f"`{tables.CLICKHOUSE_DATABASE}`.`{REGISTERS_TABLE}`"
-    stage = f"`{tables.CLICKHOUSE_DATABASE}`.`_tmp_{REGISTERS_TABLE}_{uuid.uuid4().hex}`"
+    stage = (
+        f"`{tables.CLICKHOUSE_DATABASE}`.`_tmp_{REGISTERS_TABLE}_{uuid.uuid4().hex}`"
+    )
 
     rows = [
         (

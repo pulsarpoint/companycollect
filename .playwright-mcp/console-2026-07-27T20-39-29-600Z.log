@@ -1,0 +1,5 @@
+[     877ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:14335
+[    1413ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:14335
+[   76197ms] [ERROR] Base UI: A component is changing the default value state of an uncontrolled Select after being initialized. To suppress this warning opt to use a controlled Select. @ http://localhost:5199/@vite/client:524
+[   76198ms] [ERROR] Base UI: A component is changing the default value state of an uncontrolled FieldControl after being initialized. To suppress this warning opt to use a controlled FieldControl. @ http://localhost:5199/@vite/client:524
+[  117134ms] [ERROR] Failed to load resource: the server responded with a status of 500 () @ http://localhost:5199/procurements/ted.data?table=ted_notice_winners&country=SE&from=&to=&winner=&valueMin=1000000&valueMax=:0

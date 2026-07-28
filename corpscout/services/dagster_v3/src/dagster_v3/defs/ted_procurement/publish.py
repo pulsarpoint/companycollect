@@ -59,11 +59,54 @@ def list_parsed_partitions() -> list[tuple[str, str, Path]]:
     return result
 
 
+def _normalize_france_identity(value: str) -> str:
+    compact = re.sub(r"\s+", "", value)
+    if re.fullmatch(r"\d{14}", compact):
+        return compact[:9]
+    if re.fullmatch(r"\d{9}", compact):
+        return compact
+    vat_match = re.fullmatch(r"FR[A-Z0-9]{2}(\d{9})", compact.upper())
+    if vat_match is not None:
+        return vat_match.group(1)
+    return value
+
+
+def _normalize_slovakia_identity(value: str) -> str:
+    compact = re.sub(r"\s+", "", value)
+    if re.fullmatch(r"\d{8}", compact):
+        return compact
+    return value
+
+
+def _normalize_latvia_identity(value: str) -> str:
+    compact = re.sub(r"\s+", "", value)
+    match = re.fullmatch(r"(?:LV)?(\d{11})", compact.upper())
+    if match is not None:
+        return match.group(1)
+    return value
+
+
+def _normalize_denmark_identity(value: str) -> str:
+    compact = re.sub(r"\s+", "", value)
+    match = re.fullmatch(r"(?:DK)?(\d{8})", compact.upper())
+    if match is not None:
+        return match.group(1)
+    return value
+
+
 def normalize_national_id(country: str, raw: str) -> str:
     country_code = country.upper()
     value = raw.strip()
     if country_code in {"SE", "SWE"}:
         return normalize_sweden_identity(value)
+    if country_code in {"FR", "FRA"}:
+        return _normalize_france_identity(value)
+    if country_code in {"SK", "SVK"}:
+        return _normalize_slovakia_identity(value)
+    if country_code in {"LV", "LVA"}:
+        return _normalize_latvia_identity(value)
+    if country_code in {"DK", "DNK"}:
+        return _normalize_denmark_identity(value)
     rule = tables.NATIONAL_ID_NORMALIZATION.get(country_code)
     if rule is None or value == "":
         return value

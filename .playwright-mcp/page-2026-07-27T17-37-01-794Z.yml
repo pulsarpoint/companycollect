@@ -1,0 +1,140 @@
+- generic [ref=e2]:
+  - generic [ref=e5]:
+    - list [ref=e7]:
+      - listitem [ref=e8]:
+        - link "CompanyCollect" [ref=e9] [cursor=pointer]:
+          - /url: /companies
+    - list [ref=e14]:
+      - listitem [ref=e15]:
+        - link "Companies" [ref=e16] [cursor=pointer]:
+          - /url: /companies
+      - listitem [ref=e22]:
+        - link "Countries" [ref=e23] [cursor=pointer]:
+          - /url: /countries
+      - listitem [ref=e30]:
+        - link "Procurement" [ref=e31] [cursor=pointer]:
+          - /url: /procurements
+      - listitem [ref=e39]:
+        - link "People" [ref=e40] [cursor=pointer]:
+          - /url: /people
+      - listitem [ref=e47]:
+        - link "Financials" [ref=e48] [cursor=pointer]:
+          - /url: /financials
+  - main [ref=e52]:
+    - generic [ref=e53]:
+      - button "Toggle Sidebar" [ref=e54]
+      - separator [ref=e56]
+      - generic [ref=e57]: CompanyCollect Backoffice
+    - generic [ref=e59]:
+      - generic [ref=e60]:
+        - button "← Procurement sources" [ref=e61] [cursor=pointer]
+        - heading "Doffin" [level=1] [ref=e62]
+        - generic [ref=e63]:
+          - generic [ref=e64]: DFØ (Norwegian Agency for Public and Financial Management)
+          - generic [ref=e65]: "NO"
+      - generic [ref=e66]:
+        - generic [ref=e67]:
+          - generic [ref=e68]: About this register
+          - generic [ref=e69]: Norwegian national procurement notices, including contracts below the EU thresholds. Publishes a realized value per winner in the notice's eForms document; the search API alone carries only an estimate, and the two differ on roughly three quarters of the notices that carry both.
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - term [ref=e73]: Grain
+            - definition [ref=e74]: one row per (notice, lot, winner)
+          - generic [ref=e75]:
+            - term [ref=e76]: Licence
+            - definition [ref=e77]: Norwegian Licence for Open Government Data (NLOD)
+          - generic [ref=e78]:
+            - term [ref=e79]: How we obtain it
+            - definition [ref=e80]: "Fetched. Search API sliced by issue date, then one eForms UBL XML per notice from /v2/download/{doffinId} -- the search alone carries no realized value. Requires a subscription key."
+          - generic [ref=e81]:
+            - term [ref=e82]: Read from
+            - definition [ref=e83]:
+              - link "https://api.doffin.no/public/v2/search" [ref=e84] [cursor=pointer]:
+                - /url: https://api.doffin.no/public/v2/search
+          - generic [ref=e85]:
+            - term [ref=e86]: Homepage
+            - definition [ref=e87]:
+              - link "https://doffin.no" [ref=e88] [cursor=pointer]:
+                - /url: https://doffin.no
+          - generic [ref=e89]:
+            - term [ref=e90]: Open tenders
+            - definition [ref=e91]:
+              - link "https://doffin.no/search?status=ACTIVE" [ref=e92] [cursor=pointer]:
+                - /url: https://doffin.no/search?status=ACTIVE
+          - generic [ref=e93]:
+            - term [ref=e94]: Notes
+            - definition [ref=e95]: Requires an Azure API Management subscription key. Winners carry the organisasjonsnummer directly, so no transformation is needed to match the company register -- but foreign winners appear too, and theirs is not a Norwegian number.
+      - generic [ref=e96]:
+        - generic [ref=e97]:
+          - generic [ref=e98]: Records
+          - generic [ref=e99]:
+            - text: 0 rows in
+            - code [ref=e100]: no_doffin_notices
+            - text: ", at this register's own grain and in its own columns — not the canonical projection the country views expose."
+        - generic [ref=e101]:
+          - generic [ref=e102]:
+            - generic [ref=e103]:
+              - generic [ref=e104]: Country
+              - textbox "Country" [ref=e105]:
+                - /placeholder: SE
+            - generic [ref=e106]:
+              - generic [ref=e107]: From (publication_date)
+              - textbox "From (publication_date)" [ref=e108]
+            - generic [ref=e109]:
+              - generic [ref=e110]: To
+              - textbox "To" [ref=e111]
+            - button "Filter" [ref=e112]
+          - table [ref=e115]:
+            - rowgroup [ref=e116]:
+              - row [ref=e117]:
+                - columnheader "company_id" [ref=e118]
+                - columnheader "company_match_status" [ref=e119]
+                - columnheader "country_code" [ref=e120]
+                - columnheader "source_slug" [ref=e121]
+                - columnheader "source_run_id" [ref=e122]
+                - columnheader "source_record_id" [ref=e123]
+                - columnheader "source_url" [ref=e124]
+                - columnheader "doffin_id" [ref=e125]
+                - columnheader "contract_folder_id" [ref=e126]
+                - columnheader "notice_type" [ref=e127]
+                - columnheader "notice_status" [ref=e128]
+                - columnheader "issue_date" [ref=e129]
+                - columnheader "publication_date" [ref=e130]
+                - columnheader "deadline_date" [ref=e131]
+                - columnheader "buyer_name" [ref=e132]
+                - columnheader "buyer_org_number" [ref=e133]
+                - columnheader "notice_title" [ref=e134]
+                - columnheader "notice_description" [ref=e135]
+                - columnheader "cpv_codes" [ref=e136]
+                - columnheader "location_ids" [ref=e137]
+                - columnheader "lot_id" [ref=e138]
+                - columnheader "lot_heading" [ref=e139]
+                - columnheader "winner_ordinal" [ref=e140]
+                - columnheader "winner_name" [ref=e141]
+                - columnheader "winner_org_number_raw" [ref=e142]
+                - columnheader "winner_org_number" [ref=e143]
+                - columnheader "winner_country" [ref=e144]
+                - columnheader "value_amount_original" [ref=e145]
+                - columnheader "value_amount_usd" [ref=e146]
+                - columnheader "value_currency" [ref=e147]
+                - columnheader "notice_value_amount_original" [ref=e148]
+                - columnheader "notice_value_amount_usd" [ref=e149]
+                - columnheader "notice_value_currency" [ref=e150]
+                - columnheader "estimated_value_amount_original" [ref=e151]
+                - columnheader "estimated_value_amount_usd" [ref=e152]
+                - columnheader "estimated_value_currency" [ref=e153]
+                - columnheader "fx_rate_to_usd" [ref=e154]
+                - columnheader "fx_rate_date" [ref=e155]
+                - columnheader "fx_source" [ref=e156]
+                - columnheader "directive_governed" [ref=e157]
+                - columnheader "received_tenders" [ref=e158]
+                - columnheader "award_result" [ref=e159]
+                - columnheader "partition_key" [ref=e160]
+                - columnheader "source_retrieved_at" [ref=e161]
+                - columnheader "resolved_at" [ref=e162]
+            - rowgroup
+          - generic [ref=e163]:
+            - generic [ref=e164]: Page 1 of 1
+            - generic [ref=e165]:
+              - button "Previous" [disabled] [ref=e166] [cursor=pointer]
+              - button "Next" [disabled] [ref=e167] [cursor=pointer]

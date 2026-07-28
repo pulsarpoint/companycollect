@@ -2,8 +2,8 @@
 
 The plan asked for "a table per country describing the register it reads". The
 grain here is one row **per source**, not per (country, source), because TED is
-one register serving three countries: a per-country grain would hold its licence
-and operator three times and invite them to drift apart. Countries come back as
+one register serving seven countries: a per-country grain would hold its licence
+and operator seven times and invite them to drift apart. Countries come back as
 an array, so a country page filters and a source page does not have to.
 
 That also matches what the source pages need. They are deliberately not
@@ -19,13 +19,16 @@ someone wanting to *bid* go. Nothing built so far answers that last one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dagster_v3.defs.company_signals.sources import (
+    DECP_SOURCE_SLUG,
     DOFFIN_SOURCE_SLUG,
     HILMA_SOURCE_SLUG,
+    IUB_SOURCE_SLUG,
     PNCP_SOURCE_SLUG,
     TED_SOURCE_SLUG,
+    UVO_SOURCE_SLUG,
     UHM_SOURCE_SLUG,
 )
 
@@ -45,7 +48,7 @@ class ProcurementRegister:
     # data is not an answer.
     api_or_download_url: str
     # How it arrives, because that is not always "we call an API". Hilma is a
-    # CSV a human exports and uploads; UHM is a file download; the other three
+    # CSV a human exports and uploads; UHM is a file download; other sources
     # are fetched. A reader checking a number needs to know which.
     retrieval_method: str
     licence: str
@@ -76,7 +79,7 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         source_slug=TED_SOURCE_SLUG,
         register_name="Tenders Electronic Daily (TED)",
         operator="Publications Office of the European Union",
-        country_codes=("FI", "NO", "SE"),
+        country_codes=("DK", "FI", "FR", "LV", "NO", "SE", "SK"),
         homepage_url="https://ted.europa.eu",
         api_or_download_url="https://api.ted.europa.eu/v3/notices/search",
         retrieval_method=(
@@ -89,8 +92,8 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         coverage_description=(
             "EU-wide publication of procurement above the directive thresholds. "
             "A contract below its country's threshold is not published here at "
-            "all, so TED alone understates any country's procurement -- which "
-            "is why each country pairs it with a national register."
+            "all, so TED alone understates any country's procurement and must "
+            "be complemented by a national register for complete coverage."
         ),
         open_tenders_url="https://ted.europa.eu/en/search/result",
         grain_description="one row per (notice, lot, winning tenderer)",
@@ -242,6 +245,117 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
             "No bulk download exists -- confirmed against portaldatransparencia "
             "and dadosabertos.compras.gov.br -- so the whole register is read "
             "through a rate-limited paginated API."
+        ),
+    ),
+    ProcurementRegister(
+        source_slug=DECP_SOURCE_SLUG,
+        register_name="Données essentielles de la commande publique (DECP)",
+        operator="French Ministry of the Economy, Finance and Industrial and Digital Sovereignty",
+        country_codes=("FR",),
+        homepage_url=(
+            "https://data.economie.gouv.fr/explore/dataset/decp-2022-marches-valides/"
+        ),
+        api_or_download_url=(
+            "https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
+            "decp-2022-marches-valides/exports/csv"
+        ),
+        retrieval_method=(
+            "Downloaded. A complete validated bulk CSV is content-addressed in "
+            "S3, expanded from three holder slots to one row per holder in "
+            "DuckDB, and atomically replaced in ClickHouse."
+        ),
+        documentation_url=(
+            "https://schema.data.gouv.fr/139bercy/format-commande-publique/"
+        ),
+        licence="Licence Ouverte v2.0 (Etalab)",
+        coverage_description=(
+            "French essential public-contract data published under the 22 "
+            "December 2022 order, including national and below-threshold "
+            "contracts that do not reach TED. Only records passing the "
+            "publisher's principal schema validations enter this dataset."
+        ),
+        open_tenders_url="https://www.boamp.fr/pages/recherche/",
+        grain_description="one row per (contract, holder)",
+        source_tables=("fr_decp_contract_holders",),
+        notice_table="fr_decp_contract_holders",
+        notice_key_column="contract_id",
+        notes=(
+            "montant is a contract-level published amount and is not allocated "
+            "across co-holders. BOAMP remains the complementary French notice "
+            "and active-opportunity source rather than the award signal."
+        ),
+    ),
+    ProcurementRegister(
+        source_slug=UVO_SOURCE_SLUG,
+        register_name="Vestník verejného obstarávania",
+        operator="Úrad pre verejné obstarávanie (UVO)",
+        country_codes=("SK",),
+        homepage_url="https://www.uvo.gov.sk",
+        api_or_download_url=(
+            "https://www.uvo.gov.sk/vestnik-a-registre/vestnik?date=DD.MM.YYYY"
+        ),
+        retrieval_method=(
+            "Access-gated. Bulletin issues are enumerated by date and official "
+            "result-notice HTML is snapshotted to S3 only after machine-reuse "
+            "permission is explicitly confirmed."
+        ),
+        documentation_url="https://www.uvo.gov.sk/vestnik-a-registre/vestnik",
+        licence="Machine-reuse licence confirmation pending",
+        coverage_description=(
+            "Official Slovak procurement bulletin containing above-threshold "
+            "and national result notices, including IČO, buyers, lots, tender "
+            "ranges, and published awarded values. Company signals select "
+            "national-law awards to complement TED without known overlap."
+        ),
+        open_tenders_url="https://www.uvo.gov.sk/vestnik-a-registre/vestnik",
+        grain_description="one row per (notice, lot, winning tenderer)",
+        source_tables=("sk_uvo_procurement_notices",),
+        notice_table="sk_uvo_procurement_notices",
+        notice_key_column="uvo_notice_id",
+        notes=(
+            "The downloader refuses network access unless "
+            "SLOVAKIA_UVO_MACHINE_REUSE_CONFIRMED is true. CRZ daily XML is "
+            "not used because it includes many non-procurement agreements."
+        ),
+    ),
+    ProcurementRegister(
+        source_slug=IUB_SOURCE_SLUG,
+        register_name="IUB public procurement open data",
+        operator="Iepirkumu uzraudzības birojs (Procurement Monitoring Bureau)",
+        country_codes=("LV",),
+        homepage_url="https://www.iub.gov.lv/en/open-data",
+        api_or_download_url=(
+            "https://open.iub.gov.lv/data/notice/YYYY/MM/DD-MM-YYYY.json"
+        ),
+        retrieval_method=(
+            "Fetched. One official JSON file per publication day is snapshotted "
+            "to S3 and parsed monthly into notices, lots, winners, and contract "
+            "executions."
+        ),
+        documentation_url="https://www.iub.gov.lv/en/open-data",
+        licence="CC0 1.0",
+        coverage_description=(
+            "Latvian procurement notices and contract information under the "
+            "national procurement laws. Result notices include national and "
+            "below-threshold awards; amendments and fulfilment notices are "
+            "published separately from the original award."
+        ),
+        open_tenders_url="https://info.iub.gov.lv/lv/meklet",
+        grain_description="one row per (notice, lot, contract, winner)",
+        source_tables=(
+            "lv_iub_notices",
+            "lv_iub_notice_lots",
+            "lv_iub_notice_winners",
+            "lv_iub_contract_executions",
+            "lv_iub_notices_current",
+            "lv_iub_notice_winners_current",
+        ),
+        notice_table="lv_iub_notices",
+        notice_key_column="notice_id",
+        notes=(
+            "All raw versions are retained. Current views exclude any notice "
+            "identifier referenced by a later clonedFrom value. Execution "
+            "notices never create a second company award."
         ),
     ),
 )

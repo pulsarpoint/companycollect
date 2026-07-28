@@ -10,6 +10,7 @@ import polars as pl
 
 from dagster_v3.defs.norway_brreg.resources import (
     BRREG_ANNUAL_ACCOUNTS_BASE_URL,
+    BrregAnnualAccountPdfFailure,
     NorwayBrregApiResource,
 )
 from dagster_v3.defs.norway_brreg_financial.annual_account_pdf import (
@@ -18,6 +19,7 @@ from dagster_v3.defs.norway_brreg_financial.annual_account_pdf import (
 )
 from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
+    annual_account_pdf_failure_object_key,
     annual_account_pdf_object_key,
 )
 
@@ -37,6 +39,11 @@ ANNUAL_ACCOUNT_PDF_CATALOG_SCHEMA = {
     "pdf_size_bytes": pl.Int64,
     "fetch_status": pl.Utf8,
     "capture_method": pl.Utf8,
+    "failure_object_key": pl.Utf8,
+    "http_status": pl.Int64,
+    "request_attempt_count": pl.Int64,
+    "failure_type": pl.Utf8,
+    "failure_message": pl.Utf8,
     "fetched_at": pl.Utf8,
 }
 
@@ -50,6 +57,7 @@ def download_annual_account_pdfs(
     api: NorwayBrregApiResource,
     storage: NorwayBrregFinancialParquetStorageResource,
     log: Callable[..., None] | None,
+    log_warning: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
     """Stage only unprocessed BRREG PDFs in S3 and write their partition catalog."""
     unique_candidates = _unique_candidates(candidates)
@@ -74,21 +82,35 @@ def download_annual_account_pdfs(
         for candidate in batch:
             org_number = _string(candidate.get("org_number"))
             try:
-                records.append(
-                    _stage_pdf(
-                        candidate,
-                        filing_year=filing_year,
-                        chunk_key=chunk_key,
-                        source_run_id=source_run_id,
-                        api=api,
-                        storage=storage,
-                    )
+                record = _stage_pdf(
+                    candidate,
+                    filing_year=filing_year,
+                    chunk_key=chunk_key,
+                    source_run_id=source_run_id,
+                    api=api,
+                    storage=storage,
                 )
+                records.append(record)
             except Exception as error:
                 raise RuntimeError(
                     "Norway BRREG annual-account PDF download failed: "
                     f"org={org_number} year={filing_year} chunk={chunk_key}"
                 ) from error
+            if record["fetch_status"] == "failed":
+                _log(
+                    log_warning or log,
+                    "Skipping Norway BRREG annual-account PDF after exhausted "
+                    "retries: org=%s year=%s chunk=%s source_url=%s "
+                    "http_status=%s request_attempts=%s failure_type=%s marker=%s",
+                    org_number,
+                    filing_year,
+                    chunk_key,
+                    record["source_url"],
+                    record["http_status"],
+                    record["request_attempt_count"],
+                    record["failure_type"],
+                    record["failure_object_key"],
+                )
 
         catalog_key = storage.write_annual_account_pdf_catalog(
             filing_year=filing_year,
@@ -173,6 +195,9 @@ def materialize_annual_account_documents(
         "available_pdf_count": len(available_records),
         "not_found_count": sum(
             record["fetch_status"] == "not_found" for record in records
+        ),
+        "failed_download_count": sum(
+            record["fetch_status"] == "failed" for record in records
         ),
         "pending_before_count": len(pending),
         "max_documents_per_run": max_documents,
@@ -359,6 +384,39 @@ def _stage_pdf(
             fetched_at=fetched_at,
         )
 
+    if storage.annual_account_pdf_failure_exists(
+        filing_year=filing_year,
+        chunk_key=chunk_key,
+        org_number=org_number,
+    ):
+        failure = storage.read_annual_account_pdf_failure(
+            filing_year=filing_year,
+            chunk_key=chunk_key,
+            org_number=org_number,
+        )
+        _validate_pdf_failure_identity(failure, org_number, filing_year)
+        return _catalog_record(
+            candidate=candidate,
+            filing_year=filing_year,
+            source_run_id=source_run_id,
+            source_url=_string(failure.get("source_url")),
+            source_object_key=None,
+            source_payload_hash=None,
+            pdf_size_bytes=None,
+            fetch_status="failed",
+            capture_method="failure_marker_reuse",
+            failure_object_key=annual_account_pdf_failure_object_key(
+                filing_year,
+                chunk_key,
+                org_number,
+            ),
+            http_status=_optional_int(failure.get("http_status")),
+            request_attempt_count=int(failure["request_attempt_count"]),
+            failure_type=_string(failure.get("failure_type")),
+            failure_message=_string(failure.get("failure_message")),
+            fetched_at=fetched_at,
+        )
+
     pdf = api.annual_account_pdf(org_number=org_number, filing_year=filing_year)
     if pdf is None:
         return _catalog_record(
@@ -371,6 +429,55 @@ def _stage_pdf(
             pdf_size_bytes=None,
             fetch_status="not_found",
             capture_method="http_404",
+            fetched_at=fetched_at,
+        )
+
+    if isinstance(pdf, BrregAnnualAccountPdfFailure):
+        failure_key = annual_account_pdf_failure_object_key(
+            filing_year,
+            chunk_key,
+            org_number,
+        )
+        storage.write_annual_account_pdf_failure(
+            filing_year=filing_year,
+            chunk_key=chunk_key,
+            org_number=org_number,
+            failure={
+                "schema_version": 1,
+                "org_number": org_number,
+                "legal_name": _string(candidate.get("legal_name")),
+                "filing_year": filing_year,
+                "source_url": pdf.source_url,
+                "http_status": pdf.http_status,
+                "request_attempt_count": pdf.attempt_count,
+                "failure_type": pdf.error_type,
+                "failure_message": pdf.error_message,
+                "response_headers": pdf.response_headers,
+                "decision": "skip_document",
+                "source_asset": "norway_brreg_annual_account_pdfs",
+                "source_partition_key": f"{chunk_key}|{filing_year}",
+                "source_run_id": source_run_id,
+                "failure_object_key": failure_key,
+                "first_failed_at": fetched_at,
+                "last_failed_at": fetched_at,
+                "failure_count": 1,
+            },
+        )
+        return _catalog_record(
+            candidate=candidate,
+            filing_year=filing_year,
+            source_run_id=source_run_id,
+            source_url=pdf.source_url,
+            source_object_key=None,
+            source_payload_hash=None,
+            pdf_size_bytes=None,
+            fetch_status="failed",
+            capture_method="http_failure",
+            failure_object_key=failure_key,
+            http_status=pdf.http_status,
+            request_attempt_count=pdf.attempt_count,
+            failure_type=pdf.error_type,
+            failure_message=pdf.error_message,
             fetched_at=fetched_at,
         )
 
@@ -493,6 +600,11 @@ def _catalog_record(
     fetch_status: str,
     capture_method: str,
     fetched_at: str,
+    failure_object_key: str | None = None,
+    http_status: int | None = None,
+    request_attempt_count: int | None = None,
+    failure_type: str | None = None,
+    failure_message: str | None = None,
 ) -> dict[str, Any]:
     return {
         "source_run_id": source_run_id,
@@ -505,6 +617,11 @@ def _catalog_record(
         "pdf_size_bytes": pdf_size_bytes,
         "fetch_status": fetch_status,
         "capture_method": capture_method,
+        "failure_object_key": failure_object_key,
+        "http_status": http_status,
+        "request_attempt_count": request_attempt_count,
+        "failure_type": failure_type,
+        "failure_message": failure_message,
         "fetched_at": fetched_at,
     }
 
@@ -530,6 +647,17 @@ def _download_counts(records: list[dict[str, Any]]) -> dict[str, int]:
         ),
         "not_found_count": sum(
             record["fetch_status"] == "not_found" for record in records
+        ),
+        "failed_count": sum(
+            record["fetch_status"] == "failed" for record in records
+        ),
+        "failure_marker_reused_count": sum(
+            record["capture_method"] == "failure_marker_reuse" for record in records
+        ),
+        "failed_request_attempt_count": sum(
+            int(record.get("request_attempt_count") or 0)
+            for record in records
+            if record["capture_method"] == "http_failure"
         ),
         "pdf_bytes_downloaded": sum(
             int(record.get("pdf_size_bytes") or 0)
@@ -577,6 +705,28 @@ def _validate_pdf_body(pdf_body: bytes, org_number: str, filing_year: int) -> No
             "Norway BRREG staged annual-account object is not a PDF: "
             f"org={org_number} year={filing_year}"
         )
+
+
+def _validate_pdf_failure_identity(
+    failure: Mapping[str, Any],
+    org_number: str,
+    filing_year: int,
+) -> None:
+    if (
+        _string(failure.get("org_number")) != org_number
+        or int(failure.get("filing_year") or 0) != filing_year
+        or _string(failure.get("decision")) != "skip_document"
+        or int(failure.get("request_attempt_count") or 0) < 1
+        or _string(failure.get("source_url")) == ""
+    ):
+        raise RuntimeError(
+            "Norway BRREG annual-account PDF failure marker is invalid: "
+            f"org={org_number} year={filing_year}"
+        )
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
 
 
 def _source_pdf_url(org_number: str, filing_year: int) -> str:

@@ -1,0 +1,110 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e5]:
+    - list [ref=f1e7]:
+      - listitem [ref=f1e8]:
+        - link "CompanyCollect" [ref=f1e9] [cursor=pointer]:
+          - /url: /companies
+    - list [ref=f1e14]:
+      - listitem [ref=f1e15]:
+        - link "Companies" [ref=f1e16] [cursor=pointer]:
+          - /url: /companies
+      - listitem [ref=f1e22]:
+        - link "Countries" [ref=f1e23] [cursor=pointer]:
+          - /url: /countries
+      - listitem [ref=f1e30]:
+        - link "Procurement" [ref=f1e31] [cursor=pointer]:
+          - /url: /procurements
+      - listitem [ref=f1e39]:
+        - link "People" [ref=f1e40] [cursor=pointer]:
+          - /url: /people
+      - listitem [ref=f1e47]:
+        - link "Financials" [ref=f1e48] [cursor=pointer]:
+          - /url: /financials
+  - main [ref=f1e52]:
+    - generic [ref=f1e53]:
+      - button "Toggle Sidebar" [ref=f1e54]
+      - separator [ref=f1e56]
+      - generic [ref=f1e57]: CompanyCollect Backoffice
+    - generic [ref=f1e59]:
+      - generic [ref=f1e60]:
+        - heading "Procurement sources" [level=1] [ref=f1e61]
+        - paragraph [ref=f1e62]: Each register as itself, in its own shape. A country page answers what that country bought; these answer what a register contains and whether we read it correctly — which is why they are not filtered to one country, and why a record with no matched company still appears.
+      - generic [ref=f1e63]:
+        - generic [ref=f1e64]:
+          - generic [ref=f1e65]:
+            - link "Doffin" [ref=f1e67] [cursor=pointer]:
+              - /url: /procurements/norway-doffin
+            - generic [ref=f1e68]: DFØ (Norwegian Agency for Public and Financial Management)
+          - generic [ref=f1e69]:
+            - generic [ref=f1e70]: "NO"
+            - paragraph [ref=f1e72]: Norwegian national procurement notices, including contracts below the EU thresholds. Publishes a realized value per winner in the notice's eForms document; the search API alone carries only an estimate, and the two differ on roughly three quarters of the notices that carry both.
+            - generic [ref=f1e73]:
+              - term [ref=f1e74]: Rows
+              - definition [ref=f1e75]: "0"
+              - term [ref=f1e76]: Grain
+              - definition [ref=f1e77]: one row per (notice, lot, winner)
+              - term [ref=f1e78]: Licence
+              - definition [ref=f1e79]: Norwegian Licence for Open Government Data (NLOD)
+        - generic [ref=f1e80]:
+          - generic [ref=f1e81]:
+            - link "Hilma" [ref=f1e83] [cursor=pointer]:
+              - /url: /procurements/finland-hilma
+            - generic [ref=f1e84]: Ministry of Finance, Finland
+          - generic [ref=f1e85]:
+            - generic [ref=f1e86]: FI
+            - paragraph [ref=f1e88]: Finnish national procurement notices, including contracts below the EU thresholds that never reach TED. Publishes a realized value per lot, which is one company's amount where a lot has a single winner and a shared figure where several split it.
+            - generic [ref=f1e89]:
+              - term [ref=f1e90]: Rows
+              - definition [ref=f1e91]: 23,809
+              - term [ref=f1e92]: Grain
+              - definition [ref=f1e93]: one row per (notice, lot, winner)
+              - term [ref=f1e94]: Licence
+              - definition [ref=f1e95]: CC BY 4.0
+        - generic [ref=f1e96]:
+          - generic [ref=f1e97]:
+            - link "Portal Nacional de Contratações Públicas (PNCP)" [ref=f1e99] [cursor=pointer]:
+              - /url: /procurements/brazil-pncp
+            - generic [ref=f1e100]: Serpro, for the Brazilian federal government
+          - generic [ref=f1e101]:
+            - generic [ref=f1e102]: BR
+            - paragraph [ref=f1e104]: Federal, state and municipal contracts under Lei 14.133/2021. Publishes a value per contract per supplier, so a Brazilian award carries an amount attributable to the company. Adoption was partial before the law took full effect, so early years are thin.
+            - generic [ref=f1e105]:
+              - term [ref=f1e106]: Rows
+              - definition [ref=f1e107]: "203"
+              - term [ref=f1e108]: Grain
+              - definition [ref=f1e109]: one row per (contract, supplier)
+              - term [ref=f1e110]: Licence
+              - definition [ref=f1e111]: Brazilian open government data (Lei 12.527/2011)
+        - generic [ref=f1e112]:
+          - generic [ref=f1e113]:
+            - link "Tenders Electronic Daily (TED)" [ref=f1e115] [cursor=pointer]:
+              - /url: /procurements/ted
+            - generic [ref=f1e116]: Publications Office of the European Union
+          - generic [ref=f1e117]:
+            - generic [ref=f1e118]:
+              - generic [ref=f1e119]: FI
+              - generic [ref=f1e120]: "NO"
+              - generic [ref=f1e121]: SE
+            - paragraph [ref=f1e122]: EU-wide publication of procurement above the directive thresholds. A contract below its country's threshold is not published here at all, so TED alone understates any country's procurement -- which is why each country pairs it with a national register.
+            - generic [ref=f1e123]:
+              - term [ref=f1e124]: Rows
+              - definition [ref=f1e125]: 264,176
+              - term [ref=f1e126]: Grain
+              - definition [ref=f1e127]: one row per (notice, lot, winning tenderer)
+              - term [ref=f1e128]: Licence
+              - definition [ref=f1e129]: Reuse permitted under Decision 2011/833/EU, attribution required
+        - generic [ref=f1e130]:
+          - generic [ref=f1e131]:
+            - link "Upphandlingsmyndigheten statistics" [ref=f1e133] [cursor=pointer]:
+              - /url: /procurements/sweden-uhm
+            - generic [ref=f1e134]: Upphandlingsmyndigheten (Swedish National Agency for Public Procurement)
+          - generic [ref=f1e135]:
+            - generic [ref=f1e136]: SE
+            - paragraph [ref=f1e138]: Advertised Swedish procurement. Excludes direct and non-advertised procurement, missing after-notices, and many framework call-offs. Publishes no contract value at all -- none of its 44 columns is monetary.
+            - generic [ref=f1e139]:
+              - term [ref=f1e140]: Rows
+              - definition [ref=f1e141]: 102,785
+              - term [ref=f1e142]: Grain
+              - definition [ref=f1e143]: one row per (procurement, lot, supplier)
+              - term [ref=f1e144]: Licence
+              - definition [ref=f1e145]: Swedish public sector open data

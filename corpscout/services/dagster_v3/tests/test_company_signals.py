@@ -50,6 +50,18 @@ def test_each_country_asset_depends_only_on_the_sources_it_reads() -> None:
         dg.AssetKey("norway_doffin_notices_clickhouse"),
         dg.AssetKey("ted_publish_clickhouse"),
     }
+    assert deps["fr_government_contract_signals_clickhouse"] == {
+        dg.AssetKey("france_decp_contract_holders_clickhouse"),
+        dg.AssetKey("ted_publish_clickhouse"),
+    }
+    assert deps["sk_government_contract_signals_clickhouse"] == {
+        dg.AssetKey("slovakia_uvo_procurement_notices_clickhouse"),
+        dg.AssetKey("ted_publish_clickhouse"),
+    }
+    assert deps["lv_government_contract_signals_clickhouse"] == {
+        dg.AssetKey("latvia_iub_procurement_clickhouse"),
+        dg.AssetKey("ted_publish_clickhouse"),
+    }
     # Brazil has no TED at all, being outside the EU.
     assert deps["br_government_contract_signals_clickhouse"] == {
         dg.AssetKey("brazil_pncp_contracts_clickhouse"),
@@ -73,6 +85,10 @@ def test_coverage_caveats_state_what_the_country_is_missing() -> None:
     assert "no contract value" in COUNTRY_PROCUREMENT_RULES["SE"].coverage_caveat
     assert "Doffin" in COUNTRY_PROCUREMENT_RULES["NO"].coverage_caveat
     assert "no TED" in COUNTRY_PROCUREMENT_RULES["BR"].coverage_caveat
+    for country in ("FR", "SK", "LV"):
+        caveat = COUNTRY_PROCUREMENT_RULES[country].coverage_caveat
+        assert "below-threshold" in caveat, country
+        assert "TED" in caveat, country
 
 
 def test_sweden_admits_its_counts_are_notices_not_contracts() -> None:
@@ -104,7 +120,17 @@ def test_every_ted_country_admits_it_drops_foreign_winners() -> None:
 
     Measured 2026-07-27: 3,354 SE + 2,266 FI + 1,059 NO winner rows.
     """
-    for country in ("SE", "FI", "NO"):
+    for country in ("SE", "FI", "NO", "FR", "SK", "LV"):
         caveat = COUNTRY_PROCUREMENT_RULES[country].coverage_caveat
         assert "absent" in caveat, country
         assert "companies are" in caveat, country
+
+
+def test_new_ted_countries_get_country_signal_jobs() -> None:
+    from dagster_v3.defs.company_signals.procurement import COUNTRY_CONTRACT_JOBS
+
+    job_names = {job.name for job in COUNTRY_CONTRACT_JOBS}
+
+    assert "fr_government_contract_signals_job" in job_names
+    assert "sk_government_contract_signals_job" in job_names
+    assert "lv_government_contract_signals_job" in job_names

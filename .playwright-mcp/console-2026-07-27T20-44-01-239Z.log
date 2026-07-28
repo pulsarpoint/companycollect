@@ -1,0 +1,57 @@
+[     873ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:14335
+[  142487ms] [ERROR] Failed to load resource: the server responded with a status of 500 () @ http://localhost:5199/procurements/ted?table=ted_notice_winners&country=SE&valueMin=1000000:0
+[  142691ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:14335
+[  168145ms] [ERROR] %o
+
+%s
+
+%s
+ TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+    at cell (http://localhost:5199/app/routes/procurement-source.tsx?t=1785185208380:76:50)
+    at Object.react_stack_bottom_frame (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:12866:12)
+    at renderWithHooks (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:4213:19)
+    at updateFunctionComponent (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:5569:16)
+    at beginWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:6140:20)
+    at runWithFiberInDEV (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:851:66)
+    at performUnitOfWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8429:92)
+    at workLoopSync (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8325:37)
+    at renderRootSync (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8309:6)
+    at performWorkOnRoot (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:7994:27) The above error occurred in the <cell> component. React will try to recreate this component tree from scratch using the error boundary you provided, RenderErrorBoundary. @ http://localhost:5199/@vite/client:524
+[  168146ms] [ERROR] React Router caught the following error during render TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+    at cell (http://localhost:5199/app/routes/procurement-source.tsx?t=1785185208380:76:50)
+    at Object.react_stack_bottom_frame (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:12866:12)
+    at renderWithHooks (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:4213:19)
+    at updateFunctionComponent (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:5569:16)
+    at beginWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:6140:20)
+    at runWithFiberInDEV (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:851:66)
+    at performUnitOfWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8429:92)
+    at workLoopSync (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8325:37)
+    at renderRootSync (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8309:6)
+    at performWorkOnRoot (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:7994:27) @ http://localhost:5199/@vite/client:524
+[  186796ms] [ERROR] %o
+
+%s
+
+%s
+ TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+    at cell (http://localhost:5199/app/routes/procurement-source.tsx?t=1785185227586:77:50)
+    at Object.react_stack_bottom_frame (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:12866:12)
+    at renderWithHooks (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:4213:19)
+    at updateFunctionComponent (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:5569:16)
+    at beginWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:6140:20)
+    at runWithFiberInDEV (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:851:66)
+    at performUnitOfWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8429:92)
+    at workLoopSync (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8325:37)
+    at renderRootSync (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8309:6)
+    at performWorkOnRoot (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:7994:27) The above error occurred in the <cell> component. React will try to recreate this component tree from scratch using the error boundary you provided, RenderErrorBoundary. @ http://localhost:5199/@vite/client:524
+[  186796ms] [ERROR] React Router caught the following error during render TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+    at cell (http://localhost:5199/app/routes/procurement-source.tsx?t=1785185227586:77:50)
+    at Object.react_stack_bottom_frame (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:12866:12)
+    at renderWithHooks (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:4213:19)
+    at updateFunctionComponent (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:5569:16)
+    at beginWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:6140:20)
+    at runWithFiberInDEV (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:851:66)
+    at performUnitOfWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8429:92)
+    at workLoopSync (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8325:37)
+    at renderRootSync (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:8309:6)
+    at performWorkOnRoot (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=6ee80666:7994:27) @ http://localhost:5199/@vite/client:524
