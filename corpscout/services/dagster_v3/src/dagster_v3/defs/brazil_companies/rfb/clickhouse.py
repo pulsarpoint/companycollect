@@ -20,6 +20,12 @@ CLICKHOUSE_DATE32_EXPORT_EXPRESSIONS = {
         "then activity_start_date else null end"
     ),
 }
+CLICKHOUSE_COMPANY_RELATIONS_DATE32_EXPORT_EXPRESSIONS = {
+    "relation_since": (
+        "case when relation_since between date '1900-01-01' and date '2299-12-31' "
+        "then relation_since else null end"
+    ),
+}
 
 
 def export_brazil_comp_rfb_clickhouse_companies(
@@ -117,6 +123,7 @@ def export_brazil_comp_rfb_clickhouse_company_relations(
             clickhouse_table=tables.BR_COMPANY_RELATIONS_TABLE_CH,
             columns=tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS,
             truncate=True,
+            column_expressions=CLICKHOUSE_COMPANY_RELATIONS_DATE32_EXPORT_EXPRESSIONS,
         )
     if log is not None:
         log("Finished Brazil RFB company relations export: rows=%s", rows)

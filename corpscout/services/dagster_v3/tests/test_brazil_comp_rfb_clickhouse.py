@@ -184,6 +184,58 @@ def test_clickhouse_exports_replace_company_relations(tmp_path: Path) -> None:
     assert shipped_kinds == {"1", "2"}
 
 
+def test_clickhouse_company_relations_export_nulls_relation_since_outside_date32_range(
+    tmp_path: Path,
+) -> None:
+    """I1: relation_since must get the same Date32 guard as status_date /
+    activity_start_date -- the design doc records that this RFB family
+    contains dates outside ClickHouse's Date32 range (1900-2299), and one
+    bad row must not fail the whole 20-25M-row partition export."""
+    relations_path = tmp_path / "br_company_relations.duckdb"
+    fake_client = FakeClickHouseClient()
+    fake_resource = FakeClickHouseResource(fake_client)
+
+    with duckdb.connect(str(relations_path)) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.COMPANY_RELATIONS_TABLE} as
+            select * from (values
+                ('BR', 'brazil_rfb', 'run-1', 'rec-1', '202501', '12345678', '1',
+                 'PARENT HOLDING LTDA', '11111111000191', '22', date '1899-12-31',
+                 '', '', '', '', '', now()),
+                ('BR', 'brazil_rfb', 'run-1', 'rec-2', '202501', '12345678', '2',
+                 'JOAO DA SILVA', '***123456**', '49', date '2015-03-10',
+                 '', '', '', '', '', now())
+            ) as t(country_iso2, source_slug, source_run_id, source_record_id,
+                   snapshot_year_month, cnpj_basico, related_entity_kind, related_name,
+                   related_tax_id, relation_code, relation_since, related_country,
+                   representative_tax_id, representative_name, representative_code,
+                   age_band, resolved_at)
+            """
+        )
+        relation_rows = (
+            clickhouse.export_brazil_comp_rfb_clickhouse_company_relations(
+                duckdb_connection=connection,
+                clickhouse=fake_resource,
+            )
+        )
+
+    assert relation_rows == 2
+    relations_insert_rows = fake_client.inserts[0][1]
+    relation_since_index = tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS.index(
+        "relation_since"
+    )
+    relation_since_by_record_id = {
+        row[tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS.index("source_record_id")]: row[
+            relation_since_index
+        ]
+        for row in relations_insert_rows
+    }
+    assert relation_since_by_record_id["rec-1"] is None
+    assert relation_since_by_record_id["rec-2"] is not None
+
+
 def test_clickhouse_exports_replace_company_contacts_domains_and_websites(
     tmp_path: Path,
 ) -> None:
