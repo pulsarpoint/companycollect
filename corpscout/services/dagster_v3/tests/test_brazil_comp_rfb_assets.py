@@ -35,6 +35,7 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     repo = load_defs().get_repository_def()
     keys = {key.path[-1] for key in repo.asset_graph.get_all_asset_keys()}
 
+    assert "brazil_comp_rfb_raw_archives_s3" in keys
     assert "brazil_comp_rfb_snapshot_files_duckdb" in keys
     assert "brazil_comp_rfb_raw_files_duckdb" not in keys
     assert RAW_STAGE_ASSET_KEYS.issubset(keys)
@@ -51,6 +52,9 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert "brazil_comp_rfb_company_relations_clickhouse" in keys
     assert "brazil_comp_rfb_previous_partition_cleanup" in keys
 
+    raw_archives_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_raw_archives_s3")
+    ]
     snapshot_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_snapshot_files_duckdb")
     ]
@@ -102,6 +106,9 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     cleanup_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_previous_partition_cleanup")
     ]
+    # No DuckDB file is opened here, only object storage — unlike every other
+    # asset in this module, it needs no pool.
+    assert raw_archives_asset.op.pool is None
     assert snapshot_asset.op.pool == "brazil_comp_rfb_manifest_duckdb"
     assert empresas_asset.op.pool == "brazil_comp_rfb_empresas_duckdb"
     assert estabelecimentos_asset.op.pool == "brazil_comp_rfb_estabelecimentos_duckdb"
@@ -141,6 +148,7 @@ def test_brazil_comp_rfb_assets_use_monthly_snapshot_partitions() -> None:
 
     repo = load_defs().get_repository_def()
     expected_snapshot_assets = (
+        "brazil_comp_rfb_raw_archives_s3",
         "brazil_comp_rfb_snapshot_files_duckdb",
         "brazil_comp_rfb_empresas_duckdb",
         "brazil_comp_rfb_estabelecimentos_duckdb",
@@ -226,6 +234,7 @@ def test_brazil_comp_rfb_snapshot_asset_uses_partition_snapshot_year_month(
     monkeypatch.setattr(assets.source, "brazil_rfb_source", fake_source)
     monkeypatch.setattr(assets.source, "brazil_rfb_pipeline", fake_pipeline)
 
+    fake_object_store = object()
     result = list(
         assets.brazil_comp_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
             FakeContext(),
@@ -233,6 +242,7 @@ def test_brazil_comp_rfb_snapshot_asset_uses_partition_snapshot_year_month(
                 snapshot_base_url="https://mirror.test/cnpj/",
             ),
             FakeDlt(),
+            fake_object_store,
         )
     )
 
@@ -244,6 +254,7 @@ def test_brazil_comp_rfb_snapshot_asset_uses_partition_snapshot_year_month(
         calls["source"]["download_dir"]
         == assets.BRAZIL_COMP_RFB_DOWNLOAD_DIR / "2024-02"
     )
+    assert calls["source"]["object_store"] is fake_object_store
     assert calls["pipeline_database_path"] == (
         assets.BRAZIL_COMP_RFB_DATA_ROOT / "2024-02" / "manifest.duckdb"
     )
@@ -322,6 +333,7 @@ def test_brazil_comp_rfb_snapshot_asset_reuses_existing_manifest(
                 snapshot_base_url="https://mirror.test/cnpj/",
             ),
             FakeDlt(),
+            object(),
         )
     )
 
@@ -408,6 +420,20 @@ def test_brazil_comp_rfb_companies_asset_reuses_existing_stage(
         "active_companies": 1,
         "reused_existing_stage": True,
     }
+
+
+def test_brazil_comp_rfb_snapshot_manifest_depends_on_raw_archives_s3() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    parents = {
+        parent.path[-1]
+        for parent in repo.asset_graph.get(
+            dg.AssetKey("brazil_comp_rfb_snapshot_files_duckdb")
+        ).parent_keys
+    }
+
+    assert parents == {"brazil_comp_rfb_raw_archives_s3"}
 
 
 def test_brazil_comp_rfb_raw_assets_depend_on_snapshot_manifest_only() -> None:
@@ -511,6 +537,7 @@ def test_brazil_comp_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() ->
     assert type(resolve_job.partitions_def).__name__ == "MonthlyPartitionsDefinition"
     assert resolve_job.run_config is None
     assert {
+        "brazil_comp_rfb_raw_archives_s3",
         "brazil_comp_rfb_snapshot_files_duckdb",
         "brazil_comp_rfb_empresas_duckdb",
         "brazil_comp_rfb_estabelecimentos_duckdb",

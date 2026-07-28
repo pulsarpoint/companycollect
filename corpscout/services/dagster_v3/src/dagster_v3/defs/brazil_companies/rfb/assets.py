@@ -31,6 +31,7 @@ from dagster_v3.defs.common.duckdb_resources import (
     duckdb_resource,
     read_only_duckdb_connection,
 )
+from dagster_v3.defs.common.resources import ObjectStoreResource
 
 GROUP_NAME = "brazil_comp_rfb"
 BRAZIL_COMP_RFB_MANIFEST_DUCKDB_POOL = "brazil_comp_rfb_manifest_duckdb"
@@ -49,6 +50,7 @@ BRAZIL_COMP_RFB_DEFINITION_MANIFEST_DUCKDB_PATH = (
     BRAZIL_COMP_RFB_DATA_ROOT / "__definition__" / "manifest.duckdb"
 )
 BRAZIL_COMP_RFB_DOWNLOAD_DIR = Path("data/brazil_rfb_downloads")
+RAW_ARCHIVES_ASSET_KEY = "brazil_comp_rfb_raw_archives_s3"
 SNAPSHOT_FILES_ASSET_KEY = "brazil_comp_rfb_snapshot_files_duckdb"
 EMPRESAS_ASSET_KEY = "brazil_comp_rfb_empresas_duckdb"
 ESTABELECIMENTOS_ASSET_KEY = "brazil_comp_rfb_estabelecimentos_duckdb"
@@ -159,7 +161,7 @@ class BrazilCompRfbDltTranslator(DagsterDltTranslator):
         spec = super().get_asset_spec(data)
         return spec.replace_attributes(
             key=dg.AssetKey(SNAPSHOT_FILES_ASSET_KEY),
-            deps=[],
+            deps=[dg.AssetKey(RAW_ARCHIVES_ASSET_KEY)],
             group_name=GROUP_NAME,
             description=(
                 "Brazil RFB CNPJ monthly snapshot ZIP files downloaded, extracted, "
@@ -167,6 +169,33 @@ class BrazilCompRfbDltTranslator(DagsterDltTranslator):
             ),
             kinds={"python", "dlt", "duckdb"},
         )
+
+
+@dg.asset(
+    name=RAW_ARCHIVES_ASSET_KEY,
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "zip"},
+    partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    description=(
+        "Downloads Brazil RFB monthly CNPJ open-data ZIP archives into object "
+        "storage, skipping archives already synced for the snapshot. Snapshots "
+        "the raw archives before the manifest asset extracts and discards them, "
+        "so a re-run of an older partition never depends on RFB's mirror still "
+        "publishing that month."
+    ),
+)
+def brazil_comp_rfb_raw_archives_s3(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    snapshot_year_month = brazil_comp_rfb_snapshot_year_month(context.partition_key)
+    result = source.sync_snapshot_archives_to_object_store(
+        snapshot_year_month=snapshot_year_month,
+        object_store=object_store,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=result.metadata())
 
 
 @dlt_assets(
@@ -187,6 +216,7 @@ def brazil_comp_rfb_snapshot_files_duckdb(
     context: dg.AssetExecutionContext,
     config: BrazilCompRfbConfig,
     dlt: DagsterDltResource,
+    object_store: ObjectStoreResource,
 ) -> Iterator[Any]:
     snapshot_year_month = brazil_comp_rfb_snapshot_year_month(context.partition_key)
     stage_paths = brazil_comp_rfb_stage_paths(snapshot_year_month)
@@ -232,6 +262,7 @@ def brazil_comp_rfb_snapshot_files_duckdb(
             snapshot_year_month=snapshot_year_month,
             snapshot_base_url=config.snapshot_base_url,
             download_dir=BRAZIL_COMP_RFB_DOWNLOAD_DIR / snapshot_year_month,
+            object_store=object_store,
             log=log_info,
         ),
         dlt_pipeline=source.brazil_rfb_pipeline(stage_paths.manifest),
@@ -792,6 +823,7 @@ brazil_comp_rfb_resolve_job = dg.define_asset_job(
 
 defs = dg.Definitions(
     assets=[
+        brazil_comp_rfb_raw_archives_s3,
         brazil_comp_rfb_snapshot_files_duckdb,
         brazil_comp_rfb_empresas_duckdb,
         brazil_comp_rfb_estabelecimentos_duckdb,

@@ -1,4 +1,6 @@
+import hashlib
 import io
+import json
 import zipfile
 from pathlib import Path
 
@@ -49,6 +51,62 @@ class FakeSession:
     def get(self, url: str, *, timeout: int, stream: bool = False) -> FakeResponse:
         self.calls.append((url, stream))
         return self.responses[url]
+
+
+class NoDownloadSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, bool]] = []
+
+    def get(self, url: str, *, timeout: int, stream: bool = False) -> FakeResponse:
+        raise AssertionError(f"unexpected HTTP request: {url}")
+
+
+class FakeObjectStore:
+    def __init__(self) -> None:
+        self.objects: dict[tuple[str, str], bytes] = {}
+        self.created_buckets: list[str] = []
+        self.uploaded_files: list[tuple[str, str]] = []
+        self.downloaded_files: list[tuple[str, str, Path]] = []
+        self.written_json: list[tuple[str, str]] = []
+
+    def ensure_bucket(self, bucket: str | None = None) -> None:
+        assert bucket is not None
+        self.created_buckets.append(bucket)
+
+    def exists(self, key: str, bucket: str | None = None) -> bool:
+        assert bucket is not None
+        return (bucket, key) in self.objects
+
+    def upload_file(
+        self,
+        key: str,
+        source_path: str | Path,
+        bucket: str | None = None,
+    ) -> None:
+        assert bucket is not None
+        self.uploaded_files.append((bucket, key))
+        self.objects[(bucket, key)] = Path(source_path).read_bytes()
+
+    def download_file(
+        self,
+        key: str,
+        target_path: str | Path,
+        bucket: str | None = None,
+    ) -> None:
+        assert bucket is not None
+        resolved_target = Path(target_path)
+        resolved_target.parent.mkdir(parents=True, exist_ok=True)
+        resolved_target.write_bytes(self.objects[(bucket, key)])
+        self.downloaded_files.append((bucket, key, resolved_target))
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        assert bucket is not None
+        return self.objects[(bucket, key)]
+
+    def write_json(self, key: str, body: str, bucket: str | None = None) -> None:
+        assert bucket is not None
+        self.written_json.append((bucket, key))
+        self.objects[(bucket, key)] = body.encode("utf-8")
 
 
 def test_family_from_archive_name_matches_rfb_patterns() -> None:
@@ -394,6 +452,180 @@ def test_download_extract_normalizes_dirty_latin1_csv_for_duckdb(
     assert csv_path.read_text(encoding="utf-8") == (
         "12345678;CAFÉ � LTDA;2062;49;1000,00;01;\n"
     )
+
+
+def test_rfb_archive_object_key_is_partitioned_by_snapshot_and_family() -> None:
+    """The key layout IS the reuse contract: a re-run must resolve to the same
+    key so `exists` short-circuits the download."""
+    assert (
+        source.rfb_archive_object_key("2026-07", "socios", "Socios0.zip")
+        == "brazil_rfb/raw_archives/snapshot=2026-07/family=socios/Socios0.zip"
+    )
+
+
+def test_rfb_metadata_object_key_is_a_sidecar_of_the_archive_key() -> None:
+    assert source.rfb_metadata_object_key("2026-07", "socios", "Socios0.zip") == (
+        "brazil_rfb/raw_archives/snapshot=2026-07/family=socios/Socios0.zip"
+        ".metadata.json"
+    )
+
+
+def test_sync_snapshot_archives_downloads_missing_archives_to_object_store() -> None:
+    base_url = "https://example.test/arquivos/"
+    month_url = "https://example.test/arquivos/2026-07/"
+    empresas_url = "https://example.test/arquivos/2026-07/Empresas0.zip"
+    cnaes_url = "https://example.test/arquivos/2026-07/Cnaes.zip"
+    html = """
+    <html><body>
+      <a href="Empresas0.zip">empresas</a>
+      <a href="Cnaes.zip">cnaes</a>
+    </body></html>
+    """
+    body_by_url = {
+        empresas_url: b"empresas-zip-bytes",
+        cnaes_url: b"cnaes-zip-bytes",
+    }
+    session = FakeSession(
+        {
+            month_url: FakeResponse(html.encode("utf-8")),
+            empresas_url: FakeResponse(body_by_url[empresas_url]),
+            cnaes_url: FakeResponse(body_by_url[cnaes_url]),
+        }
+    )
+    object_store = FakeObjectStore()
+
+    result = source.sync_snapshot_archives_to_object_store(
+        snapshot_year_month="2026-07",
+        object_store=object_store,
+        base_url=base_url,
+        families=("empresas", "cnaes"),
+        session=session,
+    )
+
+    assert object_store.created_buckets == [source.BRAZIL_RFB_RAW_BUCKET]
+    assert len(result.archives) == 2
+    for archive in result.archives:
+        body = body_by_url[archive.archive_url]
+        assert (
+            object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, archive.object_key)]
+            == body
+        )
+        assert archive.object_key == source.rfb_archive_object_key(
+            "2026-07", archive.family, archive.archive_name
+        )
+        assert archive.downloaded is True
+        assert archive.reused_existing is False
+        assert archive.size_bytes == len(body)
+        assert archive.sha256 == hashlib.sha256(body).hexdigest()
+        metadata = json.loads(
+            object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, archive.metadata_key)]
+        )
+        assert metadata["object_key"] == archive.object_key
+
+
+def test_sync_snapshot_archives_skips_existing_object_store_keys() -> None:
+    base_url = "https://example.test/arquivos/"
+    month_url = "https://example.test/arquivos/2026-07/"
+    html = """
+    <html><body>
+      <a href="Empresas0.zip">empresas</a>
+    </body></html>
+    """
+    session = FakeSession({month_url: FakeResponse(html.encode("utf-8"))})
+    object_store = FakeObjectStore()
+    object_key = source.rfb_archive_object_key("2026-07", "empresas", "Empresas0.zip")
+    metadata_key = source.rfb_metadata_object_key(
+        "2026-07", "empresas", "Empresas0.zip"
+    )
+    existing_body = b"already-synced-zip-bytes"
+    object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, object_key)] = existing_body
+    object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, metadata_key)] = json.dumps(
+        {
+            "size_bytes": len(existing_body),
+            "sha256": hashlib.sha256(existing_body).hexdigest(),
+        }
+    ).encode("utf-8")
+
+    result = source.sync_snapshot_archives_to_object_store(
+        snapshot_year_month="2026-07",
+        object_store=object_store,
+        base_url=base_url,
+        families=("empresas",),
+        session=session,
+    )
+
+    assert len(result.archives) == 1
+    archive = result.archives[0]
+    assert archive.downloaded is False
+    assert archive.reused_existing is True
+    assert archive.size_bytes == len(existing_body)
+    assert archive.sha256 == hashlib.sha256(existing_body).hexdigest()
+    # Only the directory-listing request was made; no archive bytes refetched.
+    assert session.calls == [(month_url, False)]
+
+
+def test_download_extract_reads_archive_from_object_store_and_deletes_local_zip(
+    tmp_path: Path,
+) -> None:
+    archive_url = "https://example.test/Empresas0.zip"
+    zip_bytes = _zip_bytes(
+        "K3241.K03200Y0.D30612.EMPRECSV",
+        b"12345678;ACME LTDA;2062;49;1000,00;01;\n",
+    )
+    object_store = FakeObjectStore()
+    object_key = source.rfb_archive_object_key("2026-07", "empresas", "Empresas0.zip")
+    object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, object_key)] = zip_bytes
+    session = NoDownloadSession()
+
+    rows = source.download_extract_snapshot_files(
+        remote_files=[
+            source.BrazilRfbRemoteFile(
+                family="empresas",
+                url=archive_url,
+                archive_name="Empresas0.zip",
+            )
+        ],
+        download_dir=tmp_path,
+        source_run_id="run-1",
+        snapshot_year_month="2026-07",
+        object_store=object_store,
+        session=session,
+    )
+
+    assert len(rows) == 1
+    csv_path = Path(rows[0]["csv_path"])
+    assert csv_path.exists()
+    assert rows[0]["archive_sha256"] == hashlib.sha256(zip_bytes).hexdigest()
+    zip_path = tmp_path / "empresas" / "Empresas0.zip"
+    assert not zip_path.exists()
+    assert object_store.downloaded_files == [
+        (source.BRAZIL_RFB_RAW_BUCKET, object_key, zip_path)
+    ]
+
+
+def test_download_extract_requires_snapshot_year_month_with_object_store(
+    tmp_path: Path,
+) -> None:
+    object_store = FakeObjectStore()
+    try:
+        source.download_extract_snapshot_files(
+            remote_files=[
+                source.BrazilRfbRemoteFile(
+                    family="empresas",
+                    url="https://example.test/Empresas0.zip",
+                    archive_name="Empresas0.zip",
+                )
+            ],
+            download_dir=tmp_path,
+            source_run_id="run-1",
+            object_store=object_store,
+        )
+    except ValueError as exc:
+        assert "snapshot_year_month is required" in str(exc)
+    else:
+        raise AssertionError(
+            "expected missing snapshot_year_month with object_store to fail"
+        )
 
 
 def test_snapshot_files_resource_declares_explicit_schema(tmp_path: Path) -> None:

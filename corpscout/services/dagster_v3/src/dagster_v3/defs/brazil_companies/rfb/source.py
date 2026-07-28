@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import tempfile
 import zipfile
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -19,8 +20,10 @@ from dlt.sources.helpers import requests as dlt_requests
 from requests import HTTPError
 
 from dagster_v3.defs.brazil_companies.rfb import tables
+from dagster_v3.defs.common.resources import ObjectStoreResource
 
 DEFAULT_BASE_URL = "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
+BRAZIL_RFB_RAW_BUCKET = "source-brazil-rfb"
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_FAMILIES = tuple(tables.RAW_TABLE_BY_FAMILY)
 DOWNLOAD_CHUNK_BYTES = 1 << 20
@@ -129,6 +132,24 @@ def build_year_month_base_url(
 ) -> str:
     clean_year_month = validate_snapshot_year_month(snapshot_year_month)
     return urljoin(base_url.rstrip("/") + "/", clean_year_month + "/")
+
+
+def rfb_archive_object_key(
+    snapshot_year_month: str, family: str, archive_name: str
+) -> str:
+    return (
+        f"brazil_rfb/raw_archives/snapshot={validate_snapshot_year_month(snapshot_year_month)}"
+        f"/family={family}/{archive_name}"
+    )
+
+
+def rfb_metadata_object_key(
+    snapshot_year_month: str, family: str, archive_name: str
+) -> str:
+    return (
+        rfb_archive_object_key(snapshot_year_month, family, archive_name)
+        + ".metadata.json"
+    )
 
 
 def resolve_dated_snapshot_directory_url(
@@ -358,15 +379,29 @@ def _extract_single_csv(
         return member, normalized_path
 
 
+def _hash_file(path: Path) -> bytes:
+    sha = hashlib.sha256()
+    with path.open("rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(DOWNLOAD_CHUNK_BYTES), b""):
+            sha.update(chunk)
+    return sha.digest()
+
+
 def download_extract_snapshot_files(
     *,
     remote_files: Sequence[BrazilRfbRemoteFile],
     download_dir: str | Path,
     source_run_id: str,
+    snapshot_year_month: str | None = None,
+    object_store: ObjectStoreResource | None = None,
     session: HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     log: LogFn | None = None,
 ) -> list[dict[str, object]]:
+    if object_store is not None and snapshot_year_month is None:
+        raise ValueError(
+            "snapshot_year_month is required when object_store is provided"
+        )
     root = Path(download_dir)
     root.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
@@ -385,20 +420,41 @@ def download_extract_snapshot_files(
             f"{remote_file.family} archive {index}/{total_files} "
             f"({remote_file.archive_name})"
         )
-        digest = _download(
-            remote_file.url,
-            dest=archive_path,
-            session=session,
-            timeout_seconds=timeout_seconds,
-            log=log,
-            progress_label=progress_label,
-        ).hex()
+        if object_store is not None:
+            object_key = rfb_archive_object_key(
+                snapshot_year_month, remote_file.family, remote_file.archive_name
+            )
+            _log_progress(
+                log,
+                "Fetching %s from object store: bucket=%s key=%s",
+                progress_label,
+                BRAZIL_RFB_RAW_BUCKET,
+                object_key,
+            )
+            object_store.download_file(
+                object_key, archive_path, bucket=BRAZIL_RFB_RAW_BUCKET
+            )
+            digest = _hash_file(archive_path).hex()
+        else:
+            digest = _download(
+                remote_file.url,
+                dest=archive_path,
+                session=session,
+                timeout_seconds=timeout_seconds,
+                log=log,
+                progress_label=progress_label,
+            ).hex()
         csv_member_name, csv_path = _extract_single_csv(
             archive_path,
             family_dir,
             log=log,
             progress_label=progress_label,
         )
+        if object_store is not None:
+            # The archive is durably snapshotted in object storage already; keep
+            # only the extracted CSV locally (staging.load_raw_family_from_manifest
+            # reads it, and the partition's own cleanup removes it later).
+            archive_path.unlink()
         rows.append(
             build_snapshot_file_row(
                 family=remote_file.family,
@@ -443,6 +499,7 @@ def brazil_rfb_source(
     download_dir: str | Path | None = None,
     families: Sequence[str] = DEFAULT_FAMILIES,
     session: HttpSession | None = None,
+    object_store: ObjectStoreResource | None = None,
     log: LogFn | None = None,
 ) -> DltResource:
     if manifest_rows is not None:
@@ -481,6 +538,8 @@ def brazil_rfb_source(
         remote_files=remote_files,
         download_dir=resolved_download_dir,
         source_run_id=source_run_id,
+        snapshot_year_month=snapshot_year_month,
+        object_store=object_store,
         session=session,
         log=log,
     )
@@ -490,6 +549,202 @@ def brazil_rfb_source(
         len(rows),
     )
     return snapshot_files_resource(rows)
+
+
+@dataclass(frozen=True)
+class BrazilRfbArchiveSyncResult:
+    family: str
+    archive_name: str
+    archive_url: str
+    object_key: str
+    metadata_key: str
+    downloaded: bool
+    reused_existing: bool
+    size_bytes: int | None
+    sha256: str | None
+    synced_at: str
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "family": self.family,
+            "archive_name": self.archive_name,
+            "archive_url": self.archive_url,
+            "s3_bucket": BRAZIL_RFB_RAW_BUCKET,
+            "object_key": self.object_key,
+            "metadata_key": self.metadata_key,
+            "downloaded": self.downloaded,
+            "reused_existing": self.reused_existing,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+            "synced_at": self.synced_at,
+        }
+
+
+@dataclass(frozen=True)
+class BrazilRfbSnapshotSyncResult:
+    snapshot_year_month: str
+    archives: tuple[BrazilRfbArchiveSyncResult, ...]
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "snapshot_year_month": self.snapshot_year_month,
+            "archive_count": len(self.archives),
+            "downloaded_archive_count": sum(
+                archive.downloaded for archive in self.archives
+            ),
+            "reused_existing_archive_count": sum(
+                archive.reused_existing for archive in self.archives
+            ),
+            "families": sorted({archive.family for archive in self.archives}),
+            "object_keys": [archive.object_key for archive in self.archives],
+            "archive_urls": [archive.archive_url for archive in self.archives],
+        }
+
+
+def sync_snapshot_archives_to_object_store(
+    *,
+    snapshot_year_month: str,
+    object_store: ObjectStoreResource,
+    base_url: str = DEFAULT_BASE_URL,
+    families: Sequence[str] = DEFAULT_FAMILIES,
+    session: HttpSession | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    log: LogFn | None = None,
+) -> BrazilRfbSnapshotSyncResult:
+    clean_year_month = validate_snapshot_year_month(snapshot_year_month)
+    object_store.ensure_bucket(BRAZIL_RFB_RAW_BUCKET)
+    remote_files = fetch_snapshot_remote_files(
+        snapshot_year_month=clean_year_month,
+        base_url=base_url,
+        families=families,
+        session=session,
+    )
+    archives = tuple(
+        _sync_remote_archive(
+            remote_file=remote_file,
+            snapshot_year_month=clean_year_month,
+            object_store=object_store,
+            session=session,
+            timeout_seconds=timeout_seconds,
+            log=log,
+        )
+        for remote_file in remote_files
+    )
+    return BrazilRfbSnapshotSyncResult(
+        snapshot_year_month=clean_year_month,
+        archives=archives,
+    )
+
+
+def _sync_remote_archive(
+    *,
+    remote_file: BrazilRfbRemoteFile,
+    snapshot_year_month: str,
+    object_store: ObjectStoreResource,
+    session: HttpSession | None,
+    timeout_seconds: int,
+    log: LogFn | None,
+) -> BrazilRfbArchiveSyncResult:
+    object_key = rfb_archive_object_key(
+        snapshot_year_month, remote_file.family, remote_file.archive_name
+    )
+    metadata_key = rfb_metadata_object_key(
+        snapshot_year_month, remote_file.family, remote_file.archive_name
+    )
+    synced_at = datetime.now(UTC).isoformat()
+
+    if object_store.exists(object_key, bucket=BRAZIL_RFB_RAW_BUCKET):
+        _log_progress(
+            log,
+            "Reusing existing Brazil RFB archive: bucket=%s key=%s",
+            BRAZIL_RFB_RAW_BUCKET,
+            object_key,
+        )
+        stored_metadata = _read_stored_metadata(object_store, metadata_key)
+        result = BrazilRfbArchiveSyncResult(
+            family=remote_file.family,
+            archive_name=remote_file.archive_name,
+            archive_url=remote_file.url,
+            object_key=object_key,
+            metadata_key=metadata_key,
+            downloaded=False,
+            reused_existing=True,
+            size_bytes=_metadata_int(stored_metadata, "size_bytes"),
+            sha256=_metadata_str(stored_metadata, "sha256") or None,
+            synced_at=synced_at,
+        )
+        object_store.write_json(
+            metadata_key,
+            json.dumps(asdict(result), indent=2, sort_keys=True),
+            bucket=BRAZIL_RFB_RAW_BUCKET,
+        )
+        return result
+
+    _log_progress(
+        log,
+        "Downloading Brazil RFB archive for object store sync: family=%s url=%s",
+        remote_file.family,
+        remote_file.url,
+    )
+    with tempfile.TemporaryDirectory(prefix="brazil_comp_rfb_sync_") as tmpdir:
+        target_path = Path(tmpdir) / remote_file.archive_name
+        digest = _download(
+            remote_file.url,
+            dest=target_path,
+            session=session,
+            timeout_seconds=timeout_seconds,
+            log=log,
+            progress_label=f"{remote_file.family} archive ({remote_file.archive_name})",
+        ).hex()
+        size_bytes = target_path.stat().st_size
+        object_store.upload_file(
+            object_key,
+            target_path,
+            bucket=BRAZIL_RFB_RAW_BUCKET,
+        )
+
+    result = BrazilRfbArchiveSyncResult(
+        family=remote_file.family,
+        archive_name=remote_file.archive_name,
+        archive_url=remote_file.url,
+        object_key=object_key,
+        metadata_key=metadata_key,
+        downloaded=True,
+        reused_existing=False,
+        size_bytes=size_bytes,
+        sha256=digest,
+        synced_at=synced_at,
+    )
+    object_store.write_json(
+        metadata_key,
+        json.dumps(asdict(result), indent=2, sort_keys=True),
+        bucket=BRAZIL_RFB_RAW_BUCKET,
+    )
+    return result
+
+
+def _read_stored_metadata(
+    object_store: ObjectStoreResource,
+    metadata_key: str,
+) -> dict[str, object]:
+    try:
+        return json.loads(
+            object_store.read_bytes(metadata_key, bucket=BRAZIL_RFB_RAW_BUCKET)
+        )
+    except Exception:
+        return {}
+
+
+def _metadata_int(metadata: dict[str, object], key: str) -> int | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    return int(value)
+
+
+def _metadata_str(metadata: dict[str, object], key: str) -> str:
+    value = metadata.get(key)
+    return "" if value is None else str(value)
 
 
 def _response_content_length(response: Any) -> int | None:
