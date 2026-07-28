@@ -4,7 +4,7 @@ import duckdb
 
 from dagster_v3.defs.france_sirene import industries, resources, tables
 
-MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIG_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 COMPANIES_MIGRATION = (MIG_DIR / "000032_corpscout_fr_companies.up.sql").read_text()
 INDUSTRIES_MIGRATION = (MIG_DIR / "000033_corpscout_fr_industries.up.sql").read_text()
 COMPANIES_ADDRESS_MIGRATION = (

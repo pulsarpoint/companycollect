@@ -319,7 +319,7 @@ def test_lv_companies_columns_match_entities_schema_and_migration():
     )
     # ...and register columns must exist in the 000015 migration that owns the base schema.
     migration = (
-        Path(__file__).resolve().parents[2]
+        Path(__file__).resolve().parents[3]
         / "clickhouse"
         / "migrations"
         / "000015_corpscout_lv_companies.up.sql"
@@ -329,7 +329,7 @@ def test_lv_companies_columns_match_entities_schema_and_migration():
         assert f"    {column} " in migration
 
     activity_migration = (
-        Path(__file__).resolve().parents[2]
+        Path(__file__).resolve().parents[3]
         / "clickhouse"
         / "migrations"
         / "000081_corpscout_lv_companies_activity_translation.up.sql"
@@ -340,7 +340,7 @@ def test_lv_companies_columns_match_entities_schema_and_migration():
 
 def test_lv_companies_vzd_address_migration_adds_columns():
     migration = (
-        Path(__file__).resolve().parents[2]
+        Path(__file__).resolve().parents[3]
         / "clickhouse"
         / "migrations"
         / "000082_corpscout_lv_companies_vzd_address.up.sql"

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 
 TEXT_TRANSLATIONS_UP = MIGRATIONS_DIR / "000056_corpscout_text_translations.up.sql"
 TEXT_TRANSLATIONS_DOWN = MIGRATIONS_DIR / "000056_corpscout_text_translations.down.sql"

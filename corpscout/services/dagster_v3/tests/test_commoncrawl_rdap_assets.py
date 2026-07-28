@@ -44,7 +44,7 @@ from dagster_v3.defs.commoncrawl_rdap.rdap import (
 )
 
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 MIGRATION_NAME = "000124_corpscout_rdap_networks"
 DICTIONARY_READER_MIGRATION_NAME = "000126_corpscout_rdap_dictionary_reader"
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "rdap"

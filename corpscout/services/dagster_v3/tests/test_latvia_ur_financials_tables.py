@@ -3,7 +3,7 @@ from pathlib import Path
 from dagster_v3.defs.latvia_ur import tables
 
 MIGRATION = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[3]
     / "clickhouse"
     / "migrations"
     / "000016_corpscout_lv_financial_statements.up.sql"
@@ -34,7 +34,7 @@ def test_wide_columns_are_unique_and_ordered():
 
 
 METRICS_MIGRATION = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[3]
     / "clickhouse"
     / "migrations"
     / "000019_corpscout_lv_financial_metrics.up.sql"

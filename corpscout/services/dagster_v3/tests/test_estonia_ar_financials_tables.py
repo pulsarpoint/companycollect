@@ -2,7 +2,7 @@ from pathlib import Path
 
 from dagster_v3.defs.estonia_ar import tables
 
-MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIG_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 STATEMENTS_MIGRATION = (
     MIG_DIR / "000025_corpscout_ee_financial_statements.up.sql"
 ).read_text()

@@ -6,7 +6,7 @@ import duckdb
 from dagster_v3.defs.estonia_ar import industries, tables
 
 MIGRATION = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[3]
     / "clickhouse"
     / "migrations"
     / "000031_corpscout_ee_industries.up.sql"

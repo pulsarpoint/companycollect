@@ -14,7 +14,7 @@ from tests.canonical_contact_tables import (
     assert_canonical_domains_ddl,
 )
 
-MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIG_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 CANONICAL_CONTACTS_MIGRATION = sorted(
     MIG_DIR.glob("*_corpscout_lv_canonical_contacts.up.sql")
 )[-1].read_text()

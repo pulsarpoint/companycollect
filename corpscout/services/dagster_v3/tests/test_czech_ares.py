@@ -10,7 +10,7 @@ from tests.canonical_contact_tables import (
     assert_canonical_domains_ddl,
 )
 
-MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIG_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 COMPANIES_MIGRATION = (MIG_DIR / "000038_corpscout_cz_companies.up.sql").read_text()
 INDUSTRIES_MIGRATION = (MIG_DIR / "000039_corpscout_cz_industries.up.sql").read_text()
 CANONICAL_CONTACTS_MIGRATION = sorted(

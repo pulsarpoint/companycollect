@@ -26,7 +26,7 @@ from dagster_v3.defs.commoncrawl_ip import (
 )
 
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 
 
 class FakeReadClient:

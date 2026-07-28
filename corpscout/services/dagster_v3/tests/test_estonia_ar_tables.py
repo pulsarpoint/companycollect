@@ -3,7 +3,7 @@ from pathlib import Path
 from dagster_v3.defs.estonia_ar import resources, tables
 
 MIGRATION = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[3]
     / "clickhouse"
     / "migrations"
     / "000024_corpscout_ee_companies.up.sql"
