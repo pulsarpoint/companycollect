@@ -280,6 +280,34 @@ and a re-run of the existing parse assets.
 Framework maxima must land in their own columns and never be merged into a
 realized value: a framework ceiling is not money anyone spent.
 
+### 4.1c UHM's sector columns are read and then dropped — OPEN
+
+Found 2026-07-28. `EXPECTED_SOURCE_COLUMNS` lists them, so the CSV parses them
+and the loader discards them:
+
+```
+Sektor för köpare              Kommun 61,927 · Region 20,324 · Stat 19,633 · Annat 783
+Delsektor för köpare           e.g. "Kommunalt ägd organisation"
+Juridisk form för köpare       e.g. "Övriga aktiebolag"
+SNI-Avdelning för köpare
+Sektor för leverantör          + Juridisk form, Företagsstorlek, 5 SNI columns
+```
+
+**This is the only data we hold that identifies public OWNERSHIP as opposed to
+public FORM**, and it is the difference between the two questions
+`company_entity_types` cannot answer. Hässleholm Miljö AB (5565550349) is a
+municipal waste company: legally `AB-ORGFO`, so it classifies as a Company and
+is right to — but UHM says `Sektor = Kommun`, `Delsektor = Kommunalt ägd
+organisation`. Nearly half of Sweden's 993 TED buyers are companies of exactly
+this kind.
+
+It also breaks the §4.4 storage rule outright: these are received and
+discarded. Fixing it is a `normalize.py` + `tables.py` + migration change and a
+UHM re-materialization — no new requests, since the CSV is snapshotted.
+
+Blocks: a distinct page treatment for government-owned entities, which cannot
+be built from legal form alone.
+
 ### 4.2 Sweden's two sources are not deduplicated — OPEN
 
 Zero cross-source matches across 242,699 rows. A Swedish contract in both
