@@ -108,6 +108,14 @@ class FakeObjectStore:
         self.written_json.append((bucket, key))
         self.objects[(bucket, key)] = body.encode("utf-8")
 
+    def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        assert bucket is not None
+        return sorted(
+            key
+            for (object_bucket, key) in self.objects
+            if object_bucket == bucket and key.startswith(prefix)
+        )
+
 
 def test_family_from_archive_name_matches_rfb_patterns() -> None:
     assert (
@@ -626,6 +634,100 @@ def test_download_extract_requires_snapshot_year_month_with_object_store(
         raise AssertionError(
             "expected missing snapshot_year_month with object_store to fail"
         )
+
+
+def test_resolve_snapshot_remote_files_from_object_store_lists_bucket_keys() -> None:
+    object_store = FakeObjectStore()
+    empresas_key = source.rfb_archive_object_key("2026-07", "empresas", "Empresas0.zip")
+    cnaes_key = source.rfb_archive_object_key("2026-07", "cnaes", "Cnaes.zip")
+    metadata_key = source.rfb_metadata_object_key("2026-07", "empresas", "Empresas0.zip")
+    object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, empresas_key)] = b"empresas"
+    object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, cnaes_key)] = b"cnaes"
+    object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, metadata_key)] = b"{}"
+
+    files = source.resolve_snapshot_remote_files_from_object_store(
+        snapshot_year_month="2026-07",
+        object_store=object_store,
+        families=("empresas", "cnaes"),
+    )
+
+    assert [(item.family, item.archive_name) for item in files] == [
+        ("cnaes", "Cnaes.zip"),
+        ("empresas", "Empresas0.zip"),
+    ]
+
+
+def test_resolve_snapshot_remote_files_from_object_store_returns_empty_when_unsynced() -> (
+    None
+):
+    object_store = FakeObjectStore()
+
+    files = source.resolve_snapshot_remote_files_from_object_store(
+        snapshot_year_month="2026-07",
+        object_store=object_store,
+        families=("empresas", "cnaes"),
+    )
+
+    assert files == []
+
+
+def test_resolve_snapshot_remote_files_from_object_store_raises_on_partial_sync() -> (
+    None
+):
+    """A partial sync (some families present, some missing) is a bug in the
+    sync asset, not something the manifest asset should silently paper over
+    by discovering the rest from origin -- fail loudly instead."""
+    object_store = FakeObjectStore()
+    empresas_key = source.rfb_archive_object_key("2026-07", "empresas", "Empresas0.zip")
+    object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, empresas_key)] = b"empresas"
+
+    try:
+        source.resolve_snapshot_remote_files_from_object_store(
+            snapshot_year_month="2026-07",
+            object_store=object_store,
+            families=("empresas", "cnaes"),
+        )
+    except LookupError as exc:
+        assert "cnaes" in str(exc)
+    else:
+        raise AssertionError("expected partial object store sync to fail")
+
+
+def test_brazil_rfb_source_resolves_from_object_store_with_no_http_at_all(
+    tmp_path: Path,
+) -> None:
+    """C1: when the raw-archives-s3 asset has already snapshotted this
+    partition, the manifest asset must resolve entirely from the bucket --
+    zero HTTP requests -- so a month RFB has stopped publishing is still
+    rebuildable from storage. A session that raises on any .get() proves it."""
+    object_store = FakeObjectStore()
+    for family, archive_name, member_name, body in (
+        (
+            "empresas",
+            "Empresas0.zip",
+            "Empresas0",
+            b"12345678;ACME LTDA;2062;49;1000,00;01;\n",
+        ),
+        ("cnaes", "Cnaes.zip", "Cnaes", b"01;COMMERCE\n"),
+    ):
+        key = source.rfb_archive_object_key("2026-07", family, archive_name)
+        object_store.objects[(source.BRAZIL_RFB_RAW_BUCKET, key)] = _zip_bytes(
+            member_name, body
+        )
+
+    dlt_source = source.brazil_rfb_source(
+        source_run_id="run-1",
+        snapshot_year_month="2026-07",
+        download_dir=tmp_path,
+        families=("empresas", "cnaes"),
+        object_store=object_store,
+        session=NoDownloadSession(),
+    )
+    rows = list(dlt_source.resources["snapshot_files"])
+
+    assert {row["family"] for row in rows} == {"empresas", "cnaes"}
+    for row in rows:
+        assert Path(row["csv_path"]).exists()
 
 
 def test_snapshot_files_resource_declares_explicit_schema(tmp_path: Path) -> None:

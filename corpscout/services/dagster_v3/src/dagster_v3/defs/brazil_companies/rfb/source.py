@@ -232,6 +232,52 @@ def fetch_snapshot_remote_files(
     return files
 
 
+def resolve_snapshot_remote_files_from_object_store(
+    *,
+    snapshot_year_month: str,
+    object_store: ObjectStoreResource,
+    families: Sequence[str] = DEFAULT_FAMILIES,
+) -> list[BrazilRfbRemoteFile]:
+    """Rebuild the partition's remote-file list from the S3 bucket alone.
+
+    The archive keys already embed `snapshot=<YYYY-MM>/family=<family>/<archive_name>`,
+    so a synced partition never needs to touch the origin mirror to be
+    re-manifested. Returns an empty list when the bucket holds nothing for
+    this snapshot (the caller falls back to origin discovery in that case).
+    Raises LookupError on a *partial* sync -- some but not all requested
+    families present -- since that is a bug in the sync asset, not a case to
+    silently patch over by mixing in an origin-mirror discovery.
+    """
+    clean_year_month = validate_snapshot_year_month(snapshot_year_month)
+    wanted = set(families)
+    prefix = f"brazil_rfb/raw_archives/snapshot={clean_year_month}/"
+    keys = object_store.list_keys(prefix, bucket=BRAZIL_RFB_RAW_BUCKET)
+    files: list[BrazilRfbRemoteFile] = []
+    for key in keys:
+        if key.endswith(".metadata.json"):
+            continue
+        archive_name = key.rsplit("/", 1)[-1]
+        family = family_from_archive_name(archive_name)
+        if family not in wanted:
+            continue
+        files.append(
+            BrazilRfbRemoteFile(
+                family=family,
+                url=f"s3://{BRAZIL_RFB_RAW_BUCKET}/{key}",
+                archive_name=archive_name,
+            )
+        )
+    if not files:
+        return []
+    missing = sorted(wanted - {item.family for item in files})
+    if missing:
+        raise LookupError(
+            "Brazil RFB object store sync is missing file families for "
+            f"snapshot {clean_year_month}: {', '.join(missing)}"
+        )
+    return sorted(files, key=lambda item: (item.family, item.archive_name))
+
+
 def build_snapshot_file_row(
     *,
     family: str,
@@ -521,25 +567,53 @@ def brazil_rfb_source(
         resolved_download_dir,
         ",".join(families),
     )
-    remote_files = fetch_snapshot_remote_files(
-        snapshot_year_month=snapshot_year_month,
-        base_url=snapshot_base_url,
-        families=families,
-        session=session,
-    )
-    _log_progress(
-        log,
-        "Resolved Brazil RFB snapshot files: snapshot_year_month=%s file_count=%s archives=%s",
-        snapshot_year_month,
-        len(remote_files),
-        ",".join(item.archive_name for item in remote_files),
-    )
+    remote_files: list[BrazilRfbRemoteFile] | None = None
+    resolve_via_object_store = False
+    if object_store is not None:
+        remote_files = resolve_snapshot_remote_files_from_object_store(
+            snapshot_year_month=snapshot_year_month,
+            object_store=object_store,
+            families=families,
+        )
+        if remote_files:
+            resolve_via_object_store = True
+            _log_progress(
+                log,
+                "Resolved Brazil RFB snapshot files from object store: "
+                "snapshot_year_month=%s file_count=%s -- no origin request needed",
+                snapshot_year_month,
+                len(remote_files),
+            )
+        else:
+            remote_files = None
+            _log_progress(
+                log,
+                "Brazil RFB object store holds no archives for snapshot_year_month=%s; "
+                "falling back to origin mirror discovery",
+                snapshot_year_month,
+            )
+
+    if remote_files is None:
+        remote_files = fetch_snapshot_remote_files(
+            snapshot_year_month=snapshot_year_month,
+            base_url=snapshot_base_url,
+            families=families,
+            session=session,
+        )
+        _log_progress(
+            log,
+            "Resolved Brazil RFB snapshot files: snapshot_year_month=%s file_count=%s archives=%s",
+            snapshot_year_month,
+            len(remote_files),
+            ",".join(item.archive_name for item in remote_files),
+        )
+
     rows = download_extract_snapshot_files(
         remote_files=remote_files,
         download_dir=resolved_download_dir,
         source_run_id=source_run_id,
         snapshot_year_month=snapshot_year_month,
-        object_store=object_store,
+        object_store=object_store if resolve_via_object_store else None,
         session=session,
         log=log,
     )
