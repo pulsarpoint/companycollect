@@ -5,8 +5,10 @@ from pathlib import Path
 import pytest
 import requests
 
+from dagster_v3.defs.sweden_uhm_procurement import tables
 from dagster_v3.defs.sweden_uhm_procurement.clickhouse import (
     uhm_awards_insert_sql,
+    uhm_candidate_stage_ddl,
 )
 from dagster_v3.defs.sweden_uhm_procurement.resources import sync_uhm_snapshot
 
@@ -123,6 +125,51 @@ def test_sync_snapshot_refuses_short_content_length() -> None:
             minimum_data_rows=1,
             download_attempts=1,
         )
+
+
+def test_candidate_stage_declares_exactly_the_exported_candidate_columns() -> None:
+    """The stage table is hand-written DDL while the export ships
+    CANDIDATE_COLUMNS into it positionally. Drift between the two does not fail
+    a unit test -- it fails inside a materialization, against real data, after
+    the download. Pin them together instead.
+    """
+    ddl = uhm_candidate_stage_ddl("corpscout.stage")
+
+    body = ddl[ddl.index("(") + 1 : ddl.rindex(")")]
+    declared = tuple(
+        line.strip().split()[0]
+        for line in body.splitlines()
+        if line.strip() and not line.strip().startswith("--")
+    )
+    assert declared == tables.CANDIDATE_COLUMNS
+
+
+def test_published_awards_carry_uhm_own_description_of_both_parties() -> None:
+    """Sector is the only ownership signal we receive, and it is published per
+    award row for buyer AND supplier. Both sides ship, verbatim -- the supplier
+    columns are the only industry and company-size data we hold for most of
+    these entities.
+    """
+    sql = uhm_awards_insert_sql(
+        candidate_table="corpscout.candidates",
+        awards_stage="corpscout.awards_stage",
+    )
+
+    for column in (
+        "buyer_sector",
+        "buyer_subsector",
+        "buyer_legal_form",
+        "buyer_sni_division",
+        "supplier_sector",
+        "supplier_legal_form",
+        "supplier_size",
+        "supplier_sni_division",
+        "supplier_sni_main_group",
+        "supplier_sni_group",
+        "supplier_sni_subgroup",
+        "supplier_sni_detail_group",
+    ):
+        assert f"u.{column}" in sql
 
 
 def test_clickhouse_publish_retains_unmatched_supplier_observations() -> None:

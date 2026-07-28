@@ -11,6 +11,56 @@ from dagster_v3.defs.clickhouse.resolved import (
 from dagster_v3.defs.sweden_uhm_procurement import tables
 
 
+def uhm_candidate_stage_ddl(table: str) -> str:
+    """The staging shape the DuckDB candidates land in.
+
+    Column order is the contract: the export ships ``CANDIDATE_COLUMNS`` into
+    this table positionally, so the two are pinned together by a test rather
+    than by whoever edits them next remembering both.
+    """
+    return f"""
+    CREATE TABLE {table}
+    (
+        source_slug LowCardinality(String),
+        source_run_id String,
+        source_record_id String,
+        source_line_number UInt64,
+        source_procurement_id String,
+        source_lot_id String,
+        publication_date Nullable(Date),
+        title String,
+        agreement_type LowCardinality(String),
+        contracted UInt8,
+        buyer_name String,
+        buyer_id_normalized String,
+        buyer_sector LowCardinality(String),
+        buyer_subsector LowCardinality(String),
+        buyer_legal_form LowCardinality(String),
+        buyer_sni_division LowCardinality(String),
+        supplier_name String,
+        supplier_id_normalized String,
+        supplier_sector LowCardinality(String),
+        supplier_legal_form LowCardinality(String),
+        supplier_size LowCardinality(String),
+        supplier_sni_division LowCardinality(String),
+        supplier_sni_main_group LowCardinality(String),
+        supplier_sni_group LowCardinality(String),
+        supplier_sni_subgroup LowCardinality(String),
+        supplier_sni_detail_group LowCardinality(String),
+        cpv_code String,
+        advertising_database LowCardinality(String),
+        directive_governed LowCardinality(String),
+        source_url String,
+        source_object_key String,
+        source_retrieved_at DateTime64(3, 'UTC'),
+        resolved_at DateTime64(3, 'UTC'),
+        match_eligibility LowCardinality(String)
+    )
+    ENGINE = MergeTree
+    ORDER BY source_record_id
+    """
+
+
 def uhm_awards_insert_sql(*, candidate_table: str, awards_stage: str) -> str:
     return f"""
     INSERT INTO {awards_stage} ({", ".join(tables.AWARDS_COLUMNS)})
@@ -42,8 +92,20 @@ def uhm_awards_insert_sql(*, candidate_table: str, awards_stage: str) -> str:
         u.contracted,
         u.buyer_name,
         u.buyer_id_normalized,
+        u.buyer_sector,
+        u.buyer_subsector,
+        u.buyer_legal_form,
+        u.buyer_sni_division,
         u.supplier_name,
         u.supplier_id_normalized,
+        u.supplier_sector,
+        u.supplier_legal_form,
+        u.supplier_size,
+        u.supplier_sni_division,
+        u.supplier_sni_main_group,
+        u.supplier_sni_group,
+        u.supplier_sni_subgroup,
+        u.supplier_sni_detail_group,
         u.cpv_code,
         u.advertising_database,
         u.directive_governed,
@@ -76,37 +138,7 @@ def export_uhm_awards_clickhouse(
     qualified_awards = _qualified(tables.AWARDS_TABLE)
 
     with clickhouse.get_connection() as client:
-        client.execute(
-            f"""
-            CREATE TABLE {qualified_candidates}
-            (
-                source_slug LowCardinality(String),
-                source_run_id String,
-                source_record_id String,
-                source_line_number UInt64,
-                source_procurement_id String,
-                source_lot_id String,
-                publication_date Nullable(Date),
-                title String,
-                agreement_type LowCardinality(String),
-                contracted UInt8,
-                buyer_name String,
-                buyer_id_normalized String,
-                supplier_name String,
-                supplier_id_normalized String,
-                cpv_code String,
-                advertising_database LowCardinality(String),
-                directive_governed LowCardinality(String),
-                source_url String,
-                source_object_key String,
-                source_retrieved_at DateTime64(3, 'UTC'),
-                resolved_at DateTime64(3, 'UTC'),
-                match_eligibility LowCardinality(String)
-            )
-            ENGINE = MergeTree
-            ORDER BY source_record_id
-            """
-        )
+        client.execute(uhm_candidate_stage_ddl(qualified_candidates))
         client.execute(f"CREATE TABLE {qualified_awards_stage} AS {qualified_awards}")
         try:
             candidate_rows = export_duckdb_connection_table_to_clickhouse(

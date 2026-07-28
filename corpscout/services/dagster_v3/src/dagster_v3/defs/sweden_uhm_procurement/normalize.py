@@ -103,8 +103,40 @@ def build_award_candidates(
                 ) as contracted,
                 coalesce(trim("Namn för köpare"), '') as buyer_name,
                 {buyer_identity} as buyer_id_normalized,
+                -- How UHM describes the parties, carried through exactly as it
+                -- wrote them. Sector is the only ownership signal we receive
+                -- anywhere: a legal form says a municipal waste company is an
+                -- aktiebolag, which is true and does not say what it is.
+                --
+                -- Nothing is mapped or bucketed here. These are published PER
+                -- AWARD ROW, so they describe a party in a role rather than the
+                -- company outright, and what an entity IS gets decided in a
+                -- per-country view where a wrong answer costs one DDL instead
+                -- of a re-materialization.
+                coalesce(trim("Sektor för köpare"), '') as buyer_sector,
+                coalesce(trim("Delsektor för köpare"), '') as buyer_subsector,
+                coalesce(trim("Juridisk form för köpare"), '') as buyer_legal_form,
+                coalesce(trim("SNI-Avdelning för köpare"), '') as buyer_sni_division,
                 coalesce(trim("Namn för leverantör"), '') as supplier_name,
                 {supplier_identity} as supplier_id_normalized,
+                coalesce(trim("Sektor för leverantör"), '') as supplier_sector,
+                coalesce(trim("Juridisk form för leverantör"), '')
+                    as supplier_legal_form,
+                coalesce(trim("Företagsstorlek för leverantör"), '')
+                    as supplier_size,
+                -- SNI is published at five nested levels. Keeping only the
+                -- division would discard the precision that makes the deeper
+                -- ones worth having, and almost no other source gives us any.
+                coalesce(trim("SNI-Avdelning för leverantör"), '')
+                    as supplier_sni_division,
+                coalesce(trim("SNI-Huvudgrupp för leverantör"), '')
+                    as supplier_sni_main_group,
+                coalesce(trim("SNI-Grupp för leverantör"), '')
+                    as supplier_sni_group,
+                coalesce(trim("SNI-Undergrupp för leverantör"), '')
+                    as supplier_sni_subgroup,
+                coalesce(trim("SNI-Detaljgrupp för leverantör"), '')
+                    as supplier_sni_detail_group,
                 coalesce(
                     regexp_extract(trim(coalesce("Huvudsaklig CPV-kod", '')), '^(\\d{{8}})', 1),
                     ''
@@ -148,8 +180,20 @@ def build_award_candidates(
             contracted,
             buyer_name,
             buyer_id_normalized,
+            buyer_sector,
+            buyer_subsector,
+            buyer_legal_form,
+            buyer_sni_division,
             supplier_name,
             supplier_id_normalized,
+            supplier_sector,
+            supplier_legal_form,
+            supplier_size,
+            supplier_sni_division,
+            supplier_sni_main_group,
+            supplier_sni_group,
+            supplier_sni_subgroup,
+            supplier_sni_detail_group,
             cpv_code,
             advertising_database,
             directive_governed,
