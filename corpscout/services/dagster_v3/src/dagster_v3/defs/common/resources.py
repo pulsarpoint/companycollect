@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,6 +31,10 @@ class S3Client(Protocol):
 
     def get_paginator(self, operation_name: str) -> Any:
         ...
+
+    def put_bucket_lifecycle_configuration(
+        self, Bucket: str, LifecycleConfiguration: Mapping[str, Any]
+    ) -> Any: ...
 
     def delete_objects(self, Bucket: str, Delete: Mapping[str, Any]) -> Any:
         ...
@@ -68,6 +72,23 @@ class ObjectStoreResource(dg.ConfigurableResource):
         except Exception as exc:
             if _error_code(exc) not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
                 raise
+
+    def apply_lifecycle_rules(
+        self,
+        rules: Sequence[Mapping[str, Any]],
+        bucket: str | None = None,
+    ) -> None:
+        """Replace the bucket's lifecycle configuration. Idempotent.
+
+        Retention policy belongs in version control: applied by hand it would
+        live nowhere, not survive a bucket being recreated, and appear in no
+        review.
+        """
+        target_bucket = bucket or self.bucket
+        self.client().put_bucket_lifecycle_configuration(
+            Bucket=target_bucket,
+            LifecycleConfiguration={"Rules": list(rules)},
+        )
 
     def exists(self, key: str, bucket: str | None = None) -> bool:
         target_bucket = bucket or self.bucket

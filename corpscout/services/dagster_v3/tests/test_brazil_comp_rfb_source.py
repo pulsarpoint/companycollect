@@ -69,10 +69,19 @@ class FakeObjectStore:
         self.uploaded_files: list[tuple[str, str]] = []
         self.downloaded_files: list[tuple[str, str, Path]] = []
         self.written_json: list[tuple[str, str]] = []
+        self.lifecycle_rules: list[tuple[str, list[dict[str, object]]]] = []
 
     def ensure_bucket(self, bucket: str | None = None) -> None:
         assert bucket is not None
         self.created_buckets.append(bucket)
+
+    def apply_lifecycle_rules(
+        self,
+        rules: object,
+        bucket: str | None = None,
+    ) -> None:
+        assert bucket is not None
+        self.lifecycle_rules.append((bucket, list(rules)))  # type: ignore[arg-type]
 
     def exists(self, key: str, bucket: str | None = None) -> bool:
         assert bucket is not None
@@ -463,20 +472,46 @@ def test_download_extract_normalizes_dirty_latin1_csv_for_duckdb(
     )
 
 
-def test_rfb_archive_object_key_is_partitioned_by_snapshot_and_family() -> None:
+def test_rfb_archive_object_key_puts_family_before_snapshot() -> None:
     """The key layout IS the reuse contract: a re-run must resolve to the same
-    key so `exists` short-circuits the download."""
+    key so `exists` short-circuits the download.
+
+    `family=` comes BEFORE `snapshot=` because S3 lifecycle rules filter by
+    prefix, not glob. Only this order makes
+    `brazil_rfb/raw_archives/family=socios/` selectable, which is what lets the
+    90-day expiry on personal data (design section 6) be expressed as one rule
+    instead of a new rule every month.
+    """
     assert (
         source.rfb_archive_object_key("2026-07", "socios", "Socios0.zip")
-        == "brazil_rfb/raw_archives/snapshot=2026-07/family=socios/Socios0.zip"
+        == "brazil_rfb/raw_archives/family=socios/snapshot=2026-07/Socios0.zip"
     )
+    assert source.rfb_archive_object_key(
+        "2026-07", "socios", "Socios0.zip"
+    ).startswith(source.RFB_SOCIOS_RETENTION_PREFIX)
 
 
 def test_rfb_metadata_object_key_is_a_sidecar_of_the_archive_key() -> None:
     assert source.rfb_metadata_object_key("2026-07", "socios", "Socios0.zip") == (
-        "brazil_rfb/raw_archives/snapshot=2026-07/family=socios/Socios0.zip"
+        "brazil_rfb/raw_archives/family=socios/snapshot=2026-07/Socios0.zip"
         ".metadata.json"
     )
+
+
+def test_socios_retention_rule_expires_only_the_personal_data_family() -> None:
+    """Design section 6: socios carries person names, masked CPFs and age bands,
+    so its raw archives expire after 90 days. The other nine families carry no
+    personal data and are kept indefinitely for rebuildability.
+
+    The rule is applied in code rather than by hand because this repo has no
+    infrastructure-as-code -- a hand-applied policy would live nowhere, survive
+    no bucket recreation, and appear in no review.
+    """
+    rule = source.rfb_socios_retention_rule()
+
+    assert rule["Filter"]["Prefix"] == "brazil_rfb/raw_archives/family=socios/"
+    assert rule["Expiration"]["Days"] == 90
+    assert rule["Status"] == "Enabled"
 
 
 def test_sync_snapshot_archives_downloads_missing_archives_to_object_store() -> None:

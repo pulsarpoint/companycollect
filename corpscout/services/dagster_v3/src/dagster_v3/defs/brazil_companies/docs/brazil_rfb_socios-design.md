@@ -154,12 +154,45 @@ in scope; establishing *who that human is* beyond what RFB published is not.
 This belongs in the module docstring, because it is the kind of boundary that
 erodes silently through well-intentioned enrichment.
 
-**Retention falls out favourably, and that is worth writing down precisely
-because it is incidental.** The module replaces each snapshot rather than
-accumulating, so only the current month is held — no growing history of personal
-data. If anyone later proposes keeping monthly history for trend analysis, they
-are changing the retention posture, not just the storage strategy, and should
-have to notice that.
+**Retention: 90 days for socios raw archives, indefinite for everything else.**
+
+The first draft of this section said retention "falls out favourably" because
+the module replaces each snapshot and holds only the current month — and warned
+that anyone later keeping monthly history would be changing the retention
+posture, not just the storage strategy, and "should have to notice that."
+
+**That happened, in this same branch.** The S3 snapshot step added to
+`brazil_companies/rfb` exists so a partition stays rebuildable after RFB's
+mirror drops a month — a good reason, and one that quietly turned
+snapshot-replace into indefinite accumulation of person names, masked CPFs and
+age bands. Nobody noticed until review. This is the deliberate answer:
+
+- `family=socios` raw archives expire after **90 days**
+  (`source.RFB_SOCIOS_RETENTION_DAYS`, applied as an S3 lifecycle rule by
+  `rfb_socios_retention_rule()` whenever the bucket is ensured).
+- The other nine families carry no personal data and are kept **indefinitely**,
+  which is where the rebuildability guarantee actually lives.
+
+Ninety days is chosen from purpose, which is the test that matters here.
+ClickHouse serves only the latest snapshot, so an old raw archive has no
+serving value; its only use is reprocessing after a bug or a layout correction,
+and that need is concentrated in the last month or two. It gives an answerable
+position — *we keep the source file for 90 days so ingest can be reprocessed* —
+where "indefinitely, because storage is cheap" gives none.
+
+**The honest cost, stated rather than discovered:** after 90 days a socios
+archive is gone, so a year-old partition rebuilds only its nine non-personal
+families. That is the trade, accepted knowingly.
+
+Two implementation notes that are load-bearing rather than incidental:
+
+- The object key is **`family=` before `snapshot=`**. S3 lifecycle rules filter
+  by prefix, not glob, so `snapshot=*/family=socios/` cannot be expressed —
+  only this order makes the rule a single line instead of a new rule each
+  month. Changing the key order silently disarms the retention policy.
+- The rule is applied **in code**, not by hand. This repo has no
+  infrastructure-as-code, so a manually-applied policy would live nowhere,
+  not survive a bucket being recreated, and never appear in review.
 
 **Access**: this phase ships the edge table only, so nothing reaches the UI.
 When it does, person rows sit behind whatever access rule governs person data

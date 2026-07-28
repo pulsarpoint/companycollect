@@ -135,13 +135,48 @@ def build_year_month_base_url(
     return urljoin(base_url.rstrip("/") + "/", clean_year_month + "/")
 
 
+RFB_RAW_ARCHIVE_PREFIX = "brazil_rfb/raw_archives"
+
+# Socios is the only family carrying personal data -- person names, masked CPFs
+# and age bands -- so its raw archives expire while the other nine are kept
+# indefinitely for rebuildability. See the socios design doc, section 6.
+RFB_SOCIOS_RETENTION_DAYS = 90
+RFB_SOCIOS_RETENTION_PREFIX = f"{RFB_RAW_ARCHIVE_PREFIX}/family=socios/"
+
+
+def rfb_family_prefix(family: str) -> str:
+    return f"{RFB_RAW_ARCHIVE_PREFIX}/family={family}/"
+
+
 def rfb_archive_object_key(
     snapshot_year_month: str, family: str, archive_name: str
 ) -> str:
+    """Key layout: family FIRST, then snapshot.
+
+    S3 lifecycle rules filter by prefix, not glob, so `snapshot=` first would
+    make `snapshot=*/family=socios/` unexpressible and force a new rule every
+    month. This order makes the 90-day personal-data expiry a single rule.
+    """
     return (
-        f"brazil_rfb/raw_archives/snapshot={validate_snapshot_year_month(snapshot_year_month)}"
-        f"/family={family}/{archive_name}"
+        f"{rfb_family_prefix(family)}"
+        f"snapshot={validate_snapshot_year_month(snapshot_year_month)}"
+        f"/{archive_name}"
     )
+
+
+def rfb_socios_retention_rule() -> dict[str, object]:
+    """The lifecycle rule bounding how long personal data is retained.
+
+    Applied in code rather than by hand: this repo has no
+    infrastructure-as-code, so a manually-applied policy would live nowhere,
+    not survive a bucket being recreated, and never appear in review.
+    """
+    return {
+        "ID": "brazil-rfb-socios-personal-data-expiry",
+        "Status": "Enabled",
+        "Filter": {"Prefix": RFB_SOCIOS_RETENTION_PREFIX},
+        "Expiration": {"Days": RFB_SOCIOS_RETENTION_DAYS},
+    }
 
 
 def rfb_metadata_object_key(
@@ -250,32 +285,32 @@ def resolve_snapshot_remote_files_from_object_store(
     silently patch over by mixing in an origin-mirror discovery.
     """
     clean_year_month = validate_snapshot_year_month(snapshot_year_month)
-    wanted = set(families)
-    prefix = f"brazil_rfb/raw_archives/snapshot={clean_year_month}/"
-    try:
-        keys = object_store.list_keys(prefix, bucket=BRAZIL_RFB_RAW_BUCKET)
-    except ClientError as exc:
-        if _s3_error_code(exc) not in {"NoSuchBucket", "404"}:
-            raise
-        keys = []
     files: list[BrazilRfbRemoteFile] = []
-    for key in keys:
-        if key.endswith(".metadata.json"):
-            continue
-        archive_name = key.rsplit("/", 1)[-1]
-        family = family_from_archive_name(archive_name)
-        if family not in wanted:
-            continue
-        files.append(
-            BrazilRfbRemoteFile(
-                family=family,
-                url=f"s3://{BRAZIL_RFB_RAW_BUCKET}/{key}",
-                archive_name=archive_name,
+    # One listing per family. The key layout is family-first (so the socios
+    # retention rule is expressible as a prefix), which means a partition spans
+    # N prefixes rather than one -- and the family comes from the prefix we
+    # asked for rather than from parsing the archive name back out.
+    for family in families:
+        prefix = f"{rfb_family_prefix(family)}snapshot={clean_year_month}/"
+        try:
+            keys = object_store.list_keys(prefix, bucket=BRAZIL_RFB_RAW_BUCKET)
+        except ClientError as exc:
+            if _s3_error_code(exc) not in {"NoSuchBucket", "404"}:
+                raise
+            keys = []
+        for key in keys:
+            if key.endswith(".metadata.json"):
+                continue
+            files.append(
+                BrazilRfbRemoteFile(
+                    family=family,
+                    url=f"s3://{BRAZIL_RFB_RAW_BUCKET}/{key}",
+                    archive_name=key.rsplit("/", 1)[-1],
+                )
             )
-        )
     if not files:
         return []
-    missing = sorted(wanted - {item.family for item in files})
+    missing = sorted(set(families) - {item.family for item in files})
     if missing:
         raise LookupError(
             "Brazil RFB object store sync is missing file families for "
@@ -733,6 +768,13 @@ def sync_snapshot_archives_to_object_store(
         )
 
     object_store.ensure_bucket(BRAZIL_RFB_RAW_BUCKET)
+    # Bound how long personal data lives here. Socios carries person names,
+    # masked CPFs and age bands; the other nine families carry none and are
+    # kept indefinitely so a partition stays rebuildable. Idempotent, and
+    # applied here so the policy cannot drift from the key layout it depends on.
+    object_store.apply_lifecycle_rules(
+        [rfb_socios_retention_rule()], bucket=BRAZIL_RFB_RAW_BUCKET
+    )
     remote_files = fetch_snapshot_remote_files(
         snapshot_year_month=clean_year_month,
         base_url=base_url,
