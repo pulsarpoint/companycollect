@@ -12,6 +12,25 @@ Design doc: `src/dagster_v3/defs/brazil_companies/docs/brazil_rfb_socios-design.
 
 ## Global Constraints
 
+- **Every new asset MUST be added to the `defs = dg.Definitions(assets=[...])`
+  list at the bottom of `assets.py` (~line 730).** `load_from_defs_folder`
+  merges each module's explicit `Definitions` object, so a function decorated
+  `@dg.asset` but omitted from that list is invisible to Dagster: absent from
+  the asset graph, unselectable in the UI, and excluded from
+  `brazil_comp_rfb_resolve_job`. **Neither `pytest` nor `dg check defs` catches
+  this** — `dg check defs` only validates what is already wired. Verify with:
+
+  ```bash
+  uv run python -c "
+  from dagster_v3.definitions import defs as load_defs
+  keys = {k.path[-1] for k in load_defs().get_repository_def().asset_graph.get_all_asset_keys()}
+  print('registered:', '<your_asset_name>' in keys)
+  "
+  ```
+
+  Then extend `RAW_STAGE_ASSET_KEYS` in `tests/test_brazil_comp_rfb_assets.py`
+  so the module's existing registration/pool contract test covers the new asset.
+
 - All commands run from `corpscout/services/dagster_v3/` and are prefixed **`uv run`**.
 - **No `from __future__ import annotations`** in any module defining a `@dg.asset` — it stringizes the context hint and breaks Dagster's op context-type validation.
 - **Every asset that opens a DuckDB file declares a `pool=`**, including read-only ones.
