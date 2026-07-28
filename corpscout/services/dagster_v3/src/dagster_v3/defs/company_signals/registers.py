@@ -2,8 +2,8 @@
 
 The plan asked for "a table per country describing the register it reads". The
 grain here is one row **per source**, not per (country, source), because TED is
-one register serving seven countries: a per-country grain would hold its licence
-and operator seven times and invite them to drift apart. Countries come back as
+one register serving eight countries: a per-country grain would hold its licence
+and operator eight times and invite them to drift apart. Countries come back as
 an array, so a country page filters and a source page does not have to.
 
 That also matches what the source pages need. They are deliberately not
@@ -27,6 +27,7 @@ from dagster_v3.defs.company_signals.sources import (
     HILMA_SOURCE_SLUG,
     IUB_SOURCE_SLUG,
     PNCP_SOURCE_SLUG,
+    RHR_SOURCE_SLUG,
     TED_SOURCE_SLUG,
     UVO_SOURCE_SLUG,
     UHM_SOURCE_SLUG,
@@ -365,6 +366,49 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
             "All raw versions are retained. Current views exclude any notice "
             "identifier referenced by a later clonedFrom value. Execution "
             "notices never create a second company award."
+        ),
+    ),
+    ProcurementRegister(
+        source_slug=RHR_SOURCE_SLUG,
+        register_name="Riigihangete register (RHR)",
+        operator="Estonian State Shared Service Centre (RTK)",
+        country_codes=("EE",),
+        homepage_url="https://riigihanked.riik.ee/rhr-web/#/open-data",
+        api_or_download_url=(
+            "https://riigihanked.riik.ee/rhr/api/public/v1/opendata/"
+            "notice_award/YYYY/month/MM/xml"
+        ),
+        retrieval_method=(
+            "Fetched. One official monthly eForms UBL XML bundle of contract-"
+            "award notices is content-addressed in S3. A contemporaneous TED "
+            "notice-identifier index is snapshotted alongside it for exact "
+            "cross-source deduplication."
+        ),
+        documentation_url="https://www.fin.ee/media/2955/download",
+        licence="CC BY-SA 3.0 EE",
+        coverage_description=(
+            "Estonian public procurement and signed-contract award notices "
+            "published by RHR, including national and below-threshold awards "
+            "that do not reach TED. Monthly machine-readable files are "
+            "available from September 2017."
+        ),
+        open_tenders_url="https://riigihanked.riik.ee/rhr-web/#/search",
+        grain_description="one row per (notice version, lot, winning tenderer)",
+        source_tables=(
+            "ee_rhr_procurement_notices",
+            "ee_rhr_procurement_lots",
+            "ee_rhr_procurement_winners",
+            "ee_rhr_procurement_notices_current",
+            "ee_rhr_procurement_lots_current",
+            "ee_rhr_procurement_winners_current",
+        ),
+        notice_table="ee_rhr_procurement_notices",
+        notice_key_column="notice_id",
+        notes=(
+            "All published versions are retained; current views remove versions "
+            "referenced by a later change notice. RHR uses the same eForms UBL "
+            "model as TED but also publishes national-only awards. Shared "
+            "consortium values are never allocated to every member."
         ),
     ),
 )

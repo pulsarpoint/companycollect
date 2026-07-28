@@ -115,6 +115,7 @@ COUNTRIES: tuple[TedCountry, ...] = (
     TedCountry(place_code="SVK", country_iso2="SK"),
     TedCountry(place_code="LVA", country_iso2="LV"),
     TedCountry(place_code="DNK", country_iso2="DK"),
+    TedCountry(place_code="EST", country_iso2="EE"),
 )
 
 # National-id normalization rules keyed by the organization's country code as

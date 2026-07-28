@@ -1,12 +1,12 @@
 # TED procurement source — design
 
 Status: **implemented 2026-07-19** (`defs/ted_procurement/`). Countries configured:
-FIN/FI, SWE/SE, NOR/NO, FRA/FR, SVK/SK, LVA/LV, and DNK/DK. First verified Finland partition:
+FIN/FI, SWE/SE, NOR/NO, FRA/FR, SVK/SK, LVA/LV, DNK/DK, and EST/EE. First verified Finland partition:
 2026-06 — 578 notices,
 1,873 winner rows (100% with national ids, 91% joining `fi_companies`), published
 to `corpscout.ted_notices` + `corpscout.ted_notice_winners` (migration 000148).
 Sweden was enabled on 2026-07-23; France, Slovakia, Latvia, and Denmark were
-enabled on 2026-07-27. Denmark is ingested into TED but cannot yet expose the
+enabled on 2026-07-27; Estonia was enabled on 2026-07-28. Denmark is ingested into TED but cannot yet expose the
 company signal because its CVR spine is not exported from DuckDB to ClickHouse.
 
 ## Why
@@ -82,7 +82,8 @@ search index (monthly partition, per country)
   France maps SIRET and French VAT forms to SIREN; Slovakia accepts only the
   eight-digit IČO shape; Latvia accepts an 11-digit registration code and the
   equivalent `LV`-prefixed VAT form; Denmark accepts an eight-digit CVR and the
-  equivalent `DK`-prefixed VAT form. Personal, consortium, unrelated VAT, and
+  equivalent `DK`-prefixed VAT form; Estonia accepts a whitespace-formatted
+  eight-digit registry code but does not convert its unrelated VAT number. Personal, consortium, unrelated VAT, and
   malformed identifiers are retained but never coerced into false company
   matches.
 - `ted_notice_winners` mirrors the `fi_hilma_notice_winners` shape

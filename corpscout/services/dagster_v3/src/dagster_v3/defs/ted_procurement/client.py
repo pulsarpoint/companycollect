@@ -51,6 +51,7 @@ def build_monthly_query(
 def iter_search_notices(
     *,
     query: str,
+    fields: tuple[str, ...] = tables.LISTING_FIELDS,
     session: HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     page_sleep_seconds: float = PAGE_SLEEP_SECONDS,
@@ -63,7 +64,7 @@ def iter_search_notices(
             tables.SEARCH_API_URL,
             json={
                 "query": query,
-                "fields": list(tables.LISTING_FIELDS),
+                "fields": list(fields),
                 "limit": tables.SEARCH_PAGE_LIMIT,
                 "page": page,
             },

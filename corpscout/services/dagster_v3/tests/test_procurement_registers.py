@@ -85,12 +85,12 @@ def test_ted_countries_are_derived_from_the_ingestion_config_not_restated() -> N
     assert set(ted.country_codes) == {country.country_iso2 for country in TED_COUNTRIES}
 
 
-def test_ted_is_one_row_serving_seven_countries() -> None:
+def test_ted_is_one_row_serving_eight_countries() -> None:
     """The case the grain exists for. Per-country rows would hold its licence
-    seven times and let them drift."""
+    eight times and let them drift."""
     ted = register_for("ted_procurement")
 
-    assert ted.country_codes == ("DK", "FI", "FR", "LV", "NO", "SE", "SK")
+    assert ted.country_codes == ("DK", "EE", "FI", "FR", "LV", "NO", "SE", "SK")
     assert (
         len([r for r in PROCUREMENT_REGISTERS if r.source_slug == "ted_procurement"])
         == 1

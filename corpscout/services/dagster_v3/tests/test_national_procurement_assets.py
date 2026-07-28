@@ -5,6 +5,11 @@ from dagster_v3.defs.france_decp_procurement.assets import (
     defs as france_defs,
 )
 from dagster_v3.defs.france_decp_procurement import tables as france_tables
+from dagster_v3.defs.estonia_rhr_procurement.assets import (
+    BACKFILL_POLICY as estonia_backfill_policy,
+    defs as estonia_defs,
+)
+from dagster_v3.defs.estonia_rhr_procurement import tables as estonia_tables
 from dagster_v3.defs.latvia_iub_procurement.assets import (
     BACKFILL_POLICY as latvia_backfill_policy,
     defs as latvia_defs,
@@ -67,12 +72,29 @@ def test_slovakia_uvo_asset_graph_is_monthly_and_registered() -> None:
     assert slovakia_backfill_policy.max_partitions_per_run == 1
 
 
+def test_estonia_rhr_asset_graph_is_monthly_and_registered() -> None:
+    assert _asset_names(estonia_defs) == {
+        "estonia_rhr_procurement_xml_s3",
+        "estonia_rhr_procurement_normalized_duckdb",
+        "estonia_rhr_procurement_winners_usd",
+        "estonia_rhr_procurement_clickhouse",
+    }
+    assert all(asset.partitions_def is not None for asset in estonia_defs.assets or [])
+    assert {job.name for job in estonia_defs.jobs or []} == {
+        "estonia_rhr_procurement_backfill_job"
+    }
+    assert estonia_backfill_policy.max_partitions_per_run == 1
+
+
 def test_national_procurement_migrations_match_exported_column_order() -> None:
     fr_sk_sql = (
         MIGRATIONS / "000201_corpscout_fr_sk_national_procurement.up.sql"
     ).read_text()
     latvia_sql = (
         MIGRATIONS / "000202_corpscout_lv_national_procurement.up.sql"
+    ).read_text()
+    estonia_sql = (
+        MIGRATIONS / "000206_corpscout_ee_national_procurement.up.sql"
     ).read_text()
 
     for sql, table, columns in (
@@ -94,6 +116,9 @@ def test_national_procurement_migrations_match_exported_column_order() -> None:
             latvia_tables.EXECUTIONS_TABLE,
             latvia_tables.EXECUTIONS_COLUMNS,
         ),
+        (estonia_sql, estonia_tables.NOTICES_TABLE, estonia_tables.NOTICES_COLUMNS),
+        (estonia_sql, estonia_tables.LOTS_TABLE, estonia_tables.LOTS_COLUMNS),
+        (estonia_sql, estonia_tables.WINNERS_TABLE, estonia_tables.WINNERS_COLUMNS),
     ):
         assert _migration_columns(sql, table) == columns
 

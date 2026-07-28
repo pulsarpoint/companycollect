@@ -94,6 +94,13 @@ def _normalize_denmark_identity(value: str) -> str:
     return value
 
 
+def _normalize_estonia_identity(value: str) -> str:
+    compact = re.sub(r"\s+", "", value)
+    if re.fullmatch(r"\d{8}", compact):
+        return compact
+    return value
+
+
 def normalize_national_id(country: str, raw: str) -> str:
     country_code = country.upper()
     value = raw.strip()
@@ -107,6 +114,8 @@ def normalize_national_id(country: str, raw: str) -> str:
         return _normalize_latvia_identity(value)
     if country_code in {"DK", "DNK"}:
         return _normalize_denmark_identity(value)
+    if country_code in {"EE", "EST"}:
+        return _normalize_estonia_identity(value)
     rule = tables.NATIONAL_ID_NORMALIZATION.get(country_code)
     if rule is None or value == "":
         return value

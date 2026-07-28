@@ -21,6 +21,7 @@ DOFFIN_SOURCE_SLUG = "norway_doffin_procurement"
 DECP_SOURCE_SLUG = "france_decp_procurement"
 UVO_SOURCE_SLUG = "slovakia_uvo_procurement"
 IUB_SOURCE_SLUG = "latvia_iub_procurement"
+RHR_SOURCE_SLUG = "estonia_rhr_procurement"
 
 
 @dataclass(frozen=True)
@@ -86,5 +87,15 @@ IUB = ProcurementSource(
     required_tables=(
         "lv_iub_notices_current",
         "lv_iub_notice_winners_current",
+    ),
+)
+
+RHR = ProcurementSource(
+    slug=RHR_SOURCE_SLUG,
+    upstream_asset_key="estonia_rhr_procurement_clickhouse",
+    required_tables=(
+        "ee_rhr_procurement_notices_current",
+        "ee_rhr_procurement_lots_current",
+        "ee_rhr_procurement_winners_current",
     ),
 )

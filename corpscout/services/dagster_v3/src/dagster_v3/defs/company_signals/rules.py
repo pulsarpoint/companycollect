@@ -40,6 +40,7 @@ from dagster_v3.defs.company_signals.sources import (
     HILMA,
     IUB,
     PNCP,
+    RHR,
     TED,
     UVO,
     UHM,
@@ -206,6 +207,24 @@ COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
             "non-Latvian companies are absent from company summaries."
         ),
         sources=(IUB, TED),
+    ),
+    "EE": CountryProcurementRule(
+        country_code="EE",
+        companies_table="ee_companies",
+        company_id_column="reg_code",
+        identifier_length=8,
+        ted_winner_countries=("EE", "EST"),
+        coverage_caveat=(
+            "RHR national and below-threshold contract-award notices plus TED "
+            "eForms awards. RHR contains both national and directive-level "
+            "awards; its notice UUID is matched to TED's publication number so "
+            "the TED branch excludes exact overlaps. Consortium tender values "
+            "are retained but counted as company spend only for a single "
+            "winner. VAT and malformed identifiers remain unmatched, and "
+            "contracts won by non-Estonian companies are absent from company "
+            "summaries."
+        ),
+        sources=(RHR, TED),
     ),
     # Brazil reads a national register and no TED because it is not in the EU.
     # The per-country design allows either source shape.

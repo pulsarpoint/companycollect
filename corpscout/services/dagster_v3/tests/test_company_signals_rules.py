@@ -5,6 +5,7 @@ from dagster_v3.defs.company_signals.sources import (
     DECP_SOURCE_SLUG,
     HILMA_SOURCE_SLUG,
     IUB_SOURCE_SLUG,
+    RHR_SOURCE_SLUG,
     TED_SOURCE_SLUG,
     UVO_SOURCE_SLUG,
     UHM_SOURCE_SLUG,
@@ -102,6 +103,20 @@ def test_france_slovakia_and_latvia_read_national_sources_and_ted() -> None:
     )
 
 
+def test_estonia_reads_rhr_and_ted_with_its_registry_code() -> None:
+    estonia = COUNTRY_PROCUREMENT_RULES["EE"]
+
+    assert estonia.companies_table == "ee_companies"
+    assert estonia.company_id_column == "reg_code"
+    assert estonia.identifier_length == 8
+    assert estonia.ted_winner_countries == ("EE", "EST")
+    assert estonia.source_slugs == tuple(sorted((RHR_SOURCE_SLUG, TED_SOURCE_SLUG)))
+    assert estonia.upstream_asset_keys == (
+        "estonia_rhr_procurement_clickhouse",
+        "ted_publish_clickhouse",
+    )
+
+
 def test_each_country_gets_its_own_asset_name() -> None:
     names = {rule.asset_name for rule in COUNTRY_PROCUREMENT_RULES.values()}
     assert names == {
@@ -112,6 +127,7 @@ def test_each_country_gets_its_own_asset_name() -> None:
         "fr_government_contract_signals_clickhouse",
         "sk_government_contract_signals_clickhouse",
         "lv_government_contract_signals_clickhouse",
+        "ee_government_contract_signals_clickhouse",
     }
 
 
@@ -132,6 +148,7 @@ def test_required_tables_follow_the_rule() -> None:
         ("FR", "fr_companies"),
         ("SK", "sk_companies"),
         ("LV", "lv_companies"),
+        ("EE", "ee_companies"),
     ):
         required = COUNTRY_PROCUREMENT_RULES[country].required_clickhouse_tables
         assert company_table in required
@@ -145,6 +162,9 @@ def test_required_tables_follow_the_rule() -> None:
     )
     assert "lv_iub_notice_winners_current" in (
         COUNTRY_PROCUREMENT_RULES["LV"].required_clickhouse_tables
+    )
+    assert "ee_rhr_procurement_winners_current" in (
+        COUNTRY_PROCUREMENT_RULES["EE"].required_clickhouse_tables
     )
 
 
@@ -178,6 +198,16 @@ def _lv_view_migration() -> str:
         / "clickhouse"
         / "migrations"
         / "000202_corpscout_lv_national_procurement.up.sql"
+    ).read_text()
+
+
+def _ee_view_migration() -> str:
+    root = pathlib.Path(__file__).resolve().parents[3]
+    return (
+        root
+        / "clickhouse"
+        / "migrations"
+        / "000206_corpscout_ee_national_procurement.up.sql"
     ).read_text()
 
 
@@ -270,6 +300,25 @@ def test_cross_country_summary_includes_latvia() -> None:
     ]
 
     assert "lv_government_contract_summary" in summary
+
+
+def test_estonia_view_uses_rhr_and_exact_ted_overlap_keys() -> None:
+    sql = _ee_view_migration()
+    estonia = sql.split("CREATE VIEW corpscout.ee_government_contracts AS")[1]
+    estonia = estonia.split("CREATE VIEW")[0]
+
+    assert "corpscout.ee_rhr_procurement_winners_current" in estonia
+    assert "corpscout.ee_companies AS c" in estonia
+    assert "c.reg_code = w.winner_national_id" in estonia
+    assert "w.country_iso2 = 'EE'" in estonia
+    assert "upper(w.winner_country) IN ('EE', 'EST')" in estonia
+    assert "SELECT ted_publication_number" in estonia
+    assert "w.awarded_value_attributable = 1" in estonia
+
+    summary = sql.split(
+        "CREATE VIEW corpscout.company_government_contract_summary AS"
+    )[1]
+    assert "ee_government_contract_summary" in summary
 
 
 def test_cross_country_view_needs_no_edit_to_add_a_country() -> None:

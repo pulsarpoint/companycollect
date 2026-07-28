@@ -74,6 +74,12 @@ def test_normalize_national_id() -> None:
         ("DNK", "26527791", "26527791"),
         ("DK", "79095311/ 26369126", "79095311/ 26369126"),
         ("DNK", "Protector Forsikring Danmark", "Protector Forsikring Danmark"),
+        # Live RHR/TED eForms use the eight-digit Estonian registry code. VAT
+        # identifiers have a different nine-digit body and cannot be derived
+        # safely into ee_companies.reg_code.
+        ("EST", "80007861", "80007861"),
+        ("EE", "80 007 861", "80007861"),
+        ("EST", "EE100078619", "EE100078619"),
     ],
 )
 def test_normalize_live_country_identifiers(
@@ -93,6 +99,7 @@ def test_ted_countries_include_all_supported_european_markets() -> None:
         ("SVK", "SK"),
         ("LVA", "LV"),
         ("DNK", "DK"),
+        ("EST", "EE"),
     }
 
 
