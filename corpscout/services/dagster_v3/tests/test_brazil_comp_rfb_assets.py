@@ -38,6 +38,7 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert "brazil_comp_rfb_snapshot_files_duckdb" in keys
     assert "brazil_comp_rfb_raw_files_duckdb" not in keys
     assert RAW_STAGE_ASSET_KEYS.issubset(keys)
+    assert "brazil_comp_rfb_socios_duckdb" in keys
     assert "brazil_comp_rfb_companies_duckdb" in keys
     assert "brazil_comp_rfb_contact_info_duckdb" in keys
     assert "brazil_comp_rfb_websites_duckdb" in keys
@@ -59,6 +60,9 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     ]
     simples_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_simples_duckdb")
+    ]
+    socios_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_socios_duckdb")
     ]
     reference_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_reference_duckdb")
@@ -94,6 +98,7 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert empresas_asset.op.pool == "brazil_comp_rfb_empresas_duckdb"
     assert estabelecimentos_asset.op.pool == "brazil_comp_rfb_estabelecimentos_duckdb"
     assert simples_asset.op.pool == "brazil_comp_rfb_simples_duckdb"
+    assert socios_asset.op.pool == "brazil_comp_rfb_socios_duckdb"
     assert reference_asset.op.pool == "brazil_comp_rfb_reference_duckdb"
     assert companies_asset.op.pool == "brazil_comp_rfb_companies_duckdb"
     assert contact_info_asset.op.pool == "brazil_comp_rfb_contact_info_duckdb"
