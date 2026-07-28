@@ -62,9 +62,26 @@ def test_register_countries_cover_the_rules_that_read_each_source() -> None:
         )
 
 
-def test_ted_register_countries_match_the_ingestion_config() -> None:
-    ted = register_for("ted_procurement")
+def test_ted_countries_are_derived_from_the_ingestion_config_not_restated() -> None:
+    """TED's country list has exactly one owner: COUNTRIES in
+    ted_procurement.tables, where adding a country is what makes us ingest it.
 
+    Restating it here made the two drift the moment four countries were added --
+    the register kept saying FI, NO, SE, and the source page said so too,
+    faithfully, because a page can only be as current as the row behind it. A
+    test that the two match catches that a day late and only if someone runs it.
+    Deriving means there is nothing to catch.
+    """
+    import inspect
+
+    from dagster_v3.defs.company_signals import registers as registers_module
+
+    source = inspect.getsource(registers_module)
+    assert '"DK", "FI", "FR", "LV", "NO", "SE", "SK"' not in source, (
+        "TED's countries are restated here instead of derived from COUNTRIES"
+    )
+
+    ted = register_for("ted_procurement")
     assert set(ted.country_codes) == {country.country_iso2 for country in TED_COUNTRIES}
 
 

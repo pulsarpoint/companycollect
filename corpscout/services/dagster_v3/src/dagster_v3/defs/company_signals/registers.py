@@ -31,6 +31,15 @@ from dagster_v3.defs.company_signals.sources import (
     UVO_SOURCE_SLUG,
     UHM_SOURCE_SLUG,
 )
+from dagster_v3.defs.ted_procurement.tables import COUNTRIES as TED_COUNTRIES
+
+# Which countries TED serves is decided by what we ingest, and that is decided
+# in ted_procurement.tables.COUNTRIES -- adding a row there is what makes a
+# country appear at all. Restating the list here is how the two drifted: four
+# countries were added to the ingest and this register kept describing three,
+# which the source page then reported faithfully, because a page can only be as
+# current as the row behind it.
+TED_COUNTRY_CODES = tuple(sorted(country.country_iso2 for country in TED_COUNTRIES))
 
 
 @dataclass(frozen=True)
@@ -79,7 +88,7 @@ PROCUREMENT_REGISTERS: tuple[ProcurementRegister, ...] = (
         source_slug=TED_SOURCE_SLUG,
         register_name="Tenders Electronic Daily (TED)",
         operator="Publications Office of the European Union",
-        country_codes=("DK", "FI", "FR", "LV", "NO", "SE", "SK"),
+        country_codes=TED_COUNTRY_CODES,
         homepage_url="https://ted.europa.eu",
         api_or_download_url="https://api.ted.europa.eu/v3/notices/search",
         retrieval_method=(
