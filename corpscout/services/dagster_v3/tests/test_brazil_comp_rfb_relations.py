@@ -1,0 +1,156 @@
+from pathlib import Path
+
+import duckdb
+import pytest
+
+from dagster_v3.defs.brazil_companies.rfb import relations, tables
+
+DATASET = tables.DLT_DATASET_NAME
+
+
+def _socios_stage(path: Path) -> None:
+    """A raw socios stage with all three partner kinds plus a legal
+    representative -- the two-edges-per-row case."""
+    connection = duckdb.connect(str(path))
+    connection.execute(f"create schema if not exists {DATASET}")
+    connection.execute(
+        f"""
+        create table {DATASET}.socios_raw (
+            cnpj_basico varchar, identificador_socio varchar,
+            nome_socio_razao_social varchar, cnpj_cpf_socio varchar,
+            qualificacao_socio varchar, data_entrada_sociedade varchar,
+            pais varchar, representante_legal varchar,
+            nome_representante varchar, qualificacao_representante varchar,
+            faixa_etaria varchar
+        )
+        """
+    )
+    connection.executemany(
+        f"insert into {DATASET}.socios_raw values (?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            # corporate partner
+            ("11111111", "1", "HOLDING ALFA LTDA", "22222222000199",
+             "22", "20180314", "", "", "", "", "0"),
+            # natural person, masked CPF
+            ("11111111", "2", "MARIA SOUZA", "***456789**",
+             "49", "20190701", "", "", "", "", "5"),
+            # foreign partner WITH a legal representative -- two edges, one row
+            ("33333333", "3", "ALFA HOLDINGS BV", "",
+             "37", "20200115", "NETHERLANDS", "***111222**", "JOAO LIMA", "10", "4"),
+            # empty optionals: must land '' and a NULL date, never None strings
+            ("44444444", "2", "ANA COSTA", "***999888**", "22", "", "", "", "", "", ""),
+        ],
+    )
+    connection.close()
+
+
+def test_relations_keep_every_partner_kind_verbatim(tmp_path: Path) -> None:
+    """One edge model: the discriminator distinguishes company, person and
+    foreign partners rather than three tables doing it."""
+    socios_path = tmp_path / "socios.duckdb"
+    _socios_stage(socios_path)
+    connection = duckdb.connect(":memory:")
+
+    counts = relations.build_brazil_rfb_company_relations(
+        connection=connection,
+        source_run_id="run-1",
+        snapshot_year_month="2026-07",
+        socios_database_path=socios_path,
+    )
+
+    assert counts["company_relations"] == 4
+    rows = connection.execute(
+        f"""
+        select cnpj_basico, related_entity_kind, related_name, related_tax_id,
+               relation_code, relation_since, related_country
+        from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}
+        order by cnpj_basico, related_entity_kind
+        """
+    ).fetchall()
+    assert rows[0][:5] == (
+        "11111111", "1", "HOLDING ALFA LTDA", "22222222000199", "22",
+    )
+    assert rows[0][5].isoformat() == "2018-03-14"
+    assert rows[1][:5] == ("11111111", "2", "MARIA SOUZA", "***456789**", "49")
+    assert rows[2][1] == "3"
+    assert rows[2][6] == "NETHERLANDS"
+
+
+def test_legal_representative_is_carried_as_a_second_edge(tmp_path: Path) -> None:
+    """A foreign partner's representative is another named person. It rides on
+    the same row because that is how RFB publishes it."""
+    socios_path = tmp_path / "socios.duckdb"
+    _socios_stage(socios_path)
+    connection = duckdb.connect(":memory:")
+
+    relations.build_brazil_rfb_company_relations(
+        connection=connection,
+        source_run_id="run-1",
+        snapshot_year_month="2026-07",
+        socios_database_path=socios_path,
+    )
+
+    assert connection.execute(
+        f"""
+        select representative_tax_id, representative_name, representative_code
+        from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}
+        where cnpj_basico = '33333333'
+        """
+    ).fetchone() == ("***111222**", "JOAO LIMA", "10")
+
+
+def test_absent_values_land_as_empty_string_not_null(tmp_path: Path) -> None:
+    """Non-nullable ClickHouse Strings: the native driver calls .encode() per
+    value and dies on None. Only real data with blanks triggers it."""
+    socios_path = tmp_path / "socios.duckdb"
+    _socios_stage(socios_path)
+    connection = duckdb.connect(":memory:")
+
+    relations.build_brazil_rfb_company_relations(
+        connection=connection,
+        source_run_id="run-1",
+        snapshot_year_month="2026-07",
+        socios_database_path=socios_path,
+    )
+
+    string_columns = [
+        column
+        for column in tables.BR_COMPANY_RELATIONS_COLUMNS
+        if column not in ("relation_since", "resolved_at")
+    ]
+    nulls = " + ".join(
+        f"count(*) filter (where {column} is null)" for column in string_columns
+    )
+    assert connection.execute(
+        f"select {nulls} from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}"
+    ).fetchone() == (0,)
+    assert connection.execute(
+        f"""
+        select relation_since, related_country
+        from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}
+        where cnpj_basico = '44444444'
+        """
+    ).fetchone() == (None, "")
+
+
+def test_relations_refuse_an_empty_source(tmp_path: Path) -> None:
+    socios_path = tmp_path / "socios.duckdb"
+    connection = duckdb.connect(str(socios_path))
+    connection.execute(f"create schema if not exists {DATASET}")
+    connection.execute(
+        f"create table {DATASET}.socios_raw (cnpj_basico varchar, "
+        f"identificador_socio varchar, nome_socio_razao_social varchar, "
+        f"cnpj_cpf_socio varchar, qualificacao_socio varchar, "
+        f"data_entrada_sociedade varchar, pais varchar, representante_legal varchar, "
+        f"nome_representante varchar, qualificacao_representante varchar, "
+        f"faixa_etaria varchar)"
+    )
+    connection.close()
+
+    with pytest.raises(ValueError, match="no company relations"):
+        relations.build_brazil_rfb_company_relations(
+            connection=duckdb.connect(":memory:"),
+            source_run_id="run-1",
+            snapshot_year_month="2026-07",
+            socios_database_path=socios_path,
+        )

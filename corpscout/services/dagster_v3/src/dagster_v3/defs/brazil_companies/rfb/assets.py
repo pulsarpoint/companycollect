@@ -12,6 +12,7 @@ from pydantic import Field
 from dagster_v3.defs.brazil_companies.rfb import (
     cleanup,
     contacts,
+    relations,
     resume,
     source,
     staging,
@@ -35,6 +36,7 @@ BRAZIL_COMP_RFB_MANIFEST_DUCKDB_POOL = "brazil_comp_rfb_manifest_duckdb"
 BRAZIL_COMP_RFB_EMPRESAS_DUCKDB_POOL = "brazil_comp_rfb_empresas_duckdb"
 BRAZIL_COMP_RFB_ESTABELECIMENTOS_DUCKDB_POOL = "brazil_comp_rfb_estabelecimentos_duckdb"
 BRAZIL_COMP_RFB_SOCIOS_DUCKDB_POOL = "brazil_comp_rfb_socios_duckdb"
+BRAZIL_COMP_RFB_RELATIONS_DUCKDB_POOL = "brazil_comp_rfb_relations_duckdb"
 BRAZIL_COMP_RFB_SIMPLES_DUCKDB_POOL = "brazil_comp_rfb_simples_duckdb"
 BRAZIL_COMP_RFB_REFERENCE_DUCKDB_POOL = "brazil_comp_rfb_reference_duckdb"
 BRAZIL_COMP_RFB_COMPANIES_DUCKDB_POOL = "brazil_comp_rfb_companies_duckdb"
@@ -50,6 +52,7 @@ SNAPSHOT_FILES_ASSET_KEY = "brazil_comp_rfb_snapshot_files_duckdb"
 EMPRESAS_ASSET_KEY = "brazil_comp_rfb_empresas_duckdb"
 ESTABELECIMENTOS_ASSET_KEY = "brazil_comp_rfb_estabelecimentos_duckdb"
 SOCIOS_ASSET_KEY = "brazil_comp_rfb_socios_duckdb"
+COMPANY_RELATIONS_ASSET_KEY = "brazil_comp_rfb_company_relations_duckdb"
 SIMPLES_ASSET_KEY = "brazil_comp_rfb_simples_duckdb"
 REFERENCE_ASSET_KEY = "brazil_comp_rfb_reference_duckdb"
 COMPANIES_ASSET_KEY = "brazil_comp_rfb_companies_duckdb"
@@ -78,6 +81,7 @@ class BrazilCompRfbStagePaths:
     empresas: Path
     estabelecimentos: Path
     socios: Path
+    relations: Path
     simples: Path
     reference: Path
     companies: Path
@@ -104,6 +108,7 @@ def brazil_comp_rfb_stage_paths(snapshot_year_month: str) -> BrazilCompRfbStageP
         empresas=root / "empresas.duckdb",
         estabelecimentos=root / "estabelecimentos.duckdb",
         socios=root / "socios.duckdb",
+        relations=root / "relations.duckdb",
         simples=root / "simples.duckdb",
         reference=root / "reference.duckdb",
         companies=root / "companies.duckdb",
@@ -332,6 +337,37 @@ def brazil_comp_rfb_socios_duckdb(
         )
     context.log.info("Loaded Brazil RFB Socios raw CSV files: rows=%s", rows)
     return dg.MaterializeResult(metadata={"socios": rows})
+
+
+@dg.asset(
+    name=COMPANY_RELATIONS_ASSET_KEY,
+    deps=[dg.AssetKey(SOCIOS_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=BRAZIL_COMP_RFB_RELATIONS_DUCKDB_POOL,
+    description=(
+        "Brazil RFB company relation edges: one row per company-to-partner "
+        "link, partner being a company, a natural person or a foreign entity."
+    ),
+)
+def brazil_comp_rfb_company_relations_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    stage_paths = _stage_paths_for_context(context)
+    stage_paths.ensure_root()
+    with duckdb_resource(stage_paths.relations).get_connection() as connection:
+        counts = relations.build_brazil_rfb_company_relations(
+            connection=connection,
+            source_run_id=context.run_id,
+            snapshot_year_month=brazil_comp_rfb_snapshot_year_month(
+                context.partition_key
+            ),
+            socios_database_path=stage_paths.socios,
+        )
+    context.log.info("Built Brazil RFB company relations: counts=%s", counts)
+    return dg.MaterializeResult(metadata=dict(counts))
 
 
 @dg.asset(
@@ -733,6 +769,7 @@ defs = dg.Definitions(
         brazil_comp_rfb_empresas_duckdb,
         brazil_comp_rfb_estabelecimentos_duckdb,
         brazil_comp_rfb_socios_duckdb,
+        brazil_comp_rfb_company_relations_duckdb,
         brazil_comp_rfb_simples_duckdb,
         brazil_comp_rfb_reference_duckdb,
         brazil_comp_rfb_companies_duckdb,

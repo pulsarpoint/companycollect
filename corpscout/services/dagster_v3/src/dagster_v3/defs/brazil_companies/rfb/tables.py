@@ -124,6 +124,35 @@ SNAPSHOT_FILE_COLUMNS = {
 }
 
 COMPANIES_TABLE = "companies"
+
+COMPANY_RELATIONS_TABLE = "company_relations"
+
+BR_COMPANY_RELATIONS_TABLE_CH = "br_company_relations"
+QUALIFIED_BR_COMPANY_RELATIONS_TABLE = (
+    f"{BRAZIL_COMP_RFB_DATABASE}.{BR_COMPANY_RELATIONS_TABLE_CH}"
+)
+
+BR_COMPANY_RELATIONS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "snapshot_year_month",
+    "cnpj_basico",
+    "related_entity_kind",
+    "related_name",
+    "related_tax_id",
+    "relation_code",
+    "relation_since",
+    "related_country",
+    "representative_tax_id",
+    "representative_name",
+    "representative_code",
+    "age_band",
+    "resolved_at",
+)
+BR_COMPANY_RELATIONS_EXPORT_COLUMNS = BR_COMPANY_RELATIONS_COLUMNS
+
 ESTABLISHMENTS_TABLE = "establishments"
 COMPANY_CONTACT_INFO_TABLE = "company_contact_info"
 WEBSITES_TABLE = "websites"
