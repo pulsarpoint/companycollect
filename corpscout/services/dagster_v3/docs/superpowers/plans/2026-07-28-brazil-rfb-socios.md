@@ -1010,3 +1010,152 @@ SELECT related_tax_id, any(related_name), count() AS companies_linked
 FROM corpscout.br_company_relations
 GROUP BY related_tax_id ORDER BY companies_linked DESC LIMIT 20;
 ```
+
+---
+
+## Task 5: Snapshot RFB archives to S3 before parsing
+
+**Added mid-flight (user, 2026-07-28).** Not part of the original socios scope —
+this fixes the RFB module's download path for **all ten families**.
+
+**Why.** `brazil_comp_rfb_snapshot_files_duckdb` downloads archives straight to
+`data/brazil_rfb_downloads/<YYYY-MM>/`, and `cleanup_previous_partition_files`
+deletes `download_root / previous_partition`. So re-running an older month
+re-downloads ~10 GB from RFB — and once RFB's mirror stops publishing a
+snapshot, that partition becomes **unrebuildable**. Its sibling modules already
+solve this: `brazil_companies/cgu` and `brazil_companies/pgfn` both snapshot raw
+archives to S3 first. `rfb` has no `ObjectStoreResource` at all and is the
+largest source we ingest.
+
+**Shape (mirrors PGFN exactly):**
+
+```
+brazil_comp_rfb_raw_archives_s3        NEW: origin -> s3://source-brazil-rfb, skip if present
+        |
+brazil_comp_rfb_snapshot_files_duckdb  CHANGED: s3 -> local -> extract -> delete local archive
+```
+
+**Files:**
+- Modify: `src/dagster_v3/defs/brazil_companies/rfb/source.py`
+- Modify: `src/dagster_v3/defs/brazil_companies/rfb/assets.py`
+- Test: `tests/test_brazil_comp_rfb_source.py`, `tests/test_brazil_comp_rfb_assets.py`
+
+**Interfaces:**
+- Consumes: `ObjectStoreResource` from `dagster_v3.defs.common.resources`
+  (`.ensure_bucket(bucket)`, `.exists(key, bucket=)`, `.upload_file(...)`,
+  `.download_file(...)` — read `pgfn/source.py:_sync_source_archive` and
+  `pgfn/parsing.py:parse_brazil_comp_pgfn_archives_from_object_store` for the
+  exact call signatures, and mirror them).
+- Produces: `source.BRAZIL_RFB_RAW_BUCKET = "source-brazil-rfb"`;
+  `source.rfb_archive_object_key(snapshot_year_month, family, archive_name) -> str`;
+  `source.sync_snapshot_archives_to_object_store(...)`;
+  asset key `brazil_comp_rfb_raw_archives_s3`.
+
+**Key layout**, following PGFN's `brazil_pgfn/raw_archives/snapshot=…/…`:
+
+```
+brazil_rfb/raw_archives/snapshot=<YYYY-MM>/family=<family>/<archive_name>
+```
+
+- [ ] **Step 1: Write the failing test for the object key**
+
+In `tests/test_brazil_comp_rfb_source.py`:
+
+```python
+def test_rfb_archive_object_key_is_partitioned_by_snapshot_and_family() -> None:
+    """The key layout IS the reuse contract: a re-run must resolve to the same
+    key so `exists` short-circuits the download."""
+    assert source.rfb_archive_object_key(
+        "2026-07", "socios", "Socios0.zip"
+    ) == "brazil_rfb/raw_archives/snapshot=2026-07/family=socios/Socios0.zip"
+```
+
+- [ ] **Step 2: Run it, confirm it fails**
+
+```bash
+uv run pytest tests/test_brazil_comp_rfb_source.py::test_rfb_archive_object_key_is_partitioned_by_snapshot_and_family -q
+```
+
+Expected: FAIL, `AttributeError: module ... has no attribute 'rfb_archive_object_key'`.
+
+- [ ] **Step 3: Implement the key + bucket + sync in `source.py`**
+
+Add near the other module constants:
+
+```python
+BRAZIL_RFB_RAW_BUCKET = "source-brazil-rfb"
+
+
+def rfb_archive_object_key(
+    snapshot_year_month: str, family: str, archive_name: str
+) -> str:
+    return (
+        f"brazil_rfb/raw_archives/snapshot={validate_snapshot_year_month(snapshot_year_month)}"
+        f"/family={family}/{archive_name}"
+    )
+```
+
+Then a sync function that, for each discovered remote file, skips when the key
+already exists and otherwise streams origin -> local temp -> S3. Reuse the
+existing `_download` helper (it already has retry/verification) and
+`fetch_snapshot_remote_files` for discovery. Return, per archive, at minimum:
+`family`, `archive_name`, `archive_url`, `object_key`, `size_bytes`, `sha256`,
+`reused_existing` — the asset reports these as metadata.
+
+- [ ] **Step 4: Run the key test, confirm it passes**
+
+```bash
+uv run pytest tests/test_brazil_comp_rfb_source.py -q
+```
+
+- [ ] **Step 5: Read archives back from S3 when building the manifest**
+
+Change `download_extract_snapshot_files` so that when an `object_store` is
+supplied it fetches each archive with `object_store.download_file(...)` instead
+of `_download(...)` from the origin, then extracts as today, then **deletes the
+local `.zip` once extraction succeeds**. The extracted CSV must remain — the
+DuckDB load reads it, and the partition's own cleanup removes it later.
+
+Thread `object_store` through `brazil_rfb_source(...)` to that call.
+
+- [ ] **Step 6: Add the S3 asset and make the manifest asset depend on it**
+
+In `assets.py`, add `RAW_ARCHIVES_ASSET_KEY = "brazil_comp_rfb_raw_archives_s3"`
+and an asset taking `object_store: ObjectStoreResource`, partitioned on
+`BRAZIL_COMP_RFB_PARTITIONS`, with `BackfillPolicy.multi_run(max_partitions_per_run=1)`,
+`kinds={"python", "s3", "zip"}`. It calls the Step 3 sync and returns the
+per-archive metadata.
+
+Then add `deps=[dg.AssetKey(RAW_ARCHIVES_ASSET_KEY)]` to
+`brazil_comp_rfb_snapshot_files_duckdb` and pass `object_store` into its
+`brazil_rfb_source(...)` call.
+
+**Register the new asset in `defs = dg.Definitions(assets=[...])`** — first in
+the list, since it now precedes the manifest asset — and add a membership +
+partition assertion in `tests/test_brazil_comp_rfb_assets.py`.
+
+- [ ] **Step 7: Verify**
+
+```bash
+uv run pytest tests/test_brazil_comp_rfb_source.py tests/test_brazil_comp_rfb_assets.py -q
+uv run python -c "
+from dagster_v3.definitions import defs as load_defs
+keys = {k.path[-1] for k in load_defs().get_repository_def().asset_graph.get_all_asset_keys()}
+print('registered:', 'brazil_comp_rfb_raw_archives_s3' in keys)
+"
+uv run dg check defs
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/dagster_v3/defs/brazil_companies/rfb/source.py \
+        src/dagster_v3/defs/brazil_companies/rfb/assets.py \
+        tests/test_brazil_comp_rfb_source.py \
+        tests/test_brazil_comp_rfb_assets.py
+git commit -m "feat(corpscout): snapshot RFB archives to S3 before parsing"
+```
+
+**Not in scope:** backfilling S3 with archives from partitions already
+materialized. RFB's mirror may no longer carry them; whether any are still
+retrievable is a question for after this ships.
