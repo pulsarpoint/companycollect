@@ -48,6 +48,7 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     assert "brazil_comp_rfb_clickhouse_company_contacts" in keys
     assert "brazil_comp_rfb_clickhouse_company_domains" in keys
     assert "brazil_comp_rfb_clickhouse_websites" in keys
+    assert "brazil_comp_rfb_company_relations_clickhouse" in keys
     assert "brazil_comp_rfb_previous_partition_cleanup" in keys
 
     snapshot_asset = repo.assets_defs_by_key[
@@ -95,6 +96,9 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
     clickhouse_websites_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_clickhouse_websites")
     ]
+    clickhouse_company_relations_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_comp_rfb_company_relations_clickhouse")
+    ]
     cleanup_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_comp_rfb_previous_partition_cleanup")
     ]
@@ -123,6 +127,12 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
         clickhouse_company_domains_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
     )
     assert clickhouse_websites_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
+    # The relations export reads relations.duckdb directly (not via
+    # read_only_duckdb_connection), so it carries the same pool as the
+    # relations-build writer for the same reason as the other exporters above.
+    assert (
+        clickhouse_company_relations_asset.op.pool == "brazil_comp_rfb_relations_duckdb"
+    )
     assert cleanup_asset.op.pool is None
 
 
@@ -144,6 +154,7 @@ def test_brazil_comp_rfb_assets_use_monthly_snapshot_partitions() -> None:
         "brazil_comp_rfb_clickhouse_company_contacts",
         "brazil_comp_rfb_clickhouse_company_domains",
         "brazil_comp_rfb_clickhouse_websites",
+        "brazil_comp_rfb_company_relations_clickhouse",
         "brazil_comp_rfb_previous_partition_cleanup",
     )
 

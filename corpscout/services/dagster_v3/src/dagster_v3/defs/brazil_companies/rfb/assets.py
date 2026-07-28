@@ -23,6 +23,7 @@ from dagster_v3.defs.brazil_companies.rfb.clickhouse import (
     export_brazil_comp_rfb_clickhouse_companies,
     export_brazil_comp_rfb_clickhouse_company_contacts,
     export_brazil_comp_rfb_clickhouse_company_domains,
+    export_brazil_comp_rfb_clickhouse_company_relations,
     export_brazil_comp_rfb_clickhouse_establishments,
     export_brazil_comp_rfb_clickhouse_websites,
 )
@@ -63,6 +64,7 @@ CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY = "brazil_comp_rfb_clickhouse_establishments
 CLICKHOUSE_COMPANY_CONTACTS_ASSET_KEY = "brazil_comp_rfb_clickhouse_company_contacts"
 CLICKHOUSE_COMPANY_DOMAINS_ASSET_KEY = "brazil_comp_rfb_clickhouse_company_domains"
 CLICKHOUSE_WEBSITES_ASSET_KEY = "brazil_comp_rfb_clickhouse_websites"
+CLICKHOUSE_COMPANY_RELATIONS_ASSET_KEY = "brazil_comp_rfb_company_relations_clickhouse"
 PREVIOUS_PARTITION_CLEANUP_ASSET_KEY = "brazil_comp_rfb_previous_partition_cleanup"
 REFERENCE_FAMILIES = (
     "cnaes",
@@ -709,6 +711,30 @@ def brazil_comp_rfb_clickhouse_websites(
 
 
 @dg.asset(
+    name=CLICKHOUSE_COMPANY_RELATIONS_ASSET_KEY,
+    deps=[dg.AssetKey(COMPANY_RELATIONS_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    partitions_def=BRAZIL_COMP_RFB_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool=BRAZIL_COMP_RFB_RELATIONS_DUCKDB_POOL,
+    description="Publish Brazil RFB company relation edges to ClickHouse.",
+)
+def brazil_comp_rfb_company_relations_clickhouse(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    stage_paths = _stage_paths_for_context(context)
+    with duckdb_resource(stage_paths.relations).get_connection() as connection:
+        rows = export_brazil_comp_rfb_clickhouse_company_relations(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata={"rows": rows})
+
+
+@dg.asset(
     name=PREVIOUS_PARTITION_CLEANUP_ASSET_KEY,
     deps=[
         dg.AssetKey(CLICKHOUSE_COMPANIES_ASSET_KEY),
@@ -780,6 +806,7 @@ defs = dg.Definitions(
         brazil_comp_rfb_clickhouse_company_contacts,
         brazil_comp_rfb_clickhouse_company_domains,
         brazil_comp_rfb_clickhouse_websites,
+        brazil_comp_rfb_company_relations_clickhouse,
         brazil_comp_rfb_previous_partition_cleanup,
     ],
     jobs=[brazil_comp_rfb_resolve_job],

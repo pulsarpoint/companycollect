@@ -216,12 +216,13 @@ EXPECTED_MIGRATIONS = (
     "000198_corpscout_no_doffin_notices",
     "000199_corpscout_procurement_registers",
     "000200_corpscout_company_entity_types",
-    "000201_corpscout_fr_sk_national_procurement",
     "000202_corpscout_lv_national_procurement",
     "000203_corpscout_se_uhm_party_descriptions",
     "000204_corpscout_procurement_registers_repair",
     "000205_corpscout_drop_companies_all",
     "000206_corpscout_ee_national_procurement",
+    "000207_corpscout_fr_sk_national_procurement",
+    "000208_corpscout_br_company_relations",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -597,6 +598,22 @@ def test_clickhouse_migrations_have_down_files() -> None:
             or "DROP USER IF EXISTS" in sql
             or "RENAME TABLE" in sql  # the inverse of a rename is a rename
         )
+
+
+def test_br_company_relations_migration_covers_export_columns() -> None:
+    """The edge table: one row per company-to-partner link. A newly exported
+    column with no migration behind it fails here rather than mid-export."""
+    sql = _migration_sql("000208_corpscout_br_company_relations.up.sql")
+    down_sql = _migration_sql("000208_corpscout_br_company_relations.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.br_company_relations" in sql
+    for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS:
+        assert f"    {column} " in sql, column
+    assert (
+        "ORDER BY (cnpj_basico, related_entity_kind, related_tax_id, relation_code)"
+        in sql
+    )
+    assert "DROP TABLE IF EXISTS corpscout.br_company_relations" in down_sql
 
 
 def test_norway_pdf_financial_tables_preserve_source_provenance() -> None:

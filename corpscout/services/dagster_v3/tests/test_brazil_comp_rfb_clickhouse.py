@@ -196,6 +196,17 @@ def test_clickhouse_exports_replace_company_contacts_domains_and_websites(
     assert domains_insert_rows[0][confidence_index] == pytest.approx(0.9)
 
 
+def test_company_relations_export_uses_the_declared_column_contract() -> None:
+    """Column order is the contract: the exporter ships this tuple positionally
+    into the migrated table."""
+    assert tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS[0] == "country_iso2"
+    assert "cnpj_basico" in tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS
+    assert "related_entity_kind" in tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS
+    assert tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS == (
+        tables.BR_COMPANY_RELATIONS_COLUMNS
+    )
+
+
 def test_export_column_tuples_are_the_shared_canonical_tuples() -> None:
     # Identity (not just equality) pin: clickhouse.py's export columns ARE the
     # shared dagster_v3.contact_extraction tuples, so the DuckDB stage order,
