@@ -90,6 +90,7 @@ def test_family_from_archive_name_matches_rfb_patterns() -> None:
     assert source.family_from_archive_name("F.K03200$Z.D30612.MOTICSV.zip") == "motivos"
     assert source.family_from_archive_name("Motivos.zip") == "motivos"
     assert source.family_from_archive_name("SOCIOCSV.zip") == "socios"
+    assert source.family_from_archive_name("Random0.zip") == ""
 
 
 def test_family_from_archive_name_matches_socios_patterns() -> None:
