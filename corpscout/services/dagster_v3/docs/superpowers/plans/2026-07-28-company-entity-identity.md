@@ -4,8 +4,14 @@
 what it does — so a municipal waste company reads differently from both a
 ministry and a private firm, without any of the three being mislabelled.
 
-**Status:** designed, not built. Step 1 is a verbatim column pass-through and
-depends on nothing else in this document.
+**Status, 2026-07-28.** Step 1 is **built, committed and schema-deployed** —
+`73880b75` carries the twelve columns, migration `000203` is applied. The
+columns are live and **empty**: the UHM re-materialization has not run, so
+102,785 rows hold `''` in every one of them. That run is the only thing between
+here and real data, and it costs no requests.
+
+Step 2's open design question is **answered** — the buyer join resolves 98.9%
+and does not miss public bodies (§2). Steps 2 and 3 are designed, not built.
 
 Read alongside `2026-07-27-procurement-sources-independent-first.md`, whose
 §4.1c, §4.1d and §4.4 this expands. That plan's Phase 1 is complete **in code**;
@@ -105,12 +111,22 @@ Two consequences:
   migration — check `Delsektor`'s cardinality and how often it is populated.
 - The change is a **projection edit**, not a parser change.
 
-### Scope
+### Scope — DONE in `73880b75`, migration `000203`
 
-Add the columns verbatim to the candidate projection, to `AWARDS_COLUMNS`, and
-to `se_uhm_procurement_awards` in a migration. Nothing is mapped, bucketed or
-renamed into a normalised vocabulary — `Sektor för köpare` lands as whatever
-UHM wrote in it.
+Twelve columns carried verbatim through the candidate projection, `AWARDS_COLUMNS`
+and `se_uhm_procurement_awards`: four buyer (`sector`, `subsector`,
+`legal_form`, `sni_division`) and eight supplier (`sector`, `legal_form`,
+`size`, and all five SNI levels). Nothing is mapped, bucketed or renamed into a
+normalised vocabulary — `Sektor för köpare` lands as whatever UHM wrote in it.
+
+Two things surfaced while building it, both recorded in §5: the raw DuckDB
+table already held all 44 columns, so this was a projection change rather than
+a parser change; and the candidate **stage DDL was hand-written inline** while
+the export shipped `CANDIDATE_COLUMNS` into it positionally — a drift that could
+only fail inside a materialization, after the download. It is extracted to
+`uhm_candidate_stage_ddl()` and pinned by a test.
+
+**Still empty until the re-materialization runs** (§4).
 
 That is the whole of Step 1, and it is why it ships alone: there is no
 vocabulary to agree on, so there is nothing to get wrong and nothing downstream
@@ -199,6 +215,36 @@ pipeline today. Two things follow, and neither is in Step 1's scope:
   the same class of invisible loss §4.1 of the other plan exists to complain
   about.
 
+**Measured 2026-07-28, and it settles the design: the join works.** Buyer ids
+are already stored, so this was answerable without the re-materialization:
+
+```
+distinct buyers               1,241
+resolve to se_companies       1,227   98.9%
+rows with a resolvable buyer  102,406 of 102,785
+```
+
+The question that mattered was not the headline rate but whether the residue is
+skewed toward the public bodies this feature exists to describe. **It is not:**
+
+```
+prefix          entity              buyers  resolved
+2120            municipality           277   277   100%
+2321            region                  20    20   100%
+2021            state agency           180   176  97.8%
+2220            kommunalförbund         57    54  94.7%
+```
+
+`se_companies` holds public-prefix org numbers in bulk (257 statlig · 290
+kommun · 186 kommunalförbund · 20 region), so Sweden has none of the structural
+absence Finland's trade register has. The 14 misses are individual — ABs that
+look deregistered, plus `LUMPARLANDS KOMMUN`, which is Ålandic and therefore a
+Finnish municipality buying in the Swedish register (an instance of the
+cross-border case §4.1 tracks, not a matching defect).
+
+So `company_attributes` keyed on `company_id` with `observed_in_role = 'buyer'`
+needs no fallback shape. Build the buyer join as described.
+
 ### What it yields on `5565550349`
 
 ```
@@ -277,38 +323,39 @@ applies: derived once, read everywhere.
 
 ## 4. Operational state to clear first
 
-### Migrations
+### Migrations — CLEARED 2026-07-28
 
-The working tree carries **four** migrations past the last deployed one, not two.
-All four are already in `EXPECTED_MIGRATIONS` in
-`tests/test_clickhouse_migrations.py`:
+`000199` through `000204` are committed and applied. Verified against the live
+database rather than the ledger, which is the point of the story below:
+`retrieval_method` is present on `procurement_registers`, and all twelve party
+columns are present on `se_uhm_procurement_awards`.
 
-| | | state |
-|---|---|---|
-| `000199` | `procurement_registers` | committed; **reshaped after deploy** — see below |
-| `000200` | `company_entity_types` | committed, applied locally |
-| `000201` | `fr_sk_national_procurement` | **untracked in git**, applied locally |
-| `000202` | `lv_national_procurement` | **untracked in git**, applied locally |
+**Why `000199` could not be fixed by re-deploying, kept because the shape of
+this mistake recurs.** `b285033e` added `retrieval_method` to that migration's
+CREATE after the version had already been applied. golang-migrate records
+applied versions, so `migrate up` is a no-op at that version, and
+`CREATE TABLE IF NOT EXISTS` would be inert even if it ran. The obvious remedy
+therefore exits clean and changes nothing — a defect whose fix reports success
+while the column stays missing, and whose next reader opens the CREATE, sees
+the column, and concludes it is covered.
 
-**`000199` cannot be fixed by re-deploying.** The deployed copy lacks
-`retrieval_method`, because the file was edited after the version was applied
-(`b285033e`, after `49635b0b`). golang-migrate records applied versions, so
-`migrate up` is a no-op at that version; and the migration is
-`CREATE TABLE IF NOT EXISTS`, so even forcing a re-run adds no column. Following
-a "re-deploy" instruction here produces a clean exit and no change.
+Repaired forward in `000204` (`7f8f1d0b`), idempotent by construction. The test
+pins the **repair**, not the column's presence, because asserting presence
+passes by reading `000199` — the exact reasoning that leaves prod without it.
 
-The fix is the one CLAUDE.md mandates for a forward-only ledger: a **forward
-repair migration** — `ALTER TABLE corpscout.procurement_registers ADD COLUMN IF
-NOT EXISTS retrieval_method String`.
+**A migration that has shipped is history, not a draft.** Never edit one to
+change what it built; add another.
 
 The ledger is **append-only** — read it with `ORDER BY sequence DESC LIMIT 1`,
 never `any(dirty)`, which returns an arbitrary row and produced a false
-"migration failed" alarm.
+"migration failed" alarm. And "applied" is a status label: when the bug *is*
+the label, check the column, not the ledger.
 
 ### Materializations outstanding — all independent
 
 | what | assets | cost |
 |---|---|---|
+| **UHM re-parse** | `sweden_uhm_procurement_raw_duckdb → _awards_duckdb → _awards_clickhouse` | **0 API requests** — the CSV is in S3. **Blocks steps 2 and 3** |
 | Brazil history | `brazil_pncp_contracts_duckdb → _usd → _clickhouse`, 2022-01…2025-01 | **0 API requests** — 37 months already in S3 |
 | Brazil recent | full job incl. `raw_pages_s3`, 2025-02…2026-07 | ~11.4 h |
 | TED re-parse | all **93** `ted_monthly_duckdb`, then `ted_publish_clickhouse` once | **0 API requests** |
@@ -330,6 +377,11 @@ UHM raw table       already holds ALL 44 source columns (`select *` at normalize
                     distributions are measurable today with no re-materialization
 UHM company_id      SUPPLIERS ONLY (clickhouse.py:56). Buyers have no resolved company
                     at all, and the worked example is a buyer
+UHM buyer join      VIABLE, measured 2026-07-28: 1,227 of 1,241 buyers resolve (98.9%),
+                    102,406 of 102,785 rows. Municipalities 277/277 and regions 20/20 —
+                    the public bodies are NOT the gap. Do not re-derive this before
+                    building the join
+UHM row count       102,785 as of 2026-07-28, not the 96,094 the earlier plan records
 match_eligibility   supplier semantics; marks non-contracted rows ineligible. Buyer
                     sector is published on those rows too — needs its own gate
 Hässleholm Miljö AB SE 5565550349 — the worked example; AB by form, Kommun by sector
