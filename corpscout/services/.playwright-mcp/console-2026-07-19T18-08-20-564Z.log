@@ -1,3 +1,0 @@
-[     738ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5184/node_modules/.vite/deps/react-dom_client.js?v=0115471d:14335
-[ 5168670ms] Error: [react-router:hmr] No module update found for route routes/country-company-detail
-    at http://localhost:5184/@id/__x00__virtual:react-router/hmr-runtime:246:11

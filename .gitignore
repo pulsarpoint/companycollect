@@ -3,6 +3,11 @@
 .vscode/
 **/.superpowers/
 
+# Browser-automation scratch output: page snapshots, console logs and
+# screenshots written by the Playwright MCP server wherever it is run from.
+# Session debris, not source -- 74 of these were committed by accident.
+.playwright-mcp/
+
 # Local environment files. Keep examples tracked.
 .env
 *.env
