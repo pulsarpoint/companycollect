@@ -187,12 +187,14 @@ class BrazilCompRfbDltTranslator(DagsterDltTranslator):
 )
 def brazil_comp_rfb_raw_archives_s3(
     context: dg.AssetExecutionContext,
+    config: BrazilCompRfbConfig,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     snapshot_year_month = brazil_comp_rfb_snapshot_year_month(context.partition_key)
     result = source.sync_snapshot_archives_to_object_store(
         snapshot_year_month=snapshot_year_month,
         object_store=object_store,
+        base_url=config.snapshot_base_url,
         log=context.log.info,
     )
     return dg.MaterializeResult(metadata=result.metadata())

@@ -207,6 +207,53 @@ def test_brazil_comp_rfb_stage_paths_are_snapshot_scoped() -> None:
     assert paths.websites == snapshot_root / "websites.duckdb"
 
 
+def test_brazil_comp_rfb_raw_archives_s3_asset_uses_config_snapshot_base_url(
+    monkeypatch,
+) -> None:
+    """I5: the manifest asset reads config.snapshot_base_url as its
+    mirror-failover hatch, but the S3-sync asset previously took no config at
+    all and always used DEFAULT_BASE_URL. Since the two mirrors use different
+    archive naming (EMPRECSV.zip vs Empresas0.zip), overriding the mirror
+    would upload under one scheme and the parse request the other."""
+    from dagster_v3.defs.brazil_companies.rfb import assets
+
+    calls = {}
+
+    class FakeContext:
+        run_id = "run-1"
+        partition_key = "2024-02-01"
+
+        class log:
+            @staticmethod
+            def info(*_args, **_kwargs) -> None:
+                pass
+
+    def fake_sync(**kwargs):
+        calls["sync"] = kwargs
+
+        class FakeResult:
+            @staticmethod
+            def metadata():
+                return {"archive_count": 0}
+
+        return FakeResult()
+
+    monkeypatch.setattr(
+        assets.source, "sync_snapshot_archives_to_object_store", fake_sync
+    )
+
+    fake_object_store = object()
+    assets.brazil_comp_rfb_raw_archives_s3.node_def.compute_fn.decorated_fn(
+        FakeContext(),
+        assets.BrazilCompRfbConfig(snapshot_base_url="https://mirror.test/cnpj/"),
+        fake_object_store,
+    )
+
+    assert calls["sync"]["snapshot_year_month"] == "2024-02"
+    assert calls["sync"]["base_url"] == "https://mirror.test/cnpj/"
+    assert calls["sync"]["object_store"] is fake_object_store
+
+
 def test_brazil_comp_rfb_snapshot_asset_uses_partition_snapshot_year_month(
     monkeypatch,
 ) -> None:
