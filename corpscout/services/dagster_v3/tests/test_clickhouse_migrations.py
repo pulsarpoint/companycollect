@@ -222,6 +222,7 @@ EXPECTED_MIGRATIONS = (
     "000201_corpscout_fr_sk_national_procurement",
     "000202_corpscout_lv_national_procurement",
     "000203_corpscout_se_uhm_party_descriptions",
+    "000204_corpscout_procurement_registers_repair",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
