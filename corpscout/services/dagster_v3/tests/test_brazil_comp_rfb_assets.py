@@ -1,5 +1,6 @@
 import dagster as dg
 import duckdb
+import pytest
 
 
 RAW_STAGE_ASSET_KEYS = {
@@ -134,13 +135,37 @@ def test_brazil_comp_rfb_assets_are_registered_with_stage_specific_pools() -> No
         clickhouse_company_domains_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
     )
     assert clickhouse_websites_asset.op.pool == "brazil_comp_rfb_websites_duckdb"
-    # The relations export reads relations.duckdb directly (not via
-    # read_only_duckdb_connection), so it carries the same pool as the
-    # relations-build writer for the same reason as the other exporters above.
     assert (
         clickhouse_company_relations_asset.op.pool == "brazil_comp_rfb_relations_duckdb"
     )
     assert cleanup_asset.op.pool is None
+
+
+def test_brazil_comp_rfb_company_relations_clickhouse_never_creates_relations_db(
+    tmp_path, monkeypatch
+) -> None:
+    """M1: the relations export must use read_only_duckdb_connection like
+    every sibling ClickHouse-export asset, not a plain
+    duckdb_resource(...).get_connection(). A leaked read-write handle holds
+    an exclusive lock that blocks retries, and read-write also silently
+    *creates* relations.duckdb if the build never ran -- read-only refuses
+    to open (let alone create) a file that doesn't exist."""
+    from dagster_v3.defs.brazil_companies.rfb import assets
+
+    monkeypatch.setattr(assets, "BRAZIL_COMP_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
+    stage_paths = assets.brazil_comp_rfb_stage_paths("2026-04")
+    stage_paths.ensure_root()
+    assert not stage_paths.relations.exists()
+
+    class FakeClickhouse:
+        pass
+
+    with pytest.raises(Exception):
+        assets.brazil_comp_rfb_company_relations_clickhouse.node_def.compute_fn.decorated_fn(
+            _FakeContext(), FakeClickhouse()
+        )
+
+    assert not stage_paths.relations.exists()
 
 
 def test_brazil_comp_rfb_assets_use_monthly_snapshot_partitions() -> None:

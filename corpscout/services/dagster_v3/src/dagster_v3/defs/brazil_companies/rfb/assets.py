@@ -758,7 +758,9 @@ def brazil_comp_rfb_company_relations_clickhouse(
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     stage_paths = _stage_paths_for_context(context)
-    with duckdb_resource(stage_paths.relations).get_connection() as connection:
+    with read_only_duckdb_connection(
+        duckdb_resource(stage_paths.relations)
+    ) as connection:
         rows = export_brazil_comp_rfb_clickhouse_company_relations(
             duckdb_connection=connection,
             clickhouse=clickhouse,
