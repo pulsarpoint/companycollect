@@ -732,6 +732,7 @@ defs = dg.Definitions(
         brazil_comp_rfb_snapshot_files_duckdb,
         brazil_comp_rfb_empresas_duckdb,
         brazil_comp_rfb_estabelecimentos_duckdb,
+        brazil_comp_rfb_socios_duckdb,
         brazil_comp_rfb_simples_duckdb,
         brazil_comp_rfb_reference_duckdb,
         brazil_comp_rfb_companies_duckdb,
