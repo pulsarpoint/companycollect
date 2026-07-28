@@ -19,13 +19,19 @@ from dagster_v3.defs.company_signals.rules import COUNTRY_PROCUREMENT_RULES
 from dagster_v3.defs.ted_procurement.tables import COUNTRIES as TED_COUNTRIES
 
 
+def _migrations_dir() -> Path:
+    return Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+
+
 def _migration_sql() -> str:
-    root = Path(__file__).resolve().parents[3]
     return (
-        root
-        / "clickhouse"
-        / "migrations"
-        / "000199_corpscout_procurement_registers.up.sql"
+        _migrations_dir() / "000199_corpscout_procurement_registers.up.sql"
+    ).read_text()
+
+
+def _repair_sql() -> str:
+    return (
+        _migrations_dir() / "000204_corpscout_procurement_registers_repair.up.sql"
     ).read_text()
 
 
@@ -176,6 +182,24 @@ def test_the_migration_covers_every_written_column() -> None:
     for column in REGISTER_COLUMNS:
         assert f"    {column} " in sql, column
     assert "ORDER BY source_slug" in sql
+
+
+def test_retrieval_method_arrives_by_alter_not_only_by_the_create() -> None:
+    """000199 was edited after it had already been applied -- b285033e added
+    retrieval_method to its CREATE TABLE.
+
+    golang-migrate records applied versions, so a database whose ledger already
+    reached 199 never re-runs that file, and CREATE TABLE IF NOT EXISTS would be
+    inert even if it did. `migrate up` therefore exits clean and the column is
+    still missing, which is the worst shape a defect can take: the remedy that
+    looks obvious reports success and changes nothing.
+
+    The ledger is forward-only, so the column has to arrive by a later ALTER.
+    This pins that repair in place -- reading the CREATE, seeing the column and
+    concluding it is covered is exactly the reasoning that leaves prod without
+    it.
+    """
+    assert "ADD COLUMN IF NOT EXISTS retrieval_method String" in _repair_sql()
 
 
 def test_the_table_is_replaced_atomically() -> None:
