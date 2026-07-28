@@ -4,10 +4,12 @@
 what it does — so a municipal waste company reads differently from both a
 ministry and a private firm, without any of the three being mislabelled.
 
-**Status:** designed, not built. Step 1 is blocked on data we currently discard.
+**Status:** designed, not built. Step 1 is a verbatim column pass-through and
+depends on nothing else in this document.
 
 Read alongside `2026-07-27-procurement-sources-independent-first.md`, whose
-§4.1c, §4.1d and §4.4 this expands. That plan's Phase 1 is **complete**.
+§4.1c, §4.1d and §4.4 this expands. That plan's Phase 1 is complete **in code**;
+several of its materializations are still outstanding (§4).
 
 ---
 
@@ -32,6 +34,43 @@ Legal form cannot answer the second. The data that can, we throw away.
 
 ---
 
+## The principle this plan now follows
+
+Decided 2026-07-28, and it governs every step below:
+
+> **Ingest stores what the source said. The conclusion is computed at query
+> time.** No mapping, bucketing or vocabulary normalisation happens on the way
+> in — `Kommun` is stored as `Kommun`. What a company *is* is decided in a
+> per-country view, where being wrong costs one DDL statement instead of a
+> re-materialization.
+
+This is §4.4's storage rule extended from amounts to descriptions, and it splits
+the work cleanly in two:
+
+| layer | table | size | changes when |
+|---|---|---|---|
+| **observation** | `company_attributes` | large, verbatim, append | a source publishes new data |
+| **interpretation** | `company_entity_types` + per-country views | tiny | we change our mind |
+
+The reason this matters is not tidiness. It is that **we cannot yet predict what
+these attributes mean across countries.** Registers differ in what an entity can
+be, what statuses exist, and how entities relate to each other and to the state.
+Storing verbatim means the observation layer never needs revisiting when
+understanding improves; only the view does. It also means the conclusion gets
+sharper as sources accumulate with no re-ingest of anything — when a Swedish
+ownership register arrives, the same view reads one more attribute and says
+something better.
+
+The corollary that made the earlier draft self-contradictory: materialising
+register facts into `company_attributes` is **fine**, and does not undo
+`000200`'s rationale, *provided the stored value is verbatim*. `000200` exists so
+that correcting a classification does not re-materialize 1.2M Norwegian or 3.4M
+Swedish rows. A verbatim row never needs correcting, so the hazard does not
+arise. Row count is not the constraint here — `companies_all` is already 115.6M,
+and `country_code`, `attribute` and `value` are all LowCardinality.
+
+---
+
 ## 1. Step one — stop discarding UHM's sector columns
 
 `sweden_uhm_procurement` lists these in `EXPECTED_SOURCE_COLUMNS`, parses them,
@@ -49,13 +88,39 @@ A plain breach of the storage rule (§4.4 of the other plan): received, parsed,
 thrown away. It is also the **only** data we hold that distinguishes ownership
 from form.
 
-**Work:** `defs/sweden_uhm_procurement/normalize.py` + `tables.py`, a migration
-adding the columns to `se_uhm_procurement_awards`, and a UHM re-materialization.
+### Where the discard actually happens
+
+Verified 2026-07-28, and it is later in the chain than "the loader drops them"
+suggests. `replace_raw_table` does `select ..., *` from `read_csv`
+(`normalize.py:37-54`), so **all 44 source columns are already in the DuckDB raw
+table**. They are dropped by the two named projections downstream:
+
+- the candidate `select` (`normalize.py:95-130`)
+- `AWARDS_COLUMNS` (`tables.py:101`) and the insert that follows it
+
+Two consequences:
+
+- **Distributions can be measured today**, against the existing DuckDB file,
+  with no re-materialization and no re-parse. Do that before writing the
+  migration — check `Delsektor`'s cardinality and how often it is populated.
+- The change is a **projection edit**, not a parser change.
+
+### Scope
+
+Add the columns verbatim to the candidate projection, to `AWARDS_COLUMNS`, and
+to `se_uhm_procurement_awards` in a migration. Nothing is mapped, bucketed or
+renamed into a normalised vocabulary — `Sektor för köpare` lands as whatever
+UHM wrote in it.
+
+That is the whole of Step 1, and it is why it ships alone: there is no
+vocabulary to agree on, so there is nothing to get wrong and nothing downstream
+that must be decided first.
 
 **No new requests.** The CSV is snapshotted at
 `s3://source-sweden-uhm-procurement/raw/retrieved_date=*/awards.csv` (115 MB),
-and all three stored copies share one sha256 — so re-parsing is free and
-verifiably reads the same bytes.
+`sweden_uhm_procurement_raw_duckdb` reads it back from S3 (`assets.py:82`), and
+all three stored copies share one sha256 — so re-parsing is free and verifiably
+reads the same bytes.
 
 ---
 
@@ -68,14 +133,20 @@ rows. Keep it as attributes:
 
 ```
 company_attributes
-  country_code, company_id
-  attribute        legal_form | sector | subsector | size | industry_division
-  value            normalised
-  value_label      display
-  source_slug      se_companies | sweden_uhm_procurement | ...
-  observed_in_role buyer | supplier | ''      -- '' for register facts
-  observations     rows evidencing it
+  country_code     LowCardinality(String)
+  company_id       String
+  attribute        LowCardinality(String)  -- open vocabulary, see below
+  value            String   -- VERBATIM as the source published it
+  value_label      String   -- the source's own display text, also verbatim
+  source_slug      LowCardinality(String)  -- se_companies | sweden_uhm_procurement | ...
+  observed_in_role LowCardinality(String)  -- buyer | supplier | '' for register facts
+  observations     UInt64   -- rows evidencing it
   first_seen, last_seen
+  resolved_at      DateTime64(3, 'UTC')
+
+ENGINE = MergeTree
+PARTITION BY (country_code, source_slug)
+ORDER BY (country_code, company_id, attribute, value, source_slug, observed_in_role)
 ```
 
 **One row per (attribute, value, source, role).** A company seen as a municipal
@@ -83,38 +154,156 @@ buyer and a private supplier keeps both rows; a register fact and a procurement
 observation that disagree sit side by side with their sources. Nothing picks a
 winner — the §4.4 rule applied to descriptions rather than amounts.
 
-On `5565550349` that yields:
+### Why these engine choices
+
+- **`PARTITION BY (country_code, source_slug)`**, not country alone. A source's
+  re-run must replace exactly its own slice: partitioning on country only would
+  mean the UHM loader replaces the `SE` partition and wipes the
+  `se_companies`-sourced rows sitting in it. At this grain each loader owns its
+  partitions, needs no coordination with any other loader, and a re-run is an
+  atomic `REPLACE PARTITION` from a stage table. Precedent:
+  `company_signal_coverage` (migration `000165`) is partitioned by country for
+  exactly this reason, and `000192` spells out the atomicity argument. This is
+  the property that lets 100 sources write one table without blocking each
+  other.
+- **Plain `MergeTree`, not `ReplacingMergeTree`.** The partition swap already
+  gives atomicity, so readers are spared `FINAL`.
+- **No `Nullable` in `ORDER BY`** (`allow_nullable_key` is off), and every
+  String in the sort key is non-nullable — `observed_in_role` uses `''`, never
+  NULL, per the native-driver rule in CLAUDE.md.
+- **`attribute` is an open vocabulary**, documented but not closed. Known
+  starters: `legal_form`, `sector`, `subsector`, `size`, `industry_*`, `status`.
+  We cannot predict what the next 90 countries publish, and an open
+  LowCardinality column costs nothing.
+
+### Unbuilt work this depends on: buyer-side identity
+
+**`se_uhm_procurement_awards.company_id` resolves suppliers only:**
+
+```sql
+LEFT ANY JOIN corpscout.se_companies AS c
+    ON c.company_id = u.supplier_id_normalized     -- clickhouse.py:56
+```
+
+The worked example below is a **buyer**, and has no `company_id` anywhere in the
+pipeline today. Two things follow, and neither is in Step 1's scope:
+
+- **A buyer join must be added.** Cheap: `buyer_id_normalized` already goes
+  through the same `sweden_identity_sql` as the supplier side
+  (`normalize.py:84-85`), so it is join-ready against `se_companies.company_id`
+  with no new normalisation.
+- **The buyer side needs its own eligibility rule.** `match_eligibility`
+  (`normalize.py:160`) is supplier semantics and marks every non-contracted row
+  `not_contracted`. Buyer sector is published on *all* rows including those.
+  Reusing the supplier gate would silently discard most buyer observations —
+  the same class of invisible loss §4.1 of the other plan exists to complain
+  about.
+
+### What it yields on `5565550349`
 
 ```
-legal_form  Aktiebolag                   se_companies              role ''
-sector      Kommun                       sweden_uhm_procurement    role buyer
-subsector   Kommunalt ägd organisation   sweden_uhm_procurement    role buyer
-industry    E Vattenförsörjning…         sweden_uhm_procurement    role buyer
+legal_form  AB-ORGFO / Övriga aktiebolag   se_companies              role ''
+sector      Kommun                         sweden_uhm_procurement    role buyer
+subsector   Kommunalt ägd organisation     sweden_uhm_procurement    role buyer
+industry    E Vattenförsörjning…           sweden_uhm_procurement    role buyer
 ```
 
 Legally a company, municipally owned, running water and waste. None of the four
-alone says what it is, which is why one type flag was the wrong shape.
+alone says what it is, which is why one type flag was the wrong shape. Note that
+every value is the source's own string — the interpretation of `Kommun` happens
+in §3, not here.
+
+### Not this table: relationships
+
+"Is this part of some other big company" is a **different grain**.
+`attribute`/`value` describes an entity with a scalar; a parent/subsidiary link
+points at *another entity* and carries its own facts — ownership percentage,
+role, start and end dates, and a counterparty country that is frequently not the
+subject's. Bending `value` to hold a foreign `company_id` means adding
+`value_country_code` and then a pile of columns that are NULL for every
+non-relationship row.
+
+Relationships get their own table when they are built. The per-country view in
+§3 reads both. **Do not half-encode them into `company_attributes` now.**
 
 ---
 
-## 3. Step three — the distinct page treatment
+## 3. Step three — the conclusion, in one view per country
 
 Compose from the attributes, not from a flag, so a municipal AB, a ministry and
-a private AB each read as themselves. Only reachable after steps 1 and 2 —
-today the page cannot even identify the example entity as government-owned.
+a private AB each read as themselves.
+
+The conclusion is a **column in a per-country view**, computed at query time:
+
+```sql
+-- se_company_identity
+SELECT
+    c.company_id,
+    et.entity_type,                     -- form:      company_entity_types
+    sec.value_label AS sector_label,    -- ownership: verbatim from UHM
+    multiIf(
+        et.is_public_sector = 1,  'public_body',
+        sec.value = 'Kommun',     'municipally_owned_company',
+        sec.value = 'Stat',       'state_owned_company',
+        ...
+    ) AS presentation
+FROM se_companies AS c
+LEFT JOIN company_entity_types AS et  ON ...
+LEFT JOIN company_attributes   AS sec ON sec.attribute = 'sector' AND ...
+```
+
+One view per country, free to say something structurally different in Brazil
+than in Sweden, exactly as the country contract views already do. There is no
+universal schema to anticipate either.
+
+**Why this is the right place for it:** changing what the product concludes
+about an entity is a migration replacing a view — no re-parse, no
+re-materialization, no touching 3.4M rows. We can be wrong about Sweden on
+Tuesday and right on Wednesday for the cost of one DDL, which is the property
+worth having while we are still learning what these attributes mean.
+
+### The guard: one view owns the conclusion
+
+Query-time logic drifts by duplication. If the `multiIf` is written once in the
+country view, again in a backoffice loader, and a third time in some count, three
+surfaces will disagree about the same company and **nothing will flag it** — the
+same silent-miss failure mode as the `recordQuery` alias trap in §5.
+
+**One view per country owns the conclusion. Everything else reads that column
+and never recomputes it.** Same discipline `company_entity_types` already
+applies: derived once, read everywhere.
 
 ---
 
 ## 4. Operational state to clear first
 
-### Migrations applied locally, NOT deployed
-- **`000199`** `procurement_registers` — **reshaped after it was deployed**; the
-  deployed copy lacks `retrieval_method`. Re-deploy.
-- **`000200`** `company_entity_types`.
+### Migrations
 
-Ledger was at 198 and clean. That ledger is **append-only** — read it with
-`ORDER BY sequence DESC LIMIT 1`, never `any(dirty)`, which returns an arbitrary
-row and produced a false "migration failed" alarm.
+The working tree carries **four** migrations past the last deployed one, not two.
+All four are already in `EXPECTED_MIGRATIONS` in
+`tests/test_clickhouse_migrations.py`:
+
+| | | state |
+|---|---|---|
+| `000199` | `procurement_registers` | committed; **reshaped after deploy** — see below |
+| `000200` | `company_entity_types` | committed, applied locally |
+| `000201` | `fr_sk_national_procurement` | **untracked in git**, applied locally |
+| `000202` | `lv_national_procurement` | **untracked in git**, applied locally |
+
+**`000199` cannot be fixed by re-deploying.** The deployed copy lacks
+`retrieval_method`, because the file was edited after the version was applied
+(`b285033e`, after `49635b0b`). golang-migrate records applied versions, so
+`migrate up` is a no-op at that version; and the migration is
+`CREATE TABLE IF NOT EXISTS`, so even forcing a re-run adds no column. Following
+a "re-deploy" instruction here produces a clean exit and no change.
+
+The fix is the one CLAUDE.md mandates for a forward-only ledger: a **forward
+repair migration** — `ALTER TABLE corpscout.procurement_registers ADD COLUMN IF
+NOT EXISTS retrieval_method String`.
+
+The ledger is **append-only** — read it with `ORDER BY sequence DESC LIMIT 1`,
+never `any(dirty)`, which returns an arbitrary row and produced a false
+"migration failed" alarm.
 
 ### Materializations outstanding — all independent
 
@@ -136,6 +325,13 @@ holds one month at a time and the export reads from it.
 
 ```
 UHM sector          the only ownership signal we receive; per award row, not per company
+UHM raw table       already holds ALL 44 source columns (`select *` at normalize.py:37).
+                    The discard is in the candidate projection and AWARDS_COLUMNS, so
+                    distributions are measurable today with no re-materialization
+UHM company_id      SUPPLIERS ONLY (clickhouse.py:56). Buyers have no resolved company
+                    at all, and the worked example is a buyer
+match_eligibility   supplier semantics; marks non-contracted rows ineligible. Buyer
+                    sector is published on those rows too — needs its own gate
 Hässleholm Miljö AB SE 5565550349 — the worked example; AB by form, Kommun by sector
 SE public forms     81 statlig · 82 kommun · 83 kommunalförbund · 84 region (identified
                     from the entities carrying them; SE publishes no description column)
