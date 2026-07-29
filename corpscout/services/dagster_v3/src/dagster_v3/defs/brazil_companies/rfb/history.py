@@ -96,8 +96,10 @@ def build_merge_select_sql(
     defaults to join_use_nulls=0, which fills the unmatched side of a FULL JOIN
     with type defaults instead of NULL -- so every sentinel below would take the
     wrong arm silently (sn.cnpj_basico would read '' instead of NULL, so nothing
-    would ever close; an unmatched state side would read is_current=0, so every
-    new spell would be born closed). The export task MUST run this SQL with
+    would ever close; an unmatched state side would read first_seen_snapshot as
+    '' instead of NULL, so coalesce(st.first_seen_snapshot, '{snapshot_year_month}')
+    would keep the '' instead of stamping the snapshot month -- every new spell
+    would be born with a blank first_seen_snapshot). The export task MUST run this SQL with
     settings={"join_use_nulls": 1}. This module only generates the SQL and
     cannot enforce that setting itself, but it is where a maintainer will look
     for it, so it is written here.
@@ -121,17 +123,44 @@ def build_merge_select_sql(
         for c in _ATTRIBUTES
     )
     snapshot_cols = ",\n                ".join(_SNAPSHOT_COLUMNS)
+    spell_key_csv = ", ".join(SPELL_KEY)
     # Deterministic tie-break for a duplicate SPELL_KEY within one snapshot.
     # SPELL_KEY is coarser than the pipeline's own record identity -- e.g. two
     # partners of one company whose MASKED CPFs collide on the 6 of 11 visible
     # digits, same role, same entry date, are two source rows but one spell
-    # key. Picking "lexicographically smallest across every attribute column"
-    # (rather than "first row DuckDB/ClickHouse happens to hand back") means
-    # the choice does not depend on file part order, dlt's load order, or
-    # engine-specific scan order, and is reproducible on a replay from S3.
-    dedup_order = ",\n                    ".join(
-        f"coalesce(cast({c} as varchar), '')" for c in _ATTRIBUTES
+    # key. Picking "the populated attributes win over the blank ones,
+    # deterministically tie-broken column by column" (rather than "first row
+    # DuckDB/ClickHouse happens to hand back") means the choice does not
+    # depend on file part order, dlt's load order, or engine-specific scan
+    # order, is reproducible on a replay from S3, and does not throw away a
+    # real name/country/etc in favor of an equally-valid-looking blank one.
+    #
+    # relation_since is deliberately excluded from this order, not just left
+    # uncast: it is functionally determined by relation_since_key, which is
+    # already part of the partition above, so it is constant within every
+    # group and a tie-break on it can never fire -- it would only add a CAST.
+    #
+    # NEVER add cast(col as varchar) to any column ordered here. ClickHouse's
+    # CAST does not propagate Nullable: cast(relation_since as varchar) raises
+    # CANNOT_INSERT_NULL_IN_ORDINARY_COLUMN the moment a row has a NULL
+    # relation_since -- which is ordinary RFB data (see relations.py's
+    # try_strptime over data_entrada_sociedade) -- before coalesce ever gets a
+    # chance to paper over it. DuckDB's CAST instead returns NULL from that
+    # same expression and lets coalesce paper over it silently, so the DuckDB
+    # tests below CANNOT see a re-introduced CAST break production; only a
+    # real ClickHouse run catches it. Every column ordered here must already
+    # be a String/varchar so plain coalesce(col, '') is sufficient on its own.
+    snapshot_dedup_order = ",\n                    ".join(
+        f"coalesce({c}, '') desc" for c in _ATTRIBUTES if c != "relation_since"
     )
+    # Tie-break for pre-existing duplicate STATE rows (see open_state and
+    # closed_state below). This is a different problem from the snapshot
+    # dedup above: state duplicates are not "two source rows collapsed to one
+    # key", they are the merge's own output already fanned out (e.g. a
+    # retried `INSERT INTO stage` in the export). Any deterministic order
+    # converges them to one row; favor the row with more observations and,
+    # failing that, the most recently resolved one.
+    state_dedup_order = "observations desc, resolved_at desc"
     passthrough_cols = ",\n        ".join(tables.BR_COMPANY_RELATIONS_COLUMNS)
     return f"""
     with snapshot_unique as (
@@ -141,8 +170,8 @@ def build_merge_select_sql(
             select
                 {snapshot_cols},
                 row_number() over (
-                    partition by {", ".join(SPELL_KEY)}
-                    order by {dedup_order}
+                    partition by {spell_key_csv}
+                    order by {snapshot_dedup_order}
                 ) as _rn
             from {snapshot_table}
         ) as ranked
@@ -150,11 +179,41 @@ def build_merge_select_sql(
     ),
     open_state as (
         -- Only an OPEN spell may be matched and mutated. A closed spell must
-        -- never enter this join.
-        select * from {state_table} where is_current = 1
+        -- never enter this join. Only one open spell per key can legitimately
+        -- exist, so pre-existing duplicates here (never produced by a clean
+        -- run, but reachable via a retried export) are collapsed on SPELL_KEY
+        -- alone -- otherwise the merge is self-referential with no self-heal
+        -- path and the duplicate would persist forever.
+        select {passthrough_cols} from (
+            select
+                {passthrough_cols},
+                row_number() over (
+                    partition by {spell_key_csv}
+                    order by {state_dedup_order}
+                ) as _rn
+            from {state_table}
+            where is_current = 1
+        ) as ranked
+        where _rn = 1
     ),
     closed_state as (
-        select {passthrough_cols} from {state_table} where is_current = 0
+        -- Multiple CLOSED spells per key are legitimate history (seen, gone,
+        -- seen again, gone again), so collapsing on SPELL_KEY alone would
+        -- wrongly merge distinct spells. Partition on the key plus
+        -- first_seen_snapshot and end_at -- the columns that actually
+        -- identify one closed spell -- so only true duplicates (identical on
+        -- all three) collapse.
+        select {passthrough_cols} from (
+            select
+                {passthrough_cols},
+                row_number() over (
+                    partition by {spell_key_csv}, first_seen_snapshot, end_at
+                    order by {state_dedup_order}
+                ) as _rn
+            from {state_table}
+            where is_current = 0
+        ) as ranked
+        where _rn = 1
     ),
     merged_open as (
         select

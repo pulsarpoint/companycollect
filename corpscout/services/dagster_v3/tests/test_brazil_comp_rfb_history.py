@@ -246,3 +246,143 @@ def test_duplicate_source_rows_do_not_fan_out() -> None:
         "one row for the key, observed once per month -- not fanned out to "
         "2/4/8/16 rows by the join"
     )
+
+
+def test_duplicate_key_with_null_and_populated_relation_since_does_not_crash_and_picks_populated() -> (
+    None
+):
+    """Guards the Critical: production RFB data routinely has NULL
+    relation_since (relations.py's try_strptime yields NULL for both '' and
+    RFB's '00000000' sentinel -- see test_brazil_comp_rfb_relations.py's
+    ("", None) case), and the every-row-relation_since_since=None fixtures
+    elsewhere in this file cannot exercise a mix of NULL and populated in one
+    dedup group. This test drives exactly that mix through the same snapshot
+    key, alongside a populated/blank related_name so the winner is
+    unambiguous.
+
+    This passes in DuckDB whether or not the dedup ORDER BY casts
+    relation_since -- DuckDB's CAST returns NULL from NULL input and coalesce
+    absorbs it. It does NOT prove ClickHouse parity by itself; the real
+    regression guard is the comment on `snapshot_dedup_order` in history.py,
+    which this test cannot substitute for. What this test does prove: the
+    merge does not blow up on mixed NULL/populated relation_since, and the
+    populated row wins the tie -- both required by the fix.
+    """
+    connection = duckdb.connect(":memory:")
+    _schema(connection)
+
+    populated = (
+        "BR", "brazil_rfb", "11111111", "2", "***456789**", "49", "20190701",
+        "MARIA SOUZA", "", "0", "", "", "",
+        __import__("datetime").date(2019, 7, 1),
+    )
+    blank = (
+        "BR", "brazil_rfb", "11111111", "2", "***456789**", "49", "20190701",
+        "", "", "0", "", "", "", None,
+    )
+    _snapshot(connection, [blank, populated])
+    _merge(connection, "2026-06", "2026-06-01")
+
+    rows = connection.execute(
+        "select related_name, relation_since, is_current from state"
+    ).fetchall()
+    assert rows == [
+        ("MARIA SOUZA", __import__("datetime").date(2019, 7, 1), 1)
+    ], "the populated row must win the dedup tie-break, not the blank one"
+
+
+def test_pre_existing_duplicate_open_state_rows_converge_to_one() -> None:
+    """Before this fix, open_state and closed_state read from state
+    unfiltered -- no dedup -- so two pre-existing OPEN rows for one spell key
+    stayed two forever, even across clean snapshots: the merge is
+    self-referential with no self-heal path. Seed state directly with a
+    duplicate (as a retried `INSERT INTO stage` in the export could produce,
+    something a clean merge cannot produce today since the table is deployed
+    empty) and drive several clean months through it.
+    """
+    connection = duckdb.connect(":memory:")
+    _schema(connection)
+
+    connection.execute(
+        """
+        insert into state values
+        ('BR','brazil_rfb','11111111','2','***456789**','49','20190701',
+         'MARIA SOUZA','','0','','','',date '2019-07-01',
+         '2026-05','2026-05',date '2019-07-01',NULL,1,1,now()),
+        ('BR','brazil_rfb','11111111','2','***456789**','49','20190701',
+         'MARIA SOUZA','','0','','','',date '2019-07-01',
+         '2026-05','2026-05',date '2019-07-01',NULL,1,1,now())
+        """
+    )
+
+    for month, date in (
+        ("2026-06", "2026-06-01"),
+        ("2026-07", "2026-07-01"),
+        ("2026-08", "2026-08-01"),
+        ("2026-09", "2026-09-01"),
+    ):
+        _snapshot(connection, [_edge("***456789**", "49", "20190701")])
+        _merge(connection, month, date)
+
+    count = connection.execute(
+        "select count(*) from state where is_current = 1"
+    ).fetchone()[0]
+    assert count == 1, "duplicate OPEN state rows must converge to one, not stay two forever"
+
+
+def test_pre_existing_duplicate_closed_state_rows_converge_to_one() -> None:
+    """Same self-heal requirement as the OPEN case, for CLOSED duplicates:
+    partitioned on SPELL_KEY + first_seen_snapshot + end_at, so TRUE
+    duplicates (identical on all three) collapse to one row.
+    """
+    connection = duckdb.connect(":memory:")
+    _schema(connection)
+
+    connection.execute(
+        """
+        insert into state values
+        ('BR','brazil_rfb','11111111','2','***456789**','49','20190701',
+         'MARIA SOUZA','','0','','','',date '2019-07-01',
+         '2026-05','2026-05',date '2019-07-01',date '2026-06-01',0,1,now()),
+        ('BR','brazil_rfb','11111111','2','***456789**','49','20190701',
+         'MARIA SOUZA','','0','','','',date '2019-07-01',
+         '2026-05','2026-05',date '2019-07-01',date '2026-06-01',0,1,now())
+        """
+    )
+
+    _snapshot(connection, [])
+    _merge(connection, "2026-06", "2026-06-01")
+
+    count = connection.execute(
+        "select count(*) from state where is_current = 0"
+    ).fetchone()[0]
+    assert count == 1, "duplicate CLOSED state rows must converge to one"
+
+
+def test_two_distinct_closed_spells_sharing_a_key_both_survive_the_dedup() -> None:
+    """The closed_state dedup must partition on more than SPELL_KEY: 'seen,
+    gone, seen again, gone again' is two legitimate closed spells sharing one
+    key (same relation_since_key, since RFB stamped no new entry date on the
+    second appearance -- see test_a_reappearing_key_opens_a_new_spell...). A
+    key-only partition would wrongly collapse them into one.
+    """
+    connection = duckdb.connect(":memory:")
+    _schema(connection)
+
+    _snapshot(connection, [_edge("***456789**", "49", "20190701")])
+    _merge(connection, "2026-06", "2026-06-01")
+    _snapshot(connection, [])
+    _merge(connection, "2026-07", "2026-07-01")
+    _snapshot(connection, [_edge("***456789**", "49", "20190701")])
+    _merge(connection, "2026-08", "2026-08-01")
+    _snapshot(connection, [])
+    _merge(connection, "2026-09", "2026-09-01")
+
+    rows = connection.execute(
+        "select first_seen_snapshot, end_at from state where is_current = 0 "
+        "order by first_seen_snapshot"
+    ).fetchall()
+    assert rows == [
+        ("2026-06", __import__("datetime").date(2026, 7, 1)),
+        ("2026-08", __import__("datetime").date(2026, 9, 1)),
+    ], "both closed spells must survive -- distinct first_seen/end_at, same key"
