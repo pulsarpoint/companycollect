@@ -154,7 +154,14 @@ in scope; establishing *who that human is* beyond what RFB published is not.
 This belongs in the module docstring, because it is the kind of boundary that
 erodes silently through well-intentioned enrichment.
 
-**Retention: 90 days for socios raw archives, indefinite for everything else.**
+> **SUPERSEDED 2026-07-29 — retention is now one year, not 90 days.** See
+> `brazil_rfb_socios_history-design.md` §7. The 90-day window below was chosen
+> when the archives' only purpose was reprocessing after a bug. Once
+> `br_company_relations` became a connection *history*, the archives turned into
+> the only path for rebuilding that history, and 90 days would have made it
+> unverifiable after a quarter. Everything else in this section — the
+> non-goal, the access and redaction rules, the two implementation notes — still
+> holds.
 
 The first draft of this section said retention "falls out favourably" because
 the module replaces each snapshot and holds only the current month — and warned
