@@ -149,7 +149,9 @@ def test_the_partition_ddl_is_the_only_copy() -> None:
         "winner_links",
     }
     assert tables.partition_column_count("winner_links") == 9
-    assert tables.partition_column_count("lots") == 15
+    # lot_id, lot_title, cpv_code, cpv_additional_codes + 6 metrics x 2 columns
+    assert tables.partition_column_count("lots") == 17
+    assert tables.partition_column_count("notice_docs") == 12
 
 
 @pytest.mark.parametrize("name", ["495544-2026.xml"])
@@ -240,3 +242,64 @@ def test_fetch_notice_xml_retries_raised_429() -> None:
     )
     assert content == b"<xml/>"
     assert session.calls == 3
+
+
+# --- CPV (BT-262 main / BT-263 additional) -----------------------------------
+#
+# TED is the register that *defines* CPV and the design doc promised to keep it
+# ("Contacts/industry (§8b/8c): none in source; CPV kept verbatim"), but no
+# column ever existed, so cpv_code read 0% for every TED country while the
+# national registers reported 99-100%. Measured over 288 notices across 8
+# countries and 3 months: 99.7% carry a procedure-level code, 99.8% of lots
+# carry their own, every value exactly 8 digits, listName always "cpv".
+
+
+def test_notice_carries_its_main_cpv_code() -> None:
+    assert _parse("492374-2026.xml").cpv_code == "45200000"
+
+
+def test_additional_cpv_codes_stay_apart_from_the_main_code() -> None:
+    """BT-262 and BT-263 are different claims: one says what this mainly is,
+    the other says what else it touches. Folding them into one list would make
+    spend-by-category double-count."""
+    parsed = _parse("495544-2026.xml")
+    assert parsed.cpv_code == "79300000"
+    assert parsed.cpv_additional_codes == ("79330000",)
+
+
+def test_every_lot_carries_its_own_cpv_code() -> None:
+    """Lot CPVs genuinely differ within a notice -- sampled notices showed 13
+    lots with 13 distinct main codes -- so notice-grain alone loses real
+    information."""
+    parsed = _parse("494092-2026.xml")
+    assert len(parsed.lots) == 6
+    assert {lot.cpv_code for lot in parsed.lots} == {"77231400"}
+    assert all(lot.cpv_additional_codes == () for lot in parsed.lots)
+
+
+def test_notice_cpv_is_read_from_the_procedure_not_the_first_lot() -> None:
+    """`.//ProcurementProject` matches a LOT's project too, and in document
+    order the procedure's happens to come first -- so a loose path passes every
+    real fixture while silently reporting a lot's code as the procedure's on any
+    notice that omits the procedure-level classification. Only a notice with no
+    procedure-level code exposes it, hence this synthetic one."""
+    xml = b"""<?xml version="1.0" encoding="utf-8"?>
+    <ContractAwardNotice
+        xmlns="urn:oasis:names:specification:ubl:schema:xsd:ContractAwardNotice-2"
+        xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+        xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+      <cac:ProcurementProject>
+        <cbc:Name>no classification here</cbc:Name>
+      </cac:ProcurementProject>
+      <cac:ProcurementProjectLot>
+        <cbc:ID>LOT-0001</cbc:ID>
+        <cac:ProcurementProject>
+          <cac:MainCommodityClassification>
+            <cbc:ItemClassificationCode listName="cpv">72000000</cbc:ItemClassificationCode>
+          </cac:MainCommodityClassification>
+        </cac:ProcurementProject>
+      </cac:ProcurementProjectLot>
+    </ContractAwardNotice>"""
+    parsed = parse_award_notice_xml(xml)
+    assert parsed.cpv_code == ""
+    assert parsed.lots[0].cpv_code == "72000000"

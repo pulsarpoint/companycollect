@@ -45,6 +45,7 @@ PARTITION_TABLE_DDL: dict[str, str] = {
     ),
     "notice_docs": (
         "publication_number varchar, buyer_org_ref varchar, "
+        "cpv_code varchar, cpv_additional_codes varchar[], "
         "estimated_value varchar, estimated_value_currency varchar, "
         "framework_maximum varchar, framework_maximum_currency varchar, "
         "framework_total_maximum varchar, framework_total_maximum_currency varchar, "
@@ -57,6 +58,7 @@ PARTITION_TABLE_DDL: dict[str, str] = {
     ),
     "lots": (
         "publication_number varchar, lot_id varchar, lot_title varchar, "
+        "cpv_code varchar, cpv_additional_codes varchar[], "
         "estimated_value varchar, estimated_value_currency varchar, "
         "framework_maximum varchar, framework_maximum_currency varchar, "
         "framework_value_maximum varchar, framework_value_maximum_currency varchar, "
@@ -206,6 +208,10 @@ TED_NOTICES_COLUMNS = (
     "buyer_national_id",
     "buyer_country",
     "notice_title",
+    # BT-262 / BT-263: what the procedure buys. TED is the register that defines
+    # CPV, so this is the authoritative classification for every EU country.
+    "cpv_code",
+    "cpv_additional_codes",
     *value_columns(TED_NOTICE_VALUE_METRICS),
     "fx_rate_to_usd",
     "fx_rate_date",
@@ -221,6 +227,10 @@ TED_NOTICE_LOTS_COLUMNS = (
     "publication_number",
     "lot_id",
     "lot_title",
+    # Per-lot classification: a multi-lot notice routinely splits across
+    # unrelated CPVs, so the lot code is not a copy of the notice's.
+    "cpv_code",
+    "cpv_additional_codes",
     *value_columns(TED_LOT_VALUE_METRICS),
     "fx_rate_to_usd",
     "fx_rate_date",

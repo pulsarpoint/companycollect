@@ -132,6 +132,8 @@ def _write_partition(tmp_path: Path, key: str, fixture_names: list[str]) -> Path
             [
                 number,
                 parsed.buyer_org_ref,
+                parsed.cpv_code,
+                list(parsed.cpv_additional_codes),
                 values.estimated_value_amount,
                 values.estimated_value_currency,
                 values.framework_maximum_amount,
@@ -163,6 +165,8 @@ def _write_partition(tmp_path: Path, key: str, fixture_names: list[str]) -> Path
                     number,
                     lot.lot_id,
                     lot.lot_title,
+                    lot.cpv_code,
+                    list(lot.cpv_additional_codes),
                     lot.estimated_value_amount,
                     lot.estimated_value_currency,
                     lot.framework_maximum_amount,
@@ -298,6 +302,27 @@ def test_build_publish_tables_and_usd(publish_connection) -> None:
         f"where publication_number = '492374-2026'"
     ).fetchone()[0]
     assert converted == Decimal("808500.00")
+
+    # CPV survives the whole path: parser -> partition DuckDB -> publish table.
+    # The parser tests prove extraction, but a wrong column in the publish SELECT
+    # would still ship an empty register column, so assert the real values here.
+    lots_table = f"{tables.DLT_DATASET_NAME}.{tables.NOTICE_LOTS_TABLE}"
+    assert con.execute(
+        f"select cpv_code from {notices} where publication_number = '492374-2026'"
+    ).fetchone()[0] == "45200000"
+    assert con.execute(
+        f"select count(*) from {notices} where cpv_code = ''"
+    ).fetchone()[0] == 0
+    # 494092 is the 6-lot notice; every lot carries its own code.
+    assert con.execute(
+        f"select count(distinct lot_id) from {lots_table} "
+        f"where publication_number = '494092-2026' and cpv_code = '77231400'"
+    ).fetchone()[0] == 6
+    # Additional codes arrive as a real list, not a stringified one.
+    assert con.execute(
+        f"select cpv_additional_codes from {notices} "
+        f"where publication_number = '494783-2026'"
+    ).fetchone()[0] == []
 
     # Column contracts match the migration order.
     for duckdb_table, contract in (

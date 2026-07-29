@@ -191,6 +191,8 @@ def build_publish_tables(
             coalesce(b.national_id, '') as buyer_national_id,
             coalesce(b.country, '') as buyer_country,
             l.notice_title,
+            coalesce(nd.cpv_code, '') as cpv_code,
+            coalesce(nd.cpv_additional_codes, []) as cpv_additional_codes,
             try_cast(l.total_value as decimal(38, 2)) as total_value_amount_original,
             cast(null as decimal(38, 2)) as total_value_amount_usd,
             upper(coalesce(l.total_value_currency, '')) as total_value_currency,
@@ -252,6 +254,8 @@ def build_publish_tables(
             t.publication_number,
             t.lot_id,
             t.lot_title,
+            coalesce(t.cpv_code, '') as cpv_code,
+            coalesce(t.cpv_additional_codes, []) as cpv_additional_codes,
             try_cast(t.estimated_value as decimal(38, 2))
                 as estimated_value_amount_original,
             cast(null as decimal(38, 2)) as estimated_value_amount_usd,

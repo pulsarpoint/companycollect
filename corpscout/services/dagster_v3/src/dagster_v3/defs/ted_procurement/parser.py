@@ -106,6 +106,11 @@ class ParsedLot:
 
     lot_id: str
     lot_title: str = ""
+    # BT-262 / BT-263, per lot. Lot codes genuinely differ inside one notice
+    # (13 lots, 13 distinct main codes was observed), so these are not
+    # redundant with the procedure-level pair.
+    cpv_code: str = ""
+    cpv_additional_codes: tuple[str, ...] = ()
     estimated_value_amount: str = ""
     estimated_value_currency: str = ""
     framework_maximum_amount: str = ""
@@ -130,6 +135,11 @@ class ParsedAwardNotice:
     winners: tuple[ParsedWinner, ...]
     notice_values: ParsedNoticeValues = ParsedNoticeValues()
     lots: tuple[ParsedLot, ...] = ()
+    # BT-262, the procedure's main CPV: what this procurement mainly buys.
+    cpv_code: str = ""
+    # BT-263, the categories it additionally touches. Kept apart from the main
+    # code because summing spend over both would count the same award twice.
+    cpv_additional_codes: tuple[str, ...] = ()
 
 
 def _text(node: etree._Element | None) -> str:
@@ -151,6 +161,30 @@ def _money(parent: etree._Element | None, path: str) -> tuple[str, str]:
     if node is None:
         return "", ""
     return _text(node), (node.get("currencyID") or "").upper()
+
+
+_MAIN_CPV = "cac:MainCommodityClassification/cbc:ItemClassificationCode"
+_ADDITIONAL_CPV = "cac:AdditionalCommodityClassification/cbc:ItemClassificationCode"
+
+
+def _classification(project: etree._Element | None) -> tuple[str, tuple[str, ...]]:
+    """The main CPV code and the additional ones, from a ProcurementProject.
+
+    ``project`` must be the *specific* project element — the procedure's or one
+    lot's. Passing the root and searching with ``.//`` would match a lot's
+    project as well, and since the procedure's comes first in document order
+    that reads correctly on every notice that has one, then silently reports a
+    lot's code as the procedure's on any notice that does not.
+    """
+    if project is None:
+        return "", ()
+    main = _text(project.find(_MAIN_CPV, _NS))
+    additional = tuple(
+        code
+        for code in (_text(node) for node in project.findall(_ADDITIONAL_CPV, _NS))
+        if code
+    )
+    return main, additional
 
 
 def parse_award_notice_xml(xml_bytes: bytes) -> ParsedAwardNotice:
@@ -247,12 +281,17 @@ def parse_award_notice_xml(xml_bytes: bytes) -> ParsedAwardNotice:
                         )
                     )
 
+    cpv_code, cpv_additional_codes = _classification(
+        root.find("cac:ProcurementProject", _NS)
+    )
     return ParsedAwardNotice(
         buyer_org_ref=buyer_org_ref,
         organizations=tuple(organizations),
         winners=tuple(winners),
         notice_values=_parse_notice_values(root),
         lots=_parse_lots(root, notice_result),
+        cpv_code=cpv_code,
+        cpv_additional_codes=cpv_additional_codes,
     )
 
 
@@ -322,12 +361,18 @@ def _parse_lots(
         lower, lower_currency = _money(lot_result, "cbc:LowerTenderAmount")
         higher, higher_currency = _money(lot_result, "cbc:HigherTenderAmount")
 
+        lot_cpv, lot_cpv_additional = _classification(
+            project_lot.find("cac:ProcurementProject", _NS)
+        )
+
         lots.append(
             ParsedLot(
                 lot_id=lot_id,
                 lot_title=_text(
                     project_lot.find("cac:ProcurementProject/cbc:Name", _NS)
                 ),
+                cpv_code=lot_cpv,
+                cpv_additional_codes=lot_cpv_additional,
                 estimated_value_amount=estimated,
                 estimated_value_currency=estimated_currency,
                 framework_maximum_amount=framework_max,

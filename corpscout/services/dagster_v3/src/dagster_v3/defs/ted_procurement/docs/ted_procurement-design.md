@@ -110,8 +110,17 @@ search index (monthly partition, per country)
   (same approach as `finland_hilma`).
 - **Translation (§8)**: none — titles come in source language + often English;
   proper nouns otherwise.
-- **Contacts/industry (§8b/8c)**: none in source; CPV kept verbatim (same decision
-  as Hilma). No canonical contacts pair (supplement source).
+- **Contacts/industry (§8b/8c)**: no contacts in source; CPV kept verbatim (same
+  decision as Hilma). No canonical contacts pair (supplement source).
+  **This was documented from the start but only implemented in 000213** — the
+  columns did not exist, so `cpv_code` read 0% for every TED-fed country while
+  the national registers reported 99–100%. Both grains are now stored
+  (`cpv_code` + `cpv_additional_codes` on `ted_notices` and `ted_notice_lots`):
+  measured over 288 notices across 8 countries, 99.7% of procedures and 99.8% of
+  lots carry a code, and lot codes genuinely differ inside one notice (13 lots,
+  13 distinct codes observed), so the notice grain alone loses information.
+  Main (BT-262) and additional (BT-263) stay in separate columns because summing
+  spend across both would count one award once per category it mentions.
 - **Schedule (§9)**: monthly, after month close (3rd, 05:35), current month
   refreshable via `end_offset=1`. Backfill 2024-01→now from the UI. The partition
   job only snapshots/parses; the stopped-by-default

@@ -235,6 +235,8 @@ def ted_monthly_duckdb(
             (
                 publication_number,
                 parsed.buyer_org_ref,
+                parsed.cpv_code,
+                list(parsed.cpv_additional_codes),
                 values.estimated_value_amount,
                 values.estimated_value_currency,
                 values.framework_maximum_amount,
@@ -251,6 +253,8 @@ def ted_monthly_duckdb(
                     publication_number,
                     lot.lot_id,
                     lot.lot_title,
+                    lot.cpv_code,
+                    list(lot.cpv_additional_codes),
                     lot.estimated_value_amount,
                     lot.estimated_value_currency,
                     lot.framework_maximum_amount,
