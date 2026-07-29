@@ -89,9 +89,11 @@ def export_duckdb_connection_table_to_clickhouse(
             log_table=f"{clickhouse_database}.{clickhouse_table}",
         )
 
-    if not allow_empty and _count_duckdb_table_rows(
-        duckdb_connection, duckdb_schema, duckdb_table
-    ) == 0:
+    if (
+        not allow_empty
+        and _count_duckdb_table_rows(duckdb_connection, duckdb_schema, duckdb_table)
+        == 0
+    ):
         raise ValueError(
             f"DuckDB table {duckdb_schema}.{duckdb_table} has 0 rows; refusing "
             f"to replace ClickHouse table {clickhouse_database}.{clickhouse_table}. "
@@ -106,7 +108,7 @@ def export_duckdb_connection_table_to_clickhouse(
     clickhouse_client.execute(
         f"CREATE TABLE {clickhouse_qualified_stage_table} AS {clickhouse_qualified_table}"
     )
-    primary_error: Exception | None = None
+    primary_error: BaseException | None = None
     row_count = 0
     try:
         row_count = _insert_duckdb_table_in_batches(
@@ -127,8 +129,9 @@ def export_duckdb_connection_table_to_clickhouse(
         clickhouse_client.execute(
             f"EXCHANGE TABLES {clickhouse_qualified_stage_table} AND {clickhouse_qualified_table}"
         )
-    except Exception as exc:
+    except BaseException as exc:
         primary_error = exc
+        _reset_clickhouse_client_for_cleanup(clickhouse_client, exc)
         raise
     finally:
         _drop_clickhouse_stage_tables(
@@ -188,7 +191,7 @@ def replace_duckdb_connection_tables_in_clickhouse(
     created_stage_tables: list[str] = []
     exchanged_tables: list[str] = []
     row_counts: dict[str, int] = {}
-    primary_error: Exception | None = None
+    primary_error: BaseException | None = None
 
     try:
         for clickhouse_table, _ in requested_tables:
@@ -229,8 +232,9 @@ def replace_duckdb_connection_tables_in_clickhouse(
                 f"AND {clickhouse_qualified_tables[clickhouse_table]}"
             )
             exchanged_tables.append(clickhouse_table)
-    except Exception as exc:
+    except BaseException as exc:
         primary_error = exc
+        _reset_clickhouse_client_for_cleanup(clickhouse_client, exc)
         rollback_failures: list[str] = []
         for clickhouse_table in reversed(exchanged_tables):
             try:
@@ -569,3 +573,23 @@ def _drop_clickhouse_stage_tables(
             "Failed to drop ClickHouse stage table(s): "
             + ", ".join(failed_stage_tables)
         ) from first_error
+
+
+def _reset_clickhouse_client_for_cleanup(
+    clickhouse_client: Any,
+    primary_error: BaseException,
+) -> None:
+    """Make an interrupted native connection reusable without masking the interruption.
+
+    DagsterExecutionInterruptedError inherits directly from BaseException and can
+    interrupt clickhouse-driver before it consumes the server's end-of-stream packet.
+    """
+    disconnect = getattr(clickhouse_client, "disconnect", None)
+    if not callable(disconnect):
+        return
+    try:
+        disconnect()
+    except BaseException as cleanup_error:
+        primary_error.add_note(
+            f"Failed to reset ClickHouse connection before cleanup: {cleanup_error}"
+        )

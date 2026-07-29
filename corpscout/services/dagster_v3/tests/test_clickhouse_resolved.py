@@ -4,6 +4,7 @@ from datetime import date
 
 import duckdb
 import pyarrow as pa
+from clickhouse_driver.errors import PartiallyConsumedQueryError
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse import resolved as clickhouse_resolved
@@ -824,6 +825,49 @@ def test__export_table_cleanup_attempts_drop_on_insert_failure(
     ]
 
 
+def test__export_table_resets_interrupted_connection_before_cleanup(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            "create table finland_resolved.fi_companies (business_id varchar)"
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
+
+    monkeypatch.setattr(
+        clickhouse_resolved.uuid,
+        "uuid4",
+        lambda: type("U", (), {"hex": "deadbeef"})(),
+    )
+    client = InterruptingInsertClickHouseClient()
+
+    try:
+        _export_table(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            duckdb_table="fi_companies",
+            clickhouse_database="corpscout",
+            clickhouse_table="fi_companies",
+            columns=("business_id",),
+            truncate=True,
+        )
+    except SimulatedDagsterInterruption:
+        pass
+    else:
+        raise AssertionError("expected simulated Dagster interruption")
+
+    assert client.disconnect_calls == 1
+    assert client.statements == [
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_deadbeef` AS `corpscout`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_deadbeef`",
+    ]
+
+
 def test__export_table_raises_cleanup_error_after_successful_exchange(
     tmp_path, monkeypatch
 ) -> None:
@@ -950,6 +994,58 @@ def test__replace_tables_rolls_back_on_exchange_failure(tmp_path, monkeypatch) -
             "INSERT INTO `corpscout`.`_tmp_fi_websites_second` (`business_id`) VALUES",
             [("1234567-8",)],
         ),
+    ]
+
+
+def test__replace_tables_resets_interrupted_connection_before_cleanup(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            "create table finland_resolved.fi_companies (business_id varchar)"
+        )
+        connection.execute(
+            "create table finland_resolved.fi_websites (business_id varchar)"
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_websites values ('1234567-8')"
+        )
+
+    stage_names = iter(["first", "second"])
+    monkeypatch.setattr(
+        clickhouse_resolved.uuid,
+        "uuid4",
+        lambda: type("U", (), {"hex": next(stage_names)})(),
+    )
+    client = InterruptingInsertClickHouseClient()
+
+    try:
+        _replace_tables(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            clickhouse_database="corpscout",
+            tables=(
+                ("fi_companies", ("business_id",)),
+                ("fi_websites", ("business_id",)),
+            ),
+        )
+    except SimulatedDagsterInterruption:
+        pass
+    else:
+        raise AssertionError("expected simulated Dagster interruption")
+
+    assert client.disconnect_calls == 1
+    assert client.statements == [
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_first` AS `corpscout`.`fi_companies`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_websites_second` AS `corpscout`.`fi_websites`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_first`",
     ]
 
 
@@ -1330,6 +1426,30 @@ class FailingInsertClickHouseClient(FakeInsertClickHouseClient):
             super().execute(sql, params)
             raise RuntimeError("insert failed")
         return super().execute(sql, params)
+
+
+class SimulatedDagsterInterruption(BaseException):
+    pass
+
+
+class InterruptingInsertClickHouseClient(FakeInsertClickHouseClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.disconnect_calls = 0
+        self._query_is_partially_consumed = False
+
+    def execute(self, sql: str, params: object | None = None) -> list[tuple[str]]:
+        if self._query_is_partially_consumed:
+            raise PartiallyConsumedQueryError
+        if sql.startswith("INSERT INTO"):
+            super().execute(sql, params)
+            self._query_is_partially_consumed = True
+            raise SimulatedDagsterInterruption
+        return super().execute(sql, params)
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
+        self._query_is_partially_consumed = False
 
 
 class FailingSecondExchangeClickHouseClient(FakeInsertClickHouseClient):
