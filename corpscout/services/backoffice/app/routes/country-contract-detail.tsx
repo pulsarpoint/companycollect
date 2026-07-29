@@ -125,7 +125,7 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
           size="sm"
           className="self-start"
           nativeButton={false}
-          render={<Link to={`/countries/${country.code}?tab=contracts`} />}
+          render={<Link to={`/countries/${country.code}/contracts`} />}
         >
           ← {country.flag} {country.name} contracts
         </Button>

@@ -1,5 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import type { CountryConfig } from "~/lib/countries";
+import { PAGE_SIZES, type CountryConfig, type SortDir } from "~/lib/countries";
 
 /** Every country's contracts live in a view named <cc>_government_contracts
  * with an identical shape, so these queries are built from the country code
@@ -28,25 +28,42 @@ export async function hasContracts(country: CountryConfig): Promise<boolean> {
   return (await loadContractCountries()).has(country.code);
 }
 
-/** One contract in the country list. A contract, not a winner row: the view has
- * one row per (source, contract, winner), and these are grouped. */
-export interface CountryContractRow {
+/** One contract in the paginated country list. A contract, not a winner row:
+ * the view has one row per (source, contract, winner), grouped down to one
+ * row per contract here. */
+export interface CountryContractListRow {
   /** Grouping key, and the id used in the detail URL. */
   contract_ref: string;
   contract_date: string;
   buyer_name: string;
   title: string;
-  sources: string[];
-  winner_count: number;
-  /** Summed across winners within one source, then the largest source taken --
-   * never summed across sources, which would double count a contract published
-   * in both a national register and TED. */
+  agreement_type: string;
+  /** The winner shown. Every field on this row (including this one) is read
+   * from whichever (contract, source) group carries the largest USD amount —
+   * so the winner shown always pairs with the amount shown, never a mix of
+   * two sources. */
+  winner_name: string;
+  /** Additional winners beyond the one shown, from that same source; 0 for a
+   * single-winner contract (all of Brazil's PNCP awards, for instance). */
+  winner_extra_count: number;
+  /** Summed across winners within the winning source — never across sources,
+   * which would double count a contract published in both a national
+   * register and TED. */
+  amount_original: number | null;
+  currency: string;
   amount_usd: number | null;
-  notice_amount_usd: number | null;
-  /** "yes" when the EU procurement directives govern the contract, which means
-   * it is also published in TED and TED carries an award amount. "no" means no
-   * value exists in any register. Empty means the source does not say. */
-  directive_governed: string;
+  source_url: string;
+}
+
+export type ContractSortKey = "date" | "buyer" | "winner" | "amount_original" | "amount_usd";
+
+export interface CountryContractsPage {
+  rows: CountryContractListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sort: ContractSortKey;
+  dir: SortDir;
 }
 
 /** One (source, winner) row of a single contract. */
@@ -91,57 +108,133 @@ export interface ContractDetail {
  * itself. */
 const REF = "if(contract_key != '', contract_key, contract_id)";
 
-export async function getCountryContracts(
+/** Sort keys are an allow-list into SQL column names, never user input passed
+ * through — the same pattern `getSortColumn` uses for the company list. */
+const CONTRACT_SORT_COLUMNS: Record<ContractSortKey, string> = {
+  date: "contract_date",
+  buyer: "buyer_name",
+  winner: "winner_name",
+  amount_original: "amount_original",
+  amount_usd: "amount_usd",
+};
+
+function isContractSortKey(value: string | null): value is ContractSortKey {
+  return value !== null && Object.hasOwn(CONTRACT_SORT_COLUMNS, value);
+}
+
+/**
+ * One page of a country's government contracts, one row per contract rather
+ * than per (source, winner) — mirrors the grouping `getContractDetail` later
+ * expands back out, but paginated and sortable server-side instead of capped
+ * at a flat LIMIT. Brazil alone has 112,943 contracts; the old LIMIT 200 hid
+ * all but the newest sliver of them.
+ *
+ * Within a contract, every displayed field (buyer, title, winner, amount, ...)
+ * is read from the ONE (source) group with the largest USD amount, so the
+ * winner shown always pairs with the amount shown — never a winner from one
+ * register next to an amount from another. Brazil is single-source and
+ * single-winner throughout (verified: 112,943 rows, 112,943 distinct
+ * contract_id), so this reduces to "the row" there; TED-covered countries
+ * can have several winners on one contract, surfaced as `winner_extra_count`.
+ */
+export async function getCountryContractsPage(
   country: CountryConfig,
-  { limit = 200 }: { limit?: number } = {},
-): Promise<CountryContractRow[]> {
-  if (!(await hasContracts(country))) return [];
-  return chQuery<CountryContractRow>(
+  opts: {
+    page?: number;
+    pageSize?: number;
+    sort?: string | null;
+    dir?: string | null;
+  } = {},
+): Promise<CountryContractsPage> {
+  const pageSize = PAGE_SIZES.includes(opts.pageSize as (typeof PAGE_SIZES)[number])
+    ? (opts.pageSize as number)
+    : 50;
+  const sort = isContractSortKey(opts.sort ?? null) ? (opts.sort as ContractSortKey) : "date";
+  const dir: SortDir = opts.dir === "asc" ? "asc" : "desc";
+
+  if (!(await hasContracts(country))) {
+    return { rows: [], total: 0, page: 1, pageSize, sort, dir };
+  }
+
+  const sortColumn = CONTRACT_SORT_COLUMNS[sort];
+
+  // Count first (same reason as searchCompanies): the requested page can be
+  // stale once contracts are added, so it is clamped to the real range below
+  // rather than trusted.
+  const countRows = await chQuery<{ total: string }>(
+    `SELECT count() AS total FROM (
+       SELECT ${REF} AS contract_ref FROM ${country.code}_government_contracts GROUP BY contract_ref
+     )`,
+  );
+  const total = Number(countRows[0].total);
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Math.trunc(opts.page ?? 1) || 1), lastPage);
+
+  const rows = await chQuery<
+    Omit<CountryContractListRow, "winner_extra_count"> & { winner_extra_count: number | string }
+  >(
     `SELECT
        contract_ref,
-       coalesce(toString(contract_date), '') AS contract_date,
+       contract_date,
        buyer_name,
        title,
-       sources,
-       winner_count,
-       amount_usd,
-       notice_amount_usd,
-       directive_governed
+       agreement_type,
+       winner_name,
+       toUInt32(winner_count_primary) - 1 AS winner_extra_count,
+       toFloat64(amount_original) AS amount_original,
+       currency,
+       nullIf(amount_usd, -1.0) AS amount_usd,
+       source_url
      FROM (
        SELECT
          contract_ref,
-         max(source_date) AS contract_date,
-         argMax(buyer_name, source_rows) AS buyer_name,
-         argMax(title, source_rows) AS title,
-         arraySort(groupUniqArrayArray([source])) AS sources,
-         max(source_winners) AS winner_count,
-         max(source_amount_usd) AS amount_usd,
-         max(source_notice_usd) AS notice_amount_usd,
-         -- A yes from any source settles it: the contract is above the
-         -- threshold, whatever the other sources leave unsaid.
-         if(has(groupArray(source_directive), 'yes'), 'yes',
-            if(has(groupArray(source_directive), 'no'), 'no', '')) AS directive_governed
+         coalesce(toString(argMax(source_date, priority)), '') AS contract_date,
+         argMax(buyer_name_in, priority) AS buyer_name,
+         argMax(title_in, priority) AS title,
+         argMax(agreement_type_in, priority) AS agreement_type,
+         argMax(source_url_in, priority) AS source_url,
+         argMax(winner_name_in, priority) AS winner_name,
+         argMax(winner_count, priority) AS winner_count_primary,
+         argMax(amount_original_in, priority) AS amount_original,
+         argMax(currency_in, priority) AS currency,
+         max(priority) AS amount_usd
        FROM (
          SELECT
            ${REF} AS contract_ref,
            source_slug AS source,
            max(publication_date) AS source_date,
-           any(buyer_name) AS buyer_name,
-           any(title) AS title,
-           count() AS source_rows,
-           uniqExact(if(company_id != '', company_id, winner_name)) AS source_winners,
-           sum(value_amount_usd) AS source_amount_usd,
-           max(notice_value_amount_usd) AS source_notice_usd,
-           anyIf(directive_governed, directive_governed != '') AS source_directive
+           any(buyer_name) AS buyer_name_in,
+           any(title) AS title_in,
+           -- PNCP (Brazil) publishes agreement_type as a raw {"id":N,"nome":"..."}
+           -- blob; every other loaded source already publishes plain text.
+           any(multiIf(startsWith(agreement_type, '{'),
+             JSONExtractString(agreement_type, 'nome'), agreement_type)) AS agreement_type_in,
+           any(source_url) AS source_url_in,
+           argMin(if(winner_name != '', winner_name, company_id), source_winner_ordinal) AS winner_name_in,
+           uniqExact(if(company_id != '', company_id, winner_name)) AS winner_count,
+           sum(value_amount_original) AS amount_original_in,
+           any(value_currency) AS currency_in,
+           -- -1 sentinel distinguishes "no source reported a USD figure" from
+           -- a genuine zero once max() below collapses the per-source values.
+           coalesce(toFloat64(sum(value_amount_usd)), -1.0) AS priority
          FROM ${country.code}_government_contracts
          GROUP BY contract_ref, source
        )
        GROUP BY contract_ref
      )
-     ORDER BY contract_date DESC, contract_ref
-     LIMIT {limit:UInt32}`,
-    { limit },
+     ORDER BY coalesce(toString(${sortColumn}), '') = '' ASC, ${sortColumn} ${dir === "asc" ? "ASC" : "DESC"}, contract_ref
+     LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
+    { limit: pageSize, offset: (page - 1) * pageSize },
   );
+
+  return {
+    rows: rows.map((r) => ({ ...r, winner_extra_count: Number(r.winner_extra_count) })),
+    total,
+    page,
+    pageSize,
+    sort,
+    dir,
+  };
 }
 
 /** SELECT * per source, so a contract shows whatever its register publishes

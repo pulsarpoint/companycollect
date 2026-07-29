@@ -10,16 +10,26 @@ export function DataTableColumnHeader({
   sortKey,
   currentSort,
   currentDir,
+  align = "start",
 }: {
   label: string;
   /** undefined → not sortable, render plain label */
   sortKey?: string;
   currentSort: string;
   currentDir: SortDir;
+  /** "end" right-aligns the button (and its edge-hugging negative margin)
+   * for numeric columns whose header sits under a right-aligned cell. */
+  align?: "start" | "end";
 }) {
   const searchParams = useEffectiveSearchParams();
   if (!sortKey) {
-    return <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{label}</span>;
+    return (
+      <span
+        className={`text-muted-foreground block text-xs font-medium uppercase tracking-wide ${align === "end" ? "text-right" : ""}`}
+      >
+        {label}
+      </span>
+    );
   }
   const isActive = currentSort === sortKey;
   const target = tableSearch(searchParams, {
@@ -31,7 +41,7 @@ export function DataTableColumnHeader({
     <Button
       variant="ghost"
       size="sm"
-      className="-ml-2 h-7 gap-1 text-xs font-medium uppercase tracking-wide data-[active=true]:text-foreground"
+      className={`h-7 gap-1 text-xs font-medium uppercase tracking-wide data-[active=true]:text-foreground ${align === "end" ? "-mr-2" : "-ml-2"}`}
       data-active={isActive}
       render={<Link to={target} preventScrollReset />}
       nativeButton={false}

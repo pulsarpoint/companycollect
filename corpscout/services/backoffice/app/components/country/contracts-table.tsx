@@ -1,6 +1,7 @@
-import { Link } from "react-router";
-import type { CountryContractRow } from "~/lib/contracts.server";
-import { Badge } from "~/components/ui/badge";
+import type { CountryContractsPage } from "~/lib/contracts.server";
+import { DataTable } from "~/components/data-table/data-table";
+import { DataTablePagination } from "~/components/data-table/pagination";
+import { buildContractColumns } from "~/components/data-table/contract-columns";
 import {
   Card,
   CardContent,
@@ -9,30 +10,22 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import { Empty, EmptyDescription, EmptyTitle } from "~/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
 
-const compactUsd = new Intl.NumberFormat("en-US", {
-  notation: "compact",
-  maximumFractionDigits: 1,
-  style: "currency",
-  currency: "USD",
-});
-
+/**
+ * Server-driven contracts table: pagination, sorting, and the total count all
+ * come from the loader's query rather than being computed client-side, the
+ * same wiring `/countries/:country/companies` uses for `searchCompanies`.
+ * Needed because a country's contracts can run to six figures (Brazil alone:
+ * 112,943) — a client-side table would mean shipping all of them.
+ */
 export function CountryContractsTable({
   countryCode,
-  contracts,
+  page,
 }: {
   countryCode: string;
-  contracts: CountryContractRow[];
+  page: CountryContractsPage;
 }) {
-  if (contracts.length === 0) {
+  if (page.total === 0) {
     return (
       <Empty>
         <EmptyTitle>No contracts yet</EmptyTitle>
@@ -44,76 +37,31 @@ export function CountryContractsTable({
     );
   }
 
+  const columns = buildContractColumns(countryCode, page.sort, page.dir);
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Government contracts</CardTitle>
         <CardDescription>
-          Award notices, one row per contract rather than per winner. A contract
-          published in both a national register and TED is shown once, carrying
-          both sources. Open a contract for its winners and source documents.
+          Award notices, one row per contract rather than per winner. A
+          contract with several winners shows the largest and a "+N" count —
+          open it for every winner and source document.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="overflow-x-auto">
-          <Table className="min-w-[52rem]">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Buyer</TableHead>
-                <TableHead>Contract</TableHead>
-                <TableHead className="text-right">Winners</TableHead>
-                <TableHead className="text-right">Value</TableHead>
-                <TableHead>Sources</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {contracts.map((c) => (
-                <TableRow key={c.contract_ref}>
-                  <TableCell className="align-top tabular-nums whitespace-nowrap">
-                    {c.contract_date || "—"}
-                  </TableCell>
-                  <TableCell className="align-top">{c.buyer_name}</TableCell>
-                  <TableCell className="align-top">
-                    <Link
-                      to={`/countries/${countryCode}/contracts/${encodeURIComponent(c.contract_ref)}`}
-                      className="underline underline-offset-2"
-                    >
-                      {c.title || "Untitled contract"}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="text-right align-top tabular-nums">
-                    {c.winner_count}
-                  </TableCell>
-                  <TableCell className="text-right align-top tabular-nums">
-                    {c.amount_usd != null ? (
-                      compactUsd.format(c.amount_usd)
-                    ) : c.notice_amount_usd != null ? (
-                      // No per-winner amount from this register. The notice
-                      // total covers every winner, so it is labelled rather
-                      // than passed off as the contract's award value.
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span>{compactUsd.format(c.notice_amount_usd)}</span>
-                        <span className="text-muted-foreground text-xs">whole notice</span>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <div className="flex flex-wrap gap-1">
-                      {c.sources.map((s) => (
-                        <Badge key={s} variant="secondary">
-                          {s.replace(/_procurement$/, "")}
-                        </Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+      <CardContent className="flex flex-col gap-3">
+        <DataTable
+          columns={columns}
+          data={page.rows}
+          minWidthClassName="min-w-[72rem]"
+          emptyText="No contracts match this page."
+        />
+        <DataTablePagination
+          total={page.total}
+          page={page.page}
+          pageSize={page.pageSize}
+          itemsLabel="contracts"
+        />
       </CardContent>
     </Card>
   );

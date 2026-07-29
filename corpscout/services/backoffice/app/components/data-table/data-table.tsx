@@ -17,10 +17,15 @@ export function DataTable<TData>({
   columns,
   data,
   emptyText = "No results.",
+  minWidthClassName = "min-w-[56rem]",
 }: {
   columns: ColumnDef<TData, unknown>[];
   data: TData[];
   emptyText?: string;
+  /** Table's own min-width, so it never gets squeezed below a readable
+   * layout — the surrounding `overflow-x-auto` div is what scrolls, not the
+   * page. Wider tables (more/denser columns) pass a larger value. */
+  minWidthClassName?: string;
 }) {
   const table = useReactTable({
     data,
@@ -33,7 +38,7 @@ export function DataTable<TData>({
 
   return (
     <div className="overflow-x-auto rounded-md border">
-      <Table className="min-w-[56rem]">
+      <Table className={minWidthClassName}>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
