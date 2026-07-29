@@ -58,7 +58,7 @@ def test_pgfn_clickhouse_export_inserts_only_requested_partition(
                 'BR'::varchar as country_iso2,
                 'brazil_pgfn'::varchar as source_slug,
                 'run-1'::varchar as source_run_id,
-                'record-1'::varchar as source_record_id,
+                1::uhugeint as source_record_id,
                 2026::usmallint as snapshot_year,
                 1::utinyint as snapshot_quarter,
                 '2026-03'::varchar as snapshot_month,
@@ -69,7 +69,6 @@ def test_pgfn_clickhouse_export_inserts_only_requested_partition(
                 'arquivo_lai_FGTS_1_202603.csv'::varchar as source_file_name,
                 2::ubigint as source_row_number,
                 '16584543000133'::varchar as cnpj,
-                '16584543'::varchar as cnpj_basico,
                 'Pessoa jurídica'::varchar as person_type,
                 'Principal'::varchar as debtor_role,
                 'Company'::varchar as debtor_name,
@@ -93,7 +92,7 @@ def test_pgfn_clickhouse_export_inserts_only_requested_partition(
             select
                 * replace (
                     'run-2' as source_run_id,
-                    'record-2' as source_record_id,
+                    2::uhugeint as source_record_id,
                     2025::usmallint as snapshot_year,
                     4::utinyint as snapshot_quarter,
                     '2025-12' as snapshot_month,
@@ -119,6 +118,13 @@ def test_pgfn_clickhouse_export_inserts_only_requested_partition(
     insert_sql, inserted_rows = fake_client.inserts[0]
     assert tables.BR_PGFN_COMPANY_DEBTS_TABLE_CH in insert_sql
     assert len(inserted_rows[0]) == len(tables.BR_PGFN_COMPANY_DEBTS_EXPORT_COLUMNS)
+    assert "cnpj_basico" not in tables.BR_PGFN_COMPANY_DEBTS_EXPORT_COLUMNS
+    assert isinstance(
+        inserted_rows[0][
+            tables.BR_PGFN_COMPANY_DEBTS_EXPORT_COLUMNS.index("source_record_id")
+        ],
+        int,
+    )
     assert (
         inserted_rows[0][
             tables.BR_PGFN_COMPANY_DEBTS_EXPORT_COLUMNS.index("snapshot_year")
@@ -144,7 +150,7 @@ def test_pgfn_clickhouse_export_coalesces_null_strings(tmp_path: Path) -> None:
                 'BR'::varchar as country_iso2,
                 'brazil_pgfn'::varchar as source_slug,
                 'run-1'::varchar as source_run_id,
-                'record-1'::varchar as source_record_id,
+                1::uhugeint as source_record_id,
                 2026::usmallint as snapshot_year,
                 1::utinyint as snapshot_quarter,
                 null::varchar as snapshot_month,
@@ -155,7 +161,6 @@ def test_pgfn_clickhouse_export_coalesces_null_strings(tmp_path: Path) -> None:
                 'arquivo_lai_FGTS_1_202603.csv'::varchar as source_file_name,
                 2::ubigint as source_row_number,
                 null::varchar as cnpj,
-                null::varchar as cnpj_basico,
                 null::varchar as person_type,
                 null::varchar as debtor_role,
                 null::varchar as debtor_name,

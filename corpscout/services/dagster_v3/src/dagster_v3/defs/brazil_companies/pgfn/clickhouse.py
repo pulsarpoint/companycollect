@@ -19,6 +19,7 @@ _NON_STRING_COLUMNS = (
     | {
         "snapshot_year",
         "snapshot_quarter",
+        "source_record_id",
         "source_row_number",
         "is_lawsuit",
         "consolidated_amount_brl",

@@ -226,6 +226,7 @@ EXPECTED_MIGRATIONS = (
     "000209_corpscout_fr_financial_and_enrichments",
     "000210_corpscout_br_company_relations_history",
     "000211_corpscout_br_company_relations_socios_part_count",
+    "000212_corpscout_br_pgfn_uint128_row_identity",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2238,24 +2239,41 @@ def test_brazil_comp_rfb_registry_dates_are_date32_for_historical_rows() -> None
 
 
 def test_brazil_comp_pgfn_company_debts_migration_covers_exported_columns() -> None:
-    sql = _migration_sql("000103_corpscout_br_pgfn_company_debts.up.sql")
-    down_sql = _migration_sql("000103_corpscout_br_pgfn_company_debts.down.sql")
+    sql = _migration_sql("000212_corpscout_br_pgfn_uint128_row_identity.up.sql")
+    down_sql = _migration_sql(
+        "000212_corpscout_br_pgfn_uint128_row_identity.down.sql"
+    )
 
     assert (
         f"CREATE TABLE IF NOT EXISTS "
         f"{brazil_pgfn_tables.QUALIFIED_BR_PGFN_COMPANY_DEBTS_TABLE}"
+        f"__uint128_row_identity"
     ) in sql
     for column_name in brazil_pgfn_tables.BR_PGFN_COMPANY_DEBTS_EXPORT_COLUMNS:
         assert f"    {column_name} " in sql, (
             f"missing {column_name} in br_pgfn_company_debts"
         )
 
+    assert "    source_record_id UInt128," in sql
+    assert "    cnpj_basico " not in sql
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
-    assert "snapshot_year," in sql
-    assert "snapshot_quarter," in sql
-    assert "cnpj," in sql
-    assert "inscription_number," in sql
-    assert "DROP TABLE IF EXISTS corpscout.br_pgfn_company_debts" in down_sql
+    assert """ORDER BY (
+    snapshot_year,
+    snapshot_quarter,
+    source_system,
+    cnpj,
+    inscription_number,
+    debtor_role,
+    responsible_unit,
+    source_record_id
+)""" in sql
+    assert "reinterpretAsUInt128(MD5(" in sql
+    assert (
+        "EXCHANGE TABLES corpscout.br_pgfn_company_debts__uint128_row_identity "
+        "AND corpscout.br_pgfn_company_debts"
+    ) in sql
+    assert "    source_record_id String," in down_sql
+    assert "    cnpj_basico String," in down_sql
 
 
 def test_brazil_comp_cgu_sanctions_migration_covers_exported_columns() -> None:

@@ -22,7 +22,6 @@ BR_PGFN_COMPANY_DEBTS_COLUMNS = (
     "source_file_name",
     "source_row_number",
     "cnpj",
-    "cnpj_basico",
     "person_type",
     "debtor_role",
     "debtor_name",

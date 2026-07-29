@@ -132,7 +132,7 @@ def _ensure_company_debts_table(connection: Any) -> None:
             country_iso2 varchar,
             source_slug varchar,
             source_run_id varchar,
-            source_record_id varchar,
+            source_record_id uhugeint,
             snapshot_year usmallint,
             snapshot_quarter utinyint,
             snapshot_month varchar,
@@ -143,7 +143,6 @@ def _ensure_company_debts_table(connection: Any) -> None:
             source_file_name varchar,
             source_row_number ubigint,
             cnpj varchar,
-            cnpj_basico varchar,
             person_type varchar,
             debtor_role varchar,
             debtor_name varchar,
@@ -162,6 +161,43 @@ def _ensure_company_debts_table(connection: Any) -> None:
         )
         """
     )
+    _migrate_legacy_company_debts_schema(connection)
+
+
+def _migrate_legacy_company_debts_schema(connection: Any) -> None:
+    column_types = dict(
+        connection.execute(
+            """
+            select column_name, data_type
+            from information_schema.columns
+            where table_schema = ?
+              and table_name = ?
+            """,
+            [BRAZIL_PGFN_DUCKDB_SCHEMA, COMPANY_DEBTS_TABLE],
+        ).fetchall()
+    )
+    if column_types["source_record_id"] != "UHUGEINT":
+        connection.execute(
+            f"""
+            alter table {BRAZIL_PGFN_DUCKDB_SCHEMA}.{COMPANY_DEBTS_TABLE}
+            alter column source_record_id type uhugeint
+            using md5_number(concat_ws(
+                '|',
+                cast(snapshot_year as varchar) || '-Q'
+                    || cast(snapshot_quarter as varchar),
+                source_system,
+                source_file_name,
+                cast(source_row_number as varchar)
+            ))
+            """
+        )
+    if "cnpj_basico" in column_types:
+        connection.execute(
+            f"""
+            alter table {BRAZIL_PGFN_DUCKDB_SCHEMA}.{COMPANY_DEBTS_TABLE}
+            drop column cnpj_basico
+            """
+        )
 
 
 def _delete_snapshot_source_rows(
@@ -224,13 +260,11 @@ def _load_csv_member(
             'BR' as country_iso2,
             ? as source_slug,
             ? as source_run_id,
-            sha256(concat_ws('|',
+            md5_number(concat_ws('|',
                 ?,
                 ?,
-                cast(source_row_number as varchar),
-                cpf_cnpj_digits,
-                coalesce(trim("NUMERO_INSCRICAO"), ''),
-                coalesce(trim("TIPO_DEVEDOR"), '')
+                ?,
+                cast(source_row_number as varchar)
             )) as source_record_id,
             ?::usmallint as snapshot_year,
             ?::utinyint as snapshot_quarter,
@@ -242,7 +276,6 @@ def _load_csv_member(
             ? as source_file_name,
             source_row_number,
             cpf_cnpj_digits as cnpj,
-            substring(cpf_cnpj_digits, 1, 8) as cnpj_basico,
             nullif(trim("TIPO_PESSOA"), '') as person_type,
             nullif(trim("TIPO_DEVEDOR"), '') as debtor_role,
             nullif(trim("NOME_DEVEDOR"), '') as debtor_name,
@@ -286,6 +319,7 @@ def _load_csv_member(
             source_run_id,
             snapshot_quarter,
             source_system,
+            source_file_name,
             snapshot_year,
             snapshot_quarter_number,
             snapshot_month,

@@ -62,12 +62,13 @@ def test_parse_pgfn_archives_normalizes_company_debts_from_zip_members() -> None
         rows = connection.execute(
             f"""
             select
+                source_record_id,
+                typeof(source_record_id),
                 snapshot_year,
                 snapshot_quarter,
                 snapshot_month,
                 source_system,
                 cnpj,
-                cnpj_basico,
                 debtor_name,
                 inscription_number,
                 is_lawsuit,
@@ -77,25 +78,95 @@ def test_parse_pgfn_archives_normalizes_company_debts_from_zip_members() -> None
             order by source_system
             """
         ).fetchall()
+        table_columns = {
+            row[1]
+            for row in connection.execute(
+                f"""
+                select *
+                from pragma_table_info(
+                    '{parsing.BRAZIL_PGFN_DUCKDB_SCHEMA}.{tables.COMPANY_DEBTS_TABLE}'
+                )
+                """
+            ).fetchall()
+        }
 
     assert counts == {
         "archive_count": 3,
         "source_file_count": 3,
         "company_debts": 3,
     }
-    assert rows[0][:10] == (
+    assert isinstance(rows[0][0], int)
+    assert 0 <= rows[0][0] < 2**128
+    assert rows[0][1:] == (
+        "UHUGEINT",
         2026,
         1,
         "2026-03",
         "fgts",
         "16584543000133",
-        "16584543",
         "COMPLEXO INDUSTRIAL FLORESTAL XAPURI S.A.",
         "FGAC202500025",
         False,
         Decimal("312038.840000"),
+        rows[0][-1],
     )
-    assert rows[0][10].startswith("arquivo_lai_")
+    assert rows[0][-1].startswith("arquivo_lai_")
+    assert "cnpj_basico" not in table_columns
+
+
+def test_ensure_pgfn_table_migrates_legacy_row_identity_schema() -> None:
+    with duckdb.connect(":memory:") as connection:
+        connection.execute(
+            f"create schema {parsing.BRAZIL_PGFN_DUCKDB_SCHEMA}"
+        )
+        connection.execute(
+            f"""
+            create table
+                {parsing.BRAZIL_PGFN_DUCKDB_SCHEMA}.{tables.COMPANY_DEBTS_TABLE}
+            (
+                source_record_id varchar,
+                snapshot_year usmallint,
+                snapshot_quarter utinyint,
+                source_system varchar,
+                source_file_name varchar,
+                source_row_number ubigint,
+                cnpj_basico varchar
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            insert into
+                {parsing.BRAZIL_PGFN_DUCKDB_SCHEMA}.{tables.COMPANY_DEBTS_TABLE}
+            values ('legacy-sha256', 2026, 1, 'fgts', 'source.csv', 2, '16584543')
+            """
+        )
+
+        parsing._ensure_company_debts_table(connection)
+
+        row = connection.execute(
+            f"""
+            select source_record_id, typeof(source_record_id)
+            from {parsing.BRAZIL_PGFN_DUCKDB_SCHEMA}.{tables.COMPANY_DEBTS_TABLE}
+            """
+        ).fetchone()
+        columns = {
+            column[1]
+            for column in connection.execute(
+                f"""
+                select *
+                from pragma_table_info(
+                    '{parsing.BRAZIL_PGFN_DUCKDB_SCHEMA}.{tables.COMPANY_DEBTS_TABLE}'
+                )
+                """
+            ).fetchall()
+        }
+        expected_source_record_id = connection.execute(
+            "select md5_number('2026-Q1|fgts|source.csv|2')"
+        ).fetchone()[0]
+
+    assert row == (expected_source_record_id, "UHUGEINT")
+    assert "cnpj_basico" not in columns
 
 
 def test_parse_pgfn_archives_replaces_existing_snapshot_rows() -> None:
