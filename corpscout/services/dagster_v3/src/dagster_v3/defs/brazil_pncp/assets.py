@@ -24,6 +24,10 @@ from dagster_v3.defs.brazil_pncp.resources import (
     month_bounds,
     trailing_window,
 )
+from dagster_v3.defs.brazil_pncp.translation import (
+    brazil_pncp_translation_load,
+    brazil_pncp_translator_queue_health_check,
+)
 from dagster_v3.defs.brazil_pncp.usd_conversion import apply_brazil_pncp_usd_conversion
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
@@ -584,7 +588,9 @@ defs = dg.Definitions(
         brazil_pncp_daily_duckdb,
         brazil_pncp_daily_usd,
         brazil_pncp_daily_clickhouse,
+        brazil_pncp_translation_load,
     ],
+    asset_checks=[brazil_pncp_translator_queue_health_check],
     jobs=[brazil_pncp_backfill_job, brazil_pncp_daily_job],
     schedules=[brazil_pncp_daily_schedule],
     resources={
