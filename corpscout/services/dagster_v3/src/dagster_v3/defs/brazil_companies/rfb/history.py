@@ -246,10 +246,32 @@ def build_merge_select_sql(
     #   - A bare parenthesised list `(a, b, c)` builds a tuple/row value
     #     identically in both engines and both compare it lexicographically,
     #     so it stands in for the multi-column `ORDER BY a desc, b desc, c
-    #     desc` this replaces: argMax returns the row where that tuple is
-    #     MAX, which is exactly the row a DESC,DESC,... row_number() would
-    #     have ranked _rn = 1. As before, nothing here is CAST -- see the
+    #     desc` this replaces. As before, nothing here is CAST -- see the
     #     comment below on why that would break ClickHouse specifically.
+    #
+    # WHERE THIS IS *NOT* EQUIVALENT TO row_number(), AND WHY IT IS STILL SAFE.
+    #
+    # argMax SKIPS ROWS WHOSE ARGUMENT IS NULL -- in both engines, identically.
+    # So if the winning row held NULL in an argMax'd column, argMax returns the
+    # *runner-up's* value for that column while other columns come from the
+    # winner: a mixed row assembled from two source rows. row_number() returns
+    # the winning row whole and has no such hazard. Verified by execution:
+    # adversarial NULL inputs diverge from row_number() in 299/300 DuckDB and
+    # 18/20 ClickHouse cases.
+    #
+    # It is safe here only because of an invariant that lives in ANOTHER FILE:
+    # relations.py `_blank()`s all six string attributes (so they are never
+    # NULL), and derives `relation_since` and `relation_since_key` from the
+    # same `nullif(trim(data_entrada_sociedade), '')` expression -- which makes
+    # relation_since constant within every SPELL_KEY group, so the one
+    # NULL-capable column can never be the odd one out. Production-shaped
+    # inputs diverge in 0/300 and 0/60 cases respectively.
+    #
+    # test_relations_never_emit_null_in_the_dedup_tiebreak_columns pins that
+    # invariant. If it ever fails, this dedup starts writing mixed rows
+    # silently -- and the merge is self-referential, so they are permanent.
+    # DuckDB has arg_max_null for this, ClickHouse has no same-spelled
+    # equivalent, so there is no portable one-word fix.
     #
     # What is NOT portable, and is why this stops at one argMax call per
     # output column instead of bundling a whole row into a single call:

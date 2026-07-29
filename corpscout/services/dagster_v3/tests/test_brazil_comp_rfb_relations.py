@@ -188,3 +188,60 @@ def test_relations_refuse_an_empty_source(tmp_path: Path) -> None:
             snapshot_year_month="2026-07",
             socios_database_path=socios_path,
         )
+
+
+def test_relations_never_emit_null_in_the_dedup_tiebreak_columns(
+    tmp_path: Path,
+) -> None:
+    """history.py's argMax dedup is only equivalent to the row_number() form it
+    replaced because these columns are never NULL.
+
+    argMax SKIPS rows whose argument is NULL, in both engines. If the winning
+    row held NULL in an argMax'd column, argMax would take the runner-up's
+    value for that column and the winner's for the others -- a mixed row
+    assembled from two source rows, written permanently, with nothing failing.
+
+    This test is the pin for that invariant, which otherwise lives only in the
+    coalescing inside build_brazil_rfb_company_relations one file away.
+    """
+    socios_path = tmp_path / "socios.duckdb"
+    _socios_stage(socios_path)
+    connection = duckdb.connect(":memory:")
+
+    relations.build_brazil_rfb_company_relations(
+        connection=connection,
+        source_run_id="run-1",
+        snapshot_year_month="2026-07",
+        socios_database_path=socios_path,
+    )
+
+    tiebreak_columns = (
+        "related_name",
+        "related_country",
+        "age_band",
+        "representative_tax_id",
+        "representative_name",
+        "representative_code",
+    )
+    nulls = " + ".join(
+        f"count(*) filter (where {column} is null)" for column in tiebreak_columns
+    )
+    assert connection.execute(
+        f"select {nulls} from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}"
+    ).fetchone() == (0,)
+
+    # ...and relation_since must be constant within a SPELL_KEY group, since it
+    # is the one NULL-capable column the dedup orders on. Both it and
+    # relation_since_key derive from the same trimmed source value, so a group
+    # with two distinct relation_since values would mean that has been broken.
+    assert connection.execute(
+        f"""
+        select count(*) from (
+            select cnpj_basico, related_entity_kind, related_tax_id,
+                   relation_code, relation_since_key
+            from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}
+            group by 1, 2, 3, 4, 5
+            having count(distinct relation_since) > 1
+        )
+        """
+    ).fetchone() == (0,)
