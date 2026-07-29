@@ -88,7 +88,7 @@ def test_estonia_rhr_asset_graph_is_monthly_and_registered() -> None:
 
 def test_national_procurement_migrations_match_exported_column_order() -> None:
     fr_sk_sql = (
-        MIGRATIONS / "000201_corpscout_fr_sk_national_procurement.up.sql"
+        MIGRATIONS / "000207_corpscout_fr_sk_national_procurement.up.sql"
     ).read_text()
     latvia_sql = (
         MIGRATIONS / "000202_corpscout_lv_national_procurement.up.sql"

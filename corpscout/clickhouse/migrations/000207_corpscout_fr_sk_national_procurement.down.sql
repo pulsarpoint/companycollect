@@ -15,4 +15,8 @@ SELECT * FROM corpscout.fi_government_contract_summary
 UNION ALL
 SELECT * FROM corpscout.no_government_contract_summary
 UNION ALL
-SELECT * FROM corpscout.br_government_contract_summary;
+SELECT * FROM corpscout.br_government_contract_summary
+UNION ALL
+SELECT * FROM corpscout.lv_government_contract_summary
+UNION ALL
+SELECT * FROM corpscout.ee_government_contract_summary;

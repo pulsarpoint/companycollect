@@ -1,5 +1,9 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
+-- Migration version 201 was already present in the live ledger before this
+-- schema was added to the repository. Keep the complete schema at a new
+-- forward-only version so existing databases execute it and fresh databases
+-- receive the same tables and views.
 CREATE TABLE IF NOT EXISTS corpscout.fr_decp_contract_holders
 (
     company_id String,
@@ -340,4 +344,8 @@ SELECT * FROM corpscout.br_government_contract_summary
 UNION ALL
 SELECT * FROM corpscout.fr_government_contract_summary
 UNION ALL
-SELECT * FROM corpscout.sk_government_contract_summary;
+SELECT * FROM corpscout.sk_government_contract_summary
+UNION ALL
+SELECT * FROM corpscout.lv_government_contract_summary
+UNION ALL
+SELECT * FROM corpscout.ee_government_contract_summary;

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
@@ -494,6 +495,19 @@ def export_ted_clickhouse(
             tables.TED_NOTICE_WINNERS_TABLE,
         ),
     )
+    replaced_countries = tuple(
+        str(row[0])
+        for row in duckdb_connection.execute(
+            f"""
+            SELECT DISTINCT country_iso2
+            FROM {DLT_DATASET_NAME}.{tables.NOTICES_TABLE}
+            ORDER BY country_iso2
+            """
+        ).fetchall()
+    )
+    if not replaced_countries:
+        raise ValueError("TED publish tables contain no country rows")
+
     counts: dict[str, int] = {}
     with clickhouse.get_connection() as client:
         for duckdb_table, ch_table, columns in (
@@ -514,17 +528,59 @@ def export_ted_clickhouse(
             ),
         ):
             if log is not None:
-                log("Exporting TED table to ClickHouse: %s", ch_table)
-            counts[ch_table] = export_duckdb_connection_table_to_clickhouse(
+                log(
+                    "Replacing TED countries %s in ClickHouse table %s",
+                    ", ".join(replaced_countries),
+                    ch_table,
+                )
+            counts[ch_table] = _replace_ted_country_slices(
                 duckdb_connection=duckdb_connection,
                 clickhouse_client=client,
-                duckdb_schema=DLT_DATASET_NAME,
                 duckdb_table=duckdb_table,
-                clickhouse_database=tables.TED_PROCUREMENT_DATABASE,
                 clickhouse_table=ch_table,
                 columns=columns,
-                truncate=True,
+                replaced_countries=replaced_countries,
             )
     if log is not None:
         log("Finished TED ClickHouse export: %s", counts)
     return counts
+
+
+def _replace_ted_country_slices(
+    *,
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    duckdb_table: str,
+    clickhouse_table: str,
+    columns: tuple[str, ...],
+    replaced_countries: tuple[str, ...],
+) -> int:
+    database = tables.TED_PROCUREMENT_DATABASE
+    stage_table = f"_tmp_{clickhouse_table}_{uuid.uuid4().hex}"
+    target = f"`{database}`.`{clickhouse_table}`"
+    stage = f"`{database}`.`{stage_table}`"
+    clickhouse_client.execute(f"CREATE TABLE {stage} AS {target}")
+    try:
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=clickhouse_client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=duckdb_table,
+            clickhouse_database=database,
+            clickhouse_table=stage_table,
+            columns=columns,
+            truncate=False,
+        )
+        clickhouse_client.execute(
+            f"""
+            INSERT INTO {stage}
+            SELECT *
+            FROM {target}
+            WHERE country_iso2 NOT IN %(replaced_countries)s
+            """,
+            {"replaced_countries": replaced_countries},
+        )
+        clickhouse_client.execute(f"EXCHANGE TABLES {stage} AND {target}")
+    finally:
+        clickhouse_client.execute(f"DROP TABLE IF EXISTS {stage}")
+    return int(rows)

@@ -187,7 +187,17 @@ def _fr_sk_view_migration() -> str:
         root
         / "clickhouse"
         / "migrations"
-        / "000201_corpscout_fr_sk_national_procurement.up.sql"
+        / "000207_corpscout_fr_sk_national_procurement.up.sql"
+    ).read_text()
+
+
+def _fr_sk_down_migration() -> str:
+    root = pathlib.Path(__file__).resolve().parents[3]
+    return (
+        root
+        / "clickhouse"
+        / "migrations"
+        / "000207_corpscout_fr_sk_national_procurement.down.sql"
     ).read_text()
 
 
@@ -271,14 +281,25 @@ def test_france_and_slovakia_views_join_their_domestic_company_registers() -> No
     assert "corpscout.sk_uvo_procurement_notices" in slovakia
 
 
-def test_cross_country_summary_includes_france_and_slovakia() -> None:
+def test_cross_country_summary_preserves_every_country_after_repair() -> None:
     sql = _fr_sk_view_migration()
     summary = sql.split("CREATE VIEW corpscout.company_government_contract_summary AS")[
         1
     ]
 
-    assert "fr_government_contract_summary" in summary
-    assert "sk_government_contract_summary" in summary
+    for country_code in ("se", "fi", "no", "br", "fr", "sk", "lv", "ee"):
+        assert f"{country_code}_government_contract_summary" in summary
+
+
+def test_france_slovakia_repair_rollback_preserves_other_countries() -> None:
+    summary = _fr_sk_down_migration().split(
+        "CREATE VIEW corpscout.company_government_contract_summary AS"
+    )[1]
+
+    for country_code in ("se", "fi", "no", "br", "lv", "ee"):
+        assert f"{country_code}_government_contract_summary" in summary
+    assert "fr_government_contract_summary" not in summary
+    assert "sk_government_contract_summary" not in summary
 
 
 def test_latvia_view_joins_its_domestic_company_register() -> None:

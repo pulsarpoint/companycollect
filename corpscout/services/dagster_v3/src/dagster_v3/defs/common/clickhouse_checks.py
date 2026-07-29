@@ -112,6 +112,16 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     # france_sirene — monthly 6th
     ClickhouseLeaf("france_sirene_clickhouse_companies", ("fr_companies",), MONTHLY),
     ClickhouseLeaf("france_sirene_clickhouse_industries", ("fr_industries",), MONTHLY),
+    # France BCE/INPI financial ratios — monthly 12th
+    ClickhouseLeaf(
+        "france_financial_metrics_clickhouse", ("fr_financial_metrics",), MONTHLY
+    ),
+    # France Annuaire enrichments — daily 04:25
+    ClickhouseLeaf(
+        "france_annuaire_enrichments_clickhouse",
+        ("fr_company_enrichments",),
+        DAILY,
+    ),
     # gleif — daily 20:30
     ClickhouseLeaf(
         "gleif_reference_clickhouse",

@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -8,6 +10,7 @@ import duckdb
 import pytest
 
 from dagster_v3.defs.ted_procurement import tables
+from dagster_v3.defs.ted_procurement import publish as publish_module
 from dagster_v3.defs.ted_procurement.parser import parse_award_notice_xml
 from dagster_v3.defs.ted_procurement.publish import (
     apply_ted_usd_conversion,
@@ -216,6 +219,28 @@ class _FakeExchangeRates:
         }
 
 
+class _RecordingClickhouseClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, tuple[str, ...]] | None]] = []
+
+    def execute(
+        self,
+        query: str,
+        params: dict[str, tuple[str, ...]] | None = None,
+    ) -> list[Any]:
+        self.calls.append((query, params))
+        return []
+
+
+class _FakeClickhouseResource:
+    def __init__(self, client: _RecordingClickhouseClient) -> None:
+        self.client = client
+
+    @contextmanager
+    def get_connection(self) -> Iterator[_RecordingClickhouseClient]:
+        yield self.client
+
+
 @pytest.fixture
 def publish_connection(tmp_path: Path) -> tuple[duckdb.DuckDBPyConnection, list]:
     p1 = _write_partition(
@@ -295,6 +320,68 @@ def test_build_refuses_empty_partitions() -> None:
     con = duckdb.connect(":memory:")
     with pytest.raises(ValueError, match="No parsed TED partitions"):
         build_publish_tables(duckdb_connection=con, partitions=[], source_run_id="run")
+
+
+def test_export_replaces_only_countries_present_in_publish_tables(
+    monkeypatch,
+) -> None:
+    connection = duckdb.connect(":memory:")
+    connection.execute(f"CREATE SCHEMA {tables.DLT_DATASET_NAME}")
+    connection.execute(
+        f"""
+        CREATE TABLE {tables.DLT_DATASET_NAME}.{tables.NOTICES_TABLE}
+        (country_iso2 VARCHAR)
+        """
+    )
+    connection.execute(
+        f"""
+        INSERT INTO {tables.DLT_DATASET_NAME}.{tables.NOTICES_TABLE}
+        VALUES ('EE'), ('EE')
+        """
+    )
+
+    client = _RecordingClickhouseClient()
+    exported: list[dict[str, Any]] = []
+
+    def fake_export(**kwargs: Any) -> int:
+        exported.append(kwargs)
+        return 7
+
+    monkeypatch.setattr(
+        publish_module,
+        "assert_clickhouse_tables_exist",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        publish_module,
+        "export_duckdb_connection_table_to_clickhouse",
+        fake_export,
+    )
+
+    counts = publish_module.export_ted_clickhouse(
+        duckdb_connection=connection,
+        clickhouse=_FakeClickhouseResource(client),
+    )
+
+    assert counts == {
+        tables.TED_NOTICES_TABLE: 7,
+        tables.TED_NOTICE_LOTS_TABLE: 7,
+        tables.TED_NOTICE_WINNERS_TABLE: 7,
+    }
+    assert len(exported) == 3
+    assert all(call["truncate"] is False for call in exported)
+    assert all(call["clickhouse_table"].startswith("_tmp_") for call in exported)
+
+    preserve_calls = [
+        (query, params)
+        for query, params in client.calls
+        if "WHERE country_iso2 NOT IN" in query
+    ]
+    assert len(preserve_calls) == 3
+    assert all(
+        params == {"replaced_countries": ("EE",)} for _query, params in preserve_calls
+    )
+    assert sum("EXCHANGE TABLES" in query for query, _params in client.calls) == 3
 
 
 def test_same_notice_survives_in_two_country_scopes(tmp_path: Path) -> None:

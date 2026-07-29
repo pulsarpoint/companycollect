@@ -7,7 +7,10 @@ from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
 )
-from dagster_v3.defs.company_financials_latest.sql import SOURCES, build_latest_insert_sql
+from dagster_v3.defs.company_financials_latest.sql import (
+    SOURCES,
+    build_latest_insert_sql,
+)
 from dagster_v3.defs.company_financials_latest.tables import (
     COMPANY_FINANCIALS_LATEST_COLUMNS,
     COMPANY_FINANCIALS_LATEST_COUNTRIES,
@@ -28,6 +31,7 @@ UPSTREAM_KEYS: dict[str, list[str]] = {
     "se": ["sweden_financial_metrics_clickhouse"],
     "ee": ["estonia_ar_clickhouse_financial_metrics"],
     "lv": ["latvia_financial_metrics_clickhouse"],
+    "fr": ["france_financial_metrics_clickhouse"],
     "gb": [
         "uk_companies_house_clickhouse_financial_metrics",
         "uk_companies_house_pdf_financial_metrics",

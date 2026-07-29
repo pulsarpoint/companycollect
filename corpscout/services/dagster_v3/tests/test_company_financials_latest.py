@@ -10,12 +10,21 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migration
 
 
 def _migration_sql() -> str:
-    return (MIGRATIONS_DIR / "000137_corpscout_company_financials_latest.up.sql").read_text()
+    return "\n".join(
+        (
+            (
+                MIGRATIONS_DIR / "000137_corpscout_company_financials_latest.up.sql"
+            ).read_text(encoding="utf-8"),
+            (
+                MIGRATIONS_DIR / "000209_corpscout_fr_financial_and_enrichments.up.sql"
+            ).read_text(encoding="utf-8"),
+        )
+    )
 
 
 def test_migration_creates_every_summary_table_with_full_schema() -> None:
     sql = _migration_sql()
-    assert len(COMPANY_FINANCIALS_LATEST_TABLES) == 8
+    assert len(COMPANY_FINANCIALS_LATEST_TABLES) == 9
     for table in COMPANY_FINANCIALS_LATEST_TABLES:
         assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in sql
     for column in COMPANY_FINANCIALS_LATEST_COLUMNS:
@@ -23,7 +32,10 @@ def test_migration_creates_every_summary_table_with_full_schema() -> None:
 
 
 def test_build_latest_insert_sql_covers_every_country() -> None:
-    from dagster_v3.defs.company_financials_latest.sql import SOURCES, build_latest_insert_sql
+    from dagster_v3.defs.company_financials_latest.sql import (
+        SOURCES,
+        build_latest_insert_sql,
+    )
 
     assert set(SOURCES) == set(COMPANY_FINANCIALS_LATEST_COUNTRIES)
 
@@ -56,7 +68,10 @@ def test_build_latest_insert_sql_qualifies_resolved_at_tiebreak() -> None:
     to the real per-row column -- derived here from ``SOURCES`` so all seven
     wide countries are covered without hand-listing table names.
     """
-    from dagster_v3.defs.company_financials_latest.sql import SOURCES, build_latest_insert_sql
+    from dagster_v3.defs.company_financials_latest.sql import (
+        SOURCES,
+        build_latest_insert_sql,
+    )
 
     for code in COMPANY_FINANCIALS_LATEST_COUNTRIES:
         if code == "br":
@@ -69,9 +84,14 @@ def test_build_latest_insert_sql_qualifies_resolved_at_tiebreak() -> None:
         )
         # And the bare, shadowable form must not appear anywhere in ORDER BY.
         order_by_line = next(
-            line for line in select_sql.splitlines() if line.strip().startswith("ORDER BY")
+            line
+            for line in select_sql.splitlines()
+            if line.strip().startswith("ORDER BY")
         )
-        assert "ORDER BY fiscal_year DESC NULLS LAST, resolved_at DESC" not in order_by_line
+        assert (
+            "ORDER BY fiscal_year DESC NULLS LAST, resolved_at DESC"
+            not in order_by_line
+        )
 
 
 def test_build_latest_insert_sql_rejects_unknown_code() -> None:
@@ -79,7 +99,7 @@ def test_build_latest_insert_sql_rejects_unknown_code() -> None:
 
     try:
         build_latest_insert_sql("zz")
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         pass
     else:
         raise AssertionError("expected build_latest_insert_sql('zz') to raise")
@@ -98,7 +118,9 @@ def test_company_financials_latest_assets_match_tables() -> None:
         company_financials_latest_assets,
     )
 
-    asset_names = {asset.key.to_user_string() for asset in company_financials_latest_assets}
+    asset_names = {
+        asset.key.to_user_string() for asset in company_financials_latest_assets
+    }
     expected_names = {
         f"{code}_company_financials_latest_clickhouse"
         for code in COMPANY_FINANCIALS_LATEST_COUNTRIES
@@ -117,6 +139,8 @@ def test_company_financials_latest_defs_include_job_and_schedule() -> None:
 
 
 def test_norway_select_excludes_quality_flagged_statements() -> None:
+    from dagster_v3.defs.company_financials_latest.sql import build_latest_insert_sql
+
     sql = build_latest_insert_sql("no")
     assert "WHERE quality_flag = ''" in sql
 

@@ -1,4 +1,14 @@
-COMPANY_FINANCIALS_LATEST_COUNTRIES = ("no", "fi", "se", "ee", "lv", "gb", "br", "sk")
+COMPANY_FINANCIALS_LATEST_COUNTRIES = (
+    "no",
+    "fi",
+    "se",
+    "ee",
+    "lv",
+    "fr",
+    "gb",
+    "br",
+    "sk",
+)
 
 COMPANY_FINANCIALS_LATEST_TABLES = tuple(
     f"{code}_company_financials_latest" for code in COMPANY_FINANCIALS_LATEST_COUNTRIES

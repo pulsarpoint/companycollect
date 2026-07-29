@@ -49,15 +49,15 @@ SELECT
   coalesce(toFloat64({rev}_amount_usd), toFloat64({rev}_amount_original) * toFloat64(fx_rate_to_usd)) AS revenue_amount_usd,
   toFloat64({net}_amount_original) AS net_result_amount_original,
   coalesce(toFloat64({net}_amount_usd), toFloat64({net}_amount_original) * toFloat64(fx_rate_to_usd)) AS net_result_amount_usd,
-  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
-  coalesce(toFloat64(total_assets_amount_usd), toFloat64(total_assets_amount_original) * toFloat64(fx_rate_to_usd)) AS total_assets_amount_usd,
-  toFloat64(equity_amount_original) AS equity_amount_original,
-  coalesce(toFloat64(equity_amount_usd), toFloat64(equity_amount_original) * toFloat64(fx_rate_to_usd)) AS equity_amount_usd,
+  {total_assets_original} AS total_assets_amount_original,
+  {total_assets_usd} AS total_assets_amount_usd,
+  {equity_original} AS equity_amount_original,
+  {equity_usd} AS equity_amount_usd,
   {employees} AS employees,
   toUInt32(uniqExact(fiscal_year) OVER (PARTITION BY {id})) AS years_count,
   now64(3) AS resolved_at
 FROM corpscout.{table}
-{where}ORDER BY fiscal_year DESC NULLS LAST, `{table}`.resolved_at DESC, isNull({rev}_amount_original) ASC, source_record_id DESC
+{where}ORDER BY fiscal_year DESC NULLS LAST, {statement_order}`{table}`.resolved_at DESC, isNull({rev}_amount_original) ASC, source_record_id DESC
 LIMIT 1 BY {id}
 """
 
@@ -119,6 +119,24 @@ SOURCES = {
         "net": "net_result",
         "employees": "toFloat64(employees)",
         "period_end": "period_end_date",
+    },
+    "fr": {
+        "table": "fr_financial_metrics",
+        "id": "siren",
+        "currency": "currency",
+        "rev": "revenue",
+        "net": "net_income",
+        "employees": "CAST(NULL AS Nullable(Float64))",
+        "period_end": "period_end_date",
+        "total_assets_original": "CAST(NULL AS Nullable(Float64))",
+        "total_assets_usd": "CAST(NULL AS Nullable(Float64))",
+        "equity_original": "CAST(NULL AS Nullable(Float64))",
+        "equity_usd": "CAST(NULL AS Nullable(Float64))",
+        "statement_order": (
+            "balance_type_code = 'K' DESC, "
+            "balance_type_code = 'C' DESC, "
+            "balance_type_code = 'S' DESC, "
+        ),
     },
     "gb": {
         "table": "gb_financial_metrics",
@@ -213,4 +231,19 @@ def build_latest_insert_sql(code: str) -> str:
         )
     if code == "br":
         return _BR_SELECT
-    return _WIDE_TEMPLATE.format(**{"where": "", **SOURCES[code]})
+    defaults = {
+        "where": "",
+        "total_assets_original": "toFloat64(total_assets_amount_original)",
+        "total_assets_usd": (
+            "coalesce(toFloat64(total_assets_amount_usd), "
+            "toFloat64(total_assets_amount_original) * "
+            "toFloat64(fx_rate_to_usd))"
+        ),
+        "equity_original": "toFloat64(equity_amount_original)",
+        "equity_usd": (
+            "coalesce(toFloat64(equity_amount_usd), "
+            "toFloat64(equity_amount_original) * toFloat64(fx_rate_to_usd))"
+        ),
+        "statement_order": "",
+    }
+    return _WIDE_TEMPLATE.format(**{**defaults, **SOURCES[code]})
