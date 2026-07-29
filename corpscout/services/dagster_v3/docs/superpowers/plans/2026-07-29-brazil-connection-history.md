@@ -766,7 +766,7 @@ git commit -m "feat(corpscout): merge a Socios snapshot into connection history"
 - Test: `tests/test_brazil_comp_rfb_clickhouse.py`
 
 **Interfaces:**
-- Consumes: `history.assert_snapshot_is_newer`, `history.build_merge_sql`, the Task 2 tables.
+- Consumes: `history.assert_snapshot_is_newer`, `history.build_merge_select_sql`, the Task 2 tables.
 - Produces: `export_brazil_comp_rfb_clickhouse_company_relations(...)` now merges rather than replaces, and returns `dict[str, int]` with `edges_in_snapshot`, `spells_opened`, `spells_closed`, `spells_total`.
 
 - [ ] **Step 1: Write the failing test**
