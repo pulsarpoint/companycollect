@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/country-contract-detail";
 import { getCountry } from "~/lib/countries";
+import { BrContractRecord } from "~/components/detail/countries/br-contract";
 import {
   getContractDetail,
   type ContractWinnerRow,
@@ -72,6 +73,30 @@ function SourceFields({ fields }: { fields: SourceRecord }) {
       ))}
     </dl>
   );
+}
+
+/**
+ * Per-register rendering, not one generic grid.
+ *
+ * The six ingested procurement registers share ZERO domain columns, and
+ * br_pncp_contracts overlaps every other one by 0-2.9%. There is no common
+ * contract shape, so a generic renderer can only print `column_name: value` —
+ * which is how a reader came to be shown
+ * `{"id":1,"nome":"Contrato (termo inicial)"}` and a bare `E` for two different
+ * code sets. Registers without a dedicated view fall back to the generic grid
+ * until they get one.
+ */
+function RegisterRecord({
+  source,
+  fields,
+}: {
+  source: string;
+  fields: SourceRecord;
+}) {
+  if (source === "brazil_pncp_procurement") {
+    return <BrContractRecord fields={fields} />;
+  }
+  return <SourceFields fields={fields} />;
 }
 
 export default function CountryContractDetail({ loaderData }: Route.ComponentProps) {
@@ -275,7 +300,15 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
                     : ""}
                 </span>
                 {rows[0].cpv_code ? <span>CPV {rows[0].cpv_code}</span> : null}
-                {rows[0].agreement_type ? <span>{rows[0].agreement_type}</span> : null}
+                {/* Brazil's tipo_contrato is stored as PNCP's raw
+                    {"id":n,"nome":"..."} JSON, so this generic chip printed the
+                    blob. Splitting it into id + name is an ingest change across
+                    116,226 rows, tracked separately; until then a blob is
+                    suppressed here and the per-register view below renders the
+                    name properly. */}
+                {rows[0].agreement_type && !rows[0].agreement_type.startsWith("{") ? (
+                  <span>{rows[0].agreement_type}</span>
+                ) : null}
               </div>
             </div>
           ))}
@@ -295,7 +328,7 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
           </CardHeader>
           <CardContent>
             <Separator className="mb-4" />
-            <SourceFields fields={record.fields} />
+            <RegisterRecord source={record.source} fields={record.fields} />
           </CardContent>
         </Card>
       ))}

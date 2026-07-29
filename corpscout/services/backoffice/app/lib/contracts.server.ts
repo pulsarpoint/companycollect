@@ -241,6 +241,12 @@ export async function getCountryContractsPage(
  * rather than the lowest common denominator. Keyed on the notice id the view
  * already carries. */
 const SOURCE_RECORD_QUERIES: Record<string, string> = {
+  // A source with no entry here renders no record at all, silently. Brazil was
+  // missing, so its page showed the handful of unified-view columns while all
+  // 42 stored PNCP fields sat unread. estonia_rhr_procurement and
+  // norway_doffin_procurement are still missing for the same reason.
+  brazil_pncp_procurement: `SELECT * FROM br_pncp_contracts
+     WHERE numero_controle_pncp = {notice:String} LIMIT 1`,
   sweden_uhm_procurement: `SELECT * FROM se_uhm_procurement_awards
      WHERE source_procurement_id = {notice:String} LIMIT 1`,
   ted_procurement: `SELECT * FROM ted_notices
