@@ -224,6 +224,7 @@ EXPECTED_MIGRATIONS = (
     "000207_corpscout_fr_sk_national_procurement",
     "000208_corpscout_br_company_relations",
     "000209_corpscout_fr_financial_and_enrichments",
+    "000210_corpscout_br_company_relations_history",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -601,19 +602,29 @@ def test_clickhouse_migrations_have_down_files() -> None:
         )
 
 
-def test_br_company_relations_migration_covers_export_columns() -> None:
-    """The edge table: one row per company-to-partner link. A newly exported
-    column with no migration behind it fails here rather than mid-export."""
-    sql = _migration_sql("000208_corpscout_br_company_relations.up.sql")
-    down_sql = _migration_sql("000208_corpscout_br_company_relations.down.sql")
+def test_br_company_relations_history_migration_covers_columns() -> None:
+    """One row per spell. relation_code and relation_since_key are IN the sort
+    key: a role change or a re-entry opens a new row rather than mutating one,
+    which is the change the table exists to show."""
+    sql = _migration_sql("000210_corpscout_br_company_relations_history.up.sql")
+    down_sql = _migration_sql(
+        "000210_corpscout_br_company_relations_history.down.sql"
+    )
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.br_company_relations" in sql
-    for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS:
+    for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_COLUMNS:
         assert f"    {column} " in sql, column
     assert (
-        "ORDER BY (cnpj_basico, related_entity_kind, related_tax_id, relation_code)"
-        in sql
+        "ORDER BY (\n    cnpj_basico,\n    related_entity_kind,\n"
+        "    related_tax_id,\n    relation_code,\n    relation_since_key\n)"
+    ) in sql
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.br_company_relations_snapshots" in sql
     )
+    for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_SNAPSHOT_COLUMNS:
+        assert f"    {column} " in sql, column
+
     assert "DROP TABLE IF EXISTS corpscout.br_company_relations" in down_sql
 
 
