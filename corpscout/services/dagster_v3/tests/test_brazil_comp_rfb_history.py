@@ -162,3 +162,87 @@ def test_a_closed_spell_is_not_reopened_or_recounted() -> None:
     assert connection.execute(
         "select is_current, observations, end_at from state"
     ).fetchall() == [(0, 1, __import__("datetime").date(2026, 7, 1))]
+
+
+def test_a_reappearing_key_opens_a_new_spell_and_leaves_the_closed_one_untouched() -> (
+    None
+):
+    """Simulates a truncated monthly download: RFB ships socios as ~10 ZIP
+    parts and relations.py only refuses a COMPLETELY empty result, so a
+    partner can be missing from one month's snapshot for infra reasons, not
+    because they actually left. When that same key (same relation_since_key --
+    RFB's own data never changed) reappears, the closed row must be left
+    exactly as it was, and the reappearance must open a NEW spell -- not
+    mutate the old one back open and not disappear from current state.
+    """
+    connection = duckdb.connect(":memory:")
+    _schema(connection)
+
+    partner_a = _edge("***111111**", "49", "20190701", "PARTNER A")
+    partner_b = _edge("***222222**", "49", "20190701", "PARTNER B")
+    partner_c = _edge("***333333**", "49", "20190701", "PARTNER C")
+
+    # 2026-06: all three partners present.
+    _snapshot(connection, [partner_a, partner_b, partner_c])
+    _merge(connection, "2026-06", "2026-06-01")
+
+    # 2026-07: truncated download -- partner B's part didn't make it in.
+    _snapshot(connection, [partner_a, partner_c])
+    _merge(connection, "2026-07", "2026-07-01")
+
+    # 2026-08: the source healed. All three are back, including B, with the
+    # SAME relation_since_key as before -- this is not a re-entry, it is our
+    # own gap closing.
+    _snapshot(connection, [partner_a, partner_b, partner_c])
+    _merge(connection, "2026-08", "2026-08-01")
+
+    current_edges = connection.execute(
+        "select count(*) from state where is_current = 1"
+    ).fetchone()[0]
+    assert current_edges == 3, "all three partners must be current after the source healed"
+
+    b_rows = connection.execute(
+        "select is_current, end_at, last_seen_snapshot, observations, "
+        "first_seen_snapshot from state where related_tax_id = '***222222**' "
+        "order by is_current"
+    ).fetchall()
+    assert b_rows == [
+        # the closed spell from the truncated month: untouched, every column.
+        (0, __import__("datetime").date(2026, 7, 1), "2026-06", 1, "2026-06"),
+        # a brand-new spell opened by the reappearance, sharing the old key.
+        (1, None, "2026-08", 1, "2026-08"),
+    ]
+
+
+def test_duplicate_source_rows_do_not_fan_out() -> None:
+    """SPELL_KEY is coarser than the pipeline's own record identity (e.g. two
+    partners whose masked CPFs collide on the 6 of 11 visible digits, same
+    role, same entry date, are two source rows but one spell key). If the
+    join doesn't dedupe, N state rows x M snapshot rows for one key fans out
+    every month it recurs -- and once state holds duplicates, even a clean
+    single source row keeps them. Drive it across four months.
+    """
+    connection = duckdb.connect(":memory:")
+    _schema(connection)
+
+    duplicate_pair = [
+        _edge("***456789**", "49", "20190701"),
+        _edge("***456789**", "49", "20190701"),
+    ]
+
+    _snapshot(connection, duplicate_pair)
+    _merge(connection, "2026-06", "2026-06-01")
+    _snapshot(connection, duplicate_pair)
+    _merge(connection, "2026-07", "2026-07-01")
+    _snapshot(connection, duplicate_pair)
+    _merge(connection, "2026-08", "2026-08-01")
+    _snapshot(connection, duplicate_pair)
+    _merge(connection, "2026-09", "2026-09-01")
+
+    rows = connection.execute(
+        "select is_current, observations from state where related_tax_id = '***456789**'"
+    ).fetchall()
+    assert rows == [(1, 4)], (
+        "one row for the key, observed once per month -- not fanned out to "
+        "2/4/8/16 rows by the join"
+    )
