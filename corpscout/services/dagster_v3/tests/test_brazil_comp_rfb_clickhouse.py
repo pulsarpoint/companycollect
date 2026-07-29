@@ -23,12 +23,13 @@ class FakeClickHouseClient:
     def __init__(
         self,
         *,
-        ledger_rows: list[tuple[str, int]] | None = None,
+        ledger_rows: list[tuple[str, int, int]] | None = None,
         merge_counts: tuple[int, int, int] = (0, 0, 0),
     ) -> None:
         self.statements: list[str] = []
         self.inserts: list[tuple[str, list[tuple[object, ...]]]] = []
         self.calls: list[tuple[str, object | None, dict | None]] = []
+        # (snapshot_year_month, edges_in_snapshot, socios_part_count)
         self.ledger_rows = list(ledger_rows or [])
         self.merge_counts = merge_counts
 
@@ -49,7 +50,7 @@ class FakeClickHouseClient:
                 (tables.BR_COMPANY_DOMAINS_TABLE_CH,),
                 (tables.BR_WEBSITES_TABLE_CH,),
             ]
-        if "SELECT snapshot_year_month, edges_in_snapshot FROM" in sql:
+        if "SELECT snapshot_year_month, edges_in_snapshot, socios_part_count" in sql:
             return list(self.ledger_rows)
         if "countIf(first_seen_snapshot" in sql:
             return [self.merge_counts]
@@ -180,6 +181,82 @@ def _build_relations_stage(tmp_path: Path, values_sql: str) -> Path:
     return relations_path
 
 
+def _build_manifest_stage(
+    tmp_path: Path, *, socios_part_count: int, other_family_rows: int = 2
+) -> Path:
+    """A manifest.duckdb stage carrying `socios_part_count` socios rows plus a
+    couple of another family's rows -- so a count that (incorrectly) ignores
+    the `family` filter would fail these tests instead of passing by
+    accident."""
+    manifest_path = tmp_path / "manifest.duckdb"
+    with duckdb.connect(str(manifest_path)) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.SNAPSHOT_FILES_TABLE} (
+                family varchar, archive_url varchar, archive_name varchar,
+                archive_sha256 varchar, csv_member_name varchar,
+                csv_path varchar, source_run_id varchar, retrieved_at timestamp
+            )
+            """
+        )
+        rows = [
+            (
+                "socios",
+                f"https://example.org/socios{i}.zip",
+                f"socios{i}.zip",
+                "deadbeef",
+                f"K3241.K03200Y{i}.D40412.SOCIOCSV",
+                f"/tmp/socios{i}.csv",
+                "run-1",
+                None,
+            )
+            for i in range(socios_part_count)
+        ] + [
+            (
+                "empresas",
+                f"https://example.org/empresas{i}.zip",
+                f"empresas{i}.zip",
+                "deadbeef",
+                f"K3241.K03200Y{i}.D40412.EMPRECSV",
+                f"/tmp/empresas{i}.csv",
+                "run-1",
+                None,
+            )
+            for i in range(other_family_rows)
+        ]
+        connection.executemany(
+            f"insert into {tables.DLT_DATASET_NAME}.{tables.SNAPSHOT_FILES_TABLE} "
+            "values (?,?,?,?,?,?,?,?)",
+            rows,
+        )
+    return manifest_path
+
+
+def _build_empty_relations_stage(tmp_path: Path) -> Path:
+    """A relations stage with the right schema but zero rows -- MINOR 3
+    (empty-snapshot refusal) needs a 0-row snapshot that still reaches the
+    export function, which `_build_relations_stage`'s VALUES-list approach
+    cannot express."""
+    relations_path = tmp_path / "br_company_relations_empty.duckdb"
+    with duckdb.connect(str(relations_path)) as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.COMPANY_RELATIONS_TABLE} (
+                country_iso2 varchar, source_slug varchar, cnpj_basico varchar,
+                related_entity_kind varchar, related_tax_id varchar,
+                relation_code varchar, relation_since_key varchar,
+                related_name varchar, related_country varchar, age_band varchar,
+                representative_tax_id varchar, representative_name varchar,
+                representative_code varchar, relation_since date,
+                resolved_at timestamp
+            )
+            """
+        )
+    return relations_path
+
+
 _TWO_EDGES_VALUES_SQL = """
     ('BR', 'brazil_rfb', '12345678', '1', '11111111000191', '22',
      '20100501', 'PARENT HOLDING LTDA', '', '', '', '', '',
@@ -208,6 +285,7 @@ def test_company_relations_export_merges_first_snapshot_into_empty_history(
     tmp_path: Path,
 ) -> None:
     relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
     fake_client = FakeClickHouseClient(ledger_rows=[], merge_counts=(2, 2, 0))
     fake_resource = FakeClickHouseResource(fake_client)
 
@@ -217,6 +295,7 @@ def test_company_relations_export_merges_first_snapshot_into_empty_history(
             clickhouse=fake_resource,
             snapshot_year_month="2026-07",
             source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
         )
 
     assert counts == {
@@ -247,7 +326,9 @@ def test_company_relations_export_merges_first_snapshot_into_empty_history(
     [ledger_row] = ledger_insert_rows
     assert ledger_row[0] == "2026-07"
     assert ledger_row[2] == "run-1"
-    assert ledger_row[3:] == (2, 2, 0, 2)
+    # edges_in_snapshot, spells_opened, spells_closed, spells_total, and the
+    # exact socios_part_count read from the manifest built above.
+    assert ledger_row[3:] == (2, 2, 0, 2, 10)
 
 
 def test_company_relations_merge_insert_runs_with_join_use_nulls(
@@ -260,6 +341,7 @@ def test_company_relations_merge_insert_runs_with_join_use_nulls(
     so this is the only place the setting can be enforced, and this is the
     only defence against it silently regressing."""
     relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
     fake_client = FakeClickHouseClient(ledger_rows=[], merge_counts=(2, 2, 0))
     fake_resource = FakeClickHouseResource(fake_client)
 
@@ -269,6 +351,7 @@ def test_company_relations_merge_insert_runs_with_join_use_nulls(
             clickhouse=fake_resource,
             snapshot_year_month="2026-07",
             source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
         )
 
     merge_insert_calls = [
@@ -279,6 +362,48 @@ def test_company_relations_merge_insert_runs_with_join_use_nulls(
     assert len(merge_insert_calls) == 1
     _, settings = merge_insert_calls[0]
     assert settings == {"join_use_nulls": 1}
+
+
+def test_company_relations_export_writes_the_ledger_row_before_exchanging_tables(
+    tmp_path: Path,
+) -> None:
+    """IMPORTANT 1 fix: with the OLD ordering (EXCHANGE, then ledger INSERT),
+    forcing the ledger insert to raise on a real ClickHouse proved the month
+    was published (new spells present, last_seen_snapshot advanced) but the
+    ledger still listed only the prior month, with the pre-merge copy already
+    dropped by `finally` -- no rollback path, and assert_snapshot_is_newer
+    would happily let that same month be re-merged, silently double-counting
+    `observations`. Writing the ledger row first inverts the failure mode
+    into a strictly better one: if EXCHANGE now fails, the month is recorded
+    but not published, so the next run refuses it loudly with "already
+    merged" instead of silently corrupting the history. This test pins the
+    ordering directly, not just the outcome, so a future edit that moves the
+    INSERT back below EXCHANGE TABLES fails here first."""
+    relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
+    fake_client = FakeClickHouseClient(ledger_rows=[], merge_counts=(2, 2, 0))
+    fake_resource = FakeClickHouseResource(fake_client)
+
+    with duckdb.connect(str(relations_path)) as connection:
+        clickhouse.export_brazil_comp_rfb_clickhouse_company_relations(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+            snapshot_year_month="2026-07",
+            source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
+        )
+
+    executed_sql = [sql for sql, _, _ in fake_client.calls]
+    ledger_insert_index = next(
+        index
+        for index, sql in enumerate(executed_sql)
+        if "INSERT INTO" in sql
+        and tables.QUALIFIED_BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE in sql
+    )
+    exchange_index = next(
+        index for index, sql in enumerate(executed_sql) if "EXCHANGE TABLES" in sql
+    )
+    assert ledger_insert_index < exchange_index
 
 
 def test_company_relations_snapshot_stage_ddl_carries_resolved_at() -> None:
@@ -296,8 +421,9 @@ def test_company_relations_export_refuses_an_out_of_order_snapshot(
     tmp_path: Path,
 ) -> None:
     relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
     fake_client = FakeClickHouseClient(
-        ledger_rows=[("2026-08", 100)], merge_counts=(2, 2, 0)
+        ledger_rows=[("2026-08", 100, 10)], merge_counts=(2, 2, 0)
     )
     fake_resource = FakeClickHouseResource(fake_client)
 
@@ -309,6 +435,7 @@ def test_company_relations_export_refuses_an_out_of_order_snapshot(
             clickhouse=fake_resource,
             snapshot_year_month="2026-07",
             source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
         )
     # Refused before the snapshot stage is even populated.
     assert fake_client.inserts == []
@@ -318,10 +445,15 @@ def test_company_relations_export_refuses_an_implausibly_short_snapshot(
     tmp_path: Path,
 ) -> None:
     """Simulates a truncated download (RFB ships socios as ~10 ZIP parts):
-    the previous merged month had far more edges than this one supplies."""
+    the previous merged month had far more edges than this one supplies.
+    The manifest's own socios part count is UNCHANGED (10 -> 10) so this
+    test isolates the edge-count ratio guard from the exact part-count
+    guard -- see test_company_relations_export_refuses_a_decrease_in_socios_part_count
+    for that one."""
     relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
     fake_client = FakeClickHouseClient(
-        ledger_rows=[("2026-06", 1_000)], merge_counts=(2, 2, 0)
+        ledger_rows=[("2026-06", 1_000, 10)], merge_counts=(2, 2, 0)
     )
     fake_resource = FakeClickHouseResource(fake_client)
 
@@ -333,6 +465,7 @@ def test_company_relations_export_refuses_an_implausibly_short_snapshot(
             clickhouse=fake_resource,
             snapshot_year_month="2026-07",
             source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
         )
     # The snapshot stage table was populated (2 edges is genuinely what
     # export_duckdb_connection_table_to_clickhouse inserted) but the merge
@@ -344,6 +477,61 @@ def test_company_relations_export_refuses_an_implausibly_short_snapshot(
     assert merge_insert_calls == []
 
 
+def test_company_relations_export_refuses_a_decrease_in_socios_part_count(
+    tmp_path: Path,
+) -> None:
+    """IMPORTANT 2 fix: MIN_SNAPSHOT_EDGE_RATIO cannot catch a single missing
+    socios part (~10% edge drop, comfortably inside its 50% floor) -- this
+    exact manifest part-count comparison is what does. Refused before the
+    snapshot stage table is even created, since the manifest part count is
+    available purely from DuckDB."""
+    relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=9)
+    fake_client = FakeClickHouseClient(
+        ledger_rows=[("2026-06", 2, 10)], merge_counts=(2, 2, 0)
+    )
+    fake_resource = FakeClickHouseResource(fake_client)
+
+    with duckdb.connect(str(relations_path)) as connection, pytest.raises(
+        ValueError, match="socios ZIP parts"
+    ):
+        clickhouse.export_brazil_comp_rfb_clickhouse_company_relations(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+            snapshot_year_month="2026-07",
+            source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
+        )
+    # Refused before the snapshot stage table was even created.
+    assert fake_client.inserts == []
+    assert not any(
+        "CREATE TABLE" in statement for statement in fake_client.statements
+    )
+
+
+def test_company_relations_export_allows_an_increase_in_socios_part_count(
+    tmp_path: Path,
+) -> None:
+    """Only a DECREASE is suspect -- RFB legitimately changing how many parts
+    it splits socios into (more parts) must not be refused."""
+    relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=11)
+    fake_client = FakeClickHouseClient(
+        ledger_rows=[("2026-06", 2, 10)], merge_counts=(2, 2, 0)
+    )
+    fake_resource = FakeClickHouseResource(fake_client)
+
+    with duckdb.connect(str(relations_path)) as connection:
+        counts = clickhouse.export_brazil_comp_rfb_clickhouse_company_relations(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+            snapshot_year_month="2026-07",
+            source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
+        )
+    assert counts["edges_in_snapshot"] == 2
+
+
 def test_company_relations_export_refuses_when_merge_produces_no_spells_from_a_non_empty_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -351,6 +539,7 @@ def test_company_relations_export_refuses_when_merge_produces_no_spells_from_a_n
     module's other exporters -- a non-empty snapshot that folds to zero
     spells must never replace the published history."""
     relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
     fake_client = FakeClickHouseClient(ledger_rows=[], merge_counts=(0, 0, 0))
     fake_resource = FakeClickHouseResource(fake_client)
 
@@ -362,10 +551,44 @@ def test_company_relations_export_refuses_when_merge_produces_no_spells_from_a_n
             clickhouse=fake_resource,
             snapshot_year_month="2026-07",
             source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
         )
     assert (
         sum("EXCHANGE TABLES" in statement for statement in fake_client.statements) == 0
     )
+
+
+def test_company_relations_export_refuses_an_empty_snapshot(tmp_path: Path) -> None:
+    """MINOR 3 fix: truncate=False bypasses the shared exporter's own
+    empty-input refusal (resolved.py's check lives inside the `truncate`
+    branch, which this call does not take), and relations.py's own "refuse a
+    0-row edge table" guard is unreachable from here -- it lives in another
+    file. An empty snapshot into an empty history would otherwise publish an
+    empty table and record edges_in_snapshot=0 in the ledger, after which
+    assert_snapshot_edge_count_is_plausible's own `<= 0` no-op leaves the
+    NEXT month completely unguarded. Make the guarantee local."""
+    relations_path = _build_empty_relations_stage(tmp_path)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
+    fake_client = FakeClickHouseClient(ledger_rows=[])
+    fake_resource = FakeClickHouseResource(fake_client)
+
+    with duckdb.connect(str(relations_path)) as connection, pytest.raises(
+        ValueError, match="0 edges"
+    ):
+        clickhouse.export_brazil_comp_rfb_clickhouse_company_relations(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+            snapshot_year_month="2026-07",
+            source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
+        )
+    assert (
+        sum("EXCHANGE TABLES" in statement for statement in fake_client.statements) == 0
+    )
+    # 0 rows in the DuckDB source means export_duckdb_connection_table_to_clickhouse's
+    # batch loop never calls INSERT at all -- not the snapshot stage, and
+    # never reaching the ledger row either.
+    assert fake_client.inserts == []
 
 
 def test_clickhouse_company_relations_export_nulls_relation_since_outside_date32_range(
@@ -386,6 +609,7 @@ def test_clickhouse_company_relations_export_nulls_relation_since_outside_date32
          date '2015-03-10', timestamp '2026-07-29 00:00:00')
         """,
     )
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
     fake_client = FakeClickHouseClient(ledger_rows=[], merge_counts=(2, 2, 0))
     fake_resource = FakeClickHouseResource(fake_client)
 
@@ -395,6 +619,7 @@ def test_clickhouse_company_relations_export_nulls_relation_since_outside_date32
             clickhouse=fake_resource,
             snapshot_year_month="2026-07",
             source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
         )
 
     assert counts["edges_in_snapshot"] == 2

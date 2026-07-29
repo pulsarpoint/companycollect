@@ -55,6 +55,38 @@ def test_edge_count_guard_ignores_a_zero_previous_count() -> None:
     history.assert_snapshot_edge_count_is_plausible(1, 0)
 
 
+def test_first_ever_snapshot_is_not_blocked_by_the_part_count_guard() -> None:
+    """No previous merged month means nothing to compare against -- refusing
+    the very first snapshot on principle would be its own bug."""
+    history.assert_snapshot_part_count_is_not_decreasing(10, None)
+
+
+def test_a_snapshot_missing_a_single_socios_part_is_refused() -> None:
+    """The exact case MIN_SNAPSHOT_EDGE_RATIO cannot catch: one missing
+    socios part out of RFB's ~10 is only a ~10% edge-count drop, comfortably
+    inside the 50% ratio floor -- but the part count itself decreased, and
+    this guard has no threshold to sail under."""
+    with pytest.raises(ValueError, match="socios ZIP parts"):
+        history.assert_snapshot_part_count_is_not_decreasing(9, 10)
+
+
+def test_a_snapshot_with_the_same_part_count_is_allowed() -> None:
+    history.assert_snapshot_part_count_is_not_decreasing(10, 10)
+
+
+def test_a_snapshot_with_more_parts_than_the_previous_month_is_allowed() -> None:
+    """Only a DECREASE is suspect -- RFB legitimately changing how many parts
+    it splits socios into (more parts) must not be refused."""
+    history.assert_snapshot_part_count_is_not_decreasing(11, 10)
+
+
+def test_part_count_guard_ignores_a_zero_previous_count() -> None:
+    """Covers a ledger row written before migration 000211 added this column
+    (`ADD COLUMN ... DEFAULT 0`) -- it must not make the very next run look
+    like a decrease against a baseline that was never actually recorded."""
+    history.assert_snapshot_part_count_is_not_decreasing(1, 0)
+
+
 def test_build_merge_select_sql_rejects_a_quote_injection_attempt() -> None:
     """build_merge_select_sql interpolates snapshot_year_month raw into the
     returned SQL text. Unvalidated, a trailing quote closes the string early

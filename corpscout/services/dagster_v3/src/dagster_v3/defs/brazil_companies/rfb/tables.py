@@ -196,6 +196,13 @@ BR_COMPANY_RELATIONS_SNAPSHOT_COLUMNS = (
     "spells_opened",
     "spells_closed",
     "spells_total",
+    # Added by migration 000211. The exact socios ZIP part count for this
+    # month's manifest -- MIN_SNAPSHOT_EDGE_RATIO (history.py) cannot catch a
+    # single missing part (~10% edge drop, inside its 50% floor); comparing
+    # this count to the previous merged month's exactly can, with no
+    # threshold and no false-positive risk. See
+    # history.assert_snapshot_part_count_is_not_decreasing.
+    "socios_part_count",
 )
 
 ESTABLISHMENTS_TABLE = "establishments"

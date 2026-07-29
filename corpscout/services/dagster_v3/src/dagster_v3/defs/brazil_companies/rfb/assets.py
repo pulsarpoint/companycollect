@@ -773,6 +773,7 @@ def brazil_comp_rfb_company_relations_clickhouse(
                 context.partition_key
             ),
             source_run_id=context.run_id,
+            snapshot_manifest_database_path=stage_paths.manifest,
             log=context.log.info,
         )
     return dg.MaterializeResult(metadata=dict(counts))

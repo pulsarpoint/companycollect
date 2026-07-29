@@ -82,28 +82,43 @@ def assert_snapshot_is_newer(
         )
 
 
-# RFB ships socios as ~10 roughly equal-sized ZIP parts. A mid-download
-# failure (network drop, killed job, disk full) yields a snapshot that is
-# still a well-formed CSV -- relations.py's own "refuse if completely empty"
-# guard does not fire -- but is missing whichever parts never landed. Fed
-# into the merge, every partner absent from those missing parts reads as
-# "gone by this snapshot" and gets closed: silent, permanent corruption of
-# the spell history, and the likelier corruption trigger in practice than the
-# out-of-order case assert_snapshot_is_newer guards above.
+# RFB ships socios as ~10 roughly equal-sized ZIP parts. This ratio is a
+# COARSE FLOOR against a large-scale event -- several parts missing from one
+# failed transfer, or an implausible month-over-month collapse -- not a
+# defence against a single missing part, and it was checked and found NOT to
+# catch that case (a previous version of this comment claimed it did; that
+# claim was wrong).
 #
-# 0.5 (refuse anything below half the previous merged month's edge count) is
-# deliberately loose, not tight:
-#   - it tolerates the real month-to-month register churn described in
-#     brazil_rfb_socios_history-design.md (partners leaving, companies being
-#     deregistered) without false-positiving on a legitimate shrink;
-#   - losing even 1 of the ~10 parts is a ~10% drop, so a 50% floor still
-#     catches the shape a truncated download actually takes (several
-#     consecutive parts missing from one failed transfer), without needing to
-#     assume the parts are exactly equal-sized, which they are not guaranteed
-#     to be.
-# A tighter threshold would need real production month-over-month variance
-# data to justify without risking false positives that block a legitimate
-# (if unusually small) run; this is the conservative choice until that data
+# What it does NOT catch, and why:
+#   - A mid-stream truncation of ONE zip part is not silent in the first
+#     place. zipfile fails loudly opening/extracting a corrupt archive (see
+#     source.py's _extract_single_csv), so that failure was never the shape
+#     this guard exists for.
+#   - The genuinely silent shape is a part that simply never downloaded: the
+#     CSV parses fine, the run looks clean, and the snapshot is just short.
+#     Losing 1 of ~10 parts is only a ~10% edge-count drop -- comfortably
+#     inside this 50% floor, so it sails through here undetected.
+#   - There is no upstream backstop either: _download's Content-Length check
+#     only LOGS a byte-count mismatch, it never verifies it (see
+#     source.py's _download), and the partial-sync LookupError in
+#     resolve_snapshot_remote_files_from_object_store checks only that each
+#     FAMILY is present, not that every socios part within the family is.
+#
+# The single-missing-part case is instead caught EXACTLY, with no threshold,
+# by assert_snapshot_part_count_is_not_decreasing below, which compares this
+# month's manifest socios-part count against the previous merged month's.
+# This ratio stays as an additional coarse floor on top of that -- it still
+# catches the multi-part/implausible-collapse shape the part-count guard
+# alone would not (e.g. a shrinking register is a legitimate part-count-equal
+# but edge-count-lower month) -- not as a replacement for it.
+#
+# 0.5 remains deliberately loose, not tight: it tolerates the real
+# month-to-month register churn described in
+# brazil_rfb_socios_history-design.md (partners leaving, companies being
+# deregistered) without false-positiving on a legitimate shrink. A tighter
+# threshold would need real production month-over-month variance data to
+# justify without risking false positives that block a legitimate (if
+# unusually small) run; this is the conservative choice until that data
 # exists.
 MIN_SNAPSHOT_EDGE_RATIO = 0.5
 
@@ -120,9 +135,11 @@ def assert_snapshot_edge_count_is_plausible(
 
     This is deliberately a size check, not a content check: it cannot tell a
     truncated download from a genuine 50%+ month-over-month change in
-    Brazil's company register, and does not try to. It exists to stop the
-    common, mechanical failure (a partial download), not to be a complete
-    fraud detector.
+    Brazil's company register, and does not try to. It exists to stop a
+    large-scale, mechanical failure (several parts missing, or a genuinely
+    implausible collapse) -- it is NOT the defence against a single missing
+    part; see the MIN_SNAPSHOT_EDGE_RATIO comment above and
+    assert_snapshot_part_count_is_not_decreasing below for that.
     """
     if previous_edges_in_snapshot is None or previous_edges_in_snapshot <= 0:
         return
@@ -138,6 +155,46 @@ def assert_snapshot_edge_count_is_plausible(
             "this snapshot_year_month, verify all archive parts were "
             "fetched (see brazil_rfb_socios_history-design.md section 8), "
             "and rebuild the relations stage before merging again."
+        )
+
+
+def assert_snapshot_part_count_is_not_decreasing(
+    socios_part_count: int, previous_socios_part_count: int | None
+) -> None:
+    """Refuse a snapshot whose manifest recorded FEWER socios ZIP parts than
+    the previous merged month's -- exactly, not by ratio.
+
+    This is the actual defence against the failure
+    MIN_SNAPSHOT_EDGE_RATIO's own comment concedes it cannot catch: RFB ships
+    socios as ~10 parts, and a single missing part is only a ~10% edge-count
+    drop -- comfortably inside that 50% floor, so it would sail through there
+    undetected. The snapshot manifest (tables.SNAPSHOT_FILE_COLUMNS) records
+    one row per downloaded file with its family, so the socios part count for
+    a month is knowable EXACTLY, not estimated -- comparing it to the
+    previous merged month needs no threshold and cannot false-positive on
+    legitimate register churn: a shrinking register does not change how many
+    ZIP files RFB split socios into.
+
+    Same no-baseline handling as assert_snapshot_edge_count_is_plausible, and
+    for the same two reasons: previous_socios_part_count is None on the
+    first-ever merge (nothing to compare against -- refusing it on principle
+    would be its own bug), and <= 0 also covers a ledger row written before
+    this column existed (migration 000211's `ADD COLUMN ... DEFAULT 0`) -- in
+    both cases there is no real baseline, so the next run must not be
+    refused against one.
+    """
+    if previous_socios_part_count is None or previous_socios_part_count <= 0:
+        return
+    if socios_part_count < previous_socios_part_count:
+        raise ValueError(
+            f"Brazil RFB snapshot has {socios_part_count} socios ZIP parts, "
+            f"fewer than the {previous_socios_part_count} parts the previous "
+            "merged month's manifest recorded. RFB ships socios as multiple "
+            "ZIP parts and a missing one parses fine -- it does not fail "
+            "extraction and is not reliably caught by the edge-count ratio "
+            "guard (MIN_SNAPSHOT_EDGE_RATIO). Re-run the download for this "
+            "snapshot_year_month, verify every socios archive part was "
+            "fetched, and rebuild the relations stage before merging again."
         )
 
 
