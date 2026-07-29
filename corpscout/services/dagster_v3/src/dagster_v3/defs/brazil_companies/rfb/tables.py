@@ -177,6 +177,11 @@ BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS = (
     "representative_name",
     "representative_code",
     "relation_since",
+    # resolved_at is produced by the DuckDB build (`now()` in relations.py) and
+    # must be shipped. A column left out of this tuple is never inserted, so
+    # ClickHouse fills it with the type default -- for DateTime64 that is the
+    # epoch, silently, on every row.
+    "resolved_at",
 )
 
 BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE_CH = "br_company_relations_snapshots"

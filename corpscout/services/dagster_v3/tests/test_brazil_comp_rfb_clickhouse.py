@@ -149,14 +149,15 @@ def test_clickhouse_exports_replace_company_relations(tmp_path: Path) -> None:
             select * from (values
                 ('BR', 'brazil_rfb', '12345678', '1', '11111111000191', '22',
                  '20100501', 'PARENT HOLDING LTDA', '', '', '', '', '',
-                 date '2010-05-01'),
+                 date '2010-05-01', timestamp '2026-07-29 00:00:00'),
                 ('BR', 'brazil_rfb', '12345678', '2', '***123456**', '49',
                  '20150310', 'JOAO DA SILVA', '', '', '', '', '',
-                 date '2015-03-10')
+                 date '2015-03-10', timestamp '2026-07-29 00:00:00')
             ) as t(country_iso2, source_slug, cnpj_basico, related_entity_kind,
                    related_tax_id, relation_code, relation_since_key, related_name,
                    related_country, age_band, representative_tax_id,
-                   representative_name, representative_code, relation_since)
+                   representative_name, representative_code, relation_since,
+                   resolved_at)
             """
         )
         relation_rows = (
@@ -202,14 +203,15 @@ def test_clickhouse_company_relations_export_nulls_relation_since_outside_date32
             select * from (values
                 ('BR', 'brazil_rfb', '12345678', '1', '11111111000191', '22',
                  '18991231', 'PARENT HOLDING LTDA', '', '', '', '', '',
-                 date '1899-12-31'),
+                 date '1899-12-31', timestamp '2026-07-29 00:00:00'),
                 ('BR', 'brazil_rfb', '12345678', '2', '***123456**', '49',
                  '20150310', 'JOAO DA SILVA', '', '', '', '', '',
-                 date '2015-03-10')
+                 date '2015-03-10', timestamp '2026-07-29 00:00:00')
             ) as t(country_iso2, source_slug, cnpj_basico, related_entity_kind,
                    related_tax_id, relation_code, relation_since_key, related_name,
                    related_country, age_band, representative_tax_id,
-                   representative_name, representative_code, relation_since)
+                   representative_name, representative_code, relation_since,
+                   resolved_at)
             """
         )
         relation_rows = (
@@ -296,15 +298,27 @@ def test_clickhouse_exports_replace_company_contacts_domains_and_websites(
     assert domains_insert_rows[0][confidence_index] == pytest.approx(0.9)
 
 
-def test_company_relations_export_uses_the_declared_column_contract() -> None:
-    """Column order is the contract: the exporter ships this tuple positionally
-    into the migrated table."""
-    assert tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS[0] == "country_iso2"
-    assert "cnpj_basico" in tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS
-    assert "related_entity_kind" in tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS
-    assert tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS == (
-        tables.BR_COMPANY_RELATIONS_COLUMNS
+def test_company_relations_snapshot_input_is_everything_the_build_produces() -> None:
+    """The exporter ships THIS tuple positionally, and a column left out of it is
+    never inserted -- ClickHouse fills it with the type default instead. For
+    resolved_at (DateTime64) that default is the epoch, on every row, silently.
+
+    So the tuple must be exactly the history shape minus the six columns the
+    merge computes, and nothing else may go missing.
+    """
+    history_only = {
+        "first_seen_snapshot",
+        "last_seen_snapshot",
+        "start_at",
+        "end_at",
+        "is_current",
+        "observations",
+    }
+    assert set(tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS) == (
+        set(tables.BR_COMPANY_RELATIONS_COLUMNS) - history_only
     )
+    assert "resolved_at" in tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS
+    assert tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS[0] == "country_iso2"
 
 
 def test_export_column_tuples_are_the_shared_canonical_tuples() -> None:

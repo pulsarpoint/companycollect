@@ -109,9 +109,13 @@ def export_brazil_comp_rfb_clickhouse_company_relations(
     history (one row per spell; see brazil_rfb_socios_history-design.md), so a
     plain truncate-and-replace here still discards the previous months on every
     run -- a still-pending history merge replaces this truncate with a fold, at
-    which point this function stops writing the six history-only columns
-    (first_seen_snapshot, last_seen_snapshot, start_at, end_at, is_current,
-    observations) at their ClickHouse type default.
+    which point the six history-only columns (first_seen_snapshot,
+    last_seen_snapshot, start_at, end_at, is_current, observations) stop landing
+    at their ClickHouse type default and get computed by the merge instead.
+
+    Any column omitted from BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS is never
+    inserted at all, so ClickHouse fills it with the type default -- for a
+    DateTime64 that is the epoch. Only those six may be missing from it.
     """
     assert_clickhouse_tables_exist(
         clickhouse,
