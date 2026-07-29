@@ -135,23 +135,41 @@ QUALIFIED_BR_COMPANY_RELATIONS_TABLE = (
 BR_COMPANY_RELATIONS_COLUMNS = (
     "country_iso2",
     "source_slug",
-    "source_run_id",
-    "source_record_id",
-    "snapshot_year_month",
     "cnpj_basico",
     "related_entity_kind",
-    "related_name",
     "related_tax_id",
     "relation_code",
-    "relation_since",
+    "relation_since_key",
+    "related_name",
     "related_country",
+    "age_band",
     "representative_tax_id",
     "representative_name",
     "representative_code",
-    "age_band",
+    "relation_since",
+    "first_seen_snapshot",
+    "last_seen_snapshot",
+    "start_at",
+    "end_at",
+    "is_current",
+    "observations",
     "resolved_at",
 )
 BR_COMPANY_RELATIONS_EXPORT_COLUMNS = BR_COMPANY_RELATIONS_COLUMNS
+
+BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE_CH = "br_company_relations_snapshots"
+QUALIFIED_BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE = (
+    f"{BRAZIL_COMP_RFB_DATABASE}.{BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE_CH}"
+)
+BR_COMPANY_RELATIONS_SNAPSHOT_COLUMNS = (
+    "snapshot_year_month",
+    "merged_at",
+    "source_run_id",
+    "edges_in_snapshot",
+    "spells_opened",
+    "spells_closed",
+    "spells_total",
+)
 
 ESTABLISHMENTS_TABLE = "establishments"
 COMPANY_CONTACT_INFO_TABLE = "company_contact_info"
