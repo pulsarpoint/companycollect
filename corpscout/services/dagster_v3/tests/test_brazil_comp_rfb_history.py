@@ -21,6 +21,63 @@ def test_first_snapshot_into_an_empty_history_is_allowed() -> None:
     history.assert_snapshot_is_newer("2026-06", [])
 
 
+def test_build_merge_select_sql_rejects_a_quote_injection_attempt() -> None:
+    """build_merge_select_sql interpolates snapshot_year_month raw into the
+    returned SQL text. Unvalidated, a trailing quote closes the string early
+    and emits the broken/injectable literal '2026-06''. The merge is
+    self-referential and writes are permanent, so this must be refused, not
+    merely produce odd SQL."""
+    with pytest.raises(ValueError, match="YYYY-MM"):
+        history.build_merge_select_sql(
+            state_table="state",
+            snapshot_table="snap",
+            snapshot_year_month="2026-06'",
+            snapshot_date="2026-06-01",
+        )
+
+
+def test_build_merge_select_sql_rejects_an_unparseable_snapshot_date() -> None:
+    """snapshot_date is interpolated raw into `date '{snapshot_date}'`.
+    Unvalidated, snapshot_date="garbage" would only fail at execution time,
+    deep inside the merge, in whichever engine happens to run it."""
+    with pytest.raises(ValueError, match="ISO date"):
+        history.build_merge_select_sql(
+            state_table="state",
+            snapshot_table="snap",
+            snapshot_year_month="2026-06",
+            snapshot_date="garbage",
+        )
+
+
+def test_build_merge_select_sql_rejects_an_unpadded_snapshot_year_month() -> None:
+    """"2026-6" (unpadded) must not be silently accepted and written into
+    first_seen_snapshot forever -- mirrors assert_snapshot_is_newer's own
+    guard against the same malformed input."""
+    with pytest.raises(ValueError, match="YYYY-MM"):
+        history.build_merge_select_sql(
+            state_table="state",
+            snapshot_table="snap",
+            snapshot_year_month="2026-6",
+            snapshot_date="2026-06-01",
+        )
+
+
+def test_build_merge_select_sql_rejects_a_snapshot_date_that_disagrees_with_the_month() -> (
+    None
+):
+    """Nothing else enforces that snapshot_year_month and snapshot_date agree.
+    month=2026-07 with date=2026-06-01 would silently write history where
+    end_at contradicts last_seen_snapshot -- permanently, since the merge is
+    self-referential."""
+    with pytest.raises(ValueError, match="first day"):
+        history.build_merge_select_sql(
+            state_table="state",
+            snapshot_table="snap",
+            snapshot_year_month="2026-07",
+            snapshot_date="2026-06-01",
+        )
+
+
 def _merge(connection: duckdb.DuckDBPyConnection, month: str, date: str) -> None:
     """Wraps the shared SELECT the way DuckDB wants it. The export wraps the
     same SELECT in an INSERT -- see the interfaces note above."""
