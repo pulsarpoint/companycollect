@@ -147,17 +147,16 @@ def test_clickhouse_exports_replace_company_relations(tmp_path: Path) -> None:
             f"""
             create table {tables.DLT_DATASET_NAME}.{tables.COMPANY_RELATIONS_TABLE} as
             select * from (values
-                ('BR', 'brazil_rfb', 'run-1', 'rec-1', '202501', '12345678', '1',
-                 'PARENT HOLDING LTDA', '11111111000191', '22', date '2010-05-01',
-                 '', '', '', '', '', now()),
-                ('BR', 'brazil_rfb', 'run-1', 'rec-2', '202501', '12345678', '2',
-                 'JOAO DA SILVA', '***123456**', '49', date '2015-03-10',
-                 '', '', '', '', '', now())
-            ) as t(country_iso2, source_slug, source_run_id, source_record_id,
-                   snapshot_year_month, cnpj_basico, related_entity_kind, related_name,
-                   related_tax_id, relation_code, relation_since, related_country,
-                   representative_tax_id, representative_name, representative_code,
-                   age_band, resolved_at)
+                ('BR', 'brazil_rfb', '12345678', '1', '11111111000191', '22',
+                 '20100501', 'PARENT HOLDING LTDA', '', '', '', '', '',
+                 date '2010-05-01'),
+                ('BR', 'brazil_rfb', '12345678', '2', '***123456**', '49',
+                 '20150310', 'JOAO DA SILVA', '', '', '', '', '',
+                 date '2015-03-10')
+            ) as t(country_iso2, source_slug, cnpj_basico, related_entity_kind,
+                   related_tax_id, relation_code, relation_since_key, related_name,
+                   related_country, age_band, representative_tax_id,
+                   representative_name, representative_code, relation_since)
             """
         )
         relation_rows = (
@@ -175,9 +174,9 @@ def test_clickhouse_exports_replace_company_relations(tmp_path: Path) -> None:
     relations_insert_sql, relations_insert_rows = fake_client.inserts[0]
     assert tables.BR_COMPANY_RELATIONS_TABLE_CH in relations_insert_sql
     assert len(relations_insert_rows[0]) == len(
-        tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS
+        tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS
     )
-    related_kind_index = tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS.index(
+    related_kind_index = tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS.index(
         "related_entity_kind"
     )
     shipped_kinds = {row[related_kind_index] for row in relations_insert_rows}
@@ -201,17 +200,16 @@ def test_clickhouse_company_relations_export_nulls_relation_since_outside_date32
             f"""
             create table {tables.DLT_DATASET_NAME}.{tables.COMPANY_RELATIONS_TABLE} as
             select * from (values
-                ('BR', 'brazil_rfb', 'run-1', 'rec-1', '202501', '12345678', '1',
-                 'PARENT HOLDING LTDA', '11111111000191', '22', date '1899-12-31',
-                 '', '', '', '', '', now()),
-                ('BR', 'brazil_rfb', 'run-1', 'rec-2', '202501', '12345678', '2',
-                 'JOAO DA SILVA', '***123456**', '49', date '2015-03-10',
-                 '', '', '', '', '', now())
-            ) as t(country_iso2, source_slug, source_run_id, source_record_id,
-                   snapshot_year_month, cnpj_basico, related_entity_kind, related_name,
-                   related_tax_id, relation_code, relation_since, related_country,
-                   representative_tax_id, representative_name, representative_code,
-                   age_band, resolved_at)
+                ('BR', 'brazil_rfb', '12345678', '1', '11111111000191', '22',
+                 '18991231', 'PARENT HOLDING LTDA', '', '', '', '', '',
+                 date '1899-12-31'),
+                ('BR', 'brazil_rfb', '12345678', '2', '***123456**', '49',
+                 '20150310', 'JOAO DA SILVA', '', '', '', '', '',
+                 date '2015-03-10')
+            ) as t(country_iso2, source_slug, cnpj_basico, related_entity_kind,
+                   related_tax_id, relation_code, relation_since_key, related_name,
+                   related_country, age_band, representative_tax_id,
+                   representative_name, representative_code, relation_since)
             """
         )
         relation_rows = (
@@ -223,17 +221,18 @@ def test_clickhouse_company_relations_export_nulls_relation_since_outside_date32
 
     assert relation_rows == 2
     relations_insert_rows = fake_client.inserts[0][1]
-    relation_since_index = tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS.index(
+    relation_since_index = tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS.index(
         "relation_since"
     )
-    relation_since_by_record_id = {
-        row[tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS.index("source_record_id")]: row[
-            relation_since_index
-        ]
+    relation_since_key_index = (
+        tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS.index("relation_since_key")
+    )
+    relation_since_by_key = {
+        row[relation_since_key_index]: row[relation_since_index]
         for row in relations_insert_rows
     }
-    assert relation_since_by_record_id["rec-1"] is None
-    assert relation_since_by_record_id["rec-2"] is not None
+    assert relation_since_by_key["18991231"] is None
+    assert relation_since_by_key["20150310"] is not None
 
 
 def test_clickhouse_exports_replace_company_contacts_domains_and_websites(

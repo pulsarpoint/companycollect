@@ -102,7 +102,17 @@ def export_brazil_comp_rfb_clickhouse_company_relations(
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
-    """Replace corpscout.br_company_relations with the DuckDB relations table."""
+    """Replace corpscout.br_company_relations with the DuckDB relations table.
+
+    Interim: ships only BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS, the columns
+    a single monthly snapshot can supply. br_company_relations is now SCD2
+    history (one row per spell; see brazil_rfb_socios_history-design.md), so a
+    plain truncate-and-replace here still discards the previous months on every
+    run -- a still-pending history merge replaces this truncate with a fold, at
+    which point this function stops writing the six history-only columns
+    (first_seen_snapshot, last_seen_snapshot, start_at, end_at, is_current,
+    observations) at their ClickHouse type default.
+    """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.BRAZIL_COMP_RFB_DATABASE,
@@ -121,7 +131,7 @@ def export_brazil_comp_rfb_clickhouse_company_relations(
             duckdb_table=tables.COMPANY_RELATIONS_TABLE,
             clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
             clickhouse_table=tables.BR_COMPANY_RELATIONS_TABLE_CH,
-            columns=tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS,
+            columns=tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS,
             truncate=True,
             column_expressions=CLICKHOUSE_COMPANY_RELATIONS_DATE32_EXPORT_EXPRESSIONS,
         )

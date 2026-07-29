@@ -157,6 +157,28 @@ BR_COMPANY_RELATIONS_COLUMNS = (
 )
 BR_COMPANY_RELATIONS_EXPORT_COLUMNS = BR_COMPANY_RELATIONS_COLUMNS
 
+# What a single monthly snapshot can actually supply -- BR_COMPANY_RELATIONS_COLUMNS
+# minus the six columns only the history merge can compute (first_seen_snapshot,
+# last_seen_snapshot, start_at, end_at, is_current, observations). relations.py's
+# DuckDB build produces (at least) these; the merge step reads them to fold a
+# snapshot into the SCD2 history rather than replacing it.
+BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "cnpj_basico",
+    "related_entity_kind",
+    "related_tax_id",
+    "relation_code",
+    "relation_since_key",
+    "related_name",
+    "related_country",
+    "age_band",
+    "representative_tax_id",
+    "representative_name",
+    "representative_code",
+    "relation_since",
+)
+
 BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE_CH = "br_company_relations_snapshots"
 QUALIFIED_BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE = (
     f"{BRAZIL_COMP_RFB_DATABASE}.{BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE_CH}"
