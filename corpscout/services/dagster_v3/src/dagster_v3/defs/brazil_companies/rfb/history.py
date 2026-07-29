@@ -70,7 +70,16 @@ def assert_snapshot_is_newer(
     if snapshot_year_month in merged_months:
         raise ValueError(
             f"Brazil RFB snapshot {snapshot_year_month} is already merged into "
-            "the connection history"
+            "the connection history -- but 'merged' here means only that the "
+            "ledger (br_company_relations_snapshots) has a row for it. The "
+            "ledger is written BEFORE EXCHANGE TABLES publishes the merge "
+            "(see clickhouse.py), so this can also mean the month was "
+            "RECORDED WITHOUT BEING PUBLISHED, if a previous run's EXCHANGE "
+            "failed after its ledger write. This is not reassurance that "
+            "br_company_relations reflects this month -- verify that "
+            "separately. If it does not, the recovery is: delete this "
+            "month's row from br_company_relations_snapshots, then re-run "
+            "the merge for this snapshot_year_month."
         )
     newest = max(merged_months)
     if snapshot_year_month < newest:
@@ -151,18 +160,47 @@ def assert_snapshot_edge_count_is_plausible(
             "edges in the previous merged month. This looks like a truncated "
             "download -- RFB ships socios as ~10 ZIP parts and a partial "
             "transfer still produces a valid-looking but incomplete snapshot "
-            "-- not a real change in the register. Re-run the download for "
-            "this snapshot_year_month, verify all archive parts were "
-            "fetched (see brazil_rfb_socios_history-design.md section 8), "
-            "and rebuild the relations stage before merging again."
+            "-- not a real change in the register. This guard runs BEFORE "
+            "anything is written to the history or the ledger, so no "
+            "recovery procedure is needed here (section 8 is for repairing "
+            "history already written, not for this): verify all archive "
+            "parts were fetched for this snapshot_year_month, re-run the "
+            "download for any that are missing, rebuild the relations "
+            "stage, and merge again."
         )
+
+
+# RFB ships socios as exactly 10 ZIP parts, Socios0.zip through Socios9.zip.
+# MEASURED against a real RFB archive on 2026-07-29, not assumed -- this is
+# not the same "~10" the rest of this module hedges with elsewhere, it is a
+# counted fact about today's archive layout.
+#
+# This is an ABSOLUTE floor, checked regardless of whether a previous merged
+# month exists. It has to be: the comparison in
+# assert_snapshot_part_count_is_not_decreasing below is a no-op when
+# previous_socios_part_count is None, which is exactly production's current
+# state -- 0 rows, an empty ledger, so the next run IS the first-ever merge.
+# Without this floor, a first run carrying only 1 of 10 parts is accepted
+# silently (verified on real ClickHouse), and that short count becomes the
+# permanent baseline every later month is judged against -- partners present
+# since 2018 would get recorded as spells first seen in whatever month the
+# short first run happened to be, with nothing flagging either run.
+#
+# If RFB legitimately repartitions socios into a different number of files,
+# THIS CONSTANT IS WHAT TO CHANGE, and this guard firing is how you find out.
+# A repartition is not a transfer failure -- telling the operator to
+# "re-run the download" when the real cause is RFB changing its layout sends
+# them in a circle: the re-run will always come back with the new (correct,
+# but different-from-10) part count and fail here again.
+EXPECTED_SOCIOS_PART_COUNT = 10
 
 
 def assert_snapshot_part_count_is_not_decreasing(
     socios_part_count: int, previous_socios_part_count: int | None
 ) -> None:
     """Refuse a snapshot whose manifest recorded FEWER socios ZIP parts than
-    the previous merged month's -- exactly, not by ratio.
+    the previous merged month's -- exactly, not by ratio. Also refuse one
+    below EXPECTED_SOCIOS_PART_COUNT outright, with no previous month needed.
 
     This is the actual defence against the failure
     MIN_SNAPSHOT_EDGE_RATIO's own comment concedes it cannot catch: RFB ships
@@ -175,14 +213,36 @@ def assert_snapshot_part_count_is_not_decreasing(
     legitimate register churn: a shrinking register does not change how many
     ZIP files RFB split socios into.
 
-    Same no-baseline handling as assert_snapshot_edge_count_is_plausible, and
-    for the same two reasons: previous_socios_part_count is None on the
-    first-ever merge (nothing to compare against -- refusing it on principle
-    would be its own bug), and <= 0 also covers a ledger row written before
-    this column existed (migration 000211's `ADD COLUMN ... DEFAULT 0`) -- in
-    both cases there is no real baseline, so the next run must not be
-    refused against one.
+    The EXPECTED_SOCIOS_PART_COUNT check runs FIRST and unconditionally,
+    before the previous-month comparison, because that comparison alone
+    cannot guard the first-ever merge: previous_socios_part_count is None
+    with nothing to compare against, and production is at exactly that state
+    today (0 rows, empty ledger). See EXPECTED_SOCIOS_PART_COUNT's own
+    comment for what a first run with too few parts does if unguarded.
+
+    Same no-baseline handling as assert_snapshot_edge_count_is_plausible for
+    the previous-month comparison specifically: previous_socios_part_count is
+    None on the first-ever merge, and <= 0 also covers a ledger row written
+    before this column existed (migration 000211's `ADD COLUMN ... DEFAULT
+    0`) -- in both cases there is no real baseline for a RELATIVE comparison,
+    so the relative check is skipped. The absolute floor above is not
+    skipped by either of those conditions.
     """
+    if socios_part_count < EXPECTED_SOCIOS_PART_COUNT:
+        raise ValueError(
+            f"Brazil RFB snapshot has {socios_part_count} socios ZIP parts, "
+            f"fewer than the {EXPECTED_SOCIOS_PART_COUNT} RFB is measured to "
+            "ship (Socios0.zip-Socios9.zip). This floor applies regardless "
+            "of whether a previous merged month exists, so it also guards "
+            "the first-ever merge -- there is no previous month's part "
+            "count to compare against yet, and a short first run would "
+            "otherwise become the permanent, silently-accepted baseline "
+            "every later month is judged against. If RFB has legitimately "
+            "repartitioned socios into a different number of files, update "
+            "EXPECTED_SOCIOS_PART_COUNT in history.py to match -- do not "
+            "assume this is a transfer failure and re-run the download "
+            "before checking that."
+        )
     if previous_socios_part_count is None or previous_socios_part_count <= 0:
         return
     if socios_part_count < previous_socios_part_count:

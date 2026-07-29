@@ -621,8 +621,30 @@ def test_br_company_relations_history_migration_covers_columns() -> None:
     )
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.br_company_relations" in sql
+    column_positions = []
     for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_COLUMNS:
         assert f"    {column} " in sql, column
+        column_positions.append(sql.index(f"    {column} "))
+    # BLOCKER 5 (brazil-connection-history whole-branch review): membership
+    # alone is not enough. `INSERT INTO t(a,b) SELECT ... AS b, ... AS a`
+    # writes POSITIONALLY in ClickHouse -- aliases are ignored -- confirmed
+    # on a real ClickHouse 26.5. history.build_merge_select_sql's `SELECT
+    # {passthrough_cols} FROM ...` does exactly this: it relies entirely on
+    # BR_COMPANY_RELATIONS_COLUMNS order matching the table's own column
+    # order. first_seen_snapshot/last_seen_snapshot are adjacent and both
+    # LowCardinality(String); start_at/end_at are adjacent and both
+    # Nullable(Date32) -- a reorder in one file but not the other swaps
+    # values between same-typed neighbors with no type error to catch it.
+    # This branch reordered this exact tuple once already. Only checking
+    # that column_positions comes out already sorted (i.e. the columns
+    # appear in the migration in the same sequence BR_COMPANY_RELATIONS_COLUMNS
+    # lists them) catches a swap; membership cannot.
+    assert column_positions == sorted(column_positions), (
+        "the migration's br_company_relations column order must match "
+        "BR_COMPANY_RELATIONS_COLUMNS order exactly -- a mismatch here means "
+        "the merge's positional INSERT will silently swap values between "
+        "same-typed adjacent columns"
+    )
     assert (
         "ORDER BY (\n    cnpj_basico,\n    related_entity_kind,\n"
         "    related_tax_id,\n    relation_code,\n    relation_since_key\n)"

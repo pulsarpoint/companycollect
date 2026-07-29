@@ -57,7 +57,25 @@ def test_edge_count_guard_ignores_a_zero_previous_count() -> None:
 
 def test_first_ever_snapshot_is_not_blocked_by_the_part_count_guard() -> None:
     """No previous merged month means nothing to compare against -- refusing
-    the very first snapshot on principle would be its own bug."""
+    the very first snapshot on principle would be its own bug. Uses exactly
+    EXPECTED_SOCIOS_PART_COUNT so it also clears the absolute floor below."""
+    history.assert_snapshot_part_count_is_not_decreasing(10, None)
+
+
+def test_first_ever_run_with_fewer_than_expected_socios_parts_is_refused() -> None:
+    """BLOCKER 1: on an empty ledger (production's exact state today),
+    previous_socios_part_count is None and the relative comparison above is
+    a no-op -- so without an absolute floor, a first run carrying only 9 of
+    RFB's measured 10 socios parts would be accepted silently, and that
+    short count would become the permanent baseline every later month is
+    judged against."""
+    with pytest.raises(ValueError, match="socios ZIP parts"):
+        history.assert_snapshot_part_count_is_not_decreasing(9, None)
+
+
+def test_first_ever_run_with_expected_socios_parts_is_accepted() -> None:
+    """The mirror case: exactly EXPECTED_SOCIOS_PART_COUNT (10) on the very
+    first-ever merge must be accepted -- the floor must not be off-by-one."""
     history.assert_snapshot_part_count_is_not_decreasing(10, None)
 
 
@@ -83,8 +101,13 @@ def test_a_snapshot_with_more_parts_than_the_previous_month_is_allowed() -> None
 def test_part_count_guard_ignores_a_zero_previous_count() -> None:
     """Covers a ledger row written before migration 000211 added this column
     (`ADD COLUMN ... DEFAULT 0`) -- it must not make the very next run look
-    like a decrease against a baseline that was never actually recorded."""
-    history.assert_snapshot_part_count_is_not_decreasing(1, 0)
+    like a decrease against a baseline that was never actually recorded.
+    Uses EXPECTED_SOCIOS_PART_COUNT (not some smaller value) because a count
+    below that now fails BLOCKER 1's absolute floor regardless of the
+    previous count -- this test isolates the zero-previous-count relative
+    comparison, not the absolute floor (see the first-ever-run tests for
+    that one)."""
+    history.assert_snapshot_part_count_is_not_decreasing(10, 0)
 
 
 def test_build_merge_select_sql_rejects_a_quote_injection_attempt() -> None:

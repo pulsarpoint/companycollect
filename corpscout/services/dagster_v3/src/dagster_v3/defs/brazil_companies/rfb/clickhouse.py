@@ -410,6 +410,31 @@ def export_brazil_comp_rfb_clickhouse_company_relations(
             client.execute(
                 f"EXCHANGE TABLES {qualified_merge} AND {qualified_target}"
             )
+            # Verify what got published actually matches what the ledger row
+            # above just claimed, instead of trusting that EXCHANGE TABLES
+            # did the right thing. This is what closes the loop on the
+            # ledger-before-EXCHANGE ordering above: that ordering turns a
+            # failed EXCHANGE into a loud, recoverable "recorded but
+            # unpublished" state (an exception here propagates and the
+            # ledger row stays orphaned until a human clears it -- see
+            # history.assert_snapshot_is_newer's "already merged" message
+            # for that recovery). This check exists for the OTHER case: a
+            # "successful" EXCHANGE (no exception) whose result still does
+            # not match the count computed just before it, which would
+            # otherwise be silently trusted as correct simply because no
+            # exception was raised.
+            [(published_row_count,)] = client.execute(
+                f"SELECT count() FROM {qualified_target}"
+            )
+            if int(published_row_count) != int(spells_total):
+                raise ValueError(
+                    "Brazil RFB connection history: after EXCHANGE TABLES "
+                    f"for {snapshot_year_month}, {qualified_target} has "
+                    f"{published_row_count} rows but the ledger just "
+                    f"recorded spells_total={spells_total} for this month. "
+                    "The publish and the ledger have diverged for this run "
+                    "-- do not trust either without investigating."
+                )
         finally:
             client.execute(f"DROP TABLE IF EXISTS {qualified_merge}")
             client.execute(f"DROP TABLE IF EXISTS {qualified_snapshot}")

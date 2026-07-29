@@ -25,6 +25,7 @@ class FakeClickHouseClient:
         *,
         ledger_rows: list[tuple[str, int, int]] | None = None,
         merge_counts: tuple[int, int, int] = (0, 0, 0),
+        published_row_count: int | None = None,
     ) -> None:
         self.statements: list[str] = []
         self.inserts: list[tuple[str, list[tuple[object, ...]]]] = []
@@ -32,6 +33,15 @@ class FakeClickHouseClient:
         # (snapshot_year_month, edges_in_snapshot, socios_part_count)
         self.ledger_rows = list(ledger_rows or [])
         self.merge_counts = merge_counts
+        # What `SELECT count() FROM <published table>` reports after
+        # EXCHANGE TABLES. Defaults to agreeing with merge_counts[0]
+        # (spells_total) so every test that does not care about the
+        # post-EXCHANGE verification guard keeps passing it by default;
+        # pass a different value to simulate the publish and the ledger
+        # diverging.
+        self.published_row_count = (
+            merge_counts[0] if published_row_count is None else published_row_count
+        )
 
     def execute(
         self,
@@ -54,6 +64,8 @@ class FakeClickHouseClient:
             return list(self.ledger_rows)
         if "countIf(first_seen_snapshot" in sql:
             return [self.merge_counts]
+        if sql.strip().startswith("SELECT count() FROM"):
+            return [(self.published_row_count,)]
         if isinstance(params, list):
             self.inserts.append((sql, params))
             return None
@@ -404,6 +416,71 @@ def test_company_relations_export_writes_the_ledger_row_before_exchanging_tables
         index for index, sql in enumerate(executed_sql) if "EXCHANGE TABLES" in sql
     )
     assert ledger_insert_index < exchange_index
+
+
+def test_company_relations_export_verifies_published_row_count_after_exchange(
+    tmp_path: Path,
+) -> None:
+    """IMPORTANT 2 fix part 1: the ledger row is written before EXCHANGE
+    TABLES (see the ordering test above), so a failed EXCHANGE leaves a
+    loud, recoverable "recorded but unpublished" state -- but a
+    "successful" EXCHANGE (no exception) was previously trusted blindly.
+    This pins that the export actually queries the published table's row
+    count, and that it does so AFTER EXCHANGE TABLES, not before -- checking
+    the count before the swap would be checking the wrong table."""
+    relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
+    fake_client = FakeClickHouseClient(ledger_rows=[], merge_counts=(2, 2, 0))
+    fake_resource = FakeClickHouseResource(fake_client)
+
+    with duckdb.connect(str(relations_path)) as connection:
+        clickhouse.export_brazil_comp_rfb_clickhouse_company_relations(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+            snapshot_year_month="2026-07",
+            source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
+        )
+
+    executed_sql = [sql for sql, _, _ in fake_client.calls]
+    exchange_index = next(
+        index for index, sql in enumerate(executed_sql) if "EXCHANGE TABLES" in sql
+    )
+    verify_index = next(
+        index
+        for index, sql in enumerate(executed_sql)
+        if sql.strip().startswith("SELECT count() FROM")
+    )
+    assert exchange_index < verify_index
+    assert tables.QUALIFIED_BR_COMPANY_RELATIONS_TABLE in executed_sql[verify_index]
+
+
+def test_company_relations_export_raises_if_published_row_count_disagrees_with_ledger(
+    tmp_path: Path,
+) -> None:
+    """IMPORTANT 2 fix part 1: EXCHANGE TABLES is atomic in ClickHouse, so
+    this should always agree -- but "should always agree" is exactly the
+    kind of claim that was previously trusted without verification. A
+    mismatch here means the publish and the ledger have already diverged
+    for THIS run, and must fail loudly rather than let a later run build on
+    state that does not match what the ledger claims."""
+    relations_path = _build_relations_stage(tmp_path, _TWO_EDGES_VALUES_SQL)
+    manifest_path = _build_manifest_stage(tmp_path, socios_part_count=10)
+    fake_client = FakeClickHouseClient(
+        ledger_rows=[], merge_counts=(2, 2, 0), published_row_count=1
+    )
+    fake_resource = FakeClickHouseResource(fake_client)
+
+    with duckdb.connect(str(relations_path)) as connection, pytest.raises(
+        ValueError, match="diverged"
+    ):
+        clickhouse.export_brazil_comp_rfb_clickhouse_company_relations(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+            snapshot_year_month="2026-07",
+            source_run_id="run-1",
+            snapshot_manifest_database_path=manifest_path,
+        )
 
 
 def test_company_relations_snapshot_stage_ddl_carries_resolved_at() -> None:
