@@ -160,7 +160,7 @@ def rfb_archive_object_key(
 
     S3 lifecycle rules filter by prefix, not glob, so `snapshot=` first would
     make `snapshot=*/family=socios/` unexpressible and force a new rule every
-    month. This order makes the 90-day personal-data expiry a single rule.
+    month. This order makes the personal-data expiry a single rule.
     """
     return (
         f"{rfb_family_prefix(family)}"
