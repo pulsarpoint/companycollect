@@ -229,6 +229,7 @@ EXPECTED_MIGRATIONS = (
     "000212_corpscout_br_pgfn_uint128_row_identity",
     "000213_corpscout_ted_cpv_classification",
     "000214_corpscout_ted_cpv_in_registers",
+    "000215_corpscout_br_pncp_translated",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

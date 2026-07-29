@@ -245,7 +245,12 @@ const SOURCE_RECORD_QUERIES: Record<string, string> = {
   // missing, so its page showed the handful of unified-view columns while all
   // 42 stored PNCP fields sat unread. estonia_rhr_procurement and
   // norway_doffin_procurement are still missing for the same reason.
-  brazil_pncp_procurement: `SELECT * FROM br_pncp_contracts
+  // The *_translated view, not the base table: it adds objeto_contrato_en so the
+  // page can lead with English. It reads br_pncp_contracts rather than
+  // br_government_contracts, so the 3,283 contracts that view filters out
+  // (natural persons, invalid supplier ids) still resolve here.
+  // Requires migration 000215.
+  brazil_pncp_procurement: `SELECT * FROM br_pncp_contracts_translated
      WHERE numero_controle_pncp = {notice:String} LIMIT 1`,
   sweden_uhm_procurement: `SELECT * FROM se_uhm_procurement_awards
      WHERE source_procurement_id = {notice:String} LIMIT 1`,
@@ -254,6 +259,45 @@ const SOURCE_RECORD_QUERIES: Record<string, string> = {
   finland_hilma_procurement: `SELECT * FROM fi_hilma_notices
      WHERE notice_number = {notice:String} LIMIT 1`,
 };
+
+/**
+ * A source record query may name a view that a target database has not migrated
+ * to yet — the migration ledger and this app deploy independently, and
+ * br_pncp_contracts_translated (000215) is exactly that case. Falling back to
+ * the pre-migration query keeps the page working through the window instead of
+ * turning it into a 500, and the richer view is picked up automatically once the
+ * migration lands, with no code change to coordinate.
+ *
+ * Only "table does not exist" is swallowed. Any other ClickHouse error is a real
+ * fault and must surface.
+ */
+const SOURCE_RECORD_FALLBACKS: Record<string, string> = {
+  brazil_pncp_procurement: `SELECT * FROM br_pncp_contracts
+     WHERE numero_controle_pncp = {notice:String} LIMIT 1`,
+};
+
+function isMissingTableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /UNKNOWN_TABLE|Unknown table|doesn't exist|does not exist/i.test(message);
+}
+
+async function fetchSourceRecord(
+  source: string,
+  notice: string,
+): Promise<SourceRecord | null> {
+  try {
+    const found = await chQuery<SourceRecord>(SOURCE_RECORD_QUERIES[source], { notice });
+    return found.length > 0 ? found[0] : null;
+  } catch (error) {
+    const fallback = SOURCE_RECORD_FALLBACKS[source];
+    if (!fallback || !isMissingTableError(error)) throw error;
+    console.warn(
+      `[contracts] ${source}: primary source-record view missing, using pre-migration query`,
+    );
+    const found = await chQuery<SourceRecord>(fallback, { notice });
+    return found.length > 0 ? found[0] : null;
+  }
+}
 
 export async function getContractDetail(
   country: CountryConfig,
@@ -304,10 +348,8 @@ export async function getContractDetail(
   const sourceRecords = (
     await Promise.all(
       [...wanted.values()].map(async ({ source, notice }) => {
-        const found = await chQuery<SourceRecord>(SOURCE_RECORD_QUERIES[source], {
-          notice,
-        });
-        return found.length > 0 ? { source, notice, fields: found[0] } : null;
+        const found = await fetchSourceRecord(source, notice);
+        return found ? { source, notice, fields: found } : null;
       }),
     )
   ).filter((r): r is { source: string; notice: string; fields: SourceRecord } => r !== null);

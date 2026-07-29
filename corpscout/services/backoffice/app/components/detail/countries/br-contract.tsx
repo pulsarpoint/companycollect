@@ -229,7 +229,6 @@ export const BR_CONTRACT_SECTIONS: BrSection[] = [
   {
     title: "Contract",
     fields: [
-      { key: "objeto_contrato", en: "What was procured", source: "objetoContrato" },
       { key: "tipo_contrato", en: "Instrument type", source: "tipoContrato.nome" },
       { key: "categoria_processo", en: "Category", source: "categoriaProcesso.nome" },
       { key: "is_revenue_contract", en: "Direction", source: "receita" },
@@ -284,6 +283,28 @@ export const BR_CONTRACT_SECTIONS: BrSection[] = [
     ],
   },
 ];
+
+/**
+ * `objeto_contrato` is the one string that says what the money bought, and PNCP
+ * publishes it only in Portuguese. `objeto_contrato_en` comes from
+ * br_pncp_contracts_translated (machine translation via text_translations) and
+ * is absent entirely when the page reads the untranslated base table.
+ *
+ * English leads, per the page's rule, but the Portuguese is kept beneath it
+ * rather than replaced: the translation is machine-made and the original is what
+ * the register actually published. When the two are identical -- acronyms,
+ * proper nouns -- the original is dropped, because printing one string twice
+ * reads as a rendering fault.
+ */
+export function brProcuredObject(
+  fields: Record<string, unknown>,
+): { primary: string; original: string | null } | null {
+  const original = text(fields.objeto_contrato);
+  const english = text(fields.objeto_contrato_en);
+  if (original == null) return english == null ? null : { primary: english, original: null };
+  if (english == null || english === original) return { primary: original, original: null };
+  return { primary: english, original };
+}
 
 /** The decode a field needs, or null to print it as stored. */
 const BR_DECODERS: Record<string, (value: unknown) => string | null> = {
@@ -408,12 +429,30 @@ export function BrContractRecord({ fields }: { fields: Record<string, unknown> }
     value: brTriStateFlag(fields[field.key]),
   })).filter((row): row is { field: BrField; value: string } => row.value !== null);
 
+  const procured = brProcuredObject(fields);
   const matchStatus = brMatchStatus(fields.company_match_status);
   const fxRate = fields.fx_rate_to_usd == null ? null : String(fields.fx_rate_to_usd);
   const fxDate = fields.fx_rate_date == null ? null : String(fields.fx_rate_date);
 
   return (
     <div className="flex flex-col gap-6">
+      {procured ? (
+        <section className="flex flex-col gap-1">
+          <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            What was procured
+            <span className="text-muted-foreground/70 ml-1.5 font-mono text-[10px] normal-case">
+              objetoContrato
+            </span>
+          </h3>
+          <p className="text-sm">{procured.primary}</p>
+          {procured.original ? (
+            <p className="text-muted-foreground text-xs" lang="pt">
+              {procured.original}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
       {sections.map((section) => (
         <section key={section.title} className="flex flex-col gap-2">
           <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">

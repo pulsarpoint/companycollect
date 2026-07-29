@@ -6,6 +6,7 @@ import {
   brContractType,
   brJsonName,
   brPersonType,
+  brProcuredObject,
   brPower,
   brProcessCategory,
   brRevenueOrExpenditure,
@@ -168,5 +169,47 @@ describe("section layout", () => {
     expect(keys).not.toContain("parliamentary_amendment");
     expect(keys).not.toContain("from_adhesion");
     expect(keys).not.toContain("has_reallocation");
+  });
+});
+
+describe("translated contract object", () => {
+  it("puts English first and keeps the Portuguese the register published", () => {
+    // English primary is the page's rule; the original stays because it is what
+    // PNCP actually published and the translation is machine-made.
+    expect(
+      brProcuredObject({
+        objeto_contrato: "AQUISIÇÃO DE MATERIAIS DE TIC",
+        objeto_contrato_en: "PURCHASE OF IT MATERIALS",
+      }),
+    ).toEqual({ primary: "PURCHASE OF IT MATERIALS", original: "AQUISIÇÃO DE MATERIAIS DE TIC" });
+  });
+
+  it("shows the Portuguese alone when nothing is translated yet", () => {
+    // True for every row until the loader has run, and permanently for any text
+    // the translator failed on. Never render an empty object.
+    expect(
+      brProcuredObject({ objeto_contrato: "CARDIOLOGIA", objeto_contrato_en: "" }),
+    ).toEqual({ primary: "CARDIOLOGIA", original: null });
+  });
+
+  it("works on a record from the untranslated view", () => {
+    // The column is absent entirely when the page reads br_pncp_contracts
+    // rather than br_pncp_contracts_translated.
+    expect(brProcuredObject({ objeto_contrato: "CARDIOLOGIA" })).toEqual({
+      primary: "CARDIOLOGIA",
+      original: null,
+    });
+  });
+
+  it("does not repeat the text when the translation is identical", () => {
+    // Proper nouns and acronym-only objects come back unchanged; printing the
+    // same string twice reads as a rendering bug.
+    expect(
+      brProcuredObject({ objeto_contrato: "SIAFI", objeto_contrato_en: "SIAFI" }),
+    ).toEqual({ primary: "SIAFI", original: null });
+  });
+
+  it("is absent when the register published no object", () => {
+    expect(brProcuredObject({ objeto_contrato: "" })).toBeNull();
   });
 });
