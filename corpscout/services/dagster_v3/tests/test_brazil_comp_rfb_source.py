@@ -479,7 +479,7 @@ def test_rfb_archive_object_key_puts_family_before_snapshot() -> None:
     `family=` comes BEFORE `snapshot=` because S3 lifecycle rules filter by
     prefix, not glob. Only this order makes
     `brazil_rfb/raw_archives/family=socios/` selectable, which is what lets the
-    90-day expiry on personal data (design section 6) be expressed as one rule
+    one-year expiry on personal data (design section 6) be expressed as one rule
     instead of a new rule every month.
     """
     assert (
@@ -500,8 +500,12 @@ def test_rfb_metadata_object_key_is_a_sidecar_of_the_archive_key() -> None:
 
 def test_socios_retention_rule_expires_only_the_personal_data_family() -> None:
     """Design section 6: socios carries person names, masked CPFs and age bands,
-    so its raw archives expire after 90 days. The other nine families carry no
+    so its raw archives expire after one year. The other nine families carry no
     personal data and are kept indefinitely for rebuildability.
+
+    One year rather than 90 days because these archives are the only path for
+    rebuilding br_company_relations' connection history -- see
+    brazil_rfb_socios_history-design.md section 7.
 
     The rule is applied in code rather than by hand because this repo has no
     infrastructure-as-code -- a hand-applied policy would live nowhere, survive
@@ -510,7 +514,7 @@ def test_socios_retention_rule_expires_only_the_personal_data_family() -> None:
     rule = source.rfb_socios_retention_rule()
 
     assert rule["Filter"]["Prefix"] == "brazil_rfb/raw_archives/family=socios/"
-    assert rule["Expiration"]["Days"] == 90
+    assert rule["Expiration"]["Days"] == 365
     assert rule["Status"] == "Enabled"
 
     # ...and it must expire ONLY socios. The other nine families are kept
@@ -554,7 +558,7 @@ def test_sync_snapshot_archives_downloads_missing_archives_to_object_store() -> 
     )
 
     assert object_store.created_buckets == [source.BRAZIL_RFB_RAW_BUCKET]
-    # The 90-day personal-data expiry is applied whenever the bucket is
+    # The one-year personal-data expiry is applied whenever the bucket is
     # ensured. Without this assertion, deleting the apply_lifecycle_rules call
     # leaves every test passing -- verified by mutation -- so the privacy
     # control the design doc promises would have no guard at all.

@@ -766,12 +766,17 @@ def brazil_comp_rfb_company_relations_clickhouse(
     with read_only_duckdb_connection(
         duckdb_resource(stage_paths.relations)
     ) as connection:
-        rows = export_brazil_comp_rfb_clickhouse_company_relations(
+        counts = export_brazil_comp_rfb_clickhouse_company_relations(
             duckdb_connection=connection,
             clickhouse=clickhouse,
+            snapshot_year_month=brazil_comp_rfb_snapshot_year_month(
+                context.partition_key
+            ),
+            source_run_id=context.run_id,
+            snapshot_manifest_database_path=stage_paths.manifest,
             log=context.log.info,
         )
-    return dg.MaterializeResult(metadata={"rows": rows})
+    return dg.MaterializeResult(metadata=dict(counts))
 
 
 @dg.asset(

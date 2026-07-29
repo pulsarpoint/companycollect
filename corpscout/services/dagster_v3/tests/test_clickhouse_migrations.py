@@ -224,6 +224,8 @@ EXPECTED_MIGRATIONS = (
     "000207_corpscout_fr_sk_national_procurement",
     "000208_corpscout_br_company_relations",
     "000209_corpscout_fr_financial_and_enrichments",
+    "000210_corpscout_br_company_relations_history",
+    "000211_corpscout_br_company_relations_socios_part_count",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -601,20 +603,84 @@ def test_clickhouse_migrations_have_down_files() -> None:
         )
 
 
-def test_br_company_relations_migration_covers_export_columns() -> None:
-    """The edge table: one row per company-to-partner link. A newly exported
-    column with no migration behind it fails here rather than mid-export."""
-    sql = _migration_sql("000208_corpscout_br_company_relations.up.sql")
-    down_sql = _migration_sql("000208_corpscout_br_company_relations.down.sql")
+def test_br_company_relations_history_migration_covers_columns() -> None:
+    """One row per spell. relation_code and relation_since_key are IN the sort
+    key: a role change or a re-entry opens a new row rather than mutating one,
+    which is the change the table exists to show.
+
+    The ledger's column contract spans two migrations -- 000210 created the
+    table, 000211 added socios_part_count -- so the contract holds against
+    their union, the same pattern as
+    test_sweden_uhm_migration_covers_export_columns below."""
+    sql = _migration_sql("000210_corpscout_br_company_relations_history.up.sql")
+    down_sql = _migration_sql(
+        "000210_corpscout_br_company_relations_history.down.sql"
+    )
+    added_later = _migration_sql(
+        "000211_corpscout_br_company_relations_socios_part_count.up.sql"
+    )
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.br_company_relations" in sql
-    for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_EXPORT_COLUMNS:
+    column_positions = []
+    for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_COLUMNS:
         assert f"    {column} " in sql, column
-    assert (
-        "ORDER BY (cnpj_basico, related_entity_kind, related_tax_id, relation_code)"
-        in sql
+        column_positions.append(sql.index(f"    {column} "))
+    # BLOCKER 5 (brazil-connection-history whole-branch review): membership
+    # alone is not enough. `INSERT INTO t(a,b) SELECT ... AS b, ... AS a`
+    # writes POSITIONALLY in ClickHouse -- aliases are ignored -- confirmed
+    # on a real ClickHouse 26.5. history.build_merge_select_sql's `SELECT
+    # {passthrough_cols} FROM ...` does exactly this: it relies entirely on
+    # BR_COMPANY_RELATIONS_COLUMNS order matching the table's own column
+    # order. first_seen_snapshot/last_seen_snapshot are adjacent and both
+    # LowCardinality(String); start_at/end_at are adjacent and both
+    # Nullable(Date32) -- a reorder in one file but not the other swaps
+    # values between same-typed neighbors with no type error to catch it.
+    # This branch reordered this exact tuple once already. Only checking
+    # that column_positions comes out already sorted (i.e. the columns
+    # appear in the migration in the same sequence BR_COMPANY_RELATIONS_COLUMNS
+    # lists them) catches a swap; membership cannot.
+    assert column_positions == sorted(column_positions), (
+        "the migration's br_company_relations column order must match "
+        "BR_COMPANY_RELATIONS_COLUMNS order exactly -- a mismatch here means "
+        "the merge's positional INSERT will silently swap values between "
+        "same-typed adjacent columns"
     )
+    assert (
+        "ORDER BY (\n    cnpj_basico,\n    related_entity_kind,\n"
+        "    related_tax_id,\n    relation_code,\n    relation_since_key\n)"
+    ) in sql
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS corpscout.br_company_relations_snapshots" in sql
+    )
+    for column in brazil_rfb_tables.BR_COMPANY_RELATIONS_SNAPSHOT_COLUMNS:
+        assert (
+            f"    {column} " in sql
+            or f"ADD COLUMN IF NOT EXISTS {column} " in added_later
+        ), column
+
     assert "DROP TABLE IF EXISTS corpscout.br_company_relations" in down_sql
+
+
+def test_br_company_relations_socios_part_count_migration_adds_column() -> None:
+    """IMPORTANT 2 fix (brazil-connection-history review): the ledger must
+    carry the exact socios ZIP part count so a single missing part -- which
+    MIN_SNAPSHOT_EDGE_RATIO's own comment concedes it cannot catch, since it
+    is only a ~10% edge-count drop against a 50% floor -- can be refused by
+    an exact comparison instead. See
+    history.assert_snapshot_part_count_is_not_decreasing. 000210 is left
+    unedited because the ledger is forward-only."""
+    sql = _migration_sql(
+        "000211_corpscout_br_company_relations_socios_part_count.up.sql"
+    )
+    down_sql = _migration_sql(
+        "000211_corpscout_br_company_relations_socios_part_count.down.sql"
+    )
+
+    assert "ALTER TABLE corpscout.br_company_relations_snapshots" in sql
+    assert "ADD COLUMN IF NOT EXISTS socios_part_count " in sql
+    assert "corpscout.br_company_relations_snapshots" in down_sql
+    assert "DROP COLUMN IF EXISTS socios_part_count" in down_sql
 
 
 def test_norway_pdf_financial_tables_preserve_source_provenance() -> None:

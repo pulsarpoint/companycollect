@@ -113,10 +113,13 @@ def test_absent_values_land_as_empty_string_not_null(tmp_path: Path) -> None:
         socios_database_path=socios_path,
     )
 
+    # The snapshot build only produces BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS
+    # (a subset of BR_COMPANY_RELATIONS_COLUMNS -- the rest are computed by the
+    # history merge from columns this table doesn't have).
     string_columns = [
         column
-        for column in tables.BR_COMPANY_RELATIONS_COLUMNS
-        if column not in ("relation_since", "resolved_at")
+        for column in tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS
+        if column != "relation_since"
     ]
     nulls = " + ".join(
         f"count(*) filter (where {column} is null)" for column in string_columns
@@ -131,6 +134,37 @@ def test_absent_values_land_as_empty_string_not_null(tmp_path: Path) -> None:
         where cnpj_basico = '44444444'
         """
     ).fetchone() == (None, "")
+
+
+def test_relation_since_key_is_the_source_entry_date_verbatim(tmp_path: Path) -> None:
+    """RFB publishes no departures, but it DOES publish re-entries: a partner who
+    rejoins carries a new data_entrada_sociedade. That makes a second spell
+    detectable from one snapshot, so the entry date is part of a spell's
+    identity -- as text, because ORDER BY cannot hold Nullable.
+    """
+    socios_path = tmp_path / "socios.duckdb"
+    _socios_stage(socios_path)
+    connection = duckdb.connect(":memory:")
+
+    relations.build_brazil_rfb_company_relations(
+        connection=connection,
+        source_run_id="run-1",
+        snapshot_year_month="2026-07",
+        socios_database_path=socios_path,
+    )
+
+    rows = connection.execute(
+        f"""
+        select relation_since_key, relation_since
+        from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}
+        order by cnpj_basico, related_entity_kind
+        """
+    ).fetchall()
+    assert rows[0][0] == "20180314"
+    assert rows[0][1].isoformat() == "2018-03-14"
+    # the row whose entry date is blank keeps '' -- never NULL, because the
+    # column is part of a non-nullable sort key
+    assert ("", None) in rows
 
 
 def test_relations_refuse_an_empty_source(tmp_path: Path) -> None:
@@ -154,3 +188,60 @@ def test_relations_refuse_an_empty_source(tmp_path: Path) -> None:
             snapshot_year_month="2026-07",
             socios_database_path=socios_path,
         )
+
+
+def test_relations_never_emit_null_in_the_dedup_tiebreak_columns(
+    tmp_path: Path,
+) -> None:
+    """history.py's argMax dedup is only equivalent to the row_number() form it
+    replaced because these columns are never NULL.
+
+    argMax SKIPS rows whose argument is NULL, in both engines. If the winning
+    row held NULL in an argMax'd column, argMax would take the runner-up's
+    value for that column and the winner's for the others -- a mixed row
+    assembled from two source rows, written permanently, with nothing failing.
+
+    This test is the pin for that invariant, which otherwise lives only in the
+    coalescing inside build_brazil_rfb_company_relations one file away.
+    """
+    socios_path = tmp_path / "socios.duckdb"
+    _socios_stage(socios_path)
+    connection = duckdb.connect(":memory:")
+
+    relations.build_brazil_rfb_company_relations(
+        connection=connection,
+        source_run_id="run-1",
+        snapshot_year_month="2026-07",
+        socios_database_path=socios_path,
+    )
+
+    tiebreak_columns = (
+        "related_name",
+        "related_country",
+        "age_band",
+        "representative_tax_id",
+        "representative_name",
+        "representative_code",
+    )
+    nulls = " + ".join(
+        f"count(*) filter (where {column} is null)" for column in tiebreak_columns
+    )
+    assert connection.execute(
+        f"select {nulls} from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}"
+    ).fetchone() == (0,)
+
+    # ...and relation_since must be constant within a SPELL_KEY group, since it
+    # is the one NULL-capable column the dedup orders on. Both it and
+    # relation_since_key derive from the same trimmed source value, so a group
+    # with two distinct relation_since values would mean that has been broken.
+    assert connection.execute(
+        f"""
+        select count(*) from (
+            select cnpj_basico, related_entity_kind, related_tax_id,
+                   relation_code, relation_since_key
+            from {DATASET}.{tables.COMPANY_RELATIONS_TABLE}
+            group by 1, 2, 3, 4, 5
+            having count(distinct relation_since) > 1
+        )
+        """
+    ).fetchone() == (0,)

@@ -135,23 +135,75 @@ QUALIFIED_BR_COMPANY_RELATIONS_TABLE = (
 BR_COMPANY_RELATIONS_COLUMNS = (
     "country_iso2",
     "source_slug",
-    "source_run_id",
-    "source_record_id",
-    "snapshot_year_month",
     "cnpj_basico",
     "related_entity_kind",
-    "related_name",
     "related_tax_id",
     "relation_code",
-    "relation_since",
+    "relation_since_key",
+    "related_name",
     "related_country",
+    "age_band",
     "representative_tax_id",
     "representative_name",
     "representative_code",
-    "age_band",
+    "relation_since",
+    "first_seen_snapshot",
+    "last_seen_snapshot",
+    "start_at",
+    "end_at",
+    "is_current",
+    "observations",
     "resolved_at",
 )
 BR_COMPANY_RELATIONS_EXPORT_COLUMNS = BR_COMPANY_RELATIONS_COLUMNS
+
+# What a single monthly snapshot can actually supply -- BR_COMPANY_RELATIONS_COLUMNS
+# minus the six columns only the history merge can compute (first_seen_snapshot,
+# last_seen_snapshot, start_at, end_at, is_current, observations). relations.py's
+# DuckDB build produces (at least) these; the merge step reads them to fold a
+# snapshot into the SCD2 history rather than replacing it.
+BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "cnpj_basico",
+    "related_entity_kind",
+    "related_tax_id",
+    "relation_code",
+    "relation_since_key",
+    "related_name",
+    "related_country",
+    "age_band",
+    "representative_tax_id",
+    "representative_name",
+    "representative_code",
+    "relation_since",
+    # resolved_at is produced by the DuckDB build (`now()` in relations.py) and
+    # must be shipped. A column left out of this tuple is never inserted, so
+    # ClickHouse fills it with the type default -- for DateTime64 that is the
+    # epoch, silently, on every row.
+    "resolved_at",
+)
+
+BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE_CH = "br_company_relations_snapshots"
+QUALIFIED_BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE = (
+    f"{BRAZIL_COMP_RFB_DATABASE}.{BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE_CH}"
+)
+BR_COMPANY_RELATIONS_SNAPSHOT_COLUMNS = (
+    "snapshot_year_month",
+    "merged_at",
+    "source_run_id",
+    "edges_in_snapshot",
+    "spells_opened",
+    "spells_closed",
+    "spells_total",
+    # Added by migration 000211. The exact socios ZIP part count for this
+    # month's manifest -- MIN_SNAPSHOT_EDGE_RATIO (history.py) cannot catch a
+    # single missing part (~10% edge drop, inside its 50% floor); comparing
+    # this count to the previous merged month's exactly can, with no
+    # threshold and no false-positive risk. See
+    # history.assert_snapshot_part_count_is_not_decreasing.
+    "socios_part_count",
+)
 
 ESTABLISHMENTS_TABLE = "establishments"
 COMPANY_CONTACT_INFO_TABLE = "company_contact_info"

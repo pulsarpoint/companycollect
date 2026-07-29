@@ -66,6 +66,7 @@ def build_brazil_rfb_company_relations(
                 {_blank('s.qualificacao_socio')} as relation_code,
                 try_strptime(nullif(trim(s.data_entrada_sociedade), ''), '%Y%m%d')::date
                     as relation_since,
+                {_blank('s.data_entrada_sociedade')} as relation_since_key,
                 {_blank('s.pais')} as related_country,
                 {_blank('s.representante_legal')} as representative_tax_id,
                 {_blank('s.nome_representante')} as representative_name,
