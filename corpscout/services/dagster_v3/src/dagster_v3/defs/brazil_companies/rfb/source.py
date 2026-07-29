@@ -138,9 +138,14 @@ def build_year_month_base_url(
 RFB_RAW_ARCHIVE_PREFIX = "brazil_rfb/raw_archives"
 
 # Socios is the only family carrying personal data -- person names, masked CPFs
-# and age bands -- so its raw archives expire while the other nine are kept
-# indefinitely for rebuildability. See the socios design doc, section 6.
-RFB_SOCIOS_RETENTION_DAYS = 90
+# and age bands. One year, not 90 days: the archives are the ONLY path for
+# rebuilding br_company_relations' connection history, since that table is
+# derived state. Ninety days would make the history unverifiable after a
+# quarter. See brazil_rfb_socios_history-design.md section 7.
+#
+# This is a hard limit, not a soft one -- RFB drops old snapshots, so
+# re-fetching past the window is not actually available.
+RFB_SOCIOS_RETENTION_DAYS = 365
 RFB_SOCIOS_RETENTION_PREFIX = f"{RFB_RAW_ARCHIVE_PREFIX}/family=socios/"
 
 

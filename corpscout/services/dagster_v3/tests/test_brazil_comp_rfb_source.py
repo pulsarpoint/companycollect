@@ -510,7 +510,7 @@ def test_socios_retention_rule_expires_only_the_personal_data_family() -> None:
     rule = source.rfb_socios_retention_rule()
 
     assert rule["Filter"]["Prefix"] == "brazil_rfb/raw_archives/family=socios/"
-    assert rule["Expiration"]["Days"] == 90
+    assert rule["Expiration"]["Days"] == 365
     assert rule["Status"] == "Enabled"
 
     # ...and it must expire ONLY socios. The other nine families are kept
