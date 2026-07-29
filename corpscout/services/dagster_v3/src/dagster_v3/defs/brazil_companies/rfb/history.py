@@ -82,6 +82,65 @@ def assert_snapshot_is_newer(
         )
 
 
+# RFB ships socios as ~10 roughly equal-sized ZIP parts. A mid-download
+# failure (network drop, killed job, disk full) yields a snapshot that is
+# still a well-formed CSV -- relations.py's own "refuse if completely empty"
+# guard does not fire -- but is missing whichever parts never landed. Fed
+# into the merge, every partner absent from those missing parts reads as
+# "gone by this snapshot" and gets closed: silent, permanent corruption of
+# the spell history, and the likelier corruption trigger in practice than the
+# out-of-order case assert_snapshot_is_newer guards above.
+#
+# 0.5 (refuse anything below half the previous merged month's edge count) is
+# deliberately loose, not tight:
+#   - it tolerates the real month-to-month register churn described in
+#     brazil_rfb_socios_history-design.md (partners leaving, companies being
+#     deregistered) without false-positiving on a legitimate shrink;
+#   - losing even 1 of the ~10 parts is a ~10% drop, so a 50% floor still
+#     catches the shape a truncated download actually takes (several
+#     consecutive parts missing from one failed transfer), without needing to
+#     assume the parts are exactly equal-sized, which they are not guaranteed
+#     to be.
+# A tighter threshold would need real production month-over-month variance
+# data to justify without risking false positives that block a legitimate
+# (if unusually small) run; this is the conservative choice until that data
+# exists.
+MIN_SNAPSHOT_EDGE_RATIO = 0.5
+
+
+def assert_snapshot_edge_count_is_plausible(
+    edges_in_snapshot: int, previous_edges_in_snapshot: int | None
+) -> None:
+    """Refuse a short snapshot before it ever reaches the merge.
+
+    Only compares against the immediately preceding MERGED month -- the
+    caller passes None when there is no previous month (first-ever merge),
+    and this is a no-op in that case: there is nothing to compare against,
+    and refusing the first snapshot on principle would be its own bug.
+
+    This is deliberately a size check, not a content check: it cannot tell a
+    truncated download from a genuine 50%+ month-over-month change in
+    Brazil's company register, and does not try to. It exists to stop the
+    common, mechanical failure (a partial download), not to be a complete
+    fraud detector.
+    """
+    if previous_edges_in_snapshot is None or previous_edges_in_snapshot <= 0:
+        return
+    threshold = previous_edges_in_snapshot * MIN_SNAPSHOT_EDGE_RATIO
+    if edges_in_snapshot < threshold:
+        raise ValueError(
+            f"Brazil RFB snapshot has {edges_in_snapshot} edges, fewer than "
+            f"{MIN_SNAPSHOT_EDGE_RATIO:.0%} of the {previous_edges_in_snapshot} "
+            "edges in the previous merged month. This looks like a truncated "
+            "download -- RFB ships socios as ~10 ZIP parts and a partial "
+            "transfer still produces a valid-looking but incomplete snapshot "
+            "-- not a real change in the register. Re-run the download for "
+            "this snapshot_year_month, verify all archive parts were "
+            "fetched (see brazil_rfb_socios_history-design.md section 8), "
+            "and rebuild the relations stage before merging again."
+        )
+
+
 def _validate_snapshot_stamp(snapshot_year_month: str, snapshot_date: str) -> tuple[str, str]:
     """Validate and normalize the two values `build_merge_select_sql` stamps
     into every row of a self-referential, permanent history table.

@@ -21,6 +21,40 @@ def test_first_snapshot_into_an_empty_history_is_allowed() -> None:
     history.assert_snapshot_is_newer("2026-06", [])
 
 
+def test_first_ever_snapshot_is_not_blocked_by_the_edge_count_guard() -> None:
+    """No previous merged month means nothing to compare against -- refusing
+    the very first snapshot on principle would be its own bug."""
+    history.assert_snapshot_edge_count_is_plausible(1, None)
+
+
+def test_a_snapshot_missing_most_of_its_edges_is_refused() -> None:
+    """Simulates a truncated download: several of RFB's ~10 socios ZIP parts
+    never landed, so the snapshot is well-formed but far short. Left
+    unchecked, the merge reads every missing partner as 'gone' and silently,
+    permanently closes their spells."""
+    with pytest.raises(ValueError, match="truncated download"):
+        history.assert_snapshot_edge_count_is_plausible(9_000_000, 20_000_000)
+
+
+def test_a_snapshot_with_a_plausible_small_drop_is_allowed() -> None:
+    """Real month-to-month churn (partners leaving, companies deregistered)
+    must not be mistaken for corruption."""
+    history.assert_snapshot_edge_count_is_plausible(19_000_000, 20_000_000)
+
+
+def test_a_snapshot_exactly_at_the_threshold_is_allowed() -> None:
+    """The guard is `< threshold`, not `<=` -- landing exactly on the ratio
+    must pass, not be an off-by-one rejection."""
+    history.assert_snapshot_edge_count_is_plausible(10_000_000, 20_000_000)
+
+
+def test_edge_count_guard_ignores_a_zero_previous_count() -> None:
+    """A previous merged month legitimately recorded with 0 edges (e.g. a
+    still-empty history) must not make every subsequent snapshot look like a
+    100% drop against a non-existent baseline."""
+    history.assert_snapshot_edge_count_is_plausible(1, 0)
+
+
 def test_build_merge_select_sql_rejects_a_quote_injection_attempt() -> None:
     """build_merge_select_sql interpolates snapshot_year_month raw into the
     returned SQL text. Unvalidated, a trailing quote closes the string early

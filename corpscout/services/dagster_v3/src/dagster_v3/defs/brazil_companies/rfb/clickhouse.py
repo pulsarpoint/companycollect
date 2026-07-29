@@ -1,9 +1,11 @@
+import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.brazil_companies.rfb import tables
+from dagster_v3.defs.brazil_companies.rfb import history, tables
 from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
@@ -96,52 +98,221 @@ def export_brazil_comp_rfb_clickhouse_establishments(
     return rows
 
 
+def _qualified(table: str) -> str:
+    return f"{tables.BRAZIL_COMP_RFB_DATABASE}.{table}"
+
+
+# ClickHouse types for the snapshot stage table, keyed by column name so the
+# DDL below is built FROM tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS
+# instead of hand-listing the columns a second time. A previous version of
+# this export hand-listed 14 columns for that DDL and silently dropped
+# resolved_at, which then landed at the DateTime64 type default (the epoch)
+# on every row instead of failing loudly. Building the DDL from the same
+# tuple the exporter ships columns from means a column added to that tuple
+# without a matching entry here fails immediately with a KeyError instead of
+# silently defaulting.
+_SNAPSHOT_STAGE_COLUMN_TYPES: dict[str, str] = {
+    "country_iso2": "LowCardinality(String)",
+    "source_slug": "LowCardinality(String)",
+    "cnpj_basico": "String",
+    "related_entity_kind": "LowCardinality(String)",
+    "related_tax_id": "String",
+    "relation_code": "LowCardinality(String)",
+    "relation_since_key": "String",
+    "related_name": "String",
+    "related_country": "String",
+    "age_band": "LowCardinality(String)",
+    "representative_tax_id": "String",
+    "representative_name": "String",
+    "representative_code": "LowCardinality(String)",
+    "relation_since": "Nullable(Date32)",
+    "resolved_at": "DateTime64(3, 'UTC')",
+}
+
+
+def _snapshot_stage_ddl(qualified_snapshot: str) -> str:
+    column_lines = ",\n        ".join(
+        f"{column} {_SNAPSHOT_STAGE_COLUMN_TYPES[column]}"
+        for column in tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS
+    )
+    return f"""
+        CREATE TABLE {qualified_snapshot}
+        (
+        {column_lines}
+        )
+        ENGINE = MergeTree
+        ORDER BY (cnpj_basico, related_tax_id, relation_code)
+        """
+
+
 def export_brazil_comp_rfb_clickhouse_company_relations(
     *,
     duckdb_connection: Any,
     clickhouse: ClickhouseResource,
+    snapshot_year_month: str,
+    source_run_id: str,
     log: Callable[..., object] | None = None,
-) -> int:
-    """Replace corpscout.br_company_relations with the DuckDB relations table.
+) -> dict[str, int]:
+    """Merge this month's snapshot into the connection history.
 
-    Interim: ships only BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS, the columns
-    a single monthly snapshot can supply. br_company_relations is now SCD2
-    history (one row per spell; see brazil_rfb_socios_history-design.md), so a
-    plain truncate-and-replace here still discards the previous months on every
-    run -- a still-pending history merge replaces this truncate with a fold, at
-    which point the six history-only columns (first_seen_snapshot,
-    last_seen_snapshot, start_at, end_at, is_current, observations) stop landing
-    at their ClickHouse type default and get computed by the merge instead.
+    Not a replace: the previous months ARE the history. br_company_relations
+    holds one row per SPELL (see brazil_rfb_socios_history-design.md); a plain
+    truncate-and-replace would destroy every month but the latest, which is
+    exactly the behaviour this function removes.
 
-    Any column omitted from BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS is never
-    inserted at all, so ClickHouse fills it with the type default -- for a
-    DateTime64 that is the epoch. Only those six may be missing from it.
+    Returns edges_in_snapshot / spells_opened / spells_closed / spells_total,
+    the same counts written to the ledger (br_company_relations_snapshots).
     """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.BRAZIL_COMP_RFB_DATABASE,
-        tables=(tables.BR_COMPANY_RELATIONS_TABLE_CH,),
+        tables=(
+            tables.BR_COMPANY_RELATIONS_TABLE_CH,
+            tables.BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE_CH,
+        ),
     )
     if log is not None:
         log(
-            "Exporting Brazil RFB company relations to ClickHouse: table=%s",
+            "Merging Brazil RFB company relations snapshot into ClickHouse: "
+            "table=%s snapshot_year_month=%s",
             tables.QUALIFIED_BR_COMPANY_RELATIONS_TABLE,
+            snapshot_year_month,
         )
+    snapshot_stage = f"_tmp_relations_snapshot_{uuid.uuid4().hex}"
+    merge_stage = f"_tmp_{tables.BR_COMPANY_RELATIONS_TABLE_CH}_{uuid.uuid4().hex}"
+    qualified_snapshot = _qualified(snapshot_stage)
+    qualified_merge = _qualified(merge_stage)
+    qualified_target = tables.QUALIFIED_BR_COMPANY_RELATIONS_TABLE
+    qualified_ledger = tables.QUALIFIED_BR_COMPANY_RELATIONS_SNAPSHOTS_TABLE
+    snapshot_date = f"{snapshot_year_month}-01"
+
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_connection_table_to_clickhouse(
-            duckdb_connection=duckdb_connection,
-            clickhouse_client=client,
-            duckdb_schema=DLT_DATASET_NAME,
-            duckdb_table=tables.COMPANY_RELATIONS_TABLE,
-            clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
-            clickhouse_table=tables.BR_COMPANY_RELATIONS_TABLE_CH,
-            columns=tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS,
-            truncate=True,
-            column_expressions=CLICKHOUSE_COMPANY_RELATIONS_DATE32_EXPORT_EXPRESSIONS,
+        ledger_rows = client.execute(
+            f"SELECT snapshot_year_month, edges_in_snapshot FROM {qualified_ledger}"
         )
+        merged_months = [str(row[0]) for row in ledger_rows]
+        edges_by_month = {str(row[0]): int(row[1]) for row in ledger_rows}
+        # Before anything is written: refuse an out-of-order or repeated
+        # month. See history.assert_snapshot_is_newer.
+        history.assert_snapshot_is_newer(snapshot_year_month, merged_months)
+        previous_edges_in_snapshot = (
+            edges_by_month[max(merged_months)] if merged_months else None
+        )
+
+        client.execute(_snapshot_stage_ddl(qualified_snapshot))
+        try:
+            edges_in_snapshot = export_duckdb_connection_table_to_clickhouse(
+                duckdb_connection=duckdb_connection,
+                clickhouse_client=client,
+                duckdb_schema=DLT_DATASET_NAME,
+                duckdb_table=tables.COMPANY_RELATIONS_TABLE,
+                clickhouse_database=tables.BRAZIL_COMP_RFB_DATABASE,
+                clickhouse_table=snapshot_stage,
+                columns=tables.BR_COMPANY_RELATIONS_SNAPSHOT_INPUT_COLUMNS,
+                truncate=False,
+                column_expressions=(
+                    CLICKHOUSE_COMPANY_RELATIONS_DATE32_EXPORT_EXPRESSIONS
+                ),
+            )
+            # Refuse a short snapshot BEFORE it reaches the merge: RFB ships
+            # socios as ~10 ZIP parts, and a truncated download produces a
+            # well-formed but incomplete snapshot that relations.py's
+            # empty-input guard cannot see. Fed into the merge, every
+            # partner missing from the incomplete parts would read as "gone
+            # by this snapshot" and get closed -- silently and permanently,
+            # since the merge folds its own output back into itself every
+            # run. See history.assert_snapshot_edge_count_is_plausible for
+            # the threshold and its rationale.
+            history.assert_snapshot_edge_count_is_plausible(
+                int(edges_in_snapshot), previous_edges_in_snapshot
+            )
+
+            client.execute(f"CREATE TABLE {qualified_merge} AS {qualified_target}")
+            client.execute(
+                f"INSERT INTO {qualified_merge} "
+                + history.build_merge_select_sql(
+                    state_table=qualified_target,
+                    snapshot_table=qualified_snapshot,
+                    snapshot_year_month=snapshot_year_month,
+                    snapshot_date=snapshot_date,
+                ),
+                settings={
+                    # MANDATORY, not tuning: ClickHouse defaults to
+                    # join_use_nulls=0, which fills the unmatched side of the
+                    # FULL JOIN with type defaults ('') instead of NULL. On a
+                    # real ClickHouse 26.5 run this did NOT error -- it wrote
+                    # country_iso2, source_slug, cnpj_basico,
+                    # related_entity_kind, related_tax_id, relation_code and
+                    # relation_since_key as '' on every row, collapsing the
+                    # entire spell identity onto one sort key. See
+                    # history.build_merge_select_sql's docstring for the full
+                    # failure mode. A bare SELECT cannot carry its own
+                    # SETTINGS clause, so this dict is the ONLY place this is
+                    # enforced -- do not move this INSERT without it.
+                    "join_use_nulls": 1,
+                    # No other settings here on purpose. history.py measured
+                    # this query at ~3.2 GiB at 25M rows, plateauing rather
+                    # than climbing, and found that manually forcing
+                    # max_bytes_before_external_group_by LOWER made a 25M-row
+                    # run WORSE (moved the failure into the join instead of
+                    # avoiding it) -- ClickHouse 26.5's own default spill
+                    # handling already outperforms a hand-tuned one here. Do
+                    # not add settings that would read the merge's own
+                    # output a second time (e.g. re-scanning qualified_merge
+                    # to recompute these counts) -- that doubles the memory
+                    # this budget was measured against.
+                },
+            )
+            [(spells_total, spells_opened, spells_closed)] = client.execute(
+                f"""
+                SELECT
+                    count(),
+                    countIf(first_seen_snapshot = '{snapshot_year_month}'),
+                    countIf(
+                        is_current = 0
+                        AND last_seen_snapshot != '{snapshot_year_month}'
+                        AND end_at = toDate('{snapshot_date}')
+                    )
+                FROM {qualified_merge}
+                """
+            )
+            if int(edges_in_snapshot) > 0 and int(spells_total) == 0:
+                raise ValueError(
+                    "Brazil RFB connection merge produced no spells from a "
+                    f"non-empty snapshot ({edges_in_snapshot} edges); refusing "
+                    "to replace the published history"
+                )
+            client.execute(
+                f"EXCHANGE TABLES {qualified_merge} AND {qualified_target}"
+            )
+            client.execute(
+                f"INSERT INTO {qualified_ledger} "
+                f"({', '.join(tables.BR_COMPANY_RELATIONS_SNAPSHOT_COLUMNS)}) VALUES",
+                [
+                    (
+                        snapshot_year_month,
+                        datetime.now(UTC),
+                        source_run_id,
+                        int(edges_in_snapshot),
+                        int(spells_opened),
+                        int(spells_closed),
+                        int(spells_total),
+                    )
+                ],
+            )
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {qualified_merge}")
+            client.execute(f"DROP TABLE IF EXISTS {qualified_snapshot}")
+
+    counts = {
+        "edges_in_snapshot": int(edges_in_snapshot),
+        "spells_opened": int(spells_opened),
+        "spells_closed": int(spells_closed),
+        "spells_total": int(spells_total),
+    }
     if log is not None:
-        log("Finished Brazil RFB company relations export: rows=%s", rows)
-    return rows
+        log("Merged Brazil RFB connection history: counts=%s", counts)
+    return counts
 
 
 def export_brazil_comp_rfb_clickhouse_company_contacts(
