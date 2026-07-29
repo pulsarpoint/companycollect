@@ -711,6 +711,58 @@ def test_usd_conversion_handles_large_decimal_amount() -> None:
     assert amount_usd == Decimal("914969668167114843.3285151213")
 
 
+def test_usd_conversion_preserves_large_fractional_amount() -> None:
+    connection, _storage = _loaded_sample_partition()
+    connection.execute(
+        f"update {ANNUAL_ACCOUNT_DATASET}.facts "
+        "set amount_original = ?, amount_usd = null "
+        "where raw_label = 'Driftsresultat'",
+        [Decimal("9222115557579215352.1234567890")],
+    )
+
+    counts = apply_annual_account_usd_conversion(
+        connection=connection,
+        exchange_rates=FakeExchangeRates(Decimal("0.099214725998")),
+        filing_year=2025,
+        chunk_key="bucket_00",
+    )
+
+    amount_usd = connection.execute(
+        f"select amount_usd from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "where raw_label = 'Driftsresultat' limit 1"
+    ).fetchone()[0]
+    assert counts["unconverted_fact_count"] == 0
+    assert amount_usd == Decimal("914969668167114843.3407638528")
+
+
+def test_usd_conversion_does_not_abort_on_unsafe_decimal_product() -> None:
+    connection, _storage = _loaded_sample_partition()
+    fact_id = connection.execute(
+        f"select fact_id from {ANNUAL_ACCOUNT_DATASET}.facts "
+        "where raw_label = 'Driftsresultat' limit 1"
+    ).fetchone()[0]
+    connection.execute(
+        f"update {ANNUAL_ACCOUNT_DATASET}.facts "
+        "set amount_original = ?, amount_usd = null "
+        "where fact_id = ?",
+        [Decimal("9999999999999999999999999999.9999999999"), fact_id],
+    )
+
+    counts = apply_annual_account_usd_conversion(
+        connection=connection,
+        exchange_rates=FakeExchangeRates(Decimal("0.099214725998")),
+        filing_year=2025,
+        chunk_key="bucket_00",
+    )
+
+    amount_usd = connection.execute(
+        f"select amount_usd from {ANNUAL_ACCOUNT_DATASET}.facts where fact_id = ?",
+        [fact_id],
+    ).fetchone()[0]
+    assert counts["unconverted_fact_count"] == 1
+    assert amount_usd is None
+
+
 def test_llm_mapping_preserves_extended_concepts(
     monkeypatch: MonkeyPatch,
 ) -> None:

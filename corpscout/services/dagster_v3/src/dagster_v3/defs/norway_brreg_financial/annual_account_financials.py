@@ -872,10 +872,20 @@ def apply_annual_account_usd_conversion(
         connection.execute(
             f"""
             update {ANNUAL_ACCOUNT_DATASET}.facts as facts
-            set amount_usd = cast(
-                    cast(facts.amount_original as decimal(38, 6)) * fx.fx_rate
+            set amount_usd = try(cast(
+                    cast(
+                        trunc(facts.amount_original)
+                        as decimal(38, 0)
+                    ) * fx.fx_rate
+                    + cast(
+                        (
+                            facts.amount_original
+                            - trunc(facts.amount_original)
+                        ) * fx.fx_rate
+                        as decimal(38, 12)
+                    )
                     as decimal(38, 10)
-                ),
+                )),
                 fx_rate_to_usd = fx.fx_rate,
                 fx_rate_date = fx.fx_rate_date,
                 fx_source = fx.fx_source
