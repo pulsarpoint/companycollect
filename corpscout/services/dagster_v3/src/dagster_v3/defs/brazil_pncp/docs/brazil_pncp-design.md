@@ -459,7 +459,7 @@ than a type default indistinguishable from a real `0`.
 emit `''` (unknown), not `'no'`. Claiming "below EU threshold" for a Brazilian
 contract would be nonsense.
 
-### 9a. Two refinements the value analysis surfaced — both are *view* problems
+### 9a. Three refinements the value analysis surfaced — all are *view* problems
 
 Both come out of the 17,538-record sample in §0. Neither is a pipeline change:
 the storage rule is that **everything the register publishes is stored and
@@ -485,6 +485,53 @@ where the choice can be labelled.
    displayed figure states its own origin; a fallback that reports a value from
    `valorInicial` while labelling it `valorGlobal` is worse than the gap it
    fills.
+
+3. **PNCP publishes values that cannot be true, and 34 of them own 98.2% of the
+   corpus total.** Found 2026-07-30 on
+   `00394452000103-2-000031/2025`: COMANDO DO EXERCITO to CENTRO OFTALMOLOGICO
+   DE BELEM LTDA for `PRESTAÇÃO DE SERVIÇOS DE OFTALMOLOGICO`, at
+   **R$ 640,000,000,000** — about 5% of Brazil's GDP for eye care. Checked
+   against the live API: PNCP itself returns `640000000000.0`, so **the ingest
+   is faithful and there is nothing to fix upstream of the view.**
+
+   Scale of the distortion, measured over all 116,226 rows:
+
+   | | rows | total |
+   |---|---|---|
+   | COMANDO DO EXERCITO | 511 | R$ 2,996.4bn |
+   | every other buyer | 115,715 | R$ 70.4bn |
+
+   34 contracts are ≥ R$1bn and carry 98.2% of all reported value; 28 of the 34
+   are COMANDO DO EXERCITO. Drop those 34 and the corpus totals **R$ 54.1bn**
+   rather than R$ 3,066.8bn — roughly R$467k per contract, against a corpus
+   median of R$ 3,493.88 and the Army's own median of R$ 93,897 across its other
+   483 contracts. So every *aggregate* over this table — spend totals, biggest-
+   buyer rankings, sector breakdowns — is currently ~57x too high and ~98% one
+   filing system's fault. The table itself is correct.
+
+   Dividing by 10^8 lands every one of them on a clean, plausible figure
+   (640000000000 -> 6,400 ophthalmology; 562500000000 -> 5,625; 336400000000 ->
+   3,364 anaesthesia; 250000000000 -> 2,500 imaging; 90000000000 -> 900
+   endoscopy; 62500000000 -> 625; 40000000000 -> 400 cardiology), which points to
+   a fixed-point fault in whatever system Army Command files through. **Do not
+   act on that inference in the pipeline.** It is a guess about a third party's
+   bug, and if PNCP ever corrects the filing a baked-in division silently makes
+   the error worse in the other direction. §7a stands: store what the register
+   published.
+
+   The view owns this, the same way it owns `receita` above:
+   - derive a plausibility flag (absolute ceiling, or a multiple of the buyer's
+     own median) and leave `valor_global` untouched
+   - have aggregates exclude the flagged rows **and say so on screen** — "34
+     contracts excluded as implausible", never silently
+   - keep the published figure on the contract detail page with a visible
+     caveat. A reader is entitled to see what the register says *and* that it
+     cannot be right
+
+   Deferred deliberately (2026-07-30) — recorded here so the next person reading
+   a Brazilian spend total knows not to trust it. Whether other registers need
+   the same treatment is unchecked, so the rule should not be assumed to
+   generalise beyond PNCP.
 
 ## 9b. UI: establishments are shown, not hidden
 
