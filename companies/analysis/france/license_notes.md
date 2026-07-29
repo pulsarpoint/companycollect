@@ -1,63 +1,53 @@
-# License notes — France
+# License and access notes — France
 
-> Public availability does NOT equal unrestricted reuse. Confirm before redistributing.
+Revalidated 2026-07-28. Public availability does not override privacy,
+confidentiality or source-specific access rules.
 
-## INSEE Base Sirene — **ODbL (Open Database License)**
+## Licence Ouverte / Open Licence 2.0
 
-- Free to use, share, adapt, including commercially.
-- **Attribution** required: credit INSEE / source Sirene.
-- **Share-alike**: a derived *database* publicly distributed must be offered under
-  ODbL as well. Internal use / producing non-database results is less constrained.
-- INSEE applies a specific note: data on *physical persons* (entrepreneurs
-  individuels) who opted out of public diffusion are excluded / masked
-  (`statutDiffusionUniteLegale`). Respect the diffusion status field.
-- Ref: https://www.insee.fr/fr/information/3591226
+The current official pages identify these sources as Open Licence 2.0:
 
-## INPI RNE (Data INPI) — open data, INPI conditions
+- INSEE Base Sirene and API Sirene;
+- Ratios financiers BCE/INPI;
+- detailed financial Parquet;
+- Annuaire enriched legal-unit/establishment bulk;
+- BODACC and BALO;
+- ADEME BEGES;
+- Documents et comptes des entreprises.
 
-- Enterprise legal data made available free of charge.
-- Governed by INPI's open-data conditions of reuse; attribution expected.
-- **Beneficial ownership (RBE)** is regulated separately — access is restricted
-  and conditioned by law (not part of free open bulk). Do not assume open reuse.
-- Annual accounts: only **non-confidential** filings are open; some companies
-  file confidential accounts that are not redistributable.
-- Ref: https://data.inpi.fr/ , https://www.inpi.fr/
+Commercial reuse is allowed with source attribution. Retain `source_name`,
+`source_url`, `source_retrieved_at` and the raw-response checksum.
 
-## BODACC (DILA) — **Licence Ouverte / Open Licence v2.0**
+## INPI RNE and intellectual-property data
 
-- Free reuse including commercial, with attribution to the source (DILA / BODACC).
-- One of the most permissive French public licenses.
-- Ref: https://bodacc-datadila.opendatasoft.com/
+INPI makes enterprise and IP data available under its reuse conditions, normally
+after free account registration for API/SFTP access. Attribute INPI and review
+the current conditions before redistribution.
 
-## API Recherche d'Entreprises (DINUM)
+Only non-confidential annual accounts are openly available. INPI reports that
+approximately 45% of annual-account filings are confidential. Do not derive,
+impute or expose protected figures.
 
-- Public service API; underlying data inherits source licenses (Sirene ODbL,
-  RNE open data, etc.). Attribution to original producers expected.
-- Respect documented rate limit (~7 req/s) and fair-use.
+## Privacy and diffusion status
 
-## Financial data — licenses & confidentiality
+Respect Sirene/RNE diffusion flags. In particular, `statutDiffusion=P` can
+indicate partially diffused information for an individual entrepreneur. Avoid
+publishing names, precise addresses or other protected personal data unless the
+source explicitly permits it.
 
-- **INPI RNE comptes annuels** — open data under INPI conditions of reuse (attribution expected).
-  **Only non-confidential filings** are published; companies that elected the legal **confidentiality
-  option** (micro/small) are excluded. Do not infer figures for confidential filers.
-- **Recherche API `finances` block** — open public service; figures derive from non-confidential INPI
-  comptes annuels. Same confidentiality limit; attribution to original producers expected.
-- **Documents et comptes des entreprises** (data.economie.gouv.fr) — **Licence Ouverte 2.0**.
-- **API Entreprise financials** (DGFIP chiffres d'affaires, Banque de France bilans) — **restricted**
-  (habilitation only); **not** reusable openly even though richer. Do not ingest via this route for
-  general reuse.
+## Restricted sources
 
-## API Entreprise (DINUM) — **restricted**
+- **RBE beneficial owners:** since 31 July 2024, access is limited to authorized
+  actors and applicants showing legitimate interest. It is not a general open
+  company-enrichment source.
+- **API Entreprise:** requires habilitation based on a public-service/legal
+  mission. DGFIP revenue and Banque de France balance data accessed through it
+  is not authorized for general open ingestion.
 
-- Reserved for administrations and legally authorized private bodies
-  (habilitation required). **Not** open for general reuse. Excluded from
-  ingestion recommendations. (Brokers DGFIP CA + Banque de France bilans — restricted financials.)
+## Operational guidance
 
-## Practical guidance for ingestion
-
-- Keep a `source_name` + `source_url` + `source_retrieved_at` on every record
-  (already in the normalized schema) to satisfy attribution.
-- If you publicly republish a derived *database* built on Sirene, publish it
-  under ODbL and credit INSEE.
-- Honor `statutDiffusion*` flags — never expose opted-out individual entrepreneurs.
-- Treat RBE / beneficial ownership as restricted unless you obtain proper access.
+- Store missing financial figures as null/unknown, not zero.
+- Keep `confidentiality` and `type_bilan` from the financial sources.
+- Record resource version and retrieval time because bulk URLs and snapshots
+  change.
+- Recheck source terms before any public redistribution.

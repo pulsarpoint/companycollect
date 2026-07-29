@@ -6,7 +6,7 @@
 - Source type: official_aggregator_api (DINUM / Annuaire des Entreprises)
 - Organization: DINUM
 - URL: `https://recherche-entreprises.api.gouv.fr/search?q=...` (no auth)
-- License: open public service; underlying data ODbL (Sirene) + INPI open data
+- License: open public service; underlying Sirene data is Open Licence 2.0 plus INPI terms
 - Access: public, **no key**; ~7 req/s/IP
 - Freshness: daily (rebuilt from INSEE Sirene + INPI RNE)
 - Record shape: `{ results: [company], total_results, page, per_page }`

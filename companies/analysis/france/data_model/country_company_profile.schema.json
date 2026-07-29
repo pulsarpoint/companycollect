@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "France Company Profile",
-  "description": "Country-specific combined company profile for France. Single clean join key: SIREN (9 digits) — unlike Germany (no key) or Spain (sparse CIF), every French source keys on SIREN. Spine = INSEE Sirene (ODbL); legal enrichment (capital, dirigeants, purpose, accounts refs) = INPI RNE; aggregator + open headline financials = API Recherche d'Entreprises (finances block); full statements = INPI comptes annuels; lifecycle events = BODACC. Financials are OPEN (no auth for ca+résultat net; free INPI account for full statements) but coverage is PARTIAL due to the legal confidentiality option. Beneficial ownership (RBE) is restricted — planning-only.",
+  "description": "Country-specific combined company profile for France. Single clean join key: SIREN (9 digits). Spine = INSEE Sirene (Open Licence 2.0); bulk financial metrics and ratios = Ratios BCE/INPI; legal enrichment and full filings = INPI RNE; headline lookup financials = API Recherche d'Entreprises; lifecycle events = BODACC. Open financial coverage is partial due to the legal confidentiality option. Beneficial ownership (RBE) is restricted.",
   "type": "object",
   "required": ["country", "country_slug", "registration", "source_provenance"],
   "properties": {

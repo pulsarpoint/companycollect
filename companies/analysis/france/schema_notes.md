@@ -75,6 +75,57 @@ immobilisations, amortissements, provisions
 ```
 - Coverage partial: micro/small firms may file **confidential** accounts (excluded). Currency EUR.
 
+### Financials — Ratios BCE/INPI (verified 2026-07-28)
+
+Primary grain:
+
+```text
+(siren, date_cloture_exercice, type_bilan)
+```
+
+`type_bilan` is required because one company/date can have multiple statements.
+Observed values include `C` (complete), `S` (simplified) and `K`
+(consolidated). Preserve the source code until an authoritative code list is
+loaded.
+
+Observed measures:
+
+```text
+chiffre_d_affaires, marge_brute, ebe, ebit, resultat_net
+taux_d_endettement, ratio_de_liquidite, ratio_de_vetuste
+autonomie_financiere, poids_bfr_exploitation_sur_ca
+couverture_des_interets, caf_sur_ca, capacite_de_remboursement
+marge_ebe, resultat_courant_avant_impots_sur_ca
+poids_bfr_exploitation_sur_ca_jours, rotation_des_stocks_jours
+credit_clients_jours, credit_fournisseurs_jours, confidentiality
+```
+
+Amounts are EUR. Ratio units must be documented per field before exposing them
+in product UI; do not assume every numeric ratio is a percentage.
+
+### Detailed financial Parquet
+
+The observed 2.82 GB Parquet resource uses SIREN, closing date and balance type
+plus an associative collection of detailed base tax-form 2033/2050 fields.
+Ingest the source in long form first (`statement_key`, `field_code`, `value`)
+unless a stable code dictionary justifies a wide ClickHouse table.
+
+### Annuaire enriched bulk and API complements
+
+Useful legal-unit flags include association/RNA, ESS, société à mission,
+EGAPRO, responsible procurement, Alim'Confiance, training organization,
+Qualiopi, SIAE, FINESS, ADEME aid, lawyers, collective agreements and
+patrimoine vivant. Establishment-level lists/flags include FINESS, BIO, RGE and
+UAI. Model evidence-bearing identifiers as arrays rather than only booleans.
+
+### ADEME BEGES and BALO
+
+- BEGES key candidates: `(siren_principal, id)` with `siret`, reporting year,
+  emissions categories/scopes, reduction targets and actions.
+- BALO key: `id_annonce`; `siren` is an array because one notice can reference
+  multiple companies. Keep notice category, publication date, PDF link and
+  full text separately.
+
 ## Mapping to internal company model
 
 | Internal field        | Sirene (UniteLegale)              | Recherche API            | RNE              |
@@ -94,6 +145,8 @@ immobilisations, amortissements, provisions
 | country               | "France"                          | "France"                 | "France"         |
 | source_url/name/at    | dataset URL + retrieved_at        | endpoint + retrieved_at  | feed + retrieved |
 | financials[]          | —                                 | finances{} (ca, résultat net) | comptes annuels (full bilan + résultat) |
+| financial ratios      | —                                 | —                        | Ratios BCE/INPI keyed by date + type |
+| enrichment flags      | —                                 | complements{}            | Annuaire bulk fields |
 | raw_record            | full row                          | full JSON object         | full JSON        |
 
 ## Encoding / formats

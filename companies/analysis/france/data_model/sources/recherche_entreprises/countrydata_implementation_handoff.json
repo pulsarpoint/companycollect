@@ -11,10 +11,10 @@
     "source_type": "official_aggregator_api",
     "organization": "DINUM / Annuaire des Entreprises",
     "source_url": "https://recherche-entreprises.api.gouv.fr/search",
-    "license": "Open public service; underlying data ODbL (Sirene) + INPI open data",
+    "license": "Open public service; underlying Sirene data is Licence Ouverte 2.0 plus INPI terms",
     "access": "public",
     "data_freshness": "daily",
-    "attribution": "Données: INSEE (Sirene, ODbL) + INPI (RNE), via Annuaire des Entreprises / DINUM."
+    "attribution": "Données: INSEE (Sirene, Licence Ouverte 2.0) + INPI (RNE), via Annuaire des Entreprises / DINUM."
   },
   "access": {
     "requires_authentication": false,

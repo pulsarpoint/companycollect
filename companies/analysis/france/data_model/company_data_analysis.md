@@ -5,7 +5,7 @@
 France supports the **richest, cleanest open company profile** of the countries analysed so far — and,
 unusually, **open financials**. Every source keys on a **single national identifier, `siren`** (9 digits),
 so the profile assembles with **no fuzzy matching** (contrast Germany = no shared key, Spain = sparse
-CIF). Identity/activity/status/address come from **INSEE Sirene** (ODbL bulk) and the no-auth **API
+CIF). Identity/activity/status/address come from **INSEE Sirene** (Open Licence 2.0 bulk) and the no-auth **API
 Recherche d'Entreprises**; legal data (capital, dirigeants, purpose, accounts refs) from **INPI RNE**;
 lifecycle events from **BODACC**. **Financials are open**: headline **revenue + net income** via the
 no-auth Recherche `finances` block, and **full balance sheet + income statement** via **INPI comptes
@@ -16,7 +16,8 @@ of small firms) and **beneficial ownership** being restricted.
 
 | Slug | Source name | Status | Access | License | Role in profile |
 |---|---|---|---|---|---|
-| insee_sirene | Base Sirene (SIREN/SIRET) | recommended | public, no auth (bulk) | ODbL | **Spine** (identity/establishments/status) |
+| insee_sirene | Base Sirene (SIREN/SIRET) | recommended | public, no auth (bulk) | Open Licence 2.0 | **Spine** (identity/establishments/status) |
+| ratios_inpi_bce | Ratios financiers BCE/INPI | recommended | public, no auth | Open Licence 2.0 | **Structured financial facts and ratios** |
 | recherche_entreprises | API Recherche d'Entreprises | recommended | public, no auth | open | Aggregator + dirigeants + **open headline financials** |
 | inpi_rne | RNE (Data INPI) | recommended | free account | INPI open | Legal: capital, dirigeants, purpose, accounts refs |
 | inpi_comptes_annuels | INPI comptes annuels | recommended | free account | INPI open | **Full financial statements** |
@@ -29,7 +30,7 @@ Entreprise (restricted — DGFIP CA + Banque de France bilans, planning-only).
 ## What Each Source Contributes
 
 - **insee_sirene (spine).** SIREN/SIRET, legal name, legal form, NAF activity, status (A/C), creation
-  date, employee band, establishments + addresses. ODbL bulk (~25M units / ~36M establishments) +
+  date, employee band, establishments + addresses. Open Licence 2.0 bulk (~25M units / ~36M establishments) +
   daily API. The backbone every other source attaches to.
 - **recherche_entreprises (aggregator + open financials).** No-auth merge of Sirene + INPI: identity,
   activity (NAF Rev2 + NAF2025), HQ address + geo, dirigeants, size category — **and a `finances` block
@@ -60,9 +61,9 @@ discriminator (`recherche_entreprises` headline vs `inpi_comptes_annuels` full).
   `registre`). No fuzzy matching — France's structural advantage.
 - **Authority**: Sirene for identity/activity/status; INPI RNE for capital/dirigeants/accounts; Recherche
   API is a convenient daily merge of both.
-- **Financial precedence**: Recherche `finances` (headline, no auth) for breadth → INPI comptes annuels
-  (full, free account) when detail is needed → API Entreprise (restricted) only with habilitation.
-  Dedupe on `siren + fiscal_year + accounts_type`.
+- **Financial precedence**: Ratios BCE/INPI (bulk facts and ratios, no auth) → Recherche `finances`
+  (headline lookup) → INPI comptes annuels (authoritative full filing, free account) → API Entreprise
+  only with habilitation. Dedupe on `siren + closing_date + accounts_type`.
 - **Freshness**: Sirene monthly stock + daily API; INPI/Recherche/BODACC daily.
 
 ## Missing Or Restricted Data
@@ -72,7 +73,7 @@ discriminator (`recherche_entreprises` headline vs `inpi_comptes_annuels` full).
   DGFIP revenue. Treat missing financials as unknown, not zero.
 - **Richer/authoritative financials** (DGFIP CA, Banque de France bilans): only via restricted API Entreprise.
 - **PII**: dirigeants (and restricted beneficial owners) — GDPR; honor `statut_diffusion=P`.
-- **License**: ODbL (Sirene) share-alike on redistributed derived databases; attribute all producers.
+- **License**: current Sirene publication is Open Licence 2.0; attribute all producers.
 
 ## Common Mapper Notes
 

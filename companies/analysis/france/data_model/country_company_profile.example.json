@@ -89,7 +89,7 @@
     {"id": "A202400000000", "familleavis_lib": "Dépôt des comptes", "dateparution": "2025-06-30"}
   ],
   "source_provenance": [
-    {"source_slug": "insee_sirene", "source_name": "Base Sirene (SIREN/SIRET)", "source_url": "https://www.data.gouv.fr/datasets/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret", "license": "ODbL", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "insee_sirene", "source_name": "Base Sirene (SIREN/SIRET)", "source_url": "https://www.data.gouv.fr/datasets/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret", "license": "Licence Ouverte 2.0", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
     {"source_slug": "recherche_entreprises", "source_name": "API Recherche d'Entreprises", "source_url": "https://recherche-entreprises.api.gouv.fr/search", "license": "open public service", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
     {"source_slug": "inpi_comptes_annuels", "source_name": "INPI RNE — Comptes annuels", "source_url": "https://data.inpi.fr/", "license": "open data (INPI); non-confidential", "access": "public_with_free_account", "retrieved_at": "2026-06-14T00:00:00Z"}
   ]

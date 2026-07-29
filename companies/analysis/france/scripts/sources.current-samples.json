@@ -1,7 +1,7 @@
 [
   {
-    "name": "API Recherche d'Entreprises — one SIREN",
-    "slug": "recherche_entreprises_example",
+    "name": "API Recherche d'Entreprises — LA POSTE",
+    "slug": "recherche_entreprises_current",
     "type": "api_page",
     "url": "https://recherche-entreprises.api.gouv.fr/search?q=356000000&per_page=1",
     "method": "GET",
@@ -10,12 +10,11 @@
     },
     "page_param": "page",
     "page_start": 1,
-    "max_pages": 1,
-    "note": "Public lookup API, approximately 7 requests/second. Not an exhaustive bulk route."
+    "max_pages": 1
   },
   {
-    "name": "Ratios financiers BCE/INPI — one SIREN",
-    "slug": "ratios_inpi_bce_example",
+    "name": "Ratios financiers BCE/INPI — LA POSTE",
+    "slug": "ratios_inpi_bce_la_poste",
     "type": "api_page",
     "url": "https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/ratios_inpi_bce/records?where=siren%3D%22356000000%22&limit=20",
     "method": "GET",
@@ -24,12 +23,11 @@
     },
     "page_param": "offset",
     "page_start": 0,
-    "max_pages": 1,
-    "note": "Use the Parquet export recorded in source_inventory.json for bulk ingestion."
+    "max_pages": 1
   },
   {
     "name": "ADEME bilans GES sample",
-    "slug": "ademe_bilans_ges_example",
+    "slug": "ademe_bilans_ges",
     "type": "api_page",
     "url": "https://data.ademe.fr/data-fair/api/v1/datasets/bilan-ges/lines?size=2",
     "method": "GET",
@@ -41,8 +39,8 @@
     "max_pages": 1
   },
   {
-    "name": "BALO notices sample",
-    "slug": "balo_notices_example",
+    "name": "BALO company notices sample",
+    "slug": "balo_notices",
     "type": "api_page",
     "url": "https://journal-officiel-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/balo/records?limit=2",
     "method": "GET",

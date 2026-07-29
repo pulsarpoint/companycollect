@@ -103,3 +103,65 @@
 - Source: WebFetch — data.economie.gouv.fr "Documents et comptes des entreprises"; data.gouv.fr RNE dataset
 - Result: RNE confirms non-confidential annual-accounts data (balance sheet, income statement, fixed assets, depreciation, provisions) since 2017-01-01, JSON since 2023. "Documents et comptes" dataset under Open Licence 2.0 (document links + metadata + confidentiality).
 - Decision: Add INPI comptes annuels + Documents-et-comptes to the inventory; document the confidentiality coverage limit.
+
+---
+
+# Current revalidation and expansion (2026-07-28)
+
+## Attempt 10 — public structured financial ratios
+
+- Source/query: official data.gouv.fr and data.economie.gouv.fr search for
+  `ratios financiers BCE INPI`.
+- URL: https://www.data.gouv.fr/datasets/ratios-financiers-bce-inpi
+- Live call: `GET /api/explore/v2.1/catalog/datasets/ratios_inpi_bce/records?where=siren="356000000"&limit=20`
+- Result: HTTP 200, 6,542,232 total records and 17 La Poste rows. Revenue,
+  margin, EBE, EBIT, net income and many ratios are structured and public.
+- Decision: Make this the first recommended financial ingestion. Key by SIREN,
+  closing date and `type_bilan`.
+
+## Attempt 11 — full financial statements without authentication
+
+- Source/query: official data.gouv.fr search for detailed company financial
+  data in Parquet.
+- URL: https://www.data.gouv.fr/datasets/donnees-financieres-detaillees-des-entreprises-format-parquet
+- Result: official Open Licence 2.0 Parquet, 2,820,473,022 bytes, containing
+  detailed 2033/2050 statement data.
+- Decision: Recommend when full line-item detail is needed; do not download
+  during research because of size.
+
+## Attempt 12 — daily enriched company bulk
+
+- Source/query: official Annuaire des Entreprises bulk-data page.
+- URL: https://www.data.gouv.fr/datasets/donnees-des-entreprises-utilisees-dans-lannuaire-des-entreprises
+- Result: daily legal-unit and establishment Parquet files with many official
+  enrichment flags. Observed sizes were about 1.14 GB and 1.68 GB.
+- Decision: Recommend as the most efficient non-financial enrichment feed.
+
+## Attempt 13 — INPI account data and confidentiality
+
+- Source: https://data.inpi.fr/content/editorial/Acces_API_Entreprises
+- Result: INPI documents daily API/SFTP access to non-confidential annual
+  accounts since 2017 and reports approximately 1.5M filings/year with about
+  45% confidentiality.
+- Decision: Keep as authoritative full-filing source but explicitly model
+  confidentiality and account setup.
+
+## Attempt 14 — ESG and issuer notices (live verification)
+
+- Calls:
+  - `GET https://data.ademe.fr/data-fair/api/v1/datasets/bilan-ges/lines?size=2`
+  - `GET https://journal-officiel-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/balo/records?limit=2`
+- Result: HTTP 200; BEGES reported 11,620 records and BALO 147,849 notices.
+  Both returned SIREN-linked records.
+- Decision: Add BEGES as ESG facts and BALO as a specialist event/notices feed.
+
+## Attempt 15 — restricted data checks
+
+- Sources:
+  - https://www.data.gouv.fr/dataservices/api-registre-des-beneficiaires-effectifs-rbe
+  - https://entreprendre.service-public.fr/actualites/A17554
+  - https://www.data.gouv.fr/dataservices/api-entreprise
+- Result: RBE access requires authorization or legitimate interest; API
+  Entreprise requires habilitation.
+- Decision: Record both for completeness and exclude them from general open
+  ingestion.

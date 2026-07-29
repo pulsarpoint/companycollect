@@ -6,7 +6,7 @@
   "source_type": "official_registry_bulk",
   "organization": "INSEE",
   "source_url": "https://www.data.gouv.fr/datasets/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret",
-  "license": "Licence ODbL (attribution + share-alike on derived databases)",
+  "license": "Licence Ouverte / Open Licence 2.0",
   "access": "public",
   "data_freshness": "monthly stock (01 of month) + daily deltas via API Sirene",
   "record_shape": "two CSV/Parquet stocks: StockUniteLegale (legal units) + StockEtablissement (establishments)",

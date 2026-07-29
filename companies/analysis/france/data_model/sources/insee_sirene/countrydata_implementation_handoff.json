@@ -11,10 +11,10 @@
     "source_type": "official_registry_bulk",
     "organization": "INSEE",
     "source_url": "https://www.data.gouv.fr/datasets/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret",
-    "license": "ODbL",
+    "license": "Licence Ouverte / Open Licence 2.0",
     "access": "public",
     "data_freshness": "monthly stock + daily API",
-    "attribution": "Source: INSEE, base Sirene (ODbL). Derived databases redistributed publicly must be ODbL."
+    "attribution": "Source: INSEE, base Sirene, Licence Ouverte 2.0."
   },
   "access": {
     "requires_authentication": false,
@@ -78,7 +78,6 @@
   },
   "blockers": [
     "Multi-GB downloads — confirm environment capacity.",
-    "Dated stock URLs rotate monthly — must resolve dynamically.",
-    "ODbL share-alike on redistributed derived databases."
+    "Dated stock URLs rotate monthly — must resolve dynamically."
   ]
 }

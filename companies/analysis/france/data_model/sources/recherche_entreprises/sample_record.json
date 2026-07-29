@@ -1,5 +1,5 @@
 {
-  "_note": "Real trimmed record from API Recherche d'Entreprises (open public service; data ODbL/INPI). La Poste SIREN 356000000.",
+  "_note": "Real trimmed record from API Recherche d'Entreprises (open public service; underlying Sirene Open Licence 2.0 and INPI data). La Poste SIREN 356000000.",
   "siren": "356000000",
   "nom_complet": "LA POSTE",
   "nom_raison_sociale": "LA POSTE",

@@ -1,117 +1,111 @@
-# Investigation — Company data for France
+# Investigation — company data for France
 
-Date: 2026-06-06
-Country: France (FR) — slug `france`
-Languages searched: French, English
+Dates: initial research 2026-06-06; financial follow-up 2026-06-14; current
+revalidation and expansion 2026-07-28.
 
 ## Summary
 
-France has one of the richest open-company-data ecosystems in Europe. There is
-a clear authoritative master register (INSEE Sirene) published as fully open bulk
-data, multiple official APIs, and a complementary legal register (INPI RNE).
-Beneficial ownership exists (RBE) but access is regulated and not freely open.
+France supports a practical SIREN-centred company model. Sirene remains the
+authoritative identity spine, while public financial, legal, lifecycle, ESG,
+certification and intellectual-property sources can be joined to it. The
+current project already ingests Sirene identity/address/activity data and DECP
+contracts, so the highest-value missing layer is structured financial facts.
 
-## The landscape
+## Financial data
 
-France splits "company data" across a few official producers:
+### 1. Ratios financiers BCE/INPI — preferred first source
 
-1. **INSEE — répertoire Sirene** is the *administrative/statistical* register.
-   It assigns the **SIREN** (9-digit legal-unit id) and **SIRET** (14-digit
-   establishment id) that everything else keys on. It is the spine: name, legal
-   category, NAF/APE activity code, headcount band, addresses, administrative
-   state (active/ceased), creation date. Fully open (ODbL), bulk + daily API.
+The DGE publishes INPI-derived annual figures and calculated ratios through the
+public data.economie.gouv.fr API and exports. At revalidation the API reported
+6,542,232 records. Observed fields include:
 
-2. **INPI — Registre National des Entreprises (RNE)** is the *legal* register
-   (successor to the centralized RCS / Infogreffe role for open data). Richer
-   legal identity: share capital, legal representatives (dirigeants), beneficial
-   owners, company acts/statutes (since 1993) and non-confidential annual
-   accounts (since 2017). Bulk via SFTP after free registration, plus an API.
+- revenue, gross margin, EBE/EBITDA, EBIT and net income;
+- debt, liquidity, age-of-assets and financial-autonomy ratios;
+- working-capital, interest-coverage, cash-flow and repayment-capacity ratios;
+- inventory, customer and supplier payment days;
+- SIREN, closing date, balance-sheet type and confidentiality status.
 
-3. **DILA — BODACC** is the *official gazette* of civil & commercial
-   announcements: the event stream of the company lifecycle (creation,
-   modification, radiation, collective procedures, account filings, sales).
-   Best used for change detection, not as a master list.
+The La Poste sample returned 17 records. It has separate complete (`C`) and
+consolidated (`K`) rows for the same period, so the ingestion key must include
+`type_bilan`.
 
-4. **DINUM — Annuaire des Entreprises / API Recherche d'Entreprises** is the
-   citizen-facing *aggregator*. It rebuilds an Elasticsearch index from INSEE +
-   INPI + others and exposes a clean, no-auth search API. Ideal entry point.
+### 2. Detailed financial Parquet — preferred full no-auth source
 
-5. **DINUM — API Entreprise** is a restricted government gateway (habilitation
-   required), not for open reuse — listed only for completeness.
+The Signaux Faibles dataset publishes a 2,820,473,022-byte Parquet snapshot with
+SIREN, closing date, balance type and detailed base tax-form 2033/2050 fields.
+It avoids account setup but needs a tax-form-code dictionary, schema profiling
+and enough storage/memory for a multi-gigabyte load.
 
-## What was found (and verified)
+### 3. INPI RNE comptes annuels — authoritative filing source
 
-- **Sirene bulk** — resolved the live monthly stock files via the data.gouv.fr
-  dataset API. Current (2026-06-01) dated URLs captured in `source_inventory.json`.
-  CSV.zip + Parquet for both legal units (~960 MB) and establishments (~2.83 GB).
-  Not downloaded here due to size; URLs and stable landing page recorded.
-- **API Recherche d'Entreprises** — called live, HTTP 200, real records for
-  "la poste" saved to `raw/api/recherche_entreprises_sample.json`. No auth.
-- **BODACC** — called live via Opendatasoft Explore v2.1, HTTP 200,
-  `total_count` = 49,386,809, sample saved to `raw/api/bodacc_annonces_sample.json`.
-- **API Sirene** and **RNE** — documented; both require a free account/key, so
-  no live key-based call was made (no credentials, and we do not bypass auth).
+INPI provides non-confidential annual accounts since 2017 through a free-account
+API/SFTP service. The source includes balance-sheet assets/liabilities, income
+statement, fixed assets, depreciation and provisions. INPI reports around
+1.5 million filings per year and approximately 45% confidentiality, so open
+coverage is materially incomplete and skewed away from smaller companies.
 
-## Financial data (annual accounts / comptes annuels)
+### 4. Recherche API — convenient lookup
 
-> Added 2026-06-14 — the user requested financial data. France is a **standout for OPEN financials**.
+The public search endpoint still returns `finances` keyed by year with `ca` and
+`resultat_net`. It also returns officers, headquarters and many complements.
+It is rate-limited to about seven requests per second and explicitly is not an
+exhaustive company-base download, so it should not be used as the bulk spine.
 
-### How French company financials are published
-- Commercial companies deposit annual accounts (**comptes annuels** / bilans) at the greffes; the
-  **INPI RNE** captures the **non-confidential** figures and republishes them as **open data** —
-  **balance sheet, income statement, fixed assets, depreciation, provisions**, for filings since
-  **2017-01-01** (format moved to **JSON** from 2023). Access: **data.inpi.fr** SFTP bulk + RNE API,
-  free account.
-- **Confidentiality option:** micro and small companies may legally file accounts as **confidential**
-  (déclaration de confidentialité), so they are **absent** from the open set. Coverage is therefore
-  **partial** (skewed toward larger companies).
+## Additional data
 
-### The easy open win — `finances` block (no auth)  ✅ verified
-- The **API Recherche d'Entreprises** (no key) returns a per-company **`finances`** object keyed by
-  year with **`ca`** (chiffre d'affaires / revenue) and **`resultat_net`** (net income). Example
-  captured live: SIREN 356000000 LA POSTE → `{"2024": {"ca": 34569000000, "resultat_net": 1722000000}}`.
-- This is the fastest way to attach headline financials to the whole company spine **for free**, but it
-  is only two figures (CA + résultat net) and only where accounts are non-confidential.
+### Enriched Annuaire bulk
 
-### Full statements
-- **INPI RNE comptes annuels** (bulk/API) — the full non-confidential balance sheet + income statement
-  line items. The path when you need more than CA + résultat net.
-- **data.economie.gouv.fr — "Documents et comptes des entreprises"** — Opendatasoft dataset (Open
-  Licence 2.0) listing/serving company documents incl. comptes; useful for discovery/links.
+Daily legal-unit and establishment Parquet files combine Sirene with official
+enrichments: association/RNA, ESS, société à mission, EGAPRO, responsible
+procurement, Alim'Confiance, spectacle licences, patrimoine vivant, training
+organizations, Qualiopi, SIAE, FINESS, ADEME aid, lawyers and collective
+agreements; establishment flags also include BIO, RGE and UAI.
 
-### Restricted (not open) financial sources — for completeness
-- **API Entreprise** (DINUM, habilitation only) brokers **DGFIP chiffres d'affaires** (last 3 years)
-  and **Banque de France bilans** (last 3 years). Richer/authoritative but **reserved for
-  administrations** — not open reuse.
-- **Banque de France** Centrale de bilans / FIBEN — not open.
+### Legal and lifecycle
 
-### Financial conclusion
-- France gives **open financials**: headline CA + résultat net via the no-auth Recherche API, and full
-  non-confidential statements via INPI RNE comptes annuels. The only real limit is the
-  **confidentiality option** (partial coverage of small firms), not access or cost.
+- INPI RNE adds capital, representatives, acts/statutes and richer legal data.
+- BODACC is the lifecycle event stream for formations, changes, closures,
+  insolvency/collective proceedings, business sales and account deposits.
+- BALO adds notices from issuers, banks and companies making public offerings.
 
-## Recommendation
+### ESG, public sector and innovation
 
-- **Master list / identifiers:** INSEE Sirene bulk (Parquet preferred), refreshed
-  monthly, with daily deltas from API Sirene.
-- **Legal enrichment:** INPI RNE bulk (SFTP) for capital, dirigeants, accounts.
-- **Lifecycle events:** BODACC API for ongoing change detection.
-- **Fast prototype / lookups:** API Recherche d'Entreprises (no auth, works now).
-- **Financials:** `finances` block (CA + résultat net) from the Recherche API for breadth at zero cost;
-  INPI RNE comptes annuels bulk for full balance-sheet/income-statement detail. Expect partial coverage
-  due to the confidentiality option.
+- ADEME BEGES exposes SIREN/SIRET-linked greenhouse-gas reports, categories,
+  reporting years, targets and action plans.
+- BOAMP provides tender and award notices. It complements rather than replaces
+  the existing DECP contract-award pipeline.
+- INPI APIs expose trademarks, patents and designs after free registration.
 
-## Risks / open questions
+## Restricted routes
 
-- Sirene direct file URLs are dated and rotate monthly — automation MUST resolve
-  them via the stable landing page / data.gouv.fr dataset API, not hardcode them.
-- Bulk sizes are large (multi-GB); confirm environment capacity before download.
-- Beneficial ownership (RBE) is regulated — not part of the open bulk.
-- NAF/APE codes are transitioning (NAF Rev2 → NAF2025); both codes now appear in
-  Sirene/Recherche API. Mapping tables needed for consistent activity coding.
-- ODbL (Sirene) requires attribution + share-alike on derived databases —
-  see `license_notes.md`.
-- **Financial coverage is partial** — the legal confidentiality option removes many small companies'
-  accounts from the open set; micro-entrepreneurs lack DGFIP revenue. Do not treat missing financials
-  as zero.
-- The Recherche API `finances` block is only **CA + résultat net**; full statements need INPI RNE.
+- RBE beneficial-owner access is restricted to authorized parties or applicants
+  demonstrating legitimate interest. General public access ended in 2024.
+- API Entreprise is for authorized public-service use. Its DGFIP revenue and
+  Banque de France balance endpoints are not general open-data sources.
+- Missing financial data may mean confidentiality, no filing, an individual
+  enterprise or an out-of-scope entity; it must never be interpreted as zero.
+
+## Recommended ingestion
+
+1. Keep Sirene legal units and establishments as dimensions.
+2. Load Ratios BCE/INPI to a financial fact table at
+   `(siren, closing_date, balance_type)`.
+3. Preserve confidentiality and provenance on every financial row.
+4. Add Annuaire enriched Parquet fields that are valuable for search/signals.
+5. Model BODACC/BALO as events and ADEME BEGES as a separate ESG fact table.
+6. Add detailed Parquet or authenticated INPI statements only after defining
+   the desired line-item model.
+
+## Risks and open questions
+
+- Confirm whether ratio exports are full replacement snapshots and how revisions
+  are represented before production scheduling.
+- Confirm the detailed-Parquet refresh cadence; the observed resource was dated
+  2026-02-10.
+- Decide whether complete, simplified and consolidated statements should coexist
+  or whether product views should prefer one `type_bilan`.
+- Sirene and Annuaire stock file resource URLs rotate. Resolve them from stable
+  data.gouv.fr pages.
+- NAF Rev.2 and NAF2025 coexist during the transition; retain both codes.
+- Respect `statutDiffusion=P` and avoid exposing personal data for opted-out
+  individual entrepreneurs.

@@ -6,7 +6,7 @@
 - Source type: official_registry_bulk
 - Organization: INSEE
 - URL: https://www.data.gouv.fr/datasets/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret
-- License: **ODbL** (attribution + share-alike on derived databases)
+- License: **Licence Ouverte / Open Licence 2.0**
 - Access: public, no auth (bulk); daily deltas via API Sirene (free key)
 - Freshness: monthly stock (01 of month) + daily API
 - Record shape: **StockUniteLegale** (legal units, ~25M) + **StockEtablissement** (establishments, ~36M); CSV.zip + Parquet
@@ -41,7 +41,7 @@
   `etablissementSiege=true` for the registered address.
 - **Codes need INSEE label tables**: `categorieJuridique`, `trancheEffectifs`, NAF (Rev2 + NAF2025).
 - **No financials, no capital, no directors** here — those come from INPI RNE / the Recherche API.
-- **ODbL share-alike**: a publicly redistributed derived *database* must be ODbL + credit INSEE.
+- **Attribution**: credit INSEE and the Base Sirene source.
 - **Diffusion**: honor `statutDiffusionUniteLegale=P` (opted-out individual entrepreneurs) — mask PII.
 - No `sample_record.json`: bulk not downloaded (multi-GB); field list is from the documented Sirene
   schema (`schema_notes.md`). Use the Parquet variant for analytics loads.

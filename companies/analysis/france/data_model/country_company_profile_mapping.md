@@ -8,36 +8,37 @@ Spain = sparse CIF). Financials are **open** but coverage is **partial** (confid
 
 | Profile path | Source | Source path | Join key | Freshness | License/access | Precedence / notes |
 |---|---|---|---|---|---|---|
-| registration.siren | insee_sirene | siren | **PK (all sources)** | monthly+daily | ODbL / public | Universal key |
-| registration.siege_siret | insee_sirene / recherche_entreprises | siret (siège) | — | daily | ODbL/open | HQ establishment |
+| registration.siren | insee_sirene | siren | **PK (all sources)** | monthly+daily | Open Licence 2.0 / public | Universal key |
+| registration.siege_siret | insee_sirene / recherche_entreprises | siret (siège) | — | daily | Open Licence/open | HQ establishment |
 | registration.vat_id | derived | FR+key+siren | — | — | — | Computed |
-| legal_identity.nom_complet | recherche_entreprises / insee_sirene | nom_complet / denomination | — | daily | open/ODbL | Prefer Sirene for authoritative name |
-| legal_identity.nature_juridique | recherche_entreprises / insee_sirene | nature_juridique | — | daily | open/ODbL | INSEE cat. juridique code |
+| legal_identity.nom_complet | recherche_entreprises / insee_sirene | nom_complet / denomination | — | daily | open/Open Licence | Prefer Sirene for authoritative name |
+| legal_identity.nature_juridique | recherche_entreprises / insee_sirene | nature_juridique | — | daily | open/Open Licence | INSEE cat. juridique code |
 | legal_identity.objet_social | inpi_rne | objet | siren | daily | INPI open | free text |
-| status.etat_administratif | insee_sirene / recherche_entreprises | etat_administratif | — | daily | ODbL/open | A/C |
+| status.etat_administratif | insee_sirene / recherche_entreprises | etat_administratif | — | daily | Open Licence/open | A/C |
 | status.derived | bodacc | jugement (procédure collective) | registre→siren | daily | Licence Ouverte 2.0 | insolvency signal |
-| activity.naf_rev2 / naf2025 | recherche_entreprises / insee_sirene | activite_principale(_naf25) | — | daily | open/ODbL | **clean codes (France has these)** |
-| registered_location.* | recherche_entreprises / insee_sirene | siege.* | — | daily | open/ODbL | address + geo |
+| activity.naf_rev2 / naf2025 | recherche_entreprises / insee_sirene | activite_principale(_naf25) | — | daily | open/Open Licence | **clean codes (France has these)** |
+| registered_location.* | recherche_entreprises / insee_sirene | siege.* | — | daily | open/Open Licence | address + geo |
 | capital.* | inpi_rne | montantCapital | siren | daily | INPI open | register capital, not accounts |
-| size.categorie_entreprise / tranche_effectif | recherche_entreprises / insee_sirene | categorie_entreprise / tranche_effectif | — | daily | open/ODbL | band codes |
+| size.categorie_entreprise / tranche_effectif | recherche_entreprises / insee_sirene | categorie_entreprise / tranche_effectif | — | daily | open/Open Licence | band codes |
 | officers[] | recherche_entreprises / inpi_rne | dirigeants / représentants | siren | daily | open/INPI · **PII** | INPI richer (roles) |
 | beneficial_owners[] | inpi_rne | RBE | siren | — | **restricted** | **planning-only** |
-| establishments[] | insee_sirene | StockEtablissement | siren | monthly | ODbL | SIRET sites |
+| establishments[] | insee_sirene | StockEtablissement | siren | monthly | Open Licence 2.0 | SIRET sites |
 | events[] | bodacc | annonces | registre→siren | daily | Licence Ouverte 2.0 | lifecycle |
 
 ## Financial statements (open, multi-source)
 
 | Profile path | Source | Source path | Join key | Freshness | License/access | Precedence / notes |
 |---|---|---|---|---|---|---|
+| financial_statements[] (bulk metrics) | ratios_inpi_bce | revenue, EBE, EBIT, net income, ratios | siren + closing date + type | periodic | **Open Licence 2.0, no auth** | **Default bulk financial source** |
 | financial_statements[] (headline) | recherche_entreprises | finances{year:{ca,resultat_net}} | siren | daily | **open, no auth** | **Default at scale** — revenue + net income, free |
 | financial_statements[] (full) | inpi_comptes_annuels | bilan + compte de résultat | siren | daily | open, **free INPI account** | Use for full balance sheet + income statement |
 
 ### Financial source precedence
-1. **recherche_entreprises `finances`** — zero-friction headline **revenue + net income** for the whole
-   spine, no auth. Default for breadth.
-2. **inpi_comptes_annuels** — when you need the **full statement** (total assets, equity, liabilities,
+1. **ratios_inpi_bce** — bulk revenue, margins, EBE, EBIT, net income and calculated ratios, no auth.
+2. **recherche_entreprises `finances`** — zero-friction headline lookup, no auth.
+3. **inpi_comptes_annuels** — when you need the **authoritative full statement** (total assets, equity, liabilities,
    operating result, depreciation). Free INPI account; non-confidential only.
-3. (Restricted, planning-only) **API Entreprise** brokers DGFIP chiffres d'affaires + Banque de France
+4. (Restricted, planning-only) **API Entreprise** brokers DGFIP chiffres d'affaires + Banque de France
    bilans (3 yrs) — richer/authoritative but **habilitation only**; not for open ingestion.
 
 Dedupe financial records on `siren + fiscal_year + accounts_type`; prefer the INPI full statement over
