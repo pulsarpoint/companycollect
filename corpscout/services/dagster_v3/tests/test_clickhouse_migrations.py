@@ -232,6 +232,7 @@ EXPECTED_MIGRATIONS = (
     "000215_corpscout_br_pncp_translated",
     "000216_corpscout_br_pncp_domain_columns",
     "000217_corpscout_br_contract_awards",
+    "000218_corpscout_no_contract_awards",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
