@@ -24,6 +24,12 @@ export function formatFieldValue(key: string, value: unknown): string | null {
 const LINEAGE_EXACT = new Set([
   "country_iso2", "source_system", "resolved_at", "updated_from_raw_at",
   "name_normalized", "xml_object_key", "xml_sha256", "xml_size_bytes",
+  // OUR matcher's verdicts, not the register's data. A card headed "everything
+  // this register publishes" led with company_match_status = 'exact' for Norway,
+  // which the register never said. Kept in the lineage bucket rather than dropped:
+  // 2,712 Brazilian suppliers are natural persons with no company record, and that
+  // is exactly why those rows carry no company link.
+  "company_match_status", "match_eligibility", "company_match_source",
 ]);
 
 // Translation-lineage suffixes: `<base>_language` records which language a

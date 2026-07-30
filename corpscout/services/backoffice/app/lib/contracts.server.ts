@@ -345,10 +345,10 @@ export async function getCountryContractsPage(
  * rather than the lowest common denominator. Keyed on the notice id the view
  * already carries. */
 const SOURCE_RECORD_QUERIES: Record<string, string> = {
-  // A source with no entry here renders no record at all, silently. Brazil was
-  // missing, so its page showed the handful of unified-view columns while all
-  // 42 stored PNCP fields sat unread. estonia_rhr_procurement and
-  // norway_doffin_procurement are still missing for the same reason.
+  // A source with no entry here renders no record at all, SILENTLY -- which is
+  // how Brazil's page showed a handful of unified-view columns while 42 stored
+  // PNCP fields sat unread, and how Norway's and Estonia's showed no register
+  // record whatsoever across 79,881 rows. Every loaded source now has one.
   // The *_translated view, not the base table: it adds objeto_contrato_en so the
   // page can lead with English. It reads br_pncp_contracts rather than
   // br_government_contracts, so the 3,283 contracts that view filters out
@@ -362,6 +362,12 @@ const SOURCE_RECORD_QUERIES: Record<string, string> = {
      WHERE publication_number = {notice:String} LIMIT 1`,
   finland_hilma_procurement: `SELECT * FROM fi_hilma_notices
      WHERE notice_number = {notice:String} LIMIT 1`,
+  // Keyed on the columns the country views build source_notice_id from:
+  // d.doffin_id for Doffin, w.notice_id for Estonia's RHR.
+  norway_doffin_procurement: `SELECT * FROM no_doffin_notices FINAL
+     WHERE doffin_id = {notice:String} LIMIT 1`,
+  estonia_rhr_procurement: `SELECT * FROM ee_rhr_procurement_notices_current
+     WHERE notice_id = {notice:String} LIMIT 1`,
 };
 
 /**

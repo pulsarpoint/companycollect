@@ -4,6 +4,7 @@ import { getCountry, type CountryConfig } from "~/lib/countries";
 import { humanizeFieldKey, splitFields } from "~/components/detail/fields";
 import { maskPersonalSupplierId, supplierStatusLabel } from "~/lib/supplier-label";
 import { BrContractRecord } from "~/components/detail/countries/br-contract";
+import { TedNoticeRecord } from "~/components/detail/countries/ted-notice";
 import {
   getContractDetail,
   type ContractWinnerRow,
@@ -138,6 +139,11 @@ function RegisterRecord({
 }) {
   if (source === "brazil_pncp_procurement") {
     return <BrContractRecord fields={fields} />;
+  }
+  // One view for TED, not four: it is a single register serving se, fi, no and
+  // ee, and its notices have the same shape in all of them.
+  if (source === "ted_procurement") {
+    return <TedNoticeRecord fields={fields} />;
   }
   return <SourceFields fields={fields} />;
 }
