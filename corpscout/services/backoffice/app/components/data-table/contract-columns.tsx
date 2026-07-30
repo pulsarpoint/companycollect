@@ -4,6 +4,7 @@ import type { ContractSortKey, CountryContractListRow } from "~/lib/contracts.se
 import type { SortDir } from "~/lib/countries";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
 import { Badge } from "~/components/ui/badge";
+import { brContractType } from "~/components/detail/countries/br-contract";
 import {
   maskPersonalSupplierId,
   supplierPosition,
@@ -126,7 +127,18 @@ export function buildContractColumns(
     {
       id: "agreement_type",
       header: header("Agreement type"),
-      cell: ({ row }) => truncated(row.original.agreement_type, "max-w-[10rem]"),
+      cell: ({ row }) =>
+        // Brazil's agreement types are Portuguese (Empenho 50,191, Contrato
+        // (termo inicial) 33,799, Outros 28,610, Termo de Adesão 153) on a page
+        // labelled in English. Translated with the original kept beside it, the
+        // same pairing used everywhere else. Other registers publish their own
+        // wording and pass through -- ee and no publish none at all.
+        truncated(
+          countryCode === "br"
+            ? (brContractType(row.original.agreement_type) ?? "")
+            : row.original.agreement_type,
+          "max-w-[14rem]",
+        ),
     },
     {
       id: "source",
