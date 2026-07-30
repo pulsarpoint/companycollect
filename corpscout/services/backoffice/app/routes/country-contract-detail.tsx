@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/country-contract-detail";
 import { getCountry, type CountryConfig } from "~/lib/countries";
+import { humanizeFieldKey, splitFields } from "~/components/detail/fields";
 import { maskPersonalSupplierId, supplierStatusLabel } from "~/lib/supplier-label";
 import { BrContractRecord } from "~/components/detail/countries/br-contract";
 import {
@@ -55,24 +56,65 @@ function money(v: number | null, currency: string) {
   );
 }
 
-/** Source rows differ in shape by design, so they are rendered generically:
- * whatever the register publishes is what shows. Empty values are dropped
- * rather than printed as blank rows. */
+/**
+ * A register's own record, for sources without a bespoke view yet.
+ *
+ * It printed the RAW column name as the label — `source_slug`, `resolved_at`,
+ * `country_iso2` — and put lineage plumbing in the body beside real data. Both
+ * helpers to fix that already existed and simply were not used here:
+ * `splitFields` separates lineage (source_run_id, resolved_at, partition_key)
+ * from what the register actually published, and `humanizeFieldKey` turns a
+ * column name into a label.
+ *
+ * Still generic, and still a fallback. A register that earns a bespoke view gets
+ * proper labels AND the source's own field names beside them, the way
+ * BrContractRecord pairs "What was procured" with `objetoContrato` — this only
+ * stops the fallback being unreadable.
+ */
 function SourceFields({ fields }: { fields: SourceRecord }) {
-  const entries = Object.entries(fields).filter(
+  const { visible, lineage } = splitFields(fields);
+  const shown = visible.filter(
     ([, v]) => v !== null && v !== "" && !(Array.isArray(v) && v.length === 0),
   );
   return (
-    <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
-      {entries.map(([key, value]) => (
-        <div key={key} className="flex flex-col gap-0.5 overflow-hidden">
-          <dt className="text-muted-foreground text-xs">{key}</dt>
-          <dd className="truncate text-sm" title={String(value)}>
-            {typeof value === "object" ? JSON.stringify(value) : String(value)}
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <div className="flex flex-col gap-4">
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+        {shown.map(([key, value]) => {
+          const text =
+            typeof value === "object" ? JSON.stringify(value) : String(value);
+          return (
+            <div key={key} className="flex flex-col gap-0.5 overflow-hidden">
+              <dt className="text-xs leading-tight">
+                <span className="text-foreground">{humanizeFieldKey(key)}</span>
+                <span className="text-muted-foreground/70 ml-1.5 font-mono text-[10px]">
+                  {key}
+                </span>
+              </dt>
+              <dd className="text-sm break-words" title={text}>
+                {text}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+      {lineage.length > 0 ? (
+        // Kept, not dropped: which run produced a row is worth being able to
+        // check. Just not interleaved with the register's own data.
+        <details className="text-muted-foreground text-xs">
+          <summary className="cursor-pointer">Lineage</summary>
+          <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+            {lineage
+              .filter(([, v]) => v !== null && v !== "")
+              .map(([key, value]) => (
+                <div key={key} className="flex gap-1.5 overflow-hidden">
+                  <dt className="font-mono">{key}</dt>
+                  <dd className="truncate">{String(value)}</dd>
+                </div>
+              ))}
+          </dl>
+        </details>
+      ) : null}
+    </div>
   );
 }
 

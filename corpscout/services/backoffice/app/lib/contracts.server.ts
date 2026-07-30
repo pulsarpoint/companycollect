@@ -477,6 +477,89 @@ async function resolveBuyer(
   return null;
 }
 
+export type ContractHeadlineStats = {
+  totalContracts: number;
+  perYear: { year: number; contracts: number }[];
+  topBuyer: { name: string; contracts: number } | null;
+  topWinner: { name: string; contracts: number } | null;
+};
+
+/**
+ * Headline figures for a country's contracts, ranked by CONTRACT COUNT.
+ *
+ * Deliberately not by value. Brazil's register carries 34 source typos that hold
+ * 98.2% of its total -- one eye clinic's R$640,000,000,000 ophthalmology contract
+ * among them -- so a value-ranked "top winner" would put a data-entry error in the
+ * largest text on the page: CENTRO OFTALMOLOGICO DE BELEM LTDA, $103.48bn, from
+ * ONE contract. By count the same question answers usefully:
+ * CENTERMEDI-COMERCIO DE PRODUTOS HOSPITALARES, 1,224 contracts.
+ *
+ * Ranking by value needs the plausibility flag brazil_pncp-design.md §9a
+ * specifies, plus aggregates that exclude it and say so on screen. Until that
+ * exists, count is the axis that cannot mislead.
+ *
+ * The per-year series is counts for the same reason. Norway spans 9 years, Sweden
+ * 6, Estonia 4, Finland 3; Brazil has only 2025 until its 36-month recovery runs,
+ * so its chart is a single bar -- which is a fair depiction of the data we hold.
+ */
+export async function getContractHeadlineStats(
+  country: CountryConfig,
+): Promise<ContractHeadlineStats | null> {
+  if (!(await hasContracts(country))) return null;
+  const source = await contractsSource(country);
+
+  // One row per contract, so a multi-winner contract is not counted twice.
+  // min(winner_name), the same rule the list uses for its primary supplier --
+  // and it has to be, or the banner would name a different "top supplier" than
+  // the table shows.
+  //
+  // NOT argMin(winner_name, source_winner_ordinal): 13,181 Swedish contracts have
+  // two winners sharing one ordinal, and argMin on a tied key picks arbitrarily,
+  // so the count flickered between runs (301, then 299, from identical data).
+  // The ordinal encodes no rank anyway -- the TED parser merely increments it per
+  // tenderer -- so alphabetical is both deterministic and no less meaningful.
+  const contracts = `(SELECT ${REF} AS contract_ref, any(buyer_name) AS buyer_name,
+       min(winner_name) AS winner_name,
+       min(publication_date) AS publication_date
+     FROM ${source.table} GROUP BY contract_ref)`;
+
+  const [totals, perYear, buyers, winners] = await Promise.all([
+    // Counted independently of the date. Summing the per-year buckets would
+    // silently drop contracts with no publication_date -- 36 of Sweden's -- and
+    // the banner would then disagree with the table's own total on the same page.
+    chQuery<{ contracts: string }>(`SELECT count() AS contracts FROM ${contracts}`),
+    chQuery<{ year: string; contracts: string }>(
+      `SELECT toYear(publication_date) AS year, count() AS contracts
+       FROM ${contracts}
+       WHERE publication_date IS NOT NULL
+       GROUP BY year ORDER BY year`,
+    ),
+    chQuery<{ name: string; contracts: string }>(
+      `SELECT buyer_name AS name, count() AS contracts FROM ${contracts}
+       WHERE buyer_name != '' GROUP BY name ORDER BY contracts DESC LIMIT 1`,
+    ),
+    chQuery<{ name: string; contracts: string }>(
+      `SELECT winner_name AS name, count() AS contracts FROM ${contracts}
+       WHERE winner_name != '' GROUP BY name ORDER BY contracts DESC LIMIT 1`,
+    ),
+  ]);
+
+  const perYearRows = perYear.map((r) => ({
+    year: Number(r.year),
+    contracts: Number(r.contracts),
+  }));
+  return {
+    totalContracts: Number(totals[0]?.contracts ?? 0),
+    perYear: perYearRows,
+    topBuyer: buyers[0]
+      ? { name: buyers[0].name, contracts: Number(buyers[0].contracts) }
+      : null,
+    topWinner: winners[0]
+      ? { name: winners[0].name, contracts: Number(winners[0].contracts) }
+      : null,
+  };
+}
+
 export async function getContractDetail(
   country: CountryConfig,
   ref: string,

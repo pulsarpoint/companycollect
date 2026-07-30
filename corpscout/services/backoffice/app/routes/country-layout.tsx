@@ -60,6 +60,9 @@ function activeTabFromPathname(pathname: string, countryCode: string): CountryTa
   return (COUNTRY_TABS as readonly string[]).includes(segment) ? (segment as CountryTab) : "overview";
 }
 
+/** Tabs that render their own headline figures in place of the country banner. */
+const TABS_WITH_OWN_BANNER = new Set(["contracts"]);
+
 export default function CountryLayout({ loaderData, params }: Route.ComponentProps) {
   const { summary, worldBank, imf, trade, showContracts } = loaderData;
   const country = getCountry(params.country)!;
@@ -117,6 +120,12 @@ export default function CountryLayout({ loaderData, params }: Route.ComponentPro
         </Button>
       </header>
 
+      {/* The country banner is the DEFAULT, not a fixture. A tab whose subject has
+          its own headline figures renders them instead -- contracts show contract
+          counts, a top buyer and a top supplier, which say far more on that page
+          than GDP and trade balance do. activeTab is already derived from the
+          location, so this needs no new plumbing. */}
+      {TABS_WITH_OWN_BANNER.has(activeTab) ? null : (
       <section
         aria-label="Country headline statistics"
         className="grid grid-cols-2 rounded-xl bg-muted/35 px-4 ring-1 ring-foreground/10 lg:grid-cols-3 xl:grid-cols-6"
@@ -152,6 +161,7 @@ export default function CountryLayout({ loaderData, params }: Route.ComponentPro
           detail={nextImfGrowth ? `Real GDP · ${nextImfGrowth.year}` : "Awaiting WEO load"}
         />
       </section>
+      )}
 
       <Tabs value={activeTab}>
         <TabsList variant="line" className="max-w-full justify-start overflow-x-auto">
