@@ -783,6 +783,7 @@ dependencies = [
     { name = "tldextract" },
     { name = "warcio" },
     { name = "whoisit" },
+    { name = "zipfile-deflate64" },
 ]
 
 [package.dev-dependencies]
@@ -825,6 +826,7 @@ requires-dist = [
     { name = "tldextract", specifier = ">=5.3.0" },
     { name = "warcio", specifier = ">=1.8.1" },
     { name = "whoisit", specifier = ">=4.0.4,<5" },
+    { name = "zipfile-deflate64", specifier = ">=0.2.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -3326,6 +3328,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/8d/c5/826a862dcfcb9e853
 wheels = [
     { url = "https://files.pythonhosted.org/packages/93/6f/7403e6ae864a0a7f1cdd8814d39690062766e141339127f2b3469201ff6f/yaspin-3.4.0-py3-none-any.whl", hash = "sha256:2a40572a38d39846d0df0a421733459481b7da17789f7a2618c3181bb0a82819", size = 21822, upload-time = "2025-12-06T12:33:50.633Z" },
 ]
+
+[[package]]
+name = "zipfile-deflate64"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/1b/f397f821b48156ee94c5ca7ad82dc5cdb73cbcbc4377b9c1b21556f3ce8c/zipfile-deflate64-0.2.0.tar.gz", hash = "sha256:875a3299de102edf1c17f8cafcc528b1ca80b62dc4814b9cb56867ec59fbfd18", size = 62896, upload-time = "2022-01-05T09:24:39.575Z" }
 
 [[package]]
 name = "zipp"
