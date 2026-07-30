@@ -5,6 +5,8 @@ import type { SortDir } from "~/lib/countries";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
 import { Badge } from "~/components/ui/badge";
 import { brContractType } from "~/components/detail/countries/br-contract";
+import { CONTRACT_COLUMNS, type ContractColumnId } from "~/lib/contract-columns";
+import { cpvSubjects } from "~/lib/cpv";
 import {
   maskPersonalSupplierId,
   supplierPosition,
@@ -23,10 +25,19 @@ function truncated(value: string, maxWidthClassName: string) {
   );
 }
 
+/**
+ * The table's columns, restricted to the ones the reader chose.
+ *
+ * Every column is built and then selected from, rather than assembled
+ * conditionally: the definitions stay readable, and `visible` — already in
+ * canonical order from `parseContractColumns` — decides both membership and
+ * order in one place.
+ */
 export function buildContractColumns(
   countryCode: string,
   sort: ContractSortKey,
   dir: SortDir,
+  visible: ContractColumnId[] = CONTRACT_COLUMNS.map((c) => c.id),
 ): ColumnDef<CountryContractListRow, unknown>[] {
   function header(label: string, sortKey?: ContractSortKey, align?: "start" | "end") {
     return () => (
@@ -40,7 +51,7 @@ export function buildContractColumns(
     );
   }
 
-  return [
+  const defs: ColumnDef<CountryContractListRow, unknown>[] = [
     {
       id: "date",
       header: header("Date", "date"),
@@ -141,6 +152,25 @@ export function buildContractColumns(
         ),
     },
     {
+      id: "cpv",
+      header: header("CPV"),
+      cell: ({ row }) => {
+        // Decoded, never the bare code: 45213100 names nothing to a reader,
+        // "Construction work" does. The exact code stays beside it because the
+        // division label is a summary and the code is what the buyer stated.
+        const subject = cpvSubjects(row.original.cpv_code)[0];
+        if (!subject) return EMPTY;
+        return (
+          <div className="max-w-[16rem]" title={`${subject.label} (${subject.code})`}>
+            <span className="block truncate">{subject.label}</span>
+            <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
+              {subject.code}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
       id: "source",
       header: header("Source"),
       cell: ({ row }) =>
@@ -158,4 +188,9 @@ export function buildContractColumns(
         ),
     },
   ];
+
+  const byId = new Map(defs.map((d) => [d.id as string, d]));
+  return visible
+    .map((id) => byId.get(id))
+    .filter((d): d is ColumnDef<CountryContractListRow, unknown> => d !== undefined);
 }

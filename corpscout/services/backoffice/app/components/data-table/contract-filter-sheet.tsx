@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { ListFilter } from "lucide-react";
 
 import {
@@ -8,6 +8,7 @@ import {
   serializeContractFilters,
   type ContractFilters,
 } from "~/lib/contract-filters";
+import { cpvDivisionLabel } from "~/lib/cpv";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
@@ -23,6 +24,7 @@ import {
 } from "~/components/ui/sheet";
 
 export type AgreementFacetOption = { value: string; count: number };
+export type CpvFacetOption = { division: string; count: number };
 
 const nf = new Intl.NumberFormat("en-US");
 
@@ -42,19 +44,27 @@ export function ContractFilterSheet({
   filters,
   agreementOptions,
   agreementLabel,
+  cpvOptions = [],
 }: {
   countryCode: string;
   filters: ContractFilters;
   agreementOptions: AgreementFacetOption[];
   agreementLabel?: (value: string) => string;
+  cpvOptions?: CpvFacetOption[];
 }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<ContractFilters>(filters);
   const active = contractFilterCount(filters);
 
   function apply(next: ContractFilters) {
-    const query = serializeContractFilters(next);
+    const params = new URLSearchParams(serializeContractFilters(next));
+    // The chosen columns are not a filter and must survive one being applied --
+    // otherwise every Apply silently resets the table back to its defaults.
+    const columns = searchParams.get("cols");
+    if (columns !== null) params.set("cols", columns);
+    const query = params.toString();
     // Page is deliberately dropped: after changing a filter, page 7 of the old
     // result set is meaningless and often past the new end.
     navigate(`/countries/${countryCode}/contracts${query ? `?${query}` : ""}`);
@@ -67,6 +77,15 @@ export function ContractFilterSheet({
       agreement: d.agreement.includes(value)
         ? d.agreement.filter((v) => v !== value)
         : [...d.agreement, value],
+    }));
+  }
+
+  function toggleCpv(division: string) {
+    setDraft((d) => ({
+      ...d,
+      cpv: d.cpv.includes(division)
+        ? d.cpv.filter((v) => v !== division)
+        : [...d.cpv, division],
     }));
   }
 
@@ -124,6 +143,44 @@ export function ContractFilterSheet({
                 ))}
               </div>
             </section>
+          ) : null}
+
+          {cpvOptions.length > 0 ? (
+            <>
+              <Separator />
+              <section className="flex flex-col gap-2">
+                <Label className="text-xs tracking-wide uppercase">
+                  What was procured
+                </Label>
+                {/* Divisions, not the ~9,500 individual codes: this is the level
+                    that has a name a reader recognises, and selecting one catches
+                    every depth a buyer published beneath it. */}
+                <div className="flex max-h-72 flex-col gap-1.5 overflow-y-auto pr-1">
+                  {cpvOptions.map((option) => (
+                    <label
+                      key={option.division}
+                      className="flex cursor-pointer items-start gap-2 text-sm"
+                    >
+                      <Checkbox
+                        checked={draft.cpv.includes(option.division)}
+                        onCheckedChange={() => toggleCpv(option.division)}
+                        className="mt-0.5"
+                      />
+                      <span className="flex-1">
+                        {cpvDivisionLabel(`${option.division}000000`) ??
+                          `CPV division ${option.division}`}
+                        <span className="text-muted-foreground ml-1.5 font-mono text-[10px]">
+                          {option.division}
+                        </span>
+                      </span>
+                      <span className="text-muted-foreground text-xs tabular-nums">
+                        {nf.format(option.count)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+            </>
           ) : null}
 
           <Separator />

@@ -7,6 +7,7 @@ import {
   EMPTY_CONTRACT_FILTERS,
   type ContractFilters,
 } from "~/lib/contract-filters";
+import { CONTRACT_COLUMNS, type ContractColumnId } from "~/lib/contract-columns";
 
 /** Every country's contracts live in a view named <cc>_government_contracts
  * with an identical shape, so these queries are built from the country code
@@ -86,6 +87,10 @@ export interface CountryContractListRow {
   buyer_name: string;
   title: string;
   agreement_type: string;
+  /** The subject procured, as the register published it. Decoded to a division
+   * label by `cpvSubjects` — a bare 8-digit code tells a reader nothing. Empty
+   * on registers that publish no CPV, which is every Brazilian row. */
+  cpv_code: string;
   /** The winner shown. Every field on this row (including this one) is read
    * from whichever (contract, source) group carries the largest USD amount —
    * so the winner shown always pairs with the amount shown, never a mix of
@@ -270,6 +275,7 @@ export async function getCountryContractsPage(
        buyer_name,
        title,
        agreement_type,
+       cpv_code,
        winner_name,
        winner_registered_id,
        winner_match_status,
@@ -285,6 +291,7 @@ export async function getCountryContractsPage(
          argMax(buyer_name_in, priority) AS buyer_name,
          argMax(title_in, priority) AS title,
          argMax(agreement_type_in, priority) AS agreement_type,
+         argMax(cpv_code_in, priority) AS cpv_code,
          argMax(source_url_in, priority) AS source_url,
          argMax(winner_name_in, priority) AS winner_name,
          argMax(winner_registered_id_in, priority) AS winner_registered_id,
@@ -303,6 +310,10 @@ export async function getCountryContractsPage(
            -- PNCP (Brazil) publishes agreement_type as a raw {"id":N,"nome":"..."}
            -- blob; every other loaded source already publishes plain text.
            any(${AGREEMENT_EXPR}) AS agreement_type_in,
+           -- max(), not any(): a contract's rows within one source can carry
+           -- CPV on some lots and '' on others, and any() would pick the blank
+           -- often enough to look like the register publishes nothing.
+           max(cpv_code) AS cpv_code_in,
            any(source_url) AS source_url_in,
            -- Alphabetically first, not source_winner_ordinal: that ordinal is
            -- just the order our parser happened to iterate the notice XML (it
@@ -437,6 +448,57 @@ export async function getAgreementTypeFacet(
      LIMIT 100`,
   );
   return rows.map((r) => ({ value: r.value, count: Number(r.cnt) }));
+}
+
+/**
+ * CPV divisions a country actually publishes, with counts.
+ *
+ * Divisions, not whole codes: CPV holds ~9,500 of them and a register uses
+ * hundreds, which is a list nobody reads. The 46 divisions are the level we
+ * carry real labels for, and picking one selects the subject at every depth a
+ * buyer might have published it under.
+ *
+ * Same shape and same reasoning as the agreement facet — an empty result means
+ * the register publishes no CPV, and both the column and the filter disappear
+ * rather than rendering permanently blank. That is what makes the table split
+ * itself per country without anyone maintaining a list of which countries are
+ * "EU": Estonia fills 98.8% of its rows and Brazil fills none.
+ */
+export async function getCpvDivisionFacet(
+  country: CountryConfig,
+): Promise<{ division: string; count: number }[]> {
+  if (!(await hasContracts(country))) return [];
+  const source = await contractsSource(country);
+  const rows = await chQuery<{ division: string; cnt: string }>(
+    `SELECT division, uniqExact(contract_ref) AS cnt
+     FROM (
+       SELECT substring(cpv_code, 1, 2) AS division, ${REF} AS contract_ref
+       FROM ${source.table}
+       WHERE cpv_code != ''
+     )
+     GROUP BY division
+     ORDER BY cnt DESC, division
+     LIMIT 100`,
+  );
+  return rows.map((r) => ({ division: r.division, count: Number(r.cnt) }));
+}
+
+/**
+ * Which columns this country's table can offer, measured from the data.
+ *
+ * Everything is available except the two the registers disagree about, and each
+ * of those is offered exactly when its facet found values. Derived from the
+ * facets the page already loads rather than a query of its own.
+ */
+export function contractColumnAvailability(facets: {
+  agreement: { value: string; count: number }[];
+  cpv: { division: string; count: number }[];
+}): ContractColumnId[] {
+  return CONTRACT_COLUMNS.map((c) => c.id).filter((id) => {
+    if (id === "agreement_type") return facets.agreement.length > 0;
+    if (id === "cpv") return facets.cpv.length > 0;
+    return true;
+  });
 }
 
 /**

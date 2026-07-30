@@ -3,7 +3,13 @@ import { DataTable } from "~/components/data-table/data-table";
 import {
   ContractFilterSheet,
   type AgreementFacetOption,
+  type CpvFacetOption,
 } from "~/components/data-table/contract-filter-sheet";
+import { ContractColumnPicker } from "~/components/data-table/contract-column-picker";
+import {
+  CONTRACT_COLUMNS,
+  type ContractColumnId,
+} from "~/lib/contract-columns";
 import { brContractType } from "~/components/detail/countries/br-contract";
 import {
   contractFilterCount,
@@ -32,13 +38,22 @@ export function CountryContractsTable({
   countryCode,
   page,
   agreementOptions = [],
+  cpvOptions = [],
   filters = EMPTY_CONTRACT_FILTERS,
+  columns: visibleColumns,
+  availableColumns,
 }: {
   countryCode: string;
   page: CountryContractsPage;
   agreementOptions?: AgreementFacetOption[];
+  cpvOptions?: CpvFacetOption[];
   filters?: ContractFilters;
+  columns?: ContractColumnId[];
+  availableColumns?: ContractColumnId[];
 }) {
+  const allIds = CONTRACT_COLUMNS.map((c) => c.id);
+  const available = availableColumns ?? allIds;
+  const visible = visibleColumns ?? available;
   const filtered = contractFilterCount(filters) > 0;
 
   // An empty result with filters ON is a filter that matched nothing, not a
@@ -56,7 +71,7 @@ export function CountryContractsTable({
     );
   }
 
-  const columns = buildContractColumns(countryCode, page.sort, page.dir);
+  const columns = buildContractColumns(countryCode, page.sort, page.dir, visible);
 
   return (
     <Card>
@@ -69,16 +84,24 @@ export function CountryContractsTable({
           open it for every winner and source document.
         </CardDescription>
         </div>
-        <ContractFilterSheet
-          countryCode={countryCode}
-          filters={filters}
-          agreementOptions={agreementOptions}
-          agreementLabel={
-            countryCode === "br"
-              ? (value) => brContractType(value) ?? value
-              : undefined
-          }
-        />
+        <div className="flex items-center gap-1.5">
+          <ContractColumnPicker
+            countryCode={countryCode}
+            visible={visible}
+            available={available}
+          />
+          <ContractFilterSheet
+            countryCode={countryCode}
+            filters={filters}
+            agreementOptions={agreementOptions}
+            cpvOptions={cpvOptions}
+            agreementLabel={
+              countryCode === "br"
+                ? (value) => brContractType(value) ?? value
+                : undefined
+            }
+          />
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <DataTable

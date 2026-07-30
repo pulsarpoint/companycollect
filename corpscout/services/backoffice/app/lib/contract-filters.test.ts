@@ -12,7 +12,14 @@ const parse = (qs: string) => parseContractFilters(new URLSearchParams(qs));
 
 describe("parsing contract filters", () => {
   it("reads nothing from an empty query", () => {
-    expect(parse("")).toEqual({ agreement: [], amountMin: null, amountMax: null, from: null, to: null });
+    expect(parse("")).toEqual({
+      agreement: [],
+      cpv: [],
+      amountMin: null,
+      amountMax: null,
+      from: null,
+      to: null,
+    });
   });
 
   it("collects repeated agreement values, deduped", () => {
@@ -163,5 +170,52 @@ describe("clearing", () => {
     );
     expect(contractFilterCount(everything)).toBe(3);
     expect(serializeContractFilters(EMPTY_CONTRACT_FILTERS)).toBe("");
+  });
+});
+
+describe("CPV division filter", () => {
+  it("parses divisions from repeated params", () => {
+    const f = parseContractFilters(new URLSearchParams("cpv=45&cpv=72"));
+    expect(f.cpv).toEqual(["45", "72"]);
+  });
+
+  it("truncates a full 8-digit code to its division rather than dropping it", () => {
+    // A hand-written or copied URL carrying a real code still selects the
+    // subject it belongs to, instead of matching nothing.
+    expect(parseContractFilters(new URLSearchParams("cpv=45213100")).cpv).toEqual(["45"]);
+  });
+
+  it("ignores values that are not a division", () => {
+    expect(parseContractFilters(new URLSearchParams("cpv=&cpv=ab&cpv=4")).cpv).toEqual([]);
+  });
+
+  it("deduplicates, so two codes in one division select it once", () => {
+    expect(parseContractFilters(new URLSearchParams("cpv=45000000&cpv=45213100")).cpv).toEqual(
+      ["45"],
+    );
+  });
+
+  it("matches on the division and excludes rows with no CPV", () => {
+    const { where, params } = contractFilterSql({
+      ...EMPTY_CONTRACT_FILTERS,
+      cpv: ["45"],
+    });
+    expect(where).toContain("substring(cpv_code, 1, 2) IN {cpv:Array(String)}");
+    expect(where).toContain("cpv_code != ''");
+    expect(params.cpv).toEqual(["45"]);
+  });
+
+  it("adds nothing to the query when no division is selected", () => {
+    expect(contractFilterSql(EMPTY_CONTRACT_FILTERS).where).toBe("");
+  });
+
+  it("round-trips through the query string", () => {
+    const filters = { ...EMPTY_CONTRACT_FILTERS, cpv: ["09", "66"] };
+    const round = parseContractFilters(new URLSearchParams(serializeContractFilters(filters)));
+    expect(round.cpv).toEqual(["09", "66"]);
+  });
+
+  it("counts as one active filter however many divisions are picked", () => {
+    expect(contractFilterCount({ ...EMPTY_CONTRACT_FILTERS, cpv: ["09", "66", "45"] })).toBe(1);
   });
 });
