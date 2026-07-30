@@ -194,6 +194,31 @@ SWEDEN = _mappings(
         "BFL-ORGFO": (COMPANY, "Filial till utländsk bank"),
         "OFB-ORGFO": (COMPANY, "Ömsesidigt försäkringsbolag"),
         "KHF-ORGFO": (COOPERATIVE, "Kooperativ hyresrättsförening"),
+        # Completing the pairs, 2026-07-30. Sweden encodes the same taxonomy twice
+        # in one field, and the numeric twin of four already-mapped -ORGFO forms
+        # was missing -- so the classification below is corroborated by this
+        # table's own existing rows, not only by the entities carrying the code.
+        "41": (COMPANY, "Bankaktiebolag"),          # twin of BAB-ORGFO
+        "42": (COMPANY, "Försäkringsaktiebolag"),   # twin of FAB-ORGFO
+        "93": (COMPANY, "Sparbank"),                # twin of SB-ORGFO
+        "54": (COOPERATIVE, "Kooperativ hyresrättsförening"),  # twin of KHF-ORGFO
+        # Identified from the entities carrying them, as Sweden's others were.
+        "43": (COMPANY, "Europabolag (SE)"),        # MTI INVESTMENT SE
+        "95": (ASSOCIATION, "Arbetslöshetskassa"),  # AKADEMIKERNAS ERKÄNDA ARBETSLÖSHETSKASSA
+        # European Spallation Source ERIC, the only holder. An ERIC is created by
+        # EU regulation with states as members, so it is neither a Swedish public
+        # body nor a business -- flagging it public sector would put a
+        # pan-European research consortium in the same bucket as a ministry.
+        "55": (OTHER, "Europeisk forskningsinfrastruktur (ERIC)"),
+        "SE-ORGFO": (COMPANY, "Europabolag (SE)"),
+        "SCE-ORGFO": (COOPERATIVE, "Europeisk kooperativ förening (SCE)"),
+        "MB-ORGFO": (COOPERATIVE, "Medlemsbank"),   # Ekobanken medlemsbank, JAK Medlemsbank
+        "SF-ORGFO": (COOPERATIVE, "Sambruksförening"),
+        "FOF-ORGFO": (ASSOCIATION, "Försäkringsförening"),
+        "TSF-ORGFO": (ASSOCIATION, "Trossamfund"),  # Borås församling, Borås pastorat
+        "TPAB-ORGFO": (COMPANY, "Tjänstepensionsaktiebolag"),
+        "TPF-ORGFO": (ASSOCIATION, "Tjänstepensionsförening"),
+        "OTPB-ORGFO": (COMPANY, "Ömsesidigt tjänstepensionsbolag"),
         "99": (OTHER, "Övrig juridisk person"),
     },
 )
@@ -224,6 +249,20 @@ FINLAND = _mappings(
         "1": (COOPERATIVE, "Housing co-operative"),
         "4": (COOPERATIVE, "Tenant-owners' society"),
         "54": (ESTATE, "Bankrupt's estate"),
+        # Completing the register, 2026-07-30. Finland publishes a description
+        # per form, so each of these is read off it rather than inferred -- and
+        # the *_en column is already translated, so both wordings agree.
+        "9": (ASSOCIATION, "Hypoteekkiyhdistys"),   # Mortgage society
+        "21": (ASSOCIATION, "Taloudellinen yhdistys"),  # Economic association
+        "38": (ASSOCIATION, "Muu taloudellinen yhdistys"),  # Other economic association
+        "39": (FOUNDATION, "Muu säätiö"),           # Other foundation
+        "23": (COMPANY, "Julkinen vakuutusosakeyhtiö"),  # Public insurance company
+        "56": (COMPANY, "Muu kiinteistöosakeyhtiö"),  # Other real estate limited company
+        "80": (COMPANY, "Eurooppayhtiö"),           # European company (SE)
+        "3": (OTHER, "Asukashallintoalue"),         # Area managed by residents
+        "71": (OTHER, "Paikallisyhteisö"),          # Local community
+        "55": (OTHER, "Yhteismetsä"),               # Collective forest
+        "63": (OTHER, "Muut oikeushenkilöt"),       # Other juridical persons
         "51": (OTHER, "Taxable grouping"),
         "52": (OTHER, "Other subject with joint liability to tax withholding"),
         # The ONLY public form in the Finnish register. Metsähallitus, the state
@@ -384,6 +423,25 @@ LEGAL_FORM_MAPPINGS: tuple[LegalFormMapping, ...] = (
 # companies. Verified against system.columns: dk_companies genuinely has no
 # such column, br_companies does.
 REGISTERS_WITHOUT_LEGAL_FORM: tuple[str, ...] = ("DK",)
+
+# Three se_companies rows carry a legal_form_code that is not a code at all, and
+# they are deliberately NOT mapped -- classifying them would paper over an ingest
+# defect rather than record a legal form:
+#
+#   'kropp och själ$FORETAGSNAMN-ORGNAM$2019-01-11"'
+#   'latin movement$FORETAGSNAMN-ORGNAM$2018-12-11"'
+#   'tillhandahållande av luftfartyg, flygprodukter och luftbundna transporttjänster'
+#
+# The first two are a company name, a $FORETAGSNAMN-ORGNAM$ field marker and a
+# date concatenated into one value; the third is a business-purpose description.
+# All three are field misalignment in the Bolagsverket load, so the fix belongs
+# in the sweden_company parser, not here. 3 rows of 3,407,809.
+#
+# Finland has one row with a BLANK code, also unmapped: a blank is the absence of
+# a value rather than a value, so legalFormCodeOf returns "" and no classification
+# is shown -- which is the honest outcome. It is not mapped to UNKNOWN either,
+# because UNKNOWN means the register SAID it does not know (see the corroboration
+# rule in the tests), and a blank says nothing at all.
 
 
 def is_public_sector(entity_type: str) -> bool:

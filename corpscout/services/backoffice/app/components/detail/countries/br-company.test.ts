@@ -45,31 +45,53 @@ describe("decorating a Brazilian company record", () => {
     legal_nature_description_pt: "Sociedade Empresária Limitada",
     company_size_code: "01",
     company_size_en: "Micro",
-    status: "Active",
+    status_en: "Active",
     status_code: "02",
     is_active: "yes",
     municipality_code: "3849",
     municipality_name: "SALVADOR",
   };
 
-  it("drops the codes the page already decodes", () => {
+  it("pairs every unified value with the original, in one row", () => {
+    // A derived value alone is unfalsifiable, and for size and status the code is
+    // the ONLY original RFB publishes -- there is no Portuguese text behind them.
     const decorated = decorateBrRecord(RECORD);
 
-    expect(decorated).not.toHaveProperty("legal_nature_code");
-    expect(decorated).not.toHaveProperty("company_size_code");
-    expect(decorated).not.toHaveProperty("status_code");
-    // status, is_active and status_code were three renderings of one fact.
-    expect(decorated).not.toHaveProperty("is_active");
-    // RFB's own municipality key, not the IBGE code, so it joins to nothing.
-    expect(decorated).not.toHaveProperty("municipality_code");
+    expect(decorated.company_size).toBe("Micro (01)");
+    expect(decorated.status_en).toBe("Active (02)");
+    expect(decorated.municipality_name).toBe("SALVADOR (3849)");
   });
 
-  it("keeps the labels those codes decoded to", () => {
+  it("removes the codes as separate rows, having folded them in", () => {
     const decorated = decorateBrRecord(RECORD);
 
-    expect(decorated.company_size_en).toBe("Micro");
-    expect(decorated.status).toBe("Active");
-    expect(decorated.municipality_name).toBe("SALVADOR");
+    for (const key of [
+      "legal_nature_code",
+      "company_size_code",
+      "status_code",
+      "municipality_code",
+    ]) {
+      expect(decorated, key).not.toHaveProperty(key);
+    }
+  });
+
+  it("drops is_active, which is a second derivation rather than an original", () => {
+    // status, status_code and is_active were three renderings of one fact. The
+    // code is the original; is_active is just status computed again.
+    expect(decorateBrRecord(RECORD)).not.toHaveProperty("is_active");
+  });
+
+  it("shows the value alone when the register published no code", () => {
+    const decorated = decorateBrRecord({ ...RECORD, company_size_code: "" });
+
+    expect(decorated.company_size).toBe("Micro");
+  });
+
+  it("shows the code alone when there is no decoded value", () => {
+    // 4,063 rows carry no company_size_code at all, and a handful the reverse.
+    const decorated = decorateBrRecord({ ...RECORD, company_size_en: "" });
+
+    expect(decorated.company_size).toBe("01");
   });
 
   it("replaces the Portuguese-only field with a translated one", () => {
@@ -92,5 +114,18 @@ describe("decorating a Brazilian company record", () => {
     decorateBrRecord(record);
 
     expect(record.legal_nature_code).toBe("2062");
+  });
+});
+
+
+describe("pairing never invents a row", () => {
+  it("leaves the original alone when the record has no field to fold it into", () => {
+    // The record is SELECT * from br_companies, so a key that is not a column
+    // is simply absent. Creating it would show a bare code under a label the
+    // register never published -- which is how this first read "Status: 02".
+    const decorated = decorateBrRecord({ status_code: "02", legal_name: "X" });
+
+    expect(decorated).not.toHaveProperty("status_en");
+    expect(decorated.status_code).toBe("02");
   });
 });

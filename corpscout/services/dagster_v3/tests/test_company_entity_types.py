@@ -206,3 +206,36 @@ def test_a_brazilian_municipality_is_public_sector() -> None:
     assert brazil["1341"] == entity_types.GOVERNMENT
     for code in ("1244", "1341", "1104", "1236"):
         assert entity_types.is_public_sector(brazil[code]), code
+
+
+def test_every_legal_form_the_nordic_registers_publish_is_classified() -> None:
+    """Coverage, so a form nobody mapped cannot sit unclassified indefinitely.
+
+    Verified against the live registers on 2026-07-30 and pinned here as counts.
+    Sweden encodes the same taxonomy twice in one field, so both the numeric and
+    the -ORGFO spelling of a form have to be present -- four numeric twins of
+    already-mapped -ORGFO forms were missing until then.
+    """
+    per_country: dict[str, int] = {}
+    for mapping in LEGAL_FORM_MAPPINGS:
+        per_country[mapping.country_code] = per_country.get(mapping.country_code, 0) + 1
+
+    assert per_country["BR"] == 90
+    # Sweden's numeric scheme plus its -ORGFO twin scheme.
+    assert per_country["SE"] >= 57
+    assert per_country["FI"] >= 35
+    assert per_country["NO"] >= 40
+
+
+def test_swedens_unclassifiable_values_are_left_alone() -> None:
+    """Three se_companies rows hold a company name plus a field marker plus a
+    date, or a business-purpose description, in legal_form_code. They are field
+    misalignment in the Bolagsverket load, and mapping them would paper over an
+    ingest defect rather than record a legal form -- so no mapping may exist for
+    a value that is obviously not a code.
+    """
+    swedish = {m.legal_form_code for m in LEGAL_FORM_MAPPINGS if m.country_code == "SE"}
+
+    for code in swedish:
+        assert "$" not in code, code
+        assert len(code) <= 12, code

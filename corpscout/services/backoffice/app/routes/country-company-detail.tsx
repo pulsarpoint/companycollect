@@ -106,12 +106,20 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
           // municipalities and ministries beside businesses. The register's own
           // wording is the tooltip so the label can be checked, not just
           // trusted.
-          <Badge
-            variant={entityType.is_public_sector ? "secondary" : "outline"}
-            title={entityType.source_label}
-          >
-            {entityType.entity_type_label}
-          </Badge>
+          // The register's own wording is rendered BESIDE the badge, not as a
+          // title: a tooltip is invisible on touch, unselectable, and absent
+          // from the page text, so the classification would be uncheckable for
+          // most readers. Same pairing as everything else here.
+          <span className="inline-flex items-center gap-1.5">
+            <Badge variant={entityType.is_public_sector ? "secondary" : "outline"}>
+              {entityType.entity_type_label}
+            </Badge>
+            {entityType.source_label ? (
+              <span className="text-muted-foreground text-xs">
+                {entityType.source_label}
+              </span>
+            ) : null}
+          </span>
         ) : null}
         {country.code === "fi" ? <FiRegistryBadges record={detail.record} /> : null}
         <LangToggle lang={lang} pairCount={pairCount} />

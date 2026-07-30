@@ -1,12 +1,16 @@
 /**
  * Brazil (RFB) company presentation.
  *
- * The generic field grid printed RFB's raw codes beside the labels they already
- * decode to: `Legal nature code 2062` next to `Legal nature description pt`,
- * `Company size code 01` next to `Company size en: Micro`, and `Status code 02`
- * next to both `Status: Active` and `Is active: yes` — three renderings of one
- * fact. The codes are RFB's internal keys, and a reader has no use for them once
- * the label is there.
+ * The generic field grid printed RFB's raw codes as SEPARATE ROWS beside the
+ * labels they decode to: `Legal nature code 2062` next to `Legal nature
+ * description pt`, `Company size code 01` next to `Company size en: Micro`, and
+ * `Status code 02` next to both `Status: Active` and `Is active: yes` — three
+ * renderings of one fact.
+ *
+ * The fix is to PAIR them, not to drop them. A unified value we derived is
+ * unfalsifiable on its own, and for size and status the code is the only original
+ * RFB publishes — there is no Portuguese text behind them. So each reads
+ * `Micro (01)`, the same shape as `State level (E)` and `Brazil (BRA)`.
  *
  * `legal_nature_description_pt` is Portuguese, on a page whose labels are
  * English. It is a CLOSED domain — 90 codes across all 68,629,147 companies, from
@@ -137,44 +141,78 @@ export function brLegalNature(
 }
 
 /**
- * RFB's internal keys, dropped because the page already shows what they decode
- * to. Each is redundant rather than merely noisy:
+ * A unified value always carries the register's original beside it.
  *
- *   legal_nature_code          -> legal_nature_description_pt, now translated
- *   company_size_code          -> company_size_en ("Micro")
- *   status_code                -> status ("Active"), and is_active repeats it again
- *   is_active                  -> the third rendering of the same fact
- *   municipality_code          -> municipality_name. RFB's own municipality key,
- *                                not the IBGE code, so it joins to nothing
- *                                outside RFB and is not the geographic key
- *                                anyone would want.
+ * The first version of this file DELETED these codes, which was the wrong
+ * correction: the codes were redundant as SEPARATE ROWS next to their label, not
+ * redundant as values. RFB publishes size and status as codes with no Portuguese
+ * text at all, so for those two the code IS the original -- dropping it left only
+ * a value we derived, with nothing to check it against.
+ *
+ * So each pairs into one row instead, the same shape used for
+ * `State level (E)`, `Brazil (BRA)` and `Contract, initial term (...)`:
+ *
+ *   Company size    Micro (01)          was: "Micro" + a separate "01" row
+ *   Status          Active (02)         was: "Active" + "02" + "is_active: yes"
+ *   Municipality    SALVADOR (3849)     was: name + a separate RFB key
+ *   Legal nature    Private limited company (Sociedade Empresária Limitada)
+ *
+ * is_active stays dropped: it is a second DERIVATION of status, not an original
+ * of anything, so it adds a third rendering of one fact and no checkability.
  */
-const BR_REDUNDANT_CODE_FIELDS = [
-  "legal_nature_code",
-  "company_size_code",
-  "status_code",
-  "is_active",
-  "municipality_code",
+const BR_PAIRED_FIELDS: readonly (readonly [display: string, original: string])[] = [
+  ["company_size_en", "company_size_code"],
+  // status_en, not status: the record is SELECT * from br_companies, whose
+  // columns are status_code / status_en / status_date. Pairing a key the record
+  // does not have would CREATE a row showing the bare code, which is how the
+  // first attempt made this read "Status: 02".
+  ["status_en", "status_code"],
+  ["municipality_name", "municipality_code"],
 ] as const;
 
-/**
- * The record as the Brazilian page should read it: codes dropped, legal nature in
- * English with the Portuguese kept beside it.
- *
- * Mirrors decorateFiRecord's shape so the route keeps one per-country seam.
- */
+/** Derived twice over, so it is dropped rather than paired. */
+const BR_REDUNDANT_DERIVED_FIELDS = ["is_active"] as const;
+
+function paired(display: unknown, original: unknown): string | null {
+  const value = display == null ? "" : String(display).trim();
+  const code = original == null ? "" : String(original).trim();
+  if (value === "") return code === "" ? null : code;
+  return code === "" ? value : `${value} (${code})`;
+}
+
 export function decorateBrRecord(
   record: Record<string, unknown>,
 ): Record<string, unknown> {
   const decorated = { ...record };
+
+  for (const [display, original] of BR_PAIRED_FIELDS) {
+    // Only fold into a field the record actually has. Otherwise the original is
+    // left exactly where it was: better a raw code under its own label than an
+    // invented row, and better than silently dropping the only value present.
+    if (!(display in record)) continue;
+    const value = paired(record[display], record[original]);
+    if (value != null) decorated[display] = value;
+    delete decorated[original];
+  }
+  for (const key of BR_REDUNDANT_DERIVED_FIELDS) delete decorated[key];
+
+  // "Company size en" is a column name, not a label. The "_en" told a reader
+  // which of two language variants they were looking at, and there is no
+  // Portuguese variant of this one -- RFB publishes only the code.
+  if ("company_size_en" in decorated) {
+    decorated.company_size = decorated.company_size_en;
+    delete decorated.company_size_en;
+  }
+
   const legalNature = brLegalNature(
     record.legal_nature_code,
     record.legal_nature_description_pt,
   );
-  for (const key of BR_REDUNDANT_CODE_FIELDS) delete decorated[key];
   if (legalNature != null) {
-    // Renamed as well as translated: "description pt" is no longer true of it.
+    // Renamed as well as translated: "description pt" is no longer true of it,
+    // and the code is already inside the value.
     delete decorated.legal_nature_description_pt;
+    delete decorated.legal_nature_code;
     decorated.legal_nature = legalNature;
   }
   return decorated;
