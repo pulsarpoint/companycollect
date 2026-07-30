@@ -2,9 +2,11 @@ import { Link } from "react-router";
 import type { Route } from "./+types/country-contract-detail";
 import { getCountry, type CountryConfig } from "~/lib/countries";
 import { humanizeFieldKey, splitFields } from "~/components/detail/fields";
+import { CpvSubjectRows } from "~/components/detail/cpv-list";
 import { cpvSubjects } from "~/lib/cpv";
 import { maskPersonalSupplierId, supplierStatusLabel } from "~/lib/supplier-label";
 import { BrContractRecord } from "~/components/detail/countries/br-contract";
+import { DoffinNoticeRecord } from "~/components/detail/countries/no-doffin";
 import { TedNoticeRecord } from "~/components/detail/countries/ted-notice";
 import {
   getContractDetail,
@@ -88,13 +90,7 @@ function SourceFields({ fields }: { fields: SourceRecord }) {
           // came from.
           const subjects = /cpv/i.test(key) ? cpvSubjects(value) : [];
           const text =
-            subjects.length > 0
-              ? subjects
-                  .map((s) => `${s.label} (${s.code})`)
-                  .join(" · ")
-              : typeof value === "object"
-                ? JSON.stringify(value)
-                : String(value);
+            typeof value === "object" ? JSON.stringify(value) : String(value);
           return (
             <div key={key} className="flex flex-col gap-0.5 overflow-hidden">
               <dt className="text-xs leading-tight">
@@ -103,9 +99,15 @@ function SourceFields({ fields }: { fields: SourceRecord }) {
                   {key}
                 </span>
               </dt>
-              <dd className="text-sm break-words" title={text}>
-                {text}
-              </dd>
+              {subjects.length > 0 ? (
+                <dd className="text-sm">
+                  <CpvSubjectRows subjects={subjects} />
+                </dd>
+              ) : (
+                <dd className="text-sm break-words" title={text}>
+                  {text}
+                </dd>
+              )}
             </div>
           );
         })}
@@ -156,6 +158,12 @@ function RegisterRecord({
   // ee, and its notices have the same shape in all of them.
   if (source === "ted_procurement") {
     return <TedNoticeRecord fields={fields} />;
+  }
+  // Doffin is eForms too, but it is NOT TED's record: its winners come resolved
+  // from the search API while its money comes from the XML, and it publishes
+  // fields TED has no equivalent for. Its own view, not a shared eForms one.
+  if (source === "norway_doffin_procurement") {
+    return <DoffinNoticeRecord fields={fields} />;
   }
   return <SourceFields fields={fields} />;
 }

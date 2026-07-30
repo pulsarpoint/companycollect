@@ -20,17 +20,11 @@
  * a ceiling summed as spend overstates it wildly.
  */
 
+import { CpvSubjectRows } from "~/components/detail/cpv-list";
 import { cpvSubjects } from "~/lib/cpv";
+import { eformsMoney, noticeText as text } from "~/lib/notice-money";
 
 export type TedField = { key: string; en: string; term: string };
-
-const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
-
-function text(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const s = String(value).trim();
-  return s === "" ? null : s;
-}
 
 const TED_SECTIONS: { title: string; fields: TedField[] }[] = [
   {
@@ -88,22 +82,6 @@ function Row({ field, children }: { field: TedField; children: React.ReactNode }
   );
 }
 
-/** A money row, or null when the notice does not publish that claim. */
-export function tedMoney(
-  fields: Record<string, unknown>,
-  key: string,
-): { original: string; usd: string | null } | null {
-  const original = text(fields[`${key}_amount_original`]);
-  if (original == null) return null;
-  const currency = text(fields[`${key}_currency`]) ?? "";
-  const usd = text(fields[`${key}_amount_usd`]);
-  const amount = Number(original);
-  return {
-    original: `${Number.isFinite(amount) ? nf.format(amount) : original}${currency ? ` ${currency}` : ""}`,
-    usd: usd != null && Number.isFinite(Number(usd)) ? `$${nf.format(Number(usd))}` : null,
-  };
-}
-
 export function TedNoticeRecord({ fields }: { fields: Record<string, unknown> }) {
   const sections = TED_SECTIONS.map((section) => ({
     title: section.title,
@@ -122,7 +100,7 @@ export function TedNoticeRecord({ fields }: { fields: Record<string, unknown> })
 
   const money = TED_VALUE_FIELDS.map((field) => ({
     field,
-    value: tedMoney(fields, field.key),
+    value: eformsMoney(fields, field.key),
   })).filter(
     (row): row is { field: TedField; value: { original: string; usd: string | null } } =>
       row.value !== null,
@@ -168,8 +146,11 @@ export function TedNoticeRecord({ fields }: { fields: Record<string, unknown> })
               </Row>
             ) : null}
             {additional.length > 0 ? (
+              // A list, not a " · " join: three subjects are three facts, and
+              // joining them rebuilds the unreadable single line that decoding
+              // the codes was meant to remove.
               <Row field={{ key: "cpv_additional", en: "Also covers", term: "BT-263" }}>
-                {additional.map((s) => s.label).join(" · ")}
+                <CpvSubjectRows subjects={additional} />
               </Row>
             ) : null}
           </dl>
