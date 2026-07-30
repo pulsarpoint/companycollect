@@ -8,6 +8,7 @@ without legal forms is named rather than silently empty.
 
 import inspect
 
+from dagster_v3.defs.company_signals import entity_types
 from dagster_v3.defs.company_signals.entity_types import (
     COMPANY,
     GOVERNMENT,
@@ -89,10 +90,15 @@ def test_finland_having_almost_no_public_forms_is_the_register_being_itself() ->
 
 
 def test_a_register_with_no_legal_form_column_is_named() -> None:
-    """Brazil and Denmark publish no legal form at all, so nothing can be
-    classified for them. Stating it stops an empty result reading as a mapping
-    that was forgotten."""
-    assert set(REGISTERS_WITHOUT_LEGAL_FORM) == {"BR", "DK"}
+    """Denmark publishes no legal form at all, so nothing can be classified for
+    it. Stating it stops an empty result reading as a mapping that was forgotten.
+
+    Brazil was listed here until 2026-07-30 and should not have been: it has
+    legal_nature_code and legal_nature_description_pt, a closed 90-value CONCLA
+    domain. Being on this list is exactly why nothing Brazilian was classified,
+    so 45.2M sole traders and 2.9M election candidates read as companies. Checked
+    against system.columns rather than assumed."""
+    assert set(REGISTERS_WITHOUT_LEGAL_FORM) == {"DK"}
     for country in REGISTERS_WITHOUT_LEGAL_FORM:
         assert not any(m.country_code == country for m in LEGAL_FORM_MAPPINGS)
 
@@ -102,7 +108,26 @@ def test_every_mapping_carries_the_registers_own_wording() -> None:
     trusted. Without it, "82 is a municipality" is unfalsifiable."""
     for mapping in LEGAL_FORM_MAPPINGS:
         assert mapping.source_label, mapping
-        assert label_for(mapping.entity_type) != "Unknown", mapping
+
+
+def test_unknown_is_only_used_where_the_register_itself_says_so() -> None:
+    """The point of forbidding a stray Unknown is to catch a form nobody got round
+    to classifying. It is NOT to forbid a register from publishing "not stated" as
+    a value: RFB does exactly that for codes 0000 and 8885, whose own description
+    reads "Natureza Jurídica não informada". Mapping those to anything else would
+    invent a classification the source explicitly declined to give.
+
+    So the rule is that Unknown must be corroborated by the source's own wording,
+    which keeps an accidental Unknown just as detectable as before.
+    """
+    for mapping in LEGAL_FORM_MAPPINGS:
+        if label_for(mapping.entity_type) != "Unknown":
+            continue
+        wording = mapping.source_label.casefold()
+        assert any(
+            phrase in wording
+            for phrase in ("não informada", "not stated", "unknown", "ukjent", "okänd")
+        ), mapping
 
 
 def test_no_code_is_declared_twice_for_one_country() -> None:
@@ -121,3 +146,63 @@ def test_the_table_is_replaced_atomically() -> None:
     assert "EXCHANGE TABLES" in source
     assert "refusing to blank" in source
     assert "is_public_sector" in " ".join(ENTITY_TYPE_COLUMNS)
+
+
+def test_brazil_classifies_every_concla_code_it_publishes() -> None:
+    """All 90 codes present in br_companies, so nothing falls through to Unknown.
+
+    The count is the assertion: a partial mapping would silently leave whole
+    slices of a 68.6M-row register unclassified.
+    """
+    brazil = [m for m in LEGAL_FORM_MAPPINGS if m.country_code == "BR"]
+
+    assert len(brazil) == 90
+    assert len({m.legal_form_code for m in brazil}) == 90
+
+
+def test_brazils_register_is_mostly_not_companies() -> None:
+    """Two thirds of it is sole traders and 4.28% are election candidates, so the
+    classification is what stops a count of 68.6M reading as 68.6M businesses."""
+    brazil = {m.legal_form_code: m.entity_type for m in LEGAL_FORM_MAPPINGS
+              if m.country_code == "BR"}
+
+    # 44,389,558 rows -- the single largest legal nature in the register.
+    assert brazil["2135"] == entity_types.SOLE_TRADER
+    # 636,055 individual rural producers, also natural persons with a CNPJ.
+    assert brazil["4120"] == entity_types.SOLE_TRADER
+    assert brazil["2062"] == entity_types.COMPANY
+
+
+def test_an_election_candidate_gets_its_own_type() -> None:
+    """2,937,479 CNPJs belong to candidates for elected office, issued so campaign
+    finance can be tracked. Neither a business nor an arm of the state, and far
+    too many to leave as 'other' -- which is what a reader would otherwise see for
+    4.28% of the register."""
+    brazil = {m.legal_form_code: m.entity_type for m in LEGAL_FORM_MAPPINGS
+              if m.country_code == "BR"}
+
+    assert brazil["4090"] == entity_types.POLITICAL_CANDIDATE
+    assert entity_types.label_for(entity_types.POLITICAL_CANDIDATE) == "Political candidate"
+    # A candidate is not an organ of the state.
+    assert not entity_types.is_public_sector(entity_types.POLITICAL_CANDIDATE)
+
+
+def test_brazilian_state_owned_enterprises_are_companies_not_public_sector() -> None:
+    """Empresa Pública and Sociedade de Economia Mista are state-owned but trade
+    as businesses, and the source_label keeps the ownership legible. Flagging them
+    public would put Petrobras in the same bucket as a ministry."""
+    brazil = {m.legal_form_code: m for m in LEGAL_FORM_MAPPINGS if m.country_code == "BR"}
+
+    assert brazil["2011"].entity_type == entity_types.COMPANY
+    assert brazil["2038"].entity_type == entity_types.COMPANY
+    assert brazil["2011"].source_label == "Empresa Pública"
+
+
+def test_a_brazilian_municipality_is_public_sector() -> None:
+    brazil = {m.legal_form_code: m.entity_type for m in LEGAL_FORM_MAPPINGS
+              if m.country_code == "BR"}
+
+    assert brazil["1244"] == entity_types.MUNICIPALITY
+    assert brazil["1341"] == entity_types.GOVERNMENT
+    for code in ("1244", "1341", "1104", "1236"):
+        assert entity_types.is_public_sector(brazil[code]), code

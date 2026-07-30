@@ -33,6 +33,10 @@ const LEGAL_FORM_COLUMN: Record<string, string> = {
   fr: "legal_form_code",
   lv: "legal_form_code",
   sk: "legal_form_code",
+  // RFB calls it a legal NATURE, and publishes a closed 90-value CONCLA
+  // domain. Without this entry legalFormCodeOf returned "" and no Brazilian
+  // company ever showed its classification.
+  br: "legal_nature_code",
 };
 
 /** Reads the code off the detail record, so no extra query is needed to find
