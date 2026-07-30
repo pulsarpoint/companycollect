@@ -24,6 +24,7 @@ import { EsefSection } from "~/components/detail/esef-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
 import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
 import { decorateFiRecord, FiRegistryBadges } from "~/components/detail/countries/fi-registry";
+import { decorateBrRecord } from "~/components/detail/countries/br-company";
 import { FiTaxRecordsSection } from "~/components/detail/countries/fi-tax-records";
 import { PublicContractsSection } from "~/components/detail/public-contracts-section";
 import { LangToggle } from "~/components/detail/lang-toggle";
@@ -63,7 +64,12 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
   const status = country.columns.find((c) => c.kind === "status");
   const searchParams = useEffectiveSearchParams();
   const lang: Lang = searchParams.get("lang") === "original" ? "original" : "en";
-  const record = country.code === "fi" ? decorateFiRecord(detail.record) : detail.record;
+  // One per-country seam: each register decides how its own record reads.
+  const DECORATORS: Record<string, (r: Record<string, unknown>) => Record<string, unknown>> = {
+    fi: decorateFiRecord,
+    br: decorateBrRecord,
+  };
+  const record = (DECORATORS[country.code] ?? ((r) => r))(detail.record);
   const { pairCount } = resolveRecordFields(record, lang);
 
   return (

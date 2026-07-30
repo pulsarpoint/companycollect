@@ -272,6 +272,12 @@ export interface IndustryDetailRow {
 export interface AddressRow {
   address_type: string;
   full_address: string;
+  /**
+   * A geocoder-friendly rendering of the same address, where the display form is
+   * too noisy to resolve. Optional: most registers publish an address Nominatim
+   * handles as-is, and those omit it.
+   */
+  geocode_address?: string;
 }
 
 export interface SecondaryNameRow {

@@ -37,8 +37,14 @@ export function ContactLocationCard({
   const requested = useRef(false);
   const stored = storedCoords(record);
   const realAddresses = addresses.filter((a) => a.full_address.trim() !== "");
+  // geocode_address where a register publishes one: the display address is the
+  // full postal form, which is what a reader wants and not always what a
+  // geocoder can resolve. Brazil's carries a building complement and a
+  // zero-padded street number that make Nominatim return nothing.
   const candidateTarget =
-    !stored && realAddresses.length > 0 ? realAddresses[0].full_address : null;
+    !stored && realAddresses.length > 0
+      ? realAddresses[0].geocode_address || realAddresses[0].full_address
+      : null;
   // Over-long addresses are unresolvable: no fetch, no map — same as no address at all.
   const geocodeTarget = candidateTarget && candidateTarget.length <= 300 ? candidateTarget : null;
 

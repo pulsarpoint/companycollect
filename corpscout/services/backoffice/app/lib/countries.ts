@@ -1126,6 +1126,27 @@ ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `cnpj_basico IN (SELECT cnpj_basico FROM br_establishments WHERE is_headquarters = 1 AND primary_cnae_code IN {f_industry:Array(String)})`,
     detail: {
+      // The COMPANY-keyed view, like Sweden's and Finland's -- not
+      // br_government_contract_awards. A company page asks "what did THIS company
+      // win", and the awards view's extra rows are precisely the ones with no
+      // company_id to attach to, so they could never appear here anyway.
+      publicContractsQuery: `SELECT
+  source_slug AS source,
+  concat(source_notice_id, if(source_lot_id = '', '', concat(':', source_lot_id))) AS notice_ref,
+  coalesce(toString(publication_date), '') AS contract_date,
+  buyer_name,
+  title,
+  toFloat64(value_amount_original) AS amount_original,
+  toFloat64(value_amount_usd) AS amount_usd,
+  value_currency AS currency,
+  toFloat64(notice_value_amount_original) AS notice_amount_original,
+  toFloat64(notice_value_amount_usd) AS notice_amount_usd,
+  notice_value_currency AS notice_currency,
+  source_url
+FROM br_government_contracts
+WHERE company_id = {id:String}
+ORDER BY publication_date DESC NULLS LAST, contract_id
+LIMIT 100`,
       financialsQuery: `SELECT toString(fy) AS fiscal_year, any(cur) AS currency,
   anyIf(orig, metric = 'revenue') AS revenue_amount_original,
   anyIf(usd, metric = 'revenue') AS revenue_amount_usd,
@@ -1173,7 +1194,24 @@ LIMIT 100`,
     coalesce(district, ''),
     trim(concat(coalesce(postal_code, ''), ' ', coalesce(municipality_name, ''))),
     coalesce(state, '')
-  ]), ', ') AS full_address
+  ]), ', ') AS full_address,
+  -- What the geocoder gets, built from the fields rather than by unpicking the
+  -- display string. Verified against Nominatim on 2026-07-30: the display form
+  -- resolves to NOTHING while this resolves to -12.9796986, -38.4568852.
+  --   complement dropped   'EDIF METROPOLITANO ALFA LOJA 01' is noise to a geocoder
+  --   district dropped     neighbourhood names add nothing once the street is there
+  --   number un-padded     RFB zero-pads it, so 000999 has to become 999
+  --   CEP hyphenated       Brazilian postal codes are written 41820-020
+  arrayStringConcat(arrayFilter(x -> x != '', [
+    trim(concat(coalesce(street_type, ''), ' ', coalesce(street_name, ''), ' ',
+      if(match(coalesce(street_number, ''), '^0*[0-9]+$'),
+         toString(toUInt64OrZero(street_number)), coalesce(street_number, '')))),
+    coalesce(municipality_name, ''),
+    coalesce(state, ''),
+    if(length(coalesce(postal_code, '')) = 8,
+       concat(substring(postal_code, 1, 5), '-', substring(postal_code, 6, 3)),
+       coalesce(postal_code, ''))
+  ]), ', ') AS geocode_address
 FROM br_companies
 WHERE cnpj_basico = {id:String}
 LIMIT 1`,
