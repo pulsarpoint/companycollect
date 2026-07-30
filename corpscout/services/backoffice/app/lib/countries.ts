@@ -1107,18 +1107,34 @@ LIMIT 1`,
       { key: "registered", label: "Activity start", expr: "toString(activity_start_date)", sortable: true, kind: "date" },
       { key: "place", label: "Municipality", expr: "concat(municipality_name, ' / ', state)", sortable: false, kind: "text", filterable: true },
     ],
+    // CNAE's OWN name first, the NACE division only as a fallback.
+    //
+    // Norway and Finland prefer their NACE join because it lands on the 4-digit
+    // class, which is as specific as the register's own code. Brazil's bridge is
+    // DIVISION level -- CNAE and NACE agree on the two-digit division and
+    // nothing below it -- so preferring it here labelled a clothing shop
+    // "Retail trade, except of motor vehicles and motorcycles". True, and far
+    // coarser than what IBGE actually publishes for that code.
+    //
+    // description_en is empty until brazil_comp_cnae_translation_load runs, so
+    // today this still falls through to the division and sharpens by itself
+    // once the translator has been round -- no second change to make.
     industryQuery: `SELECT e.cnpj_basico AS company_id,
   e.primary_cnae_code AS industry_code,
-  coalesce(nullIf(m.nace_description_en, ''), e.primary_cnae_code) AS industry_label
+  coalesce(nullIf(c.description_en, ''), nullIf(m.nace_description_en, ''), e.primary_cnae_code) AS industry_label
 FROM br_establishments AS e
+LEFT JOIN br_cnae_categories_translated AS c
+  ON c.normalized_code = e.primary_cnae_code AND c.level = 'subclass'
 LEFT JOIN br_cnae_to_nace AS m ON m.cnae_normalized_code = e.primary_cnae_code
 WHERE e.cnpj_basico IN {ids:Array(String)} AND e.is_headquarters = 1
 ORDER BY e.primary_cnae_code != '' DESC
 LIMIT 1 BY e.cnpj_basico`,
     industryFacetQuery: `SELECT e.primary_cnae_code AS value,
-  coalesce(nullIf(any(m.nace_description_en), ''), value) AS label,
+  coalesce(nullIf(any(c.description_en), ''), nullIf(any(m.nace_description_en), ''), value) AS label,
   count() AS cnt
 FROM br_establishments AS e
+LEFT JOIN br_cnae_categories_translated AS c
+  ON c.normalized_code = e.primary_cnae_code AND c.level = 'subclass'
 LEFT JOIN br_cnae_to_nace AS m ON m.cnae_normalized_code = e.primary_cnae_code
 WHERE e.is_headquarters = 1 AND e.primary_cnae_code != ''
 GROUP BY value
@@ -1179,11 +1195,18 @@ FROM br_company_domains
 WHERE registry_id = {id:String} AND is_current = 1
 ORDER BY is_primary DESC, confidence DESC
 LIMIT 50`,
-      industriesQuery: `SELECT e.primary_cnae_code AS industry_code,
-  '' AS description_original,
-  coalesce(nullIf(m.nace_description_en, ''), e.primary_cnae_code) AS industry_label,
+      // The code as Brazil writes it (4781-4/00, not 4781400) because this one
+      // is display-only, and IBGE's Portuguese as the original beside the
+      // English -- the pairing every other country's page already shows. The
+      // section suppresses the original when it equals the label, so nothing
+      // doubles up while description_en is still empty.
+      industriesQuery: `SELECT coalesce(nullIf(c.code, ''), e.primary_cnae_code) AS industry_code,
+  coalesce(c.description_pt, '') AS description_original,
+  coalesce(nullIf(c.description_en, ''), nullIf(m.nace_description_en, ''), e.primary_cnae_code) AS industry_label,
   1 AS is_primary
 FROM br_establishments AS e
+LEFT JOIN br_cnae_categories_translated AS c
+  ON c.normalized_code = e.primary_cnae_code AND c.level = 'subclass'
 LEFT JOIN br_cnae_to_nace AS m ON m.cnae_normalized_code = e.primary_cnae_code
 WHERE e.cnpj_basico = {id:String} AND e.is_headquarters = 1 AND e.primary_cnae_code != ''
 LIMIT 100`,

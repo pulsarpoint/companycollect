@@ -229,3 +229,35 @@ describe("detail config", () => {
     }
   });
 });
+
+describe("Brazil industry labels prefer CNAE over the NACE division", () => {
+  const br = COUNTRIES.find((c) => c.code === "br")!;
+  const queries = [
+    ["industryQuery", br.industryQuery],
+    ["industryFacetQuery", br.industryFacetQuery],
+    ["industriesQuery", br.detail?.industriesQuery],
+  ] as const;
+
+  it.each(queries)("%s reads the CNAE subclass name", (_name, sql) => {
+    expect(sql).toContain("br_cnae_categories_translated");
+    expect(sql).toContain("c.level = 'subclass'");
+  });
+
+  it.each(queries)("%s puts CNAE ahead of the NACE division", (_name, sql) => {
+    // The bridge is division level: CNAE and NACE agree on the two-digit
+    // division and nothing below it. Preferring the division labelled a
+    // clothing shop "Retail trade, except of motor vehicles and motorcycles".
+    const cnae = sql!.indexOf("c.description_en");
+    const nace = sql!.indexOf("m.nace_description_en");
+    expect(cnae).toBeGreaterThan(-1);
+    expect(nace).toBeGreaterThan(-1);
+    expect(cnae).toBeLessThan(nace);
+  });
+
+  it("pairs the English label with IBGE's own Portuguese", () => {
+    // CONCLA publishes Portuguese only, so the English is a translation and the
+    // original has to stay visible beside it.
+    expect(br.detail?.industriesQuery).toContain("c.description_pt");
+    expect(br.detail?.industriesQuery).not.toContain("'' AS description_original");
+  });
+});
