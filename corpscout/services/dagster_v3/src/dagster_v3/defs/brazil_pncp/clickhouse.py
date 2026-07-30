@@ -223,9 +223,52 @@ def export_contracts_clickhouse(
     # here rather than simply exporting NULLs.
     usd_conversion.ensure_usd_columns(duckdb_connection)
     stage_columns = (*tables.CANDIDATE_COLUMNS, *FX_COLUMNS)
+    candidates = f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
+
+    # The buffer must hold the month being exported, and nothing else.
+    #
+    # normalize.py does `create or replace table contract_candidates`, so this is
+    # scratch holding whichever month ran last -- not per-partition input.
+    # Reading it unfiltered and trusting it to be `partition` is what silently
+    # emptied 36 of 37 months on 2026-07-28: every _duckdb run finished the day
+    # before the first _clickhouse run, so all 37 exports read the same leftover
+    # 2025-01 rows, and REPLACE PARTITION then dropped each target partition and
+    # copied stage's same-named (absent, therefore empty) partition into it.
+    # ClickHouse reports that as success. Partition 2024-03 had produced 65,218
+    # rows and ended up with none.
+    #
+    # `if not rows` below cannot catch it -- the read returned 116,226 perfectly
+    # valid rows, just for the wrong month -- which is the hazard
+    # insert_contracts_clickhouse's docstring already warned about: "a
+    # full-looking batch would have sailed straight through it". So compare
+    # partitions, not row counts.
+    #
+    # The expression mirrors the table's own PARTITION BY,
+    # toYYYYMM(ifNull(data_publicacao_pncp, '1970-01-01')), so a NULL date (the
+    # column is a try_cast) reports as 197001 instead of vanishing: no month's
+    # export ever targets 197001, so such a row could never be replaced into
+    # visibility later.
+    buffered = [
+        str(value)
+        for (value,) in duckdb_connection.execute(
+            f"select distinct "
+            f"coalesce(strftime(data_publicacao_pncp, '%Y%m'), '197001') as part "
+            f"from {candidates} order by part"
+        ).fetchall()
+    ]
+    unexpected = [value for value in buffered if value != partition]
+    if unexpected:
+        raise ValueError(
+            f"Brazil PNCP was asked to export partition {partition} but the "
+            f"DuckDB candidates buffer holds {', '.join(unexpected)}. The buffer "
+            f"is overwritten per partition, so the export is running against "
+            f"another month's rows -- REPLACE PARTITION {partition} would have "
+            f"deleted that partition and written nothing. Re-run this partition's "
+            f"normalise step immediately before its export."
+        )
+
     rows = duckdb_connection.execute(
-        f"select {', '.join(stage_columns)} "
-        f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
+        f"select {', '.join(stage_columns)} from {candidates}"
     ).fetchall()
 
     if not rows:
