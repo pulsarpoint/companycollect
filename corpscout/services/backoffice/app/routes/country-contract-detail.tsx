@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/country-contract-detail";
-import { getCountry } from "~/lib/countries";
+import { getCountry, type CountryConfig } from "~/lib/countries";
 import { maskPersonalSupplierId, supplierStatusLabel } from "~/lib/supplier-label";
 import { BrContractRecord } from "~/components/detail/countries/br-contract";
 import {
@@ -100,6 +100,60 @@ function RegisterRecord({
   return <SourceFields fields={fields} />;
 }
 
+
+/**
+ * The buyer, as an organisation with its own page.
+ *
+ * A buyer is a company record like any other -- a ministry, a municipality, a
+ * hospital trust -- and until now the contract page named it as plain text with
+ * no way through. Linked only when a register actually holds it, so the link is
+ * never a dead end: all 4,898 Brazilian buyers resolve, via the CNPJ's first
+ * eight digits.
+ */
+function BuyerCard({
+  country,
+  first,
+  buyer,
+}: {
+  country: CountryConfig;
+  first: ContractWinnerRow;
+  buyer: { company_id: string; country_code: string } | null;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Buyer</CardTitle>
+        <CardDescription>
+          The public body that awarded this contract.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2 text-sm">
+        <div>
+          {buyer ? (
+            <Link
+              to={`/company/${buyer.country_code.toLowerCase()}/${buyer.company_id}`}
+              className="font-medium underline underline-offset-2"
+            >
+              {first.buyer_name || buyer.company_id}
+            </Link>
+          ) : (
+            <span className="font-medium">{first.buyer_name || "—"}</span>
+          )}
+        </div>
+        {first.buyer_id ? (
+          <div className="text-muted-foreground text-xs">
+            <span className="tabular-nums">{first.buyer_id}</span>
+            {buyer == null ? (
+              // Said plainly rather than left as an unexplained absence of a link.
+              <span className="ml-2">not matched to a company record</span>
+            ) : null}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CountryContractDetail({ loaderData }: Route.ComponentProps) {
   const { country, detail } = loaderData;
   const first: ContractWinnerRow = detail.rows[0];
@@ -177,185 +231,187 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Winners</CardTitle>
-          <CardDescription>
-            Companies named as winners on this contract. Non-winning tenderers
-            are not published in the registers ingested here, so this is the
-            full set of participants known — not the full set that bid.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <Table className="min-w-[36rem]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Registered id</TableHead>
-                  <TableHead>Seen in</TableHead>
-                  <TableHead className="text-right">Awarded</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {[...winners.values()].map((w) => (
-                  <TableRow key={w.company_id || w.name}>
-                    <TableCell className="align-top">
-                      {w.company_id !== "" ? (
-                        <Link
-                          to={`/company/${country.code}/${w.company_id}`}
-                          className="underline underline-offset-2"
-                        >
-                          {w.name}
-                        </Link>
-                      ) : (
-                        // No registry match, so there is no company page to
-                        // link to. The name is still worth showing.
-                        <span>{w.name}</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground align-top tabular-nums">
-                      {/* The company id when matched, otherwise the id the
-                          register published plus why it did not resolve. CPFs
-                          are masked for display; stored verbatim. */}
-                      {w.company_id ||
-                        maskPersonalSupplierId(w.registered_id, country.code) ||
-                        "—"}
-                      {supplierStatusLabel(w.match_status) ? (
-                        <Badge
-                          variant="outline"
-                          className="ml-2 px-1 py-0 text-[10px] font-normal"
-                        >
-                          {supplierStatusLabel(w.match_status)}
-                        </Badge>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <div className="flex flex-wrap gap-1">
-                        {[...w.sources].map((s) => (
-                          <Badge key={s} variant="outline">
-                            {s}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right align-top">
-                      {money(w.amount, w.currency)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Two columns: what the register PUBLISHED on the left (where it came
+          from, and the record itself), who it INVOLVES on the right. The
+          register record is the long one, so it gets the taller column and the
+          parties stay visible beside it rather than below the fold. */}
+      {/* Two columns at lg: what the register PUBLISHED on the left (where it
+          came from, and the record itself), who it INVOLVES on the right.
 
-      {noAmount ? (
-        <Alert>
-          <AlertTitle>
-            {first.directive_governed === "no"
-              ? "No contract value is published for this contract"
-              : first.directive_governed === "yes"
-                ? "The award amount is published in TED, which is not loaded for this country"
-                : "No contract value is available for this contract"}
-          </AlertTitle>
-          <AlertDescription>
-            {first.directive_governed === "no"
-              ? "It falls below the EU procurement thresholds, so it is published only in the national register — and that register publishes no monetary value in any of its 44 fields. No amount exists to load."
-              : first.directive_governed === "yes"
-                ? "EU procurement directives govern it, so the same contract is also published in TED with a per-winner awarded amount. TED has not been backfilled for this country, so the figure is missing here rather than missing at source."
-                : "The register does not say whether EU procurement thresholds apply, so it is unknown whether an amount exists in TED."}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Sources</CardTitle>
-          <CardDescription>
-            Where this contract was published, and the document each record came
-            from. A contract in more than one register appears once per register.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {[...bySource.entries()].map(([source, rows]) => (
-            <div key={source} className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">{source}</Badge>
-                <span className="text-muted-foreground text-sm tabular-nums">
-                  {rows[0].source_notice_id}
-                  {rows[0].source_lot_id ? ` · lot ${rows[0].source_lot_id}` : ""}
-                </span>
-                {rows[0].source_url !== "" ? (
-                  <a
-                    href={rows[0].source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm underline underline-offset-2"
-                  >
-                    Open source document
-                  </a>
-                ) : (
-                  <span className="text-muted-foreground text-sm">
-                    Published as a bulk download, with no address per contract
-                  </span>
-                )}
-              </div>
-              <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                <span>
-                  Awarded to this contract:{" "}
-                  {money(
-                    rows.reduce<number | null>(
-                      (sum, r) => (r.amount_original == null ? sum : (sum ?? 0) + r.amount_original),
-                      null,
-                    ),
-                    rows[0].currency,
-                  )}
-                  {/* Name the register field, so the figure can be checked
-                      against the source rather than taken on trust. */}
-                  {rows[0].value_source_field !== ""
-                    ? ` (${rows[0].value_source_field})`
-                    : ""}
-                </span>
-                <span>
-                  Whole notice: {money(rows[0].notice_amount_original, rows[0].notice_currency)}
-                  {rows[0].notice_value_source_field !== ""
-                    ? ` (${rows[0].notice_value_source_field})`
-                    : ""}
-                </span>
-                {rows[0].cpv_code ? <span>CPV {rows[0].cpv_code}</span> : null}
-                {/* Brazil's tipo_contrato is stored as PNCP's raw
-                    {"id":n,"nome":"..."} JSON, so this generic chip printed the
-                    blob. Splitting it into id + name is an ingest change across
-                    116,226 rows, tracked separately; until then a blob is
-                    suppressed here and the per-register view below renders the
-                    name properly. */}
-                {rows[0].agreement_type && !rows[0].agreement_type.startsWith("{") ? (
-                  <span>{rows[0].agreement_type}</span>
-                ) : null}
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      {detail.sourceRecords.map((record) => (
-        <Card key={`${record.source}:${record.notice}`}>
+          On one column the order inverts to parties first, then the contract
+          record, then the source: a reader on a phone wants who won and who
+          paid before the provenance of the document. The right column is
+          therefore FIRST in the DOM and ordered back at lg, and the Sources
+          card carries its own order so it falls last on small screens
+          without reversing the register records among themselves. */}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+        <div className="flex flex-col gap-4 lg:order-2">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base">
-              {record.source} — record {record.notice}
-            </CardTitle>
+            <CardTitle>Winners</CardTitle>
             <CardDescription>
-              Everything this register publishes for the contract. Fields differ
-              between registers by design.
+              Companies named as winners on this contract. Non-winning tenderers
+              are not published in the registers ingested here, so this is the
+              full set of participants known — not the full set that bid.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Separator className="mb-4" />
-            <RegisterRecord source={record.source} fields={record.fields} />
+            <div className="overflow-x-auto">
+              <Table className="min-w-[36rem]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Company</TableHead>
+                    <TableHead>Registered id</TableHead>
+                    <TableHead>Seen in</TableHead>
+                    <TableHead className="text-right">Awarded</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[...winners.values()].map((w) => (
+                    <TableRow key={w.company_id || w.name}>
+                      <TableCell className="align-top">
+                        {w.company_id !== "" ? (
+                          <Link
+                            to={`/company/${country.code}/${w.company_id}`}
+                            className="underline underline-offset-2"
+                          >
+                            {w.name}
+                          </Link>
+                        ) : (
+                          // No registry match, so there is no company page to
+                          // link to. The name is still worth showing.
+                          <span>{w.name}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground align-top tabular-nums">
+                        {/* The company id when matched, otherwise the id the
+                            register published plus why it did not resolve. CPFs
+                            are masked for display; stored verbatim. */}
+                        {w.company_id ||
+                          maskPersonalSupplierId(w.registered_id, country.code) ||
+                          "—"}
+                        {supplierStatusLabel(w.match_status) ? (
+                          <Badge
+                            variant="outline"
+                            className="ml-2 px-1 py-0 text-[10px] font-normal"
+                          >
+                            {supplierStatusLabel(w.match_status)}
+                          </Badge>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="flex flex-wrap gap-1">
+                          {[...w.sources].map((s) => (
+                            <Badge key={s} variant="outline">
+                              {s}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right align-top">
+                        {money(w.amount, w.currency)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
-      ))}
+          <BuyerCard country={country} first={first} buyer={detail.buyer} />
+        </div>
+        <div className="flex flex-col gap-4 lg:order-1">
+        <Card className="order-2 lg:order-1">
+          <CardHeader>
+            <CardTitle>Sources</CardTitle>
+            <CardDescription>
+              Where this contract was published, and the document each record came
+              from. A contract in more than one register appears once per register.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {[...bySource.entries()].map(([source, rows]) => (
+              <div key={source} className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">{source}</Badge>
+                  <span className="text-muted-foreground text-sm tabular-nums">
+                    {rows[0].source_notice_id}
+                    {rows[0].source_lot_id ? ` · lot ${rows[0].source_lot_id}` : ""}
+                  </span>
+                  {rows[0].source_url !== "" ? (
+                    <a
+                      href={rows[0].source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm underline underline-offset-2"
+                    >
+                      Open source document
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground text-sm">
+                      Published as a bulk download, with no address per contract
+                    </span>
+                  )}
+                </div>
+                <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                  <span>
+                    Awarded to this contract:{" "}
+                    {money(
+                      rows.reduce<number | null>(
+                        (sum, r) => (r.amount_original == null ? sum : (sum ?? 0) + r.amount_original),
+                        null,
+                      ),
+                      rows[0].currency,
+                    )}
+                    {/* Name the register field, so the figure can be checked
+                        against the source rather than taken on trust. */}
+                    {rows[0].value_source_field !== ""
+                      ? ` (${rows[0].value_source_field})`
+                      : ""}
+                  </span>
+                  <span>
+                    Whole notice: {money(rows[0].notice_amount_original, rows[0].notice_currency)}
+                    {rows[0].notice_value_source_field !== ""
+                      ? ` (${rows[0].notice_value_source_field})`
+                      : ""}
+                  </span>
+                  {rows[0].cpv_code ? <span>CPV {rows[0].cpv_code}</span> : null}
+                  {/* Brazil's tipo_contrato is stored as PNCP's raw
+                      {"id":n,"nome":"..."} JSON, so this generic chip printed the
+                      blob. Splitting it into id + name is an ingest change across
+                      116,226 rows, tracked separately; until then a blob is
+                      suppressed here and the per-register view below renders the
+                      name properly. */}
+                  {rows[0].agreement_type && !rows[0].agreement_type.startsWith("{") ? (
+                    <span>{rows[0].agreement_type}</span>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+        {detail.sourceRecords.map((record) => (
+          <Card
+            key={`${record.source}:${record.notice}`}
+            className="order-1 lg:order-2"
+          >
+            <CardHeader>
+              <CardTitle className="text-base">
+                {record.source} — record {record.notice}
+              </CardTitle>
+              <CardDescription>
+                Everything this register publishes for the contract. Fields differ
+                between registers by design.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Separator className="mb-4" />
+              <RegisterRecord source={record.source} fields={record.fields} />
+            </CardContent>
+          </Card>
+        ))}
+        </div>
+      </div>
     </div>
   );
 }

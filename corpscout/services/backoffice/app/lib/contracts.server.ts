@@ -1,4 +1,6 @@
 import { chQuery } from "~/lib/clickhouse.server";
+import { pickCompanyMatch } from "~/lib/company-match";
+import { matchCompanies } from "~/lib/procurements.server";
 import { PAGE_SIZES, type CountryConfig, type SortDir } from "~/lib/countries";
 import {
   contractFilterSql,
@@ -160,6 +162,12 @@ export interface ContractDetail {
   contract_ref: string;
   rows: ContractWinnerRow[];
   sourceRecords: { source: string; notice: string; fields: SourceRecord }[];
+  /**
+   * The buyer as a company page, when a register actually holds it. Empty when it
+   * does not — a buyer is an organisation like any other and deserves a link, but
+   * only to a page that exists.
+   */
+  buyer: { company_id: string; country_code: string } | null;
 }
 
 /** contract_key identifies a contract across sources and is empty when the
@@ -425,6 +433,50 @@ export async function getAgreementTypeFacet(
   return rows.map((r) => ({ value: r.value, count: Number(r.cnt) }));
 }
 
+/**
+ * Resolve the buyer to a company page, via the same matcher the procurement pages
+ * use rather than a second set of rules.
+ *
+ * matchCompanies keys on each register's OWN id column, and Brazil's is
+ * cnpj_basico -- eight digits -- while a PNCP buyer_id is the full fourteen-digit
+ * CNPJ. Passing the raw id would find nothing, so the establishment suffix is
+ * offered as a second candidate. All 4,898 Brazilian buyers resolve this way,
+ * e.g. 00000368000150 -> 00000368, CASA MILITAR DO GABINETE DO GOVERNADOR.
+ *
+ * pickCompanyMatch decides, scoped to the buyer's own country: buyers in a
+ * single-country register ARE that country's authorities, which is exactly the
+ * fallback the backoffice guide allows for buyers and forbids for winners.
+ */
+async function resolveBuyer(
+  rows: ContractWinnerRow[],
+  country: CountryConfig,
+): Promise<{ company_id: string; country_code: string } | null> {
+  const buyerId = rows.find((r) => r.buyer_id !== "")?.buyer_id ?? "";
+  if (buyerId === "") return null;
+
+  // Candidates in preference order, so a register holding the exact published
+  // form always wins over a normalised guess.
+  const candidates = [buyerId];
+
+  // Doffin publishes Norwegian org numbers space-grouped -- "971 035 854" --
+  // while no_companies stores them bare, so 19,152 of 55,474 Norwegian buyer ids
+  // would fail to match on formatting alone. Finland's hyphen is MEANINGFUL
+  // (1010547-1 is the business-id format), which is why the raw form is tried
+  // first and this is only ever an additional candidate.
+  const bare = buyerId.replace(/[^0-9A-Za-z]/g, "");
+  if (bare !== "" && bare !== buyerId) candidates.push(bare);
+
+  // A 14-digit CNPJ carries its company in the first 8.
+  if (/^\d{14}$/.test(bare)) candidates.push(bare.slice(0, 8));
+
+  const hits = await matchCompanies(candidates);
+  for (const candidate of candidates) {
+    const match = pickCompanyMatch(hits[candidate], country.code);
+    if (match) return match;
+  }
+  return null;
+}
+
 export async function getContractDetail(
   country: CountryConfig,
   ref: string,
@@ -489,5 +541,5 @@ export async function getContractDetail(
     )
   ).filter((r): r is { source: string; notice: string; fields: SourceRecord } => r !== null);
 
-  return { contract_ref: ref, rows, sourceRecords };
+  return { contract_ref: ref, rows, sourceRecords, buyer: await resolveBuyer(rows, country) };
 }
