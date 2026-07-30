@@ -20,6 +20,8 @@
  * a ceiling summed as spend overstates it wildly.
  */
 
+import { cpvSubjects } from "~/lib/cpv";
+
 export type TedField = { key: string; en: string; term: string };
 
 const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -47,17 +49,6 @@ const TED_SECTIONS: { title: string; fields: TedField[] }[] = [
       { key: "buyer_name", en: "Buyer", term: "BT-500 Organisation name" },
       { key: "buyer_national_id", en: "Buyer national id", term: "BT-501 Identifier" },
       { key: "buyer_country", en: "Buyer country", term: "BT-514 Country" },
-    ],
-  },
-  {
-    title: "What was procured",
-    fields: [
-      { key: "cpv_code", en: "Main CPV", term: "BT-262 Main classification" },
-      {
-        key: "cpv_additional_codes",
-        en: "Additional CPV",
-        term: "BT-263 Additional classification",
-      },
     ],
   },
 ];
@@ -137,6 +128,11 @@ export function TedNoticeRecord({ fields }: { fields: Record<string, unknown> })
       row.value !== null,
   );
 
+  // BT-262 is what the procurement mainly is; BT-263 what else it touches. Both
+  // decoded, because a bare 8-digit code tells a reader nothing.
+  const mainSubject = cpvSubjects(fields.cpv_code)[0] ?? null;
+  const additional = cpvSubjects(fields.cpv_additional_codes);
+
   const fxRate = text(fields.fx_rate_to_usd);
   const fxDate = text(fields.fx_rate_date);
 
@@ -156,6 +152,29 @@ export function TedNoticeRecord({ fields }: { fields: Record<string, unknown> })
           </dl>
         </section>
       ))}
+
+      {mainSubject || additional.length > 0 ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            What was procured
+          </h3>
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+            {mainSubject ? (
+              <Row field={{ key: "cpv_code", en: "Mainly", term: "BT-262" }}>
+                {mainSubject.label}
+                <span className="text-muted-foreground ml-2 font-mono text-xs">
+                  {mainSubject.code}
+                </span>
+              </Row>
+            ) : null}
+            {additional.length > 0 ? (
+              <Row field={{ key: "cpv_additional", en: "Also covers", term: "BT-263" }}>
+                {additional.map((s) => s.label).join(" · ")}
+              </Row>
+            ) : null}
+          </dl>
+        </section>
+      ) : null}
 
       <section className="flex flex-col gap-2">
         <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">

@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import type { Route } from "./+types/country-contract-detail";
 import { getCountry, type CountryConfig } from "~/lib/countries";
 import { humanizeFieldKey, splitFields } from "~/components/detail/fields";
+import { cpvSubjects } from "~/lib/cpv";
 import { maskPersonalSupplierId, supplierStatusLabel } from "~/lib/supplier-label";
 import { BrContractRecord } from "~/components/detail/countries/br-contract";
 import { TedNoticeRecord } from "~/components/detail/countries/ted-notice";
@@ -81,8 +82,19 @@ function SourceFields({ fields }: { fields: SourceRecord }) {
     <div className="flex flex-col gap-4">
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
         {shown.map(([key, value]) => {
+          // A CPV array rendered as JSON is unreadable -- eleven codes that are
+          // really three subjects, most of them ancestors of each other. Decoded
+          // wherever a key looks like a classification, whichever register it
+          // came from.
+          const subjects = /cpv/i.test(key) ? cpvSubjects(value) : [];
           const text =
-            typeof value === "object" ? JSON.stringify(value) : String(value);
+            subjects.length > 0
+              ? subjects
+                  .map((s) => `${s.label} (${s.code})`)
+                  .join(" · ")
+              : typeof value === "object"
+                ? JSON.stringify(value)
+                : String(value);
           return (
             <div key={key} className="flex flex-col gap-0.5 overflow-hidden">
               <dt className="text-xs leading-tight">
