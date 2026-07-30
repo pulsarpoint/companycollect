@@ -18,7 +18,8 @@ describe("country contracts", () => {
       expect(row.contract_ref).not.toBe("");
       // A contract has at least one winner, or it would not be an award.
       expect(row.winner_name).not.toBe("");
-      expect(row.winner_extra_count).toBeGreaterThanOrEqual(0);
+      // At least the supplier shown, so the "1/N" position is well-formed.
+      expect(row.supplier_count).toBeGreaterThanOrEqual(1);
     }
     // Newest first (the default sort).
     const dates = page.rows.map((r) => r.contract_date);
@@ -61,13 +62,13 @@ describe("country contracts", () => {
   );
 
   it("pairs the shown winner and amount from the same source", async () => {
-    // Brazil is single-source, single-winner throughout: every contract's
-    // winner_extra_count must be 0, and amount_original/currency (when
-    // present) must never be split from each other.
+    // Brazil is single-source, single-supplier throughout: every contract has
+    // exactly one, so no "1/N" position is ever shown, and amount_original and
+    // currency (when present) must never be split from each other.
     const br = getCountry("br")!;
     const page = await getCountryContractsPage(br, { pageSize: 100 });
     for (const row of page.rows) {
-      expect(row.winner_extra_count).toBe(0);
+      expect(row.supplier_count).toBe(1);
       if (row.amount_original != null) expect(row.currency).not.toBe("");
     }
   });

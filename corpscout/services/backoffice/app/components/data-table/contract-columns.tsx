@@ -3,6 +3,12 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type { ContractSortKey, CountryContractListRow } from "~/lib/contracts.server";
 import type { SortDir } from "~/lib/countries";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
+import { Badge } from "~/components/ui/badge";
+import {
+  maskPersonalSupplierId,
+  supplierPosition,
+  supplierStatusLabel,
+} from "~/lib/supplier-label";
 
 const EMPTY = <span className="text-muted-foreground">—</span>;
 const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -50,15 +56,31 @@ export function buildContractColumns(
       id: "winner",
       header: header("Winner", "winner"),
       cell: ({ row }) => {
-        const { winner_name, winner_extra_count } = row.original;
+        const { winner_name, winner_registered_id, winner_match_status, supplier_count } =
+          row.original;
         if (winner_name === "") return EMPTY;
+        const position = supplierPosition(supplier_count);
+        const status = supplierStatusLabel(winner_match_status);
+        // Masked for display only; stored verbatim. PNCP publishes 2,733
+        // unmasked CPFs and RFB masks its own, so the same mask is applied.
+        const id = maskPersonalSupplierId(winner_registered_id, countryCode);
         return (
-          <span className="block max-w-[14rem] truncate" title={winner_name}>
-            {winner_name}
-            {winner_extra_count > 0 ? (
-              <span className="text-muted-foreground"> +{winner_extra_count}</span>
+          <div className="max-w-[16rem]">
+            <span className="block truncate" title={winner_name}>
+              {winner_name}
+              {position ? (
+                <span className="text-muted-foreground"> ({position})</span>
+              ) : null}
+            </span>
+            {status ? (
+              <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                <Badge variant="outline" className="px-1 py-0 text-[10px] font-normal">
+                  {status}
+                </Badge>
+                {id ? <span className="tabular-nums">{id}</span> : null}
+              </span>
             ) : null}
-          </span>
+          </div>
         );
       },
     },

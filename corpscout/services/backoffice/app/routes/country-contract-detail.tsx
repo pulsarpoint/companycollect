@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/country-contract-detail";
 import { getCountry } from "~/lib/countries";
+import { maskPersonalSupplierId, supplierStatusLabel } from "~/lib/supplier-label";
 import { BrContractRecord } from "~/components/detail/countries/br-contract";
 import {
   getContractDetail,
@@ -116,7 +117,15 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
   // registers is one winner shown once, carrying both sources.
   const winners = new Map<
     string,
-    { company_id: string; name: string; sources: Set<string>; amount: number | null; currency: string }
+    {
+      company_id: string;
+      name: string;
+      registered_id: string;
+      match_status: string;
+      sources: Set<string>;
+      amount: number | null;
+      currency: string;
+    }
   >();
   for (const row of detail.rows) {
     const key = row.company_id !== "" ? `id:${row.company_id}` : `name:${row.winner_name}`;
@@ -131,6 +140,8 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
       winners.set(key, {
         company_id: row.company_id,
         name: row.winner_name !== "" ? row.winner_name : row.company_id,
+        registered_id: row.winner_registered_id,
+        match_status: row.winner_match_status,
         sources: new Set([row.source]),
         amount: row.amount_original,
         currency: row.currency,
@@ -204,7 +215,20 @@ export default function CountryContractDetail({ loaderData }: Route.ComponentPro
                       )}
                     </TableCell>
                     <TableCell className="text-muted-foreground align-top tabular-nums">
-                      {w.company_id || "—"}
+                      {/* The company id when matched, otherwise the id the
+                          register published plus why it did not resolve. CPFs
+                          are masked for display; stored verbatim. */}
+                      {w.company_id ||
+                        maskPersonalSupplierId(w.registered_id, country.code) ||
+                        "—"}
+                      {supplierStatusLabel(w.match_status) ? (
+                        <Badge
+                          variant="outline"
+                          className="ml-2 px-1 py-0 text-[10px] font-normal"
+                        >
+                          {supplierStatusLabel(w.match_status)}
+                        </Badge>
+                      ) : null}
                     </TableCell>
                     <TableCell className="align-top">
                       <div className="flex flex-wrap gap-1">

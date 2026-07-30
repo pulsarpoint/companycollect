@@ -12,6 +12,47 @@ import { PAGE_SIZES, type CountryConfig, type SortDir } from "~/lib/countries";
  * failure mode is a country having contracts that the UI refuses to show. */
 const CONTRACTS_VIEW_PATTERN = "^[a-z]{2}_government_contracts$";
 
+/**
+ * The awards view is preferred where it exists.
+ *
+ * `<cc>_government_contracts` is COMPANY-keyed — company_id is its second column
+ * and it ends `WHERE company_match_status = 'exact' AND company_id != ''` — which
+ * is right for company pages but makes ~15,400 real awards unreachable from a
+ * country's contracts list. `<cc>_government_contract_awards` answers the other
+ * question: one row per award, matched or not, plus the supplier's published id
+ * and why it did not match.
+ *
+ * Resolved from the database rather than assumed, for the same reason as the
+ * pattern above, and so a country still renders from the company-keyed view
+ * before its awards view is migrated. Countries are converted one at a time.
+ */
+const AWARDS_VIEW_PATTERN = "^[a-z]{2}_government_contract_awards$";
+
+let awardsCountries: Promise<Set<string>> | null = null;
+
+function loadAwardsCountries(): Promise<Set<string>> {
+  awardsCountries ??= chQuery<{ name: string }>(
+    `SELECT name FROM system.tables
+     WHERE database = currentDatabase()
+       AND match(name, {pattern:String})`,
+    { pattern: AWARDS_VIEW_PATTERN },
+  ).then((rows) => new Set(rows.map((r) => r.name.slice(0, 2))));
+  return awardsCountries;
+}
+
+/** Which view to read, and whether it carries the supplier columns. */
+async function contractsSource(
+  country: CountryConfig,
+): Promise<{ table: string; hasSupplierDetail: boolean }> {
+  if ((await loadAwardsCountries()).has(country.code)) {
+    return {
+      table: `${country.code}_government_contract_awards`,
+      hasSupplierDetail: true,
+    };
+  }
+  return { table: `${country.code}_government_contracts`, hasSupplierDetail: false };
+}
+
 let contractCountries: Promise<Set<string>> | null = null;
 
 function loadContractCountries(): Promise<Set<string>> {
@@ -43,9 +84,17 @@ export interface CountryContractListRow {
    * so the winner shown always pairs with the amount shown, never a mix of
    * two sources. */
   winner_name: string;
-  /** Additional winners beyond the one shown, from that same source; 0 for a
-   * single-winner contract (all of Brazil's PNCP awards, for instance). */
-  winner_extra_count: number;
+  /** The id the register published for the supplier shown, whether or not it
+   * resolved to a company. Empty on a country still read from the company-keyed
+   * view. Masked for display by `maskPersonalSupplierId`. */
+  winner_registered_id: string;
+  /** Why that supplier did not resolve to a company — 'exact' when it did.
+   * Rendered by `supplierStatusLabel`, which keeps Foreign, Individual,
+   * Unmatched and Unverified id apart. */
+  winner_match_status: string;
+  /** Total suppliers on the contract within the winning source, so the list can
+   * say "1/3". 1 for a single-supplier contract (every Brazilian PNCP award). */
+  supplier_count: number;
   /** Summed across winners within the winning source — never across sources,
    * which would double count a contract published in both a national
    * register and TED. */
@@ -80,6 +129,11 @@ export interface ContractWinnerRow {
   cpv_code: string;
   company_id: string;
   winner_name: string;
+  /** The register's published id for this supplier, matched or not. Masked for
+   * display by `maskPersonalSupplierId`. */
+  winner_registered_id: string;
+  /** Why it did not resolve to a company; 'exact' when it did. */
+  winner_match_status: string;
   amount_original: number | null;
   amount_usd: number | null;
   currency: string;
@@ -135,7 +189,7 @@ function isContractSortKey(value: string | null): value is ContractSortKey {
  * register next to an amount from another. Brazil is single-source and
  * single-winner throughout (verified: 112,943 rows, 112,943 distinct
  * contract_id), so this reduces to "the row" there; TED-covered countries
- * can have several winners on one contract, surfaced as `winner_extra_count`.
+ * can have several winners on one contract, surfaced as `supplier_count`.
  */
 export async function getCountryContractsPage(
   country: CountryConfig,
@@ -161,9 +215,14 @@ export async function getCountryContractsPage(
   // Count first (same reason as searchCompanies): the requested page can be
   // stale once contracts are added, so it is clamped to the real range below
   // rather than trusted.
+  const source = await contractsSource(country);
+  const supplierIdExpr = source.hasSupplierDetail ? "winner_registered_id" : "''";
+  const supplierStatusExpr = source.hasSupplierDetail
+    ? "winner_match_status"
+    : "'exact'";
   const countRows = await chQuery<{ total: string }>(
     `SELECT count() AS total FROM (
-       SELECT ${REF} AS contract_ref FROM ${country.code}_government_contracts GROUP BY contract_ref
+       SELECT ${REF} AS contract_ref FROM ${source.table} GROUP BY contract_ref
      )`,
   );
   const total = Number(countRows[0].total);
@@ -171,7 +230,7 @@ export async function getCountryContractsPage(
   const page = Math.min(Math.max(1, Math.trunc(opts.page ?? 1) || 1), lastPage);
 
   const rows = await chQuery<
-    Omit<CountryContractListRow, "winner_extra_count"> & { winner_extra_count: number | string }
+    Omit<CountryContractListRow, "supplier_count"> & { supplier_count: number | string }
   >(
     `SELECT
        contract_ref,
@@ -180,7 +239,9 @@ export async function getCountryContractsPage(
        title,
        agreement_type,
        winner_name,
-       toUInt32(winner_count_primary) - 1 AS winner_extra_count,
+       winner_registered_id,
+       winner_match_status,
+       toUInt32(winner_count_primary) AS supplier_count,
        toFloat64(amount_original) AS amount_original,
        currency,
        nullIf(amount_usd, -1.0) AS amount_usd,
@@ -194,6 +255,8 @@ export async function getCountryContractsPage(
          argMax(agreement_type_in, priority) AS agreement_type,
          argMax(source_url_in, priority) AS source_url,
          argMax(winner_name_in, priority) AS winner_name,
+         argMax(winner_registered_id_in, priority) AS winner_registered_id,
+         argMax(winner_match_status_in, priority) AS winner_match_status,
          argMax(winner_count, priority) AS winner_count_primary,
          argMax(amount_original_in, priority) AS amount_original,
          argMax(currency_in, priority) AS currency,
@@ -210,14 +273,24 @@ export async function getCountryContractsPage(
            any(multiIf(startsWith(agreement_type, '{'),
              JSONExtractString(agreement_type, 'nome'), agreement_type)) AS agreement_type_in,
            any(source_url) AS source_url_in,
-           argMin(if(winner_name != '', winner_name, company_id), source_winner_ordinal) AS winner_name_in,
+           -- Alphabetically first, not source_winner_ordinal: that ordinal is
+           -- just the order our parser happened to iterate the notice XML (it
+           -- increments per tenderer), so it encodes no rank -- arbitrary but
+           -- stable, which looks meaningful and is not. argMin over the same
+           -- expression min() uses, so the name, its id and its status all
+           -- describe ONE supplier rather than three different ones.
+           min(if(winner_name != '', winner_name, company_id)) AS winner_name_in,
+           argMin(${supplierIdExpr}, if(winner_name != '', winner_name, company_id))
+             AS winner_registered_id_in,
+           argMin(${supplierStatusExpr}, if(winner_name != '', winner_name, company_id))
+             AS winner_match_status_in,
            uniqExact(if(company_id != '', company_id, winner_name)) AS winner_count,
            sum(value_amount_original) AS amount_original_in,
            any(value_currency) AS currency_in,
            -- -1 sentinel distinguishes "no source reported a USD figure" from
            -- a genuine zero once max() below collapses the per-source values.
            coalesce(toFloat64(sum(value_amount_usd)), -1.0) AS priority
-         FROM ${country.code}_government_contracts
+         FROM ${source.table}
          GROUP BY contract_ref, source
        )
        GROUP BY contract_ref
@@ -228,7 +301,7 @@ export async function getCountryContractsPage(
   );
 
   return {
-    rows: rows.map((r) => ({ ...r, winner_extra_count: Number(r.winner_extra_count) })),
+    rows: rows.map((r) => ({ ...r, supplier_count: Number(r.supplier_count) })),
     total,
     page,
     pageSize,
@@ -305,6 +378,13 @@ export async function getContractDetail(
 ): Promise<ContractDetail | null> {
   if (!(await hasContracts(country))) return null;
 
+  // The awards view where it exists, so the winners card shows every awarded
+  // supplier including the ones that did not resolve to a company -- which the
+  // card already renders correctly (bare name, no company link).
+  const source = await contractsSource(country);
+  const supplierIdExpr = source.hasSupplierDetail ? "winner_registered_id" : "''";
+  const supplierStatusExpr = source.hasSupplierDetail ? "winner_match_status" : "'exact'";
+
   const rows = await chQuery<ContractWinnerRow>(
     `SELECT
        source_slug AS source,
@@ -319,6 +399,8 @@ export async function getContractDetail(
        cpv_code,
        company_id,
        winner_name,
+       ${supplierIdExpr} AS winner_registered_id,
+       ${supplierStatusExpr} AS winner_match_status,
        toFloat64(value_amount_original) AS amount_original,
        toFloat64(value_amount_usd) AS amount_usd,
        value_currency AS currency,
@@ -328,7 +410,7 @@ export async function getContractDetail(
        directive_governed,
        value_source_field,
        notice_value_source_field
-     FROM ${country.code}_government_contracts
+     FROM ${source.table}
      WHERE ${REF} = {ref:String}
      ORDER BY source_slug, source_lot_id, source_winner_ordinal
      LIMIT 500`,
