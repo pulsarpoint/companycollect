@@ -381,10 +381,21 @@ def test_replace_clickhouse_drops_stage_after_insert_failure(
 
 
 def test_seed_fixture_builds_non_empty_rows() -> None:
-    from dagster_v3.defs.brazil_companies.cnae.assets import BR_CNAE_TO_NACE_FIXTURE
+    """The CSV reader still works, though the asset no longer uses it.
+
+    The mapping is now generated from IBGE's vocabulary rather than a curated
+    fixture, so this covers the reader itself against the file that remains.
+    """
+    from pathlib import Path
+
+    import dagster_v3.defs.brazil_companies.cnae.assets as assets_module
+
+    fixture = (
+        Path(assets_module.__file__).parent / "fixtures" / "br_cnae_to_nace.csv"
+    )
 
     rows = build_br_cnae_to_nace_rows(
-        fixture_path=BR_CNAE_TO_NACE_FIXTURE,
+        fixture_path=fixture,
         source_run_id="seed-test",
         pulled_at=PULLED_AT,
         valid_nace_targets={
@@ -409,56 +420,66 @@ def test_brazil_comp_cnae_asset_is_registered() -> None:
 def test_brazil_comp_cnae_asset_asserts_clickhouse_target_table_before_publish(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The asset must check the target table exists BEFORE replacing it.
+
+    The migration owns the schema and the asset only swaps contents, so running
+    against a database that has not migrated has to fail loudly rather than
+    half-write.
+    """
     from dagster_v3.defs.brazil_companies.cnae import assets
 
-    calls: dict[str, object] = {}
     events: list[str] = []
-    client = object()
+    calls: dict[str, object] = {}
+
+    subclasses = [
+        {
+            "id": "6201501",
+            "descricao": "DESENVOLVIMENTO DE PROGRAMAS DE COMPUTADOR SOB ENCOMENDA",
+            "classe": {
+                "id": "62015",
+                "descricao": "DESENVOLVIMENTO DE PROGRAMAS",
+                "grupo": {
+                    "id": "620",
+                    "descricao": "SERVICOS DE TI",
+                    "divisao": {
+                        "id": "62",
+                        "descricao": "SERVICOS DE TI",
+                        "secao": {"id": "J", "descricao": "INFORMACAO"},
+                    },
+                },
+            },
+        }
+    ]
 
     class FakeConnection:
-        def __enter__(self) -> object:
+        def __enter__(self) -> "FakeConnection":
             events.append("connection")
-            calls["connection_opened"] = True
-            return client
+            return self
 
-        def __exit__(self, *args: object) -> None:
+        def __exit__(self, *_: object) -> None:
             return None
 
-    def fake_assert_clickhouse_tables_exist(
-        clickhouse: ClickhouseResource,
-        *,
-        database: str,
-        tables: tuple[str, ...],
-    ) -> None:
+        def execute(self, query: str, *args: object) -> list[tuple[str, str]]:
+            if "nace_categories" in query:
+                return [("62", "62 Computer programming, consultancy and related")]
+            return []
+
+    def fake_assert(clickhouse: object, *, database: str, tables: tuple[str, ...]) -> None:
         events.append("assert")
-        calls["assert"] = {
-            "clickhouse": clickhouse,
-            "database": database,
-            "tables": tables,
-        }
+        calls["assert"] = {"database": database, "tables": tables}
 
-    def fake_replace_br_cnae_to_nace_clickhouse(**kwargs: Any) -> dict[str, int]:
+    def fake_replace(client: object, table: str, columns: object, rows: object) -> None:
         events.append("replace")
-        calls["replace"] = kwargs
-        return {"rows": 3, "cnae_codes": 2, "nace_targets": 3}
+        calls["replace"] = {"table": table, "rows": list(rows)}
 
+    monkeypatch.setattr(assets, "assert_clickhouse_tables_exist", fake_assert)
+    monkeypatch.setattr(assets, "_replace_table", fake_replace)
     monkeypatch.setattr(
-        assets,
-        "assert_clickhouse_tables_exist",
-        fake_assert_clickhouse_tables_exist,
-    )
-    monkeypatch.setattr(
-        assets,
-        "replace_br_cnae_to_nace_clickhouse",
-        fake_replace_br_cnae_to_nace_clickhouse,
+        assets, "_fetch_subclasses", lambda: (subclasses, "deadbeef")
     )
 
     clickhouse = ClickhouseResource(host="localhost")
-    monkeypatch.setattr(
-        ClickhouseResource,
-        "get_connection",
-        lambda self: FakeConnection(),
-    )
+    monkeypatch.setattr(ClickhouseResource, "get_connection", lambda self: FakeConnection())
 
     result = dg.materialize(
         [assets.brazil_comp_cnae_to_nace_clickhouse],
@@ -466,13 +487,17 @@ def test_brazil_comp_cnae_asset_asserts_clickhouse_target_table_before_publish(
     )
 
     assert result.success
-    assert events == ["assert", "connection", "replace"]
+    # Asserted before the connection is opened and before anything is written.
+    assert events[0] == "assert"
+    assert events.index("assert") < events.index("replace")
     assert calls["assert"] == {
-        "clickhouse": clickhouse,
-        "database": tables.BRAZIL_COMP_CNAE_DATABASE,
-        "tables": (tables.BR_CNAE_TO_NACE_TABLE,),
+        "database": "corpscout",
+        "tables": ("br_cnae_to_nace", "br_cnae_categories"),
     }
-    assert calls["replace"]["clickhouse_client"] is client
-    assert calls["replace"]["fixture_path"] == assets.BR_CNAE_TO_NACE_FIXTURE
-    assert isinstance(calls["replace"]["source_run_id"], str)
-    assert calls["replace"]["source_run_id"]
+
+    written = calls["replace"]["rows"]  # type: ignore[index]
+    assert len(written) == 1
+    # The NACE target is the DIVISION, and its label has the repeated code
+    # stripped.
+    assert written[0][6] == "62"
+    assert written[0][8] == "Computer programming, consultancy and related"

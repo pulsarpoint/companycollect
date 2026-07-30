@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import dagster as dg
+import pyarrow as pa
 from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 from dlt.sources.helpers import requests
@@ -60,18 +61,22 @@ def cpv_vocabulary_duckdb(
         )
 
     retrieved_at = datetime.now(UTC).replace(tzinfo=None)
-    records = [
-        (
-            row.code,
-            row.label_en,
-            row.significant_digits,
-            row.parent_code,
-            CPV_2008_URL,
-            context.run_id,
-            retrieved_at,
-        )
-        for row in rows
-    ]
+    # An Arrow table rather than row-wise executemany: DuckDB reads Arrow
+    # directly in C++, and tests/test_duckdb_bulk_loading_contract.py forbids
+    # the row-at-a-time path outside one explicitly tracked TED debt.
+    batch = pa.table(
+        {
+            "code": pa.array([row.code for row in rows], pa.string()),
+            "label_en": pa.array([row.label_en for row in rows], pa.string()),
+            "significant_digits": pa.array(
+                [row.significant_digits for row in rows], pa.uint8()
+            ),
+            "parent_code": pa.array([row.parent_code for row in rows], pa.string()),
+            "source_url": pa.array([CPV_2008_URL] * len(rows), pa.string()),
+            "source_run_id": pa.array([context.run_id] * len(rows), pa.string()),
+            "retrieved_at": pa.array([retrieved_at] * len(rows), pa.timestamp("us")),
+        }
+    )
 
     with cpv_vocabulary_duckdb.get_connection() as connection:
         connection.execute(
@@ -91,11 +96,14 @@ def cpv_vocabulary_duckdb(
             )
             """
         )
-        connection.executemany(
-            f"INSERT INTO {tables.CPV_VOCABULARY_DUCKDB_SCHEMA}."
-            f"{tables.CPV_VOCABULARY_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?)",
-            records,
-        )
+        connection.register("cpv_vocabulary_batch", batch)
+        try:
+            connection.execute(
+                f"INSERT INTO {tables.CPV_VOCABULARY_DUCKDB_SCHEMA}."
+                f"{tables.CPV_VOCABULARY_TABLE} SELECT * FROM cpv_vocabulary_batch"
+            )
+        finally:
+            connection.unregister("cpv_vocabulary_batch")
 
     divisions = sum(1 for row in rows if not row.parent_code)
     return dg.MaterializeResult(

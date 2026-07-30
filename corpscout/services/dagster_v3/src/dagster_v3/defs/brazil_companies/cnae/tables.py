@@ -18,3 +18,24 @@ BR_CNAE_TO_NACE_COLUMNS = (
     "source_run_id",
     "pulled_at",
 )
+
+BR_CNAE_CATEGORIES_TABLE = "br_cnae_categories"
+
+# Column order is the contract with migration 000221.
+BR_CNAE_CATEGORIES_COLUMNS = (
+    "classification_version",
+    "code",
+    "normalized_code",
+    "level",
+    "parent_normalized_code",
+    "section_code",
+    "division_code",
+    "description_pt",
+    "source_url",
+    "source_run_id",
+    "retrieved_at",
+)
+
+# 1,332 subclasses plus their ancestors in CNAE 2.0. A floor, so a revision does
+# not fail the load while a truncated download still does.
+MIN_CNAE_CATEGORY_ROWS = 2_000

@@ -234,6 +234,7 @@ EXPECTED_MIGRATIONS = (
     "000217_corpscout_br_contract_awards",
     "000218_corpscout_no_contract_awards",
     "000220_corpscout_cpv_vocabulary",
+    "000221_corpscout_br_cnae_categories",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
