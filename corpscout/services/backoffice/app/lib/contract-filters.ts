@@ -31,6 +31,15 @@ export type ContractFilters = {
   to: string | null;
 };
 
+/** No filter at all, so a caller need not build one to mean "unfiltered". */
+export const EMPTY_CONTRACT_FILTERS: ContractFilters = {
+  agreement: [],
+  amountMin: null,
+  amountMax: null,
+  from: null,
+  to: null,
+};
+
 const MAX_AGREEMENT_VALUES = 50;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 

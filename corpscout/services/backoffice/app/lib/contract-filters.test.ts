@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   contractFilterCount,
+  EMPTY_CONTRACT_FILTERS,
   contractFilterSql,
   parseContractFilters,
   serializeContractFilters,
@@ -143,5 +144,24 @@ describe("round-tripping to the URL", () => {
     expect(contractFilterCount(parse("amount_min=5&amount_max=9"))).toBe(1);
     expect(contractFilterCount(parse("agreement=A&agreement=B"))).toBe(1);
     expect(contractFilterCount(parse("agreement=A&amount_min=5&year=2025"))).toBe(3);
+  });
+});
+
+describe("clearing", () => {
+  it("EMPTY_CONTRACT_FILTERS serializes to nothing, so Clear returns a bare URL", () => {
+    // The Clear button beside the trigger applies this: no query string at all,
+    // rather than params left behind set to empty values.
+    expect(serializeContractFilters(EMPTY_CONTRACT_FILTERS)).toBe("");
+    expect(contractFilterCount(EMPTY_CONTRACT_FILTERS)).toBe(0);
+  });
+
+  it("clears every parameter, not only the ones the sheet shows", () => {
+    // ee and no publish no agreement type, so their sheet renders no agreement
+    // section -- Clear must still drop an agreement param a hand-edited URL set.
+    const everything = parseContractFilters(
+      new URLSearchParams("agreement=A&amount_min=1&amount_max=2&from=2024-01-01&to=2024-02-01"),
+    );
+    expect(contractFilterCount(everything)).toBe(3);
+    expect(serializeContractFilters(EMPTY_CONTRACT_FILTERS)).toBe("");
   });
 });

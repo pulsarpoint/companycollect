@@ -1,5 +1,10 @@
 import { chQuery } from "~/lib/clickhouse.server";
 import { PAGE_SIZES, type CountryConfig, type SortDir } from "~/lib/countries";
+import {
+  contractFilterSql,
+  EMPTY_CONTRACT_FILTERS,
+  type ContractFilters,
+} from "~/lib/contract-filters";
 
 /** Every country's contracts live in a view named <cc>_government_contracts
  * with an identical shape, so these queries are built from the country code
@@ -162,6 +167,17 @@ export interface ContractDetail {
  * itself. */
 const REF = "if(contract_key != '', contract_key, contract_id)";
 
+/**
+ * The agreement type as the list DISPLAYS it.
+ *
+ * PNCP (Brazil) publishes agreement_type as a raw {"id":N,"nome":"..."} blob while
+ * every other loaded source publishes plain text. Defined once because the
+ * projection and the FILTER must use the identical expression: filtering the bare
+ * column would match nothing for Brazil while looking perfectly correct.
+ */
+const AGREEMENT_EXPR =
+  "multiIf(startsWith(agreement_type, '{'), JSONExtractString(agreement_type, 'nome'), agreement_type)";
+
 /** Sort keys are an allow-list into SQL column names, never user input passed
  * through — the same pattern `getSortColumn` uses for the company list. */
 const CONTRACT_SORT_COLUMNS: Record<ContractSortKey, string> = {
@@ -198,6 +214,7 @@ export async function getCountryContractsPage(
     pageSize?: number;
     sort?: string | null;
     dir?: string | null;
+    filters?: ContractFilters;
   } = {},
 ): Promise<CountryContractsPage> {
   const pageSize = PAGE_SIZES.includes(opts.pageSize as (typeof PAGE_SIZES)[number])
@@ -216,14 +233,21 @@ export async function getCountryContractsPage(
   // stale once contracts are added, so it is clamped to the real range below
   // rather than trusted.
   const source = await contractsSource(country);
+  const filters = opts.filters ?? EMPTY_CONTRACT_FILTERS;
+  const { where: filterWhere, params: filterParams } = contractFilterSql(filters, {
+    agreementExpr: AGREEMENT_EXPR,
+  });
+  // A filter fragment starts with " AND ", so it needs a predicate to hang off.
+  const filterClause = filterWhere === "" ? "" : ` WHERE 1${filterWhere}`;
   const supplierIdExpr = source.hasSupplierDetail ? "winner_registered_id" : "''";
   const supplierStatusExpr = source.hasSupplierDetail
     ? "winner_match_status"
     : "'exact'";
   const countRows = await chQuery<{ total: string }>(
     `SELECT count() AS total FROM (
-       SELECT ${REF} AS contract_ref FROM ${source.table} GROUP BY contract_ref
+       SELECT ${REF} AS contract_ref FROM ${source.table}${filterClause} GROUP BY contract_ref
      )`,
+    filterParams,
   );
   const total = Number(countRows[0].total);
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -270,8 +294,7 @@ export async function getCountryContractsPage(
            any(title) AS title_in,
            -- PNCP (Brazil) publishes agreement_type as a raw {"id":N,"nome":"..."}
            -- blob; every other loaded source already publishes plain text.
-           any(multiIf(startsWith(agreement_type, '{'),
-             JSONExtractString(agreement_type, 'nome'), agreement_type)) AS agreement_type_in,
+           any(${AGREEMENT_EXPR}) AS agreement_type_in,
            any(source_url) AS source_url_in,
            -- Alphabetically first, not source_winner_ordinal: that ordinal is
            -- just the order our parser happened to iterate the notice XML (it
@@ -290,14 +313,14 @@ export async function getCountryContractsPage(
            -- -1 sentinel distinguishes "no source reported a USD figure" from
            -- a genuine zero once max() below collapses the per-source values.
            coalesce(toFloat64(sum(value_amount_usd)), -1.0) AS priority
-         FROM ${source.table}
+         FROM ${source.table}${filterClause}
          GROUP BY contract_ref, source
        )
        GROUP BY contract_ref
      )
      ORDER BY coalesce(toString(${sortColumn}), '') = '' ASC, ${sortColumn} ${dir === "asc" ? "ASC" : "DESC"}, contract_ref
      LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-    { limit: pageSize, offset: (page - 1) * pageSize },
+    { limit: pageSize, offset: (page - 1) * pageSize, ...filterParams },
   );
 
   return {
@@ -370,6 +393,36 @@ async function fetchSourceRecord(
     const found = await chQuery<SourceRecord>(fallback, { notice });
     return found.length > 0 ? found[0] : null;
   }
+}
+
+/**
+ * Agreement-type values a country actually publishes, with counts.
+ *
+ * Read from the database rather than configured, so a country that publishes none
+ * yields an empty list and the sheet renders no agreement filter instead of an
+ * empty dropdown. Only br (100%), se (40%) and fi (19%) publish one at all; ee and
+ * no publish none.
+ *
+ * Counted over contracts, not rows, so the number beside a value matches what
+ * selecting it will show.
+ */
+export async function getAgreementTypeFacet(
+  country: CountryConfig,
+): Promise<{ value: string; count: number }[]> {
+  if (!(await hasContracts(country))) return [];
+  const source = await contractsSource(country);
+  const rows = await chQuery<{ value: string; cnt: string }>(
+    `SELECT value, uniqExact(contract_ref) AS cnt
+     FROM (
+       SELECT ${AGREEMENT_EXPR} AS value, ${REF} AS contract_ref
+       FROM ${source.table}
+       WHERE ${AGREEMENT_EXPR} != ''
+     )
+     GROUP BY value
+     ORDER BY cnt DESC, value
+     LIMIT 100`,
+  );
+  return rows.map((r) => ({ value: r.value, count: Number(r.cnt) }));
 }
 
 export async function getContractDetail(
