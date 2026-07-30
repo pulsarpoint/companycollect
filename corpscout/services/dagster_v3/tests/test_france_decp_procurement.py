@@ -1,9 +1,16 @@
+import csv
 from datetime import UTC, date, datetime
+from decimal import Decimal
+from pathlib import Path
+
+import duckdb
 
 from dagster_v3.defs.france_decp_procurement import tables
 from dagster_v3.defs.france_decp_procurement.normalize import (
+    build_contract_holder_candidates,
     expand_contract_holders,
     normalize_decp_identifier,
+    replace_raw_table,
 )
 
 
@@ -81,3 +88,109 @@ def test_unusable_holder_identifiers_remain_auditable() -> None:
     assert rows[0]["holder_id_raw"] == "foreign:123"
     assert rows[0]["holder_siren"] == ""
     assert rows[0]["match_eligibility"] == "invalid_holder_identifier"
+
+
+def test_contract_holder_candidates_keep_the_latest_source_version(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "decp.csv"
+    source_rows = [
+        _source_row(
+            publication_date="2025-01-31",
+            modification_publication_date="",
+            title="Original publication",
+            amount="100.00",
+        ),
+        _source_row(
+            publication_date="2026-06-22",
+            modification_publication_date="",
+            title="Corrected publication",
+            amount="200.00",
+        ),
+        _source_row(
+            publication_date="2026-06-22",
+            modification_publication_date="2026-07-01",
+            title="Modified publication",
+            amount="250.00",
+        ),
+        _source_row(
+            publication_date="2026-06-22",
+            modification_publication_date="2026-07-01",
+            title="Final publication",
+            amount="275.00",
+        ),
+    ]
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=tables.EXPECTED_SOURCE_COLUMNS,
+            delimiter=";",
+        )
+        writer.writeheader()
+        writer.writerows(source_rows)
+
+    connection = duckdb.connect()
+    retrieved_at = datetime(2026, 7, 30, tzinfo=UTC)
+    replace_raw_table(
+        connection=connection,
+        csv_path=csv_path,
+        source_run_id="run",
+        source_object_key="raw/decp.csv",
+        source_retrieved_at=retrieved_at,
+    )
+
+    counts = build_contract_holder_candidates(
+        connection=connection,
+        source_run_id="run",
+        resolved_at=retrieved_at,
+    )
+
+    assert counts == {
+        "source_version_rows": 4,
+        "candidate_rows": 1,
+        "collapsed_version_rows": 3,
+        "eligible_rows": 1,
+        "contracts": 1,
+    }
+    candidate_columns = tuple(
+        row[0]
+        for row in connection.execute(
+            f"DESCRIBE {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
+        ).fetchall()
+    )
+    assert candidate_columns == tables.CANDIDATE_COLUMNS
+    assert connection.execute(
+        f"""
+        SELECT title, contract_amount_eur
+        FROM {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}
+        """
+    ).fetchone() == ("Final publication", Decimal("275.00"))
+
+
+def _source_row(
+    *,
+    publication_date: str,
+    modification_publication_date: str,
+    title: str,
+    amount: str,
+) -> dict[str, str]:
+    row = dict.fromkeys(tables.EXPECTED_SOURCE_COLUMNS, "")
+    row.update(
+        {
+            "id": "2024U249731005",
+            "acheteur_id": "13000222300027",
+            "titulaire_id_1": "34813988200032",
+            "titulaire_typeidentifiant_1": "SIRET",
+            "titulaire_id_2": "CDL",
+            "titulaire_id_3": "CDL",
+            "datenotification": "2025-01-15",
+            "datepublicationdonnees": publication_date,
+            "datepublicationdonneesmodificationmodification": (
+                modification_publication_date
+            ),
+            "objet": title,
+            "montant": amount,
+            "source": "DECP",
+        }
+    )
+    return row

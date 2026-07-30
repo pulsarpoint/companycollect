@@ -67,8 +67,9 @@ def france_decp_procurement_raw_snapshot_s3(
     pool=tables.DUCKDB_POOL,
     description=(
         "Expands each DECP contract's three holder slots to one row per "
-        "(contract, holder), preserving raw identifiers and contract-level "
-        "amounts while normalizing SIRET and French VAT identifiers to SIREN."
+        "logical (contract, holder), keeps the latest repeated source "
+        "publication, preserves raw identifiers and contract-level amounts, "
+        "and normalizes SIRET and French VAT identifiers to SIREN."
     ),
 )
 def france_decp_contract_holders_duckdb(

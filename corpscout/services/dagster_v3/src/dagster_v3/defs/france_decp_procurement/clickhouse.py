@@ -99,6 +99,22 @@ def export_decp_contract_holders(
                 columns=tables.CANDIDATE_COLUMNS,
                 truncate=False,
             )
+            rows_in_candidate_stage, unique_candidate_rows = client.execute(
+                f"""
+                SELECT count(), uniqExact(source_record_id)
+                FROM {candidates}
+                """
+            )[0]
+            if int(rows_in_candidate_stage) != int(candidate_rows):
+                raise ValueError(
+                    "DECP candidate stage row mismatch: "
+                    f"exported={candidate_rows} staged={rows_in_candidate_stage}"
+                )
+            if int(unique_candidate_rows) != int(candidate_rows):
+                raise ValueError(
+                    "DECP candidate stage contains duplicate source_record_id values: "
+                    f"rows={candidate_rows} unique={unique_candidate_rows}"
+                )
             client.execute(
                 holders_insert_sql(
                     target_table=target_stage, candidate_table=candidates

@@ -161,6 +161,24 @@ def build_contract_holder_candidates(
     target = f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
     holder_digits = "regexp_replace(trim(holder_id_raw), '[^0-9]', '', 'g')"
     buyer_digits = "regexp_replace(trim(acheteur_id), '[^0-9]', '', 'g')"
+    source_version_rows = int(
+        connection.execute(
+            f"""
+            SELECT coalesce(sum(
+                CASE WHEN upper(coalesce(trim(titulaire_id_1), '')) NOT IN
+                    ('', 'CDL', 'NC', 'NON COMMUNIQUE', 'NON COMMUNIQUÉ')
+                    THEN 1 ELSE 0 END
+                + CASE WHEN upper(coalesce(trim(titulaire_id_2), '')) NOT IN
+                    ('', 'CDL', 'NC', 'NON COMMUNIQUE', 'NON COMMUNIQUÉ')
+                    THEN 1 ELSE 0 END
+                + CASE WHEN upper(coalesce(trim(titulaire_id_3), '')) NOT IN
+                    ('', 'CDL', 'NC', 'NON COMMUNIQUE', 'NON COMMUNIQUÉ')
+                    THEN 1 ELSE 0 END
+            ), 0)
+            FROM {raw}
+            """
+        ).fetchone()[0]
+    )
     connection.execute(
         f"""
         CREATE OR REPLACE TABLE {target} AS
@@ -205,66 +223,160 @@ def build_contract_holder_candidates(
                     ELSE ''
                 END AS buyer_siren
             FROM expanded
+        ),
+        candidates AS (
+            SELECT
+                '{tables.SOURCE_SLUG}' AS source_slug,
+                CAST(? AS VARCHAR) AS source_run_id,
+                lower(sha256(concat_ws(
+                    '|',
+                    coalesce(acheteur_id, ''),
+                    coalesce(id, ''),
+                    cast(holder_ordinal AS VARCHAR),
+                    holder_id_raw
+                ))) AS source_record_id,
+                coalesce(id, '') AS contract_id,
+                holder_ordinal::INTEGER AS holder_ordinal,
+                holder_id_raw,
+                holder_id_type,
+                holder_siren,
+                coalesce(acheteur_id, '') AS buyer_id_raw,
+                buyer_siren,
+                try_cast(nullif(trim(datenotification), '') AS DATE)
+                    AS notification_date,
+                try_cast(nullif(trim(datepublicationdonnees), '') AS DATE)
+                    AS publication_date,
+                coalesce(objet, '') AS title,
+                coalesce(nature, '') AS nature,
+                coalesce(procedure, '') AS procedure,
+                coalesce(codecpv, '') AS cpv_code,
+                try_cast(nullif(trim(dureemois), '') AS INTEGER) AS duration_months,
+                try_cast(nullif(trim(montant), '') AS DECIMAL(38, 2))
+                    AS contract_amount_eur,
+                CAST(NULL AS DECIMAL(38, 2)) AS contract_amount_usd,
+                0::TINYINT AS contract_amount_attributable,
+                coalesce(formeprix, '') AS price_form,
+                try_cast(nullif(trim(offresrecues), '') AS INTEGER)
+                    AS offers_received,
+                CASE
+                    WHEN upper(coalesce(trim(idaccordcadre), '')) IN
+                        ('', 'CDL', 'NC')
+                        THEN ''
+                    ELSE trim(idaccordcadre)
+                END AS framework_id,
+                CASE
+                    WHEN upper(coalesce(trim(idmodification), '')) IN
+                        ('', 'CDL', 'NC')
+                        THEN ''
+                    ELSE trim(idmodification)
+                END AS modification_id,
+                try_cast(
+                    nullif(trim(montantmodification), '') AS DECIMAL(38, 2)
+                ) AS modification_amount_eur,
+                try_cast(
+                    nullif(
+                        trim(datenotificationmodificationmodification),
+                        ''
+                    ) AS DATE
+                ) AS modification_notification_date,
+                CASE
+                    WHEN upper(coalesce(trim(idactesoustraitance), '')) IN
+                        ('', 'CDL', 'NC')
+                        THEN ''
+                    ELSE trim(idactesoustraitance)
+                END AS subcontract_id,
+                try_cast(
+                    nullif(trim(montantactesoustraitance), '') AS DECIMAL(38, 2)
+                ) AS subcontract_amount_eur,
+                CASE
+                    WHEN upper(coalesce(trim(idsoustraitant), '')) IN
+                        ('', 'CDL', 'NC')
+                        THEN ''
+                    ELSE trim(idsoustraitant)
+                END AS subcontractor_id_raw,
+                coalesce(source, '') AS source_system,
+                '{tables.CATALOG_URL}' AS source_url,
+                source_object_key,
+                source_retrieved_at,
+                CAST(? AS TIMESTAMP) AS resolved_at,
+                CASE
+                    WHEN holder_siren = '' THEN 'invalid_holder_identifier'
+                    ELSE 'eligible'
+                END AS match_eligibility,
+                greatest(
+                    try_cast(nullif(trim(datepublicationdonnees), '') AS DATE),
+                    try_cast(
+                        nullif(
+                            trim(datepublicationdonneesmodificationmodification),
+                            ''
+                        ) AS DATE
+                    ),
+                    try_cast(
+                        nullif(
+                            trim(datepublicationdonneesactesoustraitance),
+                            ''
+                        ) AS DATE
+                    ),
+                    try_cast(
+                        nullif(
+                            trim(
+                                datepublicationdonneesmodificationactesoustraitance
+                            ),
+                            ''
+                        ) AS DATE
+                    )
+                ) AS _version_publication_date,
+                greatest(
+                    try_cast(nullif(trim(datenotification), '') AS DATE),
+                    try_cast(
+                        nullif(
+                            trim(datenotificationmodificationmodification),
+                            ''
+                        ) AS DATE
+                    ),
+                    try_cast(
+                        nullif(trim(datenotificationactesoustraitance), '') AS DATE
+                    ),
+                    try_cast(
+                        nullif(
+                            trim(
+                                datenotificationmodificationsoustraitancemodificationactesoustraitance
+                            ),
+                            ''
+                        ) AS DATE
+                    )
+                ) AS _version_notification_date,
+                source_line_number AS _source_line_number
+            FROM normalized
+        ),
+        ranked AS (
+            SELECT
+                *,
+                row_number() OVER (
+                    PARTITION BY source_record_id
+                    ORDER BY
+                        _version_publication_date DESC NULLS LAST,
+                        _version_notification_date DESC NULLS LAST,
+                        _source_line_number DESC
+                ) AS _version_rank
+            FROM candidates
         )
-        SELECT
-            '{tables.SOURCE_SLUG}' AS source_slug,
-            CAST(? AS VARCHAR) AS source_run_id,
-            lower(sha256(concat_ws(
-                '|',
-                coalesce(acheteur_id, ''),
-                coalesce(id, ''),
-                cast(holder_ordinal AS VARCHAR),
-                holder_id_raw
-            ))) AS source_record_id,
-            coalesce(id, '') AS contract_id,
-            holder_ordinal::INTEGER AS holder_ordinal,
-            holder_id_raw,
-            holder_id_type,
-            holder_siren,
-            coalesce(acheteur_id, '') AS buyer_id_raw,
-            buyer_siren,
-            try_cast(nullif(trim(datenotification), '') AS DATE) AS notification_date,
-            try_cast(nullif(trim(datepublicationdonnees), '') AS DATE)
-                AS publication_date,
-            coalesce(objet, '') AS title,
-            coalesce(nature, '') AS nature,
-            coalesce(procedure, '') AS procedure,
-            coalesce(codecpv, '') AS cpv_code,
-            try_cast(nullif(trim(dureemois), '') AS INTEGER) AS duration_months,
-            try_cast(nullif(trim(montant), '') AS DECIMAL(38, 2))
-                AS contract_amount_eur,
-            CAST(NULL AS DECIMAL(38, 2)) AS contract_amount_usd,
-            0::TINYINT AS contract_amount_attributable,
-            coalesce(formeprix, '') AS price_form,
-            try_cast(nullif(trim(offresrecues), '') AS INTEGER) AS offers_received,
-            CASE WHEN upper(coalesce(trim(idaccordcadre), '')) IN ('', 'CDL', 'NC')
-                THEN '' ELSE trim(idaccordcadre) END AS framework_id,
-            CASE WHEN upper(coalesce(trim(idmodification), '')) IN ('', 'CDL', 'NC')
-                THEN '' ELSE trim(idmodification) END AS modification_id,
-            try_cast(nullif(trim(montantmodification), '') AS DECIMAL(38, 2))
-                AS modification_amount_eur,
-            try_cast(
-                nullif(trim(datenotificationmodificationmodification), '') AS DATE
-            ) AS modification_notification_date,
-            CASE WHEN upper(coalesce(trim(idactesoustraitance), '')) IN ('', 'CDL', 'NC')
-                THEN '' ELSE trim(idactesoustraitance) END AS subcontract_id,
-            try_cast(nullif(trim(montantactesoustraitance), '') AS DECIMAL(38, 2))
-                AS subcontract_amount_eur,
-            CASE WHEN upper(coalesce(trim(idsoustraitant), '')) IN ('', 'CDL', 'NC')
-                THEN '' ELSE trim(idsoustraitant) END AS subcontractor_id_raw,
-            coalesce(source, '') AS source_system,
-            '{tables.CATALOG_URL}' AS source_url,
-            source_object_key,
-            source_retrieved_at,
-            CAST(? AS TIMESTAMP) AS resolved_at,
-            CASE WHEN holder_siren = '' THEN 'invalid_holder_identifier'
-                ELSE 'eligible' END AS match_eligibility
-        FROM normalized
+        SELECT * EXCLUDE (
+            _version_publication_date,
+            _version_notification_date,
+            _source_line_number,
+            _version_rank
+        )
+        FROM ranked
+        WHERE _version_rank = 1
         """,
         [source_run_id, resolved_at],
     )
+    candidate_rows = _count(connection, tables.CANDIDATES_TABLE)
     counts = {
-        "candidate_rows": _count(connection, tables.CANDIDATES_TABLE),
+        "source_version_rows": source_version_rows,
+        "candidate_rows": candidate_rows,
+        "collapsed_version_rows": source_version_rows - candidate_rows,
         "eligible_rows": _count_where(
             connection, tables.CANDIDATES_TABLE, "match_eligibility = 'eligible'"
         ),
