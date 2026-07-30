@@ -79,6 +79,43 @@ const CPV_DIVISIONS: Record<string, string> = {
   "98": "Other community, social and personal services",
 };
 
+/**
+ * Every code in a value, however the register packed them.
+ *
+ * Registers disagree about the shape: Doffin and TED publish an array, and
+ * Hilma publishes ONE comma-joined string — "72317000, 48800000, 72000000" —
+ * on 1,782 of Finland's 9,275 classified rows. Treating that string as a single
+ * code read its digits as one number, so a contract about software and IT
+ * services rendered one nonsense code and matched only the first division it
+ * happened to list.
+ */
+export function cpvCodeList(raw: unknown): string[] {
+  return (Array.isArray(raw) ? raw : [raw])
+    .flatMap((v) => (v == null ? [] : String(v).split(/[,;|\s]+/)))
+    .map((v) => v.trim())
+    .filter((v) => v !== "");
+}
+
+/**
+ * The significant prefix of a code — what selecting it in a tree means.
+ *
+ * CPV is read left to right and trailing zeros mean "no more detail given", so
+ * a code's significant prefix is also its position in the hierarchy:
+ * `45000000` is Construction work, `45210000` building construction,
+ * `45213100` commercial buildings. Stripping the zeros turns each into the
+ * prefix every descendant shares — `45`, `4521`, `452131` — so matching on it
+ * selects a node and everything beneath it.
+ *
+ * Never shorter than two digits, because the division is the coarsest real
+ * unit: `30000000` strips to `3`, which is not a division, so it is held at
+ * `30`. Returns null for anything that is not a usable code.
+ */
+export function cpvPrefix(raw: unknown): string | null {
+  const digits = String(raw ?? "").replace(/\D/g, "").slice(0, 8);
+  if (digits.length < 2) return null;
+  return digits.slice(0, cpvDepth(digits));
+}
+
 /** How specific a code is — trailing zeros mean the buyer gave no more detail. */
 export function cpvDepth(code: string): number {
   const digits = code.replace(/\D/g, "").slice(0, 8);
@@ -111,9 +148,7 @@ export type CpvSubject = {
  * output never depends on the order the register happened to list them in.
  */
 export function cpvSubjects(raw: unknown): CpvSubject[] {
-  const codes = (Array.isArray(raw) ? raw : [raw])
-    .map((v) => (v == null ? "" : String(v).trim()))
-    .filter((v) => v !== "");
+  const codes = cpvCodeList(raw);
   if (codes.length === 0) return [];
 
   const byDivision = new Map<string, string[]>();

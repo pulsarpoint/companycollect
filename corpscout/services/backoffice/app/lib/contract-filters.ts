@@ -21,19 +21,23 @@
  * Client-safe: no `.server` imports, so the filter sheet can use it directly.
  */
 
+import { cpvPrefix } from "~/lib/cpv";
+
 export type ContractFilters = {
   /** Raw register values, as stored. The list translates them for display. */
   agreement: string[];
   /**
-   * CPV DIVISIONS — the leading two digits, not whole 8-digit codes.
+   * CPV hierarchy PREFIXES — 2 to 8 digits, one per selected node.
    *
-   * CPV is a tree of ~9,500 codes, which is not a dropdown. Its 46 divisions
-   * are, they are the level we hold real labels for, and 40% of the codes
-   * actually used are division-only anyway (`72000000`, `45000000`) — so for
-   * those the division IS the exact code. Filtering on the division therefore
-   * selects a subject rather than one buyer's chosen depth: picking
-   * "Construction work" catches 45000000 and 45213100 alike, which is what a
-   * reader means.
+   * CPV is a tree read left to right, so a node's significant prefix is shared
+   * by everything beneath it: `45` is Construction work, `4521` building
+   * construction, `452131` commercial buildings. Selecting a node therefore
+   * means "this and every descendant" for free — picking `45` returns 7,323
+   * Estonian contracts, `452` returns 4,139, `4521` returns 1,017.
+   *
+   * Held as prefixes rather than whole codes so a selection never depends on
+   * the depth a particular buyer chose to publish at. `cpvPrefix` normalises
+   * both ends, so `cpv=45000000` and `cpv=45` are the same filter.
    */
   cpv: string[];
   amountMin: number | null;
@@ -54,10 +58,20 @@ export const EMPTY_CONTRACT_FILTERS: ContractFilters = {
 };
 
 const MAX_AGREEMENT_VALUES = 50;
-/** There are 46 divisions in total, so anything longer is not a real selection. */
-const MAX_CPV_VALUES = 46;
-const CPV_DIVISION = /^\d{2}$/;
+/** A reader ticking more than this is not filtering; it bounds the query. */
+const MAX_CPV_VALUES = 60;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A row's CPV codes as an ARRAY, whatever shape the register stored.
+ *
+ * Doffin and TED publish one code per row; Hilma joins several into one string
+ * with commas. Splitting in SQL means a contract classified `72317000,
+ * 48800000` is found under BOTH divisions instead of only the first — which
+ * took Finland's division 48 from 90 contracts to its real 267.
+ */
+export const CPV_CODES =
+  "arrayFilter(c -> c != '', arrayMap(c -> trimBoth(c), splitByChar(',', cpv_code)))";
 
 function positiveNumber(raw: string | null): number | null {
   if (raw == null || raw.trim() === "") return null;
@@ -85,15 +99,14 @@ export function parseContractFilters(searchParams: URLSearchParams): ContractFil
     ),
   ].slice(0, MAX_AGREEMENT_VALUES);
 
-  // Two digits only. A whole 8-digit code in the URL is truncated to its
-  // division rather than dropped, so a hand-written `cpv=45213100` still
-  // selects Construction work instead of silently matching nothing.
+  // Normalised to the significant prefix, so `cpv=45000000` and `cpv=45` are
+  // one filter and a code pasted from a notice selects the node it belongs to.
   const cpv = [
     ...new Set(
       searchParams
         .getAll("cpv")
-        .map((v) => v.trim().slice(0, 2))
-        .filter((v) => CPV_DIVISION.test(v)),
+        .map((v) => cpvPrefix(v))
+        .filter((v): v is string => v !== null),
     ),
   ].slice(0, MAX_CPV_VALUES);
 
@@ -147,11 +160,14 @@ export function contractFilterSql(
     clauses.push(`${agreementExpr} IN {agreement:Array(String)}`);
     params.agreement = filters.agreement;
   }
-  // Matched on the division, so a selection catches every depth a buyer might
-  // have published under it. The empty-string guard keeps a row with no CPV out
-  // of the results even if '' ever reached the parameter list.
+  // Prefix match over the row's codes, which is what makes selecting a node
+  // select its whole subtree: '45' matches 45000000 and 45213100 alike, '4521'
+  // only the latter. Over the ARRAY, so a Hilma row carrying several codes is
+  // found under every one of them rather than only the first.
   if (filters.cpv.length > 0) {
-    clauses.push(`(cpv_code != '' AND substring(cpv_code, 1, 2) IN {cpv:Array(String)})`);
+    clauses.push(
+      `arrayExists(c -> arrayExists(p -> startsWith(c, p), {cpv:Array(String)}), ${CPV_CODES})`,
+    );
     params.cpv = filters.cpv;
   }
   // USD, because a country can mix currencies -- Sweden carries SEK from UHM and

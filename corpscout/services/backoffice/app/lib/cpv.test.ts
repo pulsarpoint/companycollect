@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cpvDepth, cpvDivisionLabel, cpvSubjects } from "./cpv";
+import { cpvCodeList, cpvDepth, cpvDivisionLabel, cpvPrefix, cpvSubjects } from "./cpv";
 
 describe("reading a CPV code", () => {
   it("names the division", () => {
@@ -100,5 +100,72 @@ describe("a real nine-code notice", () => {
       "IT services (72224100)",
       "Business services: law, marketing, consulting and security (79421000)",
     ]);
+  });
+});
+
+describe("cpvCodeList", () => {
+  it("splits Hilma's comma-joined string into separate codes", () => {
+    // 1,782 Finnish rows publish several codes in ONE string. Read as a single
+    // code its digits concatenate into nonsense.
+    expect(cpvCodeList("72317000, 48800000, 72000000")).toEqual([
+      "72317000",
+      "48800000",
+      "72000000",
+    ]);
+  });
+
+  it("leaves an array as it is", () => {
+    expect(cpvCodeList(["45000000", "77210000"])).toEqual(["45000000", "77210000"]);
+  });
+
+  it("treats a single code as one code", () => {
+    expect(cpvCodeList("45213100")).toEqual(["45213100"]);
+  });
+
+  it("returns nothing for absent values", () => {
+    expect(cpvCodeList(null)).toEqual([]);
+    expect(cpvCodeList("")).toEqual([]);
+    expect(cpvCodeList([])).toEqual([]);
+  });
+});
+
+describe("cpvSubjects with joined strings", () => {
+  it("finds all three subjects in one Hilma string", () => {
+    // Previously this produced ONE subject whose code was the whole string.
+    const subjects = cpvSubjects("72317000, 48800000, 72000000");
+    expect(subjects.map((s) => s.division).sort()).toEqual(["48", "72"]);
+  });
+});
+
+describe("cpvPrefix", () => {
+  it("reduces a code to the prefix its descendants share", () => {
+    expect(cpvPrefix("45000000")).toBe("45");
+    expect(cpvPrefix("45210000")).toBe("4521");
+    expect(cpvPrefix("45213100")).toBe("452131");
+  });
+
+  it("never goes below the division, even when the division ends in zero", () => {
+    // 30000000 strips to '3', which is not a division. Held at '30'.
+    expect(cpvPrefix("30000000")).toBe("30");
+    expect(cpvPrefix("90000000")).toBe("90");
+  });
+
+  it("passes a bare division through", () => {
+    expect(cpvPrefix("45")).toBe("45");
+  });
+
+  it("rejects anything that is not a usable code", () => {
+    expect(cpvPrefix("")).toBeNull();
+    expect(cpvPrefix("4")).toBeNull();
+    expect(cpvPrefix(null)).toBeNull();
+    expect(cpvPrefix("abc")).toBeNull();
+  });
+
+  it("is a prefix of every descendant, which is what makes selection work", () => {
+    const parent = cpvPrefix("45210000")!;
+    for (const child of ["45210000", "45213100", "45213150"]) {
+      expect(child.startsWith(parent)).toBe(true);
+    }
+    expect("45000000".startsWith(parent)).toBe(false);
   });
 });

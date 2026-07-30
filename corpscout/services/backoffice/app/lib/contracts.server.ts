@@ -4,6 +4,7 @@ import { matchCompanies } from "~/lib/procurements.server";
 import { PAGE_SIZES, type CountryConfig, type SortDir } from "~/lib/countries";
 import {
   contractFilterSql,
+  CPV_CODES,
   EMPTY_CONTRACT_FILTERS,
   type ContractFilters,
 } from "~/lib/contract-filters";
@@ -472,10 +473,12 @@ export async function getCpvDivisionFacet(
   const rows = await chQuery<{ division: string; cnt: string }>(
     `SELECT division, uniqExact(contract_ref) AS cnt
      FROM (
-       SELECT substring(cpv_code, 1, 2) AS division, ${REF} AS contract_ref
+       SELECT substring(arrayJoin(${CPV_CODES}), 1, 2) AS division,
+              ${REF} AS contract_ref
        FROM ${source.table}
        WHERE cpv_code != ''
      )
+     WHERE division != ''
      GROUP BY division
      ORDER BY cnt DESC, division
      LIMIT 100`,

@@ -173,49 +173,58 @@ describe("clearing", () => {
   });
 });
 
-describe("CPV division filter", () => {
-  it("parses divisions from repeated params", () => {
+describe("CPV hierarchy filter", () => {
+  it("parses prefixes from repeated params", () => {
     const f = parseContractFilters(new URLSearchParams("cpv=45&cpv=72"));
     expect(f.cpv).toEqual(["45", "72"]);
   });
 
-  it("truncates a full 8-digit code to its division rather than dropping it", () => {
-    // A hand-written or copied URL carrying a real code still selects the
-    // subject it belongs to, instead of matching nothing.
-    expect(parseContractFilters(new URLSearchParams("cpv=45213100")).cpv).toEqual(["45"]);
+  it("normalises a full code to the node it names", () => {
+    // A code pasted from a notice selects that node, so cpv=45000000 and
+    // cpv=45 are one filter rather than two that behave differently.
+    expect(parseContractFilters(new URLSearchParams("cpv=45000000")).cpv).toEqual(["45"]);
+    expect(parseContractFilters(new URLSearchParams("cpv=45210000")).cpv).toEqual(["4521"]);
+    expect(parseContractFilters(new URLSearchParams("cpv=45213100")).cpv).toEqual(["452131"]);
   });
 
-  it("ignores values that are not a division", () => {
+  it("keeps a deep node distinct from its ancestor", () => {
+    const f = parseContractFilters(new URLSearchParams("cpv=45&cpv=452131"));
+    expect(f.cpv).toEqual(["45", "452131"]);
+  });
+
+  it("ignores values that are not a usable code", () => {
     expect(parseContractFilters(new URLSearchParams("cpv=&cpv=ab&cpv=4")).cpv).toEqual([]);
   });
 
-  it("deduplicates, so two codes in one division select it once", () => {
-    expect(parseContractFilters(new URLSearchParams("cpv=45000000&cpv=45213100")).cpv).toEqual(
-      ["45"],
-    );
+  it("deduplicates codes that normalise to the same node", () => {
+    expect(
+      parseContractFilters(new URLSearchParams("cpv=45000000&cpv=45")).cpv,
+    ).toEqual(["45"]);
   });
 
-  it("matches on the division and excludes rows with no CPV", () => {
+  it("matches by prefix over the row's code ARRAY", () => {
+    // The array matters: Hilma joins several codes into one string, and
+    // matching the raw column would only ever find the first.
     const { where, params } = contractFilterSql({
       ...EMPTY_CONTRACT_FILTERS,
       cpv: ["45"],
     });
-    expect(where).toContain("substring(cpv_code, 1, 2) IN {cpv:Array(String)}");
-    expect(where).toContain("cpv_code != ''");
+    expect(where).toContain("startsWith(c, p)");
+    expect(where).toContain("splitByChar(',', cpv_code)");
     expect(params.cpv).toEqual(["45"]);
   });
 
-  it("adds nothing to the query when no division is selected", () => {
+  it("adds nothing to the query when no node is selected", () => {
     expect(contractFilterSql(EMPTY_CONTRACT_FILTERS).where).toBe("");
   });
 
   it("round-trips through the query string", () => {
-    const filters = { ...EMPTY_CONTRACT_FILTERS, cpv: ["09", "66"] };
+    const filters = { ...EMPTY_CONTRACT_FILTERS, cpv: ["09", "452131"] };
     const round = parseContractFilters(new URLSearchParams(serializeContractFilters(filters)));
-    expect(round.cpv).toEqual(["09", "66"]);
+    expect(round.cpv).toEqual(["09", "452131"]);
   });
 
-  it("counts as one active filter however many divisions are picked", () => {
+  it("counts as one active filter however many nodes are picked", () => {
     expect(contractFilterCount({ ...EMPTY_CONTRACT_FILTERS, cpv: ["09", "66", "45"] })).toBe(1);
   });
 });
