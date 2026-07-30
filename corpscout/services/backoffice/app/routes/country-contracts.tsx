@@ -5,7 +5,7 @@ import {
   getAgreementTypeFacet,
   getContractHeadlineStats,
   getCountryContractsPage,
-  getCpvDivisionFacet,
+  getCpvChildren,
 } from "~/lib/contracts.server";
 import { parseContractFilters } from "~/lib/contract-filters";
 import { parseContractColumns } from "~/lib/contract-columns";
@@ -22,7 +22,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   // every value rather than narrowing to what the active selection already shows
   // -- otherwise unticking is the only way back and a reader can paint
   // themselves into a corner.
-  const [page, agreementOptions, cpvOptions, stats] = await Promise.all([
+  const [page, agreementOptions, cpvRoots, stats] = await Promise.all([
     getCountryContractsPage(country, {
       page: Number(url.searchParams.get("page") ?? "1") || 1,
       pageSize: Number(url.searchParams.get("pageSize") ?? "50") || 50,
@@ -31,7 +31,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       filters,
     }),
     getAgreementTypeFacet(country),
-    getCpvDivisionFacet(country),
+    // The 45 divisions; deeper levels load on expand via /contracts-cpv.
+    getCpvChildren(country, ""),
     // Unfiltered on purpose: the banner describes the COUNTRY's contracts, not
     // the current selection, so it stays a stable reference point while filtering.
     getContractHeadlineStats(country),
@@ -42,14 +43,14 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   // costs no extra query and needs no list of which countries are "EU".
   const availableColumns = contractColumnAvailability({
     agreement: agreementOptions,
-    cpv: cpvOptions,
+    cpv: cpvRoots,
   });
   const columns = parseContractColumns(url.searchParams, availableColumns);
 
   return {
     page,
     agreementOptions,
-    cpvOptions,
+    cpvRoots,
     filters,
     stats,
     columns,
@@ -68,7 +69,7 @@ export default function CountryContracts({ loaderData, params }: Route.Component
         countryCode={country.code}
         page={loaderData.page}
         agreementOptions={loaderData.agreementOptions}
-        cpvOptions={loaderData.cpvOptions}
+        cpvRoots={loaderData.cpvRoots}
         filters={loaderData.filters}
         columns={loaderData.columns}
         availableColumns={loaderData.availableColumns}

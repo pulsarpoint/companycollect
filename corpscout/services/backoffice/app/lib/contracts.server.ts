@@ -21,6 +21,10 @@ import { CONTRACT_COLUMNS, type ContractColumnId } from "~/lib/contract-columns"
  * failure mode is a country having contracts that the UI refuses to show. */
 const CONTRACTS_VIEW_PATTERN = "^[a-z]{2}_government_contracts$";
 
+/** The EU CPV 2008 vocabulary, loaded by the cpv_vocabulary Dagster assets
+ * (migration 000220). Without it a code has no name. */
+const CPV_VOCABULARY_TABLE = "cpv_vocabulary";
+
 /**
  * The awards view is preferred where it exists.
  *
@@ -451,39 +455,82 @@ export async function getAgreementTypeFacet(
   return rows.map((r) => ({ value: r.value, count: Number(r.cnt) }));
 }
 
+/** One node of the CPV tree, as the filter's drill-down renders it. */
+export type CpvTreeNode = {
+  /** The full 8-digit code. */
+  code: string;
+  /** The prefix that selects this node and everything beneath it. */
+  prefix: string;
+  label: string;
+  /** Contracts under this node, its whole subtree included. */
+  contracts: number;
+  /** Whether drilling in would show anything, so the expander is only offered
+   * when there is something behind it. */
+  hasChildren: boolean;
+};
+
 /**
- * CPV divisions a country actually publishes, with counts.
+ * The children of one CPV node that this country actually has contracts under.
  *
- * Divisions, not whole codes: CPV holds ~9,500 of them and a register uses
- * hundreds, which is a list nobody reads. The 46 divisions are the level we
- * carry real labels for, and picking one selects the subject at every depth a
- * buyer might have published it under.
+ * A level at a time rather than the whole tree: a country's used vocabulary
+ * runs to 1,404 nodes (Norway) and 3,353 (Sweden), which is a quarter of a
+ * megabyte of labels shipped on every contracts page for a panel most readers
+ * never open. The 45 divisions come with the page and each expansion asks for
+ * one more level.
  *
- * Same shape and same reasoning as the agreement facet — an empty result means
- * the register publishes no CPV, and both the column and the filter disappear
- * rather than rendering permanently blank. That is what makes the table split
- * itself per country without anyone maintaining a list of which countries are
- * "EU": Estonia fills 98.8% of its rows and Brazil fills none.
+ * Counts are of CONTRACTS under the whole subtree, not rows at that exact
+ * code, so the number beside a node matches what selecting it returns. That is
+ * what the prefix join buys: a node's significant prefix is shared by every
+ * descendant, so one startsWith both counts and filters.
  */
-export async function getCpvDivisionFacet(
+export async function getCpvChildren(
   country: CountryConfig,
-): Promise<{ division: string; count: number }[]> {
+  parentCode: string,
+): Promise<CpvTreeNode[]> {
   if (!(await hasContracts(country))) return [];
   const source = await contractsSource(country);
-  const rows = await chQuery<{ division: string; cnt: string }>(
-    `SELECT division, uniqExact(contract_ref) AS cnt
+
+  const rows = await chQuery<{
+    code: string;
+    prefix: string;
+    label: string;
+    contracts: string;
+    deeper: number | string | boolean;
+  }>(
+    `SELECT
+       v.code AS code,
+       substring(v.code, 1, v.significant_digits) AS prefix,
+       v.label_en AS label,
+       uniqExact(t.contract_ref) AS contracts,
+       -- Is any code in use beneath this node more specific than the node
+       -- itself? That, not the vocabulary alone, decides whether expanding
+       -- would show anything for THIS country.
+       toUInt8(
+         max(greatest(2, length(replaceRegexpOne(t.code, '0+$', '')))) > v.significant_digits
+       ) AS deeper
      FROM (
-       SELECT substring(arrayJoin(${CPV_CODES}), 1, 2) AS division,
-              ${REF} AS contract_ref
+       SELECT ${REF} AS contract_ref, arrayJoin(${CPV_CODES}) AS code
        FROM ${source.table}
        WHERE cpv_code != ''
-     )
-     WHERE division != ''
-     GROUP BY division
-     ORDER BY cnt DESC, division
-     LIMIT 100`,
+     ) AS t
+     INNER JOIN ${CPV_VOCABULARY_TABLE} AS v
+       ON startsWith(t.code, substring(v.code, 1, v.significant_digits))
+     WHERE v.parent_code = {parent:String}
+     GROUP BY v.code, v.significant_digits, v.label_en
+     ORDER BY contracts DESC, v.code
+     LIMIT 500`,
+    { parent: parentCode },
   );
-  return rows.map((r) => ({ division: r.division, count: Number(r.cnt) }));
+
+  return rows.map((r) => ({
+    code: r.code,
+    prefix: r.prefix,
+    label: r.label,
+    contracts: Number(r.contracts),
+    // The driver has returned this as a number, a string and a boolean across
+    // versions; comparing against one of those left every expander hidden.
+    hasChildren: r.deeper === true || Number(r.deeper) === 1,
+  }));
 }
 
 /**
@@ -494,8 +541,8 @@ export async function getCpvDivisionFacet(
  * facets the page already loads rather than a query of its own.
  */
 export function contractColumnAvailability(facets: {
-  agreement: { value: string; count: number }[];
-  cpv: { division: string; count: number }[];
+  agreement: readonly unknown[];
+  cpv: readonly unknown[];
 }): ContractColumnId[] {
   return CONTRACT_COLUMNS.map((c) => c.id).filter((id) => {
     if (id === "agreement_type") return facets.agreement.length > 0;

@@ -7,6 +7,9 @@ export default [
     route("countries/:country/companies", "routes/country-companies.tsx"),
     route("countries/:country/contracts/:ref", "routes/country-contract-detail.tsx"),
     route("countries/:country/facet-options", "routes/country-facet-options.ts"),
+    // One level of the CPV tree at a time; see the route for why it is not
+    // loader data.
+    route("countries/:country/contracts-cpv", "routes/country-contracts-cpv.ts"),
     route("countries/:country", "routes/country-layout.tsx", [
       index("routes/country-overview.tsx"),
       route("economy", "routes/country-economy.tsx"),

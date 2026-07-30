@@ -8,7 +8,8 @@ import {
   serializeContractFilters,
   type ContractFilters,
 } from "~/lib/contract-filters";
-import { cpvDivisionLabel } from "~/lib/cpv";
+import type { CpvTreeNode } from "~/lib/contracts.server";
+import { CpvTreeFilter } from "~/components/data-table/cpv-tree-filter";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
@@ -24,7 +25,6 @@ import {
 } from "~/components/ui/sheet";
 
 export type AgreementFacetOption = { value: string; count: number };
-export type CpvFacetOption = { division: string; count: number };
 
 const nf = new Intl.NumberFormat("en-US");
 
@@ -44,13 +44,13 @@ export function ContractFilterSheet({
   filters,
   agreementOptions,
   agreementLabel,
-  cpvOptions = [],
+  cpvRoots = [],
 }: {
   countryCode: string;
   filters: ContractFilters;
   agreementOptions: AgreementFacetOption[];
   agreementLabel?: (value: string) => string;
-  cpvOptions?: CpvFacetOption[];
+  cpvRoots?: CpvTreeNode[];
 }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -80,12 +80,15 @@ export function ContractFilterSheet({
     }));
   }
 
-  function toggleCpv(division: string) {
+  function toggleCpv(prefix: string) {
     setDraft((d) => ({
       ...d,
-      cpv: d.cpv.includes(division)
-        ? d.cpv.filter((v) => v !== division)
-        : [...d.cpv, division],
+      cpv: d.cpv.includes(prefix)
+        ? d.cpv.filter((v) => v !== prefix)
+        // Selecting a node makes any already-selected descendant redundant --
+        // it is included either way -- so the narrower ones are dropped rather
+        // than left in the URL saying something the filter no longer does.
+        : [...d.cpv.filter((v) => !v.startsWith(prefix)), prefix],
     }));
   }
 
@@ -145,40 +148,22 @@ export function ContractFilterSheet({
             </section>
           ) : null}
 
-          {cpvOptions.length > 0 ? (
+          {cpvRoots.length > 0 ? (
             <>
               <Separator />
               <section className="flex flex-col gap-2">
                 <Label className="text-xs tracking-wide uppercase">
                   What was procured
                 </Label>
-                {/* Divisions, not the ~9,500 individual codes: this is the level
-                    that has a name a reader recognises, and selecting one catches
-                    every depth a buyer published beneath it. */}
-                <div className="flex max-h-72 flex-col gap-1.5 overflow-y-auto pr-1">
-                  {cpvOptions.map((option) => (
-                    <label
-                      key={option.division}
-                      className="flex cursor-pointer items-start gap-2 text-sm"
-                    >
-                      <Checkbox
-                        checked={draft.cpv.includes(option.division)}
-                        onCheckedChange={() => toggleCpv(option.division)}
-                        className="mt-0.5"
-                      />
-                      <span className="flex-1">
-                        {cpvDivisionLabel(`${option.division}000000`) ??
-                          `CPV division ${option.division}`}
-                        <span className="text-muted-foreground ml-1.5 font-mono text-[10px]">
-                          {option.division}
-                        </span>
-                      </span>
-                      <span className="text-muted-foreground text-xs tabular-nums">
-                        {nf.format(option.count)}
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                {/* Ticking a node selects everything beneath it, so a reader
+                    picks a subject without having to know which of its ~9,400
+                    codes a particular buyer chose. */}
+                <CpvTreeFilter
+                  countryCode={countryCode}
+                  roots={cpvRoots}
+                  selected={draft.cpv}
+                  onToggle={toggleCpv}
+                />
               </section>
             </>
           ) : null}

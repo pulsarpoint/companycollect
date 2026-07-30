@@ -3,8 +3,8 @@ import { DataTable } from "~/components/data-table/data-table";
 import {
   ContractFilterSheet,
   type AgreementFacetOption,
-  type CpvFacetOption,
 } from "~/components/data-table/contract-filter-sheet";
+import type { CpvTreeNode } from "~/lib/contracts.server";
 import { ContractColumnPicker } from "~/components/data-table/contract-column-picker";
 import {
   CONTRACT_COLUMNS,
@@ -38,7 +38,7 @@ export function CountryContractsTable({
   countryCode,
   page,
   agreementOptions = [],
-  cpvOptions = [],
+  cpvRoots = [],
   filters = EMPTY_CONTRACT_FILTERS,
   columns: visibleColumns,
   availableColumns,
@@ -46,7 +46,7 @@ export function CountryContractsTable({
   countryCode: string;
   page: CountryContractsPage;
   agreementOptions?: AgreementFacetOption[];
-  cpvOptions?: CpvFacetOption[];
+  cpvRoots?: CpvTreeNode[];
   filters?: ContractFilters;
   columns?: ContractColumnId[];
   availableColumns?: ContractColumnId[];
@@ -94,7 +94,7 @@ export function CountryContractsTable({
             countryCode={countryCode}
             filters={filters}
             agreementOptions={agreementOptions}
-            cpvOptions={cpvOptions}
+            cpvRoots={cpvRoots}
             agreementLabel={
               countryCode === "br"
                 ? (value) => brContractType(value) ?? value
