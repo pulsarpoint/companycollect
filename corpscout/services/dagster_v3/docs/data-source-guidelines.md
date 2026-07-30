@@ -20,7 +20,11 @@ fetch + LLM translation).
 ```
 ingest (dlt)  →  <source>_source.duckdb (staging)  →  transform (SQL/dbt)  →  corpscout.<table> (ClickHouse)
 ```
-- **One DuckDB file per source**, single-writer. Put `pool="<source>_duckdb"` on *every* asset that
+- **A partitioned source gets one DuckDB file per partition** via
+  `defs/common/partition_duckdb.py`, so an export cannot read another partition's rows. A shared file
+  plus `REPLACE PARTITION` silently deletes data: see the CLAUDE.md entry and the 36 months it cost
+  Brazil PNCP on 2026-07-28.
+- **One DuckDB file per non-partitioned source**, single-writer. Put `pool="<source>_duckdb"` on *every* asset that
   **opens** it — writers AND read-only exporters (a DuckDB writer excludes readers across
   processes, so an unpooled read-only step still collides with a concurrent write step's file
   lock). One shared pool across ALL of a source's chains (refresh, backfill, export) is what makes

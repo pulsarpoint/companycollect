@@ -1,3 +1,7 @@
+from dagster_v3.defs.common.partition_duckdb import (
+    partition_duckdb_path as _partition_duckdb_path,
+)
+
 COUNTRY_CODE = "SK"
 SOURCE_SLUG = "slovakia_uvo_procurement"
 GROUP_NAME = "slovakia_uvo_procurement"
@@ -15,7 +19,9 @@ S3_ISSUE_PREFIX = "issues"
 S3_DETAIL_PREFIX = "notices"
 S3_MANIFEST_PREFIX = "manifests"
 
-DUCKDB_FILE_NAME = "slovakia_uvo_procurement_source.duckdb"
+# Superseded by partition_duckdb_path: kept so an operator can still find
+# the pre-2026-07-30 shared file this source used to write.
+LEGACY_SHARED_DUCKDB_FILE_NAME = "slovakia_uvo_procurement_source.duckdb"
 DUCKDB_SCHEMA = "slovakia_uvo_procurement"
 DUCKDB_POOL = "slovakia_uvo_procurement_duckdb"
 CANDIDATES_TABLE = "notice_winner_candidates"
@@ -68,3 +74,13 @@ NOTICES_COLUMNS = (
     "company_match_status",
     *CANDIDATE_COLUMNS,
 )
+
+
+def partition_duckdb_path(partition: str):
+    """This source's DuckDB file for one monthly partition.
+
+    Per-partition rather than one shared file: see
+    defs/common/partition_duckdb.py for the 36 months this shape cost
+    Brazil's PNCP chain.
+    """
+    return _partition_duckdb_path(source="slovakia_uvo_procurement", partition=partition)

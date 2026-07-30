@@ -1,12 +1,13 @@
 from datetime import UTC, datetime
-from pathlib import Path
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+from dagster_v3.defs.common.partition_duckdb import (
+    open_partition_duckdb,
+    require_partition_duckdb,
+)
 from dagster_v3.defs.common.eur_usd import apply_eur_usd_conversion
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.slovakia_uvo_procurement import tables
@@ -20,7 +21,10 @@ from dagster_v3.defs.slovakia_uvo_procurement.resources import (
     sync_uvo_month,
 )
 
-DUCKDB_PATH = Path("data") / tables.DUCKDB_FILE_NAME
+# No shared DuckDB path: every partitioned asset opens its own file, so an
+# export cannot read another month's rows. See
+# defs/common/partition_duckdb.py.
+SOURCE_NAME = "slovakia_uvo_procurement"
 MONTHLY_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date=tables.PARTITION_START_DATE,
     end_offset=1,
@@ -76,7 +80,6 @@ def slovakia_uvo_procurement_html_s3(
 )
 def slovakia_uvo_procurement_notices_duckdb(
     context: dg.AssetExecutionContext,
-    slovakia_uvo_procurement_duckdb: DuckDBResource,
     slovakia_uvo_procurement_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     manifest = latest_month_manifest(
@@ -104,8 +107,9 @@ def slovakia_uvo_procurement_notices_duckdb(
                 resolved_at=resolved_at,
             )
         )
-    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with slovakia_uvo_procurement_duckdb.get_connection() as connection:
+    with open_partition_duckdb(
+        source=SOURCE_NAME, partition=context.partition_key
+    ) as connection:
         written = replace_candidates(connection, rows)
     return dg.MaterializeResult(metadata={"notice_winner_rows": written})
 
@@ -125,11 +129,12 @@ def slovakia_uvo_procurement_notices_duckdb(
 )
 def slovakia_uvo_procurement_notices_usd(
     context: dg.AssetExecutionContext,
-    slovakia_uvo_procurement_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
-    with slovakia_uvo_procurement_duckdb.get_connection() as connection:
+    with require_partition_duckdb(
+        source=SOURCE_NAME, partition=context.partition_key
+    ) as connection:
         counts = apply_eur_usd_conversion(
             duckdb_connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),
@@ -161,7 +166,6 @@ def slovakia_uvo_procurement_notices_usd(
 def slovakia_uvo_procurement_notices_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
-    slovakia_uvo_procurement_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -169,7 +173,9 @@ def slovakia_uvo_procurement_notices_clickhouse(
         tables=(tables.NOTICES_TABLE, "sk_companies"),
     )
     with (
-        slovakia_uvo_procurement_duckdb.get_connection() as connection,
+        require_partition_duckdb(
+            source=SOURCE_NAME, partition=context.partition_key
+        ) as connection,
         clickhouse.get_connection() as client,
     ):
         counts = export_uvo_partition(
@@ -200,7 +206,6 @@ defs = dg.Definitions(
     ],
     jobs=[slovakia_uvo_procurement_backfill_job],
     resources={
-        "slovakia_uvo_procurement_duckdb": duckdb_resource(DUCKDB_PATH),
         "slovakia_uvo_procurement_object_store": ObjectStoreResource(
             bucket=tables.S3_BUCKET
         ),

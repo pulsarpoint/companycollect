@@ -12,6 +12,10 @@ See docs/norway_doffin-design.md. Two facts from there shape everything here:
 
 from __future__ import annotations
 
+from dagster_v3.defs.common.partition_duckdb import (
+    partition_duckdb_path as _partition_duckdb_path,
+)
+
 COUNTRY_CODE = "NO"
 SOURCE_SLUG = "norway_doffin_procurement"
 GROUP_NAME = "norway_doffin"
@@ -47,7 +51,9 @@ S3_BUCKET = "source-norway-doffin"
 S3_SEARCH_PREFIX = "search"
 S3_NOTICE_PREFIX = "notices"
 
-DUCKDB_FILE_NAME = "norway_doffin_source.duckdb"
+# Superseded by partition_duckdb_path: kept only so an operator can find the
+# pre-2026-07-30 shared file that this source used to write.
+LEGACY_SHARED_DUCKDB_FILE_NAME = "norway_doffin_source.duckdb"
 DUCKDB_SCHEMA = "norway_doffin"
 DUCKDB_POOL = "norway_doffin_duckdb"
 RAW_NOTICES_TABLE = "raw_notices"
@@ -136,3 +142,12 @@ NOTICES_COLUMNS: tuple[str, ...] = (
     "company_match_status",
     *CANDIDATE_COLUMNS,
 )
+
+
+def partition_duckdb_path(partition: str):
+    """This source's DuckDB file for one monthly partition.
+
+    Per-partition rather than one shared file: see
+    defs/common/partition_duckdb.py for the 36 months this shape cost Brazil.
+    """
+    return _partition_duckdb_path(source="norway_doffin", partition=partition)

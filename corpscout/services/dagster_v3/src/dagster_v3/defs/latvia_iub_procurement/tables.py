@@ -1,3 +1,7 @@
+from dagster_v3.defs.common.partition_duckdb import (
+    partition_duckdb_path as _partition_duckdb_path,
+)
+
 COUNTRY_CODE = "LV"
 SOURCE_SLUG = "latvia_iub_procurement"
 GROUP_NAME = "latvia_iub_procurement"
@@ -11,7 +15,9 @@ S3_BUCKET = "source-latvia-iub-procurement"
 S3_NOTICE_PREFIX = "notice"
 S3_MANIFEST_PREFIX = "manifests"
 
-DUCKDB_FILE_NAME = "latvia_iub_procurement_source.duckdb"
+# Superseded by partition_duckdb_path: kept so an operator can still find
+# the pre-2026-07-30 shared file this source used to write.
+LEGACY_SHARED_DUCKDB_FILE_NAME = "latvia_iub_procurement_source.duckdb"
 DUCKDB_SCHEMA = "latvia_iub_procurement"
 DUCKDB_POOL = "latvia_iub_procurement_duckdb"
 
@@ -145,3 +151,13 @@ EXECUTIONS_COLUMNS = (
     "resolved_at",
     "partition_key",
 )
+
+
+def partition_duckdb_path(partition: str):
+    """This source's DuckDB file for one monthly partition.
+
+    Per-partition rather than one shared file: see
+    defs/common/partition_duckdb.py for the 36 months this shape cost
+    Brazil's PNCP chain.
+    """
+    return _partition_duckdb_path(source="latvia_iub_procurement", partition=partition)

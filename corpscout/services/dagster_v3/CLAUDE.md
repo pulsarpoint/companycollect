@@ -27,7 +27,21 @@ files and S3 raw snapshots are rebuildable cache).
 - Validate before done: **`uv run dg check defs`** and the relevant `uv run pytest tests/...`.
 
 ## DuckDB (per-source file)
-- **One DuckDB file per source**, single-writer. Put a concurrency **`pool="..."`** on *every* asset that **opens**
+- **A PARTITIONED source gets one DuckDB file per PARTITION**, never one shared file. Use
+  `defs/common/partition_duckdb.py` (`open_partition_duckdb` in the normalise step,
+  `require_partition_duckdb` downstream) — the partition lands in the path,
+  `data/<source>/duckdb/partition_key=<key>/data.duckdb`, as `ted_procurement` has always done.
+  **A shared file plus `REPLACE PARTITION` silently deletes data.** `create or replace table
+  <candidates>` leaves the file holding whichever partition ran last, and an export that reads it
+  unfiltered publishes those rows as the partition it was asked for. `REPLACE PARTITION X FROM stage`
+  means "drop X, copy stage's X in", so when the stage holds another month its X is absent and the
+  statement deletes a populated partition and writes nothing — which ClickHouse reports as success.
+  On 2026-07-28 this emptied 36 of Brazil PNCP's 37 months (2024-03 alone had produced 65,218 rows);
+  every run was green. `norway_doffin` and `estonia_rhr_procurement` had the same shape and survived
+  only because their backfills happened to interleave normalise and export per partition — safe by
+  launch pattern, not construction. A guard that asks "did the read return rows?" cannot catch it:
+  the read returned 116,226 valid rows for the wrong month.
+- **One DuckDB file per NON-partitioned source**, single-writer. Put a concurrency **`pool="..."`** on *every* asset that **opens**
   that file — writers AND read-only exporters (dlt load, dbt, ClickHouse export): a DuckDB writer excludes
   readers across processes, so an unpooled read-only step still collides with a concurrent writer's file lock.
   The instance defaults every pool to limit 1 (`dagster.yaml` `concurrency.pools.default_limit: 1`), so just

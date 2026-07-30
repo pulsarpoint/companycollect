@@ -3,10 +3,12 @@ from pathlib import Path
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+from dagster_v3.defs.common.partition_duckdb import (
+    open_partition_duckdb,
+    require_partition_duckdb,
+)
 from dagster_v3.defs.common.eur_usd import apply_eur_usd_conversion
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.latvia_iub_procurement import tables
@@ -18,7 +20,10 @@ from dagster_v3.defs.latvia_iub_procurement.resources import (
     sync_iub_month,
 )
 
-DUCKDB_PATH = Path("data") / tables.DUCKDB_FILE_NAME
+# No shared DuckDB path: every partitioned asset opens its own file, so an
+# export cannot read another month's rows. See
+# defs/common/partition_duckdb.py.
+SOURCE_NAME = "latvia_iub_procurement"
 MONTHLY_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date=tables.PARTITION_START_DATE,
     end_offset=1,
@@ -77,7 +82,6 @@ def latvia_iub_procurement_daily_json_s3(
 )
 def latvia_iub_procurement_normalized_duckdb(
     context: dg.AssetExecutionContext,
-    latvia_iub_procurement_duckdb: DuckDBResource,
     latvia_iub_procurement_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     manifest = latest_month_manifest(
@@ -99,8 +103,9 @@ def latvia_iub_procurement_normalized_duckdb(
                 resolved_at=datetime.now(UTC),
             )
         )
-    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with latvia_iub_procurement_duckdb.get_connection() as connection:
+    with open_partition_duckdb(
+        source=SOURCE_NAME, partition=context.partition_key
+    ) as connection:
         counts = write_parsed_month(connection, parsed_days)
     return dg.MaterializeResult(metadata=counts)
 
@@ -120,11 +125,12 @@ def latvia_iub_procurement_normalized_duckdb(
 )
 def latvia_iub_procurement_winners_usd(
     context: dg.AssetExecutionContext,
-    latvia_iub_procurement_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
-    with latvia_iub_procurement_duckdb.get_connection() as connection:
+    with require_partition_duckdb(
+        source=SOURCE_NAME, partition=context.partition_key
+    ) as connection:
         counts = apply_eur_usd_conversion(
             duckdb_connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),
@@ -166,7 +172,6 @@ def latvia_iub_procurement_winners_usd(
 def latvia_iub_procurement_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
-    latvia_iub_procurement_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -180,7 +185,9 @@ def latvia_iub_procurement_clickhouse(
         ),
     )
     with (
-        latvia_iub_procurement_duckdb.get_connection() as connection,
+        require_partition_duckdb(
+            source=SOURCE_NAME, partition=context.partition_key
+        ) as connection,
         clickhouse.get_connection() as client,
     ):
         counts = export_iub_partition(
@@ -205,7 +212,6 @@ defs = dg.Definitions(
     ],
     jobs=[latvia_iub_procurement_backfill_job],
     resources={
-        "latvia_iub_procurement_duckdb": duckdb_resource(DUCKDB_PATH),
         "latvia_iub_procurement_object_store": ObjectStoreResource(
             bucket=tables.S3_BUCKET
         ),

@@ -1,13 +1,14 @@
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+from dagster_v3.defs.common.partition_duckdb import (
+    open_partition_duckdb,
+    require_partition_duckdb,
+)
 from dagster_v3.defs.common.eur_usd import apply_eur_usd_conversion
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.estonia_rhr_procurement import tables
@@ -19,7 +20,10 @@ from dagster_v3.defs.estonia_rhr_procurement.resources import (
     sync_rhr_month,
 )
 
-DUCKDB_PATH = Path("data") / tables.DUCKDB_FILE_NAME
+# No shared DuckDB path: every partitioned asset opens its own file, so an
+# export cannot read another month's rows. See
+# defs/common/partition_duckdb.py.
+SOURCE_NAME = "estonia_rhr_procurement"
 MONTHLY_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date=tables.PARTITION_START_DATE,
     end_offset=1,
@@ -75,7 +79,6 @@ def estonia_rhr_procurement_xml_s3(
 )
 def estonia_rhr_procurement_normalized_duckdb(
     context: dg.AssetExecutionContext,
-    estonia_rhr_procurement_duckdb: DuckDBResource,
     estonia_rhr_procurement_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     manifest = latest_month_manifest(
@@ -96,8 +99,9 @@ def estonia_rhr_procurement_normalized_duckdb(
         source_retrieved_at=datetime.fromisoformat(str(manifest["retrieved_at"])),
         resolved_at=datetime.now(UTC),
     )
-    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with estonia_rhr_procurement_duckdb.get_connection() as connection:
+    with open_partition_duckdb(
+        source=SOURCE_NAME, partition=context.partition_key
+    ) as connection:
         counts = write_parsed_month(connection, parsed)
     return dg.MaterializeResult(metadata=counts)
 
@@ -117,11 +121,12 @@ def estonia_rhr_procurement_normalized_duckdb(
 )
 def estonia_rhr_procurement_winners_usd(
     context: dg.AssetExecutionContext,
-    estonia_rhr_procurement_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
-    with estonia_rhr_procurement_duckdb.get_connection() as connection:
+    with require_partition_duckdb(
+        source=SOURCE_NAME, partition=context.partition_key
+    ) as connection:
         counts = apply_eur_usd_conversion(
             duckdb_connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),
@@ -164,7 +169,6 @@ def estonia_rhr_procurement_winners_usd(
 def estonia_rhr_procurement_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
-    estonia_rhr_procurement_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -177,7 +181,9 @@ def estonia_rhr_procurement_clickhouse(
         ),
     )
     with (
-        estonia_rhr_procurement_duckdb.get_connection() as connection,
+        require_partition_duckdb(
+            source=SOURCE_NAME, partition=context.partition_key
+        ) as connection,
         clickhouse.get_connection() as client,
     ):
         counts = export_rhr_partition(
@@ -202,7 +208,6 @@ defs = dg.Definitions(
     ],
     jobs=[estonia_rhr_procurement_backfill_job],
     resources={
-        "estonia_rhr_procurement_duckdb": duckdb_resource(DUCKDB_PATH),
         "estonia_rhr_procurement_object_store": ObjectStoreResource(
             bucket=tables.S3_BUCKET
         ),

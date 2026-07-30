@@ -1,15 +1,16 @@
 import json
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from dagster_duckdb import DuckDBResource
 from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+from dagster_v3.defs.common.partition_duckdb import (
+    open_partition_duckdb,
+    require_partition_duckdb,
+)
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.norway_doffin import tables
 from dagster_v3.defs.norway_doffin.clickhouse import export_notices_clickhouse
@@ -24,11 +25,15 @@ from dagster_v3.defs.norway_doffin.usd_conversion import (
     apply_norway_doffin_usd_conversion,
 )
 
-DUCKDB_PATH = Path("data") / tables.DUCKDB_FILE_NAME
+# No shared DuckDB path: every partitioned asset opens its own file via
+# tables.partition_duckdb_path, so an export cannot read another month's
+# rows. See defs/common/partition_duckdb.py.
 
 # Monthly, keyed on ISSUE date -- publication date is not filterable, so it is
 # the only partition key the API can actually serve. Nothing exists before 2018,
 # and the busiest month measured is 378 notices against a 1,000-result ceiling.
+SOURCE_NAME = "norway_doffin"
+
 NOTICE_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date=tables.PARTITION_START_DATE, end_offset=1
 )
@@ -143,11 +148,9 @@ def norway_doffin_notices_s3(
 )
 def norway_doffin_notices_duckdb(
     context: dg.AssetExecutionContext,
-    norway_doffin_duckdb: DuckDBResource,
     norway_doffin_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     partition = context.partition_key
-    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     search_key = f"{tables.S3_SEARCH_PREFIX}/{partition}/hits.jsonl"
     if not norway_doffin_object_store.exists(search_key, bucket=tables.S3_BUCKET):
@@ -191,7 +194,8 @@ def norway_doffin_notices_duckdb(
             resolved_at=now,
         )
 
-    with norway_doffin_duckdb.get_connection() as connection:
+    connection = open_partition_duckdb(source=SOURCE_NAME, partition=partition)
+    with connection:
         written = write_candidates(connection, rows)
 
     if missing_xml:
@@ -223,11 +227,13 @@ def norway_doffin_notices_duckdb(
 )
 def norway_doffin_notices_usd(
     context: dg.AssetExecutionContext,
-    norway_doffin_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
-    with norway_doffin_duckdb.get_connection() as connection:
+    connection = require_partition_duckdb(
+        source=SOURCE_NAME, partition=context.partition_key
+    )
+    with connection:
         counts = apply_norway_doffin_usd_conversion(
             duckdb_connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),
@@ -253,7 +259,6 @@ def norway_doffin_notices_usd(
 )
 def norway_doffin_notices_clickhouse(
     context: dg.AssetExecutionContext,
-    norway_doffin_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
@@ -261,9 +266,10 @@ def norway_doffin_notices_clickhouse(
         database=tables.CLICKHOUSE_DATABASE,
         tables=(tables.NOTICES_TABLE, "no_companies"),
     )
-    with norway_doffin_duckdb.get_connection() as connection, (
-        clickhouse.get_connection()
-    ) as client:
+    connection = require_partition_duckdb(
+        source=SOURCE_NAME, partition=context.partition_key
+    )
+    with connection, clickhouse.get_connection() as client:
         result = export_notices_clickhouse(
             duckdb_connection=connection,
             clickhouse_client=client,
@@ -311,7 +317,6 @@ defs = dg.Definitions(
     jobs=[norway_doffin_backfill_job],
     schedules=[norway_doffin_daily_schedule],
     resources={
-        "norway_doffin_duckdb": duckdb_resource(DUCKDB_PATH),
         "norway_doffin_object_store": ObjectStoreResource(bucket=tables.S3_BUCKET),
     },
 )
