@@ -23,6 +23,10 @@ _STAGE_COLUMN_TYPES = {
     "ano_contrato": "Nullable(UInt16)",
     "sequencial_contrato": "Nullable(UInt32)",
     "numero_retificacao": "Nullable(UInt16)",
+    # Nullable, not 0: PNCP has no domain value 0, so an absent object must read
+    # as "not stated" rather than as a code that does not exist.
+    "tipo_contrato_id": "Nullable(UInt16)",
+    "categoria_processo_id": "Nullable(UInt16)",
     "numero_parcelas": "Nullable(UInt32)",
     "data_publicacao_pncp": "Nullable(Date)",
     "data_assinatura": "Nullable(Date)",

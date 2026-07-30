@@ -105,6 +105,13 @@ CANDIDATE_COLUMNS = (
     "processo",
     "tipo_contrato",
     "categoria_processo",
+    # Parsed out of the two nested domain objects above, which PNCP publishes
+    # as {"id":n,"nome":"..."}. The raw text stays (§7a); these make the
+    # domain groupable and keep the blob off the page.
+    "tipo_contrato_id",
+    "tipo_contrato_name",
+    "categoria_processo_id",
+    "categoria_processo_name",
     "objeto_contrato",
     "informacao_complementar",
     "data_publicacao_pncp",
@@ -128,6 +135,8 @@ CANDIDATE_COLUMNS = (
     "buyer_unit_name",
     "buyer_state_code",
     "buyer_municipality",
+    # IBGE municipality code -- the standard Brazilian geographic key.
+    "buyer_municipality_ibge_code",
     # All five value fields are kept. The API documents none of them, so which
     # one is "the" contract value is decided in the view, not here.
     "valor_inicial",

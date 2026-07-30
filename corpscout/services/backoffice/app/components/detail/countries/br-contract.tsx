@@ -258,6 +258,11 @@ export const BR_CONTRACT_SECTIONS: BrSection[] = [
       { key: "buyer_unit_name", en: "Purchasing unit", source: "unidadeOrgao.nomeUnidade" },
       { key: "buyer_unit_code", en: "Purchasing unit code", source: "unidadeOrgao.codigoUnidade" },
       { key: "buyer_municipality", en: "Municipality", source: "unidadeOrgao.municipioNome" },
+      {
+        key: "buyer_municipality_ibge_code",
+        en: "Municipality IBGE code",
+        source: "unidadeOrgao.codigoIbge",
+      },
       { key: "buyer_state_code", en: "State", source: "unidadeOrgao.ufSigla" },
     ],
   },
@@ -304,6 +309,29 @@ export function brProcuredObject(
   if (original == null) return english == null ? null : { primary: english, original: null };
   if (english == null || english === original) return { primary: original, original: null };
   return { primary: english, original };
+}
+
+/**
+ * Use the parsed domain name where it exists, falling back to the raw blob.
+ *
+ * 000216 splits tipoContrato/categoriaProcesso into id + name columns, but it
+ * only ADDS them -- values appear per month as each is re-published, so both
+ * shapes coexist for a while and neither may render as empty. brContractType
+ * already tolerates either (brJsonName returns the raw string when it is not
+ * parseable JSON), so substituting the value is all that is needed.
+ */
+export function brPreferParsedDomain(
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  const parsed = { ...fields };
+  for (const [raw, name] of [
+    ["tipo_contrato", "tipo_contrato_name"],
+    ["categoria_processo", "categoria_processo_name"],
+  ] as const) {
+    const value = text(fields[name]);
+    if (value != null) parsed[raw] = value;
+  }
+  return parsed;
 }
 
 /** The decode a field needs, or null to print it as stored. */
@@ -409,10 +437,11 @@ function BrFieldGrid({ children }: { children: React.ReactNode }) {
  * cases where a blank carries meaning and guessing would mislead.
  */
 export function BrContractRecord({ fields }: { fields: Record<string, unknown> }) {
+  const record = brPreferParsedDomain(fields);
   const sections = BR_CONTRACT_SECTIONS.map((section) => ({
     title: section.title,
     rows: section.fields
-      .map((field) => ({ field, value: brFieldValue(field.key, fields[field.key]) }))
+      .map((field) => ({ field, value: brFieldValue(field.key, record[field.key]) }))
       .filter((row): row is { field: BrField; value: string } => row.value !== null),
   })).filter((section) => section.rows.length > 0);
 

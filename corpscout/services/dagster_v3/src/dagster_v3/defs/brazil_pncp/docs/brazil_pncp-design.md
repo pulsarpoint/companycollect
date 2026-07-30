@@ -291,6 +291,29 @@ ineligible, do not fabricate a `company_id`.
   Store the human one, as with TED and Hilma.
 - **Export subset**: `BR_PNCP_CONTRACTS_EXPORT_COLUMNS` drops `raw_contract` and
   `source_payload_hash` per guidelines.
+- **Nested domain values are stored twice, on purpose** (000216). `tipoContrato`
+  and `categoriaProcesso` are `{"id":n,"nome":"..."}` objects, and
+  `json ->> '$.tipoContrato'` extracts the whole object as text — so every row
+  carried the literal blob, which is unusable for grouping and reached the
+  contract page verbatim through the register view's `agreement_type`. The raw
+  columns stay as published (§7a) and `*_id` / `*_name` are added beside them.
+  The ids are `Nullable`, never defaulted to 0: PNCP has no domain value 0, so an
+  absent object must read as "not stated" rather than as a code that does not
+  exist. The parser falls back to the whole value when it is a plain string, so
+  older snapshots still yield a name.
+
+  Worth knowing why this survived: the normalise fixture set
+  `tipoContrato` to a plain **string** while the live API sends the object, so the
+  stored shape was never exercised by a test. Fixtures for this source should be
+  copied from a live response.
+- **`unidadeOrgao.codigoIbge` is kept** (000216) as
+  `buyer_municipality_ibge_code`. It was the one field on `/contratos` that was
+  dropped and cannot be derived from what we keep: it is Brazil's standard
+  geographic key, so without it every join to population, GDP or regional data
+  goes through fuzzy matching on `municipioNome`. Stored as String — an
+  identifier, not a quantity. The other unstored fields are either NULL in
+  practice, derivable (`ufNome` from `ufSigla`), or provenance trivia
+  (`usuarioNome`).
 
 ## 6. Translation (§8) — `defs/brazil_pncp/translation.py`
 

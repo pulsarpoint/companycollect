@@ -5,7 +5,9 @@ import {
   brAmendment,
   brContractType,
   brJsonName,
+  brFieldValue,
   brPersonType,
+  brPreferParsedDomain,
   brProcuredObject,
   brPower,
   brProcessCategory,
@@ -211,5 +213,47 @@ describe("translated contract object", () => {
 
   it("is absent when the register published no object", () => {
     expect(brProcuredObject({ objeto_contrato: "" })).toBeNull();
+  });
+});
+
+describe("parsed domain columns (migration 000216)", () => {
+  it("prefers the parsed name over the raw blob", () => {
+    const fields = brPreferParsedDomain({
+      tipo_contrato: '{"id":1,"nome":"Contrato (termo inicial)"}',
+      tipo_contrato_name: "Contrato (termo inicial)",
+      categoria_processo: '{"id":2,"nome":"Compras"}',
+      categoria_processo_name: "Compras",
+    });
+    expect(brFieldValue("tipo_contrato", fields.tipo_contrato)).toBe(
+      "Contract, initial term (Contrato (termo inicial))",
+    );
+    expect(brFieldValue("categoria_processo", fields.categoria_processo)).toBe(
+      "Goods purchase (Compras)",
+    );
+  });
+
+  it("still reads the blob on rows published before the re-publish", () => {
+    // 000216 only adds columns; values appear per month as it is re-published,
+    // so both shapes coexist and neither may render as empty.
+    const fields = brPreferParsedDomain({
+      tipo_contrato: '{"id":7,"nome":"Empenho"}',
+      tipo_contrato_name: "",
+    });
+    expect(brFieldValue("tipo_contrato", fields.tipo_contrato)).toBe(
+      "Commitment note (Empenho)",
+    );
+  });
+
+  it("leaves every other field untouched", () => {
+    const fields = brPreferParsedDomain({ buyer_sphere_id: "E", objeto_contrato: "X" });
+    expect(fields.buyer_sphere_id).toBe("E");
+    expect(fields.objeto_contrato).toBe("X");
+  });
+
+  it("labels the IBGE municipality code, the one field that was lost", () => {
+    const buyer = BR_CONTRACT_SECTIONS.find((s) => s.title === "Buyer");
+    const field = buyer?.fields.find((f) => f.key === "buyer_municipality_ibge_code");
+    expect(field?.source).toBe("unidadeOrgao.codigoIbge");
+    expect(field?.en).toMatch(/IBGE/);
   });
 });

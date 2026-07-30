@@ -87,8 +87,31 @@ def build_contract_candidates(
                 try_cast(json ->> '$.numeroRetificacao' as usmallint)
                     as numero_retificacao,
                 coalesce(json ->> '$.processo', '') as processo,
+                -- Kept verbatim (§7a): this is the field as PNCP published it.
+                -- For the live API that is a nested id/nome object, so the text
+                -- form is the whole object -- which is why the parsed pair below
+                -- exists rather than replacing it.
                 coalesce(json ->> '$.tipoContrato', '') as tipo_contrato,
                 coalesce(json ->> '$.categoriaProcesso', '') as categoria_processo,
+                -- Split out so the domain is groupable and filterable, and so a
+                -- reader is never shown the blob. `->>` on a nested path returns
+                -- NULL when the value is a plain string (older snapshots, and
+                -- this module's own earlier test fixture), so fall back to the
+                -- whole value for the name and leave the id absent.
+                try_cast(json ->> '$.tipoContrato.id' as usmallint)
+                    as tipo_contrato_id,
+                coalesce(
+                    json ->> '$.tipoContrato.nome',
+                    json ->> '$.tipoContrato',
+                    ''
+                ) as tipo_contrato_name,
+                try_cast(json ->> '$.categoriaProcesso.id' as usmallint)
+                    as categoria_processo_id,
+                coalesce(
+                    json ->> '$.categoriaProcesso.nome',
+                    json ->> '$.categoriaProcesso',
+                    ''
+                ) as categoria_processo_name,
                 coalesce(json ->> '$.objetoContrato', '') as objeto_contrato,
                 coalesce(json ->> '$.informacaoComplementar', '')
                     as informacao_complementar,
@@ -127,6 +150,13 @@ def build_contract_candidates(
                 coalesce(json ->> '$.unidadeOrgao.codigoUnidade', '') as buyer_unit_code,
                 coalesce(json ->> '$.unidadeOrgao.nomeUnidade', '') as buyer_unit_name,
                 coalesce(json ->> '$.unidadeOrgao.ufSigla', '') as buyer_state_code,
+                -- IBGE municipality code: Brazil's standard geographic key, and
+                -- the only field on this endpoint that cannot be derived from
+                -- what we already keep. Without it every join to population, GDP
+                -- or regional data goes through fuzzy matching on municipioNome.
+                -- String, not an integer: it is an identifier, not a quantity.
+                coalesce(json ->> '$.unidadeOrgao.codigoIbge', '')
+                    as buyer_municipality_ibge_code,
                 coalesce(json ->> '$.unidadeOrgao.municipioNome', '')
                     as buyer_municipality,
                 -- All five value fields. Which one is *the* contract value is
@@ -172,6 +202,10 @@ def build_contract_candidates(
             processo,
             tipo_contrato,
             categoria_processo,
+            tipo_contrato_id,
+            tipo_contrato_name,
+            categoria_processo_id,
+            categoria_processo_name,
             objeto_contrato,
             informacao_complementar,
             data_publicacao_pncp,
@@ -198,6 +232,7 @@ def build_contract_candidates(
             buyer_unit_name,
             buyer_state_code,
             buyer_municipality,
+            buyer_municipality_ibge_code,
             valor_inicial,
             valor_parcela,
             valor_global,
