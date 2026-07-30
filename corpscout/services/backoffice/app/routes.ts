@@ -16,6 +16,7 @@ export default [
       route("trade", "routes/country-trade.tsx"),
       route("business", "routes/country-business.tsx"),
       route("contracts", "routes/country-contracts.tsx"),
+      route("markets", "routes/country-markets.tsx"),
     ]),
     route("company/:country/:id", "routes/country-company-detail.tsx"),
     route("company/:country/:id/facts/:year", "routes/company-facts.tsx"),

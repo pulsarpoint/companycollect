@@ -10,6 +10,7 @@ import {
 } from "~/lib/country-statistics.server";
 import { IMF_INDICATORS, WORLD_BANK_INDICATORS } from "~/lib/country-statistics";
 import { hasContracts } from "~/lib/contracts.server";
+import { hasMarkets } from "~/lib/markets.server";
 import { COUNTRY_TABS, type CountryTab } from "~/lib/country-tabs";
 import { cn } from "~/lib/utils";
 import { Metric, SourceLink, compactUsd, getWorldBankSeries, nf } from "~/components/country/shared";
@@ -22,17 +23,18 @@ export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
   if (!country) throw new Response("Country not found", { status: 404 });
 
-  const [directory, worldBank, imf, trade, showContracts] = await Promise.all([
+  const [directory, worldBank, imf, trade, showContracts, showMarkets] = await Promise.all([
     getCountryDirectory(),
     getCountryWorldBankStatistics(country.code),
     getCountryImfOutlook(country.iso3),
     getCountryTradeStatistics(country.iso3),
     hasContracts(country),
+    hasMarkets(country),
   ]);
   const summary = directory.find((row) => row.country_code === country.code);
   if (!summary) throw new Response("Country data not found", { status: 404 });
 
-  return { summary, worldBank, imf, trade, showContracts };
+  return { summary, worldBank, imf, trade, showContracts, showMarkets };
 }
 
 export function meta({ params }: Route.MetaArgs) {
@@ -61,10 +63,10 @@ function activeTabFromPathname(pathname: string, countryCode: string): CountryTa
 }
 
 /** Tabs that render their own headline figures in place of the country banner. */
-const TABS_WITH_OWN_BANNER = new Set(["contracts"]);
+const TABS_WITH_OWN_BANNER = new Set(["contracts", "markets"]);
 
 export default function CountryLayout({ loaderData, params }: Route.ComponentProps) {
-  const { summary, worldBank, imf, trade, showContracts } = loaderData;
+  const { summary, worldBank, imf, trade, showContracts, showMarkets } = loaderData;
   const country = getCountry(params.country)!;
   const activeTab = activeTabFromPathname(useLocation().pathname, country.code);
   const coverage =
@@ -200,6 +202,15 @@ export default function CountryLayout({ loaderData, params }: Route.ComponentPro
               nativeButton={false}
             >
               Contracts
+            </TabsTrigger>
+          ) : null}
+          {showMarkets ? (
+            <TabsTrigger
+              value="markets"
+              render={<NavLink to={`/countries/${country.code}/markets`} />}
+              nativeButton={false}
+            >
+              Markets
             </TabsTrigger>
           ) : null}
         </TabsList>

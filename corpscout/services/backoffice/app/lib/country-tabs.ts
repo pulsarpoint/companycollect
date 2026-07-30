@@ -3,7 +3,7 @@
  * both the nested layout's tab nav and the overview route's legacy-redirect
  * check need it, and the layout renders inside the client bundle.
  */
-export const COUNTRY_TABS = ["overview", "economy", "trade", "business", "contracts"] as const;
+export const COUNTRY_TABS = ["overview", "economy", "trade", "business", "contracts", "markets"] as const;
 export type CountryTab = (typeof COUNTRY_TABS)[number];
 
 export function isCountryTab(value: string): value is CountryTab {
