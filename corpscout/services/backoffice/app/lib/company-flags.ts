@@ -91,6 +91,18 @@ export const COMPANY_FLAG_SOURCES: Record<
     address: { table: "no_company_addresses", idColumn: "registry_id" },
     trading: { market: true },
   },
+  // Sweden has no contact source at all -- no websites, domains or contacts
+  // table -- so it offers three flags where Norway offers four. That is the
+  // design working: a dark C on every Swedish row would describe our coverage
+  // rather than the company.
+  //
+  // Measured on 3,407,809 companies: financials 560,208 (16.4%),
+  // address 3,407,783 (99.999%), traded 784.
+  se: {
+    financials: { table: "se_company_financials_latest", idColumn: "company_id" },
+    address: { table: "se_company_addresses", idColumn: "company_id" },
+    trading: { market: true },
+  },
 };
 
 /** The flags this country can fill, in canonical order. */
