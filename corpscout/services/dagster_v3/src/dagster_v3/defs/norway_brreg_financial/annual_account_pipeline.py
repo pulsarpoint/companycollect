@@ -12,6 +12,7 @@ from dagster_v3.defs.norway_brreg.resources import (
     BRREG_ANNUAL_ACCOUNTS_BASE_URL,
     BrregAnnualAccountPdfFailure,
     NorwayBrregApiResource,
+    annual_account_pdf_file_name,
 )
 from dagster_v3.defs.norway_brreg_financial.annual_account_pdf import (
     extract_annual_account_pdf,
@@ -33,6 +34,7 @@ ANNUAL_ACCOUNT_PDF_CATALOG_SCHEMA = {
     "org_number": pl.Utf8,
     "legal_name": pl.Utf8,
     "filing_year": pl.Int64,
+    "source_file_name": pl.Utf8,
     "source_url": pl.Utf8,
     "source_object_key": pl.Utf8,
     "source_payload_hash": pl.Utf8,
@@ -351,6 +353,7 @@ def _stage_pdf(
             candidate=candidate,
             filing_year=filing_year,
             source_run_id=source_run_id,
+            source_file_name=annual_account_pdf_file_name(org_number, filing_year),
             source_url=_source_pdf_url(org_number, filing_year),
             source_object_key=pdf_key,
             source_payload_hash=hashlib.sha256(pdf_body).hexdigest(),
@@ -375,6 +378,10 @@ def _stage_pdf(
             candidate=candidate,
             filing_year=filing_year,
             source_run_id=source_run_id,
+            source_file_name=(
+                _string(document.get("source_file_name"))
+                or annual_account_pdf_file_name(org_number, filing_year)
+            ),
             source_url=_string(document.get("source_pdf_url")),
             source_object_key=None,
             source_payload_hash=_string(document.get("source_pdf_sha256")),
@@ -399,6 +406,7 @@ def _stage_pdf(
             candidate=candidate,
             filing_year=filing_year,
             source_run_id=source_run_id,
+            source_file_name=annual_account_pdf_file_name(org_number, filing_year),
             source_url=_string(failure.get("source_url")),
             source_object_key=None,
             source_payload_hash=None,
@@ -423,6 +431,7 @@ def _stage_pdf(
             candidate=candidate,
             filing_year=filing_year,
             source_run_id=source_run_id,
+            source_file_name=annual_account_pdf_file_name(org_number, filing_year),
             source_url=_source_pdf_url(org_number, filing_year),
             source_object_key=None,
             source_payload_hash=None,
@@ -467,6 +476,7 @@ def _stage_pdf(
             candidate=candidate,
             filing_year=filing_year,
             source_run_id=source_run_id,
+            source_file_name=annual_account_pdf_file_name(org_number, filing_year),
             source_url=pdf.source_url,
             source_object_key=None,
             source_payload_hash=None,
@@ -491,6 +501,7 @@ def _stage_pdf(
         candidate=candidate,
         filing_year=filing_year,
         source_run_id=source_run_id,
+        source_file_name=pdf.source_file_name,
         source_url=pdf.source_url,
         source_object_key=pdf_key,
         source_payload_hash=hashlib.sha256(pdf.body).hexdigest(),
@@ -526,6 +537,10 @@ def _process_staged_document(
         org_number=org_number,
         legal_name=_string(record.get("legal_name")),
         filing_year=filing_year,
+        source_file_name=(
+            _string(record.get("source_file_name"))
+            or annual_account_pdf_file_name(org_number, filing_year)
+        ),
         source_pdf_url=_string(record.get("source_url")),
         source_run_id=source_run_id,
         retrieved_at=_string(record.get("fetched_at")),
@@ -593,6 +608,7 @@ def _catalog_record(
     candidate: Mapping[str, Any],
     filing_year: int,
     source_run_id: str,
+    source_file_name: str,
     source_url: str,
     source_object_key: str | None,
     source_payload_hash: str | None,
@@ -611,6 +627,7 @@ def _catalog_record(
         "org_number": _string(candidate.get("org_number")),
         "legal_name": _string(candidate.get("legal_name")),
         "filing_year": filing_year,
+        "source_file_name": source_file_name,
         "source_url": source_url,
         "source_object_key": source_object_key,
         "source_payload_hash": source_payload_hash,

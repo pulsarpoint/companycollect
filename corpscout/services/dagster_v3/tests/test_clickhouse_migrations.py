@@ -233,6 +233,7 @@ EXPECTED_MIGRATIONS = (
     "000216_corpscout_br_pncp_domain_columns",
     "000217_corpscout_br_contract_awards",
     "000218_corpscout_no_contract_awards",
+    "000219_corpscout_no_financial_pdf_provenance",
     "000220_corpscout_cpv_vocabulary",
     "000221_corpscout_br_cnae_categories",
     "000222_corpscout_company_market_facts",
@@ -240,6 +241,7 @@ EXPECTED_MIGRATIONS = (
     "000224_corpscout_br_b3_listings",
     "000225_corpscout_br_b3_instruments",
     "000226_corpscout_gleif_isin_lei",
+    "000227_corpscout_company_market_excluded",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -713,6 +715,21 @@ def test_norway_pdf_financial_tables_preserve_source_provenance() -> None:
     assert "source_json_sha256 FixedString(64)" in sql
     assert "PARTITION BY (source_filing_year, source_chunk)" in sql
     assert "CREATE OR REPLACE VIEW corpscout.no_financial_facts_with_source" in sql
+
+
+def test_norway_pdf_financial_facts_store_direct_pdf_provenance() -> None:
+    sql = _migration_sql("000219_corpscout_no_financial_pdf_provenance.up.sql")
+    down_sql = _migration_sql("000219_corpscout_no_financial_pdf_provenance.down.sql")
+
+    assert "ALTER TABLE corpscout.no_financial_facts" in sql
+    assert "ADD COLUMN IF NOT EXISTS source_file_name" in sql
+    assert "ADD COLUMN IF NOT EXISTS source_url" in sql
+    assert "aarsregnskap-" in sql
+    assert (
+        "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregnskap/kopi/"
+    ) in sql
+    assert "DROP COLUMN IF EXISTS source_file_name" in down_sql
+    assert "DROP COLUMN IF EXISTS source_url" in down_sql
 
 
 def test_domain_hostnames_view_normalizes_addressable_dns_record_owners() -> None:

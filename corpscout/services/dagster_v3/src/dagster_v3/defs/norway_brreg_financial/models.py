@@ -63,6 +63,7 @@ class AnnualAccountDocument(BaseModel):
     org_number: str
     legal_name: str
     filing_year: int
+    source_file_name: str | None = None
     source_pdf_url: str
     source_pdf_sha256: str
     source_pdf_size_bytes: int = Field(ge=0)

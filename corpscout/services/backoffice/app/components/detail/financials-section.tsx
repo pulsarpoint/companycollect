@@ -22,11 +22,6 @@ import {
   TableRow,
 } from "~/components/ui/table";
 
-const chartConfig = {
-  revenue: { label: "Revenue (USD)", color: "var(--chart-1)" },
-  result: { label: "Net result (USD)", color: "var(--chart-2)" },
-} satisfies ChartConfig;
-
 const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 function money(v: number | null) {
@@ -40,10 +35,10 @@ function MoneyPair({ original, usd }: { original: number | null; usd: number | n
   }
   return (
     <div className="flex flex-col items-end">
-      <span>{money(original)}</span>
-      <span className="text-muted-foreground text-xs">
-        {usd == null ? "—" : `$${nf.format(usd)}`}
-      </span>
+      {original === null ? null : <span>{money(original)}</span>}
+      {usd === null ? null : (
+        <span className="text-muted-foreground text-xs">${nf.format(usd)}</span>
+      )}
     </div>
   );
 }
@@ -64,24 +59,38 @@ function allMoneyNull(financials: FinancialYearRow[]): boolean {
 export function FinancialsSection({
   financials,
   factsHref,
+  title = "Financials",
 }: {
   financials: FinancialYearRow[];
   /** When set, year cells link to the raw source facts for that filing. */
   factsHref?: (fiscalYear: string) => string;
+  title?: string;
 }) {
   if (financials.length === 0) return null;
   const noFigures = allMoneyNull(financials);
+  const chartUsesUsd = financials.some(
+    (row) => row.revenue_amount_usd !== null || row.net_result_amount_usd !== null,
+  );
+  const chartCurrency = chartUsesUsd ? "USD" : financials[0]?.currency || "original currency";
+  const chartConfig = {
+    revenue: { label: `Revenue (${chartCurrency})`, color: "var(--chart-1)" },
+    result: { label: `Net result (${chartCurrency})`, color: "var(--chart-2)" },
+  } satisfies ChartConfig;
   // Chart wants oldest → newest, left to right.
   const chartData = [...financials]
     .reverse()
-    .map((f) => ({ year: f.fiscal_year, revenue: f.revenue_amount_usd, result: f.net_result_amount_usd }));
+    .map((f) => ({
+      year: f.fiscal_year,
+      revenue: chartUsesUsd ? f.revenue_amount_usd : f.revenue_amount_original,
+      result: chartUsesUsd ? f.net_result_amount_usd : f.net_result_amount_original,
+    }));
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Financials</CardTitle>
+        <CardTitle className="text-base">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="flex flex-col gap-4">
         {noFigures ? (
           <p className="text-muted-foreground text-sm">
             Filings exist for the years below, but the digital submissions carry
@@ -90,7 +99,7 @@ export function FinancialsSection({
             credit institutions).
           </p>
         ) : null}
-        {noFigures ? null : (
+        {noFigures || financials.length < 2 ? null : (
         <ChartContainer config={chartConfig} className="h-56 w-full">
           <BarChart data={chartData}>
             <CartesianGrid vertical={false} />

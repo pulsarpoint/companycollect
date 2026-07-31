@@ -1,15 +1,6 @@
-import type { ComponentType } from "react";
-import { Link } from "react-router";
-import { ArrowLeft } from "lucide-react";
 import type { Route } from "./+types/country-company-detail";
 import { getCountry } from "~/lib/countries";
 import { getCompanyDetail } from "~/lib/queries.server";
-import {
-  getEntityType,
-  legalFormCodeOf,
-} from "~/lib/entity-type.server";
-import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
 import {
   CompanyRecordSection,
   DomainsSection,
@@ -20,36 +11,23 @@ import { WikidataSection } from "~/components/detail/wikidata-section";
 import { SecondaryNamesSection } from "~/components/detail/secondary-names-section";
 import { ManagementSection } from "~/components/detail/management-section";
 import { FinancialsSection } from "~/components/detail/financials-section";
+import { FinancialSnapshot } from "~/components/detail/financial-snapshot";
 import { EsefSection } from "~/components/detail/esef-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
-import { NoFinancialsSection, StatementsFallback } from "~/components/detail/countries/no-financials";
-import { decorateFiRecord, FiRegistryBadges } from "~/components/detail/countries/fi-registry";
+import { StatementsFallback } from "~/components/detail/countries/no-financials";
+import { decorateFiRecord } from "~/components/detail/countries/fi-registry";
 import { decorateBrRecord } from "~/components/detail/countries/br-company";
 import { FiTaxRecordsSection } from "~/components/detail/countries/fi-tax-records";
 import { PublicContractsSection } from "~/components/detail/public-contracts-section";
-import { LangToggle } from "~/components/detail/lang-toggle";
-import { resolveRecordFields, type Lang } from "~/components/detail/language";
+import type { Lang } from "~/components/detail/language";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
-
-const COUNTRY_FINANCIALS: Record<
-  string,
-  ComponentType<{ statements: Record<string, unknown>[] }>
-> = {
-  no: NoFinancialsSection,
-};
 
 export async function loader({ params }: Route.LoaderArgs) {
   const country = getCountry(params.country);
   if (!country) throw new Response("Not found", { status: 404 });
   const detail = await getCompanyDetail(country, params.id);
   if (!detail) throw new Response("Company not found", { status: 404 });
-  // The register row is already fetched, so the legal form code comes free and
-  // only the classification needs a lookup.
-  const entityType = await getEntityType(
-    country.code,
-    legalFormCodeOf(country.code, detail.record),
-  );
-  return { detail, entityType };
+  return { detail };
 }
 
 export function meta({ loaderData, params }: Route.MetaArgs) {
@@ -58,10 +36,9 @@ export function meta({ loaderData, params }: Route.MetaArgs) {
 }
 
 export default function CompanyDetail({ loaderData, params }: Route.ComponentProps) {
-  const { detail, entityType } = loaderData;
+  const { detail } = loaderData;
   const country = getCountry(params.country)!;
   const { company } = detail;
-  const status = country.columns.find((c) => c.kind === "status");
   const searchParams = useEffectiveSearchParams();
   const lang: Lang = searchParams.get("lang") === "original" ? "original" : "en";
   // One per-country seam: each register decides how its own record reads.
@@ -70,61 +47,9 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
     br: decorateBrRecord,
   };
   const record = (DECORATORS[country.code] ?? ((r) => r))(detail.record);
-  const { pairCount } = resolveRecordFields(record, lang);
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-      <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2"
-          nativeButton={false}
-          render={<Link to="/companies" />}
-        >
-          <ArrowLeft className="size-4" />
-          Companies
-        </Button>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-2xl font-semibold">{String(company.name ?? "")}</h2>
-        {status ? (
-          <Badge variant={company.active ? "default" : "outline"}>
-            {(() => {
-              const v = company[status.key];
-              const s = v == null ? "" : String(v);
-              return s !== "" ? s : company.active ? "active" : "inactive";
-            })()}
-          </Badge>
-        ) : null}
-        <span className="text-muted-foreground font-mono text-sm">
-          {String(company.id)}
-        </span>
-        {entityType ? (
-          // Says what the row IS, because a register of legal entities holds
-          // municipalities and ministries beside businesses. The register's own
-          // wording is the tooltip so the label can be checked, not just
-          // trusted.
-          // The register's own wording is rendered BESIDE the badge, not as a
-          // title: a tooltip is invisible on touch, unselectable, and absent
-          // from the page text, so the classification would be uncheckable for
-          // most readers. Same pairing as everything else here.
-          <span className="inline-flex items-center gap-1.5">
-            <Badge variant={entityType.is_public_sector ? "secondary" : "outline"}>
-              {entityType.entity_type_label}
-            </Badge>
-            {entityType.source_label ? (
-              <span className="text-muted-foreground text-xs">
-                {entityType.source_label}
-              </span>
-            ) : null}
-          </span>
-        ) : null}
-        {country.code === "fi" ? <FiRegistryBadges record={detail.record} /> : null}
-        <LangToggle lang={lang} pairCount={pairCount} />
-      </div>
-
+    <div className="flex w-full max-w-5xl flex-col gap-4">
       <CompanyRecordSection company={company} record={record} lang={lang} />
       <GleifGroupSection
         relationships={detail.gleifRelationships}
@@ -136,8 +61,14 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
       <ManagementSection officers={detail.officers} peopleMatches={detail.peopleMatches} audit={detail.audit} />
       <IndustriesSection industries={detail.industries} />
       {(() => {
-        const Specific = COUNTRY_FINANCIALS[country.code];
-        if (Specific) return <Specific statements={detail.statements} />;
+        if (country.detail?.financialReports) {
+          return (
+            <FinancialSnapshot
+              financials={detail.financials}
+              href={`/company/${country.code}/${params.id}/financials`}
+            />
+          );
+        }
         if (detail.statements.length > 0) return <StatementsFallback statements={detail.statements} />;
         return (
           <FinancialsSection

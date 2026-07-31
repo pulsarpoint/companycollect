@@ -46,6 +46,11 @@ export interface CompanySearchResult {
   dir: SortDir;
 }
 
+export interface CompanyShell {
+  company: CompanyListRow;
+  record: Record<string, unknown>;
+}
+
 interface IndustryRow {
   company_id: string;
   industry_code: string | null;
@@ -59,6 +64,36 @@ function buildCompanySelectList(country: CountryConfig): string {
     `toUInt8(${country.activeExpr}) AS active`,
     ...(country.industryQuery ? [`toString(${joinKeyExpr}) AS __industry_key`] : []),
   ].join(",\n       ");
+}
+
+/** Header data shared by every company sub-route. This deliberately avoids
+ * the detail page's many section queries, so opening a report does not also
+ * fetch contracts, domains, officers, ESEF filings, and other overview data. */
+export async function getCompanyShell(
+  country: CountryConfig,
+  id: string,
+): Promise<CompanyShell | null> {
+  const selectList = buildCompanySelectList(country);
+  const [companies, records] = await Promise.all([
+    chQuery<CompanyListRow & { __industry_key?: string }>(
+      `SELECT ${selectList}
+       FROM ${country.companiesTable}
+       WHERE ${country.idColumn} = {id:String}
+       LIMIT 1`,
+      { id },
+    ),
+    chQuery<Record<string, unknown>>(
+      country.detail?.recordQuery ??
+        `SELECT * FROM ${country.companiesTable}
+         WHERE ${country.idColumn} = {id:String}
+         LIMIT 1`,
+      { id },
+    ),
+  ]);
+  const company = companies[0];
+  if (!company) return null;
+  delete company.__industry_key;
+  return { company, record: records[0] ?? {} };
 }
 
 export async function searchCompanies(
@@ -156,6 +191,14 @@ export interface FinancialYearRow {
   observation?: "filed" | "comparative";
   /** For comparative rows: fiscal year of the filing that carried the figures. */
   source_fiscal_year?: string;
+}
+
+export async function getCompanyFinancials(
+  country: CountryConfig,
+  id: string,
+): Promise<FinancialYearRow[]> {
+  if (!country.detail?.financialsQuery) return [];
+  return chQuery<FinancialYearRow>(country.detail.financialsQuery, { id });
 }
 
 /** Public corporate income tax data (tax base + assessed taxes), one row per

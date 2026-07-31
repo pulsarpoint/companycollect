@@ -2,6 +2,11 @@ CLICKHOUSE_DATABASE = "corpscout"
 
 TRADED_SYMBOLS_TABLE = "company_traded_symbols"
 MARKET_MONTHLY_TABLE = "company_market_monthly"
+
+# Turnover above this multiple of a symbol's own median day is treated as a
+# corporate-action artefact rather than trading. Measured, see
+# docs/market-turnover-plausibility.md.
+IMPLAUSIBLE_TURNOVER_MULTIPLE = 200
 MARKET_SUMMARY_TABLE = "company_market_summary"
 
 COMPANY_MARKET_TABLES = (

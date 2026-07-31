@@ -18,7 +18,11 @@ export default [
       route("contracts", "routes/country-contracts.tsx"),
       route("markets", "routes/country-markets.tsx"),
     ]),
-    route("company/:country/:id", "routes/country-company-detail.tsx"),
+    route("company/:country/:id", "routes/company-layout.tsx", [
+      index("routes/country-company-detail.tsx"),
+      route("financials", "routes/company-financials.tsx"),
+      route("financials/:documentId", "routes/company-financial-report.tsx"),
+    ]),
     route("company/:country/:id/facts/:year", "routes/company-facts.tsx"),
     route("company/:country/:id/facts/:year/document", "routes/company-facts-document.ts"),
     route("company/:country/geocode", "routes/country-geocode.ts"),

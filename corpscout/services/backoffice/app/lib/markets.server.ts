@@ -33,6 +33,14 @@ export type MarketOverview = {
   /** Companies with meaningful turnover, as opposed to a nominal listing. */
   activeCompanies: number;
   tradedUsd: number;
+  /** Turnover set aside by the plausibility guard, and the days it came from.
+   * Reported rather than silently netted off: EODHD adjusts price for a
+   * reverse split and leaves volume on the pre-split share count, so those
+   * days are an artefact — but a guard that quietly changes a published
+   * number is its own kind of bug. See
+   * dagster_v3/docs/market-turnover-plausibility.md. */
+  excludedUsd: number;
+  excludedDays: number;
   /** Every month held, not just the selected year — the trend is the point. */
   perMonth: MarketMonth[];
 };
@@ -105,11 +113,20 @@ export async function getMarketOverview(
       : defaultMarketYear(availableYears)!;
 
   const [months, totals] = await Promise.all([
-    chQuery<{ month: string; companies: string; symbols: string; traded: string }>(
+    chQuery<{
+      month: string;
+      companies: string;
+      symbols: string;
+      traded: string;
+      excluded: string;
+      excluded_days: string;
+    }>(
       `SELECT toString(month) AS month,
               toString(companies) AS companies,
               toString(symbols) AS symbols,
-              toString(traded_usd) AS traded
+              toString(traded_usd) AS traded,
+              toString(excluded_usd) AS excluded,
+              toString(excluded_days) AS excluded_days
        FROM company_market_monthly
        WHERE country_code = {country:String}
        ORDER BY month`,
@@ -139,6 +156,13 @@ export async function getMarketOverview(
     companies: Number(totals[0]?.companies ?? 0),
     activeCompanies: Number(totals[0]?.active ?? 0),
     tradedUsd: Number(totals[0]?.traded ?? 0),
+    // Scoped to the selected year, like every other headline figure.
+    excludedUsd: months
+      .filter((m) => m.month.startsWith(String(year)))
+      .reduce((sum, m) => sum + Number(m.excluded), 0),
+    excludedDays: months
+      .filter((m) => m.month.startsWith(String(year)))
+      .reduce((sum, m) => sum + Number(m.excluded_days), 0),
     perMonth,
   };
 }

@@ -16,6 +16,7 @@ from openai import OpenAI
 import pyarrow as pa
 
 from exchange_rates import ExchangeRateRequest
+from dagster_v3.defs.norway_brreg.resources import annual_account_pdf_file_name
 from dagster_v3.defs.norway_brreg_financial.models import (
     AnnualAccountConceptMappingResponse,
     AnnualAccountDocument,
@@ -58,6 +59,7 @@ _DOCUMENT_COLUMNS = (
     "source_json_object_key",
     "source_json_uri",
     "source_json_sha256",
+    "source_file_name",
     "source_pdf_url",
     "source_pdf_sha256",
     "source_pdf_size_bytes",
@@ -84,6 +86,7 @@ _DOCUMENT_ARROW_SCHEMA = pa.schema(
         pa.field("source_json_object_key", pa.string(), nullable=False),
         pa.field("source_json_uri", pa.string(), nullable=False),
         pa.field("source_json_sha256", pa.string(), nullable=False),
+        pa.field("source_file_name", pa.string(), nullable=False),
         pa.field("source_pdf_url", pa.string(), nullable=False),
         pa.field("source_pdf_sha256", pa.string(), nullable=False),
         pa.field("source_pdf_size_bytes", pa.int64(), nullable=False),
@@ -103,6 +106,8 @@ _FACT_COLUMNS = (
     "document_id",
     "country_iso2",
     "source_slug",
+    "source_file_name",
+    "source_url",
     "source_run_id",
     "org_number",
     "source_filing_year",
@@ -146,6 +151,8 @@ _FACT_ARROW_SCHEMA = pa.schema(
         pa.field("document_id", pa.string(), nullable=False),
         pa.field("country_iso2", pa.string(), nullable=False),
         pa.field("source_slug", pa.string(), nullable=False),
+        pa.field("source_file_name", pa.string(), nullable=False),
+        pa.field("source_url", pa.string(), nullable=False),
         pa.field("source_run_id", pa.string(), nullable=False),
         pa.field("org_number", pa.string(), nullable=False),
         pa.field("source_filing_year", pa.int32(), nullable=False),
@@ -339,6 +346,7 @@ def ensure_annual_account_duckdb_schema(
             source_json_object_key varchar not null,
             source_json_uri varchar not null,
             source_json_sha256 varchar not null,
+            source_file_name varchar not null,
             source_pdf_url varchar not null,
             source_pdf_sha256 varchar not null,
             source_pdf_size_bytes bigint not null,
@@ -361,6 +369,8 @@ def ensure_annual_account_duckdb_schema(
             document_id varchar not null,
             country_iso2 varchar not null,
             source_slug varchar not null,
+            source_file_name varchar not null,
+            source_url varchar not null,
             source_run_id varchar not null,
             org_number varchar not null,
             source_filing_year integer not null,
@@ -423,6 +433,7 @@ def ensure_annual_account_duckdb_schema(
             document_id varchar not null,
             country_iso2 varchar not null,
             source_slug varchar not null,
+            source_file_name varchar not null,
             source_run_id varchar not null,
             org_number varchar not null,
             legal_name varchar not null,
@@ -450,6 +461,74 @@ def ensure_annual_account_duckdb_schema(
         )
         """
     )
+    _ensure_annual_account_provenance_columns(connection)
+
+
+def _ensure_annual_account_provenance_columns(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    table_columns = {
+        table_name: {
+            str(row[0])
+            for row in connection.execute(
+                """
+                select column_name
+                from information_schema.columns
+                where table_schema = ? and table_name = ?
+                """,
+                [ANNUAL_ACCOUNT_DATASET, table_name],
+            ).fetchall()
+        }
+        for table_name in ("documents", "facts", "metrics")
+    }
+    connection.execute(
+        f"alter table {ANNUAL_ACCOUNT_DATASET}.documents "
+        "add column if not exists source_file_name varchar"
+    )
+    connection.execute(
+        f"alter table {ANNUAL_ACCOUNT_DATASET}.facts "
+        "add column if not exists source_file_name varchar"
+    )
+    connection.execute(
+        f"alter table {ANNUAL_ACCOUNT_DATASET}.facts "
+        "add column if not exists source_url varchar"
+    )
+    connection.execute(
+        f"alter table {ANNUAL_ACCOUNT_DATASET}.metrics "
+        "add column if not exists source_file_name varchar"
+    )
+    if "source_file_name" not in table_columns["documents"]:
+        connection.execute(
+            f"""
+            update {ANNUAL_ACCOUNT_DATASET}.documents
+            set source_file_name = concat(
+                'aarsregnskap-',
+                cast(source_filing_year as varchar),
+                '_',
+                org_number,
+                '.pdf'
+            )
+            """
+        )
+    if not {"source_file_name", "source_url"}.issubset(table_columns["facts"]):
+        connection.execute(
+            f"""
+            update {ANNUAL_ACCOUNT_DATASET}.facts as facts
+            set source_file_name = documents.source_file_name,
+                source_url = documents.source_pdf_url
+            from {ANNUAL_ACCOUNT_DATASET}.documents as documents
+            where documents.document_id = facts.document_id
+            """
+        )
+    if "source_file_name" not in table_columns["metrics"]:
+        connection.execute(
+            f"""
+            update {ANNUAL_ACCOUNT_DATASET}.metrics as metrics
+            set source_file_name = documents.source_file_name
+            from {ANNUAL_ACCOUNT_DATASET}.documents as documents
+            where documents.document_id = metrics.document_id
+            """
+        )
 
 
 def extract_annual_account_facts(
@@ -516,6 +595,11 @@ def load_annual_account_documents(
                 key,
                 f"s3://{SOURCE_BUCKET}/{key}",
                 source_json_sha256,
+                document.source_file_name
+                or annual_account_pdf_file_name(
+                    document.org_number,
+                    document.filing_year,
+                ),
                 document.source_pdf_url,
                 document.source_pdf_sha256,
                 document.source_pdf_size_bytes,
@@ -565,7 +649,12 @@ def replace_annual_account_facts(
     ensure_annual_account_duckdb_schema(connection)
     documents = connection.execute(
         f"""
-        select document_id, source_json_object_key, source_json_sha256
+        select
+            document_id,
+            source_json_object_key,
+            source_json_sha256,
+            source_file_name,
+            source_pdf_url
         from {ANNUAL_ACCOUNT_DATASET}.documents
         where source_filing_year = ? and source_chunk = ?
         order by document_id
@@ -577,7 +666,13 @@ def replace_annual_account_facts(
     resolved_at = datetime.now(UTC)
 
     def fact_rows() -> Iterable[tuple[Any, ...]]:
-        for document_id, key, expected_json_sha256 in documents:
+        for (
+            document_id,
+            key,
+            expected_json_sha256,
+            source_file_name,
+            source_url,
+        ) in documents:
             body = storage.read_response(key)
             actual_json_sha256 = hashlib.sha256(body).hexdigest()
             if actual_json_sha256 != expected_json_sha256:
@@ -594,6 +689,8 @@ def replace_annual_account_facts(
             for fact in facts:
                 yield _fact_row(
                     fact,
+                    source_file_name=str(source_file_name),
+                    source_url=str(source_url),
                     source_run_id=source_run_id,
                     source_chunk=chunk_key,
                     resolved_at=resolved_at,
@@ -963,6 +1060,7 @@ def build_annual_account_metrics(
             facts.document_id,
             'NO' as country_iso2,
             '{SOURCE_SLUG}' as source_slug,
+            documents.source_file_name,
             ? as source_run_id,
             facts.org_number,
             documents.legal_name,
@@ -1007,7 +1105,8 @@ def build_annual_account_metrics(
         group by
             facts.document_id, facts.org_number, documents.legal_name,
             facts.source_filing_year, facts.source_chunk, facts.fiscal_year,
-            documents.source_pdf_url, documents.source_json_uri, documents.source_json_sha256
+            documents.source_file_name, documents.source_pdf_url,
+            documents.source_json_uri, documents.source_json_sha256
         having count(*) filter (
             where canonical_concept in ({_METRIC_NAMES_SQL})
               and mapping_confidence >= 0.95 and ocr_confidence >= 80
@@ -1494,6 +1593,8 @@ def _union_bbox(
 def _fact_row(
     fact: ExtractedAnnualAccountFact,
     *,
+    source_file_name: str,
+    source_url: str,
     source_run_id: str,
     source_chunk: str,
     resolved_at: datetime,
@@ -1503,6 +1604,8 @@ def _fact_row(
         fact.document_id,
         "NO",
         SOURCE_SLUG,
+        source_file_name,
+        source_url,
         source_run_id,
         fact.org_number,
         fact.source_filing_year,
@@ -1586,7 +1689,7 @@ def _insert_document_stage_batch(
     connection.register(_DOCUMENT_BATCH_RELATION, arrow_table)
     try:
         connection.execute(
-            f"insert into {_DOCUMENT_STAGE_TABLE} "
+            f"insert into {_DOCUMENT_STAGE_TABLE} by name "
             f"select * from {_DOCUMENT_BATCH_RELATION}"
         )
     finally:
@@ -1642,12 +1745,14 @@ def _insert_fact_stage_batch(
     try:
         connection.execute(
             f"""
-            insert into {_FACT_STAGE_TABLE}
+            insert into {_FACT_STAGE_TABLE} ({", ".join(_FACT_COLUMNS)})
             select
                 fact_id,
                 document_id,
                 country_iso2,
                 source_slug,
+                source_file_name,
+                source_url,
                 source_run_id,
                 org_number,
                 source_filing_year,

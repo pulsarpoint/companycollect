@@ -100,7 +100,13 @@ export function MarketsPanel({
         <Metric
           label={`Traded value · ${overview.year}`}
           value={usdBn(overview.tradedUsd)}
-          detail={overview.partial ? `${overview.year} still running` : "price × volume, all venues"}
+          detail={
+            overview.excludedDays > 0
+              ? `${usdBn(overview.excludedUsd)} set aside over ${nf.format(overview.excludedDays)} days`
+              : overview.partial
+                ? `${overview.year} still running`
+                : "price × volume, all venues"
+          }
         />
         <div className="flex flex-col justify-center gap-1.5 px-4 py-4">
           <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
@@ -134,7 +140,10 @@ export function MarketsPanel({
           <CardDescription>
             How much money changed hands in these companies' shares, in USD,
             summed across every venue where they trade. This is turnover — not
-            what the companies are worth. Market capitalisation needs shares
+            what the companies are worth. Days whose turnover is wildly out of
+            line with a symbol's own history are set aside: a reverse split
+            raises the price without the vendor restating volume, which
+            manufactures trading that never happened. Market capitalisation needs shares
             outstanding, which this warehouse does not hold for {countryCode.toUpperCase()}.
           </CardDescription>
         </CardHeader>

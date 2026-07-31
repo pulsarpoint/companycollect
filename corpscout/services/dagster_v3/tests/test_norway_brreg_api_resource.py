@@ -278,7 +278,16 @@ def test_annual_account_pdf_returns_one_pdf_for_company_year() -> None:
         "aarsregnskap/kopi/923609016/2025"
     )
     session = FakeHttpSession(
-        {source_url: FakeResponse(content=b"%PDF-1.7 annual account")}
+        {
+            source_url: FakeResponse(
+                content=b"%PDF-1.7 annual account",
+                headers={
+                    "Content-Disposition": (
+                        "attachment; filename=aarsregnskap-2025_923609016.pdf"
+                    )
+                },
+            )
+        }
     )
     resource = NorwayBrregApiResource(session=session)
 
@@ -289,6 +298,7 @@ def test_annual_account_pdf_returns_one_pdf_for_company_year() -> None:
 
     assert result is not None
     assert result.source_url == source_url
+    assert result.source_file_name == "aarsregnskap-2025_923609016.pdf"
     assert result.body == b"%PDF-1.7 annual account"
     assert session.calls == [(source_url, None, 120, False)]
 

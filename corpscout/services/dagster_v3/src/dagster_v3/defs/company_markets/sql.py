@@ -118,6 +118,35 @@ px AS (
         ON p.eodhd_symbol_key = t.eodhd_symbol_key
     WHERE p.volume > 0 AND p.close IS NOT NULL
 ),
+-- The turnover plausibility guard.
+--
+-- EODHD adjusts price for a reverse split and leaves volume on the pre-split
+-- share count: across 46 B3 jump events, price multiplies by a median 20x
+-- while volume moves 0.80x. close x volume then mixes two share bases. Azul's
+-- December 2025 split produced four days worth 538bn BRL and put a distressed
+-- airline above Petrobras.
+--
+-- Judged per SYMBOL against its OWN median day, so a volatile small cap is
+-- compared to itself rather than to Petrobras. The threshold is measured, not
+-- guessed: a normal busy day is 32x the median (p99) and p99.9 is 253x, while
+-- 200x removes a tenth of Brazil's 2025 value against three thousandths of
+-- Sweden's. Cutting lower, at 50x, would discard a fiftieth of Sweden's
+-- genuine trading to gain nothing in Brazil, whose inflation is all far out
+-- in the tail. Figures in docs/market-turnover-plausibility.md.
+--
+-- Never write a literal per-cent sign in this file, comments included. The
+-- ClickHouse driver binds parameters by that character, so one inside a
+-- COMMENT is still read as a format spec and the whole statement dies with
+-- "an integer is required, not dict". Spell the figures out in words instead.
+--
+-- 30 days of history minimum: below that there is no basis to judge a symbol,
+-- and it passes through unguarded rather than being cut on a thin median.
+symbol_median AS (
+    SELECT symbol_key, median(traded_native) AS median_traded, count() AS days
+    FROM px
+    GROUP BY symbol_key
+    HAVING days >= 30 AND median_traded > 0
+),
 fx AS (
     SELECT
         r.rate_date AS rate_date,
@@ -134,6 +163,16 @@ factor AS (
     SELECT cal.price_date AS price_date, cal.ccy AS ccy, fx.to_usd AS to_usd
     FROM (SELECT DISTINCT price_date, ccy FROM px) AS cal
     ASOF LEFT JOIN fx ON fx.ccy = cal.ccy AND fx.rate_date <= cal.price_date
+),
+-- Flagged, not filtered, so the amount set aside can be reported.
+pxg AS (
+    SELECT px.*,
+           toUInt8(
+               m.median_traded IS NOT NULL
+               AND px.traded_native > m.median_traded * 200
+           ) AS implausible
+    FROM px
+    LEFT JOIN symbol_median AS m ON m.symbol_key = px.symbol_key
 )
 """
 
@@ -141,15 +180,19 @@ MARKET_MONTHLY_SELECT = (
     _TRADED_CTE
     + """
 SELECT
-    px.country_code AS country_code,
-    toStartOfMonth(px.price_date) AS month,
-    toUInt32(uniqExact(px.company_id)) AS companies,
-    toUInt32(uniqExact(px.symbol_key)) AS symbols,
-    toDecimal64(sum(px.traded_native * factor.to_usd), 2) AS traded_usd,
-    %(resolved_at)s AS resolved_at
-FROM px
+    pxg.country_code AS country_code,
+    toStartOfMonth(pxg.price_date) AS month,
+    toUInt32(uniqExactIf(pxg.company_id, pxg.implausible = 0)) AS companies,
+    toUInt32(uniqExactIf(pxg.symbol_key, pxg.implausible = 0)) AS symbols,
+    toDecimal64(sumIf(pxg.traded_native * factor.to_usd, pxg.implausible = 0), 2)
+        AS traded_usd,
+    %(resolved_at)s AS resolved_at,
+    toUInt32(countIf(pxg.implausible = 1)) AS excluded_days,
+    toDecimal64(sumIf(pxg.traded_native * factor.to_usd, pxg.implausible = 1), 2)
+        AS excluded_usd
+FROM pxg
 INNER JOIN factor
-    ON factor.price_date = px.price_date AND factor.ccy = px.ccy
+    ON factor.price_date = pxg.price_date AND factor.ccy = pxg.ccy
 GROUP BY country_code, month
 """
 )
@@ -184,19 +227,23 @@ FROM (
     -- sum(traded_usd) as sum(sum(...)) and fail with ILLEGAL_AGGREGATION --
     -- alias shadowing, not scoping.
     SELECT
-        px.country_code AS country_code,
-        toYear(px.price_date) AS year,
-        px.company_id AS company_id,
-        px.symbol_key AS symbol_key,
-        any(px.ticker) AS symbol_ticker,
-        any(px.exchange_code) AS symbol_exchange,
-        argMax(px.close_native, px.price_date) AS symbol_last_close,
-        argMax(px.ccy, px.price_date) AS symbol_ccy,
-        max(px.price_date) AS symbol_last_day,
-        sum(px.traded_native * factor.to_usd) AS symbol_traded_usd
-    FROM px
+        pxg.country_code AS country_code,
+        toYear(pxg.price_date) AS year,
+        pxg.company_id AS company_id,
+        pxg.symbol_key AS symbol_key,
+        any(pxg.ticker) AS symbol_ticker,
+        any(pxg.exchange_code) AS symbol_exchange,
+        argMax(pxg.close_native, pxg.price_date) AS symbol_last_close,
+        argMax(pxg.ccy, pxg.price_date) AS symbol_ccy,
+        max(pxg.price_date) AS symbol_last_day,
+        sum(pxg.traded_native * factor.to_usd) AS symbol_traded_usd
+    FROM pxg
     INNER JOIN factor
-        ON factor.price_date = px.price_date AND factor.ccy = px.ccy
+        ON factor.price_date = pxg.price_date AND factor.ccy = pxg.ccy
+    -- The same guard the monthly totals apply. Reading raw px here left Azul
+    -- at 99.4bn USD in the company ranking while the country total had already
+    -- set it aside -- two published numbers disagreeing about the same days.
+    WHERE pxg.implausible = 0
     GROUP BY country_code, year, company_id, symbol_key
 ) AS per_symbol
 GROUP BY country_code, year, company_id

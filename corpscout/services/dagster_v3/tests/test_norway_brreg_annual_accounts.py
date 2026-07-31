@@ -122,6 +122,7 @@ class FailingSecondAnnualAccountApi:
             raise RuntimeError("rate limited")
         return BrregAnnualAccountPdf(
             source_url=f"https://example.test/{org_number}/{filing_year}",
+            source_file_name=f"aarsregnskap-{filing_year}_{org_number}.pdf",
             body=f"%PDF-1.7 {org_number}".encode(),
         )
 
@@ -148,6 +149,7 @@ class FailedFirstAnnualAccountApi:
             )
         return BrregAnnualAccountPdf(
             source_url=f"https://example.test/{org_number}/{filing_year}",
+            source_file_name=f"aarsregnskap-{filing_year}_{org_number}.pdf",
             body=f"%PDF-1.7 {org_number}".encode(),
         )
 
@@ -274,6 +276,7 @@ def test_pdf_download_stages_pdf_and_catalog_without_processing(monkeypatch) -> 
     api = FakeAnnualAccountApi(
         BrregAnnualAccountPdf(
             source_url="https://example.test/923609016/2025",
+            source_file_name="aarsregnskap-2025_923609016.pdf",
             body=pdf_body,
         )
     )
@@ -305,6 +308,7 @@ def test_pdf_download_stages_pdf_and_catalog_without_processing(monkeypatch) -> 
             "org_number": "923609016",
             "legal_name": "EQUINOR ASA",
             "filing_year": 2025,
+            "source_file_name": "aarsregnskap-2025_923609016.pdf",
             "source_url": "https://example.test/923609016/2025",
             "source_object_key": pdf_key,
             "source_payload_hash": hashlib.sha256(pdf_body).hexdigest(),
@@ -534,6 +538,7 @@ def test_pdf_download_resumes_after_failure_without_redownloading_completed_pdf(
     resumed_api = FakeAnnualAccountApi(
         BrregAnnualAccountPdf(
             source_url="https://example.test/222222222/2025",
+            source_file_name="aarsregnskap-2025_222222222.pdf",
             body=b"%PDF-1.7 second",
         )
     )
@@ -566,6 +571,7 @@ def test_document_processing_reads_staged_pdf_and_skips_existing_json(
         api=FakeAnnualAccountApi(
             BrregAnnualAccountPdf(
                 source_url="https://example.test/923609016/2025",
+                source_file_name="aarsregnskap-2025_923609016.pdf",
                 body=pdf_body,
             )
         ),
@@ -579,6 +585,7 @@ def test_document_processing_reads_staged_pdf_and_skips_existing_json(
         return {
             "org_number": kwargs["org_number"],
             "filing_year": kwargs["filing_year"],
+            "source_file_name": kwargs["source_file_name"],
             "source_pdf_url": kwargs["source_pdf_url"],
             "source_pdf_sha256": hashlib.sha256(body).hexdigest(),
             "source_pdf_size_bytes": len(body),
@@ -631,6 +638,7 @@ def test_document_processing_uses_bounded_resumable_batches(monkeypatch) -> None
         api=FakeAnnualAccountApi(
             BrregAnnualAccountPdf(
                 source_url="https://example.test/annual-account.pdf",
+                source_file_name="aarsregnskap-2025_111111111.pdf",
                 body=b"%PDF-1.7 staged annual account",
             )
         ),
@@ -644,6 +652,7 @@ def test_document_processing_uses_bounded_resumable_batches(monkeypatch) -> None
         return {
             "org_number": kwargs["org_number"],
             "filing_year": kwargs["filing_year"],
+            "source_file_name": kwargs["source_file_name"],
             "source_pdf_url": kwargs["source_pdf_url"],
             "source_pdf_sha256": hashlib.sha256(body).hexdigest(),
             "source_pdf_size_bytes": len(body),
@@ -721,6 +730,7 @@ def test_document_processing_runs_at_most_four_documents_in_parallel(
         api=FakeAnnualAccountApi(
             BrregAnnualAccountPdf(
                 source_url="https://example.test/annual-account.pdf",
+                source_file_name="aarsregnskap-2025_100000000.pdf",
                 body=b"%PDF-1.7 staged annual account",
             )
         ),
@@ -742,6 +752,7 @@ def test_document_processing_runs_at_most_four_documents_in_parallel(
         return {
             "org_number": kwargs["org_number"],
             "filing_year": kwargs["filing_year"],
+            "source_file_name": kwargs["source_file_name"],
             "source_pdf_url": kwargs["source_pdf_url"],
             "source_pdf_sha256": hashlib.sha256(body).hexdigest(),
             "source_pdf_size_bytes": len(body),
@@ -779,6 +790,7 @@ def test_cleanup_deletes_pdf_only_after_matching_json_exists(monkeypatch) -> Non
         api=FakeAnnualAccountApi(
             BrregAnnualAccountPdf(
                 source_url="https://example.test/923609016/2025",
+                source_file_name="aarsregnskap-2025_923609016.pdf",
                 body=pdf_body,
             )
         ),
@@ -791,6 +803,7 @@ def test_cleanup_deletes_pdf_only_after_matching_json_exists(monkeypatch) -> Non
         lambda body, **kwargs: {
             "org_number": kwargs["org_number"],
             "filing_year": kwargs["filing_year"],
+            "source_file_name": kwargs["source_file_name"],
             "source_pdf_url": kwargs["source_pdf_url"],
             "source_pdf_sha256": hashlib.sha256(body).hexdigest(),
             "source_pdf_size_bytes": len(body),
@@ -850,6 +863,7 @@ def test_cleanup_keeps_pdf_when_its_json_is_missing() -> None:
         api=FakeAnnualAccountApi(
             BrregAnnualAccountPdf(
                 source_url="https://example.test/923609016/2025",
+                source_file_name="aarsregnskap-2025_923609016.pdf",
                 body=b"%PDF-1.7 not processed",
             )
         ),
@@ -909,6 +923,7 @@ def test_native_text_pdf_does_not_invoke_ocr() -> None:
         org_number="923609016",
         legal_name="EQUINOR ASA",
         filing_year=2025,
+        source_file_name="aarsregnskap-2025_923609016.pdf",
         source_pdf_url="https://example.test/923609016/2025",
         source_run_id="run-1",
         retrieved_at="2026-07-17T12:00:00Z",
@@ -922,6 +937,7 @@ def test_native_text_pdf_does_not_invoke_ocr() -> None:
     assert document["ocr_page_count"] == 0
     assert document["pages"][0]["extraction_method"] == "native_text"
     assert "Annual account operating revenue 100" in document["pages"][0]["text"]
+    assert document["source_file_name"] == "aarsregnskap-2025_923609016.pdf"
     assert document["source_pdf_url"].endswith("/923609016/2025")
     assert len(document["source_pdf_sha256"]) == 64
 
@@ -932,6 +948,7 @@ def test_scanned_pdf_preserves_ocr_words_coordinates_and_confidence() -> None:
         org_number="923609016",
         legal_name="EQUINOR ASA",
         filing_year=2025,
+        source_file_name="aarsregnskap-2025_923609016.pdf",
         source_pdf_url="https://example.test/923609016/2025",
         source_run_id="run-1",
         retrieved_at="2026-07-17T12:00:00Z",

@@ -12,6 +12,7 @@ from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
+from email.message import Message
 from typing import Any, Protocol
 from typing import TYPE_CHECKING
 
@@ -58,6 +59,7 @@ BRREG_ENTITIES_COLUMNS = tables.BRREG_ENTITIES_COLUMNS
 @dataclass(frozen=True)
 class BrregAnnualAccountPdf:
     source_url: str
+    source_file_name: str
     body: bytes
 
 
@@ -229,7 +231,15 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
                     "Norway BRREG annual-account response is not a PDF: "
                     f"org={org_number} year={filing_year}"
                 )
-            return BrregAnnualAccountPdf(source_url=source_url, body=body)
+            return BrregAnnualAccountPdf(
+                source_url=source_url,
+                source_file_name=_annual_account_pdf_response_file_name(
+                    response,
+                    org_number=org_number,
+                    filing_year=filing_year,
+                ),
+                body=body,
+            )
 
         raise AssertionError("annual-account PDF retry loop completed without a result")
 
@@ -619,6 +629,36 @@ def _annual_account_pdf_safe_response_headers(response: Any) -> dict[str, str]:
         for name, value in headers.items()
         if str(name).lower() in ANNUAL_ACCOUNT_PDF_SAFE_RESPONSE_HEADERS
     }
+
+
+def annual_account_pdf_file_name(org_number: str, filing_year: int) -> str:
+    return f"aarsregnskap-{filing_year}_{org_number}.pdf"
+
+
+def _annual_account_pdf_response_file_name(
+    response: Any,
+    *,
+    org_number: str,
+    filing_year: int,
+) -> str:
+    content_disposition = next(
+        (
+            str(value)
+            for name, value in response.headers.items()
+            if str(name).lower() == "content-disposition"
+        ),
+        "",
+    )
+    message = Message()
+    message["content-disposition"] = content_disposition
+    header_file_name = message.get_filename()
+    if header_file_name is None:
+        return annual_account_pdf_file_name(org_number, filing_year)
+
+    file_name = str(header_file_name).rsplit("/", 1)[-1].rsplit("\\", 1)[-1].strip()
+    if file_name == "" or not file_name.lower().endswith(".pdf"):
+        return annual_account_pdf_file_name(org_number, filing_year)
+    return file_name
 
 
 def _bounded_error_message(error: Exception) -> str:

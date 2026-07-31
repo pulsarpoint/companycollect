@@ -406,9 +406,14 @@ def test_duckdb_stages_preserve_documents_facts_mappings_and_validated_metrics()
         f"select source_json_sha256, parser_version from {ANNUAL_ACCOUNT_DATASET}.documents"
     ).fetchone() == (hashlib.sha256(raw_document).hexdigest(), PARSER_VERSION)
     assert connection.execute(
-        f"select canonical_concept from {ANNUAL_ACCOUNT_DATASET}.facts "
+        f"select canonical_concept, source_file_name, source_url "
+        f"from {ANNUAL_ACCOUNT_DATASET}.facts "
         "where raw_label = 'Driftsresultat' limit 1"
-    ).fetchone() == ("operating_result",)
+    ).fetchone() == (
+        "operating_result",
+        "aarsregnskap-2025_811725102.pdf",
+        "https://example.test/annual-account.pdf",
+    )
     assert connection.execute(
         f"select mapping_version from {ANNUAL_ACCOUNT_DATASET}.metrics limit 1"
     ).fetchone() == (MAPPING_VERSION,)
@@ -1241,6 +1246,7 @@ def _sample_document() -> dict[str, object]:
         "org_number": "811725102",
         "legal_name": "FORLAND CONSULTING AS",
         "filing_year": 2025,
+        "source_file_name": "aarsregnskap-2025_811725102.pdf",
         "source_pdf_url": "https://example.test/annual-account.pdf",
         "source_pdf_sha256": "b" * 64,
         "source_pdf_size_bytes": 1234,
@@ -1280,6 +1286,8 @@ def _synthetic_fact_row(
         f"document-{index // 10:06d}",
         "NO",
         annual_account_financials.SOURCE_SLUG,
+        "aarsregnskap-2025_811725102.pdf",
+        "https://example.test/annual-account.pdf",
         "bulk-run",
         "811725102",
         2025,

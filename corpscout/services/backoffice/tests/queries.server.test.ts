@@ -5,7 +5,13 @@ import { isLineageKey } from "~/components/detail/fields";
 import { COUNTRIES, getCountry } from "~/lib/countries";
 import { getFacetOptions } from "~/lib/facets.server";
 import { filterableFacetKeys } from "~/lib/filters";
-import { PAGE_SIZES, getCompanyDetail, getCountryStats, searchCompanies } from "~/lib/queries.server";
+import {
+  PAGE_SIZES,
+  getCompanyDetail,
+  getCompanyShell,
+  getCountryStats,
+  searchCompanies,
+} from "~/lib/queries.server";
 
 // Integration tests against the real ClickHouse. Estonia is the smallest
 // dataset (~373k rows), so queries stay fast.
@@ -168,6 +174,23 @@ describe("searchCompanies across all countries", () => {
       const detail = await getCompanyDetail(country, id);
       expect(detail).not.toBeNull();
       expect(String(detail!.company.id)).toBe(id);
+    },
+    60_000,
+  );
+
+  it.each(COUNTRIES.map((c) => [c.code, c] as const))(
+    "%s: shared company shell loads header and record data",
+    async (_code, country) => {
+      const [seed] = await chQuery<{ id: string }>(
+        `SELECT toString(${country.idColumn}) AS id
+         FROM ${country.companiesTable}
+         LIMIT 1`,
+      );
+      const shell = await getCompanyShell(country, seed.id);
+      expect(shell).not.toBeNull();
+      expect(String(shell!.company.id)).toBe(seed.id);
+      expect(shell!.record).toBeTruthy();
+      expect(shell!.company).not.toHaveProperty("__industry_key");
     },
     60_000,
   );
