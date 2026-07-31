@@ -5,6 +5,7 @@ import { getCountry } from "~/lib/countries";
 import { getCountryIndustryGroups } from "~/lib/countries-overview.server";
 import { getCountryFinancials, TOP_DIVISIONS_LIMIT } from "~/lib/financial-aggregates.server";
 import { legacyTabPath } from "~/lib/country-tabs";
+import { getTradedCompanies } from "~/lib/markets.server";
 import { OverviewTab } from "~/components/country/overview-tab";
 
 export async function loader({ params, request }: Route.LoaderArgs) {
@@ -17,9 +18,12 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const redirectTo = legacyTabPath(country.code, url.searchParams.get("tab"));
   if (redirectTo) throw redirect(redirectTo);
 
-  const [financials, coverageIndustries] = await Promise.all([
+  const [financials, coverageIndustries, tradedCompanies] = await Promise.all([
     getCountryFinancials(country.code),
     getCountryIndustryGroups(country.code),
+    // Reads the precomputed company_market_summary, so this costs a small
+    // indexed lookup rather than the warehouse join it replaced.
+    getTradedCompanies(country, 5),
   ]);
 
   const revenueIndustries = financials?.divisions?.slice(0, TOP_DIVISIONS_LIMIT) ?? null;
@@ -27,11 +31,12 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     industries: revenueIndustries ?? coverageIndustries,
     industryMode: revenueIndustries ? ("revenue" as const) : ("coverage" as const),
     topCompanies: financials?.topCompanies ?? [],
+    tradedCompanies,
   };
 }
 
 export default function CountryOverview({ loaderData, params }: Route.ComponentProps) {
-  const { industries, industryMode, topCompanies } = loaderData;
+  const { industries, industryMode, topCompanies, tradedCompanies } = loaderData;
   const country = getCountry(params.country)!;
   const layoutData = useRouteLoaderData<typeof countryLayoutLoader>("routes/country-layout")!;
 
@@ -44,6 +49,7 @@ export default function CountryOverview({ loaderData, params }: Route.ComponentP
         industries={industries}
         industryMode={industryMode}
         topCompanies={topCompanies}
+        tradedCompanies={tradedCompanies}
       />
     </div>
   );

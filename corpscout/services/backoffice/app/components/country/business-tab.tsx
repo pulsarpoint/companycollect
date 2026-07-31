@@ -155,7 +155,7 @@ export function BusinessTab({
 
       <Card>
         <CardHeader>
-          <CardTitle>Most valuable companies</CardTitle>
+          <CardTitle>Largest companies by revenue</CardTitle>
           <CardDescription>Companies ranked by latest reported revenue.</CardDescription>
         </CardHeader>
         <CardContent>

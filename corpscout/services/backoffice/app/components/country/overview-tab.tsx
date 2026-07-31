@@ -1,5 +1,7 @@
 import type { CountryTradeStatistics, CountryWorldBankSeries } from "~/lib/country-statistics";
 import type { TopCompany } from "~/lib/financial-aggregates.server";
+import type { TradedCompanyRow } from "~/lib/markets.server";
+import { Link } from "react-router";
 import { TopCompaniesTable } from "~/components/financials/top-companies-table";
 import { Badge } from "~/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
@@ -23,6 +25,7 @@ export function OverviewTab({
   industries,
   industryMode,
   topCompanies,
+  tradedCompanies = [],
 }: {
   countryCode: string;
   worldBank: CountryWorldBankSeries[];
@@ -30,6 +33,7 @@ export function OverviewTab({
   industries: IndustryListItem[];
   industryMode: IndustryMode;
   topCompanies: TopCompany[];
+  tradedCompanies?: TradedCompanyRow[];
 }) {
   const latestYear = Math.max(
     ...worldBank.flatMap((series) => series.points.map((point) => point.year)),
@@ -117,8 +121,12 @@ export function OverviewTab({
 
         <Card>
           <CardHeader>
-            <CardTitle>Most valuable companies</CardTitle>
-            <CardDescription>Latest reported company revenue.</CardDescription>
+            <CardTitle>Largest companies by revenue</CardTitle>
+            <CardDescription>
+              Latest reported company revenue, from filed standalone accounts —
+              a different question from what a company is worth or how much its
+              shares trade.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {topCompanies.length > 0 ? (
@@ -131,6 +139,48 @@ export function OverviewTab({
             )}
           </CardContent>
         </Card>
+
+        {/* The market answer to the same instinct, kept separate on purpose.
+            Revenue and traded value are different quantities, and putting them
+            in one card invites a comparison neither supports. Shown only where
+            there are traded companies. */}
+        {tradedCompanies.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Most traded companies</CardTitle>
+              <CardDescription>
+                Money changing hands in their shares, across every venue they
+                trade on. Turnover, not market capitalisation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="flex flex-col gap-2">
+                {tradedCompanies.map((row) => (
+                  <li
+                    key={row.company_id}
+                    className="flex items-baseline justify-between gap-3 text-sm"
+                  >
+                    <Link
+                      to={`/company/${countryCode}/${row.company_id}`}
+                      className="truncate underline-offset-2 hover:underline"
+                    >
+                      {row.name || row.company_id}
+                    </Link>
+                    <span className="text-muted-foreground shrink-0 tabular-nums">
+                      ${(row.tradedUsd / 1e9).toFixed(1)}bn
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <Link
+                to={`/countries/${countryCode}/markets`}
+                className="text-muted-foreground mt-3 inline-block text-xs underline underline-offset-2"
+              >
+                All traded companies →
+              </Link>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
     </>
   );
