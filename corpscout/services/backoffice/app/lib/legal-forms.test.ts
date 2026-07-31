@@ -63,6 +63,27 @@ describe("getLegalFormLabels", () => {
     expect(labels.get("5499")?.en).toBe("Limited liability company (SARL)");
   });
 
+  test("qualifies the filtered column so an alias cannot shadow it", async () => {
+    // The dimension views name their columns `label` and `label_en`, which are
+    // also the aliases this query assigns. Unqualified, ClickHouse reads the
+    // WHERE as referring to `any(label) AS label` and rejects the query with
+    // "Aggregate function any(label) AS label is found in WHERE".
+    chQuery.mockResolvedValue([]);
+    const LV = {
+      code: "lv",
+      legalFormLookup: {
+        table: "lv_legal_forms_translated",
+        codeColumn: "code",
+        labelColumn: "label",
+        enColumn: "label_en",
+      },
+    } as never;
+    await getLegalFormLabels(LV);
+    const sql = String(chQuery.mock.calls[0][0]);
+    expect(sql).toMatch(/WHERE\s+\w+\.label\s*!=/);
+    expect(sql).toMatch(/FROM\s+lv_legal_forms_translated\s+AS\s+\w+/);
+  });
+
   test("a failed fetch is not cached", async () => {
     chQuery.mockRejectedValueOnce(new Error("clickhouse down"));
     await expect(getLegalFormLabels(SE)).rejects.toThrow("clickhouse down");

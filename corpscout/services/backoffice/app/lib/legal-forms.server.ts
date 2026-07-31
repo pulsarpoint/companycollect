@@ -70,12 +70,16 @@ export function getLegalFormLabels(
   const lookup = country.legalFormLookup;
   const [sql, params] = lookup
     ? [
-        `SELECT ${lookup.codeColumn} AS legal_form_code,
-                any(${lookup.labelColumn}) AS label,
-                any(${lookup.enColumn}) AS label_en
-         FROM ${lookup.table}
-         WHERE ${lookup.labelColumn} != ''
-         GROUP BY ${lookup.codeColumn}`,
+        // Qualified with `d.` throughout. The dimension views name their
+        // columns `label` and `label_en`, which are also the aliases assigned
+        // here — unqualified, ClickHouse reads the WHERE as referring to
+        // `any(label) AS label` and rejects the query outright.
+        `SELECT d.${lookup.codeColumn} AS legal_form_code,
+                any(d.${lookup.labelColumn}) AS label,
+                any(d.${lookup.enColumn}) AS label_en
+         FROM ${lookup.table} AS d
+         WHERE d.${lookup.labelColumn} != ''
+         GROUP BY d.${lookup.codeColumn}`,
         {},
       ]
     : [

@@ -59,7 +59,15 @@ function cellFor(
           return (
             <span
               className="block max-w-[14rem] truncate"
-              title={[shown, original !== shown ? original : "", `(${code})`]
+              // The code is only worth showing when it is not already one of
+              // the other two. Estonia's register publishes no code, so its
+              // term is its own key and the tooltip would read
+              // "Private limited company · Osaühing · (Osaühing)".
+              title={[
+                shown,
+                original !== shown ? original : "",
+                code === original || code === shown ? "" : `(${code})`,
+              ]
                 .filter(Boolean)
                 .join(" · ")}
             >

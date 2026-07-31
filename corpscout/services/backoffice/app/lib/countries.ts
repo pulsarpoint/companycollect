@@ -864,10 +864,12 @@ LIMIT 100`,
     code: "ee", iso3: "EST", eurostatGeoCode: "EE", name: "Estonia", flag: "🇪🇪", companiesTable: "ee_companies",
     idColumn: "reg_code", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "373k", features: ["financials", "industries", "contacts", "domains"],
+    legalFormLookup: { table: "ee_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
     columns: [
       { key: "id", label: "Reg. code", expr: "reg_code", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Legal form", expr: "coalesce(nullIf(legal_form_en, ''), legal_form_original)", sortable: true, kind: "text", filterable: true },
+      // Estonia's register publishes no code, so the Estonian term is its own key.
+      { key: "legal_form", label: "Legal form", expr: "legal_form_original", sortable: true, kind: "text", filterable: true },
       { key: "status", label: "Status", expr: "coalesce(nullIf(status_en, ''), status_original)", sortable: true, kind: "status", filterable: true },
       { key: "registered", label: "First entry", expr: "toString(first_entry_date)", sortable: true, kind: "date" },
       { key: "place", label: "Location", expr: "location", sortable: false, kind: "text", filterable: true },
@@ -951,10 +953,14 @@ LIMIT 1`,
     code: "lv", iso3: "LVA", eurostatGeoCode: "LV", name: "Latvia", flag: "🇱🇻", companiesTable: "lv_companies",
     idColumn: "regcode", nameColumn: "legal_name", activeExpr: "is_active = 1",
     approxCompanies: "485k", features: ["financials", "contacts", "domains"],
+    legalFormLookup: { table: "lv_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
     columns: [
       { key: "id", label: "Reg. code", expr: "regcode", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "legal_name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Legal form", expr: "coalesce(nullIf(legal_form_description_en, ''), legal_form_text)", sortable: true, kind: "text", filterable: true },
+      // Read from text_translations, not lv_companies.legal_form_description_en:
+      // that column was stamped in at load time and held June's pre-correction
+      // wording on 118,008 rows until the register was downloaded again.
+      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
       { key: "status", label: "Status", expr: "status", sortable: true, kind: "status", filterable: true },
       { key: "registered", label: "Registered", expr: "registered_date", sortable: true, kind: "date" },
       { key: "place", label: "City", expr: "coalesce(address_city_name, '')", sortable: false, kind: "text", filterable: true },
@@ -1368,10 +1374,12 @@ LIMIT 1`,
     code: "sk", iso3: "SVK", eurostatGeoCode: "SK", name: "Slovakia", flag: "🇸🇰", companiesTable: "sk_companies",
     idColumn: "ico", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "2.2M", features: ["financials", "industries"],
+    legalFormLookup: { table: "sk_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
     columns: [
       { key: "id", label: "IČO", expr: "ico", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Legal form", expr: "coalesce(nullIf(legal_form_en, ''), legal_form_original)", sortable: true, kind: "text", filterable: true },
+      // Read from text_translations rather than the column baked at ingest.
+      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
       { key: "status", label: "Status", expr: "if(is_active = 1, 'active', 'inactive')", sortable: true, kind: "status", filterable: true },
       { key: "registered", label: "Established", expr: "toString(established_date)", sortable: true, kind: "date" },
       { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },
