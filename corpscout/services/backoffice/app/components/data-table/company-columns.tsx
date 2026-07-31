@@ -161,19 +161,27 @@ export function buildCompanyColumns(
       cell: ({ row }) => {
         const held = new Set((row.original.flags ?? []) as CompanyFlagId[]);
         return (
-          <span className="flex gap-0.5 font-mono text-xs">
+          <span className="flex gap-1">
             {flags.map((flag) => {
               const on = held.has(flag.id);
               return (
                 <span
                   key={flag.id}
-                  // Dimmed rather than merely uncoloured when absent, so the
-                  // lit ones are what the eye lands on scanning a page of rows.
-                  className={
+                  // A filled disc, not a bare letter. Four coloured characters
+                  // in a row read as a word and disappeared into the text
+                  // around them; a chip has an edge, so the eye finds it while
+                  // scanning a column of fifty rows.
+                  className={[
+                    "inline-flex size-5 shrink-0 items-center justify-center",
+                    "rounded-full border text-[10px] font-semibold leading-none",
+                    // Held is filled and strongly bordered, not-held is an
+                    // outline. Both were ~15% tints at first and read as the
+                    // same chip in two hues -- the weight difference is what
+                    // makes a row legible at a glance, not the colour alone.
                     on
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-rose-400/50 dark:text-rose-500/40"
-                  }
+                      ? "border-emerald-600/60 bg-emerald-500/30 text-emerald-900 dark:border-emerald-400/50 dark:bg-emerald-400/25 dark:text-emerald-100"
+                      : "border-rose-400/40 bg-transparent text-rose-400/70 dark:border-rose-400/25 dark:text-rose-400/40",
+                  ].join(" ")}
                   title={`${flag.label}: ${on ? flag.meaning : "not held"}`}
                 >
                   {flag.char}

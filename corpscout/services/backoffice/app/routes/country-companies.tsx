@@ -127,8 +127,8 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
         <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
           <span className="uppercase tracking-wide">Data held</span>
           {flagLegend.map((flag) => (
-            <span key={flag.id} className="flex items-center gap-1">
-              <span className="text-emerald-600 dark:text-emerald-400 font-mono">
+            <span key={flag.id} className="flex items-center gap-1.5">
+              <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-emerald-600/30 bg-emerald-500/15 text-[10px] leading-none font-semibold text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/15 dark:text-emerald-300">
                 {flag.char}
               </span>
               <span>{flag.label}</span>
