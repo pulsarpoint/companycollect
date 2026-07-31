@@ -49,9 +49,11 @@ def build_company_identifier_insert_sql(
 WITH
 register_current AS
 (
-    SELECT company_id
+    SELECT
+        {rule.id_column} AS company_id,
+        replaceRegexpAll({rule.id_column}, '[^0-9]', '') AS company_id_normalized
     FROM corpscout.{rule.register_table}
-    GROUP BY company_id
+    GROUP BY company_id, company_id_normalized
 ),
 gleif_country AS
 (
@@ -102,12 +104,23 @@ SELECT
     %(source_run_id)s AS source_run_id,
     %(resolved_at)s AS resolved_at
 FROM gleif_normalized AS g
+-- BOTH sides normalised. Only GLEIF's side was, so a register storing its ids
+-- punctuated never matched: Finland went from 0 to 47,680 on this line alone.
+-- Sweden was unaffected because se_companies.company_id is already bare digits,
+-- which is exactly why it went unnoticed.
 INNER JOIN register_current AS r
-    ON r.company_id = g.company_id_normalized
+    ON r.company_id_normalized = g.company_id_normalized
 WHERE length(g.company_id_normalized) = {rule.identifier_length}"""
 
 
-def _quality_sql(stage_table: str) -> str:
+def _quality_sql(stage_table: str, rule: CountryIdentityRule | None = None) -> str:
+    """Quality for ONE country when a rule is given.
+
+    The staging table now holds every declared country, so an unscoped check
+    would let a country that resolved nothing hide behind one that resolved
+    115,592 rows.
+    """
+    scope = "" if rule is None else f"\nWHERE country_code = '{rule.country_code}'"
     return f"""SELECT
     count() AS row_count,
     uniqExact(issuer_id) AS issuer_count,
@@ -122,7 +135,7 @@ def _quality_sql(stage_table: str) -> str:
         OR match_method = ''
         OR match_confidence = ''
     ) AS invalid_rows
-FROM {stage_table}"""
+FROM {stage_table}{scope}"""
 
 
 def _validate_quality(
@@ -161,7 +174,13 @@ def replace_company_identifier_clickhouse(
     source_run_id: str,
     resolved_at: datetime,
 ) -> dict[str, object]:
-    """Atomically rebuild one country's issuer to company resolution."""
+    """Atomically rebuild one country's issuer to company resolution.
+
+    Kept per country so a register that is missing or has regressed fails that
+    country's quality check rather than the whole table. `replace_all` below
+    composes them into ONE swap, so a reader never sees a table holding some
+    countries and not others.
+    """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.CLICKHOUSE_DATABASE,
@@ -230,20 +249,56 @@ def company_identifier_clickhouse(
     context: dg.AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    metadata = replace_company_identifier_clickhouse(
-        clickhouse=clickhouse,
-        rule=COUNTRY_IDENTITY_RULES["SE"],
-        source_run_id=context.run_id,
-        resolved_at=datetime.now(UTC),
+    """Every declared country, into one atomic swap.
+
+    Was hardcoded to Sweden, which made COUNTRY_IDENTITY_RULES look like a
+    registry while only one entry was ever read. Each country still gets its own
+    quality check; they are filled into a single staging table so the swap
+    remains all-or-nothing.
+    """
+    resolved_at = datetime.now(UTC)
+    stage_name = f"_tmp_{tables.COMPANY_IDENTIFIER_TABLE}_all_{uuid.uuid4().hex}"
+    qualified_stage = _qualified(stage_name)
+    qualified_target = _qualified(tables.COMPANY_IDENTIFIER_TABLE)
+
+    required = {tables.COMPANY_IDENTIFIER_TABLE, "gleif_lei_records"}
+    required.update(rule.register_table for rule in COUNTRY_IDENTITY_RULES.values())
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.CLICKHOUSE_DATABASE,
+        tables=tuple(sorted(required)),
     )
-    context.log.info(
-        "Resolved %s company identifiers: rows=%s issuers=%s companies=%s",
-        metadata["country_code"],
-        metadata["row_count"],
-        metadata["issuer_count"],
-        metadata["company_count"],
+
+    per_country: dict[str, object] = {}
+    with clickhouse.get_connection() as client:
+        client.execute(f"CREATE TABLE {qualified_stage} AS {qualified_target}")
+        try:
+            for code, rule in COUNTRY_IDENTITY_RULES.items():
+                client.execute(
+                    build_company_identifier_insert_sql(qualified_stage, rule),
+                    {"source_run_id": context.run_id, "resolved_at": resolved_at},
+                )
+                row = client.execute(_quality_sql(qualified_stage, rule))[0]
+                quality = {
+                    column: value
+                    for column, value in zip(_QUALITY_COLUMNS, row, strict=True)
+                }
+                _validate_quality(quality, rule)
+                per_country[f"{code}_rows"] = int(quality["row_count"])
+                context.log.info(
+                    "Resolved %s: rows=%s issuers=%s companies=%s",
+                    code,
+                    quality["row_count"],
+                    quality["issuer_count"],
+                    quality["company_count"],
+                )
+            client.execute(f"EXCHANGE TABLES {qualified_stage} AND {qualified_target}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {qualified_stage}")
+
+    return dg.MaterializeResult(
+        metadata={"countries": len(COUNTRY_IDENTITY_RULES), **per_country}
     )
-    return dg.MaterializeResult(metadata=metadata)
 
 
 company_identifier_job = dg.define_asset_job(

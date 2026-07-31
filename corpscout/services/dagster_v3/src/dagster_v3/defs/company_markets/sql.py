@@ -15,13 +15,13 @@ from dagster_v3.defs.company_markets import tables
 # on: whatever chain a market uses, it lands here as (country, company, symbol)
 # and everything downstream is identical.
 #
-# Branch 1 -- LEI. ESMA FIRDS gives ISIN -> issuer LEI, GLEIF gives LEI ->
+# Branch 1 -- LEI. FIRDS and GLEIF both give ISIN -> issuer LEI, GLEIF gives LEI ->
 # national registration number, company_identifier verifies that against the
 # national register. Deliberately NOT company_listings: that view adds
 # instrument_venues (15.0M rows) to answer "where is it admitted", which this
 # does not need, and costs 57s per country instead of 11s.
 #
-# Branch 2 -- CNPJ. The EU chain cannot reach Brazil at all: there is no LEI
+# Branch 2 -- CNPJ + B3 instruments. The EU chain cannot reach Brazil at all: there is no LEI
 # mandate (4,259 Brazilian LEIs against 119,035 Swedish), and FIRDS records only
 # EU/EEA admissions, so a B3-listed share is absent from it entirely. B3's own
 # register publishes CNPJ and the trading-code root together, which closes both
@@ -37,7 +37,19 @@ SELECT
     any(s.exchange_code) AS exchange_code,
     %(resolved_at)s AS resolved_at
 FROM corpscout.company_identifier AS ci
-INNER JOIN corpscout.instrument_issuer AS ii
+INNER JOIN (
+    -- ESMA FIRDS and GLEIF answer the same question with different reach.
+    -- FIRDS records EU/EEA admissions only; GLEIF's ISIN-to-LEI file is
+    -- published worldwide with ANNA and knows 98,390 issuers against FIRDS's
+    -- 39,675 -- 77,648 of them absent from FIRDS entirely, in Delaware,
+    -- Turkey, the Caymans and elsewhere. Unioned rather than swapped: FIRDS
+    -- carries EU instruments GLEIF has not been given, and the GROUP BY below
+    -- collapses the overlap.
+    SELECT issuer_scheme, issuer_id, isin FROM corpscout.instrument_issuer
+    UNION DISTINCT
+    SELECT 'lei' AS issuer_scheme, lei AS issuer_id, isin
+    FROM corpscout.gleif_isin_lei
+) AS ii
     ON ii.issuer_scheme = ci.issuer_scheme AND ii.issuer_id = ci.issuer_id
 INNER JOIN corpscout.eodhd_symbols AS s ON s.isin = ii.isin
 WHERE ci.is_current = 1
@@ -47,21 +59,28 @@ UNION ALL
 
 SELECT
     'BR' AS country_code,
-    b.cnpj_basico AS company_id,
-    ifNull(any(s.isin), '') AS isin,
+    i.cnpj_basico AS company_id,
+    any(i.isin) AS isin,
     s.eodhd_symbol_key AS eodhd_symbol_key,
     any(s.ticker) AS ticker,
     any(s.exchange_code) AS exchange_code,
     %(resolved_at)s AS resolved_at
-FROM corpscout.br_b3_listings AS b
--- The ticker root is what a Brazilian ISIN encodes and what EODHD's symbol
--- starts with: PETR4 and BRPETRACNPR6 both carry PETR.
+FROM corpscout.br_b3_instruments AS i
 INNER JOIN corpscout.eodhd_symbols AS s
-    ON s.exchange_code = 'SA' AND substring(s.ticker, 1, 4) = b.ticker_root
+    ON s.exchange_code = 'SA'
+    -- ISIN first, because B3 publishes the pairing and a match on it is a
+    -- fact. The exact trading code is the fallback for symbols EODHD carries
+    -- without an ISIN, and the root prefix catches the fractional-lot codes
+    -- (PETR4F) that B3 does not list separately but that trade all the same.
+    AND (
+        (i.isin != '' AND s.isin = i.isin)
+        OR s.ticker = i.ticker
+        OR (i.ticker_root != '' AND substring(s.ticker, 1, 4) = i.ticker_root)
+    )
 -- The register is the proof, exactly as company_identifier is for branch 1.
 INNER JOIN (SELECT DISTINCT cnpj_basico FROM corpscout.br_companies) AS c
-    ON c.cnpj_basico = b.cnpj_basico
-WHERE b.cnpj_basico != '' AND b.ticker_root != ''
+    ON c.cnpj_basico = i.cnpj_basico
+WHERE i.cnpj_basico != ''
 GROUP BY country_code, company_id, eodhd_symbol_key
 """
 

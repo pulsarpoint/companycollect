@@ -25,6 +25,10 @@ class CountryIdentityRule:
     country_code: str
     issuer_scheme: str
     register_table: str
+    # The register's own id column. They disagree — se_companies.company_id,
+    # no_companies.org_number, fi_companies.business_id — and hardcoding one
+    # silently limited this to Sweden.
+    id_column: str
     identifier_length: int
     min_expected_rows: int
 
@@ -34,7 +38,28 @@ COUNTRY_IDENTITY_RULES = {
         country_code="SE",
         issuer_scheme="lei",
         register_table="se_companies",
+        id_column="company_id",
         identifier_length=10,
+        min_expected_rows=500,
+    ),
+    "NO": CountryIdentityRule(
+        country_code="NO",
+        issuer_scheme="lei",
+        register_table="no_companies",
+        id_column="org_number",
+        identifier_length=9,
+        min_expected_rows=500,
+    ),
+    # Finland matched ZERO before the register side of the join was normalised:
+    # fi_companies stores 0136203-8 while GLEIF's registered_as normalises to
+    # 01362038, so every row missed. Measured after the fix: 47,680 of 59,297
+    # Finnish LEIs verify against the register.
+    "FI": CountryIdentityRule(
+        country_code="FI",
+        issuer_scheme="lei",
+        register_table="fi_companies",
+        id_column="business_id",
+        identifier_length=8,
         min_expected_rows=500,
     ),
 }

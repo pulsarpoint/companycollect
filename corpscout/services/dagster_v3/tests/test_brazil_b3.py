@@ -78,3 +78,59 @@ def test_rows_are_tuples_in_column_order():
     assert len(rows[0]) == len(tables.BR_B3_LISTINGS_COLUMNS)
     # cvm_code, cnpj, cnpj_basico, ticker_root lead the tuple.
     assert rows[0][:4] == ("9512", "33000167000101", "33000167", "PETR")
+
+
+# ---------- instrument register (ticker -> ISIN) ----------
+
+import json
+
+from dagster_v3.defs.brazil_b3.source import build_b3_instrument_rows, parse_b3_instruments
+
+# B3 returns the detail as a JSON STRING inside a JSON response.
+DETAIL = json.dumps(
+    json.dumps(
+        {
+            "issuingCompany": "PETR",
+            "companyName": "PETROLEO BRASILEIRO S.A. PETROBRAS",
+            "cnpj": "33000167000101",
+            "codeCVM": "9512",
+            "code": "PETR4",
+            "otherCodes": [
+                {"code": "PETR3", "isin": "BRPETRACNOR9"},
+                {"code": "PETR4", "isin": "BRPETRACNPR6"},
+            ],
+        }
+    )
+)
+
+
+def test_maps_every_trading_code_to_its_isin():
+    by_ticker = {i.ticker: i.isin for i in parse_b3_instruments(json.loads(DETAIL))}
+    assert by_ticker["PETR3"] == "BRPETRACNOR9"
+    assert by_ticker["PETR4"] == "BRPETRACNPR6"
+
+
+def test_decodes_the_double_encoded_payload():
+    """The endpoint returns a JSON string containing JSON."""
+    assert len(parse_b3_instruments(json.loads(DETAIL))) == 2
+
+
+def test_accepts_a_plain_object_too():
+    """So a fix at B3's end does not break the loader."""
+    plain = json.loads(json.loads(DETAIL))
+    assert len(parse_b3_instruments(plain)) == 2
+
+
+def test_folds_in_the_company_code_when_otherCodes_omits_it():
+    """B3 reports `code` separately; losing it would drop a company's main line."""
+    body = {"cnpj": "33000167000101", "codeCVM": "9512", "issuingCompany": "PETR",
+            "code": "PETR4", "otherCodes": []}
+    rows = parse_b3_instruments(body)
+    assert [r.ticker for r in rows] == ["PETR4"]
+    # No ISIN is honest; inventing one would be worse.
+    assert rows[0].isin == ""
+
+
+def test_instrument_rows_are_deduplicated_per_company_and_ticker():
+    items = list(parse_b3_instruments(json.loads(DETAIL))) * 2
+    assert len(build_b3_instrument_rows(items, source_run_id="r")) == 2

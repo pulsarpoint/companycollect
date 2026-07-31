@@ -159,3 +159,116 @@ def build_b3_listing_rows(
             )
         )
     return rows
+
+
+B3_COMPANY_DETAIL_URL = (
+    "https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/"
+    "CompanyCall/GetDetail"
+)
+
+
+@dataclass(frozen=True)
+class B3Instrument:
+    cvm_code: str
+    cnpj: str
+    cnpj_basico: str
+    ticker: str
+    isin: str
+    ticker_root: str
+
+
+def _detail_payload(body: Any) -> dict:
+    """B3 returns the detail as a JSON STRING inside a JSON response.
+
+    Decoded twice rather than once, and tolerant of the endpoint being fixed:
+    a plain object is accepted as-is, and a single-element list is unwrapped.
+    """
+    if isinstance(body, str):
+        body = json.loads(body)
+    if isinstance(body, list):
+        body = body[0] if body else {}
+    return body if isinstance(body, dict) else {}
+
+
+def parse_b3_instruments(body: Any) -> tuple[B3Instrument, ...]:
+    """Every (ticker, ISIN) pair one company lists.
+
+    `otherCodes` is the authoritative mapping. The company's own `code` is
+    folded in too: B3 reports it separately and it is occasionally absent from
+    otherCodes, which would silently lose a company's main line.
+    """
+    detail = _detail_payload(body)
+    cnpj = _digits(detail.get("cnpj"))
+    if len(cnpj) != 14:
+        cnpj = ""
+    root = _text(detail.get("issuingCompany")).upper()
+    cvm_code = _text(detail.get("codeCVM"))
+
+    pairs: dict[str, str] = {}
+    for entry in detail.get("otherCodes") or []:
+        if not isinstance(entry, dict):
+            continue
+        ticker = _text(entry.get("code")).upper()
+        if ticker:
+            pairs.setdefault(ticker, _text(entry.get("isin")).upper())
+    main = _text(detail.get("code")).upper()
+    if main:
+        pairs.setdefault(main, "")
+
+    return tuple(
+        B3Instrument(
+            cvm_code=cvm_code,
+            cnpj=cnpj,
+            cnpj_basico=cnpj[:8],
+            ticker=ticker,
+            isin=isin,
+            ticker_root=root,
+        )
+        for ticker, isin in sorted(pairs.items())
+    )
+
+
+def fetch_b3_company_detail(code_cvm: str, *, timeout: int = 45) -> Any:
+    """One company's detail, including its trading codes and their ISINs."""
+    params = json.dumps(
+        {"codeCVM": str(code_cvm), "language": "pt-br"}, separators=(",", ":")
+    )
+    url = f"{B3_COMPANY_DETAIL_URL}/{base64.b64encode(params.encode()).decode()}"
+    response = requests.get(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def build_b3_instrument_rows(
+    instruments: list[B3Instrument],
+    *,
+    source_run_id: str,
+    retrieved_at: datetime | None = None,
+) -> list[tuple]:
+    """Rows for `br_b3_instruments`, in the migration's column order."""
+    stamped = retrieved_at or datetime.now(UTC).replace(tzinfo=None)
+    seen: set[tuple[str, str]] = set()
+    rows: list[tuple] = []
+    for item in instruments:
+        key = (item.cnpj_basico, item.ticker)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            (
+                item.cvm_code,
+                item.cnpj,
+                item.cnpj_basico,
+                item.ticker,
+                item.isin,
+                item.ticker_root,
+                B3_COMPANY_DETAIL_URL,
+                source_run_id,
+                stamped,
+            )
+        )
+    return rows

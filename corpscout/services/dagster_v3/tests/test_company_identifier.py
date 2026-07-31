@@ -61,7 +61,10 @@ def test_sql_requires_the_identifier_to_exist_in_the_register() -> None:
     sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
     assert "INNER JOIN register_current AS r" in sql
-    assert "r.company_id = g.company_id_normalized" in sql
+    # BOTH sides normalised. Comparing GLEIF's normalised id against the
+    # register's RAW one matched nothing wherever a register punctuates its
+    # ids: Finland stores 0136203-8 and scored zero until this changed.
+    assert "r.company_id_normalized = g.company_id_normalized" in sql
 
 
 def test_sql_does_not_tier_confidence_by_registration_authority() -> None:
@@ -189,3 +192,26 @@ def test_replace_refuses_duplicate_identity_grain(
         )
 
     assert not any(s.startswith("EXCHANGE TABLES") for s in client.statements)
+
+
+def test_each_country_names_its_own_register_id_column() -> None:
+    """Registers disagree — company_id, org_number, business_id — and a
+    hardcoded column silently limited this to Sweden."""
+    from dagster_v3.defs.company_identifier.rules import COUNTRY_IDENTITY_RULES
+
+    columns = {code: rule.id_column for code, rule in COUNTRY_IDENTITY_RULES.items()}
+    assert columns["SE"] == "company_id"
+    assert columns["NO"] == "org_number"
+    assert columns["FI"] == "business_id"
+
+
+def test_every_rule_uses_its_own_id_column_in_the_sql() -> None:
+    from dagster_v3.defs.company_identifier.assets import (
+        build_company_identifier_insert_sql,
+    )
+    from dagster_v3.defs.company_identifier.rules import COUNTRY_IDENTITY_RULES
+
+    for rule in COUNTRY_IDENTITY_RULES.values():
+        sql = build_company_identifier_insert_sql(_STAGE, rule)
+        assert f"{rule.id_column} AS company_id" in sql, rule.country_code
+        assert rule.register_table in sql, rule.country_code
