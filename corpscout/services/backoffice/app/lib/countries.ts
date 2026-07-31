@@ -204,6 +204,29 @@ export interface CountryConfig {
    * the year selector simply does not reach that country's revenue cards.
    */
   financialsByYear?: { table: string; idColumn: string };
+  /**
+   * Where this country's legal-form codes are decoded, when not the shared
+   * company_entity_types_translated.
+   *
+   * Most registers publish a form list small enough to curate into
+   * company_entity_types. France does not: INSEE's nomenclature is 309 codes
+   * pulled as its own source, so it gets its own dimension table rather than
+   * 309 hand-typed rows in a table whose real job is entity classification.
+   */
+  legalFormLookup?: {
+    table: string;
+    codeColumn: string;
+    labelColumn: string;
+    enColumn: string;
+    /**
+     * Whether a four-digit code ending '00' may fall back to its two-digit
+     * prefix. Sirene writes some units at INSEE's coarser level II — 28,520
+     * companies carry '2200', which is level II's '22'. Only the trailing
+     * zeros license this: '5498' is a level-III code that happens to be
+     * absent, and truncating it to '54' would assert it is a plain SARL.
+     */
+    paddedParentFallback?: boolean;
+  };
 }
 
 export type CountryFinancialsAggregates = {
@@ -1067,10 +1090,20 @@ LIMIT 1`,
     code: "fr", iso3: "FRA", eurostatGeoCode: "FR", name: "France", flag: "🇫🇷", companiesTable: "fr_companies",
     idColumn: "siren", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "29.7M", features: ["industries"],
+    legalFormLookup: {
+      table: "fr_legal_forms_translated",
+      codeColumn: "code",
+      labelColumn: "label_fr",
+      enColumn: "label_en",
+      paddedParentFallback: true,
+    },
     columns: [
       { key: "id", label: "SIREN", expr: "siren", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Legal form", expr: "legal_form_en", sortable: true, kind: "text", filterable: true },
+      // The raw INSEE code, decoded through fr_legal_forms_translated. The
+      // baked legal_form_en named 93.5% of rows and left 1.93M showing a bare
+      // number, because fr_companies carries no label column to fall back to.
+      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
       { key: "status", label: "Status", expr: "status_en", sortable: true, kind: "status", filterable: true },
       { key: "registered", label: "Created", expr: "toString(creation_date)", sortable: true, kind: "date" },
       { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },

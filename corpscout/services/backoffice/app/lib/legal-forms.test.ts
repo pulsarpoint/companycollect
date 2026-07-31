@@ -3,9 +3,21 @@ import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
 const chQuery = vi.fn();
 vi.mock("~/lib/clickhouse.server", () => ({ chQuery: (...a: unknown[]) => chQuery(...a) }));
 
-const { getLegalFormLabels, __resetLegalFormCache } = await import("~/lib/legal-forms.server");
+const { getLegalFormLabels, __resetLegalFormCache, lookupLegalForm } = await import(
+  "~/lib/legal-forms.server"
+);
 
 const SE = { code: "se" } as never;
+const FR = {
+  code: "fr",
+  legalFormLookup: {
+    table: "fr_legal_forms_translated",
+    codeColumn: "code",
+    labelColumn: "label_fr",
+    enColumn: "label_en",
+    paddedParentFallback: true,
+  },
+} as never;
 
 const row = (en: string) => [{ legal_form_code: "49", label: "Aktiebolag", label_en: en }];
 
@@ -38,11 +50,50 @@ describe("getLegalFormLabels", () => {
     expect((await getLegalFormLabels(SE)).get("49")?.en).toBe("Limited company");
   });
 
+  test("reads a country's own dimension table when it declares one", async () => {
+    chQuery.mockResolvedValue([
+      { legal_form_code: "5499", label: "Société à responsabilité limitée", label_en: "Limited liability company (SARL)" },
+    ]);
+    const labels = await getLegalFormLabels(FR);
+    const sql = String(chQuery.mock.calls[0][0]);
+    expect(sql).toContain("fr_legal_forms_translated");
+    // The shared table is country-scoped; a country's own dimension is not,
+    // so it must not be filtered by a column it does not have.
+    expect(sql).not.toContain("country_code");
+    expect(labels.get("5499")?.en).toBe("Limited liability company (SARL)");
+  });
+
   test("a failed fetch is not cached", async () => {
     chQuery.mockRejectedValueOnce(new Error("clickhouse down"));
     await expect(getLegalFormLabels(SE)).rejects.toThrow("clickhouse down");
 
     chQuery.mockResolvedValue(row("Limited company"));
     expect((await getLegalFormLabels(SE)).get("49")?.en).toBe("Limited company");
+  });
+});
+
+describe("lookupLegalForm", () => {
+  const labels = new Map([
+    ["22", { en: "", original: "Société créée de fait" }],
+    ["54", { en: "", original: "SARL" }],
+    ["5499", { en: "Limited liability company (SARL)", original: "SARL sans autre indication" }],
+  ]);
+
+  test("an exact code wins", () => {
+    expect(lookupLegalForm(labels, "5499", true)?.en).toBe("Limited liability company (SARL)");
+  });
+
+  test("a padded level-two code falls back to its two digits", () => {
+    expect(lookupLegalForm(labels, "2200", true)?.original).toBe("Société créée de fait");
+  });
+
+  test("the fallback needs the trailing zeros", () => {
+    // '5498' is a missing level-III code, not a padded level-II one. Reporting
+    // it as '54' would call the company a plain SARL on no evidence.
+    expect(lookupLegalForm(labels, "5498", true)).toBeUndefined();
+  });
+
+  test("the fallback is off unless the country asks for it", () => {
+    expect(lookupLegalForm(labels, "2200", false)).toBeUndefined();
   });
 });

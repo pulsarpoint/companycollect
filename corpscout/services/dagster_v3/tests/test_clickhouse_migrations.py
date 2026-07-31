@@ -244,6 +244,7 @@ EXPECTED_MIGRATIONS = (
     "000227_corpscout_company_market_excluded",
     "000228_corpscout_company_entity_types_translated",
     "000229_corpscout_fr_legal_forms",
+    "000230_corpscout_fr_legal_forms_translated",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

@@ -64,14 +64,33 @@ export function getLegalFormLabels(
   const cached = cache.get(code);
   if (cached && Date.now() - cached.fetchedAt < TTL_MS) return cached.labels;
 
+  // Most countries share company_entity_types, which is country-scoped. A
+  // country with its own dimension table (France's INSEE nomenclature) has no
+  // country_code column, so it must not be filtered by one.
+  const lookup = country.legalFormLookup;
+  const [sql, params] = lookup
+    ? [
+        `SELECT ${lookup.codeColumn} AS legal_form_code,
+                any(${lookup.labelColumn}) AS label,
+                any(${lookup.enColumn}) AS label_en
+         FROM ${lookup.table}
+         WHERE ${lookup.labelColumn} != ''
+         GROUP BY ${lookup.codeColumn}`,
+        {},
+      ]
+    : [
+        `SELECT legal_form_code,
+                any(source_label) AS label,
+                any(source_label_en) AS label_en
+         FROM company_entity_types_translated
+         WHERE country_code = {country:String} AND source_label != ''
+         GROUP BY legal_form_code`,
+        { country: code },
+      ];
+
   const pending = chQuery<{ legal_form_code: string; label: string; label_en: string }>(
-    `SELECT legal_form_code,
-            any(source_label) AS label,
-            any(source_label_en) AS label_en
-     FROM company_entity_types_translated
-     WHERE country_code = {country:String} AND source_label != ''
-     GROUP BY legal_form_code`,
-    { country: code },
+    sql,
+    params,
   ).then(
     (rows) =>
       new Map(
@@ -87,4 +106,30 @@ export function getLegalFormLabels(
     if (cache.get(code) === entry) cache.delete(code);
   });
   return pending;
+}
+
+/**
+ * The label for a code, with the one fallback INSEE's numbering requires.
+ *
+ * Sirene records some units at INSEE's level II, written as four digits with
+ * trailing zeros: 28,520 French companies carry '2200', which is level II's
+ * '22'. Those would otherwise render as a bare number despite the nomenclature
+ * naming them perfectly well.
+ *
+ * The trailing zeros are what license the fallback, and nothing else does.
+ * '5498' is a level-III code that simply is not in the nomenclature — cutting
+ * it to '54' would state that the company is a plain SARL on no evidence at
+ * all, which is the same class of mistake as machine-translating a legal form.
+ */
+export function lookupLegalForm(
+  labels: Map<string, LegalFormLabel>,
+  code: string,
+  paddedParentFallback = false,
+): LegalFormLabel | undefined {
+  const exact = labels.get(code);
+  if (exact) return exact;
+  if (paddedParentFallback && code.length === 4 && code.endsWith("00")) {
+    return labels.get(code.slice(0, 2));
+  }
+  return undefined;
 }

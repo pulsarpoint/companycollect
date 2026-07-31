@@ -43,7 +43,14 @@ function cellFor(
           // whatever it does not.
           const code = value == null ? "" : String(value);
           if (code === "") return EMPTY;
-          const entry = legalForms[code];
+          // France's codes need one fallback: Sirene writes some units at
+          // INSEE's coarser level II, padded with trailing zeros.
+          const fallback = country.legalFormLookup?.paddedParentFallback;
+          const entry =
+            legalForms[code] ??
+            (fallback && code.length === 4 && code.endsWith("00")
+              ? legalForms[code.slice(0, 2)]
+              : undefined);
           // English leads where it exists; the register's own term is what a
           // reader checks it against, and stands alone until the translator
           // has been round.
