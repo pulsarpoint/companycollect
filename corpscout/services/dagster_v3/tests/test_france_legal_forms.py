@@ -80,3 +80,38 @@ class TestResolveCode:
 @pytest.mark.parametrize("code,level", [("1", 1), ("54", 2), ("5499", 3)])
 def test_legal_form_level_is_derived_consistently(code: str, level: int) -> None:
     assert LegalForm.from_row(code, "x", "").level == level
+
+
+class TestCuratedEnglish:
+    """The curated map is deliberately COARSE -- 5410, 5458 and 5460 all read
+    "Limited liability company (SARL)", which is accurate: they are all SARLs,
+    and INSEE's sub-variants are finer than a company list needs.
+
+    Coarse is fine. Displaced is not. Czechia's map put 145's meaning on 771
+    and nobody noticed, because every value was a real legal form. These
+    assert that an entry describes the form INSEE's French describes, anchored
+    on a word of the French so the check cannot drift with the English.
+    """
+
+    def test_an_entry_does_not_name_a_different_family(self) -> None:
+        from dagster_v3.defs.france_sirene.resources import FR_LEGAL_FORM_EN_BY_CODE
+
+        anchors = {
+            # A GAEC is a joint FARMING group. It sits in the 65xx societe
+            # civile family beside the SCIs, which is how it came to be
+            # labelled as one -- 51,567 farms read "Real estate civil company".
+            "6533": ("agricole", "farming"),
+            # 9230 is recognised as being of public utility. "Under local law"
+            # is 9260, Alsace-Moselle.
+            "9230": ("utilité publique", "public utility"),
+            "9260": ("droit local", "local law"),
+            "6540": ("immobilière", "real estate"),
+            "9220": ("déclarée", "declared"),
+            "6220": ("intérêt économique", "economic interest"),
+        }
+        for code, (french_fragment, english_fragment) in anchors.items():
+            english = FR_LEGAL_FORM_EN_BY_CODE[code]
+            assert english_fragment.lower() in english.lower(), (
+                f"{code} is translated as {english!r}, which does not "
+                f"describe a form whose INSEE label says {french_fragment!r}"
+            )

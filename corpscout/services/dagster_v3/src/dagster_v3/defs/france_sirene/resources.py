@@ -77,7 +77,10 @@ FR_LEGAL_FORM_EN_BY_CODE = {
     "5720": "Single-member simplified joint-stock company (SASU)",
     "5785": "Simplified joint-stock company (SAS)",
     "6220": "Economic interest grouping (GIE)",
-    "6533": "Real estate civil company (SCI)",
+    # A GAEC is a joint FARMING group. It sits in the 65xx societe civile
+    # family beside the SCIs, which is how it came to be labelled as one --
+    # 51,567 farms read "Real estate civil company".
+    "6533": "Joint farming group (GAEC)",
     "6540": "Real estate civil company (SCI)",
     "6541": "Real estate civil company (SCI)",
     "6542": "Civil company",
@@ -88,7 +91,10 @@ FR_LEGAL_FORM_EN_BY_CODE = {
     "9222": "Association",
     "9223": "Association",
     "9224": "Association",
-    "9230": "Association under local law",
+    # "Association under local law" is what 9260 means (Alsace-Moselle).
+    # 9230 is an association recognised as being of public utility.
+    "9230": "Declared association recognised as being of public utility",
+    "9260": "Association under local law (Alsace-Moselle)",
     "9300": "Foundation",
 }
 
