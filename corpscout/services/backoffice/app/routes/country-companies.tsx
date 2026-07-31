@@ -4,6 +4,7 @@ import type { Route } from "./+types/country-companies";
 import { getCountry } from "~/lib/countries";
 import { parseFilters } from "~/lib/filters";
 import { searchCompanies } from "~/lib/queries.server";
+import { getLegalFormLabels } from "~/lib/legal-forms.server";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Badge } from "~/components/ui/badge";
@@ -20,15 +21,24 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 
   const url = new URL(request.url);
   const filters = parseFilters(url.searchParams, country);
-  const result = await searchCompanies(country, {
+  const [result, legalFormLabels] = await Promise.all([
+    searchCompanies(country, {
+      q: url.searchParams.get("q") ?? "",
+      page: Number(url.searchParams.get("page") ?? "1") || 1,
+      pageSize: Number(url.searchParams.get("pageSize") ?? "50") || 50,
+      sort: url.searchParams.get("sort"),
+      dir: url.searchParams.get("dir"),
+      filters,
+    }),
+    // A few dozen rows, cached per process — se_companies stores only the code.
+    getLegalFormLabels(country),
+  ]);
+  return {
     q: url.searchParams.get("q") ?? "",
-    page: Number(url.searchParams.get("page") ?? "1") || 1,
-    pageSize: Number(url.searchParams.get("pageSize") ?? "50") || 50,
-    sort: url.searchParams.get("sort"),
-    dir: url.searchParams.get("dir"),
+    result,
     filters,
-  });
-  return { q: url.searchParams.get("q") ?? "", result, filters };
+    legalForms: Object.fromEntries(legalFormLabels),
+  };
 }
 
 export function meta({ params }: Route.MetaArgs) {
@@ -37,9 +47,9 @@ export function meta({ params }: Route.MetaArgs) {
 }
 
 export default function CountryCompanies({ loaderData, params }: Route.ComponentProps) {
-  const { q, result, filters } = loaderData;
+  const { q, result, filters, legalForms } = loaderData;
   const country = getCountry(params.country)!;
-  const columns = buildCompanyColumns(country, result.sort, result.dir);
+  const columns = buildCompanyColumns(country, result.sort, result.dir, legalForms);
   const searchParams = useEffectiveSearchParams();
 
   return (

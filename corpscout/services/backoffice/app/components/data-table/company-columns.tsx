@@ -13,7 +13,11 @@ function text(value: unknown) {
   return s;
 }
 
-function cellFor(col: CompanyColumn, country: CountryConfig) {
+function cellFor(
+  col: CompanyColumn,
+  country: CountryConfig,
+  legalForms: Record<string, string> = {},
+) {
   return ({ row }: { row: { original: CompanyListRow } }) => {
     const value = row.original[col.key];
     switch (col.kind) {
@@ -32,6 +36,20 @@ function cellFor(col: CompanyColumn, country: CountryConfig) {
           </Badge>
         );
       default:
+        if (col.key === "legal_form") {
+          // Sweden stores only the code, so the column read 51, 61, E-ORGFO.
+          // company_entity_types carries the register's own wording and covers
+          // 3,407,806 of its 3,407,809 companies; the code shows through for
+          // whatever it does not.
+          const code = value == null ? "" : String(value);
+          if (code === "") return EMPTY;
+          const label = legalForms[code];
+          return (
+            <span className="block max-w-[14rem] truncate" title={`${label ?? ""} (${code})`.trim()}>
+              {label ?? code}
+            </span>
+          );
+        }
         if (col.key === "name") {
           const s = value == null ? "" : String(value);
           if (s === "") return EMPTY;
@@ -50,10 +68,18 @@ function cellFor(col: CompanyColumn, country: CountryConfig) {
   };
 }
 
+/** "68.20 Rental and operating…" -> "Rental and operating…" */
+function stripLeadingCode(label: string): string {
+  return label.replace(/^\s*[0-9][0-9.\-/]*\s+/, "");
+}
+
 export function buildCompanyColumns(
   country: CountryConfig,
   sort: string,
   dir: SortDir,
+  /** Legal-form code -> the register's own wording. Sweden stores only the
+   * code, so without this its column reads 51, 61, E-ORGFO. */
+  legalForms: Record<string, string> = {},
 ): ColumnDef<CompanyListRow, unknown>[] {
   const defs: ColumnDef<CompanyListRow, unknown>[] = country.columns.map((col) => ({
     id: col.key,
@@ -65,7 +91,7 @@ export function buildCompanyColumns(
         currentDir={dir}
       />
     ),
-    cell: cellFor(col, country),
+    cell: cellFor(col, country, legalForms),
   }));
 
   if (country.industryQuery) {
@@ -78,16 +104,18 @@ export function buildCompanyColumns(
         const code = row.original.industry_code;
         const label = row.original.industry_label;
         if (!code && !label) return EMPTY;
+        // A NACE description already begins with its own code — "68.20 Rental
+        // and operating of own or leased real estate" — so printing the code
+        // beside it showed the same number twice, once as 6820 and once as
+        // 68.20. The column is for scanning what a company does; the code
+        // stays on hover and on the company page.
+        const text = label ? stripLeadingCode(String(label)) : String(code);
         return (
-          <span className="flex max-w-[20rem] items-baseline gap-1.5">
-            {code ? (
-              <span className="text-muted-foreground font-mono text-xs">{code}</span>
-            ) : null}
-            {label ? (
-              <span className="truncate" title={String(label)}>
-                {label}
-              </span>
-            ) : null}
+          <span
+            className="block max-w-[20rem] truncate"
+            title={[code, label].filter(Boolean).join(" · ")}
+          >
+            {text}
           </span>
         );
       },
