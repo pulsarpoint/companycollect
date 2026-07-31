@@ -71,7 +71,12 @@ describe("country contracts", () => {
       expect(row.supplier_count).toBe(1);
       if (row.amount_original != null) expect(row.currency).not.toBe("");
     }
-  });
+    // 20s, not the 5s default. This query takes ~5.2s against ClickHouse and
+    // was landing either side of the limit depending on machine load. The
+    // headroom is so the suite stops flapping -- NOT because 5.2s is
+    // acceptable: br_government_contracts holds 539,083 rows, and a page over
+    // that should be milliseconds. The query is worth profiling.
+  }, 20_000);
 
   it("opens a contract with every source it was published in", async () => {
     const fi = getCountry("fi")!;

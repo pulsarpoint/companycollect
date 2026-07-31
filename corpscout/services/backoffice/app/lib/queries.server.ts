@@ -63,6 +63,7 @@ function buildCompanySelectList(country: CountryConfig): string {
     ...country.columns.map((c) => `${c.expr} AS ${c.key}`),
     `toUInt8(${country.activeExpr}) AS active`,
     ...(country.industryQuery ? [`toString(${joinKeyExpr}) AS __industry_key`] : []),
+    ...(country.placeQuery ? [`toString(${country.idColumn}) AS __place_key`] : []),
   ].join(",\n       ");
 }
 
@@ -168,6 +169,18 @@ export async function searchCompanies(
       row.industry_code = hit?.industry_code ?? null;
       row.industry_label = hit?.industry_label ?? null;
       delete row.__industry_key;
+    }
+  }
+
+  if (country.placeQuery) {
+    const ids = rows.map((r) => String(r.__place_key ?? "")).filter((v) => v !== "");
+    const places = ids.length
+      ? await chQuery<{ company_id: string; place: string }>(country.placeQuery, { ids })
+      : [];
+    const byId = new Map(places.map((p) => [p.company_id, p.place]));
+    for (const row of rows) {
+      row.place = byId.get(String(row.__place_key ?? "")) ?? null;
+      delete row.__place_key;
     }
   }
 

@@ -213,6 +213,20 @@ export interface CountryConfig {
    * pulled as its own source, so it gets its own dimension table rather than
    * 309 hand-typed rows in a table whose real job is entity classification.
    */
+  /**
+   * Where a company's town comes from when the register keeps it outside the
+   * companies table.
+   *
+   * Norway, Finland and Sweden hold addresses in {xx}_company_addresses --
+   * 1.35M, 702k and 4.37M rows against roughly one company each, because a
+   * company has more than one address and they are typed. Joining that into
+   * the list query would put a multi-million-row join in the hot path to
+   * label 50 visible rows, so this runs as a second query keyed on the ids
+   * actually on screen, exactly as industryQuery does.
+   *
+   * Must return company_id and place. Takes an {ids:Array(String)} parameter.
+   */
+  placeQuery?: string;
   legalFormLookup?: {
     table: string;
     codeColumn: string;
@@ -249,8 +263,13 @@ export const COUNTRIES: CountryConfig[] = [
     code: "no", iso3: "NOR", eurostatGeoCode: "NO", name: "Norway", flag: "🇳🇴", companiesTable: "no_companies",
     idColumn: "org_number", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "1.2M", features: ["financials", "industries", "contacts", "domains"],
+    placeQuery: `SELECT toString(registry_id) AS company_id,
+            argMax(coalesce(nullIf(city, ''), municipality), address_type = 'business') AS place
+     FROM no_company_addresses
+     WHERE registry_id IN {ids:Array(String)}
+     GROUP BY company_id`,
     columns: [
-      { key: "id", label: "Org number", expr: "org_number", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "org_number", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
       // The CODE, so the shared decoder names it — English once translated,
       // the register's own term until then. Reading
@@ -355,8 +374,13 @@ LIMIT 10`,
     code: "fi", iso3: "FIN", eurostatGeoCode: "FI", name: "Finland", flag: "🇫🇮", companiesTable: "fi_companies",
     idColumn: "business_id", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "460k", features: ["financials", "industries", "contacts", "domains"],
+    placeQuery: `SELECT toString(registry_id) AS company_id,
+            argMax(coalesce(nullIf(city, ''), municipality), address_type = 'postal') AS place
+     FROM fi_company_addresses
+     WHERE registry_id IN {ids:Array(String)}
+     GROUP BY company_id`,
     columns: [
-      { key: "id", label: "Business ID", expr: "business_id", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "business_id", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
       { key: "legal_form", label: "Legal form", expr: "coalesce(legal_form_description_en, legal_form_description_original, legal_form_code)", sortable: true, kind: "text", filterable: true }, // populated from YTJ companyForms since 2026-07-17
       { key: "status", label: "Status", expr: "lifecycle_status", sortable: true, kind: "status", filterable: true },
@@ -475,8 +499,13 @@ LIMIT 100`,
       "concat(coalesce(legal_name, ''), ' ', replaceRegexpAll(replaceRegexpAll(coalesce(legal_name, ''), '(?i)aktiebolag', 'AB'), '(?i)handelsbolag', 'HB'))",
     approxCompanies: "3.4M", features: ["financials", "industries"],
     industryJoinKeyExpr: "company_id",
+    placeQuery: `SELECT toString(company_id) AS company_id,
+            argMax(post_town, address_type = 'postal') AS place
+     FROM se_company_addresses
+     WHERE company_id IN {ids:Array(String)}
+     GROUP BY company_id`,
     columns: [
-      { key: "id", label: "Reg. number", expr: "registration_number", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "registration_number", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "legal_name", sortable: true, kind: "text" },
       { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
       { key: "status", label: "Status", expr: "status", sortable: true, kind: "status", filterable: true },
@@ -866,7 +895,7 @@ LIMIT 100`,
     approxCompanies: "373k", features: ["financials", "industries", "contacts", "domains"],
     legalFormLookup: { table: "ee_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
     columns: [
-      { key: "id", label: "Reg. code", expr: "reg_code", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "reg_code", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
       // Estonia's register publishes no code, so the Estonian term is its own key.
       { key: "legal_form", label: "Legal form", expr: "legal_form_original", sortable: true, kind: "text", filterable: true },
@@ -955,7 +984,7 @@ LIMIT 1`,
     approxCompanies: "485k", features: ["financials", "contacts", "domains"],
     legalFormLookup: { table: "lv_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
     columns: [
-      { key: "id", label: "Reg. code", expr: "regcode", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "regcode", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "legal_name", sortable: true, kind: "text" },
       // Read from text_translations, not lv_companies.legal_form_description_en:
       // that column was stamped in at load time and held June's pre-correction
@@ -1018,7 +1047,7 @@ LIMIT 1`,
     idColumn: "company_number", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "5.7M", features: ["financials", "industries"],
     columns: [
-      { key: "id", label: "Company number", expr: "company_number", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "company_number", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
       { key: "legal_form", label: "Category", expr: "company_category", sortable: true, kind: "text", filterable: true },
       { key: "status", label: "Status", expr: "company_status", sortable: true, kind: "status", filterable: true },
@@ -1104,7 +1133,7 @@ LIMIT 1`,
       paddedParentFallback: true,
     },
     columns: [
-      { key: "id", label: "SIREN", expr: "siren", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "siren", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
       // The raw INSEE code, decoded through fr_legal_forms_translated. The
       // baked legal_form_en named 93.5% of rows and left 1.93M showing a bare
@@ -1160,7 +1189,7 @@ LIMIT 1`,
     idColumn: "cnpj_basico", nameColumn: "legal_name", activeExpr: "is_active = 1",
     approxCompanies: "68.6M", features: ["financials", "contacts", "domains"],
     columns: [
-      { key: "id", label: "CNPJ", expr: "cnpj_basico", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "cnpj_basico", sortable: true, kind: "id" },
       { key: "name", label: "Legal name", expr: "legal_name", sortable: true, kind: "text" },
       { key: "trade_name", label: "Trade name", expr: "trade_name", sortable: false, kind: "text" },
       { key: "size", label: "Size", expr: "company_size_en", sortable: true, kind: "text", filterable: true },
@@ -1313,7 +1342,7 @@ LIMIT 1`,
     approxCompanies: "3.5M", features: ["industries", "contacts", "domains"],
     legalFormLookup: { table: "cz_legal_forms_translated", codeColumn: "code", labelColumn: "label_cs", enColumn: "label_en" },
     columns: [
-      { key: "id", label: "IČO", expr: "ico", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "ico", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
       // The raw ARES code, decoded through cz_legal_forms_translated. The baked
       // legal_form_en left 108,341 companies on 38 codes showing a bare
@@ -1380,7 +1409,7 @@ LIMIT 1`,
     approxCompanies: "2.2M", features: ["financials", "industries"],
     legalFormLookup: { table: "sk_legal_forms_translated", codeColumn: "code", labelColumn: "label", enColumn: "label_en" },
     columns: [
-      { key: "id", label: "IČO", expr: "ico", sortable: true, kind: "id" },
+      { key: "id", label: "ID", expr: "ico", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
       // Read from text_translations rather than the column baked at ingest.
       { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },

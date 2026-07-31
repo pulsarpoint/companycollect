@@ -150,5 +150,24 @@ export function buildCompanyColumns(
     defs.splice(nameIndex + 1, 0, industryDef);
   }
 
+  if (country.placeQuery) {
+    // Not sortable: the value is merged in after the page is fetched, so the
+    // database cannot order by it. Offering a sort that silently did nothing
+    // would be worse than not offering one.
+    defs.push({
+      id: "place",
+      header: () => <span className="text-muted-foreground">Place</span>,
+      cell: ({ row }) => {
+        const place = row.original.place;
+        if (!place) return EMPTY;
+        return (
+          <span className="block max-w-[12rem] truncate" title={String(place)}>
+            {String(place)}
+          </span>
+        );
+      },
+    });
+  }
+
   return defs;
 }
