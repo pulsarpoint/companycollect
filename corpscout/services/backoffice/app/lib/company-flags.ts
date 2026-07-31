@@ -15,7 +15,7 @@
  * Client-safe: no `.server` imports, so the table and legend can use it.
  */
 
-export type CompanyFlagId = "financials" | "contacts" | "address" | "trading";
+export type CompanyFlagId = "financials" | "contacts" | "domain" | "trading";
 
 export type CompanyFlag = {
   id: CompanyFlagId;
@@ -41,10 +41,10 @@ export const COMPANY_FLAGS: CompanyFlag[] = [
     meaning: "An email, phone or website found for the company",
   },
   {
-    id: "address",
-    char: "A",
-    label: "Address",
-    meaning: "A registered address",
+    id: "domain",
+    char: "D",
+    label: "Domain",
+    meaning: "A website matched to the company and validated",
   },
   {
     id: "trading",
@@ -81,14 +81,14 @@ export const COMPANY_FLAG_SOURCES: Record<
   // measured spread is what makes the column worth having, and that is worth
   // seeing on one country before it lands on ten.
   //
-  // Measured on 1,167,141 Norwegian companies: financials 425,365 (36%),
-  // contacts 479,035 (41%), address 1,165,337 (99.8%), traded 249.
+  // Measured on 1,167,141 Norwegian companies: financials 36.4%,
+  // contacts 41%, domain 9.7%, traded 249 companies.
   no: {
     financials: { table: "no_company_financials_latest", idColumn: "company_id" },
     // Contacts are keyed on registry_id, not company_id, in every register
     // that has them.
     contacts: { table: "no_company_contacts", idColumn: "registry_id" },
-    address: { table: "no_company_addresses", idColumn: "registry_id" },
+    domain: { table: "no_company_domains", idColumn: "registry_id" },
     trading: { market: true },
   },
   // Sweden has no contact source at all -- no websites, domains or contacts
@@ -96,11 +96,11 @@ export const COMPANY_FLAG_SOURCES: Record<
   // design working: a dark C on every Swedish row would describe our coverage
   // rather than the company.
   //
-  // Measured on 3,407,809 companies: financials 560,208 (16.4%),
-  // address 3,407,783 (99.999%), traded 784.
+  // Measured on 3,407,809 companies: financials 16.4%, traded 784. Sweden has
+  // neither a contact nor a domain source, so it shows two flags where Norway
+  // shows four -- which is itself worth seeing.
   se: {
     financials: { table: "se_company_financials_latest", idColumn: "company_id" },
-    address: { table: "se_company_addresses", idColumn: "company_id" },
     trading: { market: true },
   },
 };
