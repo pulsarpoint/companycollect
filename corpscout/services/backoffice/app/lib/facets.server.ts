@@ -56,6 +56,36 @@ function facetSql(country: CountryConfig, facetKey: string): string {
   );
   if (!column) throw new Error(`unknown facet: ${facetKey}`);
   // Identifiers/expressions come from the static registry only.
+  //
+  // Legal form filters on the CODE and displays the name. Without the join the
+  // dropdown listed 51, 61, E-ORGFO — the same thing the column itself used to
+  // show, in a second place. company_entity_types_translated carries English
+  // where the translator has been round and the register's own term otherwise.
+  if (column.key === "legal_form") {
+    // No `c.` prefix: several countries' expr is an EXPRESSION, not a column
+    // — coalesce(legal_form_description_en, ...) — and qualifying it produced
+    // `c.coalesce(...)`, which ClickHouse read as a function that does not
+    // exist. Unqualified names resolve against the FROM table anyway.
+    //
+    // Where a country's expr is already a description rather than a code the
+    // join simply misses and the label falls back to it, which is what those
+    // countries showed before.
+    return `SELECT toString(${column.expr}) AS value,
+       coalesce(nullIf(any(t.source_label_en), ''), nullIf(any(t.source_label), ''), toString(${column.expr})) AS label,
+       count() AS cnt
+FROM ${country.companiesTable}
+LEFT JOIN (
+  SELECT legal_form_code, any(source_label) AS source_label, any(source_label_en) AS source_label_en
+  FROM company_entity_types_translated
+  WHERE country_code = '${country.code.toUpperCase()}'
+  GROUP BY legal_form_code
+) AS t ON t.legal_form_code = toString(${column.expr})
+WHERE toString(${column.expr}) != ''
+GROUP BY value
+ORDER BY cnt DESC
+LIMIT 50000`;
+  }
+
   return `SELECT toString(${column.expr}) AS value,
        toString(${column.expr}) AS label,
        count() AS cnt

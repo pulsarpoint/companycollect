@@ -34,7 +34,15 @@ class TranslationField:
     column: str
 
 
-def build_scan_sql(table: str, column: str) -> str:
+def build_scan_sql(table: str, column: str, extra_where: str | None = None) -> str:
+    """Untranslated texts for one column.
+
+    `extra_where` scopes the scan, for a table whose rows are not all in one
+    language: company_entity_types holds Swedish, Norwegian, Finnish and
+    Portuguese labels side by side, and each must be enqueued with its own
+    source language or the translator is told Swedish is Portuguese.
+    """
+    scope = "" if extra_where is None else f"\n  AND ({extra_where})"
     return f"""
 SELECT DISTINCT
     c.{column} AS source_text,
@@ -47,7 +55,7 @@ LEFT ANTI JOIN (
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.{column})
 WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''
-  AND length(c.{column}) <= 8000"""
+  AND length(c.{column}) <= 8000{scope}"""
 
 
 def build_static_scan_sql(table: str, column: str, key_column: str) -> str:
@@ -64,7 +72,7 @@ LEFT ANTI JOIN (
     GROUP BY source_text_hash
 ) AS t ON t.source_text_hash = cityHash64(c.{column})
 WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''
-  AND length(c.{column}) <= 8000"""
+  AND length(c.{column}) <= 8000{scope}"""
 
 
 def insert_static_translations(

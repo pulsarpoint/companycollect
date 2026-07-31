@@ -16,7 +16,7 @@ function text(value: unknown) {
 function cellFor(
   col: CompanyColumn,
   country: CountryConfig,
-  legalForms: Record<string, string> = {},
+  legalForms: Record<string, { en: string; original: string }> = {},
 ) {
   return ({ row }: { row: { original: CompanyListRow } }) => {
     const value = row.original[col.key];
@@ -43,10 +43,20 @@ function cellFor(
           // whatever it does not.
           const code = value == null ? "" : String(value);
           if (code === "") return EMPTY;
-          const label = legalForms[code];
+          const entry = legalForms[code];
+          // English leads where it exists; the register's own term is what a
+          // reader checks it against, and stands alone until the translator
+          // has been round.
+          const shown = entry?.en || entry?.original || code;
+          const original = entry?.original ?? "";
           return (
-            <span className="block max-w-[14rem] truncate" title={`${label ?? ""} (${code})`.trim()}>
-              {label ?? code}
+            <span
+              className="block max-w-[14rem] truncate"
+              title={[shown, original !== shown ? original : "", `(${code})`]
+                .filter(Boolean)
+                .join(" · ")}
+            >
+              {shown}
             </span>
           );
         }
@@ -79,7 +89,7 @@ export function buildCompanyColumns(
   dir: SortDir,
   /** Legal-form code -> the register's own wording. Sweden stores only the
    * code, so without this its column reads 51, 61, E-ORGFO. */
-  legalForms: Record<string, string> = {},
+  legalForms: Record<string, { en: string; original: string }> = {},
 ): ColumnDef<CompanyListRow, unknown>[] {
   const defs: ColumnDef<CompanyListRow, unknown>[] = country.columns.map((col) => ({
     id: col.key,

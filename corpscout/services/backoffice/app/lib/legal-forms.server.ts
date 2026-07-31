@@ -20,22 +20,42 @@ import type { CountryConfig } from "~/lib/countries";
  * company search would put a JOIN in every country's hot path to save nothing.
  */
 
-const cache = new Map<string, Promise<Map<string, string>>>();
+export type LegalFormLabel = {
+  /** English, once the translator has been round. Empty until then. */
+  en: string;
+  /** The register's own term, always present. */
+  original: string;
+};
 
+const cache = new Map<string, Promise<Map<string, LegalFormLabel>>>();
+
+/**
+ * English primary, original paired — the same rule every other field here
+ * follows. Until company_entity_types_translation_load has run, `en` is empty
+ * and the caller falls back to the register's wording, which is what the
+ * column showed before and is never wrong, only untranslated.
+ */
 export function getLegalFormLabels(
   country: CountryConfig,
-): Promise<Map<string, string>> {
+): Promise<Map<string, LegalFormLabel>> {
   const code = country.code.toUpperCase();
   const cached = cache.get(code);
   if (cached) return cached;
 
-  const pending = chQuery<{ legal_form_code: string; label: string }>(
-    `SELECT legal_form_code, any(source_label) AS label
-     FROM company_entity_types
+  const pending = chQuery<{ legal_form_code: string; label: string; label_en: string }>(
+    `SELECT legal_form_code,
+            any(source_label) AS label,
+            any(source_label_en) AS label_en
+     FROM company_entity_types_translated
      WHERE country_code = {country:String} AND source_label != ''
      GROUP BY legal_form_code`,
     { country: code },
-  ).then((rows) => new Map(rows.map((r) => [r.legal_form_code, r.label])));
+  ).then(
+    (rows) =>
+      new Map(
+        rows.map((r) => [r.legal_form_code, { en: r.label_en, original: r.label }]),
+      ),
+  );
 
   cache.set(code, pending);
   pending.catch(() => cache.delete(code));
