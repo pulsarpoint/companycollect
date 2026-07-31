@@ -242,6 +242,7 @@ EXPECTED_MIGRATIONS = (
     "000225_corpscout_br_b3_instruments",
     "000226_corpscout_gleif_isin_lei",
     "000227_corpscout_company_market_excluded",
+    "000227_corpscout_company_market_excluded",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
