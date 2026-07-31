@@ -177,6 +177,43 @@ def test_annual_account_asset_graph_separates_download_processing_and_cleanup() 
     }
 
 
+@pytest.mark.parametrize(
+    ("asset", "kwargs", "upstream_asset_name"),
+    [
+        (
+            norway_brreg_annual_account_documents_json,
+            {
+                "config": annual_accounts.NorwayBrregAnnualAccountDocumentConfig(),
+                "norway_brreg_financial_storage": object(),
+            },
+            "norway_brreg_annual_account_pdfs",
+        ),
+        (
+            norway_brreg_annual_account_pdf_cleanup,
+            {"norway_brreg_financial_storage": object()},
+            "norway_brreg_annual_account_documents_json",
+        ),
+    ],
+)
+def test_annual_account_s3_stages_require_same_partition_parent(
+    asset: Any,
+    kwargs: dict[str, Any],
+    upstream_asset_name: str,
+) -> None:
+    partition_key = dg.MultiPartitionKey(
+        {"year": "2025", "chunk": "bucket_63"}
+    )
+    with (
+        dg.DagsterInstance.ephemeral() as instance,
+        dg.build_asset_context(
+            instance=instance,
+            partition_key=partition_key,
+        ) as context,
+        pytest.raises(dg.Failure, match=upstream_asset_name),
+    ):
+        asset(context=context, **kwargs)
+
+
 def test_pdf_asset_queries_requested_year_and_chunk_without_processing(
     monkeypatch,
 ) -> None:

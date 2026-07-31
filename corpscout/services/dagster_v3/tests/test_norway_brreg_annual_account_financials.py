@@ -33,6 +33,9 @@ from dagster_v3.defs.norway_brreg_financial.annual_account_clickhouse import (
     publish_annual_account_partition,
 )
 from dagster_v3.defs.norway_brreg_financial import annual_account_clickhouse
+from dagster_v3.defs.norway_brreg_financial.assets import (
+    annual_account_financials as annual_account_financial_assets,
+)
 from dagster_v3.defs.norway_brreg_financial.assets.annual_account_financials import (
     norway_brreg_annual_account_documents_duckdb,
     norway_brreg_annual_account_fact_mappings_duckdb,
@@ -42,6 +45,9 @@ from dagster_v3.defs.norway_brreg_financial.assets.annual_account_financials imp
     norway_brreg_annual_account_metrics_clickhouse,
     norway_brreg_annual_account_metrics_duckdb,
     norway_brreg_annual_account_reports_clickhouse,
+)
+from dagster_v3.defs.norway_brreg_financial.assets.annual_accounts import (
+    _require_upstream_partition_materializations,
 )
 from dagster_v3.defs.norway_brreg_financial.models import (
     AnnualAccountConceptMappingResponse,
@@ -985,6 +991,129 @@ def test_clickhouse_publish_atomically_replaces_one_partition(monkeypatch: Any) 
     statements = "\n".join(clickhouse.client.statements).lower()
     assert "replace partition tuple(2025, 'bucket_00')" in statements
     assert "drop table if exists" in statements
+
+
+def test_downstream_asset_requires_materialized_parent_partition() -> None:
+    upstream_asset_key = dg.AssetKey(
+        "norway_brreg_annual_account_metrics_duckdb"
+    )
+    partition_key = "bucket_00|2024"
+
+    with dg.DagsterInstance.ephemeral() as instance:
+        context = dg.build_asset_context(
+            instance=instance,
+            partition_key=partition_key,
+        )
+
+        with pytest.raises(dg.Failure, match="has no materialization") as exc_info:
+            _require_upstream_partition_materializations(
+                context,
+                upstream_asset_keys=(upstream_asset_key,),
+            )
+
+        assert exc_info.value.allow_retries is False
+
+        instance.report_runless_asset_event(
+            dg.AssetMaterialization(
+                asset_key=upstream_asset_key,
+                partition=partition_key,
+            )
+        )
+        _require_upstream_partition_materializations(
+            context,
+            upstream_asset_keys=(upstream_asset_key,),
+        )
+
+
+@pytest.mark.parametrize(
+    ("asset", "kwargs", "upstream_asset_names"),
+    [
+        (
+            norway_brreg_annual_account_documents_duckdb,
+            {
+                "norway_brreg_financial_storage": object(),
+                "norway_brreg_annual_accounts_duckdb": object(),
+            },
+            ("norway_brreg_annual_account_documents_json",),
+        ),
+        (
+            norway_brreg_annual_account_facts_duckdb,
+            {
+                "norway_brreg_financial_storage": object(),
+                "norway_brreg_annual_accounts_duckdb": object(),
+            },
+            ("norway_brreg_annual_account_documents_duckdb",),
+        ),
+        (
+            norway_brreg_annual_account_fact_mappings_duckdb,
+            {
+                "config": annual_account_financial_assets.AnnualAccountLlmMappingConfig(),
+                "norway_brreg_annual_accounts_duckdb": object(),
+            },
+            ("norway_brreg_annual_account_facts_duckdb",),
+        ),
+        (
+            norway_brreg_annual_account_facts_usd_duckdb,
+            {"norway_brreg_annual_accounts_duckdb": object()},
+            ("norway_brreg_annual_account_facts_duckdb",),
+        ),
+        (
+            norway_brreg_annual_account_metrics_duckdb,
+            {"norway_brreg_annual_accounts_duckdb": object()},
+            (
+                "norway_brreg_annual_account_fact_mappings_duckdb",
+                "norway_brreg_annual_account_facts_usd_duckdb",
+            ),
+        ),
+        (
+            norway_brreg_annual_account_reports_clickhouse,
+            {
+                "clickhouse": object(),
+                "norway_brreg_annual_accounts_duckdb": object(),
+            },
+            ("norway_brreg_annual_account_documents_duckdb",),
+        ),
+        (
+            norway_brreg_annual_account_facts_clickhouse,
+            {
+                "clickhouse": object(),
+                "norway_brreg_annual_accounts_duckdb": object(),
+            },
+            (
+                "norway_brreg_annual_account_fact_mappings_duckdb",
+                "norway_brreg_annual_account_facts_usd_duckdb",
+            ),
+        ),
+        (
+            norway_brreg_annual_account_metrics_clickhouse,
+            {
+                "clickhouse": object(),
+                "norway_brreg_annual_accounts_duckdb": object(),
+            },
+            ("norway_brreg_annual_account_metrics_duckdb",),
+        ),
+    ],
+)
+def test_annual_account_financial_stages_require_same_partition_parents(
+    asset: Any,
+    kwargs: dict[str, Any],
+    upstream_asset_names: tuple[str, ...],
+) -> None:
+    partition_key = dg.MultiPartitionKey(
+        {"year": "2025", "chunk": "bucket_63"}
+    )
+    with (
+        dg.DagsterInstance.ephemeral() as instance,
+        dg.build_asset_context(
+            instance=instance,
+            partition_key=partition_key,
+        ) as context,
+        pytest.raises(dg.Failure) as exc_info,
+    ):
+        asset(context=context, **kwargs)
+
+    for upstream_asset_name in upstream_asset_names:
+        assert upstream_asset_name in str(exc_info.value)
 
 
 def test_annual_account_financial_asset_graph_keeps_each_stage_separate() -> None:

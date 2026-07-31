@@ -129,6 +129,10 @@ def norway_brreg_annual_account_documents_json(
     config: NorwayBrregAnnualAccountDocumentConfig,
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
+    _require_upstream_partition_materializations(
+        context,
+        upstream_asset_keys=(dg.AssetKey("norway_brreg_annual_account_pdfs"),),
+    )
     filing_year, chunk_key = _partition_values(context.partition_key)
     metadata = materialize_annual_account_documents(
         filing_year=filing_year,
@@ -165,6 +169,12 @@ def norway_brreg_annual_account_pdf_cleanup(
     context: AssetExecutionContext,
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
+    _require_upstream_partition_materializations(
+        context,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_documents_json"),
+        ),
+    )
     filing_year, chunk_key = _partition_values(context.partition_key)
     metadata = remove_processed_annual_account_pdfs(
         filing_year=filing_year,
@@ -222,3 +232,40 @@ def _annual_account_candidates(
         }
         for org_number, name in rows
     ]
+
+
+def _require_upstream_partition_materializations(
+    context: AssetExecutionContext,
+    *,
+    upstream_asset_keys: tuple[dg.AssetKey, ...],
+) -> None:
+    missing_asset_keys = [
+        asset_key
+        for asset_key in upstream_asset_keys
+        if not context.instance.fetch_materializations(
+            dg.AssetRecordsFilter(
+                asset_key=asset_key,
+                asset_partitions=[context.partition_key],
+            ),
+            limit=1,
+        ).records
+    ]
+    if not missing_asset_keys:
+        return
+
+    missing_assets = ", ".join(
+        asset_key.to_user_string() for asset_key in missing_asset_keys
+    )
+    raise dg.Failure(
+        description=(
+            f"Partition {context.partition_key} has no materialization for upstream "
+            f"asset(s): {missing_assets}; refusing downstream materialization"
+        ),
+        metadata={
+            "partition": context.partition_key,
+            "missing_upstream_assets": [
+                asset_key.to_user_string() for asset_key in missing_asset_keys
+            ],
+        },
+        allow_retries=False,
+    )

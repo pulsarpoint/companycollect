@@ -25,6 +25,7 @@ from dagster_v3.defs.norway_brreg_financial.annual_account_financials import (
 from dagster_v3.defs.norway_brreg_financial.assets.annual_accounts import (
     NORWAY_BRREG_ANNUAL_ACCOUNT_PARTITIONS,
     _partition_values,
+    _require_upstream_partition_materializations,
 )
 from dagster_v3.defs.norway_brreg_financial.constants import GROUP_NAME
 from dagster_v3.defs.norway_brreg_financial.financial_storage import (
@@ -59,6 +60,12 @@ def norway_brreg_annual_account_documents_duckdb(
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
     norway_brreg_annual_accounts_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    _require_upstream_partition_materializations(
+        context,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_documents_json"),
+        ),
+    )
     filing_year, chunk_key = _partition_values(context.partition_key)
     with norway_brreg_annual_accounts_duckdb.get_connection() as connection:
         counts = load_annual_account_documents(
@@ -91,6 +98,12 @@ def norway_brreg_annual_account_facts_duckdb(
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
     norway_brreg_annual_accounts_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    _require_upstream_partition_materializations(
+        context,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_documents_duckdb"),
+        ),
+    )
     filing_year, chunk_key = _partition_values(context.partition_key)
     with norway_brreg_annual_accounts_duckdb.get_connection() as connection:
         counts = replace_annual_account_facts(
@@ -123,6 +136,12 @@ def norway_brreg_annual_account_fact_mappings_duckdb(
     config: AnnualAccountLlmMappingConfig,
     norway_brreg_annual_accounts_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    _require_upstream_partition_materializations(
+        context,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_facts_duckdb"),
+        ),
+    )
     filing_year, chunk_key = _partition_values(context.partition_key)
     base_url, model, api_key = llm_settings()
     with norway_brreg_annual_accounts_duckdb.get_connection() as connection:
@@ -164,6 +183,12 @@ def norway_brreg_annual_account_facts_usd_duckdb(
     context: AssetExecutionContext,
     norway_brreg_annual_accounts_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    _require_upstream_partition_materializations(
+        context,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_facts_duckdb"),
+        ),
+    )
     filing_year, chunk_key = _partition_values(context.partition_key)
     with norway_brreg_annual_accounts_duckdb.get_connection() as connection:
         counts = apply_annual_account_usd_conversion(
@@ -197,6 +222,13 @@ def norway_brreg_annual_account_metrics_duckdb(
     context: AssetExecutionContext,
     norway_brreg_annual_accounts_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    _require_upstream_partition_materializations(
+        context,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_fact_mappings_duckdb"),
+            dg.AssetKey("norway_brreg_annual_account_facts_usd_duckdb"),
+        ),
+    )
     filing_year, chunk_key = _partition_values(context.partition_key)
     with norway_brreg_annual_accounts_duckdb.get_connection() as connection:
         counts = build_annual_account_metrics(
@@ -235,6 +267,9 @@ def norway_brreg_annual_account_reports_clickhouse(
         duckdb_table="documents",
         clickhouse_table=REPORTS_TABLE,
         columns=REPORT_COLUMNS,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_documents_duckdb"),
+        ),
     )
 
 
@@ -266,6 +301,10 @@ def norway_brreg_annual_account_facts_clickhouse(
         duckdb_table="facts",
         clickhouse_table=FACTS_TABLE,
         columns=FACT_COLUMNS,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_fact_mappings_duckdb"),
+            dg.AssetKey("norway_brreg_annual_account_facts_usd_duckdb"),
+        ),
     )
 
 
@@ -294,6 +333,9 @@ def norway_brreg_annual_account_metrics_clickhouse(
         duckdb_table="metrics",
         clickhouse_table=METRICS_TABLE,
         columns=METRIC_COLUMNS,
+        upstream_asset_keys=(
+            dg.AssetKey("norway_brreg_annual_account_metrics_duckdb"),
+        ),
     )
 
 
@@ -305,7 +347,12 @@ def _publish_clickhouse_asset(
     duckdb_table: str,
     clickhouse_table: str,
     columns: tuple[str, ...],
+    upstream_asset_keys: tuple[dg.AssetKey, ...],
 ) -> dg.MaterializeResult:
+    _require_upstream_partition_materializations(
+        context,
+        upstream_asset_keys=upstream_asset_keys,
+    )
     filing_year, chunk_key = _partition_values(context.partition_key)
     with duckdb_resource.get_connection() as connection:
         row_count = publish_annual_account_partition(
