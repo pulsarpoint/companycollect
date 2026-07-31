@@ -369,3 +369,129 @@ export async function getIndustryFinancials(
     topCompanies,
   };
 }
+
+// ---------- Per-year country overview ----------
+
+/**
+ * Which fiscal years a country can actually show.
+ *
+ * Read from the data rather than assumed, so the year selector offers only
+ * years that will render something. Bounded to a decade: the metrics tables
+ * reach back to 2017 and the overview chart shows ten years.
+ */
+export async function getCountryFinancialYears(code: string): Promise<number[]> {
+  const country = getCountry(code);
+  if (!country?.financialsByYear) return [];
+  const rows = await chQuery<{ fiscal_year: string; companies: string }>(
+    `SELECT toString(fiscal_year) AS fiscal_year, toString(count()) AS companies
+     FROM ${country.financialsByYear.table}
+     WHERE revenue_amount_usd IS NOT NULL
+     GROUP BY fiscal_year
+     ORDER BY fiscal_year`,
+  );
+  // A year with a handful of early filings is not worth offering — it would
+  // show a "leading industries" ranking built from a dozen companies.
+  const meaningful = rows.filter((r) => Number(r.companies) >= 100);
+  return meaningful.map((r) => Number(r.fiscal_year));
+}
+
+/**
+ * The year to land on: the most recent one that is substantially filed.
+ *
+ * Not simply the latest. Sweden's newest fiscal year carries 10,789 filings
+ * against the previous year's 386,371 — accounts arrive for months after a year
+ * ends — so landing there would show a real year that reads as a collapse. A
+ * quarter of the busiest year is the bar; thinner years stay selectable.
+ */
+export async function getCountryDefaultFinancialYear(
+  code: string,
+): Promise<number | null> {
+  const country = getCountry(code);
+  if (!country?.financialsByYear) return null;
+  const rows = await chQuery<{ fiscal_year: string; companies: string }>(
+    `SELECT toString(fiscal_year) AS fiscal_year, toString(count()) AS companies
+     FROM ${country.financialsByYear.table}
+     WHERE revenue_amount_usd IS NOT NULL
+     GROUP BY fiscal_year
+     ORDER BY fiscal_year`,
+  );
+  if (rows.length === 0) return null;
+  const peak = Math.max(...rows.map((r) => Number(r.companies)));
+  const substantial = rows.filter((r) => Number(r.companies) >= peak * 0.25);
+  if (substantial.length === 0) return Number(rows[rows.length - 1].fiscal_year);
+  return Number(substantial[substantial.length - 1].fiscal_year);
+}
+
+/**
+ * Totals, leading divisions and top companies for ONE fiscal year.
+ *
+ * Deliberately a separate path from getCountryFinancials: that one reads
+ * financialsLatest, which holds a single row per company — its most recent
+ * filing — and so mixes fiscal years across companies. Asking it for a year is
+ * not possible, and changing it would alter the landing page and every
+ * industry page. This reads the metrics table, which keeps every year.
+ */
+export async function getCountryFinancialsForYear(
+  code: string,
+  year: number,
+): Promise<null | {
+  totals: CountryTotals;
+  divisions: DivisionRevenue[] | null;
+  topCompanies: TopCompany[];
+}> {
+  const country = getCountry(code);
+  if (!country?.financialsByYear) return null;
+  const { table, idColumn } = country.financialsByYear;
+  const nace = country.financialsAggregates?.nace;
+  const scope = `f.fiscal_year = {year:UInt16} AND f.revenue_amount_usd IS NOT NULL`;
+
+  const [labels, totalsRows, divisionRows, topRows] = await Promise.all([
+    getDivisionLabels(),
+    chQuery<RawTotalsRow>(
+      `SELECT '${country.code}' AS country_code,
+              toUInt32(count()) AS companies,
+              sum(f.revenue_amount_usd) AS revenue_usd,
+              max(f.fiscal_year) AS latest_fiscal_year
+       FROM ${table} f
+       WHERE ${scope}`,
+      { year },
+    ),
+    nace
+      ? chQuery<RawDivisionRow>(
+          `SELECT substring(i.code, 1, 2) AS division,
+                  toUInt32(count()) AS companies,
+                  sum(f.revenue_amount_usd) AS revenue_usd
+           FROM ${table} f
+           INNER JOIN (
+             SELECT ${nace.companyKeyExpr} AS cid, any(${nace.naceCodeExpr}) AS code
+             FROM ${nace.industriesTable}
+             WHERE ${nace.filterExpr}
+             GROUP BY cid
+           ) i ON i.cid = toString(f.${idColumn})
+           WHERE ${scope}
+           GROUP BY division
+           ORDER BY revenue_usd DESC
+           LIMIT ${TOP_DIVISIONS_LIMIT}`,
+          { year },
+        )
+      : Promise.resolve(null),
+    chQuery<RawTopCompanyRow>(
+      `SELECT '${country.code}' AS country_code,
+              toString(f.${idColumn}) AS company_id,
+              f.revenue_amount_usd AS revenue_usd,
+              f.fiscal_year AS fiscal_year,
+              toUInt8(0) AS excluded_from_sums
+       FROM ${table} f
+       WHERE ${scope}
+       ORDER BY f.revenue_amount_usd DESC
+       LIMIT ${TOP_COMPANIES_LIMIT}`,
+      { year },
+    ),
+  ]);
+
+  return {
+    totals: parseTotals(totalsRows[0]),
+    divisions: divisionRows ? divisionRows.map((r) => toDivisionRevenue(r, labels)) : null,
+    topCompanies: await enrichTopCompanies(topRows),
+  };
+}

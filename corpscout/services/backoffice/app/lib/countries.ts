@@ -21,6 +21,12 @@ export interface CompanyColumn {
 }
 
 export interface CountryDetailConfig {
+  /**
+   * The company page exposes a dedicated Financials tab with source report
+   * documents and extracted facts. The route owns the source-specific query;
+   * this flag is the navigation capability, not a source identifier.
+   */
+  financialReports?: boolean;
   /** {id:String} → canonical financial rows (see FinancialYearRow in queries.server). */
   financialsQuery?: string;
   /** {id:String} → { contact_type, contact_value } rows. */
@@ -188,6 +194,16 @@ export interface CountryConfig {
   financialsLatest?: { table: string; companyKeyExpr: string };
   /** NACE join + sum-exclusion rules for the financial aggregates layer. */
   financialsAggregates?: CountryFinancialsAggregates;
+  /**
+   * Per-FISCAL-YEAR financials, for the overview's year selector.
+   *
+   * financialsLatest holds one row per company — its most recent filing — so it
+   * cannot answer "what did 2022 look like". The metrics table keeps every
+   * year. Only declared where a country has one with revenue in USD; Norway's
+   * exists but carries no revenue_amount_usd, so it is deliberately absent and
+   * the year selector simply does not reach that country's revenue cards.
+   */
+  financialsByYear?: { table: string; idColumn: string };
 }
 
 export type CountryFinancialsAggregates = {
@@ -239,6 +255,7 @@ ORDER BY cnt DESC
 LIMIT 50000`,
     industryFilterExpr: `org_number IN (SELECT org_number FROM no_industries WHERE is_primary = 1 AND nace_normalized_code IN {f_industry:Array(String)})`,
     detail: {
+      financialReports: true,
       financialsQuery: `SELECT toString(fiscal_year) AS fiscal_year, currency AS currency,
   toFloat64(operating_revenue_amount_original) AS revenue_amount_original,
   toFloat64(operating_revenue_amount_usd) AS revenue_amount_usd,
@@ -805,6 +822,7 @@ ORDER BY publication_date DESC NULLS LAST, contract_id
 LIMIT 100`,
     },
     financialsLatest: { table: "se_company_financials_latest", companyKeyExpr: "company_id" },
+    financialsByYear: { table: "se_financial_metrics", idColumn: "company_id" },
     financialsAggregates: {
       // Company ids normalized at the dagster layer since 2026-07-18 (16-prefix stripped); no workaround needed.
       nace: {

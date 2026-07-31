@@ -127,9 +127,16 @@ function CurrencyTooltipValue(value: unknown, name: unknown) {
 export function EconomicPulseChart({
   series,
   minYear,
+  selectedYear,
+  onSelectYear,
 }: {
   series: CountryWorldBankSeries[];
   minYear?: number;
+  /** Highlighted year, when the chart is being used as a year picker. */
+  selectedYear?: number | null;
+  /** Provided by the country overview, where the chart drives the whole page.
+   * Omitted elsewhere, and then the chart stays a plain read-only chart. */
+  onSelectYear?: (year: number) => void;
 }) {
   const rowsByYear = new Map<number, Record<string, number>>();
   const definitions = [
@@ -152,11 +159,36 @@ export function EconomicPulseChart({
     .sort(([a], [b]) => a - b)
     .map(([year, values]) => ({ year, ...values }));
 
+  const interactive = typeof onSelectYear === "function";
+
   return (
     <ChartContainer config={percentConfig} className="h-72 w-full">
       {/* Right margin reserves room for the end-labels. */}
-      <LineChart data={data} margin={{ top: 8, right: 104, left: -16, bottom: 0 }}>
+      <LineChart
+        data={data}
+        margin={{ top: 8, right: 104, left: -16, bottom: 0 }}
+        // Clicking anywhere in the plot selects the year under the cursor,
+        // rather than asking a reader to hit a 1px line.
+        onClick={
+          interactive
+            ? (state: { activeLabel?: string | number }) => {
+                const year = Number(state?.activeLabel);
+                if (Number.isInteger(year)) onSelectYear!(year);
+              }
+            : undefined
+        }
+        style={interactive ? { cursor: "pointer" } : undefined}
+      >
         <CartesianGrid vertical={false} />
+        {selectedYear != null && data.some((row) => row.year === selectedYear) ? (
+          <ReferenceLine
+            x={selectedYear}
+            stroke="var(--foreground)"
+            strokeOpacity={0.35}
+            strokeDasharray="4 3"
+            label={{ value: String(selectedYear), position: "top", fontSize: 11 }}
+          />
+        ) : null}
         <XAxis dataKey="year" tickLine={false} axisLine={false} minTickGap={28} />
         <YAxis
           tickLine={false}

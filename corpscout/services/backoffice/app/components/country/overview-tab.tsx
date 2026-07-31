@@ -1,7 +1,7 @@
 import type { CountryTradeStatistics, CountryWorldBankSeries } from "~/lib/country-statistics";
 import type { TopCompany } from "~/lib/financial-aggregates.server";
 import type { TradedCompanyRow } from "~/lib/markets.server";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { TopCompaniesTable } from "~/components/financials/top-companies-table";
 import { Badge } from "~/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
@@ -26,6 +26,8 @@ export function OverviewTab({
   industryMode,
   topCompanies,
   tradedCompanies = [],
+  year = null,
+  availableYears = [],
 }: {
   countryCode: string;
   worldBank: CountryWorldBankSeries[];
@@ -34,11 +36,27 @@ export function OverviewTab({
   industryMode: IndustryMode;
   topCompanies: TopCompany[];
   tradedCompanies?: TradedCompanyRow[];
+  /** The year every card on this page is describing. */
+  year?: number | null;
+  availableYears?: number[];
 }) {
   const latestYear = Math.max(
     ...worldBank.flatMap((series) => series.points.map((point) => point.year)),
   );
-  const latestTrade = trade.latest;
+  const navigate = useNavigate();
+  // Clicking the pulse chart re-runs the page for that year. In the URL, so the
+  // view is linkable and the back button walks the years.
+  const selectYear = (next: number) => {
+    if (!availableYears.includes(next)) return;
+    const latest = Math.max(...availableYears);
+    navigate(next === latest ? "?" : `?year=${next}`, { preventScrollReset: true });
+  };
+
+  // Every card answers about the SELECTED year. Trade already carries all its
+  // years, so it is filtered here rather than re-queried.
+  const selectedTrade = year == null
+    ? trade.latest
+    : (trade.points.find((p) => p.year === year) ?? null);
 
   return (
     <>
@@ -47,21 +65,31 @@ export function OverviewTab({
           <CardHeader>
             <CardTitle>Economic pulse</CardTitle>
             <CardDescription>
-              Real growth, consumer-price inflation, and unemployment over the last decade.
+              Real growth, consumer-price inflation, and unemployment over the last
+              decade.{availableYears.length > 0
+                ? " Click a year to show the rest of this page for it."
+                : ""}
             </CardDescription>
             <CardAction>
               <Badge variant="outline">World Bank</Badge>
             </CardAction>
           </CardHeader>
           <CardContent>
-            <EconomicPulseChart series={worldBank} minYear={latestYear - 9} />
+            <EconomicPulseChart
+              series={worldBank}
+              minYear={latestYear - 9}
+              selectedYear={year}
+              onSelectYear={availableYears.length > 0 ? selectYear : undefined}
+            />
           </CardContent>
         </Card>
 
         <div className="grid gap-4">
           <Card size="sm">
             <CardHeader>
-              <CardTitle>Trade snapshot</CardTitle>
+              <CardTitle>
+                Trade snapshot{selectedTrade ? ` · ${selectedTrade.year}` : ""}
+              </CardTitle>
               <CardDescription>
                 Merchandise trade reported to UN Comtrade.
               </CardDescription>
@@ -71,20 +99,20 @@ export function OverviewTab({
                 <Metric
                   label="Exports"
                   value={
-                    latestTrade?.exportsUsd === null || latestTrade?.exportsUsd === undefined
+                    selectedTrade?.exportsUsd === null || selectedTrade?.exportsUsd === undefined
                       ? "—"
-                      : compactUsd.format(latestTrade.exportsUsd)
+                      : compactUsd.format(selectedTrade.exportsUsd)
                   }
-                  detail={latestTrade ? String(latestTrade.year) : undefined}
+                  detail={selectedTrade ? String(selectedTrade.year) : "no data for this year"}
                 />
                 <Metric
                   label="Imports"
                   value={
-                    latestTrade?.importsUsd === null || latestTrade?.importsUsd === undefined
+                    selectedTrade?.importsUsd === null || selectedTrade?.importsUsd === undefined
                       ? "—"
-                      : compactUsd.format(latestTrade.importsUsd)
+                      : compactUsd.format(selectedTrade.importsUsd)
                   }
-                  detail={latestTrade ? String(latestTrade.year) : undefined}
+                  detail={selectedTrade ? String(selectedTrade.year) : "no data for this year"}
                 />
               </div>
               <TradeSnapshotChart points={trade.points} />
@@ -96,10 +124,12 @@ export function OverviewTab({
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Leading industries</CardTitle>
+            <CardTitle>
+              Leading industries{year != null && industryMode === "revenue" ? ` · ${year}` : ""}
+            </CardTitle>
             <CardDescription>
               {industryMode === "revenue"
-                ? "Top NACE divisions by reported revenue."
+                ? `Top NACE divisions by revenue reported for ${year ?? "the latest filed year"}.`
                 : "Top registry industry groups by company count."}
             </CardDescription>
           </CardHeader>
@@ -121,11 +151,13 @@ export function OverviewTab({
 
         <Card>
           <CardHeader>
-            <CardTitle>Largest companies by revenue</CardTitle>
+            <CardTitle>
+              Largest companies by revenue{year != null ? ` · ${year}` : ""}
+            </CardTitle>
             <CardDescription>
-              Latest reported company revenue, from filed standalone accounts —
-              a different question from what a company is worth or how much its
-              shares trade.
+              Revenue reported for {year ?? "the latest filed year"}, from filed
+              standalone accounts — a different question from what a company is
+              worth or how much its shares trade.
             </CardDescription>
           </CardHeader>
           <CardContent>
