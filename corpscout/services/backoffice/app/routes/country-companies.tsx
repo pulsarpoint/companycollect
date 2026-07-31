@@ -10,6 +10,7 @@ import {
   parseCompanyColumns,
 } from "~/lib/company-columns";
 import { CompanyColumnPicker } from "~/components/data-table/company-column-picker";
+import { availableCompanyFlags } from "~/lib/company-flags";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Badge } from "~/components/ui/badge";
@@ -65,6 +66,7 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
     visibleColumns,
   );
   const searchParams = useEffectiveSearchParams();
+  const flagLegend = availableCompanyFlags(country.code);
 
   return (
     <>
@@ -118,6 +120,21 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
           >
             Clear all
           </Link>
+        </div>
+      ) : null}
+
+      {flagLegend.length > 0 && visibleColumns.includes("data") ? (
+        <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <span className="uppercase tracking-wide">Data held</span>
+          {flagLegend.map((flag) => (
+            <span key={flag.id} className="flex items-center gap-1">
+              <span className="text-emerald-600 dark:text-emerald-400 font-mono">
+                {flag.char}
+              </span>
+              <span>{flag.label}</span>
+            </span>
+          ))}
+          <span className="opacity-70">green = held, red = not held</span>
         </div>
       ) : null}
 

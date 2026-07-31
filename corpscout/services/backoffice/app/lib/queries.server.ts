@@ -1,5 +1,10 @@
 import { chQuery } from "~/lib/clickhouse.server";
 import {
+  COMPANY_FLAG_SOURCES,
+  availableCompanyFlags,
+  type CompanyFlagId,
+} from "~/lib/company-flags";
+import {
   getSortColumn,
   PAGE_SIZES,
   type CountryConfig,
@@ -33,8 +38,10 @@ export async function getCountryStats(country: CountryConfig): Promise<CountrySt
 // module.
 export { PAGE_SIZES };
 
-export type CompanyListRow = Record<string, string | number | null> & {
+export type CompanyListRow = Record<string, string | number | null | CompanyFlagId[]> & {
   active: 0 | 1;
+  /** Which kinds of data we hold for this company. See lib/company-flags. */
+  flags?: CompanyFlagId[];
 };
 
 export interface CompanySearchResult {
@@ -57,6 +64,90 @@ interface IndustryRow {
   industry_label: string | null;
 }
 
+
+/**
+ * Flags a register keeps ON the company row, computed in the main select.
+ *
+ * The rest are existence checks against companion tables and are fetched
+ * separately -- see attachCompanyFlags. Splitting them this way means a
+ * register that stores its address inline costs no extra query at all.
+ */
+function flagSelectList(country: CountryConfig): string[] {
+  const sources = COMPANY_FLAG_SOURCES[country.code.toLowerCase()] ?? {};
+  return Object.entries(sources)
+    .filter(([, source]) => "expr" in source)
+    .map(
+      ([id, source]) =>
+        `toUInt8(coalesce(toString(${(source as { expr: string }).expr}), '') != '') AS __flag_${id}`,
+    );
+}
+
+/**
+ * Which of the flags each visible company can light, in one round trip.
+ *
+ * A UNION of existence checks rather than one query per flag: four kinds of
+ * data would otherwise be four round trips per page, and each branch is an
+ * indexed lookup of the ~50 ids actually on screen.
+ */
+async function attachCompanyFlags(
+  country: CountryConfig,
+  rows: CompanyListRow[],
+): Promise<void> {
+  const code = country.code.toLowerCase();
+  const sources = COMPANY_FLAG_SOURCES[code] ?? {};
+  const ids = rows.map((r) => String(r.id ?? "")).filter((v) => v !== "");
+
+  // Inline flags are already in the row from the select above.
+  for (const row of rows) {
+    const held: CompanyFlagId[] = [];
+    for (const flag of availableCompanyFlags(code)) {
+      const key = `__flag_${flag.id}` as keyof CompanyListRow;
+      const inline = row[key];
+      if (typeof inline !== "object" && inline !== undefined && Number(inline) === 1) {
+        held.push(flag.id);
+      }
+      delete (row as Record<string, unknown>)[key as string];
+    }
+    row.flags = held;
+  }
+  if (ids.length === 0) return;
+
+  const branches = Object.entries(sources).flatMap(([id, source]) => {
+    if ("table" in source) {
+      return [
+        `SELECT toString(${source.idColumn}) AS company_id, '${id}' AS flag
+         FROM ${source.table}
+         WHERE toString(${source.idColumn}) IN {ids:Array(String)}`,
+      ];
+    }
+    if ("market" in source) {
+      return [
+        `SELECT toString(company_id) AS company_id, '${id}' AS flag
+         FROM company_market_summary
+         WHERE country_code = '${country.code.toUpperCase()}'
+           AND toString(company_id) IN {ids:Array(String)}`,
+      ];
+    }
+    return [];
+  });
+  if (branches.length === 0) return;
+
+  const found = await chQuery<{ company_id: string; flag: CompanyFlagId }>(
+    branches.join("\nUNION ALL\n"),
+    { ids },
+  );
+  const byId = new Map<string, Set<CompanyFlagId>>();
+  for (const hit of found) {
+    let set = byId.get(hit.company_id);
+    if (!set) byId.set(hit.company_id, (set = new Set()));
+    set.add(hit.flag);
+  }
+  for (const row of rows) {
+    const extra = byId.get(String(row.id ?? ""));
+    if (extra) row.flags = [...(row.flags ?? []), ...extra];
+  }
+}
+
 function buildCompanySelectList(country: CountryConfig): string {
   const joinKeyExpr = country.industryJoinKeyExpr ?? country.idColumn;
   return [
@@ -64,6 +155,7 @@ function buildCompanySelectList(country: CountryConfig): string {
     `toUInt8(${country.activeExpr}) AS active`,
     ...(country.industryQuery ? [`toString(${joinKeyExpr}) AS __industry_key`] : []),
     ...(country.placeQuery ? [`toString(${country.idColumn}) AS __place_key`] : []),
+    ...flagSelectList(country),
   ].join(",\n       ");
 }
 
@@ -183,6 +275,8 @@ export async function searchCompanies(
       delete row.__place_key;
     }
   }
+
+  await attachCompanyFlags(country, rows);
 
   return { rows, total, page, pageSize, sort: sortColumn.key, dir };
 }

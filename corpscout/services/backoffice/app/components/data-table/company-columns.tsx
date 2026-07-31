@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { CompanyColumn, CountryConfig, SortDir } from "~/lib/countries";
 import type { CompanyListRow } from "~/lib/queries.server";
+import { availableCompanyFlags, type CompanyFlagId } from "~/lib/company-flags";
 import { Badge } from "~/components/ui/badge";
 import { DataTableColumnHeader } from "~/components/data-table/column-header";
 
@@ -150,6 +151,39 @@ export function buildCompanyColumns(
     // Insert industry right after the name column.
     const nameIndex = defs.findIndex((d) => d.id === "name");
     defs.splice(nameIndex + 1, 0, industryDef);
+  }
+
+  const flags = availableCompanyFlags(country.code);
+  if (flags.length > 0) {
+    defs.push({
+      id: "data",
+      header: () => <span className="text-muted-foreground">Data</span>,
+      cell: ({ row }) => {
+        const held = new Set((row.original.flags ?? []) as CompanyFlagId[]);
+        return (
+          <span className="flex gap-0.5 font-mono text-xs">
+            {flags.map((flag) => {
+              const on = held.has(flag.id);
+              return (
+                <span
+                  key={flag.id}
+                  // Dimmed rather than merely uncoloured when absent, so the
+                  // lit ones are what the eye lands on scanning a page of rows.
+                  className={
+                    on
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-400/50 dark:text-rose-500/40"
+                  }
+                  title={`${flag.label}: ${on ? flag.meaning : "not held"}`}
+                >
+                  {flag.char}
+                </span>
+              );
+            })}
+          </span>
+        );
+      },
+    });
   }
 
   if (country.placeQuery) {

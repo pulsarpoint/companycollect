@@ -21,6 +21,7 @@
  */
 
 import type { CountryConfig } from "~/lib/countries";
+import { availableCompanyFlags } from "~/lib/company-flags";
 
 export type CompanyColumn = {
   id: string;
@@ -38,7 +39,16 @@ export type CompanyColumn = {
  * table never reorders itself because of the sequence a reader ticked boxes
  * in, and Brazil (which declares legal_form last) reads like everywhere else.
  */
-const CORE_ORDER = ["id", "name", "industry", "legal_form", "status", "registered", "place"];
+const CORE_ORDER = [
+  "id",
+  "name",
+  "industry",
+  "legal_form",
+  "status",
+  "registered",
+  "place",
+  "data",
+];
 
 // The only route to a company's own page. Hiding it would leave a reader with
 // rows they can see and cannot open.
@@ -48,6 +58,7 @@ const LOCKED = ["name"];
 const INJECTED_LABELS: Record<string, string> = {
   industry: "Industry",
   place: "Place",
+  data: "Data",
 };
 
 /**
@@ -61,6 +72,10 @@ export function availableCompanyColumns(country: CountryConfig): CompanyColumn[]
   const has = (id: string): boolean => {
     if (id === "industry") return Boolean(country.industryQuery) || declared.has(id);
     if (id === "place") return Boolean(country.placeQuery) || declared.has(id);
+    // Offered only where at least one kind of data can actually be held, so a
+    // country with no sources does not get a column of permanently dark
+    // glyphs describing our coverage rather than the company.
+    if (id === "data") return availableCompanyFlags(country.code).length > 0;
     return declared.has(id);
   };
 

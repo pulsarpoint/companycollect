@@ -65,8 +65,12 @@ describe("availableCompanyColumns", () => {
       availableCompanyColumns(c)
         .filter((x) => x.core)
         .map((x) => x.id);
-    expect(core(BR)).toEqual(["id", "name", "industry", "legal_form", "status", "registered", "place"]);
-    expect(core(NO)).toEqual(["id", "name", "industry", "legal_form", "status", "registered", "place"]);
+    const shared = ["id", "name", "industry", "legal_form", "status", "registered", "place"];
+    expect(core(BR)).toEqual(shared);
+    // Norway additionally carries the data-availability column, because it is
+    // the only country wired to flag sources so far. When the rest follow, the
+    // two lists converge again.
+    expect(core(NO)).toEqual([...shared, "data"]);
   });
 
   test("keeps the country's own label for a column", () => {
@@ -79,7 +83,17 @@ describe("availableCompanyColumns", () => {
 
 describe("defaultCompanyColumns", () => {
   test("is the core only, so every country's default list matches", () => {
-    expect(defaultCompanyColumns(availableCompanyColumns(BR))).toEqual(defaultCompanyColumns(availableCompanyColumns(NO)));
+    // Compared without the data column: it is offered only where flag sources
+    // are configured, which today is Norway alone.
+    const withoutData = (ids: string[]) => ids.filter((id) => id !== "data");
+    expect(withoutData(defaultCompanyColumns(availableCompanyColumns(BR)))).toEqual(
+      withoutData(defaultCompanyColumns(availableCompanyColumns(NO))),
+    );
+  });
+
+  test("the data column appears only where a flag source exists", () => {
+    expect(defaultCompanyColumns(availableCompanyColumns(NO))).toContain("data");
+    expect(defaultCompanyColumns(availableCompanyColumns(BR))).not.toContain("data");
   });
 
   test("leaves a country's extras switched off until asked for", () => {
