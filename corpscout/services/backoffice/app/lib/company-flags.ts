@@ -74,34 +74,87 @@ export const COMPANY_FLAG_SOURCES: Record<
   string,
   Partial<Record<CompanyFlagId, FlagSource>>
 > = {
-  // Norway only for now, deliberately. The other nine follow the same shapes
-  // -- a companion table for Estonia's and Brazil's contacts, an `address`
-  // column on the company row for Latvia, Czechia, France and Slovakia, and
-  // the market flag wherever company_market_summary reaches -- but the
-  // measured spread is what makes the column worth having, and that is worth
-  // seeing on one country before it lands on ten.
+  // A flag is offered where the country HAS the source, not where the source
+  // is well filled. A dark F is true either way, and it states plainly what a
+  // features list claiming "financials" does not.
   //
-  // Measured on 1,167,141 Norwegian companies: financials 36.4%,
-  // contacts 41%, domain 9.7%, traded 249 companies.
+  // Low coverage is not one condition though, and the glyph cannot tell them
+  // apart -- so, for anyone reading a country's number below:
+  //
+  //   Brazil   1,218 companies of 68.6M, and CORRECT. The source is CVM, the
+  //            securities regulator, so only listed companies file -- and
+  //            Brazil has about 1,200. It sits on 63M raw statement rows and
+  //            903,767 normalised metrics, so the pipeline is complete over
+  //            the population it can reach. F there marks the publicly
+  //            accountable companies, which is worth seeing.
+  //   Slovakia 1 row, in sk_financial_metrics AND sk_company_financials_latest.
+  //            That is a stalled pipeline, not a narrow source.
+  //   Estonia  74.6%, because its register publishes annual reports for every
+  //            company rather than only for listed ones.
+  //
+  // Trading is the exception, and deliberately. It reads one shared table that
+  // the markets pipeline populates for four countries only. A dark T in France
+  // would not mean "no listing found for this company", it would mean we do
+  // not look -- a different claim, and a misleading one.
+  //
+  // Coverage when last measured, as a percentage of each register:
+  //        F       C       D       T
+  //  no   36.45   41.04    9.70   0.021
+  //  fi    4.47   25.80   25.79   0.038
+  //  se   16.44      --      --   0.023
+  //  ee   74.57   97.85   17.91     --
+  //  lv   52.32    0.53    0.32     --
+  //  gb    0.42      --      --     --
+  //  fr    5.34      --      --     --
+  //  br    0.00   83.58    1.24   0.0005
+  //  cz      --    0.19    0.13     --
+  //  sk    0.00      --      --     --
   no: {
     financials: { table: "no_company_financials_latest", idColumn: "company_id" },
-    // Contacts are keyed on registry_id, not company_id, in every register
-    // that has them.
+    // Contacts and domains are keyed on registry_id, not company_id, in every
+    // register that has them.
     contacts: { table: "no_company_contacts", idColumn: "registry_id" },
     domain: { table: "no_company_domains", idColumn: "registry_id" },
     trading: { market: true },
   },
-  // Sweden has no contact source at all -- no websites, domains or contacts
-  // table -- so it offers three flags where Norway offers four. That is the
-  // design working: a dark C on every Swedish row would describe our coverage
-  // rather than the company.
-  //
-  // Measured on 3,407,809 companies: financials 16.4%, traded 784. Sweden has
-  // neither a contact nor a domain source, so it shows two flags where Norway
-  // shows four -- which is itself worth seeing.
+  fi: {
+    financials: { table: "fi_company_financials_latest", idColumn: "company_id" },
+    contacts: { table: "fi_company_contacts", idColumn: "registry_id" },
+    domain: { table: "fi_company_domains", idColumn: "registry_id" },
+    trading: { market: true },
+  },
   se: {
     financials: { table: "se_company_financials_latest", idColumn: "company_id" },
     trading: { market: true },
+  },
+  ee: {
+    financials: { table: "ee_company_financials_latest", idColumn: "company_id" },
+    contacts: { table: "ee_company_contacts", idColumn: "registry_id" },
+    domain: { table: "ee_company_domains", idColumn: "registry_id" },
+  },
+  lv: {
+    financials: { table: "lv_company_financials_latest", idColumn: "company_id" },
+    contacts: { table: "lv_company_contacts", idColumn: "registry_id" },
+    domain: { table: "lv_company_domains", idColumn: "registry_id" },
+  },
+  gb: {
+    financials: { table: "gb_company_financials_latest", idColumn: "company_id" },
+  },
+  fr: {
+    financials: { table: "fr_company_financials_latest", idColumn: "company_id" },
+  },
+  br: {
+    financials: { table: "br_company_financials_latest", idColumn: "company_id" },
+    contacts: { table: "br_company_contacts", idColumn: "registry_id" },
+    domain: { table: "br_company_domains", idColumn: "registry_id" },
+    trading: { market: true },
+  },
+  cz: {
+    contacts: { table: "cz_company_contacts", idColumn: "registry_id" },
+    domain: { table: "cz_company_domains", idColumn: "registry_id" },
+  },
+  sk: {
+    financials: { table: "sk_company_financials_latest", idColumn: "company_id" },
   },
 };
 
