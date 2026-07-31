@@ -457,6 +457,9 @@ latvia_ur_register_job = dg.define_asset_job(
         "latvia_ur_translation_load",
         "latvia_ur_nace_classification",
         "latvia_ur_clickhouse_company_contacts",
+        # Curated legal forms follow the export, so a refreshed register that
+        # carries a new form picks up its English on the same run.
+        "latvia_ur_curated_legal_forms",
     ).upstream(),
 )
 latvia_ur_register_schedule = dg.ScheduleDefinition(

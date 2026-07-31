@@ -322,7 +322,11 @@ def _duckdb_table_count(*, duckdb_connection: Any, table_name: str) -> int:
 estonia_ar_register_job = dg.define_asset_job(
     "estonia_ar_register_job",
     selection=dg.AssetSelection.assets(ENTITIES_ASSET_KEY)
-    | dg.AssetSelection.assets("estonia_ar_clickhouse_companies"),
+    | dg.AssetSelection.assets("estonia_ar_clickhouse_companies")
+    # The curated legal forms follow the export: a refreshed register can
+    # carry a form nobody has translated yet, and without this the asset
+    # would only ever run by hand.
+    | dg.AssetSelection.assets("estonia_ar_curated_legal_forms"),
 )
 # Register snapshot refreshes daily → daily 04:00.
 estonia_ar_register_schedule = dg.ScheduleDefinition(

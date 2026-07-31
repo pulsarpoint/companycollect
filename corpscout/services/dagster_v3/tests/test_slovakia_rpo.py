@@ -251,4 +251,5 @@ def test_register_job_and_schedule():
         "slovakia_rpo_clickhouse_companies",
         "slovakia_rpo_industries_duckdb",
         "slovakia_rpo_clickhouse_industries",
+        "slovakia_rpo_curated_legal_forms",
     }

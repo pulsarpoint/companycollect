@@ -1311,10 +1311,14 @@ LIMIT 1`,
     code: "cz", iso3: "CZE", eurostatGeoCode: "CZ", name: "Czechia", flag: "🇨🇿", companiesTable: "cz_companies",
     idColumn: "ico", nameColumn: "name", activeExpr: "is_active = 1",
     approxCompanies: "3.5M", features: ["industries", "contacts", "domains"],
+    legalFormLookup: { table: "cz_legal_forms_translated", codeColumn: "code", labelColumn: "label_cs", enColumn: "label_en" },
     columns: [
       { key: "id", label: "IČO", expr: "ico", sortable: true, kind: "id" },
       { key: "name", label: "Name", expr: "name", sortable: true, kind: "text" },
-      { key: "legal_form", label: "Legal form", expr: "legal_form_en", sortable: true, kind: "text", filterable: true },
+      // The raw ARES code, decoded through cz_legal_forms_translated. The baked
+      // legal_form_en left 108,341 companies on 38 codes showing a bare
+      // number, because cz_companies carries no label column to fall back to.
+      { key: "legal_form", label: "Legal form", expr: "legal_form_code", sortable: true, kind: "text", filterable: true },
       { key: "status", label: "Status", expr: "if(is_active = 1, 'active', 'inactive')", sortable: true, kind: "status", filterable: true },
       { key: "registered", label: "Established", expr: "toString(established_date)", sortable: true, kind: "date" },
       { key: "place", label: "City", expr: "city", sortable: false, kind: "text", filterable: true },

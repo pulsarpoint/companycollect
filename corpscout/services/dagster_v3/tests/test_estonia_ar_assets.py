@@ -103,7 +103,13 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         k.path[-1]
         for k in repo.get_job("estonia_ar_register_job").asset_layer.executable_asset_keys
     }
-    assert register_keys == {"estonia_ar_entities_duckdb", "estonia_ar_clickhouse_companies"}
+    assert register_keys == {
+        "estonia_ar_entities_duckdb",
+        "estonia_ar_clickhouse_companies",
+        # Curated legal forms run with the register, so a refreshed snapshot
+        # carrying a new form gets its English on the same run.
+        "estonia_ar_curated_legal_forms",
+    }
 
     # .upstream() must pull the FULL transitive chain (8 raw + pivot + metrics +
     # usd + 2 exports = 13), unlike the `dg launch +leaf` 1-hop CLI behavior.
@@ -137,7 +143,7 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     }
     assert full_keys == register_keys | general_keys
     assert not (full_keys & financials_keys)
-    assert len(full_keys) == 7
+    assert len(full_keys) == 8
 
     asset_graph = repo.asset_graph
     assert asset_graph.get(

@@ -121,6 +121,10 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         "latvia_address_cities_duckdb",
         "latvia_address_municipalities_duckdb",
         "latvia_ur_clickhouse_companies",
+        # Curated legal forms run with the register, so a refreshed snapshot
+        # carrying a new form gets its English on the same run -- and a
+        # correction to the map no longer waits for a full re-ingest.
+        "latvia_ur_curated_legal_forms",
         # The translation loader runs at the end of every register refresh so
         # newly landed texts are enqueued to the translator service.
         "latvia_ur_translation_load",

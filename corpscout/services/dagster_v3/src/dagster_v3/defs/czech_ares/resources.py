@@ -25,47 +25,15 @@ _DOWNLOAD_RETRYABLE_ERRORS = (
     requests.exceptions.Timeout,
 )
 # CZ legal-form code (FORMA) -> English. Common codes; unknown -> "" (extensible).
-CZ_LEGAL_FORM_EN_BY_CODE = {
-    "101": "Sole trader (trade licence)",
-    "102": "Sole trader (other regulations)",
-    "105": "Sole trader (farmer)",
-    "107": "Sole trader (other)",
-    "111": "General partnership",
-    "112": "Limited liability company (s.r.o.)",
-    "113": "Limited partnership",
-    "115": "Limited liability company (s.r.o.)",
-    "117": "European company",
-    "121": "Joint-stock company (a.s.)",
-    "141": "Mutual insurance company",
-    "145": "Mutual fund",
-    "151": "Other limited company",
-    "205": "Cooperative",
-    "301": "State enterprise",
-    "325": "State organizational unit",
-    "331": "State-funded organization (founded by region/municipality)",
-    "332": "Contributory organization",
-    "352": "Public research institution",
-    "421": "Foreign legal person's branch",
-    "521": "Foreign person's branch",
-    "525": "Foreign legal person",
-    "601": "University",
-    "641": "Local government association",
-    "701": "Association",
-    "705": "Association",
-    "706": "Trade union organization",
-    "711": "Political party or movement",
-    "721": "Church or religious society",
-    "731": "Organizational unit of an association",
-    "741": "Interest association of legal entities",
-    "745": "Professional chamber",
-    "751": "Self-governing professional organization",
-    "761": "Hunting association",
-    "771": "Owners' association of units",
-    "801": "Municipality",
-    "804": "Region",
-    "805": "Voluntary municipality association",
-    "921": "International organization",
-}
+# The curated English lives in czech_legal_forms.english, keyed against ARES's
+# own Czech label. The map that used to sit here was displaced against the
+# codes -- 706 "Spolek" (an association) read "Trade union organization" on
+# 111,581 companies, and 145 (unit owners' associations) read "Mutual fund" on
+# 80,414 -- so it is imported rather than kept in a second copy that can drift
+# out of step with the nomenclature again.
+from dagster_v3.defs.czech_legal_forms.english import (  # noqa: E402
+    CZ_LEGAL_FORM_EN_BY_CODE,
+)
 
 
 def _stream_download(

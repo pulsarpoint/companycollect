@@ -134,7 +134,11 @@ def slovakia_rpo_clickhouse_industries(
 slovakia_rpo_register_job = dg.define_asset_job(
     "slovakia_rpo_register_job",
     selection=dg.AssetSelection.assets(
-        "slovakia_rpo_clickhouse_companies", "slovakia_rpo_clickhouse_industries"
+        "slovakia_rpo_clickhouse_companies",
+        "slovakia_rpo_clickhouse_industries",
+        # Curated legal forms follow the export, so a refreshed register that
+        # carries a new form picks up its English on the same run.
+        "slovakia_rpo_curated_legal_forms",
     ).upstream(),
 )
 slovakia_rpo_register_schedule = dg.ScheduleDefinition(
