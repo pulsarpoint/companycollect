@@ -5,6 +5,11 @@ import { getCountry } from "~/lib/countries";
 import { parseFilters } from "~/lib/filters";
 import { searchCompanies } from "~/lib/queries.server";
 import { getLegalFormLabels } from "~/lib/legal-forms.server";
+import {
+  availableCompanyColumns,
+  parseCompanyColumns,
+} from "~/lib/company-columns";
+import { CompanyColumnPicker } from "~/components/data-table/company-column-picker";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Badge } from "~/components/ui/badge";
@@ -33,11 +38,14 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     // A few dozen rows, cached per process — se_companies stores only the code.
     getLegalFormLabels(country),
   ]);
+  const available = availableCompanyColumns(country);
   return {
     q: url.searchParams.get("q") ?? "",
     result,
     filters,
     legalForms: Object.fromEntries(legalFormLabels),
+    available,
+    visibleColumns: parseCompanyColumns(url.searchParams, available),
   };
 }
 
@@ -47,9 +55,15 @@ export function meta({ params }: Route.MetaArgs) {
 }
 
 export default function CountryCompanies({ loaderData, params }: Route.ComponentProps) {
-  const { q, result, filters, legalForms } = loaderData;
+  const { q, result, filters, legalForms, available, visibleColumns } = loaderData;
   const country = getCountry(params.country)!;
-  const columns = buildCompanyColumns(country, result.sort, result.dir, legalForms);
+  const columns = buildCompanyColumns(
+    country,
+    result.sort,
+    result.dir,
+    legalForms,
+    visibleColumns,
+  );
   const searchParams = useEffectiveSearchParams();
 
   return (
@@ -71,6 +85,11 @@ export default function CountryCompanies({ loaderData, params }: Route.Component
               Search
             </Button>
           </Form>
+          <CompanyColumnPicker
+            countryCode={country.code}
+            visible={visibleColumns}
+            available={available}
+          />
           <FilterSidebar country={country} filters={filters} />
         </div>
       </div>

@@ -105,6 +105,8 @@ export function buildCompanyColumns(
   /** Legal-form code -> the register's own wording. Sweden stores only the
    * code, so without this its column reads 51, 61, E-ORGFO. */
   legalForms: Record<string, { en: string; original: string }> = {},
+  /** Column ids to show. Undefined means every column the country has. */
+  visible?: string[],
 ): ColumnDef<CompanyListRow, unknown>[] {
   const defs: ColumnDef<CompanyListRow, unknown>[] = country.columns.map((col) => ({
     id: col.key,
@@ -167,6 +169,18 @@ export function buildCompanyColumns(
         );
       },
     });
+  }
+
+  if (visible) {
+    // Ordered BY `visible`, not filtered against it. The defs are built in each
+    // country's declaration order -- Brazil declares legal_form after status
+    // and its trade name second -- while `visible` is already in the canonical
+    // order from company-columns.ts. Ordering here is what makes the core read
+    // identically in every country, which is the whole point of having one.
+    const byId = new Map(defs.map((d) => [String(d.id), d]));
+    return visible
+      .map((id) => byId.get(id))
+      .filter((d): d is ColumnDef<CompanyListRow, unknown> => d !== undefined);
   }
 
   return defs;
