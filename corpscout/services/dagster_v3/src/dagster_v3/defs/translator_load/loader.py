@@ -58,7 +58,11 @@ WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''
   AND length(c.{column}) <= 8000{scope}"""
 
 
-def build_static_scan_sql(table: str, column: str, key_column: str) -> str:
+def build_static_scan_sql(
+    table: str, column: str, key_column: str, extra_where: str | None = None
+) -> str:
+    """As build_scan_sql, but carrying the key a static map is looked up by."""
+    scope = "" if extra_where is None else f"\n  AND ({extra_where})"
     return f"""
 SELECT DISTINCT
     c.{column} AS source_text,

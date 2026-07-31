@@ -27,7 +27,29 @@ export type LegalFormLabel = {
   original: string;
 };
 
-const cache = new Map<string, Promise<Map<string, LegalFormLabel>>>();
+/**
+ * How long a country's decoding is held before it is read again.
+ *
+ * Not a performance knob — a correctness one. This is a dimension a Dagster
+ * asset rewrites, and caching it for the life of the process meant Sweden went
+ * on rendering "Aktiebolag" after the curated English had already landed in
+ * ClickHouse: the only cure was restarting a dev server that had been up for
+ * three weeks. A few dozen rows per country makes the re-read free, so the
+ * window is short enough that a translation load shows up on its own.
+ */
+const TTL_MS = 5 * 60 * 1000;
+
+type Entry = {
+  fetchedAt: number;
+  labels: Promise<Map<string, LegalFormLabel>>;
+};
+
+const cache = new Map<string, Entry>();
+
+/** Test seam: drop everything held, so a case can start from a cold process. */
+export function __resetLegalFormCache(): void {
+  cache.clear();
+}
 
 /**
  * English primary, original paired — the same rule every other field here
@@ -40,7 +62,7 @@ export function getLegalFormLabels(
 ): Promise<Map<string, LegalFormLabel>> {
   const code = country.code.toUpperCase();
   const cached = cache.get(code);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.fetchedAt < TTL_MS) return cached.labels;
 
   const pending = chQuery<{ legal_form_code: string; label: string; label_en: string }>(
     `SELECT legal_form_code,
@@ -57,7 +79,12 @@ export function getLegalFormLabels(
       ),
   );
 
-  cache.set(code, pending);
-  pending.catch(() => cache.delete(code));
+  const entry: Entry = { fetchedAt: Date.now(), labels: pending };
+  cache.set(code, entry);
+  // A failure must not be held for the TTL, and must not evict a newer entry
+  // that replaced it in the meantime.
+  pending.catch(() => {
+    if (cache.get(code) === entry) cache.delete(code);
+  });
   return pending;
 }

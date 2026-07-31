@@ -15,16 +15,25 @@ so each country is scanned and enqueued separately with its own source
 language. Telling the translator that Swedish is Portuguese would produce
 confident nonsense rather than an error.
 
+Curated where a hand-written map exists (see legal_form_english), machine
+translated otherwise. The curated rows go in first, so the machine scan's
+anti-join then treats them as already done and never overwrites a reviewed
+term with a plausible-sounding one.
+
 Small and bounded: 211 distinct labels across four countries, each paid for
-once by the loader's anti-join. For comparison, PNCP's contract objects are
-57,229.
+once. For comparison, PNCP's contract objects are 57,229.
 """
 
 import dagster as dg
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.translator_load.loader import build_scan_sql
+from dagster_v3.defs.company_signals.legal_form_english import english_by_code
+from dagster_v3.defs.translator_load.loader import (
+    build_scan_sql,
+    build_static_scan_sql,
+    insert_static_translations,
+)
 from dagster_v3.defs.translator_load.resource import (
     TranslatorResource,
     translator_queue_health_check,
@@ -132,3 +141,64 @@ def company_entity_types_translator_queue_health_check(
     translator: TranslatorResource,
 ) -> dg.AssetCheckResult:
     return translator_queue_health_check(translator)
+
+
+@dg.asset(
+    deps=[dg.AssetKey("company_entity_types_clickhouse")],
+    group_name="company_signals",
+    kinds={"clickhouse"},
+    description=(
+        "Insert the hand-curated English for legal forms, straight into "
+        "text_translations. No translator involved."
+    ),
+)
+def company_entity_types_curated_english(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    """Curated terms, written without asking the translator anything.
+
+    Separate from the machine loader on purpose. A legal form is a term of art
+    and there are only a couple of hundred, so they are mapped by hand and
+    reviewed in a diff — and that work must not be blocked by whether a
+    translation service happens to be reachable. It also runs FIRST in
+    practice: the machine scan's anti-join then sees these as already
+    translated and never overwrites a reviewed term with a plausible one.
+    """
+    inserted_by_country: dict[str, object] = {}
+    total = 0
+
+    with clickhouse.get_connection() as client:
+        for country_code, source_lang, _ in COUNTRY_LANGUAGES:
+            labels = {
+                str(code): str(label)
+                for code, label in client.execute(
+                    f"SELECT legal_form_code, any(source_label) FROM {SOURCE_TABLE} "
+                    f"WHERE country_code = '{country_code}' GROUP BY legal_form_code"
+                )
+            }
+            curated = english_by_code(country_code, labels)
+            if not curated:
+                continue
+            static_rows = client.execute(
+                build_static_scan_sql(
+                    SOURCE_TABLE,
+                    SOURCE_COLUMN,
+                    "legal_form_code",
+                    extra_where=f"country_code = '{country_code}'",
+                )
+            )
+            inserted = insert_static_translations(
+                client,
+                SOURCE_TABLE,
+                SOURCE_COLUMN,
+                source_lang,
+                TARGET_LANG,
+                static_rows,
+                curated,
+            )
+            inserted_by_country[f"{country_code}_inserted"] = inserted
+            total += inserted
+            context.log.info("%s: %d curated legal forms inserted", country_code, inserted)
+
+    return dg.MaterializeResult(metadata={"inserted": total, **inserted_by_country})

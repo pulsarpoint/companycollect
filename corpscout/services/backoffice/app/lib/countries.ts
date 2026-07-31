@@ -1126,6 +1126,11 @@ LIMIT 1`,
       { key: "trade_name", label: "Trade name", expr: "trade_name", sortable: false, kind: "text" },
       { key: "size", label: "Size", expr: "company_size_en", sortable: true, kind: "text", filterable: true },
       { key: "status", label: "Status", expr: "status_en", sortable: true, kind: "status", filterable: true },
+      // The bare code, decoded through company_entity_types like Sweden and
+      // Norway. legal_nature_description_pt sits beside it in br_companies but
+      // is Portuguese only; the decoder carries the curated English and keeps
+      // the register's own wording in the tooltip.
+      { key: "legal_form", label: "Legal form", expr: "legal_nature_code", sortable: true, kind: "text", filterable: true },
       { key: "registered", label: "Activity start", expr: "toString(activity_start_date)", sortable: true, kind: "date" },
       { key: "place", label: "Municipality", expr: "concat(municipality_name, ' / ', state)", sortable: false, kind: "text", filterable: true },
     ],

@@ -145,7 +145,7 @@ isin_lei_job = dg.define_asset_job(
 isin_lei_daily = dg.ScheduleDefinition(
     name="isin_lei_daily",
     job=isin_lei_job,
-    cron_schedule="50 5 * * *",
+    cron_schedule="5 3 * * *",
     execution_timezone="UTC",
     default_status=dg.DefaultScheduleStatus.STOPPED,
 )

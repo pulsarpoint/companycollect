@@ -167,7 +167,7 @@ brazil_b3_job = dg.define_asset_job(
 brazil_b3_daily = dg.ScheduleDefinition(
     name="brazil_b3_daily",
     job=brazil_b3_job,
-    cron_schedule="15 6 * * *",
+    cron_schedule="35 3 * * *",
     execution_timezone="UTC",
     default_status=dg.DefaultScheduleStatus.STOPPED,
 )
