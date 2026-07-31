@@ -161,7 +161,6 @@ export async function getTradedCompanies(
   const yearFilter = year == null ? "" : " AND m.year = {year:UInt16}";
   const rows = await chQuery<{
     company_id: string;
-    name: string;
     tickers: string[];
     venues: string;
     lead_venue: string;
@@ -170,11 +169,10 @@ export async function getTradedCompanies(
     last_day: string | null;
     traded: string;
   }>(
-    // Names come from the country's OWN register, named by CountryConfig. There
-    // is no companies_all: registers differ by design, so each country declares
-    // its table and which columns hold the id and the display name.
+    // Ranked WITHOUT the register join. Joining a grouped se_companies (1.9M
+    // rows) inline cost 1.28s against 0.03s for the ranking alone: the whole
+    // register was being scanned to name a hundred rows.
     `SELECT m.company_id AS company_id,
-            ifNull(any(c.name), '') AS name,
             arrayDistinct(arrayFlatten(groupArray(m.tickers))) AS tickers,
             toString(max(m.venues)) AS venues,
             argMax(m.lead_venue, m.year) AS lead_venue,
@@ -183,11 +181,6 @@ export async function getTradedCompanies(
             toString(argMax(m.last_day, m.year)) AS last_day,
             toString(sum(m.traded_usd)) AS traded
      FROM company_market_summary AS m
-     LEFT JOIN (
-       SELECT ${country.idColumn} AS company_id, any(${country.nameColumn}) AS name
-       FROM ${country.companiesTable}
-       GROUP BY company_id
-     ) AS c ON c.company_id = m.company_id
      WHERE m.country_code = {country:String}${yearFilter}
      GROUP BY m.company_id
      ORDER BY sum(m.traded_usd) DESC
@@ -195,9 +188,25 @@ export async function getTradedCompanies(
     year == null ? { country: code, limit } : { country: code, limit, year },
   );
 
+  // Names for the rows actually shown — an indexed lookup of at most `limit`
+  // ids. Registers differ by design, so each country declares its table and
+  // which columns hold the id and the display name.
+  const nameById = new Map<string, string>();
+  if (rows.length > 0) {
+    const names = await chQuery<{ company_id: string; name: string }>(
+      `SELECT toString(${country.idColumn}) AS company_id,
+              any(${country.nameColumn}) AS name
+       FROM ${country.companiesTable}
+       WHERE ${country.idColumn} IN {ids:Array(String)}
+       GROUP BY company_id`,
+      { ids: rows.map((r) => r.company_id) },
+    );
+    for (const n of names) nameById.set(n.company_id, n.name);
+  }
+
   return rows.map((r) => ({
     company_id: r.company_id,
-    name: r.name,
+    name: nameById.get(r.company_id) ?? "",
     tickers: r.tickers ?? [],
     venues: Number(r.venues),
     leadVenue: r.lead_venue,

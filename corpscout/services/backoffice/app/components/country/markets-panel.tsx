@@ -115,7 +115,7 @@ export function MarketsPanel({
                 key={y}
                 type="button"
                 onClick={() => selectYear(y)}
-                className={`rounded-md px-2 py-0.5 text-sm tabular-nums ${
+                className={`cursor-pointer rounded-md px-2 py-0.5 text-sm tabular-nums transition-colors ${
                   y === overview.year
                     ? "bg-foreground text-background"
                     : "text-muted-foreground hover:text-foreground"
