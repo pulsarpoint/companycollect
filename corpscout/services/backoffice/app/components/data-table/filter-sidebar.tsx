@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useFetcher, useNavigate } from "react-router";
+import { Link, useFetcher, useNavigate } from "react-router";
 import { Check, ListFilter } from "lucide-react";
 import type { CountryConfig } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
 import { filterableFacetKeys } from "~/lib/filters";
+import { availableCompanyFlags, flagFilterKey } from "~/lib/company-flags";
 import type { FacetOption } from "~/lib/facets.server";
 import { toggleFilterValue } from "~/components/data-table/url";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
@@ -33,6 +34,12 @@ const nf = new Intl.NumberFormat("en-US");
 
 export function facetLabel(country: CountryConfig, key: string): string {
   if (key === "industry") return "Industry";
+  // Flag filters are not columns, so the active-filter chip would otherwise
+  // read "flag_financials: yes" -- the raw key, leaked to the reader.
+  const flag = availableCompanyFlags(country.code).find(
+    (f) => flagFilterKey(f.id) === key,
+  );
+  if (flag) return flag.label;
   return country.columns.find((c) => c.key === key)?.label ?? key;
 }
 
@@ -131,6 +138,71 @@ function FacetCombobox({
   );
 }
 
+
+/**
+ * A switch per kind of data we hold.
+ *
+ * Two states, not three: off means "any", on means "only companies that have
+ * it". The URL model still understands `no` -- `?f_flag_financials=no` returns
+ * the companies we hold no accounts for, which is how a coverage gap gets
+ * found -- but that is a rarer question than "show me the ones with data", and
+ * a control that reads as a switch should behave like one.
+ *
+ * Rendered as a Link rather than a stateful control so the filter stays in the
+ * URL like every other one here: shareable, back-button-safe, and rendered on
+ * the server.
+ */
+function FlagFilters({
+  country,
+  filters,
+}: {
+  country: CountryConfig;
+  filters: CompanyFilters;
+}) {
+  const effectiveParams = useEffectiveSearchParams();
+  const flags = availableCompanyFlags(country.code);
+  if (flags.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">Data held</p>
+      <div className="flex flex-col gap-2">
+        {flags.map((flag) => {
+          const key = flagFilterKey(flag.id);
+          const on = (filters[key] ?? []).includes("yes");
+          return (
+            <Link
+              key={flag.id}
+              to={toggleFilterValue(effectiveParams, key, "yes")}
+              preventScrollReset
+              role="switch"
+              aria-checked={on}
+              aria-label={`Only companies with ${flag.label.toLowerCase()}`}
+              className="flex items-center justify-between gap-2 py-0.5"
+              title={flag.meaning}
+            >
+              <span className="text-muted-foreground text-sm">{flag.label}</span>
+              <span
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+                  on
+                    ? "border-emerald-600/50 bg-emerald-500/70"
+                    : "border-border bg-muted"
+                }`}
+              >
+                <span
+                  className={`size-3.5 rounded-full bg-white shadow-sm transition-transform ${
+                    on ? "translate-x-[1.15rem]" : "translate-x-[0.15rem]"
+                  }`}
+                />
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function FilterSidebar({
   country,
   filters,
@@ -151,6 +223,7 @@ export function FilterSidebar({
           <SheetTitle>Filter companies</SheetTitle>
         </SheetHeader>
         <div className="space-y-4 px-4 pb-6">
+          <FlagFilters country={country} filters={filters} />
           {filterableFacetKeys(country).map((key) => (
             <FacetCombobox
               key={key}

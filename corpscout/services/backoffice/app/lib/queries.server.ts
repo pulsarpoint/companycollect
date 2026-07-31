@@ -2,6 +2,7 @@ import { chQuery } from "~/lib/clickhouse.server";
 import {
   COMPANY_FLAG_SOURCES,
   availableCompanyFlags,
+  flagFilterKey,
   type CompanyFlagId,
 } from "~/lib/company-flags";
 import {
@@ -72,6 +73,40 @@ interface IndustryRow {
  * separately -- see attachCompanyFlags. Splitting them this way means a
  * register that stores its address inline costs no extra query at all.
  */
+
+/**
+ * A WHERE conjunct restricting to companies that do (or do not) hold a flag.
+ *
+ * Unlike the per-page flag lookup, this cannot be scoped to the visible ids --
+ * it decides which rows exist at all, so each check is a semi-join against the
+ * whole companion table. They are the same tables the flags are read from, so
+ * the filter and the glyph can never disagree.
+ *
+ * Returns null when the country has no source for the flag, so an unknown
+ * combination filters nothing rather than excluding everything.
+ */
+function flagFilterCondition(
+  country: CountryConfig,
+  flagId: CompanyFlagId,
+  want: boolean,
+): string | null {
+  const source = COMPANY_FLAG_SOURCES[country.code.toLowerCase()]?.[flagId];
+  if (!source) return null;
+
+  if ("expr" in source) {
+    const value = `coalesce(toString(${source.expr}), '')`;
+    return want ? `${value} != ''` : `${value} = ''`;
+  }
+
+  const id = `toString(${country.idColumn})`;
+  const subquery =
+    "market" in source
+      ? `SELECT toString(company_id) FROM company_market_summary
+         WHERE country_code = '${country.code.toUpperCase()}'`
+      : `SELECT toString(${source.idColumn}) FROM ${source.table}`;
+  return want ? `${id} IN (${subquery})` : `${id} NOT IN (${subquery})`;
+}
+
 function flagSelectList(country: CountryConfig): string[] {
   const sources = COMPANY_FLAG_SOURCES[country.code.toLowerCase()] ?? {};
   return Object.entries(sources)
@@ -222,6 +257,17 @@ export async function searchCompanies(
     conds.push(`${column.expr} IN {f_${column.key}:Array(String)}`);
     params[`f_${column.key}`] = values;
   }
+  for (const flag of availableCompanyFlags(country.code)) {
+    const values = opts.filters?.[flagFilterKey(flag.id)];
+    if (!values || values.length === 0) continue;
+    const yes = values.includes("yes");
+    const no = values.includes("no");
+    // Both ticked is every company, which is the same as no filter at all.
+    if (yes === no) continue;
+    const condition = flagFilterCondition(country, flag.id, yes);
+    if (condition) conds.push(condition);
+  }
+
   const industryValues = opts.filters?.industry;
   if (industryValues?.length && country.industryFilterExpr) {
     conds.push(country.industryFilterExpr);

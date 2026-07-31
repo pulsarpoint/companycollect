@@ -1,4 +1,5 @@
 import type { CountryConfig } from "~/lib/countries";
+import { flagFilterKeys } from "~/lib/company-flags";
 
 export const FILTER_PREFIX = "f_";
 const MAX_VALUES_PER_FILTER = 50;
@@ -18,7 +19,9 @@ export function parseFilters(
   country: CountryConfig,
 ): CompanyFilters {
   const filters: CompanyFilters = {};
-  for (const key of filterableFacetKeys(country)) {
+  // Flag filters are whitelisted here but NOT in filterableFacetKeys: they are
+  // yes/no toggles, not a searchable list of a column's distinct values.
+  for (const key of [...filterableFacetKeys(country), ...flagFilterKeys(country.code)]) {
     const values = [
       ...new Set(
         searchParams

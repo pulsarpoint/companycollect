@@ -98,3 +98,24 @@ export function availableCompanyFlags(countryCode: string): CompanyFlag[] {
   const sources = COMPANY_FLAG_SOURCES[countryCode.toLowerCase()] ?? {};
   return COMPANY_FLAGS.filter((flag) => sources[flag.id] !== undefined);
 }
+
+/**
+ * The filter key a flag uses in the URL, e.g. `f_flag_financials=yes`.
+ *
+ * Separate from the facet keys, which drive a searchable combobox over a
+ * column's distinct values. A flag has exactly two states, so it gets a pair
+ * of toggles instead -- and "no" is as useful as "yes" here: finding the
+ * Norwegian companies we hold NO financials for is how a coverage gap gets
+ * noticed.
+ */
+export function flagFilterKey(id: CompanyFlagId): string {
+  return `flag_${id}`;
+}
+
+export const FLAG_FILTER_VALUES = ["yes", "no"] as const;
+export type FlagFilterValue = (typeof FLAG_FILTER_VALUES)[number];
+
+/** Filter keys this country offers, one per flag it can fill. */
+export function flagFilterKeys(countryCode: string): string[] {
+  return availableCompanyFlags(countryCode).map((flag) => flagFilterKey(flag.id));
+}
