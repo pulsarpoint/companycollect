@@ -1,5 +1,5 @@
-import { Link } from "react-router";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Link, useNavigate } from "react-router";
+import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
 
 import type { MarketOverview, TradedCompanyRow } from "~/lib/markets.server";
 import { Metric } from "~/components/country/shared";
@@ -69,10 +69,17 @@ export function MarketsPanel({
     );
   }
 
+  const navigate = useNavigate();
+  const selectYear = (next: number) =>
+    navigate(`?year=${next}`, { preventScrollReset: true });
+
   const chart = overview.perMonth.map((m) => ({
     month: monthLabel(m.month),
     traded: m.tradedUsd / 1e9,
     companies: m.companies,
+    // The chart keeps every month — the trend is the point — and dims the ones
+    // outside the selected year rather than hiding them.
+    selected: m.month.startsWith(String(overview.year)),
   }));
 
   return (
@@ -83,19 +90,42 @@ export function MarketsPanel({
       >
         <Metric
           label="Traded companies"
-          value={nf.format(overview.companies)}
-          detail={`${nf.format(overview.symbols)} symbols`}
+          value={nf.format(overview.activeCompanies)}
+          detail={
+            overview.companies > overview.activeCompanies
+              ? `${nf.format(overview.companies - overview.activeCompanies)} listed but barely traded`
+              : "all actively traded"
+          }
         />
         <Metric
-          label="Traded value"
+          label={`Traded value · ${overview.year}`}
           value={usdBn(overview.tradedUsd)}
-          detail="price × volume, all venues"
+          detail={overview.partial ? `${overview.year} still running` : "price × volume, all venues"}
         />
-        <Metric
-          label="Period"
-          value={`${monthLabel(overview.firstDay)} – ${monthLabel(overview.lastDay)}`}
-          detail={`${overview.perMonth.length} months`}
-        />
+        <div className="flex flex-col justify-center gap-1.5 px-4 py-4">
+          <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Period
+          </span>
+          {/* Every figure on this page describes ONE year. There is deliberately
+              no all-time option: a total over "however much history is loaded"
+              grew whenever the backfill advanced and told a reader nothing. */}
+          <div className="flex flex-wrap gap-1">
+            {overview.availableYears.map((y) => (
+              <button
+                key={y}
+                type="button"
+                onClick={() => selectYear(y)}
+                className={`rounded-md px-2 py-0.5 text-sm tabular-nums ${
+                  y === overview.year
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+        </div>
       </section>
 
       <Card>
@@ -130,7 +160,15 @@ export function MarketsPanel({
                 tickFormatter={(v: number) => `$${v.toFixed(0)}bn`}
               />
               <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="traded" fill="var(--color-traded)" radius={2} />
+              <Bar dataKey="traded" radius={2}>
+                {chart.map((row) => (
+                  <Cell
+                    key={row.month}
+                    fill="var(--color-traded)"
+                    fillOpacity={row.selected ? 1 : 0.28}
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ChartContainer>
         </CardContent>
@@ -140,8 +178,9 @@ export function MarketsPanel({
         <CardHeader>
           <CardTitle>Companies</CardTitle>
           <CardDescription>
-            Ranked by traded value, because a share price is not a size — a
-            company quoted at 2,000 is not bigger than one quoted at 20.
+            Ranked by traded value in {overview.year}, because a share price is
+            not a size — a company quoted at 2,000 is not bigger than one quoted
+            at 20.
           </CardDescription>
         </CardHeader>
         <CardContent>

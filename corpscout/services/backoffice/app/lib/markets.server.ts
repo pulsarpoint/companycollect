@@ -24,13 +24,28 @@ import type { CountryConfig } from "~/lib/countries";
 export type MarketMonth = { month: string; companies: number; tradedUsd: number };
 
 export type MarketOverview = {
+  /** The year every headline figure describes. Never an unbounded total. */
+  year: number;
+  availableYears: number[];
+  /** Whether `year` is still running, so the page can say so. */
+  partial: boolean;
   companies: number;
-  symbols: number;
-  firstDay: string;
-  lastDay: string;
+  /** Companies with meaningful turnover, as opposed to a nominal listing. */
+  activeCompanies: number;
   tradedUsd: number;
+  /** Every month held, not just the selected year — the trend is the point. */
   perMonth: MarketMonth[];
 };
+
+/**
+ * Turnover below which a listing is nominal rather than traded.
+ *
+ * 67 Swedish companies have Frankfurt as their busiest venue and essentially
+ * zero traded value: admitted somewhere, traded nowhere. Counting them as
+ * "traded companies" overstates the market, so they are counted separately
+ * rather than dropped — they ARE listed, which is a fact worth keeping.
+ */
+const NOMINAL_TURNOVER_USD = 1_000_000;
 
 export type TradedCompanyRow = {
   company_id: string;
@@ -56,10 +71,39 @@ export async function hasMarkets(country: CountryConfig): Promise<boolean> {
   return Number(rows[0]?.n ?? 0) > 0;
 }
 
+/**
+ * The default period: the latest year that has fully elapsed.
+ *
+ * Not the latest year with data, and never a total across everything held.
+ * "Traded value over 31 months" was a number that grew because the backfill
+ * advanced, not because anything happened in Sweden — it answered no question.
+ * A completed calendar year is a period a reader can reason about, and the
+ * running year stays selectable, marked as incomplete.
+ */
+function defaultMarketYear(years: number[], now = new Date()): number | null {
+  if (years.length === 0) return null;
+  const sorted = [...years].sort((a, b) => a - b);
+  const complete = sorted.filter((y) => y < now.getUTCFullYear());
+  return complete.length > 0 ? complete[complete.length - 1] : sorted[sorted.length - 1];
+}
+
 export async function getMarketOverview(
   country: CountryConfig,
+  requestedYear?: number | null,
 ): Promise<MarketOverview | null> {
   const code = country.code.toUpperCase();
+  const yearRows = await chQuery<{ year: string }>(
+    `SELECT DISTINCT toString(year) AS year FROM company_market_summary
+     WHERE country_code = {country:String} ORDER BY year`,
+    { country: code },
+  );
+  const availableYears = yearRows.map((r) => Number(r.year));
+  if (availableYears.length === 0) return null;
+  const year =
+    requestedYear != null && availableYears.includes(requestedYear)
+      ? requestedYear
+      : defaultMarketYear(availableYears)!;
+
   const [months, totals] = await Promise.all([
     chQuery<{ month: string; companies: string; symbols: string; traded: string }>(
       `SELECT toString(month) AS month,
@@ -71,11 +115,13 @@ export async function getMarketOverview(
        ORDER BY month`,
       { country: code },
     ),
-    chQuery<{ companies: string }>(
-      `SELECT toString(uniqExact(company_id)) AS companies
+    chQuery<{ companies: string; active: string; traded: string }>(
+      `SELECT toString(uniqExact(company_id)) AS companies,
+              toString(uniqExactIf(company_id, traded_usd >= ${NOMINAL_TURNOVER_USD})) AS active,
+              toString(sum(traded_usd)) AS traded
        FROM company_market_summary
-       WHERE country_code = {country:String}`,
-      { country: code },
+       WHERE country_code = {country:String} AND year = {year:UInt16}`,
+      { country: code, year },
     ),
   ]);
   if (months.length === 0) return null;
@@ -87,13 +133,12 @@ export async function getMarketOverview(
   }));
 
   return {
+    year,
+    availableYears,
+    partial: year >= new Date().getUTCFullYear(),
     companies: Number(totals[0]?.companies ?? 0),
-    // The busiest month's symbol count, so the figure means "series we hold"
-    // rather than summing the same symbol once per month.
-    symbols: Math.max(...months.map((m) => Number(m.symbols))),
-    firstDay: perMonth[0].month,
-    lastDay: perMonth[perMonth.length - 1].month,
-    tradedUsd: perMonth.reduce((sum, m) => sum + m.tradedUsd, 0),
+    activeCompanies: Number(totals[0]?.active ?? 0),
+    tradedUsd: Number(totals[0]?.traded ?? 0),
     perMonth,
   };
 }
