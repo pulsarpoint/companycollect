@@ -102,7 +102,11 @@ GROUP BY country_code, month
 """
 )
 
-# One row per traded company, already folded across venues.
+# One row per traded company PER YEAR, folded across venues.
+#
+# Per year because the country overview lets a reader pick one, and an
+# all-time total cannot answer "who traded most in 2022". The Markets tab
+# sums across years for its all-time view.
 #
 # The quoted price comes from the symbol with the most traded value, not from
 # whichever venue reported last: that put Ericsson at EUR 8.67 and Volvo at USD
@@ -112,6 +116,7 @@ MARKET_SUMMARY_SELECT = (
     + """
 SELECT
     country_code,
+    year,
     company_id,
     groupUniqArray(symbol_ticker) AS tickers,
     toUInt16(uniqExact(symbol_exchange)) AS venues,
@@ -128,6 +133,7 @@ FROM (
     -- alias shadowing, not scoping.
     SELECT
         px.country_code AS country_code,
+        toYear(px.price_date) AS year,
         px.company_id AS company_id,
         px.symbol_key AS symbol_key,
         any(px.ticker) AS symbol_ticker,
@@ -139,9 +145,9 @@ FROM (
     FROM px
     INNER JOIN factor
         ON factor.price_date = px.price_date AND factor.ccy = px.ccy
-    GROUP BY country_code, company_id, symbol_key
+    GROUP BY country_code, year, company_id, symbol_key
 ) AS per_symbol
-GROUP BY country_code, company_id
+GROUP BY country_code, year, company_id
 """
 )
 

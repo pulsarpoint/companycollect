@@ -12,7 +12,7 @@ import {
 } from "~/lib/financial-aggregates.server";
 import { parseYear, resolveYear } from "~/lib/country-year";
 import { legacyTabPath } from "~/lib/country-tabs";
-import { getTradedCompanies } from "~/lib/markets.server";
+import { getTradedCompanies, hasMarkets } from "~/lib/markets.server";
 import { OverviewTab } from "~/components/country/overview-tab";
 
 export async function loader({ params, request }: Route.LoaderArgs) {
@@ -34,13 +34,18 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   ]);
   const year = resolveYear(parseYear(url.searchParams.get("year")), availableYears, defaultYear);
 
-  const [financials, coverageIndustries, tradedCompanies, yearFinancials] =
+  const [financials, coverageIndustries, tradedCompanies, countryHasMarkets, yearFinancials] =
     await Promise.all([
       getCountryFinancials(country.code),
       getCountryIndustryGroups(country.code),
       // Reads the precomputed company_market_summary, so this costs a small
       // indexed lookup rather than the warehouse join it replaced.
-      getTradedCompanies(country, 5),
+      // Year-aware: the card answers about the same year as the rest of the
+      // page. Older years show nothing until EODHD history reaches them.
+      getTradedCompanies(country, 5, year),
+      // Whether the country has ANY traded companies, so a year with no market
+      // data can say so instead of the card silently disappearing.
+      hasMarkets(country),
       year === null
         ? Promise.resolve(null)
         : getCountryFinancialsForYear(country.code, year),
@@ -57,13 +62,14 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     industryMode: revenueIndustries ? ("revenue" as const) : ("coverage" as const),
     topCompanies: yearFinancials?.topCompanies ?? financials?.topCompanies ?? [],
     tradedCompanies,
+    countryHasMarkets,
     year,
     availableYears,
   };
 }
 
 export default function CountryOverview({ loaderData, params }: Route.ComponentProps) {
-  const { industries, industryMode, topCompanies, tradedCompanies, year, availableYears } =
+  const { industries, industryMode, topCompanies, tradedCompanies, countryHasMarkets, year, availableYears } =
     loaderData;
   const country = getCountry(params.country)!;
   const layoutData = useRouteLoaderData<typeof countryLayoutLoader>("routes/country-layout")!;
@@ -78,6 +84,7 @@ export default function CountryOverview({ loaderData, params }: Route.ComponentP
         industryMode={industryMode}
         topCompanies={topCompanies}
         tradedCompanies={tradedCompanies}
+        hasMarkets={countryHasMarkets}
         year={year}
         availableYears={availableYears}
       />

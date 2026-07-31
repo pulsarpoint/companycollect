@@ -72,7 +72,7 @@ export async function getMarketOverview(
       { country: code },
     ),
     chQuery<{ companies: string }>(
-      `SELECT toString(count()) AS companies
+      `SELECT toString(uniqExact(company_id)) AS companies
        FROM company_market_summary
        WHERE country_code = {country:String}`,
       { country: code },
@@ -107,8 +107,13 @@ export async function getMarketOverview(
 export async function getTradedCompanies(
   country: CountryConfig,
   limit = 100,
+  year?: number | null,
 ): Promise<TradedCompanyRow[]> {
   const code = country.code.toUpperCase();
+  // company_market_summary is keyed per (country, year, company). Without a
+  // year the rows are folded to an all-time view: traded value sums, and the
+  // quoted price comes from the most recent year rather than an arbitrary one.
+  const yearFilter = year == null ? "" : " AND m.year = {year:UInt16}";
   const rows = await chQuery<{
     company_id: string;
     name: string;
@@ -125,24 +130,24 @@ export async function getTradedCompanies(
     // its table and which columns hold the id and the display name.
     `SELECT m.company_id AS company_id,
             ifNull(any(c.name), '') AS name,
-            any(m.tickers) AS tickers,
-            toString(any(m.venues)) AS venues,
-            any(m.lead_venue) AS lead_venue,
-            any(m.lead_currency) AS lead_currency,
-            toString(any(m.last_close)) AS last_close,
-            toString(any(m.last_day)) AS last_day,
-            toString(any(m.traded_usd)) AS traded
+            arrayDistinct(arrayFlatten(groupArray(m.tickers))) AS tickers,
+            toString(max(m.venues)) AS venues,
+            argMax(m.lead_venue, m.year) AS lead_venue,
+            argMax(m.lead_currency, m.year) AS lead_currency,
+            toString(argMax(m.last_close, m.year)) AS last_close,
+            toString(argMax(m.last_day, m.year)) AS last_day,
+            toString(sum(m.traded_usd)) AS traded
      FROM company_market_summary AS m
      LEFT JOIN (
        SELECT ${country.idColumn} AS company_id, any(${country.nameColumn}) AS name
        FROM ${country.companiesTable}
        GROUP BY company_id
      ) AS c ON c.company_id = m.company_id
-     WHERE m.country_code = {country:String}
+     WHERE m.country_code = {country:String}${yearFilter}
      GROUP BY m.company_id
-     ORDER BY any(m.traded_usd) DESC
+     ORDER BY sum(m.traded_usd) DESC
      LIMIT {limit:UInt32}`,
-    { country: code, limit },
+    year == null ? { country: code, limit } : { country: code, limit, year },
   );
 
   return rows.map((r) => ({

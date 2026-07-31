@@ -236,6 +236,7 @@ EXPECTED_MIGRATIONS = (
     "000220_corpscout_cpv_vocabulary",
     "000221_corpscout_br_cnae_categories",
     "000222_corpscout_company_market_facts",
+    "000223_corpscout_company_market_summary_year",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

@@ -26,6 +26,7 @@ export function OverviewTab({
   industryMode,
   topCompanies,
   tradedCompanies = [],
+  hasMarkets = false,
   year = null,
   availableYears = [],
 }: {
@@ -36,6 +37,9 @@ export function OverviewTab({
   industryMode: IndustryMode;
   topCompanies: TopCompany[];
   tradedCompanies?: TradedCompanyRow[];
+  /** The country has traded companies in SOME year — distinguishes "no market
+   * data here" from "none for the year you picked". */
+  hasMarkets?: boolean;
   /** The year every card on this page is describing. */
   year?: number | null;
   availableYears?: number[];
@@ -176,16 +180,25 @@ export function OverviewTab({
             Revenue and traded value are different quantities, and putting them
             in one card invites a comparison neither supports. Shown only where
             there are traded companies. */}
-        {tradedCompanies.length > 0 ? (
+        {hasMarkets ? (
           <Card>
             <CardHeader>
-              <CardTitle>Most traded companies</CardTitle>
+              <CardTitle>
+                Most traded companies{year != null ? ` · ${year}` : ""}
+              </CardTitle>
               <CardDescription>
-                Money changing hands in their shares, across every venue they
-                trade on. Turnover, not market capitalisation.
+                Money changing hands in their shares during {year ?? "the period held"},
+                across every venue they trade on. Turnover, not market
+                capitalisation.
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {tradedCompanies.length === 0 ? (
+                <EmptyData
+                  title={`No market data for ${year ?? "this year"}`}
+                  description="Price history does not reach this year yet. Pick a more recent one, or open Markets for every year held."
+                />
+              ) : (
               <ul className="flex flex-col gap-2">
                 {tradedCompanies.map((row) => (
                   <li
@@ -204,6 +217,7 @@ export function OverviewTab({
                   </li>
                 ))}
               </ul>
+              )}
               <Link
                 to={`/countries/${countryCode}/markets`}
                 className="text-muted-foreground mt-3 inline-block text-xs underline underline-offset-2"
