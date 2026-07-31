@@ -62,4 +62,19 @@ COUNTRY_IDENTITY_RULES = {
         identifier_length=8,
         min_expected_rows=500,
     ),
+    # France verifies more cleanly than any register added so far: 168,718 of
+    # the 168,968 French LEIs whose registered_as normalises to nine digits
+    # match a SIREN, which is 99.85%. GLEIF records a handful as SIRET (the
+    # 14-digit establishment number, 17 rows) -- those are left unmatched
+    # rather than truncated to their SIREN prefix, because a SIRET names one
+    # establishment and the truncation would silently assert it is the legal
+    # unit.
+    "FR": CountryIdentityRule(
+        country_code="FR",
+        issuer_scheme="lei",
+        register_table="fr_companies",
+        id_column="siren",
+        identifier_length=9,
+        min_expected_rows=500,
+    ),
 }
