@@ -423,12 +423,19 @@ def apply_ted_usd_conversion(
         ),
     )
 
+    # Only real currency codes reach the FX client. eForms marks a withheld
+    # field with the literal token UNPUBLISHED, and currencyID carries it like
+    # any other value -- which took ted_publish_clickhouse down three times with
+    # "Invalid currency code: UNPUBLISHED". A three-letter alphabetic code is
+    # the whole test; anything else is a marker, not money, and simply gets no
+    # USD twin.
     pair_query = "\nunion\n".join(
         f"""
         select distinct {metric}_currency as currency,
                cast(publication_date as varchar) as rate_date
         from {qualified}
-        where {metric}_currency <> '' and publication_date is not null
+        where regexp_matches({metric}_currency, '^[A-Z]{{3}}$')
+          and publication_date is not null
         """
         for qualified, metrics in targets
         for metric, _ in metrics

@@ -497,3 +497,24 @@ def test_list_parsed_partitions_reports_country_and_month(
         for country, month, _ in publish_module.list_parsed_partitions()
     }
     assert found == {("SE", "2024-01-01"), ("FI", "2024-02-01")}
+
+
+def test_fx_requests_only_real_currency_codes() -> None:
+    """eForms marks a withheld field with the literal token UNPUBLISHED, and
+    currencyID carries it like any other value.
+
+    ted_publish_clickhouse failed three times on 2026-07-31 with "Invalid
+    currency code: UNPUBLISHED" because the FX pair query accepted any
+    non-empty string. A three-letter alphabetic code is the whole test; a
+    marker gets no USD twin, which the UI already renders as an absent figure.
+    """
+    import inspect
+
+    from dagster_v3.defs.ted_procurement import publish
+
+    source = inspect.getsource(publish)
+    assert "regexp_matches" in source
+    # Doubled braces: the pattern lives inside an f-string.
+    assert "'^[A-Z]{{3}}$'" in source
+    # The old predicate accepted every marker, not only currencies.
+    assert "_currency <> ''" not in source
