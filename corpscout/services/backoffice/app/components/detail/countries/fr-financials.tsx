@@ -83,8 +83,12 @@ function MoneyPair({
   );
 }
 
+type RatioKey = {
+  [K in keyof FrFinancialRow]: FrFinancialRow[K] extends number | null ? K : never;
+}[keyof FrFinancialRow];
+
 const RATIOS: {
-  key: keyof FrFinancialRow;
+  key: RatioKey;
   label: string;
   unit: "percent" | "days" | "ratio";
 }[] = [
@@ -162,13 +166,25 @@ export function FrFinancialsSection({
                     />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {money(r.gross_margin_original)}
+                    <MoneyPair
+                      original={r.gross_margin_original}
+                      usd={r.gross_margin_usd}
+                      currency={r.currency}
+                    />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {money(r.ebitda_original)}
+                    <MoneyPair
+                      original={r.ebitda_original}
+                      usd={r.ebitda_usd}
+                      currency={r.currency}
+                    />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {money(r.ebit_original)}
+                    <MoneyPair
+                      original={r.ebit_original}
+                      usd={r.ebit_usd}
+                      currency={r.currency}
+                    />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     <MoneyPair
@@ -204,7 +220,7 @@ export function FrFinancialsSection({
                       key={r.fiscal_year}
                       className="text-right tabular-nums"
                     >
-                      {formatRatio(r[ratio.key] as number | null, ratio.unit)}
+                      {formatRatio(r[ratio.key], ratio.unit)}
                     </TableCell>
                   ))}
                 </TableRow>

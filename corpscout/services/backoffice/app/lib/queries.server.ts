@@ -420,8 +420,11 @@ export interface FrFinancialRow {
   revenue_original: number | null;
   revenue_usd: number | null;
   gross_margin_original: number | null;
+  gross_margin_usd: number | null;
   ebitda_original: number | null;
+  ebitda_usd: number | null;
   ebit_original: number | null;
+  ebit_usd: number | null;
   net_income_original: number | null;
   net_income_usd: number | null;
   ebitda_margin_percent: number | null;
@@ -432,6 +435,7 @@ export interface FrFinancialRow {
   customer_payment_days: number | null;
   supplier_payment_days: number | null;
   inventory_turnover_days: number | null;
+  period_end_date: string;
 }
 
 export interface TaxRecordRow {

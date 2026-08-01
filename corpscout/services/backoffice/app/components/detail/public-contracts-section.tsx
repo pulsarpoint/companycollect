@@ -1,5 +1,4 @@
-import type { PublicContractRow } from "~/lib/queries.server";
-import type { ContractSummaryRow } from "~/lib/queries.server";
+import type { ContractSummaryRow, PublicContractRow } from "~/lib/queries.server";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -17,6 +16,7 @@ import {
 } from "~/components/ui/table";
 
 const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const summaryNf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 function money(v: number | null) {
   return v == null ? <span className="text-muted-foreground">—</span> : nf.format(v);
@@ -54,8 +54,6 @@ function MoneyPair({
  * TED, …) is decided per country in its publicContractsQuery — this component
  * only labels the source.
  */
-const summaryNf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-
 export function PublicContractsSection({
   contracts,
   summary = null,
@@ -76,10 +74,23 @@ export function PublicContractsSection({
         {summary ? (
           <div className="text-muted-foreground flex flex-wrap gap-x-6 gap-y-1 text-sm">
             <span>
-              <span className="text-foreground tabular-nums">
-                {summaryNf.format(Number(summary.award_count))}
-              </span>{" "}
-              awards
+              {contracts.length === 100 && Number(summary.award_count) > 100 ? (
+                <>
+                  newest{" "}
+                  <span className="text-foreground tabular-nums">100</span> of{" "}
+                  <span className="text-foreground tabular-nums">
+                    {summaryNf.format(Number(summary.award_count))}
+                  </span>{" "}
+                  awards
+                </>
+              ) : (
+                <>
+                  <span className="text-foreground tabular-nums">
+                    {summaryNf.format(Number(summary.award_count))}
+                  </span>{" "}
+                  awards
+                </>
+              )}
             </span>
             {summary.last_award_date === "" ? null : (
               <span>

@@ -15,8 +15,11 @@ function row(over: Partial<FrFinancialRow> = {}): FrFinancialRow {
     revenue_original: 121958,
     revenue_usd: 130714.58,
     gross_margin_original: 121958,
+    gross_margin_usd: 130714.58,
     ebitda_original: -21641,
+    ebitda_usd: -23169.5,
     ebit_original: -21643,
+    ebit_usd: -23171.64,
     net_income_original: 1041528,
     net_income_usd: 1116309.71,
     ebitda_margin_percent: -17.745,
@@ -27,6 +30,7 @@ function row(over: Partial<FrFinancialRow> = {}): FrFinancialRow {
     customer_payment_days: 48.287,
     supplier_payment_days: 232.315,
     inventory_turnover_days: 0,
+    period_end_date: "2024-12-31",
     ...over,
   };
 }

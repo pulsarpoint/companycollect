@@ -114,6 +114,36 @@ describe("France financial metrics", () => {
     expect(rows.some((r) => r.ebitda_margin_percent != null)).toBe(true);
     expect(rows.some((r) => r.customer_payment_days != null)).toBe(true);
   });
+
+  it("picks the LATER period_end_date when a fiscal year has more than one row tied on balance type", async () => {
+    // 005680145, fiscal year 2020, has two 'C' filings with different period
+    // ends and genuinely different figures (revenue 17,458,238 vs 6,736,538).
+    // Balance-type priority alone does not break this tie -- 10,344
+    // (siren, fiscal_year, balance_type_code) groups don't -- so the query's
+    // third ORDER BY term, period_end_date DESC, must decide it. This test
+    // pins the identity of the picked row rather than just its distinctness,
+    // which is the only way to catch an arbitrary pick regressing back in.
+    const rows = await chQuery<{
+      fiscal_year: string;
+      balance_type: string;
+      period_end_date: string;
+    }>(getCountry("fr")!.detail!.financialMetricsQuery!, { id: "005680145" });
+    const row2020 = rows.find((r) => r.fiscal_year === "2020");
+    expect(row2020).toBeDefined();
+    expect(row2020!.balance_type).toBe("C");
+
+    // Confirm against the two raw candidate rows for that year/balance type,
+    // rather than hardcoding a date this test can't independently justify.
+    const candidates = await chQuery<{ period_end_date: string }>(
+      `SELECT coalesce(toString(period_end_date), '') AS period_end_date
+       FROM fr_financial_metrics
+       WHERE siren = {id:String} AND fiscal_year = 2020 AND balance_type_code = 'C'
+       ORDER BY period_end_date DESC`,
+      { id: "005680145" },
+    );
+    expect(candidates.length).toBeGreaterThan(1);
+    expect(row2020!.period_end_date).toBe(candidates[0].period_end_date);
+  });
 });
 
 describe("France contract summary", () => {
