@@ -34,7 +34,9 @@ GROUP_NAME = "company_contracts"
 CONTRACT_REF = "if(contract_key != '', contract_key, contract_id)"
 
 
-def contract_facts_insert_sql(*, target: str, view: str, resolved_at: str) -> str:
+def facts_insert_sql(
+    *, target: str, view: str, resolved_at: str, columns: tuple[str, ...]
+) -> str:
     """One country's contracts, shaped for the facts table.
 
     The SELECT list is built from CONTRACT_FACTS_COLUMNS so it cannot drift out
@@ -47,10 +49,10 @@ def contract_facts_insert_sql(*, target: str, view: str, resolved_at: str) -> st
         else f"toDateTime('{resolved_at}') AS resolved_at"
         if column == "resolved_at"
         else column
-        for column in tables.CONTRACT_FACTS_COLUMNS
+        for column in columns
     )
     return f"""
-INSERT INTO {target} ({', '.join(tables.CONTRACT_FACTS_COLUMNS)})
+INSERT INTO {target} ({', '.join(columns)})
 SELECT {selected}
 FROM {view}
 """
@@ -92,8 +94,11 @@ def company_contract_facts(
                 # reading the public name would make this asset its own source.
                 view = f"{RESOLVED_DATABASE}.{code}_government_contracts_live"
                 client.execute(
-                    contract_facts_insert_sql(
-                        target=stage, view=view, resolved_at=resolved_at
+                    facts_insert_sql(
+                        target=stage,
+                        view=view,
+                        resolved_at=resolved_at,
+                        columns=tables.CONTRACT_FACTS_COLUMNS,
                     )
                 )
                 rows = client.execute(
@@ -125,9 +130,75 @@ def company_contract_facts(
     )
 
 
+@dg.asset(
+    name="company_contract_award_facts",
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    metadata={"tables": [f"{RESOLVED_DATABASE}.{tables.AWARD_FACTS_TABLE}"]},
+    description=(
+        "Brazil's and Norway's award-shaped contracts, with the supplier "
+        "columns those pages show, resolved into one table."
+    ),
+)
+def company_contract_award_facts(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RESOLVED_DATABASE,
+        tables=tables.AWARD_FACTS_TABLES,
+    )
+    qualified = f"`{RESOLVED_DATABASE}`.`{tables.AWARD_FACTS_TABLE}`"
+    stage = (
+        f"`{RESOLVED_DATABASE}`."
+        f"`_tmp_{tables.AWARD_FACTS_TABLE}_{uuid.uuid4().hex}`"
+    )
+    resolved_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    per_country: dict[str, int] = {}
+    with clickhouse.get_connection() as client:
+        client.execute(f"CREATE TABLE {stage} AS {qualified}")
+        try:
+            for code in tables.AWARD_COUNTRIES:
+                view = (
+                    f"{RESOLVED_DATABASE}.{code}_government_contract_awards_live"
+                )
+                client.execute(
+                    facts_insert_sql(
+                        target=stage,
+                        view=view,
+                        resolved_at=resolved_at,
+                        columns=tables.AWARD_FACTS_COLUMNS,
+                    )
+                )
+                rows = client.execute(
+                    f"SELECT count() FROM {stage} "
+                    f"WHERE country_code = '{code.upper()}'"
+                )[0][0]
+                per_country[code] = int(rows)
+                context.log.info("%s: %d award rows", code.upper(), rows)
+
+            total = sum(per_country.values())
+            if total < tables.MIN_AWARD_FACTS_ROWS:
+                raise ValueError(
+                    f"award facts produced {total} rows, below the "
+                    f"{tables.MIN_AWARD_FACTS_ROWS} floor"
+                )
+            client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
+
+    return dg.MaterializeResult(
+        metadata={"rows": sum(per_country.values()), **per_country}
+    )
+
+
 company_contract_facts_job = dg.define_asset_job(
     name="company_contract_facts_job",
-    selection=dg.AssetSelection.assets(company_contract_facts),
+    selection=dg.AssetSelection.assets(
+        company_contract_facts, company_contract_award_facts
+    ),
 )
 
 company_contract_facts_schedule = dg.ScheduleDefinition(
@@ -139,7 +210,7 @@ company_contract_facts_schedule = dg.ScheduleDefinition(
 )
 
 defs = dg.Definitions(
-    assets=[company_contract_facts],
+    assets=[company_contract_facts, company_contract_award_facts],
     jobs=[company_contract_facts_job],
     schedules=[company_contract_facts_schedule],
 )

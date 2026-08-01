@@ -250,6 +250,8 @@ EXPECTED_MIGRATIONS = (
     "000233_corpscout_contract_view_join_order",
     "000234_corpscout_company_contract_facts",
     "000235_corpscout_contracts_read_from_facts",
+    "000236_corpscout_company_contract_award_facts",
+    "000237_corpscout_awards_read_from_facts",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

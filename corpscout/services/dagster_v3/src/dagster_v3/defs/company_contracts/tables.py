@@ -53,3 +53,53 @@ CONTRACT_COUNTRIES = ("br", "ee", "fi", "fr", "lv", "no", "se", "sk")
 # populated table from a source that has gone empty, which is exactly what a
 # broken upstream view looks like.
 MIN_CONTRACT_FACTS_ROWS = 300_000
+
+
+AWARD_FACTS_TABLE = "company_contract_award_facts"
+
+AWARD_FACTS_TABLES = (AWARD_FACTS_TABLE,)
+
+# Column order is the contract with migration 000236 and is asserted by
+# tests/test_clickhouse_migrations.py. The 26 of the contract shape plus the
+# three supplier columns those pages show -- winner_registered_id,
+# winner_match_status, winner_country.
+AWARD_FACTS_COLUMNS = (
+    "country_code",
+    "contract_ref",
+    "company_id",
+    "contract_id",
+    "source_slug",
+    "source_notice_id",
+    "source_lot_id",
+    "source_winner_ordinal",
+    "winner_name",
+    "winner_registered_id",
+    "winner_match_status",
+    "winner_country",
+    "source_url",
+    "publication_date",
+    "buyer_name",
+    "buyer_id",
+    "title",
+    "agreement_type",
+    "cpv_code",
+    "directive_governed",
+    "value_amount_original",
+    "value_currency",
+    "value_amount_usd",
+    "notice_value_amount_original",
+    "notice_value_currency",
+    "notice_value_amount_usd",
+    "value_source_field",
+    "notice_value_source_field",
+    "source_updated_at",
+    "contract_key",
+    "resolved_at",
+)
+
+# Only two registers publish the award shape. Brazil is why this exists: its
+# page sources br_pncp_contracts through the view and reached 12.8 GiB at 4.6M
+# rows.
+AWARD_COUNTRIES = ("br", "no")
+
+MIN_AWARD_FACTS_ROWS = 50_000
