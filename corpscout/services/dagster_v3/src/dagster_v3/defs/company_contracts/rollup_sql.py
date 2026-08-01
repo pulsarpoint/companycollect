@@ -8,9 +8,8 @@ completes before the page's LIMIT applies. For Brazil it collapses nothing
 holding a dozen aggregate states over wide strings in order to emit 4.6M rows:
 31s and 13.2 GiB, which the app abandons as a 500.
 
-Nothing about the shape changed in the move. Every comment below records a
-decision that was got wrong once, and the expressions are character-for-
-character what the page computed -- the rollup has to order and display
+Every comment below records a decision that was got wrong once, and the
+expressions are what the page computed -- the rollup has to order and display
 identically to what it replaces.
 
 What was dropped, deliberately:
@@ -21,8 +20,34 @@ What was dropped, deliberately:
   aggregating every winner row and then filtering.
 - The ORDER BY and LIMIT. The asset writes every row.
 
-What was added: `publication_date_in`, so the rollup can carry a real Date for
-the from/to filters. The page only ever needed the string form.
+Three expressions are NOT verbatim, each because the page's OUTER projection
+did the work and there is no outer projection any more:
+
+- `nullIf(max(priority), -1.0) AS amount_usd`. The page unwrapped the sentinel
+  one level up. Stored, -1.0 stops being a sentinel and starts being a number:
+  `amount_usd <= X` is true for it, so every contract with no USD figure would
+  join every max-amount filter, and `ORDER BY amount_usd ASC` would lead with
+  them instead of trailing. The sentinel stays in the inner query, where it is
+  still doing its job of keeping "no figure" apart from a genuine zero while
+  max() collapses the per-source values.
+- `toUInt32(...) AS supplier_count`. The page cast it; uniqExact returns UInt64
+  and the column is UInt32.
+- `argMax(publication_date_in, priority) AS publication_date` -- see below.
+
+`publication_date_in` is an addition: the page only ever needed the string
+form, and the from/to filters need a real Date.
+
+**argMax, not max, for that date.** `contract_date` is
+`argMax(source_date, priority)`, so it comes from the one source carrying the
+largest USD amount. A plain max() over every source would let a multi-source
+contract be FILTERED on one date and DISPLAY another -- the same class of bug
+as filtering the raw agreement_type while displaying the extracted one.
+Sharing `priority` makes the filtered date and the displayed date the same date
+by construction.
+
+The projection is in ROLLUP_COLUMNS order, because the asset's INSERT names its
+columns positionally: a SELECT in a different order writes source_url into
+publication_date, and ClickHouse accepts it.
 """
 
 # PNCP (Brazil) publishes agreement_type as a raw {"id":N,"nome":"..."} blob
@@ -45,12 +70,12 @@ def build_rollup_select(*, source_table: str, has_supplier_detail: bool) -> str:
     is identical either way and only the inner source expression differs, which
     is exactly what the page did.
 
-    An empty match status reads the same as 'exact' on the page
-    (`supplierStatusLabel` returns null for both), so a plain-shape country
-    still renders no badge.
+    The status falls back to the literal 'exact', not a blank: a source with no
+    supplier detail has nothing to disagree with, and that is what the page has
+    always displayed for those six countries.
     """
     supplier_id = "winner_registered_id" if has_supplier_detail else "''"
-    supplier_status = "winner_match_status" if has_supplier_detail else "''"
+    supplier_status = "winner_match_status" if has_supplier_detail else "'exact'"
     return f"""
 SELECT
     contract_ref,
@@ -59,15 +84,15 @@ SELECT
     argMax(title_in, priority) AS title,
     argMax(agreement_type_in, priority) AS agreement_type,
     argMax(cpv_code_in, priority) AS cpv_code,
-    argMax(source_url_in, priority) AS source_url,
     argMax(winner_name_in, priority) AS winner_name,
     argMax(winner_registered_id_in, priority) AS winner_registered_id,
     argMax(winner_match_status_in, priority) AS winner_match_status,
-    argMax(winner_count, priority) AS winner_count_primary,
+    toUInt32(argMax(winner_count, priority)) AS supplier_count,
     argMax(amount_original_in, priority) AS amount_original,
     argMax(currency_in, priority) AS currency,
-    max(priority) AS amount_usd,
-    max(publication_date_in) AS publication_date
+    nullIf(max(priority), -1.0) AS amount_usd,
+    argMax(source_url_in, priority) AS source_url,
+    argMax(publication_date_in, priority) AS publication_date
 FROM (
     SELECT
         contract_ref,

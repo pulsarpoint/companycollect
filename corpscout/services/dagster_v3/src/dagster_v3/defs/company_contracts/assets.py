@@ -195,16 +195,6 @@ def company_contract_award_facts(
     )
 
 
-# The rollup's SELECT names its supplier count winner_count_primary and leaves
-# the amounts in the source's own types, exactly as the page's query did. These
-# are the only columns that need saying; every other one is passed through by
-# name, so the INSERT list and the projection cannot drift out of order.
-ROLLUP_EXPRESSIONS = {
-    "supplier_count": "toUInt32(winner_count_primary)",
-    "amount_original": "toFloat64(amount_original)",
-}
-
-
 def rollup_insert_sql(
     *,
     target: str,
@@ -220,15 +210,17 @@ def rollup_insert_sql(
     question each page asks about one of them.
 
     country_code and resolved_at are not produced by the aggregation -- they
-    are selected as literals where they sit in ROLLUP_COLUMNS, the same way
-    facts_insert_sql handles contract_ref and resolved_at.
+    are selected as literals at their own positions in ROLLUP_COLUMNS, the same
+    way facts_insert_sql handles contract_ref and resolved_at. Everything
+    between them comes from build_rollup_select, which projects in that same
+    order.
     """
     selected = ", ".join(
         f"'{country_code.upper()}' AS country_code"
         if column == "country_code"
         else f"toDateTime('{resolved_at}') AS resolved_at"
         if column == "resolved_at"
-        else f"{ROLLUP_EXPRESSIONS.get(column, column)} AS {column}"
+        else column
         for column in tables.ROLLUP_COLUMNS
     )
     inner = build_rollup_select(

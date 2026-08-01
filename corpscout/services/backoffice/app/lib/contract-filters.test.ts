@@ -117,13 +117,14 @@ describe("building the SQL", () => {
   });
 
   it("compares the amount column the table being read actually has", () => {
-    // company_contract_rollup holds the contract's total as amount_usd, with
-    // -1.0 for "no source reported a figure". Comparing the bare column would
-    // put all 9,535 such Norwegian contracts under every upper bound.
+    // company_contract_rollup calls it amount_usd, and holds one per contract
+    // rather than one per winner row. Binding the winner-level name would be a
+    // query error, not a wrong answer -- but only for the countries that reach
+    // that code path, which is every one of them.
     const { where } = contractFilterSql(parse("amount_max=1000000"), {
-      amountExpr: "nullIf(amount_usd, -1.0)",
+      amountExpr: "amount_usd",
     });
-    expect(where).toContain("nullIf(amount_usd, -1.0) <= {amount_max:Float64}");
+    expect(where).toContain("amount_usd <= {amount_max:Float64}");
     expect(where).not.toContain("value_amount_usd");
   });
 
