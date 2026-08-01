@@ -249,6 +249,7 @@ EXPECTED_MIGRATIONS = (
     "000232_corpscout_cz_legal_forms",
     "000233_corpscout_contract_view_join_order",
     "000234_corpscout_company_contract_facts",
+    "000235_corpscout_contracts_read_from_facts",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

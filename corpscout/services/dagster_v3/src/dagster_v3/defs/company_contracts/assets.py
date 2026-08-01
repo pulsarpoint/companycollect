@@ -87,7 +87,10 @@ def company_contract_facts(
         client.execute(f"CREATE TABLE {stage} AS {qualified}")
         try:
             for code in tables.CONTRACT_COUNTRIES:
-                view = f"{RESOLVED_DATABASE}.{code}_government_contracts"
+                # The _live view holds the join. Migration 000235 renamed it
+                # there and gave the public name to a read of this table, so
+                # reading the public name would make this asset its own source.
+                view = f"{RESOLVED_DATABASE}.{code}_government_contracts_live"
                 client.execute(
                     contract_facts_insert_sql(
                         target=stage, view=view, resolved_at=resolved_at
