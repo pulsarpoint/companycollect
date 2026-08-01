@@ -13,6 +13,7 @@ import { ManagementSection } from "~/components/detail/management-section";
 import { FinancialsSection } from "~/components/detail/financials-section";
 import { FinancialSnapshot } from "~/components/detail/financial-snapshot";
 import { EsefSection } from "~/components/detail/esef-section";
+import { FrFinancialsSection } from "~/components/detail/countries/fr-financials";
 import { IndustriesSection } from "~/components/detail/industries-section";
 import { StatementsFallback } from "~/components/detail/countries/no-financials";
 import { decorateFiRecord } from "~/components/detail/countries/fi-registry";
@@ -81,6 +82,7 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
           />
         );
       })()}
+      <FrFinancialsSection financials={detail.frFinancials} />
       <EsefSection filings={detail.esefFilings} />
       <FiTaxRecordsSection taxRecords={detail.taxRecords} />
       <PublicContractsSection contracts={detail.publicContracts} />
