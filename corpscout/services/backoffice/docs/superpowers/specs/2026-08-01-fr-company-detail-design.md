@@ -101,22 +101,18 @@ financial autonomy, liquidity, interest coverage, then the working-capital set
 France uniquely publishes — customer payment days, supplier payment days,
 inventory turnover days.
 
-**Equity and total assets are a latest-year snapshot, not a column.** They do
-not exist in `fr_financial_metrics`; they live only in
-`fr_company_financials_latest`, one row per company.
+**Equity and total assets are NOT shown, because France does not have them.**
 
-They arrive on the **same query**, not a sixth one, via
+An earlier draft of this spec had them as a latest-year snapshot joined from
+`fr_company_financials_latest`. Verified against the live table before writing
+the plan: `equity_amount_original` and `total_assets_amount_original` are NULL
+for **all 1,586,046 rows**. The columns exist because the table is shaped the
+same for every country; France's loader fills neither.
 
-```sql
-LEFT JOIN fr_company_financials_latest AS l
-  ON l.company_id = m.siren AND l.fiscal_year = m.fiscal_year
-```
-
-so the figures land on the one row whose year they describe and are NULL on
-every other. The component lifts them out of that row and renders them as a
-labelled snapshot line above the table, carrying their fiscal year. Rendering
-them as a per-year column would show a column populated for exactly one year,
-which reads as a bug rather than as a different grain.
+So there is no join and no snapshot line. The section shows what France
+actually publishes: revenue, gross margin, EBITDA, EBIT, net income and the
+ratios. If the French loader later fills equity, adding it is a column, not a
+redesign.
 
 **Confidentiality is displayed.** 23.5% of filings are
 `Partiellement confidentiel`, plus 50,273 `RAPCAC` and 2,178
@@ -157,11 +153,25 @@ change for the table itself. Sole source is `france_decp_procurement`.
 Contract counts per company are median 2, p90 15, p99 69, max 1,507, so the
 existing `LIMIT 100` covers more than 99% of companies completely.
 
-The new part is the summary header on the shared `PublicContractsSection`, from
-`fr_government_contract_summary`: award count, total USD value, how many awards
-carry a value (`public_award_valued_count` — so the page can say "value known
-for 812 of 1,204" rather than implying the total is complete), last award date,
-and the source list.
+**France publishes no per-winner values, and that is already handled.**
+`value_amount_original` and `value_amount_usd` are NULL for all 721,161 rows,
+while `notice_value_amount_original` and `notice_value_amount_usd` are
+populated for all 721,161. DECP publishes what the whole procurement was worth,
+not what each winner got.
+
+`PublicContractsSection` already does the right thing with exactly this shape
+(`public-contracts-section.tsx:89-104`): where there is no per-winner figure it
+renders the notice total **labelled as such**, rather than passing it off as
+this company's share. No component change, and no attempt to divide a notice
+total by its winners.
+
+The summary header, from `fr_government_contract_summary`, therefore shows
+**award count, last award date and source list — and no value**.
+`public_award_value_usd` is NULL and `public_award_valued_count` is 0 for all
+99,287 companies, because both are derived from the per-winner figure France
+does not publish. A "total value: —" would state that France awards nothing.
+The header renders a value only when the summary carries one, so the countries
+that do publish per-winner figures get it for free.
 
 The prop is optional. Countries that declare no `contractSummaryQuery` render
 exactly what they render today.
@@ -217,6 +227,14 @@ Live-ClickHouse integration tests, following `tests/public-contracts.queries.tes
   consumes it — the company-list flags come from `COMPANY_FLAG_SOURCES`, where
   France's `financials` flag is already wired to `fr_company_financials_latest`.
   Left alone rather than changed speculatively.
+- **France's country contracts page showing no amounts.** Noticed while
+  verifying the above, and not caused by this work: `company_contract_rollup`
+  derives `amount_original`/`amount_usd` from the per-winner
+  `value_amount_original`, which is NULL for every French row, so all 589,291
+  French contracts show a blank value on `/countries/fr/contracts`. The notice
+  totals are right there in the facts table. Whether the country list should
+  fall back to them the way the company detail section already does is a real
+  question, and a separate one.
 - **Generalising extended financials** to a country-agnostic type. Latvia also
   has a metrics table, but designing a shared shape from one example contradicts
   the "extract shared components only when a pattern repeats" rule this codebase
