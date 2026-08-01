@@ -111,9 +111,18 @@ def export_decp_contract_holders(
                     f"exported={candidate_rows} staged={rows_in_candidate_stage}"
                 )
             if int(unique_candidate_rows) != int(candidate_rows):
+                # build_contract_holder_candidates keeps one row per
+                # source_record_id, so a duplicate here means the DuckDB table
+                # this read was not built by the current normalise -- almost
+                # always a stale file from before that dedup existed, exported
+                # by running this asset alone. DuckDB holds the candidates, so
+                # re-running the leaf re-reads the same stale rows forever.
                 raise ValueError(
                     "DECP candidate stage contains duplicate source_record_id values: "
-                    f"rows={candidate_rows} unique={unique_candidate_rows}"
+                    f"rows={candidate_rows} unique={unique_candidate_rows}. "
+                    "The DuckDB candidates table is stale -- materialise "
+                    "france_decp_contract_holders_duckdb (and then _usd) before "
+                    "this asset, not this asset on its own."
                 )
             client.execute(
                 holders_insert_sql(
