@@ -383,6 +383,40 @@ export interface PublicContractRow {
   source_url: string;
 }
 
+/**
+ * One fiscal year of a French filing, with the ratio suite INPI publishes.
+ *
+ * Distinct from FinancialYearRow: France carries gross margin, EBITDA, EBIT
+ * and fourteen ratio and working-capital-day columns that the canonical shape
+ * has no room for, and carries neither equity nor total assets, which it has.
+ *
+ * A null figure means WITHHELD, not zero -- 23.5% of French filings are
+ * partially confidential and may legally omit lines.
+ */
+export interface FrFinancialRow {
+  fiscal_year: string;
+  /** 'C' complete, 'S' simplified, 'K' consolidated. */
+  balance_type: string;
+  /** 'Public' | 'Partiellement confidentiel' | 'Partiellement confidentiel (RAPCAC)' | 'Publication simplifiee'. */
+  confidentiality: string;
+  currency: string;
+  revenue_original: number | null;
+  revenue_usd: number | null;
+  gross_margin_original: number | null;
+  ebitda_original: number | null;
+  ebit_original: number | null;
+  net_income_original: number | null;
+  net_income_usd: number | null;
+  ebitda_margin_percent: number | null;
+  debt_ratio_percent: number | null;
+  financial_autonomy_percent: number | null;
+  liquidity_ratio_percent: number | null;
+  interest_coverage_percent: number | null;
+  customer_payment_days: number | null;
+  supplier_payment_days: number | null;
+  inventory_turnover_days: number | null;
+}
+
 export interface TaxRecordRow {
   tax_year: string;
   currency: string;
@@ -572,6 +606,8 @@ export interface CompanyDetail {
   company: CompanyListRow;
   record: Record<string, unknown>;
   financials: FinancialYearRow[];
+  /** France's extended per-year metrics; empty for every other country. */
+  frFinancials: FrFinancialRow[];
   contacts: ContactRow[];
   domains: DomainRow[];
   statements: Record<string, unknown>[];
@@ -725,6 +761,9 @@ export async function getCompanyDetail(
   const taxRecordsPromise = country.detail?.taxRecordsQuery
     ? chQuery<TaxRecordRow>(country.detail.taxRecordsQuery, { id })
     : Promise.resolve([]);
+  const frFinancialsPromise = country.detail?.financialMetricsQuery
+    ? chQuery<FrFinancialRow>(country.detail.financialMetricsQuery, { id })
+    : Promise.resolve([]);
   const publicContractsPromise = country.detail?.publicContractsQuery
     ? chQuery<PublicContractRow>(country.detail.publicContractsQuery, { id })
     : Promise.resolve([]);
@@ -772,6 +811,7 @@ export async function getCompanyDetail(
   wikidataPromise.catch(() => {});
   wikidataPeoplePromise.catch(() => {});
   esefFilingsPromise.catch(() => {});
+  frFinancialsPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -783,7 +823,7 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships, gleifEntityRows, wikidataRows, wikidataPeople, esefFilings] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships, gleifEntityRows, wikidataRows, wikidataPeople, esefFilings, frFinancials] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
@@ -799,6 +839,7 @@ export async function getCompanyDetail(
     wikidataPromise,
     wikidataPeoplePromise,
     esefFilingsPromise,
+    frFinancialsPromise,
   ]);
 
   // Same-name matches need the officers' names, so this can only start once
@@ -821,6 +862,7 @@ export async function getCompanyDetail(
     company,
     record: records[0] ?? {},
     financials,
+    frFinancials,
     contacts,
     domains,
     statements,

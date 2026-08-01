@@ -123,3 +123,52 @@ WHERE p.company_wikidata_id IN (
 )
 ORDER BY p.is_current DESC, p.role_label, per.name
 LIMIT 100`;
+
+/**
+ * Per-year filed accounts, with the ratio suite INPI publishes.
+ *
+ * ONE ROW PER FISCAL YEAR. 41,055 (siren, fiscal_year) pairs carry more than
+ * one filing because a company can file under more than one balance type --
+ * C complete (4,924,259 rows), S simplified (1,586,394), K consolidated
+ * (31,579). LIMIT 1 BY takes one, ordered by an explicit priority: the
+ * entity's own complete accounts first, then its simplified ones, and the
+ * consolidated group last, because this is the entity's page and not the
+ * group's.
+ *
+ * NOT argMin over the balance type. argMin on a tied key picks arbitrarily
+ * between runs -- the defect that made Swedish contract counts flicker
+ * between 301 and 299 from identical data.
+ *
+ * No equity and no total assets: fr_company_financials_latest carries those
+ * columns for every country but France fills neither, NULL across all
+ * 1,586,046 rows. Joining it would add two permanently empty columns.
+ *
+ * Currency is EUR for all 6,542,232 rows, so the *_usd twins are conversions
+ * rather than a second reporting currency.
+ */
+export const FR_FINANCIAL_METRICS_QUERY = `SELECT
+  toString(m.fiscal_year) AS fiscal_year,
+  m.balance_type_code AS balance_type,
+  m.confidentiality_status AS confidentiality,
+  m.currency AS currency,
+  toFloat64(m.revenue_amount_original) AS revenue_original,
+  toFloat64(m.revenue_amount_usd) AS revenue_usd,
+  toFloat64(m.gross_margin_amount_original) AS gross_margin_original,
+  toFloat64(m.ebitda_amount_original) AS ebitda_original,
+  toFloat64(m.ebit_amount_original) AS ebit_original,
+  toFloat64(m.net_income_amount_original) AS net_income_original,
+  toFloat64(m.net_income_amount_usd) AS net_income_usd,
+  toFloat64(m.ebitda_margin_percent) AS ebitda_margin_percent,
+  toFloat64(m.debt_ratio_percent) AS debt_ratio_percent,
+  toFloat64(m.financial_autonomy_percent) AS financial_autonomy_percent,
+  toFloat64(m.liquidity_ratio_percent) AS liquidity_ratio_percent,
+  toFloat64(m.interest_coverage_percent) AS interest_coverage_percent,
+  toFloat64(m.customer_payment_days) AS customer_payment_days,
+  toFloat64(m.supplier_payment_days) AS supplier_payment_days,
+  toFloat64(m.inventory_turnover_days) AS inventory_turnover_days
+FROM fr_financial_metrics AS m
+WHERE m.siren = {id:String}
+ORDER BY m.fiscal_year DESC,
+  multiIf(m.balance_type_code = 'C', 0, m.balance_type_code = 'S', 1, 2)
+LIMIT 1 BY m.fiscal_year
+LIMIT 15`;

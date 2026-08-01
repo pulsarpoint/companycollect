@@ -72,3 +72,46 @@ describe("France Wikidata", () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe("France financial metrics", () => {
+  it("declares the query", () => {
+    expect(getCountry("fr")?.detail?.financialMetricsQuery).toBeTruthy();
+  });
+
+  it("returns nothing for an id that cannot exist", async () => {
+    const rows = await chQuery(getCountry("fr")!.detail!.financialMetricsQuery!, {
+      id: "0",
+    });
+    expect(rows).toEqual([]);
+  });
+
+  it("returns one row per fiscal year, newest first", async () => {
+    // 531615169 files under more than one balance type in the same year --
+    // 41,055 (siren, fiscal_year) pairs do. Two rows for one year would put
+    // the year in the table twice, and it is invisible until someone opens
+    // exactly such a company.
+    const rows = await chQuery<{ fiscal_year: string; balance_type: string }>(
+      getCountry("fr")!.detail!.financialMetricsQuery!,
+      { id: "531615169" },
+    );
+    expect(rows.length).toBeGreaterThan(1);
+    expect(new Set(rows.map((r) => r.fiscal_year)).size).toBe(rows.length);
+    const years = rows.map((r) => Number(r.fiscal_year));
+    expect(years).toEqual([...years].sort((a, b) => b - a));
+  });
+
+  it("carries the ratio suite and the confidentiality status", async () => {
+    const rows = await chQuery<{
+      currency: string;
+      confidentiality: string;
+      revenue_original: number | null;
+      ebitda_margin_percent: number | null;
+      customer_payment_days: number | null;
+    }>(getCountry("fr")!.detail!.financialMetricsQuery!, { id: "055800296" });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].currency).toBe("EUR");
+    expect(rows[0].confidentiality).not.toBe("");
+    expect(rows.some((r) => r.ebitda_margin_percent != null)).toBe(true);
+    expect(rows.some((r) => r.customer_payment_days != null)).toBe(true);
+  });
+});

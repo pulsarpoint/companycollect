@@ -2,6 +2,7 @@ import {
   FR_PUBLIC_CONTRACTS_QUERY,
   FR_WIKIDATA_QUERY,
   FR_WIKIDATA_PEOPLE_QUERY,
+  FR_FINANCIAL_METRICS_QUERY,
 } from "~/lib/detail-queries/fr";
 
 export type CountryFeature = "financials" | "industries" | "contacts" | "domains";
@@ -35,6 +36,13 @@ export interface CountryDetailConfig {
   financialReports?: boolean;
   /** {id:String} → canonical financial rows (see FinancialYearRow in queries.server). */
   financialsQuery?: string;
+  /**
+   * {id:String} → per-year financial metrics for registers that publish more
+   * than the five canonical figures (see FrFinancialRow in queries.server).
+   * Rendered by a country-specific section, NOT the generic FinancialsSection
+   * -- a country declaring this one usually declares no financialsQuery.
+   */
+  financialMetricsQuery?: string;
   /** {id:String} → { contact_type, contact_value } rows. */
   contactsQuery?: string;
   /** {id:String} → { domain, website_url, domain_source, confidence, is_primary } rows. */
@@ -1191,6 +1199,7 @@ LIMIT 1`,
       publicContractsQuery: FR_PUBLIC_CONTRACTS_QUERY,
       wikidataQuery: FR_WIKIDATA_QUERY,
       wikidataPeopleQuery: FR_WIKIDATA_PEOPLE_QUERY,
+      financialMetricsQuery: FR_FINANCIAL_METRICS_QUERY,
     },
   },
   {
