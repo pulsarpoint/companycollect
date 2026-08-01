@@ -130,7 +130,9 @@ def brazil_pncp_raw_pages_s3(
     if snapshotted:
         context.log.info(
             "%s: %s pages already snapshotted, resuming at %s",
-            month, len(snapshotted), len(snapshotted) + 1,
+            month,
+            len(snapshotted),
+            len(snapshotted) + 1,
         )
 
     def _log_progress(progress: dict) -> None:
@@ -174,8 +176,13 @@ def brazil_pncp_raw_pages_s3(
     context.log.info(
         "PNCP %s..%s: %s pages total (%s already snapshotted, resumed from page "
         "%s), %s newly uploaded, %s reused",
-        start, end, downloaded["pages"], len(snapshotted),
-        downloaded["resumed_from_page"], uploaded, reused,
+        start,
+        end,
+        downloaded["pages"],
+        len(snapshotted),
+        downloaded["resumed_from_page"],
+        uploaded,
+        reused,
     )
     return dg.MaterializeResult(
         metadata={
@@ -197,9 +204,10 @@ def brazil_pncp_raw_pages_s3(
     group_name=tables.GROUP_NAME,
     kinds={"python", "json", "duckdb"},
     description=(
-        "Normalises a month's snapshotted pages into typed candidates. Reads "
-        "from S3, not from local scratch, so re-normalising never re-fetches "
-        "and works on a machine that never did the download."
+        "Normalises a month's snapshotted pages into a durable partition of "
+        "typed DuckDB candidates. Reads from S3, not from local scratch, so "
+        "re-normalising never re-fetches and works on a machine that never "
+        "did the download."
     ),
 )
 def brazil_pncp_contracts_duckdb(
@@ -208,6 +216,7 @@ def brazil_pncp_contracts_duckdb(
     brazil_pncp_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     month = context.partition_key[:7]
+    partition = month.replace("-", "")
     prefix = f"{tables.S3_RAW_PREFIX}/{month}"
     DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -235,11 +244,20 @@ def brazil_pncp_contracts_duckdb(
                 source_retrieved_at=now,
             )
             counts = build_contract_candidates(
-                connection=connection, source_run_id=source_run_id, resolved_at=now
+                connection=connection,
+                source_run_id=source_run_id,
+                resolved_at=now,
+                partition=partition,
             )
 
     return dg.MaterializeResult(
-        metadata={"raw_rows": raw_rows, "pages_read": len(keys), **counts}
+        metadata={
+            "partition": partition,
+            "table": f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}",
+            "raw_rows": raw_rows,
+            "pages_read": len(keys),
+            **counts,
+        }
     )
 
 
@@ -266,13 +284,15 @@ def brazil_pncp_contracts_usd(
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
+    partition = context.partition_key[:7].replace("-", "")
     with brazil_pncp_duckdb.get_connection() as connection:
         counts = apply_brazil_pncp_usd_conversion(
             duckdb_connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),
             log=context.log.info,
+            partition=partition,
         )
-    return dg.MaterializeResult(metadata=counts)
+    return dg.MaterializeResult(metadata={"partition": partition, **counts})
 
 
 @dg.asset(
@@ -303,9 +323,10 @@ def brazil_pncp_contracts_clickhouse(
     )
     partition = context.partition_key[:7].replace("-", "")
 
-    with brazil_pncp_duckdb.get_connection() as connection, (
-        clickhouse.get_connection()
-    ) as client:
+    with (
+        brazil_pncp_duckdb.get_connection() as connection,
+        clickhouse.get_connection() as client,
+    ):
         result = export_contracts_clickhouse(
             duckdb_connection=connection,
             clickhouse_client=client,
@@ -390,8 +411,13 @@ def brazil_pncp_daily_pages_s3(
         def _log(progress: dict, label: str = label) -> None:
             context.log.info(
                 "%s %s..%s page %s/%s: %s records, %.1f pages/min",
-                label, start, end, progress["page"], progress["total_pages"],
-                progress["records_fetched"], progress["pages_per_minute"],
+                label,
+                start,
+                end,
+                progress["page"],
+                progress["total_pages"],
+                progress["records_fetched"],
+                progress["pages_per_minute"],
             )
 
         downloaded = download_partition(
@@ -467,9 +493,14 @@ def brazil_pncp_daily_duckdb(
                 page_dir=page_dir,
                 source_run_id=source_run_id,
                 source_retrieved_at=now,
+                raw_table=tables.DAILY_RAW_TABLE,
             )
             counts = build_contract_candidates(
-                connection=connection, source_run_id=source_run_id, resolved_at=now
+                connection=connection,
+                source_run_id=source_run_id,
+                resolved_at=now,
+                raw_table=tables.DAILY_RAW_TABLE,
+                candidates_table=tables.DAILY_CANDIDATES_TABLE,
             )
 
     return dg.MaterializeResult(
@@ -496,6 +527,7 @@ def brazil_pncp_daily_usd(
             duckdb_connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),
             log=context.log.info,
+            candidates_table=tables.DAILY_CANDIDATES_TABLE,
         )
     return dg.MaterializeResult(metadata=counts)
 
@@ -524,9 +556,10 @@ def brazil_pncp_daily_clickhouse(
         database=tables.CLICKHOUSE_DATABASE,
         tables=(tables.CONTRACTS_TABLE, "br_companies"),
     )
-    with brazil_pncp_duckdb.get_connection() as connection, (
-        clickhouse.get_connection()
-    ) as client:
+    with (
+        brazil_pncp_duckdb.get_connection() as connection,
+        clickhouse.get_connection() as client,
+    ):
         result = insert_contracts_clickhouse(
             duckdb_connection=connection, clickhouse_client=client
         )
@@ -534,7 +567,9 @@ def brazil_pncp_daily_clickhouse(
     total = result["contract_rows"]
     context.log.info(
         "daily window: %s contracts appended, %s matched to a company (%.1f%%)",
-        total, matched, (matched / total * 100) if total else 0.0,
+        total,
+        matched,
+        (matched / total * 100) if total else 0.0,
     )
     return dg.MaterializeResult(metadata=result)
 

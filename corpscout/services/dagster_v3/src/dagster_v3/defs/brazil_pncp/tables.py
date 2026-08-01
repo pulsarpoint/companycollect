@@ -15,7 +15,9 @@ MAX_PAGE_SIZE = 500
 
 # A contract has an address of its own, unlike Sweden's bulk-CSV register.
 # Both forms verified HTTP 200; the human-facing one is what gets stored.
-CONTRACT_URL_TEMPLATE = "https://pncp.gov.br/app/contratos/{buyer_cnpj}/{year}/{sequential}"
+CONTRACT_URL_TEMPLATE = (
+    "https://pncp.gov.br/app/contratos/{buyer_cnpj}/{year}/{sequential}"
+)
 
 S3_BUCKET = "source-brazil-pncp"
 S3_RAW_PREFIX = "raw"
@@ -38,6 +40,9 @@ DUCKDB_SCHEMA = "brazil_pncp"
 DUCKDB_POOL = "brazil_pncp_duckdb"
 RAW_TABLE = "raw_contracts"
 CANDIDATES_TABLE = "contract_candidates"
+CANDIDATE_PARTITION_COLUMN = "source_partition"
+DAILY_RAW_TABLE = "daily_raw_contracts"
+DAILY_CANDIDATES_TABLE = "daily_contract_candidates"
 
 CLICKHOUSE_DATABASE = "corpscout"
 CONTRACTS_TABLE = "br_pncp_contracts"

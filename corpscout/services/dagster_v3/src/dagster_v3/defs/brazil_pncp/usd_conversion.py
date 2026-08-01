@@ -92,13 +92,25 @@ def apply_brazil_pncp_usd_conversion(
     duckdb_connection: Any,
     exchange_rates: ExchangeRates,
     log: Callable[..., object] | None = None,
+    candidates_table: str = tables.CANDIDATES_TABLE,
+    partition: str | None = None,
 ) -> dict[str, int]:
     """Fill ``valor_global_usd`` and the three FX provenance columns."""
-    qualified = f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
-    _require_candidates_table(duckdb_connection)
-    ensure_usd_columns(duckdb_connection)
+    qualified = f"{tables.DUCKDB_SCHEMA}.{candidates_table}"
+    _require_candidates_table(duckdb_connection, candidates_table)
+    ensure_usd_columns(duckdb_connection, candidates_table)
+    if partition is not None:
+        _require_candidate_partition(
+            duckdb_connection,
+            candidates_table=candidates_table,
+            partition=partition,
+        )
 
-    rate_dates = _rate_dates(duckdb_connection)
+    rate_dates = _rate_dates(
+        duckdb_connection,
+        candidates_table=candidates_table,
+        partition=partition,
+    )
     rates = _load_rates(
         exchange_rates,
         [_request(CONTRACT_CURRENCY, rate_date) for rate_date in rate_dates],
@@ -134,6 +146,7 @@ def apply_brazil_pncp_usd_conversion(
     # Cleared first so a re-run after a rate correction cannot leave a stale
     # conversion sitting beside a contract whose rate has since changed.
     cleared = ",\n            ".join(f"{usd} = NULL" for _, usd in VALUE_COLUMNS)
+    scope, scope_params = _partition_scope(partition)
     duckdb_connection.execute(
         f"""
         update {qualified}
@@ -141,7 +154,9 @@ def apply_brazil_pncp_usd_conversion(
             fx_rate_to_usd = NULL,
             fx_rate_date = NULL,
             fx_source = ''
-        """
+        where {scope}
+        """,
+        scope_params,
     )
     # NULL in, NULL out: a contract that omits valorAcumulado must not gain a
     # zero-valued USD figure it never had.
@@ -151,7 +166,9 @@ def apply_brazil_pncp_usd_conversion(
         f"as decimal(38, 2))"
         for native, usd in VALUE_COLUMNS
     )
-    any_value = " or ".join(f"contracts.{native} is not null" for native, _ in VALUE_COLUMNS)
+    any_value = " or ".join(
+        f"contracts.{native} is not null" for native, _ in VALUE_COLUMNS
+    )
     duckdb_connection.execute(
         f"""
         update {qualified} as contracts
@@ -162,7 +179,9 @@ def apply_brazil_pncp_usd_conversion(
         from _br_pncp_fx as fx
         where {RATE_DATE_EXPRESSION} = fx.rate_date
           and ({any_value})
-        """
+          and {_partition_scope(partition, alias="contracts")[0]}
+        """,
+        scope_params,
     )
 
     any_value = " or ".join(f"{native} is not null" for native, _ in VALUE_COLUMNS)
@@ -170,25 +189,36 @@ def apply_brazil_pncp_usd_conversion(
         "rate_dates": len(rate_dates),
         "rates_found": len(fx_rows),
         "rows_converted": _count(
-            duckdb_connection, f"select count(*) from {qualified} where fx_rate_to_usd is not null"
+            duckdb_connection,
+            f"select count(*) from {qualified} "
+            f"where ({scope}) and fx_rate_to_usd is not null",
+            scope_params,
         ),
         "rows_with_value": _count(
-            duckdb_connection, f"select count(*) from {qualified} where {any_value}"
+            duckdb_connection,
+            f"select count(*) from {qualified} where ({scope}) and ({any_value})",
+            scope_params,
         ),
         "rows_missing_rate_date": _count(
             duckdb_connection,
             f"select count(*) from {qualified} "
-            f"where ({any_value}) and {RATE_DATE_EXPRESSION} is null",
+            f"where ({scope}) and ({any_value}) "
+            f"and {RATE_DATE_EXPRESSION} is null",
+            scope_params,
         ),
     }
     # Per figure, so a field that silently stops converting is visible in the
     # asset's metadata rather than only in whatever the view happens to read.
     for native, usd in VALUE_COLUMNS:
         counts[f"converted_{usd}"] = _count(
-            duckdb_connection, f"select count(*) from {qualified} where {usd} is not null"
+            duckdb_connection,
+            f"select count(*) from {qualified} where ({scope}) and {usd} is not null",
+            scope_params,
         )
         counts[f"present_{native}"] = _count(
-            duckdb_connection, f"select count(*) from {qualified} where {native} is not null"
+            duckdb_connection,
+            f"select count(*) from {qualified} where ({scope}) and {native} is not null",
+            scope_params,
         )
     if log is not None:
         log(
@@ -208,9 +238,12 @@ def apply_brazil_pncp_usd_conversion(
     return counts
 
 
-def ensure_usd_columns(duckdb_connection: Any) -> None:
+def ensure_usd_columns(
+    duckdb_connection: Any,
+    candidates_table: str = tables.CANDIDATES_TABLE,
+) -> None:
     """Add the FX columns to the candidates table if a prior build predates them."""
-    qualified = f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
+    qualified = f"{tables.DUCKDB_SCHEMA}.{candidates_table}"
     columns = (
         *((usd, "decimal(38, 2)") for _, usd in VALUE_COLUMNS),
         ("fx_rate_to_usd", "decimal(38, 12)"),
@@ -223,25 +256,85 @@ def ensure_usd_columns(duckdb_connection: Any) -> None:
         )
 
 
-def _require_candidates_table(duckdb_connection: Any) -> None:
+def _require_candidates_table(duckdb_connection: Any, candidates_table: str) -> None:
     exists = bool(
         duckdb_connection.execute(
             """
             select count(*) from information_schema.tables
             where table_schema = ? and table_name = ?
             """,
-            [tables.DUCKDB_SCHEMA, tables.CANDIDATES_TABLE],
+            [tables.DUCKDB_SCHEMA, candidates_table],
         ).fetchone()[0]
     )
     if not exists:
         raise RuntimeError(
             f"Brazil PNCP candidates table is missing: "
-            f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}. Materialize "
+            f"{tables.DUCKDB_SCHEMA}.{candidates_table}. Materialize "
             f"brazil_pncp_contracts_duckdb for this partition before converting."
         )
 
 
-def _rate_dates(duckdb_connection: Any) -> list[str]:
+def _require_candidate_partition(
+    duckdb_connection: Any,
+    *,
+    candidates_table: str,
+    partition: str,
+) -> None:
+    qualified = f"{tables.DUCKDB_SCHEMA}.{candidates_table}"
+    columns = {
+        str(row[0])
+        for row in duckdb_connection.execute(
+            """
+            select column_name from information_schema.columns
+            where table_schema = ? and table_name = ?
+            """,
+            [tables.DUCKDB_SCHEMA, candidates_table],
+        ).fetchall()
+    }
+    if tables.CANDIDATE_PARTITION_COLUMN not in columns:
+        raise ValueError(
+            f"Brazil PNCP candidates are not partitioned; materialize "
+            f"brazil_pncp_contracts_duckdb for {partition} before converting"
+        )
+
+    buffered = [
+        str(value)
+        for (value,) in duckdb_connection.execute(
+            f"select distinct {tables.CANDIDATE_PARTITION_COLUMN} "
+            f"from {qualified} order by 1"
+        ).fetchall()
+    ]
+    if partition not in buffered:
+        raise ValueError(
+            f"Brazil PNCP USD conversion was asked for partition {partition}, "
+            f"but the durable candidates table holds {', '.join(buffered) or 'none'}. "
+            f"Materialize brazil_pncp_contracts_duckdb for {partition} first."
+        )
+
+    derived = [
+        str(value)
+        for (value,) in duckdb_connection.execute(
+            f"select distinct coalesce("
+            f"strftime(data_publicacao_pncp, '%Y%m'), '197001') as part "
+            f"from {qualified} where {tables.CANDIDATE_PARTITION_COLUMN} = ? "
+            f"order by part",
+            [partition],
+        ).fetchall()
+    ]
+    unexpected = [value for value in derived if value != partition]
+    if unexpected:
+        raise ValueError(
+            f"Brazil PNCP candidate partition {partition} contains publication "
+            f"month(s) {', '.join(unexpected)}; refusing to convert misfiled rows"
+        )
+
+
+def _rate_dates(
+    duckdb_connection: Any,
+    *,
+    candidates_table: str,
+    partition: str | None,
+) -> list[str]:
     """Every date on which *any* of the four figures needs a rate.
 
     Keyed off all four rather than valor_global, or a contract that publishes
@@ -251,9 +344,12 @@ def _rate_dates(duckdb_connection: Any) -> list[str]:
     rows = duckdb_connection.execute(
         f"""
         select distinct cast({RATE_DATE_EXPRESSION} as varchar)
-        from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}
-        where ({any_value}) and {RATE_DATE_EXPRESSION} is not null
-        """
+        from {tables.DUCKDB_SCHEMA}.{candidates_table}
+        where ({_partition_scope(partition)[0]})
+          and ({any_value})
+          and {RATE_DATE_EXPRESSION} is not null
+        """,
+        _partition_scope(partition)[1],
     ).fetchall()
     return sorted(str(row[0]) for row in rows)
 
@@ -286,5 +382,20 @@ def _load_rates(
     return rates
 
 
-def _count(duckdb_connection: Any, sql: str) -> int:
-    return int(duckdb_connection.execute(sql).fetchone()[0])
+def _partition_scope(
+    partition: str | None,
+    *,
+    alias: str | None = None,
+) -> tuple[str, list[str]]:
+    if partition is None:
+        return "true", []
+    prefix = f"{alias}." if alias is not None else ""
+    return f"{prefix}{tables.CANDIDATE_PARTITION_COLUMN} = ?", [partition]
+
+
+def _count(
+    duckdb_connection: Any,
+    sql: str,
+    params: list[str] | None = None,
+) -> int:
+    return int(duckdb_connection.execute(sql, params or []).fetchone()[0])

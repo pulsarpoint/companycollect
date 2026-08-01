@@ -22,10 +22,7 @@ import duckdb
 import pytest
 
 from dagster_v3.defs.brazil_pncp import tables
-from dagster_v3.defs.brazil_pncp.clickhouse import (
-    FX_COLUMNS,
-    export_contracts_clickhouse,
-)
+from dagster_v3.defs.brazil_pncp.clickhouse import export_contracts_clickhouse
 
 
 class _StubClickhouse:
@@ -52,7 +49,7 @@ class _StubClickhouse:
 
 
 def _candidates(connection, publication_dates: list[str]) -> None:
-    """A candidates buffer holding one row per given publication date."""
+    """Partitioned candidates with one row per given publication date."""
     connection.execute(f"create schema if not exists {tables.DUCKDB_SCHEMA}")
     columns = ", ".join(
         f"{name} date" if name == "data_publicacao_pncp" else f"{name} varchar"
@@ -60,12 +57,15 @@ def _candidates(connection, publication_dates: list[str]) -> None:
     )
     connection.execute(
         f"create or replace table "
-        f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} ({columns})"
+        f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} "
+        f"({tables.CANDIDATE_PARTITION_COLUMN} varchar, {columns})"
     )
     for value in publication_dates:
+        partition = value[:7].replace("-", "")
         connection.execute(
             f"insert into {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} "
-            f"(data_publicacao_pncp) values (date '{value}')"
+            f"({tables.CANDIDATE_PARTITION_COLUMN}, data_publicacao_pncp) "
+            f"values ('{partition}', date '{value}')"
         )
 
 
@@ -113,17 +113,17 @@ def test_the_refusal_names_the_month_the_buffer_actually_holds() -> None:
         )
 
 
-def test_a_buffer_mixing_months_is_refused() -> None:
-    """Even with the requested month present, extra months mean the buffer is
-    not what the export assumed, and REPLACE PARTITION would drop the rest."""
+def test_export_reads_only_the_requested_month_from_partitioned_candidates() -> None:
     connection = duckdb.connect(":memory:")
     _candidates(connection, ["2024-03-05", "2025-01-31"])
     client = _StubClickhouse()
 
-    with pytest.raises(ValueError, match="202501"):
-        export_contracts_clickhouse(
-            duckdb_connection=connection, clickhouse_client=client, partition="202403"
-        )
+    result = export_contracts_clickhouse(
+        duckdb_connection=connection, clickhouse_client=client, partition="202403"
+    )
+
+    assert result["contract_rows"] == 1
+    assert len(client.replaced_partitions) == 1
 
 
 def test_an_unattributable_publication_date_is_refused_not_misfiled() -> None:
@@ -135,7 +135,8 @@ def test_an_unattributable_publication_date_is_refused_not_misfiled() -> None:
     _candidates(connection, ["2025-01-31"])
     connection.execute(
         f"insert into {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} "
-        f"(data_publicacao_pncp) values (NULL)"
+        f"({tables.CANDIDATE_PARTITION_COLUMN}, data_publicacao_pncp) "
+        f"values ('202501', NULL)"
     )
     client = _StubClickhouse()
 

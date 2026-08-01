@@ -1,7 +1,7 @@
 # Brazil PNCP (government contracts) design doc
 
 > Follows `docs/data-source-guidelines.md`; deviations are called out below.
-> Status: **built; backfill and FX outstanding.** Section 0 is closed.
+> Status: **built; historical ClickHouse recovery in progress.** Section 0 is closed.
 
 ## 0. Open questions that gated the build — all closed
 
@@ -178,10 +178,13 @@ treat 429 as expected, not exceptional.
   rate-limited, so page fetching has to be explicit anyway. Writing pages to
   JSONL keeps the raw response as the checkpoint — a partition that fails at
   page 300 does not re-fetch pages 1–299.
-- **Staging shape**: `raw_contracts` (all 41 fields as VARCHAR, plus
-  `source_run_id`, `source_url`, `source_retrieved_at`, `source_line_number`),
-  then `contract_candidates` with typed and normalised columns. Raw JSON stays
-  in DuckDB only and is **not** exported (§5).
+- **Staging shape**: `raw_contracts` is the replaceable monthly parse scratch;
+  `contract_candidates` is the durable typed table keyed by
+  `source_partition=YYYYMM`. Materializing a second month replaces only that
+  month, so every green Dagster partition remains physically readable. The
+  rolling job uses separate `daily_raw_contracts` and
+  `daily_contract_candidates` tables and cannot overwrite a monthly backfill.
+  Raw JSON stays in DuckDB only and is **not** exported (§5).
 - **Nested objects**: `orgaoEntidade`, `unidadeOrgao`, `orgaoSubRogado`,
   `unidadeSubRogada` are objects. Flatten the fields used (buyer CNPJ, name,
   `poderId`, `esferaId`, UF, municipality) in DuckDB SQL; keep the whole object
@@ -190,6 +193,12 @@ treat 429 as expected, not exceptional.
 ## 4. Transform (§5)
 
 - **Mechanism**: set-based DuckDB SQL. No dbt — nothing here earns it.
+- **Partition durability**: normalisation builds into a temporary table,
+  verifies every publication date belongs to the requested month, and then
+  atomically deletes/inserts only that `source_partition`. USD conversion and
+  ClickHouse export both require and filter the same partition. Dagster's
+  `deps=` edges order runs but do not transfer data, so correctness must live
+  in the table rather than depend on adjacent scheduling.
 - **Shape**: register row-map. One row per contract per supplier, which is what
   the endpoint already returns; there is no separate winners table to join, so
   this is shaped like Sweden's UHM rather than TED/Hilma.
@@ -626,6 +635,15 @@ cannot be recovered from a rollup.
 - Run `scripts/dagster-health-check.py` afterwards.
 
 ## 11. Issues found during investigation
+
+- **A materialization event is not storage.** On 2026-07-28 the original
+  `create or replace table contract_candidates` design left only 2025-01 after
+  all monthly normalisations. Thirty-seven USD assets then converted that same
+  table, and 37 exports reported success while `REPLACE PARTITION` emptied 36
+  other ClickHouse months. A publication-month guard stopped the next 17
+  exports on 2026-07-31, but the green DuckDB/USD tiles remained misleading.
+  Monthly candidates are now durable by `source_partition`; daily scratch is a
+  separate table; conversion/export are partition-scoped.
 
 - **No bulk download, and this is known.** Confirmed against two alternative
   portals before concluding. Do not spend more time looking.

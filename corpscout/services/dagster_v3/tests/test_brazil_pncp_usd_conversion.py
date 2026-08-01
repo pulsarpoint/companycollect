@@ -95,7 +95,9 @@ def _read(connection):
 
 
 def test_converts_valor_global_at_the_signature_date_rate(connection) -> None:
-    _insert(connection, [("c1", Decimal("1000.00"), date(2024, 6, 10), date(2024, 6, 20))])
+    _insert(
+        connection, [("c1", Decimal("1000.00"), date(2024, 6, 10), date(2024, 6, 20))]
+    )
     rates = FakeExchangeRates({"2024-06-10": "0.185"})
 
     counts = apply_brazil_pncp_usd_conversion(
@@ -126,7 +128,9 @@ def test_falls_back_to_the_publication_date_when_unsigned(connection) -> None:
 
 
 def test_the_signature_date_wins_when_both_are_present(connection) -> None:
-    _insert(connection, [("c1", Decimal("100.00"), date(2024, 1, 5), date(2024, 6, 20))])
+    _insert(
+        connection, [("c1", Decimal("100.00"), date(2024, 1, 5), date(2024, 6, 20))]
+    )
     rates = FakeExchangeRates({"2024-01-05": "0.10", "2024-06-20": "0.90"})
 
     apply_brazil_pncp_usd_conversion(duckdb_connection=connection, exchange_rates=rates)
@@ -292,9 +296,9 @@ def test_a_contract_with_only_a_secondary_figure_still_gets_a_rate(
     )
 
     assert counts["rate_dates"] == 1
-    assert connection.execute(
-        f"select valor_inicial_usd from {QUALIFIED}"
-    ).fetchone()[0] == Decimal("100.00")
+    assert connection.execute(f"select valor_inicial_usd from {QUALIFIED}").fetchone()[
+        0
+    ] == Decimal("100.00")
 
 
 def test_refuses_to_run_before_the_candidates_are_built() -> None:
@@ -306,3 +310,53 @@ def test_refuses_to_run_before_the_candidates_are_built() -> None:
             duckdb_connection=con, exchange_rates=FakeExchangeRates({})
         )
     con.close()
+
+
+def test_partitioned_conversion_updates_only_the_requested_month(connection) -> None:
+    connection.execute(
+        f"alter table {QUALIFIED} add column "
+        f"{tables.CANDIDATE_PARTITION_COLUMN} varchar"
+    )
+    _insert(
+        connection,
+        [
+            ("june", Decimal("100.00"), date(2025, 6, 10), date(2025, 6, 20)),
+            ("july", Decimal("100.00"), date(2025, 7, 10), date(2025, 7, 20)),
+        ],
+    )
+    connection.execute(
+        f"update {QUALIFIED} set {tables.CANDIDATE_PARTITION_COLUMN} = "
+        "case numero_controle_pncp when 'june' then '202506' else '202507' end"
+    )
+
+    counts = apply_brazil_pncp_usd_conversion(
+        duckdb_connection=connection,
+        exchange_rates=FakeExchangeRates({"2025-06-10": "0.20"}),
+        partition="202506",
+    )
+
+    rows = _read(connection)
+    assert rows["june"][0] == Decimal("20.00")
+    assert rows["july"][0] is None
+    assert counts["rows_converted"] == 1
+
+
+def test_partitioned_conversion_refuses_a_missing_month(connection) -> None:
+    connection.execute(
+        f"alter table {QUALIFIED} add column "
+        f"{tables.CANDIDATE_PARTITION_COLUMN} varchar"
+    )
+    _insert(
+        connection,
+        [("july", Decimal("100.00"), date(2025, 7, 10), date(2025, 7, 20))],
+    )
+    connection.execute(
+        f"update {QUALIFIED} set {tables.CANDIDATE_PARTITION_COLUMN} = '202507'"
+    )
+
+    with pytest.raises(ValueError, match="202506"):
+        apply_brazil_pncp_usd_conversion(
+            duckdb_connection=connection,
+            exchange_rates=FakeExchangeRates({}),
+            partition="202506",
+        )

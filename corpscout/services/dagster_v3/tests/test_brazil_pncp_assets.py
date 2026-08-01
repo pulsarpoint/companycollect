@@ -7,6 +7,7 @@ from dagster_v3.defs.brazil_pncp.assets import (
     CONTRACTS_PARTITIONS,
     brazil_pncp_backfill_job,
     brazil_pncp_contracts_duckdb,
+    brazil_pncp_contracts_usd,
     brazil_pncp_page_cache_cleanup,
     brazil_pncp_raw_pages_s3,
     defs,
@@ -94,6 +95,16 @@ def test_normalisation_reads_the_snapshot_not_local_scratch() -> None:
     assert "list_keys" in source
     assert "download_file" in source
     assert "PAGE_SCRATCH" not in source
+
+
+def test_monthly_normalisation_and_usd_are_scoped_to_the_partition() -> None:
+    normalize_source = inspect.getsource(
+        brazil_pncp_contracts_duckdb.op.compute_fn.decorated_fn
+    )
+    usd_source = inspect.getsource(brazil_pncp_contracts_usd.op.compute_fn.decorated_fn)
+
+    assert "partition=partition" in normalize_source
+    assert "partition=partition" in usd_source
 
 
 def test_the_snapshot_outlives_the_cleanup() -> None:

@@ -3,12 +3,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.brazil_pncp import tables
 from dagster_v3.defs.brazil_pncp.normalize import (
     build_contract_candidates,
     load_raw_pages,
 )
+from dagster_v3.defs.brazil_pncp.usd_conversion import ensure_usd_columns
 
 
 def _contract(**overrides):
@@ -120,8 +122,12 @@ def test_natural_persons_are_marked_not_matched(tmp_path: Path) -> None:
         tmp_path,
         [
             _contract(tipoPessoa="PJ"),
-            _contract(tipoPessoa="PF", niFornecedor="12345678901", sequencialContrato=2),
-            _contract(tipoPessoa="", niFornecedor="57423612000104", sequencialContrato=3),
+            _contract(
+                tipoPessoa="PF", niFornecedor="12345678901", sequencialContrato=2
+            ),
+            _contract(
+                tipoPessoa="", niFornecedor="57423612000104", sequencialContrato=3
+            ),
         ],
     )
     counts = build_contract_candidates(
@@ -156,8 +162,15 @@ def test_all_five_value_fields_survive_the_projection(tmp_path: Path) -> None:
     re-fetching ~6,400 rate-limited pages."""
     connection = _loaded(
         tmp_path,
-        [_contract(valorInicial=100.0, valorParcela=50.0, valorGlobal=200.0,
-                   valorAcumulado=250.0, numeroParcelas=4)],
+        [
+            _contract(
+                valorInicial=100.0,
+                valorParcela=50.0,
+                valorGlobal=200.0,
+                valorAcumulado=250.0,
+                numeroParcelas=4,
+            )
+        ],
     )
     build_contract_candidates(
         connection=connection,
@@ -165,8 +178,12 @@ def test_all_five_value_fields_survive_the_projection(tmp_path: Path) -> None:
         resolved_at=datetime(2026, 7, 26, tzinfo=UTC),
     )
     (row,) = _candidates(
-        connection, "valor_inicial", "valor_parcela", "valor_global",
-        "valor_acumulado", "numero_parcelas",
+        connection,
+        "valor_inicial",
+        "valor_parcela",
+        "valor_global",
+        "valor_acumulado",
+        "numero_parcelas",
     )
     assert [float(v) for v in row[:4]] == [100.0, 50.0, 200.0, 250.0]
     assert row[4] == 4
@@ -191,3 +208,176 @@ def test_candidate_columns_match_the_declared_contract(tmp_path: Path) -> None:
         ).fetchall()
     )
     assert columns == tables.CANDIDATE_COLUMNS
+
+
+def test_monthly_candidates_keep_every_materialized_partition(tmp_path: Path) -> None:
+    """A materialized monthly asset must remain readable after another month runs."""
+    connection = duckdb.connect(":memory:")
+    june = tmp_path / "june"
+    july = tmp_path / "july"
+    june.mkdir()
+    july.mkdir()
+    (june / "page-00001.jsonl").write_text(
+        json.dumps(_contract(dataPublicacaoPncp="2025-06-01T00:00:13")) + "\n",
+        encoding="utf-8",
+    )
+    (july / "page-00001.jsonl").write_text(
+        json.dumps(
+            _contract(
+                dataPublicacaoPncp="2025-07-02T00:00:13",
+                sequencialContrato=2751,
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    load_raw_pages(
+        connection=connection,
+        page_dir=june,
+        source_run_id="june-run",
+        source_retrieved_at=datetime(2026, 7, 26, tzinfo=UTC),
+    )
+    build_contract_candidates(
+        connection=connection,
+        source_run_id="june-run",
+        resolved_at=datetime(2026, 7, 26, tzinfo=UTC),
+        partition="202506",
+    )
+    load_raw_pages(
+        connection=connection,
+        page_dir=july,
+        source_run_id="july-run",
+        source_retrieved_at=datetime(2026, 7, 27, tzinfo=UTC),
+    )
+    build_contract_candidates(
+        connection=connection,
+        source_run_id="july-run",
+        resolved_at=datetime(2026, 7, 27, tzinfo=UTC),
+        partition="202507",
+    )
+
+    rows = connection.execute(
+        f"select {tables.CANDIDATE_PARTITION_COLUMN}, count(*) "
+        f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} "
+        f"group by {tables.CANDIDATE_PARTITION_COLUMN} order by 1"
+    ).fetchall()
+    assert rows == [("202506", 1), ("202507", 1)]
+
+
+def test_rematerializing_a_month_replaces_only_that_month(tmp_path: Path) -> None:
+    connection = duckdb.connect(":memory:")
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "page-00001.jsonl").write_text(
+        json.dumps(_contract(dataPublicacaoPncp="2025-06-01")) + "\n",
+        encoding="utf-8",
+    )
+    (second / "page-00001.jsonl").write_text(
+        "\n".join(
+            json.dumps(
+                _contract(
+                    dataPublicacaoPncp="2025-06-02",
+                    sequencialContrato=sequence,
+                )
+            )
+            for sequence in (1, 2)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    for page_dir, run_id in ((first, "first-run"), (second, "second-run")):
+        load_raw_pages(
+            connection=connection,
+            page_dir=page_dir,
+            source_run_id=run_id,
+            source_retrieved_at=datetime(2026, 7, 26, tzinfo=UTC),
+        )
+        build_contract_candidates(
+            connection=connection,
+            source_run_id=run_id,
+            resolved_at=datetime(2026, 7, 26, tzinfo=UTC),
+            partition="202506",
+        )
+
+    assert connection.execute(
+        f"select count(*), count(distinct source_run_id) "
+        f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} "
+        f"where {tables.CANDIDATE_PARTITION_COLUMN} = '202506'"
+    ).fetchone() == (2, 1)
+
+
+def test_first_partitioned_write_migrates_the_existing_legacy_buffer(
+    tmp_path: Path,
+) -> None:
+    connection = duckdb.connect(":memory:")
+    june = tmp_path / "legacy-june"
+    july = tmp_path / "partitioned-july"
+    june.mkdir()
+    july.mkdir()
+    (june / "page-00001.jsonl").write_text(
+        json.dumps(_contract(dataPublicacaoPncp="2025-06-01")) + "\n",
+        encoding="utf-8",
+    )
+    (july / "page-00001.jsonl").write_text(
+        json.dumps(_contract(dataPublicacaoPncp="2025-07-01")) + "\n",
+        encoding="utf-8",
+    )
+
+    load_raw_pages(
+        connection=connection,
+        page_dir=june,
+        source_run_id="legacy-run",
+        source_retrieved_at=datetime(2026, 7, 26, tzinfo=UTC),
+    )
+    build_contract_candidates(
+        connection=connection,
+        source_run_id="legacy-run",
+        resolved_at=datetime(2026, 7, 26, tzinfo=UTC),
+    )
+    ensure_usd_columns(connection)
+    connection.execute(
+        f"update {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} "
+        "set valor_global_usd = 12.34"
+    )
+
+    load_raw_pages(
+        connection=connection,
+        page_dir=july,
+        source_run_id="july-run",
+        source_retrieved_at=datetime(2026, 7, 27, tzinfo=UTC),
+    )
+    build_contract_candidates(
+        connection=connection,
+        source_run_id="july-run",
+        resolved_at=datetime(2026, 7, 27, tzinfo=UTC),
+        partition="202507",
+    )
+
+    rows = connection.execute(
+        f"select {tables.CANDIDATE_PARTITION_COLUMN}, count(*), "
+        "count(valor_global_usd) "
+        f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} "
+        f"group by {tables.CANDIDATE_PARTITION_COLUMN} order by 1"
+    ).fetchall()
+    assert rows == [("202506", 1, 1), ("202507", 1, 0)]
+
+
+def test_monthly_candidates_refuse_rows_from_another_publication_month(
+    tmp_path: Path,
+) -> None:
+    connection = _loaded(
+        tmp_path,
+        [_contract(dataPublicacaoPncp="2025-06-01")],
+    )
+
+    with pytest.raises(ValueError, match="202506"):
+        build_contract_candidates(
+            connection=connection,
+            source_run_id="run-1",
+            resolved_at=datetime(2026, 7, 26, tzinfo=UTC),
+            partition="202507",
+        )

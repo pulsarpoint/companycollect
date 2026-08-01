@@ -154,17 +154,18 @@ def insert_contracts_clickhouse(
     stale row it leaves behind is invisible downstream rather than
     double-counted.
     """
+
     def _qualified(name: str) -> str:
         return f"`{tables.CLICKHOUSE_DATABASE}`.`{name}`"
 
     qualified = _qualified(tables.CONTRACTS_TABLE)
     stage_candidates = _qualified(f"_tmp_{tables.CONTRACTS_TABLE}_daily_src")
 
-    usd_conversion.ensure_usd_columns(duckdb_connection)
+    usd_conversion.ensure_usd_columns(duckdb_connection, tables.DAILY_CANDIDATES_TABLE)
     stage_columns = (*tables.CANDIDATE_COLUMNS, *FX_COLUMNS)
     rows = duckdb_connection.execute(
         f"select {', '.join(stage_columns)} "
-        f"from {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
+        f"from {tables.DUCKDB_SCHEMA}.{tables.DAILY_CANDIDATES_TABLE}"
     ).fetchall()
 
     if not rows:
@@ -182,8 +183,7 @@ def insert_contracts_clickhouse(
     try:
         for start in range(0, len(rows), batch_size):
             clickhouse_client.execute(
-                f"INSERT INTO {stage_candidates} "
-                f"({', '.join(stage_columns)}) VALUES",
+                f"INSERT INTO {stage_candidates} ({', '.join(stage_columns)}) VALUES",
                 rows[start : start + batch_size],
             )
         clickhouse_client.execute(
@@ -206,13 +206,14 @@ def export_contracts_clickhouse(
     partition: str,
     batch_size: int = 50_000,
 ) -> dict[str, int]:
-    """Replace one month's partition with the candidates currently in DuckDB.
+    """Replace one month's partition with its durable DuckDB candidates.
 
     REPLACE PARTITION rather than a plain insert, so re-running a month yields
     that month rather than two copies of it. Refuses to blank a partition that
     currently holds rows: an empty fetch is a degraded run, not a month in which
     Brazil awarded no contracts.
     """
+
     def _qualified(name: str) -> str:
         # Quote the whole identifier, never append to an already-quoted one:
         # "`db`.`t`" + "_src" puts the suffix outside the backticks.
@@ -225,21 +226,19 @@ def export_contracts_clickhouse(
     # The FX columns may predate this partition's build, so make sure they
     # exist before selecting them -- an old DuckDB file would otherwise fail
     # here rather than simply exporting NULLs.
-    usd_conversion.ensure_usd_columns(duckdb_connection)
+    usd_conversion.ensure_usd_columns(duckdb_connection, tables.CANDIDATES_TABLE)
     stage_columns = (*tables.CANDIDATE_COLUMNS, *FX_COLUMNS)
     candidates = f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
 
-    # The buffer must hold the month being exported, and nothing else.
+    # The durable table holds every materialized month. Select the requested
+    # source partition first, then independently verify that its publication
+    # dates map to the same ClickHouse partition.
     #
-    # normalize.py does `create or replace table contract_candidates`, so this is
-    # scratch holding whichever month ran last -- not per-partition input.
-    # Reading it unfiltered and trusting it to be `partition` is what silently
-    # emptied 36 of 37 months on 2026-07-28: every _duckdb run finished the day
-    # before the first _clickhouse run, so all 37 exports read the same leftover
-    # 2025-01 rows, and REPLACE PARTITION then dropped each target partition and
-    # copied stage's same-named (absent, therefore empty) partition into it.
-    # ClickHouse reports that as success. Partition 2024-03 had produced 65,218
-    # rows and ended up with none.
+    # Before source_partition existed, normalize.py did `create or replace table
+    # contract_candidates`. Reading that single last-writer-wins buffer is what
+    # silently emptied 36 of 37 months on 2026-07-28. Keeping all months makes a
+    # Dagster materialization durable; this guard remains because a malformed
+    # publication date would still land in the wrong ClickHouse partition.
     #
     # `if not rows` below cannot catch it -- the read returned 116,226 perfectly
     # valid rows, just for the wrong month -- which is the hazard
@@ -252,40 +251,60 @@ def export_contracts_clickhouse(
     # column is a try_cast) reports as 197001 instead of vanishing: no month's
     # export ever targets 197001, so such a row could never be replaced into
     # visibility later.
+    columns = {
+        str(row[0])
+        for row in duckdb_connection.execute(
+            """
+            select column_name from information_schema.columns
+            where table_schema = ? and table_name = ?
+            """,
+            [tables.DUCKDB_SCHEMA, tables.CANDIDATES_TABLE],
+        ).fetchall()
+    }
+    if tables.CANDIDATE_PARTITION_COLUMN not in columns:
+        raise ValueError(
+            f"Brazil PNCP candidates are not partitioned; materialize "
+            f"brazil_pncp_contracts_duckdb for {partition} before exporting"
+        )
+
+    available = [
+        str(value)
+        for (value,) in duckdb_connection.execute(
+            f"select distinct {tables.CANDIDATE_PARTITION_COLUMN} "
+            f"from {candidates} order by 1"
+        ).fetchall()
+    ]
+    rows = duckdb_connection.execute(
+        f"select {', '.join(stage_columns)} from {candidates} "
+        f"where {tables.CANDIDATE_PARTITION_COLUMN} = ?",
+        [partition],
+    ).fetchall()
+    if not rows:
+        raise ValueError(
+            f"Brazil PNCP has no durable candidates for partition {partition}; "
+            f"the table holds {', '.join(available) or 'none'}. Materialize "
+            f"brazil_pncp_contracts_duckdb for {partition} before exporting; "
+            f"refusing to blank the ClickHouse partition."
+        )
+
     buffered = [
         str(value)
         for (value,) in duckdb_connection.execute(
             f"select distinct "
             f"coalesce(strftime(data_publicacao_pncp, '%Y%m'), '197001') as part "
-            f"from {candidates} order by part"
+            f"from {candidates} where {tables.CANDIDATE_PARTITION_COLUMN} = ? "
+            f"order by part",
+            [partition],
         ).fetchall()
     ]
     unexpected = [value for value in buffered if value != partition]
     if unexpected:
         raise ValueError(
             f"Brazil PNCP was asked to export partition {partition} but the "
-            f"DuckDB candidates buffer holds {', '.join(unexpected)}. The buffer "
-            f"is overwritten per partition, so the export is running against "
-            f"another month's rows -- REPLACE PARTITION {partition} would have "
-            f"deleted that partition and written nothing. Re-run this partition's "
-            f"normalise step immediately before its export."
+            f"durable DuckDB partition contains publication month(s) "
+            f"{', '.join(unexpected)}. REPLACE PARTITION {partition} would write "
+            f"those rows elsewhere, so the candidates must be rebuilt."
         )
-
-    rows = duckdb_connection.execute(
-        f"select {', '.join(stage_columns)} from {candidates}"
-    ).fetchall()
-
-    if not rows:
-        existing = clickhouse_client.execute(
-            f"SELECT count() FROM {qualified} WHERE "
-            f"toYYYYMM(ifNull(data_publicacao_pncp, toDate('1970-01-01'))) = %(p)s",
-            {"p": int(partition)},
-        )[0][0]
-        if int(existing) > 0:
-            raise ValueError(
-                f"Brazil PNCP produced no contracts for {partition}, but that "
-                f"partition holds {existing} rows -- refusing to blank it"
-            )
 
     clickhouse_client.execute(f"DROP TABLE IF EXISTS {stage_candidates}")
     clickhouse_client.execute(candidate_stage_ddl(stage_candidates))
@@ -294,8 +313,7 @@ def export_contracts_clickhouse(
     try:
         for start in range(0, len(rows), batch_size):
             clickhouse_client.execute(
-                f"INSERT INTO {stage_candidates} "
-                f"({', '.join(stage_columns)}) VALUES",
+                f"INSERT INTO {stage_candidates} ({', '.join(stage_columns)}) VALUES",
                 rows[start : start + batch_size],
             )
         clickhouse_client.execute(

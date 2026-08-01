@@ -87,6 +87,22 @@ def test_the_two_endpoints_pages_do_not_overwrite_each_other() -> None:
     assert 'f"{endpoint}-{Path(key).name}"' in source
 
 
+def test_daily_candidates_are_isolated_from_monthly_partition_storage() -> None:
+    from dagster_v3.defs.brazil_pncp.assets import (
+        brazil_pncp_daily_duckdb,
+        brazil_pncp_daily_usd,
+    )
+
+    normalize_source = inspect.getsource(
+        brazil_pncp_daily_duckdb.op.compute_fn.decorated_fn
+    )
+    usd_source = inspect.getsource(brazil_pncp_daily_usd.op.compute_fn.decorated_fn)
+
+    assert "DAILY_RAW_TABLE" in normalize_source
+    assert "DAILY_CANDIDATES_TABLE" in normalize_source
+    assert "DAILY_CANDIDATES_TABLE" in usd_source
+
+
 def test_the_daily_window_is_kept_out_of_the_monthly_snapshot_prefix() -> None:
     """The monthly prefix is contiguous pages 1..N of one month, and the
     backfill's resume logic depends on that. A rolling window's pages are a
@@ -127,9 +143,13 @@ def test_the_daily_chain_runs_in_order() -> None:
         return {d.asset_key for d in asset.specs_by_key[asset.key].deps}
 
     assert deps("brazil_pncp_daily_pages_s3") == set()
-    assert deps("brazil_pncp_daily_duckdb") == {dg.AssetKey("brazil_pncp_daily_pages_s3")}
+    assert deps("brazil_pncp_daily_duckdb") == {
+        dg.AssetKey("brazil_pncp_daily_pages_s3")
+    }
     assert deps("brazil_pncp_daily_usd") == {dg.AssetKey("brazil_pncp_daily_duckdb")}
-    assert deps("brazil_pncp_daily_clickhouse") == {dg.AssetKey("brazil_pncp_daily_usd")}
+    assert deps("brazil_pncp_daily_clickhouse") == {
+        dg.AssetKey("brazil_pncp_daily_usd")
+    }
 
 
 def test_the_daily_window_is_not_partitioned() -> None:

@@ -32,6 +32,8 @@ _ELIGIBILITY_SQL = f"""
         end
 """
 
+_CANDIDATES_BUILD_TABLE = "_br_pncp_contract_candidates_build"
+
 
 def load_raw_pages(
     *,
@@ -39,12 +41,13 @@ def load_raw_pages(
     page_dir: Path,
     source_run_id: str,
     source_retrieved_at: datetime,
+    raw_table: str = tables.RAW_TABLE,
 ) -> int:
     """Load a partition's page files into the raw table, one row per contract."""
     connection.execute(f"create schema if not exists {tables.DUCKDB_SCHEMA}")
     connection.execute(
         f"""
-        create or replace table {tables.DUCKDB_SCHEMA}.{tables.RAW_TABLE} as
+        create or replace table {tables.DUCKDB_SCHEMA}.{raw_table} as
         select
             cast(? as varchar) as source_run_id,
             row_number() over ()::ubigint as source_line_number,
@@ -56,7 +59,7 @@ def load_raw_pages(
     )
     return int(
         connection.execute(
-            f"select count() from {tables.DUCKDB_SCHEMA}.{tables.RAW_TABLE}"
+            f"select count() from {tables.DUCKDB_SCHEMA}.{raw_table}"
         ).fetchone()[0]
     )
 
@@ -66,11 +69,14 @@ def build_contract_candidates(
     connection: Any,
     source_run_id: str,
     resolved_at: datetime,
+    raw_table: str = tables.RAW_TABLE,
+    candidates_table: str = tables.CANDIDATES_TABLE,
+    partition: str | None = None,
 ) -> dict[str, int]:
     """Project raw JSON into the candidate columns, typed and normalised."""
     connection.execute(
         f"""
-        create or replace table {tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE} as
+        create or replace temp table {_CANDIDATES_BUILD_TABLE} as
         with extracted as (
             select
                 source_run_id,
@@ -175,7 +181,7 @@ def build_contract_candidates(
                 try_cast(json ->> '$.frutoAdesao' as boolean)::tinyint as from_adhesion,
                 try_cast(json ->> '$.temRemanejamento' as boolean)::tinyint
                     as has_reallocation
-            from {tables.DUCKDB_SCHEMA}.{tables.RAW_TABLE}
+            from {tables.DUCKDB_SCHEMA}.{raw_table}
         )
         select
             '{tables.SOURCE_SLUG}' as source_slug,
@@ -249,7 +255,6 @@ def build_contract_candidates(
         """,
         [source_run_id, resolved_at],
     )
-    qualified = f"{tables.DUCKDB_SCHEMA}.{tables.CANDIDATES_TABLE}"
     row = connection.execute(
         f"""
         select
@@ -260,10 +265,10 @@ def build_contract_candidates(
             count(*) filter (where match_eligibility = 'invalid_supplier_id'),
             count(*) filter (where source_url = ''),
             count(*) filter (where data_publicacao_pncp is null)
-        from {qualified}
+        from {_CANDIDATES_BUILD_TABLE}
         """
     ).fetchone()
-    return {
+    counts = {
         "candidate_rows": int(row[0]),
         "eligible_rows": int(row[1]),
         "natural_person_rows": int(row[2]),
@@ -271,4 +276,125 @@ def build_contract_candidates(
         "invalid_supplier_ids": int(row[4]),
         "rows_without_source_url": int(row[5]),
         "malformed_publication_dates": int(row[6]),
+    }
+    qualified = f"{tables.DUCKDB_SCHEMA}.{candidates_table}"
+    if partition is None:
+        connection.execute(
+            f"create or replace table {qualified} as "
+            f"select * from {_CANDIDATES_BUILD_TABLE}"
+        )
+    else:
+        _replace_candidate_partition(
+            connection=connection,
+            qualified_table=qualified,
+            candidates_table=candidates_table,
+            partition=partition,
+        )
+    return counts
+
+
+def _replace_candidate_partition(
+    *,
+    connection: Any,
+    qualified_table: str,
+    candidates_table: str,
+    partition: str,
+) -> None:
+    """Atomically replace one durable monthly candidates partition."""
+    derived_partitions = [
+        str(value)
+        for (value,) in connection.execute(
+            f"select distinct coalesce("
+            f"strftime(data_publicacao_pncp, '%Y%m'), '197001') as part "
+            f"from {_CANDIDATES_BUILD_TABLE} order by part"
+        ).fetchall()
+    ]
+    if not derived_partitions:
+        raise ValueError(
+            f"Brazil PNCP produced no candidates for partition {partition}; "
+            f"refusing to replace its durable DuckDB rows"
+        )
+    unexpected = [value for value in derived_partitions if value != partition]
+    if unexpected:
+        raise ValueError(
+            f"Brazil PNCP normalised partition {partition}, but its rows belong "
+            f"to {', '.join(unexpected)}; refusing to persist a misfiled month"
+        )
+
+    connection.execute(
+        f"alter table {_CANDIDATES_BUILD_TABLE} add column "
+        f"{tables.CANDIDATE_PARTITION_COLUMN} varchar"
+    )
+    connection.execute(
+        f"update {_CANDIDATES_BUILD_TABLE} set {tables.CANDIDATE_PARTITION_COLUMN} = ?",
+        [partition],
+    )
+
+    existing_columns = _table_columns(connection, candidates_table)
+    if not existing_columns:
+        connection.execute(
+            f"create table {qualified_table} as select * from {_CANDIDATES_BUILD_TABLE}"
+        )
+        return
+
+    if tables.CANDIDATE_PARTITION_COLUMN not in existing_columns:
+        connection.execute(
+            f"alter table {qualified_table} add column "
+            f"{tables.CANDIDATE_PARTITION_COLUMN} varchar"
+        )
+        connection.execute(
+            f"update {qualified_table} set {tables.CANDIDATE_PARTITION_COLUMN} = "
+            "coalesce(strftime(data_publicacao_pncp, '%Y%m'), '197001')"
+        )
+        existing_columns[tables.CANDIDATE_PARTITION_COLUMN] = "VARCHAR"
+
+    for column, column_type in _table_columns(
+        connection,
+        _CANDIDATES_BUILD_TABLE,
+        schema="main",
+        catalog="temp",
+    ).items():
+        if column not in existing_columns:
+            connection.execute(
+                f"alter table {qualified_table} add column {column} {column_type}"
+            )
+
+    connection.execute("begin transaction")
+    try:
+        connection.execute(
+            f"delete from {qualified_table} where "
+            f"{tables.CANDIDATE_PARTITION_COLUMN} = ?",
+            [partition],
+        )
+        connection.execute(
+            f"insert into {qualified_table} by name "
+            f"select * from {_CANDIDATES_BUILD_TABLE}"
+        )
+    except Exception:
+        connection.execute("rollback")
+        raise
+    connection.execute("commit")
+
+
+def _table_columns(
+    connection: Any,
+    table_name: str,
+    *,
+    schema: str = tables.DUCKDB_SCHEMA,
+    catalog: str | None = None,
+) -> dict[str, str]:
+    catalog_filter = "" if catalog is None else "and table_catalog = ?"
+    params = [schema, table_name] if catalog is None else [schema, table_name, catalog]
+    return {
+        str(column): str(data_type)
+        for column, data_type in connection.execute(
+            f"""
+            select column_name, data_type
+            from information_schema.columns
+            where table_schema = ? and table_name = ?
+              {catalog_filter}
+            order by ordinal_position
+            """,
+            params,
+        ).fetchall()
     }
