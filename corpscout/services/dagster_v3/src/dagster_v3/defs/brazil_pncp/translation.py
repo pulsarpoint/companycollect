@@ -69,7 +69,16 @@ def brazil_pncp_translation_load(
     clickhouse: ClickhouseResource,
     translator: TranslatorResource,
 ) -> dg.MaterializeResult:
-    baseline_failed = translator.queue_stats().failed
+    # Reachability probe, kept now that the wait below is gone: scanning two
+    # million rows out of ClickHouse and building the payloads before finding
+    # the translator is down wastes the expensive part of the run.
+    queue_before = translator.queue_stats()
+    context.log.info(
+        "translator queue before enqueue: input=%d pending=%d failed=%d",
+        queue_before.input,
+        queue_before.pending,
+        queue_before.failed,
+    )
     enqueued_received = 0
     enqueued_inserted = 0
     scanned = 0
@@ -111,21 +120,27 @@ def brazil_pncp_translation_load(
             },
         )
 
+    # Enqueue and return -- this one does NOT block on the queue draining.
+    #
+    # Every other loader waits, and should: a few thousand texts drain inside
+    # the two-hour timeout, and a run that goes green when the work is done is
+    # the clearer signal. This column is 2,037,058 distinct texts, which is a
+    # day or more of GPU. Waiting would fail the run on the timeout every time
+    # while the queue kept working perfectly, and would fail it immediately on
+    # the first bad item out of two million -- both of them red for reasons
+    # that say nothing about whether the enqueue worked.
+    #
+    # The enqueue is the durable part: items are in the queue db, and the
+    # translator drains them whether Dagster is watching or not. "Is it
+    # finished" is answered by the translations_present check, which counts
+    # what is actually in text_translations every ten minutes -- a better
+    # answer than a blocking poll, and the reason this can stop blocking.
     if enqueued_received > 0:
         context.log.info(
-            "waiting for translator queue completion: received=%d inserted=%d",
+            "enqueued %d texts (%d new) and returning without waiting -- "
+            "track completion on the translations_present check",
             enqueued_received,
             enqueued_inserted,
-        )
-        completion_stats = translator.wait_for_queue_completion(
-            baseline_failed=baseline_failed
-        )
-        context.log.info(
-            "translator queue completed: input=%d pending=%d output=%d failed=%d",
-            completion_stats.input,
-            completion_stats.pending,
-            completion_stats.output,
-            completion_stats.failed,
         )
 
     return dg.MaterializeResult(
