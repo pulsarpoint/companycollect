@@ -491,21 +491,37 @@ buyer and winner appear only as the headline's top-1, inside the fourth.
   leaves the tree. It also leaves the filter, which is why the counts still
   agree. `uniqExact(t.contract_ref)` becomes `count()`.
 
-- [x] **Step 4: Leave `getContractHeadlineStats` on the facts tables.** Nothing
-  measured says it is slow, and it does not agree with the rollup:
+- [x] **Step 4: `getContractHeadlineStats` — measure first, then repoint.**
+
+  This step originally said *leave it*, on the grounds that "nothing measured
+  says it is slow". That was an assumption stated as a measurement, and it was
+  wrong. Measured: four 4.6M-row `GROUP BY contract_ref` at 0.98s + 0.99s +
+  1.43s + 2.30s — **the entire remaining cost of Brazil's page**, against a
+  0.20s list query. It was the whole reason `br` still took 5.3s after the
+  rollup landed.
+
+  Two disagreements with the rollup made it worth checking before switching,
+  and both turned out to be theoretical:
 
   - it takes `min(publication_date)` per contract where the rollup carries the
-    highest-USD source's — repointing moves contracts between years in the
-    histogram;
+    highest-USD source's, which could move a multi-source contract between
+    years — **zero contracts move, in any country**;
   - its top winner is a bare `min(winner_name)` where the rollup uses
-    `min(if(winner_name != '', winner_name, company_id))` under an `argMax`. A
-    contract with a blank winner name is dropped from the ranking today
-    (`WHERE winner_name != ''`) and would rank under a company id from the
-    rollup — and for a multi-source contract the two pick different winners
-    outright.
+    `min(if(winner_name != '', winner_name, company_id))` under an `argMax`, so
+    a contract with a published id but no name counts as nameless in one and
+    under its id in the other.
 
-  Both are defensible; neither is free. If a later change wants the rollup
-  here, make it a deliberate step with its own before/after counts.
+  Totals, per-year buckets and top buyer are **identical for all six countries
+  holding data** (br, ee, fi, fr, no, se). The top winner differs for **France
+  alone**: DECP publishes titulaire ids without names, so the banner named no
+  top winner at all while the table beside it listed those same ids. It now
+  says `329338883`, 6,547 contracts — agreeing with the table. Every other
+  country is unchanged, value for value.
+
+  Repointing took `br` from 5.3s to **0.78s**.
+
+  The lesson for the next plan: "nothing measured says X" is not a measurement.
+  Either measure it or say it is unmeasured.
 
 - [x] **Step 5:** Leave the DETAIL page and supplier lists on the winner-level
   facts tables. They need the per-winner grain, which the rollup does not have.

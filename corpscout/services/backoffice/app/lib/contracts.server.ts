@@ -588,48 +588,59 @@ export async function getContractHeadlineStats(
   country: CountryConfig,
 ): Promise<ContractHeadlineStats | null> {
   if (!(await hasContracts(country))) return null;
-  const source = await contractsSource(country);
 
-  // Still the winner-level table, deliberately -- this is the one read that did
-  // NOT move to the rollup. Nothing measured says it is slow, and it does not
-  // agree with the rollup: min(publication_date) per contract against the
-  // rollup's highest-USD source would move contracts between years in the
-  // histogram, and this bare min(winner_name) ranks a different supplier than
-  // the rollup's min(if(winner_name != '', winner_name, company_id)) under an
-  // argMax whenever a contract has a blank winner name or several sources.
-  // Both are defensible; repointing is a deliberate change with its own
-  // before/after counts, not a side effect of this one.
+  // The rollup, like the list above it. This was the last read still building
+  // its own per-contract aggregation, and on Brazil it was the whole cost of
+  // the page: four 4.6M-row GROUP BY contract_ref at 0.98s + 0.99s + 1.43s +
+  // 2.30s, against a 0.20s list. Reading rows instead takes the page from 5.3s
+  // to ~1.2s.
   //
-  // One row per contract, so a multi-winner contract is not counted twice.
+  // Repointed only after measuring both shapes, because the winner-level
+  // version did not obviously agree with the rollup. It does, everywhere but
+  // one place. Totals, per-year buckets and top buyer are IDENTICAL for all six
+  // countries holding data (br, ee, fi, fr, no, se). The two feared differences:
   //
-  // NOT argMin(winner_name, source_winner_ordinal): 13,181 Swedish contracts have
-  // two winners sharing one ordinal, and argMin on a tied key picks arbitrarily,
-  // so the count flickered between runs (301, then 299, from identical data).
-  // The ordinal encodes no rank anyway -- the TED parser merely increments it per
-  // tenderer -- so alphabetical is both deterministic and no less meaningful.
-  const contracts = `(SELECT ${REF} AS contract_ref, any(buyer_name) AS buyer_name,
-       min(winner_name) AS winner_name,
-       min(publication_date) AS publication_date
-     FROM ${source.table} GROUP BY contract_ref)`;
+  //  - This took min(publication_date) across a contract's sources where the
+  //    rollup carries the highest-USD source's, so a multi-source contract
+  //    could land in a different year. ZERO contracts move, in any country.
+  //  - This ranked a bare min(winner_name) where the rollup ranks
+  //    min(if(winner_name != '', winner_name, company_id)) -- so a contract
+  //    whose register published an id but no name counted as nameless here and
+  //    counts under its id there. France is the only country where that shows:
+  //    DECP publishes titulaire ids without names, so the banner named NO top
+  //    winner at all while the table beside it listed those very ids. Both now
+  //    say 329338883, 6,547 contracts.
+  //
+  // Which winner a contract shows is decided ONCE, in the rollup asset, and the
+  // reasoning for it (alphabetically first, never source_winner_ordinal) lives
+  // there with it. Duplicating any of it here is what this whole change removed.
+  const scope = "WHERE country_code = {country:String}";
+  const params = { country: country.code.toUpperCase() };
 
   const [totals, perYear, buyers, winners] = await Promise.all([
     // Counted independently of the date. Summing the per-year buckets would
     // silently drop contracts with no publication_date -- 36 of Sweden's -- and
-    // the banner would then disagree with the table's own total on the same page.
-    chQuery<{ contracts: string }>(`SELECT count() AS contracts FROM ${contracts}`),
+    // the banner would then disagree with the table's own total on the same
+    // page. Off the same table as that table, so they now agree by construction.
+    chQuery<{ contracts: string }>(
+      `SELECT count() AS contracts FROM ${ROLLUP_TABLE} ${scope}`,
+      params,
+    ),
     chQuery<{ year: string; contracts: string }>(
       `SELECT toYear(publication_date) AS year, count() AS contracts
-       FROM ${contracts}
-       WHERE publication_date IS NOT NULL
+       FROM ${ROLLUP_TABLE} ${scope} AND publication_date IS NOT NULL
        GROUP BY year ORDER BY year`,
+      params,
     ),
     chQuery<{ name: string; contracts: string }>(
-      `SELECT buyer_name AS name, count() AS contracts FROM ${contracts}
-       WHERE buyer_name != '' GROUP BY name ORDER BY contracts DESC LIMIT 1`,
+      `SELECT buyer_name AS name, count() AS contracts FROM ${ROLLUP_TABLE}
+       ${scope} AND buyer_name != '' GROUP BY name ORDER BY contracts DESC LIMIT 1`,
+      params,
     ),
     chQuery<{ name: string; contracts: string }>(
-      `SELECT winner_name AS name, count() AS contracts FROM ${contracts}
-       WHERE winner_name != '' GROUP BY name ORDER BY contracts DESC LIMIT 1`,
+      `SELECT winner_name AS name, count() AS contracts FROM ${ROLLUP_TABLE}
+       ${scope} AND winner_name != '' GROUP BY name ORDER BY contracts DESC LIMIT 1`,
+      params,
     ),
   ]);
 
