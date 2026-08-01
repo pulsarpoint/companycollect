@@ -49,7 +49,7 @@ the shape stated here.
 | duplicate `(siren, fiscal_year)` | 41,055 pairs, across balance types C (4,924,259) / S (1,586,394) / K (31,579) |
 | confidentiality | Public 4,951,478 · Partiellement confidentiel 1,538,303 · RAPCAC 50,273 · Publication simplifiee 2,178 |
 | `fr_government_contracts` | 721,161 rows, 99,287 companies, sole source `france_decp_procurement` |
-| contracts per company | median 2, p90 15, p99 69, max 1,507 |
+| contracts per company | median 2, p90 15, p99 69, **max 7,035**, 616 companies over 100 |
 | `wikidata_company_identifiers` `fr_siren` | 169 |
 
 **Test seeds**, all confirmed to exist:

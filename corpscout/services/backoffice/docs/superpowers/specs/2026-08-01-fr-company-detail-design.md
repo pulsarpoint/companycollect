@@ -150,8 +150,15 @@ France declares `publicContractsQuery` against `fr_government_contracts WHERE
 company_id = {id:String}` in the same shape Brazil already uses. No component
 change for the table itself. Sole source is `france_decp_procurement`.
 
-Contract counts per company are median 2, p90 15, p99 69, max 1,507, so the
-existing `LIMIT 100` covers more than 99% of companies completely.
+Contract counts per company are median 2, p90 15, p99 69, **max 7,035**, so the
+existing `LIMIT 100` covers more than 99% of companies completely — but 616
+companies exceed it.
+
+An earlier draft said "max 1,507". That came from a single
+`quantiles(0.5, 0.9, 0.99, 1.0)` call, whose top quantile is an approximation,
+not a maximum; `max()` returns 7,035. The distinction matters here because the
+summary header states the true award count directly above a table capped at
+100, so those 616 companies need a truncation cue rather than a silent cap.
 
 **France publishes no per-winner values, and that is already handled.**
 `value_amount_original` and `value_amount_usd` are NULL for all 721,161 rows,
