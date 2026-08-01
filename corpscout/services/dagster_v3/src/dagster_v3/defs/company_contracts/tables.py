@@ -103,3 +103,37 @@ AWARD_FACTS_COLUMNS = (
 AWARD_COUNTRIES = ("br", "no")
 
 MIN_AWARD_FACTS_ROWS = 50_000
+
+
+ROLLUP_TABLE = "company_contract_rollup"
+
+ROLLUP_TABLES = (ROLLUP_TABLE,)
+
+# Column order is the contract with migration 000238 and is asserted by
+# tests/test_clickhouse_migrations.py. One row per (country, contract): the
+# first fourteen are what the contracts list selects, the rest what it filters
+# and sorts on.
+ROLLUP_COLUMNS = (
+    "country_code",
+    "contract_ref",
+    "contract_date",
+    "buyer_name",
+    "title",
+    "agreement_type",
+    "cpv_code",
+    "winner_name",
+    "winner_registered_id",
+    "winner_match_status",
+    "supplier_count",
+    "amount_original",
+    "currency",
+    "amount_usd",
+    "source_url",
+    "publication_date",
+    "resolved_at",
+)
+
+# A floor, not an equality. Brazil alone contributes 4.6M contracts, so this is
+# an order of magnitude below the real figure -- it exists to catch a rollup
+# built from an emptied facts table, not to track growth.
+MIN_ROLLUP_ROWS = 500_000

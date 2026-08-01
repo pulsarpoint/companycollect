@@ -5,6 +5,7 @@ from dagster_v3.defs.brazil_companies.cgu import tables as brazil_cgu_tables
 from dagster_v3.defs.brazil_companies.pgfn import tables as brazil_pgfn_tables
 from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
+from dagster_v3.defs.company_contracts import tables as company_contracts_tables
 from dagster_v3.defs.company_signals import tables as company_signals_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
@@ -252,6 +253,7 @@ EXPECTED_MIGRATIONS = (
     "000235_corpscout_contracts_read_from_facts",
     "000236_corpscout_company_contract_award_facts",
     "000237_corpscout_awards_read_from_facts",
+    "000238_corpscout_company_contract_rollup",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -2880,6 +2882,27 @@ def test_esef_filings_migration_covers_all_four_tables() -> None:
         for table_name in reversed(expected_columns_by_table)
     ]
     assert drop_order == sorted(drop_order)
+
+
+def test_company_contract_rollup_migration_matches_the_column_contract() -> None:
+    """The asset INSERTs a positional column list, so the migration's column
+    ORDER is the contract -- a column added to one side only would land every
+    value in the wrong field without failing."""
+    sql = _migration_sql("000238_corpscout_company_contract_rollup.up.sql")
+    down_sql = _migration_sql("000238_corpscout_company_contract_rollup.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.company_contract_rollup" in sql
+    assert "DROP TABLE IF EXISTS corpscout.company_contract_rollup" in down_sql
+
+    positions = [
+        sql.index(f"\n    {column} ")
+        for column in company_contracts_tables.ROLLUP_COLUMNS
+    ]
+    assert positions == sorted(positions)
+
+    # One row per (country, contract), ordered by the column the list sorts on
+    # by default, so the common page is an ordered read rather than a sort.
+    assert "ORDER BY (country_code, contract_date, contract_ref);" in sql
 
 
 def _migration_sql(file_name: str) -> str:
