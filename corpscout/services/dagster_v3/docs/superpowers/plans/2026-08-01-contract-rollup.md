@@ -1,6 +1,6 @@
 # Contract-level rollup Implementation Plan
 
-> **For agentic workers:** Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make `/countries/br/contracts` load, by precomputing the contract-level
 aggregation the page currently performs on every request.
@@ -143,7 +143,7 @@ old behaviour.
 **Interfaces produced:** `ROLLUP_TABLE`, `ROLLUP_COLUMNS`, `ROLLUP_TABLES`,
 `MIN_ROLLUP_ROWS` in `company_contracts/tables.py`.
 
-- [ ] **Step 1: Write the migration.**
+- [x] **Step 1: Write the migration.**
 
 Columns, in this order. The first fourteen are what the page selects; the rest
 are what it filters and sorts on.
@@ -183,13 +183,13 @@ above). No semicolons inside it.
 
 Down migration: `DROP TABLE IF EXISTS corpscout.company_contract_rollup;`
 
-- [ ] **Step 2: Add the contract to `tables.py`**, mirroring the existing
+- [x] **Step 2: Add the contract to `tables.py`**, mirroring the existing
   `CONTRACT_FACTS_COLUMNS` block. `MIN_ROLLUP_ROWS = 500_000`.
 
-- [ ] **Step 3: Register the migration** by appending
+- [x] **Step 3: Register the migration** by appending
   `"000238_corpscout_company_contract_rollup"` to `EXPECTED_MIGRATIONS`.
 
-- [ ] **Step 4: Apply and verify.**
+- [x] **Step 4: Apply and verify.**
 
 ```bash
 cd corpscout && make clickhouse-migrate-up-one
@@ -197,7 +197,7 @@ cd services/dagster_v3 && uv run pytest tests/test_clickhouse_migrations.py -q
 ```
 Expected: migration 238 applies, tests pass.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ---
 
@@ -316,7 +316,7 @@ filtering the raw `agreement_type` while displaying the extracted one. Sharing
 `priority` makes the filtered date and the displayed date the same date by
 construction. Identical either way for Brazil, which is single-source.
 
-- [ ] **Step 1: Write the failing test** in `tests/test_contract_rollup.py`:
+- [x] **Step 1: Write the failing test** in `tests/test_contract_rollup.py`:
 
 Assert the substituted EXPRESSION, not the absence of a substring — a test that
 greps for a column name passes for the wrong reason the moment an alias happens
@@ -382,11 +382,11 @@ def test_projects_columns_in_table_order() -> None:
     assert ["contract_ref", *re.findall(r"AS (\w+)", outer)] == expected
 ```
 
-- [ ] **Step 2: Run it and watch it fail** —
+- [x] **Step 2: Run it and watch it fail** —
   `uv run pytest tests/test_contract_rollup.py -q`. Expected: ModuleNotFoundError.
-- [ ] **Step 3: Write `rollup_sql.py`** with the SQL above.
-- [ ] **Step 4: Run the tests to green.**
-- [ ] **Step 5: Commit.**
+- [x] **Step 3: Write `rollup_sql.py`** with the SQL above.
+- [x] **Step 4: Run the tests to green.**
+- [x] **Step 5: Commit.**
 
 ---
 
@@ -401,7 +401,7 @@ Follow `company_contract_facts` in the same file exactly — it is the template:
 staging table, per-country insert, floor check, `EXCHANGE TABLES`, `DROP` in
 `finally`, per-country row counts in the log and in `MaterializeResult`.
 
-- [ ] **Step 1: Add `company_contract_rollup`.** For each country, pick the
+- [x] **Step 1: Add `company_contract_rollup`.** For each country, pick the
   source by shape:
 
 ```python
@@ -426,10 +426,10 @@ the INSERT column list and select them as literals at their own positions, as
 after the loop — the same shape `company_contract_facts` uses. Per country it
 would be nonsense: 500,000 is below Brazil and above every other country.
 
-- [ ] **Step 2: Add it to the existing job**, after both facts assets, so the
+- [x] **Step 2: Add it to the existing job**, after both facts assets, so the
   grains cannot disagree. Add a `deps=[...]` on both facts asset keys.
-- [ ] **Step 3: `uv run dg check defs`.** Expected: loads successfully.
-- [ ] **Step 4: Materialize and verify equality against the live page query.**
+- [x] **Step 3: `uv run dg check defs`.** Expected: loads successfully.
+- [x] **Step 4: Materialize and verify equality against the live page query.**
 
 ```bash
 uv run dg launch --assets company_contract_facts,company_contract_award_facts,company_contract_rollup
@@ -439,7 +439,7 @@ Then verify, for at least `br`, `no` and `se`, that the rollup agrees with what
 the page computes today. Expected row counts: `br` 4,605,018 contracts,
 `no` 26,124, `se` ~24,462 (a `_summary` view already reports Sweden's).
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ---
 
@@ -454,7 +454,7 @@ The read side is exactly four functions: `getCountryContractsPage`,
 is **no `buyer_name` or `winner_name` facet** — don't go looking for one. The
 buyer and winner appear only as the headline's top-1, inside the fourth.
 
-- [ ] **Step 1: Teach `contractFilterSql` the rollup's column names.** It binds
+- [x] **Step 1: Teach `contractFilterSql` the rollup's column names.** It binds
   `value_amount_usd`; the rollup calls that `amount_usd`. Add an option beside
   the existing `agreementExpr` one — that option exists for precisely this
   reason and the comment above it explains why filtering a column the page does
@@ -468,7 +468,7 @@ buyer and winner appear only as the headline's top-1, inside the fourth.
   `publication_date` and `cpv_code` keep their names, so `CPV_CODES` and the
   date clauses move unchanged.
 
-- [ ] **Step 2: Replace the list query** with a read of
+- [x] **Step 2: Replace the list query** with a read of
   `company_contract_rollup` filtered by `country_code`, with the filter clause,
   `ORDER BY` and `LIMIT/OFFSET` applied directly. The count query above it
   (`SELECT count() FROM (SELECT ... GROUP BY contract_ref)`) collapses to a
@@ -478,7 +478,7 @@ buyer and winner appear only as the headline's top-1, inside the fourth.
   Drop `nullIf(amount_usd, -1.0)` and `toUInt32(winner_count_primary)` from the
   projection: the asset now stores both in their final form.
 
-- [ ] **Step 3: Move the facets with the filter — this is correctness, not
+- [x] **Step 3: Move the facets with the filter — this is correctness, not
   speed.** `getAgreementTypeFacet` and `getCpvChildren` count contracts so that
   "the number beside a value matches what selecting it will show" (their own
   doc comments). Once the FILTER runs against the rollup's single
@@ -491,7 +491,7 @@ buyer and winner appear only as the headline's top-1, inside the fourth.
   leaves the tree. It also leaves the filter, which is why the counts still
   agree. `uniqExact(t.contract_ref)` becomes `count()`.
 
-- [ ] **Step 4: Leave `getContractHeadlineStats` on the facts tables.** Nothing
+- [x] **Step 4: Leave `getContractHeadlineStats` on the facts tables.** Nothing
   measured says it is slow, and it does not agree with the rollup:
 
   - it takes `min(publication_date)` per contract where the rollup carries the
@@ -507,13 +507,13 @@ buyer and winner appear only as the headline's top-1, inside the fourth.
   Both are defensible; neither is free. If a later change wants the rollup
   here, make it a deliberate step with its own before/after counts.
 
-- [ ] **Step 5:** Leave the DETAIL page and supplier lists on the winner-level
+- [x] **Step 5:** Leave the DETAIL page and supplier lists on the winner-level
   facts tables. They need the per-winner grain, which the rollup does not have.
-- [ ] **Step 6:** `npm run typecheck && npx vitest run`. Expected: all pass. The
+- [x] **Step 6:** `npm run typecheck && npx vitest run`. Expected: all pass. The
   Brazil test in `tests/country-contracts.queries.test.ts` currently exceeds its
   20s timeout — it should now pass comfortably. **Do not raise that timeout**;
   it has already been raised twice and is the signal this work exists to fix.
-- [ ] **Step 7: Measure every contracts page** and record the numbers:
+- [x] **Step 7: Measure every contracts page** and record the numbers:
 
 ```bash
 for c in br no se fr ee fi lv sk; do
@@ -543,7 +543,7 @@ still far cheaper than the aggregation it replaces (no aggregate states, narrow
 columns), but it is the one remaining full scan and it should be measured rather
 than assumed. If it is slow, the fix is a projection, not a wider sort key.
 
-- [ ] **Step 8: Commit**, recording the before/after numbers and the Norway
+- [x] **Step 8: Commit**, recording the before/after numbers and the Norway
   filter-semantics change from the Background section.
 
 ---
