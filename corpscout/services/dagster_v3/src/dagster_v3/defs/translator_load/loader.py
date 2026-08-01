@@ -58,6 +58,34 @@ WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''
   AND length(c.{column}) <= 8000{scope}"""
 
 
+def build_coverage_sql(table: str, column: str, extra_where: str | None = None) -> str:
+    """How many distinct texts this column has, and how many are translated.
+
+    The WHERE clauses mirror build_scan_sql exactly, and must keep doing so: a
+    check that counts texts the loader would never enqueue reports a shortfall
+    that no run can close, and one that skips texts the loader does enqueue
+    reports success while work is outstanding. Whitespace-only and >8,000-char
+    texts are excluded from BOTH for the reasons in this module's docstring.
+    """
+    scope = "" if extra_where is None else f"\n      AND ({extra_where})"
+    return f"""
+WITH texts AS (
+    SELECT DISTINCT cityHash64(c.{column}) AS h
+    FROM {table} AS c
+    WHERE trim(BOTH ' \\t\\r\\n' FROM c.{column}) != ''
+      AND length(c.{column}) <= 8000{scope}
+),
+have AS (
+    SELECT DISTINCT source_text_hash AS h
+    FROM corpscout.text_translations
+    WHERE source_table = '{table}' AND source_column = '{column}'
+)
+SELECT
+    count() AS source_texts,
+    countIf(h IN (SELECT h FROM have)) AS translated
+FROM texts"""
+
+
 def build_static_scan_sql(
     table: str, column: str, key_column: str, extra_where: str | None = None
 ) -> str:

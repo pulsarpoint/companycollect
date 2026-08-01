@@ -30,7 +30,11 @@ from dagster_v3.defs.czech_legal_forms.source import (
     MIN_LEGAL_FORM_ROWS,
     parse_legal_forms,
 )
-from dagster_v3.defs.translator_load.loader import build_scan_sql
+from dagster_v3.defs.translator_load.coverage import (
+    TRANSLATION_CHECK_CRON,
+    translation_coverage_result,
+)
+from dagster_v3.defs.translator_load.loader import TranslationField, build_scan_sql
 from dagster_v3.defs.translator_load.resource import (
     TranslatorResource,
     translator_queue_health_check,
@@ -271,6 +275,18 @@ def czech_legal_forms_translator_queue_health_check(
     return translator_queue_health_check(translator)
 
 
+@dg.asset_check(
+    asset=czech_legal_forms_translation_load, name="translations_present"
+)
+def czech_legal_forms_translation_coverage(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    """How many Czech legal-form labels exist, and how many are translated."""
+    return translation_coverage_result(
+        clickhouse, (TranslationField(SOURCE_TABLE, SOURCE_COLUMN),)
+    )
+
+
 czech_legal_forms_refresh_job = dg.define_asset_job(
     name="czech_legal_forms_refresh_job",
     selection=dg.AssetSelection.assets(czech_legal_forms_curated_english).upstream(),
@@ -283,6 +299,32 @@ czech_legal_forms_yearly_schedule = dg.ScheduleDefinition(
     default_status=dg.DefaultScheduleStatus.STOPPED,
 )
 
+# Checks only -- no asset is materialised, so this cannot re-download or
+# re-publish anything. It re-reads coverage so a queue that drains after the
+# load finished is reflected without waiting for the next yearly refresh.
+translation_coverage_job = dg.define_asset_job(
+    name="translation_coverage_job",
+    # Selected by KEY, not by importing each check: the job lives in one
+    # module but covers every source, and importing France's check here would
+    # make czech_legal_forms depend on france_legal_forms for no reason.
+    selection=dg.AssetSelection.checks(
+        *(
+            dg.AssetCheckKey(dg.AssetKey(asset), "translations_present")
+            for asset in (
+                "czech_legal_forms_translation_load",
+                "france_legal_forms_translation_load",
+            )
+        )
+    ),
+)
+
+translation_coverage_schedule = dg.ScheduleDefinition(
+    name="translation_coverage_schedule",
+    job=translation_coverage_job,
+    cron_schedule=TRANSLATION_CHECK_CRON,
+    default_status=dg.DefaultScheduleStatus.STOPPED,
+)
+
 defs = dg.Definitions(
     assets=[
         czech_legal_forms_duckdb,
@@ -290,8 +332,11 @@ defs = dg.Definitions(
         czech_legal_forms_curated_english,
         czech_legal_forms_translation_load,
     ],
-    asset_checks=[czech_legal_forms_translator_queue_health_check],
-    jobs=[czech_legal_forms_refresh_job],
-    schedules=[czech_legal_forms_yearly_schedule],
+    asset_checks=[
+        czech_legal_forms_translator_queue_health_check,
+        czech_legal_forms_translation_coverage,
+    ],
+    jobs=[czech_legal_forms_refresh_job, translation_coverage_job],
+    schedules=[czech_legal_forms_yearly_schedule, translation_coverage_schedule],
     resources={"czech_legal_forms_duckdb": duckdb_resource(CZ_LEGAL_FORMS_DUCKDB_PATH)},
 )

@@ -25,7 +25,9 @@ from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.france_sirene.resources import FR_LEGAL_FORM_EN_BY_CODE
+from dagster_v3.defs.translator_load.coverage import translation_coverage_result
 from dagster_v3.defs.translator_load.loader import (
+    TranslationField,
     build_scan_sql,
     build_static_scan_sql,
     insert_static_translations,
@@ -152,3 +154,15 @@ def france_legal_forms_translator_queue_health_check(
     translator: TranslatorResource,
 ) -> dg.AssetCheckResult:
     return translator_queue_health_check(translator)
+
+
+@dg.asset_check(
+    asset=france_legal_forms_translation_load, name="translations_present"
+)
+def france_legal_forms_translation_coverage(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    """How many INSEE labels exist, and how many are translated."""
+    return translation_coverage_result(
+        clickhouse, (TranslationField(SOURCE_TABLE, SOURCE_COLUMN),)
+    )
