@@ -26,6 +26,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
 )
 from dagster_v3.defs.company_contracts import tables
+from dagster_v3.defs.company_contracts.rollup_sql import build_rollup_select
 
 GROUP_NAME = "company_contracts"
 
@@ -194,10 +195,137 @@ def company_contract_award_facts(
     )
 
 
+# The rollup's SELECT names its supplier count winner_count_primary and leaves
+# the amounts in the source's own types, exactly as the page's query did. These
+# are the only columns that need saying; every other one is passed through by
+# name, so the INSERT list and the projection cannot drift out of order.
+ROLLUP_EXPRESSIONS = {
+    "supplier_count": "toUInt32(winner_count_primary)",
+    "amount_original": "toFloat64(amount_original)",
+}
+
+
+def rollup_insert_sql(
+    *,
+    target: str,
+    source: str,
+    country_code: str,
+    resolved_at: str,
+    has_supplier_detail: bool,
+) -> str:
+    """One country's contracts, rolled up to one row per contract.
+
+    The source is filtered to the country before the aggregation rather than
+    after: a rollup of every country at once would group 5.5M rows to answer a
+    question each page asks about one of them.
+
+    country_code and resolved_at are not produced by the aggregation -- they
+    are selected as literals where they sit in ROLLUP_COLUMNS, the same way
+    facts_insert_sql handles contract_ref and resolved_at.
+    """
+    selected = ", ".join(
+        f"'{country_code.upper()}' AS country_code"
+        if column == "country_code"
+        else f"toDateTime('{resolved_at}') AS resolved_at"
+        if column == "resolved_at"
+        else f"{ROLLUP_EXPRESSIONS.get(column, column)} AS {column}"
+        for column in tables.ROLLUP_COLUMNS
+    )
+    inner = build_rollup_select(
+        source_table=f"(SELECT * FROM {source} WHERE country_code = "
+        f"'{country_code.upper()}')",
+        has_supplier_detail=has_supplier_detail,
+    )
+    return f"""
+INSERT INTO {target} ({', '.join(tables.ROLLUP_COLUMNS)})
+SELECT {selected}
+FROM ({inner})
+"""
+
+
+@dg.asset(
+    name="company_contract_rollup",
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "sql"},
+    deps=[
+        dg.AssetKey("company_contract_facts"),
+        dg.AssetKey("company_contract_award_facts"),
+    ],
+    metadata={"tables": [f"{RESOLVED_DATABASE}.{tables.ROLLUP_TABLE}"]},
+    description=(
+        "One row per contract, the shape the contracts list renders, so a page "
+        "filters and sorts an ordered read instead of aggregating every winner "
+        "row in the country first."
+    ),
+)
+def company_contract_rollup(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RESOLVED_DATABASE,
+        tables=tables.ROLLUP_TABLES,
+    )
+    qualified = f"`{RESOLVED_DATABASE}`.`{tables.ROLLUP_TABLE}`"
+    stage = f"`{RESOLVED_DATABASE}`.`_tmp_{tables.ROLLUP_TABLE}_{uuid.uuid4().hex}`"
+    resolved_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    per_country: dict[str, int] = {}
+    with clickhouse.get_connection() as client:
+        client.execute(f"CREATE TABLE {stage} AS {qualified}")
+        try:
+            for code in tables.CONTRACT_COUNTRIES:
+                # Which facts table by SHAPE, not preference: br and no publish
+                # the supplier columns their pages show, and the plain table
+                # does not carry them at all.
+                awards = code in tables.AWARD_COUNTRIES
+                source = (
+                    f"{RESOLVED_DATABASE}.{tables.AWARD_FACTS_TABLE}"
+                    if awards
+                    else f"{RESOLVED_DATABASE}.{tables.CONTRACT_FACTS_TABLE}"
+                )
+                client.execute(
+                    rollup_insert_sql(
+                        target=stage,
+                        source=source,
+                        country_code=code,
+                        resolved_at=resolved_at,
+                        has_supplier_detail=awards,
+                    )
+                )
+                rows = client.execute(
+                    f"SELECT count() FROM {stage} "
+                    f"WHERE country_code = '{code.upper()}'"
+                )[0][0]
+                per_country[code] = int(rows)
+                context.log.info("%s: %d contracts", code.upper(), rows)
+
+            total = sum(per_country.values())
+            if total < tables.MIN_ROLLUP_ROWS:
+                # Same refusal as the facts assets: an emptied upstream would
+                # otherwise publish "this country has no procurement at all"
+                # rather than fail.
+                raise ValueError(
+                    f"contract rollup produced {total} rows, below the "
+                    f"{tables.MIN_ROLLUP_ROWS} floor"
+                )
+            client.execute(f"EXCHANGE TABLES {stage} AND {qualified}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
+
+    return dg.MaterializeResult(
+        metadata={"rows": sum(per_country.values()), **per_country}
+    )
+
+
 company_contract_facts_job = dg.define_asset_job(
     name="company_contract_facts_job",
+    # The rollup last, and after BOTH facts assets, so the two grains cannot
+    # disagree: a rollup built from yesterday's facts would show a contract
+    # count the same page's detail view contradicts.
     selection=dg.AssetSelection.assets(
-        company_contract_facts, company_contract_award_facts
+        company_contract_facts, company_contract_award_facts, company_contract_rollup
     ),
 )
 
@@ -210,7 +338,11 @@ company_contract_facts_schedule = dg.ScheduleDefinition(
 )
 
 defs = dg.Definitions(
-    assets=[company_contract_facts, company_contract_award_facts],
+    assets=[
+        company_contract_facts,
+        company_contract_award_facts,
+        company_contract_rollup,
+    ],
     jobs=[company_contract_facts_job],
     schedules=[company_contract_facts_schedule],
 )
