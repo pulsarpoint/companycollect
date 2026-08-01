@@ -1,3 +1,9 @@
+import {
+  FR_PUBLIC_CONTRACTS_QUERY,
+  FR_WIKIDATA_QUERY,
+  FR_WIKIDATA_PEOPLE_QUERY,
+} from "~/lib/detail-queries/fr";
+
 export type CountryFeature = "financials" | "industries" | "contacts" | "domains";
 
 export type ColumnKind = "id" | "text" | "date" | "status";
@@ -1182,6 +1188,9 @@ LIMIT 100`,
 FROM fr_companies
 WHERE siren = {id:String}
 LIMIT 1`,
+      publicContractsQuery: FR_PUBLIC_CONTRACTS_QUERY,
+      wikidataQuery: FR_WIKIDATA_QUERY,
+      wikidataPeopleQuery: FR_WIKIDATA_PEOPLE_QUERY,
     },
   },
   {
