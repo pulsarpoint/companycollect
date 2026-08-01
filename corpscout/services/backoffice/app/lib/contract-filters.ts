@@ -143,7 +143,7 @@ export function parseContractFilters(searchParams: URLSearchParams): ContractFil
  */
 export function contractFilterSql(
   filters: ContractFilters,
-  opts?: { agreementExpr?: string },
+  opts?: { agreementExpr?: string; amountExpr?: string },
 ): {
   where: string;
   params: Record<string, unknown>;
@@ -153,6 +153,13 @@ export function contractFilterSql(
   // object, so `agreement_type IN ('Empenho')` would match nothing at all while
   // looking perfectly correct.
   const agreementExpr = opts?.agreementExpr ?? "agreement_type";
+  // Which USD figure the range compares. The winner-level tables publish one
+  // per winner row as value_amount_usd, NULL where no source reported one;
+  // company_contract_rollup publishes the contract's total as amount_usd, with
+  // -1.0 standing for the same absence. That sentinel has to be turned back
+  // into NULL or an "under $1m" filter would sweep in every contract with no
+  // USD figure at all.
+  const amountExpr = opts?.amountExpr ?? "value_amount_usd";
   const clauses: string[] = [];
   const params: Record<string, unknown> = {};
 
@@ -174,11 +181,11 @@ export function contractFilterSql(
   // EUR from TED -- so a threshold against "the original amount" would compare
   // unlike numbers. The sheet labels the unit so the reader knows.
   if (filters.amountMin != null) {
-    clauses.push("value_amount_usd >= {amount_min:Float64}");
+    clauses.push(`${amountExpr} >= {amount_min:Float64}`);
     params.amount_min = filters.amountMin;
   }
   if (filters.amountMax != null) {
-    clauses.push("value_amount_usd <= {amount_max:Float64}");
+    clauses.push(`${amountExpr} <= {amount_max:Float64}`);
     params.amount_max = filters.amountMax;
   }
   if (filters.from != null) {

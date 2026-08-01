@@ -116,6 +116,17 @@ describe("building the SQL", () => {
     expect(params).toMatchObject({ amount_min: 10, amount_max: 20 });
   });
 
+  it("compares the amount column the table being read actually has", () => {
+    // company_contract_rollup holds the contract's total as amount_usd, with
+    // -1.0 for "no source reported a figure". Comparing the bare column would
+    // put all 9,535 such Norwegian contracts under every upper bound.
+    const { where } = contractFilterSql(parse("amount_max=1000000"), {
+      amountExpr: "nullIf(amount_usd, -1.0)",
+    });
+    expect(where).toContain("nullIf(amount_usd, -1.0) <= {amount_max:Float64}");
+    expect(where).not.toContain("value_amount_usd");
+  });
+
   it("filters the date on publication_date", () => {
     const { where, params } = contractFilterSql(parse("year=2025"));
     expect(where).toContain("publication_date >= {from:String}");

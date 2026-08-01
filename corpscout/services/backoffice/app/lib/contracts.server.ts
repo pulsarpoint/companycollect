@@ -26,6 +26,37 @@ const CONTRACTS_VIEW_PATTERN = "^[a-z]{2}_government_contracts$";
 const CPV_VOCABULARY_TABLE = "cpv_vocabulary";
 
 /**
+ * One row per (country_code, contract_ref) — exactly what the list renders.
+ *
+ * Built daily by the company_contract_rollup Dagster asset (migration 000238),
+ * which runs the aggregation this file used to run on every request. That
+ * aggregation is two levels deep over every winner row in the country and
+ * completes in full before LIMIT 50 applies, and for Brazil it collapses
+ * nothing — 4,605,018 contracts from 4,605,018 winner rows — so a single page
+ * built 4.6M groups of a dozen aggregate states to emit 4.6M rows: 31s and
+ * 13.2 GiB, which the app abandoned as a 500.
+ *
+ * The aggregation SQL lives in the asset now and NOWHERE else. Rebuilding any
+ * part of it here would give the page a second definition of what a contract
+ * is, and the two would drift.
+ *
+ * Every filter this page offers is contract-level (agreement type, CPV prefix,
+ * amount range, date range), which is what makes reading one row per contract
+ * legal. The detail page and the supplier lists still read the winner-level
+ * facts tables, because they need the per-winner grain this does not have.
+ */
+const ROLLUP_TABLE = "company_contract_rollup";
+
+/**
+ * The rollup's USD figure as a filter compares it.
+ *
+ * -1.0 is the sentinel the aggregation writes for "no source reported a USD
+ * figure", so it has to become NULL before a range test — otherwise every
+ * contract with no USD amount would satisfy any upper bound.
+ */
+const ROLLUP_AMOUNT_EXPR = "nullIf(amount_usd, -1.0)";
+
+/**
  * The awards view is preferred where it exists.
  *
  * `<cc>_government_contracts` is COMPANY-keyed — company_id is its second column
@@ -185,17 +216,6 @@ export interface ContractDetail {
  * itself. */
 const REF = "if(contract_key != '', contract_key, contract_id)";
 
-/**
- * The agreement type as the list DISPLAYS it.
- *
- * PNCP (Brazil) publishes agreement_type as a raw {"id":N,"nome":"..."} blob while
- * every other loaded source publishes plain text. Defined once because the
- * projection and the FILTER must use the identical expression: filtering the bare
- * column would match nothing for Brazil while looking perfectly correct.
- */
-const AGREEMENT_EXPR =
-  "multiIf(startsWith(agreement_type, '{'), JSONExtractString(agreement_type, 'nome'), agreement_type)";
-
 /** Sort keys are an allow-list into SQL column names, never user input passed
  * through — the same pattern `getSortColumn` uses for the company list. */
 const CONTRACT_SORT_COLUMNS: Record<ContractSortKey, string> = {
@@ -214,16 +234,19 @@ function isContractSortKey(value: string | null): value is ContractSortKey {
  * One page of a country's government contracts, one row per contract rather
  * than per (source, winner) — mirrors the grouping `getContractDetail` later
  * expands back out, but paginated and sortable server-side instead of capped
- * at a flat LIMIT. Brazil alone has 112,943 contracts; the old LIMIT 200 hid
+ * at a flat LIMIT. Brazil alone has 4,605,018 contracts; the old LIMIT 200 hid
  * all but the newest sliver of them.
  *
  * Within a contract, every displayed field (buyer, title, winner, amount, ...)
  * is read from the ONE (source) group with the largest USD amount, so the
  * winner shown always pairs with the amount shown — never a winner from one
- * register next to an amount from another. Brazil is single-source and
- * single-winner throughout (verified: 112,943 rows, 112,943 distinct
- * contract_id), so this reduces to "the row" there; TED-covered countries
- * can have several winners on one contract, surfaced as `supplier_count`.
+ * register next to an amount from another. That is decided when the rollup is
+ * built; here it is already one row.
+ *
+ * A filtered read of a table with the right sort key, not an aggregation: the
+ * ORDER BY leads on contract_date, which is the rollup's own sort order after
+ * country_code, so the default page is an ordered scan rather than a sort of
+ * everything the country has.
  */
 export async function getCountryContractsPage(
   country: CountryConfig,
@@ -250,22 +273,20 @@ export async function getCountryContractsPage(
   // Count first (same reason as searchCompanies): the requested page can be
   // stale once contracts are added, so it is clamped to the real range below
   // rather than trusted.
-  const source = await contractsSource(country);
   const filters = opts.filters ?? EMPTY_CONTRACT_FILTERS;
+  // The rollup stores agreement_type already decoded, so the filter matches the
+  // bare column here — the PNCP blob is unwrapped when the rollup is built.
   const { where: filterWhere, params: filterParams } = contractFilterSql(filters, {
-    agreementExpr: AGREEMENT_EXPR,
+    amountExpr: ROLLUP_AMOUNT_EXPR,
   });
-  // A filter fragment starts with " AND ", so it needs a predicate to hang off.
-  const filterClause = filterWhere === "" ? "" : ` WHERE 1${filterWhere}`;
-  const supplierIdExpr = source.hasSupplierDetail ? "winner_registered_id" : "''";
-  const supplierStatusExpr = source.hasSupplierDetail
-    ? "winner_match_status"
-    : "'exact'";
+  // A filter fragment starts with " AND ", and the country predicate is what it
+  // hangs off — every read of the rollup is scoped to one country.
+  const scope = `WHERE country_code = {country:String}${filterWhere}`;
+  const scopeParams = { country: country.code.toUpperCase(), ...filterParams };
+
   const countRows = await chQuery<{ total: string }>(
-    `SELECT count() AS total FROM (
-       SELECT ${REF} AS contract_ref FROM ${source.table}${filterClause} GROUP BY contract_ref
-     )`,
-    filterParams,
+    `SELECT count() AS total FROM ${ROLLUP_TABLE} ${scope}`,
+    scopeParams,
   );
   const total = Number(countRows[0].total);
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -284,67 +305,18 @@ export async function getCountryContractsPage(
        winner_name,
        winner_registered_id,
        winner_match_status,
-       toUInt32(winner_count_primary) AS supplier_count,
-       toFloat64(amount_original) AS amount_original,
+       supplier_count,
+       amount_original,
        currency,
+       -- The sentinel back to NULL, so the column renders as "no figure" and
+       -- ORDER BY amount_usd -- which binds to THIS alias -- sorts those last
+       -- rather than below every genuine amount.
        nullIf(amount_usd, -1.0) AS amount_usd,
        source_url
-     FROM (
-       SELECT
-         contract_ref,
-         coalesce(toString(argMax(source_date, priority)), '') AS contract_date,
-         argMax(buyer_name_in, priority) AS buyer_name,
-         argMax(title_in, priority) AS title,
-         argMax(agreement_type_in, priority) AS agreement_type,
-         argMax(cpv_code_in, priority) AS cpv_code,
-         argMax(source_url_in, priority) AS source_url,
-         argMax(winner_name_in, priority) AS winner_name,
-         argMax(winner_registered_id_in, priority) AS winner_registered_id,
-         argMax(winner_match_status_in, priority) AS winner_match_status,
-         argMax(winner_count, priority) AS winner_count_primary,
-         argMax(amount_original_in, priority) AS amount_original,
-         argMax(currency_in, priority) AS currency,
-         max(priority) AS amount_usd
-       FROM (
-         SELECT
-           ${REF} AS contract_ref,
-           source_slug AS source,
-           max(publication_date) AS source_date,
-           any(buyer_name) AS buyer_name_in,
-           any(title) AS title_in,
-           -- PNCP (Brazil) publishes agreement_type as a raw {"id":N,"nome":"..."}
-           -- blob; every other loaded source already publishes plain text.
-           any(${AGREEMENT_EXPR}) AS agreement_type_in,
-           -- max(), not any(): a contract's rows within one source can carry
-           -- CPV on some lots and '' on others, and any() would pick the blank
-           -- often enough to look like the register publishes nothing.
-           max(cpv_code) AS cpv_code_in,
-           any(source_url) AS source_url_in,
-           -- Alphabetically first, not source_winner_ordinal: that ordinal is
-           -- just the order our parser happened to iterate the notice XML (it
-           -- increments per tenderer), so it encodes no rank -- arbitrary but
-           -- stable, which looks meaningful and is not. argMin over the same
-           -- expression min() uses, so the name, its id and its status all
-           -- describe ONE supplier rather than three different ones.
-           min(if(winner_name != '', winner_name, company_id)) AS winner_name_in,
-           argMin(${supplierIdExpr}, if(winner_name != '', winner_name, company_id))
-             AS winner_registered_id_in,
-           argMin(${supplierStatusExpr}, if(winner_name != '', winner_name, company_id))
-             AS winner_match_status_in,
-           uniqExact(if(company_id != '', company_id, winner_name)) AS winner_count,
-           sum(value_amount_original) AS amount_original_in,
-           any(value_currency) AS currency_in,
-           -- -1 sentinel distinguishes "no source reported a USD figure" from
-           -- a genuine zero once max() below collapses the per-source values.
-           coalesce(toFloat64(sum(value_amount_usd)), -1.0) AS priority
-         FROM ${source.table}${filterClause}
-         GROUP BY contract_ref, source
-       )
-       GROUP BY contract_ref
-     )
+     FROM ${ROLLUP_TABLE} ${scope}
      ORDER BY coalesce(toString(${sortColumn}), '') = '' ASC, ${sortColumn} ${dir === "asc" ? "ASC" : "DESC"}, contract_ref
      LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-    { limit: pageSize, offset: (page - 1) * pageSize, ...filterParams },
+    { limit: pageSize, offset: (page - 1) * pageSize, ...scopeParams },
   );
 
   return {
@@ -440,17 +412,17 @@ export async function getAgreementTypeFacet(
   country: CountryConfig,
 ): Promise<{ value: string; count: number }[]> {
   if (!(await hasContracts(country))) return [];
-  const source = await contractsSource(country);
+  // One row per contract already, so this is a plain count over the same
+  // column the filter tests — the number beside a value is exactly what
+  // selecting it returns, which a count over winner rows could not promise.
   const rows = await chQuery<{ value: string; cnt: string }>(
-    `SELECT value, uniqExact(contract_ref) AS cnt
-     FROM (
-       SELECT ${AGREEMENT_EXPR} AS value, ${REF} AS contract_ref
-       FROM ${source.table}
-       WHERE ${AGREEMENT_EXPR} != ''
-     )
+    `SELECT agreement_type AS value, count() AS cnt
+     FROM ${ROLLUP_TABLE}
+     WHERE country_code = {country:String} AND agreement_type != ''
      GROUP BY value
      ORDER BY cnt DESC, value
      LIMIT 100`,
+    { country: country.code.toUpperCase() },
   );
   return rows.map((r) => ({ value: r.value, count: Number(r.cnt) }));
 }
@@ -488,7 +460,6 @@ export async function getCpvChildren(
   parentCode: string,
 ): Promise<CpvTreeNode[]> {
   if (!(await hasContracts(country))) return [];
-  const source = await contractsSource(country);
 
   const rows = await chQuery<{
     code: string;
@@ -509,9 +480,12 @@ export async function getCpvChildren(
          max(greatest(2, length(replaceRegexpOne(t.code, '0+$', '')))) > v.significant_digits
        ) AS deeper
      FROM (
-       SELECT ${REF} AS contract_ref, arrayJoin(${CPV_CODES}) AS code
-       FROM ${source.table}
-       WHERE cpv_code != ''
+       -- One row per contract already; still uniqExact, because a contract
+       -- classified under several codes can match one node through more than
+       -- one of them and would otherwise be counted twice.
+       SELECT contract_ref, arrayJoin(${CPV_CODES}) AS code
+       FROM ${ROLLUP_TABLE}
+       WHERE country_code = {country:String} AND cpv_code != ''
      ) AS t
      INNER JOIN ${CPV_VOCABULARY_TABLE} AS v
        ON startsWith(t.code, substring(v.code, 1, v.significant_digits))
@@ -519,7 +493,7 @@ export async function getCpvChildren(
      GROUP BY v.code, v.significant_digits, v.label_en
      ORDER BY contracts DESC, v.code
      LIMIT 500`,
-    { parent: parentCode },
+    { parent: parentCode, country: country.code.toUpperCase() },
   );
 
   return rows.map((r) => ({
@@ -624,41 +598,40 @@ export async function getContractHeadlineStats(
   country: CountryConfig,
 ): Promise<ContractHeadlineStats | null> {
   if (!(await hasContracts(country))) return null;
-  const source = await contractsSource(country);
 
-  // One row per contract, so a multi-winner contract is not counted twice.
-  // min(winner_name), the same rule the list uses for its primary supplier --
-  // and it has to be, or the banner would name a different "top supplier" than
-  // the table shows.
-  //
-  // NOT argMin(winner_name, source_winner_ordinal): 13,181 Swedish contracts have
-  // two winners sharing one ordinal, and argMin on a tied key picks arbitrarily,
-  // so the count flickered between runs (301, then 299, from identical data).
-  // The ordinal encodes no rank anyway -- the TED parser merely increments it per
-  // tenderer -- so alphabetical is both deterministic and no less meaningful.
-  const contracts = `(SELECT ${REF} AS contract_ref, any(buyer_name) AS buyer_name,
-       min(winner_name) AS winner_name,
-       min(publication_date) AS publication_date
-     FROM ${source.table} GROUP BY contract_ref)`;
+  // The rollup is already one row per contract, so a multi-winner contract is
+  // not counted twice -- and the supplier named here is the same one the table
+  // shows on its own row, because both now read the field the rollup decided.
+  // The banner naming a different "top supplier" than the list displays was the
+  // failure this rule has always existed to prevent.
+  const contracts = `(SELECT buyer_name, winner_name, publication_date
+     FROM ${ROLLUP_TABLE} WHERE country_code = {country:String})`;
+  const params = { country: country.code.toUpperCase() };
 
   const [totals, perYear, buyers, winners] = await Promise.all([
     // Counted independently of the date. Summing the per-year buckets would
     // silently drop contracts with no publication_date -- 36 of Sweden's -- and
     // the banner would then disagree with the table's own total on the same page.
-    chQuery<{ contracts: string }>(`SELECT count() AS contracts FROM ${contracts}`),
+    chQuery<{ contracts: string }>(
+      `SELECT count() AS contracts FROM ${contracts}`,
+      params,
+    ),
     chQuery<{ year: string; contracts: string }>(
       `SELECT toYear(publication_date) AS year, count() AS contracts
        FROM ${contracts}
        WHERE publication_date IS NOT NULL
        GROUP BY year ORDER BY year`,
+      params,
     ),
     chQuery<{ name: string; contracts: string }>(
       `SELECT buyer_name AS name, count() AS contracts FROM ${contracts}
        WHERE buyer_name != '' GROUP BY name ORDER BY contracts DESC LIMIT 1`,
+      params,
     ),
     chQuery<{ name: string; contracts: string }>(
       `SELECT winner_name AS name, count() AS contracts FROM ${contracts}
        WHERE winner_name != '' GROUP BY name ORDER BY contracts DESC LIMIT 1`,
+      params,
     ),
   ]);
 
