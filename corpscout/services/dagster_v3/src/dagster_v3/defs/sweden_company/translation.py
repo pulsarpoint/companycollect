@@ -22,7 +22,8 @@ from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.translator_load.loader import build_scan_sql
+from dagster_v3.defs.translator_load.coverage import translation_coverage_result
+from dagster_v3.defs.translator_load.loader import TranslationField, build_scan_sql
 from dagster_v3.defs.translator_load.resource import (
     TranslatorResource,
     translator_queue_health_check,
@@ -246,3 +247,9 @@ def sweden_company_translator_queue_health_check(
     translator: TranslatorResource,
 ) -> dg.AssetCheckResult:
     return translator_queue_health_check(translator)
+
+
+@dg.asset_check(asset=sweden_company_translation_load, name="translations_present")
+def sweden_company_translation_coverage(clickhouse: ClickhouseResource) -> dg.AssetCheckResult:
+    """How many Swedish activity descriptions exist, and how many are translated."""
+    return translation_coverage_result(clickhouse, (TranslationField("corpscout.se_companies", "activity_description"),))

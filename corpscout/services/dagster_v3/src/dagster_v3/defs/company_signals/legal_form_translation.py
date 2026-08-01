@@ -29,7 +29,9 @@ from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.company_signals.legal_form_english import english_by_code
+from dagster_v3.defs.translator_load.coverage import translation_coverage_result
 from dagster_v3.defs.translator_load.loader import (
+    TranslationField,
     build_scan_sql,
     build_static_scan_sql,
     insert_static_translations,
@@ -202,3 +204,9 @@ def company_entity_types_curated_english(
             context.log.info("%s: %d curated legal forms inserted", country_code, inserted)
 
     return dg.MaterializeResult(metadata={"inserted": total, **inserted_by_country})
+
+
+@dg.asset_check(asset=company_entity_types_translation_load, name="translations_present")
+def company_entity_types_translation_coverage(clickhouse: ClickhouseResource) -> dg.AssetCheckResult:
+    """How many legal-form labels exist, and how many are translated."""
+    return translation_coverage_result(clickhouse, (TranslationField(SOURCE_TABLE, SOURCE_COLUMN),))

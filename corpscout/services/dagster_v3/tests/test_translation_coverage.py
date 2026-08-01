@@ -112,3 +112,28 @@ def test_counts_exactly_the_population_the_loader_enqueues() -> None:
 def test_extra_where_scopes_both_the_count_and_the_scan() -> None:
     coverage = build_coverage_sql("corpscout.t", "c", "country_code = 'SE'")
     assert "country_code = 'SE'" in coverage
+
+
+def test_translation_coverage_job_covers_every_loader() -> None:
+    """The ten-minute job names its assets as strings, so nothing tells it when
+    a new translation loader appears. This does: a loader that grows a
+    translations_present check and is not added to the list fails here rather
+    than silently going unchecked."""
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    declared = {
+        key
+        for key in repo.asset_graph.asset_check_keys
+        if key.name == "translations_present"
+    }
+    job = repo.get_job("translation_coverage_job")
+    selected = {
+        key for key in job.asset_layer.asset_graph.asset_check_keys
+        if key.name == "translations_present"
+    }
+    missing = sorted(k.to_user_string() for k in declared - selected)
+    assert missing == [], (
+        f"these loaders have a coverage check that the ten-minute job does not "
+        f"run: {missing} -- add them to TRANSLATION_LOAD_ASSETS"
+    )

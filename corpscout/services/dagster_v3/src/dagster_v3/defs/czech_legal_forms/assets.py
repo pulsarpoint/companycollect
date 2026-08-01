@@ -299,6 +299,22 @@ czech_legal_forms_yearly_schedule = dg.ScheduleDefinition(
     default_status=dg.DefaultScheduleStatus.STOPPED,
 )
 
+# Every asset that loads translations. Listed by name rather than imported:
+# the job lives in one module but covers all of them, and importing each
+# would make czech_legal_forms depend on Brazil, Latvia, Norway and Sweden.
+# test_translation_coverage_job_covers_every_loader keeps this list honest.
+TRANSLATION_LOAD_ASSETS = (
+    "brazil_comp_cnae_translation_load",
+    "brazil_pncp_translation_load",
+    "company_entity_types_translation_load",
+    "czech_legal_forms_translation_load",
+    "france_legal_forms_translation_load",
+    "latvia_ur_translation_load",
+    "norway_brreg_translation_load",
+    "sweden_company_translation_load",
+    "sweden_financial_concepts_translation_load",
+)
+
 # Checks only -- no asset is materialised, so this cannot re-download or
 # re-publish anything. It re-reads coverage so a queue that drains after the
 # load finished is reflected without waiting for the next yearly refresh.
@@ -310,10 +326,7 @@ translation_coverage_job = dg.define_asset_job(
     selection=dg.AssetSelection.checks(
         *(
             dg.AssetCheckKey(dg.AssetKey(asset), "translations_present")
-            for asset in (
-                "czech_legal_forms_translation_load",
-                "france_legal_forms_translation_load",
-            )
+            for asset in TRANSLATION_LOAD_ASSETS
         )
     ),
 )

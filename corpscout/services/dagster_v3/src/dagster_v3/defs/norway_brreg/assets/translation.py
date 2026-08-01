@@ -12,6 +12,7 @@ import dagster as dg
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
+from dagster_v3.defs.translator_load.coverage import translation_coverage_result
 from dagster_v3.defs.translator_load.loader import (
     TranslationField,
     build_scan_sql,
@@ -192,3 +193,9 @@ def norway_brreg_translator_queue_health_check(
     translator: TranslatorResource,
 ) -> dg.AssetCheckResult:
     return translator_queue_health_check(translator)
+
+
+@dg.asset_check(asset=norway_brreg_translation_load, name="translations_present")
+def norway_brreg_translation_coverage(clickhouse: ClickhouseResource) -> dg.AssetCheckResult:
+    """How many Norwegian free-text fields exist, and how many are translated."""
+    return translation_coverage_result(clickhouse, TRANSLATION_FIELDS)
