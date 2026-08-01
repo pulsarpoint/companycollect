@@ -172,3 +172,22 @@ ORDER BY m.fiscal_year DESC,
   multiIf(m.balance_type_code = 'C', 0, m.balance_type_code = 'S', 1, 2)
 LIMIT 1 BY m.fiscal_year
 LIMIT 15`;
+
+/**
+ * One row summarising a company's award history.
+ *
+ * total_value_usd is NULL for every French company -- public_award_value_usd
+ * and public_award_valued_count are derived from the per-winner figure DECP
+ * does not publish, so they are NULL and 0 across all 99,287 rows. It is
+ * selected anyway because the header renders a value only when one exists, and
+ * the other eight contract countries have the same table with figures in it.
+ */
+export const FR_CONTRACT_SUMMARY_QUERY = `SELECT
+  toUInt32(public_award_count) AS award_count,
+  toUInt32(public_award_valued_count) AS valued_count,
+  toFloat64(public_award_value_usd) AS total_value_usd,
+  coalesce(toString(public_award_last_date), '') AS last_award_date,
+  arrayStringConcat(source_slugs, ', ') AS sources
+FROM fr_government_contract_summary
+WHERE company_id = {id:String}
+LIMIT 1`;

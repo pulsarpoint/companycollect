@@ -3,6 +3,7 @@ import {
   FR_WIKIDATA_QUERY,
   FR_WIKIDATA_PEOPLE_QUERY,
   FR_FINANCIAL_METRICS_QUERY,
+  FR_CONTRACT_SUMMARY_QUERY,
 } from "~/lib/detail-queries/fr";
 
 export type CountryFeature = "financials" | "industries" | "contacts" | "domains";
@@ -79,6 +80,12 @@ export interface CountryDetailConfig {
    * PublicContractsSection renders it for every country identically.
    */
   publicContractsQuery?: string;
+  /**
+   * {id:String} → ONE row from <cc>_government_contract_summary (see
+   * ContractSummaryRow in queries.server), rendered as a header above the
+   * contracts table. Optional: a country without it renders the table alone.
+   */
+  contractSummaryQuery?: string;
   /**
    * {id:String} + {year:UInt16} → raw source facts for ONE fiscal year's
    * filing (see FactRow in queries.server), in source document order.
@@ -1197,6 +1204,7 @@ FROM fr_companies
 WHERE siren = {id:String}
 LIMIT 1`,
       publicContractsQuery: FR_PUBLIC_CONTRACTS_QUERY,
+      contractSummaryQuery: FR_CONTRACT_SUMMARY_QUERY,
       wikidataQuery: FR_WIKIDATA_QUERY,
       wikidataPeopleQuery: FR_WIKIDATA_PEOPLE_QUERY,
       financialMetricsQuery: FR_FINANCIAL_METRICS_QUERY,

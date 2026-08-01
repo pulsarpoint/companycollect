@@ -85,7 +85,10 @@ export default function CompanyDetail({ loaderData, params }: Route.ComponentPro
       <FrFinancialsSection financials={detail.frFinancials} />
       <EsefSection filings={detail.esefFilings} />
       <FiTaxRecordsSection taxRecords={detail.taxRecords} />
-      <PublicContractsSection contracts={detail.publicContracts} />
+      <PublicContractsSection
+        contracts={detail.publicContracts}
+        summary={detail.contractSummary}
+      />
       <ContactLocationCard
         country={country}
         contacts={detail.contacts}

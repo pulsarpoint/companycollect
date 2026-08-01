@@ -384,6 +384,23 @@ export interface PublicContractRow {
 }
 
 /**
+ * A company's award history in one row, for the header above the contracts
+ * table.
+ *
+ * total_value_usd and valued_count are null/0 wherever a register publishes no
+ * per-winner figure -- which is every French company. The header shows a value
+ * only when one exists: printing "total value: 0" would say the company won
+ * nothing.
+ */
+export interface ContractSummaryRow {
+  award_count: number | string;
+  valued_count: number | string;
+  total_value_usd: number | null;
+  last_award_date: string;
+  sources: string;
+}
+
+/**
  * One fiscal year of a French filing, with the ratio suite INPI publishes.
  *
  * Distinct from FinancialYearRow: France carries gross margin, EBITDA, EBIT
@@ -615,6 +632,9 @@ export interface CompanyDetail {
   addresses: AddressRow[];
   taxRecords: TaxRecordRow[];
   publicContracts: PublicContractRow[];
+  /** Award-history summary; null when the country declares no summary query
+   * or the company has never won one. */
+  contractSummary: ContractSummaryRow | null;
   secondaryNames: SecondaryNameRow[];
   officers: OfficerRow[];
   /** Same-name matches for the officers above, in OTHER companies. Fetched
@@ -767,6 +787,9 @@ export async function getCompanyDetail(
   const publicContractsPromise = country.detail?.publicContractsQuery
     ? chQuery<PublicContractRow>(country.detail.publicContractsQuery, { id })
     : Promise.resolve([]);
+  const contractSummaryPromise = country.detail?.contractSummaryQuery
+    ? chQuery<ContractSummaryRow>(country.detail.contractSummaryQuery, { id })
+    : Promise.resolve([]);
   const secondaryNamesPromise = country.detail?.secondaryNamesQuery
     ? chQuery<SecondaryNameRow>(country.detail.secondaryNamesQuery, { id })
     : Promise.resolve([]);
@@ -812,6 +835,7 @@ export async function getCompanyDetail(
   wikidataPeoplePromise.catch(() => {});
   esefFilingsPromise.catch(() => {});
   frFinancialsPromise.catch(() => {});
+  contractSummaryPromise.catch(() => {});
 
   if (country.industryQuery) {
     const key = company.__industry_key ?? "";
@@ -823,7 +847,7 @@ export async function getCompanyDetail(
     delete company.__industry_key;
   }
 
-  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships, gleifEntityRows, wikidataRows, wikidataPeople, esefFilings, frFinancials] = await Promise.all([
+  const [records, [financials, contacts, domains], statements, industries, addresses, taxRecords, publicContracts, secondaryNames, officers, auditRows, gleifRelationships, gleifEntityRows, wikidataRows, wikidataPeople, esefFilings, frFinancials, contractSummaryRows] = await Promise.all([
     recordPromise,
     sectionsPromise,
     statementsPromise,
@@ -840,6 +864,7 @@ export async function getCompanyDetail(
     wikidataPeoplePromise,
     esefFilingsPromise,
     frFinancialsPromise,
+    contractSummaryPromise,
   ]);
 
   // Same-name matches need the officers' names, so this can only start once
@@ -870,6 +895,7 @@ export async function getCompanyDetail(
     addresses,
     taxRecords,
     publicContracts,
+    contractSummary: contractSummaryRows[0] ?? null,
     secondaryNames,
     officers,
     peopleMatches,

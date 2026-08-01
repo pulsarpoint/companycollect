@@ -115,3 +115,32 @@ describe("France financial metrics", () => {
     expect(rows.some((r) => r.customer_payment_days != null)).toBe(true);
   });
 });
+
+describe("France contract summary", () => {
+  it("declares the query", () => {
+    expect(getCountry("fr")?.detail?.contractSummaryQuery).toBeTruthy();
+  });
+
+  it("returns nothing for a company with no awards", async () => {
+    const rows = await chQuery(getCountry("fr")!.detail!.contractSummaryQuery!, {
+      id: "0",
+    });
+    expect(rows).toEqual([]);
+  });
+
+  it("summarises a company with awards", async () => {
+    const rows = await chQuery<{
+      award_count: number | string;
+      total_value_usd: number | null;
+      last_award_date: string;
+      sources: string;
+    }>(getCountry("fr")!.detail!.contractSummaryQuery!, { id: "055800296" });
+    expect(rows.length).toBe(1);
+    expect(Number(rows[0].award_count)).toBeGreaterThan(0);
+    expect(rows[0].sources).toBe("france_decp_procurement");
+    expect(rows[0].last_award_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // France publishes no per-winner value, so the summary's USD total is NULL
+    // for all 99,287 companies. The header must not print "0" for it.
+    expect(rows[0].total_value_usd).toBeNull();
+  });
+});

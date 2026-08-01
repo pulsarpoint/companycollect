@@ -1,4 +1,5 @@
 import type { PublicContractRow } from "~/lib/queries.server";
+import type { ContractSummaryRow } from "~/lib/queries.server";
 import { Badge } from "~/components/ui/badge";
 import {
   Card,
@@ -53,10 +54,16 @@ function MoneyPair({
  * TED, …) is decided per country in its publicContractsQuery — this component
  * only labels the source.
  */
+const summaryNf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
 export function PublicContractsSection({
   contracts,
+  summary = null,
 }: {
   contracts: PublicContractRow[];
+  /** Award history in one line. Optional: a country that declares no
+   * contractSummaryQuery renders exactly what it rendered before. */
+  summary?: ContractSummaryRow | null;
 }) {
   if (contracts.length === 0) return null;
 
@@ -66,6 +73,36 @@ export function PublicContractsSection({
         <CardTitle className="text-base">Government contracts</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {summary ? (
+          <div className="text-muted-foreground flex flex-wrap gap-x-6 gap-y-1 text-sm">
+            <span>
+              <span className="text-foreground tabular-nums">
+                {summaryNf.format(Number(summary.award_count))}
+              </span>{" "}
+              awards
+            </span>
+            {summary.last_award_date === "" ? null : (
+              <span>
+                latest{" "}
+                <span className="text-foreground tabular-nums">
+                  {summary.last_award_date}
+                </span>
+              </span>
+            )}
+            {/* Only where the register publishes a per-winner figure. France
+                publishes none, so printing a zero here would say this company
+                won nothing. */}
+            {summary.total_value_usd == null ? null : (
+              <span>
+                <span className="text-foreground tabular-nums">
+                  ${summaryNf.format(summary.total_value_usd)}
+                </span>{" "}
+                across {summaryNf.format(Number(summary.valued_count))} valued
+              </span>
+            )}
+            {summary.sources === "" ? null : <span>{summary.sources}</span>}
+          </div>
+        ) : null}
         <div className="overflow-x-auto">
           <Table className="min-w-[44rem]">
             <TableHeader>
